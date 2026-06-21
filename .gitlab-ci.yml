@@ -185,6 +185,12 @@ test:e2e:
 build:macos:
   stage: build
   tags: [macos]                     # ← замените на тег вашего macOS-раннера
+  # Пока нет macOS-раннера — задача ручная и не роняет/не блокирует пайплайн.
+  # Когда зарегистрируете раннер с тегом macos, запускайте её кнопкой (или
+  # уберите этот блок rules, чтобы снова собирать автоматически).
+  rules:
+    - when: manual
+  allow_failure: true
   cache:
     key: cargo-macos
     paths:
@@ -210,6 +216,12 @@ build:macos:
 build:windows:
   stage: build
   tags: [windows]                   # ← замените на тег вашего Windows-раннера
+  # Пока нет Windows-раннера — задача ручная и не роняет/не блокирует пайплайн.
+  # Когда зарегистрируете раннер с тегом windows, запускайте её кнопкой (или
+  # уберите этот блок rules, чтобы снова собирать автоматически).
+  rules:
+    - when: manual
+  allow_failure: true
   cache:
     key: cargo-windows
     paths:
