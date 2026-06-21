@@ -1,93 +1,470 @@
 # vterm
 
+**vterm** — кроссплатформенный (macOS + Windows) SSH-терминал и SFTP-клиент с
+графическим интерфейсом, написанный на Rust поверх **Tauri 2** и **SvelteKit**.
+По духу — аналог [iTerm2](https://iterm2.com/) и
+[MobaXterm](https://mobaxterm.mobatek.net/): слева список сохранённых серверов,
+справа живой терминал подключения, плюс передача файлов по SFTP и безопасное
+хранение паролей в системном хранилище ключей.
 
+> ⚙️ **Текущий статус: Фазы 1–5 реализованы.** SSH-терминал (пароль/ключ), вкладки,
+> сохранение секретов в системном keychain, профили в JSON и **SFTP-менеджер файлов**
+> (просмотр, навигация, upload/download, drag-and-drop, прогресс). Фаза 4: регулируемые/
+> сворачиваемые панели, **темы оформления** (xterm + UI) и настройки шрифта/курсора,
+> панель **⚙ Settings**, **нижний статус-бар** с метриками, копирование/вставка,
+> подтверждение закрытия вкладки, переподключение при обрыве, группы/поиск/теги серверов,
+> проверка отпечатка хоста и окно Help & About. Фаза 5: **тесты и покрытие** (Rust-юниты,
+> Vitest, E2E) с гейтами в CI. Полный план — в [ROADMAP.md](ROADMAP.md).
 
-## Getting started
+> 📚 **Документация:** [CONTEXT.md](CONTEXT.md) — рабочие правила и инварианты проекта
+> (читать перед любой задачей) · [CONTRIBUTING.md](CONTRIBUTING.md) — как
+> контрибьютить · [docs/adr/](docs/adr/) — архитектурные решения ·
+> [SECURITY.md](SECURITY.md) — модель безопасности и SAST-гейты ·
+> [ROADMAP.md](ROADMAP.md) — план по фазам · [TESTS.md](TESTS.md) — тестирование.
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+---
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+## Содержание
 
-## Add your files
+- [Возможности](#возможности)
+- [Доступность и горячие клавиши](#доступность-и-горячие-клавиши)
+- [Технологический стек](#технологический-стек)
+- [Архитектура](#архитектура)
+- [Структура каталогов](#структура-каталогов)
+- [Требования к окружению](#требования-к-окружению)
+- [Установка и запуск (разработка)](#установка-и-запуск-разработка)
+- [Сборка дистрибутивов](#сборка-дистрибутивов)
+- [Непрерывная сборка (CI): два файла на каждом этапе](#непрерывная-сборка-ci-два-файла-на-каждом-этапе)
+- [Тестирование](#тестирование)
+- [Сеть и автономность](#сеть-и-автономность)
+- [Запуск готового приложения](#запуск-готового-приложения)
+- [Команды проекта](#команды-проекта)
+- [Возможные проблемы](#возможные-проблемы)
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+---
+
+## Возможности
+
+### Реализовано (Фазы 0–4)
+
+**Подключение и терминал**
+- 🪟 Двухпанельное окно: слева — список сохранённых серверов, справа — терминал.
+- 📋 В окне — кнопка **«+ Add server»**; подключение кнопкой **Connect** в центре окна
+  или двойным кликом по серверу. При наведении на строку появляются значки: ✎ —
+  редактировать сервер / переименовать папку, × — удалить.
+- 🍎 **Нативное меню приложения**: **Settings** и **About** вынесены в системное меню.
+  На macOS — в меню **vterm** (Settings с ⌘,) и **Help**; на Windows/Linux — в
+  меню-баре окна (**File → Settings…**, **Help → About**).
+- 🔌 **SSH-подключение** (russh) по **паролю и SSH-ключу**: выбор метода в форме,
+  путь к ключу через нативный диалог, passphrase для зашифрованных ключей.
+- 🖥️ **Живой терминал** на xterm.js: PTY, ANSI-цвета, ввод/вывод, авто-resize.
+- 🗂️ **Вкладки**: несколько одновременных соединений (в т.ч. к одному серверу),
+  **перетаскивание** для изменения порядка, индикатор статуса на каждой.
+- 🔄 Индикатор статуса (Connecting / Connected / Disconnected / Error) и
+  **переподключение** при обрыве (кнопка Reconnect + опциональный авто-reconnect).
+- ⏱️ Таймаут подключения и keepalive (настраиваются) — «мёртвое» соединение
+  детектируется автоматически.
+- 🔑 **Сохранение секретов в системный keychain** (macOS Keychain / Windows
+  Credential Manager) — чекбокс «Сохранить» при подключении, автоподключение.
+- 🛡️ **Проверка отпечатка хоста** (vterm-managed `known_hosts.json`, SHA256):
+  политики strict / trust-on-first-use / accept-any.
+
+**Список серверов**
+- 🗂️ Профили серверов сохраняются в **JSON** в конфиг-каталоге ОС.
+- ➕ Модальное окно добавления/редактирования: псевдоним, host/IP, порт, логин,
+  метод аутентификации и **теги**.
+- 📂 **Иерархические папки** (любая вложенность, пустые папки сохраняются):
+  создание/удаление/переименование, **перетаскивание сервера в папку мышью**
+  (распределение по папкам — только так), сворачивание пиктограммой +/−;
+  **поиск** по списку (alias/host/логин/папка/теги).
+
+**SFTP**
+- 📁 **SFTP-менеджер файлов** (правая панель, по умолчанию свёрнута в полоску;
+  разворачивается и подключается кнопкой **Connect** внутри панели): просмотр и навигация, создание/
+  удаление папок, **upload/download** через нативный диалог, **drag-and-drop**
+  загрузка, индикатор прогресса.
+
+**Интерфейс и UX (Фаза 4)**
+- 🎨 **Темы оформления** терминала и UI (применяются в реальном времени): Catppuccin,
+  Dracula, Nord, Gruvbox, Solarized, One Dark, Tokyo Night и ретро — Fallout (зелёный
+  фосфор), Amber CRT, IBM 3270, Commodore C64; плюс **пользовательская тема**
+  (свои цвета фона/текста/курсора и 16-цветной ANSI-палитры).
+- ⚙ **Панель настроек**: тема, шрифт (семейство/размер/интервал), курсор, scrollback,
+  bell, копирование по выделению, параметры соединения, host-key-политика и др.
+
+  > **Что такое bell.** «Bell» — реакция терминала на управляющий символ BEL
+  > (ASCII `0x07`, он же `\a`). Его шлёт удалённая программа, чтобы привлечь внимание:
+  > неоднозначное автодополнение по Tab, ошибка ввода в shell, уведомления из
+  > `tmux`/`vim` и т.п. (проверить можно командой `printf '\a'`). В настройках
+  > выбирается реакция: **None** — игнорировать, **Sound** — короткий звуковой сигнал,
+  > **Visual** — кратковременная подсветка терминала акцентным цветом (когда звук
+  > нежелателен). По умолчанию — None.
+- 💾 **Бэкап настроек** (в панели ⚙ Settings): **Export backup…** сохраняет список
+  серверов, их настройки, структуру папок и параметры приложения в один JSON-файл;
+  **Import backup…** восстанавливает их (с подтверждением, т.к. заменяет текущие).
+  Пароли/passphrase **не** попадают в файл — они остаются в системном keychain.
+- 📊 **Нижний статус-бар** (как в MobaXterm): иконка ОС, hostname/пользователь,
+  **график загрузки ЦП** + проценты, ОЗУ и свободное место на диске — метрики
+  собираются отдельным exec-каналом раз в N секунд.
+- 🧩 **Регулируемые и сворачиваемые панели**: ширину левой панели и SFTP можно тянуть
+  мышью, каждую можно свернуть в тонкую полоску (состояние запоминается).
+- 📋 **Копирование/вставка** (copy-on-select, ⌘/Ctrl-сочетания, средняя кнопка),
+  **подтверждение закрытия вкладки** с активной сессией, окно **Help & About**.
+
+### Запланировано (Фазы 5–12)
+- 🧪 **Тесты и покрытие** (Фаза 5): юнит/интеграционные/компонентные/e2e, гейты в CI.
+- 🛠️ **Рефакторинг** (Фаза 6): SAST/безопасность, автономность, архитектура/DRY,
+  производительность.
+- 🎨 **Дизайн-ревизия** (Фаза 7); 📜 **умные логи** — regex-подсветка, JSON-таблицы,
+  поиск по буферу (Фаза 8); ⏺️ **запись сессий** asciinema-style (Фаза 9).
+- 📝 **Редактор конфигов** (Monaco) с diff и синхронизацией папок в SFTP (Фаза 10).
+- 📦 **Релизная сборка и CI/CD**: подписанные `.dmg`/`.msi`/NSIS, нотаризация (Фаза 12).
+
+Детализация по фазам — в [ROADMAP.md](ROADMAP.md).
+
+---
+
+## Доступность и горячие клавиши
+
+vterm управляется с клавиатуры и предоставляет доступную семантику для скринридеров
+(результат UX-ревизии Фазы 7).
+
+### Горячие клавиши
+
+| Действие | Сочетание |
+|----------|-----------|
+| **Командная палитра** | `⌘K` / `Ctrl+K` |
+| Копировать выделение | `⌘C` / `Ctrl+Shift+C` |
+| Вставить | `⌘V` / `Ctrl+Shift+V` |
+| Прерывание (SIGINT) | `Ctrl+C` |
+| Закрыть диалог / палитру | `Esc` |
+| Переключение вкладок | `←` / `→` (по кругу), `Home` / `End` |
+| Активировать вкладку под фокусом | `Enter` / `Space` |
+| Подключиться к выбранному серверу | двойной клик по серверу |
+
+### Командная палитра (⌘K)
+
+`⌘K` / `Ctrl+K` открывает палитру с быстрым поиском по **серверам** (подключение),
+**папкам** (добавить сервер в папку), **действиям** и **настройкам**. Навигация:
+`↑` / `↓` — выбор, `Enter` — выполнить, `Esc` — закрыть.
+
+### Доступность диалогов
+
+Все модальные окна (форма сервера, ввод пароля **Connect**, создание/переименование
+папки, диалоги подтверждения) построены на общем компоненте `Modal` и обеспечивают:
+
+- **автофокус** первого поля при открытии;
+- **фокус-трап** — `Tab` / `Shift+Tab` ходят по кругу внутри окна и не уходят на фон;
+- **возврат фокуса** на элемент, открывший окно, после закрытия;
+- закрытие по `Esc` и семантику `role="dialog"` / `aria-modal` / `aria-label`.
+
+### Навигация по вкладкам терминалов
+
+Ряд вкладок реализует ARIA-паттерн *tablist* с роуминг-фокусом: в общий порядок `Tab`
+включена только активная вкладка, а `←` / `→` (с заворотом), `Home` / `End`
+переключают вкладки; `Enter` / `Space` активируют вкладку под фокусом. Список серверов
+слева — дерево (`role="tree"`).
+
+### macOS: полный доступ с клавиатуры
+
+Если в диалоге `Tab` перескакивает только между текстовыми полями и **не попадает на
+кнопки**, включите системную опцию: **Системные настройки → Клавиатура → «Навигация с
+помощью клавиатуры»** (Full Keyboard Access). Это ограничение macOS, а не приложения.
+
+---
+
+## Технологический стек
+
+| Слой | Технология | Назначение |
+|------|-----------|-----------|
+| GUI-фреймворк | **Tauri 2** | Нативное окно + WebView, Rust-бэкенд |
+| Бэкенд | **Rust** (stable) | Команды, состояние, в будущем — SSH/SFTP/секреты |
+| Фронтенд | **SvelteKit** (Svelte 5, runes) | Реактивный UI в режиме SPA |
+| Стилизация | **Tailwind CSS v4** | Утилитарный CSS (плагин Vite, без PostCSS-конфига) |
+| Сборка фронта | **Vite 6** | Dev-сервер и бандлинг |
+| Терминал | **xterm.js 6** + addon-fit | Веб-терминал с поддержкой ANSI |
+| SSH | **russh 0.61** | Чистый Rust SSH-клиент (пароль, PTY, shell) |
+| SFTP | **russh-sftp 2** | Передача файлов поверх SSH-сессии |
+| Секреты | **keyring 3** | Keychain (macOS) / Credential Manager (Windows) |
+| Диалоги | **tauri-plugin-dialog** | Нативный выбор файла ключа |
+| Пакетный менеджер | **pnpm** + **cargo** | Зависимости JS и Rust |
+
+> **Примечание о Tailwind.** В исходном плане значился Tailwind 3.x, но используется
+> **v4**: он подключается одним плагином Vite и не требует `tailwind.config.js` /
+> PostCSS. Кастомные токены темы заданы прямо в CSS через `@theme`
+> (см. [src/app.css](src/app.css)).
+
+---
+
+## Архитектура
+
+Главный принцип: **вся «тяжёлая» логика живёт в Rust-бэкенде**, а фронтенд —
+тонкий UI. Граница между ними проходит по двум каналам Tauri:
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.home.arpa/boris/vterm.git
-git branch -M main
-git push -uf origin main
+┌───────────────────────────────┐         ┌──────────────────────────────┐
+│        Фронтенд (WebView)      │         │        Бэкенд (Rust)         │
+│  SvelteKit + Tailwind + (xterm)│         │           Tauri 2            │
+│                                │         │                              │
+│  +page.svelte ── UI            │         │  lib.rs ── #[tauri::command] │
+│        │                       │         │     ├─ list_servers          │
+│  lib/api.ts ──invoke()────────────────▶  │     ├─ add_server            │
+│        ▲                       │ команды │     ├─ delete_server         │
+│        │                       │         │     └─ connect_session       │
+│  xterm.js ◀───event()──────────────────  │  model.rs ── ServerProfile   │
+│   (поток терминала, Фаза 1)    │ события │  AppState (Mutex<…>)         │
+└───────────────────────────────┘         └──────────────────────────────┘
 ```
 
-## Integrate with your tools
+- **Команды** (`invoke`) — запрос/ответ: фронтенд вызывает функции Rust
+  (`list_servers`, `add_server`, …). Все вызовы инкапсулированы в
+  [src/lib/api.ts](src/lib/api.ts), UI не работает со строками-именами команд
+  напрямую.
+- **События** (`event`) — поток данных от бэкенда к фронту. В Фазе 1 по этому
+  каналу пойдёт вывод PTY с удалённого сервера прямо в xterm.js, а нажатия клавиш
+  пойдут обратно командой.
+- **Модель данных** ([src-tauri/src/model.rs](src-tauri/src/model.rs)) сериализуется
+  через `serde` с `rename_all = "camelCase"`, чтобы поля совпадали с TypeScript-типами
+  ([src/lib/types.ts](src/lib/types.ts)). Пароли в модели **не хранятся** — они
+  пойдут в системный keychain (Фаза 2).
 
-* [Set up project integrations](https://gitlab.home.arpa/boris/vterm/-/settings/integrations)
+---
 
-## Collaborate with your team
+## Структура каталогов
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```
+vterm/
+├── README.md                 # этот файл
+├── ROADMAP.md                # план развития по фазам
+├── .gitlab-ci.yml            # CI: сборка macOS + Windows (два артефакта)
+├── package.json              # JS-зависимости и скрипты
+├── pnpm-workspace.yaml       # настройки pnpm (в т.ч. allowBuilds: esbuild)
+├── svelte.config.js          # SvelteKit: adapter-static (SPA)
+├── vite.config.js            # Vite + плагины tailwind/sveltekit, порт 1420
+├── tsconfig.json
+│
+├── src/                      # ── ФРОНТЕНД (SvelteKit) ──
+│   ├── app.html              # HTML-обёртка, <title>vterm</title>
+│   ├── app.css               # Tailwind v4 (@import) + токены темы (@theme)
+│   ├── lib/
+│   │   ├── api.ts                # типизированные обёртки над invoke()
+│   │   ├── types.ts              # TS-типы, зеркало моделей Rust
+│   │   ├── settings.svelte.ts    # реактивный store настроек (localStorage)
+│   │   ├── themes.ts             # палитры тем (терминал + UI), применение к CSS
+│   │   ├── clipboard.ts          # copy/paste (абстракция над буфером обмена)
+│   │   ├── Terminal.svelte       # компонент xterm.js (ввод/вывод, темы, copy/paste)
+│   │   ├── SftpPanel.svelte      # файловый менеджер SFTP (листинг, upload/download)
+│   │   ├── SettingsPanel.svelte  # окно настроек (тема, шрифт, соединение, …)
+│   │   ├── HelpPanel.svelte      # окно Help & About
+│   │   └── StatusBar.svelte      # нижний статус-бар (метрики, график ЦП)
+│   └── routes/
+│       ├── +layout.ts        # ssr=false (SPA-режим для Tauri)
+│       ├── +layout.svelte    # подключение глобального CSS
+│       └── +page.svelte      # главный экран: панели, вкладки, дерево папок, модалки
+│
+├── static/                   # статические ассеты (иконки)
+│
+└── src-tauri/                # ── БЭКЕНД (Rust + Tauri) ──
+    ├── Cargo.toml            # crate "vterm", lib "vterm_lib"
+    ├── build.rs
+    ├── tauri.conf.json       # конфиг приложения (окно 1100×720, identifier, bundle)
+    ├── capabilities/
+    │   └── default.json      # разрешения (permissions) главного окна
+    ├── icons/                # иконки приложения под все платформы
+    └── src/
+        ├── main.rs           # точка входа бинаря → vterm_lib::run()
+        ├── lib.rs            # tauri::Builder, состояние, #[tauri::command] (вкл. папки, метрики)
+        ├── model.rs          # ServerProfile (+ group/tags) / NewServerProfile / AuthMethod
+        ├── store.rs          # JSON-персистентность: профили, папки, known_hosts
+        ├── secrets.rs        # пароли/passphrase в системном keychain (keyring)
+        ├── ssh.rs            # SSH-сессия на russh: пароль/ключ, PTY, SFTP, host-key, exec
+        └── sftp.rs           # SFTP-операции: листинг, mkdir/delete, upload/download
+```
 
-## Test and Deploy
+> Каталоги `node_modules/`, `build/`, `.svelte-kit/` (фронт) и `src-tauri/target/`
+> (Rust) генерируются при сборке и в репозиторий не попадают.
 
-Use the built-in continuous integration in GitLab.
+---
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## Требования к окружению
 
-***
+Нужны на обеих ОС:
 
-# Editing this README
+- **Node.js** 20+ и **pnpm** (через `corepack` или standalone-инсталлятор).
+- **Rust** stable через [rustup](https://rustup.rs/) (используется 1.96+).
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Дополнительно по платформам:
 
-## Suggestions for a good README
+### macOS
+- **Xcode Command Line Tools**: `xcode-select --install`.
+- WebView предоставляется системой (WKWebView), отдельная установка не нужна.
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+### Windows
+- **Microsoft C++ Build Tools** (компонент «Сборка C++» из Visual Studio Build
+  Tools) — нужен линковщик MSVC.
+- **WebView2 Runtime** (на Windows 11 предустановлен; на Windows 10 ставится
+  [отсюда](https://developer.microsoft.com/microsoft-edge/webview2/)).
 
-## Name
-Choose a self-explaining name for your project.
+Подробности — в официальной инструкции
+[Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/).
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+---
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+## Установка и запуск (разработка)
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```bash
+# 1. Установить JS-зависимости
+pnpm install
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+# 2. Запустить приложение в режиме разработки
+pnpm tauri dev
+```
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+`pnpm tauri dev` поднимает Vite на `http://localhost:1420`, компилирует Rust-бэкенд
+(первая сборка — 1–2 минуты, дальше быстрее за счёт кэша) и открывает нативное окно
+с горячей перезагрузкой фронтенда.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+> **Если `pnpm` или `cargo` не находятся** (`command not found`) — инструменты стоят
+> в нестандартных путях. Откройте новую вкладку терминала (профиль перечитается) или
+> выполните в текущей сессии:
+>
+> ```bash
+> export PATH="$HOME/Library/pnpm/bin:$PATH"   # pnpm
+> source "$HOME/.cargo/env"                     # cargo
+> ```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+---
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## Сборка дистрибутивов
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+```bash
+pnpm tauri build
+```
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Команда собирает фронтенд, компилирует Rust в release и упаковывает нативный
+дистрибутив **только для текущей ОС**.
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+⚠️ **Важно: один файл, работающий и на Windows, и на macOS, невозможен** — у систем
+разные форматы исполняемых файлов (PE/`.exe` vs Mach-O). Поэтому на каждом этапе
+собираются **два отдельных артефакта**, по одному на ОС. Кросс-компиляция между
+macOS и Windows на одной машине для Tauri-приложения нерабочая (нужны системный
+WebView и линковщик целевой ОС), поэтому **оба файла собираются в CI** — см. ниже.
 
-## License
-For open source projects, say how it is licensed.
+Результат локальной сборки появляется в `src-tauri/target/release/bundle/`:
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+- **macOS** — `.app` (портативный бандл, можно перетащить куда угодно) и `.dmg`
+  в подкаталогах `macos/` и `dmg/`.
+- **Windows** — `.msi` (WiX) и/или установщик NSIS (`.exe`) в `msi/` и `nsis/`.
+  Сам `vterm.exe` из `target/release/` — это портативный файл (нужен лишь системный
+  WebView2 Runtime).
+
+> Для распространения без предупреждений ОС потребуется подпись кода: Apple
+> Developer ID + нотаризация на macOS и code-signing сертификат на Windows. Это
+> вынесено в Фазу 5 (см. [ROADMAP.md](ROADMAP.md)).
+
+## Непрерывная сборка (CI): два файла на каждом этапе
+
+Чтобы на каждом этапе гарантированно получать **оба** дистрибутива, настроен
+**GitLab CI** [.gitlab-ci.yml](.gitlab-ci.yml) с двумя задачами сборки — на
+macOS- и Windows-раннерах:
+
+| Событие | Что происходит |
+|---------|----------------|
+| push в дефолтную ветку, Merge Request, ручной запуск | Сборка обеих ОС, файлы — в **артефактах пайплайна** (`vterm-macos`, `vterm-windows`) |
+| push тега вида `v1.2.3` | Дополнительно создаётся **GitLab Release** для обеих ОС |
+
+macOS собирается как **universal** (Intel + Apple Silicon). Конфиг рассчитан на
+**self-hosted раннеры**: в [.gitlab-ci.yml](.gitlab-ci.yml) указаны теги-плейсхолдеры
+`macos` / `windows` / `linux` — замените их на теги своих раннеров
+(*GitLab → Settings → CI/CD → Runners*). Раннер macOS должен иметь Xcode CLT, раннер
+Windows — VS C++ Build Tools и WebView2 Runtime; Rust и pnpm CI ставит сам
+(идемпотентно). Сборка активируется после публикации репозитория в GitLab; локально
+по-прежнему доступна сборка только под текущую ОС через `pnpm tauri build`.
+
+---
+
+## Тестирование
+
+Проект покрыт многослойным набором тестов (Фаза 5): Rust-юниты (`cargo test`),
+фронтенд-юниты и компонентные тесты на **Vitest**, а также E2E на
+**WebdriverIO + tauri-driver** против тестового SSH-сервера. CI блокирует сборку
+дистрибутивов, пока линтеры, тесты и гейты покрытия (≥ 90 % для чистой логики,
+≥ 80 % в целом) не пройдут.
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust-юниты
+pnpm test            # фронтенд: юнит + компонентные тесты
+pnpm test:coverage   # то же + покрытие и гейты
+```
+
+📖 **Полная документация по тестам — в [TESTS.md](TESTS.md):** слои, как
+запускать каждый вид, тестовый SSH-сервер, покрытие, структура CI и как добавить
+свой тест.
+
+---
+
+## Сеть и автономность
+
+vterm работает **полностью офлайн**. Единственный сетевой доступ — исходящие
+**SSH-подключения к серверам, которые вы сами добавили** (порт 22 или указанный в
+профиле). Приложению **не нужен** доступ в интернет для работы.
+
+- Нет CDN, Google Fonts, телеметрии и аналитики: моноширинные шрифты встроены в
+  бандл (`@fontsource`, копируются при сборке), цвета/темы — локальные.
+- Нет runtime-запросов `fetch`/WebSocket к внешним сервисам. Это закреплено
+  тестом-гейтом [autonomy.guard.test.ts](src/lib/autonomy.guard.test.ts), который
+  падает в CI, если в исходниках появится сетевой вызов.
+- Внешние ссылки в окне **About** открываются в системном браузере **только по
+  явному клику** пользователя (через `tauri-plugin-opener`).
+- Секреты хранятся локально в системном keychain; профили/папки — в JSON в
+  конфиг-каталоге. Ничего не синхронизируется в облако.
+
+Воспроизводимость сборки: lock-файлы (`pnpm-lock.yaml`, `Cargo.lock`) закоммичены;
+CI ставит зависимости через `pnpm install --frozen-lockfile`.
+
+---
+
+## Запуск готового приложения
+
+### macOS
+1. Открыть `.dmg`, перетащить **vterm.app** в `/Applications`.
+2. Запустить. Если сборка не подписана, при первом запуске:
+   правый клик по приложению → **«Открыть»** → подтвердить
+   (либо разрешить в *Системные настройки → Конфиденциальность и безопасность*).
+
+### Windows
+1. Запустить `.msi` или NSIS-`.exe` и пройти установку.
+2. Запустить **vterm** из меню «Пуск». Если установщик не подписан, SmartScreen
+   может показать предупреждение — *«Подробнее» → «Выполнить в любом случае»*.
+
+---
+
+## Команды проекта
+
+| Команда | Действие |
+|---------|----------|
+| `pnpm install` | Установить JS-зависимости |
+| `pnpm tauri dev` | Запуск приложения в режиме разработки |
+| `pnpm tauri build` | Сборка нативного дистрибутива для текущей ОС |
+| `pnpm dev` | Только фронтенд (Vite) без окна Tauri |
+| `pnpm build` | Сборка фронтенда (SPA через adapter-static) |
+| `pnpm check` | Проверка типов и a11y (`svelte-check`) |
+| `pnpm test` | Фронтенд-тесты (Vitest: юнит + компонентные) |
+| `pnpm test:watch` | Тесты Vitest в watch-режиме |
+| `pnpm test:coverage` | Тесты Vitest с покрытием и гейтами |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Rust-юнит-тесты |
+| `pnpm tauri --version` | Версия Tauri CLI |
+
+> Подробно о тестах (E2E, покрытие, CI) — [TESTS.md](TESTS.md).
+
+---
+
+## Возможные проблемы
+
+- **`cargo` не найден после установки rustup** — добавьте Cargo в `PATH`
+  (`source "$HOME/.cargo/env"` или перезапустите терминал).
+- **pnpm блокирует сборку нативных пакетов** (`Ignored build scripts: esbuild`) —
+  разрешение уже прописано в [pnpm-workspace.yaml](pnpm-workspace.yaml)
+  (`allowBuilds: { esbuild: true }`); достаточно выполнить `pnpm install` повторно.
+- **Долгая первая сборка Rust** — это нормально: компилируется всё дерево
+  зависимостей Tauri. Последующие сборки используют кэш в `src-tauri/target/`.

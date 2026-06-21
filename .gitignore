@@ -14,3 +14,17 @@ vite.config.ts.timestamp-*
 coverage-rust.xml
 junit-web.xml
 e2e/node_modules
+
+# Rust / Tauri build artifacts (also covered by src-tauri/.gitignore — kept here
+# explicitly so bulky builds never reach the repo even if that file is removed)
+/src-tauri/target
+/src-tauri/gen/schemas
+
+# Packaged distributables (produced under src-tauri/target/.../bundle)
+*.app
+*.dmg
+*.msi
+*.exe
+*.AppImage
+*.deb
+*.rpm
