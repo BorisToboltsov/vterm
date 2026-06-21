@@ -1,0 +1,8 @@
+allowBuilds:
+  esbuild: true
+
+# Security: force a patched `cookie` (>=0.7.0). It comes in transitively via
+# @sveltejs/kit; vterm is an SPA (no SSR cookie handling) so this is safe.
+# Clears RUSTSEC-equivalent advisory GHSA-pxg6-pf52-xh8x.
+overrides:
+  cookie: ">=0.7.0"

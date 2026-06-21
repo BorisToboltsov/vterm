@@ -1,0 +1,74 @@
+# Security
+
+Документ описывает модель безопасности vterm, автоматические проверки (SAST /
+supply-chain) и принятые исключения. Часть Фазы 6.1 дорожной карты.
+
+## Что делает приложение
+
+vterm — локальный SSH/SFTP-клиент. Он **полностью офлайн**, кроме исходящих SSH к
+серверам, которые добавил пользователь (см.
+[«Сеть и автономность»](README.md#сеть-и-автономность) и ADR
+[0004](docs/adr/0004-offline-first.md)). Секреты хранятся только в системном
+keychain; ничего не отправляется во внешние сервисы.
+
+## Сообщить об уязвимости
+
+Пишите приватно автору (контакт в README/коммитах). Пожалуйста, не открывайте
+публичную issue до выпуска исправления.
+
+## Автоматические проверки (CI-гейты)
+
+Стадия `security` в [.gitlab-ci.yml](.gitlab-ci.yml):
+
+| Проверка | Инструмент | Что ищет |
+|----------|-----------|----------|
+| Rust advisories | `cargo audit` | RUSTSEC (известные уязвимости в зависимостях) |
+| Rust политика | `cargo deny check` | advisories + лицензии + дубликаты + источники |
+| JS advisories | `pnpm audit` | уязвимости npm-зависимостей |
+| SAST (JS/TS) | **Semgrep** (`p/typescript`, `p/javascript`, `p/secrets`) | анти-паттерны, секреты |
+| Бандл/ФС | **Trivy** (`fs`: vuln/secret/misconfig) | уязвимости, секреты, misconfig |
+
+Конфигурации без DOM-зависимостей дополнительно защищены **юнит-гейтами** (падают
+в обычном `pnpm test`):
+
+- `src/lib/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
+- `src/lib/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
+  минимально необходимые, opener ограничен `https://`.
+
+## Hardening (что сделано)
+
+- **CSP.** В `tauri.conf.json` задан строгий `csp` (и `devCsp` для Vite HMR):
+  `default-src 'self'`, `connect-src 'self' ipc:` (никаких удалённых соединений),
+  `object-src 'none'`. Удалённые источники скриптов/стилей/картинок запрещены.
+  `'unsafe-inline'` для скриптов оставлен только под inline-бутстрап SvelteKit;
+  все удалённые origin'ы заблокированы.
+- **Capabilities (наименьшие привилегии).** `capabilities/default.json` выдаёт
+  только `core:default`, `dialog:allow-open`, `dialog:allow-save` и
+  `opener:allow-open-url` **со scope `https://*`** (без открытия путей/`reveal`,
+  без message/ask/confirm-диалогов, без `fs`). Нет `dangerous*`-флагов.
+- **Секреты.** Пароли/passphrase живут в OS keychain (`secrets.rs`), не в файлах
+  и не в логах (логирование секретов отсутствует). Копии в памяти оборачиваются в
+  `zeroize::Zeroizing` и стираются при сбросе. Секрет пишется в keychain только
+  **после** успешной аутентификации.
+- **Host-key.** Дефолтная политика — **TOFU с отклонением изменённого ключа**
+  (`HostKeyPolicy::TofuReject`), не «доверять всему». Доступны `strict` и `accept`.
+- **Ошибки.** Типизированы (`AppError`), без утечки секретов в сообщениях.
+
+## Принятые исключения (advisories)
+
+Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml) и
+зеркалятся в `.cargo/audit.toml`. Их нужно периодически пересматривать.
+
+- **RUSTSEC-2023-0071 (`rsa`, Marvin timing side-channel).** Фикса вверх по
+  течению **нет**. Доходит до нас только через поддержку RSA в `russh`.
+  **Снижение риска:** используйте ключи **ed25519/ecdsa** (vterm их поддерживает) —
+  тогда RSA-путь не задействуется. Снять исключение, когда выйдет патч `rsa`.
+- **gtk-rs / glib (RUSTSEC-2024-0411…0420, 0429).** Unmaintained/unsound; это
+  Linux-стек WebKitGTK самого Tauri, не используется в коде vterm и не обновляется
+  нами.
+- **proc-macro-error, unic-\* (RUSTSEC-2024-0370, 2025-0075/0080/0081/0098/0100).**
+  Транзитивные unmaintained build/utility-крейты.
+
+## Не покрыто этой фазой
+
+CodeQL (опционально) — можно добавить в GitHub-зеркало; локально не запускается.

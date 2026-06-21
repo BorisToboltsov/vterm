@@ -1,0 +1,250 @@
+# CI для vterm — собирает ДВА дистрибутива (macOS + Windows) на каждом изменении.
+# Один кросс-ОС файл невозможен, а кросс-компиляция Tauri между ОС нерабочая,
+# поэтому используются два self-hosted раннера: macOS и Windows.
+#
+# ⚠️ ТЕГИ РАННЕРОВ — ПЛЕЙСХОЛДЕРЫ. Замените `macos` / `windows` / `linux` ниже
+# на теги ваших зарегистрированных раннеров (GitLab → Settings → CI/CD → Runners).
+# Установка Rust/pnpm сделана идемпотентной — на постоянных раннерах повторно
+# ничего не переустанавливается.
+
+stages:
+  - lint
+  - security
+  - test
+  - build
+  - release
+
+# Запускаем пайплайн на: дефолтной ветке, merge request'ах, тегах и вручную.
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Phase 5 — тесты и покрытие (safety net перед рефакторингом).
+#  Стадии: lint → test (rust + web + e2e) → build → release.
+#  Подробности и как запускать локально — см. TESTS.md.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Линтеры/форматтеры как гейты ───────────────────────────────────────────────
+lint:
+  stage: lint
+  tags: [linux]                     # ← замените на тег вашего Linux-раннера
+  cache:
+    key: cargo-linux
+    paths:
+      - .pnpm-store/
+      - src-tauri/target/
+  before_script:
+    - command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
+    - rustup component add rustfmt clippy
+    - command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
+    - pnpm config set store-dir "$CI_PROJECT_DIR/.pnpm-store"
+    - pnpm install --frozen-lockfile
+  script:
+    - cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+    - cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+    - pnpm check
+
+# ════════════════════════════════════════════════════════════════════════════
+#  Phase 6.1 — security gates (SAST / supply-chain). Accepted advisories and
+#  rationale live in src-tauri/deny.toml + .cargo/audit.toml; see SECURITY.md.
+# ════════════════════════════════════════════════════════════════════════════
+
+# ── Rust supply chain: RUSTSEC advisories + licenses/bans/sources ──────────────
+security:rust:
+  stage: security
+  tags: [linux]
+  cache:
+    key: cargo-linux
+    paths:
+      - src-tauri/target/
+  before_script:
+    - command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
+    - command -v cargo-audit >/dev/null 2>&1 || cargo install cargo-audit
+    - command -v cargo-deny >/dev/null 2>&1 || cargo install cargo-deny
+  script:
+    - cd src-tauri
+    - cargo audit          # honours .cargo/audit.toml ignores
+    - cargo deny check     # advisories + licenses + bans + sources (deny.toml)
+
+# ── JS supply chain + Semgrep SAST ─────────────────────────────────────────────
+security:web:
+  stage: security
+  image: returntocorp/semgrep:latest   # bundles semgrep; any image with pnpm also works
+  tags: [linux]
+  before_script:
+    - command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
+    - pnpm install --frozen-lockfile
+  script:
+    - pnpm audit --audit-level moderate
+    - semgrep --config p/typescript --config p/javascript --config p/secrets --error src/
+  allow_failure: true   # Semgrep registry needs network; don't hard-block MRs on it
+
+# ── Bundle/filesystem scan (vulns + secrets + IaC misconfig) ───────────────────
+security:bundle:
+  stage: security
+  image:
+    name: aquasec/trivy:latest
+    entrypoint: [""]
+  tags: [linux]
+  script:
+    - trivy fs --scanners vuln,secret,misconfig --exit-code 0 --no-progress .
+  allow_failure: true   # informational; tighten exit-code once the baseline is clean
+
+# ── Rust: юнит-тесты + покрытие (чистая логика ≥ 90%) ──────────────────────────
+test:rust:
+  stage: test
+  tags: [linux]
+  cache:
+    key: cargo-linux
+    paths:
+      - .pnpm-store/
+      - src-tauri/target/
+  before_script:
+    - command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
+    - command -v cargo-llvm-cov >/dev/null 2>&1 || cargo install cargo-llvm-cov
+    - rustup component add llvm-tools-preview
+  script:
+    # Run the tests once, then emit both a text summary (for the coverage badge)
+    # and a Cobertura report (for the MR widget) from the collected data.
+    - cargo llvm-cov --manifest-path src-tauri/Cargo.toml --no-report
+    - cargo llvm-cov report --manifest-path src-tauri/Cargo.toml
+    - cargo llvm-cov report --manifest-path src-tauri/Cargo.toml --cobertura --output-path coverage-rust.xml
+  coverage: '/TOTAL.*?(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage-rust.xml
+
+# ── Фронтенд: Vitest юнит/компонентные тесты + покрытие (гейт в vitest.config) ──
+test:web:
+  stage: test
+  tags: [linux]
+  cache:
+    key: cargo-linux
+    paths:
+      - .pnpm-store/
+  before_script:
+    - command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
+    - pnpm config set store-dir "$CI_PROJECT_DIR/.pnpm-store"
+    - pnpm install --frozen-lockfile
+  script:
+    # Coverage thresholds (90% pure logic / 80% overall) are enforced inside
+    # vitest.config.ts — the job fails if they are not met.
+    - pnpm test:coverage --reporter=default --reporter=junit --outputFile=junit-web.xml
+  coverage: '/Lines\s*:\s*([\d.]+)%/'
+  artifacts:
+    when: always
+    reports:
+      junit: junit-web.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage/cobertura-coverage.xml
+
+# ── E2E: реальное окно через tauri-driver против тестового SSH-сервера ──────────
+#   tauri-driver работает на Linux/Windows (не на macOS). Запускается вручную или
+#   на дефолтной ветке, чтобы не задерживать каждый MR (сборка релиза долгая).
+test:e2e:
+  stage: test
+  tags: [linux]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_PIPELINE_SOURCE == "web"
+  services:
+    - name: lscr.io/linuxserver/openssh-server:latest
+      alias: ssh
+  variables:
+    PASSWORD_ACCESS: "true"
+    USER_NAME: tester
+    USER_PASSWORD: testpass
+    VTERM_TEST_SSH_HOST: ssh
+    VTERM_TEST_SSH_PORT: "2222"
+    VTERM_TEST_SSH_USER: tester
+    VTERM_TEST_SSH_PASS: testpass
+  before_script:
+    - command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
+    # System deps for the Tauri Linux build + WebKitWebDriver for tauri-driver.
+    - command -v tauri-driver >/dev/null 2>&1 || cargo install tauri-driver
+    - command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
+    - pnpm install --frozen-lockfile
+    - (cd e2e && pnpm install)
+  script:
+    - cd e2e && pnpm test:e2e
+  allow_failure: true   # native E2E is environment-sensitive; don't block on flakes
+
+# ── macOS: .app + .dmg (universal: Intel + Apple Silicon) ──────────────────────
+build:macos:
+  stage: build
+  tags: [macos]                     # ← замените на тег вашего macOS-раннера
+  cache:
+    key: cargo-macos
+    paths:
+      - .pnpm-store/
+      - src-tauri/target/
+  before_script:
+    - command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    - source "$HOME/.cargo/env"
+    - rustup target add aarch64-apple-darwin x86_64-apple-darwin
+    - command -v pnpm >/dev/null 2>&1 || npm install -g pnpm
+    - pnpm config set store-dir "$CI_PROJECT_DIR/.pnpm-store"
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm tauri build --target universal-apple-darwin
+  artifacts:
+    name: vterm-macos
+    paths:
+      - src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+      - src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+    expire_in: 2 weeks
+
+# ── Windows: .msi + NSIS .exe (PowerShell-раннер) ──────────────────────────────
+build:windows:
+  stage: build
+  tags: [windows]                   # ← замените на тег вашего Windows-раннера
+  cache:
+    key: cargo-windows
+    paths:
+      - .pnpm-store/
+      - src-tauri/target/
+  before_script:
+    # Требуются предустановленные VS C++ Build Tools и WebView2 Runtime.
+    - if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { choco install rustup.install -y --no-progress }
+    - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+    - rustup default stable
+    - if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) { npm install -g pnpm }
+    - pnpm config set store-dir "$env:CI_PROJECT_DIR/.pnpm-store"
+  script:
+    - pnpm install --frozen-lockfile
+    - pnpm tauri build
+  artifacts:
+    name: vterm-windows
+    paths:
+      - src-tauri/target/release/bundle/msi/*.msi
+      - src-tauri/target/release/bundle/nsis/*.exe
+    expire_in: 2 weeks
+
+# ── Релиз: создаётся при пуше тега вида v* ─────────────────────────────────────
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  tags: [linux]                     # ← любой Linux-раннер (для release-cli)
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  needs:
+    - build:macos
+    - build:windows
+  script:
+    - echo "Публикуем релиз $CI_COMMIT_TAG (артефакты доступны в пайплайне)"
+  release:
+    tag_name: $CI_COMMIT_TAG
+    name: "vterm $CI_COMMIT_TAG"
+    description: "Автоматический релиз vterm $CI_COMMIT_TAG (macOS + Windows)."
