@@ -69,3 +69,57 @@ describe("SettingsPanel — backup", () => {
     );
   });
 });
+
+describe("SettingsPanel — appearance & search", () => {
+  it("theme picker is collapsed by default and expands on click", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    // Collapsed: no theme options rendered yet.
+    expect(screen.queryByTitle("GitHub Light")).toBeNull();
+    await userEvent.click(screen.getByTestId("theme-toggle"));
+    expect(screen.getByTitle("GitHub Light")).toBeInTheDocument();
+  });
+
+  it("selects a theme from the visual picker", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("theme-toggle"));
+    const gh = screen.getByTitle("GitHub Light");
+    expect(gh).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(gh);
+    expect(screen.getByTitle("GitHub Light")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("font picker is collapsed by default and reveals a live preview", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    expect(screen.queryByTestId("font-preview")).toBeNull();
+    await userEvent.click(screen.getByTestId("font-toggle"));
+    const preview = screen.getByTestId("font-preview");
+    expect(preview).toBeInTheDocument();
+    expect(preview.textContent).toContain("def greet");
+  });
+
+  it("selects a font from the grid", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("font-toggle"));
+    const jb = screen.getByTitle("JetBrains Mono");
+    expect(jb).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(jb);
+    expect(screen.getByTitle("JetBrains Mono")).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("filters sections by search query", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    // Everything visible by default.
+    expect(screen.getByText("Security")).toBeInTheDocument();
+    expect(screen.getByText("Backup")).toBeInTheDocument();
+
+    await userEvent.type(screen.getByTestId("settings-search"), "backup");
+    expect(screen.getByText("Backup")).toBeInTheDocument();
+    expect(screen.queryByText("Security")).toBeNull();
+  });
+
+  it("shows an empty state when nothing matches", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.type(screen.getByTestId("settings-search"), "zzzzz");
+    expect(screen.getByText("Ничего не найдено")).toBeInTheDocument();
+  });
+});

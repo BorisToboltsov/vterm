@@ -40,7 +40,7 @@ export interface UiPalette {
 export interface ThemeDef {
   id: string;
   name: string;
-  group: "modern" | "retro";
+  group: "light" | "modern" | "retro";
   terminal: TerminalTheme;
   ui: UiPalette;
 }
@@ -467,6 +467,160 @@ const c64: ThemeDef = {
   },
 };
 
+// ── Light schemes ─────────────────────────────────────────────────────────────
+
+const solarizedLight: ThemeDef = {
+  id: "solarized-light",
+  name: "Solarized Light",
+  group: "light",
+  terminal: {
+    background: "#fdf6e3",
+    foreground: "#657b83",
+    cursor: "#586e75",
+    selectionBackground: "#eee8d5",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#002b36",
+    brightRed: "#cb4b16",
+    brightGreen: "#586e75",
+    brightYellow: "#657b83",
+    brightBlue: "#839496",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
+  ui: {
+    panel: "#fdf6e3",
+    panelAlt: "#eee8d5",
+    edge: "#ddd6c1",
+    accent: "#268bd2",
+    accentHover: "#1f6fa8",
+    danger: "#dc322f",
+    muted: "#93a1a1",
+    text: "#586e75",
+  },
+};
+
+const githubLight: ThemeDef = {
+  id: "github-light",
+  name: "GitHub Light",
+  group: "light",
+  terminal: {
+    background: "#ffffff",
+    foreground: "#24292e",
+    cursor: "#044289",
+    selectionBackground: "#c8e1ff",
+    black: "#24292e",
+    red: "#d73a49",
+    green: "#28a745",
+    yellow: "#dbab09",
+    blue: "#0366d6",
+    magenta: "#5a32a3",
+    cyan: "#0598bc",
+    white: "#6a737d",
+    brightBlack: "#959da5",
+    brightRed: "#cb2431",
+    brightGreen: "#22863a",
+    brightYellow: "#b08800",
+    brightBlue: "#005cc5",
+    brightMagenta: "#5a32a3",
+    brightCyan: "#3192aa",
+    brightWhite: "#d1d5da",
+  },
+  ui: {
+    panel: "#ffffff",
+    panelAlt: "#f6f8fa",
+    edge: "#d0d7de",
+    accent: "#0366d6",
+    accentHover: "#0356b6",
+    danger: "#d73a49",
+    muted: "#6a737d",
+    text: "#24292e",
+  },
+};
+
+const catppuccinLatte: ThemeDef = {
+  id: "catppuccin-latte",
+  name: "Catppuccin Latte",
+  group: "light",
+  terminal: {
+    background: "#eff1f5",
+    foreground: "#4c4f69",
+    cursor: "#4c4f69",
+    selectionBackground: "#bcc0cc",
+    black: "#5c5f77",
+    red: "#d20f39",
+    green: "#40a02b",
+    yellow: "#df8e1d",
+    blue: "#1e66f5",
+    magenta: "#ea76cb",
+    cyan: "#179299",
+    white: "#acb0be",
+    brightBlack: "#6c6f85",
+    brightRed: "#d20f39",
+    brightGreen: "#40a02b",
+    brightYellow: "#df8e1d",
+    brightBlue: "#1e66f5",
+    brightMagenta: "#ea76cb",
+    brightCyan: "#179299",
+    brightWhite: "#bcc0cc",
+  },
+  ui: {
+    panel: "#eff1f5",
+    panelAlt: "#e6e9ef",
+    edge: "#ccd0da",
+    accent: "#1e66f5",
+    accentHover: "#1552c9",
+    danger: "#d20f39",
+    muted: "#8c8fa1",
+    text: "#4c4f69",
+  },
+};
+
+const gruvboxLight: ThemeDef = {
+  id: "gruvbox-light",
+  name: "Gruvbox Light",
+  group: "light",
+  terminal: {
+    background: "#fbf1c7",
+    foreground: "#3c3836",
+    cursor: "#3c3836",
+    selectionBackground: "#ebdbb2",
+    black: "#fbf1c7",
+    red: "#cc241d",
+    green: "#98971a",
+    yellow: "#d79921",
+    blue: "#458588",
+    magenta: "#b16286",
+    cyan: "#689d6a",
+    white: "#7c6f64",
+    brightBlack: "#928374",
+    brightRed: "#9d0006",
+    brightGreen: "#79740e",
+    brightYellow: "#b57614",
+    brightBlue: "#076678",
+    brightMagenta: "#8f3f71",
+    brightCyan: "#427b58",
+    brightWhite: "#3c3836",
+  },
+  ui: {
+    panel: "#fbf1c7",
+    panelAlt: "#f2e5bc",
+    edge: "#ebdbb2",
+    accent: "#458588",
+    accentHover: "#076678",
+    danger: "#cc241d",
+    muted: "#7c6f64",
+    text: "#3c3836",
+  },
+};
+
 export const THEMES: ThemeDef[] = [
   catppuccin,
   dracula,
@@ -475,6 +629,10 @@ export const THEMES: ThemeDef[] = [
   solarizedDark,
   tokyoNight,
   oneDark,
+  solarizedLight,
+  githubLight,
+  catppuccinLatte,
+  gruvboxLight,
   fallout,
   amber,
   ibm3270,
@@ -485,6 +643,12 @@ export const DEFAULT_THEME_ID = catppuccin.id;
 
 export function getTheme(id: string): ThemeDef {
   return THEMES.find((t) => t.id === id) ?? catppuccin;
+}
+
+/** Representative colors for a theme preview chip (bg, fg, accent, ok, warn, err). */
+export function themeSwatches(t: ThemeDef): string[] {
+  const term = t.terminal;
+  return [term.background, term.foreground, term.blue, term.green, term.yellow, term.red];
 }
 
 /** Apply a UI palette to the document by overriding Tailwind's `--color-*` tokens. */

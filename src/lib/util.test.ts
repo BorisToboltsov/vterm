@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { debounce, isHidden } from "./util";
+import { debounce, isHidden, matchesQuery } from "./util";
 
 describe("debounce", () => {
   afterEach(() => vi.useRealTimers());
@@ -25,6 +25,21 @@ describe("debounce", () => {
     d.cancel();
     vi.advanceTimersByTime(200);
     expect(fn).not.toHaveBeenCalled();
+  });
+});
+
+describe("matchesQuery", () => {
+  it("matches everything for an empty/whitespace query", () => {
+    expect(matchesQuery("Appearance theme font", "")).toBe(true);
+    expect(matchesQuery("anything", "   ")).toBe(true);
+  });
+  it("is case-insensitive and substring-based", () => {
+    expect(matchesQuery("Host key policy known_hosts", "KEY")).toBe(true);
+    expect(matchesQuery("Scrollback bell copy", "bell")).toBe(true);
+  });
+  it("requires every whitespace-separated term to be present", () => {
+    expect(matchesQuery("Connection timeout keepalive port", "timeout port")).toBe(true);
+    expect(matchesQuery("Connection timeout keepalive", "timeout nope")).toBe(false);
   });
 });
 

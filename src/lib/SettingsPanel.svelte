@@ -1,6 +1,6 @@
 <script lang="ts">
   import { applyImportedSettings, settings, resetSettings } from "./settings.svelte";
-  import { THEMES, type TerminalTheme } from "./themes";
+  import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import {
     exportBackup,
     importBackup,
@@ -8,6 +8,9 @@
     pickBackupSavePath,
   } from "./api";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import Icon from "./Icon.svelte";
+  import { slide } from "svelte/transition";
+  import { matchesQuery } from "./util";
 
   let {
     open = $bindable(false),
@@ -53,8 +56,12 @@
     }
   }
 
-  const modern = THEMES.filter((t) => t.group === "modern");
-  const retro = THEMES.filter((t) => t.group === "retro");
+  // Theme picker groups (visual swatch chips instead of a plain dropdown).
+  const themeGroups: { label: string; items: ThemeDef[] }[] = [
+    { label: "Light", items: THEMES.filter((t) => t.group === "light") },
+    { label: "Modern", items: THEMES.filter((t) => t.group === "modern") },
+    { label: "Retro", items: THEMES.filter((t) => t.group === "retro") },
+  ];
 
   // Editable swatches for the custom terminal palette.
   const swatches: { key: keyof TerminalTheme; label: string }[] = [
@@ -110,6 +117,48 @@
     const font = THEME_FONT[themeId];
     if (font) settings.fontFamily = font;
   }
+
+  function selectTheme(themeId: string) {
+    settings.theme = themeId;
+    onThemeChange(themeId);
+  }
+
+  // The theme picker is a collapsible sub-section, collapsed by default.
+  let themeOpen = $state(false);
+  const currentTheme = $derived(THEMES.find((t) => t.id === settings.theme));
+  const currentThemeName = $derived(
+    currentTheme?.name ?? (settings.theme === "custom" ? "Custom" : settings.theme),
+  );
+
+  // The font picker mirrors the theme one: collapsible, collapsed by default.
+  let fontOpen = $state(false);
+  const currentFontLabel = $derived(
+    FONTS.find((f) => f.value === settings.fontFamily)?.label ?? settings.fontFamily,
+  );
+  // Tiny Python snippet to preview the font (glyphs, ligatures, indentation).
+  const FONT_SAMPLE = `def greet(name: str) -> str:
+    return f"Hello, {name}!"  # 0O1lI
+
+print(greet("world"))  # => 12345`;
+
+  // ── Settings search ────────────────────────────────────────────────────────
+  let search = $state("");
+  // Each section is filterable by its title + keywords.
+  const SECTIONS: { id: string; keywords: string }[] = [
+    { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom" },
+    { id: "cursor", keywords: "Cursor blink block bar underline" },
+    { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click" },
+    { id: "behavior", keywords: "Behavior confirm close tab auto reconnect" },
+    { id: "connection", keywords: "Connection timeout keepalive default port" },
+    { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk" },
+    { id: "security", keywords: "Security host key known_hosts policy strict trust accept" },
+    { id: "backup", keywords: "Backup export import json restore" },
+  ];
+  const visibleIds = $derived(
+    new Set(SECTIONS.filter((s) => matchesQuery(s.keywords, search)).map((s) => s.id)),
+  );
+  const show = (id: string) => visibleIds.has(id);
+  const noResults = $derived(visibleIds.size === 0);
 </script>
 
 {#if open}
@@ -131,61 +180,171 @@
         >
       </div>
 
+      <div class="border-b border-edge px-4 py-2">
+        <input
+          data-testid="settings-search"
+          type="search"
+          placeholder="Search settings…"
+          aria-label="Search settings"
+          class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          bind:value={search}
+        />
+      </div>
+
       <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 text-sm">
+        {#if noResults}
+          <p class="py-6 text-center text-xs text-muted">Ничего не найдено</p>
+        {/if}
+        {#if show("appearance")}
         <!-- Appearance -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Appearance</h3>
-          <label class="mb-2 block text-xs text-muted">
-            Theme
-            <select
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-              bind:value={settings.theme}
-              onchange={(e) => onThemeChange(e.currentTarget.value)}
+          <div class="mb-2">
+            <button
+              type="button"
+              data-testid="theme-toggle"
+              aria-expanded={themeOpen}
+              onclick={() => (themeOpen = !themeOpen)}
+              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              <optgroup label="Modern">
-                {#each modern as t (t.id)}
-                  <option value={t.id}>{t.name}</option>
-                {/each}
-              </optgroup>
-              <optgroup label="Retro">
-                {#each retro as t (t.id)}
-                  <option value={t.id}>{t.name}</option>
-                {/each}
-              </optgroup>
-              <option value="custom">Custom…</option>
-            </select>
-          </label>
-
-          {#if settings.theme === "custom"}
-            <div class="mb-2 grid grid-cols-3 gap-2">
-              {#each swatches as sw (sw.key)}
-                <label class="flex items-center gap-1 text-[11px] text-muted">
-                  <input
-                    type="color"
-                    class="h-6 w-6 shrink-0 rounded border border-edge bg-panel"
-                    bind:value={settings.customTheme[sw.key]}
-                  />
-                  <span class="truncate">{sw.label}</span>
-                </label>
+              <span>Theme</span>
+              <span class="flex min-w-0 items-center gap-2">
+                {#if currentTheme}
+                  <span class="flex shrink-0 overflow-hidden rounded border border-edge">
+                    {#each themeSwatches(currentTheme) as c, ci (ci)}
+                      <span class="h-3 w-2" style="background-color: {c}"></span>
+                    {/each}
+                  </span>
+                {/if}
+                <span class="truncate text-white">{currentThemeName}</span>
+                <Icon
+                  name={themeOpen ? "chevronDown" : "chevronRight"}
+                  size={14}
+                  class="shrink-0"
+                />
+              </span>
+            </button>
+            {#if themeOpen}
+            <div transition:slide={{ duration: 200 }}>
+            <div role="radiogroup" aria-label="Theme" class="mt-2 space-y-2">
+              {#each themeGroups as grp (grp.label)}
+                <div>
+                  <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
+                    {grp.label}
+                  </span>
+                  <div class="grid grid-cols-2 gap-1.5">
+                    {#each grp.items as t (t.id)}
+                      <button
+                        type="button"
+                        role="radio"
+                        aria-checked={settings.theme === t.id}
+                        data-testid="theme-option"
+                        title={t.name}
+                        onclick={() => selectTheme(t.id)}
+                        class="flex items-center gap-2 rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.theme ===
+                        t.id
+                          ? 'border-accent bg-edge text-white'
+                          : 'border-edge text-muted hover:bg-edge'}"
+                      >
+                        <span class="flex shrink-0 overflow-hidden rounded border border-edge">
+                          {#each themeSwatches(t) as c, ci (ci)}
+                            <span class="h-4 w-2.5" style="background-color: {c}"></span>
+                          {/each}
+                        </span>
+                        <span class="truncate">{t.name}</span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
               {/each}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={settings.theme === "custom"}
+                onclick={() => selectTheme("custom")}
+                class="w-full rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.theme ===
+                'custom'
+                  ? 'border-accent bg-edge text-white'
+                  : 'border-edge text-muted hover:bg-edge'}"
+              >
+                Custom…
+              </button>
             </div>
-          {/if}
 
-          <label class="mb-2 block text-xs text-muted">
-            Font
-            <select
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-              bind:value={settings.fontFamily}
+            {#if settings.theme === "custom"}
+              <div class="mt-2 grid grid-cols-3 gap-2">
+                {#each swatches as sw (sw.key)}
+                  <label class="flex items-center gap-1 text-[11px] text-muted">
+                    <input
+                      type="color"
+                      class="h-6 w-6 shrink-0 rounded border border-edge bg-panel"
+                      bind:value={settings.customTheme[sw.key]}
+                    />
+                    <span class="truncate">{sw.label}</span>
+                  </label>
+                {/each}
+              </div>
+            {/if}
+            </div>
+            {/if}
+          </div>
+
+          <div class="mb-2">
+            <button
+              type="button"
+              data-testid="font-toggle"
+              aria-expanded={fontOpen}
+              onclick={() => (fontOpen = !fontOpen)}
+              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              {#each FONT_GROUPS as g (g)}
-                <optgroup label={g}>
-                  {#each FONTS.filter((f) => f.group === g) as f (f.value)}
-                    <option value={f.value}>{f.label}</option>
+              <span>Font</span>
+              <span class="flex min-w-0 items-center gap-2">
+                <span class="truncate text-white">{currentFontLabel}</span>
+                <Icon
+                  name={fontOpen ? "chevronDown" : "chevronRight"}
+                  size={14}
+                  class="shrink-0"
+                />
+              </span>
+            </button>
+            {#if fontOpen}
+              <div transition:slide={{ duration: 200 }}>
+                <div role="radiogroup" aria-label="Font" class="mt-2 space-y-2">
+                  {#each FONT_GROUPS as g (g)}
+                    <div>
+                      <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
+                        {g}
+                      </span>
+                      <div class="grid grid-cols-2 gap-1.5">
+                        {#each FONTS.filter((f) => f.group === g) as f (f.value)}
+                          <button
+                            type="button"
+                            role="radio"
+                            aria-checked={settings.fontFamily === f.value}
+                            data-testid="font-option"
+                            title={f.label}
+                            onclick={() => (settings.fontFamily = f.value)}
+                            style="font-family: {f.value}"
+                            class="truncate rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.fontFamily ===
+                            f.value
+                              ? 'border-accent bg-edge text-white'
+                              : 'border-edge text-muted hover:bg-edge'}"
+                          >
+                            {f.label}
+                          </button>
+                        {/each}
+                      </div>
+                    </div>
                   {/each}
-                </optgroup>
-              {/each}
-            </select>
-          </label>
+                </div>
+                <!-- Live preview of the chosen font (a tiny Python snippet). -->
+                <pre
+                  data-testid="font-preview"
+                  class="mt-2 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs leading-snug text-white"
+                  style="font-family: {settings.fontFamily}">{FONT_SAMPLE}</pre>
+              </div>
+            {/if}
+          </div>
           <div class="flex gap-2">
             <label class="block flex-1 text-xs text-muted">
               Font size
@@ -211,6 +370,9 @@
           </div>
         </section>
 
+        {/if}
+
+        {#if show("cursor")}
         <!-- Cursor -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Cursor</h3>
@@ -233,6 +395,9 @@
           </div>
         </section>
 
+        {/if}
+
+        {#if show("terminal")}
         <!-- Terminal -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Terminal</h3>
@@ -270,6 +435,9 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("behavior")}
         <!-- Behavior -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Behavior</h3>
@@ -283,6 +451,9 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("connection")}
         <!-- Connection -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">
@@ -323,6 +494,9 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("statusbar")}
         <!-- Status bar -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Status bar</h3>
@@ -342,6 +516,9 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("security")}
         <!-- Security -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Security</h3>
@@ -358,6 +535,9 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("backup")}
         <!-- Backup -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Backup</h3>
@@ -386,6 +566,7 @@
             </p>
           {/if}
         </section>
+        {/if}
       </div>
 
       <div class="flex items-center justify-between border-t border-edge px-4 py-3">

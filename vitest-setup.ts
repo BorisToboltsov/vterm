@@ -29,6 +29,26 @@ class MemoryStorage {
   }
 }
 
+// jsdom lacks the Web Animations API that Svelte 5 transitions (slide/fade) use.
+// Provide a no-op `Element.prototype.animate` so transitions don't crash in tests
+// (the element is still inserted/removed; only the visual tween is skipped).
+if (typeof Element !== "undefined" && !Element.prototype.animate) {
+  Element.prototype.animate = function animate() {
+    return {
+      cancel() {},
+      finish() {},
+      play() {},
+      pause() {},
+      finished: Promise.resolve(),
+      onfinish: null,
+      oncancel: null,
+      currentTime: 0,
+      startTime: 0,
+      playState: "finished",
+    } as unknown as Animation;
+  };
+}
+
 const storage = new MemoryStorage();
 Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
 if (typeof window !== "undefined") {

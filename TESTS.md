@@ -121,7 +121,9 @@ cargo llvm-cov report --manifest-path src-tauri/Cargo.toml
 Конфигурация — [vitest.config.ts](vitest.config.ts) (отдельная от dev-конфига
 Tauri/SvelteKit): плагин Svelte + `svelteTesting()`, среда **jsdom**, алиас
 `$lib`. Глобальная подготовка — [vitest-setup.ts](vitest-setup.ts) (матчеры
-`jest-dom` и детерминированный `localStorage`).
+`jest-dom`, детерминированный `localStorage` и no-op `Element.prototype.animate` —
+jsdom не реализует Web Animations API, который используют Svelte-переходы
+`slide`/`fade`).
 
 ```sh
 pnpm test            # один прогон
@@ -136,12 +138,14 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `format.ts` — `fmtBytes`, `osIcon` (возвращает имя иконки реестра — Apple/Linux/
   Windows/BSD/Unknown, и каждое имя существует в `icons.ts`), `memPct`, `diskFree`
   (статус-бар);
-- `util.ts` — `debounce` (с fake-таймерами), `isHidden`;
+- `util.ts` — `debounce` (с fake-таймерами), `isHidden`, `matchesQuery`
+  (AND-подстрока, регистронезависимость, пустой запрос → всё);
 - `command.ts` — `matchScore` (пустой запрос, отсутствие терма, регистронезависимость
   по title/subtitle/keywords/group, все термы обязательны, буст префикса) и
   `filterCommands` (порядок, отсев, ранжирование, стабильность ничьих);
 - `actions/drag.ts` — `passedThreshold`, `dropTargetAt`, экшен `resizableHandle`;
-- `themes.ts` — целостность палитр (все ключи — валидный hex), `getTheme`,
+- `themes.ts` — целостность палитр (все ключи — валидный hex, группа
+  light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
   `applyUiPalette`;
 - `settings.svelte.ts` — дефолты, persist в `localStorage`, `activeTerminalTheme`,
   `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`);
@@ -206,7 +210,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   сворачивание папки, фильтр поиска, кнопка «New folder», пустое состояние с
   CTA «Добавить сервер» (`empty-add-server` → `onAddServer`).
 - `SettingsPanel.test.ts` — секция Backup: экспорт по выбранному пути со снимком
-  настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`.
+  настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
+  визуальный пикер тем (выбор → `aria-checked`), живой `font-preview`, поиск по
+  настройкам (фильтр секций, пустое состояние «Ничего не найдено»).
 
 Тяжёлые интерактивные компоненты (`Terminal.svelte` — xterm.js,
 `SftpPanel.svelte` — нативные диалоги и pointer-DnD, `SettingsPanel.svelte`)

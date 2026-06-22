@@ -4,6 +4,7 @@ import {
   DEFAULT_THEME_ID,
   getTheme,
   THEMES,
+  themeSwatches,
   type TerminalTheme,
   type UiPalette,
 } from "./themes";
@@ -35,9 +36,24 @@ describe("theme catalogue integrity", () => {
       for (const k of UI_KEYS) {
         expect(theme.ui[k], `ui.${k}`).toSatisfy(isHex);
       }
-      expect(["modern", "retro"]).toContain(theme.group);
+      expect(["light", "modern", "retro"]).toContain(theme.group);
     },
   );
+});
+
+describe("light themes", () => {
+  it("ships at least one light theme", () => {
+    expect(THEMES.some((t) => t.group === "light")).toBe(true);
+  });
+});
+
+describe("themeSwatches", () => {
+  it("returns six representative hex colors from the terminal palette", () => {
+    const sw = themeSwatches(getTheme("nord"));
+    expect(sw).toHaveLength(6);
+    for (const c of sw) expect(c).toSatisfy(isHex);
+    expect(sw[0]).toBe(getTheme("nord").terminal.background);
+  });
 });
 
 describe("getTheme", () => {

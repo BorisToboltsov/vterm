@@ -5,6 +5,18 @@ export function isHidden(): boolean {
   return typeof document !== "undefined" && document.visibilityState === "hidden";
 }
 
+/**
+ * Case-insensitive AND-substring match: every whitespace-separated term in
+ * `query` must appear somewhere in `haystack`. An empty query matches anything
+ * (used for settings search / list filtering).
+ */
+export function matchesQuery(haystack: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  const hay = haystack.toLowerCase();
+  return q.split(/\s+/).every((term) => hay.includes(term));
+}
+
 export interface Debounced<A extends unknown[]> {
   (...args: A): void;
   /** Cancel a pending trailing call. */
