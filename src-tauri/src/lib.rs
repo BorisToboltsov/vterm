@@ -17,7 +17,7 @@ use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use sftp::FileEntry;
 use ssh::{ConnectOptions, Credential, HostKeyPolicy, SshSession};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 
 /// Application state: persisted server profiles + the registry of live SSH sessions.
@@ -31,6 +31,10 @@ struct AppState {
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Last `/proc/stat` (idle, total) jiffies per session, for CPU% deltas.
     cpu_samples: Mutex<HashMap<String, (u64, u64)>>,
+    /// Last cumulative network (rx, tx) bytes + instant per session, for rate deltas.
+    net_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// Last cumulative disk (read, written) bytes + instant per session, for rates.
+    disk_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
 }
 
 /// Clone out the session for `session_id`, releasing the registry lock before
@@ -565,7 +569,18 @@ printf 'pretty=%s\\n' \"$( ( . /etc/os-release 2>/dev/null && printf %s \"$PRETT
 printf 'load=%s\\n' \"$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)\"; \
 printf 'mem=%s\\n' \"$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%d %d\",(t-a)*1024,t*1024}' /proc/meminfo 2>/dev/null)\"; \
 printf 'disk=%s\\n' \"$(df -kP / 2>/dev/null | awk 'NR==2{printf \"%d %d\",$3*1024,$2*1024}')\"; \
-printf 'cpustat=%s\\n' \"$(grep '^cpu ' /proc/stat 2>/dev/null | head -1 | sed 's/^cpu *//')\"";
+printf 'cpustat=%s\\n' \"$(grep '^cpu ' /proc/stat 2>/dev/null | head -1 | sed 's/^cpu *//')\"; \
+printf 'net=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\",$1); if($1!=\"lo\"){rx+=$2; tx+=$10}} END{printf \"%d %d\",rx,tx}' /proc/net/dev 2>/dev/null)\"; \
+printf 'uptime=%s\\n' \"$(cut -d. -f1 /proc/uptime 2>/dev/null)\"; \
+printf 'swap=%s\\n' \"$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf \"%d %d\",(t-f)*1024,t*1024}' /proc/meminfo 2>/dev/null)\"; \
+printf 'diskio=%s\\n' \"$(awk '$3 ~ /^(sd|nvme|vd|xvd|hd)[a-z0-9]*$/ {r+=$6; w+=$10} END{printf \"%d %d\",r*512,w*512}' /proc/diskstats 2>/dev/null)\"; \
+printf 'users=%s\\n' \"$(who 2>/dev/null | awk '{print $1}' | sort -u | tr '\\n' ' ')\"; \
+printf 'ip=%s\\n' \"$(hostname -I 2>/dev/null | awk '{print $1}')\"; \
+printf 'topproc=%s\\n' \"$(ps -eo pcpu=,comm= 2>/dev/null | sort -rn | head -3 | awk '{printf \"%s %d%%, \",$2,$1}' | sed 's/, $//')\"; \
+printf 'cputemp=%s\\n' \"$(awk '{printf \"%.0f\",$1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)\"; \
+printf 'netconns=%s\\n' \"$(ss -tH state established 2>/dev/null | wc -l | tr -d ' ')\"; \
+printf 'kernel=%s\\n' \"$(uname -r 2>/dev/null)\"; \
+printf 'stime=%s\\n' \"$(date '+%H:%M %Z' 2>/dev/null)\"";
 
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -583,6 +598,25 @@ struct Metrics {
     mem_total: Option<u64>,
     disk_used: Option<u64>,
     disk_total: Option<u64>,
+    /// Network throughput in bytes/sec, from a `/proc/net/dev` delta between polls.
+    net_rx_rate: Option<u64>,
+    net_tx_rate: Option<u64>,
+    /// Disk I/O in bytes/sec, from a `/proc/diskstats` delta between polls.
+    disk_read_rate: Option<u64>,
+    disk_write_rate: Option<u64>,
+    uptime_secs: Option<u64>,
+    swap_used: Option<u64>,
+    swap_total: Option<u64>,
+    /// Space-separated logged-in usernames (count derived on the frontend).
+    users: String,
+    ip: String,
+    /// Top CPU process as "name NN%".
+    top_proc: String,
+    cpu_temp: Option<f64>,
+    net_conns: Option<u64>,
+    kernel: String,
+    /// Remote clock + timezone, e.g. "14:05 UTC".
+    server_time: String,
 }
 
 fn parse_metrics(raw: &str) -> Metrics {
@@ -613,6 +647,19 @@ fn parse_metrics(raw: &str) -> Metrics {
                 m.disk_used = it.next().and_then(|v| v.parse().ok());
                 m.disk_total = it.next().and_then(|v| v.parse().ok());
             }
+            "uptime" => m.uptime_secs = value.parse().ok(),
+            "swap" => {
+                let mut it = value.split_whitespace();
+                m.swap_used = it.next().and_then(|v| v.parse().ok());
+                m.swap_total = it.next().and_then(|v| v.parse().ok());
+            }
+            "users" => m.users = value.to_string(),
+            "ip" => m.ip = value.to_string(),
+            "topproc" => m.top_proc = value.to_string(),
+            "cputemp" => m.cpu_temp = value.parse().ok(),
+            "netconns" => m.net_conns = value.parse().ok(),
+            "kernel" => m.kernel = value.to_string(),
+            "stime" => m.server_time = value.to_string(),
             _ => {}
         }
     }
@@ -638,6 +685,47 @@ fn parse_cpustat(raw: &str) -> Option<(u64, u64)> {
     Some((idle, total))
 }
 
+/// Parse a `key=<a> <b>` line into a pair of cumulative `u64` counters. Used for
+/// network (`net=rx tx`) and disk I/O (`diskio=read written`) byte deltas.
+fn parse_pair(raw: &str, key: &str) -> Option<(u64, u64)> {
+    let prefix = format!("{key}=");
+    let line = raw.lines().find_map(|l| l.strip_prefix(prefix.as_str()))?;
+    let nums: Vec<u64> = line
+        .split_whitespace()
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    if nums.len() < 2 {
+        return None;
+    }
+    Some((nums[0], nums[1]))
+}
+
+fn parse_net(raw: &str) -> Option<(u64, u64)> {
+    parse_pair(raw, "net")
+}
+
+/// Turn cumulative counters into a per-second rate using the previous sample for
+/// this session (updating it). Returns `(None, None)` on the first poll.
+fn rate_from(
+    samples: &Mutex<HashMap<String, (u64, u64, Instant)>>,
+    session_id: &str,
+    cur: (u64, u64),
+) -> (Option<u64>, Option<u64>) {
+    let now = Instant::now();
+    let mut s = samples.lock().unwrap();
+    let mut a = None;
+    let mut b = None;
+    if let Some(&(pa, pb, pinst)) = s.get(session_id) {
+        let secs = now.duration_since(pinst).as_secs_f64();
+        if secs > 0.0 {
+            a = Some((cur.0.saturating_sub(pa) as f64 / secs) as u64);
+            b = Some((cur.1.saturating_sub(pb) as f64 / secs) as u64);
+        }
+    }
+    s.insert(session_id.to_string(), (cur.0, cur.1, now));
+    (a, b)
+}
+
 /// Probe the active session for OS info and resource usage (status bar).
 #[tauri::command]
 async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> AppResult<Metrics> {
@@ -656,6 +744,14 @@ async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> AppRes
             }
         }
         samples.insert(session_id.clone(), (idle, total));
+    }
+
+    // Network + disk I/O rates need two samples and the wall-clock gap between them.
+    if let Some(net) = parse_net(&raw) {
+        (m.net_rx_rate, m.net_tx_rate) = rate_from(&state.net_samples, &session_id, net);
+    }
+    if let Some(dio) = parse_pair(&raw, "diskio") {
+        (m.disk_read_rate, m.disk_write_rate) = rate_from(&state.disk_samples, &session_id, dio);
     }
     Ok(m)
 }
@@ -829,6 +925,8 @@ pub fn run() {
         sessions: tokio::sync::Mutex::new(HashMap::new()),
         cancels: Mutex::new(HashMap::new()),
         cpu_samples: Mutex::new(HashMap::new()),
+        net_samples: Mutex::new(HashMap::new()),
+        disk_samples: Mutex::new(HashMap::new()),
     };
 
     tauri::Builder::default()
@@ -971,6 +1069,46 @@ mod tests {
     fn parse_cpustat_missing_or_short_is_none() {
         assert!(parse_cpustat("os=Linux").is_none());
         assert!(parse_cpustat("cpustat=1 2 3").is_none()); // < 5 fields
+    }
+
+    // ── parse_net ─────────────────────────────────────────────────────────────
+    #[test]
+    fn parse_net_reads_rx_tx() {
+        let (rx, tx) = parse_net("cpustat=1 2\nnet=12345 6789").unwrap();
+        assert_eq!(rx, 12345);
+        assert_eq!(tx, 6789);
+    }
+
+    #[test]
+    fn parse_net_missing_or_short_is_none() {
+        assert!(parse_net("os=Linux").is_none());
+        assert!(parse_net("net=42").is_none()); // < 2 fields
+    }
+
+    #[test]
+    fn parse_pair_reads_named_counters() {
+        let (r, w) = parse_pair("diskio=1000 2000\nnet=5 6", "diskio").unwrap();
+        assert_eq!((r, w), (1000, 2000));
+        assert!(parse_pair("diskio=1", "diskio").is_none()); // < 2 fields
+        assert!(parse_pair("net=1 2", "diskio").is_none()); // wrong key
+    }
+
+    #[test]
+    fn parse_metrics_reads_extended_fields() {
+        let m = parse_metrics(
+            "uptime=90061\nswap=1024 4096\nusers=alice bob \nip=10.0.0.5\n\
+             topproc=node 87%\ncputemp=56\nnetconns=42\nkernel=6.1.0\nstime=14:05 UTC",
+        );
+        assert_eq!(m.uptime_secs, Some(90061));
+        assert_eq!(m.swap_used, Some(1024));
+        assert_eq!(m.swap_total, Some(4096));
+        assert_eq!(m.users, "alice bob");
+        assert_eq!(m.ip, "10.0.0.5");
+        assert_eq!(m.top_proc, "node 87%");
+        assert_eq!(m.cpu_temp, Some(56.0));
+        assert_eq!(m.net_conns, Some(42));
+        assert_eq!(m.kernel, "6.1.0");
+        assert_eq!(m.server_time, "14:05 UTC");
     }
 
     // ── uuid_like ─────────────────────────────────────────────────────────────

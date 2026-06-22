@@ -15,6 +15,27 @@ export type CursorStyle = "block" | "bar" | "underline";
 export type BellStyle = "none" | "sound" | "visual";
 export type HostKeyPolicy = "strict" | "ask" | "accept";
 
+/** Which metric groups the bottom status bar shows. */
+export interface StatusBarItems {
+  os: boolean;
+  host: boolean;
+  cpu: boolean;
+  load: boolean;
+  ram: boolean;
+  swap: boolean;
+  disk: boolean;
+  diskio: boolean;
+  net: boolean;
+  netConns: boolean;
+  uptime: boolean;
+  users: boolean;
+  ip: boolean;
+  topProc: boolean;
+  cpuTemp: boolean;
+  kernel: boolean;
+  serverTime: boolean;
+}
+
 export interface Settings {
   // Appearance
   theme: string; // preset id, or "custom"
@@ -39,6 +60,8 @@ export interface Settings {
   defaultPort: number;
   // Status bar
   showStatusBar: boolean;
+  statusBarExpanded: boolean; // false = compact (icons + percentages)
+  statusBarItems: StatusBarItems;
   statusPollInterval: number; // seconds
   // Reconnect
   autoReconnect: boolean;
@@ -64,6 +87,26 @@ const DEFAULTS: Settings = {
   termType: "xterm-256color",
   defaultPort: 22,
   showStatusBar: true,
+  statusBarExpanded: false,
+  statusBarItems: {
+    os: true,
+    host: true,
+    cpu: true,
+    load: true,
+    ram: true,
+    swap: true,
+    disk: true,
+    diskio: true,
+    net: true,
+    netConns: true,
+    uptime: true,
+    users: true,
+    ip: true,
+    topProc: true,
+    cpuTemp: true,
+    kernel: true,
+    serverTime: true,
+  },
   statusPollInterval: 5,
   autoReconnect: false,
   hostKeyPolicy: "ask",
@@ -78,9 +121,14 @@ function load(): Settings {
       ...DEFAULTS,
       ...raw,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
+      statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
     };
   } catch {
-    return { ...DEFAULTS, customTheme: { ...DEFAULTS.customTheme } };
+    return {
+      ...DEFAULTS,
+      customTheme: { ...DEFAULTS.customTheme },
+      statusBarItems: { ...DEFAULTS.statusBarItems },
+    };
   }
 }
 
@@ -95,7 +143,11 @@ export function activeTerminalTheme(): TerminalTheme {
 
 /** Reset all settings to their defaults. */
 export function resetSettings(): void {
-  Object.assign(settings, { ...DEFAULTS, customTheme: { ...DEFAULTS.customTheme } });
+  Object.assign(settings, {
+    ...DEFAULTS,
+    customTheme: { ...DEFAULTS.customTheme },
+    statusBarItems: { ...DEFAULTS.statusBarItems },
+  });
 }
 
 /**
@@ -106,15 +158,25 @@ export function resetSettings(): void {
 export function applyImportedSettings(raw: unknown): void {
   if (!raw || typeof raw !== "object") return;
   const r = raw as Record<string, unknown>;
-  const next: Settings = { ...DEFAULTS, customTheme: { ...DEFAULTS.customTheme } };
+  const next: Settings = {
+    ...DEFAULTS,
+    customTheme: { ...DEFAULTS.customTheme },
+    statusBarItems: { ...DEFAULTS.statusBarItems },
+  };
   const sink = next as unknown as Record<string, unknown>;
   for (const key of Object.keys(DEFAULTS)) {
-    if (key !== "customTheme" && key in r) {
+    if (key !== "customTheme" && key !== "statusBarItems" && key in r) {
       sink[key] = r[key];
     }
   }
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
+  }
+  if (r.statusBarItems && typeof r.statusBarItems === "object") {
+    next.statusBarItems = {
+      ...DEFAULTS.statusBarItems,
+      ...(r.statusBarItems as Partial<StatusBarItems>),
+    };
   }
   Object.assign(settings, next);
 }

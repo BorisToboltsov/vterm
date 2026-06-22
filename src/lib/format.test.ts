@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskFree, fmtBytes, memPct, osIcon } from "./format";
+import { diskFree, fmtBytes, fmtRate, fmtUptime, memPct, osIcon } from "./format";
 import { ICONS } from "./icons";
 
 describe("fmtBytes", () => {
@@ -13,6 +13,30 @@ describe("fmtBytes", () => {
   it("uses GiB with one decimal at/above 1 GiB", () => {
     expect(fmtBytes(1024 ** 3)).toBe("1.0 GiB");
     expect(fmtBytes(Math.round(2.5 * 1024 ** 3))).toBe("2.5 GiB");
+  });
+});
+
+describe("fmtRate", () => {
+  it("renders an em dash for null", () => {
+    expect(fmtRate(null)).toBe("—");
+  });
+  it("uses B/s below 1 KB", () => {
+    expect(fmtRate(512)).toBe("512 B/s");
+  });
+  it("scales to KB/s and MB/s", () => {
+    expect(fmtRate(512 * 1024)).toBe("512 KB/s");
+    expect(fmtRate(2 * 1024 ** 2)).toBe("2.0 MB/s");
+  });
+});
+
+describe("fmtUptime", () => {
+  it("renders an em dash for null", () => {
+    expect(fmtUptime(null)).toBe("—");
+  });
+  it("formats days/hours/minutes", () => {
+    expect(fmtUptime(90061)).toBe("1d 1h"); // 1d 1h 1m
+    expect(fmtUptime(3 * 3600 + 12 * 60)).toBe("3h 12m");
+    expect(fmtUptime(5 * 60)).toBe("5m");
   });
 });
 

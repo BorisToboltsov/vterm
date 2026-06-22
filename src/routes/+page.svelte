@@ -57,6 +57,8 @@
   import CommandPalette from "$lib/CommandPalette.svelte";
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess } from "$lib/stores/toasts.svelte";
+  import { applyProgress } from "$lib/stores/transfers.svelte";
+  import type { SftpProgress } from "$lib/api";
   import { settings } from "$lib/settings.svelte";
 
   let servers = $state<ServerProfile[]>([]);
@@ -172,6 +174,10 @@
       helpTab = "help";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
+    // App-level SFTP progress feed → shared store (read by SFTP panel + status bar).
+    listen<SftpProgress>("sftp://progress", (e) => applyProgress(e.payload)).then((u) =>
+      unlisteners.push(u),
+    );
     return () => unlisteners.forEach((u) => u());
   });
 

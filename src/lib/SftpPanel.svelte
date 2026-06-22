@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
     pickSaveDir,
@@ -19,6 +19,7 @@
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import { transfersState } from "./stores/transfers.svelte";
 
   let {
     sessionId,
@@ -51,10 +52,11 @@
   let mkdirName = $state("");
   let confirmTarget = $state<FileEntry | null>(null);
 
-  let transfers = $state<Record<string, SftpProgress>>({});
   const unlisten: UnlistenFn[] = [];
 
-  const transferList = $derived(Object.values(transfers));
+  // Transfer progress lives in a shared store (also read by the status-bar
+  // indicator); the `sftp://progress` subscription is owned by +page.svelte.
+  const transferList = $derived(Object.values(transfersState.map));
 
   /** Open the SFTP subsystem and list the home directory (button-triggered). */
   async function connect() {
@@ -72,19 +74,6 @@
   }
 
   onMount(async () => {
-    unlisten.push(
-      await listen<SftpProgress>("sftp://progress", (e) => {
-        const p = e.payload;
-        transfers = { ...transfers, [p.id]: p };
-        if (p.done) {
-          setTimeout(() => {
-            const { [p.id]: _drop, ...rest } = transfers;
-            transfers = rest;
-          }, 1500);
-        }
-      }),
-    );
-
     unlisten.push(
       await getCurrentWebview().onDragDropEvent((ev) => {
         if (!connected) return;

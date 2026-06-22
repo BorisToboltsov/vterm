@@ -122,4 +122,12 @@ describe("SettingsPanel — appearance & search", () => {
     await userEvent.type(screen.getByTestId("settings-search"), "zzzzz");
     expect(screen.getByText("Ничего не найдено")).toBeInTheDocument();
   });
+
+  it("status-bar metric checkboxes are collapsible", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    expect(screen.queryByLabelText("CPU")).toBeNull();
+    await userEvent.click(screen.getByTestId("metrics-toggle"));
+    expect(screen.getByLabelText("CPU")).toBeInTheDocument();
+    expect(screen.getByLabelText("Disk")).toBeInTheDocument();
+  });
 });

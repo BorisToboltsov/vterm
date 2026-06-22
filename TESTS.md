@@ -84,7 +84,9 @@ pnpm check
 Тестируется **чистая логика без сети**:
 
 - `lib.rs` — `normalize_path`, `reprefixed` (перенос/переименование папок и
-  поддеревьев), `parse_metrics`, `parse_cpustat`, `uuid_like`;
+  поддеревьев), `parse_metrics` (вкл. расширенные поля: uptime/swap/users/ip/
+  topproc/cputemp/netconns/kernel/stime), `parse_cpustat`, `parse_net`/`parse_pair`
+  (rx/tx сети и disk I/O), `uuid_like`;
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
@@ -135,9 +137,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
 
 - `tree.ts` — построение `treeRows`, эффективные папки, группировка, фильтр
   поиска, `parentOf`/`nameOf`/`groupOf`, валидация drop (`dropAllowed`);
-- `format.ts` — `fmtBytes`, `osIcon` (возвращает имя иконки реестра — Apple/Linux/
-  Windows/BSD/Unknown, и каждое имя существует в `icons.ts`), `memPct`, `diskFree`
-  (статус-бар);
+- `format.ts` — `fmtBytes`, `fmtRate` (B/KB/MB/s, прочерк для null), `fmtUptime`
+  (d/h/m), `osIcon`
+  (возвращает имя иконки реестра — Apple/Linux/Windows/BSD/Unknown, и каждое имя
+  существует в `icons.ts`), `memPct`, `diskFree` (статус-бар);
 - `util.ts` — `debounce` (с fake-таймерами), `isHidden`, `matchesQuery`
   (AND-подстрока, регистронезависимость, пустой запрос → всё);
 - `command.ts` — `matchScore` (пустой запрос, отсутствие терма, регистронезависимость
@@ -156,6 +159,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `stores/toasts.svelte.ts` — `notify`/`notifyError`/`notifySuccess`/`notifyInfo`,
   авто-дисмисс по `TOAST_TTL` (fake-таймеры), кастомный ttl и sticky (`ttl=0`),
   `dismissToast` (снятие таймера), `clearToasts`;
+- `stores/transfers.svelte.ts` — `aggregateTransfers` (активные/суммарный %/
+  направление, приоритет upload), `applyProgress` (upsert, авто-удаление done по
+  `DONE_LINGER_MS` с fake-таймерами), `removeTransfer`;
 - `clipboard.ts` — write/read с моками `navigator.clipboard` и `execCommand`;
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `exportBackup`/`importBackup` и backup-диалоги);
@@ -188,10 +194,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
 
 - `HelpPanel.test.ts` — вкладки Help/About, таблица хоткеев, версия из мока
   `@tauri-apps/api/app`, открытие внешних ссылок.
-- `StatusBar.test.ts` — рендер ОС/`user@host`/ресурсов из мока `fetchMetrics`,
-  OS-иконка из реестра (по `title` семейства ОС / «Unknown OS»),
-  CPU-мини-график (`cpu-chart`): стабильное число столбиков, последний отражает
-  свежий сэмпл, состояние «Metrics unavailable» при ошибке.
+- `StatusBar.test.ts` — компактный режим по умолчанию (иконки + проценты, без имён/
+  байтов/графика), тоггл в расширенный (имена, байты, sparkline, load-avg), скрытие
+  группы по флагу видимости, индикатор передач SFTP из общего стора (+клик →
+  разворот панели), OS-иконка по `title`, состояния ошибки/прочерков.
 - `Icon.test.ts` — рендер SVG из реестра, размер, accessible-title.
 - `Toast.test.ts` — рендер тостов из стора, роль `status`, кнопка Dismiss убирает
   тост (синхронизация с `toastsState`).
@@ -211,8 +217,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   CTA «Добавить сервер» (`empty-add-server` → `onAddServer`).
 - `SettingsPanel.test.ts` — секция Backup: экспорт по выбранному пути со снимком
   настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
-  визуальный пикер тем (выбор → `aria-checked`), живой `font-preview`, поиск по
-  настройкам (фильтр секций, пустое состояние «Ничего не найдено»).
+  визуальный пикер тем (свёрнут/раскрытие, выбор → `aria-checked`), сетка шрифтов с
+  Python-превью (`font-preview`), поиск по настройкам (фильтр секций, пустое состояние),
+  сворачиваемые чекбоксы показателей статус-бара (`metrics-toggle`).
 
 Тяжёлые интерактивные компоненты (`Terminal.svelte` — xterm.js,
 `SftpPanel.svelte` — нативные диалоги и pointer-DnD, `SettingsPanel.svelte`)

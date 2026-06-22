@@ -23,6 +23,8 @@ export const ICONS = {
   chevronLeft: '<path d="M15 18l-6-6 6-6"/>',
   chevronRight: '<path d="M9 18l6-6-6-6"/>',
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
+  chevronsLeft: '<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>',
+  chevronsRight: '<path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
   upload: '<path d="M12 19V5M5 12l7-7 7 7"/>',
   download: '<path d="M12 5v14M19 12l-7 7-7-7"/>',
@@ -39,6 +41,32 @@ export const ICONS = {
   memory:
     '<rect x="2" y="7" width="20" height="9" rx="1"/><path d="M5 16v3M9 16v3M15 16v3M19 16v3"/><path d="M7 10v3M12 10v3M17 10v3"/>',
   disk: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8" cy="12" r="2.4"/><path d="M15 9.5v5"/>',
+  // Load average — a speedometer/gauge (arc + needle + pivot).
+  gauge: '<path d="M4 17a8 8 0 1 1 16 0"/><path d="M12 17l4-4"/><circle cx="12" cy="17" r="1"/>',
+  // Uptime — power symbol (system has been up).
+  power: '<path d="M12 4v8"/><path d="M7.5 7.5a7 7 0 1 0 9 0"/>',
+  // Server time — a clock.
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  // Swap — two opposing vertical arrows.
+  swap: '<path d="M7 4v14M7 18l-3-3M7 18l3-3"/><path d="M17 20V6M17 6l-3 3M17 6l3 3"/>',
+  // Disk I/O — drum/HDD with up/down arrows.
+  diskIo:
+    '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 13l2-2 2 2M10 11v5M16 11l-2 2-2-2M14 16v-5"/>',
+  // Logged-in users — two people.
+  users:
+    '<circle cx="9" cy="8" r="3"/><path d="M3.5 20a5.5 5.5 0 0 1 11 0"/><path d="M16 5.5a3 3 0 0 1 0 5M20.5 20a5.5 5.5 0 0 0-4-5.3"/>',
+  // IP address — globe with meridians.
+  globe:
+    '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/>',
+  // Top process — activity pulse line.
+  activity: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+  // CPU temperature — thermometer.
+  thermometer: '<path d="M10 13V5a2 2 0 1 1 4 0v8a4 4 0 1 1-4 0z"/><path d="M12 13.5V8"/>',
+  // Network connections — a plug/link.
+  plug: '<path d="M9 2v6M15 2v6"/><path d="M7 8h10v3a5 5 0 0 1-10 0z"/><path d="M12 16v6"/>',
+  // Kernel — a terminal/console window.
+  terminal:
+    '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
 
   // OS family marks for the status bar (line style, matching the icon set).
   osApple:

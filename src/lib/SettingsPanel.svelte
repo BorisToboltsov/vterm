@@ -1,5 +1,10 @@
 <script lang="ts">
-  import { applyImportedSettings, settings, resetSettings } from "./settings.svelte";
+  import {
+    applyImportedSettings,
+    settings,
+    resetSettings,
+    type StatusBarItems,
+  } from "./settings.svelte";
   import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import {
     exportBackup,
@@ -140,6 +145,28 @@
     return f"Hello, {name}!"  # 0O1lI
 
 print(greet("world"))  # => 12345`;
+
+  // Status-bar metric checkboxes (collapsible sub-section).
+  let metricsOpen = $state(false);
+  const STATUS_ITEMS: { key: keyof StatusBarItems; label: string }[] = [
+    { key: "os", label: "OS" },
+    { key: "host", label: "User @ host" },
+    { key: "cpu", label: "CPU" },
+    { key: "load", label: "Load average" },
+    { key: "ram", label: "RAM" },
+    { key: "swap", label: "Swap" },
+    { key: "disk", label: "Disk" },
+    { key: "diskio", label: "Disk I/O" },
+    { key: "net", label: "Network" },
+    { key: "netConns", label: "Connections" },
+    { key: "uptime", label: "Uptime" },
+    { key: "users", label: "Users" },
+    { key: "ip", label: "IP address" },
+    { key: "topProc", label: "Top process" },
+    { key: "cpuTemp", label: "CPU temp" },
+    { key: "kernel", label: "Kernel" },
+    { key: "serverTime", label: "Server time" },
+  ];
 
   // ── Settings search ────────────────────────────────────────────────────────
   let search = $state("");
@@ -504,6 +531,10 @@ print(greet("world"))  # => 12345`;
             <input type="checkbox" bind:checked={settings.showStatusBar} />
             Show bottom status bar
           </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.statusBarExpanded} />
+            Expanded view (names, byte totals, CPU graph) by default
+          </label>
           <label class="mt-2 block text-xs text-muted">
             Metrics poll interval (s)
             <input
@@ -514,6 +545,33 @@ print(greet("world"))  # => 12345`;
               bind:value={settings.statusPollInterval}
             />
           </label>
+
+          <div class="mt-2">
+            <button
+              type="button"
+              data-testid="metrics-toggle"
+              aria-expanded={metricsOpen}
+              onclick={() => (metricsOpen = !metricsOpen)}
+              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
+            >
+              <span>Shown metrics</span>
+              <Icon
+                name={metricsOpen ? "chevronDown" : "chevronRight"}
+                size={14}
+                class="shrink-0"
+              />
+            </button>
+            {#if metricsOpen}
+              <div transition:slide={{ duration: 200 }} class="mt-2 grid grid-cols-2 gap-1.5">
+                {#each STATUS_ITEMS as it (it.key)}
+                  <label class="flex items-center gap-2 text-xs text-muted">
+                    <input type="checkbox" bind:checked={settings.statusBarItems[it.key]} />
+                    {it.label}
+                  </label>
+                {/each}
+              </div>
+            {/if}
+          </div>
         </section>
 
         {/if}

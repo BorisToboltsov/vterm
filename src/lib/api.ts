@@ -207,6 +207,25 @@ export interface Metrics {
   memTotal: number | null;
   diskUsed: number | null;
   diskTotal: number | null;
+  /** Network throughput in bytes/sec (download = rx, upload = tx). */
+  netRxRate: number | null;
+  netTxRate: number | null;
+  /** Disk I/O in bytes/sec. */
+  diskReadRate: number | null;
+  diskWriteRate: number | null;
+  uptimeSecs: number | null;
+  swapUsed: number | null;
+  swapTotal: number | null;
+  /** Space-separated logged-in usernames. */
+  users: string;
+  ip: string;
+  /** Top CPU process, e.g. "node 87%". */
+  topProc: string;
+  cpuTemp: number | null;
+  netConns: number | null;
+  kernel: string;
+  /** Remote clock + timezone, e.g. "14:05 UTC". */
+  serverTime: string;
 }
 
 /** Probe the active session for OS info and resource usage. */
