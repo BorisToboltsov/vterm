@@ -147,6 +147,15 @@ pnpm test:coverage
   фильтрация — только в `command.ts` (`filterCommands`/`matchScore`); компонент
   получает `commands` с готовыми `run` от страницы, новые источники команд добавляй
   там же. Глобальный хоткей ⌘K — `<svelte:window>` в [+page.svelte](src/routes/+page.svelte).
+- **Анимации/переходы.** Короткие и сдержанные: токены `--motion-fast` (120ms) /
+  `--motion-base` (200ms) в [app.css](src/app.css); анимируй только дешёвые свойства
+  (`opacity`/`transform`/цвет/`width`), не layout вне панелей. **Уважай
+  `prefers-reduced-motion`** — глобальный guard в `app.css` гасит анимации, не вводи
+  движение в обход него. Паттерны: сворачивание панелей — `transition-[width]`,
+  **выключается на время ресайза** (проп `animateWidth` из `resizing`); состояния
+  строк/drop-таргета — `transition duration-150`; drag-«призраки» — `in:fade` 120ms;
+  загрузка списков — скелетоны через [Skeleton.svelte](src/lib/Skeleton.svelte)
+  (`animate-pulse`, `aria-hidden`), а не текст «Loading…».
 - **Панель мониторинга** (нижний статус-бар, [StatusBar.svelte](src/lib/StatusBar.svelte)) —
   ряд **групп** показаний (OS, user@host, CPU, ОЗУ, диск). Закреплено:
   - **Структура группы:** иконка (`size=14 text-muted`) + значение(я). Все значения —

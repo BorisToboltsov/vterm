@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { fade } from "svelte/transition";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     addFolder,
@@ -526,6 +527,7 @@
       onDeleteFolder={(p) => (folderToDelete = p)}
       onMoveServer={moveServerToGroup}
       onMoveFolder={moveFolderAndRefresh}
+      animateWidth={resizing !== "left"}
     />
     {#if !layout.leftCollapsed}
       <!-- Drag handle to resize the server list -->
@@ -644,6 +646,7 @@
                 width={layout.sftpWidth}
                 bind:collapsed={layout.sftpCollapsed}
                 sessionReady={sftpReady}
+                animateWidth={resizing !== "sftp"}
               />
             {/key}
           {/if}
@@ -685,6 +688,7 @@
 <!-- Drag ghost for a terminal tab being reordered. -->
 {#if draggingTab}
   <div
+    in:fade={{ duration: 120 }}
     class="pointer-events-none fixed z-50 flex max-w-48 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
     style="left: {tabDragX + 12}px; top: {tabDragY + 8}px"
   >

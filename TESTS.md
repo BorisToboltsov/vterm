@@ -196,6 +196,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `CommandPalette.test.ts` — список команд и фильтрация по вводу, запуск верхнего
   совпадения по Enter и закрытие, запуск по клику, навигация ↑/↓, закрытие по Escape,
   пустое состояние «Ничего не найдено».
+- `Skeleton.test.ts` — пульсирующий плейсхолдер (`animate-pulse`, `aria-hidden`),
+  применение размеров width/height и доп. классов.
 - `Modal.test.ts` — `Modal` (рендер/закрытие по фону и Escape; a11y: `role="dialog"`/
   `aria-modal`/`aria-label`, автофокус первого контроля, фокус-трап Tab/Shift+Tab по
   кругу) и `ConfirmDialog` (колбэки confirm/cancel, accent/danger).

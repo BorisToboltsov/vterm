@@ -14,6 +14,7 @@
   import { dropTargetAt, passedThreshold } from "./actions/drag";
   import { layout } from "./stores/layout.svelte";
   import Icon from "./Icon.svelte";
+  import { fade } from "svelte/transition";
   import EmptyState from "./EmptyState.svelte";
 
   let {
@@ -30,6 +31,7 @@
     onDeleteFolder,
     onMoveServer,
     onMoveFolder,
+    animateWidth = true,
   }: {
     servers: ServerProfile[];
     folders: string[];
@@ -44,7 +46,12 @@
     onDeleteFolder: (path: string) => void;
     onMoveServer: (id: string, group: string | null) => void;
     onMoveFolder: (path: string, parent: string | null) => void;
+    /** Animate width changes (collapse). Disabled while the user drags-resizes. */
+    animateWidth?: boolean;
   } = $props();
+
+  /** Width of the collapsed strip (matches the w-9 = 36px rail). */
+  const COLLAPSED_W = 36;
 
   let serverSearch = $state("");
 
@@ -145,29 +152,29 @@
   }
 </script>
 
-{#if layout.leftCollapsed}
-  <aside
-    class="flex w-9 shrink-0 flex-col items-center gap-3 border-r border-edge bg-panel-alt py-2"
-  >
-    <button
-      class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-      title="Expand server list"
-      aria-label="Expand server list"
-      onclick={() => (layout.leftCollapsed = false)}
-    >
-      <Icon name="chevronRight" size={16} />
-    </button>
-    <span
-      class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
-    >
-      Servers
-    </span>
-  </aside>
-{:else}
-  <aside
-    style="width: {layout.leftWidth}px"
-    class="flex shrink-0 flex-col border-r border-edge bg-panel-alt"
-  >
+<aside
+  style="width: {layout.leftCollapsed ? COLLAPSED_W : layout.leftWidth}px"
+  class="flex shrink-0 flex-col overflow-hidden border-r border-edge bg-panel-alt {animateWidth
+    ? 'transition-[width] duration-200 ease-out'
+    : ''}"
+>
+  {#if layout.leftCollapsed}
+    <div class="flex w-9 flex-col items-center gap-3 py-2">
+      <button
+        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+        title="Expand server list"
+        aria-label="Expand server list"
+        onclick={() => (layout.leftCollapsed = false)}
+      >
+        <Icon name="chevronRight" size={16} />
+      </button>
+      <span
+        class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
+      >
+        Servers
+      </span>
+    </div>
+  {:else}
     <div
       class="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wider text-muted"
     >
@@ -224,7 +231,7 @@
             tabindex="-1"
             style="padding-left: {row.depth * 16}px"
             onpointerdown={(e) => folderPointerDown(e, row.path)}
-            class="group relative flex cursor-grab items-center gap-1 border-l-2 border-transparent py-1 pr-2 text-sm {dropTarget ===
+            class="group relative flex cursor-grab items-center gap-1 border-l-2 border-transparent py-1 pr-2 text-sm transition duration-150 {dropTarget ===
               row.path && dropAllowed(row.path)
               ? 'bg-accent/20 ring-1 ring-inset ring-accent'
               : 'hover:bg-edge'} {dragKind === 'folder' && dragId === row.path
@@ -279,7 +286,7 @@
             role="button"
             tabindex="0"
             style="padding-left: {row.depth * 16}px"
-            class="group relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm hover:bg-edge {selectedId ===
+            class="group relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
             row.server.id
               ? 'border-accent bg-edge'
               : 'border-transparent'} {dragKind === 'server' && dragId === row.server.id
@@ -354,12 +361,13 @@
         {/if}
       {/each}
     </div>
-  </aside>
-{/if}
+  {/if}
+</aside>
 
 <!-- Drag ghosts (pointer-events-none so elementFromPoint still sees the target). -->
 {#if draggingServer}
   <div
+    in:fade={{ duration: 120 }}
     class="pointer-events-none fixed z-50 w-56 rounded border border-accent bg-panel-alt px-3 py-2 text-sm opacity-90 shadow-lg"
     style="left: {dragX + 12}px; top: {dragY + 8}px"
   >
@@ -371,6 +379,7 @@
 {/if}
 {#if draggingFolder}
   <div
+    in:fade={{ duration: 120 }}
     class="pointer-events-none fixed z-50 flex items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
     style="left: {dragX + 12}px; top: {dragY + 8}px"
   >

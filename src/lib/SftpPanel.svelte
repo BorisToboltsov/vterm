@@ -17,6 +17,7 @@
   } from "./api";
   import type { FileEntry } from "./types";
   import Icon from "./Icon.svelte";
+  import Skeleton from "./Skeleton.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
 
   let {
@@ -24,6 +25,7 @@
     width = 384,
     collapsed = $bindable(false),
     sessionReady = false,
+    animateWidth = true,
   }: {
     sessionId: string;
     /** Panel width in px (controlled by the parent's resize handle). */
@@ -32,6 +34,8 @@
     collapsed?: boolean;
     /** Whether the terminal session is connected (enables the Connect button). */
     sessionReady?: boolean;
+    /** Animate width changes (collapse). Disabled while the user drags-resizes. */
+    animateWidth?: boolean;
   } = $props();
 
   let cwd = $state("");
@@ -207,33 +211,34 @@
   function pct(t: SftpProgress): number {
     return t.total > 0 ? Math.round((t.transferred / t.total) * 100) : 0;
   }
+
+  /** Width of the collapsed strip (matches the w-9 = 36px rail). */
+  const COLLAPSED_W = 36;
 </script>
 
-{#if collapsed}
-  <div
-    class="flex h-full w-9 shrink-0 flex-col items-center gap-3 border-l border-edge bg-panel-alt py-2"
-  >
-    <button
-      class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-      title="Expand SFTP panel"
-      aria-label="Expand SFTP panel"
-      onclick={() => (collapsed = false)}
-    >
-      <Icon name="chevronLeft" size={16} />
-    </button>
-    <span
-      class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
-    >
-      SFTP
-    </span>
-  </div>
-{:else}
-  <div
-    style="width: {width}px"
-    class="flex h-full shrink-0 flex-col border-l border-edge bg-panel-alt {dragOver
-      ? 'ring-2 ring-inset ring-accent'
-      : ''}"
-  >
+<div
+  style="width: {collapsed ? COLLAPSED_W : width}px"
+  class="flex h-full shrink-0 flex-col overflow-hidden border-l border-edge bg-panel-alt {animateWidth
+    ? 'transition-[width] duration-200 ease-out'
+    : ''} {dragOver ? 'ring-2 ring-inset ring-accent' : ''}"
+>
+  {#if collapsed}
+    <div class="flex w-9 flex-col items-center gap-3 py-2">
+      <button
+        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+        title="Expand SFTP panel"
+        aria-label="Expand SFTP panel"
+        onclick={() => (collapsed = false)}
+      >
+        <Icon name="chevronLeft" size={16} />
+      </button>
+      <span
+        class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
+      >
+        SFTP
+      </span>
+    </div>
+  {:else}
     <!-- Toolbar -->
     <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
       <button
@@ -337,7 +342,15 @@
   <!-- Listing -->
   <div class="min-h-0 flex-1 overflow-y-auto text-sm">
     {#if loading}
-      <div class="px-3 py-4 text-xs text-muted">Loading…</div>
+      <!-- Skeleton rows while the directory listing loads. -->
+      <div data-testid="sftp-skeleton" class="py-1">
+        {#each Array(7) as _, i (i)}
+          <div class="flex items-center gap-2 px-2 py-1.5">
+            <Skeleton width="15px" height="15px" class="shrink-0" />
+            <Skeleton width="{45 + ((i * 17) % 40)}%" height="0.7rem" />
+          </div>
+        {/each}
+      </div>
     {:else}
       {#if cwd && cwd !== "/"}
         <button
@@ -424,8 +437,8 @@
     </div>
   {/if}
   {/if}
-  </div>
-{/if}
+  {/if}
+</div>
 
 <!-- Delete confirmation -->
 {#if confirmTarget}

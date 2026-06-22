@@ -32,3 +32,23 @@ body {
   background: var(--color-edge);
   border-radius: 4px;
 }
+
+/* Motion tokens (Phase 7). Keep UI animations short and consistent; use these
+   durations with Tailwind's `duration-[…]` or in component styles. */
+:root {
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+}
+
+/* Accessibility: honour "reduce motion". Collapse all animations/transitions to
+   an instant so the UI still updates but without movement. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
