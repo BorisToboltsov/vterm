@@ -152,19 +152,21 @@ pnpm test:coverage   # прогон + покрытие + гейты
   по title/subtitle/keywords/group, все термы обязательны, буст префикса) и
   `filterCommands` (порядок, отсев, ранжирование, стабильность ничьих);
 - `actions/drag.ts` — `passedThreshold`, `dropTargetAt`, экшен `resizableHandle`;
-- `actions/clipboardKeys.ts` — `selectedText`/`replaceSelection` (вставка по
-  каретке и замена выделения с событием `input`) и экшен `clipboardKeys`: вставка
-  по Cmd+V и Ctrl+V, копирование/вырезание выделения, select-all по Cmd+A,
-  игнор обычных и Alt/Shift-модифицированных нажатий, снятие слушателя в `destroy`
-  (модуль `../clipboard` замокан, так что вставка/копирование проверяются без
-  Tauri/navigator);
+- `actions/clipboardKeys.ts` — `isEditable` (text-like input/textarea — да; чекбокс/
+  div/readonly/disabled/`.xterm`-textarea — нет), `selectedText`/`replaceSelection`
+  (вставка по каретке + событие `input`; замена всего значения для `type="number"`
+  без selection API) и глобальный `handleClipboardShortcut`: вставка по Cmd+V и
+  Ctrl+V (вкл. number-поле), копирование/вырезание выделения, select-all по Cmd+A,
+  игнор не-редактируемых целей (терминал) и обычных/Alt/Shift-нажатий (модуль
+  `../clipboard` замокан, проверка без Tauri/navigator);
 - `themes.ts` — целостность палитр (все ключи — валидный hex, группа
   light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
   `applyUiPalette`;
 - `settings.svelte.ts` — дефолты, persist в `localStorage`, `activeTerminalTheme`,
   `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`);
 - `stores/layout.svelte.ts` — дефолты, persist ширин/сворачивания, `clamp`;
-- `stores/tabs.svelte.ts` — `openTab`/`closeTab`/`moveTab`/`setTabStatus`,
+- `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
+  пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
   переназначение активной вкладки, чистые `statusLabel`/`dotClass`/`isLive`,
   `nextTabIndex` (роуминг ←/→ с заворотом, Home/End, null для прочих клавиш/пустого);
 - `stores/toasts.svelte.ts` — `notify`/`notifyError`/`notifySuccess`/`notifyInfo`,

@@ -43,7 +43,7 @@
     type Tab,
   } from "$lib/stores/tabs.svelte";
   import { resizableHandle } from "$lib/actions/drag";
-  import { clipboardKeys } from "$lib/actions/clipboardKeys";
+  import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
   import SftpPanel from "$lib/SftpPanel.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
@@ -186,7 +186,13 @@
     listen<SftpProgress>("sftp://progress", (e) => applyProgress(e.payload)).then((u) =>
       unlisteners.push(u),
     );
-    return () => unlisteners.forEach((u) => u());
+    // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
+    // even inside modals and before any field-local handler). See clipboardKeys.ts.
+    document.addEventListener("keydown", handleClipboardShortcut, true);
+    return () => {
+      unlisteners.forEach((u) => u());
+      document.removeEventListener("keydown", handleClipboardShortcut, true);
+    };
   });
 
   async function refresh() {
@@ -561,56 +567,58 @@
 
     <!-- Right: tabbed terminals -->
     <main class="flex min-w-0 flex-1 flex-col bg-panel">
-      {#if tabsState.list.length > 0}
-        <div
-          bind:this={barEl}
-          role="tablist"
-          tabindex={-1}
-          onpointermove={barPointerMove}
-          onpointerup={barPointerUp}
-          class="flex select-none items-stretch border-b border-edge bg-panel-alt"
-        >
-          {#each tabsState.list as tab (tab.sessionId)}
-            <div
-              data-tab
-              role="tab"
-              tabindex={tabsState.activeId === tab.sessionId ? 0 : -1}
-              aria-selected={tabsState.activeId === tab.sessionId}
-              onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
-              onkeydown={(e) => onTabKey(e, tab.sessionId)}
-              class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
-              tab.sessionId
-                ? 'bg-panel text-white'
-                : 'text-muted hover:bg-edge'}"
-              title={tab.status}
-            >
-              <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
-              <span class="truncate">{tabAlias(tab)}</span>
-              <button
-                data-close
-                class="shrink-0 rounded p-0.5 text-muted hover:bg-danger hover:text-white"
-                aria-label="Close tab"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  requestCloseTab(tab.sessionId);
-                }}
-              >
-                <Icon name="close" size={12} />
-              </button>
-            </div>
-          {/each}
-          <!-- Open a local-shell terminal tab (same "+" as the top bar). -->
-          <button
-            data-testid="new-local-terminal"
-            class="flex shrink-0 items-center rounded-none px-2.5 text-muted hover:bg-edge hover:text-white"
-            title="Открыть локальный терминал"
-            aria-label="Открыть локальный терминал"
-            onclick={() => openLocalTab()}
+      <!-- Tab bar always visible so the local-terminal "+" is reachable even
+           with no open sessions. -->
+      <div
+        bind:this={barEl}
+        role="tablist"
+        tabindex={-1}
+        onpointermove={barPointerMove}
+        onpointerup={barPointerUp}
+        class="flex min-h-8 select-none items-stretch border-b border-edge bg-panel-alt"
+      >
+        {#each tabsState.list as tab (tab.sessionId)}
+          <div
+            data-tab
+            role="tab"
+            tabindex={tabsState.activeId === tab.sessionId ? 0 : -1}
+            aria-selected={tabsState.activeId === tab.sessionId}
+            onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
+            onkeydown={(e) => onTabKey(e, tab.sessionId)}
+            class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
+            tab.sessionId
+              ? 'bg-panel text-white'
+              : 'text-muted hover:bg-edge'}"
+            title={tab.status}
           >
-            <Icon name="plus" size={14} />
-          </button>
-        </div>
+            <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
+            <span class="truncate">{tabAlias(tab)}</span>
+            <button
+              data-close
+              class="shrink-0 rounded p-0.5 text-muted hover:bg-danger hover:text-white"
+              aria-label="Close tab"
+              onclick={(e) => {
+                e.stopPropagation();
+                requestCloseTab(tab.sessionId);
+              }}
+            >
+              <Icon name="close" size={12} />
+            </button>
+          </div>
+        {/each}
+        <!-- Open a local-shell terminal tab (same "+" as the top bar). -->
+        <button
+          data-testid="new-local-terminal"
+          class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
+          title="Открыть локальный терминал"
+          aria-label="Открыть локальный терминал"
+          onclick={() => openLocalTab()}
+        >
+          <Icon name="plus" size={14} />
+        </button>
+      </div>
 
+      {#if tabsState.list.length > 0}
         <div class="flex min-h-0 flex-1">
           <div class="relative min-h-0 min-w-0 flex-1">
             {#each tabsState.list as tab (tab.sessionId)}
@@ -837,7 +845,6 @@
           type="password"
           data-testid="secret-input"
           use:focusOnMount
-          use:clipboardKeys
           class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
           bind:value={secretValue}
         />

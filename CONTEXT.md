@@ -162,6 +162,17 @@ pnpm test:coverage
   фильтрация — только в `command.ts` (`filterCommands`/`matchScore`); компонент
   получает `commands` с готовыми `run` от страницы, новые источники команд добавляй
   там же. Глобальный хоткей ⌘K — `<svelte:window>` в [+page.svelte](src/routes/+page.svelte).
+- **Буфер обмена в полях ввода — обязателен везде.** **Все** текстовые поля
+  (`<input>` типов text/search/url/tel/email/password/number и `<textarea>`)
+  обязаны поддерживать **Cmd/Ctrl + V/C/X/A**. Это обеспечивает **единый
+  глобальный обработчик** `handleClipboardShortcut`
+  ([actions/clipboardKeys.ts](src/lib/actions/clipboardKeys.ts)), повешенный один
+  раз на `document` (capture-фаза) в [+page.svelte](src/routes/+page.svelte) — он
+  работает для текущих и **будущих** полей **без** per-input разметки, так что
+  отдельный `use:`-экшен на инпуты вешать не нужно. Чтение буфера идёт нативно через
+  бэкенд (`read_clipboard_text`), без промпта WebKit. Обработчик **пропускает**
+  служебный `<textarea>` xterm.js (`.xterm`) — терминал владеет ⌘C/⌘V сам; не ломай
+  это исключение.
 - **Анимации/переходы.** Короткие и сдержанные: токены `--motion-fast` (120ms) /
   `--motion-base` (200ms) в [app.css](src/app.css); анимируй только дешёвые свойства
   (`opacity`/`transform`/цвет/`width`/`height`), не layout вне панелей.
@@ -212,7 +223,11 @@ pnpm test:coverage
   - **Режимы:** `settings.statusBarExpanded` (по умолчанию **компактный**) —
     компактный показывает иконки + проценты (CPU/ОЗУ/диск %), расширенный добавляет
     имя ОС, байтовые суммы, sparkline и load-average инлайн. Тоггл — кнопка справа
-    (`statusbar-toggle`, иконки `chevronsLeft`/`chevronsRight`).
+    (`statusbar-toggle`), **закреплена у правого края**: бар = `flex items-stretch`
+    из **прокручиваемой** области метрик (`overflow-x-auto`, `flex-1`) и кнопки-тоггла
+    **снаружи** этой области (`self-stretch` + `border-l`), поэтому метрики никогда
+    не видны за стрелкой при горизонтальной прокрутке. Иконки — одинарные шевроны
+    `chevronLeft`/`chevronRight` (как у сворачивания панелей), не двойные.
   - **Показатели (каждый — своя группа со своей иконкой):** OS, user@host, ip(`globe`),
     uptime(`power`,`fmtUptime`), kernel(`terminal`), server time(`clock`),
     CPU(%+sparkline), load average(`gauge`), CPU temp(`thermometer`), top process

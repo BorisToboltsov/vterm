@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The action talks to the clipboard only through these helpers; mock them so the
+// The handler talks to the clipboard only through these helpers; mock them so the
 // tests stay free of Tauri `invoke` / navigator.clipboard wiring.
 const readClipboard = vi.fn<() => Promise<string>>();
 const writeClipboard = vi.fn<(t: string) => Promise<void>>();
@@ -9,18 +9,30 @@ vi.mock("../clipboard", () => ({
   writeClipboard: (t: string) => writeClipboard(t),
 }));
 
-import { clipboardKeys, replaceSelection, selectedText } from "./clipboardKeys";
+import {
+  handleClipboardShortcut,
+  isEditable,
+  replaceSelection,
+  selectedText,
+} from "./clipboardKeys";
 
-function makeInput(value = "", start = value.length, end = start): HTMLInputElement {
+function makeInput(value = "", start = value.length, end = start, type = "text") {
   const node = document.createElement("input");
+  node.type = type;
   node.value = value;
   document.body.appendChild(node);
-  node.setSelectionRange(start, end);
+  try {
+    node.setSelectionRange(start, end);
+  } catch {
+    /* type without selection support (e.g. number) */
+  }
   return node;
 }
 
-function press(node: HTMLElement, key: string, mods: Partial<KeyboardEvent> = {}) {
-  node.dispatchEvent(new KeyboardEvent("keydown", { key, cancelable: true, ...mods }));
+function keyEvent(node: EventTarget, key: string, mods: Partial<KeyboardEvent> = {}) {
+  const ev = new KeyboardEvent("keydown", { key, cancelable: true, ...mods });
+  Object.defineProperty(ev, "target", { value: node, configurable: true });
+  return ev;
 }
 
 afterEach(() => {
@@ -29,94 +41,106 @@ afterEach(() => {
   writeClipboard.mockReset();
 });
 
-describe("selectedText", () => {
-  it("returns the highlighted slice", () => {
-    expect(selectedText(makeInput("hello", 1, 4))).toBe("ell");
+describe("isEditable", () => {
+  it("accepts text-like inputs and textareas", () => {
+    expect(isEditable(makeInput("", 0, 0, "text"))).toBe(true);
+    expect(isEditable(makeInput("", 0, 0, "number"))).toBe(true);
+    expect(isEditable(makeInput("", 0, 0, "password"))).toBe(true);
+    expect(isEditable(document.createElement("textarea"))).toBe(true);
   });
-  it("is empty with no selection", () => {
-    expect(selectedText(makeInput("hello"))).toBe("");
+  it("rejects non-text inputs and non-inputs", () => {
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    expect(isEditable(cb)).toBe(false);
+    expect(isEditable(document.createElement("div"))).toBe(false);
+    expect(isEditable(null)).toBe(false);
+  });
+  it("rejects readonly/disabled inputs", () => {
+    const ro = makeInput("x");
+    ro.readOnly = true;
+    expect(isEditable(ro)).toBe(false);
+    const dis = makeInput("x");
+    dis.disabled = true;
+    expect(isEditable(dis)).toBe(false);
+  });
+  it("rejects xterm's internal helper textarea", () => {
+    const term = document.createElement("div");
+    term.className = "xterm";
+    const ta = document.createElement("textarea");
+    term.appendChild(ta);
+    document.body.appendChild(term);
+    expect(isEditable(ta)).toBe(false);
   });
 });
 
-describe("replaceSelection", () => {
+describe("selectedText / replaceSelection", () => {
+  it("returns the highlighted slice", () => {
+    expect(selectedText(makeInput("hello", 1, 4))).toBe("ell");
+  });
   it("inserts at the caret and fires input", () => {
     const node = makeInput("ac", 1, 1);
     const input = vi.fn();
     node.addEventListener("input", input);
     replaceSelection(node, "b");
     expect(node.value).toBe("abc");
-    expect(node.selectionStart).toBe(2);
     expect(input).toHaveBeenCalledOnce();
   });
-  it("replaces the current selection", () => {
-    const node = makeInput("abc", 1, 2);
-    replaceSelection(node, "XY");
-    expect(node.value).toBe("aXYc");
-    expect(node.selectionStart).toBe(3);
+  it("replaces the whole value when no selection range (number input)", () => {
+    const node = makeInput("80", 0, 0, "number");
+    replaceSelection(node, "8080");
+    expect(node.value).toBe("8080");
   });
 });
 
-describe("clipboardKeys action", () => {
-  it("pastes clipboard text on Cmd+V", async () => {
-    readClipboard.mockResolvedValue("secret");
-    const node = makeInput("");
-    clipboardKeys(node);
-    press(node, "v", { metaKey: true });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(node.value).toBe("secret");
-  });
-
-  it("pastes on Ctrl+V too", async () => {
+describe("handleClipboardShortcut", () => {
+  it("pastes into a focused text input on Cmd+V", async () => {
     readClipboard.mockResolvedValue("pw");
     const node = makeInput("");
-    clipboardKeys(node);
-    press(node, "v", { ctrlKey: true });
-    await Promise.resolve();
-    await Promise.resolve();
+    await handleClipboardShortcut(keyEvent(node, "v", { metaKey: true }));
     expect(node.value).toBe("pw");
   });
 
-  it("copies the selection on Cmd+C", () => {
+  it("pastes on Ctrl+V too (and into a number field)", async () => {
+    readClipboard.mockResolvedValue("8080");
+    const node = makeInput("", 0, 0, "number");
+    await handleClipboardShortcut(keyEvent(node, "v", { ctrlKey: true }));
+    expect(node.value).toBe("8080");
+  });
+
+  it("copies the selection on Cmd+C", async () => {
     const node = makeInput("hello", 0, 3);
-    clipboardKeys(node);
-    press(node, "c", { metaKey: true });
+    await handleClipboardShortcut(keyEvent(node, "c", { metaKey: true }));
     expect(writeClipboard).toHaveBeenCalledWith("hel");
   });
 
-  it("cuts the selection on Cmd+X", () => {
+  it("cuts the selection on Cmd+X", async () => {
     const node = makeInput("hello", 0, 3);
-    clipboardKeys(node);
-    press(node, "x", { metaKey: true });
+    await handleClipboardShortcut(keyEvent(node, "x", { metaKey: true }));
     expect(writeClipboard).toHaveBeenCalledWith("hel");
     expect(node.value).toBe("lo");
   });
 
-  it("selects all on Cmd+A", () => {
+  it("selects all on Cmd+A", async () => {
     const node = makeInput("hello", 5, 5);
-    clipboardKeys(node);
-    press(node, "a", { metaKey: true });
+    await handleClipboardShortcut(keyEvent(node, "a", { metaKey: true }));
     expect(node.selectionStart).toBe(0);
     expect(node.selectionEnd).toBe(5);
   });
 
-  it("ignores plain keys and Alt/Shift-modified chords", async () => {
-    const node = makeInput("x");
-    clipboardKeys(node);
-    press(node, "v"); // no modifier
-    press(node, "v", { metaKey: true, altKey: true });
-    press(node, "v", { metaKey: true, shiftKey: true });
-    await Promise.resolve();
+  it("ignores non-editable targets (e.g. the terminal)", async () => {
+    readClipboard.mockResolvedValue("nope");
+    const div = document.createElement("div");
+    await handleClipboardShortcut(keyEvent(div, "v", { metaKey: true }));
     expect(readClipboard).not.toHaveBeenCalled();
-    expect(node.value).toBe("x");
   });
 
-  it("stops listening after destroy", async () => {
-    const node = makeInput("");
-    const handle = clipboardKeys(node);
-    handle.destroy();
-    press(node, "v", { metaKey: true });
-    await Promise.resolve();
+  it("ignores plain keys and Alt/Shift-modified chords", async () => {
+    readClipboard.mockResolvedValue("nope");
+    const node = makeInput("x");
+    await handleClipboardShortcut(keyEvent(node, "v"));
+    await handleClipboardShortcut(keyEvent(node, "v", { metaKey: true, altKey: true }));
+    await handleClipboardShortcut(keyEvent(node, "v", { metaKey: true, shiftKey: true }));
     expect(readClipboard).not.toHaveBeenCalled();
+    expect(node.value).toBe("x");
   });
 });

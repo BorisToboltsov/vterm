@@ -62,7 +62,12 @@
       "Bash(sed -n '/function tabAlias/,/}/p' src/routes/+page.svelte)",
       "Bash(sed -n '/coverage:/,/}/p' vitest.config.ts)",
       "Bash(api.ts)",
-      "Bash(grep -n \"stores/tabs.svelte.ts\\\\|`api.ts`\" TESTS.md)"
+      "Bash(grep -n \"stores/tabs.svelte.ts\\\\|`api.ts`\" TESTS.md)",
+      "Bash(awk 'NR>=566 && NR<=569 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\" spaces | \"$0}' src/routes/+page.svelte)",
+      "Bash(perl -i -pe 's/^  // if $. >= 569 && $. <= 613' src/routes/+page.svelte)",
+      "Bash(awk 'NR>=566 && NR<=571 || NR>=611 && NR<=616 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\"sp | \"$0}' src/routes/+page.svelte)",
+      "Bash(perl -i -pe 's/^\\(?=.\\)/  / if $. >= 141 && $. <= 316' src/lib/StatusBar.svelte)",
+      "Bash(awk 'NR==140 || NR==141 || NR==142 || NR==315 || NR==316 || NR==317 || NR==322 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\"sp | \"$0}' src/lib/StatusBar.svelte)"
     ]
   }
 }
