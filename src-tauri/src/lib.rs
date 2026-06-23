@@ -909,7 +909,8 @@ fn build_app_menu<R: tauri::Runtime>(
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
     let about = MenuItemBuilder::with_id("about", "About vterm").build(app)?;
-    let help = MenuItemBuilder::with_id("help", "vterm Help").build(app)?;
+    let help = MenuItemBuilder::with_id("help", "Help").build(app)?;
+    let manual = MenuItemBuilder::with_id("manual", "Инструкция").build(app)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -926,7 +927,10 @@ fn build_app_menu<R: tauri::Runtime>(
             .separator()
             .quit()
             .build()?;
-        let help_menu = SubmenuBuilder::new(app, "Help").item(&help).build()?;
+        let help_menu = SubmenuBuilder::new(app, "Help")
+            .item(&help)
+            .item(&manual)
+            .build()?;
         MenuBuilder::new(app)
             .item(&app_menu)
             .item(&help_menu)
@@ -942,6 +946,7 @@ fn build_app_menu<R: tauri::Runtime>(
         let help_menu = SubmenuBuilder::new(app, "Help")
             .item(&about)
             .item(&help)
+            .item(&manual)
             .build()?;
         MenuBuilder::new(app)
             .item(&file_menu)
@@ -971,6 +976,7 @@ pub fn run() {
                 "settings" => app.emit("menu://settings", ()),
                 "about" => app.emit("menu://about", ()),
                 "help" => app.emit("menu://help", ()),
+                "manual" => app.emit("menu://manual", ()),
                 _ => Ok(()),
             };
         })

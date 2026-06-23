@@ -69,7 +69,7 @@
   let editId = $state<string | null>(null);
   let showSettings = $state(false);
   let showHelp = $state(false);
-  let helpTab = $state<"help" | "about">("help");
+  let helpTab = $state<"help" | "about" | "manual">("help");
   let showPalette = $state(false);
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
@@ -123,6 +123,8 @@
       keywords: "settings preferences параметры", run: () => (showSettings = true) },
     { id: "act:help", title: "Справка", icon: "info", group: "Действия",
       keywords: "help помощь", run: () => { helpTab = "help"; showHelp = true; } },
+    { id: "act:manual", title: "Инструкция (README)", icon: "info", group: "Действия",
+      keywords: "manual readme инструкция документация docs", run: () => { helpTab = "manual"; showHelp = true; } },
     { id: "act:about", title: "О программе", icon: "info", group: "Действия",
       keywords: "about version версия", run: () => { helpTab = "about"; showHelp = true; } },
     { id: "act:toggle-left",
@@ -173,6 +175,10 @@
     }).then((u) => unlisteners.push(u));
     listen("menu://help", () => {
       helpTab = "help";
+      showHelp = true;
+    }).then((u) => unlisteners.push(u));
+    listen("menu://manual", () => {
+      helpTab = "manual";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
     // App-level SFTP progress feed → shared store (read by SFTP panel + status bar).

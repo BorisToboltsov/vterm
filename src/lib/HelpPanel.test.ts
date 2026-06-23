@@ -48,4 +48,23 @@ describe("HelpPanel", () => {
     await user.click(await screen.findByRole("button", { name: "xterm.js" }));
     expect(openUrl).toHaveBeenCalledWith("https://xtermjs.org");
   });
+
+  it("shows the author contacts on the About tab", () => {
+    render(HelpPanel, { props: { open: true, tab: "about" } });
+    expect(screen.getByText("bt@vcore.su")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "@BorisToboltsov" })).toBeInTheDocument();
+  });
+
+  it("opens the Telegram contact through the opener", async () => {
+    const user = userEvent.setup();
+    render(HelpPanel, { props: { open: true, tab: "about" } });
+    await user.click(screen.getByRole("button", { name: "@BorisToboltsov" }));
+    expect(openUrl).toHaveBeenCalledWith("https://t.me/BorisToboltsov");
+  });
+
+  it("renders the bundled README on the Инструкция tab", () => {
+    render(HelpPanel, { props: { open: true, tab: "manual" } });
+    // The README's top-level heading is the project name.
+    expect(screen.getByRole("heading", { name: "vterm", level: 1 })).toBeInTheDocument();
+  });
 });

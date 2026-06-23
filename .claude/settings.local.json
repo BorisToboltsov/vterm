@@ -56,7 +56,8 @@
       "Bash(cd /Users/boristoboltsov/project/project/vterm *)",
       "Bash(timeout 6 curl -sI https://registry.npmjs.org/@tauri-apps/plugin-clipboard-manager)",
       "Bash(timeout 6 curl -sI https://static.crates.io/crates/tauri-plugin-clipboard-manager/2.2.2/download)",
-      "Bash(timeout 6 curl -sI https://github.com)"
+      "Bash(timeout 6 curl -sI https://github.com)",
+      "Bash(perl -i -pe 's/^const MARK = \".*\";$/const MARK = \"\\\\\\\\uE000\";/ if $. == 17' src/lib/markdown.ts)"
     ]
   }
 }

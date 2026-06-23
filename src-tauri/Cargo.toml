@@ -1,7 +1,7 @@
 [package]
 name = "vterm"
-version = "0.7.11"
-description = "vterm — SSH terminal & SFTP client"
+version = "0.8.0"
+description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
 license = "MIT"
