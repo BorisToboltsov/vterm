@@ -32,6 +32,12 @@ keyring = { version = "^3", features = ["apple-native", "windows-native"] }
 thiserror = "2"
 zeroize = "1"
 
+# Read the OS clipboard in-process so the frontend can avoid
+# navigator.clipboard.readText() and WebKit's "Paste" permission prompt.
+# Already in the tree transitively via Tauri; pinned here to use it directly.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+
 [dev-dependencies]
 tempfile = "3"
 

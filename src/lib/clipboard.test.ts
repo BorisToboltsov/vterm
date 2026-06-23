@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// readClipboard reads natively via the backend first; mock that wrapper.
+const readClipboardText = vi.fn<() => Promise<string>>();
+vi.mock("./api", () => ({ readClipboardText: () => readClipboardText() }));
+
 import { readClipboard, writeClipboard } from "./clipboard";
 
 describe("writeClipboard", () => {
@@ -37,16 +42,29 @@ describe("writeClipboard", () => {
 });
 
 describe("readClipboard", () => {
-  beforeEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    readClipboardText.mockReset();
+  });
 
-  it("returns the clipboard text", async () => {
+  it("reads natively via the backend, without touching navigator.clipboard", async () => {
+    readClipboardText.mockResolvedValue("native");
+    const readText = vi.fn().mockResolvedValue("web");
+    vi.stubGlobal("navigator", { clipboard: { readText } });
+    expect(await readClipboard()).toBe("native");
+    expect(readText).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the web API when the native reader is unavailable", async () => {
+    readClipboardText.mockRejectedValue(new Error("non-macos"));
     vi.stubGlobal("navigator", {
       clipboard: { readText: vi.fn().mockResolvedValue("pasted") },
     });
     expect(await readClipboard()).toBe("pasted");
   });
 
-  it("returns an empty string when reading fails", async () => {
+  it("returns an empty string when both paths fail", async () => {
+    readClipboardText.mockRejectedValue(new Error("non-macos"));
     vi.stubGlobal("navigator", {
       clipboard: { readText: vi.fn().mockRejectedValue(new Error("blocked")) },
     });

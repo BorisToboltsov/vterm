@@ -1,7 +1,11 @@
-// Clipboard helpers, isolated so the backing implementation can be swapped
-// (e.g. for tauri-plugin-clipboard-manager) without touching the terminal code.
-// In the WebView, navigator.clipboard works for the focused document; a hidden
-// textarea + execCommand covers the copy path when the async API is unavailable.
+// Clipboard helpers, isolated so the terminal/UI never touch a clipboard API
+// directly. Reads go through the Rust backend (NSPasteboard on macOS) so we
+// avoid `navigator.clipboard.readText()`, which pops WebKit's "Paste" permission
+// button in WKWebView; the web API stays only as a fallback for platforms /
+// environments where the native command isn't available. Writes use the async
+// API (writing never prompts) with a hidden-textarea + execCommand fallback.
+
+import { readClipboardText } from "./api";
 
 export async function writeClipboard(text: string): Promise<void> {
   try {
@@ -25,6 +29,12 @@ export async function writeClipboard(text: string): Promise<void> {
 }
 
 export async function readClipboard(): Promise<string> {
+  // Native read first: no webview involvement, so no WebKit "Paste" prompt.
+  try {
+    return await readClipboardText();
+  } catch {
+    /* no native reader (non-macOS / non-Tauri) — fall back to the web API */
+  }
   try {
     return await navigator.clipboard.readText();
   } catch {

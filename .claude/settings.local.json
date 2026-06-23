@@ -50,7 +50,13 @@
       "Bash(sed -i '' 's/\"version\": \"0.6.0\"/\"version\": \"0.7.1\"/' src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.6.0\"/version = \"0.7.1\"/' src-tauri/Cargo.toml)",
       "Bash(perl -0pi -e 's/\\\\{ add: vi\\\\.fn\\\\\\(\\\\\\), settings: vi\\\\.fn\\\\\\(\\\\\\), web: vi\\\\.fn\\\\\\(\\\\\\) \\\\}/{ add: vi.fn<\\(\\) => void>\\(\\), settings: vi.fn<\\(\\) => void>\\(\\), web: vi.fn<\\(\\) => void>\\(\\) }/g' src/lib/CommandPalette.test.ts)",
-      "Bash(grep -rln 'from \"./Modal.svelte\"\\\\|from \"$lib/Modal.svelte\"\\\\|<Modal' src/)"
+      "Bash(grep -rln 'from \"./Modal.svelte\"\\\\|from \"$lib/Modal.svelte\"\\\\|<Modal' src/)",
+      "Bash(grep -rn 'actions/drag\\\\|from \"$lib\\\\|from \"./clipboard\\\\|from \"$lib/clipboard' src/)",
+      "Bash(timeout 5 curl -sI https://registry.npmjs.org/@tauri-apps/plugin-clipboard-manager)",
+      "Bash(cd /Users/boristoboltsov/project/project/vterm *)",
+      "Bash(timeout 6 curl -sI https://registry.npmjs.org/@tauri-apps/plugin-clipboard-manager)",
+      "Bash(timeout 6 curl -sI https://static.crates.io/crates/tauri-plugin-clipboard-manager/2.2.2/download)",
+      "Bash(timeout 6 curl -sI https://github.com)"
     ]
   }
 }

@@ -147,6 +147,12 @@ pnpm test:coverage   # прогон + покрытие + гейты
   по title/subtitle/keywords/group, все термы обязательны, буст префикса) и
   `filterCommands` (порядок, отсев, ранжирование, стабильность ничьих);
 - `actions/drag.ts` — `passedThreshold`, `dropTargetAt`, экшен `resizableHandle`;
+- `actions/clipboardKeys.ts` — `selectedText`/`replaceSelection` (вставка по
+  каретке и замена выделения с событием `input`) и экшен `clipboardKeys`: вставка
+  по Cmd+V и Ctrl+V, копирование/вырезание выделения, select-all по Cmd+A,
+  игнор обычных и Alt/Shift-модифицированных нажатий, снятие слушателя в `destroy`
+  (модуль `../clipboard` замокан, так что вставка/копирование проверяются без
+  Tauri/navigator);
 - `themes.ts` — целостность палитр (все ключи — валидный hex, группа
   light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
   `applyUiPalette`;
@@ -162,9 +168,13 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `stores/transfers.svelte.ts` — `aggregateTransfers` (активные/суммарный %/
   направление, приоритет upload), `applyProgress` (upsert, авто-удаление done по
   `DONE_LINGER_MS` с fake-таймерами), `removeTransfer`;
-- `clipboard.ts` — write/read с моками `navigator.clipboard` и `execCommand`;
+- `clipboard.ts` — `writeClipboard` (async API + фолбэк на textarea/`execCommand`)
+  и `readClipboard`: нативное чтение через бэкенд (`read_clipboard_text`, мок `./api`)
+  без обращения к `navigator.clipboard`, откат на web-API при отсутствии нативного
+  ридера, пустая строка если оба пути упали;
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
-  именем команды и аргументами (вкл. `exportBackup`/`importBackup` и backup-диалоги);
+  именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
+  `exportBackup`/`importBackup` и backup-диалоги);
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора);
 - `icons.ts` — целостность реестра иконок.

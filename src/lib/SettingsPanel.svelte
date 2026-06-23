@@ -16,6 +16,7 @@
   import Icon from "./Icon.svelte";
   import { slide } from "svelte/transition";
   import { matchesQuery } from "./util";
+  import { clipboardKeys } from "./actions/clipboardKeys";
 
   let {
     open = $bindable(false),
@@ -214,6 +215,7 @@ print(greet("world"))  # => 12345`;
           placeholder="Search settings…"
           aria-label="Search settings"
           class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          use:clipboardKeys
           bind:value={search}
         />
       </div>

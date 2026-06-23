@@ -4,6 +4,7 @@
   // `commands` (each with its own `run`); matching/ranking lives in command.ts.
   import Icon from "./Icon.svelte";
   import { filterCommands, type CommandItem } from "./command";
+  import { clipboardKeys } from "./actions/clipboardKeys";
 
   let {
     open = $bindable(false),
@@ -68,6 +69,7 @@
         <Icon name="search" size={16} class="shrink-0 text-muted" />
         <input
           use:autofocus
+          use:clipboardKeys
           bind:value={query}
           oninput={() => (activeIndex = 0)}
           onkeydown={onKey}

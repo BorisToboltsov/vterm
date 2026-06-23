@@ -864,6 +864,35 @@ fn uuid_like() -> String {
     format!("srv-{nanos:x}")
 }
 
+/// Read UTF-8 text from the OS clipboard in the Rust process.
+///
+/// The frontend deliberately avoids `navigator.clipboard.readText()`: in
+/// WKWebView (macOS) it pops WebKit's "Paste" permission button, and the app
+/// ships without a native Edit menu (so the terminal keeps ⌘C/⌘V). Reading the
+/// pasteboard here — the same thing `tauri-plugin-clipboard-manager` would do —
+/// never touches the webview, so no prompt appears. Returns the empty string for
+/// an empty/non-text clipboard; errors on platforms without a native reader so
+/// the caller can fall back to the web API.
+#[tauri::command]
+fn read_clipboard_text() -> AppResult<String> {
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+        // SAFETY: reading the general pasteboard via AppKit. NSPasteboard reads
+        // are thread-safe, so this is fine off the main thread (Tauri command
+        // pool). We only borrow the returned string to copy it into a Rust String.
+        let text =
+            unsafe { NSPasteboard::generalPasteboard().stringForType(NSPasteboardTypeString) };
+        Ok(text.map(|s| s.to_string()).unwrap_or_default())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(AppError::Message(
+            "native clipboard read is only implemented on macOS".into(),
+        ))
+    }
+}
+
 /// Build the native application menu. On macOS the items live in the standard
 /// "vterm" app menu (Settings with ⌘,) and a Help menu; on Windows/Linux they
 /// appear in an in-window menu bar (File → Settings…, Help → About).
@@ -968,7 +997,8 @@ pub fn run() {
             sftp_delete,
             sftp_upload,
             sftp_download,
-            sftp_cancel
+            sftp_cancel,
+            read_clipboard_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

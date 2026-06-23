@@ -329,3 +329,12 @@ export interface SftpProgress {
 export function sftpCancel(transferId: string): Promise<void> {
   return invoke<void>("sftp_cancel", { transferId });
 }
+
+/**
+ * Read clipboard text in the Rust process (macOS NSPasteboard). Bypasses
+ * WKWebView so `navigator.clipboard.readText()`'s "Paste" prompt never appears.
+ * Rejects on platforms without a native reader so the caller can fall back.
+ */
+export function readClipboardText(): Promise<string> {
+  return invoke<string>("read_clipboard_text");
+}

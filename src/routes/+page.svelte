@@ -42,6 +42,7 @@
     type Tab,
   } from "$lib/stores/tabs.svelte";
   import { resizableHandle } from "$lib/actions/drag";
+  import { clipboardKeys } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
   import SftpPanel from "$lib/SftpPanel.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
@@ -818,6 +819,7 @@
           type="password"
           data-testid="secret-input"
           use:focusOnMount
+          use:clipboardKeys
           class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
           bind:value={secretValue}
         />

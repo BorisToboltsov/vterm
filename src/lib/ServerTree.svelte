@@ -12,6 +12,7 @@
     type TreeRow,
   } from "./tree";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { clipboardKeys } from "./actions/clipboardKeys";
   import { layout } from "./stores/layout.svelte";
   import Icon from "./Icon.svelte";
   import { fade } from "svelte/transition";
@@ -193,6 +194,7 @@
         data-testid="server-search"
         class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
         placeholder="Search servers, tags…"
+        use:clipboardKeys
         bind:value={serverSearch}
       />
       <button

@@ -5410,6 +5410,7 @@ version = "0.7.11"
 dependencies = [
  "directories",
  "keyring",
+ "objc2-app-kit",
  "russh",
  "russh-sftp",
  "serde",
