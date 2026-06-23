@@ -123,9 +123,13 @@ pnpm test:coverage
   - **primary / green** (действие Connect): `bg-green-600 text-white hover:bg-green-500`
     (+ `disabled:opacity-40`). Connect **всегда зелёный**.
   - **neutral**: `bg-edge hover:bg-accent hover:text-panel-alt`.
-- **Иконочные кнопки в тулбарах** (collapse/expand, refresh, new folder, add server,
-  upload): `flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white`,
-  иконка `size=14`.
+- **Иконочные кнопки в тулбарах** (collapse/expand, refresh, new folder, new file,
+  add server, upload): `flex items-center rounded p-1.5 text-muted hover:bg-edge
+  hover:text-white`, иконка `size=14`. **Создание сущности — иконкой с «+»:** новую
+  папку обозначает `folderPlus`, новый файл и «добавить сервер» — `filePlus` (лист с
+  «+», в стиле иконки файла). «Добавить сервер» живёт в тулбаре списка серверов
+  (рядом с «Новая папка»), **не** в верхней панели; «Новый файл» — в тулбаре SFTP
+  (рядом с «Новая папка», создаёт пустой файл через `sftp_create_file`).
 - **Иконочные действия в строках** (edit/download/upload по ховеру строки):
   `rounded p-0.5 text-muted hover:text-accent`; **удаление** —
   `hover:text-danger` (иконка `trash`); иконка `size=13`.

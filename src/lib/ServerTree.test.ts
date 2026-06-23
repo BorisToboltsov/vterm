@@ -108,4 +108,11 @@ describe("ServerTree", () => {
     await userEvent.click(screen.getByLabelText("New folder"));
     expect(onNewFolder).toHaveBeenCalledWith("");
   });
+
+  it("the toolbar add-server button (next to new-folder) requests a new server", async () => {
+    const onAddServer = vi.fn();
+    render(ServerTree, { props: { ...baseProps(), onAddServer } });
+    await userEvent.click(screen.getByTestId("add-server"));
+    expect(onAddServer).toHaveBeenCalledOnce();
+  });
 });

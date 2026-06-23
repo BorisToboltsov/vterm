@@ -203,6 +203,15 @@
       >
         <Icon name="folderPlus" size={14} />
       </button>
+      <button
+        data-testid="add-server"
+        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+        title="Add server"
+        aria-label="Add server"
+        onclick={onAddServer}
+      >
+        <Icon name="filePlus" size={14} />
+      </button>
     </div>
     <div
       bind:this={listEl}

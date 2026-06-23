@@ -261,6 +261,10 @@ export function sftpMkdir(sessionId: string, path: string): Promise<void> {
   return invoke<void>("sftp_mkdir", { sessionId, path });
 }
 
+export function sftpCreateFile(sessionId: string, path: string): Promise<void> {
+  return invoke<void>("sftp_create_file", { sessionId, path });
+}
+
 export function sftpDelete(
   sessionId: string,
   path: string,

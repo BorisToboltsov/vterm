@@ -110,6 +110,7 @@ describe("remaining invoke wrappers", () => {
       [api.fetchMetrics("s"), "fetch_metrics", { sessionId: "s" }],
       [api.sftpHome("s"), "sftp_home", { sessionId: "s" }],
       [api.sftpMkdir("s", "/d"), "sftp_mkdir", { sessionId: "s", path: "/d" }],
+      [api.sftpCreateFile("s", "/f"), "sftp_create_file", { sessionId: "s", path: "/f" }],
       [api.sftpDelete("s", "/d", true), "sftp_delete", { sessionId: "s", path: "/d", isDir: true }],
       [
         api.sftpUpload("s", "t", "/l", "/r"),

@@ -181,7 +181,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   ридера, пустая строка если оба пути упали;
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
-  `exportBackup`/`importBackup` и backup-диалоги);
+  `sftpCreateFile` → `sftp_create_file`, `exportBackup`/`importBackup` и
+  backup-диалоги);
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора);
 - `icons.ts` — целостность реестра иконок;
@@ -234,10 +235,12 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `Modal.test.ts` — `Modal` (рендер/закрытие по фону и Escape; a11y: `role="dialog"`/
   `aria-modal`/`aria-label`, автофокус первого контроля, фокус-трап Tab/Shift+Tab по
   кругу) и `ConfirmDialog` (колбэки confirm/cancel, accent/danger).
-- `TopBar.test.ts` — статус и кнопка «Add server».
+- `TopBar.test.ts` — рендер статуса подключения; проверка, что кнопки «Add server»
+  в верхней панели больше нет (перенесена в тулбар списка серверов).
 - `ServerTree.test.ts` — рендер папок/серверов, выбор, dbl-click → connect,
-  сворачивание папки, фильтр поиска, кнопка «New folder», пустое состояние с
-  CTA «Добавить сервер» (`empty-add-server` → `onAddServer`).
+  сворачивание папки, фильтр поиска, кнопка «New folder», кнопка «Add server» в
+  тулбаре (`add-server` → `onAddServer`), пустое состояние с CTA «Добавить сервер»
+  (`empty-add-server` → `onAddServer`).
 - `SettingsPanel.test.ts` — секция Backup: экспорт по выбранному пути со снимком
   настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
   визуальный пикер тем (свёрнут/раскрытие, выбор → `aria-checked`), сетка шрифтов с

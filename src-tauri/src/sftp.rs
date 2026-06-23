@@ -100,6 +100,14 @@ pub async fn mkdir(sftp: &SftpSession, path: &str) -> AppResult<()> {
         .map_err(|e| e.to_string().into())
 }
 
+/// Create an empty regular file at `path` (fails if it already exists is left
+/// to the server; russh-sftp `create` truncates, so callers guard duplicates).
+pub async fn create_file(sftp: &SftpSession, path: &str) -> AppResult<()> {
+    let mut f = sftp.create(path).await.map_err(|e| e.to_string())?;
+    f.shutdown().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 pub async fn remove(sftp: &SftpSession, path: &str, is_dir: bool) -> AppResult<()> {
     if is_dir {
         sftp.remove_dir(path)

@@ -7,6 +7,7 @@
     pickSavePath,
     pickUploadFiles,
     sftpCancel,
+    sftpCreateFile,
     sftpDelete,
     sftpDownload,
     sftpHome,
@@ -50,6 +51,8 @@
 
   let showMkdir = $state(false);
   let mkdirName = $state("");
+  let showMkfile = $state(false);
+  let mkfileName = $state("");
   let confirmTarget = $state<FileEntry | null>(null);
 
   const unlisten: UnlistenFn[] = [];
@@ -133,6 +136,20 @@
       showMkdir = false;
       await refresh();
       notifySuccess(`Папка «${name}» создана`);
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
+  async function createFile() {
+    const name = mkfileName.trim();
+    if (!name) return;
+    try {
+      await sftpCreateFile(sessionId, join(cwd, name));
+      mkfileName = "";
+      showMkfile = false;
+      await refresh();
+      notifySuccess(`Файл «${name}» создан`);
     } catch (e) {
       notifyError(String(e));
     }
@@ -251,9 +268,24 @@
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
           title="New folder"
           aria-label="New folder"
-          onclick={() => (showMkdir = !showMkdir)}
+          onclick={() => {
+            showMkdir = !showMkdir;
+            if (showMkdir) showMkfile = false;
+          }}
         >
           <Icon name="folderPlus" size={14} />
+        </button>
+        <button
+          data-testid="sftp-new-file"
+          class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+          title="New file"
+          aria-label="New file"
+          onclick={() => {
+            showMkfile = !showMkfile;
+            if (showMkfile) showMkdir = false;
+          }}
+        >
+          <Icon name="filePlus" size={14} />
         </button>
         <button
           class="ml-auto flex items-center rounded p-1.5 text-muted hover:text-accent"
@@ -307,6 +339,23 @@
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
         placeholder="Folder name"
         bind:value={mkdirName}
+      />
+      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">OK</button>
+    </form>
+  {/if}
+
+  {#if showMkfile}
+    <form
+      class="flex gap-1 border-b border-edge px-2 py-1"
+      onsubmit={(e) => {
+        e.preventDefault();
+        createFile();
+      }}
+    >
+      <input
+        class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+        placeholder="File name"
+        bind:value={mkfileName}
       />
       <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">OK</button>
     </form>

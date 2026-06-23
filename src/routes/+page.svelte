@@ -530,7 +530,7 @@
 <svelte:window onkeydown={onGlobalKey} />
 
 <div class="flex h-screen w-screen flex-col">
-  <TopBar {status} onAdd={() => openAdd()} />
+  <TopBar {status} />
 
   <div class="flex min-h-0 flex-1">
     <ServerTree

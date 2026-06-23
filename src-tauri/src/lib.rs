@@ -832,6 +832,16 @@ async fn sftp_mkdir(state: State<'_, AppState>, session_id: String, path: String
 }
 
 #[tauri::command]
+async fn sftp_create_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<()> {
+    let sftp = get_sftp(&state, &session_id).await?;
+    sftp::create_file(&sftp, &path).await
+}
+
+#[tauri::command]
 async fn sftp_delete(
     state: State<'_, AppState>,
     session_id: String,
@@ -1046,6 +1056,7 @@ pub fn run() {
             sftp_home,
             sftp_list,
             sftp_mkdir,
+            sftp_create_file,
             sftp_delete,
             sftp_upload,
             sftp_download,
