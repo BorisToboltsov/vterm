@@ -31,6 +31,7 @@ tauri-plugin-dialog = "2.7.1"
 keyring = { version = "^3", features = ["apple-native", "windows-native"] }
 thiserror = "2"
 zeroize = "1"
+portable-pty = "0.9.0"
 
 # Read the OS clipboard in-process so the frontend can avoid
 # navigator.clipboard.readText() and WebKit's "Paste" permission prompt.

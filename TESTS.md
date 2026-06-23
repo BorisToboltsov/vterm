@@ -91,6 +91,9 @@ pnpm check
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
   файловый round-trip во временном каталоге (`tempfile`);
+- `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
+  shell-вкладки (`portable-pty`) проверяется вживую/E2E, а не юнит-тестом
+  (нужен реальный tty + Tauri-события).
 - `ssh.rs` — `HostKeyPolicy::from_str`, имена событий, `key_is_encrypted` на
   сгенерированных `ssh-keygen` ключах (тест мягко пропускается, если
   `ssh-keygen` недоступен); `find_default_key` (порядок предпочтения OpenSSH,

@@ -8,6 +8,7 @@ import {
   moveTab,
   nextTabIndex,
   openTab,
+  openLocalTab,
   reconnectTab,
   setTabStatus,
   statusLabel,
@@ -49,6 +50,17 @@ describe("openTab / closeTab", () => {
     expect(tabsState.list).toHaveLength(1);
     expect(tabsState.activeId).toBe(id);
     expect(findTab(id)?.status).toBe("connecting");
+    expect(findTab(id)?.kind).toBe("ssh");
+  });
+
+  it("openLocalTab adds an active local tab with no server", () => {
+    const id = openLocalTab();
+    const tab = findTab(id);
+    expect(tabsState.activeId).toBe(id);
+    expect(tab?.kind).toBe("local");
+    expect(tab?.serverId).toBe("");
+    expect(tab?.alias).toBe("Local shell");
+    expect(tab?.status).toBe("connecting");
   });
 
   it("focuses the neighbour after closing the active tab", () => {

@@ -53,6 +53,14 @@ pnpm test:coverage
   в `lib.rs`) и каналы событий (`term://…`, `sftp://…`, `menu://…`). Новый
   функционал такого рода: команда в бэкенде + типизированная обёртка в
   [src/lib/api.ts](src/lib/api.ts). Не дублируй бизнес-логику на фронте. (ADR 0001)
+  - **Единый контракт терминала.** SSH-сессии ([ssh.rs](src-tauri/src/ssh.rs)) и
+    локальные shell-вкладки ([pty.rs](src-tauri/src/pty.rs), `portable-pty`)
+    используют **один** канал событий (`term://out|closed/{id}`) и **одни** команды
+    (`write_to_terminal`/`resize_pty`/`disconnect`, маршрутизация по `session_id`),
+    поэтому [Terminal.svelte](src/lib/Terminal.svelte) общий для обоих (проп
+    `local`). Новый вид терминала подключай к этому же контракту, а не отдельным.
+
+
 - **Ошибки — типизированы.** В Rust возвращай `AppResult<T>`
   ([error.rs](src-tauri/src/error.rs)), не `String`. Семантические случаи —
   отдельные варианты (`AuthRejected`, `HostKeyRejected`, `NoSession`,

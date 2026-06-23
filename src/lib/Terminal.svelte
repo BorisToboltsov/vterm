@@ -10,6 +10,7 @@
     closedEvent,
     connectSession,
     disconnect,
+    openLocalTerminal,
     outputEvent,
     resizePty,
     writeToTerminal,
@@ -24,12 +25,15 @@
     serverId,
     secret,
     remember,
+    local = false,
     onstatus,
   }: {
     sessionId: string;
     serverId: string;
     secret: string | null;
     remember: boolean;
+    /** Local-shell PTY tab instead of an SSH connection. */
+    local?: boolean;
     onstatus?: (status: Status, detail?: string) => void;
   } = $props();
 
@@ -133,26 +137,31 @@
     unlisten.push(
       await listen(closedEvent(sessionId), () => {
         onstatus?.("closed");
-        term.write("\r\n\x1b[33m[connection closed]\x1b[0m\r\n");
+        const msg = local ? "[shell exited]" : "[connection closed]";
+        term.write(`\r\n\x1b[33m${msg}\x1b[0m\r\n`);
       }),
     );
 
     onstatus?.("connecting");
     try {
-      await connectSession(
-        sessionId,
-        serverId,
-        secret,
-        remember,
-        term.cols,
-        term.rows,
-        {
-          termType: settings.termType,
-          connectTimeout: settings.connectTimeout,
-          keepaliveInterval: settings.keepaliveInterval,
-          hostKeyPolicy: settings.hostKeyPolicy,
-        },
-      );
+      if (local) {
+        await openLocalTerminal(sessionId, term.cols, term.rows);
+      } else {
+        await connectSession(
+          sessionId,
+          serverId,
+          secret,
+          remember,
+          term.cols,
+          term.rows,
+          {
+            termType: settings.termType,
+            connectTimeout: settings.connectTimeout,
+            keepaliveInterval: settings.keepaliveInterval,
+            hostKeyPolicy: settings.hostKeyPolicy,
+          },
+        );
+      }
       onstatus?.("connected");
       term.focus();
     } catch (err) {

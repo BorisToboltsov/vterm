@@ -1,6 +1,7 @@
 mod backup;
 mod error;
 mod model;
+mod pty;
 mod secrets;
 mod sftp;
 mod ssh;
@@ -27,6 +28,8 @@ struct AppState {
     /// Explicit folder paths (incl. empty/nested) for organizing the server list.
     folders: Mutex<Vec<String>>,
     sessions: tokio::sync::Mutex<HashMap<String, Arc<SshSession>>>,
+    /// Live local-shell PTYs (the "+" terminal tabs), keyed by session id.
+    local_ptys: Mutex<HashMap<String, Arc<pty::LocalPty>>>,
     /// Cancellation flags for in-progress folder downloads, keyed by transfer id.
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Last `/proc/stat` (idle, total) jiffies per session, for CPU% deltas.
@@ -530,14 +533,44 @@ async fn connect_session(
     Ok(())
 }
 
+/// Open a local-shell terminal (PTY on the machine running vterm) under the
+/// per-tab `session_id`. Output/close events reuse the `term://…` channels, so
+/// the frontend terminal widget drives it exactly like an SSH session.
+#[tauri::command]
+async fn open_local_terminal(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+) -> AppResult<()> {
+    // Replace any existing session registered under this id.
+    state.sessions.lock().await.remove(&session_id);
+    state.local_ptys.lock().unwrap().remove(&session_id);
+
+    let local = pty::open_local(app, session_id.clone(), cols, rows)?;
+    state
+        .local_ptys
+        .lock()
+        .unwrap()
+        .insert(session_id, Arc::new(local));
+    Ok(())
+}
+
 #[tauri::command]
 async fn write_to_terminal(
     state: State<'_, AppState>,
     session_id: String,
     data: Vec<u8>,
 ) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    session.write_input(data).await
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        return session.write_input(data).await;
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    match local {
+        Some(pty) => pty.write_input(data),
+        None => Err(AppError::NoSession),
+    }
 }
 
 #[tauri::command]
@@ -549,6 +582,11 @@ async fn resize_pty(
 ) -> AppResult<()> {
     if let Ok(session) = session_arc(&state, &session_id).await {
         session.resize(cols, rows).await?;
+        return Ok(());
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        pty.resize(cols, rows)?;
     }
     Ok(())
 }
@@ -556,6 +594,8 @@ async fn resize_pty(
 #[tauri::command]
 async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
     state.sessions.lock().await.remove(&session_id);
+    // Removing the LocalPty drops it, which kills the child shell.
+    state.local_ptys.lock().unwrap().remove(&session_id);
     state.cpu_samples.lock().unwrap().remove(&session_id);
     Ok(())
 }
@@ -961,6 +1001,7 @@ pub fn run() {
         servers: Mutex::new(store::load_servers()),
         folders: Mutex::new(store::load_folders()),
         sessions: tokio::sync::Mutex::new(HashMap::new()),
+        local_ptys: Mutex::new(HashMap::new()),
         cancels: Mutex::new(HashMap::new()),
         cpu_samples: Mutex::new(HashMap::new()),
         net_samples: Mutex::new(HashMap::new()),
@@ -997,6 +1038,7 @@ pub fn run() {
             import_backup,
             connect_plan,
             connect_session,
+            open_local_terminal,
             write_to_terminal,
             resize_pty,
             disconnect,

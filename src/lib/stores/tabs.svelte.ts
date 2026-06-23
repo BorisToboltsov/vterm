@@ -4,10 +4,13 @@
 
 export interface Tab {
   sessionId: string;
+  /** "ssh" = remote server connection; "local" = local shell PTY. */
+  kind: "ssh" | "local";
+  /** SSH only: the server profile id ("" for local tabs). */
   serverId: string;
   /** Snapshot of the server alias at open time (UI falls back to it). */
   alias: string;
-  /** Just-typed secret, or null to use the keychain. */
+  /** Just-typed secret, or null to use the keychain (unused for local). */
   secret: string | null;
   remember: boolean;
   /** Human-readable status label (see statusLabel). */
@@ -83,10 +86,28 @@ export function openTab(
 ): string {
   const tab: Tab = {
     sessionId: crypto.randomUUID(),
+    kind: "ssh",
     serverId,
     alias,
     secret,
     remember,
+    status: "connecting",
+    gen: 0,
+  };
+  tabsState.list = [...tabsState.list, tab];
+  tabsState.activeId = tab.sessionId;
+  return tab.sessionId;
+}
+
+/** Open a local-shell terminal tab (PTY on the machine running vterm). */
+export function openLocalTab(): string {
+  const tab: Tab = {
+    sessionId: crypto.randomUUID(),
+    kind: "local",
+    serverId: "",
+    alias: "Local shell",
+    secret: null,
+    remember: false,
     status: "connecting",
     gen: 0,
   };

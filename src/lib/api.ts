@@ -168,6 +168,15 @@ export function connectSession(
   });
 }
 
+/** Open a local-shell terminal (a PTY on the machine running vterm). */
+export function openLocalTerminal(
+  sessionId: string,
+  cols: number,
+  rows: number,
+): Promise<void> {
+  return invoke<void>("open_local_terminal", { sessionId, cols, rows });
+}
+
 /** Send user keystrokes (UTF-8 bytes) to the remote shell. */
 export function writeToTerminal(
   sessionId: string,

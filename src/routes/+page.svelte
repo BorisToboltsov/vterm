@@ -36,6 +36,7 @@
     moveTab,
     nextTabIndex,
     openTab as openTabStore,
+    openLocalTab,
     reconnectTab as reconnectTabStore,
     setTabStatus,
     tabsState,
@@ -598,6 +599,16 @@
               </button>
             </div>
           {/each}
+          <!-- Open a local-shell terminal tab (same "+" as the top bar). -->
+          <button
+            data-testid="new-local-terminal"
+            class="flex shrink-0 items-center rounded-none px-2.5 text-muted hover:bg-edge hover:text-white"
+            title="Открыть локальный терминал"
+            aria-label="Открыть локальный терминал"
+            onclick={() => openLocalTab()}
+          >
+            <Icon name="plus" size={14} />
+          </button>
         </div>
 
         <div class="flex min-h-0 flex-1">
@@ -623,11 +634,12 @@
                     serverId={tab.serverId}
                     secret={tab.secret}
                     remember={tab.remember}
+                    local={tab.kind === "local"}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
                       if (st === "error" && d?.includes("auth-rejected")) {
                         reauth(tab.sessionId);
-                      } else if (st === "closed" && settings.autoReconnect) {
+                      } else if (st === "closed" && settings.autoReconnect && tab.kind === "ssh") {
                         setTimeout(() => {
                           if (findTab(tab.sessionId)) reconnectTabStore(tab.sessionId);
                         }, 1000);
@@ -638,7 +650,7 @@
               </div>
             {/each}
           </div>
-          {#if tabsState.activeId}
+          {#if tabsState.activeId && activeTab?.kind === "ssh"}
             {#if !layout.sftpCollapsed}
               <div
                 role="separator"
@@ -686,7 +698,7 @@
     </main>
   </div>
 
-  {#if settings.showStatusBar && tabsState.activeId && activeTab?.status.startsWith("Connected")}
+  {#if settings.showStatusBar && tabsState.activeId && activeTab?.kind === "ssh" && activeTab?.status.startsWith("Connected")}
     {#key tabsState.activeId}
       <StatusBar sessionId={tabsState.activeId} />
     {/key}

@@ -98,6 +98,11 @@ describe("remaining invoke wrappers", () => {
       [api.forgetSecrets("id1"), "forget_secrets", { id: "id1" }],
       [api.listFolders(), "list_folders", undefined as never],
       [api.readClipboardText(), "read_clipboard_text", undefined as never],
+      [
+        api.openLocalTerminal("s", 80, 24),
+        "open_local_terminal",
+        { sessionId: "s", cols: 80, rows: 24 },
+      ],
       [api.deleteFolder("Prod"), "delete_folder", { path: "Prod" }],
       [api.connectPlan("id1"), "connect_plan", { id: "id1" }],
       [api.resizePty("s", 80, 24), "resize_pty", { sessionId: "s", cols: 80, rows: 24 }],

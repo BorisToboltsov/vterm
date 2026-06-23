@@ -57,7 +57,12 @@
       "Bash(timeout 6 curl -sI https://registry.npmjs.org/@tauri-apps/plugin-clipboard-manager)",
       "Bash(timeout 6 curl -sI https://static.crates.io/crates/tauri-plugin-clipboard-manager/2.2.2/download)",
       "Bash(timeout 6 curl -sI https://github.com)",
-      "Bash(perl -i -pe 's/^const MARK = \".*\";$/const MARK = \"\\\\\\\\uE000\";/ if $. == 17' src/lib/markdown.ts)"
+      "Bash(perl -i -pe 's/^const MARK = \".*\";$/const MARK = \"\\\\\\\\uE000\";/ if $. == 17' src/lib/markdown.ts)",
+      "Bash(timeout 6 curl -sI https://static.crates.io/crates/portable-pty/0.8.1/download)",
+      "Bash(sed -n '/function tabAlias/,/}/p' src/routes/+page.svelte)",
+      "Bash(sed -n '/coverage:/,/}/p' vitest.config.ts)",
+      "Bash(api.ts)",
+      "Bash(grep -n \"stores/tabs.svelte.ts\\\\|`api.ts`\" TESTS.md)"
     ]
   }
 }
