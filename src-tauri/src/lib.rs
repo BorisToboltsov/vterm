@@ -38,6 +38,10 @@ struct AppState {
     net_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
     /// Last cumulative disk (read, written) bytes + instant per session, for rates.
     disk_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// Last per-core `/proc/stat` (idle, total) jiffies per session, for per-core CPU%.
+    core_samples: Mutex<HashMap<String, Vec<(u64, u64)>>>,
+    /// Last cumulative (ctxt, intr) counters + instant per session, for rate deltas.
+    ctxintr_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
 }
 
 /// Clone out the session for `session_id`, releasing the registry lock before
@@ -597,6 +601,8 @@ async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult
     // Removing the LocalPty drops it, which kills the child shell.
     state.local_ptys.lock().unwrap().remove(&session_id);
     state.cpu_samples.lock().unwrap().remove(&session_id);
+    state.core_samples.lock().unwrap().remove(&session_id);
+    state.ctxintr_samples.lock().unwrap().remove(&session_id);
     Ok(())
 }
 
@@ -800,6 +806,337 @@ async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> AppRes
     Ok(m)
 }
 
+// ── Detailed metrics (monitoring overlay; fetched only while the page is open) ──
+
+/// Richer, heavier probe than the status bar's `METRICS_SCRIPT`. Run only when
+/// the monitoring overlay is open. Lines are `key=value`; multi-record values
+/// (partitions, TCP states) pack records separated by `;`/spaces.
+const DETAIL_SCRIPT: &str = "\
+printf 'percpu=%s\\n' \"$(awk '/^cpu[0-9]/{idle=$5+$6; tot=0; for(i=2;i<=NF;i++)tot+=$i; printf \"%d,%d \",idle,tot}' /proc/stat 2>/dev/null)\"; \
+printf 'memdetail=%s\\n' \"$(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^MemAvailable:/{a=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}END{printf \"%d %d %d %d %d\",t*1024,f*1024,a*1024,b*1024,c*1024}' /proc/meminfo 2>/dev/null)\"; \
+printf 'topmem=%s\\n' \"$(ps -eo pmem=,comm= 2>/dev/null | sort -rn | head -3 | awk '{printf \"%s %s%%, \",$2,$1}' | sed 's/, $//')\"; \
+printf 'parts=%s\\n' \"$(df -P -T -k 2>/dev/null | awk 'NR>1 && $2!~/^(tmpfs|devtmpfs|squashfs|overlay|proc|sysfs|cgroup|cgroup2|mqueue|debugfs|tracefs|none)$/ {printf \"%s,%s,%d,%d;\",$7,$2,$3*1024,$4*1024}')\"; \
+printf 'inodes=%s\\n' \"$(df -P -T -i 2>/dev/null | awk 'NR>1 && $2!~/^(tmpfs|devtmpfs|squashfs|overlay|proc|sysfs|cgroup|cgroup2|mqueue|debugfs|tracefs|none)$/ {printf \"%s,%d,%d;\",$7,$3,$4}')\"; \
+printf 'filenr=%s\\n' \"$(awk '{print $1, $3}' /proc/sys/fs/file-nr 2>/dev/null)\"; \
+printf 'ulimit=%s\\n' \"$( (ulimit -Sn; ulimit -Hn) 2>/dev/null | tr '\\n' ' ')\"; \
+printf 'psicpu=%s\\n' \"$(grep '^some' /proc/pressure/cpu 2>/dev/null)\"; \
+printf 'psimem=%s\\n' \"$(grep '^some' /proc/pressure/memory 2>/dev/null)\"; \
+printf 'psiio=%s\\n' \"$(grep '^some' /proc/pressure/io 2>/dev/null)\"; \
+printf 'tcp=%s\\n' \"$(ss -tanH 2>/dev/null | awk '{print $1}' | sort | uniq -c | awk '{printf \"%s:%s \",$2,$1}')\"; \
+printf 'ctxintr=%s\\n' \"$(awk '/^ctxt /{c=$2}/^intr /{i=$2}END{printf \"%d %d\",c,i}' /proc/stat 2>/dev/null)\"; \
+printf 'procs=%s\\n' \"$(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' /proc/stat 2>/dev/null)\"";
+
+/// Pressure Stall Information (PSI) `some` averages over 10/60/300 s windows.
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Psi {
+    avg10: f64,
+    avg60: f64,
+    avg300: f64,
+}
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Partition {
+    mount: String,
+    fstype: String,
+    used: u64,
+    total: u64,
+    inodes_used: Option<u64>,
+    inodes_total: Option<u64>,
+}
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct TcpState {
+    state: String,
+    count: u64,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct MetricsDetail {
+    /// Per-core CPU utilization 0–100 (empty on the first poll of a session).
+    per_cpu: Vec<f64>,
+    mem_total: Option<u64>,
+    mem_free: Option<u64>,
+    mem_available: Option<u64>,
+    mem_buffers: Option<u64>,
+    mem_cached: Option<u64>,
+    /// Top processes by memory, "name N%" comma-joined.
+    top_mem: String,
+    partitions: Vec<Partition>,
+    /// System-wide open file descriptors vs the `fs.file-max` ceiling.
+    file_nr_used: Option<u64>,
+    file_nr_max: Option<u64>,
+    ulimit_soft: Option<u64>,
+    ulimit_hard: Option<u64>,
+    psi_cpu: Option<Psi>,
+    psi_mem: Option<Psi>,
+    psi_io: Option<Psi>,
+    tcp: Vec<TcpState>,
+    /// Context switches / interrupts per second (rate from cumulative counters).
+    ctxt_rate: Option<u64>,
+    intr_rate: Option<u64>,
+    procs_running: Option<u64>,
+    procs_blocked: Option<u64>,
+}
+
+/// Parse `key=a,b a,b …` per-core jiffies into `(idle, total)` pairs.
+fn parse_percpu(raw: &str) -> Vec<(u64, u64)> {
+    let Some(line) = raw.lines().find_map(|l| l.strip_prefix("percpu=")) else {
+        return Vec::new();
+    };
+    line.split_whitespace()
+        .filter_map(|tok| {
+            let (idle, total) = tok.split_once(',')?;
+            Some((idle.parse().ok()?, total.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Per-core utilization from previous and current `(idle, total)` jiffies.
+/// Cores whose totals didn't advance (or counts changed) yield 0.
+fn percpu_delta(prev: &[(u64, u64)], cur: &[(u64, u64)]) -> Vec<f64> {
+    if prev.len() != cur.len() {
+        return Vec::new();
+    }
+    cur.iter()
+        .zip(prev.iter())
+        .map(|(&(ci, ct), &(pi, pt))| {
+            let dt = ct.saturating_sub(pt);
+            let di = ci.saturating_sub(pi);
+            if dt > 0 {
+                ((dt - di) as f64 / dt as f64 * 100.0).clamp(0.0, 100.0)
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
+/// Parse a `some avg10=x avg60=y avg300=z total=…` PSI line.
+fn parse_psi(raw: &str, key: &str) -> Option<Psi> {
+    let prefix = format!("{key}=");
+    let line = raw.lines().find_map(|l| l.strip_prefix(prefix.as_str()))?;
+    if line.trim().is_empty() {
+        return None;
+    }
+    let mut p = Psi::default();
+    for tok in line.split_whitespace() {
+        if let Some((k, v)) = tok.split_once('=') {
+            let val: f64 = v.parse().unwrap_or(0.0);
+            match k {
+                "avg10" => p.avg10 = val,
+                "avg60" => p.avg60 = val,
+                "avg300" => p.avg300 = val,
+                _ => {}
+            }
+        }
+    }
+    Some(p)
+}
+
+/// Merge the `parts=` (space/used) and `inodes=` records into partitions, keyed
+/// by mount point.
+fn parse_partitions(raw: &str) -> Vec<Partition> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("parts="))
+        .unwrap_or("");
+    let inodes_line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("inodes="))
+        .unwrap_or("");
+
+    let mut inode_map: HashMap<String, (u64, u64)> = HashMap::new();
+    for rec in inodes_line.split(';').filter(|r| !r.is_empty()) {
+        let f: Vec<&str> = rec.split(',').collect();
+        if f.len() == 3 {
+            if let (Ok(total), Ok(used)) = (f[1].parse(), f[2].parse()) {
+                inode_map.insert(f[0].to_string(), (used, total));
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for rec in line.split(';').filter(|r| !r.is_empty()) {
+        let f: Vec<&str> = rec.split(',').collect();
+        if f.len() != 4 {
+            continue;
+        }
+        let (Ok(total), Ok(used)) = (f[2].parse::<u64>(), f[3].parse::<u64>()) else {
+            continue;
+        };
+        let (inodes_used, inodes_total) = match inode_map.get(f[0]) {
+            Some(&(u, t)) => (Some(u), Some(t)),
+            None => (None, None),
+        };
+        out.push(Partition {
+            mount: f[0].to_string(),
+            fstype: f[1].to_string(),
+            used,
+            total,
+            inodes_used,
+            inodes_total,
+        });
+    }
+    out
+}
+
+/// Parse the `tcp=STATE:count …` line into per-state counts.
+fn parse_tcp(raw: &str) -> Vec<TcpState> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("tcp="))
+        .unwrap_or("");
+    line.split_whitespace()
+        .filter_map(|tok| {
+            let (state, count) = tok.split_once(':')?;
+            Some(TcpState {
+                state: state.to_string(),
+                count: count.parse().ok()?,
+            })
+        })
+        .collect()
+}
+
+/// Build the static part of `MetricsDetail` (everything not needing a delta).
+fn parse_detail(raw: &str) -> MetricsDetail {
+    let mut d = MetricsDetail::default();
+    if let Some(line) = raw.lines().find_map(|l| l.strip_prefix("memdetail=")) {
+        let n: Vec<u64> = line
+            .split_whitespace()
+            .filter_map(|v| v.parse().ok())
+            .collect();
+        if n.len() == 5 {
+            d.mem_total = Some(n[0]);
+            d.mem_free = Some(n[1]);
+            d.mem_available = Some(n[2]);
+            d.mem_buffers = Some(n[3]);
+            d.mem_cached = Some(n[4]);
+        }
+    }
+    d.top_mem = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("topmem="))
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    d.partitions = parse_partitions(raw);
+    if let Some((used, max)) = parse_pair(raw, "filenr") {
+        d.file_nr_used = Some(used);
+        d.file_nr_max = Some(max);
+    }
+    if let Some((soft, hard)) = parse_pair(raw, "ulimit") {
+        d.ulimit_soft = Some(soft);
+        d.ulimit_hard = Some(hard);
+    }
+    d.psi_cpu = parse_psi(raw, "psicpu");
+    d.psi_mem = parse_psi(raw, "psimem");
+    d.psi_io = parse_psi(raw, "psiio");
+    d.tcp = parse_tcp(raw);
+    if let Some((r, b)) = parse_pair(raw, "procs") {
+        d.procs_running = Some(r);
+        d.procs_blocked = Some(b);
+    }
+    d
+}
+
+/// Probe the active session for detailed metrics (monitoring overlay).
+#[tauri::command]
+async fn fetch_metrics_detail(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<MetricsDetail> {
+    let session = session_arc(&state, &session_id).await?;
+    let raw = session.run_command(DETAIL_SCRIPT).await?;
+    let mut d = parse_detail(&raw);
+
+    // Per-core CPU% needs two samples (per-core jiffies stored per session).
+    let cur = parse_percpu(&raw);
+    if !cur.is_empty() {
+        let mut samples = state.core_samples.lock().unwrap();
+        if let Some(prev) = samples.get(&session_id) {
+            d.per_cpu = percpu_delta(prev, &cur);
+        }
+        samples.insert(session_id.clone(), cur);
+    }
+
+    // Context-switch / interrupt rates (delta of cumulative counters).
+    if let Some(ci) = parse_pair(&raw, "ctxintr") {
+        (d.ctxt_rate, d.intr_rate) = rate_from(&state.ctxintr_samples, &session_id, ci);
+    }
+    Ok(d)
+}
+
+/// Distro-aware count of pending package updates + a reboot-required flag. Heavy
+/// (reads package caches), so it lives behind its own command and is fetched
+/// lazily by the monitoring overlay — never by the status bar.
+const PENDING_SCRIPT: &str = r#"
+reboot=0; [ -e /var/run/reboot-required ] && reboot=1
+mgr=""; up=""; sec=""
+if command -v apt-get >/dev/null 2>&1; then
+  mgr=apt
+  if [ -x /usr/lib/update-notifier/apt-check ]; then
+    r=$(/usr/lib/update-notifier/apt-check 2>&1); up=${r%%;*}; sec=${r##*;}
+  else
+    up=$(LANG=C apt-get -s upgrade 2>/dev/null | grep -c '^Inst')
+    sec=$(LANG=C apt-get -s upgrade 2>/dev/null | grep '^Inst' | grep -ic 'security')
+  fi
+elif command -v dnf >/dev/null 2>&1; then
+  mgr=dnf; up=$(dnf -q check-update 2>/dev/null | grep -c '^[a-zA-Z0-9]')
+elif command -v yum >/dev/null 2>&1; then
+  mgr=yum; up=$(yum -q check-update 2>/dev/null | grep -c '^[a-zA-Z0-9]')
+elif command -v checkupdates >/dev/null 2>&1; then
+  mgr=pacman; up=$(checkupdates 2>/dev/null | grep -c '.')
+elif command -v zypper >/dev/null 2>&1; then
+  mgr=zypper; up=$(zypper -q lu 2>/dev/null | grep -c '^v ')
+elif command -v apk >/dev/null 2>&1; then
+  mgr=apk; up=$(apk version -l '<' 2>/dev/null | grep -c '<')
+fi
+printf 'mgr=%s\nupdates=%s\nsecurity=%s\nreboot=%s\n' "$mgr" "$up" "$sec" "$reboot"
+"#;
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PendingUpdates {
+    /// Package manager detected ("apt"/"dnf"/…); empty if none recognized.
+    manager: String,
+    updates: Option<u64>,
+    security: Option<u64>,
+    reboot_required: bool,
+}
+
+fn parse_pending(raw: &str) -> PendingUpdates {
+    let mut p = PendingUpdates::default();
+    for line in raw.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let v = v.trim();
+        match k {
+            "mgr" => p.manager = v.to_string(),
+            "updates" => p.updates = v.parse().ok(),
+            "security" => p.security = v.parse().ok(),
+            "reboot" => p.reboot_required = v == "1",
+            _ => {}
+        }
+    }
+    p
+}
+
+/// Lazily probe the active session for pending package updates.
+#[tauri::command]
+async fn fetch_pending_updates(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<PendingUpdates> {
+    let session = session_arc(&state, &session_id).await?;
+    let raw = session.run_command(PENDING_SCRIPT).await?;
+    Ok(parse_pending(&raw))
+}
+
 // ── SFTP commands ─────────────────────────────────────────────────────────────
 
 /// Fetch (opening on first use) the SFTP session for a tab, then release the lock
@@ -961,6 +1298,9 @@ fn build_app_menu<R: tauri::Runtime>(
     let about = MenuItemBuilder::with_id("about", "About vterm").build(app)?;
     let help = MenuItemBuilder::with_id("help", "Help").build(app)?;
     let manual = MenuItemBuilder::with_id("manual", "Инструкция").build(app)?;
+    let monitoring = MenuItemBuilder::with_id("monitoring", "Мониторинг")
+        .accelerator("CmdOrCtrl+Shift+M")
+        .build(app)?;
 
     #[cfg(target_os = "macos")]
     {
@@ -970,6 +1310,7 @@ fn build_app_menu<R: tauri::Runtime>(
             .item(&about)
             .separator()
             .item(&settings)
+            .item(&monitoring)
             .separator()
             .hide()
             .hide_others()
@@ -990,6 +1331,7 @@ fn build_app_menu<R: tauri::Runtime>(
     {
         let file_menu = SubmenuBuilder::new(app, "File")
             .item(&settings)
+            .item(&monitoring)
             .separator()
             .quit()
             .build()?;
@@ -1016,6 +1358,8 @@ pub fn run() {
         cpu_samples: Mutex::new(HashMap::new()),
         net_samples: Mutex::new(HashMap::new()),
         disk_samples: Mutex::new(HashMap::new()),
+        core_samples: Mutex::new(HashMap::new()),
+        ctxintr_samples: Mutex::new(HashMap::new()),
     };
 
     tauri::Builder::default()
@@ -1028,6 +1372,7 @@ pub fn run() {
                 "about" => app.emit("menu://about", ()),
                 "help" => app.emit("menu://help", ()),
                 "manual" => app.emit("menu://manual", ()),
+                "monitoring" => app.emit("menu://monitoring", ()),
                 _ => Ok(()),
             };
         })
@@ -1053,6 +1398,8 @@ pub fn run() {
             resize_pty,
             disconnect,
             fetch_metrics,
+            fetch_metrics_detail,
+            fetch_pending_updates,
             sftp_home,
             sftp_list,
             sftp_mkdir,
@@ -1202,6 +1549,137 @@ mod tests {
         assert_eq!(m.net_conns, Some(42));
         assert_eq!(m.kernel, "6.1.0");
         assert_eq!(m.server_time, "14:05 UTC");
+    }
+
+    // ── detailed metrics (monitoring overlay) ─────────────────────────────────
+    #[test]
+    fn parse_percpu_reads_idle_total_pairs() {
+        let v = parse_percpu("percpu=100,1000 200,2000 \nfoo=bar");
+        assert_eq!(v, vec![(100, 1000), (200, 2000)]);
+        assert!(parse_percpu("os=Linux").is_empty());
+    }
+
+    #[test]
+    fn percpu_delta_computes_busy_percentage() {
+        // core0: total +100, idle +20 → 80% busy. core1: total +100, idle +100 → 0%.
+        let prev = [(100, 1000), (500, 5000)];
+        let cur = [(120, 1100), (600, 5100)];
+        let pct = percpu_delta(&prev, &cur);
+        assert_eq!(pct, vec![80.0, 0.0]);
+        // Mismatched core counts → empty (a CPU hotplug between polls).
+        assert!(percpu_delta(&prev, &[(1, 2)]).is_empty());
+    }
+
+    #[test]
+    fn parse_psi_reads_some_averages() {
+        let p = parse_psi(
+            "psicpu=avg10=1.50 avg60=0.20 avg300=0.05 total=999",
+            "psicpu",
+        )
+        .unwrap();
+        assert_eq!((p.avg10, p.avg60, p.avg300), (1.50, 0.20, 0.05));
+        // Empty line (kernel without PSI) → None.
+        assert!(parse_psi("psicpu=", "psicpu").is_none());
+        assert!(parse_psi("os=Linux", "psicpu").is_none());
+    }
+
+    #[test]
+    fn parse_partitions_merges_space_and_inodes() {
+        let raw = "parts=/,ext4,10485760,5242880;/boot,vfat,1048576,524288;\n\
+                   inodes=/,655360,123456;\n";
+        let parts = parse_partitions(raw);
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].mount, "/");
+        assert_eq!(parts[0].fstype, "ext4");
+        assert_eq!(parts[0].total, 10485760);
+        assert_eq!(parts[0].used, 5242880);
+        assert_eq!(parts[0].inodes_total, Some(655360));
+        assert_eq!(parts[0].inodes_used, Some(123456));
+        // /boot has no inode record → None, not a crash.
+        assert_eq!(parts[1].mount, "/boot");
+        assert_eq!(parts[1].inodes_total, None);
+    }
+
+    #[test]
+    fn parse_tcp_counts_states() {
+        let t = parse_tcp("tcp=ESTAB:12 LISTEN:8 TIME-WAIT:3 \n");
+        assert_eq!(t.len(), 3);
+        assert_eq!(t[0].state, "ESTAB");
+        assert_eq!(t[0].count, 12);
+        assert!(parse_tcp("os=Linux").is_empty());
+    }
+
+    #[test]
+    fn parse_detail_reads_mem_filenr_ulimit_and_procs() {
+        let raw = "memdetail=8000 1000 4000 200 2000\n\
+                   topmem=node 12%, postgres 8%\n\
+                   filenr=1536 9223372036854775807\n\
+                   ulimit=1024 524288\n\
+                   procs=2 0\n";
+        let d = parse_detail(raw);
+        assert_eq!(d.mem_total, Some(8000));
+        assert_eq!(d.mem_available, Some(4000));
+        assert_eq!(d.mem_cached, Some(2000));
+        assert_eq!(d.top_mem, "node 12%, postgres 8%");
+        assert_eq!(d.file_nr_used, Some(1536));
+        assert_eq!(d.file_nr_max, Some(9223372036854775807));
+        assert_eq!(d.ulimit_soft, Some(1024));
+        assert_eq!(d.ulimit_hard, Some(524288));
+        assert_eq!(d.procs_running, Some(2));
+        assert_eq!(d.procs_blocked, Some(0));
+    }
+
+    // The metrics scripts are shell with awk embedded inside Rust string escapes;
+    // a stray backslash silently breaks awk at runtime. Run them through `sh` on
+    // the dev machine to catch quoting regressions (output is /proc-dependent, so
+    // we only assert the keys are emitted and the shell exits cleanly).
+    #[test]
+    fn detail_script_runs_in_a_shell_and_emits_keys() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(DETAIL_SCRIPT)
+            .output()
+            .expect("spawn sh");
+        assert!(out.status.success(), "DETAIL_SCRIPT exited non-zero");
+        let text = String::from_utf8_lossy(&out.stdout);
+        for key in [
+            "percpu=",
+            "memdetail=",
+            "parts=",
+            "filenr=",
+            "ulimit=",
+            "tcp=",
+        ] {
+            assert!(text.contains(key), "DETAIL_SCRIPT missing {key}: {text}");
+        }
+    }
+
+    #[test]
+    fn pending_script_runs_in_a_shell_and_emits_keys() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(PENDING_SCRIPT)
+            .output()
+            .expect("spawn sh");
+        assert!(out.status.success(), "PENDING_SCRIPT exited non-zero");
+        let text = String::from_utf8_lossy(&out.stdout);
+        for key in ["mgr=", "updates=", "security=", "reboot="] {
+            assert!(text.contains(key), "PENDING_SCRIPT missing {key}: {text}");
+        }
+    }
+
+    #[test]
+    fn parse_pending_reads_manager_and_counts() {
+        let p = parse_pending("mgr=apt\nupdates=12\nsecurity=3\nreboot=1\n");
+        assert_eq!(p.manager, "apt");
+        assert_eq!(p.updates, Some(12));
+        assert_eq!(p.security, Some(3));
+        assert!(p.reboot_required);
+        // No recognized manager → empty/None, reboot false.
+        let none = parse_pending("mgr=\nupdates=\nsecurity=\nreboot=0\n");
+        assert!(none.manager.is_empty());
+        assert_eq!(none.updates, None);
+        assert!(!none.reboot_required);
     }
 
     // ── uuid_like ─────────────────────────────────────────────────────────────

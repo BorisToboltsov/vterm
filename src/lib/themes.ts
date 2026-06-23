@@ -33,6 +33,8 @@ export interface UiPalette {
   accent: string;
   accentHover: string;
   danger: string;
+  /** Warning/threshold amber. Optional — defaults to a fixed amber when omitted. */
+  warn?: string;
   muted: string;
   text: string;
 }
@@ -661,6 +663,8 @@ export function applyUiPalette(ui: UiPalette): void {
   root.setProperty("--color-accent", ui.accent);
   root.setProperty("--color-accent-hover", ui.accentHover);
   root.setProperty("--color-danger", ui.danger);
+  // Warn (threshold amber) is optional per theme; fall back to a fixed amber.
+  root.setProperty("--color-warn", ui.warn ?? "#e5a50a");
   root.setProperty("--color-muted", ui.muted);
   root.setProperty("--color-text", ui.text);
 }

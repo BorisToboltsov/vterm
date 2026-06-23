@@ -242,6 +242,73 @@ export function fetchMetrics(sessionId: string): Promise<Metrics> {
   return invoke<Metrics>("fetch_metrics", { sessionId });
 }
 
+/** Pressure Stall Information `some` averages (10/60/300 s windows). */
+export interface Psi {
+  avg10: number;
+  avg60: number;
+  avg300: number;
+}
+
+/** A mounted filesystem with space and (optionally) inode usage. */
+export interface Partition {
+  mount: string;
+  fstype: string;
+  used: number;
+  total: number;
+  inodesUsed: number | null;
+  inodesTotal: number | null;
+}
+
+export interface TcpState {
+  state: string;
+  count: number;
+}
+
+/** Heavier per-page metrics, fetched only while the monitoring overlay is open. */
+export interface MetricsDetail {
+  /** Per-core CPU utilization 0–100 (empty until the second poll). */
+  perCpu: number[];
+  memTotal: number | null;
+  memFree: number | null;
+  memAvailable: number | null;
+  memBuffers: number | null;
+  memCached: number | null;
+  /** Top processes by memory, e.g. "node 12%, postgres 8%". */
+  topMem: string;
+  partitions: Partition[];
+  /** System-wide open file descriptors vs the `fs.file-max` ceiling. */
+  fileNrUsed: number | null;
+  fileNrMax: number | null;
+  ulimitSoft: number | null;
+  ulimitHard: number | null;
+  psiCpu: Psi | null;
+  psiMem: Psi | null;
+  psiIo: Psi | null;
+  tcp: TcpState[];
+  ctxtRate: number | null;
+  intrRate: number | null;
+  procsRunning: number | null;
+  procsBlocked: number | null;
+}
+
+/** Detailed metrics for the monitoring overlay (heavier than `fetchMetrics`). */
+export function fetchMetricsDetail(sessionId: string): Promise<MetricsDetail> {
+  return invoke<MetricsDetail>("fetch_metrics_detail", { sessionId });
+}
+
+/** Pending OS package updates + reboot-required flag. */
+export interface PendingUpdates {
+  manager: string;
+  updates: number | null;
+  security: number | null;
+  rebootRequired: boolean;
+}
+
+/** Lazily probe pending package updates (heavy — overlay only, deferred). */
+export function fetchPendingUpdates(sessionId: string): Promise<PendingUpdates> {
+  return invoke<PendingUpdates>("fetch_pending_updates", { sessionId });
+}
+
 /** Event name carrying raw output bytes for a session (mirrors ssh.rs). */
 export const outputEvent = (sessionId: string) => `term://out/${sessionId}`;
 /** Event name signalling the session closed. */

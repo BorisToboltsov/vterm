@@ -128,6 +128,41 @@ describe("StatusBar — expanded", () => {
   });
 });
 
+describe("StatusBar — thresholds & monitoring", () => {
+  it("colours a metric amber at the warn threshold and red at the limit", async () => {
+    settings.statusBarThresholds.cpu = { warn: 40, crit: 90 };
+    fetchMetrics.mockResolvedValue(linux); // cpuPct = 42
+    const { unmount } = render(StatusBar, { props: { sessionId: "th1" } });
+    await screen.findByTitle("Linux");
+    expect(screen.getByText("42%")).toHaveClass("text-warn");
+    unmount();
+
+    settings.statusBarThresholds.cpu = { warn: 10, crit: 40 };
+    render(StatusBar, { props: { sessionId: "th2" } });
+    await screen.findByTitle("Linux");
+    expect(screen.getByText("42%")).toHaveClass("text-danger");
+  });
+
+  it("does not colour a metric below its thresholds", async () => {
+    settings.statusBarThresholds.cpu = { warn: 80, crit: 95 };
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "th3" } });
+    await screen.findByTitle("Linux");
+    const cpu = screen.getByText("42%");
+    expect(cpu).not.toHaveClass("text-warn");
+    expect(cpu).not.toHaveClass("text-danger");
+  });
+
+  it("fires onOpenMonitoring when the monitoring button is clicked", async () => {
+    const onOpenMonitoring = vi.fn();
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "mon", onOpenMonitoring } });
+    await screen.findByTitle("Linux");
+    await userEvent.click(screen.getByTestId("open-monitoring"));
+    expect(onOpenMonitoring).toHaveBeenCalledOnce();
+  });
+});
+
 describe("StatusBar — transfers & states", () => {
   it("shows the SFTP transfer indicator from the shared store", async () => {
     fetchMetrics.mockResolvedValue(linux);

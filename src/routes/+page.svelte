@@ -49,6 +49,7 @@
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
+  import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
   import TopBar from "$lib/TopBar.svelte";
   import ServerTree from "$lib/ServerTree.svelte";
   import Modal from "$lib/Modal.svelte";
@@ -72,6 +73,7 @@
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
   let showPalette = $state(false);
+  let showMonitoring = $state(false);
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -114,6 +116,15 @@
   const status = $derived(activeTab?.status ?? "Not connected");
   const sftpReady = $derived(activeTab ? activeTab.status.startsWith("Connected") : false);
 
+  /** Open the detailed monitoring overlay (needs a connected SSH session). */
+  function openMonitoring() {
+    if (activeTab?.kind === "ssh" && activeTab.status.startsWith("Connected")) {
+      showMonitoring = true;
+    } else {
+      notifyError("Откройте мониторинг при активном SSH-подключении");
+    }
+  }
+
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: "Добавить сервер", icon: "plus", group: "Действия",
@@ -122,6 +133,8 @@
       keywords: "folder new папка", run: () => openFolderForm("") },
     { id: "act:settings", title: "Настройки", icon: "settings", group: "Действия",
       keywords: "settings preferences параметры", run: () => (showSettings = true) },
+    { id: "act:monitoring", title: "Мониторинг сервера", icon: "barChart", group: "Действия",
+      keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
     { id: "act:help", title: "Справка", icon: "info", group: "Действия",
       keywords: "help помощь", run: () => { helpTab = "help"; showHelp = true; } },
     { id: "act:manual", title: "Инструкция (README)", icon: "info", group: "Действия",
@@ -182,6 +195,7 @@
       helpTab = "manual";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
+    listen("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
     // App-level SFTP progress feed → shared store (read by SFTP panel + status bar).
     listen<SftpProgress>("sftp://progress", (e) => applyProgress(e.payload)).then((u) =>
       unlisteners.push(u),
@@ -708,10 +722,14 @@
 
   {#if settings.showStatusBar && tabsState.activeId && activeTab?.kind === "ssh" && activeTab?.status.startsWith("Connected")}
     {#key tabsState.activeId}
-      <StatusBar sessionId={tabsState.activeId} />
+      <StatusBar sessionId={tabsState.activeId} onOpenMonitoring={openMonitoring} />
     {/key}
   {/if}
 </div>
+
+{#if tabsState.activeId}
+  <MonitoringOverlay bind:open={showMonitoring} sessionId={tabsState.activeId} />
+{/if}
 
 <!-- While resizing: keep the col-resize cursor and suppress text selection. -->
 {#if resizing}

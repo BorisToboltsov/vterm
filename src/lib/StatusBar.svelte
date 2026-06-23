@@ -11,11 +11,14 @@
   } from "./format";
   import { settings } from "./settings.svelte";
   import { isHidden } from "./util";
+  import { thresholdClass } from "./thresholds";
   import Icon from "./Icon.svelte";
+  import Sparkline from "./Sparkline.svelte";
   import { layout } from "./stores/layout.svelte";
   import { aggregateTransfers, transfersState } from "./stores/transfers.svelte";
 
-  let { sessionId }: { sessionId: string } = $props();
+  let { sessionId, onOpenMonitoring }: { sessionId: string; onOpenMonitoring?: () => void } =
+    $props();
 
   let metrics = $state<Metrics | null>(null);
   let failed = $state(false);
@@ -88,6 +91,16 @@
   const usersList = $derived((metrics?.users ?? "").split(/\s+/).filter(Boolean));
   const topProcs = $derived((metrics?.topProc ?? "").split(", ").filter(Boolean));
 
+  // Threshold colouring (amber = average exceeded, red = limit exceeded). Pure
+  // classification in thresholds.ts; the same thresholds drive the overlay.
+  const th = $derived(settings.statusBarThresholds);
+  const cpuClass = $derived(thresholdClass(cpu, th.cpu));
+  const ramClass = $derived(thresholdClass(memPct, th.ram));
+  const swapClass = $derived(thresholdClass(swapPct, th.swap));
+  const diskClass = $derived(thresholdClass(diskPct, th.disk));
+  const loadClass = $derived(thresholdClass(metrics?.load1 ?? null, th.load));
+  const tempClass = $derived(thresholdClass(metrics?.cpuTemp ?? null, th.cpuTemp));
+
   // Per-element value width: tight to the content, with two values — one for
   // compact, one for expanded (expanded values are longer). Keeps the bar from
   // reflowing as numbers change while avoiding empty padding.
@@ -157,33 +170,23 @@
           <span class="flex items-center gap-2" title={loadTitle}>
             <Icon name="cpu" size={14} class="text-muted" />
             {#if expanded}
-              <span
-                data-testid="cpu-chart"
-                class="flex h-3.5 w-10 items-end gap-px overflow-hidden rounded-sm border border-edge bg-panel px-px"
-              >
-                {#each cpuBars as v, k (k)}
-                  <span
-                    class="min-w-0 flex-1 rounded-[1px]"
-                    style="height: {v > 0 ? Math.max(6, Math.min(100, v)) : 0}%; background-color: #22c55e"
-                  ></span>
-                {/each}
-              </span>
+              <Sparkline testid="cpu-chart" values={cpuBars} />
             {/if}
-            <span class="inline-block text-center tabular-nums {w('w-7', 'w-7')}"
+            <span class="inline-block text-center tabular-nums {w('w-7', 'w-7')} {cpuClass}"
               >{cpu == null ? "—" : `${Math.round(cpu)}%`}</span
             >
           </span>
         {:else if g === "load"}
           <span class="flex items-center gap-2" title="Load average (1 / 5 / 15 min)">
             <Icon name="gauge" size={14} class="text-muted" />
-            <span class="inline-block text-center tabular-nums {w('w-[5.25rem]', 'w-[5.25rem]')}"
+            <span class="inline-block text-center tabular-nums {w('w-[5.25rem]', 'w-[5.25rem]')} {loadClass}"
               >{loadAvg}</span
             >
           </span>
         {:else if g === "ram"}
           <span class="flex items-center gap-2" title="RAM used / total">
             <Icon name="memory" size={14} class="text-muted" />
-            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')}">
+            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {ramClass}">
               {#if expanded}{fmtBytes(metrics.memUsed)} / {fmtBytes(metrics.memTotal)}{memPct !=
                 null
                   ? ` (${memPct}%)`
@@ -193,7 +196,7 @@
         {:else if g === "disk"}
           <span class="flex items-center gap-2" title="Disk free / total on /">
             <Icon name="disk" size={14} class="text-muted" />
-            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-38')}">
+            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-38')} {diskClass}">
               {#if expanded}{fmtBytes(diskFree)} free / {fmtBytes(metrics.diskTotal)}{:else}{diskPct ==
               null
                 ? "—"
@@ -240,7 +243,7 @@
         {:else if g === "cpuTemp"}
           <span class="flex items-center gap-2" title="CPU temperature">
             <Icon name="thermometer" size={14} class="text-muted" />
-            <span class="inline-block text-center tabular-nums {w('w-9', 'w-9')}"
+            <span class="inline-block text-center tabular-nums {w('w-9', 'w-9')} {tempClass}"
               >{Math.round(metrics.cpuTemp ?? 0)}°C</span
             >
           </span>
@@ -254,7 +257,7 @@
         {:else if g === "swap"}
           <span class="flex items-center gap-2" title="Swap used / total">
             <Icon name="swap" size={14} class="text-muted" />
-            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')}">
+            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {swapClass}">
               {#if expanded}{fmtBytes(metrics.swapUsed)} / {fmtBytes(metrics.swapTotal)}{swapPct !=
                 null
                   ? ` (${swapPct}%)`
@@ -329,6 +332,17 @@
       onclick={() => (settings.statusBarExpanded = !settings.statusBarExpanded)}
     >
       <Icon name={expanded ? "chevronLeft" : "chevronRight"} size={14} />
+    </button>
+    <!-- Open the detailed monitoring overlay. Sits after the compact/expanded
+         toggle at the very right edge. -->
+    <button
+      data-testid="open-monitoring"
+      class="flex shrink-0 items-center self-stretch border-l border-edge px-2 text-muted hover:text-white"
+      title="Подробный мониторинг"
+      aria-label="Open detailed monitoring"
+      onclick={() => onOpenMonitoring?.()}
+    >
+      <Icon name="barChart" size={14} />
     </button>
   {/if}
 </div>

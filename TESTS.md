@@ -86,7 +86,11 @@ pnpm check
 - `lib.rs` — `normalize_path`, `reprefixed` (перенос/переименование папок и
   поддеревьев), `parse_metrics` (вкл. расширенные поля: uptime/swap/users/ip/
   topproc/cputemp/netconns/kernel/stime), `parse_cpustat`, `parse_net`/`parse_pair`
-  (rx/tx сети и disk I/O), `uuid_like`;
+  (rx/tx сети и disk I/O), `uuid_like`; **детальные метрики мониторинга** —
+  `parse_percpu`/`percpu_delta` (per-core CPU%), `parse_psi` (PSI some-средние),
+  `parse_partitions` (слияние места и inodes по mount), `parse_tcp` (состояния
+  TCP), `parse_detail` (mem/filenr/ulimit/procs) и `parse_pending` (распознавание
+  пакетного менеджера и счётчиков обновлений);
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
@@ -145,7 +149,11 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `format.ts` — `fmtBytes`, `fmtRate` (B/KB/MB/s, прочерк для null), `fmtUptime`
   (d/h/m), `osIcon`
   (возвращает имя иконки реестра — Apple/Linux/Windows/BSD/Unknown, и каждое имя
-  существует в `icons.ts`), `memPct`, `diskFree` (статус-бар);
+  существует в `icons.ts`), `memPct`, `fmtPct` (округление + «%», прочерк),
+  `diskFree` (статус-бар);
+- `thresholds.ts` — `thresholdLevel` (ok/warn/crit, включительные границы, crit
+  важнее warn, null-значение/порог → ok, по-уровнево отключаемые границы),
+  `levelTextClass`/`thresholdClass` (уровень → `text-warn`/`text-danger`);
 - `util.ts` — `debounce` (с fake-таймерами), `isHidden`, `matchesQuery`
   (AND-подстрока, регистронезависимость, пустой запрос → всё);
 - `command.ts` — `matchScore` (пустой запрос, отсутствие терма, регистронезависимость
@@ -163,7 +171,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
   `applyUiPalette`;
 - `settings.svelte.ts` — дефолты, persist в `localStorage`, `activeTerminalTheme`,
-  `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`);
+  `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`),
+  `statusBarThresholds` (числовые дефолты, deep-merge бэкапа с сохранением
+  дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора);
 - `stores/layout.svelte.ts` — дефолты, persist ширин/сворачивания, `clamp`;
 - `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
@@ -181,8 +191,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   ридера, пустая строка если оба пути упали;
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
-  `sftpCreateFile` → `sftp_create_file`, `exportBackup`/`importBackup` и
-  backup-диалоги);
+  `sftpCreateFile` → `sftp_create_file`, `fetchMetricsDetail` →
+  `fetch_metrics_detail`, `fetchPendingUpdates` → `fetch_pending_updates`,
+  `exportBackup`/`importBackup` и backup-диалоги);
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора);
 - `icons.ts` — целостность реестра иконок;
@@ -221,7 +232,13 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `StatusBar.test.ts` — компактный режим по умолчанию (иконки + проценты, без имён/
   байтов/графика), тоггл в расширенный (имена, байты, sparkline, load-avg), скрытие
   группы по флагу видимости, индикатор передач SFTP из общего стора (+клик →
-  разворот панели), OS-иконка по `title`, состояния ошибки/прочерков.
+  разворот панели), OS-иконка по `title`, состояния ошибки/прочерков; **пороги**
+  (жёлтый при превышении среднего, красный — предельного, без цвета ниже порогов) и
+  кнопка `open-monitoring` (вызывает `onOpenMonitoring`).
+- `MonitoringOverlay.test.ts` — smoke-тест страницы мониторинга (API замокан):
+  рендер карточек из живого опроса (ЦП/память/ФС/ядра/разделы/TCP), **ленивая**
+  подгрузка pending-updates после первого рендера, красная подсветка раздела при
+  превышении порога диска, отсутствие опроса при закрытой странице.
 - `Icon.test.ts` — рендер SVG из реестра, размер, accessible-title.
 - `Toast.test.ts` — рендер тостов из стора, роль `status`, кнопка Dismiss убирает
   тост (синхронизация с `toastsState`).
@@ -248,8 +265,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   сворачиваемые чекбоксы показателей статус-бара (`metrics-toggle`).
 
 Тяжёлые интерактивные компоненты (`Terminal.svelte` — xterm.js,
-`SftpPanel.svelte` — нативные диалоги и pointer-DnD, `SettingsPanel.svelte`)
-исключены из юнит-покрытия и проверяются E2E-набором.
+`SftpPanel.svelte` — нативные диалоги и pointer-DnD, `SettingsPanel.svelte`,
+`MonitoringOverlay.svelte` — петля опроса метрик) исключены из **покрытия** (их
+чистая логика живёт в покрытых `.ts`-модулях — `thresholds.ts`/`format.ts`), но
+поведение всё равно проверяется smoke/компонентными тестами и E2E-набором.
 
 ---
 

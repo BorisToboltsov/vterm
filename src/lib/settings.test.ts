@@ -67,6 +67,34 @@ describe("resetSettings", () => {
   });
 });
 
+describe("statusBarThresholds", () => {
+  it("seeds sensible numeric defaults", () => {
+    expect(settings.statusBarThresholds.cpu).toEqual({ warn: 80, crit: 95 });
+    expect(settings.statusBarThresholds.load).toEqual({ warn: null, crit: null });
+  });
+
+  it("deep-merges a backup snapshot, keeping defaults for absent metrics", () => {
+    applyImportedSettings({ statusBarThresholds: { cpu: { warn: 60, crit: 90 } } });
+    flushSync();
+    expect(settings.statusBarThresholds.cpu).toEqual({ warn: 60, crit: 90 });
+    // A metric absent from the snapshot keeps its default.
+    expect(settings.statusBarThresholds.ram).toEqual({ warn: 85, crit: 95 });
+  });
+
+  it("preserves an explicit null bound (disabled) over the default", () => {
+    applyImportedSettings({ statusBarThresholds: { cpu: { warn: null, crit: null } } });
+    flushSync();
+    expect(settings.statusBarThresholds.cpu).toEqual({ warn: null, crit: null });
+  });
+
+  it("ignores junk values in the thresholds object", () => {
+    applyImportedSettings({ statusBarThresholds: { cpu: { warn: "oops" } } });
+    flushSync();
+    // Bad value falls back to the default warn.
+    expect(settings.statusBarThresholds.cpu.warn).toBe(80);
+  });
+});
+
 describe("applyImportedSettings", () => {
   it("applies known keys from a backup snapshot", () => {
     applyImportedSettings({ theme: "dracula", fontSize: 20, defaultPort: 2222 });

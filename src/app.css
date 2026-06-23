@@ -8,6 +8,10 @@
   --color-accent: #89b4fa;
   --color-accent-hover: #b4befe;
   --color-danger: #f38ba8;
+  /* Warning/threshold amber (Phase «Расширение мониторинга»): a semantic alert
+     colour for "average threshold exceeded". Fixed across themes unless a theme
+     overrides `warn` in its UiPalette. */
+  --color-warn: #e5a50a;
   --color-muted: #6c7086;
   --color-text: #cdd6f4;
 }

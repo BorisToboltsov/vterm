@@ -109,6 +109,8 @@ describe("remaining invoke wrappers", () => {
       [api.disconnect("s"), "disconnect", { sessionId: "s" }],
       [api.fetchMetrics("s"), "fetch_metrics", { sessionId: "s" }],
       [api.sftpHome("s"), "sftp_home", { sessionId: "s" }],
+      [api.fetchMetricsDetail("s"), "fetch_metrics_detail", { sessionId: "s" }],
+      [api.fetchPendingUpdates("s"), "fetch_pending_updates", { sessionId: "s" }],
       [api.sftpMkdir("s", "/d"), "sftp_mkdir", { sessionId: "s", path: "/d" }],
       [api.sftpCreateFile("s", "/f"), "sftp_create_file", { sessionId: "s", path: "/f" }],
       [api.sftpDelete("s", "/d", true), "sftp_delete", { sessionId: "s", path: "/d", isDir: true }],

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskFree, fmtBytes, fmtRate, fmtUptime, memPct, osIcon } from "./format";
+import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct, osIcon } from "./format";
 import { ICONS } from "./icons";
 
 describe("fmtBytes", () => {
@@ -77,6 +77,17 @@ describe("memPct", () => {
     expect(memPct(null, 4)).toBeNull();
     expect(memPct(1, null)).toBeNull();
     expect(memPct(1, 0)).toBeNull();
+  });
+});
+
+describe("fmtPct", () => {
+  it("rounds and appends a percent sign", () => {
+    expect(fmtPct(42)).toBe("42%");
+    expect(fmtPct(42.6)).toBe("43%");
+    expect(fmtPct(0)).toBe("0%");
+  });
+  it("is an em dash when null", () => {
+    expect(fmtPct(null)).toBe("—");
   });
 });
 

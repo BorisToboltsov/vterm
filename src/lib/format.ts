@@ -53,6 +53,11 @@ export function memPct(used: number | null, total: number | null): number | null
   return used != null && total ? Math.round((used / total) * 100) : null;
 }
 
+/** A percentage value as "42%", or "—" when null. */
+export function fmtPct(n: number | null): string {
+  return n == null ? "—" : `${Math.round(n)}%`;
+}
+
 /** Free disk bytes (total − used), or null when either value is missing. */
 export function diskFree(used: number | null, total: number | null): number | null {
   return total != null && used != null ? total - used : null;

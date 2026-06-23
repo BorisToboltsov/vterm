@@ -36,6 +36,27 @@ export interface StatusBarItems {
   serverTime: boolean;
 }
 
+/** Numeric metrics that support average/limit thresholds with colour coding. */
+export type ThresholdKey =
+  | "cpu"
+  | "ram"
+  | "swap"
+  | "disk"
+  | "load"
+  | "cpuTemp"
+  | "fd"
+  | "inodes";
+
+/** A pair of thresholds for one numeric metric; `null` disables that level. */
+export interface Threshold {
+  /** Average/soft limit — value at/above this is highlighted amber. */
+  warn: number | null;
+  /** Hard limit — value at/above this is highlighted red. */
+  crit: number | null;
+}
+
+export type StatusBarThresholds = Record<ThresholdKey, Threshold>;
+
 export interface Settings {
   // Appearance
   theme: string; // preset id, or "custom"
@@ -62,6 +83,7 @@ export interface Settings {
   showStatusBar: boolean;
   statusBarExpanded: boolean; // false = compact (icons + percentages)
   statusBarItems: StatusBarItems;
+  statusBarThresholds: StatusBarThresholds;
   statusPollInterval: number; // seconds
   // Reconnect
   autoReconnect: boolean;
@@ -107,12 +129,37 @@ const DEFAULTS: Settings = {
     kernel: true,
     serverTime: true,
   },
+  statusBarThresholds: {
+    cpu: { warn: 80, crit: 95 },
+    ram: { warn: 85, crit: 95 },
+    swap: { warn: 50, crit: 90 },
+    disk: { warn: 85, crit: 95 },
+    load: { warn: null, crit: null },
+    cpuTemp: { warn: 75, crit: 90 },
+    fd: { warn: 80, crit: 95 },
+    inodes: { warn: 85, crit: 95 },
+  },
   statusPollInterval: 5,
   autoReconnect: false,
   hostKeyPolicy: "ask",
 };
 
 const STORAGE_KEY = "vterm.settings";
+
+/** Deep-merge a stored thresholds object onto defaults, key by key, ignoring junk. */
+function mergeThresholds(raw: unknown): StatusBarThresholds {
+  const out = {} as StatusBarThresholds;
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  for (const key of Object.keys(DEFAULTS.statusBarThresholds) as ThresholdKey[]) {
+    const def = DEFAULTS.statusBarThresholds[key];
+    const v = r[key] as Partial<Threshold> | undefined;
+    out[key] = {
+      warn: typeof v?.warn === "number" ? v.warn : v?.warn === null ? null : def.warn,
+      crit: typeof v?.crit === "number" ? v.crit : v?.crit === null ? null : def.crit,
+    };
+  }
+  return out;
+}
 
 function load(): Settings {
   try {
@@ -122,12 +169,14 @@ function load(): Settings {
       ...raw,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
       statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
+      statusBarThresholds: mergeThresholds(raw.statusBarThresholds),
     };
   } catch {
     return {
       ...DEFAULTS,
       customTheme: { ...DEFAULTS.customTheme },
       statusBarItems: { ...DEFAULTS.statusBarItems },
+      statusBarThresholds: mergeThresholds(undefined),
     };
   }
 }
@@ -147,6 +196,7 @@ export function resetSettings(): void {
     ...DEFAULTS,
     customTheme: { ...DEFAULTS.customTheme },
     statusBarItems: { ...DEFAULTS.statusBarItems },
+    statusBarThresholds: mergeThresholds(undefined),
   });
 }
 
@@ -162,10 +212,12 @@ export function applyImportedSettings(raw: unknown): void {
     ...DEFAULTS,
     customTheme: { ...DEFAULTS.customTheme },
     statusBarItems: { ...DEFAULTS.statusBarItems },
+    statusBarThresholds: mergeThresholds(undefined),
   };
   const sink = next as unknown as Record<string, unknown>;
+  const nested = ["customTheme", "statusBarItems", "statusBarThresholds"];
   for (const key of Object.keys(DEFAULTS)) {
-    if (key !== "customTheme" && key !== "statusBarItems" && key in r) {
+    if (!nested.includes(key) && key in r) {
       sink[key] = r[key];
     }
   }
@@ -177,6 +229,9 @@ export function applyImportedSettings(raw: unknown): void {
       ...DEFAULTS.statusBarItems,
       ...(r.statusBarItems as Partial<StatusBarItems>),
     };
+  }
+  if (r.statusBarThresholds !== undefined) {
+    next.statusBarThresholds = mergeThresholds(r.statusBarThresholds);
   }
   Object.assign(settings, next);
 }

@@ -67,7 +67,13 @@
       "Bash(perl -i -pe 's/^  // if $. >= 569 && $. <= 613' src/routes/+page.svelte)",
       "Bash(awk 'NR>=566 && NR<=571 || NR>=611 && NR<=616 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\"sp | \"$0}' src/routes/+page.svelte)",
       "Bash(perl -i -pe 's/^\\(?=.\\)/  / if $. >= 141 && $. <= 316' src/lib/StatusBar.svelte)",
-      "Bash(awk 'NR==140 || NR==141 || NR==142 || NR==315 || NR==316 || NR==317 || NR==322 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\"sp | \"$0}' src/lib/StatusBar.svelte)"
+      "Bash(awk 'NR==140 || NR==141 || NR==142 || NR==315 || NR==316 || NR==317 || NR==322 {n=0; while\\(substr\\($0,n+1,1\\)==\" \"\\) n++; print NR\": \"n\"sp | \"$0}' src/lib/StatusBar.svelte)",
+      "Bash(awk '/^cpu[0-9]/{idle=$5+$6; tot=0; for\\(i=2;i<=NF;i++\\)tot+=$i; printf \"%d,%d \",idle,tot}' stat.txt)",
+      "Bash(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^MemAvailable:/{a=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}END{printf \"%d %d %d %d %d\",t*1024,f*1024,a*1024,b*1024,c*1024}' meminfo.txt)",
+      "Bash(awk '/^ctxt /{c=$2}/^intr /{i=$2}END{printf \"%d %d\",c,i}' stat.txt)",
+      "Bash(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' stat.txt)",
+      "Bash(awk '{print $1}')",
+      "Bash(awk '{printf \"%s:%s \",$2,$1}')"
     ]
   }
 }

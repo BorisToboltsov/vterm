@@ -35,6 +35,9 @@ export default defineConfig({
         "src/lib/SftpPanel.svelte",
         "src/lib/SettingsPanel.svelte",
         "src/lib/ServerTree.svelte",
+        // Polling overlay driven by live metrics/native fetches; pure logic lives
+        // in thresholds.ts/format.ts (covered) and a smoke test renders it.
+        "src/lib/MonitoringOverlay.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).
