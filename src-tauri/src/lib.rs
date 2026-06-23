@@ -410,8 +410,12 @@ fn connect_plan(id: String, state: State<AppState>) -> AppResult<ConnectPlan> {
             secret_label: "Password".to_string(),
         },
         AuthMethod::Key => {
-            let needs = match &profile.key_path {
-                Some(path) => ssh::key_is_encrypted(path) && secrets::get_passphrase(&id).is_none(),
+            // Resolve the same way connect_session will (explicit path, else a
+            // default in ~/.ssh) so we prompt for a passphrase iff that key needs one.
+            let needs = match ssh::resolve_key_path(profile.key_path.as_deref()) {
+                Some(path) => {
+                    ssh::key_is_encrypted(&path) && secrets::get_passphrase(&id).is_none()
+                }
                 None => false,
             };
             ConnectPlan {
@@ -460,10 +464,10 @@ async fn connect_session(
             Credential::Password(password)
         }
         AuthMethod::Key => {
-            let path = profile
-                .key_path
-                .clone()
-                .ok_or_else(|| "no key path set for this server".to_string())?;
+            // No explicit key path → fall back to a default key in ~/.ssh/.
+            let path = ssh::resolve_key_path(profile.key_path.as_deref()).ok_or_else(|| {
+                "no SSH key set and none found in ~/.ssh — pick a private key file".to_string()
+            })?;
             let passphrase = secret
                 .clone()
                 .or_else(|| secrets::get_passphrase(&server_id));

@@ -184,6 +184,54 @@ pub fn key_is_encrypted(path: &str) -> bool {
     load_secret_key(path, None).is_err()
 }
 
+/// Standard OpenSSH private-key filenames, in the order `ssh(1)` itself tries
+/// them (most modern/preferred first). Lives under `~/.ssh/` on every platform —
+/// macOS/Linux use `$HOME/.ssh`, Windows OpenSSH uses `%USERPROFILE%\.ssh`.
+const DEFAULT_KEY_NAMES: &[&str] = &[
+    "id_ed25519",
+    "id_ecdsa_sk",
+    "id_ed25519_sk",
+    "id_ecdsa",
+    "id_rsa",
+    "id_dsa",
+];
+
+/// First existing private key inside `ssh_dir`, by OpenSSH preference order.
+/// Split out from [`default_key_path`] so it can be unit-tested against a tmp dir.
+fn find_default_key(ssh_dir: &std::path::Path) -> Option<String> {
+    DEFAULT_KEY_NAMES
+        .iter()
+        .map(|name| ssh_dir.join(name))
+        .find(|p| p.is_file())
+        .and_then(|p| p.to_str().map(str::to_string))
+}
+
+/// Locate a default private key in the user's `~/.ssh/` directory, used when a
+/// server is set to key auth but has no explicit key path. `None` if there is no
+/// home directory or `~/.ssh` holds no recognized key.
+pub fn default_key_path() -> Option<String> {
+    let home = directories::UserDirs::new()?.home_dir().to_path_buf();
+    find_default_key(&home.join(".ssh"))
+}
+
+/// Decide which key file to authenticate with: the explicit per-server path when
+/// set (and non-blank), otherwise a default discovered via `fallback`.
+fn pick_key_path(
+    explicit: Option<&str>,
+    fallback: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    match explicit {
+        Some(p) if !p.trim().is_empty() => Some(p.to_string()),
+        _ => fallback(),
+    }
+}
+
+/// Resolve the key path for a server: explicit path if present, else a default
+/// from `~/.ssh/`.
+pub fn resolve_key_path(explicit: Option<&str>) -> Option<String> {
+    pick_key_path(explicit, default_key_path)
+}
+
 /// What to authenticate with. Secret material is wrapped in `Zeroizing` so
 /// vterm's in-memory copy is wiped when the credential is dropped.
 pub enum Credential {
@@ -406,5 +454,56 @@ mod tests {
             key_is_encrypted(&encrypted),
             "encrypted key should need a passphrase"
         );
+    }
+
+    #[test]
+    fn find_default_key_empty_dir_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(find_default_key(dir.path()), None);
+    }
+
+    #[test]
+    fn find_default_key_prefers_ssh_order() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create two keys; id_ed25519 must win over id_rsa regardless of fs order.
+        std::fs::write(dir.path().join("id_rsa"), b"x").unwrap();
+        std::fs::write(dir.path().join("id_ed25519"), b"x").unwrap();
+        let found = find_default_key(dir.path()).unwrap();
+        assert!(found.ends_with("id_ed25519"), "got {found}");
+
+        // With only id_rsa present, it is selected.
+        let dir2 = tempfile::tempdir().unwrap();
+        std::fs::write(dir2.path().join("id_rsa"), b"x").unwrap();
+        assert!(find_default_key(dir2.path()).unwrap().ends_with("id_rsa"));
+    }
+
+    #[test]
+    fn find_default_key_ignores_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        // A directory named like a key must not be picked (only real files count).
+        std::fs::create_dir(dir.path().join("id_ed25519")).unwrap();
+        assert_eq!(find_default_key(dir.path()), None);
+    }
+
+    #[test]
+    fn pick_key_path_prefers_explicit() {
+        assert_eq!(
+            pick_key_path(Some("/keys/mine"), || Some("fallback".into())),
+            Some("/keys/mine".to_string())
+        );
+    }
+
+    #[test]
+    fn pick_key_path_falls_back_when_blank_or_absent() {
+        assert_eq!(
+            pick_key_path(None, || Some("fallback".into())),
+            Some("fallback".to_string())
+        );
+        assert_eq!(
+            pick_key_path(Some("   "), || Some("fallback".into())),
+            Some("fallback".to_string())
+        );
+        // No explicit path and no default key → None.
+        assert_eq!(pick_key_path(None, || None), None);
     }
 }

@@ -93,7 +93,9 @@ pnpm check
   файловый round-trip во временном каталоге (`tempfile`);
 - `ssh.rs` — `HostKeyPolicy::from_str`, имена событий, `key_is_encrypted` на
   сгенерированных `ssh-keygen` ключах (тест мягко пропускается, если
-  `ssh-keygen` недоступен).
+  `ssh-keygen` недоступен); `find_default_key` (порядок предпочтения OpenSSH,
+  пустой каталог → `None`, игнор каталогов с именем ключа) и `pick_key_path`
+  (явный путь побеждает, пустой/отсутствующий откатывается на дефолт из `~/.ssh`).
 - `error.rs` — `AppError`: наличие маркеров (`auth-rejected`/`host-key-rejected`)
   в `Display`, конверсии `From<String>/<io::Error>`, сериализация в строку
   (контракт с фронтом не меняется).
