@@ -74,7 +74,10 @@
       "Bash(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' stat.txt)",
       "Bash(awk '{print $1}')",
       "Bash(awk '{printf \"%s:%s \",$2,$1}')",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(grep -n 'props\\\\|$props\\\\|: {\\\\|icon\\\\|title\\\\|hint\\\\|Snippet\\\\|children')",
+      "Read(//Users/boristoboltsov/Downloads/**)",
+      "Bash(grep -n 'toggle\\\\|chevron\\\\|transition:slide\\\\|aria-expanded\\\\|= $state\\(false\\)\\\\|showThemePicker\\\\|showThresholds\\\\|showMetrics' src/lib/SettingsPanel.svelte)"
     ]
   }
 }

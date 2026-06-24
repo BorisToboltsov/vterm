@@ -153,6 +153,54 @@ describe("highlightRules (Phase 10)", () => {
     resetSettings();
     expect(settings.highlightRules.length).toBeGreaterThan(0);
   });
+
+  it("seeds style fields and a green success rule", () => {
+    const ids = settings.highlightRules.map((r) => r.id);
+    expect(ids).toContain("success");
+    const success = settings.highlightRules.find((r) => r.id === "success")!;
+    expect(success.color).toBe("green");
+    expect(success).toMatchObject({ wholeLine: false, bold: false, background: false });
+  });
+
+  it("sanitises style booleans on import", () => {
+    applyImportedSettings({
+      highlightRules: [
+        { id: "a", pattern: "x", color: "red", wholeLine: true, bold: true, background: "yes" },
+      ],
+    });
+    flushSync();
+    expect(settings.highlightRules[0]).toMatchObject({
+      wholeLine: true,
+      bold: true,
+      background: false, // non-boolean coerced to false
+    });
+  });
+});
+
+describe("searchOptions (Phase 10)", () => {
+  it("defaults to all off", () => {
+    expect(settings.searchOptions).toEqual({
+      caseSensitive: false,
+      wholeWord: false,
+      regex: false,
+    });
+  });
+
+  it("persists and reloads, and resets with resetSettings", () => {
+    settings.searchOptions.regex = true;
+    flushSync();
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(stored.searchOptions.regex).toBe(true);
+    resetSettings();
+    expect(settings.searchOptions.regex).toBe(false);
+  });
+
+  it("merges a partial backup snapshot onto defaults", () => {
+    applyImportedSettings({ searchOptions: { regex: true } });
+    flushSync();
+    expect(settings.searchOptions.regex).toBe(true);
+    expect(settings.searchOptions.caseSensitive).toBe(false);
+  });
 });
 
 describe("applyImportedSettings", () => {

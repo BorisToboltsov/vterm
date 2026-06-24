@@ -82,6 +82,16 @@ export interface HighlightRule {
   color: HighlightColor;
   enabled: boolean;
   caseSensitive: boolean;
+  wholeLine: boolean; // colour the entire line, not just the match
+  bold: boolean;
+  background: boolean; // colour the background instead of the text
+}
+
+/** Remembered options for the terminal buffer-search box. */
+export interface SearchOptions {
+  caseSensitive: boolean;
+  wholeWord: boolean;
+  regex: boolean;
 }
 
 export interface Settings {
@@ -119,36 +129,43 @@ export interface Settings {
   // Logs & text (Phase 10)
   smartLogs: SmartLogs;
   highlightRules: HighlightRule[];
+  searchOptions: SearchOptions;
   // Security
   hostKeyPolicy: HostKeyPolicy;
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
 export function defaultHighlightRules(): HighlightRule[] {
+  const base = { enabled: true, caseSensitive: false, wholeLine: false, bold: false, background: false };
   return [
     {
       id: "error",
       name: "ERROR/FATAL",
-      pattern: "\\b(ERROR|FATAL|CRITICAL|FAILED|FAIL)\\b",
+      pattern: "\\b(ERROR|FATAL|CRITICAL|FAILED|FAIL|PANIC)\\b",
       color: "red",
-      enabled: true,
-      caseSensitive: false,
+      ...base,
+      bold: true,
     },
     {
       id: "warn",
       name: "WARNING",
       pattern: "\\b(WARN|WARNING)\\b",
       color: "yellow",
-      enabled: true,
-      caseSensitive: false,
+      ...base,
+    },
+    {
+      id: "success",
+      name: "SUCCESS/OK",
+      pattern: "\\b(SUCCESS|SUCCEEDED|PASSED|READY|OK|UP|ONLINE|ACTIVE)\\b",
+      color: "green",
+      ...base,
     },
     {
       id: "ip",
       name: "IP",
       pattern: "\\b\\d{1,3}(\\.\\d{1,3}){3}\\b",
       color: "blue",
-      enabled: true,
-      caseSensitive: false,
+      ...base,
     },
   ];
 }
@@ -211,6 +228,7 @@ const DEFAULTS: Settings = {
     jsonView: true,
   },
   highlightRules: defaultHighlightRules(),
+  searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
   hostKeyPolicy: "ask",
 };
 
@@ -258,6 +276,9 @@ function mergeHighlightRules(raw: unknown): HighlightRule[] {
         : "yellow",
       enabled: r.enabled !== false,
       caseSensitive: r.caseSensitive === true,
+      wholeLine: r.wholeLine === true,
+      bold: r.bold === true,
+      background: r.background === true,
     });
   }
   return out;
@@ -277,6 +298,7 @@ function load(): Settings {
       highlightRules: "highlightRules" in raw
         ? mergeHighlightRules(raw.highlightRules)
         : defaultHighlightRules(),
+      searchOptions: { ...DEFAULTS.searchOptions, ...(raw.searchOptions ?? {}) },
     };
   } catch {
     return {
@@ -286,6 +308,7 @@ function load(): Settings {
       statusBarThresholds: mergeThresholds(undefined),
       smartLogs: { ...DEFAULTS.smartLogs },
       highlightRules: defaultHighlightRules(),
+      searchOptions: { ...DEFAULTS.searchOptions },
     };
   }
 }
@@ -308,6 +331,7 @@ export function resetSettings(): void {
     statusBarThresholds: mergeThresholds(undefined),
     smartLogs: { ...DEFAULTS.smartLogs },
     highlightRules: defaultHighlightRules(),
+    searchOptions: { ...DEFAULTS.searchOptions },
   });
 }
 
@@ -326,6 +350,7 @@ export function applyImportedSettings(raw: unknown): void {
     statusBarThresholds: mergeThresholds(undefined),
     smartLogs: { ...DEFAULTS.smartLogs },
     highlightRules: defaultHighlightRules(),
+    searchOptions: { ...DEFAULTS.searchOptions },
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -334,6 +359,7 @@ export function applyImportedSettings(raw: unknown): void {
     "statusBarThresholds",
     "smartLogs",
     "highlightRules",
+    "searchOptions",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -358,6 +384,9 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.highlightRules !== undefined) {
     next.highlightRules = mergeHighlightRules(r.highlightRules);
+  }
+  if (r.searchOptions && typeof r.searchOptions === "object") {
+    next.searchOptions = { ...DEFAULTS.searchOptions, ...(r.searchOptions as Partial<SearchOptions>) };
   }
   Object.assign(settings, next);
 }

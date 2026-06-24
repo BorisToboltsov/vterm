@@ -30,6 +30,7 @@ export const ICONS = {
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
   chevronUp: '<path d="M6 15l6-6 6 6"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  table: '<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 4v16"/>',
   chevronsLeft: '<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>',
   chevronsRight: '<path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',

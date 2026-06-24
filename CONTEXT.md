@@ -320,6 +320,10 @@ pnpm test:coverage
   `contextSnippet`/`matchCountLabel`) — в [search.ts](src/lib/search.ts) (ADR 0003),
   компонент только связывает её с буфером xterm. Поле ввода поиска — обычный
   `<input>`, поэтому глобальный clipboard-обработчик работает в нём (не `.xterm`).
+  Опции регистр/слово/regex живут в `settings.searchOptions` (**запоминаются**, общие на
+  вкладки/перезапуски). Невалидное regex (`buildMatcher`===null) **не уходит в аддон**
+  (иначе исключение) — `runSearch` чистит и показывает подсказку; счётчик — `role="status"`/
+  `aria-live`.
 - **Подсветка — через ANSI-SGR в потоке, не decoration.** Regex-подсветка строк
   лога делается **вставкой ANSI-SGR-кодов** в поток вывода **до** `term.write`
   (приём grc/ccze), а не decoration-API: цвет — **базовый ANSI** (`31`..`37`),
@@ -328,15 +332,53 @@ pnpm test:coverage
   `applyHighlight`/`colorToSgr`, ADR 0003): не матчит **внутри** escape-последова­
   тельностей (не ломает существующие коды), приоритет — самое раннее совпадение.
   Применяется **только к нормальному буферу** (`term.buffer.active.type==="normal"`)
-  — full-screen TUI (vim/htop, alt-screen) не трогаем. Вывод декодируется **потоковым**
-  `TextDecoder` (многобайтовые символы на границе чанков). Правила — массив
-  `settings.highlightRules` (`HighlightRule`: id/name/pattern/color/enabled/
-  caseSensitive), редактор в разделе «Логи и текст», дефолты — `defaultHighlightRules()`;
-  гейт — `smartLogs.highlight`. Цвет в редакторе выбирается свотчами в палитре темы.
+  — full-screen TUI (vim/htop, alt-screen) не трогаем. **`applyHighlight` работает
+  построчно**: первое сработавшее **whole-line**-правило красит всю строку, иначе —
+  токены. Стили правила (`ruleSgr`): `bold` → префикс `1;`, `background` → bg-код +
+  чёрный текст `30`; reset — `39` (только fg) или `0` (если bold/bg). Вывод декодируется
+  **потоковым** `TextDecoder`. Правила — массив `settings.highlightRules`
+  (`HighlightRule`: id/name/pattern/color/enabled/caseSensitive/**wholeLine/bold/background**),
+  **порядок = приоритет** (редактор даёт ↑/↓), редактор — в **сворачиваемой под-секции**
+  под тумблером «Подсветка…» (шеврон, `transition:slide`, по образцу темы/порогов), дефолты —
+  `defaultHighlightRules()` (ERROR/WARN/**SUCCESS**(green)/IP); гейт — `smartLogs.highlight`.
+  Цвет в редакторе выбирается свотчами в палитре темы.
 - **Кликабельные ссылки — `@xterm/addon-web-links` + opener.** Аддон грузится/выгружается
   `$effect`-ом по `smartLogs.highlight`; клик по ссылке открывает **только http(s)**
   во внешнем браузере через `openUrl` (`tauri-plugin-opener`) — офлайн-инвариант
   (только по явному клику, без рантайм-сети) соблюдён, как в HelpPanel.
+- **Структурный вид — мультиформатный, парсинг только при открытом виде.** Оверлей
+  [JsonLogView.svelte](src/lib/JsonLogView.svelte) поверх терминала (тумблер-иконка
+  `table` в углу, при `smartLogs.jsonView`; имя файла историческое — формат**ов** много).
+  Парсинг потока (`feedJson`) идёт **только пока `structured` включён** — нулевой оверхед
+  иначе; при включении — **посев из текущего scrollback** (`seedJsonFromBuffer`) + живой
+  разбор, буфер ограничен `MAX_JSON_ENTRIES`. Чистая логика — [jsonlog.ts](src/lib/jsonlog.ts)
+  (ADR 0003): **`toLogEntry` авто-определяет формат построчно** по порядку
+  `parseLogLine`(JSON) → `parseNginx` → `parseSyslog` → `parseDmesg` → `parseLogfmt`
+  (logfmt последним, т.к. самый «жадный»; сам гард требует ≥2 пары и покрытие всей строки),
+  каждый отдаёт field-map → `extractFields` (регистронезависимо + алиасы systemd-journal,
+  числовой `PRIORITY`→уровень). Запись несёт `format` и `source` (исходная строка) — для
+  бейджа формата, **детального разворота и копирования** (JSON → pretty, иначе → `source`).
+  Время в колонке — через `normalizeTime` (epoch µs/ms/s, ISO, syslog-без-года → локальное
+  `YYYY-MM-DD HH:MM:SS`; uptime/непарсируемое — как есть; исходное в тултипе). Снимает ANSI;
+  **посев из буфера склеивает перенесённые строки** (`IBufferLine.isWrapped`) перед разбором.
+  Цвет уровня — те же токены `text-warn`/`text-danger`, что и в мониторинге. **Сверх базовых
+  колонок Время/Уровень/Сообщение — динамические колонки по полям** (пикер: `availableFields`
+  считается только пока пикер открыт — не на каждой
+  строке live-tail), **чипы фильтра по уровню** (`LEVEL_CATS`) + текстовый фильтр
+  (`applyFilters`), **автоскролл** к низу пока пользователь не проскроллил вверх, и
+  **текстовая кнопка «Clear» с подтверждением** (`ConfirmDialog`; `onClear` →
+  `clearJson` в Terminal обнуляет строки/буфер, компонент сбрасывает выбранные
+  колонки/фильтр) — чистый старт перед просмотром другого лога (накопитель потока
+  неизбежно смешал бы схемы разных источников). **Clear ставит «водяной знак»**
+  (`term.registerMarker`, поле `seedMark`): повторный заход в structured (`seedJsonFromBuffer`)
+  читает буфер **только после маркера**, поэтому очищенный вывод не возвращается —
+  ждём новый. Маркер авто-инвалидируется, когда строка уходит из scrollback → откат на
+  полный посев. Кнопка стоит **слева от чипов уровня**,
+  отделена вертикальным разделителем. Панель фильтра имеет левый отступ (`pl-10`), чтобы
+  не перекрываться угловой кнопкой-тумблером raw↔structured (она во Terminal, `left-1 top-1`).
+  Таблица
+  ([JsonLogView.svelte](src/lib/JsonLogView.svelte)) презентационна; парсинг/состояние
+  потока — в Terminal.svelte.
 
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 

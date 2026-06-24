@@ -28,6 +28,7 @@
   }: { open?: boolean; onImported?: () => void } = $props();
 
   // ── Highlight rules (Phase 10) ─────────────────────────────────────────────
+  let highlightRulesOpen = $state(false);
   const HIGHLIGHT_COLORS: HighlightColor[] = [
     "red",
     "green",
@@ -63,12 +64,25 @@
         color: "yellow",
         enabled: true,
         caseSensitive: false,
+        wholeLine: false,
+        bold: false,
+        background: false,
       },
     ];
   }
 
   function removeRule(id: string) {
     settings.highlightRules = settings.highlightRules.filter((r) => r.id !== id);
+  }
+
+  // Rule order is priority (earliest match wins), so moving reorders precedence.
+  function moveRule(index: number, dir: -1 | 1) {
+    const to = index + dir;
+    const rules = settings.highlightRules;
+    if (to < 0 || to >= rules.length) return;
+    const next = [...rules];
+    [next[index], next[to]] = [next[to], next[index]];
+    settings.highlightRules = next;
   }
 
   function resetRules() {
@@ -579,14 +593,29 @@ print(greet("world"))  # => 12345`;
                 <input type="checkbox" bind:checked={settings.smartLogs.search} />
                 {t("settings.smartLogsSearch")}
               </label>
-              <label class="flex items-center gap-2 text-xs text-muted">
-                <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
-                {t("settings.smartLogsHighlight")}
-              </label>
+              <div class="flex items-center gap-2">
+                <label class="flex flex-1 items-center gap-2 text-xs text-muted">
+                  <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
+                  {t("settings.smartLogsHighlight")}
+                </label>
+                {#if settings.smartLogs.highlight}
+                  <button
+                    type="button"
+                    data-testid="highlight-rules-toggle"
+                    aria-expanded={highlightRulesOpen}
+                    onclick={() => (highlightRulesOpen = !highlightRulesOpen)}
+                    title={t("highlight.rulesSection")}
+                    aria-label={t("highlight.rulesSection")}
+                    class="rounded p-0.5 text-muted hover:text-white"
+                  >
+                    <Icon name={highlightRulesOpen ? "chevronDown" : "chevronRight"} size={14} />
+                  </button>
+                {/if}
+              </div>
 
-              {#if settings.smartLogs.highlight}
+              {#if settings.smartLogs.highlight && highlightRulesOpen}
                 <div transition:slide={{ duration: 200 }} class="mt-1 space-y-2">
-                  {#each settings.highlightRules as rule (rule.id)}
+                  {#each settings.highlightRules as rule, i (rule.id)}
                     <div class="space-y-1.5 rounded border border-edge p-2">
                       <div class="flex items-center gap-2">
                         <input
@@ -599,6 +628,26 @@ print(greet("world"))  # => 12345`;
                           placeholder={t("highlight.namePlaceholder")}
                           class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
                         />
+                        <button
+                          type="button"
+                          onclick={() => moveRule(i, -1)}
+                          disabled={i === 0}
+                          title={t("highlight.moveUp")}
+                          aria-label={t("highlight.moveUp")}
+                          class="rounded p-0.5 text-muted hover:text-accent disabled:opacity-30 disabled:hover:text-muted"
+                        >
+                          <Icon name="chevronUp" size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onclick={() => moveRule(i, 1)}
+                          disabled={i === settings.highlightRules.length - 1}
+                          title={t("highlight.moveDown")}
+                          aria-label={t("highlight.moveDown")}
+                          class="rounded p-0.5 text-muted hover:text-accent disabled:opacity-30 disabled:hover:text-muted"
+                        >
+                          <Icon name="chevronDown" size={13} />
+                        </button>
                         <button
                           type="button"
                           onclick={() => removeRule(rule.id)}
@@ -636,6 +685,20 @@ print(greet("world"))  # => 12345`;
                           {t("highlight.caseSensitive")}
                         </label>
                       </div>
+                      <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+                        <label class="flex items-center gap-1">
+                          <input type="checkbox" bind:checked={rule.wholeLine} />
+                          {t("highlight.wholeLine")}
+                        </label>
+                        <label class="flex items-center gap-1">
+                          <input type="checkbox" bind:checked={rule.bold} />
+                          {t("highlight.bold")}
+                        </label>
+                        <label class="flex items-center gap-1">
+                          <input type="checkbox" bind:checked={rule.background} />
+                          {t("highlight.background")}
+                        </label>
+                      </div>
                     </div>
                   {/each}
                   <div class="flex items-center gap-2">
@@ -657,6 +720,11 @@ print(greet("world"))  # => 12345`;
                   </div>
                 </div>
               {/if}
+
+              <label class="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" bind:checked={settings.smartLogs.jsonView} />
+                {t("settings.smartLogsJson")}
+              </label>
             </div>
           {/if}
         </section>

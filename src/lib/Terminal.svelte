@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { Terminal } from "@xterm/xterm";
+  import { Terminal, type IMarker } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { SearchAddon } from "@xterm/addon-search";
@@ -12,8 +12,10 @@
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
-  import { contextSnippet, findMatchRows, matchCountLabel } from "./search";
+  import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import { applyHighlight, compileRules } from "./highlight";
+  import { toLogEntry, type JsonLogEntry } from "./jsonlog";
+  import JsonLogView from "./JsonLogView.svelte";
   import {
     closedEvent,
     connectSession,
@@ -60,17 +62,27 @@
   // the master toggle returns the terminal to its plain behaviour.
   let searchAddon: SearchAddon | undefined;
   let searchInput = $state<HTMLInputElement>();
+  // Match options live in settings (remembered across opens, tabs and restarts).
+  const opts = $derived(settings.searchOptions);
   const search = $state({
     open: false,
     query: "",
-    caseSensitive: false,
-    wholeWord: false,
-    regex: false,
     index: -1,
     count: 0,
   });
   const searchEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.search);
   const countLabel = $derived(matchCountLabel(search.index, search.count));
+  // In regex mode, a malformed pattern matches nothing — surface that instead of
+  // failing silently (mirrors the highlight-rules editor).
+  const searchInvalid = $derived(
+    opts.regex &&
+      search.query.length > 0 &&
+      buildMatcher(search.query, {
+        regex: true,
+        caseSensitive: opts.caseSensitive,
+        wholeWord: opts.wholeWord,
+      }) === null,
+  );
 
   // ── Regex highlighting + clickable links (Phase 10) ────────────────────────
   // Output is decoded with a streaming decoder (handles multibyte chars split
@@ -83,6 +95,93 @@
     highlightEnabled ? compileRules(settings.highlightRules) : [],
   );
   let webLinks: WebLinksAddon | undefined;
+
+  // ── Structured JSON log view (Phase 10) ────────────────────────────────────
+  // A raw↔structured toggle; in structured mode the output stream is parsed line
+  // by line into a filterable table (JsonLogView). Parsing only runs while the
+  // structured view is open (zero overhead otherwise); toggling it on first
+  // seeds from the existing scrollback so recent logs show immediately.
+  const MAX_JSON_ENTRIES = 2000;
+  const jsonViewEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.jsonView);
+  let structured = $state(false);
+  let jsonEntries = $state<JsonLogEntry[]>([]);
+  let jsonBuffer = "";
+  let jsonSeq = 0;
+  // After "Clear", a marker at the then-current bottom: re-seeding reads only
+  // lines after it, so cleared output stays gone and we wait for new output.
+  let seedMark: IMarker | undefined;
+
+  function pushEntry(line: string) {
+    const entry = toLogEntry(line, jsonSeq);
+    if (!entry) return;
+    jsonSeq++;
+    jsonEntries.push(entry);
+    if (jsonEntries.length > MAX_JSON_ENTRIES) {
+      jsonEntries.splice(0, jsonEntries.length - MAX_JSON_ENTRIES);
+    }
+  }
+
+  /** Feed live output (already decoded) to the JSON parser, line by line. */
+  function feedJson(text: string) {
+    jsonBuffer += text;
+    let nl: number;
+    while ((nl = jsonBuffer.indexOf("\n")) >= 0) {
+      pushEntry(jsonBuffer.slice(0, nl).replace(/\r$/, ""));
+      jsonBuffer = jsonBuffer.slice(nl + 1);
+    }
+  }
+
+  /**
+   * Seed the table from the current scrollback when structured mode opens.
+   * Long lines wrap across several buffer rows (`isWrapped`), so rows are
+   * stitched back into their logical line before parsing — otherwise a wrapped
+   * JSON object would be split into unparseable fragments.
+   */
+  function seedJsonFromBuffer() {
+    jsonEntries = [];
+    jsonSeq = 0;
+    jsonBuffer = "";
+    const buf = term.buffer.active;
+    // Start after the "cleared" watermark (if still in scrollback) so previously
+    // cleared output isn't re-read; otherwise seed the whole scrollback.
+    const start =
+      seedMark && !seedMark.isDisposed && seedMark.line >= 0 ? seedMark.line + 1 : 0;
+    let acc = "";
+    for (let i = start; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      if (!line) continue;
+      const text = line.translateToString(false);
+      if (line.isWrapped) {
+        acc += text; // continuation of the previous row
+      } else {
+        if (acc) pushEntry(acc);
+        acc = text;
+      }
+    }
+    if (acc) pushEntry(acc);
+  }
+
+  function toggleStructured() {
+    if (!structured) {
+      seedJsonFromBuffer();
+      structured = true;
+    } else {
+      structured = false;
+    }
+  }
+
+  /**
+   * Wipe accumulated entries — a clean slate before viewing a different log.
+   * Drops a watermark at the current bottom so leaving and re-entering the
+   * structured view doesn't re-read the just-cleared output (only newer lines).
+   */
+  function clearJson() {
+    jsonEntries = [];
+    jsonSeq = 0;
+    jsonBuffer = "";
+    seedMark?.dispose();
+    seedMark = term.registerMarker(0) ?? undefined;
+  }
 
   /** The current theme's accent colour (the UI palette's `--color-accent`). */
   function accentColor(): string {
@@ -108,9 +207,9 @@
     const th = activeTerminalTheme();
     const accent = accentColor();
     return {
-      regex: search.regex,
-      caseSensitive: search.caseSensitive,
-      wholeWord: search.wholeWord,
+      regex: opts.regex,
+      caseSensitive: opts.caseSensitive,
+      wholeWord: opts.wholeWord,
       decorations: {
         matchBackground: th.selectionBackground,
         matchOverviewRuler: th.selectionBackground,
@@ -123,7 +222,8 @@
 
   function runSearch() {
     if (!searchAddon) return;
-    if (!search.query) {
+    if (!search.query || searchInvalid) {
+      // Empty query or a malformed regex: clear highlights, show no count.
       searchAddon.clearDecorations();
       search.index = -1;
       search.count = 0;
@@ -179,9 +279,9 @@
       lines.push(buf.getLine(i)?.translateToString(true) ?? "");
     }
     const rows = findMatchRows(lines, search.query, {
-      caseSensitive: search.caseSensitive,
-      wholeWord: search.wholeWord,
-      regex: search.regex,
+      caseSensitive: opts.caseSensitive,
+      wholeWord: opts.wholeWord,
+      regex: opts.regex,
     });
     if (rows.length === 0) return;
     // Map the addon's per-match active index onto a matching row (best-effort;
@@ -302,6 +402,8 @@
         term.write(
           highlightEnabled && onNormalBuffer ? applyHighlight(text, compiledRules) : text,
         );
+        // Mirror raw output into the structured view while it's open.
+        if (structured) feedJson(text);
       }),
     );
     unlisten.push(
@@ -433,12 +535,19 @@
     }
   });
 
+  // Leaving the structured view (and dropping its data) the moment the feature
+  // is switched off keeps the terminal in its plain state.
+  $effect(() => {
+    if (!jsonViewEnabled && structured) structured = false;
+  });
+
   onDestroy(() => {
     observer?.disconnect();
     unlisten.forEach((u) => u());
     disconnect(sessionId).catch(() => {});
     searchAddon?.dispose();
     webLinks?.dispose();
+    seedMark?.dispose();
     webgl?.dispose();
     term?.dispose();
   });
@@ -451,6 +560,26 @@
     role="presentation"
     class="h-full w-full"
   ></div>
+  <!-- Structured JSON log view + raw↔structured toggle (Phase 10). -->
+  {#if structured}
+    <div class="absolute inset-0 z-10">
+      <JsonLogView entries={jsonEntries} onClear={clearJson} />
+    </div>
+  {/if}
+  {#if jsonViewEnabled}
+    <button
+      type="button"
+      onclick={toggleStructured}
+      title={structured ? t("jsonlog.toggleRaw") : t("jsonlog.toggleStructured")}
+      aria-label={structured ? t("jsonlog.toggleRaw") : t("jsonlog.toggleStructured")}
+      aria-pressed={structured}
+      class="absolute left-1 top-1 z-30 flex items-center rounded border border-edge bg-panel-alt/95 p-1.5 shadow-lg {structured
+        ? 'text-accent'
+        : 'text-muted hover:text-accent'}"
+    >
+      <Icon name="table" size={14} />
+    </button>
+  {/if}
   <!-- Full-buffer search overlay (Phase 10). -->
   {#if search.open}
     <div
@@ -469,45 +598,51 @@
         aria-label={t("search.placeholder")}
         class="w-44 bg-transparent text-sm text-text outline-none placeholder:text-muted"
       />
-      <span class="min-w-14 text-right text-xs tabular-nums text-muted">
-        {#if search.query}{countLabel || t("search.noResults")}{/if}
+      <span
+        role="status"
+        aria-live="polite"
+        class="min-w-14 text-right text-xs tabular-nums {searchInvalid ? 'text-danger' : 'text-muted'}"
+      >
+        {#if searchInvalid}
+          {t("search.invalidRegex")}
+        {:else if search.query}{countLabel || t("search.noResults")}{/if}
       </span>
       <button
         type="button"
         onclick={() => {
-          search.caseSensitive = !search.caseSensitive;
+          settings.searchOptions.caseSensitive = !opts.caseSensitive;
           runSearch();
         }}
         title={t("search.caseSensitive")}
         aria-label={t("search.caseSensitive")}
-        aria-pressed={search.caseSensitive}
-        class="rounded px-1 text-xs font-medium {search.caseSensitive
+        aria-pressed={opts.caseSensitive}
+        class="rounded px-1 text-xs font-medium {opts.caseSensitive
           ? 'bg-edge text-accent'
           : 'text-muted hover:text-accent'}">Aa</button
       >
       <button
         type="button"
         onclick={() => {
-          search.wholeWord = !search.wholeWord;
+          settings.searchOptions.wholeWord = !opts.wholeWord;
           runSearch();
         }}
         title={t("search.wholeWord")}
         aria-label={t("search.wholeWord")}
-        aria-pressed={search.wholeWord}
-        class="rounded px-1 text-xs font-medium {search.wholeWord
+        aria-pressed={opts.wholeWord}
+        class="rounded px-1 text-xs font-medium {opts.wholeWord
           ? 'bg-edge text-accent'
           : 'text-muted hover:text-accent'}">W</button
       >
       <button
         type="button"
         onclick={() => {
-          search.regex = !search.regex;
+          settings.searchOptions.regex = !opts.regex;
           runSearch();
         }}
         title={t("search.regex")}
         aria-label={t("search.regex")}
-        aria-pressed={search.regex}
-        class="rounded px-1 text-xs font-medium {search.regex
+        aria-pressed={opts.regex}
+        class="rounded px-1 text-xs font-medium {opts.regex
           ? 'bg-edge text-accent'
           : 'text-muted hover:text-accent'}">.*</button
       >

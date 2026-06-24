@@ -10,6 +10,9 @@ const rule = (over: Partial<HighlightRule>): HighlightRule => ({
   color: "red",
   enabled: true,
   caseSensitive: false,
+  wholeLine: false,
+  bold: false,
+  background: false,
   ...over,
 });
 
@@ -83,5 +86,39 @@ describe("applyHighlight", () => {
 
   it("does not hang or wrap on zero-length matches", () => {
     expect(applyHighlight("abc", compileRules([rule({ pattern: "x*" })]))).toBe("abc");
+  });
+
+  it("colours the whole line for a whole-line rule", () => {
+    const rules = compileRules([rule({ pattern: "ERROR", color: "red", wholeLine: true })]);
+    expect(applyHighlight("an ERROR here", rules)).toBe(`${ESC}[31man ERROR here${ESC}[39m`);
+  });
+
+  it("applies whole-line per line, leaving non-matching lines as token-highlighted", () => {
+    const rules = compileRules([
+      rule({ pattern: "ERROR", color: "red", wholeLine: true }),
+      rule({ pattern: "WARN", color: "yellow" }),
+    ]);
+    const out = applyHighlight("ERROR boom\na WARN b", rules);
+    expect(out).toBe(`${ESC}[31mERROR boom${ESC}[39m\na ${ESC}[33mWARN${ESC}[39m b`);
+  });
+
+  it("emits bold (1;…) and resets fully with 0", () => {
+    const rules = compileRules([rule({ pattern: "ERR", color: "red", bold: true })]);
+    expect(applyHighlight("ERR", rules)).toBe(`${ESC}[1;31mERR${ESC}[0m`);
+  });
+
+  it("emits a background (black text on the colour) and resets fully", () => {
+    const rules = compileRules([rule({ pattern: "ERR", color: "yellow", background: true })]);
+    // yellow fg=33 → bg=43, black text=30
+    expect(applyHighlight("ERR", rules)).toBe(`${ESC}[30;43mERR${ESC}[0m`);
+  });
+});
+
+describe("compileRules styles", () => {
+  it("carries wholeLine and builds set/reset params", () => {
+    const [c] = compileRules([rule({ pattern: "x", color: "blue", wholeLine: true, bold: true })]);
+    expect(c.wholeLine).toBe(true);
+    expect(c.sgr).toBe("1;34");
+    expect(c.reset).toBe("0");
   });
 });
