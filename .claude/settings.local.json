@@ -73,7 +73,8 @@
       "Bash(awk '/^ctxt /{c=$2}/^intr /{i=$2}END{printf \"%d %d\",c,i}' stat.txt)",
       "Bash(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' stat.txt)",
       "Bash(awk '{print $1}')",
-      "Bash(awk '{printf \"%s:%s \",$2,$1}')"
+      "Bash(awk '{printf \"%s:%s \",$2,$1}')",
+      "Bash(node -e ' *)"
     ]
   }
 }

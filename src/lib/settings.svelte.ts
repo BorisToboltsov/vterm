@@ -58,6 +58,19 @@ export interface Threshold {
 
 export type StatusBarThresholds = Record<ThresholdKey, Threshold>;
 
+/**
+ * Phase 10 "smart logs & text" terminal enhancements. `enabled` is the master
+ * switch: turning it off makes the terminal behave exactly like before (plain
+ * xterm — no search, no highlighting, no structured view), regardless of the
+ * per-feature flags below.
+ */
+export interface SmartLogs {
+  enabled: boolean; // master toggle
+  search: boolean; // full-buffer search (Cmd/Ctrl+F)
+  highlight: boolean; // regex highlighting (added in a later task)
+  jsonView: boolean; // structured JSON log view (added in a later task)
+}
+
 export interface Settings {
   // Language
   language: Locale; // UI language code (see src/lib/i18n)
@@ -90,6 +103,8 @@ export interface Settings {
   statusPollInterval: number; // seconds
   // Reconnect
   autoReconnect: boolean;
+  // Logs & text (Phase 10)
+  smartLogs: SmartLogs;
   // Security
   hostKeyPolicy: HostKeyPolicy;
 }
@@ -145,6 +160,12 @@ const DEFAULTS: Settings = {
   },
   statusPollInterval: 5,
   autoReconnect: false,
+  smartLogs: {
+    enabled: true,
+    search: true,
+    highlight: true,
+    jsonView: true,
+  },
   hostKeyPolicy: "ask",
 };
 
@@ -175,6 +196,7 @@ function load(): Settings {
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
       statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
       statusBarThresholds: mergeThresholds(raw.statusBarThresholds),
+      smartLogs: { ...DEFAULTS.smartLogs, ...(raw.smartLogs ?? {}) },
     };
   } catch {
     return {
@@ -182,6 +204,7 @@ function load(): Settings {
       customTheme: { ...DEFAULTS.customTheme },
       statusBarItems: { ...DEFAULTS.statusBarItems },
       statusBarThresholds: mergeThresholds(undefined),
+      smartLogs: { ...DEFAULTS.smartLogs },
     };
   }
 }
@@ -202,6 +225,7 @@ export function resetSettings(): void {
     customTheme: { ...DEFAULTS.customTheme },
     statusBarItems: { ...DEFAULTS.statusBarItems },
     statusBarThresholds: mergeThresholds(undefined),
+    smartLogs: { ...DEFAULTS.smartLogs },
   });
 }
 
@@ -218,9 +242,10 @@ export function applyImportedSettings(raw: unknown): void {
     customTheme: { ...DEFAULTS.customTheme },
     statusBarItems: { ...DEFAULTS.statusBarItems },
     statusBarThresholds: mergeThresholds(undefined),
+    smartLogs: { ...DEFAULTS.smartLogs },
   };
   const sink = next as unknown as Record<string, unknown>;
-  const nested = ["customTheme", "statusBarItems", "statusBarThresholds"];
+  const nested = ["customTheme", "statusBarItems", "statusBarThresholds", "smartLogs"];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
       sink[key] = r[key];
@@ -238,6 +263,9 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.statusBarThresholds !== undefined) {
     next.statusBarThresholds = mergeThresholds(r.statusBarThresholds);
+  }
+  if (r.smartLogs && typeof r.smartLogs === "object") {
+    next.smartLogs = { ...DEFAULTS.smartLogs, ...(r.smartLogs as Partial<SmartLogs>) };
   }
   Object.assign(settings, next);
 }

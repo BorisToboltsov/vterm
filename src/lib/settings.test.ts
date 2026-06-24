@@ -95,6 +95,33 @@ describe("statusBarThresholds", () => {
   });
 });
 
+describe("smartLogs (Phase 10)", () => {
+  it("defaults to all enabled", () => {
+    expect(settings.smartLogs).toEqual({
+      enabled: true,
+      search: true,
+      highlight: true,
+      jsonView: true,
+    });
+  });
+
+  it("merges a partial backup snapshot onto defaults", () => {
+    applyImportedSettings({ smartLogs: { enabled: false } });
+    flushSync();
+    expect(settings.smartLogs.enabled).toBe(false);
+    // Absent sub-flags keep their defaults rather than vanishing.
+    expect(settings.smartLogs.search).toBe(true);
+  });
+
+  it("is restored to defaults by resetSettings", () => {
+    settings.smartLogs.enabled = false;
+    settings.smartLogs.search = false;
+    resetSettings();
+    expect(settings.smartLogs.enabled).toBe(true);
+    expect(settings.smartLogs.search).toBe(true);
+  });
+});
+
 describe("applyImportedSettings", () => {
   it("applies known keys from a backup snapshot", () => {
     applyImportedSettings({ theme: "dracula", fontSize: 20, defaultPort: 2222 });

@@ -204,6 +204,7 @@ print(greet("world"))  # => 12345`;
     { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
     { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
     { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click терминал буфер сигнал копировать вставка" },
+    { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
     { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
     { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
     { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
@@ -508,6 +509,27 @@ print(greet("world"))  # => 12345`;
             <input type="checkbox" bind:checked={settings.middleClickPaste} />
             {t("settings.middleClickPaste")}
           </label>
+        </section>
+
+        {/if}
+
+        {#if show("smartlogs")}
+        <!-- Logs & text (Phase 10) -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSmartLogs")}</h3>
+          <label class="flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.smartLogs.enabled} />
+            {t("settings.smartLogsEnabled")}
+          </label>
+          <p class="mt-1 text-[11px] text-muted/80">{t("settings.smartLogsEnabledHint")}</p>
+          {#if settings.smartLogs.enabled}
+            <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
+              <label class="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" bind:checked={settings.smartLogs.search} />
+                {t("settings.smartLogsSearch")}
+              </label>
+            </div>
+          {/if}
         </section>
 
         {/if}

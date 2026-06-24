@@ -3,9 +3,14 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
+  import { SearchAddon } from "@xterm/addon-search";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "./util";
+  import Icon from "./Icon.svelte";
+  import { t } from "./i18n";
+  import { notifySuccess } from "./stores/toasts.svelte";
+  import { contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import {
     closedEvent,
     connectSession,
@@ -46,6 +51,131 @@
   const unlisten: UnlistenFn[] = [];
   const encoder = new TextEncoder();
 
+  // ── Full-buffer search (Phase 10) ──────────────────────────────────────────
+  // The SearchAddon handles scroll-to-match + highlight decorations; the pure
+  // helpers in search.ts power "copy match with context". Gated by settings so
+  // the master toggle returns the terminal to its plain behaviour.
+  let searchAddon: SearchAddon | undefined;
+  let searchInput = $state<HTMLInputElement>();
+  const search = $state({
+    open: false,
+    query: "",
+    caseSensitive: false,
+    wholeWord: false,
+    regex: false,
+    index: -1,
+    count: 0,
+  });
+  const searchEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.search);
+  const countLabel = $derived(matchCountLabel(search.index, search.count));
+
+  /** The current theme's accent colour (the UI palette's `--color-accent`). */
+  function accentColor(): string {
+    if (typeof document !== "undefined") {
+      const v = getComputedStyle(document.documentElement)
+        .getPropertyValue("--color-accent")
+        .trim();
+      if (v) return v;
+    }
+    return activeTerminalTheme().foreground;
+  }
+
+  /**
+   * Search options incl. highlight decoration colours (xterm wants #RRGGBB).
+   * The fill is the theme's own `selectionBackground` — it's coordinated with
+   * each theme and, being the colour text is already shown selected on, keeps
+   * the terminal's light glyphs readable (a yellow fill washed them out). Solid,
+   * no transparency. The active match is marked by a border in the theme's
+   * **accent** colour plus the grow-in pulse (see the style block), so it stands
+   * out in-theme without an unreadable fill.
+   */
+  function searchOpts() {
+    const th = activeTerminalTheme();
+    const accent = accentColor();
+    return {
+      regex: search.regex,
+      caseSensitive: search.caseSensitive,
+      wholeWord: search.wholeWord,
+      decorations: {
+        matchBackground: th.selectionBackground,
+        matchOverviewRuler: th.selectionBackground,
+        activeMatchBackground: th.selectionBackground,
+        activeMatchBorder: accent,
+        activeMatchColorOverviewRuler: accent,
+      },
+    };
+  }
+
+  function runSearch() {
+    if (!searchAddon) return;
+    if (!search.query) {
+      searchAddon.clearDecorations();
+      search.index = -1;
+      search.count = 0;
+      return;
+    }
+    searchAddon.findNext(search.query, { ...searchOpts(), incremental: true });
+  }
+
+  function nextMatch() {
+    if (search.query) searchAddon?.findNext(search.query, searchOpts());
+  }
+  function prevMatch() {
+    if (search.query) searchAddon?.findPrevious(search.query, searchOpts());
+  }
+
+  function openSearch() {
+    search.open = true;
+    const sel = term.getSelection();
+    if (sel && !sel.includes("\n")) search.query = sel;
+    // Wait for the input to render before focusing/searching.
+    queueMicrotask(() => {
+      searchInput?.focus();
+      searchInput?.select();
+      runSearch();
+    });
+  }
+
+  function closeSearch() {
+    search.open = false;
+    searchAddon?.clearDecorations();
+    search.index = -1;
+    search.count = 0;
+    term?.focus();
+  }
+
+  function onSearchKey(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeSearch();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (e.shiftKey) prevMatch();
+      else nextMatch();
+    }
+  }
+
+  /** Copy the active match's line plus ±5 lines of context to the clipboard. */
+  function copyContext() {
+    if (!search.query || search.count === 0) return;
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    for (let i = 0; i < buf.length; i++) {
+      lines.push(buf.getLine(i)?.translateToString(true) ?? "");
+    }
+    const rows = findMatchRows(lines, search.query, {
+      caseSensitive: search.caseSensitive,
+      wholeWord: search.wholeWord,
+      regex: search.regex,
+    });
+    if (rows.length === 0) return;
+    // Map the addon's per-match active index onto a matching row (best-effort;
+    // a row with several matches collapses to one, which is fine for context).
+    const i = search.index >= 0 ? Math.min(search.index, rows.length - 1) : 0;
+    writeClipboard(contextSnippet(lines, rows[i], 5));
+    notifySuccess(t("search.copied"));
+  }
+
   function copySelection() {
     const sel = term.getSelection();
     if (sel) writeClipboard(sel);
@@ -65,10 +195,21 @@
       cursorBlink: settings.cursorBlink,
       cursorStyle: settings.cursorStyle,
       scrollback: settings.scrollback,
+      // Search highlight decorations (addon-search) use xterm's decoration API,
+      // which is still "proposed" in xterm 6 and throws unless opted in.
+      allowProposedApi: true,
       theme: t,
     });
     fit = new FitAddon();
     term.loadAddon(fit);
+    // Search addon is always loaded (cheap); the UI/hotkey are gated by settings
+    // so toggling the feature off at runtime needs no remount.
+    searchAddon = new SearchAddon();
+    term.loadAddon(searchAddon);
+    searchAddon.onDidChangeResults((e) => {
+      search.index = e.resultIndex;
+      search.count = e.resultCount;
+    });
     term.open(container);
     fit.fit();
 
@@ -108,6 +249,15 @@
     // Plain Ctrl+C is left untouched so it still sends SIGINT.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
+      // Cmd+F (macOS) or Ctrl+Shift+F (Win/Linux) opens full-buffer search.
+      // Plain Ctrl+F is left for the remote shell (readline forward-char).
+      const findCombo =
+        (e.metaKey && e.key === "f") || (e.ctrlKey && e.shiftKey && e.key === "F");
+      if (findCombo && searchEnabled) {
+        e.preventDefault();
+        openSearch();
+        return false;
+      }
       const copyCombo =
         (e.metaKey && e.key === "c") || (e.ctrlKey && e.shiftKey && e.key === "C");
       const pasteCombo =
@@ -242,10 +392,17 @@
     }
   });
 
+  // Closing the search box when the feature is disabled mid-session keeps the
+  // terminal in its plain state the moment the master toggle flips off.
+  $effect(() => {
+    if (!searchEnabled && search.open) closeSearch();
+  });
+
   onDestroy(() => {
     observer?.disconnect();
     unlisten.forEach((u) => u());
     disconnect(sessionId).catch(() => {});
+    searchAddon?.dispose();
     webgl?.dispose();
     term?.dispose();
   });
@@ -258,6 +415,104 @@
     role="presentation"
     class="h-full w-full"
   ></div>
+  <!-- Full-buffer search overlay (Phase 10). -->
+  {#if search.open}
+    <div
+      class="absolute right-2 top-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
+      data-testid="terminal-search"
+    >
+      <Icon name="search" size={14} class="text-muted" />
+      <input
+        bind:this={searchInput}
+        bind:value={search.query}
+        oninput={runSearch}
+        onkeydown={onSearchKey}
+        type="text"
+        spellcheck="false"
+        placeholder={t("search.placeholder")}
+        aria-label={t("search.placeholder")}
+        class="w-44 bg-transparent text-sm text-text outline-none placeholder:text-muted"
+      />
+      <span class="min-w-14 text-right text-xs tabular-nums text-muted">
+        {#if search.query}{countLabel || t("search.noResults")}{/if}
+      </span>
+      <button
+        type="button"
+        onclick={() => {
+          search.caseSensitive = !search.caseSensitive;
+          runSearch();
+        }}
+        title={t("search.caseSensitive")}
+        aria-label={t("search.caseSensitive")}
+        aria-pressed={search.caseSensitive}
+        class="rounded px-1 text-xs font-medium {search.caseSensitive
+          ? 'bg-edge text-accent'
+          : 'text-muted hover:text-accent'}">Aa</button
+      >
+      <button
+        type="button"
+        onclick={() => {
+          search.wholeWord = !search.wholeWord;
+          runSearch();
+        }}
+        title={t("search.wholeWord")}
+        aria-label={t("search.wholeWord")}
+        aria-pressed={search.wholeWord}
+        class="rounded px-1 text-xs font-medium {search.wholeWord
+          ? 'bg-edge text-accent'
+          : 'text-muted hover:text-accent'}">W</button
+      >
+      <button
+        type="button"
+        onclick={() => {
+          search.regex = !search.regex;
+          runSearch();
+        }}
+        title={t("search.regex")}
+        aria-label={t("search.regex")}
+        aria-pressed={search.regex}
+        class="rounded px-1 text-xs font-medium {search.regex
+          ? 'bg-edge text-accent'
+          : 'text-muted hover:text-accent'}">.*</button
+      >
+      <button
+        type="button"
+        onclick={prevMatch}
+        title={t("search.prev")}
+        aria-label={t("search.prev")}
+        class="rounded p-0.5 text-muted hover:text-accent"
+      >
+        <Icon name="chevronUp" size={14} />
+      </button>
+      <button
+        type="button"
+        onclick={nextMatch}
+        title={t("search.next")}
+        aria-label={t("search.next")}
+        class="rounded p-0.5 text-muted hover:text-accent"
+      >
+        <Icon name="chevronDown" size={14} />
+      </button>
+      <button
+        type="button"
+        onclick={copyContext}
+        title={t("search.copyContext")}
+        aria-label={t("search.copyContext")}
+        class="rounded p-0.5 text-muted hover:text-accent"
+      >
+        <Icon name="copy" size={13} />
+      </button>
+      <button
+        type="button"
+        onclick={closeSearch}
+        title={t("search.close")}
+        aria-label={t("search.close")}
+        class="rounded p-0.5 text-muted hover:text-danger"
+      >
+        <Icon name="close" size={14} />
+      </button>
+    </div>
+  {/if}
   <!-- Visual bell: a brief flash drawn on top of the terminal. -->
   {#if flashing}
     <div
@@ -265,3 +520,36 @@
     ></div>
   {/if}
 </div>
+
+<style>
+  /* addon-search renders match highlights as global DOM decorations
+     (.xterm-find-result-decoration; the active one also gets
+     .xterm-find-active-result-decoration), so these need :global. The active
+     match grows in briefly when we navigate to it, making the jump obvious.
+     Honors prefers-reduced-motion via the global guard in app.css plus the
+     explicit override below. */
+  :global(.xterm-find-result-decoration) {
+    border-radius: 2px;
+  }
+  :global(.xterm-find-active-result-decoration) {
+    border-radius: 2px;
+    transform-origin: center;
+    animation: vterm-find-active-in var(--motion-base, 200ms) ease-out;
+  }
+  @keyframes -global-vterm-find-active-in {
+    from {
+      transform: scale(0.5);
+    }
+    60% {
+      transform: scale(1.18);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    :global(.xterm-find-active-result-decoration) {
+      animation: none;
+    }
+  }
+</style>

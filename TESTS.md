@@ -159,6 +159,14 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `command.ts` — `matchScore` (пустой запрос, отсутствие терма, регистронезависимость
   по title/subtitle/keywords/group, все термы обязательны, буст префикса) и
   `filterCommands` (порядок, отсев, ранжирование, стабильность ничьих);
+- `search.ts` — полнобуферный поиск терминала (Фаза 10): `buildMatcher`
+  (пустой запрос → null, регистронезависимость по умолчанию, `caseSensitive`,
+  экранирование метасимволов в литеральном режиме vs `regex`, `wholeWord` —
+  границы слова, невалидный regex → null), `findMatchRows` (индексы строк
+  сверху-вниз, пустой запрос/нет совпадений, регистр), `contextSnippet` (строка
+  ±radius, клампинг у краёв буфера, обрезка хвостовых пустых строк, out-of-range
+  → пусто), `matchCountLabel` (`""` при 0, one-based `n/total`, `count+` при
+  непрослеживаемом активном индексе);
 - `actions/drag.ts` — `passedThreshold`, `dropTargetAt`, экшен `resizableHandle`;
 - `actions/clipboardKeys.ts` — `isEditable` (text-like input/textarea — да; чекбокс/
   div/readonly/disabled/`.xterm`-textarea — нет), `selectedText`/`replaceSelection`
@@ -173,7 +181,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `settings.svelte.ts` — дефолты, persist в `localStorage`, `activeTerminalTheme`,
   `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`),
   `statusBarThresholds` (числовые дефолты, deep-merge бэкапа с сохранением
-  дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора);
+  дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора),
+  `smartLogs` (Фаза 10: дефолты — всё включено; merge частичного бэкапа с
+  сохранением дефолтных под-флагов; восстановление `resetSettings`);
 - `stores/layout.svelte.ts` — дефолты, persist ширин/сворачивания, `clamp`;
 - `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
