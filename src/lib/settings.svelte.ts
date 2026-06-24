@@ -71,6 +71,19 @@ export interface SmartLogs {
   jsonView: boolean; // structured JSON log view (added in a later task)
 }
 
+/** Named highlight colour — rendered in the active theme's ANSI palette. */
+export type HighlightColor = "red" | "green" | "yellow" | "blue" | "magenta" | "cyan" | "white";
+
+/** A single regex highlight rule for terminal output (Phase 10). */
+export interface HighlightRule {
+  id: string;
+  name: string;
+  pattern: string; // regex source
+  color: HighlightColor;
+  enabled: boolean;
+  caseSensitive: boolean;
+}
+
 export interface Settings {
   // Language
   language: Locale; // UI language code (see src/lib/i18n)
@@ -105,8 +118,39 @@ export interface Settings {
   autoReconnect: boolean;
   // Logs & text (Phase 10)
   smartLogs: SmartLogs;
+  highlightRules: HighlightRule[];
   // Security
   hostKeyPolicy: HostKeyPolicy;
+}
+
+/** Built-in starter highlight rules (a fresh copy each call). */
+export function defaultHighlightRules(): HighlightRule[] {
+  return [
+    {
+      id: "error",
+      name: "ERROR/FATAL",
+      pattern: "\\b(ERROR|FATAL|CRITICAL|FAILED|FAIL)\\b",
+      color: "red",
+      enabled: true,
+      caseSensitive: false,
+    },
+    {
+      id: "warn",
+      name: "WARNING",
+      pattern: "\\b(WARN|WARNING)\\b",
+      color: "yellow",
+      enabled: true,
+      caseSensitive: false,
+    },
+    {
+      id: "ip",
+      name: "IP",
+      pattern: "\\b\\d{1,3}(\\.\\d{1,3}){3}\\b",
+      color: "blue",
+      enabled: true,
+      caseSensitive: false,
+    },
+  ];
 }
 
 const DEFAULTS: Settings = {
@@ -166,6 +210,7 @@ const DEFAULTS: Settings = {
     highlight: true,
     jsonView: true,
   },
+  highlightRules: defaultHighlightRules(),
   hostKeyPolicy: "ask",
 };
 
@@ -186,6 +231,38 @@ function mergeThresholds(raw: unknown): StatusBarThresholds {
   return out;
 }
 
+const HIGHLIGHT_COLORS: HighlightColor[] = [
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+];
+
+/** Validate a stored highlight-rules array, falling back to defaults for junk. */
+function mergeHighlightRules(raw: unknown): HighlightRule[] {
+  if (!Array.isArray(raw)) return defaultHighlightRules();
+  const out: HighlightRule[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.pattern !== "string") continue;
+    out.push({
+      id: typeof r.id === "string" ? r.id : crypto.randomUUID(),
+      name: typeof r.name === "string" ? r.name : "",
+      pattern: r.pattern,
+      color: HIGHLIGHT_COLORS.includes(r.color as HighlightColor)
+        ? (r.color as HighlightColor)
+        : "yellow",
+      enabled: r.enabled !== false,
+      caseSensitive: r.caseSensitive === true,
+    });
+  }
+  return out;
+}
+
 function load(): Settings {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
@@ -197,6 +274,9 @@ function load(): Settings {
       statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
       statusBarThresholds: mergeThresholds(raw.statusBarThresholds),
       smartLogs: { ...DEFAULTS.smartLogs, ...(raw.smartLogs ?? {}) },
+      highlightRules: "highlightRules" in raw
+        ? mergeHighlightRules(raw.highlightRules)
+        : defaultHighlightRules(),
     };
   } catch {
     return {
@@ -205,6 +285,7 @@ function load(): Settings {
       statusBarItems: { ...DEFAULTS.statusBarItems },
       statusBarThresholds: mergeThresholds(undefined),
       smartLogs: { ...DEFAULTS.smartLogs },
+      highlightRules: defaultHighlightRules(),
     };
   }
 }
@@ -226,6 +307,7 @@ export function resetSettings(): void {
     statusBarItems: { ...DEFAULTS.statusBarItems },
     statusBarThresholds: mergeThresholds(undefined),
     smartLogs: { ...DEFAULTS.smartLogs },
+    highlightRules: defaultHighlightRules(),
   });
 }
 
@@ -243,9 +325,16 @@ export function applyImportedSettings(raw: unknown): void {
     statusBarItems: { ...DEFAULTS.statusBarItems },
     statusBarThresholds: mergeThresholds(undefined),
     smartLogs: { ...DEFAULTS.smartLogs },
+    highlightRules: defaultHighlightRules(),
   };
   const sink = next as unknown as Record<string, unknown>;
-  const nested = ["customTheme", "statusBarItems", "statusBarThresholds", "smartLogs"];
+  const nested = [
+    "customTheme",
+    "statusBarItems",
+    "statusBarThresholds",
+    "smartLogs",
+    "highlightRules",
+  ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
       sink[key] = r[key];
@@ -266,6 +355,9 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.smartLogs && typeof r.smartLogs === "object") {
     next.smartLogs = { ...DEFAULTS.smartLogs, ...(r.smartLogs as Partial<SmartLogs>) };
+  }
+  if (r.highlightRules !== undefined) {
+    next.highlightRules = mergeHighlightRules(r.highlightRules);
   }
   Object.assign(settings, next);
 }

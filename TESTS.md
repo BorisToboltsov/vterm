@@ -167,7 +167,12 @@ pnpm test:coverage   # прогон + покрытие + гейты
   ±radius, клампинг у краёв буфера, обрезка хвостовых пустых строк, out-of-range
   → пусто), `matchCountLabel` (`""` при 0, one-based `n/total`, `count+` при
   непрослеживаемом активном индексе);
-- `actions/drag.ts` — `passedThreshold`, `dropTargetAt`, экшен `resizableHandle`;
+- `highlight.ts` — regex-подсветка логов (Фаза 10): `colorToSgr` (имя цвета → ANSI
+  SGR), `compileRules` (пропуск выключенных/пустых/невалидных regex, флаги `gi` vs
+  `g`), `applyHighlight` (обёртка совпадения в SGR + сброс; регистронезависимость по
+  умолчанию; несколько правил со своими цветами; без двойной обёртки на пересечении —
+  выигрывает самое раннее; **не матчит внутри escape-последовательностей**; подсветка
+  реального текста при наличии escape-кодов; без зависания/обёртки на нулевых совпадениях);
 - `actions/clipboardKeys.ts` — `isEditable` (text-like input/textarea — да; чекбокс/
   div/readonly/disabled/`.xterm`-textarea — нет), `selectedText`/`replaceSelection`
   (вставка по каретке + событие `input`; замена всего значения для `type="number"`
@@ -183,7 +188,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `statusBarThresholds` (числовые дефолты, deep-merge бэкапа с сохранением
   дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора),
   `smartLogs` (Фаза 10: дефолты — всё включено; merge частичного бэкапа с
-  сохранением дефолтных под-флагов; восстановление `resetSettings`);
+  сохранением дефолтных под-флагов; восстановление `resetSettings`),
+  `highlightRules` (Фаза 10: посев стартовых правил; санитизация импортируемого
+  массива — отсев мусора без `pattern`/не-объектов; фолбэк цвета/флага `enabled`
+  для частичных записей; восстановление `resetSettings`);
 - `stores/layout.svelte.ts` — дефолты, persist ширин/сворачивания, `clamp`;
 - `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,

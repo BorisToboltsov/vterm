@@ -320,6 +320,23 @@ pnpm test:coverage
   `contextSnippet`/`matchCountLabel`) — в [search.ts](src/lib/search.ts) (ADR 0003),
   компонент только связывает её с буфером xterm. Поле ввода поиска — обычный
   `<input>`, поэтому глобальный clipboard-обработчик работает в нём (не `.xterm`).
+- **Подсветка — через ANSI-SGR в потоке, не decoration.** Regex-подсветка строк
+  лога делается **вставкой ANSI-SGR-кодов** в поток вывода **до** `term.write`
+  (приём grc/ccze), а не decoration-API: цвет — **базовый ANSI** (`31`..`37`),
+  поэтому рендерится **цветами активной темы** автоматически (правило «red» → красный
+  темы). Чистая логика — [highlight.ts](src/lib/highlight.ts) (`compileRules`/
+  `applyHighlight`/`colorToSgr`, ADR 0003): не матчит **внутри** escape-последова­
+  тельностей (не ломает существующие коды), приоритет — самое раннее совпадение.
+  Применяется **только к нормальному буферу** (`term.buffer.active.type==="normal"`)
+  — full-screen TUI (vim/htop, alt-screen) не трогаем. Вывод декодируется **потоковым**
+  `TextDecoder` (многобайтовые символы на границе чанков). Правила — массив
+  `settings.highlightRules` (`HighlightRule`: id/name/pattern/color/enabled/
+  caseSensitive), редактор в разделе «Логи и текст», дефолты — `defaultHighlightRules()`;
+  гейт — `smartLogs.highlight`. Цвет в редакторе выбирается свотчами в палитре темы.
+- **Кликабельные ссылки — `@xterm/addon-web-links` + opener.** Аддон грузится/выгружается
+  `$effect`-ом по `smartLogs.highlight`; клик по ссылке открывает **только http(s)**
+  во внешнем браузере через `openUrl` (`tauri-plugin-opener`) — офлайн-инвариант
+  (только по явному клику, без рантайм-сети) соблюдён, как в HelpPanel.
 
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 

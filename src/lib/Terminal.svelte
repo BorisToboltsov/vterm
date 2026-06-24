@@ -4,13 +4,16 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { SearchAddon } from "@xterm/addon-search";
+  import { WebLinksAddon } from "@xterm/addon-web-links";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "./util";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
   import { contextSnippet, findMatchRows, matchCountLabel } from "./search";
+  import { applyHighlight, compileRules } from "./highlight";
   import {
     closedEvent,
     connectSession,
@@ -68,6 +71,18 @@
   });
   const searchEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.search);
   const countLabel = $derived(matchCountLabel(search.index, search.count));
+
+  // ── Regex highlighting + clickable links (Phase 10) ────────────────────────
+  // Output is decoded with a streaming decoder (handles multibyte chars split
+  // across chunks) and, when highlighting is on and we're on the normal screen
+  // buffer (not a full-screen TUI), matched tokens are wrapped in ANSI colours
+  // before reaching xterm. Pure logic lives in highlight.ts.
+  const decoder = new TextDecoder();
+  const highlightEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.highlight);
+  const compiledRules = $derived(
+    highlightEnabled ? compileRules(settings.highlightRules) : [],
+  );
+  let webLinks: WebLinksAddon | undefined;
 
   /** The current theme's accent colour (the UI palette's `--color-accent`). */
   function accentColor(): string {
@@ -281,7 +296,12 @@
     // Stream output and close events BEFORE connecting (don't miss the banner).
     unlisten.push(
       await listen<number[]>(outputEvent(sessionId), (e) => {
-        term.write(new Uint8Array(e.payload));
+        const text = decoder.decode(new Uint8Array(e.payload), { stream: true });
+        // Only colour the normal buffer — never a full-screen app (vim/htop).
+        const onNormalBuffer = term.buffer.active.type === "normal";
+        term.write(
+          highlightEnabled && onNormalBuffer ? applyHighlight(text, compiledRules) : text,
+        );
       }),
     );
     unlisten.push(
@@ -398,11 +418,27 @@
     if (!searchEnabled && search.open) closeSearch();
   });
 
+  // Clickable links follow the highlight toggle. The handler opens only http(s)
+  // externally, on an explicit click (offline invariant) — via the Tauri opener.
+  $effect(() => {
+    if (!term) return;
+    if (highlightEnabled && !webLinks) {
+      webLinks = new WebLinksAddon((_event, uri) => {
+        if (/^https?:\/\//i.test(uri)) openUrl(uri).catch(() => {});
+      });
+      term.loadAddon(webLinks);
+    } else if (!highlightEnabled && webLinks) {
+      webLinks.dispose();
+      webLinks = undefined;
+    }
+  });
+
   onDestroy(() => {
     observer?.disconnect();
     unlisten.forEach((u) => u());
     disconnect(sessionId).catch(() => {});
     searchAddon?.dispose();
+    webLinks?.dispose();
     webgl?.dispose();
     term?.dispose();
   });

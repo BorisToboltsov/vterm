@@ -3,8 +3,11 @@
     applyImportedSettings,
     settings,
     resetSettings,
+    activeTerminalTheme,
+    defaultHighlightRules,
     type StatusBarItems,
     type ThresholdKey,
+    type HighlightColor,
   } from "./settings.svelte";
   import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import {
@@ -23,6 +26,54 @@
     open = $bindable(false),
     onImported,
   }: { open?: boolean; onImported?: () => void } = $props();
+
+  // ── Highlight rules (Phase 10) ─────────────────────────────────────────────
+  const HIGHLIGHT_COLORS: HighlightColor[] = [
+    "red",
+    "green",
+    "yellow",
+    "blue",
+    "magenta",
+    "cyan",
+    "white",
+  ];
+
+  // Render colour swatches in the active theme's ANSI palette — the same colours
+  // the highlight will actually use in the terminal.
+  const swatchColor = (c: HighlightColor): string => activeTerminalTheme()[c];
+
+  /** Is a rule's regex valid? Drives an inline invalid-pattern hint. */
+  function patternValid(pattern: string): boolean {
+    if (!pattern) return false;
+    try {
+      new RegExp(pattern);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function addRule() {
+    settings.highlightRules = [
+      ...settings.highlightRules,
+      {
+        id: crypto.randomUUID(),
+        name: "",
+        pattern: "",
+        color: "yellow",
+        enabled: true,
+        caseSensitive: false,
+      },
+    ];
+  }
+
+  function removeRule(id: string) {
+    settings.highlightRules = settings.highlightRules.filter((r) => r.id !== id);
+  }
+
+  function resetRules() {
+    settings.highlightRules = defaultHighlightRules();
+  }
 
   // ── Backup export / import ─────────────────────────────────────────────────
   let backupMsg = $state("");
@@ -528,6 +579,84 @@ print(greet("world"))  # => 12345`;
                 <input type="checkbox" bind:checked={settings.smartLogs.search} />
                 {t("settings.smartLogsSearch")}
               </label>
+              <label class="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
+                {t("settings.smartLogsHighlight")}
+              </label>
+
+              {#if settings.smartLogs.highlight}
+                <div transition:slide={{ duration: 200 }} class="mt-1 space-y-2">
+                  {#each settings.highlightRules as rule (rule.id)}
+                    <div class="space-y-1.5 rounded border border-edge p-2">
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          bind:checked={rule.enabled}
+                          aria-label={t("highlight.enableRule")}
+                        />
+                        <input
+                          bind:value={rule.name}
+                          placeholder={t("highlight.namePlaceholder")}
+                          class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+                        />
+                        <button
+                          type="button"
+                          onclick={() => removeRule(rule.id)}
+                          title={t("highlight.deleteRule")}
+                          aria-label={t("highlight.deleteRule")}
+                          class="rounded p-0.5 text-muted hover:text-danger"
+                        >
+                          <Icon name="trash" size={13} />
+                        </button>
+                      </div>
+                      <input
+                        bind:value={rule.pattern}
+                        placeholder={t("highlight.patternPlaceholder")}
+                        spellcheck="false"
+                        class="w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
+                      />
+                      {#if rule.pattern && !patternValid(rule.pattern)}
+                        <p class="text-[11px] text-danger">{t("highlight.invalidPattern")}</p>
+                      {/if}
+                      <div class="flex items-center gap-1.5">
+                        {#each HIGHLIGHT_COLORS as c}
+                          <button
+                            type="button"
+                            onclick={() => (rule.color = c)}
+                            aria-label={t("highlight.color", { color: c })}
+                            title={t("highlight.color", { color: c })}
+                            class="h-4 w-4 rounded-full border {rule.color === c
+                              ? 'ring-2 ring-accent'
+                              : 'border-edge'}"
+                            style="background:{swatchColor(c)}"
+                          ></button>
+                        {/each}
+                        <label class="ml-auto flex items-center gap-1 text-[11px] text-muted">
+                          <input type="checkbox" bind:checked={rule.caseSensitive} />
+                          {t("highlight.caseSensitive")}
+                        </label>
+                      </div>
+                    </div>
+                  {/each}
+                  <div class="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onclick={addRule}
+                      class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs text-muted hover:bg-accent hover:text-panel-alt"
+                    >
+                      <Icon name="plus" size={13} />
+                      {t("highlight.addRule")}
+                    </button>
+                    <button
+                      type="button"
+                      onclick={resetRules}
+                      class="rounded px-2 py-1 text-xs text-muted hover:text-accent"
+                    >
+                      {t("highlight.resetRules")}
+                    </button>
+                  </div>
+                </div>
+              {/if}
             </div>
           {/if}
         </section>

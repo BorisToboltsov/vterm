@@ -122,6 +122,39 @@ describe("smartLogs (Phase 10)", () => {
   });
 });
 
+describe("highlightRules (Phase 10)", () => {
+  it("seeds built-in starter rules", () => {
+    expect(settings.highlightRules.length).toBeGreaterThan(0);
+    expect(settings.highlightRules.map((r) => r.id)).toContain("error");
+  });
+
+  it("sanitises an imported rules array, dropping junk entries", () => {
+    applyImportedSettings({
+      highlightRules: [
+        { id: "a", name: "A", pattern: "foo", color: "green", enabled: true, caseSensitive: false },
+        { name: "no pattern" }, // dropped — no pattern string
+        "garbage", // dropped — not an object
+      ],
+    });
+    flushSync();
+    expect(settings.highlightRules).toHaveLength(1);
+    expect(settings.highlightRules[0]).toMatchObject({ pattern: "foo", color: "green" });
+  });
+
+  it("falls back to a valid colour and enabled flag for partial entries", () => {
+    applyImportedSettings({ highlightRules: [{ id: "b", pattern: "x", color: "bogus" }] });
+    flushSync();
+    expect(settings.highlightRules[0].color).toBe("yellow");
+    expect(settings.highlightRules[0].enabled).toBe(true);
+  });
+
+  it("is restored to defaults by resetSettings", () => {
+    settings.highlightRules = [];
+    resetSettings();
+    expect(settings.highlightRules.length).toBeGreaterThan(0);
+  });
+});
+
 describe("applyImportedSettings", () => {
   it("applies known keys from a backup snapshot", () => {
     applyImportedSettings({ theme: "dracula", fontSize: 20, defaultPort: 2222 });
