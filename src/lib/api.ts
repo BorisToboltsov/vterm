@@ -418,3 +418,21 @@ export function sftpCancel(transferId: string): Promise<void> {
 export function readClipboardText(): Promise<string> {
   return invoke<string>("read_clipboard_text");
 }
+
+// ── Native menu ───────────────────────────────────────────────────────────────
+
+/** Localized labels for the native application menu (mirrors `MenuLabels` in Rust). */
+export interface MenuLabels {
+  fileMenu: string;
+  helpMenu: string;
+  settings: string;
+  about: string;
+  help: string;
+  manual: string;
+  monitoring: string;
+}
+
+/** Rebuild the native menu in the given language (called on startup + on change). */
+export function setMenuLanguage(labels: MenuLabels): Promise<void> {
+  return invoke<void>("set_menu_language", { labels });
+}

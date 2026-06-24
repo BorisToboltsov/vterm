@@ -45,7 +45,7 @@ describe("ServerTree", () => {
   it("renders an onboarding empty state with an add-server CTA", async () => {
     const onAddServer = vi.fn();
     render(ServerTree, { props: { ...baseProps(), onAddServer } });
-    expect(screen.getByText("Пока нет серверов")).toBeInTheDocument();
+    expect(screen.getByText("No servers yet")).toBeInTheDocument();
     await userEvent.click(screen.getByTestId("empty-add-server"));
     expect(onAddServer).toHaveBeenCalledOnce();
   });

@@ -195,7 +195,17 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `fetch_metrics_detail`, `fetchPendingUpdates` → `fetch_pending_updates`,
   `exportBackup`/`importBackup` и backup-диалоги);
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
-  ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора);
+  ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора) + `language`
+  (дефолт `en`, персист, валидация валидного/невалидного кода при импорте);
+- `i18n/` — локализация ([i18n.test.ts](src/lib/i18n/i18n.test.ts)): реестр языков и
+  гард `isLocale`, `availableLocales` (native-имена); **полнота словарей** (каждый
+  язык покрывает все `MessageKey`) и **отсутствие лишних ключей**; **неизменность
+  технических терминов** между языками (`CPU`/`RAM`/`Load average`/`Disk I/O`/…);
+  чистые `interpolate` (плейсхолдеры `{name}`, числа, неизвестные плейсхолдеры) и
+  `resolve` (фолбэк на дефолтный язык/ключ); реактивный `t()` (перевод по
+  `settings.language`, фолбэк при мусоре);
+- `stores/tabs.svelte.ts` — `localizedStatus` (канонический английский статус →
+  текущий язык, в т.ч. `Error: {detail}` и дефолт `Not connected`);
 - `icons.ts` — целостность реестра иконок;
 - `markdown.ts` — мини-рендер Markdown для встроенной инструкции: `escapeHtml`,
   `inline` (код/ссылки/жирный/курсив, экранирование, литеральный код в бэктиках),
@@ -262,7 +272,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
   визуальный пикер тем (свёрнут/раскрытие, выбор → `aria-checked`), сетка шрифтов с
   Python-превью (`font-preview`), поиск по настройкам (фильтр секций, пустое состояние),
-  сворачиваемые чекбоксы показателей статус-бара (`metrics-toggle`).
+  сворачиваемые чекбоксы показателей статус-бара (`metrics-toggle`), **live-переключение
+  языка** (`language-select` → заголовок панели меняется на выбранный язык).
 
 Тяжёлые интерактивные компоненты (`Terminal.svelte` — xterm.js,
 `SftpPanel.svelte` — нативные диалоги и pointer-DnD, `SettingsPanel.svelte`,
@@ -349,6 +360,7 @@ Cobertura (`coverage/cobertura-coverage.xml`) и JSON-summary для CI.
 src-tauri/src/*.rs            # Rust: #[cfg(test)] mod tests рядом с кодом (incl. error.rs)
 src/lib/*.test.ts             # Фронтенд: юнит + компонентные тесты
 src/lib/stores/*.test.ts      # Тесты runes-сторов (layout, tabs)
+src/lib/i18n/i18n.test.ts     # Локализация: словари, t(), фолбэки
 src/lib/actions/*.test.ts     # Тесты pointer-drag хелперов/экшена
 src/lib/autonomy.guard.test.ts# Гейт офлайн-автономности
 vitest.config.ts              # Конфиг Vitest + гейты покрытия

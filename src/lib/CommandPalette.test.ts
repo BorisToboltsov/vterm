@@ -73,6 +73,6 @@ describe("CommandPalette", () => {
     render(CommandPalette, { props: { open: true, commands: commands(runs) } });
 
     await userEvent.type(screen.getByTestId("command-input"), "zzzzz");
-    expect(screen.getByText("Ничего не найдено")).toBeInTheDocument();
+    expect(screen.getByText("Nothing found")).toBeInTheDocument();
   });
 });

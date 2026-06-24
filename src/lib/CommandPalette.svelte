@@ -4,6 +4,7 @@
   // `commands` (each with its own `run`); matching/ranking lives in command.ts.
   import Icon from "./Icon.svelte";
   import { filterCommands, type CommandItem } from "./command";
+  import { t } from "./i18n";
 
   let {
     open = $bindable(false),
@@ -58,7 +59,7 @@
   <div class="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]">
     <button
       class="absolute inset-0 bg-black/50"
-      aria-label="Close command palette"
+      aria-label={t("palette.closeAria")}
       onclick={close}
     ></button>
     <div
@@ -73,11 +74,11 @@
           onkeydown={onKey}
           data-testid="command-input"
           class="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-muted"
-          placeholder="Команда, сервер, папка…"
-          aria-label="Command palette"
+          placeholder={t("palette.placeholder")}
+          aria-label={t("palette.ariaLabel")}
         />
       </div>
-      <div class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label="Commands">
+      <div class="min-h-0 flex-1 overflow-y-auto py-1" role="listbox" aria-label={t("palette.listAria")}>
         {#each filtered as item, i (item.id)}
           <button
             type="button"
@@ -102,7 +103,7 @@
             </span>
           </button>
         {:else}
-          <div class="px-3 py-6 text-center text-xs text-muted">Ничего не найдено</div>
+          <div class="px-3 py-6 text-center text-xs text-muted">{t("common.nothingFound")}</div>
         {/each}
       </div>
     </div>

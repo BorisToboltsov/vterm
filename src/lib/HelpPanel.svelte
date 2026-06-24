@@ -4,6 +4,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "./markdown";
   import readme from "../../README.md?raw";
+  import { t, type MessageKey } from "./i18n";
 
   let {
     open = $bindable(false),
@@ -55,13 +56,15 @@
     };
   }
 
-  const hotkeys: [string, string][] = [
-    ["Command palette", "⌘K  /  Ctrl+K"],
-    ["Copy selection", "⌘C  /  Ctrl+Shift+C"],
-    ["Paste", "⌘V  /  Ctrl+Shift+V"],
-    ["Interrupt (SIGINT)", "Ctrl+C"],
-    ["Connect to selected server", "Double-click server"],
-    ["Reorder tabs", "Drag a tab"],
+  // [label message-key, key combo, optional combo message-key]. Key combos that
+  // are pure symbols (⌘K …) stay literal; descriptive ones are translated.
+  const hotkeys: [MessageKey, string, MessageKey?][] = [
+    ["help.hkCommandPalette", "⌘K  /  Ctrl+K"],
+    ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],
+    ["help.hkPaste", "⌘V  /  Ctrl+Shift+V"],
+    ["help.hkInterrupt", "Ctrl+C"],
+    ["help.hkConnect", "", "help.hkConnectKeys"],
+    ["help.hkReorder", "", "help.hkReorderKeys"],
   ];
 </script>
 
@@ -69,7 +72,7 @@
   <div class="fixed inset-0 z-40 flex items-center justify-center">
     <button
       class="absolute inset-0 bg-black/50"
-      aria-label="Close help"
+      aria-label={t("help.close")}
       onclick={() => (open = false)}
     ></button>
     <div
@@ -83,44 +86,39 @@
           class="text-sm font-semibold {tab === 'help'
             ? 'text-accent'
             : 'text-muted hover:text-white'}"
-          onclick={() => (tab = "help")}>Help</button
+          onclick={() => (tab = "help")}>{t("help.tabHelp")}</button
         >
         <button
           class="text-sm font-semibold {tab === 'manual'
             ? 'text-accent'
             : 'text-muted hover:text-white'}"
-          onclick={() => (tab = "manual")}>Инструкция</button
+          onclick={() => (tab = "manual")}>{t("help.tabManual")}</button
         >
         <button
           class="text-sm font-semibold {tab === 'about'
             ? 'text-accent'
             : 'text-muted hover:text-white'}"
-          onclick={() => (tab = "about")}>About</button
+          onclick={() => (tab = "about")}>{t("help.tabAbout")}</button
         >
         <button
           class="ml-auto rounded px-2 text-muted hover:text-white"
-          aria-label="Close"
+          aria-label={t("common.close")}
           onclick={() => (open = false)}>×</button
         >
       </div>
 
       <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm">
         {#if tab === "help"}
-          <p class="mb-3 text-xs text-muted">
-            vterm — кроссплатформенный инструмент для системных администраторов,
-            DevOps, SRE (SSH терминал, SFTP клиент). Выберите сервер слева и нажмите
-            <span class="text-green-500">Connect</span> (или дважды кликните по
-            серверу). Несколько подключений живут в отдельных вкладках. SFTP —
-            в правой панели (разворачивается и подключается кнопкой Connect внутри
-            неё).
-          </p>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Hotkeys</h3>
+          <p class="mb-3 text-xs text-muted">{t("help.intro")}</p>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("help.hotkeys")}</h3>
           <table class="w-full text-xs">
             <tbody>
-              {#each hotkeys as [action, keys] (action)}
+              {#each hotkeys as [labelKey, keys, keysLabel] (labelKey)}
                 <tr class="border-b border-edge/50">
-                  <td class="py-1 text-muted">{action}</td>
-                  <td class="py-1 text-right font-mono text-white">{keys}</td>
+                  <td class="py-1 text-muted">{t(labelKey)}</td>
+                  <td class="py-1 text-right font-mono text-white"
+                    >{keysLabel ? t(keysLabel) : keys}</td
+                  >
                 </tr>
               {/each}
             </tbody>
@@ -134,16 +132,16 @@
           <div class="space-y-2 text-xs">
             <div class="text-lg font-semibold text-accent">{appName}</div>
             <div class="text-muted">
-              Version <span class="text-white">{version || "—"}</span>
+              {t("help.version")} <span class="text-white">{version || "—"}</span>
               {#if tauriVersion}
                 · Tauri <span class="text-white">{tauriVersion}</span>
               {/if}
             </div>
             <p class="text-muted">
-              Автор: <span class="text-white">Тобольцов Борис Олегович</span>
+              {t("help.author")}: <span class="text-white">Тобольцов Борис Олегович</span>
             </p>
             <p class="text-muted">
-              Email: <span class="select-text text-white">bt@vcore.su</span>
+              {t("help.email")}: <span class="select-text text-white">bt@vcore.su</span>
             </p>
             <p class="text-muted">
               Telegram: <button
@@ -151,33 +149,33 @@
                 onclick={() => ext("https://t.me/BorisToboltsov")}>@BorisToboltsov</button
               >
             </p>
-            <p class="text-muted">Лицензия: MIT</p>
+            <p class="text-muted">{t("help.license")}: MIT</p>
             <h3 class="pt-2 text-xs uppercase tracking-wider text-muted">
-              Технологии
+              {t("help.technologies")}
             </h3>
             <ul class="space-y-1">
               <li>
                 <button class="text-accent hover:underline" onclick={() => ext("https://tauri.app")}
                   >Tauri 2</button
-                > — нативное окно + Rust-бэкенд
+                > — {t("help.techTauri")}
               </li>
               <li>
                 <button
                   class="text-accent hover:underline"
                   onclick={() => ext("https://github.com/Eugeny/russh")}>russh</button
-                > — SSH-клиент на Rust
+                > — {t("help.techRussh")}
               </li>
               <li>
                 <button
                   class="text-accent hover:underline"
                   onclick={() => ext("https://xtermjs.org")}>xterm.js</button
-                > — веб-терминал
+                > — {t("help.techXterm")}
               </li>
               <li>
                 <button
                   class="text-accent hover:underline"
                   onclick={() => ext("https://svelte.dev")}>SvelteKit</button
-                > — UI
+                > — {t("help.techSvelte")}
               </li>
             </ul>
           </div>

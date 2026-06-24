@@ -3,6 +3,7 @@
   // Cancel / Confirm buttons. Defaults to a destructive (danger) confirm.
   import type { Snippet } from "svelte";
   import Modal from "./Modal.svelte";
+  import { t } from "./i18n";
 
   let {
     open = false,
@@ -34,7 +35,7 @@
       class="rounded px-3 py-1 text-sm text-muted hover:text-white"
       onclick={() => oncancel?.()}
     >
-      Cancel
+      {t("common.cancel")}
     </button>
     <button
       type="button"

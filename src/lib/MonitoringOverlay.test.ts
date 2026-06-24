@@ -95,9 +95,9 @@ beforeEach(() => {
 describe("MonitoringOverlay", () => {
   it("renders metric cards from a live poll", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s1" } });
-    expect(await screen.findByText("Процессор")).toBeInTheDocument();
-    expect(screen.getByText("Память")).toBeInTheDocument();
-    expect(screen.getByText("Файловые системы")).toBeInTheDocument();
+    expect(await screen.findByText("CPU")).toBeInTheDocument();
+    expect(screen.getByText("Memory")).toBeInTheDocument();
+    expect(screen.getByText("Filesystems")).toBeInTheDocument();
     expect(screen.getByTestId("per-core")).toBeInTheDocument();
     expect(screen.getByTestId("partitions")).toBeInTheDocument();
     expect(screen.getByTestId("tcp-states")).toBeInTheDocument();
@@ -107,7 +107,7 @@ describe("MonitoringOverlay", () => {
 
   it("lazily loads pending updates after the first paint", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s2" } });
-    await screen.findByText("Процессор");
+    await screen.findByText("CPU");
     // Pending fetch is deferred (~300ms); the manager appears once it resolves.
     expect(await screen.findByText("apt")).toBeInTheDocument();
     expect(fetchPendingUpdates).toHaveBeenCalledWith("s2");
@@ -116,7 +116,7 @@ describe("MonitoringOverlay", () => {
   it("colours a partition red when usage exceeds the limit threshold", async () => {
     settings.statusBarThresholds.disk = { warn: 1, crit: 2 }; // 5% usage → crit
     render(MonitoringOverlay, { props: { open: true, sessionId: "s3" } });
-    await screen.findByText("Файловые системы");
+    await screen.findByText("Filesystems");
     // The "/" partition usage figure is red.
     const usage = await screen.findByText(/5\.0 GiB \/ 100\.0 GiB/);
     expect(usage).toHaveClass("text-danger");

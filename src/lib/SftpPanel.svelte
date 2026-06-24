@@ -21,6 +21,7 @@
   import Skeleton from "./Skeleton.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { transfersState } from "./stores/transfers.svelte";
+  import { t } from "./i18n";
 
   let {
     sessionId,
@@ -135,7 +136,7 @@
       mkdirName = "";
       showMkdir = false;
       await refresh();
-      notifySuccess(`Папка «${name}» создана`);
+      notifySuccess(t("sftp.folderCreated", { name }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -149,7 +150,7 @@
       mkfileName = "";
       showMkfile = false;
       await refresh();
-      notifySuccess(`Файл «${name}» создан`);
+      notifySuccess(t("sftp.fileCreated", { name }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -160,7 +161,7 @@
     try {
       await sftpDelete(sessionId, entry.path, entry.isDir);
       await refresh();
-      notifySuccess(`Удалено: ${entry.name}`);
+      notifySuccess(t("sftp.deleted", { name: entry.name }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -232,8 +233,8 @@
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title="Expand SFTP panel"
-        aria-label="Expand SFTP panel"
+        title={t("sftp.expandPanel")}
+        aria-label={t("sftp.expandPanel")}
         onclick={() => (collapsed = false)}
       >
         <Icon name="chevronLeft" size={16} />
@@ -249,8 +250,8 @@
     <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title="Collapse SFTP panel"
-        aria-label="Collapse SFTP panel"
+        title={t("sftp.collapsePanel")}
+        aria-label={t("sftp.collapsePanel")}
         onclick={() => (collapsed = true)}
       >
         <Icon name="chevronRight" size={16} />
@@ -258,16 +259,16 @@
       {#if connected}
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title="Refresh"
-          aria-label="Refresh"
+          title={t("sftp.refresh")}
+          aria-label={t("sftp.refresh")}
           onclick={refresh}
         >
           <Icon name="refresh" size={14} />
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title="New folder"
-          aria-label="New folder"
+          title={t("sftp.newFolder")}
+          aria-label={t("sftp.newFolder")}
           onclick={() => {
             showMkdir = !showMkdir;
             if (showMkdir) showMkfile = false;
@@ -278,8 +279,8 @@
         <button
           data-testid="sftp-new-file"
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title="New file"
-          aria-label="New file"
+          title={t("sftp.newFile")}
+          aria-label={t("sftp.newFile")}
           onclick={() => {
             showMkfile = !showMkfile;
             if (showMkfile) showMkdir = false;
@@ -289,8 +290,8 @@
         </button>
         <button
           class="ml-auto flex items-center rounded p-1.5 text-muted hover:text-accent"
-          title="Upload"
-          aria-label="Upload"
+          title={t("sftp.upload")}
+          aria-label={t("sftp.upload")}
           onclick={uploadFiles}
         >
           <Icon name="upload" size={14} />
@@ -310,12 +311,10 @@
         disabled={!sessionReady || connecting}
         onclick={connect}
       >
-        {connecting ? "Connecting…" : "Connect"}
+        {connecting ? t("sftp.connecting") : t("common.connect")}
       </button>
       <p class="text-muted">
-        {sessionReady
-          ? "Открыть SFTP для этой сессии"
-          : "Сначала подключитесь к серверу"}
+        {sessionReady ? t("sftp.openForSession") : t("sftp.connectFirst")}
       </p>
       {#if error}
         <p class="break-words text-danger">{error}</p>
@@ -337,10 +336,10 @@
     >
       <input
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
-        placeholder="Folder name"
+        placeholder={t("sftp.folderNamePlaceholder")}
         bind:value={mkdirName}
       />
-      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">OK</button>
+      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">{t("common.ok")}</button>
     </form>
   {/if}
 
@@ -354,10 +353,10 @@
     >
       <input
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
-        placeholder="File name"
+        placeholder={t("sftp.fileNamePlaceholder")}
         bind:value={mkfileName}
       />
-      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">OK</button>
+      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">{t("common.ok")}</button>
     </form>
   {/if}
 
@@ -369,7 +368,7 @@
       <span class="min-w-0 flex-1 break-words">{error}</span>
       <button
         class="flex shrink-0 items-center hover:text-white"
-        aria-label="Dismiss"
+        aria-label={t("common.dismiss")}
         onclick={() => (error = "")}
       >
         <Icon name="close" size={14} />
@@ -394,7 +393,7 @@
         <button
           class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge"
           ondblclick={goUp}
-          title="Перейти на уровень выше"
+          title={t("sftp.goUp")}
         >
           <Icon name="folder" size={15} class="text-muted" />
           <span class="truncate text-muted">..</span>
@@ -421,16 +420,16 @@
           <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
             <button
               class="rounded p-0.5 text-muted hover:text-accent"
-              title={entry.isDir ? "Download folder" : "Download"}
-              aria-label={entry.isDir ? "Download folder" : "Download"}
+              title={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
+              aria-label={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
               onclick={() => download(entry)}
             >
               <Icon name="download" size={13} />
             </button>
             <button
               class="rounded p-0.5 text-muted hover:text-danger"
-              title="Delete"
-              aria-label="Delete"
+              title={t("common.delete")}
+              aria-label={t("common.delete")}
               onclick={() => (confirmTarget = entry)}
             >
               <Icon name="trash" size={13} />
@@ -438,7 +437,7 @@
           </div>
         </div>
       {:else}
-        <div class="px-3 py-4 text-xs text-muted">Empty directory</div>
+        <div class="px-3 py-4 text-xs text-muted">{t("sftp.emptyDir")}</div>
       {/each}
     {/if}
   </div>
@@ -446,21 +445,21 @@
   <!-- Transfers -->
   {#if transferList.length > 0}
     <div class="border-t border-edge px-2 py-1">
-      {#each transferList as t (t.id)}
+      {#each transferList as tr (tr.id)}
         <div class="group py-0.5 text-xs">
           <div class="flex items-center justify-between gap-2 text-muted">
             <span class="truncate">
-              {t.direction === "upload" ? "↑" : "↓"}
-              {t.name}{#if t.isFolder}&nbsp;({t.transferred}/{t.total}){/if}
+              {tr.direction === "upload" ? "↑" : "↓"}
+              {tr.name}{#if tr.isFolder}&nbsp;({tr.transferred}/{tr.total}){/if}
             </span>
             <div class="flex shrink-0 items-center gap-1">
-              <span>{pct(t)}%</span>
-              {#if t.isFolder && !t.done}
+              <span>{pct(tr)}%</span>
+              {#if tr.isFolder && !tr.done}
                 <button
                   class="hidden items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white group-hover:inline-flex"
-                  title="Stop download"
-                  aria-label="Stop download"
-                  onclick={() => sftpCancel(t.id)}
+                  title={t("sftp.stopDownload")}
+                  aria-label={t("sftp.stopDownload")}
+                  onclick={() => sftpCancel(tr.id)}
                 >
                   <Icon name="close" size={12} />
                 </button>
@@ -468,7 +467,7 @@
             </div>
           </div>
           <div class="mt-0.5 h-1 rounded bg-edge">
-            <div class="h-1 rounded bg-accent" style="width: {pct(t)}%"></div>
+            <div class="h-1 rounded bg-accent" style="width: {pct(tr)}%"></div>
           </div>
         </div>
       {/each}
@@ -483,22 +482,22 @@
   <div class="fixed inset-0 flex items-center justify-center">
     <button
       class="absolute inset-0 bg-black/50"
-      aria-label="Close dialog"
+      aria-label={t("common.closeDialog")}
       onclick={() => (confirmTarget = null)}
     ></button>
     <div class="relative w-80 rounded-lg border border-edge bg-panel-alt p-4">
-      <h2 class="mb-2 text-sm font-semibold text-danger">Delete?</h2>
+      <h2 class="mb-2 text-sm font-semibold text-danger">{t("sftp.deleteTitle")}</h2>
       <p class="mb-4 break-all text-xs text-muted">
-        {confirmTarget.isDir ? "Folder" : "File"}: {confirmTarget.path}
+        {confirmTarget.isDir ? t("sftp.folder") : t("sftp.file")}: {confirmTarget.path}
       </p>
       <div class="flex justify-end gap-2">
         <button
           class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (confirmTarget = null)}>Cancel</button
+          onclick={() => (confirmTarget = null)}>{t("common.cancel")}</button
         >
         <button
           class="rounded bg-danger px-3 py-1 text-sm text-panel-alt hover:opacity-90"
-          onclick={() => confirmTarget && remove(confirmTarget)}>Delete</button
+          onclick={() => confirmTarget && remove(confirmTarget)}>{t("common.delete")}</button
         >
       </div>
     </div>

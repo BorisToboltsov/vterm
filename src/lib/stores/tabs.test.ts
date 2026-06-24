@@ -5,6 +5,7 @@ import {
   dotClass,
   findTab,
   isLive,
+  localizedStatus,
   moveTab,
   nextTabIndex,
   openTab,
@@ -14,6 +15,7 @@ import {
   statusLabel,
   tabsState,
 } from "./tabs.svelte";
+import { settings } from "../settings.svelte";
 
 beforeEach(() => {
   tabsState.list = [];
@@ -41,6 +43,22 @@ describe("pure helpers", () => {
     expect(isLive("Connecting…")).toBe(true);
     expect(isLive("Disconnected")).toBe(false);
     expect(isLive("Error: x")).toBe(false);
+  });
+
+  it("localizedStatus maps the canonical (English) status to the UI language", () => {
+    settings.language = "en";
+    expect(localizedStatus("Connected")).toBe("Connected");
+    expect(localizedStatus("connecting")).toBe("Connecting…");
+    expect(localizedStatus("Disconnected")).toBe("Disconnected");
+    expect(localizedStatus("Error: auth-rejected")).toBe("Error: auth-rejected");
+    expect(localizedStatus("Not connected")).toBe("Not connected");
+
+    settings.language = "ru";
+    expect(localizedStatus("Connected")).toBe("Подключено");
+    expect(localizedStatus("Connecting…")).toBe("Подключение…");
+    expect(localizedStatus("Error: boom")).toBe("Ошибка: boom");
+    expect(localizedStatus("Not connected")).toBe("Нет подключения");
+    settings.language = "en";
   });
 });
 

@@ -2,6 +2,8 @@
 // and which one is active, plus the operations that mutate them. Connection /
 // secret orchestration stays in the page; this store is pure tab bookkeeping.
 
+import { t } from "../i18n";
+
 export interface Tab {
   sessionId: string;
   /** "ssh" = remote server connection; "local" = local shell PTY. */
@@ -33,6 +35,22 @@ export function statusLabel(st: TabStatus, detail?: string): string {
     default:
       return `Error: ${detail ?? "unknown"}`;
   }
+}
+
+/**
+ * Localize a canonical status label (as produced by `statusLabel`) for display.
+ * The stored `status` stays in English so the `startsWith(…)` logic checks below
+ * keep working regardless of UI language; this maps it to the current language
+ * only at render time. Reactive: reads the language via `t()`.
+ */
+export function localizedStatus(statusText: string): string {
+  if (statusText.startsWith("Connecting") || statusText === "connecting")
+    return t("status.connecting");
+  if (statusText.startsWith("Connected")) return t("status.connected");
+  if (statusText.startsWith("Disconnected")) return t("status.disconnected");
+  if (statusText.startsWith("Error"))
+    return t("status.error", { detail: statusText.replace(/^Error:\s*/, "") });
+  return t("status.notConnected");
 }
 
 /** Tailwind colour class for a tab's status dot. */

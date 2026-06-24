@@ -1284,21 +1284,56 @@ fn read_clipboard_text() -> AppResult<String> {
     }
 }
 
-/// Build the native application menu. On macOS the items live in the standard
-/// "vterm" app menu (Settings with ⌘,) and a Help menu; on Windows/Linux they
-/// appear in an in-window menu bar (File → Settings…, Help → About).
+/// Localized labels for the native menu. Sourced from the frontend i18n
+/// dictionaries (`src/lib/i18n`) so the native menu follows the same language as
+/// the rest of the UI. Defaults are the canonical English used for the very
+/// first build, before the WebView pushes the user's language.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MenuLabels {
+    // Used only in the Windows/Linux in-window menu bar (macOS has no File menu).
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    file_menu: String,
+    help_menu: String,
+    settings: String,
+    about: String,
+    help: String,
+    manual: String,
+    monitoring: String,
+}
+
+impl Default for MenuLabels {
+    fn default() -> Self {
+        Self {
+            file_menu: "File".into(),
+            help_menu: "Help".into(),
+            settings: "Settings…".into(),
+            about: "About vterm".into(),
+            help: "Help".into(),
+            manual: "Manual".into(),
+            monitoring: "Monitoring".into(),
+        }
+    }
+}
+
+/// Build the native application menu from localized `labels`. On macOS the items
+/// live in the standard "vterm" app menu (Settings with ⌘,) and a Help menu; on
+/// Windows/Linux they appear in an in-window menu bar (File → Settings…, Help).
+/// Item ids are stable across languages, so the `on_menu_event` routing keeps
+/// working after a rebuild (see `set_menu_language`).
 fn build_app_menu<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
+    labels: &MenuLabels,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
     use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 
-    let settings = MenuItemBuilder::with_id("settings", "Settings…")
+    let settings = MenuItemBuilder::with_id("settings", &labels.settings)
         .accelerator("CmdOrCtrl+,")
         .build(app)?;
-    let about = MenuItemBuilder::with_id("about", "About vterm").build(app)?;
-    let help = MenuItemBuilder::with_id("help", "Help").build(app)?;
-    let manual = MenuItemBuilder::with_id("manual", "Инструкция").build(app)?;
-    let monitoring = MenuItemBuilder::with_id("monitoring", "Мониторинг")
+    let about = MenuItemBuilder::with_id("about", &labels.about).build(app)?;
+    let help = MenuItemBuilder::with_id("help", &labels.help).build(app)?;
+    let manual = MenuItemBuilder::with_id("manual", &labels.manual).build(app)?;
+    let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
         .accelerator("CmdOrCtrl+Shift+M")
         .build(app)?;
 
@@ -1318,7 +1353,7 @@ fn build_app_menu<R: tauri::Runtime>(
             .separator()
             .quit()
             .build()?;
-        let help_menu = SubmenuBuilder::new(app, "Help")
+        let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
             .item(&help)
             .item(&manual)
             .build()?;
@@ -1329,13 +1364,13 @@ fn build_app_menu<R: tauri::Runtime>(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let file_menu = SubmenuBuilder::new(app, "File")
+        let file_menu = SubmenuBuilder::new(app, &labels.file_menu)
             .item(&settings)
             .item(&monitoring)
             .separator()
             .quit()
             .build()?;
-        let help_menu = SubmenuBuilder::new(app, "Help")
+        let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
             .item(&about)
             .item(&help)
             .item(&manual)
@@ -1345,6 +1380,15 @@ fn build_app_menu<R: tauri::Runtime>(
             .item(&help_menu)
             .build()
     }
+}
+
+/// Rebuild the native menu in the language chosen on the frontend. Called by the
+/// WebView on startup and whenever the user switches language in Settings.
+#[tauri::command]
+fn set_menu_language(app: AppHandle, labels: MenuLabels) -> Result<(), String> {
+    let menu = build_app_menu(&app, &labels).map_err(|e| e.to_string())?;
+    app.set_menu(menu).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1365,7 +1409,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .menu(build_app_menu)
+        .menu(|app| build_app_menu(app, &MenuLabels::default()))
         .on_menu_event(|app, event| {
             let _ = match event.id().as_ref() {
                 "settings" => app.emit("menu://settings", ()),
@@ -1408,7 +1452,8 @@ pub fn run() {
             sftp_upload,
             sftp_download,
             sftp_cancel,
-            read_clipboard_text
+            read_clipboard_text,
+            set_menu_language
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

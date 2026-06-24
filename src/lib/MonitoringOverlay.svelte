@@ -23,6 +23,7 @@
   import Icon from "./Icon.svelte";
   import Sparkline from "./Sparkline.svelte";
   import Skeleton from "./Skeleton.svelte";
+  import { t } from "./i18n";
 
   let {
     open = $bindable(false),
@@ -137,7 +138,7 @@
 
 <Modal
   {open}
-  title="Мониторинг сервера"
+  title={t("mon.title")}
   width="w-[min(96vw,1180px)]"
   onclose={() => (open = false)}
 >
@@ -149,7 +150,7 @@
       {/each}
     </div>
   {:else if failed}
-    <p class="py-8 text-center text-sm text-danger">Не удалось получить метрики сессии.</p>
+    <p class="py-8 text-center text-sm text-danger">{t("mon.fetchFailed")}</p>
   {:else if metrics}
     <!-- Header -->
     <div class="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
@@ -169,7 +170,7 @@
         <!-- ── CPU ── -->
         <section class="rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="cpu" size={14} /> Процессор
+            <Icon name="cpu" size={14} /> {t("mon.cpu")}
           </h3>
           <div class="mb-2 flex items-end justify-between">
             <span class="text-2xl font-semibold tabular-nums {thresholdClass(cpu, th.cpu)}">{fmtPct(cpu)}</span>
@@ -178,7 +179,7 @@
           <!-- Per-core utilization -->
           {#if cores.length > 0}
             <div class="mb-2" data-testid="per-core">
-              <div class="mb-1 text-[11px] text-muted">Ядра ({cores.length})</div>
+              <div class="mb-1 text-[11px] text-muted">{t("mon.cores", { n: cores.length })}</div>
               <div class="flex h-12 items-end gap-0.5">
                 {#each cores as c, i (i)}
                   <span
@@ -191,38 +192,38 @@
             </div>
           {/if}
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <dt class="text-muted">Load (1/5/15)</dt>
+            <dt class="text-muted">{t("mon.load")}</dt>
             <dd class="text-right tabular-nums {thresholdClass(metrics.load1, th.load)}">
               {metrics.load1?.toFixed(2) ?? "—"} / {metrics.load5?.toFixed(2) ?? "—"} / {metrics.load15?.toFixed(2) ?? "—"}
             </dd>
             {#if loadCores != null}
-              <dt class="text-muted">Load / ядро</dt>
+              <dt class="text-muted">{t("mon.loadPerCore")}</dt>
               <dd class="text-right tabular-nums">{loadCores.toFixed(2)}</dd>
             {/if}
             {#if detail?.psiCpu}
-              <dt class="text-muted" title="Pressure Stall Info, avg 10/60/300s">PSI CPU</dt>
+              <dt class="text-muted" title={t("mon.psiCpuTitle")}>PSI CPU</dt>
               <dd class="text-right tabular-nums">{psiLabel(detail.psiCpu)}</dd>
             {/if}
             {#if detail?.ctxtRate != null}
-              <dt class="text-muted">Ctx-switch/s</dt>
+              <dt class="text-muted">{t("mon.ctxSwitch")}</dt>
               <dd class="text-right tabular-nums">{detail.ctxtRate.toLocaleString()}</dd>
             {/if}
             {#if detail?.intrRate != null}
-              <dt class="text-muted">Прерывания/s</dt>
+              <dt class="text-muted">{t("mon.interrupts")}</dt>
               <dd class="text-right tabular-nums">{detail.intrRate.toLocaleString()}</dd>
             {/if}
             {#if detail?.procsRunning != null}
-              <dt class="text-muted">Процессы run/blk</dt>
+              <dt class="text-muted">{t("mon.procsRunBlk")}</dt>
               <dd class="text-right tabular-nums">{detail.procsRunning} / {detail.procsBlocked ?? 0}</dd>
             {/if}
             {#if metrics.cpuTemp != null}
-              <dt class="text-muted">Температура</dt>
+              <dt class="text-muted">{t("mon.temperature")}</dt>
               <dd class="text-right tabular-nums {thresholdClass(metrics.cpuTemp, th.cpuTemp)}">{Math.round(metrics.cpuTemp)}°C</dd>
             {/if}
           </dl>
           {#if topCpuProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
-              Топ CPU: <span class="text-text">{topCpuProcs.join(", ")}</span>
+              {t("mon.topCpu")} <span class="text-text">{topCpuProcs.join(", ")}</span>
             </div>
           {/if}
         </section>
@@ -230,7 +231,7 @@
         <!-- ── Memory ── -->
         <section class="rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="memory" size={14} /> Память
+            <Icon name="memory" size={14} /> {t("mon.memory")}
           </h3>
           <div class="mb-2 flex items-end justify-between">
             <span class="text-2xl font-semibold tabular-nums {thresholdClass(ramPct, th.ram)}">{fmtPct(ramPct)}</span>
@@ -240,22 +241,22 @@
             <span class="block h-full rounded-full bg-accent" style="width: {ramPct ?? 0}%"></span>
           </div>
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <dt class="text-muted">Использовано</dt>
+            <dt class="text-muted">{t("mon.used")}</dt>
             <dd class="text-right tabular-nums">{fmtBytes(metrics.memUsed)} / {fmtBytes(metrics.memTotal)}</dd>
             {#if detail?.memAvailable != null}
-              <dt class="text-muted">Доступно</dt>
+              <dt class="text-muted">{t("mon.available")}</dt>
               <dd class="text-right tabular-nums">{fmtBytes(detail.memAvailable)}</dd>
             {/if}
             {#if detail?.memCached != null}
-              <dt class="text-muted">Кэш / буферы</dt>
+              <dt class="text-muted">{t("mon.cacheBuffers")}</dt>
               <dd class="text-right tabular-nums">{fmtBytes(detail.memCached)} / {fmtBytes(detail.memBuffers)}</dd>
             {/if}
             {#if detail?.memFree != null}
-              <dt class="text-muted">Свободно</dt>
+              <dt class="text-muted">{t("mon.free")}</dt>
               <dd class="text-right tabular-nums">{fmtBytes(detail.memFree)}</dd>
             {/if}
             {#if metrics.swapTotal}
-              <dt class="text-muted">Swap</dt>
+              <dt class="text-muted">{t("mon.swap")}</dt>
               <dd class="text-right tabular-nums {thresholdClass(swapPctV, th.swap)}">
                 {fmtBytes(metrics.swapUsed)} / {fmtBytes(metrics.swapTotal)} ({fmtPct(swapPctV)})
               </dd>
@@ -267,7 +268,7 @@
           </dl>
           {#if topMemProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
-              Топ MEM: <span class="text-text">{topMemProcs.join(", ")}</span>
+              {t("mon.topMem")} <span class="text-text">{topMemProcs.join(", ")}</span>
             </div>
           {/if}
         </section>
@@ -275,7 +276,7 @@
         <!-- ── Filesystems / descriptors ── -->
         <section class="rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="disk" size={14} /> Файловые системы
+            <Icon name="disk" size={14} /> {t("mon.filesystems")}
           </h3>
           {#if detail?.partitions && detail.partitions.length > 0}
             <div class="space-y-2" data-testid="partitions">
@@ -297,7 +298,7 @@
                   </div>
                   {#if ip != null}
                     <div class="mt-0.5 flex justify-between text-[11px] text-muted">
-                      <span>inodes</span>
+                      <span>{t("mon.inodes")}</span>
                       <span class="tabular-nums {thresholdClass(ip, th.inodes)}">{p.inodesUsed?.toLocaleString()} / {p.inodesTotal?.toLocaleString()} ({fmtPct(ip)})</span>
                     </div>
                   {/if}
@@ -307,16 +308,16 @@
           {/if}
           <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-edge pt-2 text-xs">
             {#if detail?.fileNrUsed != null}
-              <dt class="text-muted" title="Системные дескрипторы файлов / лимит fs.file-max">Дескрипторы</dt>
+              <dt class="text-muted" title={t("mon.descriptorsTitle")}>{t("mon.descriptors")}</dt>
               <dd class="text-right tabular-nums {thresholdClass(fdPct, th.fd)}">
                 {detail.fileNrUsed.toLocaleString()} / {detail.fileNrMax?.toLocaleString()} ({fmtPct(fdPct)})
               </dd>
             {/if}
             {#if detail?.ulimitSoft != null}
-              <dt class="text-muted" title="ulimit -n (soft / hard)">ulimit -n</dt>
+              <dt class="text-muted" title={t("mon.ulimitTitle")}>ulimit -n</dt>
               <dd class="text-right tabular-nums">{detail.ulimitSoft} / {detail.ulimitHard}</dd>
             {/if}
-            <dt class="text-muted">Disk I/O чтение/запись</dt>
+            <dt class="text-muted">{t("mon.diskIoRw")}</dt>
             <dd class="text-right tabular-nums">{fmtRate(metrics.diskReadRate)} / {fmtRate(metrics.diskWriteRate)}</dd>
             {#if detail?.psiIo}
               <dt class="text-muted">PSI I/O</dt>
@@ -328,31 +329,31 @@
         <!-- ── Network ── -->
         <section class="rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="plug" size={14} /> Сеть
+            <Icon name="plug" size={14} /> {t("mon.network")}
           </h3>
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <dt class="flex items-center gap-1 text-muted"><Icon name="download" size={12} /> Приём</dt>
+            <dt class="flex items-center gap-1 text-muted"><Icon name="download" size={12} /> {t("mon.rx")}</dt>
             <dd class="text-right tabular-nums">{fmtRate(metrics.netRxRate)}</dd>
-            <dt class="flex items-center gap-1 text-muted"><Icon name="upload" size={12} /> Передача</dt>
+            <dt class="flex items-center gap-1 text-muted"><Icon name="upload" size={12} /> {t("mon.tx")}</dt>
             <dd class="text-right tabular-nums">{fmtRate(metrics.netTxRate)}</dd>
             {#if metrics.netConns != null}
-              <dt class="text-muted">Соединения (estab)</dt>
+              <dt class="text-muted">{t("mon.connEstab")}</dt>
               <dd class="text-right tabular-nums">{metrics.netConns}</dd>
             {/if}
           </dl>
           {#if detail?.tcp && detail.tcp.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="tcp-states">
-              <div class="mb-1 text-[11px] text-muted">Состояния TCP</div>
+              <div class="mb-1 text-[11px] text-muted">{t("mon.tcpStates")}</div>
               <div class="flex flex-wrap gap-1">
-                {#each detail.tcp as t (t.state)}
-                  <span class="rounded bg-edge px-1.5 py-0.5 text-[11px] tabular-nums">{t.state}: {t.count}</span>
+                {#each detail.tcp as tcp (tcp.state)}
+                  <span class="rounded bg-edge px-1.5 py-0.5 text-[11px] tabular-nums">{tcp.state}: {tcp.count}</span>
                 {/each}
               </div>
             </div>
           {/if}
           {#if usersList.length > 0}
             <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
-              Пользователи ({usersList.length}): <span class="text-text">{usersList.join(", ")}</span>
+              {t("mon.users", { n: usersList.length })} <span class="text-text">{usersList.join(", ")}</span>
             </div>
           {/if}
         </section>
@@ -360,37 +361,37 @@
         <!-- ── Load history ── -->
         <section class="rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="gauge" size={14} /> Load average
+            <Icon name="gauge" size={14} /> {t("mon.loadHistory")}
           </h3>
           <div class="mb-1 flex items-end justify-between">
             <span class="text-2xl font-semibold tabular-nums {thresholdClass(metrics.load1, th.load)}">{metrics.load1?.toFixed(2) ?? "—"}</span>
             <Sparkline values={loadHist} max={Math.max(1, cores.length)} color="#f9e2af" class="h-10 w-40" />
           </div>
-          <p class="text-[11px] text-muted">Шкала графика — по числу ядер ({cores.length || "?"}).</p>
+          <p class="text-[11px] text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
         </section>
 
         <!-- ── Updates (lazy) ── -->
         <section class="rounded border border-edge bg-panel p-3" data-testid="updates-card">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="refresh" size={14} /> Обновления
+            <Icon name="refresh" size={14} /> {t("mon.updates")}
           </h3>
           {#if pendingLoading}
             <Skeleton height="20px" width="60%" />
           {:else if pending && pending.manager}
             <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <dt class="text-muted">Менеджер</dt>
+              <dt class="text-muted">{t("mon.manager")}</dt>
               <dd class="text-right">{pending.manager}</dd>
-              <dt class="text-muted">Доступно обновлений</dt>
+              <dt class="text-muted">{t("mon.updatesAvailable")}</dt>
               <dd class="text-right tabular-nums {(pending.updates ?? 0) > 0 ? 'text-warn' : ''}">{pending.updates ?? "—"}</dd>
               {#if pending.security != null}
-                <dt class="text-muted">Из них безопасность</dt>
+                <dt class="text-muted">{t("mon.security")}</dt>
                 <dd class="text-right tabular-nums {(pending.security ?? 0) > 0 ? 'text-danger' : ''}">{pending.security}</dd>
               {/if}
-              <dt class="text-muted">Требуется перезагрузка</dt>
-              <dd class="text-right {pending.rebootRequired ? 'text-danger' : ''}">{pending.rebootRequired ? "да" : "нет"}</dd>
+              <dt class="text-muted">{t("mon.rebootRequired")}</dt>
+              <dd class="text-right {pending.rebootRequired ? 'text-danger' : ''}">{pending.rebootRequired ? t("mon.yes") : t("mon.no")}</dd>
             </dl>
           {:else}
-            <p class="text-xs text-muted">Пакетный менеджер не распознан или данные недоступны.</p>
+            <p class="text-xs text-muted">{t("mon.pmUnknown")}</p>
           {/if}
         </section>
       </div>

@@ -17,6 +17,7 @@
   import Icon from "./Icon.svelte";
   import { slide } from "svelte/transition";
   import { matchesQuery } from "./util";
+  import { t, availableLocales, type MessageKey } from "./i18n";
 
   let {
     open = $bindable(false),
@@ -39,10 +40,10 @@
       const path = await pickBackupSavePath(`vterm-backup-${todayStamp()}.json`);
       if (!path) return;
       await exportBackup(path, $state.snapshot(settings));
-      backupMsg = "Backup exported.";
+      backupMsg = t("settings.backupExported");
     } catch (e) {
       backupErr = true;
-      backupMsg = `Export failed: ${e}`;
+      backupMsg = t("settings.exportFailed", { error: String(e) });
     }
   }
 
@@ -55,41 +56,45 @@
       const result = await importBackup(path);
       if (result.settings) applyImportedSettings(result.settings);
       onImported?.();
-      backupMsg = `Restored ${result.serverCount} server(s) and ${result.folderCount} folder(s).`;
+      backupMsg = t("settings.backupRestored", {
+        servers: result.serverCount,
+        folders: result.folderCount,
+      });
     } catch (e) {
       backupErr = true;
-      backupMsg = `Import failed: ${e}`;
+      backupMsg = t("settings.importFailed", { error: String(e) });
     }
   }
 
-  // Theme picker groups (visual swatch chips instead of a plain dropdown).
-  const themeGroups: { label: string; items: ThemeDef[] }[] = [
-    { label: "Light", items: THEMES.filter((t) => t.group === "light") },
-    { label: "Modern", items: THEMES.filter((t) => t.group === "modern") },
-    { label: "Retro", items: THEMES.filter((t) => t.group === "retro") },
+  // Theme picker groups (visual swatch chips instead of a plain dropdown). The
+  // group label is a message key, resolved reactively in the markup.
+  const themeGroups: { labelKey: MessageKey; items: ThemeDef[] }[] = [
+    { labelKey: "settings.themeGroupLight", items: THEMES.filter((th) => th.group === "light") },
+    { labelKey: "settings.themeGroupModern", items: THEMES.filter((th) => th.group === "modern") },
+    { labelKey: "settings.themeGroupRetro", items: THEMES.filter((th) => th.group === "retro") },
   ];
 
   // Editable swatches for the custom terminal palette.
-  const swatches: { key: keyof TerminalTheme; label: string }[] = [
-    { key: "background", label: "Background" },
-    { key: "foreground", label: "Foreground" },
-    { key: "cursor", label: "Cursor" },
-    { key: "black", label: "Black" },
-    { key: "red", label: "Red" },
-    { key: "green", label: "Green" },
-    { key: "yellow", label: "Yellow" },
-    { key: "blue", label: "Blue" },
-    { key: "magenta", label: "Magenta" },
-    { key: "cyan", label: "Cyan" },
-    { key: "white", label: "White" },
-    { key: "brightBlack", label: "Br. Black" },
-    { key: "brightRed", label: "Br. Red" },
-    { key: "brightGreen", label: "Br. Green" },
-    { key: "brightYellow", label: "Br. Yellow" },
-    { key: "brightBlue", label: "Br. Blue" },
-    { key: "brightMagenta", label: "Br. Magenta" },
-    { key: "brightCyan", label: "Br. Cyan" },
-    { key: "brightWhite", label: "Br. White" },
+  const swatches: { key: keyof TerminalTheme; labelKey: MessageKey }[] = [
+    { key: "background", labelKey: "settings.swatch.background" },
+    { key: "foreground", labelKey: "settings.swatch.foreground" },
+    { key: "cursor", labelKey: "settings.swatch.cursor" },
+    { key: "black", labelKey: "settings.swatch.black" },
+    { key: "red", labelKey: "settings.swatch.red" },
+    { key: "green", labelKey: "settings.swatch.green" },
+    { key: "yellow", labelKey: "settings.swatch.yellow" },
+    { key: "blue", labelKey: "settings.swatch.blue" },
+    { key: "magenta", labelKey: "settings.swatch.magenta" },
+    { key: "cyan", labelKey: "settings.swatch.cyan" },
+    { key: "white", labelKey: "settings.swatch.white" },
+    { key: "brightBlack", labelKey: "settings.swatch.brightBlack" },
+    { key: "brightRed", labelKey: "settings.swatch.brightRed" },
+    { key: "brightGreen", labelKey: "settings.swatch.brightGreen" },
+    { key: "brightYellow", labelKey: "settings.swatch.brightYellow" },
+    { key: "brightBlue", labelKey: "settings.swatch.brightBlue" },
+    { key: "brightMagenta", labelKey: "settings.swatch.brightMagenta" },
+    { key: "brightCyan", labelKey: "settings.swatch.brightCyan" },
+    { key: "brightWhite", labelKey: "settings.swatch.brightWhite" },
   ];
 
   // Font choices grouped for the dropdown. Bundled fonts (Coding + Retro, see
@@ -110,6 +115,11 @@
     { label: "Share Tech Mono", value: "'Share Tech Mono', monospace", group: "Retro" },
   ];
   const FONT_GROUPS: FontGroup[] = ["System", "Coding", "Retro"];
+  const FONT_GROUP_KEY: Record<FontGroup, MessageKey> = {
+    System: "settings.fontGroupSystem",
+    Coding: "settings.fontGroupCoding",
+    Retro: "settings.fontGroupRetro",
+  };
 
   // Font that best matches each retro theme — applied when that theme is picked.
   const THEME_FONT: Record<string, string> = {
@@ -131,9 +141,10 @@
 
   // The theme picker is a collapsible sub-section, collapsed by default.
   let themeOpen = $state(false);
-  const currentTheme = $derived(THEMES.find((t) => t.id === settings.theme));
+  const currentTheme = $derived(THEMES.find((th) => th.id === settings.theme));
   const currentThemeName = $derived(
-    currentTheme?.name ?? (settings.theme === "custom" ? "Custom" : settings.theme),
+    currentTheme?.name ??
+      (settings.theme === "custom" ? t("settings.themeCustomName") : settings.theme),
   );
 
   // The font picker mirrors the theme one: collapsible, collapsed by default.
@@ -149,52 +160,55 @@ print(greet("world"))  # => 12345`;
 
   // Status-bar metric checkboxes (collapsible sub-section).
   let metricsOpen = $state(false);
-  const STATUS_ITEMS: { key: keyof StatusBarItems; label: string }[] = [
-    { key: "os", label: "OS" },
-    { key: "host", label: "User @ host" },
-    { key: "cpu", label: "CPU" },
-    { key: "load", label: "Load average" },
-    { key: "ram", label: "RAM" },
-    { key: "swap", label: "Swap" },
-    { key: "disk", label: "Disk" },
-    { key: "diskio", label: "Disk I/O" },
-    { key: "net", label: "Network" },
-    { key: "netConns", label: "Connections" },
-    { key: "uptime", label: "Uptime" },
-    { key: "users", label: "Users" },
-    { key: "ip", label: "IP address" },
-    { key: "topProc", label: "Top process" },
-    { key: "cpuTemp", label: "CPU temp" },
-    { key: "kernel", label: "Kernel" },
-    { key: "serverTime", label: "Server time" },
+  const STATUS_ITEMS: { key: keyof StatusBarItems; labelKey: MessageKey }[] = [
+    { key: "os", labelKey: "settings.metric.os" },
+    { key: "host", labelKey: "settings.metric.host" },
+    { key: "cpu", labelKey: "settings.metric.cpu" },
+    { key: "load", labelKey: "settings.metric.load" },
+    { key: "ram", labelKey: "settings.metric.ram" },
+    { key: "swap", labelKey: "settings.metric.swap" },
+    { key: "disk", labelKey: "settings.metric.disk" },
+    { key: "diskio", labelKey: "settings.metric.diskio" },
+    { key: "net", labelKey: "settings.metric.net" },
+    { key: "netConns", labelKey: "settings.metric.netConns" },
+    { key: "uptime", labelKey: "settings.metric.uptime" },
+    { key: "users", labelKey: "settings.metric.users" },
+    { key: "ip", labelKey: "settings.metric.ip" },
+    { key: "topProc", labelKey: "settings.metric.topProc" },
+    { key: "cpuTemp", labelKey: "settings.metric.cpuTemp" },
+    { key: "kernel", labelKey: "settings.metric.kernel" },
+    { key: "serverTime", labelKey: "settings.metric.serverTime" },
   ];
 
   // Status-bar thresholds (collapsible sub-section). Each numeric metric gets an
   // average (amber) and a limit (red); `unit` is shown next to the inputs.
   let thresholdsOpen = $state(false);
-  const THRESHOLD_ITEMS: { key: ThresholdKey; label: string; unit: string }[] = [
-    { key: "cpu", label: "CPU", unit: "%" },
-    { key: "ram", label: "RAM", unit: "%" },
-    { key: "swap", label: "Swap", unit: "%" },
-    { key: "disk", label: "Disk", unit: "%" },
-    { key: "inodes", label: "Inodes", unit: "%" },
-    { key: "fd", label: "File descriptors", unit: "%" },
-    { key: "load", label: "Load average (1m)", unit: "" },
-    { key: "cpuTemp", label: "CPU temp", unit: "°C" },
+  const THRESHOLD_ITEMS: { key: ThresholdKey; labelKey: MessageKey; unit: string }[] = [
+    { key: "cpu", labelKey: "settings.metric.cpu", unit: "%" },
+    { key: "ram", labelKey: "settings.metric.ram", unit: "%" },
+    { key: "swap", labelKey: "settings.metric.swap", unit: "%" },
+    { key: "disk", labelKey: "settings.metric.disk", unit: "%" },
+    { key: "inodes", labelKey: "settings.thresholdInodes", unit: "%" },
+    { key: "fd", labelKey: "settings.thresholdFd", unit: "%" },
+    { key: "load", labelKey: "settings.thresholdLoad", unit: "" },
+    { key: "cpuTemp", labelKey: "settings.metric.cpuTemp", unit: "°C" },
   ];
 
   // ── Settings search ────────────────────────────────────────────────────────
   let search = $state("");
   // Each section is filterable by its title + keywords.
+  // Keywords are intentionally bilingual (EN + RU) so search matches regardless
+  // of the current UI language. They are not displayed.
   const SECTIONS: { id: string; keywords: string }[] = [
-    { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom" },
-    { id: "cursor", keywords: "Cursor blink block bar underline" },
-    { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click" },
-    { id: "behavior", keywords: "Behavior confirm close tab auto reconnect" },
-    { id: "connection", keywords: "Connection timeout keepalive default port" },
-    { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг" },
-    { id: "security", keywords: "Security host key known_hosts policy strict trust accept" },
-    { id: "backup", keywords: "Backup export import json restore" },
+    { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
+    { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
+    { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
+    { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click терминал буфер сигнал копировать вставка" },
+    { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
+    { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
+    { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
+    { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
+    { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
   ];
   const visibleIds = $derived(
     new Set(SECTIONS.filter((s) => matchesQuery(s.keywords, search)).map((s) => s.id)),
@@ -207,17 +221,17 @@ print(greet("world"))  # => 12345`;
   <div class="fixed inset-0 z-40 flex items-center justify-center">
     <button
       class="absolute inset-0 bg-black/50"
-      aria-label="Close settings"
+      aria-label={t("settings.close")}
       onclick={() => (open = false)}
     ></button>
     <div
       class="relative flex max-h-[85vh] w-[32rem] flex-col rounded-lg border border-edge bg-panel-alt"
     >
       <div class="flex items-center justify-between border-b border-edge px-4 py-3">
-        <h2 class="text-sm font-semibold text-accent">Settings</h2>
+        <h2 class="text-sm font-semibold text-accent">{t("settings.title")}</h2>
         <button
           class="rounded px-2 text-muted hover:text-white"
-          aria-label="Close"
+          aria-label={t("common.close")}
           onclick={() => (open = false)}>×</button
         >
       </div>
@@ -226,8 +240,8 @@ print(greet("world"))  # => 12345`;
         <input
           data-testid="settings-search"
           type="search"
-          placeholder="Search settings…"
-          aria-label="Search settings"
+          placeholder={t("settings.searchPlaceholder")}
+          aria-label={t("settings.searchAria")}
           class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
           bind:value={search}
         />
@@ -235,12 +249,31 @@ print(greet("world"))  # => 12345`;
 
       <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 text-sm">
         {#if noResults}
-          <p class="py-6 text-center text-xs text-muted">Ничего не найдено</p>
+          <p class="py-6 text-center text-xs text-muted">{t("common.nothingFound")}</p>
+        {/if}
+        {#if show("language")}
+        <!-- Language -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionLanguage")}</h3>
+          <label class="block text-xs text-muted">
+            {t("settings.languageLabel")}
+            <select
+              data-testid="language-select"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              bind:value={settings.language}
+            >
+              {#each availableLocales as loc (loc.id)}
+                <option value={loc.id}>{loc.nativeName}</option>
+              {/each}
+            </select>
+          </label>
+        </section>
+
         {/if}
         {#if show("appearance")}
         <!-- Appearance -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Appearance</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionAppearance")}</h3>
           <div class="mb-2">
             <button
               type="button"
@@ -249,7 +282,7 @@ print(greet("world"))  # => 12345`;
               onclick={() => (themeOpen = !themeOpen)}
               class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              <span>Theme</span>
+              <span>{t("settings.theme")}</span>
               <span class="flex min-w-0 items-center gap-2">
                 {#if currentTheme}
                   <span class="flex shrink-0 overflow-hidden rounded border border-edge">
@@ -268,32 +301,32 @@ print(greet("world"))  # => 12345`;
             </button>
             {#if themeOpen}
             <div transition:slide={{ duration: 200 }}>
-            <div role="radiogroup" aria-label="Theme" class="mt-2 space-y-2">
-              {#each themeGroups as grp (grp.label)}
+            <div role="radiogroup" aria-label={t("settings.theme")} class="mt-2 space-y-2">
+              {#each themeGroups as grp (grp.labelKey)}
                 <div>
                   <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
-                    {grp.label}
+                    {t(grp.labelKey)}
                   </span>
                   <div class="grid grid-cols-2 gap-1.5">
-                    {#each grp.items as t (t.id)}
+                    {#each grp.items as themeDef (themeDef.id)}
                       <button
                         type="button"
                         role="radio"
-                        aria-checked={settings.theme === t.id}
+                        aria-checked={settings.theme === themeDef.id}
                         data-testid="theme-option"
-                        title={t.name}
-                        onclick={() => selectTheme(t.id)}
+                        title={themeDef.name}
+                        onclick={() => selectTheme(themeDef.id)}
                         class="flex items-center gap-2 rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.theme ===
-                        t.id
+                        themeDef.id
                           ? 'border-accent bg-edge text-white'
                           : 'border-edge text-muted hover:bg-edge'}"
                       >
                         <span class="flex shrink-0 overflow-hidden rounded border border-edge">
-                          {#each themeSwatches(t) as c, ci (ci)}
+                          {#each themeSwatches(themeDef) as c, ci (ci)}
                             <span class="h-4 w-2.5" style="background-color: {c}"></span>
                           {/each}
                         </span>
-                        <span class="truncate">{t.name}</span>
+                        <span class="truncate">{themeDef.name}</span>
                       </button>
                     {/each}
                   </div>
@@ -309,7 +342,7 @@ print(greet("world"))  # => 12345`;
                   ? 'border-accent bg-edge text-white'
                   : 'border-edge text-muted hover:bg-edge'}"
               >
-                Custom…
+                {t("settings.themeCustom")}
               </button>
             </div>
 
@@ -322,7 +355,7 @@ print(greet("world"))  # => 12345`;
                       class="h-6 w-6 shrink-0 rounded border border-edge bg-panel"
                       bind:value={settings.customTheme[sw.key]}
                     />
-                    <span class="truncate">{sw.label}</span>
+                    <span class="truncate">{t(sw.labelKey)}</span>
                   </label>
                 {/each}
               </div>
@@ -339,7 +372,7 @@ print(greet("world"))  # => 12345`;
               onclick={() => (fontOpen = !fontOpen)}
               class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              <span>Font</span>
+              <span>{t("settings.font")}</span>
               <span class="flex min-w-0 items-center gap-2">
                 <span class="truncate text-white">{currentFontLabel}</span>
                 <Icon
@@ -351,11 +384,11 @@ print(greet("world"))  # => 12345`;
             </button>
             {#if fontOpen}
               <div transition:slide={{ duration: 200 }}>
-                <div role="radiogroup" aria-label="Font" class="mt-2 space-y-2">
+                <div role="radiogroup" aria-label={t("settings.font")} class="mt-2 space-y-2">
                   {#each FONT_GROUPS as g (g)}
                     <div>
                       <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
-                        {g}
+                        {t(FONT_GROUP_KEY[g])}
                       </span>
                       <div class="grid grid-cols-2 gap-1.5">
                         {#each FONTS.filter((f) => f.group === g) as f (f.value)}
@@ -389,7 +422,7 @@ print(greet("world"))  # => 12345`;
           </div>
           <div class="flex gap-2">
             <label class="block flex-1 text-xs text-muted">
-              Font size
+              {t("settings.fontSize")}
               <input
                 type="number"
                 min="8"
@@ -399,7 +432,7 @@ print(greet("world"))  # => 12345`;
               />
             </label>
             <label class="block flex-1 text-xs text-muted">
-              Line height
+              {t("settings.lineHeight")}
               <input
                 type="number"
                 min="1"
@@ -417,22 +450,22 @@ print(greet("world"))  # => 12345`;
         {#if show("cursor")}
         <!-- Cursor -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Cursor</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionCursor")}</h3>
           <div class="flex items-center gap-4">
             <label class="block flex-1 text-xs text-muted">
-              Style
+              {t("settings.cursorStyle")}
               <select
                 class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
                 bind:value={settings.cursorStyle}
               >
-                <option value="block">Block</option>
-                <option value="bar">Bar</option>
-                <option value="underline">Underline</option>
+                <option value="block">{t("settings.cursorBlock")}</option>
+                <option value="bar">{t("settings.cursorBar")}</option>
+                <option value="underline">{t("settings.cursorUnderline")}</option>
               </select>
             </label>
             <label class="mt-4 flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" bind:checked={settings.cursorBlink} />
-              Blink
+              {t("settings.cursorBlink")}
             </label>
           </div>
         </section>
@@ -442,10 +475,10 @@ print(greet("world"))  # => 12345`;
         {#if show("terminal")}
         <!-- Terminal -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Terminal</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionTerminal")}</h3>
           <div class="flex gap-2">
             <label class="block flex-1 text-xs text-muted">
-              Scrollback (lines)
+              {t("settings.scrollback")}
               <input
                 type="number"
                 min="0"
@@ -456,24 +489,24 @@ print(greet("world"))  # => 12345`;
               />
             </label>
             <label class="block flex-1 text-xs text-muted">
-              Bell
+              {t("settings.bell")}
               <select
                 class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
                 bind:value={settings.bell}
               >
-                <option value="none">None</option>
-                <option value="sound">Sound</option>
-                <option value="visual">Visual</option>
+                <option value="none">{t("settings.bellNone")}</option>
+                <option value="sound">{t("settings.bellSound")}</option>
+                <option value="visual">{t("settings.bellVisual")}</option>
               </select>
             </label>
           </div>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.copyOnSelect} />
-            Copy on selection
+            {t("settings.copyOnSelect")}
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.middleClickPaste} />
-            Paste on middle click
+            {t("settings.middleClickPaste")}
           </label>
         </section>
 
@@ -482,14 +515,14 @@ print(greet("world"))  # => 12345`;
         {#if show("behavior")}
         <!-- Behavior -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Behavior</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionBehavior")}</h3>
           <label class="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.confirmCloseTab} />
-            Confirm before closing a tab with an active session
+            {t("settings.confirmCloseTab")}
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.autoReconnect} />
-            Auto-reconnect when a connection drops
+            {t("settings.autoReconnect")}
           </label>
         </section>
 
@@ -499,12 +532,12 @@ print(greet("world"))  # => 12345`;
         <!-- Connection -->
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">
-            Connection
+            {t("settings.sectionConnection")}
           </h3>
-          <p class="mb-2 text-[11px] text-muted">Applies to new connections.</p>
+          <p class="mb-2 text-[11px] text-muted">{t("settings.connectionNote")}</p>
           <div class="flex gap-2">
             <label class="block flex-1 text-xs text-muted">
-              Connect timeout (s)
+              {t("settings.connectTimeout")}
               <input
                 type="number"
                 min="1"
@@ -514,7 +547,7 @@ print(greet("world"))  # => 12345`;
               />
             </label>
             <label class="block flex-1 text-xs text-muted">
-              Keepalive (s)
+              {t("settings.keepalive")}
               <input
                 type="number"
                 min="0"
@@ -525,7 +558,7 @@ print(greet("world"))  # => 12345`;
             </label>
           </div>
           <label class="mt-2 block w-32 text-xs text-muted">
-            Default port
+            {t("settings.defaultPort")}
             <input
               type="number"
               min="1"
@@ -541,17 +574,17 @@ print(greet("world"))  # => 12345`;
         {#if show("statusbar")}
         <!-- Status bar -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Status bar</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionStatusBar")}</h3>
           <label class="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.showStatusBar} />
-            Show bottom status bar
+            {t("settings.showStatusBar")}
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.statusBarExpanded} />
-            Expanded view (names, byte totals, CPU graph) by default
+            {t("settings.expandedByDefault")}
           </label>
           <label class="mt-2 block text-xs text-muted">
-            Metrics poll interval (s)
+            {t("settings.pollInterval")}
             <input
               type="number"
               min="1"
@@ -569,7 +602,7 @@ print(greet("world"))  # => 12345`;
               onclick={() => (metricsOpen = !metricsOpen)}
               class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              <span>Shown metrics</span>
+              <span>{t("settings.shownMetrics")}</span>
               <Icon
                 name={metricsOpen ? "chevronDown" : "chevronRight"}
                 size={14}
@@ -581,7 +614,7 @@ print(greet("world"))  # => 12345`;
                 {#each STATUS_ITEMS as it (it.key)}
                   <label class="flex items-center gap-2 text-xs text-muted">
                     <input type="checkbox" bind:checked={settings.statusBarItems[it.key]} />
-                    {it.label}
+                    {t(it.labelKey)}
                   </label>
                 {/each}
               </div>
@@ -596,7 +629,7 @@ print(greet("world"))  # => 12345`;
               onclick={() => (thresholdsOpen = !thresholdsOpen)}
               class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
             >
-              <span>Пороги (средний → <span class="text-warn">жёлтый</span>, предельный → <span class="text-danger">красный</span>)</span>
+              <span>{t("settings.thresholdsPre")}<span class="text-warn">{t("settings.thresholdsAmber")}</span>{t("settings.thresholdsMid")}<span class="text-danger">{t("settings.thresholdsRed")}</span>{t("settings.thresholdsPost")}</span>
               <Icon
                 name={thresholdsOpen ? "chevronDown" : "chevronRight"}
                 size={14}
@@ -606,30 +639,30 @@ print(greet("world"))  # => 12345`;
             {#if thresholdsOpen}
               <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
                 <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-[10px] uppercase tracking-wider text-muted">
-                  <span>Метрика</span>
-                  <span class="w-20 text-center text-warn">Средний</span>
-                  <span class="w-20 text-center text-danger">Предельный</span>
+                  <span>{t("settings.thresholdMetric")}</span>
+                  <span class="w-20 text-center text-warn">{t("settings.thresholdAverage")}</span>
+                  <span class="w-20 text-center text-danger">{t("settings.thresholdLimit")}</span>
                 </div>
                 {#each THRESHOLD_ITEMS as it (it.key)}
                   <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-xs text-muted">
-                    <span>{it.label}{it.unit ? ` (${it.unit})` : ""}</span>
+                    <span>{t(it.labelKey)}{it.unit ? ` (${it.unit})` : ""}</span>
                     <input
                       type="number"
                       min="0"
-                      aria-label="{it.label} average"
+                      aria-label={t("settings.thresholdAverageAria", { label: t(it.labelKey) })}
                       class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-white outline-none focus:border-accent"
                       bind:value={settings.statusBarThresholds[it.key].warn}
                     />
                     <input
                       type="number"
                       min="0"
-                      aria-label="{it.label} limit"
+                      aria-label={t("settings.thresholdLimitAria", { label: t(it.labelKey) })}
                       class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-white outline-none focus:border-accent"
                       bind:value={settings.statusBarThresholds[it.key].crit}
                     />
                   </div>
                 {/each}
-                <p class="text-[11px] text-muted">Пустое поле — порог отключён. Применяется и в статус-баре, и на странице мониторинга.</p>
+                <p class="text-[11px] text-muted">{t("settings.thresholdNote")}</p>
               </div>
             {/if}
           </div>
@@ -640,16 +673,16 @@ print(greet("world"))  # => 12345`;
         {#if show("security")}
         <!-- Security -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Security</h3>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSecurity")}</h3>
           <label class="block text-xs text-muted">
-            Host key policy (known_hosts)
+            {t("settings.hostKeyPolicy")}
             <select
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
               bind:value={settings.hostKeyPolicy}
             >
-              <option value="strict">Strict — only keys already trusted</option>
-              <option value="ask">Trust on first use — reject if changed</option>
-              <option value="accept">Accept any — trust every key (insecure)</option>
+              <option value="strict">{t("settings.hostKeyStrict")}</option>
+              <option value="ask">{t("settings.hostKeyAsk")}</option>
+              <option value="accept">{t("settings.hostKeyAccept")}</option>
             </select>
           </label>
         </section>
@@ -659,21 +692,18 @@ print(greet("world"))  # => 12345`;
         {#if show("backup")}
         <!-- Backup -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">Backup</h3>
-          <p class="mb-2 text-[11px] text-muted">
-            Экспорт списка серверов, их настроек, структуры папок и параметров приложения
-            в JSON. Пароли/passphrase не входят в бэкап — они хранятся в системном keychain.
-          </p>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionBackup")}</h3>
+          <p class="mb-2 text-[11px] text-muted">{t("settings.backupNote")}</p>
           <div class="flex gap-2">
             <button
               data-testid="backup-export"
               class="rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-              onclick={doExport}>Export backup…</button
+              onclick={doExport}>{t("settings.exportBackup")}</button
             >
             <button
               data-testid="backup-import"
               class="rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-              onclick={() => (confirmImport = true)}>Import backup…</button
+              onclick={() => (confirmImport = true)}>{t("settings.importBackup")}</button
             >
           </div>
           {#if backupMsg}
@@ -691,11 +721,11 @@ print(greet("world"))  # => 12345`;
       <div class="flex items-center justify-between border-t border-edge px-4 py-3">
         <button
           class="rounded px-2 py-1 text-xs text-muted hover:text-danger"
-          onclick={resetSettings}>Reset to defaults</button
+          onclick={resetSettings}>{t("settings.resetDefaults")}</button
         >
         <button
           class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-          onclick={() => (open = false)}>Done</button
+          onclick={() => (open = false)}>{t("common.done")}</button
         >
       </div>
     </div>
@@ -705,14 +735,13 @@ print(greet("world"))  # => 12345`;
 <!-- Importing a backup replaces the current servers and folders. -->
 <ConfirmDialog
   open={confirmImport}
-  title="Import backup?"
-  confirmLabel="Import"
+  title={t("settings.importTitle")}
+  confirmLabel={t("common.import")}
   onconfirm={() => {
     confirmImport = false;
     doImport();
   }}
   oncancel={() => (confirmImport = false)}
 >
-  Текущий список серверов и структура папок будут заменены содержимым бэкапа.
-  Сохранённые в keychain пароли затрагиваются только для перезаписанных серверов.
+  {t("settings.importBody")}
 </ConfirmDialog>

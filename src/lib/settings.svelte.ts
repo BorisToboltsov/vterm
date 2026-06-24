@@ -10,6 +10,7 @@ import {
   getTheme,
   type TerminalTheme,
 } from "./themes";
+import { DEFAULT_LOCALE, isLocale, type Locale } from "./i18n/locales";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type BellStyle = "none" | "sound" | "visual";
@@ -58,6 +59,8 @@ export interface Threshold {
 export type StatusBarThresholds = Record<ThresholdKey, Threshold>;
 
 export interface Settings {
+  // Language
+  language: Locale; // UI language code (see src/lib/i18n)
   // Appearance
   theme: string; // preset id, or "custom"
   customTheme: TerminalTheme;
@@ -92,6 +95,7 @@ export interface Settings {
 }
 
 const DEFAULTS: Settings = {
+  language: DEFAULT_LOCALE,
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
@@ -167,6 +171,7 @@ function load(): Settings {
     return {
       ...DEFAULTS,
       ...raw,
+      language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
       statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
       statusBarThresholds: mergeThresholds(raw.statusBarThresholds),
@@ -221,6 +226,7 @@ export function applyImportedSettings(raw: unknown): void {
       sink[key] = r[key];
     }
   }
+  if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
   }

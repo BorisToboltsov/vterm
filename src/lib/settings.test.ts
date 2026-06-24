@@ -123,4 +123,26 @@ describe("applyImportedSettings", () => {
     expect(settings.theme).toBe(DEFAULT_THEME_ID); // reset to default by the object call
     expect((settings as unknown as Record<string, unknown>).notARealKey).toBeUndefined();
   });
+
+  it("imports a valid language and rejects an invalid one", () => {
+    applyImportedSettings({ language: "ru" });
+    flushSync();
+    expect(settings.language).toBe("ru");
+    applyImportedSettings({ language: "klingon" });
+    flushSync();
+    expect(settings.language).toBe("en"); // junk falls back to the default
+  });
+});
+
+describe("language", () => {
+  it("defaults to English", () => {
+    expect(settings.language).toBe("en");
+  });
+
+  it("persists a language change and reloads valid, rejects junk", () => {
+    settings.language = "ru";
+    flushSync();
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(stored.language).toBe("ru");
+  });
 });

@@ -63,6 +63,9 @@
   import { applyProgress } from "$lib/stores/transfers.svelte";
   import type { SftpProgress } from "$lib/api";
   import { settings } from "$lib/settings.svelte";
+  import { t } from "$lib/i18n";
+  import { setMenuLanguage } from "$lib/api";
+  import { localizedStatus } from "$lib/stores/tabs.svelte";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
@@ -113,7 +116,8 @@
 
   const selected = $derived(servers.find((s) => s.id === selectedId) ?? null);
   const activeTab = $derived(findTab(tabsState.activeId));
-  const status = $derived(activeTab?.status ?? "Not connected");
+  // Raw status drives logic (startsWith checks); localize only for the top bar.
+  const status = $derived(localizedStatus(activeTab?.status ?? "Not connected"));
   const sftpReady = $derived(activeTab ? activeTab.status.startsWith("Connected") : false);
 
   /** Open the detailed monitoring overlay (needs a connected SSH session). */
@@ -121,40 +125,40 @@
     if (activeTab?.kind === "ssh" && activeTab.status.startsWith("Connected")) {
       showMonitoring = true;
     } else {
-      notifyError("Откройте мониторинг при активном SSH-подключении");
+      notifyError(t("page.monitoringNeedsSsh"));
     }
   }
 
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
   const paletteCommands = $derived<CommandItem[]>([
-    { id: "act:add", title: "Добавить сервер", icon: "plus", group: "Действия",
-      keywords: "add server new сервер", run: () => openAdd() },
-    { id: "act:newfolder", title: "Новая папка", icon: "folderPlus", group: "Действия",
-      keywords: "folder new папка", run: () => openFolderForm("") },
-    { id: "act:settings", title: "Настройки", icon: "settings", group: "Действия",
-      keywords: "settings preferences параметры", run: () => (showSettings = true) },
-    { id: "act:monitoring", title: "Мониторинг сервера", icon: "barChart", group: "Действия",
+    { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
+      keywords: "add server new сервер добавить", run: () => openAdd() },
+    { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
+      keywords: "folder new папка новая", run: () => openFolderForm("") },
+    { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
+      keywords: "settings preferences параметры настройки", run: () => (showSettings = true) },
+    { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
       keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
-    { id: "act:help", title: "Справка", icon: "info", group: "Действия",
-      keywords: "help помощь", run: () => { helpTab = "help"; showHelp = true; } },
-    { id: "act:manual", title: "Инструкция (README)", icon: "info", group: "Действия",
+    { id: "act:help", title: t("palette.help"), icon: "info", group: t("palette.groupActions"),
+      keywords: "help помощь справка", run: () => { helpTab = "help"; showHelp = true; } },
+    { id: "act:manual", title: t("palette.manual"), icon: "info", group: t("palette.groupActions"),
       keywords: "manual readme инструкция документация docs", run: () => { helpTab = "manual"; showHelp = true; } },
-    { id: "act:about", title: "О программе", icon: "info", group: "Действия",
-      keywords: "about version версия", run: () => { helpTab = "about"; showHelp = true; } },
+    { id: "act:about", title: t("palette.about"), icon: "info", group: t("palette.groupActions"),
+      keywords: "about version версия о программе", run: () => { helpTab = "about"; showHelp = true; } },
     { id: "act:toggle-left",
-      title: layout.leftCollapsed ? "Показать список серверов" : "Скрыть список серверов",
-      icon: "server", group: "Действия", keywords: "panel sidebar toggle панель",
+      title: layout.leftCollapsed ? t("palette.showServerList") : t("palette.hideServerList"),
+      icon: "server", group: t("palette.groupActions"), keywords: "panel sidebar toggle панель серверы",
       run: () => (layout.leftCollapsed = !layout.leftCollapsed) },
     { id: "act:toggle-sftp",
-      title: layout.sftpCollapsed ? "Показать панель SFTP" : "Скрыть панель SFTP",
-      icon: "file", group: "Действия", keywords: "sftp panel toggle панель",
+      title: layout.sftpCollapsed ? t("palette.showSftp") : t("palette.hideSftp"),
+      icon: "file", group: t("palette.groupActions"), keywords: "sftp panel toggle панель",
       run: () => (layout.sftpCollapsed = !layout.sftpCollapsed) },
     ...servers.map((s): CommandItem => ({
       id: `srv:${s.id}`,
       title: s.alias,
       subtitle: `${s.username}@${s.host}:${s.port}`,
       icon: "server",
-      group: "Серверы",
+      group: t("palette.groupServers"),
       keywords: `${s.tags.join(" ")} ${s.group ?? ""} connect подключить`,
       run: () => {
         selectedId = s.id;
@@ -166,11 +170,26 @@
       title: nameOf(f),
       subtitle: f,
       icon: "folder",
-      group: "Папки",
+      group: t("palette.groupFolders"),
       keywords: "folder add server папка добавить",
       run: () => openAdd(f),
     })),
   ]);
+
+  // Keep the native application menu in the same language as the rest of the UI.
+  // Re-runs whenever `settings.language` changes (read via `t()`); errors are
+  // ignored so a non-Tauri context (e.g. plain `pnpm dev`) doesn't throw.
+  $effect(() => {
+    setMenuLanguage({
+      fileMenu: t("menu.fileMenu"),
+      helpMenu: t("menu.helpMenu"),
+      settings: t("menu.settings"),
+      about: t("menu.about"),
+      help: t("menu.help"),
+      manual: t("menu.manual"),
+      monitoring: t("menu.monitoring"),
+    }).catch(() => {});
+  });
 
   function onGlobalKey(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
@@ -247,7 +266,7 @@
     try {
       folders = await addFolder(path);
       showFolderForm = false;
-      notifySuccess(`Папка «${name}» создана`);
+      notifySuccess(t("page.folderCreated", { name }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -281,7 +300,7 @@
     try {
       await deleteFolder(path);
       [servers, folders] = await Promise.all([listServers(), listFolders()]);
-      notifySuccess(`Папка «${nameOf(path)}» удалена`);
+      notifySuccess(t("page.folderDeleted", { name: nameOf(path) }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -306,6 +325,7 @@
 
   /** Alias shown on a tab — follows server edits, falls back to the snapshot. */
   function tabAlias(tab: Tab): string {
+    if (tab.kind === "local") return t("tab.localShell");
     return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias;
   }
 
@@ -352,8 +372,8 @@
       const plan = await connectPlan(server.id);
       const msg =
         plan.secretLabel === "Passphrase"
-          ? "Ключ или passphrase не приняты сервером. Введите passphrase заново."
-          : "Неверный логин или пароль. Введите пароль заново.";
+          ? t("page.passphraseRejected")
+          : t("page.passwordRejected");
       promptSecret(server, plan.secretLabel, msg);
     }
   }
@@ -481,7 +501,7 @@
     try {
       await forgetSecrets(editId);
       servers = servers.map((s) => (s.id === editId ? { ...s, hasSavedPassword: false } : s));
-      notifySuccess("Сохранённый секрет удалён");
+      notifySuccess(t("page.savedSecretRemoved"));
     } catch (e) {
       notifyError(String(e));
     }
@@ -508,12 +528,12 @@
       if (formMode === "edit" && editId) {
         const updated = await updateServer(editId, payload);
         servers = servers.map((s) => (s.id === updated.id ? updated : s));
-        notifySuccess(`Сервер «${updated.alias}» обновлён`);
+        notifySuccess(t("page.serverUpdated", { alias: updated.alias }));
       } else {
         const created = await addServer(payload);
         servers = [...servers, created];
         selectedId = created.id;
-        notifySuccess(`Сервер «${created.alias}» добавлен`);
+        notifySuccess(t("page.serverAdded", { alias: created.alias }));
       }
       showForm = false;
     } catch (e) {
@@ -524,13 +544,13 @@
   let serverToDelete = $state<ServerProfile | null>(null);
 
   async function doDeleteServer(id: string) {
-    const alias = servers.find((s) => s.id === id)?.alias ?? "сервер";
+    const alias = servers.find((s) => s.id === id)?.alias ?? t("page.serverFallbackName");
     closeTabsForServer(id);
     try {
       await deleteServer(id);
       servers = servers.filter((s) => s.id !== id);
       if (selectedId === id) selectedId = servers[0]?.id ?? null;
-      notifySuccess(`Сервер «${alias}» удалён`);
+      notifySuccess(t("page.serverDeleted", { alias }));
     } catch (e) {
       notifyError(String(e));
     }
@@ -603,14 +623,14 @@
             tab.sessionId
               ? 'bg-panel text-white'
               : 'text-muted hover:bg-edge'}"
-            title={tab.status}
+            title={localizedStatus(tab.status)}
           >
             <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
             <span class="truncate">{tabAlias(tab)}</span>
             <button
               data-close
               class="shrink-0 rounded p-0.5 text-muted hover:bg-danger hover:text-white"
-              aria-label="Close tab"
+              aria-label={t("tab.close")}
               onclick={(e) => {
                 e.stopPropagation();
                 requestCloseTab(tab.sessionId);
@@ -624,8 +644,8 @@
         <button
           data-testid="new-local-terminal"
           class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
-          title="Открыть локальный терминал"
-          aria-label="Открыть локальный терминал"
+          title={t("tab.openLocalTerminal")}
+          aria-label={t("tab.openLocalTerminal")}
           onclick={() => openLocalTab()}
         >
           <Icon name="plus" size={14} />
@@ -641,12 +661,12 @@
                   <div
                     class="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-3 border-b border-edge bg-panel-alt/95 px-3 py-1.5 text-xs"
                   >
-                    <span class="text-muted">{tab.status}</span>
+                    <span class="text-muted">{localizedStatus(tab.status)}</span>
                     <button
                       class="rounded bg-accent px-2 py-0.5 text-panel-alt hover:bg-accent-hover"
                       onclick={() => reconnectTabStore(tab.sessionId)}
                     >
-                      Reconnect
+                      {t("common.reconnect")}
                     </button>
                   </div>
                 {/if}
@@ -701,10 +721,8 @@
       {:else}
         <EmptyState
           icon="server"
-          title={selected ? `Сервер «${selected.alias}»` : "Нет активной сессии"}
-          hint={selected
-            ? "Нажмите Connect или дважды кликните по серверу. Быстрый доступ — ⌘K."
-            : "Выберите сервер слева или добавьте новый. Палитра команд — ⌘K / Ctrl+K."}
+          title={selected ? t("page.emptyServerTitle", { alias: selected.alias }) : t("page.emptyNoSession")}
+          hint={selected ? t("page.hintConnect") : t("page.hintSelect")}
         >
           {#if selected}
             <button
@@ -712,7 +730,7 @@
               class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500"
               onclick={startConnect}
             >
-              Connect
+              {t("common.connect")}
             </button>
           {/if}
         </EmptyState>
@@ -752,53 +770,53 @@
 <HelpPanel bind:open={showHelp} bind:tab={helpTab} />
 
 <!-- New folder -->
-<Modal open={showFolderForm} title="New folder" onclose={() => (showFolderForm = false)}>
+<Modal open={showFolderForm} title={t("page.newFolderTitle")} onclose={() => (showFolderForm = false)}>
   <form onsubmit={submitFolder}>
     {#if folderParent}
       <p class="mb-3 text-xs text-muted">
-        Inside <span class="text-white">{folderParent}</span>
+        {t("page.inside")} <span class="text-white">{folderParent}</span>
       </p>
     {/if}
     <input
       use:focusOnMount
       class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-      placeholder="Folder name"
+      placeholder={t("sftp.folderNamePlaceholder")}
       bind:value={folderName}
     />
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
         class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-        onclick={() => (showFolderForm = false)}>Cancel</button
+        onclick={() => (showFolderForm = false)}>{t("common.cancel")}</button
       >
       <button
         type="submit"
         class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-        >Create</button
+        >{t("common.create")}</button
       >
     </div>
   </form>
 </Modal>
 
 <!-- Rename folder -->
-<Modal open={!!folderToRename} title="Rename folder" onclose={() => (folderToRename = null)}>
+<Modal open={!!folderToRename} title={t("page.renameFolderTitle")} onclose={() => (folderToRename = null)}>
   <form onsubmit={submitFolderRename}>
     <input
       use:focusOnMount
       class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-      placeholder="Folder name"
+      placeholder={t("sftp.folderNamePlaceholder")}
       bind:value={renameName}
     />
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
         class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-        onclick={() => (folderToRename = null)}>Cancel</button
+        onclick={() => (folderToRename = null)}>{t("common.cancel")}</button
       >
       <button
         type="submit"
         class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-        >Rename</button
+        >{t("common.rename")}</button
       >
     </div>
   </form>
@@ -807,35 +825,33 @@
 <!-- Delete folder confirmation -->
 <ConfirmDialog
   open={!!folderToDelete}
-  title="Delete folder?"
-  confirmLabel="Delete"
+  title={t("page.deleteFolderTitle")}
+  confirmLabel={t("common.delete")}
   onconfirm={confirmDeleteFolder}
   oncancel={() => (folderToDelete = null)}
 >
-  Папка <span class="text-white">{folderToDelete}</span> и все вложенные папки будут удалены.
-  Серверы внутри переместятся в корень.
+  {t("page.deleteFolderBody1")} <span class="text-white">{folderToDelete}</span> {t("page.deleteFolderBody2")}
 </ConfirmDialog>
 
 <!-- Delete server confirmation -->
 <ConfirmDialog
   open={!!serverToDelete}
-  title="Delete server?"
-  confirmLabel="Delete"
+  title={t("page.deleteServerTitle")}
+  confirmLabel={t("common.delete")}
   onconfirm={async () => {
     if (serverToDelete) await doDeleteServer(serverToDelete.id);
     serverToDelete = null;
   }}
   oncancel={() => (serverToDelete = null)}
 >
-  Сервер <span class="text-white">{serverToDelete?.alias}</span> и его сохранённые секреты
-  будут удалены. Открытые вкладки этого сервера закроются.
+  {t("page.deleteServerBody1")} <span class="text-white">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
 </ConfirmDialog>
 
 <!-- Tab close confirmation -->
 <ConfirmDialog
   open={!!closeConfirmTab}
-  title="Close tab?"
-  confirmLabel="Close"
+  title={t("page.closeTabTitle")}
+  confirmLabel={t("common.close")}
   danger={false}
   onconfirm={() => {
     if (closeConfirmId) closeTabStore(closeConfirmId);
@@ -843,12 +859,12 @@
   }}
   oncancel={() => (closeConfirmId = null)}
 >
-  Сессия <span class="text-white">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
-  будет разорвана.
+  {t("page.closeTabBody1")} <span class="text-white">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
+  {t("page.closeTabBody2")}
 </ConfirmDialog>
 
 <!-- Secret prompt (password or key passphrase) -->
-<Modal open={!!secretTarget} title="Connect" onclose={() => (secretTarget = null)}>
+<Modal open={!!secretTarget} title={t("page.secretTitle")} onclose={() => (secretTarget = null)}>
   {#if secretTarget}
     <form onsubmit={submitSecret}>
       <p class="mb-3 text-xs text-muted">
@@ -858,7 +874,7 @@
         <p class="mb-3 rounded border border-danger px-2 py-1 text-xs text-danger">{secretError}</p>
       {/if}
       <label class="block text-xs text-muted">
-        {secretLabel}
+        {secretLabel === "Passphrase" ? t("page.secretPassphrase") : t("page.secretPassword")}
         <input
           type="password"
           data-testid="secret-input"
@@ -869,19 +885,19 @@
       </label>
       <label class="mt-3 flex items-center gap-2 text-xs text-muted">
         <input type="checkbox" bind:checked={rememberSecret} />
-        Сохранить в связке ключей (keychain)
+        {t("page.rememberKeychain")}
       </label>
       <div class="mt-4 flex justify-end gap-2">
         <button
           type="button"
           class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (secretTarget = null)}>Cancel</button
+          onclick={() => (secretTarget = null)}>{t("common.cancel")}</button
         >
         <button
           type="submit"
           data-testid="secret-connect"
           class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-          >Connect</button
+          >{t("common.connect")}</button
         >
       </div>
     </form>
@@ -891,21 +907,21 @@
 <!-- Add / Edit server modal -->
 <Modal
   open={showForm}
-  title={formMode === "edit" ? "Edit server" : "New server"}
+  title={formMode === "edit" ? t("page.editServerTitle") : t("page.newServerTitle")}
   onclose={() => (showForm = false)}
 >
   <form onsubmit={submitForm}>
     <label class="mb-2 block text-xs text-muted">
-      Alias
+      {t("page.alias")}
       <input
         data-testid="field-alias"
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
         bind:value={alias}
-        placeholder="My VPS"
+        placeholder={t("page.aliasPlaceholder")}
       />
     </label>
     <label class="mb-2 block text-xs text-muted">
-      Host / IP
+      {t("page.hostIp")}
       <input
         data-testid="field-host"
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
@@ -915,7 +931,7 @@
     </label>
     <div class="mb-2 flex gap-2">
       <label class="block w-20 text-xs text-muted">
-        Port
+        {t("page.port")}
         <input
           type="number"
           class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
@@ -923,7 +939,7 @@
         />
       </label>
       <label class="block flex-1 text-xs text-muted">
-        Username
+        {t("page.username")}
         <input
           data-testid="field-username"
           class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
@@ -934,22 +950,22 @@
     </div>
 
     <div class="mb-2 text-xs text-muted">
-      Authentication
+      {t("page.authentication")}
       <div class="mt-1 flex gap-3 text-sm text-white">
         <label class="flex items-center gap-1">
           <input type="radio" value="password" bind:group={authMethod} />
-          Password
+          {t("page.authPassword")}
         </label>
         <label class="flex items-center gap-1">
           <input type="radio" value="key" bind:group={authMethod} />
-          SSH key
+          {t("page.authKey")}
         </label>
       </div>
     </div>
 
     {#if authMethod === "key"}
       <label class="mb-2 block text-xs text-muted">
-        Private key file
+        {t("page.privateKeyFile")}
         <div class="mt-1 flex gap-2">
           <input
             readonly
@@ -960,14 +976,14 @@
           <button
             type="button"
             class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-            onclick={browseKey}>Browse…</button
+            onclick={browseKey}>{t("common.browse")}</button
           >
         </div>
       </label>
     {/if}
 
     <label class="mb-2 block text-xs text-muted">
-      Tags (comma-separated)
+      {t("page.tags")}
       <input
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
         bind:value={tagsInput}
@@ -981,22 +997,22 @@
           type="button"
           class="rounded px-2 py-1 text-xs text-danger hover:underline"
           onclick={() => (confirmForget = true)}
-          title="Удалить сохранённый пароль/passphrase из keychain"
+          title={t("page.forgetSavedSecretTitle")}
         >
-          Forget saved secret
+          {t("page.forgetSavedSecret")}
         </button>
       {/if}
       <div class="ml-auto flex gap-2">
         <button
           type="button"
           class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (showForm = false)}>Cancel</button
+          onclick={() => (showForm = false)}>{t("common.cancel")}</button
         >
         <button
           type="submit"
           data-testid="save-server"
           class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-          >{formMode === "edit" ? "Update" : "Save"}</button
+          >{formMode === "edit" ? t("common.update") : t("common.save")}</button
         >
       </div>
     </div>
@@ -1006,15 +1022,15 @@
 <!-- Forget-secret confirmation -->
 <ConfirmDialog
   open={confirmForget}
-  title="Forget saved secret?"
-  confirmLabel="Forget"
+  title={t("page.forgetSecretTitle")}
+  confirmLabel={t("common.forget")}
   onconfirm={async () => {
     await forgetSaved();
     confirmForget = false;
   }}
   oncancel={() => (confirmForget = false)}
 >
-  Сохранённый пароль/passphrase будет удалён из системного keychain. Действие нельзя отменить.
+  {t("page.forgetSecretBody")}
 </ConfirmDialog>
 
 <!-- Command palette (⌘K) -->

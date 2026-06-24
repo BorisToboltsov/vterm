@@ -16,6 +16,7 @@
   import Sparkline from "./Sparkline.svelte";
   import { layout } from "./stores/layout.svelte";
   import { aggregateTransfers, transfersState } from "./stores/transfers.svelte";
+  import { t } from "./i18n";
 
   let { sessionId, onOpenMonitoring }: { sessionId: string; onOpenMonitoring?: () => void } =
     $props();
@@ -83,7 +84,9 @@
           .join(" ")
       : "",
   );
-  const loadTitle = $derived(loadAvg ? `Load average: ${loadAvg}` : "CPU utilization");
+  const loadTitle = $derived(
+    loadAvg ? t("bar.titleLoadAvg", { value: loadAvg }) : t("bar.titleCpuUtil"),
+  );
   const memPct = $derived(memPctOf(metrics?.memUsed ?? null, metrics?.memTotal ?? null));
   const diskFree = $derived(diskFreeOf(metrics?.diskUsed ?? null, metrics?.diskTotal ?? null));
   const diskPct = $derived(memPctOf(metrics?.diskUsed ?? null, metrics?.diskTotal ?? null));
@@ -160,7 +163,7 @@
               name={osIconFor(metrics)}
               size={14}
               class="text-muted"
-              title={metrics.os || "Unknown OS"}
+              title={metrics.os || t("bar.osUnknown")}
             />
             {#if expanded}<span>{metrics.prettyName || metrics.os || "—"}</span>{/if}
           </span>
@@ -177,14 +180,14 @@
             >
           </span>
         {:else if g === "load"}
-          <span class="flex items-center gap-2" title="Load average (1 / 5 / 15 min)">
+          <span class="flex items-center gap-2" title={t("bar.titleLoad")}>
             <Icon name="gauge" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-[5.25rem]', 'w-[5.25rem]')} {loadClass}"
               >{loadAvg}</span
             >
           </span>
         {:else if g === "ram"}
-          <span class="flex items-center gap-2" title="RAM used / total">
+          <span class="flex items-center gap-2" title={t("bar.titleRam")}>
             <Icon name="memory" size={14} class="text-muted" />
             <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {ramClass}">
               {#if expanded}{fmtBytes(metrics.memUsed)} / {fmtBytes(metrics.memTotal)}{memPct !=
@@ -194,7 +197,7 @@
             </span>
           </span>
         {:else if g === "disk"}
-          <span class="flex items-center gap-2" title="Disk free / total on /">
+          <span class="flex items-center gap-2" title={t("bar.titleDisk")}>
             <Icon name="disk" size={14} class="text-muted" />
             <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-38')} {diskClass}">
               {#if expanded}{fmtBytes(diskFree)} free / {fmtBytes(metrics.diskTotal)}{:else}{diskPct ==
@@ -204,7 +207,7 @@
             </span>
           </span>
         {:else if g === "net"}
-          <span class="flex items-center gap-1" title="Network ↑ upload / ↓ download">
+          <span class="flex items-center gap-1" title={t("bar.titleNet")}>
             <Icon name="upload" size={13} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-[3.05rem]', 'w-[3.05rem]')}"
               >{fmtRate(metrics.netTxRate)}</span
@@ -215,47 +218,47 @@
             >
           </span>
         {:else if g === "ip"}
-          <span class="flex items-center gap-2" title={"IP address: " + metrics.ip}>
+          <span class="flex items-center gap-2" title={t("bar.titleIp", { ip: metrics.ip })}>
             <Icon name="globe" size={14} class="text-muted" />
             <span class="inline-block truncate text-center tabular-nums {w('w-20', 'w-20')}"
               >{metrics.ip}</span
             >
           </span>
         {:else if g === "uptime"}
-          <span class="flex items-center gap-2" title="Uptime">
+          <span class="flex items-center gap-2" title={t("bar.titleUptime")}>
             <Icon name="power" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-[40px]', 'w-[42px]')}"
               >{fmtUptime(metrics.uptimeSecs)}</span
             >
           </span>
         {:else if g === "kernel"}
-          <span class="flex items-center gap-2" title="Kernel: {metrics.kernel}">
+          <span class="flex items-center gap-2" title={t("bar.titleKernel", { kernel: metrics.kernel })}>
             <Icon name="terminal" size={14} class="text-muted" />
             <span class="inline-block truncate text-center {w('w-20', 'w-28')}">{metrics.kernel}</span>
           </span>
         {:else if g === "serverTime"}
-          <span class="flex items-center gap-2" title="Server time">
+          <span class="flex items-center gap-2" title={t("bar.titleServerTime")}>
             <Icon name="clock" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-16', 'w-16')}"
               >{metrics.serverTime}</span
             >
           </span>
         {:else if g === "cpuTemp"}
-          <span class="flex items-center gap-2" title="CPU temperature">
+          <span class="flex items-center gap-2" title={t("bar.titleCpuTemp")}>
             <Icon name="thermometer" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-9', 'w-9')} {tempClass}"
               >{Math.round(metrics.cpuTemp ?? 0)}°C</span
             >
           </span>
         {:else if g === "topProc"}
-          <span class="flex items-center gap-2" title={"Top processes:\n" + topProcs.join("\n")}>
+          <span class="flex items-center gap-2" title={t("bar.titleTopProc") + "\n" + topProcs.join("\n")}>
             <Icon name="activity" size={14} class="text-muted" />
             <span class="inline-block truncate text-center tabular-nums {w('w-16', 'w-20')}"
               >{topProcs[0] ?? "—"}</span
             >
           </span>
         {:else if g === "swap"}
-          <span class="flex items-center gap-2" title="Swap used / total">
+          <span class="flex items-center gap-2" title={t("bar.titleSwap")}>
             <Icon name="swap" size={14} class="text-muted" />
             <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {swapClass}">
               {#if expanded}{fmtBytes(metrics.swapUsed)} / {fmtBytes(metrics.swapTotal)}{swapPct !=
@@ -265,7 +268,7 @@
             </span>
           </span>
         {:else if g === "diskio"}
-          <span class="flex items-center gap-1" title="Disk I/O — read / write">
+          <span class="flex items-center gap-1" title={t("bar.titleDiskIo")}>
             <Icon name="diskIo" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-[3.25rem]', 'w-[3.25rem]')}"
               >{fmtRate(metrics.diskReadRate)}</span
@@ -276,14 +279,14 @@
             >
           </span>
         {:else if g === "netConns"}
-          <span class="flex items-center gap-2" title="Established connections">
+          <span class="flex items-center gap-2" title={t("bar.titleNetConns")}>
             <Icon name="plug" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-2', 'w-2')}"
               >{metrics.netConns}</span
             >
           </span>
         {:else if g === "users"}
-          <span class="flex items-center gap-2" title={"Logged-in users:\n" + usersList.join("\n")}>
+          <span class="flex items-center gap-2" title={t("bar.titleUsers") + "\n" + usersList.join("\n")}>
             <Icon name="users" size={14} class="text-muted" />
             <span class="inline-block text-center tabular-nums {w('w-2', 'w-2')}"
               >{usersList.length}</span
@@ -298,12 +301,12 @@
         <button
           data-testid="transfer-indicator"
           class="flex items-center gap-1.5 rounded px-1 text-muted hover:text-white"
-          title="SFTP transfers — click to open the panel"
+          title={t("bar.transfers")}
           onclick={() => (layout.sftpCollapsed = false)}
         >
           <Icon name={summary.direction === "upload" ? "upload" : "download"} size={13} />
           {#if expanded}
-            <span class="tabular-nums">{summary.active} {summary.active === 1 ? "file" : "files"}</span>
+            <span class="tabular-nums">{summary.active} {summary.active === 1 ? t("bar.file") : t("bar.files")}</span>
             <span class="h-1.5 w-12 overflow-hidden rounded-full bg-edge">
               <span class="block h-full rounded-full bg-accent" style="width: {summary.pct}%"></span>
             </span>
@@ -313,9 +316,9 @@
       {/if}
 
     {:else if failed}
-      <span>Metrics unavailable</span>
+      <span>{t("bar.metricsUnavailable")}</span>
     {:else}
-      <span>Loading metrics…</span>
+      <span>{t("bar.loadingMetrics")}</span>
     {/if}
   </div>
 
@@ -326,8 +329,8 @@
     <button
       data-testid="statusbar-toggle"
       class="flex shrink-0 items-center self-stretch border-l border-edge px-2 text-muted hover:text-white"
-      title={expanded ? "Compact view" : "Expanded view"}
-      aria-label={expanded ? "Compact status bar" : "Expanded status bar"}
+      title={expanded ? t("bar.compactView") : t("bar.expandedView")}
+      aria-label={expanded ? t("bar.compactAria") : t("bar.expandedAria")}
       aria-pressed={expanded}
       onclick={() => (settings.statusBarExpanded = !settings.statusBarExpanded)}
     >
@@ -338,8 +341,8 @@
     <button
       data-testid="open-monitoring"
       class="flex shrink-0 items-center self-stretch border-l border-edge px-2 text-muted hover:text-white"
-      title="Подробный мониторинг"
-      aria-label="Open detailed monitoring"
+      title={t("bar.detailedMonitoring")}
+      aria-label={t("bar.openMonitoringAria")}
       onclick={() => onOpenMonitoring?.()}
     >
       <Icon name="barChart" size={14} />

@@ -2,6 +2,7 @@
   // Reusable modal shell: dimmed backdrop + centered card. Controlled via `open`
   // + `onclose` (backdrop click or Escape). Content is passed as children.
   import type { Snippet } from "svelte";
+  import { t } from "./i18n";
 
   let {
     open = false,
@@ -70,7 +71,7 @@
   <div class="fixed inset-0 z-40 flex items-center justify-center">
     <button
       class="absolute inset-0 bg-black/50"
-      aria-label="Close dialog"
+      aria-label={t("common.closeDialog")}
       onclick={() => onclose?.()}
     ></button>
     <div

@@ -15,9 +15,11 @@ vi.mock("./api", () => ({
 }));
 
 import SettingsPanel from "./SettingsPanel.svelte";
+import { settings } from "./settings.svelte";
 
 beforeEach(() => {
   localStorage.clear();
+  settings.language = "en";
   exportBackup.mockReset().mockResolvedValue(undefined);
   importBackup.mockReset();
   pickBackupSavePath.mockReset();
@@ -120,7 +122,17 @@ describe("SettingsPanel — appearance & search", () => {
   it("shows an empty state when nothing matches", async () => {
     render(SettingsPanel, { props: { open: true } });
     await userEvent.type(screen.getByTestId("settings-search"), "zzzzz");
-    expect(screen.getByText("Ничего не найдено")).toBeInTheDocument();
+    expect(screen.getByText("Nothing found")).toBeInTheDocument();
+  });
+
+  it("switches the UI language live via the language select", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    // English by default.
+    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByTestId("language-select"), "ru");
+    // The heading (and the rest of the panel) re-renders in Russian.
+    expect(screen.getByRole("heading", { name: "Настройки" })).toBeInTheDocument();
+    expect(settings.language).toBe("ru");
   });
 
   it("status-bar metric checkboxes are collapsible", async () => {

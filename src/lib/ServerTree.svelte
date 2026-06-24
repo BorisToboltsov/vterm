@@ -16,6 +16,7 @@
   import Icon from "./Icon.svelte";
   import { fade } from "svelte/transition";
   import EmptyState from "./EmptyState.svelte";
+  import { t } from "./i18n";
 
   let {
     servers,
@@ -162,8 +163,8 @@
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title="Expand server list"
-        aria-label="Expand server list"
+        title={t("tree.expandList")}
+        aria-label={t("tree.expandList")}
         onclick={() => (layout.leftCollapsed = false)}
       >
         <Icon name="chevronRight" size={16} />
@@ -171,18 +172,18 @@
       <span
         class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
       >
-        Servers
+        {t("tree.servers")}
       </span>
     </div>
   {:else}
     <div
       class="flex items-center justify-between px-3 py-2 text-xs uppercase tracking-wider text-muted"
     >
-      <span>Saved servers</span>
+      <span>{t("tree.savedServers")}</span>
       <button
         class="rounded p-0.5 hover:bg-edge hover:text-white"
-        title="Collapse server list"
-        aria-label="Collapse server list"
+        title={t("tree.collapseList")}
+        aria-label={t("tree.collapseList")}
         onclick={() => (layout.leftCollapsed = true)}
       >
         <Icon name="chevronLeft" size={16} />
@@ -192,13 +193,13 @@
       <input
         data-testid="server-search"
         class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
-        placeholder="Search servers, tags…"
+        placeholder={t("tree.searchPlaceholder")}
         bind:value={serverSearch}
       />
       <button
         class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        title="New folder"
-        aria-label="New folder"
+        title={t("tree.newFolder")}
+        aria-label={t("tree.newFolder")}
         onclick={() => onNewFolder("")}
       >
         <Icon name="folderPlus" size={14} />
@@ -206,8 +207,8 @@
       <button
         data-testid="add-server"
         class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        title="Add server"
-        aria-label="Add server"
+        title={t("tree.addServer")}
+        aria-label={t("tree.addServer")}
         onclick={onAddServer}
       >
         <Icon name="filePlus" size={14} />
@@ -250,8 +251,8 @@
             {@render guides(row.depth)}
             <button
               class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-white"
-              title={collapsedFolders.includes(row.path) ? "Expand" : "Collapse"}
-              aria-label="Toggle folder"
+              title={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
+              aria-label={t("tree.toggleFolder")}
               onclick={() => toggleFolder(row.path)}
             >
               <Icon name={collapsedFolders.includes(row.path) ? "chevronRight" : "chevronDown"} size={14} />
@@ -264,24 +265,24 @@
             >
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title="Rename folder"
-                aria-label="Rename folder"
+                title={t("tree.renameFolder")}
+                aria-label={t("tree.renameFolder")}
                 onclick={() => onRenameFolder(row.path)}
               >
                 <Icon name="pencil" size={13} />
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title="New subfolder"
-                aria-label="New subfolder"
+                title={t("tree.newSubfolder")}
+                aria-label={t("tree.newSubfolder")}
                 onclick={() => onNewFolder(row.path)}
               >
                 <Icon name="plus" size={13} />
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-danger"
-                title="Delete folder"
-                aria-label="Delete folder"
+                title={t("tree.deleteFolder")}
+                aria-label={t("tree.deleteFolder")}
                 onclick={() => onDeleteFolder(row.path)}
               >
                 <Icon name="trash" size={13} />
@@ -327,8 +328,8 @@
             >
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title="Edit server"
-                aria-label="Edit server"
+                title={t("tree.editServer")}
+                aria-label={t("tree.editServer")}
                 onclick={(e) => {
                   e.stopPropagation();
                   onEditServer(row.server);
@@ -338,8 +339,8 @@
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-danger"
-                title="Delete server"
-                aria-label="Delete server"
+                title={t("tree.deleteServer")}
+                aria-label={t("tree.deleteServer")}
                 onclick={(e) => {
                   e.stopPropagation();
                   onDeleteServer(row.server);
@@ -354,19 +355,19 @@
         {#if servers.length === 0}
           <EmptyState
             icon="server"
-            title="Пока нет серверов"
-            hint="Добавьте первый сервер, чтобы подключиться по SSH."
+            title={t("tree.emptyTitle")}
+            hint={t("tree.emptyHint")}
           >
             <button
               data-testid="empty-add-server"
               class="rounded bg-edge px-3 py-1 text-sm font-medium hover:bg-accent hover:text-panel-alt"
               onclick={onAddServer}
             >
-              Добавить сервер
+              {t("tree.addServer")}
             </button>
           </EmptyState>
         {:else}
-          <div class="px-3 py-4 text-center text-sm text-muted">Ничего не найдено</div>
+          <div class="px-3 py-4 text-center text-sm text-muted">{t("common.nothingFound")}</div>
         {/if}
       {/each}
     </div>
