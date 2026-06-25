@@ -92,12 +92,45 @@ pnpm check
   TCP), `parse_detail` (mem/filenr/ulimit/procs) и `parse_pending` (распознавание
   пакетного менеджера и счётчиков обновлений);
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
-  (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`);
+  (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`** —
+  легаси-профиль → `auto_record:false`; round-trip сохраняет `autoRecord:true`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
   файловый round-trip во временном каталоге (`tempfile`);
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
   shell-вкладки (`portable-pty`) проверяется вживую/E2E, а не юнит-тестом
   (нужен реальный tty + Tauri-события).
+- `recording.rs` — запись сессий (Фаза 11), чистые хелперы: `asciicast_header`
+  (валидный JSON v2, кламп нулевых размеров, **флаг-расширение `timed`** — `true`/`false`
+  в заголовке, плюс поле **`server`** = creation-title), `with_updated_meta` (перезапись
+  `title`/`description`: события и прочие поля — `timed`/`width`/**`server`** — сохраняются,
+  т.е. сервер переживает переименование; не-JSON/пустой ввод → `None`),
+  **метаданные сессии**: `Recorder::start` вкладывает в заголовок `vterm`-объект (env из
+  фронта: hostname/ip/os + бэкендные `recordMode`/`startedAt`; пустой env → объект всё равно с
+  `recordMode`), `with_ended_at` ставит `vterm.endedAt` сохраняя остальное, `RecordMode::label`
+  (commands/fullNoTiming/full round-trip), **пауза** (`set_paused`): пока на паузе `output`
+  отбрасывается, а `input` авто-возобновляет (фоновый поток не записан, до/после — записаны),
+  `event_line` (JSON-массив `[t,kind,data]`
+  с округлением времени до мкс и экранированием), `sanitize_title` (fs-безопасный слаг,
+  фолбэк `session`), `is_password_prompt` (детект `password:`/`passphrase:`/`[sudo]`,
+  без ложного срабатывания на «the password is …»), `RecordMode::parse`
+  (full/fullNoTiming/commands → timed/per_line, неизвестное → full), и **ритм untimed-режимов**
+  (`Recorder` во временный файл): в `commands` сначала пишется **затравочное приглашение**
+  (передано в `start` — первое `o`-событие при `t=0`), затем команда эхо-печатается посимвольно
+  с растущими таймингами, а вывод (два чанка) пишется **одним таймингом** — сразу целиком, не
+  построчно; в `fullNoTiming` (приглашение пустое → не сеется) набор идёт с **тем же шагом
+  `TYPING_STEP`** (пер-keystroke — проверяется равенство интервала), а вывод так же **одним
+  таймингом** — оба режима играют полностью одинаково. Отдельный тест: **пустой Enter в
+  `commands` игнорируется** — «долбёжка» Enter не даёт `i`-событий, а echo пустых строк и
+  повторно отрисованное приглашение оболочки подавляются (в записи остаются затравочное
+  приглашение и реальная команда с выводом). **Построчный редактор `commands`-режима:**
+  стрелки/escape не утекают в команду (`ESC[D`/`ESC[C`, `ESC O D`/`ESC O C` SS3, `ESC[1;5C`
+  CSI-с-параметрами → чистая `cd /etc/systemd`); **вставка по курсору** — после ←← набранный
+  `X` встаёт в середину (`cd /etc/systeXmd`, а не в конец); **Home/End/Delete/backspace**
+  (Ctrl+A/E, `ESC[H`, `ESC[3~`) редактируют строку в нужной позиции; **правки оболочки
+  восстанавливаются из её вывода:** **история (↑/↓)** — `ESC[A`/`ESC O A` + redraw `CR приглашение
+  команда ESC[K` → recalled-команда как есть, а после backspace+вставки — отредактированная
+  (`cd /etc/systeX`); **tab-completion** — простое дополнение (эхо `c/` без `CR` → дописка по
+  курсору `cd /etc/`) и неоднозначное со списком+перерисовкой (→ строка минус приглашение, `echo`).
 - `ssh.rs` — `HostKeyPolicy::from_str`, имена событий, `key_is_encrypted` на
   сгенерированных `ssh-keygen` ключах (тест мягко пропускается, если
   `ssh-keygen` недоступен); `find_default_key` (порядок предпочтения OpenSSH,
@@ -193,6 +226,28 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `filterEntries` (пустой запрос → всё; регистронезависимый матч по level/message/raw-JSON),
   `applyFilters` (комбинация текст + чипы уровня: все/пустой набор → без фильтра,
   только включённые категории, пересечение с текстом);
+- `recording.ts` — записи сессий (Фаза 11): `parseCast` (заголовок + `o`/`i`-события
+  asciicast, отсев мусора, пустое, **чтение флага-расширения `timed`** из заголовка —
+  `false`/отсутствует), `extractTranscript` (склейка вывода, снятие ANSI,
+  игнор ввода, схлопывание CR-перерисовок до финального состояния, сжатие пустых строк,
+  пусто без вывода), `extractCommands` (список введённых команд: keystroke-режим — по Enter;
+  **commands-режим — каждое `i`-событие без `\r` = команда**, не склеиваются),
+  `extractMarkdown` (**ранбук**: шапка `# title`, нумерованные команды в code-span, вывод в
+  `` ```text ``; голый заголовок без вывода; пусто без команд; **commands-режим без `\r` строит
+  ранбук, а не пустой файл** — из блока срезаются эхо команды и хвостовое приглашение; «забор»
+  расширяется при backtick'ах в выводе), **`sessionMetaPairs`/`metadataComment`** (упорядоченный
+  блок метаданных: server/host/address/ip/user/os/kernel/started/ended/duration/mode/app; только
+  присутствующие поля; `#`-комментарии для txt; пусто без заголовка),
+  `castDuration` (время последнего события / 0); библиотека:
+  `recordingDateISO` (UTC `YYYY-MM-DD`, "" для 0), `filterRecordings` (по **заголовку/описанию/
+  серверу**/файлу/ISO-дате — в т.ч. сервер находится после переименования заголовка,
+  регистронезависимо, пустой запрос → всё), `sortRecordings`/`sortRecordingsBy`
+  (одно- и **многоключевая** сортировка дата/имя/размер: приоритет по порядку критериев,
+  пустые → копия без мутации входа); плеер: `outputUpTo` (конкатенация вывода до времени
+  `t`, игнор ввода), `formatTime` (`M:SS`/`H:MM:SS`, отрицательное → `0:00`) и
+  `playbackSpeeds` (по флагу `timed`: реально-таймингованные → `0.5/1/2/4×` старт `1×`;
+  синтетические `timed:false` → замедленная `0.25/0.5/1/2×` старт `0.5×`; отсутствие флага
+  и `null` → как таймингованные);
 - `actions/clipboardKeys.ts` — `isEditable` (text-like input/textarea — да; чекбокс/
   div/readonly/disabled/`.xterm`-textarea — нет), `selectedText`/`replaceSelection`
   (вставка по каретке + событие `input`; замена всего значения для `type="number"`
@@ -203,7 +258,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `themes.ts` — целостность палитр (все ключи — валидный hex, группа
   light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
   `applyUiPalette`;
-- `settings.svelte.ts` — дефолты, persist в `localStorage`, `activeTerminalTheme`,
+- `settings.svelte.ts` — дефолты (в т.ч. `recordIdlePauseSecs: 20` — пауза записи при простое),
+  persist в `localStorage`, `activeTerminalTheme`,
   `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`),
   `statusBarThresholds` (числовые дефолты, deep-merge бэкапа с сохранением
   дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора),

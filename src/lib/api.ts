@@ -2,7 +2,7 @@
 // so the UI never deals with command-name strings directly.
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { FileEntry, NewServerProfile, ServerProfile } from "./types";
+import type { FileEntry, NewServerProfile, RecordingMeta, ServerProfile } from "./types";
 
 // ── Server profiles ───────────────────────────────────────────────────────────
 
@@ -435,4 +435,69 @@ export interface MenuLabels {
 /** Rebuild the native menu in the given language (called on startup + on change). */
 export function setMenuLanguage(labels: MenuLabels): Promise<void> {
   return invoke<void>("set_menu_language", { labels });
+}
+
+// ── Session recording (Phase 11) ───────────────────────────────────────────────
+
+/** Start recording a session to a new asciicast file; resolves to its path. */
+export function startRecording(
+  sessionId: string,
+  title: string,
+  cols: number,
+  rows: number,
+  prompt: string,
+  env: string,
+  maskPasswords: boolean,
+  mode: string,
+): Promise<string> {
+  return invoke<string>("start_recording", {
+    sessionId,
+    title,
+    cols,
+    rows,
+    prompt,
+    env,
+    maskPasswords,
+    mode,
+  });
+}
+
+/** Stop recording a session; resolves to the file path if one was active. */
+export function stopRecording(sessionId: string): Promise<string | null> {
+  return invoke<string | null>("stop_recording", { sessionId });
+}
+
+/** Pause or resume the active recording (tab switched away / idle). */
+export function setRecordingPaused(sessionId: string, paused: boolean): Promise<void> {
+  return invoke<void>("set_recording_paused", { sessionId, paused });
+}
+
+/** List stored recordings, newest first. */
+export function listRecordings(): Promise<RecordingMeta[]> {
+  return invoke<RecordingMeta[]>("list_recordings");
+}
+
+/** Set a recording's title and description (rewrites its asciicast header). */
+export function setRecordingMeta(path: string, title: string, description: string): Promise<void> {
+  return invoke<void>("set_recording_meta", { path, title, description });
+}
+
+/** Delete a stored recording by path. */
+export function deleteRecording(path: string): Promise<void> {
+  return invoke<void>("delete_recording", { path });
+}
+
+/** Read a recording's raw asciicast content (for transcript export / player). */
+export function readRecording(path: string): Promise<string> {
+  return invoke<string>("read_recording", { path });
+}
+
+/** Write exported text (transcript or .cast copy) to a user-chosen path. */
+export function exportRecording(path: string, content: string): Promise<void> {
+  return invoke<void>("export_recording", { path, content });
+}
+
+/** Native "save as" dialog for an export; returns the chosen path or null. */
+export function pickExportSavePath(defaultName: string): Promise<string | null> {
+  return save({ defaultPath: defaultName });
 }

@@ -2,6 +2,7 @@ mod backup;
 mod error;
 mod model;
 mod pty;
+mod recording;
 mod secrets;
 mod sftp;
 mod ssh;
@@ -76,6 +77,7 @@ fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResult<Se
         has_saved_password: false,
         group: profile.group,
         tags: profile.tags,
+        auto_record: profile.auto_record,
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -104,6 +106,7 @@ fn update_server(
                 server.key_path = profile.key_path;
                 server.group = profile.group;
                 server.tags = profile.tags;
+                server.auto_record = profile.auto_record;
             }
             None => return Err(AppError::UnknownServer),
         }
@@ -604,6 +607,210 @@ async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult
     state.core_samples.lock().unwrap().remove(&session_id);
     state.ctxintr_samples.lock().unwrap().remove(&session_id);
     Ok(())
+}
+
+// ── Session recording (asciicast v2) ───────────────────────────────────────────
+
+/// Metadata about a stored recording, read from its asciicast header + file stat.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingMeta {
+    path: String,
+    title: String,
+    description: String,
+    server: String,
+    width: u32,
+    height: u32,
+    timestamp: u64,
+    size: u64,
+}
+
+/// True if `path` is a `.cast` file directly inside the recordings directory
+/// (guards `read`/`delete` against arbitrary filesystem access).
+fn is_recording_path(path: &std::path::Path) -> bool {
+    let Some(dir) = recording::recordings_dir() else {
+        return false;
+    };
+    path.extension().is_some_and(|e| e == "cast") && path.parent() == Some(dir.as_path())
+}
+
+/// Start recording the given session to a new asciicast file; returns its path.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // Tauri command params arrive by name from JS
+async fn start_recording(
+    state: State<'_, AppState>,
+    session_id: String,
+    title: String,
+    cols: u32,
+    rows: u32,
+    prompt: String,
+    env: String,
+    mask_passwords: bool,
+    mode: String,
+) -> AppResult<String> {
+    let dir = recording::recordings_dir().ok_or_else(|| "no recordings directory".to_string())?;
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let path = dir.join(format!(
+        "{}-{}.cast",
+        recording::sanitize_title(&title),
+        millis
+    ));
+
+    let is_ssh = session_arc(&state, &session_id).await.is_ok();
+    let local = if is_ssh {
+        None
+    } else {
+        state.local_ptys.lock().unwrap().get(&session_id).cloned()
+    };
+    if !is_ssh && local.is_none() {
+        return Err(AppError::NoSession);
+    }
+
+    let rec = recording::Recorder::start(
+        path.clone(),
+        cols,
+        rows,
+        &title,
+        &prompt,
+        &env,
+        mask_passwords,
+        recording::RecordMode::parse(&mode),
+    )?;
+    if is_ssh {
+        session_arc(&state, &session_id).await?.begin_recording(rec);
+    } else if let Some(pty) = local {
+        pty.begin_recording(rec);
+    }
+    Ok(path.to_string_lossy().into_owned())
+}
+
+/// Stop recording the given session; returns the file path if one was active.
+#[tauri::command]
+async fn stop_recording(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<Option<String>> {
+    let path = if let Ok(session) = session_arc(&state, &session_id).await {
+        session.end_recording()
+    } else {
+        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+        local.and_then(|p| p.end_recording())
+    };
+    // Stamp the wall-clock end time into the header now that recording has stopped.
+    if let Some(p) = &path {
+        if let Ok(content) = std::fs::read_to_string(p) {
+            let ended = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if let Some(updated) = recording::with_ended_at(&content, ended) {
+                let _ = std::fs::write(p, updated);
+            }
+        }
+    }
+    Ok(path.map(|p| p.to_string_lossy().into_owned()))
+}
+
+/// Pause or resume the active recording on a session (tab switched away / idle).
+#[tauri::command]
+async fn set_recording_paused(
+    state: State<'_, AppState>,
+    session_id: String,
+    paused: bool,
+) -> AppResult<()> {
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        session.set_recording_paused(paused);
+    } else {
+        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+        if let Some(pty) = local {
+            pty.set_recording_paused(paused);
+        }
+    }
+    Ok(())
+}
+
+/// List stored recordings (newest first), reading metadata from each header.
+#[tauri::command]
+fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
+    let Some(dir) = recording::recordings_dir() else {
+        return Ok(vec![]);
+    };
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(vec![]); // dir not created yet
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "cast") {
+            continue;
+        }
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        let header = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| c.lines().next().map(str::to_owned))
+            .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok());
+        let h = header.unwrap_or(serde_json::Value::Null);
+        let title = h["title"].as_str().unwrap_or("").to_owned();
+        out.push(RecordingMeta {
+            path: path.to_string_lossy().into_owned(),
+            // Older recordings have no `server` field → fall back to the title.
+            server: h["server"].as_str().unwrap_or(&title).to_owned(),
+            title,
+            description: h["description"].as_str().unwrap_or("").to_owned(),
+            width: h["width"].as_u64().unwrap_or(80) as u32,
+            height: h["height"].as_u64().unwrap_or(24) as u32,
+            timestamp: h["timestamp"].as_u64().unwrap_or(0),
+            size,
+        });
+    }
+    out.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
+    Ok(out)
+}
+
+/// Delete a stored recording (only within the recordings directory).
+#[tauri::command]
+fn delete_recording(path: String) -> AppResult<()> {
+    let p = std::path::PathBuf::from(&path);
+    if !is_recording_path(&p) {
+        return Err(AppError::Message("not a recording".into()));
+    }
+    std::fs::remove_file(&p).map_err(|e| format!("delete recording: {e}"))?;
+    Ok(())
+}
+
+/// Set a recording's title and description (rewrites the asciicast header in
+/// place). Used by the "name this recording" prompt shown after stopping.
+#[tauri::command]
+fn set_recording_meta(path: String, title: String, description: String) -> AppResult<()> {
+    let p = std::path::PathBuf::from(&path);
+    if !is_recording_path(&p) {
+        return Err(AppError::Message("not a recording".into()));
+    }
+    let content = std::fs::read_to_string(&p).map_err(|e| format!("read recording: {e}"))?;
+    let updated = recording::with_updated_meta(&content, &title, &description)
+        .ok_or_else(|| AppError::Message("invalid recording header".into()))?;
+    std::fs::write(&p, updated).map_err(|e| format!("write recording: {e}"))?;
+    Ok(())
+}
+
+/// Read a recording's raw asciicast content (for the AI transcript export / player).
+#[tauri::command]
+fn read_recording(path: String) -> AppResult<String> {
+    let p = std::path::PathBuf::from(&path);
+    if !is_recording_path(&p) {
+        return Err(AppError::Message("not a recording".into()));
+    }
+    std::fs::read_to_string(&p).map_err(|e| format!("read recording: {e}").into())
+}
+
+/// Write exported text (a transcript or a copied .cast) to a user-chosen path.
+/// The destination comes from a native save dialog, so the user intends it.
+#[tauri::command]
+fn export_recording(path: String, content: String) -> AppResult<()> {
+    std::fs::write(&path, content).map_err(|e| format!("export recording: {e}").into())
 }
 
 // ── Remote metrics (bottom status bar) ─────────────────────────────────────────
@@ -1453,7 +1660,15 @@ pub fn run() {
             sftp_download,
             sftp_cancel,
             read_clipboard_text,
-            set_menu_language
+            set_menu_language,
+            start_recording,
+            stop_recording,
+            set_recording_paused,
+            list_recordings,
+            delete_recording,
+            set_recording_meta,
+            read_recording,
+            export_recording
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

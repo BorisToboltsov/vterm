@@ -100,6 +100,7 @@ mod tests {
             has_saved_password: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
+            auto_record: true,
         }
     }
 

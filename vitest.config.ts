@@ -38,6 +38,12 @@ export default defineConfig({
         // Polling overlay driven by live metrics/native fetches; pure logic lives
         // in thresholds.ts/format.ts (covered) and a smoke test renders it.
         "src/lib/MonitoringOverlay.svelte",
+        // Recordings library — thin shell over the recording API + dialogs; pure
+        // logic (transcript/parse) lives in recording.ts (covered).
+        "src/lib/RecordingsPanel.svelte",
+        // asciicast player — xterm-driven replay; timing logic (outputUpTo/
+        // formatTime/castDuration) lives in recording.ts (covered).
+        "src/lib/RecordingPlayer.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

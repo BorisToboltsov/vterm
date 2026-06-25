@@ -24,6 +24,7 @@ describe("defaults", () => {
     expect(settings.keepaliveInterval).toBe(15);
     expect(settings.defaultPort).toBe(22);
     expect(settings.hostKeyPolicy).toBe("ask");
+    expect(settings.recordIdlePauseSecs).toBe(20);
     // The custom theme seeds from the default preset's terminal palette.
     expect(settings.customTheme).toEqual(getTheme(DEFAULT_THEME_ID).terminal);
   });
@@ -200,6 +201,13 @@ describe("searchOptions (Phase 10)", () => {
     flushSync();
     expect(settings.searchOptions.regex).toBe(true);
     expect(settings.searchOptions.caseSensitive).toBe(false);
+  });
+});
+
+describe("recording settings (Phase 11)", () => {
+  it("defaults to full recording with password masking", () => {
+    expect(settings.recordMode).toBe("full");
+    expect(settings.recordMaskPasswords).toBe(true);
   });
 });
 

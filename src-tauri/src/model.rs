@@ -33,6 +33,10 @@ pub struct ServerProfile {
     /// Free-form tags for filtering/search.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Automatically start recording when a session to this server connects
+    /// (e.g. for production servers — an audit trail of every session).
+    #[serde(default)]
+    pub auto_record: bool,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -51,6 +55,8 @@ pub struct NewServerProfile {
     pub group: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub auto_record: bool,
 }
 
 #[cfg(test)]
@@ -80,17 +86,20 @@ mod tests {
             has_saved_password: true,
             group: Some("Prod/EU".into()),
             tags: vec!["web".into(), "eu".into()],
+            auto_record: true,
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
         assert!(json.contains("\"authMethod\":\"key\""));
         assert!(json.contains("\"keyPath\""));
         assert!(json.contains("\"hasSavedPassword\":true"));
+        assert!(json.contains("\"autoRecord\":true"));
         let back: ServerProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "srv-1");
         assert_eq!(back.port, 2222);
         assert_eq!(back.auth_method, AuthMethod::Key);
         assert_eq!(back.tags, vec!["web", "eu"]);
+        assert!(back.auto_record);
     }
 
     #[test]
@@ -109,6 +118,7 @@ mod tests {
         assert!(!p.has_saved_password);
         assert_eq!(p.group, None);
         assert!(p.tags.is_empty());
+        assert!(!p.auto_record); // legacy profiles default to off
     }
 
     #[test]

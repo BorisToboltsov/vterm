@@ -77,7 +77,9 @@
       "Bash(node -e ' *)",
       "Bash(grep -n 'props\\\\|$props\\\\|: {\\\\|icon\\\\|title\\\\|hint\\\\|Snippet\\\\|children')",
       "Read(//Users/boristoboltsov/Downloads/**)",
-      "Bash(grep -n 'toggle\\\\|chevron\\\\|transition:slide\\\\|aria-expanded\\\\|= $state\\(false\\)\\\\|showThemePicker\\\\|showThresholds\\\\|showMetrics' src/lib/SettingsPanel.svelte)"
+      "Bash(grep -n 'toggle\\\\|chevron\\\\|transition:slide\\\\|aria-expanded\\\\|= $state\\(false\\)\\\\|showThemePicker\\\\|showThresholds\\\\|showMetrics' src/lib/SettingsPanel.svelte)",
+      "Bash(grep -n '$props\\\\|open\\\\|title\\\\|onclose\\\\|children\\\\|Snippet' src/lib/Modal.svelte)",
+      "Bash(grep -n 'stopRecording\\\\|deleteRecording\\\\|setRecordingMeta\\\\|notifyInfo\\\\|notifySuccess\\\\|RecordingSaveDialog\\\\|import.*api\\\\|from \"$lib/stores/toasts' src/routes/+page.svelte)"
     ]
   }
 }

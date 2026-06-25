@@ -8,10 +8,12 @@
 //! by session id.
 
 use crate::error::AppResult;
+use crate::recording::Recorder;
 use crate::ssh::{closed_event, output_event};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 /// Build a `PtySize` from terminal dimensions, clamping to at least 1×1 (a
@@ -30,16 +32,44 @@ pub struct LocalPty {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    /// Active session recorder, if recording (shared with the reader thread).
+    recorder: Arc<Mutex<Option<Recorder>>>,
 }
 
 impl LocalPty {
-    /// Send user keystrokes to the local shell.
+    /// Send user keystrokes to the local shell (recording input first if active).
     pub fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
+        if let Ok(mut g) = self.recorder.lock() {
+            if let Some(r) = g.as_mut() {
+                r.input(&data);
+            }
+        }
         let mut w = self.writer.lock().unwrap();
         w.write_all(&data)
             .map_err(|e| format!("local write failed: {e}"))?;
         w.flush().map_err(|e| format!("local flush failed: {e}"))?;
         Ok(())
+    }
+
+    /// Begin recording on this session.
+    pub fn begin_recording(&self, rec: Recorder) {
+        *self.recorder.lock().unwrap() = Some(rec);
+    }
+
+    /// Stop recording; returns the file path if a recording was active.
+    pub fn end_recording(&self) -> Option<PathBuf> {
+        self.recorder
+            .lock()
+            .unwrap()
+            .take()
+            .map(|r| r.path().to_path_buf())
+    }
+
+    /// Pause or resume the active recording (no-op if not recording).
+    pub fn set_recording_paused(&self, paused: bool) {
+        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+            rec.set_paused(paused);
+        }
     }
 
     /// Inform the kernel (and the child) of a new terminal size.
@@ -94,12 +124,19 @@ pub fn open_local(app: AppHandle, session_id: String, cols: u32, rows: u32) -> A
 
     let out = output_event(&session_id);
     let closed = closed_event(&session_id);
+    let recorder: Arc<Mutex<Option<Recorder>>> = Arc::new(Mutex::new(None));
+    let rec_for_reader = recorder.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
+                    if let Ok(mut g) = rec_for_reader.lock() {
+                        if let Some(r) = g.as_mut() {
+                            r.output(&buf[..n]);
+                        }
+                    }
                     if app.emit(&out, buf[..n].to_vec()).is_err() {
                         break;
                     }
@@ -115,6 +152,7 @@ pub fn open_local(app: AppHandle, session_id: String, cols: u32, rows: u32) -> A
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
         killer: Mutex::new(killer),
+        recorder,
     })
 }
 

@@ -21,6 +21,7 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     hasSavedPassword: false,
     group: null,
     tags: [],
+    autoRecord: false,
     ...p,
   };
 }

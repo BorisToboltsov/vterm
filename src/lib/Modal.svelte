@@ -80,7 +80,7 @@
       aria-modal="true"
       aria-label={title}
       tabindex="-1"
-      class="relative {width} rounded-lg border border-edge bg-panel-alt p-4 outline-none"
+      class="relative {width} max-h-[90vh] max-w-[95vw] overflow-auto rounded-lg border border-edge bg-panel-alt p-4 outline-none"
     >
       {#if title}
         <h2 class="mb-3 text-sm font-semibold {titleClass}">{title}</h2>

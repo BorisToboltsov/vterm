@@ -17,6 +17,8 @@ export interface ServerProfile {
   group: string | null;
   /** Free-form tags for filtering/search. */
   tags: string[];
+  /** Auto-start recording whenever a session to this server connects. */
+  autoRecord: boolean;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -40,4 +42,21 @@ export interface NewServerProfile {
   keyPath: string | null;
   group: string | null;
   tags: string[];
+  autoRecord: boolean;
+}
+
+/** Metadata about a stored session recording (from its asciicast header). */
+export interface RecordingMeta {
+  path: string;
+  title: string;
+  /** Free-form description set by the user when saving the recording. */
+  description: string;
+  /** Server/host the session was recorded on (preserved across title renames). */
+  server: string;
+  width: number;
+  height: number;
+  /** Recording start time, epoch seconds. */
+  timestamp: number;
+  /** File size in bytes. */
+  size: number;
 }

@@ -37,6 +37,8 @@
     remember,
     local = false,
     onstatus,
+    onresize,
+    onactivity,
   }: {
     sessionId: string;
     serverId: string;
@@ -45,6 +47,10 @@
     /** Local-shell PTY tab instead of an SSH connection. */
     local?: boolean;
     onstatus?: (status: Status, detail?: string) => void;
+    /** Reports the live terminal grid size (used for the recording header). */
+    onresize?: (cols: number, rows: number) => void;
+    /** Fired on user keystrokes (used to re-arm the recording idle timer). */
+    onactivity?: () => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -301,6 +307,19 @@
     if (text) writeToTerminal(sessionId, encoder.encode(text)).catch(() => {});
   }
 
+  /**
+   * The text on the current cursor line up to the cursor — i.e. the live shell
+   * prompt the user is about to type after. Used to seed a recording so its first
+   * command has a prompt in front of it (the prompt was printed before REC). The
+   * cursor column bound keeps the prompt's trailing space without padding.
+   */
+  export function currentPromptLine(): string {
+    if (!term) return "";
+    const buf = term.buffer.active;
+    const line = buf.getLine(buf.baseY + buf.cursorY);
+    return line ? line.translateToString(false, 0, buf.cursorX) : "";
+  }
+
   onMount(async () => {
     const t = activeTerminalTheme();
     term = new Terminal({
@@ -327,6 +346,7 @@
     });
     term.open(container);
     fit.fit();
+    onresize?.(term.cols, term.rows);
 
     // GPU-accelerated rendering for smooth output under heavy load. Falls back
     // to the DOM renderer if WebGL is unavailable or its context is lost.
@@ -344,6 +364,7 @@
 
     // Forward keystrokes to the remote shell.
     term.onData((d) => {
+      onactivity?.();
       writeToTerminal(sessionId, encoder.encode(d)).catch(() => {});
     });
 
@@ -449,6 +470,7 @@
       try {
         fit.fit();
         resizePty(sessionId, term.cols, term.rows).catch(() => {});
+        onresize?.(term.cols, term.rows);
       } catch {
         /* container not measurable yet */
       }
@@ -488,6 +510,7 @@
       fit?.fit();
       term.refresh(0, term.rows - 1);
       resizePty(sessionId, term.cols, term.rows).catch(() => {});
+      onresize?.(term.cols, term.rows);
     } catch {
       /* not measurable yet */
     }

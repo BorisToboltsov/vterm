@@ -104,15 +104,43 @@ pub struct SshSession {
     reader: JoinHandle<()>,
     /// Lazily-opened SFTP subsystem on the same SSH connection.
     sftp: Mutex<Option<Arc<SftpSession>>>,
+    /// Active session recorder, if recording (shared with the reader task).
+    recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>>,
 }
 
 impl SshSession {
-    /// Send user keystrokes to the remote shell.
+    /// Send user keystrokes to the remote shell (recording input first if active).
     pub async fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
+        if let Ok(mut g) = self.recorder.lock() {
+            if let Some(r) = g.as_mut() {
+                r.input(&data);
+            }
+        }
         self.write
             .data_bytes(data)
             .await
             .map_err(|e| format!("write failed: {e}").into())
+    }
+
+    /// Begin recording on this session.
+    pub fn begin_recording(&self, rec: crate::recording::Recorder) {
+        *self.recorder.lock().unwrap() = Some(rec);
+    }
+
+    /// Stop recording; returns the file path if a recording was active.
+    pub fn end_recording(&self) -> Option<std::path::PathBuf> {
+        self.recorder
+            .lock()
+            .unwrap()
+            .take()
+            .map(|r| r.path().to_path_buf())
+    }
+
+    /// Pause or resume the active recording (no-op if not recording).
+    pub fn set_recording_paused(&self, paused: bool) {
+        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+            rec.set_paused(paused);
+        }
     }
 
     /// Inform the remote PTY of a new terminal size.
@@ -353,14 +381,20 @@ pub async fn connect(
 
     let out = output_event(&session_id);
     let closed = closed_event(&session_id);
+    let recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let rec_for_reader = recorder.clone();
     let reader = tokio::spawn(async move {
         loop {
             match read.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    let _ = app.emit(&out, data.to_vec());
-                }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    let _ = app.emit(&out, data.to_vec());
+                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    let bytes = data.to_vec();
+                    if let Ok(mut g) = rec_for_reader.lock() {
+                        if let Some(r) = g.as_mut() {
+                            r.output(&bytes);
+                        }
+                    }
+                    let _ = app.emit(&out, bytes);
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                     let _ = app.emit(&closed, ());
@@ -376,6 +410,7 @@ pub async fn connect(
         handle,
         reader,
         sftp: Mutex::new(None),
+        recorder,
     })
 }
 

@@ -270,6 +270,7 @@ print(greet("world"))  # => 12345`;
     { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
     { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click терминал буфер сигнал копировать вставка" },
     { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
+    { id: "recording", keywords: "Recording session asciicast password mask privacy idle pause auto запись сессий пароль маскирование приватность простой пауза автозапись" },
     { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
     { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
     { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
@@ -727,6 +728,41 @@ print(greet("world"))  # => 12345`;
               </label>
             </div>
           {/if}
+        </section>
+
+        {/if}
+
+        {#if show("recording")}
+        <!-- Session recording (Phase 11) -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionRecording")}</h3>
+          <label class="block text-xs text-muted">
+            {t("settings.recordMode")}
+            <select
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              bind:value={settings.recordMode}
+            >
+              <option value="full">{t("settings.recordModeFull")}</option>
+              <option value="fullNoTiming">{t("settings.recordModeNoTiming")}</option>
+              <option value="commands">{t("settings.recordModeCommands")}</option>
+            </select>
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.recordMaskPasswords} />
+            {t("settings.recordMaskPasswords")}
+          </label>
+          <p class="mt-1 text-[11px] text-muted/80">{t("settings.recordMaskPasswordsHint")}</p>
+          <label class="mt-3 block text-xs text-muted">
+            {t("settings.recordIdlePause")}
+            <input
+              type="number"
+              min="0"
+              step="5"
+              class="mt-1 w-24 rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              bind:value={settings.recordIdlePauseSecs}
+            />
+          </label>
+          <p class="mt-1 text-[11px] text-muted/80">{t("settings.recordIdlePauseHint")}</p>
         </section>
 
         {/if}

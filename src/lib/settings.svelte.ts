@@ -87,6 +87,9 @@ export interface HighlightRule {
   background: boolean; // colour the background instead of the text
 }
 
+/** What a session recording captures (mirrors `RecordMode` parsing in Rust). */
+export type RecordMode = "full" | "fullNoTiming" | "commands";
+
 /** Remembered options for the terminal buffer-search box. */
 export interface SearchOptions {
   caseSensitive: boolean;
@@ -130,6 +133,11 @@ export interface Settings {
   smartLogs: SmartLogs;
   highlightRules: HighlightRule[];
   searchOptions: SearchOptions;
+  // Session recording (Phase 11)
+  recordMaskPasswords: boolean; // redact input after password prompts
+  recordMode: RecordMode;
+  /** Pause recording after this many seconds idle on the active tab (0 = never). */
+  recordIdlePauseSecs: number;
   // Security
   hostKeyPolicy: HostKeyPolicy;
 }
@@ -229,6 +237,9 @@ const DEFAULTS: Settings = {
   },
   highlightRules: defaultHighlightRules(),
   searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
+  recordMaskPasswords: true,
+  recordMode: "full",
+  recordIdlePauseSecs: 20,
   hostKeyPolicy: "ask",
 };
 
@@ -299,6 +310,13 @@ function load(): Settings {
         ? mergeHighlightRules(raw.highlightRules)
         : defaultHighlightRules(),
       searchOptions: { ...DEFAULTS.searchOptions, ...(raw.searchOptions ?? {}) },
+      recordMode: (["full", "fullNoTiming", "commands"] as RecordMode[]).includes(raw.recordMode)
+        ? raw.recordMode
+        : DEFAULTS.recordMode,
+      recordIdlePauseSecs:
+        typeof raw.recordIdlePauseSecs === "number" && raw.recordIdlePauseSecs >= 0
+          ? Math.floor(raw.recordIdlePauseSecs)
+          : DEFAULTS.recordIdlePauseSecs,
     };
   } catch {
     return {

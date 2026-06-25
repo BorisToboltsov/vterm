@@ -58,13 +58,33 @@
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
+  import RecordingsPanel from "$lib/RecordingsPanel.svelte";
   import type { CommandItem } from "$lib/command";
-  import { notifyError, notifySuccess } from "$lib/stores/toasts.svelte";
+  import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
   import { applyProgress } from "$lib/stores/transfers.svelte";
+  import {
+    recordingState,
+    recordingPaused,
+    isRecording,
+    isRecordingPaused,
+    setRecording,
+    setRecordingPausedState,
+    clearRecording,
+  } from "$lib/stores/recordings.svelte";
   import type { SftpProgress } from "$lib/api";
   import { settings } from "$lib/settings.svelte";
   import { t } from "$lib/i18n";
-  import { setMenuLanguage } from "$lib/api";
+  import {
+    setMenuLanguage,
+    startRecording,
+    stopRecording,
+    setRecordingPaused,
+    setRecordingMeta,
+    deleteRecording,
+    fetchMetrics,
+  } from "$lib/api";
+  import { getVersion } from "@tauri-apps/api/app";
+  import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
 
   let servers = $state<ServerProfile[]>([]);
@@ -77,6 +97,14 @@
   let helpTab = $state<"help" | "about" | "manual">("help");
   let showPalette = $state(false);
   let showMonitoring = $state(false);
+  let showRecordings = $state(false);
+  // After stopping a recording: prompt to name/describe or discard it.
+  let saveRec = $state<{ path: string; defaultTitle: string } | null>(null);
+
+  // Last-known terminal dimensions per session (for the recording header).
+  const termDims = $state<Record<string, { cols: number; rows: number }>>({});
+  // Live terminal components per session, for reading the current prompt at REC start.
+  const termRefs: Record<string, { currentPromptLine?: () => string }> = {};
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -99,6 +127,7 @@
   let keyPath = $state<string | null>(null);
   let group = $state("");
   let tagsInput = $state("");
+  let autoRecord = $state(false);
 
   // Folders
   let folders = $state<string[]>([]);
@@ -129,6 +158,196 @@
     }
   }
 
+  /** Title for a recording: the tab's server alias (or "Local shell"). */
+  function recordingTitle(tab: Tab): string {
+    if (tab.kind === "local") return t("tab.localShell");
+    return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.serverId;
+  }
+
+  /**
+   * Collect host/session metadata to embed in the recording header (for later
+   * analysis and the export's info block). App version always; for SSH sessions
+   * a one-shot metrics probe adds hostname/ip/user/OS/kernel. Best-effort — never
+   * blocks recording on a failure.
+   */
+  async function recordingEnv(tab: Tab): Promise<string> {
+    const env: Record<string, string | number> = {};
+    try {
+      env.appVersion = await getVersion();
+    } catch {
+      /* version unavailable */
+    }
+    if (tab.kind === "ssh") {
+      const srv = servers.find((s) => s.id === tab.serverId);
+      if (srv) {
+        env.connectedHost = srv.host;
+        env.port = srv.port;
+        if (srv.username) env.username = srv.username;
+      }
+      try {
+        const m = await fetchMetrics(tab.sessionId);
+        if (m.hostname) env.hostname = m.hostname;
+        if (m.ip) env.ip = m.ip;
+        if (m.user) env.username = m.user;
+        if (m.prettyName || m.os) env.os = m.prettyName || m.os;
+        if (m.kernel) env.kernel = m.kernel;
+        if (m.serverTime) env.serverTime = m.serverTime;
+      } catch {
+        /* metrics probe failed — keep profile-derived fields */
+      }
+    }
+    return JSON.stringify(env);
+  }
+
+  /** Start recording a session (no-op if already recording). Used by the manual
+   *  REC toggle and by auto-record on connect. */
+  async function startSessionRecording(tab: Tab) {
+    const id = tab.sessionId;
+    if (isRecording(id)) return;
+    const dims = termDims[id] ?? { cols: 80, rows: 24 };
+    // Seed the recording with the on-screen prompt so the first command has one.
+    const prompt = termRefs[id]?.currentPromptLine?.() ?? "";
+    const env = await recordingEnv(tab);
+    const path = await startRecording(
+      id,
+      recordingTitle(tab),
+      dims.cols,
+      dims.rows,
+      prompt,
+      env,
+      settings.recordMaskPasswords,
+      settings.recordMode,
+    );
+    setRecording(id, path);
+  }
+
+  /** Start/stop recording the active session (manual REC button / palette). */
+  async function toggleRecording() {
+    const tab = activeTab;
+    if (!tab || !isLive(tab.status)) {
+      notifyError(t("recordings.needsSession"));
+      return;
+    }
+    const id = tab.sessionId;
+    try {
+      if (isRecording(id)) {
+        const path = await stopRecording(id);
+        clearRecording(id);
+        // Prompt to name/describe (or discard) the just-saved recording.
+        if (path) saveRec = { path, defaultTitle: recordingTitle(tab) };
+        else notifySuccess(t("recordings.stopped"));
+      } else {
+        await startSessionRecording(tab);
+        notifySuccess(t("recordings.started"));
+      }
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
+  /**
+   * Auto-record on connect for servers flagged `autoRecord` (e.g. production):
+   * starts a recording the moment an SSH session connects, for an audit trail.
+   */
+  async function maybeAutoRecord(tab: Tab) {
+    if (tab.kind !== "ssh" || isRecording(tab.sessionId)) return;
+    if (!servers.find((s) => s.id === tab.serverId)?.autoRecord) return;
+    try {
+      await startSessionRecording(tab);
+      notifyInfo(t("recordings.autoStarted", { alias: recordingTitle(tab) }));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
+  /** Finalize a recording when its session closes (stamps end time), then clear. */
+  async function finalizeRecordingOnClose(sessionId: string) {
+    if (isRecording(sessionId)) {
+      try {
+        await stopRecording(sessionId);
+      } catch {
+        /* session already gone — file is flushed regardless */
+      }
+    }
+    clearRecording(sessionId);
+  }
+
+  // ── Recording pause: skip disk when a recording tab is unwatched or idle ──────
+  let recordIdleTimer: ReturnType<typeof setTimeout> | undefined;
+  // The active recording tab we last resumed — guards against clobbering an idle
+  // pause when the effect re-runs for an unrelated reason.
+  let resumedTab: string | null = null;
+
+  function clearRecordIdleTimer() {
+    if (recordIdleTimer) clearTimeout(recordIdleTimer);
+    recordIdleTimer = undefined;
+  }
+
+  /** Pause/resume a recording: update the tab indicator + tell the backend (only on change). */
+  function applyPause(sessionId: string, paused: boolean) {
+    if (isRecordingPaused(sessionId) === paused) return;
+    setRecordingPausedState(sessionId, paused);
+    setRecordingPaused(sessionId, paused).catch(() => {});
+  }
+
+  /** (Re)arm the idle countdown that pauses the active recording tab. */
+  function armRecordIdleTimer(sessionId: string) {
+    clearRecordIdleTimer();
+    const secs = settings.recordIdlePauseSecs;
+    if (secs <= 0 || !isRecording(sessionId)) return;
+    recordIdleTimer = setTimeout(() => applyPause(sessionId, true), secs * 1000);
+  }
+
+  /** Keystroke on the active terminal → resume (if idle-paused) and re-arm the idle timer. */
+  function handleTerminalActivity(sessionId: string) {
+    if (sessionId !== tabsState.activeId || !isRecording(sessionId)) return;
+    applyPause(sessionId, false); // backend also auto-resumes on input
+    armRecordIdleTimer(sessionId);
+  }
+
+  // Keep exactly the active recording tab running; pause background recording tabs
+  // and re-arm the idle timer when the active recording tab changes.
+  $effect(() => {
+    const active = tabsState.activeId;
+    const ids = Object.keys(recordingState);
+    for (const id of ids) {
+      if (id !== active) applyPause(id, true);
+    }
+    const activeRecording = active && ids.includes(active) ? active : null;
+    if (activeRecording && activeRecording !== resumedTab) {
+      applyPause(activeRecording, false);
+      armRecordIdleTimer(activeRecording);
+    }
+    if (!activeRecording) clearRecordIdleTimer();
+    resumedTab = activeRecording;
+  });
+
+  /** Save the title/description entered after stopping a recording. */
+  async function saveRecording(title: string, description: string) {
+    const rec = saveRec;
+    saveRec = null;
+    if (!rec) return;
+    try {
+      await setRecordingMeta(rec.path, title, description);
+      notifySuccess(t("recordings.stopped"));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
+  /** Discard the just-made recording from the save prompt. */
+  async function discardRecording() {
+    const rec = saveRec;
+    saveRec = null;
+    if (!rec) return;
+    try {
+      await deleteRecording(rec.path);
+      notifyInfo(t("recordings.discarded"));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
@@ -139,6 +358,12 @@
       keywords: "settings preferences параметры настройки", run: () => (showSettings = true) },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
       keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
+    { id: "act:record",
+      title: activeTab && isRecording(activeTab.sessionId) ? t("palette.stopRecording") : t("palette.startRecording"),
+      icon: "activity", group: t("palette.groupActions"),
+      keywords: "record recording session запись сессия rec asciicast", run: toggleRecording },
+    { id: "act:recordings", title: t("palette.recordings"), icon: "activity", group: t("palette.groupActions"),
+      keywords: "recordings library записи библиотека asciicast", run: () => (showRecordings = true) },
     { id: "act:help", title: t("palette.help"), icon: "info", group: t("palette.groupActions"),
       keywords: "help помощь справка", run: () => { helpTab = "help"; showHelp = true; } },
     { id: "act:manual", title: t("palette.manual"), icon: "info", group: t("palette.groupActions"),
@@ -473,6 +698,7 @@
     keyPath = null;
     group = prefillGroup;
     tagsInput = "";
+    autoRecord = false;
     showForm = true;
   }
 
@@ -488,6 +714,7 @@
     keyPath = server.keyPath;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
+    autoRecord = server.autoRecord;
     showForm = true;
   }
 
@@ -523,6 +750,7 @@
       keyPath,
       group: group.trim() || null,
       tags,
+      autoRecord,
     };
     try {
       if (formMode === "edit" && editId) {
@@ -626,6 +854,22 @@
             title={localizedStatus(tab.status)}
           >
             <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
+            {#if recordingState[tab.sessionId]}
+              {#if recordingPaused[tab.sessionId]}
+                <Icon
+                  name="pause"
+                  size={12}
+                  class="shrink-0 text-green-500"
+                  title={t("recordings.paused")}
+                />
+              {:else}
+                <span
+                  class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-danger"
+                  title={t("recordings.recording")}
+                  aria-label={t("recordings.recording")}
+                ></span>
+              {/if}
+            {/if}
             <span class="truncate">{tabAlias(tab)}</span>
             <button
               data-close
@@ -650,6 +894,43 @@
         >
           <Icon name="plus" size={14} />
         </button>
+
+        <!-- Recording controls (right-aligned). -->
+        <div class="ml-auto flex shrink-0 items-center">
+          {#if activeTab && isLive(activeTab.status)}
+            <button
+              data-testid="record-toggle"
+              class="flex items-center gap-1 px-2.5 py-1.5 text-xs {activeTab &&
+              isRecording(activeTab.sessionId)
+                ? 'text-danger'
+                : 'text-muted hover:bg-edge hover:text-white'}"
+              title={activeTab && isRecording(activeTab.sessionId)
+                ? t("recordings.stop")
+                : t("recordings.start")}
+              aria-label={activeTab && isRecording(activeTab.sessionId)
+                ? t("recordings.stop")
+                : t("recordings.start")}
+              aria-pressed={!!(activeTab && isRecording(activeTab.sessionId))}
+              onclick={toggleRecording}
+            >
+              <span
+                class="h-2.5 w-2.5 rounded-full {activeTab && isRecording(activeTab.sessionId)
+                  ? 'animate-pulse bg-danger'
+                  : 'border border-current'}"
+              ></span>
+              REC
+            </button>
+          {/if}
+          <button
+            data-testid="open-recordings"
+            class="flex items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
+            title={t("recordings.title")}
+            aria-label={t("recordings.title")}
+            onclick={() => (showRecordings = true)}
+          >
+            <Icon name="activity" size={14} />
+          </button>
+        </div>
       </div>
 
       {#if tabsState.list.length > 0}
@@ -672,13 +953,18 @@
                 {/if}
                 {#key tab.gen}
                   <TerminalView
+                    bind:this={termRefs[tab.sessionId]}
                     sessionId={tab.sessionId}
                     serverId={tab.serverId}
                     secret={tab.secret}
                     remember={tab.remember}
                     local={tab.kind === "local"}
+                    onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
+                    onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
+                      if (st === "closed") finalizeRecordingOnClose(tab.sessionId);
+                      if (st === "connected") maybeAutoRecord(tab);
                       if (st === "error" && d?.includes("auth-rejected")) {
                         reauth(tab.sessionId);
                       } else if (st === "closed" && settings.autoReconnect && tab.kind === "ssh") {
@@ -863,6 +1149,16 @@
   {t("page.closeTabBody2")}
 </ConfirmDialog>
 
+<!-- Name/describe (or discard) a recording right after stopping it -->
+<RecordingSaveDialog
+  open={saveRec !== null}
+  heading={t("recordings.saveTitle")}
+  defaultTitle={saveRec?.defaultTitle ?? ""}
+  onsave={saveRecording}
+  ondelete={discardRecording}
+  onclose={() => (saveRec = null)}
+/>
+
 <!-- Secret prompt (password or key passphrase) -->
 <Modal open={!!secretTarget} title={t("page.secretTitle")} onclose={() => (secretTarget = null)}>
   {#if secretTarget}
@@ -991,6 +1287,12 @@
       />
     </label>
 
+    <label class="mb-2 flex items-center gap-2 text-xs text-text">
+      <input type="checkbox" bind:checked={autoRecord} />
+      {t("page.autoRecord")}
+    </label>
+    <p class="mb-2 text-[11px] text-muted">{t("page.autoRecordHint")}</p>
+
     <div class="mt-3 flex items-center gap-2">
       {#if formMode === "edit"}
         <button
@@ -1035,6 +1337,9 @@
 
 <!-- Command palette (⌘K) -->
 <CommandPalette bind:open={showPalette} commands={paletteCommands} />
+
+<!-- Session recordings library (Phase 11) -->
+<RecordingsPanel bind:open={showRecordings} />
 
 <!-- Global non-blocking notifications -->
 <Toast />
