@@ -142,30 +142,49 @@ describe("remaining invoke wrappers", () => {
 describe("backup wrappers", () => {
   it("exportBackup / importBackup pass the right command + args", async () => {
     invoke.mockResolvedValue(undefined);
-    await api.exportBackup("/tmp/b.json", { theme: "nord" });
+    await api.exportBackup("/tmp/b.zip", "all", { theme: "nord" });
     expect(invoke).toHaveBeenCalledWith("export_backup", {
-      path: "/tmp/b.json",
+      path: "/tmp/b.zip",
+      kind: "all",
       settings: { theme: "nord" },
     });
 
-    invoke.mockResolvedValueOnce({ serverCount: 2, folderCount: 1, settings: null });
-    const res = await api.importBackup("/tmp/b.json");
-    expect(invoke).toHaveBeenCalledWith("import_backup", { path: "/tmp/b.json" });
-    expect(res.serverCount).toBe(2);
+    invoke.mockResolvedValueOnce({
+      kind: "all",
+      servers: 2,
+      folders: 1,
+      recordings: 0,
+      settings: null,
+    });
+    const res = await api.importBackup("/tmp/b.zip");
+    expect(invoke).toHaveBeenCalledWith("import_backup", { path: "/tmp/b.zip" });
+    expect(res.servers).toBe(2);
   });
 
-  it("pickBackupSavePath / pickBackupFile use the JSON-filtered dialogs", async () => {
-    save.mockResolvedValueOnce("/out/vterm.json");
-    expect(await api.pickBackupSavePath("vterm-backup.json")).toBe("/out/vterm.json");
+  it("pickBackupSavePath / pickBackupFile use the archive-filtered dialogs", async () => {
+    save.mockResolvedValueOnce("/out/vterm.zip");
+    expect(await api.pickBackupSavePath("vterm-backup.zip")).toBe("/out/vterm.zip");
     expect(save).toHaveBeenCalledWith({
-      defaultPath: "vterm-backup.json",
-      filters: [{ name: "JSON", extensions: ["json"] }],
+      defaultPath: "vterm-backup.zip",
+      filters: [{ name: "vterm backup", extensions: ["zip"] }],
     });
 
-    open.mockResolvedValueOnce("/in/vterm.json");
-    expect(await api.pickBackupFile()).toBe("/in/vterm.json");
+    open.mockResolvedValueOnce("/in/vterm.zip");
+    expect(await api.pickBackupFile()).toBe("/in/vterm.zip");
     open.mockResolvedValueOnce(null);
     expect(await api.pickBackupFile()).toBeNull();
+  });
+
+  it("importRecording / pickRecordingFile wrap the upload flow", async () => {
+    invoke.mockResolvedValueOnce({ path: "/rec/x.cast", title: "x" });
+    const meta = await api.importRecording("/src/x.cast");
+    expect(invoke).toHaveBeenCalledWith("import_recording", { srcPath: "/src/x.cast" });
+    expect(meta.path).toBe("/rec/x.cast");
+
+    open.mockResolvedValueOnce("/src/y.cast");
+    expect(await api.pickRecordingFile()).toBe("/src/y.cast");
+    open.mockResolvedValueOnce(null);
+    expect(await api.pickRecordingFile()).toBeNull();
   });
 });
 

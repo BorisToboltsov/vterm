@@ -27,17 +27,29 @@ beforeEach(() => {
 });
 
 describe("SettingsPanel — backup", () => {
-  it("exports to the chosen path with the current settings", async () => {
-    pickBackupSavePath.mockResolvedValue("/out/vterm.json");
+  it("exports to the chosen path with the selected kind and current settings", async () => {
+    pickBackupSavePath.mockResolvedValue("/out/vterm.zip");
     render(SettingsPanel, { props: { open: true } });
 
     await userEvent.click(screen.getByTestId("backup-export"));
 
     await waitFor(() => expect(exportBackup).toHaveBeenCalledOnce());
-    const [path, settings] = exportBackup.mock.calls[0];
-    expect(path).toBe("/out/vterm.json");
+    const [path, kind, settings] = exportBackup.mock.calls[0];
+    expect(path).toBe("/out/vterm.zip");
+    expect(kind).toBe("all"); // default preset
     expect(settings).toHaveProperty("theme"); // a settings snapshot was passed
     expect(await screen.findByTestId("backup-msg")).toHaveTextContent(/exported/i);
+  });
+
+  it("exports only the chosen section when a kind is selected", async () => {
+    pickBackupSavePath.mockResolvedValue("/out/vterm.zip");
+    render(SettingsPanel, { props: { open: true } });
+
+    await userEvent.selectOptions(screen.getByTestId("backup-kind"), "recordings");
+    await userEvent.click(screen.getByTestId("backup-export"));
+
+    await waitFor(() => expect(exportBackup).toHaveBeenCalledOnce());
+    expect(exportBackup.mock.calls[0][1]).toBe("recordings");
   });
 
   it("does nothing when export is cancelled", async () => {
@@ -49,10 +61,12 @@ describe("SettingsPanel — backup", () => {
   });
 
   it("imports after confirmation and notifies the parent", async () => {
-    pickBackupFile.mockResolvedValue("/in/vterm.json");
+    pickBackupFile.mockResolvedValue("/in/vterm.zip");
     importBackup.mockResolvedValue({
-      serverCount: 3,
-      folderCount: 2,
+      kind: "all",
+      servers: 3,
+      folders: 2,
+      recordings: 5,
       settings: { theme: "nord" },
     });
     const onImported = vi.fn();
@@ -64,11 +78,30 @@ describe("SettingsPanel — backup", () => {
 
     await userEvent.click(await screen.findByTestId("confirm"));
 
-    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/vterm.json"));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/vterm.zip"));
     expect(onImported).toHaveBeenCalledOnce();
-    expect(await screen.findByTestId("backup-msg")).toHaveTextContent(
-      /Restored 3 server\(s\) and 2 folder\(s\)/,
-    );
+    const msg = await screen.findByTestId("backup-msg");
+    expect(msg).toHaveTextContent(/Restored 3 server\(s\), 2 folder\(s\)/);
+    expect(msg).toHaveTextContent(/Imported 5 recording\(s\)/);
+  });
+
+  it("reports a settings-only import without touching servers", async () => {
+    pickBackupFile.mockResolvedValue("/in/settings.zip");
+    importBackup.mockResolvedValue({
+      kind: "settings",
+      servers: null,
+      folders: null,
+      recordings: null,
+      settings: { theme: "nord" },
+    });
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-import"));
+    await userEvent.click(await screen.findByTestId("confirm"));
+
+    await waitFor(() => expect(importBackup).toHaveBeenCalled());
+    const msg = await screen.findByTestId("backup-msg");
+    expect(msg).toHaveTextContent(/Settings applied/);
+    expect(msg).not.toHaveTextContent(/server/i);
   });
 });
 

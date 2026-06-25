@@ -1,13 +1,23 @@
-//! Backup export/import: server profiles + folder structure + UI settings as a
-//! single portable JSON document.
+//! Backup export/import.
+//!
+//! A backup is a portable **`.zip` archive** holding any combination of three
+//! data sections — server profiles + folder structure (`servers`), the UI
+//! settings snapshot (`settings`), and session recordings (`recordings`). The
+//! user picks what to export via a preset *kind* (`servers` / `settings` /
+//! `recordings` / `all`).
+//!
+//! Every archive carries a `manifest.json` at its root identifying the app, the
+//! kind, and the sections present; import reads it to auto-detect what to restore
+//! (and which sections to leave untouched). `servers`/`settings` live in an inner
+//! `backup.json`; recordings are stored as `recordings/*.cast`.
 //!
 //! Secrets are intentionally **never** included — passwords/passphrases live in
 //! the OS keychain (see secrets.rs) and are not portable. `keyPath` (a local file
 //! path) and `hasSavedPassword` (a UI hint) are kept as-is; on another machine
 //! the keychain simply won't have the secret and the connect flow re-prompts.
 //!
-//! The pure functions here (build/encode/decode) are unit-tested; the Tauri
-//! commands in lib.rs wrap them with state + file I/O.
+//! The pure functions here (build/encode/decode + manifest helpers) are
+//! unit-tested; the Tauri commands in lib.rs wrap them with state + zip I/O.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -18,6 +28,102 @@ use crate::model::ServerProfile;
 /// Current backup schema version. Bump on breaking changes; `decode` rejects
 /// versions newer than this.
 pub const BACKUP_VERSION: u32 = 1;
+
+/// Data-section identifiers (also used as the manifest's `sections` entries).
+pub const SECTION_SERVERS: &str = "servers";
+pub const SECTION_SETTINGS: &str = "settings";
+pub const SECTION_RECORDINGS: &str = "recordings";
+
+/// Backup preset kinds the user can choose to export.
+pub const KIND_SERVERS: &str = "servers";
+pub const KIND_SETTINGS: &str = "settings";
+pub const KIND_RECORDINGS: &str = "recordings";
+pub const KIND_ALL: &str = "all";
+
+/// Archive member names.
+pub const MANIFEST_NAME: &str = "manifest.json";
+pub const BACKUP_NAME: &str = "backup.json";
+pub const RECORDINGS_PREFIX: &str = "recordings/";
+
+/// Which data sections a chosen backup `kind` includes. The `servers` section
+/// carries the folder structure too; an unknown kind falls back to a full backup.
+pub fn sections_for_kind(kind: &str) -> Vec<String> {
+    match kind {
+        KIND_SERVERS => vec![SECTION_SERVERS.into()],
+        KIND_SETTINGS => vec![SECTION_SETTINGS.into()],
+        KIND_RECORDINGS => vec![SECTION_RECORDINGS.into()],
+        _ => vec![
+            SECTION_SERVERS.into(),
+            SECTION_SETTINGS.into(),
+            SECTION_RECORDINGS.into(),
+        ],
+    }
+}
+
+/// Identification document at the root of every backup archive (`manifest.json`).
+/// Import reads it to learn what the archive holds and restore only those sections.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Manifest {
+    /// App marker ("vterm").
+    pub app: String,
+    pub version: u32,
+    /// The user-chosen preset: "servers" | "settings" | "recordings" | "all".
+    pub kind: String,
+    /// Export time (epoch seconds); informational.
+    #[serde(default)]
+    pub exported_at: u64,
+    /// Data sections present in the archive — drives a section-aware restore.
+    #[serde(default)]
+    pub sections: Vec<String>,
+}
+
+impl Manifest {
+    /// Is `section` (one of the `SECTION_*` ids) present in this archive?
+    pub fn has(&self, section: &str) -> bool {
+        self.sections.iter().any(|s| s == section)
+    }
+}
+
+/// Assemble the manifest for a chosen `kind`.
+pub fn build_manifest(kind: &str, exported_at: u64) -> Manifest {
+    Manifest {
+        app: "vterm".to_string(),
+        version: BACKUP_VERSION,
+        kind: kind.to_string(),
+        exported_at,
+        sections: sections_for_kind(kind),
+    }
+}
+
+/// Serialize the manifest to pretty JSON.
+pub fn encode_manifest(m: &Manifest) -> AppResult<String> {
+    serde_json::to_string_pretty(m).map_err(|e| AppError::Message(format!("serialize manifest: {e}")))
+}
+
+/// Parse and validate a manifest. Rejects malformed JSON and future schema versions.
+pub fn decode_manifest(bytes: &[u8]) -> AppResult<Manifest> {
+    let m: Manifest = serde_json::from_slice(bytes)
+        .map_err(|e| AppError::Message(format!("not a valid vterm backup manifest: {e}")))?;
+    if m.version == 0 || m.version > BACKUP_VERSION {
+        return Err(AppError::Message(format!(
+            "unsupported backup version {} (this build understands up to {})",
+            m.version, BACKUP_VERSION
+        )));
+    }
+    Ok(m)
+}
+
+/// Reduce an archive's `recordings/<name>` entry to a safe `*.cast` file name,
+/// defending against zip-slip / nested paths. `None` for directory entries,
+/// non-`.cast` files, or anything with traversal segments.
+pub fn safe_recording_name(entry: &str) -> Option<String> {
+    let base = entry.rsplit(['/', '\\']).next().unwrap_or(entry);
+    if base.is_empty() || base == ".." || base == "." || !base.ends_with(".cast") {
+        return None;
+    }
+    Some(base.to_string())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -162,5 +268,52 @@ mod tests {
     fn normalize_folders_sorts_and_dedups() {
         let f = normalize_folders(vec!["B".into(), "A".into(), "B".into()]);
         assert_eq!(f, vec!["A", "B"]);
+    }
+
+    #[test]
+    fn kind_maps_to_expected_sections() {
+        assert_eq!(sections_for_kind(KIND_SERVERS), vec![SECTION_SERVERS]);
+        assert_eq!(sections_for_kind(KIND_SETTINGS), vec![SECTION_SETTINGS]);
+        assert_eq!(sections_for_kind(KIND_RECORDINGS), vec![SECTION_RECORDINGS]);
+        assert_eq!(
+            sections_for_kind(KIND_ALL),
+            vec![SECTION_SERVERS, SECTION_SETTINGS, SECTION_RECORDINGS]
+        );
+        // Unknown kind → full backup.
+        assert_eq!(
+            sections_for_kind("???"),
+            vec![SECTION_SERVERS, SECTION_SETTINGS, SECTION_RECORDINGS]
+        );
+    }
+
+    #[test]
+    fn manifest_round_trips_and_reports_sections() {
+        let m = build_manifest(KIND_SERVERS, 1_700_000_000);
+        let json = encode_manifest(&m).unwrap();
+        assert!(json.contains("\"exportedAt\""));
+        let back = decode_manifest(json.as_bytes()).unwrap();
+        assert_eq!(back.app, "vterm");
+        assert_eq!(back.kind, KIND_SERVERS);
+        assert!(back.has(SECTION_SERVERS));
+        assert!(!back.has(SECTION_SETTINGS));
+        assert!(!back.has(SECTION_RECORDINGS));
+    }
+
+    #[test]
+    fn decode_manifest_rejects_future_version() {
+        let raw = serde_json::json!({ "app": "vterm", "version": 999, "kind": "all" });
+        let err = decode_manifest(raw.to_string().as_bytes()).unwrap_err();
+        assert!(err.to_string().contains("unsupported backup version"));
+    }
+
+    #[test]
+    fn safe_recording_name_guards_against_zip_slip() {
+        assert_eq!(safe_recording_name("recordings/web.cast").as_deref(), Some("web.cast"));
+        assert_eq!(safe_recording_name("a/b/c.cast").as_deref(), Some("c.cast"));
+        // Traversal, absolute paths, and non-cast entries are rejected.
+        assert_eq!(safe_recording_name("../../etc/passwd"), None);
+        assert_eq!(safe_recording_name("recordings/notes.txt"), None);
+        assert_eq!(safe_recording_name("recordings/"), None);
+        assert_eq!(safe_recording_name("..\\evil.cast").as_deref(), Some("evil.cast"));
     }
 }

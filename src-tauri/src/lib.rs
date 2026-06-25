@@ -341,51 +341,217 @@ fn set_server_group(
 
 // ── Backup (export/import) ─────────────────────────────────────────────────────
 
-/// Write a backup (servers + folders + UI settings) to `path` as JSON. Secrets
-/// are never included (they live in the keychain). `settings` is the frontend's
-/// opaque settings snapshot.
+/// Current unix time in seconds (0 if the clock predates the epoch).
+fn now_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Write a backup `.zip` archive to `path`. `kind` chooses which sections go in
+/// ("servers" / "settings" / "recordings" / "all"); the archive always carries a
+/// `manifest.json` identifying its contents. Secrets are never included (they
+/// live in the keychain). `settings` is the frontend's opaque settings snapshot.
 #[tauri::command]
 fn export_backup(
     path: String,
+    kind: String,
     settings: Option<serde_json::Value>,
     state: State<AppState>,
 ) -> AppResult<()> {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let servers = state.servers.lock().unwrap().clone();
-    let folders = backup::normalize_folders(state.folders.lock().unwrap().clone());
-    let exported_at = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let doc = backup::build(servers, folders, settings, exported_at);
-    let json = backup::encode(&doc)?;
-    std::fs::write(&path, json).map_err(|e| AppError::Message(format!("write {path}: {e}")))
+    use std::io::Write;
+    let exported_at = now_secs();
+    let manifest = backup::build_manifest(&kind, exported_at);
+
+    let file = std::fs::File::create(&path)
+        .map_err(|e| AppError::Message(format!("create {path}: {e}")))?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts: zip::write::SimpleFileOptions =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    let zip_err = |e: zip::result::ZipError| AppError::Message(format!("write backup archive: {e}"));
+
+    // Identification document first.
+    zip.start_file(backup::MANIFEST_NAME, opts).map_err(zip_err)?;
+    zip.write_all(backup::encode_manifest(&manifest)?.as_bytes())
+        .map_err(|e| AppError::Message(format!("write manifest: {e}")))?;
+
+    // servers/folders + settings travel in an inner backup.json (only the
+    // selected sections are populated — a settings-only backup carries no servers).
+    if manifest.has(backup::SECTION_SERVERS) || manifest.has(backup::SECTION_SETTINGS) {
+        let servers = if manifest.has(backup::SECTION_SERVERS) {
+            state.servers.lock().unwrap().clone()
+        } else {
+            Vec::new()
+        };
+        let folders = if manifest.has(backup::SECTION_SERVERS) {
+            backup::normalize_folders(state.folders.lock().unwrap().clone())
+        } else {
+            Vec::new()
+        };
+        let settings = if manifest.has(backup::SECTION_SETTINGS) {
+            settings
+        } else {
+            None
+        };
+        let doc = backup::build(servers, folders, settings, exported_at);
+        zip.start_file(backup::BACKUP_NAME, opts).map_err(zip_err)?;
+        zip.write_all(backup::encode(&doc)?.as_bytes())
+            .map_err(|e| AppError::Message(format!("write backup.json: {e}")))?;
+    }
+
+    // Recordings are copied verbatim under recordings/.
+    if manifest.has(backup::SECTION_RECORDINGS) {
+        if let Some(dir) = recording::recordings_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.extension().is_none_or(|e| e != "cast") {
+                        continue;
+                    }
+                    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
+                        continue;
+                    };
+                    let data = std::fs::read(&p)
+                        .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
+                    zip.start_file(format!("{}{}", backup::RECORDINGS_PREFIX, name), opts)
+                        .map_err(zip_err)?;
+                    zip.write_all(&data)
+                        .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
+                }
+            }
+        }
+    }
+
+    zip.finish().map_err(zip_err)?;
+    Ok(())
 }
 
-/// Result of importing a backup: counts restored + the UI settings to apply.
+/// Result of importing a backup. Each section count is `None` when the backup
+/// didn't include that section (so the frontend reports only what was restored
+/// and leaves the rest untouched). `settings` is the opaque UI snapshot to apply.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportResult {
-    server_count: usize,
-    folder_count: usize,
+    /// The backup's declared kind ("servers" / "settings" / "recordings" / "all").
+    kind: String,
+    servers: Option<usize>,
+    folders: Option<usize>,
+    recordings: Option<usize>,
     settings: Option<serde_json::Value>,
 }
 
-/// Restore a backup from `path`, **replacing** the current servers and folders
-/// (persisted). Returns counts and the UI settings for the frontend to apply.
+/// Restore a backup from `path`. Auto-detects the format: a `.zip` archive
+/// (current) restores exactly the sections its manifest declares; a bare JSON
+/// document (legacy) is treated as a full servers+folders+settings backup.
 #[tauri::command]
 fn import_backup(path: String, state: State<AppState>) -> AppResult<ImportResult> {
     let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
-    let doc = backup::decode(&bytes)?;
+    // Zip files start with the "PK" local-file-header magic.
+    if bytes.starts_with(b"PK") {
+        import_archive(bytes, &state)
+    } else {
+        import_legacy_json(&bytes, &state)
+    }
+}
 
+/// Restore from a `.zip` backup archive, honouring the manifest's section list.
+fn import_archive(bytes: Vec<u8>, state: &State<AppState>) -> AppResult<ImportResult> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| AppError::Message(format!("open backup archive: {e}")))?;
+
+    let manifest = {
+        let mut f = zip
+            .by_name(backup::MANIFEST_NAME)
+            .map_err(|_| AppError::Message("not a vterm backup (no manifest)".into()))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)
+            .map_err(|e| AppError::Message(format!("read manifest: {e}")))?;
+        backup::decode_manifest(&buf)?
+    };
+
+    let mut result = ImportResult {
+        kind: manifest.kind.clone(),
+        servers: None,
+        folders: None,
+        recordings: None,
+        settings: None,
+    };
+
+    // Inner backup.json: restore only the sections the manifest declares.
+    if manifest.has(backup::SECTION_SERVERS) || manifest.has(backup::SECTION_SETTINGS) {
+        let doc = {
+            let mut f = zip
+                .by_name(backup::BACKUP_NAME)
+                .map_err(|_| AppError::Message("backup archive missing backup.json".into()))?;
+            let mut buf = Vec::new();
+            f.read_to_end(&mut buf)
+                .map_err(|e| AppError::Message(format!("read backup.json: {e}")))?;
+            backup::decode(&buf)?
+        };
+        if manifest.has(backup::SECTION_SERVERS) {
+            let servers = doc.servers;
+            let folders = backup::normalize_folders(doc.folders);
+            store::save_servers(&servers)?;
+            store::save_folders(&folders)?;
+            result.servers = Some(servers.len());
+            result.folders = Some(folders.len());
+            *state.servers.lock().unwrap() = servers;
+            *state.folders.lock().unwrap() = folders;
+        }
+        if manifest.has(backup::SECTION_SETTINGS) {
+            result.settings = doc.settings;
+        }
+    }
+
+    // Recordings: extract each recordings/*.cast into the recordings directory
+    // under a collision-safe name (never overwrites an existing recording).
+    if manifest.has(backup::SECTION_RECORDINGS) {
+        let mut count = 0usize;
+        if let Some(dir) = recording::recordings_dir() {
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| AppError::Message(format!("create recordings dir: {e}")))?;
+            for i in 0..zip.len() {
+                let mut f = zip
+                    .by_index(i)
+                    .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
+                let entry_name = f.name().to_string();
+                if !entry_name.starts_with(backup::RECORDINGS_PREFIX) {
+                    continue;
+                }
+                let Some(safe) = backup::safe_recording_name(&entry_name) else {
+                    continue;
+                };
+                let mut buf = Vec::new();
+                f.read_to_end(&mut buf)
+                    .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
+                let dest = unique_recording_path(&dir, &safe);
+                std::fs::write(&dest, &buf)
+                    .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
+                count += 1;
+            }
+        }
+        result.recordings = Some(count);
+    }
+
+    Ok(result)
+}
+
+/// Restore a legacy single-JSON backup (servers + folders + settings).
+fn import_legacy_json(bytes: &[u8], state: &State<AppState>) -> AppResult<ImportResult> {
+    let doc = backup::decode(bytes)?;
     let servers = doc.servers;
     let folders = backup::normalize_folders(doc.folders);
     store::save_servers(&servers)?;
     store::save_folders(&folders)?;
 
     let result = ImportResult {
-        server_count: servers.len(),
-        folder_count: folders.len(),
+        kind: backup::KIND_ALL.to_string(),
+        servers: Some(servers.len()),
+        folders: Some(folders.len()),
+        recordings: None,
         settings: doc.settings,
     };
     *state.servers.lock().unwrap() = servers;
@@ -634,6 +800,47 @@ fn is_recording_path(path: &std::path::Path) -> bool {
     path.extension().is_some_and(|e| e == "cast") && path.parent() == Some(dir.as_path())
 }
 
+/// A free `.cast` path for `name` inside `dir`: returns `dir/name`, or appends
+/// `-1`, `-2`, … before the extension if a file with that name already exists.
+/// Used by both backup restore and the "upload recording" import so neither ever
+/// clobbers an existing recording.
+fn unique_recording_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let stem = name.strip_suffix(".cast").unwrap_or(name);
+    for n in 1.. {
+        let candidate = dir.join(format!("{stem}-{n}.cast"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    unreachable!("ran out of recording name suffixes")
+}
+
+/// Read a stored recording's metadata (asciicast header + file size) at `path`.
+fn meta_for_path(path: &std::path::Path) -> RecordingMeta {
+    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    let header = std::fs::read_to_string(path)
+        .ok()
+        .and_then(|c| c.lines().next().map(str::to_owned))
+        .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let title = header["title"].as_str().unwrap_or("").to_owned();
+    RecordingMeta {
+        path: path.to_string_lossy().into_owned(),
+        // Older recordings have no `server` field → fall back to the title.
+        server: header["server"].as_str().unwrap_or(&title).to_owned(),
+        title,
+        description: header["description"].as_str().unwrap_or("").to_owned(),
+        width: header["width"].as_u64().unwrap_or(80) as u32,
+        height: header["height"].as_u64().unwrap_or(24) as u32,
+        timestamp: header["timestamp"].as_u64().unwrap_or(0),
+        size,
+    }
+}
+
 /// Start recording the given session to a new asciicast file; returns its path.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)] // Tauri command params arrive by name from JS
@@ -747,27 +954,46 @@ fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
         if path.extension().is_none_or(|e| e != "cast") {
             continue;
         }
-        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let header = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|c| c.lines().next().map(str::to_owned))
-            .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok());
-        let h = header.unwrap_or(serde_json::Value::Null);
-        let title = h["title"].as_str().unwrap_or("").to_owned();
-        out.push(RecordingMeta {
-            path: path.to_string_lossy().into_owned(),
-            // Older recordings have no `server` field → fall back to the title.
-            server: h["server"].as_str().unwrap_or(&title).to_owned(),
-            title,
-            description: h["description"].as_str().unwrap_or("").to_owned(),
-            width: h["width"].as_u64().unwrap_or(80) as u32,
-            height: h["height"].as_u64().unwrap_or(24) as u32,
-            timestamp: h["timestamp"].as_u64().unwrap_or(0),
-            size,
-        });
+        out.push(meta_for_path(&path));
     }
     out.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
     Ok(out)
+}
+
+/// Import (upload) an external recording into the library by copying it into the
+/// recordings directory under a collision-safe name. Validates that the file is
+/// an **asciicast v2** recording (a JSON header line with `version: 2`) so the
+/// player — which expects the full raw `.cast` stream — can replay it. Returns
+/// the new recording's metadata so the frontend can refresh its list.
+#[tauri::command]
+fn import_recording(src_path: String) -> AppResult<RecordingMeta> {
+    let dir = recording::recordings_dir().ok_or_else(|| "no recordings directory".to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create recordings dir: {e}"))?;
+
+    let content =
+        std::fs::read_to_string(&src_path).map_err(|e| format!("read {src_path}: {e}"))?;
+    // The first line must be a valid asciicast v2 header object.
+    let first = content.lines().next().unwrap_or("").trim();
+    let header: serde_json::Value = serde_json::from_str(first)
+        .map_err(|_| AppError::Message("not an asciicast recording (bad header)".into()))?;
+    if header.get("version").and_then(serde_json::Value::as_u64) != Some(2) {
+        return Err(AppError::Message(
+            "unsupported recording — expected an asciicast v2 (.cast) file".into(),
+        ));
+    }
+
+    let base = std::path::Path::new(&src_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("imported.cast");
+    let name = if base.ends_with(".cast") {
+        base.to_string()
+    } else {
+        format!("{base}.cast")
+    };
+    let dest = unique_recording_path(&dir, &name);
+    std::fs::write(&dest, content.as_bytes()).map_err(|e| format!("write recording: {e}"))?;
+    Ok(meta_for_path(&dest))
 }
 
 /// Delete a stored recording (only within the recordings directory).
@@ -1668,7 +1894,8 @@ pub fn run() {
             delete_recording,
             set_recording_meta,
             read_recording,
-            export_recording
+            export_recording,
+            import_recording
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

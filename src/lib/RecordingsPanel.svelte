@@ -27,6 +27,8 @@
     readRecording,
     exportRecording,
     pickExportSavePath,
+    importRecording,
+    pickRecordingFile,
   } from "./api";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import type { RecordingMeta } from "./types";
@@ -78,6 +80,20 @@
       notifyError(String(e));
     } finally {
       loading = false;
+    }
+  }
+
+  /** Upload an external .cast file into the library (only asciicast v2 replays). */
+  async function upload() {
+    try {
+      const src = await pickRecordingFile();
+      if (!src) return;
+      const rec = await importRecording(src);
+      // Show it immediately without a full reload.
+      items = [rec, ...items.filter((r) => r.path !== rec.path)];
+      notifySuccess(t("recordings.uploaded"));
+    } catch (e) {
+      notifyError(String(e));
     }
   }
 
@@ -194,9 +210,25 @@
     {/key}
   {:else if loading}
     <p class="py-6 text-center text-xs text-muted">{t("recordings.loading")}</p>
-  {:else if items.length === 0}
-    <EmptyState icon="activity" title={t("recordings.emptyTitle")} hint={t("recordings.emptyHint")} />
   {:else}
+    <!-- Upload an external .cast recording into the library. Always available,
+         including when the library is empty. -->
+    <div class="mb-2 flex justify-end">
+      <button
+        type="button"
+        data-testid="recordings-upload"
+        onclick={upload}
+        class="flex items-center gap-1.5 rounded border border-edge px-2 py-1 text-xs text-muted hover:border-accent hover:text-accent"
+      >
+        <Icon name="upload" size={14} />
+        {t("recordings.upload")}
+      </button>
+    </div>
+  {/if}
+
+  {#if !playing && !loading && items.length === 0}
+    <EmptyState icon="activity" title={t("recordings.emptyTitle")} hint={t("recordings.emptyHint")} />
+  {:else if !playing && !loading}
     <!-- Search -->
     <div class="mb-2 flex min-w-0 items-center gap-1.5 rounded border border-edge bg-panel px-2 py-1">
       <Icon name="search" size={14} class="shrink-0 text-muted" />

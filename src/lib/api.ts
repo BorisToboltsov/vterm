@@ -70,31 +70,44 @@ export function setServerGroup(
 
 // ── Backup (export / import) ───────────────────────────────────────────────────
 
-/** Result of importing a backup. `settings` is the opaque UI settings snapshot. */
+/** Which data sections a backup carries — also the export preset the user picks. */
+export type BackupKind = "servers" | "settings" | "recordings" | "all";
+
+/**
+ * Result of importing a backup. Each section count is `null` when the backup
+ * didn't include it (so the UI reports only what was restored). `kind` echoes the
+ * backup's declared kind; `settings` is the opaque UI snapshot to apply (if any).
+ */
 export interface ImportResult {
-  serverCount: number;
-  folderCount: number;
+  kind: BackupKind;
+  servers: number | null;
+  folders: number | null;
+  recordings: number | null;
   settings: unknown | null;
 }
 
 /**
- * Write a backup (servers + folders + UI settings) to `path` as JSON. Secrets are
- * never exported — they stay in the OS keychain.
+ * Write a backup `.zip` archive to `path`. `kind` chooses which sections go in
+ * (servers + folders, UI settings, recordings, or all). Secrets are never
+ * exported — they stay in the OS keychain.
  */
-export function exportBackup(path: string, settings: unknown): Promise<void> {
-  return invoke<void>("export_backup", { path, settings });
+export function exportBackup(path: string, kind: BackupKind, settings: unknown): Promise<void> {
+  return invoke<void>("export_backup", { path, kind, settings });
 }
 
-/** Restore a backup from `path`, replacing the current servers and folders. */
+/**
+ * Restore a backup from `path`. The backend auto-detects the format (`.zip`
+ * archive or legacy `.json`) and restores exactly the sections it contains.
+ */
 export function importBackup(path: string): Promise<ImportResult> {
   return invoke<ImportResult>("import_backup", { path });
 }
 
-/** Native "save as" dialog for a backup file; returns the chosen path or null. */
+/** Native "save as" dialog for a backup archive; returns the chosen path or null. */
 export function pickBackupSavePath(defaultName: string): Promise<string | null> {
   return save({
     defaultPath: defaultName,
-    filters: [{ name: "JSON", extensions: ["json"] }],
+    filters: [{ name: "vterm backup", extensions: ["zip"] }],
   });
 }
 
@@ -104,7 +117,8 @@ export async function pickBackupFile(): Promise<string | null> {
     multiple: false,
     directory: false,
     title: "Import backup",
-    filters: [{ name: "JSON", extensions: ["json"] }],
+    // Accept the current .zip archives and legacy .json backups.
+    filters: [{ name: "vterm backup", extensions: ["zip", "json"] }],
   });
   return typeof res === "string" ? res : null;
 }
@@ -502,4 +516,25 @@ export function exportRecording(path: string, content: string): Promise<void> {
 /** Native "save as" dialog for an export; returns the chosen path or null. */
 export function pickExportSavePath(defaultName: string): Promise<string | null> {
   return save({ defaultPath: defaultName });
+}
+
+/**
+ * Import (upload) an external `.cast` recording into the library. The backend
+ * validates it's an asciicast v2 file and copies it in; returns the new entry's
+ * metadata. The player needs the full raw `.cast` stream, so only `.cast` files
+ * (not transcripts) replay correctly.
+ */
+export function importRecording(srcPath: string): Promise<RecordingMeta> {
+  return invoke<RecordingMeta>("import_recording", { srcPath });
+}
+
+/** Native open dialog for a `.cast` recording to upload; returns the path or null. */
+export async function pickRecordingFile(): Promise<string | null> {
+  const res = await open({
+    multiple: false,
+    directory: false,
+    title: "Upload recording",
+    filters: [{ name: "asciicast", extensions: ["cast"] }],
+  });
+  return typeof res === "string" ? res : null;
 }
