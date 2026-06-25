@@ -15,6 +15,9 @@ import {
   normalizeTime,
   filterEntries,
   applyFilters,
+  colWidth,
+  resizedWidth,
+  COL_MIN,
   type JsonLogEntry,
 } from "./jsonlog";
 
@@ -300,5 +303,29 @@ describe("applyFilters", () => {
   it("combines the text query with the level filter", () => {
     expect(applyFilters(entries, "careful", ["warn"]).map((e) => e.seq)).toEqual([3]);
     expect(applyFilters(entries, "careful", ["error"])).toHaveLength(0);
+  });
+});
+
+describe("colWidth", () => {
+  it("returns the stored width when present and positive", () => {
+    expect(colWidth({ time: 200 }, "time", 170)).toBe(200);
+  });
+
+  it("falls back when the key is missing or non-positive", () => {
+    expect(colWidth({}, "time", 170)).toBe(170);
+    expect(colWidth({ time: 0 }, "time", 170)).toBe(170);
+    expect(colWidth({ time: -5 }, "time", 170)).toBe(170);
+  });
+});
+
+describe("resizedWidth", () => {
+  it("adds the signed delta to the start width and rounds", () => {
+    expect(resizedWidth(170, 30.4)).toBe(200);
+    expect(resizedWidth(170, -20.6)).toBe(149);
+  });
+
+  it("clamps to the minimum width", () => {
+    expect(resizedWidth(80, -100)).toBe(COL_MIN);
+    expect(resizedWidth(80, -100, 40)).toBe(40);
   });
 });

@@ -732,9 +732,13 @@ security-гейтами и архитектурой, готовой к расш�
       **только** пока вид открыт (нулевой оверхед иначе), буфер ограничен (`MAX_JSON_ENTRIES`).
       Имена полей — **регистронезависимо** + алиасы systemd-journal (`MESSAGE`/`PRIORITY`/
       `SYSLOG_TIMESTAMP`, числовой `PRIORITY`→уровень: `journalctl -o json` из коробки).
+      Колонки **изменяются по ширине мышью** — drag-ручка на правом краю заголовка
+      (`table-layout: fixed` + `<colgroup>`; общий экшен `resizableHandle` из
+      [actions/drag.ts](src/lib/actions/drag.ts); при переполнении — горизонтальный скролл).
       Чистая логика (`parseLogLine`/`parseLogfmt`/`parseSyslog`/`parseNginx`/`parseDmesg`/
       `toLogEntry`/`extractFields`/`levelCategory`/`levelClass`/`availableFields`/`fieldValue`/
-      `normalizeTime`/`filterEntries`/`applyFilters`) в [jsonlog.ts](src/lib/jsonlog.ts),
+      `normalizeTime`/`filterEntries`/`applyFilters`/`colWidth`/`resizedWidth`) в
+      [jsonlog.ts](src/lib/jsonlog.ts),
       таблица — [JsonLogView.svelte](src/lib/JsonLogView.svelte). Включается тумблером
       `settings.smartLogs.jsonView`.
 - [x] **Поиск по всему буферу терминала** (`@xterm/addon-search`): не только по экрану,

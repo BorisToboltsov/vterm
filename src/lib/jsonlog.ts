@@ -322,3 +322,30 @@ export function applyFilters(
   if (set.size === 0 || LEVEL_CATS.every((c) => set.has(c))) return byText;
   return byText.filter((e) => set.has(levelCategory(e.level)));
 }
+
+// --- Column sizing (structured view) ---------------------------------------
+// The structured table uses a fixed layout so columns can be drag-resized. Pure
+// helpers below keep the width math testable (ADR 0003); the component owns the
+// widths map and the pointer-drag wiring (via the shared `resizableHandle`).
+
+/** Default pixel widths for the built-in columns. */
+export const COL_WIDTHS = { time: 170, level: 84, message: 420 } as const;
+/** Default width for a user-added field column. */
+export const COL_EXTRA_DEFAULT = 150;
+/** Smallest a column may be dragged to. */
+export const COL_MIN = 56;
+
+/** Current width for column `key`, or `fallback` if it was never resized. */
+export function colWidth(
+  widths: Record<string, number>,
+  key: string,
+  fallback: number,
+): number {
+  const w = widths[key];
+  return typeof w === "number" && w > 0 ? w : fallback;
+}
+
+/** New width for a column being dragged from `start` by signed delta `dx`. */
+export function resizedWidth(start: number, dx: number, min = COL_MIN): number {
+  return Math.max(min, Math.round(start + dx));
+}

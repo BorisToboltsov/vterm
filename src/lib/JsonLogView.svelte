@@ -10,10 +10,15 @@
     fieldValue,
     levelClass,
     normalizeTime,
+    colWidth,
+    resizedWidth,
+    COL_WIDTHS,
+    COL_EXTRA_DEFAULT,
     LEVEL_CATS,
     type JsonLogEntry,
     type LevelCat,
   } from "./jsonlog";
+  import { resizableHandle } from "./actions/drag";
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -31,6 +36,31 @@
   let expanded = $state(new Set<number>());
   let scroller = $state<HTMLDivElement>();
   let stick = $state(true);
+
+  // Drag-resizable column widths, keyed by "time"/"level"/"message" and
+  // "x:<field>" for user-added columns. Empty = use defaults. The grip captures
+  // the column's start width on pointerdown, then sets the new width on move.
+  let colWidths = $state<Record<string, number>>({});
+  let resizingCol = $state<string | null>(null);
+  let resizeStartW = 0;
+  const EXPAND_W = 28;
+
+  function startColResize(key: string, fallback: number) {
+    resizingCol = key;
+    resizeStartW = colWidth(colWidths, key, fallback);
+  }
+  function onColResize(key: string, dx: number) {
+    colWidths = { ...colWidths, [key]: resizedWidth(resizeStartW, dx) };
+  }
+  const endColResize = () => (resizingCol = null);
+
+  const totalWidth = $derived(
+    EXPAND_W +
+      colWidth(colWidths, "time", COL_WIDTHS.time) +
+      colWidth(colWidths, "level", COL_WIDTHS.level) +
+      colWidth(colWidths, "message", COL_WIDTHS.message) +
+      extraColumns.reduce((s, c) => s + colWidth(colWidths, `x:${c}`, COL_EXTRA_DEFAULT), 0),
+  );
 
   const filtered = $derived(applyFilters(entries, query, activeLevels));
   // Field list for the column picker — only computed while the picker is open
@@ -162,16 +192,50 @@
       <EmptyState icon="table" title={t("jsonlog.emptyTitle")} hint={t("jsonlog.emptyHint")} />
     </div>
   {:else}
+    {#snippet grip(key: string, fallback: number)}
+      <!-- Drag-to-resize gutter on the column's right edge. Mouse-only, so it is
+           hidden from the a11y tree (kept out of the column header's name). -->
+      <div
+        aria-hidden="true"
+        title={t("jsonlog.resizeColumn")}
+        class="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize hover:bg-accent {resizingCol ===
+        key
+          ? 'bg-accent'
+          : ''}"
+        use:resizableHandle={{
+          onStart: () => startColResize(key, fallback),
+          onResize: (dx) => onColResize(key, dx),
+          onEnd: endColResize,
+        }}
+      ></div>
+    {/snippet}
     <div bind:this={scroller} onscroll={onScroll} class="min-h-0 flex-1 overflow-auto">
-      <table class="w-full border-collapse text-xs">
+      <table class="table-fixed border-collapse text-xs" style="width:{totalWidth}px">
+        <colgroup>
+          <col style="width:{EXPAND_W}px" />
+          <col style="width:{colWidth(colWidths, 'time', COL_WIDTHS.time)}px" />
+          <col style="width:{colWidth(colWidths, 'level', COL_WIDTHS.level)}px" />
+          <col style="width:{colWidth(colWidths, 'message', COL_WIDTHS.message)}px" />
+          {#each extraColumns as col}
+            <col style="width:{colWidth(colWidths, `x:${col}`, COL_EXTRA_DEFAULT)}px" />
+          {/each}
+        </colgroup>
         <thead class="sticky top-0 z-10 bg-panel-alt text-muted">
           <tr>
-            <th class="w-6 px-1 py-1"></th>
-            <th class="px-2 py-1 text-left font-medium">{t("jsonlog.colTime")}</th>
-            <th class="px-2 py-1 text-left font-medium">{t("jsonlog.colLevel")}</th>
-            <th class="px-2 py-1 text-left font-medium">{t("jsonlog.colMessage")}</th>
+            <th class="px-1 py-1"></th>
+            <th class="relative px-2 py-1 text-left font-medium">
+              {t("jsonlog.colTime")}{@render grip("time", COL_WIDTHS.time)}
+            </th>
+            <th class="relative px-2 py-1 text-left font-medium">
+              {t("jsonlog.colLevel")}{@render grip("level", COL_WIDTHS.level)}
+            </th>
+            <th class="relative px-2 py-1 text-left font-medium">
+              {t("jsonlog.colMessage")}{@render grip("message", COL_WIDTHS.message)}
+            </th>
             {#each extraColumns as col}
-              <th class="px-2 py-1 text-left font-mono font-medium">{col}</th>
+              <th class="relative truncate px-2 py-1 text-left font-mono font-medium" title={col}>
+                {col}{@render grip(`x:${col}`, COL_EXTRA_DEFAULT)}
+              </th>
             {/each}
           </tr>
         </thead>
@@ -190,10 +254,10 @@
                   <Icon name={expanded.has(e.seq) ? "chevronDown" : "chevronRight"} size={12} />
                 </button>
               </td>
-              <td class="whitespace-nowrap px-2 py-1 tabular-nums text-muted" title={e.ts ?? ""}>
+              <td class="truncate px-2 py-1 tabular-nums text-muted" title={e.ts ?? ""}>
                 {normalizeTime(e.ts)}
               </td>
-              <td class="whitespace-nowrap px-2 py-1 font-medium {levelClass(e.level)}">
+              <td class="truncate px-2 py-1 font-medium {levelClass(e.level)}">
                 {e.level ?? ""}
               </td>
               <td class="break-words px-2 py-1 text-text">{e.message ?? ""}</td>

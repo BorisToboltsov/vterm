@@ -79,7 +79,10 @@
       "Read(//Users/boristoboltsov/Downloads/**)",
       "Bash(grep -n 'toggle\\\\|chevron\\\\|transition:slide\\\\|aria-expanded\\\\|= $state\\(false\\)\\\\|showThemePicker\\\\|showThresholds\\\\|showMetrics' src/lib/SettingsPanel.svelte)",
       "Bash(grep -n '$props\\\\|open\\\\|title\\\\|onclose\\\\|children\\\\|Snippet' src/lib/Modal.svelte)",
-      "Bash(grep -n 'stopRecording\\\\|deleteRecording\\\\|setRecordingMeta\\\\|notifyInfo\\\\|notifySuccess\\\\|RecordingSaveDialog\\\\|import.*api\\\\|from \"$lib/stores/toasts' src/routes/+page.svelte)"
+      "Bash(grep -n 'stopRecording\\\\|deleteRecording\\\\|setRecordingMeta\\\\|notifyInfo\\\\|notifySuccess\\\\|RecordingSaveDialog\\\\|import.*api\\\\|from \"$lib/stores/toasts' src/routes/+page.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.11.0\"/\"version\": \"0.11.1\"/' package.json)",
+      "Bash(sed -i '' '0,/^version = \"0.11.0\"/s//version = \"0.11.1\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.11.0\"/\"version\": \"0.11.1\"/' src-tauri/tauri.conf.json)"
     ]
   }
 }

@@ -1,7 +1,11 @@
 import { render, screen, fireEvent } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import JsonLogView from "./JsonLogView.svelte";
 import type { JsonLogEntry } from "./jsonlog";
+
+// jsdom lacks pointer capture; the resize grip calls it on pointerdown.
+Element.prototype.setPointerCapture ??= vi.fn();
+Element.prototype.releasePointerCapture ??= vi.fn();
 
 const entries: JsonLogEntry[] = [
   {
@@ -105,5 +109,19 @@ describe("JsonLogView", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(cleared).toBe(0);
     expect(screen.getByText("disk full")).toBeInTheDocument();
+  });
+
+  it("widens a column when its resize grip is dragged", async () => {
+    const { container } = render(JsonLogView, { props: { entries } });
+    // The time column is the 2nd <col> (after the fixed expand-toggle column).
+    const timeCol = () => container.querySelectorAll("colgroup col")[1] as HTMLElement;
+    const before = parseInt(timeCol().style.width, 10);
+
+    const [timeGrip] = screen.getAllByTitle("Drag to resize column");
+    await fireEvent.pointerDown(timeGrip, { clientX: 100, pointerId: 1 });
+    await fireEvent.pointerMove(timeGrip, { clientX: 160, pointerId: 1 });
+    await fireEvent.pointerUp(timeGrip, { clientX: 160, pointerId: 1 });
+
+    expect(parseInt(timeCol().style.width, 10)).toBe(before + 60);
   });
 });
