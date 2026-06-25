@@ -21,10 +21,39 @@ describe("ConnectingOverlay", () => {
     expect(active.className).toContain("text-accent");
   });
 
-  it("colours the failed phase as danger when errored", () => {
+  it("colours the failed phase as danger in failed mode", () => {
     render(ConnectingOverlay, {
-      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "session", errored: true },
+      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "session", failed: true },
     });
     expect(screen.getByText("Session").className).toContain("text-danger");
+  });
+
+  it("renders the error title, red detail and alert role in failed mode", () => {
+    render(ConnectingOverlay, {
+      props: {
+        alias: "prod-db",
+        host: "deploy@10.0.0.5:22",
+        phase: "connecting",
+        failed: true,
+        title: "Couldn't connect",
+        detail: "Connection refused",
+      },
+    });
+    expect(screen.getByText("Couldn't connect")).toBeInTheDocument();
+    expect(screen.getByText("Connection refused").className).toContain("text-danger");
+    expect(screen.getByTestId("connecting-overlay")).toHaveAttribute("role", "alert");
+  });
+
+  it("hides the checklist when showSteps is false", () => {
+    render(ConnectingOverlay, {
+      props: {
+        alias: "prod-db",
+        host: "deploy@10.0.0.5:22",
+        failed: true,
+        showSteps: false,
+        title: "Connection lost",
+      },
+    });
+    expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   });
 });

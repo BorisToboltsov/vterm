@@ -607,6 +607,53 @@
     }
   }
 
+  /**
+   * Presentation for the connection-error overlay (ConnectingOverlay `failed`).
+   * Maps a tab's terminal status to a title, optional red detail, the phase that
+   * failed (so the checklist freezes on it) and which action button to show.
+   */
+  function sshErrorView(
+    sessionId: string,
+    status: string,
+  ): {
+    title: string;
+    detail?: string;
+    phase: ConnPhase;
+    showSteps: boolean;
+    action: "reconnect" | "reauth";
+  } {
+    if (status.startsWith("Disconnected")) {
+      // Dropped after a successful connect — not a phase failure.
+      return { title: t("connecting.lost"), phase: "session", showSteps: false, action: "reconnect" };
+    }
+    const raw = status.replace(/^Error:\s*/, "");
+    if (raw.includes("auth-rejected")) {
+      return {
+        title: t("connecting.authFailed"),
+        detail: t("connecting.authFailedDetail"),
+        phase: "authenticating",
+        showSteps: true,
+        action: "reauth",
+      };
+    }
+    if (raw.includes("host-key-rejected")) {
+      return {
+        title: t("connecting.hostKeyFailed"),
+        detail: t("connecting.hostKeyDetail"),
+        phase: connPhase[sessionId] ?? "connecting",
+        showSteps: true,
+        action: "reconnect",
+      };
+    }
+    return {
+      title: t("connecting.connectFailed"),
+      detail: raw,
+      phase: connPhase[sessionId] ?? "connecting",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
+
   function submitSecret(event: Event) {
     event.preventDefault();
     if (!secretTarget) return;
@@ -942,7 +989,44 @@
           <div class="relative min-h-0 min-w-0 flex-1">
             {#each tabsState.list as tab (tab.sessionId)}
               <div class="absolute inset-0 p-1 {tabsState.activeId === tab.sessionId ? '' : 'invisible'}">
-                {#if tab.status.startsWith("Disconnected") || tab.status.startsWith("Error")}
+                {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
+                  {@const srv = servers.find((s) => s.id === tab.serverId)}
+                  <ConnectingOverlay
+                    alias={tab.alias}
+                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
+                    phase={connPhase[tab.sessionId] ?? "connecting"}
+                  />
+                {:else if tab.kind === "ssh" && (tab.status.startsWith("Error") || tab.status.startsWith("Disconnected"))}
+                  {@const srv = servers.find((s) => s.id === tab.serverId)}
+                  {@const ev = sshErrorView(tab.sessionId, tab.status)}
+                  <ConnectingOverlay
+                    failed
+                    alias={tab.alias}
+                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
+                    phase={ev.phase}
+                    title={ev.title}
+                    detail={ev.detail}
+                    showSteps={ev.showSteps}
+                  >
+                    {#if ev.action === "reauth"}
+                      <button
+                        class="flex items-center gap-1.5 rounded bg-accent px-3 py-1 text-xs font-medium text-panel-alt hover:bg-accent-hover"
+                        onclick={() => reauth(tab.sessionId)}
+                      >
+                        {t("connecting.retryAuth")}
+                      </button>
+                    {:else}
+                      <button
+                        class="flex items-center gap-1.5 rounded bg-accent px-3 py-1 text-xs font-medium text-panel-alt hover:bg-accent-hover"
+                        onclick={() => reconnectTabStore(tab.sessionId)}
+                      >
+                        <Icon name="refresh" size={14} />
+                        {t("common.reconnect")}
+                      </button>
+                    {/if}
+                  </ConnectingOverlay>
+                {:else if tab.status.startsWith("Disconnected") || tab.status.startsWith("Error")}
+                  <!-- Local shells: keep the lightweight top banner. -->
                   <div
                     class="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-3 border-b border-edge bg-panel-alt/95 px-3 py-1.5 text-xs"
                   >
@@ -954,14 +1038,6 @@
                       {t("common.reconnect")}
                     </button>
                   </div>
-                {/if}
-                {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
-                  {@const srv = servers.find((s) => s.id === tab.serverId)}
-                  <ConnectingOverlay
-                    alias={tab.alias}
-                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
-                    phase={connPhase[tab.sessionId] ?? "connecting"}
-                  />
                 {/if}
                 {#key tab.gen}
                   <TerminalView
@@ -979,9 +1055,10 @@
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "closed") finalizeRecordingOnClose(tab.sessionId);
                       if (st === "connected") maybeAutoRecord(tab);
-                      if (st === "error" && d?.includes("auth-rejected")) {
-                        reauth(tab.sessionId);
-                      } else if (st === "closed" && settings.autoReconnect && tab.kind === "ssh") {
+                      // Auth failures now keep the tab and show the error overlay
+                      // (the user re-enters the secret via its button), so we no
+                      // longer auto-close/re-prompt here.
+                      if (st === "closed" && settings.autoReconnect && tab.kind === "ssh") {
                         setTimeout(() => {
                           if (findTab(tab.sessionId)) reconnectTabStore(tab.sessionId);
                         }, 1000);

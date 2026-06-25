@@ -1,8 +1,11 @@
 <script lang="ts">
-  // Friendly waiting state shown over the terminal area while an SSH session is
-  // connecting. A comet-trail orbit around the server icon plus a checklist of
-  // the real connection phases (driven by `term://phase` events; mapping lives
-  // in connphase.ts). Presentational — the page owns the phase/identity props.
+  // Connection-lifecycle screen shown over the terminal area: while an SSH
+  // session is connecting (animated comet orbit + live phase checklist driven by
+  // `term://phase` events) and, in `failed` mode, when it could not connect / was
+  // dropped (static icon with a red cross, the checklist frozen on the phase that
+  // failed, plus action buttons via the default slot). Presentational — the page
+  // owns the phase/identity props and wires the reconnect/re-auth actions.
+  import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { phaseSteps, type ConnPhase } from "./connphase";
@@ -11,10 +14,30 @@
     alias,
     host,
     phase = "connecting",
-    errored = false,
-  }: { alias: string; host: string; phase?: ConnPhase; errored?: boolean } = $props();
+    failed = false,
+    detail,
+    title,
+    showSteps = true,
+    children,
+  }: {
+    alias: string;
+    host: string;
+    /** Current phase (connecting) or the phase that failed (failed mode). */
+    phase?: ConnPhase;
+    /** Render the error state (static red icon, frozen checklist, actions). */
+    failed?: boolean;
+    /** Red detail line under the title (error reason). */
+    detail?: string;
+    /** Title override; defaults to the localized "Connecting to {alias}…". */
+    title?: string;
+    /** Show the phase checklist (hidden for a plain drop after connect). */
+    showSteps?: boolean;
+    /** Action buttons (reconnect / re-enter secret), rendered below the host. */
+    children?: Snippet;
+  } = $props();
 
-  const steps = $derived(phaseSteps(phase, errored));
+  const steps = $derived(phaseSteps(phase, failed));
+  const heading = $derived(title ?? t("connecting.connectingTo", { alias }));
 
   function phaseLabel(p: ConnPhase): string {
     return p === "connecting"
@@ -35,39 +58,62 @@
 <div
   data-testid="connecting-overlay"
   class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 bg-panel p-6"
-  role="status"
-  aria-live="polite"
+  role={failed ? "alert" : "status"}
+  aria-live={failed ? "assertive" : "polite"}
 >
-  <!-- Comet-trail orbit around the server glyph. -->
+  <!-- Comet-trail orbit while connecting; static red-crossed icon on failure. -->
   <div class="orbit-stage">
-    <span class="orbit-trail" aria-hidden="true"></span>
-    <Icon name="server" size={22} class="text-accent" />
+    {#if failed}
+      <span class="ring-failed" aria-hidden="true"></span>
+      <Icon name="server" size={22} class="text-danger" />
+      <span
+        class="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full border-2 border-panel bg-danger text-panel"
+      >
+        <Icon name="close" size={11} />
+      </span>
+    {:else}
+      <span class="orbit-trail" aria-hidden="true"></span>
+      <Icon name="server" size={22} class="text-accent" />
+    {/if}
   </div>
 
-  <p class="text-sm font-medium text-text">{t("connecting.connectingTo", { alias })}</p>
+  <div class="space-y-1 text-center">
+    <p class="text-sm font-medium text-text">{heading}</p>
+    {#if detail}
+      <p class="mx-auto max-w-xs break-words text-xs text-danger">{detail}</p>
+    {/if}
+  </div>
 
-  <ul class="flex flex-col gap-2.5">
-    {#each steps as step (step.phase)}
-      <li class="flex items-center gap-2.5 text-xs">
-        <span class="flex w-4 shrink-0 items-center justify-center">
-          {#if step.state === "done"}
-            <Icon name="check" size={14} class="text-green-500" />
-          {:else if step.state === "error"}
-            <Icon name="alert" size={14} class="text-danger" />
-          {:else if step.state === "active"}
-            <span class="conn-spin"></span>
-          {:else}
-            <span class="conn-pending"></span>
-          {/if}
-        </span>
-        <span class={labelClass[step.state]}>
-          {phaseLabel(step.phase)}{step.state === "active" ? "…" : ""}
-        </span>
-      </li>
-    {/each}
-  </ul>
+  {#if showSteps}
+    <ul class="flex flex-col gap-2.5">
+      {#each steps as step (step.phase)}
+        <li class="flex items-center gap-2.5 text-xs">
+          <span class="flex w-4 shrink-0 items-center justify-center">
+            {#if step.state === "done"}
+              <Icon name="check" size={14} class="text-green-500" />
+            {:else if step.state === "error"}
+              <Icon name="close" size={14} class="text-danger" />
+            {:else if step.state === "active"}
+              <span class="conn-spin"></span>
+            {:else}
+              <span class="conn-pending"></span>
+            {/if}
+          </span>
+          <span class={labelClass[step.state]}>
+            {phaseLabel(step.phase)}{step.state === "active" ? "…" : ""}
+          </span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   <p class="font-mono text-xs text-muted">{host}</p>
+
+  {#if children}
+    <div class="flex flex-wrap items-center justify-center gap-2">
+      {@render children()}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -87,6 +133,14 @@
     -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
     mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
     animation: orbit-spin 1.4s linear infinite;
+  }
+  .ring-failed {
+    position: absolute;
+    inset: 0;
+    border-radius: 9999px;
+    border: 1.5px solid var(--color-danger);
+    background: var(--color-panel-alt);
+    opacity: 0.6;
   }
   .conn-spin {
     width: 16px;

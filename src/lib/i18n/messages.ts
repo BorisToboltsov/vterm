@@ -51,6 +51,13 @@ export const en = {
   "connecting.phaseConnecting": "Connection",
   "connecting.phaseAuth": "Authentication",
   "connecting.phaseSession": "Session",
+  "connecting.connectFailed": "Couldn't connect",
+  "connecting.authFailed": "Authentication failed",
+  "connecting.hostKeyFailed": "Host key not trusted",
+  "connecting.lost": "Connection lost",
+  "connecting.authFailedDetail": "Wrong password or key not accepted",
+  "connecting.hostKeyDetail": "The server's key is not in known hosts",
+  "connecting.retryAuth": "Re-enter password",
 
   // ── Tabs ──
   "tab.localShell": "Local shell",
@@ -582,6 +589,13 @@ const ru: Record<MessageKey, string> = {
   "connecting.phaseConnecting": "Соединение",
   "connecting.phaseAuth": "Аутентификация",
   "connecting.phaseSession": "Сессия",
+  "connecting.connectFailed": "Не удалось подключиться",
+  "connecting.authFailed": "Аутентификация отклонена",
+  "connecting.hostKeyFailed": "Ключ хоста не доверен",
+  "connecting.lost": "Соединение разорвано",
+  "connecting.authFailedDetail": "Неверный пароль или ключ не принят",
+  "connecting.hostKeyDetail": "Ключ сервера отсутствует в known_hosts",
+  "connecting.retryAuth": "Ввести пароль заново",
 
   // ── Tabs ──
   "tab.localShell": "Локальная оболочка",
