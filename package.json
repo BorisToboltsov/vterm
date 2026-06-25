@@ -1,6 +1,6 @@
 {
   "name": "vterm",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Кроссплатформенный инструмент для работы системных администраторов, devops, sre",
   "type": "module",
   "scripts": {

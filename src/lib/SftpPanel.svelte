@@ -225,7 +225,7 @@
 
 <div
   style="width: {collapsed ? COLLAPSED_W : width}px"
-  class="flex h-full shrink-0 flex-col overflow-hidden border-l border-edge bg-panel-alt {animateWidth
+  class="relative flex h-full shrink-0 flex-col overflow-hidden border-l border-edge bg-panel-alt {animateWidth
     ? 'transition-[width] duration-200 ease-out'
     : ''} {dragOver ? 'ring-2 ring-inset ring-accent' : ''}"
 >
@@ -246,6 +246,14 @@
       </span>
     </div>
   {:else}
+    <!-- Inner content is absolutely pinned to the panel's fixed right edge at the
+         full expanded width. The panel is docked right, so during expansion its
+         *left* border is what moves; an absolutely-positioned child is reliably
+         clipped by the `overflow-hidden` root every frame in WebKit (unlike an
+         oversized static flex child, which flickered past the left edge over the
+         terminal). The content stays visually stationary and the moving left border
+         simply reveals it (clip) — content and border stay perfectly in sync. -->
+    <div class="absolute inset-y-0 right-0 flex flex-col" style="width: {width}px">
     <!-- Toolbar -->
     <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
       <button
@@ -474,6 +482,7 @@
     </div>
   {/if}
   {/if}
+    </div>
   {/if}
 </div>
 
