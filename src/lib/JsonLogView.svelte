@@ -20,13 +20,18 @@
   } from "./jsonlog";
   import { resizableHandle } from "./actions/drag";
   import Icon from "./Icon.svelte";
+  import ViewModeToggle from "./ViewModeToggle.svelte";
   import EmptyState from "./EmptyState.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess } from "./stores/toasts.svelte";
   import { t } from "./i18n";
 
-  let { entries, onClear }: { entries: JsonLogEntry[]; onClear?: () => void } = $props();
+  let {
+    entries,
+    onClear,
+    onShowRaw,
+  }: { entries: JsonLogEntry[]; onClear?: () => void; onShowRaw?: () => void } = $props();
 
   let query = $state("");
   let activeLevels = $state<LevelCat[]>([...LEVEL_CATS]);
@@ -116,8 +121,7 @@
 </script>
 
 <div class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view">
-  <!-- Left padding clears the corner raw↔structured toggle button (Terminal.svelte). -->
-  <div class="flex flex-wrap items-center gap-2 border-b border-edge bg-panel-alt py-1.5 pl-10 pr-2">
+  <div class="flex flex-wrap items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1.5">
     <Icon name="search" size={14} class="text-muted" />
     <input
       bind:value={query}
@@ -185,6 +189,8 @@
       {/if}
     </div>
     <span class="shrink-0 text-xs tabular-nums text-muted">{filtered.length}</span>
+    <!-- Raw ↔ Table switch lives at the toolbar's right end in structured mode. -->
+    <ViewModeToggle structured={true} onSelect={(on) => !on && onShowRaw?.()} />
   </div>
 
   {#if entries.length === 0}

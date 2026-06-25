@@ -343,6 +343,9 @@ export const en = {
 
   "jsonlog.toggleStructured": "Structured log view",
   "jsonlog.toggleRaw": "Raw terminal view",
+  "jsonlog.viewMode": "View mode",
+  "jsonlog.viewRaw": "Raw",
+  "jsonlog.viewTable": "Table",
   "jsonlog.filter": "Filter logs…",
   "jsonlog.colTime": "Time",
   "jsonlog.colLevel": "Level",
@@ -874,6 +877,9 @@ const ru: Record<MessageKey, string> = {
 
   "jsonlog.toggleStructured": "Структурный вид логов",
   "jsonlog.toggleRaw": "Обычный вид терминала",
+  "jsonlog.viewMode": "Режим вида",
+  "jsonlog.viewRaw": "Текст",
+  "jsonlog.viewTable": "Таблица",
   "jsonlog.filter": "Фильтр логов…",
   "jsonlog.colTime": "Время",
   "jsonlog.colLevel": "Уровень",

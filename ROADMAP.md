@@ -886,6 +886,13 @@ security-гейтами и архитектурой, готовой к расш�
       oversize-статичный флекс-ребёнок c `self-end` «мелькал» за левой границей над
       терминалом). Кнопка Connect больше не уходит за центральное окно.
       [SftpPanel.svelte](src/lib/SftpPanel.svelte).
+- [x] **0.11.5** — переключатель raw↔structured переделан из плавающей угловой
+      иконки (перекрывала приглашение) в **сегмент «Raw | Table»**
+      ([ViewModeToggle.svelte](src/lib/ViewModeToggle.svelte)): в raw-режиме плавает
+      справа-сверху (оверлей поиска стекается **под** ним), в table-режиме — крайний
+      правый элемент тулбара таблицы (убран костыль `pl-10`). Состояние `structured`
+      осталось в Terminal. [Terminal.svelte](src/lib/Terminal.svelte),
+      [JsonLogView.svelte](src/lib/JsonLogView.svelte).
 
 ---
 

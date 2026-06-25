@@ -395,8 +395,9 @@ pnpm test:coverage
   во внешнем браузере через `openUrl` (`tauri-plugin-opener`) — офлайн-инвариант
   (только по явному клику, без рантайм-сети) соблюдён, как в HelpPanel.
 - **Структурный вид — мультиформатный, парсинг только при открытом виде.** Оверлей
-  [JsonLogView.svelte](src/lib/JsonLogView.svelte) поверх терминала (тумблер-иконка
-  `table` в углу, при `smartLogs.jsonView`; имя файла историческое — формат**ов** много).
+  [JsonLogView.svelte](src/lib/JsonLogView.svelte) поверх терминала (переключатель
+  режима — **сегмент «Raw | Table»** [ViewModeToggle.svelte](src/lib/ViewModeToggle.svelte),
+  при `smartLogs.jsonView`; имя файла историческое — формат**ов** много).
   Парсинг потока (`feedJson`) идёт **только пока `structured` включён** — нулевой оверхед
   иначе; при включении — **посев из текущего scrollback** (`seedJsonFromBuffer`) + живой
   разбор, буфер ограничен `MAX_JSON_ENTRIES`. Чистая логика — [jsonlog.ts](src/lib/jsonlog.ts)
@@ -421,9 +422,15 @@ pnpm test:coverage
   (`term.registerMarker`, поле `seedMark`): повторный заход в structured (`seedJsonFromBuffer`)
   читает буфер **только после маркера**, поэтому очищенный вывод не возвращается —
   ждём новый. Маркер авто-инвалидируется, когда строка уходит из scrollback → откат на
-  полный посев. Кнопка стоит **слева от чипов уровня**,
-  отделена вертикальным разделителем. Панель фильтра имеет левый отступ (`pl-10`), чтобы
-  не перекрываться угловой кнопкой-тумблером raw↔structured (она во Terminal, `left-1 top-1`).
+  полный посев. Кнопка «Clear» стоит **слева от чипов уровня**, отделена вертикальным
+  разделителем. **Переключатель режима — единый сегмент `Raw | Table`**
+  ([ViewModeToggle.svelte](src/lib/ViewModeToggle.svelte), иконки `terminal`/`table`),
+  живёт в **двух взаимоисключающих** местах (состояние `structured` — в Terminal, лифтинг
+  не нужен): в **raw**-режиме плавает в правом-верхнем углу (`absolute right-2 top-2 z-30`
+  во Terminal), в **table**-режиме — **крайний правый элемент тулбара** JsonLogView (проп
+  `onShowRaw` → Terminal `setStructured(false)`). Поэтому старый костыль `pl-10` тулбара
+  убран. Оверлей поиска (Cmd+F) при видимом плавающем сегменте **стекается под ним**
+  (`top-11` вместо `top-2`), а не перекрывается.
   **Колонки изменяются по ширине мышью**: таблица — `table-layout: fixed` + `<colgroup>`
   с пиксельными ширинами, drag-ручка на правом краю каждого заголовка через **общий**
   экшен `resizableHandle` ([actions/drag.ts](src/lib/actions/drag.ts), как ресайз панелей),

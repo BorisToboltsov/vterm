@@ -16,6 +16,7 @@
   import { applyHighlight, compileRules } from "./highlight";
   import { toLogEntry, type JsonLogEntry } from "./jsonlog";
   import JsonLogView from "./JsonLogView.svelte";
+  import ViewModeToggle from "./ViewModeToggle.svelte";
   import {
     closedEvent,
     connectSession,
@@ -172,13 +173,10 @@
     if (acc) pushEntry(acc);
   }
 
-  function toggleStructured() {
-    if (!structured) {
-      seedJsonFromBuffer();
-      structured = true;
-    } else {
-      structured = false;
-    }
+  function setStructured(on: boolean) {
+    if (on === structured) return;
+    if (on) seedJsonFromBuffer();
+    structured = on;
   }
 
   /**
@@ -594,30 +592,25 @@
     role="presentation"
     class="h-full w-full"
   ></div>
-  <!-- Structured JSON log view + raw↔structured toggle (Phase 10). -->
+  <!-- Structured JSON log view + raw↔table toggle (Phase 10). In structured mode
+       the toggle lives inside the table toolbar; in raw mode it floats top-right. -->
   {#if structured}
     <div class="absolute inset-0 z-10">
-      <JsonLogView entries={jsonEntries} onClear={clearJson} />
+      <JsonLogView entries={jsonEntries} onClear={clearJson} onShowRaw={() => setStructured(false)} />
     </div>
-  {/if}
-  {#if jsonViewEnabled}
-    <button
-      type="button"
-      onclick={toggleStructured}
-      title={structured ? t("jsonlog.toggleRaw") : t("jsonlog.toggleStructured")}
-      aria-label={structured ? t("jsonlog.toggleRaw") : t("jsonlog.toggleStructured")}
-      aria-pressed={structured}
-      class="absolute left-1 top-1 z-30 flex items-center rounded border border-edge bg-panel-alt/95 p-1.5 shadow-lg {structured
-        ? 'text-accent'
-        : 'text-muted hover:text-accent'}"
-    >
-      <Icon name="table" size={14} />
-    </button>
+  {:else if jsonViewEnabled}
+    <div class="absolute right-2 top-2 z-30">
+      <ViewModeToggle {structured} onSelect={setStructured} />
+    </div>
   {/if}
   <!-- Full-buffer search overlay (Phase 10). -->
   {#if search.open}
+    <!-- Stacks below the floating raw↔table toggle (top-right) when it's shown. -->
     <div
-      class="absolute right-2 top-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
+      class="absolute right-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg {jsonViewEnabled &&
+      !structured
+        ? 'top-11'
+        : 'top-2'}"
       data-testid="terminal-search"
     >
       <Icon name="search" size={14} class="text-muted" />
