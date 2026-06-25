@@ -44,6 +44,10 @@ export default defineConfig({
         // asciicast player — xterm-driven replay; timing logic (outputUpTo/
         // formatTime/castDuration) lives in recording.ts (covered).
         "src/lib/RecordingPlayer.svelte",
+        // CodeMirror-driven config editor; pure logic (language detection,
+        // workspace bookkeeping, theme glue) lives in editorlang.ts /
+        // workspaces.svelte.ts / cmtheme.ts (covered). See TESTS.md.
+        "src/lib/EditorTab.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

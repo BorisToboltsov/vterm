@@ -98,7 +98,8 @@ pub fn build_manifest(kind: &str, exported_at: u64) -> Manifest {
 
 /// Serialize the manifest to pretty JSON.
 pub fn encode_manifest(m: &Manifest) -> AppResult<String> {
-    serde_json::to_string_pretty(m).map_err(|e| AppError::Message(format!("serialize manifest: {e}")))
+    serde_json::to_string_pretty(m)
+        .map_err(|e| AppError::Message(format!("serialize manifest: {e}")))
 }
 
 /// Parse and validate a manifest. Rejects malformed JSON and future schema versions.
@@ -308,12 +309,18 @@ mod tests {
 
     #[test]
     fn safe_recording_name_guards_against_zip_slip() {
-        assert_eq!(safe_recording_name("recordings/web.cast").as_deref(), Some("web.cast"));
+        assert_eq!(
+            safe_recording_name("recordings/web.cast").as_deref(),
+            Some("web.cast")
+        );
         assert_eq!(safe_recording_name("a/b/c.cast").as_deref(), Some("c.cast"));
         // Traversal, absolute paths, and non-cast entries are rejected.
         assert_eq!(safe_recording_name("../../etc/passwd"), None);
         assert_eq!(safe_recording_name("recordings/notes.txt"), None);
         assert_eq!(safe_recording_name("recordings/"), None);
-        assert_eq!(safe_recording_name("..\\evil.cast").as_deref(), Some("evil.cast"));
+        assert_eq!(
+            safe_recording_name("..\\evil.cast").as_deref(),
+            Some("evil.cast")
+        );
     }
 }

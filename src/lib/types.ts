@@ -32,6 +32,29 @@ export interface FileEntry {
   modified: number | null;
 }
 
+/** A remote text file opened in the editor (mirrors sftp.rs TextFile). */
+export interface TextFile {
+  content: string;
+  /** Original line-ending style, re-applied on save. */
+  eol: "lf" | "crlf";
+  size: number;
+  /** Unix permission bits, if reported. */
+  mode: number | null;
+  /** Modification time, epoch seconds. */
+  mtime: number | null;
+  /** SHA-256 of the on-server bytes when opened (passed back for conflict check). */
+  sha256: string;
+  /** Best-effort hint that the file has no write bit set. */
+  readOnly: boolean;
+}
+
+/** Fresh metadata returned after a successful save (mirrors sftp.rs WriteResult). */
+export interface WriteResult {
+  sha256: string;
+  size: number;
+  mtime: number | null;
+}
+
 /** Payload for creating/updating a server profile. Backend assigns the id. */
 export interface NewServerProfile {
   alias: string;

@@ -137,9 +137,15 @@ pnpm check
   `ssh-keygen` недоступен); `find_default_key` (порядок предпочтения OpenSSH,
   пустой каталог → `None`, игнор каталогов с именем ключа) и `pick_key_path`
   (явный путь побеждает, пустой/отсутствующий откатывается на дефолт из `~/.ssh`).
-- `error.rs` — `AppError`: наличие маркеров (`auth-rejected`/`host-key-rejected`)
-  в `Display`, конверсии `From<String>/<io::Error>`, сериализация в строку
-  (контракт с фронтом не меняется).
+- `error.rs` — `AppError`: наличие маркеров (`auth-rejected`/`host-key-rejected`/
+  `file-changed`) в `Display`, конверсии `From<String>/<io::Error>`, сериализация
+  в строку (контракт с фронтом не меняется).
+- `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
+  `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
+  `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
+  на CRLF-входе); `looks_binary` (NUL → бинарь, UTF-8/кириллица → текст);
+  `is_read_only` (`0o444` → true, `0o644`/`0o600`/None → false); `temp_sibling`
+  (скрытый sibling в той же папке, без `/` для голого имени).
 - `backup.rs` — экспорт/импорт бэкапа: round-trip серверов/папок/настроек
   (camelCase), отсутствие секретов в JSON, отказ на мусоре и будущей версии,
   минимальный документ, нормализация папок.
@@ -294,9 +300,29 @@ pnpm test:coverage   # прогон + покрытие + гейты
   ридера, пустая строка если оба пути упали;
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
-  `sftpCreateFile` → `sftp_create_file`, `fetchMetricsDetail` →
+  `sftpCreateFile` → `sftp_create_file`, `sftpReadText` → `sftp_read_text`,
+  `sftpWriteText` → `sftp_write_text` (вкл. `expectedSha256`), `fetchMetricsDetail` →
   `fetch_metrics_detail`, `fetchPendingUpdates` → `fetch_pending_updates`,
-  `exportBackup`/`importBackup` и backup-диалоги);
+  `exportBackup`/`importBackup` и backup-диалоги) + `isFileChangedError`
+  (матч маркера `file-changed`, игнор посторонних ошибок);
+- `editorlang.ts` (Фаза 12.2) — `baseName`/`fileExt` (lower-case расширения, dotfile
+  без расширения), `editorLangFor` (известные расширения → язык: config-форматы, **скрипты/
+  ЯП** Python/JS/TS/Java/Go/Rust/Ruby/C·C++·C#/SQL/PowerShell/Lua/Perl, **markup** HTML/CSS/
+  SCSS/Less/XML, **DevOps** nginx/CMake/diff/Protobuf/Puppet, Groovy/Scala/Kotlin/Dart/Swift/
+  Clojure/Haskell/Erlang/Elm/R/Julia/CoffeeScript/OCaml/F#/Tcl и др.; **Dockerfile** по
+  имени/расширению + Gemfile/Containerfile/Vagrantfile/`nginx.conf`/`CMakeLists.txt`/
+  `build.gradle`; well-known dotfile `.env`/`.bashrc`; неизвестное → `null`), `isEditable`
+  (true ⇔ язык распознан);
+- `stores/workspaces.svelte.ts` (Фаза 12.2) — чистые `isDirty` (content vs base, не при
+  loading), `hasUnsaved`, `nextActiveAfterClose` (сохранение неактивного, соседняя/
+  предыдущая/терминал); **мутаторы стора** (рунический `$state` под jsdom): `addEditor`
+  (loading-док + активация + дедуп по пути), `fillEditor`/`setEditorContent` (загрузка/
+  dirty), `markSaved` (новый base+хэш), `failEditor`, `closeEditor` (рефокус),
+  `removeWorkspace` + `getWorkspace` (пустой дефолт);
+- `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
+  `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
+  [EditorTab.svelte](src/lib/EditorTab.svelte) исключён из покрытия (CodeMirror-driven,
+  как Terminal/SftpPanel — логика в чистых `.ts`);
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора) + `language`
   (дефолт `en`, персист, валидация валидного/невалидного кода при импорте);

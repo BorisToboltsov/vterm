@@ -588,6 +588,74 @@ pnpm test:coverage
   фиксированной высоты с `overflow-y-hidden` (вертикаль у xterm) + `overflow-x-auto` (для
   записей шире модалки): двойной полосы прокрутки и «преждевременного» скролла нет.
 
+## Редактор конфигов / продвинутый SFTP (Фаза 12) — ЗАКРЕПЛЕНО
+
+> Фаза идёт **по под-фазам 12.1–12.6** (см. [ROADMAP.md](ROADMAP.md)). Редактор —
+> **CodeMirror 6** (не Monaco: легче, дружит со строгим CSP и офлайн-инвариантом,
+> встроенный diff/merge). Когда дойдём до UI: CodeMirror и грамматики **бандлятся
+> локально** (без CDN — иначе падает `autonomy.guard`), тема редактора строится из
+> **токенов активной темы** (как xterm в [themes.ts](src/lib/themes.ts)), кнопки/иконки/
+> диалоги — из залоченной дизайн-системы (реестр иконок, `Modal`/`ConfirmDialog`).
+> Глобальный clipboard-обработчик должен **пропускать** CodeMirror (он сам владеет
+> копипастой), как уже пропускает `.xterm`.
+
+- **Чтение/запись текста — в бэкенде** ([sftp.rs](src-tauri/src/sftp.rs)), как и весь
+  SFTP. `sftp_read_text(path)` → `TextFile{content, eol, size, mode, mtime, sha256,
+  readOnly}`: гарды `MAX_EDIT_SIZE` (2 МБ) и бинарь (NUL-байт **или** не-UTF-8) → отказ
+  «качай как файл, не редактор». Контент **нормализуется в LF** для редактора, исходный
+  стиль переносов несётся в `eol` и **восстанавливается на запись** (не переписываем
+  молча CRLF-конфиг в LF).
+- **Запись — атомарная и неразрушающая.** `sftp_write_text(path, content, eol,
+  expectedSha256?)` пишет **sibling-temp** (`.{name}.vterm-tmp-{nanos}`) → `set_metadata`
+  (сохраняет **mode** оригинала) → `rename` поверх цели (SSH_FXP_RENAME у OpenSSH падает
+  на существующей цели, поэтому перед ним `remove_file` — единственное неатомарное окно,
+  но полный контент уже в temp). Частичная/упавшая запись **никогда не обрезает**
+  оригинал. *(sudo-запись и `.bak` — отложены в 12.6.)*
+- **Конфликт-детект (защита прода).** `expectedSha256` — это sha256, с которым редактор
+  **открыл** файл; перед записью бэкенд сверяет его с текущим на сервере и при
+  расхождении возвращает `AppError::FileChangedOnServer` (маркер **`file-changed`**, как
+  `auth-rejected`/`host-key-rejected`). Фронт матчит его через `isFileChangedError`
+  ([api.ts](src/lib/api.ts)) и предлагает передоткрыть/перезаписать (новый семантический
+  вариант ошибки, **не** `Message`).
+- **Чистая логика — в свободных функциях** sftp.rs (`looks_binary`/`detect_eol`/
+  `apply_eol`/`is_read_only`/`sha256_hex`/`temp_sibling`), тестируется без сервера; сами
+  `read_text`/`write_text` требуют живой `SftpSession` (как `list`/`upload`). Хэши —
+  `sha2` (RustCrypto, без C-зависимостей), тот же крейт пойдёт на хэш-дерево синка (12.5).
+- **Workspace с под-вкладками (12.2).** Каждое соединение = workspace в
+  [stores/workspaces.svelte.ts](src/lib/stores/workspaces.svelte.ts) (`active` = `TERMINAL_VIEW`
+  или id редактора + `editors[]`). Строка под-вкладок рендерится **внутри** контейнера своей
+  вкладки (между панелью вкладок и областью контента), поэтому **терминал всегда смонтирован**
+  (скрывается `invisible`, не размонтируется — поток не рвётся), а редакторы живут рядом
+  абсолютными слоями и переживают переключение вкладок. Чистые `isDirty`/`hasUnsaved`/
+  `nextActiveAfterClose` — в сторе (тестируются без DOM); компонент-страница только оркестрирует.
+  Закрытие вкладки соединения зовёт `removeWorkspace` (общий `closeTabFully`).
+- **Редактор — CodeMirror 6** ([EditorTab.svelte](src/lib/EditorTab.svelte), исключён из
+  coverage как Terminal/SftpPanel — логика в чистых `.ts`). **Бандлится локально** (пакеты
+  `@codemirror/*` + `@codemirror/legacy-modes`, без CDN — `autonomy.guard`). **Тема — из
+  токенов активной темы** ([cmtheme.ts](src/lib/cmtheme.ts) `editorTheme(activeTerminalTheme())`,
+  live-реконфиг через `Compartment` при смене темы): дизайн-система не нарушается, сырых hex в
+  редакторе нет. Язык по имени файла — чистый [editorlang.ts](src/lib/editorlang.ts)
+  (`editorLangFor`/`isEditable`, расширения + well-known dotfile/extensionless имена; неизвестное
+  редактируемое → plain). Покрыто **50+ языков/форматов**: официальные Lezer-пакеты Python/
+  JavaScript/TypeScript/Java + всё остальное из `@codemirror/legacy-modes` (уже в дереве — новые
+  языки оттуда **не требуют установки**): Shell·bash/PowerShell, Dockerfile, Go/Rust/Ruby/C·C++·C#/
+  SQL, HTML/CSS·SCSS·Less/XML, nginx/CMake/diff/Protobuf/Puppet, Groovy·Gradle/Scala/Kotlin/Dart/
+  Swift/Clojure/Haskell/Erlang/Elm/R/Julia/Lua/Perl/… (`html` берётся из mode `xml`, `css/sCSS/less`
+  из mode `css`).
+  **Новый язык = запись в `EXT_LANG`/`NAME_LANG` + ветка в `langExt` EditorTab** (официальный
+  пакет ставить только если в legacy-modes нет нужного режима). Метки языков (YAML/JSON/…)
+  **не переводятся** (как бейджи логов/имена тем).
+- **Буфер обмена редактора.** CodeMirror — `contenteditable`, не `<input>/<textarea>`, поэтому
+  глобальный `handleClipboardShortcut` его **не трогает** (как `.xterm`). Cmd/Ctrl+C/X/V
+  привязаны внутри EditorTab к **нативному** буферу (`clipboard.ts`), как у xterm в Terminal —
+  не убирать (на WKWebView без Edit-меню иначе копипасты нет). Cmd/Ctrl+S — сохранение.
+- **Сохранение (базовое в 12.2).** Клик по редактируемому файлу в SFTP открывает редактор
+  (read-text из 12.1; бинарь/большой → тост, без вкладки). Save шлёт `sftp_write_text` с
+  `baseSha256`, на успех `markSaved` снимает dirty; `file-changed` пока **тост**. Закрытие
+  изменённого редактора — через `ConfirmDialog` (правило «деструктив с подтверждением»).
+  *Diff-перед-сохранением (по настройке), явный UI разрешения конфликта, аудит-связка с
+  записью сессии и офлайн-линт — 12.3.*
+
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 
 > **Главное правило (требование пользователя).** **Весь** пользовательский текст

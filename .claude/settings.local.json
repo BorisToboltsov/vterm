@@ -91,7 +91,15 @@
       "Bash(sed -i '' 's/\"version\": \"0.11.3\"/\"version\": \"0.11.4\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.11.3\"/version = \"0.11.4\"/' src-tauri/Cargo.toml)",
       "Bash(cd /Users/boristoboltsov/project/project/vterm/src-tauri; grep -c \"zip\" Cargo.lock 2>/dev/null; echo \"---zip pkgs in lock---\"; grep -n '^name = \"zip\"\\\\|^name = \"flate2\"\\\\|^name = \"miniz_oxide\"' Cargo.lock 2>/dev/null; echo \"--- cargo offline? ---\"; ls ~/.cargo/registry/cache/*/ 2>/dev/null | grep -i \"^zip\\\\|flate2\\\\|miniz\" | head)",
-      "Bash(timeout 30 cargo add zip --dry-run --no-default-features --features deflate)"
+      "Bash(timeout 30 cargo add zip --dry-run --no-default-features --features deflate)",
+      "Bash(awk 'NR>=900 && NR<=1436' src/routes/+page.svelte)",
+      "Read(//Users/boristoboltsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/russh-sftp-2.3.0/src/client/**)",
+      "Read(//Users/boristoboltsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/russh-sftp-2.3.0/src/**)",
+      "Read(//Users/boristoboltsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/russh-sftp-2.3.0/src/protocol/**)",
+      "Bash(sed -i '' 's/\"version\": \"0.11.5\"/\"version\": \"0.12.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.11.5\"/version = \"0.12.0\"/' src-tauri/Cargo.toml)",
+      "Bash(grep -n 'from \"\\\\$lib/api\"' src/routes/+page.svelte)",
+      "Bash(grep -n \"широкого набора языков\\\\|Terraform.$\\\\|Дальше — diff\" README.md)"
     ]
   }
 }

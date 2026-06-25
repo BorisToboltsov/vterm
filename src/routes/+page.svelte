@@ -16,6 +16,9 @@
     renameFolder,
     setServerGroup,
     updateServer,
+    sftpReadText,
+    sftpWriteText,
+    isFileChangedError,
   } from "$lib/api";
   import type { AuthMethod, ServerProfile } from "$lib/types";
   import { nameOf } from "$lib/tree";
@@ -48,6 +51,21 @@
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
   import SftpPanel from "$lib/SftpPanel.svelte";
+  import EditorTab from "$lib/EditorTab.svelte";
+  import { editorLangFor } from "$lib/editorlang";
+  import {
+    getWorkspace,
+    addEditor,
+    fillEditor,
+    closeEditor as closeEditorStore,
+    setActiveView,
+    findEditorByPath,
+    markSaved,
+    isDirty,
+    removeWorkspace,
+    TERMINAL_VIEW,
+    type EditorDoc,
+  } from "$lib/stores/workspaces.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
@@ -670,7 +688,62 @@
   function requestCloseTab(sessionId: string) {
     const tab = findTab(sessionId);
     if (tab && isLive(tab.status) && settings.confirmCloseTab) closeConfirmId = sessionId;
-    else closeTabStore(sessionId);
+    else closeTabFully(sessionId);
+  }
+
+  /** Drop a tab and its workspace (open editors) together. */
+  function closeTabFully(sessionId: string) {
+    removeWorkspace(sessionId);
+    closeTabStore(sessionId);
+  }
+
+  // ── Config editor (Phase 12) ────────────────────────────────────────────────
+  let savingEditorId = $state<string | null>(null);
+  let closeEditorConfirm = $state<{ sid: string; doc: EditorDoc } | null>(null);
+
+  /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
+  async function openFileInEditor(path: string, name: string) {
+    const sid = tabsState.activeId;
+    if (!sid) return;
+    const lang = editorLangFor(name);
+    if (!lang) return; // not an editable type — leave SFTP's download behaviour
+    const existing = findEditorByPath(sid, path);
+    if (existing) {
+      setActiveView(sid, existing.id);
+      return;
+    }
+    // Read first, so binary/too-large files just toast instead of opening a tab.
+    let file;
+    try {
+      file = await sftpReadText(sid, path);
+    } catch (e) {
+      notifyError(String(e));
+      return;
+    }
+    const id = addEditor(sid, path, name, lang);
+    fillEditor(sid, id, file);
+  }
+
+  /** Save editor content back to the server (basic save; diff/conflict UI = 12.3). */
+  async function saveEditor(sid: string, doc: EditorDoc) {
+    if (doc.readOnly || savingEditorId) return;
+    savingEditorId = doc.id;
+    try {
+      const res = await sftpWriteText(sid, doc.path, doc.content, doc.eol, doc.baseSha256);
+      markSaved(sid, doc.id, res);
+      notifySuccess(t("editor.saved", { name: doc.name }));
+    } catch (e) {
+      if (isFileChangedError(e)) notifyError(t("editor.conflict", { name: doc.name }));
+      else notifyError(String(e));
+    } finally {
+      savingEditorId = null;
+    }
+  }
+
+  /** Close an editor sub-tab, confirming first when it has unsaved changes. */
+  function requestCloseEditor(sid: string, doc: EditorDoc) {
+    if (isDirty(doc)) closeEditorConfirm = { sid, doc };
+    else closeEditorStore(sid, doc.id);
   }
 
   // Roving keyboard navigation across tabs (a11y): arrows/Home/End move focus
@@ -988,7 +1061,51 @@
         <div class="flex min-h-0 flex-1">
           <div class="relative min-h-0 min-w-0 flex-1">
             {#each tabsState.list as tab (tab.sessionId)}
-              <div class="absolute inset-0 p-1 {tabsState.activeId === tab.sessionId ? '' : 'invisible'}">
+              {@const ws = getWorkspace(tab.sessionId)}
+              <div class="absolute inset-0 flex flex-col {tabsState.activeId === tab.sessionId ? '' : 'invisible'}">
+                {#if ws.editors.length > 0}
+                  <!-- Workspace sub-tabs: terminal + open editors (Phase 12). -->
+                  <div class="flex shrink-0 items-stretch overflow-x-auto border-b border-edge bg-panel-alt text-xs">
+                    <button
+                      class="flex shrink-0 items-center gap-1.5 border-r border-edge px-3 py-1 {ws.active ===
+                      TERMINAL_VIEW
+                        ? 'bg-panel text-white'
+                        : 'text-muted hover:bg-edge hover:text-white'}"
+                      onclick={() => setActiveView(tab.sessionId, TERMINAL_VIEW)}
+                    >
+                      <Icon name="terminal" size={13} />
+                      {t("workspace.terminal")}
+                    </button>
+                    {#each ws.editors as ed (ed.id)}
+                      <div
+                        class="group flex shrink-0 items-center border-r border-edge {ws.active === ed.id
+                          ? 'bg-panel text-white'
+                          : 'text-muted hover:bg-edge'}"
+                      >
+                        <button
+                          class="flex items-center gap-1.5 py-1 pl-2"
+                          title={ed.path}
+                          onclick={() => setActiveView(tab.sessionId, ed.id)}
+                        >
+                          <Icon name="file" size={13} />
+                          <span class="max-w-32 truncate">{ed.name}</span>
+                          {#if isDirty(ed)}
+                            <span class="h-1.5 w-1.5 rounded-full bg-accent" title={t("editor.unsaved")}></span>
+                          {/if}
+                        </button>
+                        <button
+                          class="rounded px-1.5 py-1 opacity-60 hover:text-danger hover:opacity-100"
+                          aria-label={t("common.close")}
+                          onclick={() => requestCloseEditor(tab.sessionId, ed)}
+                        >
+                          <Icon name="close" size={12} />
+                        </button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+                <div class="relative min-h-0 flex-1 p-1">
+                <div class="absolute inset-0 {ws.active === TERMINAL_VIEW ? '' : 'invisible'}">
                 {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
                   <ConnectingOverlay
@@ -1066,6 +1183,24 @@
                     }}
                   />
                 {/key}
+                </div>
+                {#each ws.editors as ed (ed.id)}
+                  <div class="absolute inset-0 {ws.active === ed.id ? '' : 'invisible'}">
+                    {#if ed.loadError}
+                      <div class="p-4 text-sm text-danger">{ed.loadError}</div>
+                    {:else if ed.loading}
+                      <div class="p-4 text-sm text-muted">{t("editor.loading")}</div>
+                    {:else}
+                      <EditorTab
+                        sessionId={tab.sessionId}
+                        doc={ed}
+                        saving={savingEditorId === ed.id}
+                        onsave={() => saveEditor(tab.sessionId, ed)}
+                      />
+                    {/if}
+                  </div>
+                {/each}
+                </div>
               </div>
             {/each}
           </div>
@@ -1091,6 +1226,7 @@
                 bind:collapsed={layout.sftpCollapsed}
                 sessionReady={sftpReady}
                 animateWidth={resizing !== "sftp"}
+                onOpenFile={openFileInEditor}
               />
             {/key}
           {/if}
@@ -1231,13 +1367,30 @@
   confirmLabel={t("common.close")}
   danger={false}
   onconfirm={() => {
-    if (closeConfirmId) closeTabStore(closeConfirmId);
+    if (closeConfirmId) closeTabFully(closeConfirmId);
     closeConfirmId = null;
   }}
   oncancel={() => (closeConfirmId = null)}
 >
   {t("page.closeTabBody1")} <span class="text-white">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
   {t("page.closeTabBody2")}
+</ConfirmDialog>
+
+<!-- Discard-unsaved confirmation when closing an edited file -->
+<ConfirmDialog
+  open={!!closeEditorConfirm}
+  title={t("editor.discardTitle")}
+  confirmLabel={t("editor.discard")}
+  danger
+  onconfirm={() => {
+    if (closeEditorConfirm) closeEditorStore(closeEditorConfirm.sid, closeEditorConfirm.doc.id);
+    closeEditorConfirm = null;
+  }}
+  oncancel={() => (closeEditorConfirm = null)}
+>
+  {t("editor.discardBody1")}
+  <span class="text-white">{closeEditorConfirm?.doc.name}</span>
+  {t("editor.discardBody2")}
 </ConfirmDialog>
 
 <!-- Name/describe (or discard) a recording right after stopping it -->

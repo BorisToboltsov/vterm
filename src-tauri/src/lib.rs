@@ -368,12 +368,14 @@ fn export_backup(
     let file = std::fs::File::create(&path)
         .map_err(|e| AppError::Message(format!("create {path}: {e}")))?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts: zip::write::SimpleFileOptions =
-        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    let zip_err = |e: zip::result::ZipError| AppError::Message(format!("write backup archive: {e}"));
+    let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    let zip_err =
+        |e: zip::result::ZipError| AppError::Message(format!("write backup archive: {e}"));
 
     // Identification document first.
-    zip.start_file(backup::MANIFEST_NAME, opts).map_err(zip_err)?;
+    zip.start_file(backup::MANIFEST_NAME, opts)
+        .map_err(zip_err)?;
     zip.write_all(backup::encode_manifest(&manifest)?.as_bytes())
         .map_err(|e| AppError::Message(format!("write manifest: {e}")))?;
 
@@ -1611,6 +1613,31 @@ async fn sftp_create_file(
     sftp::create_file(&sftp, &path).await
 }
 
+/// Open a remote file as text in the in-app editor (rejects large/binary files).
+#[tauri::command]
+async fn sftp_read_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<sftp::TextFile> {
+    let sftp = get_sftp(&state, &session_id).await?;
+    sftp::read_text(&sftp, &path).await
+}
+
+/// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
+#[tauri::command]
+async fn sftp_write_text(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    content: String,
+    eol: String,
+    expected_sha256: Option<String>,
+) -> AppResult<sftp::WriteResult> {
+    let sftp = get_sftp(&state, &session_id).await?;
+    sftp::write_text(&sftp, &path, &content, &eol, expected_sha256.as_deref()).await
+}
+
 #[tauri::command]
 async fn sftp_delete(
     state: State<'_, AppState>,
@@ -1881,6 +1908,8 @@ pub fn run() {
             sftp_list,
             sftp_mkdir,
             sftp_create_file,
+            sftp_read_text,
+            sftp_write_text,
             sftp_delete,
             sftp_upload,
             sftp_download,

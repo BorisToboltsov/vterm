@@ -2,7 +2,22 @@
 // so the UI never deals with command-name strings directly.
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { FileEntry, NewServerProfile, RecordingMeta, ServerProfile } from "./types";
+import type {
+  FileEntry,
+  NewServerProfile,
+  RecordingMeta,
+  ServerProfile,
+  TextFile,
+  WriteResult,
+} from "./types";
+
+/** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
+export const FILE_CHANGED_MARKER = "file-changed";
+
+/** True when a thrown invoke error means the file changed on the server. */
+export function isFileChangedError(err: unknown): boolean {
+  return String(err).includes(FILE_CHANGED_MARKER);
+}
 
 // ── Server profiles ───────────────────────────────────────────────────────────
 
@@ -346,6 +361,31 @@ export function sftpMkdir(sessionId: string, path: string): Promise<void> {
 
 export function sftpCreateFile(sessionId: string, path: string): Promise<void> {
   return invoke<void>("sftp_create_file", { sessionId, path });
+}
+
+/** Open a remote file as text in the editor (throws on large/binary files). */
+export function sftpReadText(sessionId: string, path: string): Promise<TextFile> {
+  return invoke<TextFile>("sftp_read_text", { sessionId, path });
+}
+
+/**
+ * Save editor text back to a remote file. `expectedSha256` is the hash the editor
+ * opened with; a mismatch throws a `file-changed` error (see {@link isFileChangedError}).
+ */
+export function sftpWriteText(
+  sessionId: string,
+  path: string,
+  content: string,
+  eol: "lf" | "crlf",
+  expectedSha256: string | null,
+): Promise<WriteResult> {
+  return invoke<WriteResult>("sftp_write_text", {
+    sessionId,
+    path,
+    content,
+    eol,
+    expectedSha256,
+  });
 }
 
 export function sftpDelete(

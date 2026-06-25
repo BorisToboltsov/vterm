@@ -89,6 +89,31 @@ describe("invoke wrappers pass the right command + args", () => {
     await api.sftpCancel("t1");
     expect(invoke).toHaveBeenCalledWith("sftp_cancel", { transferId: "t1" });
   });
+
+  it("sftp text editor commands", async () => {
+    await api.sftpReadText("sess", "/etc/app.conf");
+    expect(invoke).toHaveBeenCalledWith("sftp_read_text", {
+      sessionId: "sess",
+      path: "/etc/app.conf",
+    });
+    await api.sftpWriteText("sess", "/etc/app.conf", "data\n", "lf", "abc123");
+    expect(invoke).toHaveBeenCalledWith("sftp_write_text", {
+      sessionId: "sess",
+      path: "/etc/app.conf",
+      content: "data\n",
+      eol: "lf",
+      expectedSha256: "abc123",
+    });
+  });
+});
+
+describe("isFileChangedError", () => {
+  it("matches the backend marker, ignores unrelated errors", () => {
+    expect(api.isFileChangedError("file-changed: file modified on server")).toBe(true);
+    expect(api.isFileChangedError(new Error("file-changed: x"))).toBe(true);
+    expect(api.isFileChangedError("auth-rejected")).toBe(false);
+    expect(api.isFileChangedError("some network error")).toBe(false);
+  });
 });
 
 describe("remaining invoke wrappers", () => {

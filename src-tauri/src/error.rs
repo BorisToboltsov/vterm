@@ -28,6 +28,12 @@ pub enum AppError {
     #[error("unknown server")]
     UnknownServer,
 
+    /// The file changed on the server since the editor opened it (its current
+    /// hash no longer matches the one the editor read). The frontend matches the
+    /// `file-changed` marker to warn before overwriting prod config.
+    #[error("file-changed: file modified on server since it was opened")]
+    FileChangedOnServer,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -77,6 +83,9 @@ mod tests {
         assert!(AppError::HostKeyRejected
             .to_string()
             .contains("host-key-rejected"));
+        assert!(AppError::FileChangedOnServer
+            .to_string()
+            .contains("file-changed"));
     }
 
     #[test]

@@ -115,6 +115,20 @@ export const en = {
   "sftp.folderCreated": "Folder “{name}” created",
   "sftp.fileCreated": "File “{name}” created",
   "sftp.deleted": "Deleted: {name}",
+  "sftp.editFile": "Edit",
+
+  // ── Config editor (Phase 12) ──
+  "workspace.terminal": "Terminal",
+  "editor.save": "Save",
+  "editor.saved": "Saved {name}",
+  "editor.readOnly": "Read-only",
+  "editor.unsaved": "Unsaved changes",
+  "editor.loading": "Loading…",
+  "editor.conflict": "{name} changed on the server since you opened it — reopen it before saving",
+  "editor.discardTitle": "Discard changes?",
+  "editor.discard": "Discard",
+  "editor.discardBody1": "Discard unsaved changes to",
+  "editor.discardBody2": "?",
 
   // ── Command palette ──
   "palette.placeholder": "Command, server, folder…",
@@ -666,6 +680,20 @@ const ru: Record<MessageKey, string> = {
   "sftp.folderCreated": "Папка «{name}» создана",
   "sftp.fileCreated": "Файл «{name}» создан",
   "sftp.deleted": "Удалено: {name}",
+  "sftp.editFile": "Редактировать",
+
+  // ── Config editor (Phase 12) ──
+  "workspace.terminal": "Терминал",
+  "editor.save": "Сохранить",
+  "editor.saved": "Сохранено: {name}",
+  "editor.readOnly": "Только чтение",
+  "editor.unsaved": "Несохранённые изменения",
+  "editor.loading": "Загрузка…",
+  "editor.conflict": "{name} изменён на сервере после открытия — переоткройте перед сохранением",
+  "editor.discardTitle": "Отменить изменения?",
+  "editor.discard": "Отменить",
+  "editor.discardBody1": "Отменить несохранённые изменения в",
+  "editor.discardBody2": "?",
 
   // ── Command palette ──
   "palette.placeholder": "Команда, сервер, папка…",

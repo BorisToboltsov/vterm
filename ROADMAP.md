@@ -19,7 +19,7 @@
 | 9 | Расширение мониторинга (промежуточная) | ✅ Реализовано |
 | 10 | Умная работа с логами и текстом | ✅ Реализовано |
 | 11 | Аудит и запись сессий | ✅ Реализовано |
-| 12 | Продвинутый SFTP и редактор конфигов | ⬜ |
+| 12 | Продвинутый SFTP и редактор конфигов | 🟦 В работе (12.1–12.2 ✅) |
 | 13 | Актуализация и оформление README | ⬜ |
 | 14 | Сборка и CI/CD (релиз) | ⬜ |
 
@@ -896,19 +896,83 @@ security-гейтами и архитектурой, готовой к расш�
 
 ---
 
-## ⬜ Фаза 12 — Продвинутый SFTP и работа с конфигами
+## 🟦 Фаза 12 — Продвинутый SFTP и работа с конфигами
 
 **Цель:** быстро править конфиги на сервере, не только качать файлы.
 
-- [ ] **Встроенный редактор с подсветкой (Monaco):** клик по `.yaml`/`.json`/`.conf`/
-      `.tf`/`.sh` в SFTP-панели открывает редактор (тот же движок, что в VS Code);
-      `Ctrl+S` → файл улетает на сервер. Monaco **бандлить** (не CDN — автономность).
-- [ ] **Diff-viewer:** перед сохранением показывать diff (что на сервере vs что вы
-      хотите записать), чтобы случайно не сломать прод.
-- [ ] **Синхронизация директорий (Sync folder):** сравнить локальную папку (Ansible-роли,
-      Terraform-модули) и папку на сервере по хэш-суммам, докачать только изменённое.
+> **Решения (2026-06-25):** редактор — **CodeMirror 6** (а не Monaco: легче, дружит
+> со строгим CSP и офлайн-инвариантом, встроенный diff/merge), полноценный
+> **workspace с под-вкладками** под основным таб-баром, разбивка **по под-фазам
+> 12.1–12.6**. Diff перед сохранением — **по настройке**; sudo-запись и `.bak` —
+> отложены в 12.6.
 
-**Артефакт:** правка конфигов с подсветкой, diff и синхронизацией папок.
+### ✅ 12.1 — Backend: чтение/запись текста + безопасность прода
+
+- [x] `sftp_read_text(path)` → `{content, eol, size, mode, mtime, sha256, readOnly}`;
+      гарды: размер (> 2 МБ) и бинарь (NUL-байт / не-UTF-8) → отказ «качай как файл».
+      Контент нормализуется в LF, исходный стиль переносов несётся в `eol`.
+- [x] `sftp_write_text(path, content, eol, expectedSha256?)`: **атомарно** (sibling
+      temp + rename, не обрезающая запись), **сохранение прав** (mode) оригинала,
+      **конфликт-детект** по sha256 → `AppError::FileChangedOnServer` (маркер
+      `file-changed`), восстановление исходных EOL на запись.
+- [x] Зависимость `sha2` (RustCrypto, без C); чистые хелперы `looks_binary`/
+      `detect_eol`/`apply_eol`/`is_read_only`/`sha256_hex`/`temp_sibling` + тесты.
+- [x] Фронт-контракт: `TextFile`/`WriteResult` в [types.ts](src/lib/types.ts),
+      `sftpReadText`/`sftpWriteText`/`isFileChangedError` в [api.ts](src/lib/api.ts).
+
+### ✅ 12.2 — Workspace с под-вкладками + редактор (CodeMirror)
+
+- [x] Стор [workspaces.svelte.ts](src/lib/stores/workspaces.svelte.ts) (под-вкладки
+      `[Терминал]` + редакторы, `active`/`dirty`; чистые `isDirty`/`hasUnsaved`/
+      `nextActiveAfterClose`); строка под-вкладок под основным таб-баром (на каждое
+      соединение, терминал всегда смонтирован).
+- [x] [EditorTab.svelte](src/lib/EditorTab.svelte) на **CodeMirror 6** (бандл локально,
+      без CDN); тема редактора — из токенов активной темы ([cmtheme.ts](src/lib/cmtheme.ts),
+      `editorTheme`/`isDark`, live-смена при переключении темы). Подсветка по расширению/
+      имени: чистый [editorlang.ts](src/lib/editorlang.ts) (yaml/json/markdown/shell/toml/
+      ini + plain-fallback; tf/dotfiles/Dockerfile). Cmd/Ctrl+C/X/V через нативный буфер
+      (CodeMirror — contenteditable, не input → нужен свой биндинг, как у xterm).
+- [x] **Широкий набор языков** (0.12.2–0.12.3): официальные Lezer-парсеры Python /
+      JavaScript / TypeScript(JSX/TSX) / Java; всё остальное — из `@codemirror/legacy-modes`
+      (уже в дереве, без новых установок): Shell·bash / PowerShell, Dockerfile, Go, Rust,
+      Ruby, C·C++·C#, SQL, Lua, Perl, **HTML, CSS/SCSS/Less, XML/SVG**, **nginx, CMake, diff,
+      HTTP, Protobuf, Puppet**, Groovy/Gradle, Scala, Kotlin, Dart, Swift, Clojure, Haskell,
+      Erlang, Elm, Crystal, R, Julia, CoffeeScript, Visual Basic, Scheme, Common Lisp, OCaml,
+      F#, Tcl, D, Verilog, VHDL, Pascal, Fortran, COBOL. Имена/расширения (вкл.
+      `Dockerfile`/`Containerfile`/`Gemfile`/`Vagrantfile`/`nginx.conf`/`CMakeLists.txt`/
+      `build.gradle`) — в [editorlang.ts](src/lib/editorlang.ts).
+- [x] Клик/карандаш по редактируемому файлу в SFTP → открыть редактор (read-text из 12.1;
+      бинарь/большой файл → тост, без вкладки); dirty-«●» на под-вкладке; **базовое
+      сохранение** (Cmd/Ctrl+S → `sftp_write_text`, тосты, `file-changed` → тост);
+      **guard на закрытие** несохранённого (ConfirmDialog) + закрытие воркспейса с вкладкой.
+
+> Diff перед сохранением, явный UI разрешения конфликта `file-changed`, аудит-связка и
+> офлайн-линт — в 12.3 (поверх базового сохранения).
+
+### ⬜ 12.3 — Сохранение + Diff (по настройке)
+
+- [ ] `Ctrl+S` → `sftp_write_text`; **diff перед сохранением** под настройкой
+      `settings.sftpEditor.diffBeforeSave` (CM MergeView в `Modal`); обработка
+      `file-changed` (передоткрыть/перезаписать); аудит-связка с записью сессии;
+      офлайн-линт YAML/JSON/TOML.
+
+### ⬜ 12.4 — Markdown-превью + «Открыть с помощью vterm»
+
+- [ ] Тумблер «Код ⇄ Превью» (markdown.ts), `.md` сразу в превью; OS-ассоциации +
+      single-instance + разбор argv → локальный терминал + редактор-вкладка.
+
+### ⬜ 12.5 — Синхронизация директорий (Sync folder)
+
+- [ ] `sftp_hash_tree` (хэши через `find … sha256sum` по SSH); сравнение локальной и
+      удалённой папки; dry-run превью, направление push/pull/bi, exclude-паттерны,
+      докачать только изменённое.
+
+### ⬜ 12.6 — Доводка + безопасность записи
+
+- [ ] sudo-запись (`sudo tee`/temp+`sudo mv`) + опциональный `.bak`; snippets/шаблоны;
+      поиск по содержимому (grep по SSH); иконки типов файлов; команды палитры.
+
+**Артефакт:** правка конфигов с подсветкой, diff, превью и синхронизацией папок.
 
 ---
 

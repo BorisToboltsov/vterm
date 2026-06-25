@@ -17,6 +17,7 @@
     type SftpProgress,
   } from "./api";
   import type { FileEntry } from "./types";
+  import { isEditable } from "./editorlang";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
@@ -29,6 +30,7 @@
     collapsed = $bindable(false),
     sessionReady = false,
     animateWidth = true,
+    onOpenFile,
   }: {
     sessionId: string;
     /** Panel width in px (controlled by the parent's resize handle). */
@@ -39,6 +41,8 @@
     sessionReady?: boolean;
     /** Animate width changes (collapse). Disabled while the user drags-resizes. */
     animateWidth?: boolean;
+    /** Open an editable file in the in-app editor (double-click). */
+    onOpenFile?: (path: string, name: string) => void;
   } = $props();
 
   let cwd = $state("");
@@ -121,6 +125,7 @@
 
   function open(entry: FileEntry) {
     if (entry.isDir) load(entry.path);
+    else if (onOpenFile && isEditable(entry.name)) onOpenFile(entry.path, entry.name);
   }
 
   function goUp() {
@@ -426,6 +431,16 @@
             {/if}
           </button>
           <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
+            {#if !entry.isDir && onOpenFile && isEditable(entry.name)}
+              <button
+                class="rounded p-0.5 text-muted hover:text-accent"
+                title={t("sftp.editFile")}
+                aria-label={t("sftp.editFile")}
+                onclick={() => onOpenFile?.(entry.path, entry.name)}
+              >
+                <Icon name="pencil" size={13} />
+              </button>
+            {/if}
             <button
               class="rounded p-0.5 text-muted hover:text-accent"
               title={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
