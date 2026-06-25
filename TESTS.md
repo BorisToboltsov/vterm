@@ -131,7 +131,8 @@ pnpm check
   команда ESC[K` → recalled-команда как есть, а после backspace+вставки — отредактированная
   (`cd /etc/systeX`); **tab-completion** — простое дополнение (эхо `c/` без `CR` → дописка по
   курсору `cd /etc/`) и неоднозначное со списком+перерисовкой (→ строка минус приглашение, `echo`).
-- `ssh.rs` — `HostKeyPolicy::from_str`, имена событий, `key_is_encrypted` на
+- `ssh.rs` — `HostKeyPolicy::from_str`, имена событий (вкл. `phase_event` →
+  `term://phase/{id}`), `key_is_encrypted` на
   сгенерированных `ssh-keygen` ключах (тест мягко пропускается, если
   `ssh-keygen` недоступен); `find_default_key` (порядок предпочтения OpenSSH,
   пустой каталог → `None`, игнор каталогов с именем ключа) и `pick_key_path`
@@ -277,6 +278,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
   переназначение активной вкладки, чистые `statusLabel`/`dotClass`/`isLive`,
   `nextTabIndex` (роуминг ←/→ с заворотом, Home/End, null для прочих клавиш/пустого);
+- `connphase.ts` — окно подключения (0.11.2): `phaseSteps` (первая фаза `active`,
+  остальные `pending`; ранние → `done`, поздние → `pending`; `errored` красит
+  активную фазу в `error`; неизвестная фаза → первый шаг `active`) и порядок
+  `PHASE_ORDER`, совпадающий со стадиями бэкенда;
 - `stores/toasts.svelte.ts` — `notify`/`notifyError`/`notifySuccess`/`notifyInfo`,
   авто-дисмисс по `TOAST_TTL` (fake-таймеры), кастомный ttl и sticky (`ttl=0`),
   `dismissToast` (снятие таймера), `clearToasts`;
@@ -352,6 +357,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   тост (синхронизация с `toastsState`).
 - `EmptyState.test.ts` — рендер иконки/заголовка/подсказки, опциональность подсказки,
   слот CTA-кнопок.
+- `ConnectingOverlay.test.ts` — окно ожидания подключения (0.11.2): заголовок с
+  `alias` и подпись `user@host:port`, `role="status"`; активная фаза с акцентным
+  цветом и многоточием, предыдущая фаза как «done»; `errored` красит провалившуюся
+  фазу в `text-danger`.
 - `JsonLogView.test.ts` — табличный JSON-вид (Фаза 10): пустое состояние без записей,
   строка на запись с сообщением, цвет уровня `error` (`text-danger`) в ячейке,
   фильтрация по вводу с обновлением счётчика, нота «нет подходящих записей»,

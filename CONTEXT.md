@@ -63,6 +63,17 @@ pnpm test:coverage
     (`write_to_terminal`/`resize_pty`/`disconnect`, маршрутизация по `session_id`),
     поэтому [Terminal.svelte](src/lib/Terminal.svelte) общий для обоих (проп
     `local`). Новый вид терминала подключай к этому же контракту, а не отдельным.
+  - **Окно подключения (connecting-оверлей).** Пока SSH-вкладка в статусе
+    `Connecting…`, поверх области терминала показывается
+    [ConnectingOverlay.svelte](src/lib/ConnectingOverlay.svelte): орбита-комета вокруг
+    иконки сервера + `alias` + `user@host:port` + **честный** чек-лист фаз. Фазы —
+    **реальные**, из дополнительного канала `term://phase/{id}` ([ssh.rs](src-tauri/src/ssh.rs)
+    `phase_event`, payload `connecting`→`authenticating`→`session`, эмитится по ходу
+    последовательных стадий `connect`); фронт слушает его в `Terminal.svelte` (проп `onphase`,
+    только SSH), а чистый маппинг фаза→состояние-шага — в [connphase.ts](src/lib/connphase.ts)
+    (`phaseSteps`, ADR 0003). Новую стадию подключения добавляй как новый `emit` в `connect` +
+    запись в `PHASE_ORDER`, не плоди отдельные каналы. Анимации — только дешёвые
+    `transform`/`opacity`, под глобальным `prefers-reduced-motion`-guard.
 
 
 - **Ошибки — типизированы.** В Rust возвращай `AppResult<T>`

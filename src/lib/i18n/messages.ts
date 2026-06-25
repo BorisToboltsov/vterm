@@ -46,6 +46,12 @@ export const en = {
   "status.error": "Error: {detail}",
   "status.errorUnknown": "unknown",
 
+  // ── Connecting overlay ──
+  "connecting.connectingTo": "Connecting to {alias}…",
+  "connecting.phaseConnecting": "Connection",
+  "connecting.phaseAuth": "Authentication",
+  "connecting.phaseSession": "Session",
+
   // ── Tabs ──
   "tab.localShell": "Local shell",
   "tab.close": "Close tab",
@@ -570,6 +576,12 @@ const ru: Record<MessageKey, string> = {
   "status.notConnected": "Нет подключения",
   "status.error": "Ошибка: {detail}",
   "status.errorUnknown": "неизвестно",
+
+  // ── Connecting overlay ──
+  "connecting.connectingTo": "Подключение к {alias}…",
+  "connecting.phaseConnecting": "Соединение",
+  "connecting.phaseAuth": "Аутентификация",
+  "connecting.phaseSession": "Сессия",
 
   // ── Tabs ──
   "tab.localShell": "Локальная оболочка",

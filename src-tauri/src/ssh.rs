@@ -58,6 +58,14 @@ pub fn closed_event(session_id: &str) -> String {
     format!("term://closed/{session_id}")
 }
 
+/// Event name carrying connection-phase progress for the connecting overlay.
+/// Payload is one of `"connecting"` (TCP + SSH handshake), `"authenticating"`,
+/// `"session"` (opening the channel / PTY / shell). These mirror the sequential
+/// stages of [`connect`] below, so the UI shows a real (not faux) step indicator.
+pub fn phase_event(session_id: &str) -> String {
+    format!("term://phase/{session_id}")
+}
+
 /// Client handler that verifies the server host key against vterm's own
 /// `known_hosts.json` according to the configured policy.
 struct ClientHandler {
@@ -303,6 +311,8 @@ pub async fn connect(
         port,
         policy: opts.host_key_policy,
     };
+    // Phase 1: TCP connect + SSH transport handshake (host-key check).
+    let _ = app.emit(&phase_event(&session_id), "connecting");
     let mut handle = timeout(
         connect_timeout,
         client::connect(config, (host, port), handler),
@@ -325,6 +335,8 @@ pub async fn connect(
         }
     })?;
 
+    // Phase 2: authentication (password or public key).
+    let _ = app.emit(&phase_event(&session_id), "authenticating");
     let auth = match cred {
         Credential::Password(password) => timeout(
             connect_timeout,
@@ -364,6 +376,8 @@ pub async fn connect(
         return Err(AppError::AuthRejected);
     }
 
+    // Phase 3: open the session channel, request a PTY and start the shell.
+    let _ = app.emit(&phase_event(&session_id), "session");
     let channel = handle
         .channel_open_session()
         .await
@@ -443,6 +457,7 @@ mod tests {
     fn event_names() {
         assert_eq!(output_event("abc"), "term://out/abc");
         assert_eq!(closed_event("abc"), "term://closed/abc");
+        assert_eq!(phase_event("abc"), "term://phase/abc");
     }
 
     #[test]

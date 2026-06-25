@@ -45,6 +45,8 @@
   import { resizableHandle } from "$lib/actions/drag";
   import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
+  import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
+  import type { ConnPhase } from "$lib/connphase";
   import SftpPanel from "$lib/SftpPanel.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
@@ -105,6 +107,8 @@
   const termDims = $state<Record<string, { cols: number; rows: number }>>({});
   // Live terminal components per session, for reading the current prompt at REC start.
   const termRefs: Record<string, { currentPromptLine?: () => string }> = {};
+  // Current SSH connection phase per session, driving the connecting overlay.
+  const connPhase = $state<Record<string, ConnPhase>>({});
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -951,6 +955,14 @@
                     </button>
                   </div>
                 {/if}
+                {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
+                  {@const srv = servers.find((s) => s.id === tab.serverId)}
+                  <ConnectingOverlay
+                    alias={tab.alias}
+                    host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
+                    phase={connPhase[tab.sessionId] ?? "connecting"}
+                  />
+                {/if}
                 {#key tab.gen}
                   <TerminalView
                     bind:this={termRefs[tab.sessionId]}
@@ -961,8 +973,10 @@
                     local={tab.kind === "local"}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
+                    onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
+                      if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "closed") finalizeRecordingOnClose(tab.sessionId);
                       if (st === "connected") maybeAutoRecord(tab);
                       if (st === "error" && d?.includes("auth-rejected")) {

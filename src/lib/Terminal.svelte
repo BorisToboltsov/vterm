@@ -22,9 +22,11 @@
     disconnect,
     openLocalTerminal,
     outputEvent,
+    phaseEvent,
     resizePty,
     writeToTerminal,
   } from "./api";
+  import type { ConnPhase } from "./connphase";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { readClipboard, writeClipboard } from "./clipboard";
 
@@ -37,6 +39,7 @@
     remember,
     local = false,
     onstatus,
+    onphase,
     onresize,
     onactivity,
   }: {
@@ -47,6 +50,8 @@
     /** Local-shell PTY tab instead of an SSH connection. */
     local?: boolean;
     onstatus?: (status: Status, detail?: string) => void;
+    /** Reports SSH connection-phase progress for the connecting overlay. */
+    onphase?: (phase: ConnPhase) => void;
     /** Reports the live terminal grid size (used for the recording header). */
     onresize?: (cols: number, rows: number) => void;
     /** Fired on user keystrokes (used to re-arm the recording idle timer). */
@@ -434,6 +439,12 @@
         term.write(`\r\n\x1b[33m${msg}\x1b[0m\r\n`);
       }),
     );
+    // Real SSH connection-phase progress for the connecting overlay (SSH only).
+    if (!local) {
+      unlisten.push(
+        await listen<ConnPhase>(phaseEvent(sessionId), (e) => onphase?.(e.payload)),
+      );
+    }
 
     onstatus?.("connecting");
     try {

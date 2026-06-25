@@ -82,7 +82,12 @@
       "Bash(grep -n 'stopRecording\\\\|deleteRecording\\\\|setRecordingMeta\\\\|notifyInfo\\\\|notifySuccess\\\\|RecordingSaveDialog\\\\|import.*api\\\\|from \"$lib/stores/toasts' src/routes/+page.svelte)",
       "Bash(sed -i '' 's/\"version\": \"0.11.0\"/\"version\": \"0.11.1\"/' package.json)",
       "Bash(sed -i '' '0,/^version = \"0.11.0\"/s//version = \"0.11.1\"/' src-tauri/Cargo.toml)",
-      "Bash(sed -i '' 's/\"version\": \"0.11.0\"/\"version\": \"0.11.1\"/' src-tauri/tauri.conf.json)"
+      "Bash(sed -i '' 's/\"version\": \"0.11.0\"/\"version\": \"0.11.1\"/' src-tauri/tauri.conf.json)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget",
+      "Bash(grep -n 'import TerminalView\\\\|import.*Terminal\\\\|import SftpPanel\\\\|import EmptyState\\\\|import.*from \"$lib' src/routes/+page.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.11.1\"/\"version\": \"0.11.2\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.11.1\"/version = \"0.11.2\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

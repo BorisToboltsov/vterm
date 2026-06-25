@@ -313,6 +313,8 @@ export function fetchPendingUpdates(sessionId: string): Promise<PendingUpdates> 
 export const outputEvent = (sessionId: string) => `term://out/${sessionId}`;
 /** Event name signalling the session closed. */
 export const closedEvent = (sessionId: string) => `term://closed/${sessionId}`;
+/** Event name carrying SSH connection-phase progress (mirrors ssh.rs). */
+export const phaseEvent = (sessionId: string) => `term://phase/${sessionId}`;
 
 // ── SFTP ──────────────────────────────────────────────────────────────────────
 
