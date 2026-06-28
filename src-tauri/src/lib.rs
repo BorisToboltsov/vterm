@@ -1,5 +1,6 @@
 mod backup;
 mod error;
+mod localfile;
 mod model;
 mod pty;
 mod recording;
@@ -7,6 +8,7 @@ mod secrets;
 mod sftp;
 mod ssh;
 mod store;
+mod sync;
 
 use error::{AppError, AppResult};
 
@@ -20,7 +22,7 @@ use serde::Serialize;
 use sftp::FileEntry;
 use ssh::{ConnectOptions, Credential, HostKeyPolicy, SshSession};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Application state: persisted server profiles + the registry of live SSH sessions.
 #[derive(Default)]
@@ -43,6 +45,9 @@ struct AppState {
     core_samples: Mutex<HashMap<String, Vec<(u64, u64)>>>,
     /// Last cumulative (ctxt, intr) counters + instant per session, for rate deltas.
     ctxintr_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// Files vterm was asked to open (CLI args / macOS `Opened`), drained by the
+    /// frontend on startup via `take_pending_opens`.
+    pending_opens: Mutex<Vec<String>>,
 }
 
 /// Clone out the session for `session_id`, releasing the registry lock before
@@ -1663,6 +1668,98 @@ async fn sftp_write_text(
     sftp::write_text(&sftp, &path, &content, &eol, expected_sha256.as_deref()).await
 }
 
+/// Open a LOCAL file as text in the editor ("Open with vterm" flow). Same guards
+/// and contract as `sftp_read_text`, but on the machine running vterm.
+#[tauri::command]
+async fn read_local_text(path: String, max_bytes: Option<u64>) -> AppResult<sftp::TextFile> {
+    let limit = max_bytes
+        .unwrap_or(sftp::MAX_EDIT_SIZE)
+        .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
+    localfile::read_text(&path, limit).await
+}
+
+/// Save editor text back to a LOCAL file (atomic temp+rename, conflict-checked).
+#[tauri::command]
+async fn write_local_text(
+    path: String,
+    content: String,
+    eol: String,
+    expected_sha256: Option<String>,
+) -> AppResult<sftp::WriteResult> {
+    localfile::write_text(&path, &content, &eol, expected_sha256.as_deref()).await
+}
+
+/// Take and clear the queue of files vterm was asked to open (CLI args at launch
+/// and macOS `Opened` events), so the frontend can open them on startup.
+#[tauri::command]
+fn take_pending_opens(state: State<AppState>) -> Vec<String> {
+    std::mem::take(&mut state.pending_opens.lock().unwrap())
+}
+
+// ── Local filesystem browser (the right panel for local-terminal tabs) ─────────
+
+#[tauri::command]
+fn local_home() -> AppResult<String> {
+    localfile::home()
+}
+
+#[tauri::command]
+async fn local_list(path: String) -> AppResult<Vec<sftp::FileEntry>> {
+    localfile::list(&path).await
+}
+
+#[tauri::command]
+async fn local_mkdir(path: String) -> AppResult<()> {
+    localfile::mkdir(&path).await
+}
+
+#[tauri::command]
+async fn local_create_file(path: String) -> AppResult<()> {
+    localfile::create_file(&path).await
+}
+
+#[tauri::command]
+async fn local_delete(path: String, is_dir: bool) -> AppResult<()> {
+    localfile::remove(&path, is_dir).await
+}
+
+// ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
+
+/// Hash every file under a remote directory via `sha256sum` over the SSH exec
+/// channel (no download). Returns `/`-relative path → sha256.
+#[tauri::command]
+async fn sftp_hash_tree(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<Vec<sync::HashEntry>> {
+    let session = session_arc(&state, &session_id).await?;
+    let out = session
+        .run_command(&sync::remote_hash_command(&path))
+        .await?;
+    Ok(sync::parse_hashsum(&out))
+}
+
+/// Hash every file under a local directory (the local side of sync).
+#[tauri::command]
+async fn local_hash_tree(path: String) -> AppResult<Vec<sync::HashEntry>> {
+    localfile::hash_tree(&path).await
+}
+
+/// Apply a computed sync plan: upload/download changed files, delete extraneous.
+#[tauri::command]
+async fn sftp_sync_apply(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    local_root: String,
+    remote_root: String,
+    actions: Vec<sync::SyncAction>,
+) -> AppResult<sync::SyncStats> {
+    let sftp = get_sftp(&state, &session_id).await?;
+    sync::apply(&app, &sftp, &local_root, &remote_root, actions).await
+}
+
 #[tauri::command]
 async fn sftp_delete(
     state: State<'_, AppState>,
@@ -1731,7 +1828,7 @@ fn sftp_cancel(state: State<AppState>, transfer_id: String) {
 }
 
 /// Tiny unique-id helper so we don't pull in the `uuid` crate yet.
-fn uuid_like() -> String {
+pub(crate) fn uuid_like() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1876,8 +1973,21 @@ fn set_menu_language(app: AppHandle, labels: MenuLabels) -> Result<(), String> {
     Ok(())
 }
 
+/// Treat non-flag CLI arguments as file paths to open in the editor.
+fn file_args(argv: &[String]) -> Vec<String> {
+    argv.iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .cloned()
+        .collect()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Files passed on the command line at first launch (Windows/Linux "open with"
+    // gives the path as argv; macOS uses the `Opened` run event below).
+    let initial_files = file_args(&std::env::args().collect::<Vec<_>>());
+
     let state = AppState {
         servers: Mutex::new(store::load_servers()),
         folders: Mutex::new(store::load_folders()),
@@ -1889,9 +1999,20 @@ pub fn run() {
         disk_samples: Mutex::new(HashMap::new()),
         core_samples: Mutex::new(HashMap::new()),
         ctxintr_samples: Mutex::new(HashMap::new()),
+        pending_opens: Mutex::new(initial_files),
     };
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        // single-instance must be registered first: a second launch (e.g. another
+        // "open with vterm") forwards its file args to the running window instead.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for path in file_args(&argv) {
+                let _ = app.emit("vterm://open-file", path);
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .menu(|app| build_app_menu(app, &MenuLabels::default()))
@@ -1935,6 +2056,17 @@ pub fn run() {
             sftp_create_file,
             sftp_read_text,
             sftp_write_text,
+            read_local_text,
+            write_local_text,
+            take_pending_opens,
+            local_home,
+            local_list,
+            local_mkdir,
+            local_create_file,
+            local_delete,
+            sftp_hash_tree,
+            local_hash_tree,
+            sftp_sync_apply,
             sftp_delete,
             sftp_upload,
             sftp_download,
@@ -1952,8 +2084,39 @@ pub fn run() {
             export_recording,
             import_recording
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(move |app_handle, event| {
+        // macOS delivers "Open with" / dropped files as an Opened run event (the
+        // variant only exists on macOS/iOS — Windows/Linux get the path via argv,
+        // handled by single-instance / initial `pending_opens`). Queue + emit so the
+        // frontend opens them whether or not it's listening yet.
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Opened { urls } = event {
+            let paths: Vec<String> = urls
+                .iter()
+                .filter_map(|u| u.to_file_path().ok())
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            if !paths.is_empty() {
+                if let Some(state) = app_handle.try_state::<AppState>() {
+                    state
+                        .pending_opens
+                        .lock()
+                        .unwrap()
+                        .extend(paths.iter().cloned());
+                }
+                for p in paths {
+                    let _ = app_handle.emit("vterm://open-file", p);
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = (app_handle, event);
+        }
+    });
 }
 
 #[cfg(test)]

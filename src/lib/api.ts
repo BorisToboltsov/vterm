@@ -11,6 +11,8 @@ import type {
   WriteResult,
 } from "./types";
 
+import type { HashEntry, SyncAction, SyncStats } from "./sync";
+
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
 export const FILE_CHANGED_MARKER = "file-changed";
 
@@ -374,6 +376,73 @@ export function sftpReadText(
 ): Promise<TextFile> {
   return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes });
 }
+
+/** Open a LOCAL file as text in the editor (throws on large/binary files). */
+export function readLocalText(path: string, maxBytes?: number): Promise<TextFile> {
+  return invoke<TextFile>("read_local_text", { path, maxBytes });
+}
+
+/** Save editor text back to a LOCAL file (atomic, conflict-checked). */
+export function writeLocalText(
+  path: string,
+  content: string,
+  eol: "lf" | "crlf",
+  expectedSha256: string | null,
+): Promise<WriteResult> {
+  return invoke<WriteResult>("write_local_text", { path, content, eol, expectedSha256 });
+}
+
+/** Drain the queue of files vterm was asked to open (CLI args / macOS Opened). */
+export function takePendingOpens(): Promise<string[]> {
+  return invoke<string[]>("take_pending_opens");
+}
+
+// ── Local filesystem browser (right panel for local-terminal tabs) ──────────────
+
+export function localHome(): Promise<string> {
+  return invoke<string>("local_home");
+}
+
+export function localList(path: string): Promise<FileEntry[]> {
+  return invoke<FileEntry[]>("local_list", { path });
+}
+
+export function localMkdir(path: string): Promise<void> {
+  return invoke<void>("local_mkdir", { path });
+}
+
+export function localCreateFile(path: string): Promise<void> {
+  return invoke<void>("local_create_file", { path });
+}
+
+export function localDelete(path: string, isDir: boolean): Promise<void> {
+  return invoke<void>("local_delete", { path, isDir });
+}
+
+// ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
+
+/** Hash a remote directory tree via sha256sum over SSH (no download). */
+export function sftpHashTree(sessionId: string, path: string): Promise<HashEntry[]> {
+  return invoke<HashEntry[]>("sftp_hash_tree", { sessionId, path });
+}
+
+/** Hash a local directory tree. */
+export function localHashTree(path: string): Promise<HashEntry[]> {
+  return invoke<HashEntry[]>("local_hash_tree", { path });
+}
+
+/** Apply a computed sync plan (uploads/downloads/deletes); returns counts. */
+export function sftpSyncApply(
+  sessionId: string,
+  localRoot: string,
+  remoteRoot: string,
+  actions: SyncAction[],
+): Promise<SyncStats> {
+  return invoke<SyncStats>("sftp_sync_apply", { sessionId, localRoot, remoteRoot, actions });
+}
+
+/** Event name emitted when the OS asks vterm to open a file ("Open with vterm"). */
+export const OPEN_FILE_EVENT = "vterm://open-file";
 
 /**
  * Save editor text back to a remote file. `expectedSha256` is the hash the editor

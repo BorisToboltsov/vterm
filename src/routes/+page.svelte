@@ -19,6 +19,10 @@
     sftpReadText,
     sftpWriteText,
     isFileChangedError,
+    readLocalText,
+    writeLocalText,
+    takePendingOpens,
+    OPEN_FILE_EVENT,
   } from "$lib/api";
   import type { AuthMethod, ServerProfile } from "$lib/types";
   import { nameOf } from "$lib/tree";
@@ -51,6 +55,7 @@
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
   import SftpPanel from "$lib/SftpPanel.svelte";
+  import LocalFilePanel from "$lib/LocalFilePanel.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
   import { editorLangOrPlain } from "$lib/editorlang";
@@ -469,6 +474,13 @@
     listen<SftpProgress>("sftp://progress", (e) => applyProgress(e.payload)).then((u) =>
       unlisteners.push(u),
     );
+    // "Open with vterm": files asked for at launch (drained now) and while running.
+    takePendingOpens()
+      .then((paths) => paths.forEach(handleOpenFile))
+      .catch(() => {});
+    listen<string>(OPEN_FILE_EVENT, (e) => handleOpenFile(e.payload)).then((u) =>
+      unlisteners.push(u),
+    );
     // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
     // even inside modals and before any field-local handler). See clipboardKeys.ts.
     document.addEventListener("keydown", handleClipboardShortcut, true);
@@ -707,6 +719,9 @@
   let diffSave = $state<{ sid: string; doc: EditorDoc } | null>(null);
   let conflict = $state<{ sid: string; doc: EditorDoc; serverText: string } | null>(null);
 
+  /** Configured editor open-size limit, in bytes. */
+  const editorMaxBytes = () => settings.sftp.maxOpenMb * 1024 * 1024;
+
   /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
   async function openFileInEditor(path: string, name: string) {
     const sid = tabsState.activeId;
@@ -722,13 +737,46 @@
     // Read first, so binary/too-large files just toast instead of opening a tab.
     let file;
     try {
-      file = await sftpReadText(sid, path, settings.sftp.maxOpenMb * 1024 * 1024);
+      file = await sftpReadText(sid, path, editorMaxBytes());
     } catch (e) {
       notifyError(String(e));
       return;
     }
-    const id = addEditor(sid, path, name, lang);
+    const id = addEditor(sid, path, name, lang, "sftp");
     fillEditor(sid, id, file);
+  }
+
+  /** Open a LOCAL file in a given workspace's editor (from "Open with vterm"). */
+  async function openLocalFileInEditor(sid: string, path: string) {
+    const name = path.split(/[\\/]/).pop() ?? path;
+    const existing = findEditorByPath(sid, path);
+    if (existing) {
+      setActiveView(sid, existing.id);
+      return;
+    }
+    let file;
+    try {
+      file = await readLocalText(path, editorMaxBytes());
+    } catch (e) {
+      notifyError(String(e));
+      return;
+    }
+    const id = addEditor(sid, path, name, editorLangOrPlain(name), "local");
+    fillEditor(sid, id, file);
+  }
+
+  /** OS asked to open a file: ensure a local terminal tab, then open the editor. */
+  function handleOpenFile(path: string) {
+    let sid =
+      activeTab?.kind === "local"
+        ? activeTab.sessionId
+        : (tabsState.list.find((t) => t.kind === "local")?.sessionId ?? null);
+    if (!sid) {
+      sid = openLocalTab(); // creates the tab and makes it active
+    } else {
+      tabsState.activeId = sid;
+    }
+    void openLocalFileInEditor(sid, path);
   }
 
   /** Save trigger: nothing to do if unchanged; show the diff first when enabled. */
@@ -747,7 +795,10 @@
     savingEditorId = doc.id;
     try {
       const before = doc.baseContent;
-      const res = await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha);
+      const res =
+        doc.source === "local"
+          ? await writeLocalText(doc.path, doc.content, doc.eol, expectedSha)
+          : await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha);
       const stat = lineDiffStat(before, doc.content);
       markSaved(sid, doc.id, res);
       notifySuccess(t("editor.saved", { name: doc.name }));
@@ -760,9 +811,12 @@
       }
     } catch (e) {
       if (isFileChangedError(e)) {
-        // Fetch the server's current text and let the user resolve the conflict.
+        // Fetch the current on-disk text and let the user resolve the conflict.
         try {
-          const cur = await sftpReadText(sid, doc.path);
+          const cur =
+            doc.source === "local"
+              ? await readLocalText(doc.path, editorMaxBytes())
+              : await sftpReadText(sid, doc.path, editorMaxBytes());
           conflict = { sid, doc, serverText: cur.content };
         } catch {
           notifyError(t("editor.conflict", { name: doc.name }));
@@ -794,7 +848,8 @@
     conflict = null;
     if (!c) return;
     closeEditorStore(c.sid, c.doc.id);
-    void openFileInEditor(c.doc.path, c.doc.name);
+    if (c.doc.source === "local") void openLocalFileInEditor(c.sid, c.doc.path);
+    else void openFileInEditor(c.doc.path, c.doc.name);
   }
 
   /** Close an editor sub-tab, confirming first when it has unsaved changes. */
@@ -1261,7 +1316,7 @@
               </div>
             {/each}
           </div>
-          {#if tabsState.activeId && activeTab?.kind === "ssh"}
+          {#if tabsState.activeId && (activeTab?.kind === "ssh" || activeTab?.kind === "local")}
             {#if !layout.sftpCollapsed}
               <div
                 role="separator"
@@ -1277,14 +1332,25 @@
               ></div>
             {/if}
             {#key tabsState.activeId}
-              <SftpPanel
-                sessionId={tabsState.activeId}
-                width={layout.sftpWidth}
-                bind:collapsed={layout.sftpCollapsed}
-                sessionReady={sftpReady}
-                animateWidth={resizing !== "sftp"}
-                onOpenFile={openFileInEditor}
-              />
+              {#if activeTab?.kind === "ssh"}
+                <SftpPanel
+                  sessionId={tabsState.activeId}
+                  width={layout.sftpWidth}
+                  bind:collapsed={layout.sftpCollapsed}
+                  sessionReady={sftpReady}
+                  animateWidth={resizing !== "sftp"}
+                  onOpenFile={openFileInEditor}
+                />
+              {:else}
+                <LocalFilePanel
+                  width={layout.sftpWidth}
+                  bind:collapsed={layout.sftpCollapsed}
+                  animateWidth={resizing !== "sftp"}
+                  onOpenFile={(path) => {
+                    if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
+                  }}
+                />
+              {/if}
             {/key}
           {/if}
         </div>

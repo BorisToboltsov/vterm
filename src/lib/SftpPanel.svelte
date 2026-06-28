@@ -19,6 +19,7 @@
   import type { FileEntry } from "./types";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
+  import SyncModal from "./SyncModal.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { transfersState } from "./stores/transfers.svelte";
   import { t } from "./i18n";
@@ -58,6 +59,7 @@
   let showMkfile = $state(false);
   let mkfileName = $state("");
   let confirmTarget = $state<FileEntry | null>(null);
+  let showSync = $state(false);
 
   const unlisten: UnlistenFn[] = [];
 
@@ -304,6 +306,14 @@
         </button>
         <button
           class="ml-auto flex items-center rounded p-1.5 text-muted hover:text-accent"
+          title={t("sync.button")}
+          aria-label={t("sync.button")}
+          onclick={() => (showSync = true)}
+        >
+          <Icon name="sync" size={14} />
+        </button>
+        <button
+          class="flex items-center rounded p-1.5 text-muted hover:text-accent"
           title={t("sftp.upload")}
           aria-label={t("sftp.upload")}
           onclick={uploadFiles}
@@ -528,3 +538,12 @@
     </div>
   </div>
 {/if}
+
+<!-- Directory sync (compares local folder ⇄ current remote folder) -->
+<SyncModal
+  open={showSync}
+  {sessionId}
+  remotePath={cwd || "."}
+  onclose={() => (showSync = false)}
+  onapplied={refresh}
+/>

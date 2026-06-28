@@ -33,6 +33,7 @@ export default defineConfig({
         // a smoke component test — not jsdom branch coverage. See TESTS.md.
         "src/lib/Terminal.svelte",
         "src/lib/SftpPanel.svelte",
+        "src/lib/LocalFilePanel.svelte",
         "src/lib/SettingsPanel.svelte",
         "src/lib/ServerTree.svelte",
         // Polling overlay driven by live metrics/native fetches; pure logic lives
@@ -50,6 +51,8 @@ export default defineConfig({
         "src/lib/EditorTab.svelte",
         // CodeMirror MergeView diff dialog (driven by the merge addon).
         "src/lib/DiffModal.svelte",
+        // Sync dialog — thin shell over sync.ts (covered) + native dialogs/api.
+        "src/lib/SyncModal.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

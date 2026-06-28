@@ -76,6 +76,7 @@
   import { activeTerminalTheme, settings } from "./settings.svelte";
   import type { EditorLangKind } from "./editorlang";
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
+  import { renderMarkdown } from "./markdown";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -97,6 +98,13 @@
   let view: EditorView | undefined;
   const themeC = new Compartment();
   const lintC = new Compartment();
+
+  // Markdown files get a Code ⇄ Preview toggle; they open in preview by default
+  // (set once in onMount). `lang.kind` never changes for a mounted editor.
+  const isMarkdown = $derived(doc.lang.kind === "markdown");
+  let preview = $state(false);
+  // Live-rendered HTML (CodeMirror stays mounted, so doc.content tracks edits).
+  const previewHtml = $derived(isMarkdown && preview ? renderMarkdown(doc.content) : "");
 
   /** Generic linter: flag error nodes in the syntax tree (works for any Lezer
    *  language — YAML/JSON/Python/JS/…; StreamLanguage modes simply yield none). */
@@ -284,6 +292,7 @@
   }
 
   onMount(() => {
+    preview = isMarkdown; // markdown opens in preview by default
     const state = EditorState.create({
       doc: doc.content,
       extensions: [
@@ -351,6 +360,35 @@
       {#if doc.content !== doc.baseContent && !doc.readOnly}
         <span class="text-[10px] text-muted">{t("editor.unsaved")}</span>
       {/if}
+      {#if isMarkdown}
+        <!-- Code ⇄ Preview segmented toggle (markdown only). -->
+        <div class="flex overflow-hidden rounded border border-edge">
+          <button
+            type="button"
+            class="flex items-center gap-1 px-2 py-0.5 {preview
+              ? 'text-muted hover:text-accent'
+              : 'bg-edge text-text'}"
+            aria-pressed={!preview}
+            title={t("editor.viewCode")}
+            onclick={() => (preview = false)}
+          >
+            <Icon name="code" size={13} />
+            {t("editor.viewCode")}
+          </button>
+          <button
+            type="button"
+            class="flex items-center gap-1 px-2 py-0.5 {preview
+              ? 'bg-edge text-accent'
+              : 'text-muted hover:text-accent'}"
+            aria-pressed={preview}
+            title={t("editor.viewPreview")}
+            onclick={() => (preview = true)}
+          >
+            <Icon name="eye" size={13} />
+            {t("editor.viewPreview")}
+          </button>
+        </div>
+      {/if}
       <button
         class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
         title={t("editor.save")}
@@ -363,6 +401,122 @@
       </button>
     </div>
   </div>
-  <!-- CodeMirror host; the editor owns its own scrolling. -->
-  <div bind:this={host} class="min-h-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full"></div>
+  <!-- CodeMirror host (always mounted so edits keep flowing); hidden in preview. -->
+  <div
+    bind:this={host}
+    class="min-h-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full {preview ? 'hidden' : ''}"
+  ></div>
+  {#if isMarkdown && preview}
+    <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm">
+      {@html previewHtml}
+    </div>
+  {/if}
 </div>
+
+<!--
+  Styling for the {@html}-rendered markdown preview. Svelte's scoped styles don't
+  reach injected HTML, so descendants are targeted with :global(...). Colors use
+  the theme tokens so the preview follows the active UI theme (same as HelpPanel).
+-->
+<style>
+  .markdown-preview :global(h1),
+  .markdown-preview :global(h2),
+  .markdown-preview :global(h3),
+  .markdown-preview :global(h4) {
+    font-weight: 600;
+    color: var(--color-text);
+    margin: 1.1em 0 0.5em;
+    line-height: 1.3;
+  }
+  .markdown-preview :global(h1) {
+    font-size: 1.35em;
+  }
+  .markdown-preview :global(h2) {
+    font-size: 1.15em;
+    border-bottom: 1px solid var(--color-edge);
+    padding-bottom: 0.25em;
+  }
+  .markdown-preview :global(h3) {
+    font-size: 1.05em;
+  }
+  .markdown-preview :global(h1:first-child) {
+    margin-top: 0;
+  }
+  .markdown-preview :global(p) {
+    margin: 0.6em 0;
+  }
+  .markdown-preview :global(ul),
+  .markdown-preview :global(ol) {
+    margin: 0.5em 0;
+    padding-left: 1.2em;
+  }
+  .markdown-preview :global(ul) {
+    list-style: disc;
+  }
+  .markdown-preview :global(ol) {
+    list-style: decimal;
+  }
+  .markdown-preview :global(li) {
+    margin: 0.2em 0;
+  }
+  .markdown-preview :global(a) {
+    color: var(--color-accent);
+    cursor: pointer;
+  }
+  .markdown-preview :global(a:hover) {
+    text-decoration: underline;
+  }
+  .markdown-preview :global(strong) {
+    color: var(--color-text);
+    font-weight: 600;
+  }
+  .markdown-preview :global(code) {
+    font-family: ui-monospace, monospace;
+    background: var(--color-panel);
+    border: 1px solid var(--color-edge);
+    border-radius: 4px;
+    padding: 0 0.3em;
+    font-size: 0.92em;
+  }
+  .markdown-preview :global(pre) {
+    background: var(--color-panel);
+    border: 1px solid var(--color-edge);
+    border-radius: 6px;
+    padding: 0.75em;
+    overflow-x: auto;
+    margin: 0.7em 0;
+  }
+  .markdown-preview :global(pre code) {
+    background: none;
+    border: none;
+    padding: 0;
+  }
+  .markdown-preview :global(blockquote) {
+    border-left: 3px solid var(--color-edge);
+    padding: 0.1em 0.8em;
+    margin: 0.7em 0;
+    color: var(--color-muted);
+  }
+  .markdown-preview :global(hr) {
+    border: none;
+    border-top: 1px solid var(--color-edge);
+    margin: 1em 0;
+  }
+  .markdown-preview :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 0.7em 0;
+    display: block;
+    overflow-x: auto;
+  }
+  .markdown-preview :global(th),
+  .markdown-preview :global(td) {
+    border: 1px solid var(--color-edge);
+    padding: 0.3em 0.5em;
+    text-align: left;
+  }
+  .markdown-preview :global(th) {
+    background: var(--color-panel);
+    color: var(--color-text);
+  }
+</style>

@@ -19,7 +19,7 @@
 | 9 | Расширение мониторинга (промежуточная) | ✅ Реализовано |
 | 10 | Умная работа с логами и текстом | ✅ Реализовано |
 | 11 | Аудит и запись сессий | ✅ Реализовано |
-| 12 | Продвинутый SFTP и редактор конфигов | 🟦 В работе (12.1–12.3 ✅) |
+| 12 | Продвинутый SFTP и редактор конфигов | 🟦 В работе (12.1–12.5 ✅) |
 | 13 | Актуализация и оформление README | ⬜ |
 | 14 | Сборка и CI/CD (релиз) | ⬜ |
 
@@ -975,16 +975,50 @@ security-гейтами и архитектурой, готовой к расш�
       Правило: чтобы включить синтаксический линт для legacy-языка — заменить его режим
       на официальный `@codemirror/lang-*` (если он существует).
 
-### ⬜ 12.4 — Markdown-превью + «Открыть с помощью vterm»
+### ✅ 12.4 — Markdown-превью + «Открыть с помощью vterm»
 
-- [ ] Тумблер «Код ⇄ Превью» (markdown.ts), `.md` сразу в превью; OS-ассоциации +
-      single-instance + разбор argv → локальный терминал + редактор-вкладка.
+- [x] **Markdown-превью**: тумблер «Код ⇄ Превью» в [EditorTab.svelte](src/lib/EditorTab.svelte)
+      (иконки `code`/`eye`), `.md` открывается **сразу в превью**; рендер через существующий
+      [markdown.ts](src/lib/markdown.ts) (`renderMarkdown` → `{@html}`), стили в тон активной
+      темы (как HelpPanel). CodeMirror остаётся смонтированным (превью живо обновляется при правке).
+- [x] **Локальное редактирование файлов** (backend [localfile.rs](src-tauri/src/localfile.rs)):
+      `read_local_text`/`write_local_text` — локальный аналог SFTP read/write (переиспользуют
+      чистые хелперы sftp.rs, тот же контракт `TextFile`/`WriteResult`, атомарная запись
+      temp+rename, сохранение прав, sha-конфликт). `EditorDoc.source` (`sftp`|`local`) — save/
+      read/конфликт ветвятся по нему.
+- [x] **«Открыть с помощью vterm»**: `tauri-plugin-single-instance` (второй запуск с файлом →
+      в текущее окно), `bundle.fileAssociations` (macOS Info.plist / Windows registry),
+      `RunEvent::Opened` (macOS, cfg-гард) + argv (Windows/Linux) → очередь `pending_opens` +
+      событие `vterm://open-file`. Фронт: на старте `take_pending_opens`, дальше слушает событие →
+      открывает **локальный терминал-таб** + редактор-вкладку с файлом (md → превью).
 
-### ⬜ 12.5 — Синхронизация директорий (Sync folder)
+- [x] **Локальная файловая панель** (0.12.9): для **локальных** терминал-вкладок справа —
+      [LocalFilePanel.svelte](src/lib/LocalFilePanel.svelte) (как SFTP для удалённого, но без
+      connect/трансферов): обзор локальной ФС, навигация, новая папка/файл, удаление с
+      подтверждением, открытие файла в редакторе (двойной клик/карандаш). Backend
+      `local_home`/`local_list`/`local_mkdir`/`local_create_file`/`local_delete`
+      ([localfile.rs](src-tauri/src/localfile.rs), `FileEntry` как у SFTP).
 
-- [ ] `sftp_hash_tree` (хэши через `find … sha256sum` по SSH); сравнение локальной и
-      удалённой папки; dry-run превью, направление push/pull/bi, exclude-паттерны,
-      докачать только изменённое.
+> Полная проверка OS-ассоциаций/«Открыть с помощью» требует **собранного** приложения
+> (.app/.msi) — в dev проверяется через CLI-аргумент пути и эмуляцию события.
+
+### ✅ 12.5 — Синхронизация директорий (Sync folder)
+
+- [x] **Хэш-деревья**: `sftp_hash_tree` (хэши через `sha256sum`/`shasum` по SSH exec, без
+      скачивания; парсер вывода + fallback) + `local_hash_tree` (обход локальной ФС, sha256
+      каждого файла, относительные `/`-пути). Бэкенд [sync.rs](src-tauri/src/sync.rs) +
+      [localfile.rs](src-tauri/src/localfile.rs).
+- [x] **Чистый diff** [sync.ts](src/lib/sync.ts): `diffTrees(local, remote, direction,
+      excludes, deleteExtraneous)` → план действий; **направление push/pull/bi** (bi добавляет
+      недостающее с обеих сторон, расхождения помечает **конфликтом** — по хэшу нельзя выбрать
+      сторону); **exclude-паттерны** (gitignore-lite: `compileExclude`, сегмент/путь, `*`/`?`);
+      `applicable`/`summarize`.
+- [x] **UI** [SyncModal.svelte](src/lib/SyncModal.svelte) (кнопка `sync` в тулбаре SFTP): выбор
+      локальной папки, удалённая = текущая папка SFTP, направление, исключения, «удалять лишнее»;
+      **dry-run превью** (список действий + сводка, конфликты подсвечены) → **Применить**.
+- [x] **Apply** `sftp_sync_apply` ([sync.rs](src-tauri/src/sync.rs)): заливка/скачивание только
+      изменённого (mkdir-p родителей, переиспользует `sftp::upload`/`download` с прогрессом),
+      удаление лишнего (opt-in); возвращает счётчики `SyncStats`.
 
 ### ⬜ 12.6 — Доводка + безопасность записи
 

@@ -100,7 +100,8 @@
       "Bash(sed -i '' 's/^version = \"0.11.5\"/version = \"0.12.0\"/' src-tauri/Cargo.toml)",
       "Bash(grep -n 'from \"\\\\$lib/api\"' src/routes/+page.svelte)",
       "Bash(grep -n \"широкого набора языков\\\\|Terraform.$\\\\|Дальше — diff\" README.md)",
-      "Bash(grep -n 'from \"./settings.svelte\"\\\\|from \"\\\\$lib/settings.svelte\"\\\\|import.*settings' src/lib/SettingsPanel.svelte)"
+      "Bash(grep -n 'from \"./settings.svelte\"\\\\|from \"\\\\$lib/settings.svelte\"\\\\|import.*settings' src/lib/SettingsPanel.svelte)",
+      "Bash(grep -n \"take_pending_opens\\\\`, \\\\`annotateRecording\" TESTS.md)"
     ]
   }
 }

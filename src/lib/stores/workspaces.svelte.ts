@@ -12,7 +12,9 @@ export const TERMINAL_VIEW = "terminal";
 /** An open editor document inside a workspace. */
 export interface EditorDoc {
   id: string;
-  /** Remote absolute path. */
+  /** Where the file lives — a remote SFTP session, or the local filesystem. */
+  source: "sftp" | "local";
+  /** Absolute path (remote for sftp, local for local). */
   path: string;
   /** Basename, shown on the sub-tab. */
   name: string;
@@ -110,10 +112,12 @@ export function addEditor(
   path: string,
   name: string,
   lang: EditorLang,
+  source: "sftp" | "local" = "sftp",
 ): string {
   const id = crypto.randomUUID();
   const doc: EditorDoc = {
     id,
+    source,
     path,
     name,
     lang,

@@ -25,6 +25,7 @@ const LANG: EditorLang = { kind: "yaml", label: "YAML" };
 function doc(over: Partial<EditorDoc> = {}): EditorDoc {
   return {
     id: "1",
+    source: "sftp",
     path: "/a.yaml",
     name: "a.yaml",
     lang: LANG,
@@ -91,7 +92,13 @@ describe("store mutators", () => {
     expect(ws.editors).toHaveLength(1);
     expect(ws.active).toBe(id);
     expect(ws.editors[0].loading).toBe(true);
+    expect(ws.editors[0].source).toBe("sftp"); // default source
     expect(findEditorByPath("s1", "/etc/app.yaml")?.id).toBe(id);
+  });
+
+  it("addEditor records a local source when given", () => {
+    const id = addEditor("s1", "/home/me/n.md", "n.md", LANG, "local");
+    expect(getWorkspace("s1").editors.find((e) => e.id === id)?.source).toBe("local");
   });
 
   it("fillEditor loads content and clears dirty; setEditorContent makes it dirty", () => {

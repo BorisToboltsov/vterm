@@ -106,6 +106,52 @@ describe("invoke wrappers pass the right command + args", () => {
       expectedSha256: "abc123",
     });
   });
+
+  it("local file editor commands", async () => {
+    await api.readLocalText("/home/me/notes.md", 2097152);
+    expect(invoke).toHaveBeenCalledWith("read_local_text", {
+      path: "/home/me/notes.md",
+      maxBytes: 2097152,
+    });
+    await api.writeLocalText("/home/me/notes.md", "hi\n", "lf", "sha9");
+    expect(invoke).toHaveBeenCalledWith("write_local_text", {
+      path: "/home/me/notes.md",
+      content: "hi\n",
+      eol: "lf",
+      expectedSha256: "sha9",
+    });
+    await api.takePendingOpens();
+    expect(invoke).toHaveBeenCalledWith("take_pending_opens");
+  });
+
+  it("local filesystem browser commands", async () => {
+    await api.localHome();
+    expect(invoke).toHaveBeenCalledWith("local_home");
+    await api.localList("/home/me");
+    expect(invoke).toHaveBeenCalledWith("local_list", { path: "/home/me" });
+    await api.localMkdir("/home/me/new");
+    expect(invoke).toHaveBeenCalledWith("local_mkdir", { path: "/home/me/new" });
+    await api.localCreateFile("/home/me/f.txt");
+    expect(invoke).toHaveBeenCalledWith("local_create_file", { path: "/home/me/f.txt" });
+    await api.localDelete("/home/me/old", true);
+    expect(invoke).toHaveBeenCalledWith("local_delete", { path: "/home/me/old", isDir: true });
+  });
+
+  it("directory sync commands", async () => {
+    invoke.mockResolvedValue([]);
+    await api.sftpHashTree("sess", "/srv/app");
+    expect(invoke).toHaveBeenCalledWith("sftp_hash_tree", { sessionId: "sess", path: "/srv/app" });
+    await api.localHashTree("/home/me/app");
+    expect(invoke).toHaveBeenCalledWith("local_hash_tree", { path: "/home/me/app" });
+    const actions = [{ path: "a.txt", op: "upload" as const, reason: "new" as const }];
+    await api.sftpSyncApply("sess", "/home/me/app", "/srv/app", actions);
+    expect(invoke).toHaveBeenCalledWith("sftp_sync_apply", {
+      sessionId: "sess",
+      localRoot: "/home/me/app",
+      remoteRoot: "/srv/app",
+      actions,
+    });
+  });
 });
 
 describe("isFileChangedError", () => {

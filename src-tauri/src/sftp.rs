@@ -119,7 +119,7 @@ pub async fn create_file(sftp: &SftpSession, path: &str) -> AppResult<()> {
 }
 
 /// A text file opened in the in-app editor.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct TextFile {
     pub content: String,
@@ -140,7 +140,7 @@ pub struct TextFile {
 }
 
 /// Result of a successful text save — fresh metadata for the editor to adopt.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteResult {
     pub sha256: String,
@@ -505,13 +505,14 @@ fn temp_sibling(path: &str) -> String {
 
 /// Heuristic binary detection: a NUL byte in the first chunk. Good enough to keep
 /// the editor from choking on images/executables; valid UTF-8 text has none.
-fn looks_binary(bytes: &[u8]) -> bool {
+/// Shared with the local-file editor ([`crate::localfile`]).
+pub(crate) fn looks_binary(bytes: &[u8]) -> bool {
     let scan = bytes.len().min(CHUNK);
     bytes[..scan].contains(&0)
 }
 
 /// `"crlf"` if any CRLF is present, else `"lf"`.
-fn detect_eol(s: &str) -> &'static str {
+pub(crate) fn detect_eol(s: &str) -> &'static str {
     if s.contains("\r\n") {
         "crlf"
     } else {
@@ -521,7 +522,7 @@ fn detect_eol(s: &str) -> &'static str {
 
 /// Normalize to LF, then apply the requested ending. The editor always hands us
 /// LF content; this re-imposes the file's original style on save.
-fn apply_eol(content: &str, eol: &str) -> String {
+pub(crate) fn apply_eol(content: &str, eol: &str) -> String {
     let lf = content.replace("\r\n", "\n");
     if eol == "crlf" {
         lf.replace('\n', "\r\n")
@@ -531,11 +532,11 @@ fn apply_eol(content: &str, eol: &str) -> String {
 }
 
 /// Best-effort: no write bit set for owner/group/other (e.g. `0o444`).
-fn is_read_only(mode: Option<u32>) -> bool {
+pub(crate) fn is_read_only(mode: Option<u32>) -> bool {
     mode.map(|m| m & 0o222 == 0).unwrap_or(false)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
     let digest = h.finalize();

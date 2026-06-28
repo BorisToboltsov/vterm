@@ -142,6 +142,13 @@ pnpm check
   в строку (контракт с фронтом не меняется).
 - `recording.rs` (Фаза 12.3, аудит) — `annotate` пишет видимое `o`-событие
   `[vterm] …` в asciicast, **даже на паузе** (два события: до и после `set_paused(true)`).
+- `localfile.rs` (Фаза 12.4, локальные файлы) — `local_temp` (скрытый sibling, корректный
+  parent + bare-имя); async round-trip read/write с **конфликт-проверкой** по sha
+  (правильный sha → запись, устаревший → `file-changed`); отказ на **бинаре** (NUL) и
+  **слишком большом** файле (через `tokio::test` + `tempfile`).
+- `sync.rs` (Фаза 12.5, синхронизация) — `shell_quote` (экранирование `'`), `remote_hash_command`
+  (квотирование пути + fallback `sha256sum`→`shasum`), `parse_hashsum` (hash+относительный путь,
+  `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`.
 - `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
   `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
   `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
@@ -303,9 +310,13 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
   `sftpCreateFile` → `sftp_create_file`, `sftpReadText` → `sftp_read_text`,
-  `sftpWriteText` → `sftp_write_text` (вкл. `expectedSha256`), `annotateRecording` →
-  `annotate_recording`, `fetchMetricsDetail` →
-  `fetch_metrics_detail`, `fetchPendingUpdates` → `fetch_pending_updates`,
+  `sftpWriteText` → `sftp_write_text` (вкл. `expectedSha256`), `readLocalText` →
+  `read_local_text`, `writeLocalText` → `write_local_text`, `takePendingOpens` →
+  `take_pending_opens`, `localHome`/`localList`/`localMkdir`/`localCreateFile`/`localDelete`
+  → `local_*` (локальная файловая панель), `sftpHashTree`/`localHashTree`/`sftpSyncApply` →
+  `sftp_hash_tree`/`local_hash_tree`/`sftp_sync_apply` (синхронизация), `annotateRecording` →
+  `annotate_recording`, `fetchMetricsDetail` → `fetch_metrics_detail`, `fetchPendingUpdates` →
+  `fetch_pending_updates`,
   `exportBackup`/`importBackup` и backup-диалоги) + `isFileChangedError`
   (матч маркера `file-changed`, игнор посторонних ошибок);
 - `editorlang.ts` (Фаза 12.2) — `baseName`/`fileExt` (lower-case расширения, dotfile
@@ -323,6 +334,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (loading-док + активация + дедуп по пути), `fillEditor`/`setEditorContent` (загрузка/
   dirty), `markSaved` (новый base+хэш), `failEditor`, `closeEditor` (рефокус),
   `removeWorkspace` + `getWorkspace` (пустой дефолт);
+- `sync.ts` (Фаза 12.5, синхронизация) — `compileExclude` (bare-имя по сегменту, glob `*`,
+  path-anchored + всё под ним, пустые паттерны), `parseExcludes` (split по `\n`/`,`),
+  `diffTrees` (push/pull/bi: новые/изменённые/удаление по флагу, bi → конфликт на расхождении,
+  учёт исключений), `applicable` (отбрасывает конфликты), `summarize` (счётчики по op);
 - `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
   [EditorTab.svelte](src/lib/EditorTab.svelte) и [DiffModal.svelte](src/lib/DiffModal.svelte)

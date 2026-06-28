@@ -683,6 +683,52 @@ pnpm test:coverage
 - **Настройки редактора** — `settings.editor` (`EditorSettings{diffBeforeSave,lint}`), раздел
   «Редактор конфигов» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte) (`SECTIONS` id
   `editor`, двуязычные keywords); как все настройки — мерджится в load/reset/applyImportedSettings.
+  Лимит размера открытия — `settings.sftp.maxOpenMb` (раздел SFTP), см. секцию 12.1 выше.
+- **Markdown-превью (12.4).** В [EditorTab.svelte](src/lib/EditorTab.svelte) для `markdown`-доков —
+  тумблер «Код ⇄ Превью» (иконки `code`/`eye`), `.md` открывается в превью по умолчанию (ставится
+  один раз в `onMount`). Рендер — существующий `renderMarkdown` ([markdown.ts](src/lib/markdown.ts))
+  через `{@html}`; стили `.markdown-preview :global(...)` из токенов темы (как HelpPanel).
+  **CodeMirror остаётся смонтированным** (скрыт `hidden`), поэтому правки текут в стор и превью
+  (`$derived`) обновляется живо. Офлайн: никакого внешнего рендера/сети.
+- **Локальные файлы (12.4) — `EditorDoc.source` (`sftp`|`local`)**. Бэкенд
+  [localfile.rs](src-tauri/src/localfile.rs) `read_text`/`write_text` — **локальный двойник**
+  sftp.rs (переиспользует его `pub(crate)` чистые хелперы; тот же `TextFile`/`WriteResult`,
+  атомарная temp+rename, сохранение прав, sha-конфликт; `tokio::fs`). Команды `read_local_text`/
+  `write_local_text` (лимит как у SFTP — клампится). На фронте `saveEditor`/конфликт/переоткрытие
+  **ветвятся по `doc.source`** (sftp → `sftpWriteText`/`sftpReadText`, local → `writeLocalText`/
+  `readLocalText`). Новый источник файлов — добавляй сюда же (`source` + ветка), не плоди отдельный
+  путь сохранения.
+- **«Открыть с помощью vterm» (12.4).** `tauri-plugin-single-instance` (**регистрируется первым**;
+  второй запуск с файлом форвардит argv в текущее окно), `bundle.fileAssociations` в
+  [tauri.conf.json](src-tauri/tauri.conf.json) (Info.plist / Windows registry). Пути приходят:
+  argv (Win/Linux, первый запуск → `AppState.pending_opens`), `RunEvent::Opened` (**только macOS**,
+  обязательно под `#[cfg(target_os="macos")]` — иначе не собирается на Windows). И то и другое →
+  очередь `pending_opens` + событие **`vterm://open-file`**. Фронт: на старте `take_pending_opens`,
+  затем слушает событие → `handleOpenFile` (переиспользует/создаёт локальный терминал-таб +
+  открывает редактор-вкладку `source:"local"`; md → превью). Дедуп по пути (`findEditorByPath`).
+  `.run()` заменён на `.build()?.run(|app, event| …)` ради `Opened`.
+- **Локальная файловая панель (12.4).** Для **локальных** терминал-вкладок справа рендерится
+  [LocalFilePanel.svelte](src/lib/LocalFilePanel.svelte) — локальный аналог `SftpPanel` (тот же
+  докинг/ресайз/`layout.sftpWidth`+`sftpCollapsed`, дизайн-токены, иконки папка/файл/символ-ссылка),
+  но **без connect-шага и трансферов** (локальная ФС всегда доступна; файл открывается прямо в
+  редакторе). Backend `local_home`/`local_list`/`local_mkdir`/`local_create_file`/`local_delete`
+  ([localfile.rs](src-tauri/src/localfile.rs), отдают `sftp::FileEntry`); удаление — через
+  `ConfirmDialog` (правило деструктива). `onOpenFile(path)` → `openLocalFileInEditor` в воркспейсе
+  активной локальной вкладки. Путь-сепаратор детектится из строки (`/` и `\`). Исключён из coverage
+  (как SftpPanel/Terminal). В [+page.svelte](src/routes/+page.svelte) правый блок выбирает панель по
+  `activeTab.kind` (ssh → SftpPanel, local → LocalFilePanel).
+- **Синхронизация директорий (12.5).** Хэш-деревья считаются на бэкенде: **удалённое** —
+  `sftp_hash_tree` через **SSH exec** `sha256sum`/`shasum` (без скачивания; команда+парсер в
+  [sync.rs](src-tauri/src/sync.rs), `remote_hash_command`/`parse_hashsum`), **локальное** —
+  `local_hash_tree` (обход ФС, `sha256_hex`; [localfile.rs](src-tauri/src/localfile.rs)). Обе
+  стороны — `HashEntry{path,sha256}` с `/`-относительными путями. **Diff — чистый TS**
+  [sync.ts](src/lib/sync.ts) (`diffTrees`/`compileExclude`/`parseExcludes`/`applicable`/
+  `summarize`), тестируется без бэкенда; направление push/pull/**bi** (bi: union-добавление,
+  расхождение → `conflict`, пропускается), exclude gitignore-lite. **Apply** — `sftp_sync_apply`
+  → `sync::apply` (mkdir-p родителей, переиспользует `sftp::upload`/`download`, opt-in удаление;
+  `SyncStats`). UI — [SyncModal.svelte](src/lib/SyncModal.svelte) (кнопка `sync` в тулбаре SFTP,
+  dry-run превью; исключён из coverage). `uuid_like` сделан `pub(crate)` для переиспользования.
+  Новый источник хэшей/направление — добавляй в `diffTrees`/`apply`, не дублируй обход.
 
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 

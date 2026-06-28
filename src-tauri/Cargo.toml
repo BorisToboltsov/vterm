@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.12.7"
+version = "0.12.10"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+# Forward a second "Open with vterm" launch to the running window (Phase 12.4).
+tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 russh = "0.61.2"
