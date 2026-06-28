@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   activeTerminalTheme,
   applyImportedSettings,
+  clampMaxOpenMb,
   resetSettings,
   settings,
 } from "./settings.svelte";
@@ -120,6 +121,61 @@ describe("smartLogs (Phase 10)", () => {
     resetSettings();
     expect(settings.smartLogs.enabled).toBe(true);
     expect(settings.smartLogs.search).toBe(true);
+  });
+});
+
+describe("editor settings (Phase 12)", () => {
+  it("defaults to diff-before-save and lint on", () => {
+    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true });
+  });
+
+  it("merges a partial backup snapshot onto defaults", () => {
+    applyImportedSettings({ editor: { diffBeforeSave: false } });
+    flushSync();
+    expect(settings.editor.diffBeforeSave).toBe(false);
+    expect(settings.editor.lint).toBe(true); // absent flag keeps its default
+  });
+
+  it("is restored to defaults by resetSettings", () => {
+    settings.editor.diffBeforeSave = false;
+    settings.editor.lint = false;
+    resetSettings();
+    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true });
+  });
+});
+
+describe("sftp settings (Phase 12)", () => {
+  it("defaults max open size to 2 MB", () => {
+    expect(settings.sftp).toEqual({ maxOpenMb: 2 });
+  });
+
+  it("clamps an imported value to the 1…64 MB range", () => {
+    applyImportedSettings({ sftp: { maxOpenMb: 1000 } });
+    flushSync();
+    expect(settings.sftp.maxOpenMb).toBe(64);
+    applyImportedSettings({ sftp: { maxOpenMb: 0 } });
+    flushSync();
+    expect(settings.sftp.maxOpenMb).toBe(1);
+    applyImportedSettings({ sftp: { maxOpenMb: "junk" } });
+    flushSync();
+    expect(settings.sftp.maxOpenMb).toBe(2); // non-number → default
+  });
+
+  it("is restored to defaults by resetSettings", () => {
+    settings.sftp.maxOpenMb = 10;
+    resetSettings();
+    expect(settings.sftp.maxOpenMb).toBe(2);
+  });
+});
+
+describe("clampMaxOpenMb", () => {
+  it("rounds and clamps to [1, 64]", () => {
+    expect(clampMaxOpenMb(2)).toBe(2);
+    expect(clampMaxOpenMb(2.6)).toBe(3);
+    expect(clampMaxOpenMb(0)).toBe(1);
+    expect(clampMaxOpenMb(999)).toBe(64);
+    expect(clampMaxOpenMb(NaN)).toBe(2);
+    expect(clampMaxOpenMb("x")).toBe(2);
   });
 });
 

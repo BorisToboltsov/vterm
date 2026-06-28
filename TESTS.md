@@ -140,6 +140,8 @@ pnpm check
 - `error.rs` — `AppError`: наличие маркеров (`auth-rejected`/`host-key-rejected`/
   `file-changed`) в `Display`, конверсии `From<String>/<io::Error>`, сериализация
   в строку (контракт с фронтом не меняется).
+- `recording.rs` (Фаза 12.3, аудит) — `annotate` пишет видимое `o`-событие
+  `[vterm] …` в asciicast, **даже на паузе** (два события: до и после `set_paused(true)`).
 - `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
   `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
   `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
@@ -301,7 +303,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `api.ts` — каждая обёртка вызывает `invoke`/диалог с правильным
   именем команды и аргументами (вкл. `readClipboardText` → `read_clipboard_text`,
   `sftpCreateFile` → `sftp_create_file`, `sftpReadText` → `sftp_read_text`,
-  `sftpWriteText` → `sftp_write_text` (вкл. `expectedSha256`), `fetchMetricsDetail` →
+  `sftpWriteText` → `sftp_write_text` (вкл. `expectedSha256`), `annotateRecording` →
+  `annotate_recording`, `fetchMetricsDetail` →
   `fetch_metrics_detail`, `fetchPendingUpdates` → `fetch_pending_updates`,
   `exportBackup`/`importBackup` и backup-диалоги) + `isFileChangedError`
   (матч маркера `file-changed`, игнор посторонних ошибок);
@@ -312,7 +315,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   Clojure/Haskell/Erlang/Elm/R/Julia/CoffeeScript/OCaml/F#/Tcl и др.; **Dockerfile** по
   имени/расширению + Gemfile/Containerfile/Vagrantfile/`nginx.conf`/`CMakeLists.txt`/
   `build.gradle`; well-known dotfile `.env`/`.bashrc`; неизвестное → `null`), `isEditable`
-  (true ⇔ язык распознан);
+  (true ⇔ язык распознан), **`editorLangOrPlain`** (всегда отдаёт язык: известный → его,
+  неизвестное/без расширения → `plain` Text — позволяет открыть любой файл);
 - `stores/workspaces.svelte.ts` (Фаза 12.2) — чистые `isDirty` (content vs base, не при
   loading), `hasUnsaved`, `nextActiveAfterClose` (сохранение неактивного, соседняя/
   предыдущая/терминал); **мутаторы стора** (рунический `$state` под jsdom): `addEditor`
@@ -321,8 +325,14 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `removeWorkspace` + `getWorkspace` (пустой дефолт);
 - `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
-  [EditorTab.svelte](src/lib/EditorTab.svelte) исключён из покрытия (CodeMirror-driven,
-  как Terminal/SftpPanel — логика в чистых `.ts`);
+  [EditorTab.svelte](src/lib/EditorTab.svelte) и [DiffModal.svelte](src/lib/DiffModal.svelte)
+  исключены из покрытия (CodeMirror/MergeView-driven, как Terminal/SftpPanel — логика в `.ts`);
+- `util.ts` → `lineDiffStat` (Фаза 12.3) — 0/0 для идентичного текста; счёт added/removed;
+  multiset (порядок не важен, дубликаты учитываются) — метрика для аудит-записи правок;
+- `settings.svelte.ts` → `editor` (Фаза 12.3) — дефолты `{diffBeforeSave,lint}=true`, мердж
+  частичного бэкапа, восстановление `resetSettings`; `sftp` + `clampMaxOpenMb` (Фаза 12) —
+  дефолт `maxOpenMb=2`, кламп импортируемого значения в `[1,64]` (округление, мусор → дефолт),
+  сброс к дефолту;
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора) + `language`
   (дефолт `en`, персист, валидация валидного/невалидного кода при импорте);

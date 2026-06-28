@@ -378,6 +378,14 @@ impl Recorder {
         self.emit_step(kind, data, TYPING_STEP);
     }
 
+    /// Record an audit annotation (e.g. an in-app config edit) as a visible cyan
+    /// output line. Written even while paused — these are deliberate, low-volume
+    /// events worth keeping in the audit trail.
+    pub fn annotate(&mut self, text: &str) {
+        let line = format!("\r\n\u{1b}[36m[vterm] {text}\u{1b}[0m\r\n");
+        self.emit_step('o', &line, 0.0);
+    }
+
     /// Record an output chunk and update password-prompt detection. In `per_line`
     /// mode, output produced while the user is typing (the shell's echo of the
     /// line being edited) is suppressed — only command results are kept.
@@ -752,6 +760,41 @@ mod tests {
             serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(header["vterm"]["recordMode"], "full");
         assert!(header["vterm"]["hostname"].is_null());
+    }
+
+    #[test]
+    fn annotate_writes_a_visible_audit_event() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cast");
+        let mut rec = Recorder::start(
+            path.clone(),
+            80,
+            24,
+            "x",
+            "",
+            "",
+            false,
+            RecordMode::parse("full"),
+        )
+        .unwrap();
+        rec.annotate("edited /etc/nginx.conf (2 lines changed)");
+        // Annotations are recorded even while paused (deliberate audit events).
+        rec.set_paused(true);
+        rec.annotate("saved /etc/hosts");
+        drop(rec);
+        let content = std::fs::read_to_string(&path).unwrap();
+        let outs: Vec<serde_json::Value> = content
+            .lines()
+            .skip(1)
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter(|v| v[1] == "o")
+            .collect();
+        assert_eq!(outs.len(), 2);
+        assert!(outs[0][2]
+            .as_str()
+            .unwrap()
+            .contains("[vterm] edited /etc/nginx.conf"));
+        assert!(outs[1][2].as_str().unwrap().contains("saved /etc/hosts"));
     }
 
     #[test]

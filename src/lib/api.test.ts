@@ -91,10 +91,11 @@ describe("invoke wrappers pass the right command + args", () => {
   });
 
   it("sftp text editor commands", async () => {
-    await api.sftpReadText("sess", "/etc/app.conf");
+    await api.sftpReadText("sess", "/etc/app.conf", 4194304);
     expect(invoke).toHaveBeenCalledWith("sftp_read_text", {
       sessionId: "sess",
       path: "/etc/app.conf",
+      maxBytes: 4194304,
     });
     await api.sftpWriteText("sess", "/etc/app.conf", "data\n", "lf", "abc123");
     expect(invoke).toHaveBeenCalledWith("sftp_write_text", {
@@ -138,6 +139,11 @@ describe("remaining invoke wrappers", () => {
       [api.fetchPendingUpdates("s"), "fetch_pending_updates", { sessionId: "s" }],
       [api.sftpMkdir("s", "/d"), "sftp_mkdir", { sessionId: "s", path: "/d" }],
       [api.sftpCreateFile("s", "/f"), "sftp_create_file", { sessionId: "s", path: "/f" }],
+      [
+        api.annotateRecording("s", "edited /x"),
+        "annotate_recording",
+        { sessionId: "s", text: "edited /x" },
+      ],
       [api.sftpDelete("s", "/d", true), "sftp_delete", { sessionId: "s", path: "/d", isDir: true }],
       [
         api.sftpUpload("s", "t", "/l", "/r"),

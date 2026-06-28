@@ -15,10 +15,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 const CHUNK: usize = 32 * 1024;
 /// Throttle progress events to roughly one per this many transferred bytes.
 const PROGRESS_STEP: u64 = 256 * 1024;
-/// Largest file the in-app editor will open. Anything bigger (or binary) should
-/// be downloaded as a file instead — keeps the whole content in memory and the
-/// CodeMirror buffer responsive.
+/// Default cap (bytes) for opening a file in the in-app editor when the frontend
+/// passes no explicit limit. Anything bigger (or binary) should be downloaded
+/// instead — the whole content lives in memory and the CodeMirror buffer.
 pub const MAX_EDIT_SIZE: u64 = 2 * 1024 * 1024;
+/// Hard ceiling (bytes) the configurable editor open-size is clamped to, so a bad
+/// setting can't try to slurp a gigantic file into memory. Matches the frontend
+/// `MAX_OPEN_MB_LIMIT` (64 MB).
+pub const HARD_MAX_EDIT_SIZE: u64 = 64 * 1024 * 1024;
 
 /// A remote directory entry sent to the frontend.
 #[derive(Serialize)]
@@ -144,9 +148,10 @@ pub struct WriteResult {
     pub mtime: Option<u64>,
 }
 
-/// Read a remote file as UTF-8 text for the editor. Rejects files that are too
-/// large or binary (NUL byte / invalid UTF-8) — the caller should download those.
-pub async fn read_text(sftp: &SftpSession, path: &str) -> AppResult<TextFile> {
+/// Read a remote file as UTF-8 text for the editor. Rejects files larger than
+/// `max_bytes` or binary (NUL byte / invalid UTF-8) — the caller should download
+/// those. `max_bytes` is the configured editor open-size (see lib.rs clamping).
+pub async fn read_text(sftp: &SftpSession, path: &str, max_bytes: u64) -> AppResult<TextFile> {
     let meta = sftp
         .metadata(path)
         .await
@@ -155,9 +160,9 @@ pub async fn read_text(sftp: &SftpSession, path: &str) -> AppResult<TextFile> {
         return Err(AppError::Message(format!("{path} is a directory")));
     }
     if let Some(size) = meta.size {
-        if size > MAX_EDIT_SIZE {
+        if size > max_bytes {
             return Err(AppError::Message(format!(
-                "file too large to edit ({size} bytes, limit {MAX_EDIT_SIZE})"
+                "file too large to edit ({size} bytes, limit {max_bytes})"
             )));
         }
     }
@@ -166,7 +171,7 @@ pub async fn read_text(sftp: &SftpSession, path: &str) -> AppResult<TextFile> {
         .read(path)
         .await
         .map_err(|e| format!("read {path}: {e}"))?;
-    if (bytes.len() as u64) > MAX_EDIT_SIZE {
+    if (bytes.len() as u64) > max_bytes {
         return Err(AppError::Message("file too large to edit".into()));
     }
     if looks_binary(&bytes) {

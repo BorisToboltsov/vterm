@@ -48,6 +48,8 @@ export default defineConfig({
         // workspace bookkeeping, theme glue) lives in editorlang.ts /
         // workspaces.svelte.ts / cmtheme.ts (covered). See TESTS.md.
         "src/lib/EditorTab.svelte",
+        // CodeMirror MergeView diff dialog (driven by the merge addon).
+        "src/lib/DiffModal.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

@@ -151,6 +151,13 @@ impl SshSession {
         }
     }
 
+    /// Write an audit annotation into the active recording (no-op if not recording).
+    pub fn annotate_recording(&self, text: &str) {
+        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+            rec.annotate(text);
+        }
+    }
+
     /// Inform the remote PTY of a new terminal size.
     pub async fn resize(&self, cols: u32, rows: u32) -> AppResult<()> {
         self.write

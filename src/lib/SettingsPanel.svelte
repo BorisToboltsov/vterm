@@ -5,6 +5,8 @@
     resetSettings,
     activeTerminalTheme,
     defaultHighlightRules,
+    clampMaxOpenMb,
+    MAX_OPEN_MB_LIMIT,
     type StatusBarItems,
     type ThresholdKey,
     type HighlightColor,
@@ -286,6 +288,8 @@ print(greet("world"))  # => 12345`;
     { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click терминал буфер сигнал копировать вставка" },
     { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
     { id: "recording", keywords: "Recording session asciicast password mask privacy idle pause auto запись сессий пароль маскирование приватность простой пауза автозапись" },
+    { id: "sftp", keywords: "SFTP files file size open editor megabytes mb limit max файлы файл размер открыть редактор мегабайт лимит" },
+    { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка" },
     { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
     { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
     { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
@@ -778,6 +782,42 @@ print(greet("world"))  # => 12345`;
             />
           </label>
           <p class="mt-1 text-[11px] text-muted/80">{t("settings.recordIdlePauseHint")}</p>
+        </section>
+
+        {/if}
+
+        {#if show("sftp")}
+        <!-- SFTP (Phase 12) -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSftp")}</h3>
+          <label class="block w-40 text-xs text-muted">
+            {t("settings.sftpMaxOpenMb")}
+            <input
+              type="number"
+              min="1"
+              max={MAX_OPEN_MB_LIMIT}
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              value={settings.sftp.maxOpenMb}
+              onchange={(e) => (settings.sftp.maxOpenMb = clampMaxOpenMb(e.currentTarget.valueAsNumber))}
+            />
+          </label>
+          <p class="mt-1 text-[11px] text-muted">{t("settings.sftpMaxOpenMbHint")}</p>
+        </section>
+
+        {/if}
+
+        {#if show("editor")}
+        <!-- Config editor (Phase 12) -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionEditor")}</h3>
+          <label class="flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.diffBeforeSave} />
+            {t("settings.editorDiffBeforeSave")}
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.lint} />
+            {t("settings.editorLint")}
+          </label>
         </section>
 
         {/if}

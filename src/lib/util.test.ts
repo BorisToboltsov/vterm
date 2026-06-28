@@ -1,5 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { debounce, isHidden, matchesQuery } from "./util";
+import { debounce, isHidden, lineDiffStat, matchesQuery } from "./util";
+
+describe("lineDiffStat", () => {
+  it("is 0/0 for identical text", () => {
+    expect(lineDiffStat("a\nb\nc", "a\nb\nc")).toEqual({ added: 0, removed: 0 });
+  });
+
+  it("counts added and removed lines", () => {
+    expect(lineDiffStat("a\nb", "a\nb\nc")).toEqual({ added: 1, removed: 0 });
+    expect(lineDiffStat("a\nb\nc", "a\nc")).toEqual({ added: 0, removed: 1 });
+    expect(lineDiffStat("a\nb\nc", "a\nX\nc")).toEqual({ added: 1, removed: 1 });
+  });
+
+  it("is order-insensitive (multiset) but counts net duplicates", () => {
+    expect(lineDiffStat("a\na", "a")).toEqual({ added: 0, removed: 1 });
+    expect(lineDiffStat("x\ny", "y\nx")).toEqual({ added: 0, removed: 0 });
+  });
+});
 
 describe("debounce", () => {
   afterEach(() => vi.useRealTimers());

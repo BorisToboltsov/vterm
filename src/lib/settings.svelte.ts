@@ -87,6 +87,23 @@ export interface HighlightRule {
   background: boolean; // colour the background instead of the text
 }
 
+/** Config-editor behaviour (Phase 12.3). */
+export interface EditorSettings {
+  /** Show a before/after diff dialog before writing a changed file to the server. */
+  diffBeforeSave: boolean;
+  /** Lint YAML/JSON (and other Lezer langs) in the editor and warn before saving. */
+  lint: boolean;
+}
+
+/** SFTP behaviour (Phase 12). */
+export interface SftpSettings {
+  /** Largest file (in MB) that may be opened in the in-app editor. */
+  maxOpenMb: number;
+}
+
+/** Hard ceiling (MB) for the editor open size — the setting is clamped to this. */
+export const MAX_OPEN_MB_LIMIT = 64;
+
 /** What a session recording captures (mirrors `RecordMode` parsing in Rust). */
 export type RecordMode = "full" | "fullNoTiming" | "commands";
 
@@ -138,6 +155,10 @@ export interface Settings {
   recordMode: RecordMode;
   /** Pause recording after this many seconds idle on the active tab (0 = never). */
   recordIdlePauseSecs: number;
+  // Config editor (Phase 12)
+  editor: EditorSettings;
+  // SFTP (Phase 12)
+  sftp: SftpSettings;
   // Security
   hostKeyPolicy: HostKeyPolicy;
 }
@@ -240,8 +261,16 @@ const DEFAULTS: Settings = {
   recordMaskPasswords: true,
   recordMode: "full",
   recordIdlePauseSecs: 20,
+  editor: { diffBeforeSave: true, lint: true },
+  sftp: { maxOpenMb: 2 },
   hostKeyPolicy: "ask",
 };
+
+/** Clamp the editor open-size setting to a sane positive range (1…limit MB). */
+export function clampMaxOpenMb(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? v : DEFAULTS.sftp.maxOpenMb;
+  return Math.min(MAX_OPEN_MB_LIMIT, Math.max(1, Math.round(n)));
+}
 
 const STORAGE_KEY = "vterm.settings";
 
@@ -317,6 +346,8 @@ function load(): Settings {
         typeof raw.recordIdlePauseSecs === "number" && raw.recordIdlePauseSecs >= 0
           ? Math.floor(raw.recordIdlePauseSecs)
           : DEFAULTS.recordIdlePauseSecs,
+      editor: { ...DEFAULTS.editor, ...(raw.editor ?? {}) },
+      sftp: { maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb) },
     };
   } catch {
     return {
@@ -327,6 +358,8 @@ function load(): Settings {
       smartLogs: { ...DEFAULTS.smartLogs },
       highlightRules: defaultHighlightRules(),
       searchOptions: { ...DEFAULTS.searchOptions },
+      editor: { ...DEFAULTS.editor },
+      sftp: { ...DEFAULTS.sftp },
     };
   }
 }
@@ -350,6 +383,8 @@ export function resetSettings(): void {
     smartLogs: { ...DEFAULTS.smartLogs },
     highlightRules: defaultHighlightRules(),
     searchOptions: { ...DEFAULTS.searchOptions },
+    editor: { ...DEFAULTS.editor },
+    sftp: { ...DEFAULTS.sftp },
   });
 }
 
@@ -369,6 +404,8 @@ export function applyImportedSettings(raw: unknown): void {
     smartLogs: { ...DEFAULTS.smartLogs },
     highlightRules: defaultHighlightRules(),
     searchOptions: { ...DEFAULTS.searchOptions },
+    editor: { ...DEFAULTS.editor },
+    sftp: { ...DEFAULTS.sftp },
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -378,6 +415,8 @@ export function applyImportedSettings(raw: unknown): void {
     "smartLogs",
     "highlightRules",
     "searchOptions",
+    "editor",
+    "sftp",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -405,6 +444,12 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.searchOptions && typeof r.searchOptions === "object") {
     next.searchOptions = { ...DEFAULTS.searchOptions, ...(r.searchOptions as Partial<SearchOptions>) };
+  }
+  if (r.editor && typeof r.editor === "object") {
+    next.editor = { ...DEFAULTS.editor, ...(r.editor as Partial<EditorSettings>) };
+  }
+  if (r.sftp && typeof r.sftp === "object") {
+    next.sftp = { maxOpenMb: clampMaxOpenMb((r.sftp as Partial<SftpSettings>).maxOpenMb) };
   }
   Object.assign(settings, next);
 }

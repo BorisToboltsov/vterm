@@ -52,7 +52,9 @@
   import type { ConnPhase } from "$lib/connphase";
   import SftpPanel from "$lib/SftpPanel.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
-  import { editorLangFor } from "$lib/editorlang";
+  import DiffModal from "$lib/DiffModal.svelte";
+  import { editorLangOrPlain } from "$lib/editorlang";
+  import { lineDiffStat } from "$lib/util";
   import {
     getWorkspace,
     addEditor,
@@ -101,6 +103,7 @@
     setRecordingPaused,
     setRecordingMeta,
     deleteRecording,
+    annotateRecording,
     fetchMetrics,
   } from "$lib/api";
   import { getVersion } from "@tauri-apps/api/app";
@@ -700,13 +703,17 @@
   // ── Config editor (Phase 12) ────────────────────────────────────────────────
   let savingEditorId = $state<string | null>(null);
   let closeEditorConfirm = $state<{ sid: string; doc: EditorDoc } | null>(null);
+  // Pre-save diff confirmation (settings-gated) and conflict resolution.
+  let diffSave = $state<{ sid: string; doc: EditorDoc } | null>(null);
+  let conflict = $state<{ sid: string; doc: EditorDoc; serverText: string } | null>(null);
 
   /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
   async function openFileInEditor(path: string, name: string) {
     const sid = tabsState.activeId;
     if (!sid) return;
-    const lang = editorLangFor(name);
-    if (!lang) return; // not an editable type — leave SFTP's download behaviour
+    // Any file opens in the editor; unknown/extensionless types fall back to plain
+    // text (binary/oversize files are still rejected by the backend read below).
+    const lang = editorLangOrPlain(name);
     const existing = findEditorByPath(sid, path);
     if (existing) {
       setActiveView(sid, existing.id);
@@ -715,7 +722,7 @@
     // Read first, so binary/too-large files just toast instead of opening a tab.
     let file;
     try {
-      file = await sftpReadText(sid, path);
+      file = await sftpReadText(sid, path, settings.sftp.maxOpenMb * 1024 * 1024);
     } catch (e) {
       notifyError(String(e));
       return;
@@ -724,20 +731,70 @@
     fillEditor(sid, id, file);
   }
 
-  /** Save editor content back to the server (basic save; diff/conflict UI = 12.3). */
-  async function saveEditor(sid: string, doc: EditorDoc) {
-    if (doc.readOnly || savingEditorId) return;
+  /** Save trigger: nothing to do if unchanged; show the diff first when enabled. */
+  function saveEditor(sid: string, doc: EditorDoc) {
+    if (doc.readOnly || savingEditorId || doc.content === doc.baseContent) return;
+    if (settings.editor.diffBeforeSave) {
+      diffSave = { sid, doc };
+      return;
+    }
+    void doWriteEditor(sid, doc, doc.baseSha256);
+  }
+
+  /** Actually write to the server. `expectedSha` null = force overwrite (conflict). */
+  async function doWriteEditor(sid: string, doc: EditorDoc, expectedSha: string | null) {
+    if (savingEditorId) return;
     savingEditorId = doc.id;
     try {
-      const res = await sftpWriteText(sid, doc.path, doc.content, doc.eol, doc.baseSha256);
+      const before = doc.baseContent;
+      const res = await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha);
+      const stat = lineDiffStat(before, doc.content);
       markSaved(sid, doc.id, res);
       notifySuccess(t("editor.saved", { name: doc.name }));
+      // Audit trail (Phase 11 tie-in): record the edit if the session is recording.
+      if (isRecording(sid)) {
+        void annotateRecording(
+          sid,
+          t("editor.auditEdit", { path: doc.path, added: stat.added, removed: stat.removed }),
+        );
+      }
     } catch (e) {
-      if (isFileChangedError(e)) notifyError(t("editor.conflict", { name: doc.name }));
-      else notifyError(String(e));
+      if (isFileChangedError(e)) {
+        // Fetch the server's current text and let the user resolve the conflict.
+        try {
+          const cur = await sftpReadText(sid, doc.path);
+          conflict = { sid, doc, serverText: cur.content };
+        } catch {
+          notifyError(t("editor.conflict", { name: doc.name }));
+        }
+      } else {
+        notifyError(String(e));
+      }
     } finally {
       savingEditorId = null;
     }
+  }
+
+  function confirmDiffSave() {
+    const s = diffSave;
+    diffSave = null;
+    if (s) void doWriteEditor(s.sid, s.doc, s.doc.baseSha256);
+  }
+
+  /** Conflict: overwrite the server's newer version with mine (skip the hash check). */
+  function overwriteConflict() {
+    const c = conflict;
+    conflict = null;
+    if (c) void doWriteEditor(c.sid, c.doc, null);
+  }
+
+  /** Conflict: discard my changes and reopen the file fresh from the server. */
+  function reopenConflict() {
+    const c = conflict;
+    conflict = null;
+    if (!c) return;
+    closeEditorStore(c.sid, c.doc.id);
+    void openFileInEditor(c.doc.path, c.doc.name);
   }
 
   /** Close an editor sub-tab, confirming first when it has unsaved changes. */
@@ -1392,6 +1449,50 @@
   <span class="text-white">{closeEditorConfirm?.doc.name}</span>
   {t("editor.discardBody2")}
 </ConfirmDialog>
+
+<!-- Pre-save diff: server version ⇄ what we'll write (settings-gated) -->
+<DiffModal
+  open={!!diffSave}
+  title={diffSave ? t("editor.diffSaveTitle", { name: diffSave.doc.name }) : ""}
+  original={diffSave?.doc.baseContent ?? ""}
+  modified={diffSave?.doc.content ?? ""}
+  originalLabel={t("editor.serverVersion")}
+  modifiedLabel={t("editor.yourVersion")}
+  onclose={() => (diffSave = null)}
+>
+  <button
+    class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+    onclick={() => (diffSave = null)}>{t("common.cancel")}</button
+  >
+  <button
+    class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500"
+    onclick={confirmDiffSave}>{t("editor.save")}</button
+  >
+</DiffModal>
+
+<!-- Conflict: the file changed on the server since it was opened -->
+<DiffModal
+  open={!!conflict}
+  title={conflict ? t("editor.conflictTitle", { name: conflict.doc.name }) : ""}
+  original={conflict?.serverText ?? ""}
+  modified={conflict?.doc.content ?? ""}
+  originalLabel={t("editor.serverNow")}
+  modifiedLabel={t("editor.yourVersion")}
+  onclose={() => (conflict = null)}
+>
+  <button
+    class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+    onclick={() => (conflict = null)}>{t("common.cancel")}</button
+  >
+  <button
+    class="rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+    onclick={reopenConflict}>{t("editor.reopen")}</button
+  >
+  <button
+    class="rounded bg-danger px-3 py-1 text-sm text-panel-alt hover:opacity-90"
+    onclick={overwriteConflict}>{t("editor.overwrite")}</button
+  >
+</DiffModal>
 
 <!-- Name/describe (or discard) a recording right after stopping it -->
 <RecordingSaveDialog

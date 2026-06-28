@@ -268,7 +268,16 @@ export function editorLangFor(name: string): EditorLang | null {
   return EXT_LANG[fileExt(name)] ?? null;
 }
 
-/** True when double-clicking the file opens the in-app editor. */
+/** True when a file has a recognised editor language (used for hints, not gating). */
 export function isEditable(name: string): boolean {
   return editorLangFor(name) !== null;
+}
+
+/**
+ * The editor language for a file, always resolved — falling back to plain text for
+ * unknown/extensionless files. Any file can be opened in the editor (binary/oversize
+ * files are still rejected by the backend read guard, not here).
+ */
+export function editorLangOrPlain(name: string): EditorLang {
+  return editorLangFor(name) ?? TEXT;
 }

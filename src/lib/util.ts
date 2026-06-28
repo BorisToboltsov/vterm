@@ -17,6 +17,29 @@ export function matchesQuery(haystack: string, query: string): boolean {
   return q.split(/\s+/).every((term) => hay.includes(term));
 }
 
+/**
+ * Order-insensitive line change stat between two texts: how many distinct lines
+ * were added and removed (multiset difference). Good enough for an audit note
+ * ("3 added, 1 removed") without a full LCS diff; identical text → 0/0.
+ */
+export function lineDiffStat(
+  oldText: string,
+  newText: string,
+): { added: number; removed: number } {
+  const counts = (text: string): Map<string, number> => {
+    const m = new Map<string, number>();
+    for (const line of text.split("\n")) m.set(line, (m.get(line) ?? 0) + 1);
+    return m;
+  };
+  const a = counts(oldText);
+  const b = counts(newText);
+  let added = 0;
+  let removed = 0;
+  for (const [line, n] of b) added += Math.max(0, n - (a.get(line) ?? 0));
+  for (const [line, n] of a) removed += Math.max(0, n - (b.get(line) ?? 0));
+  return { added, removed };
+}
+
 export interface Debounced<A extends unknown[]> {
   (...args: A): void;
   /** Cancel a pending trailing call. */

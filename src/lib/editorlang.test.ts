@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baseName, fileExt, editorLangFor, isEditable } from "./editorlang";
+import { baseName, fileExt, editorLangFor, editorLangOrPlain, isEditable } from "./editorlang";
 
 describe("baseName / fileExt", () => {
   it("baseName takes the last path segment", () => {
@@ -111,5 +111,18 @@ describe("isEditable", () => {
     expect(isEditable("values.yaml")).toBe(true);
     expect(isEditable("/etc/hosts.bin")).toBe(false);
     expect(isEditable("archive.zip")).toBe(false);
+  });
+});
+
+describe("editorLangOrPlain", () => {
+  it("returns the known language when recognised", () => {
+    expect(editorLangOrPlain("a.yaml").kind).toBe("yaml");
+    expect(editorLangOrPlain("Dockerfile").kind).toBe("dockerfile");
+  });
+
+  it("falls back to plain text for unknown / extensionless files", () => {
+    expect(editorLangOrPlain("/etc/hosts")).toEqual({ kind: "plain", label: "Text" });
+    expect(editorLangOrPlain("weird.qwerty")).toEqual({ kind: "plain", label: "Text" });
+    expect(editorLangOrPlain("noext")).toEqual({ kind: "plain", label: "Text" });
   });
 });

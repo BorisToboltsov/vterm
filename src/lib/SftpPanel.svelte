@@ -17,7 +17,6 @@
     type SftpProgress,
   } from "./api";
   import type { FileEntry } from "./types";
-  import { isEditable } from "./editorlang";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
@@ -124,8 +123,10 @@
   }
 
   function open(entry: FileEntry) {
+    // Any file can be opened in the editor (binary/oversize files are rejected by
+    // the backend read with a toast); directories navigate.
     if (entry.isDir) load(entry.path);
-    else if (onOpenFile && isEditable(entry.name)) onOpenFile(entry.path, entry.name);
+    else onOpenFile?.(entry.path, entry.name);
   }
 
   function goUp() {
@@ -431,7 +432,7 @@
             {/if}
           </button>
           <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
-            {#if !entry.isDir && onOpenFile && isEditable(entry.name)}
+            {#if !entry.isDir && onOpenFile}
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
                 title={t("sftp.editFile")}

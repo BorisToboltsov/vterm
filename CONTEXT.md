@@ -600,11 +600,13 @@ pnpm test:coverage
 > копипастой), как уже пропускает `.xterm`.
 
 - **Чтение/запись текста — в бэкенде** ([sftp.rs](src-tauri/src/sftp.rs)), как и весь
-  SFTP. `sftp_read_text(path)` → `TextFile{content, eol, size, mode, mtime, sha256,
-  readOnly}`: гарды `MAX_EDIT_SIZE` (2 МБ) и бинарь (NUL-байт **или** не-UTF-8) → отказ
-  «качай как файл, не редактор». Контент **нормализуется в LF** для редактора, исходный
-  стиль переносов несётся в `eol` и **восстанавливается на запись** (не переписываем
-  молча CRLF-конфиг в LF).
+  SFTP. `sftp_read_text(path, maxBytes)` → `TextFile{content, eol, size, mode, mtime, sha256,
+  readOnly}`: гарды по размеру и бинарь (NUL-байт **или** не-UTF-8) → отказ «качай как файл,
+  не редактор». **Лимит размера настраиваемый** — `settings.sftp.maxOpenMb` (дефолт 2 МБ),
+  фронт шлёт его в байтах, backend клампит в `[1, HARD_MAX_EDIT_SIZE=64 МБ]`
+  (`MAX_EDIT_SIZE` = дефолт при отсутствии). Чистый `clampMaxOpenMb` — в
+  [settings.svelte.ts](src/lib/settings.svelte.ts). Контент **нормализуется в LF** для
+  редактора, исходный стиль переносов несётся в `eol` и **восстанавливается на запись**.
 - **Запись — атомарная и неразрушающая.** `sftp_write_text(path, content, eol,
   expectedSha256?)` пишет **sibling-temp** (`.{name}.vterm-tmp-{nanos}`) → `set_metadata`
   (сохраняет **mode** оригинала) → `rename` поверх цели (SSH_FXP_RENAME у OpenSSH падает
@@ -634,14 +636,16 @@ pnpm test:coverage
   `@codemirror/*` + `@codemirror/legacy-modes`, без CDN — `autonomy.guard`). **Тема — из
   токенов активной темы** ([cmtheme.ts](src/lib/cmtheme.ts) `editorTheme(activeTerminalTheme())`,
   live-реконфиг через `Compartment` при смене темы): дизайн-система не нарушается, сырых hex в
-  редакторе нет. Язык по имени файла — чистый [editorlang.ts](src/lib/editorlang.ts)
-  (`editorLangFor`/`isEditable`, расширения + well-known dotfile/extensionless имена; неизвестное
-  редактируемое → plain). Покрыто **50+ языков/форматов**: официальные Lezer-пакеты Python/
-  JavaScript/TypeScript/Java + всё остальное из `@codemirror/legacy-modes` (уже в дереве — новые
-  языки оттуда **не требуют установки**): Shell·bash/PowerShell, Dockerfile, Go/Rust/Ruby/C·C++·C#/
-  SQL, HTML/CSS·SCSS·Less/XML, nginx/CMake/diff/Protobuf/Puppet, Groovy·Gradle/Scala/Kotlin/Dart/
-  Swift/Clojure/Haskell/Erlang/Elm/R/Julia/Lua/Perl/… (`html` берётся из mode `xml`, `css/sCSS/less`
-  из mode `css`).
+  редакторе нет. **Открыть можно ЛЮБОЙ файл** (двойной клик/карандаш в SFTP на чём угодно,
+  включая без расширения): язык по имени — чистый [editorlang.ts](src/lib/editorlang.ts)
+  (`editorLangFor` → язык или `null`; **`editorLangOrPlain` всегда отдаёт язык**, неизвестное →
+  `plain` Text — его и зовёт `openFileInEditor`). `isEditable` — лишь признак «известный тип»
+  (для подсказок), **не** гейт открытия; бинарь/слишком большой отсекает backend-read (тост).
+  Покрыто **50+ языков/форматов**: официальные Lezer-пакеты Python/JavaScript/TypeScript/Java +
+  «зелёная группа» HTML/CSS/SCSS/LESS/XML/C·C++/Rust/Go/SQL; всё остальное — из
+  `@codemirror/legacy-modes` (уже в дереве — новые языки оттуда **не требуют установки**):
+  Shell·bash/PowerShell, Dockerfile, Ruby/C#, nginx/CMake/diff/Protobuf/Puppet, Groovy·Gradle/
+  Scala/Kotlin/Dart/Swift/Clojure/Haskell/Erlang/Elm/R/Julia/Lua/Perl/….
   **Новый язык = запись в `EXT_LANG`/`NAME_LANG` + ветка в `langExt` EditorTab** (официальный
   пакет ставить только если в legacy-modes нет нужного режима). Метки языков (YAML/JSON/…)
   **не переводятся** (как бейджи логов/имена тем).
@@ -649,12 +653,36 @@ pnpm test:coverage
   глобальный `handleClipboardShortcut` его **не трогает** (как `.xterm`). Cmd/Ctrl+C/X/V
   привязаны внутри EditorTab к **нативному** буферу (`clipboard.ts`), как у xterm в Terminal —
   не убирать (на WKWebView без Edit-меню иначе копипасты нет). Cmd/Ctrl+S — сохранение.
-- **Сохранение (базовое в 12.2).** Клик по редактируемому файлу в SFTP открывает редактор
-  (read-text из 12.1; бинарь/большой → тост, без вкладки). Save шлёт `sftp_write_text` с
-  `baseSha256`, на успех `markSaved` снимает dirty; `file-changed` пока **тост**. Закрытие
-  изменённого редактора — через `ConfirmDialog` (правило «деструктив с подтверждением»).
-  *Diff-перед-сохранением (по настройке), явный UI разрешения конфликта, аудит-связка с
-  записью сессии и офлайн-линт — 12.3.*
+- **Сохранение.** Клик по любому файлу в SFTP открывает редактор (read-text из 12.1;
+  бинарь/большой → тост, без вкладки). Save шлёт `sftp_write_text` с `baseSha256`, на успех
+  `markSaved` снимает dirty. Закрытие изменённого редактора — через `ConfirmDialog`.
+- **Diff перед сохранением (12.3) — по настройке** `settings.editor.diffBeforeSave` (дефолт on):
+  [DiffModal.svelte](src/lib/DiffModal.svelte) на CM `MergeView` (read-only, тема из активной
+  темы; исключён из coverage как Terminal/EditorTab). Выключено → пишем сразу. Тот же DiffModal —
+  для **разрешения конфликта** `file-changed`: подтягиваем текущий серверный текст и даём
+  **Переоткрыть** (`closeEditor`+`openFileInEditor` заново) / **Перезаписать** (`doWriteEditor`
+  с `expectedSha=null` — форс) / Отмена. Поток в [+page.svelte](src/routes/+page.svelte):
+  `saveEditor` (гейт+diff) → `doWriteEditor(expectedSha)` → `markSaved`/конфликт.
+- **Аудит-связка с Фазой 11.** На успешном сохранении при активной записи (`isRecording`) фронт
+  зовёт `annotate_recording(session_id, text)` → `SshSession/LocalPty::annotate_recording` →
+  `Recorder::annotate` пишет **видимое cyan `o`-событие** `[vterm] правка {path} (+N −M строк)`
+  в asciicast (пишется **даже на паузе** — это намеренное низкочастотное событие). Метрика строк —
+  чистый `lineDiffStat` ([util.ts](src/lib/util.ts), multiset-разница). Новые «аудит-факты»
+  редактора веди тем же путём (annotate), а не отдельным каналом.
+- **Офлайн-линт (12.3) — по настройке** `settings.editor.lint` (дефолт on, `lintC`-Compartment,
+  live-тоггл): JSON — точный `jsonParseLinter` (`@codemirror/lang-json`); прочие **Lezer**-языки —
+  общий линтер по error-нодам `syntaxTree` + `lintGutter`. На Lezer (→ синтаксический линт):
+  YAML/Python/JS/TS/Java + «зелёная группа» **HTML/CSS/SCSS/LESS/XML/C·C++/Rust/Go/SQL**
+  (официальные `@codemirror/lang-*`). StreamLanguage-режимы (legacy-modes: shell/toml/ini/ruby/
+  kotlin/…) error-нод не дают → линта нет (без ложных срабатываний). Сети нет.
+  **Правило: чтобы включить синтаксический линт для legacy-языка — заменить его режим в `langExt`
+  на официальный `@codemirror/lang-*`** (если существует); generic-линтер подхватит сам, доп. кода
+  не нужно. Серверный линт реальными инструментами по SSH (`nginx -t`, `yamllint`, `hadolint`…) —
+  отдельная под-фаза 12.7; «тяжёлые» браузерные линтеры (shellcheck/ESLint/ruff WASM) — опционально
+  (см. конец Фазы 12 в ROADMAP).
+- **Настройки редактора** — `settings.editor` (`EditorSettings{diffBeforeSave,lint}`), раздел
+  «Редактор конфигов» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte) (`SECTIONS` id
+  `editor`, двуязычные keywords); как все настройки — мерджится в load/reset/applyImportedSettings.
 
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 

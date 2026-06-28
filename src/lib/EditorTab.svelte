@@ -15,27 +15,35 @@
     StreamLanguage,
     bracketMatching,
     indentOnInput,
+    syntaxTree,
   } from "@codemirror/language";
+  import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
   import { yaml } from "@codemirror/lang-yaml";
-  import { json } from "@codemirror/lang-json";
+  import { json, jsonParseLinter } from "@codemirror/lang-json";
   import { markdown } from "@codemirror/lang-markdown";
   import { python } from "@codemirror/lang-python";
   import { javascript } from "@codemirror/lang-javascript";
   import { java } from "@codemirror/lang-java";
+  // Official Lezer packages for the "green group": these parse to a syntax tree,
+  // so the generic error-node linter below gives them syntax linting for free.
+  import { html } from "@codemirror/lang-html";
+  import { css } from "@codemirror/lang-css";
+  import { sass } from "@codemirror/lang-sass";
+  import { less } from "@codemirror/lang-less";
+  import { xml } from "@codemirror/lang-xml";
+  import { cpp } from "@codemirror/lang-cpp";
+  import { rust } from "@codemirror/lang-rust";
+  import { go } from "@codemirror/lang-go";
+  import { sql } from "@codemirror/lang-sql";
   import { shell } from "@codemirror/legacy-modes/mode/shell";
   import { toml } from "@codemirror/legacy-modes/mode/toml";
   import { properties } from "@codemirror/legacy-modes/mode/properties";
   import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
-  import { go } from "@codemirror/legacy-modes/mode/go";
-  import { rust } from "@codemirror/legacy-modes/mode/rust";
   import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-  import { c, cpp, csharp, scala, kotlin, dart } from "@codemirror/legacy-modes/mode/clike";
-  import { standardSQL } from "@codemirror/legacy-modes/mode/sql";
+  import { csharp, scala, kotlin, dart } from "@codemirror/legacy-modes/mode/clike";
   import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
   import { lua } from "@codemirror/legacy-modes/mode/lua";
   import { perl } from "@codemirror/legacy-modes/mode/perl";
-  import { css, sCSS, less } from "@codemirror/legacy-modes/mode/css";
-  import { xml, html } from "@codemirror/legacy-modes/mode/xml";
   import { nginx } from "@codemirror/legacy-modes/mode/nginx";
   import { cmake } from "@codemirror/legacy-modes/mode/cmake";
   import { diff } from "@codemirror/legacy-modes/mode/diff";
@@ -88,6 +96,32 @@
   let host: HTMLDivElement;
   let view: EditorView | undefined;
   const themeC = new Compartment();
+  const lintC = new Compartment();
+
+  /** Generic linter: flag error nodes in the syntax tree (works for any Lezer
+   *  language — YAML/JSON/Python/JS/…; StreamLanguage modes simply yield none). */
+  function syntaxErrorLinter() {
+    return linter((v) => {
+      const diags: Diagnostic[] = [];
+      syntaxTree(v.state).iterate({
+        enter: (node) => {
+          if (!node.type.isError) return;
+          const to =
+            node.to > node.from ? node.to : Math.min(node.from + 1, v.state.doc.length);
+          diags.push({ from: node.from, to, severity: "error", message: t("editor.syntaxError") });
+        },
+      });
+      return diags;
+    });
+  }
+
+  /** Lint extensions for the current doc, gated by the setting. JSON gets precise
+   *  parse messages; everything else uses the generic syntax-error linter. */
+  function lintExt() {
+    if (!settings.editor.lint) return [];
+    const which = doc.lang.kind === "json" ? linter(jsonParseLinter()) : syntaxErrorLinter();
+    return [lintGutter(), which];
+  }
 
   /** Resolve a language kind to a CodeMirror language extension. */
   function langExt(kind: EditorLangKind): Extension {
@@ -115,19 +149,18 @@
       case "dockerfile":
         return StreamLanguage.define(dockerFile);
       case "go":
-        return StreamLanguage.define(go);
+        return go();
       case "rust":
-        return StreamLanguage.define(rust);
+        return rust();
       case "ruby":
         return StreamLanguage.define(ruby);
       case "c":
-        return StreamLanguage.define(c);
       case "cpp":
-        return StreamLanguage.define(cpp);
+        return cpp();
       case "csharp":
         return StreamLanguage.define(csharp);
       case "sql":
-        return StreamLanguage.define(standardSQL);
+        return sql();
       case "powershell":
         return StreamLanguage.define(powerShell);
       case "lua":
@@ -135,15 +168,15 @@
       case "perl":
         return StreamLanguage.define(perl);
       case "html":
-        return StreamLanguage.define(html);
+        return html();
       case "css":
-        return StreamLanguage.define(css);
+        return css();
       case "scss":
-        return StreamLanguage.define(sCSS);
+        return sass({ indented: false });
       case "less":
-        return StreamLanguage.define(less);
+        return less();
       case "xml":
-        return StreamLanguage.define(xml);
+        return xml();
       case "nginx":
         return StreamLanguage.define(nginx);
       case "cmake":
@@ -265,6 +298,7 @@
         EditorView.lineWrapping,
         EditorState.readOnly.of(doc.readOnly),
         langExt(doc.lang.kind),
+        lintC.of(lintExt()),
         themeC.of(editorTheme(activeTerminalTheme())),
         // Mod+S saves; Mod+C/X/V use the backend clipboard. These sit before the
         // default keymap so they win.
@@ -289,6 +323,12 @@
     void settings.theme;
     void settings.customTheme;
     view?.dispatch({ effects: themeC.reconfigure(editorTheme(activeTerminalTheme())) });
+  });
+
+  // Toggle linting live when the setting changes.
+  $effect(() => {
+    void settings.editor.lint;
+    view?.dispatch({ effects: lintC.reconfigure(lintExt()) });
   });
 
   onDestroy(() => view?.destroy());

@@ -363,9 +363,16 @@ export function sftpCreateFile(sessionId: string, path: string): Promise<void> {
   return invoke<void>("sftp_create_file", { sessionId, path });
 }
 
-/** Open a remote file as text in the editor (throws on large/binary files). */
-export function sftpReadText(sessionId: string, path: string): Promise<TextFile> {
-  return invoke<TextFile>("sftp_read_text", { sessionId, path });
+/**
+ * Open a remote file as text in the editor (throws on large/binary files).
+ * `maxBytes` is the configured open-size limit (backend clamps it to a hard cap).
+ */
+export function sftpReadText(
+  sessionId: string,
+  path: string,
+  maxBytes?: number,
+): Promise<TextFile> {
+  return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes });
 }
 
 /**
@@ -526,6 +533,11 @@ export function stopRecording(sessionId: string): Promise<string | null> {
 /** Pause or resume the active recording (tab switched away / idle). */
 export function setRecordingPaused(sessionId: string, paused: boolean): Promise<void> {
   return invoke<void>("set_recording_paused", { sessionId, paused });
+}
+
+/** Write an audit annotation (e.g. an in-app config edit) into the recording. */
+export function annotateRecording(sessionId: string, text: string): Promise<void> {
+  return invoke<void>("annotate_recording", { sessionId, text });
 }
 
 /** List stored recordings, newest first. */

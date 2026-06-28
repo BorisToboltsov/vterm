@@ -941,6 +941,25 @@ async fn set_recording_paused(
     Ok(())
 }
 
+/// Write an audit annotation (e.g. "edited /etc/nginx.conf") into the session's
+/// active recording. No-op if the session isn't recording.
+#[tauri::command]
+async fn annotate_recording(
+    state: State<'_, AppState>,
+    session_id: String,
+    text: String,
+) -> AppResult<()> {
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        session.annotate_recording(&text);
+    } else {
+        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+        if let Some(pty) = local {
+            pty.annotate_recording(&text);
+        }
+    }
+    Ok(())
+}
+
 /// List stored recordings (newest first), reading metadata from each header.
 #[tauri::command]
 fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
@@ -1614,14 +1633,20 @@ async fn sftp_create_file(
 }
 
 /// Open a remote file as text in the in-app editor (rejects large/binary files).
+/// `max_bytes` is the configurable open-size limit; clamped to a hard ceiling so a
+/// bad setting can't slurp a huge file into memory.
 #[tauri::command]
 async fn sftp_read_text(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
+    max_bytes: Option<u64>,
 ) -> AppResult<sftp::TextFile> {
+    let limit = max_bytes
+        .unwrap_or(sftp::MAX_EDIT_SIZE)
+        .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
     let sftp = get_sftp(&state, &session_id).await?;
-    sftp::read_text(&sftp, &path).await
+    sftp::read_text(&sftp, &path, limit).await
 }
 
 /// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
@@ -1919,6 +1944,7 @@ pub fn run() {
             start_recording,
             stop_recording,
             set_recording_paused,
+            annotate_recording,
             list_recordings,
             delete_recording,
             set_recording_meta,
