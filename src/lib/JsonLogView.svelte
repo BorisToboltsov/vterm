@@ -37,6 +37,8 @@
   let activeLevels = $state<LevelCat[]>([...LEVEL_CATS]);
   let extraColumns = $state<string[]>([]);
   let showColumns = $state(false);
+  // Narrow toolbars collapse the level chips behind this funnel popover.
+  let showLevels = $state(false);
   let confirmClear = $state(false);
   let expanded = $state(new Set<number>());
   let scroller = $state<HTMLDivElement>();
@@ -121,76 +123,108 @@
 </script>
 
 <div class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view">
-  <div class="flex flex-wrap items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1.5">
-    <Icon name="search" size={14} class="text-muted" />
-    <input
-      bind:value={query}
-      type="text"
-      spellcheck="false"
-      placeholder={t("jsonlog.filter")}
-      aria-label={t("jsonlog.filter")}
-      class="min-w-24 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
-    />
-    <!-- Clear accumulated rows (confirmed) — e.g. before viewing a different log -->
+  <!-- Toolbar: the view toggle is pinned to the top-right and never wraps. As a
+       `@container`, its own width (not the viewport) drives the narrow-mode
+       collapses below — level chips fold into a funnel, the toggle drops its
+       labels — and anything still too wide reflows onto a second row. -->
+  {#snippet levelChip(cat: LevelCat)}
     <button
       type="button"
-      onclick={() => (confirmClear = true)}
-      class="rounded px-2 py-0.5 text-xs font-medium text-muted hover:text-danger"
+      onclick={() => toggleLevel(cat)}
+      aria-pressed={activeLevels.includes(cat)}
+      aria-label={t("jsonlog.toggleLevel", { level: cat })}
+      title={t("jsonlog.toggleLevel", { level: cat })}
+      class="rounded px-1.5 py-0.5 text-[11px] font-medium {activeLevels.includes(cat)
+        ? `bg-edge ${levelClass(cat)}`
+        : 'text-muted/50 hover:text-muted'}">{cat}</button
     >
-      {t("jsonlog.clear")}
-    </button>
-    <span class="h-4 w-px bg-edge"></span>
-    <!-- Level filter chips -->
-    <div class="flex items-center gap-1">
-      {#each LEVEL_CATS as cat}
-        <button
-          type="button"
-          onclick={() => toggleLevel(cat)}
-          aria-pressed={activeLevels.includes(cat)}
-          aria-label={t("jsonlog.toggleLevel", { level: cat })}
-          title={t("jsonlog.toggleLevel", { level: cat })}
-          class="rounded px-1.5 py-0.5 text-[11px] font-medium {activeLevels.includes(cat)
-            ? `bg-edge ${levelClass(cat)}`
-            : 'text-muted/50 hover:text-muted'}">{cat}</button
-        >
-      {/each}
-    </div>
-    <!-- Column picker -->
-    <div class="relative">
+  {/snippet}
+  <div class="@container flex items-start gap-2 border-b border-edge bg-panel-alt px-2 py-1.5">
+    <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+      <Icon name="search" size={14} class="shrink-0 text-muted" />
+      <input
+        bind:value={query}
+        type="text"
+        spellcheck="false"
+        placeholder={t("jsonlog.filter")}
+        aria-label={t("jsonlog.filter")}
+        class="min-w-16 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
+      />
+      <!-- Clear accumulated rows (confirmed) — e.g. before viewing a different log -->
       <button
         type="button"
-        onclick={() => (showColumns = !showColumns)}
-        aria-expanded={showColumns}
-        title={t("jsonlog.columns")}
-        aria-label={t("jsonlog.columns")}
-        class="flex items-center gap-1 rounded p-1 text-muted hover:text-accent"
+        onclick={() => (confirmClear = true)}
+        class="shrink-0 rounded px-2 py-0.5 text-xs font-medium text-muted hover:text-danger"
       >
-        <Icon name="table" size={14} />
+        {t("jsonlog.clear")}
       </button>
-      {#if showColumns}
-        <div
-          class="absolute right-0 top-7 z-20 max-h-64 w-44 overflow-auto rounded border border-edge bg-panel-alt p-1.5 shadow-lg"
+      <span class="h-4 w-px shrink-0 bg-edge"></span>
+      <!-- Level filter: inline chips when wide, a funnel popover when narrow.
+           The chips collapse with enough slack that the row never wraps while
+           they're still inline — only the already-compact row (funnel + icon
+           toggle) may wrap, one item at a time, at extreme narrow widths. -->
+      <div class="hidden shrink-0 items-center gap-1 @min-[680px]:flex">
+        {#each LEVEL_CATS as cat}{@render levelChip(cat)}{/each}
+      </div>
+      <div class="relative shrink-0 @min-[680px]:hidden">
+        <button
+          type="button"
+          onclick={() => (showLevels = !showLevels)}
+          aria-expanded={showLevels}
+          title={t("jsonlog.levels")}
+          aria-label={t("jsonlog.levels")}
+          class="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-muted hover:text-accent"
         >
-          {#if fields.length === 0}
-            <p class="px-1 py-0.5 text-[11px] text-muted">{t("jsonlog.noFields")}</p>
-          {:else}
-            {#each fields as field}
-              <label class="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-muted hover:bg-edge">
-                <input
-                  type="checkbox"
-                  checked={extraColumns.includes(field)}
-                  onchange={() => toggleColumn(field)}
-                />
-                <span class="truncate font-mono">{field}</span>
-              </label>
-            {/each}
-          {/if}
-        </div>
-      {/if}
+          <Icon name="filter" size={13} />
+          <span class="text-[11px] tabular-nums">{activeLevels.length}</span>
+        </button>
+        {#if showLevels}
+          <div
+            class="absolute left-0 top-7 z-20 flex w-max items-center gap-1 rounded border border-edge bg-panel-alt p-1.5 shadow-lg"
+          >
+            {#each LEVEL_CATS as cat}{@render levelChip(cat)}{/each}
+          </div>
+        {/if}
+      </div>
+      <!-- Column picker -->
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          onclick={() => (showColumns = !showColumns)}
+          aria-expanded={showColumns}
+          title={t("jsonlog.columns")}
+          aria-label={t("jsonlog.columns")}
+          class="flex items-center gap-1 rounded p-1 text-muted hover:text-accent"
+        >
+          <Icon name="table" size={14} />
+        </button>
+        {#if showColumns}
+          <div
+            class="absolute left-0 top-7 z-20 max-h-64 w-44 overflow-auto rounded border border-edge bg-panel-alt p-1.5 shadow-lg"
+          >
+            {#if fields.length === 0}
+              <p class="px-1 py-0.5 text-[11px] text-muted">{t("jsonlog.noFields")}</p>
+            {:else}
+              {#each fields as field}
+                <label class="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-muted hover:bg-edge">
+                  <input
+                    type="checkbox"
+                    checked={extraColumns.includes(field)}
+                    onchange={() => toggleColumn(field)}
+                  />
+                  <span class="truncate font-mono">{field}</span>
+                </label>
+              {/each}
+            {/if}
+          </div>
+        {/if}
+      </div>
+      <span class="shrink-0 text-xs tabular-nums text-muted">{filtered.length}</span>
     </div>
-    <span class="shrink-0 text-xs tabular-nums text-muted">{filtered.length}</span>
-    <!-- Raw ↔ Table switch lives at the toolbar's right end in structured mode. -->
-    <ViewModeToggle structured={true} onSelect={(on) => !on && onShowRaw?.()} />
+    <!-- Raw ↔ Table switch — always anchored at the toolbar's top-right corner. -->
+    <div class="shrink-0">
+      <ViewModeToggle compact structured={true} onSelect={(on) => !on && onShowRaw?.()} />
+    </div>
   </div>
 
   {#if entries.length === 0}

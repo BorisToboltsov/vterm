@@ -6,10 +6,20 @@
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
+  // `compact` collapses the labels to icons-only once the surrounding
+  // `@container` toolbar is too narrow — set by JsonLogView; the floating
+  // Terminal.svelte usage leaves it off and always shows the text.
   let {
     structured,
     onSelect,
-  }: { structured: boolean; onSelect: (structured: boolean) => void } = $props();
+    compact = false,
+  }: {
+    structured: boolean;
+    onSelect: (structured: boolean) => void;
+    compact?: boolean;
+  } = $props();
+
+  const labelCls = $derived(compact ? "@max-[460px]:hidden" : "");
 </script>
 
 <div
@@ -28,7 +38,7 @@
       : 'text-muted hover:text-accent'}"
   >
     <Icon name="terminal" size={13} />
-    {t("jsonlog.viewRaw")}
+    <span class={labelCls}>{t("jsonlog.viewRaw")}</span>
   </button>
   <button
     type="button"
@@ -40,6 +50,6 @@
       : 'text-muted hover:text-accent'}"
   >
     <Icon name="table" size={13} />
-    {t("jsonlog.viewTable")}
+    <span class={labelCls}>{t("jsonlog.viewTable")}</span>
   </button>
 </div>
