@@ -151,6 +151,40 @@ describe("invoke wrappers pass the right command + args", () => {
       remoteRoot: "/srv/app",
       actions,
     });
+    await api.sftpGrep("sess", "/srv", "TODO", true, false);
+    expect(invoke).toHaveBeenCalledWith("sftp_grep", {
+      sessionId: "sess",
+      dir: "/srv",
+      query: "TODO",
+      caseInsensitive: true,
+      fixed: false,
+    });
+  });
+
+  it("sftpReadText/WriteText forward sudo + backup options", async () => {
+    await api.sftpReadText("s", "/etc/sudoers", 2048, true, "pw");
+    expect(invoke).toHaveBeenCalledWith("sftp_read_text", {
+      sessionId: "s",
+      path: "/etc/sudoers",
+      maxBytes: 2048,
+      sudo: true,
+      sudoPassword: "pw",
+    });
+    await api.sftpWriteText("s", "/etc/hosts", "x\n", "lf", "sha", {
+      sudo: true,
+      sudoPassword: "pw",
+      backup: true,
+    });
+    expect(invoke).toHaveBeenCalledWith("sftp_write_text", {
+      sessionId: "s",
+      path: "/etc/hosts",
+      content: "x\n",
+      eol: "lf",
+      expectedSha256: "sha",
+      sudo: true,
+      sudoPassword: "pw",
+      backup: true,
+    });
   });
 });
 
@@ -160,6 +194,18 @@ describe("isFileChangedError", () => {
     expect(api.isFileChangedError(new Error("file-changed: x"))).toBe(true);
     expect(api.isFileChangedError("auth-rejected")).toBe(false);
     expect(api.isFileChangedError("some network error")).toBe(false);
+  });
+});
+
+describe("isPermissionError", () => {
+  it("matches permission-denied and no-such-file (the staging-temp quirk)", () => {
+    expect(api.isPermissionError("open /etc/x: Permission denied")).toBe(true);
+    expect(api.isPermissionError("write /etc/.hostname.vterm-tmp-1: No such file: No such file")).toBe(
+      true,
+    );
+    expect(api.isPermissionError(new Error("Permission denied (3)"))).toBe(true);
+    expect(api.isPermissionError("connection reset")).toBe(false);
+    expect(api.isPermissionError("file-changed")).toBe(false);
   });
 });
 

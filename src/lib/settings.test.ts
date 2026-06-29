@@ -126,7 +126,7 @@ describe("smartLogs (Phase 10)", () => {
 
 describe("editor settings (Phase 12)", () => {
   it("defaults to diff-before-save and lint on", () => {
-    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true });
+    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true, backupOnSave: false });
   });
 
   it("merges a partial backup snapshot onto defaults", () => {
@@ -140,7 +140,7 @@ describe("editor settings (Phase 12)", () => {
     settings.editor.diffBeforeSave = false;
     settings.editor.lint = false;
     resetSettings();
-    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true });
+    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true, backupOnSave: false });
   });
 });
 

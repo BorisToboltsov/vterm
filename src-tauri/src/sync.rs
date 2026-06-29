@@ -3,11 +3,18 @@
 //! SSH exec channel (no download); the diff itself is pure TS (`sync.ts`). This
 //! module owns the remote-hash shell command + parser and the apply step.
 
-use crate::error::AppResult;
-use crate::sftp;
+use crate::error::{AppError, AppResult};
+use crate::sftp::{self, apply_eol, detect_eol, looks_binary, sha256_hex, TextFile, WriteResult};
+use crate::ssh::SshSession;
 use russh_sftp::client::SftpSession;
+use russh_sftp::protocol::FileAttributes;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
+
+/// Marker appended to a sudo command to confirm it succeeded (exit status isn't
+/// captured over the exec channel, so a wrong password / failure is detected by
+/// the marker's absence).
+const OK_MARKER: &str = "__VTERM_OK__";
 
 /// One file's hash, relative to the synced root (path uses `/` separators).
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -32,6 +39,53 @@ pub struct SyncStats {
     pub uploaded: u32,
     pub downloaded: u32,
     pub deleted: u32,
+}
+
+/// One content-search hit (Phase 12.6 grep-over-SSH): relative path, line, text.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepMatch {
+    pub path: String,
+    pub line: u32,
+    pub text: String,
+}
+
+/// `grep -rnI` over SSH under `dir`. `-F` (fixed string) or `-E` (regex), optional
+/// case-insensitivity; output capped so a broad search can't flood the channel.
+pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool) -> String {
+    let d = shell_quote(dir);
+    let q = shell_quote(query);
+    let mut flags = String::from("-rnI");
+    if case_insensitive {
+        flags.push('i');
+    }
+    let mode = if fixed { "-F" } else { "-E" };
+    format!("cd -- {d} 2>/dev/null && grep {flags} {mode} -e {q} -- . 2>/dev/null | head -n 1000")
+}
+
+/// Parse `grep -rn` output (`./path:line:text`) into matches; bad lines skipped.
+pub fn parse_grep(out: &str) -> Vec<GrepMatch> {
+    let mut matches = Vec::new();
+    for line in out.lines() {
+        let rest = line.strip_prefix("./").unwrap_or(line);
+        let Some(c1) = rest.find(':') else { continue };
+        let (path, after) = rest.split_at(c1);
+        let after = &after[1..];
+        let Some(c2) = after.find(':') else { continue };
+        let (num, text) = after.split_at(c2);
+        let Ok(line_no) = num.parse::<u32>() else {
+            continue;
+        };
+        if path.is_empty() {
+            continue;
+        }
+        matches.push(GrepMatch {
+            path: path.to_string(),
+            line: line_no,
+            text: text[1..].chars().take(300).collect(),
+        });
+    }
+    matches
 }
 
 /// Single-quote a path for `sh`, escaping embedded single quotes.
@@ -154,6 +208,121 @@ pub async fn apply(
     Ok(stats)
 }
 
+// ── sudo edit (Phase 12.6) ─────────────────────────────────────────────────────
+
+/// Run `inner` under `sudo -S`, feeding `password` on stdin (kept out of the
+/// process list). Returns stdout.
+async fn sudo_run(session: &SshSession, inner: &str, password: &str) -> AppResult<String> {
+    let cmd = format!("sudo -S -p '' {inner}");
+    let mut pw = password.as_bytes().to_vec();
+    pw.push(b'\n');
+    session.run_command_stdin(&cmd, &pw).await
+}
+
+/// Run `inner` under sudo and confirm success via [`OK_MARKER`].
+async fn sudo_ok(session: &SshSession, inner: &str, password: &str) -> AppResult<bool> {
+    let out = sudo_run(session, &format!("{inner} && printf {OK_MARKER}"), password).await?;
+    Ok(out.contains(OK_MARKER))
+}
+
+/// Read a root-owned file as text via `sudo cat` (Phase 12.6 "edit as root").
+pub async fn sudo_read(
+    session: &SshSession,
+    path: &str,
+    max_bytes: u64,
+    password: &str,
+) -> AppResult<TextFile> {
+    if !sudo_ok(session, "true", password).await? {
+        return Err(AppError::Message("sudo authentication failed".into()));
+    }
+    let cmd = format!("cat -- {} | head -c {}", shell_quote(path), max_bytes + 1);
+    let content = sudo_run(session, &cmd, password).await?;
+    let bytes = content.as_bytes();
+    if bytes.len() as u64 > max_bytes {
+        return Err(AppError::Message("file too large to edit".into()));
+    }
+    if looks_binary(bytes) {
+        return Err(AppError::Message("file appears to be binary".into()));
+    }
+    let sha256 = sha256_hex(bytes);
+    Ok(TextFile {
+        eol: detect_eol(&content),
+        size: bytes.len() as u64,
+        mode: None,
+        mtime: None,
+        read_only: false,
+        sha256,
+        content: content.replace("\r\n", "\n"),
+    })
+}
+
+/// Write a root-owned file via sudo: stage a temp in the user's home (mode 0600),
+/// optionally back up, then `sudo cp` over the target (preserving its owner/perms).
+#[allow(clippy::too_many_arguments)]
+pub async fn sudo_write(
+    session: &SshSession,
+    sftp: &SftpSession,
+    path: &str,
+    content: &str,
+    eol: &str,
+    expected_sha256: Option<&str>,
+    backup: bool,
+    password: &str,
+) -> AppResult<WriteResult> {
+    if !sudo_ok(session, "true", password).await? {
+        return Err(AppError::Message("sudo authentication failed".into()));
+    }
+    // Conflict check (best-effort): hash the current content via sudo cat.
+    if let Some(expected) = expected_sha256 {
+        let cur = sudo_run(session, &format!("cat -- {}", shell_quote(path)), password)
+            .await
+            .unwrap_or_default();
+        if !cur.is_empty() && sha256_hex(cur.as_bytes()) != expected {
+            return Err(AppError::FileChangedOnServer);
+        }
+    }
+
+    let out = apply_eol(content, eol);
+    let bytes = out.as_bytes();
+    let home = sftp
+        .canonicalize(".")
+        .await
+        .map_err(|e| format!("home dir: {e}"))?;
+    let tmp = format!(
+        "{}/.vterm-sudo-{}",
+        home.trim_end_matches('/'),
+        crate::uuid_like()
+    );
+    sftp::write_bytes(sftp, &tmp, bytes)
+        .await
+        .map_err(|e| format!("stage {tmp}: {e}"))?;
+    let attrs = FileAttributes {
+        permissions: Some(0o600),
+        ..Default::default()
+    };
+    let _ = sftp.set_metadata(tmp.clone(), attrs).await;
+
+    if backup {
+        let bak = shell_quote(&format!("{path}.bak"));
+        let inner = format!("test -e {0} && cp -p -- {0} {bak}", shell_quote(path));
+        let _ = sudo_ok(session, &inner, password).await; // best-effort
+    }
+
+    let cmd = format!("cp -- {} {}", shell_quote(&tmp), shell_quote(path));
+    let ok = sudo_ok(session, &cmd, password).await?;
+    let _ = sftp.remove_file(tmp).await;
+    if !ok {
+        return Err(AppError::Message(
+            "sudo write failed (check password / permissions)".into(),
+        ));
+    }
+    Ok(WriteResult {
+        sha256: sha256_hex(bytes),
+        size: bytes.len() as u64,
+        mtime: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -192,6 +361,32 @@ mod tests {
     fn parse_hashsum_skips_non_hex_and_empty() {
         let bad = format!("{}  ./x\n", "z".repeat(64));
         assert!(parse_hashsum(&bad).is_empty());
+    }
+
+    #[test]
+    fn grep_command_builds_flags() {
+        let c = grep_command("/srv", "TODO", true, true);
+        assert!(c.contains("cd -- '/srv'"));
+        assert!(c.contains("grep -rnIi -F -e 'TODO'"));
+        let c2 = grep_command("/srv", "a.+b", false, false);
+        assert!(c2.contains("grep -rnI -E -e 'a.+b'"));
+    }
+
+    #[test]
+    fn parse_grep_reads_path_line_text() {
+        let out = "./conf/app.yaml:12:  key: value\n./bad line\n./x:notnum:t\n./a:3:hit\n";
+        let m = parse_grep(out);
+        assert_eq!(m.len(), 2);
+        assert_eq!(
+            m[0],
+            GrepMatch {
+                path: "conf/app.yaml".into(),
+                line: 12,
+                text: "  key: value".into()
+            }
+        );
+        assert_eq!(m[1].path, "a");
+        assert_eq!(m[1].line, 3);
     }
 
     #[test]

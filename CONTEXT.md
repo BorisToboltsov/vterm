@@ -607,6 +607,10 @@ pnpm test:coverage
   (`MAX_EDIT_SIZE` = дефолт при отсутствии). Чистый `clampMaxOpenMb` — в
   [settings.svelte.ts](src/lib/settings.svelte.ts). Контент **нормализуется в LF** для
   редактора, исходный стиль переносов несётся в `eol` и **восстанавливается на запись**.
+- **Запись на сервер — только через `create`.** russh-sftp `SftpSession::write` открывает файл
+  во flags **`WRITE` без `CREATE`** → «No such file» на новом пути. Поэтому стейджинг temp,
+  `.bak` и sudo-temp идут через **`sftp::write_bytes`** (`sftp.create` = CREATE|TRUNCATE|WRITE +
+  write_all + shutdown). Не использовать `sftp.write` для новых файлов.
 - **Запись — атомарная и неразрушающая.** `sftp_write_text(path, content, eol,
   expectedSha256?)` пишет **sibling-temp** (`.{name}.vterm-tmp-{nanos}`) → `set_metadata`
   (сохраняет **mode** оригинала) → `rename` поверх цели (SSH_FXP_RENAME у OpenSSH падает
@@ -729,6 +733,28 @@ pnpm test:coverage
   `SyncStats`). UI — [SyncModal.svelte](src/lib/SyncModal.svelte) (кнопка `sync` в тулбаре SFTP,
   dry-run превью; исключён из coverage). `uuid_like` сделан `pub(crate)` для переиспользования.
   Новый источник хэшей/направление — добавляй в `diffTrees`/`apply`, не дублируй обход.
+- **sudo-правка (12.6).** `sftp_read_text`/`sftp_write_text` принимают `sudo`+`sudoPassword`:
+  чтение — `sudo cat | head -c` ([sync.rs](src-tauri/src/sync.rs) `sudo_read`), запись —
+  staged-temp (mode 0600 в `$HOME`) + `sudo cp` поверх цели (`sudo_write`, сохраняет владельца/
+  права). **Пароль sudo идёт в stdin** через `ssh::run_command_stdin` (`sudo -S -p ''`, не в `ps`/
+  history); успех проверяется маркером `__VTERM_OK__` (exit-статус по exec не виден). UI: единый
+  sudo-промпт (`sudoPrompt` с `kind: "open" | "save"`) — «Открыть от root» при permission-denied
+  на **чтении**, и **«Сохранить от root» при permission-denied на записи** (readable-but-not-
+  writable файл редактируется обычным юзером, на `Ctrl+S` → промпт → `setEditorSudo` помечает
+  `doc.sudo` и повторяет `doWriteEditor`; дальнейшие сохранения уже sudo). Отказ доступа ловится
+  чистой `isPermissionError` ([api.ts](src/lib/api.ts)) — **и `permission denied`, и `no such file`**:
+  staged-temp создаётся **в той же папке** (`{dir}/.{name}.vterm-tmp-…`), и при не-записываемой папке
+  некоторые SFTP-серверы отдают `No such file` вместо `Permission denied` (файл точно существует — он
+  был открыт/в листинге, значит это отказ, а не отсутствие). Пароль
+  хранится в `EditorDoc.sudoPassword` **только в памяти** (стор не персистится), save переиспользует
+  `doc.sudo`. **`.bak`** — `settings.editor.
+  backupOnSave` (копия `path.bak` перед перезаписью, в обычной и sudo-записи).
+- **Прочее 12.6.** Иконки типов файлов — чистый [fileicon.ts](src/lib/fileicon.ts) (`fileIconName`,
+  ext→иконка реестра; папка/симлинк не трогаем), в обеих файловых панелях. **Сниппеты** —
+  [snippets.ts](src/lib/snippets.ts) (`snippetsForLang`), меню в тулбаре редактора, вставка по
+  курсору. **Grep по SSH** — `sftp_grep` (`grep -rnI`, регистр/regex, cap) + `parse_grep`; UI в
+  SFTP-панели, клик открывает файл на строке (`EditorDoc.gotoLine` → CM scroll в onMount). Команды
+  палитры: новый локальный терминал, открыть локальный файл (через `pickOpenFile` → `handleOpenFile`).
 
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 

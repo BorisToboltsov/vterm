@@ -818,6 +818,10 @@ print(greet("world"))  # => 12345`;
             <input type="checkbox" bind:checked={settings.editor.lint} />
             {t("settings.editorLint")}
           </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.editor.backupOnSave} />
+            {t("settings.editorBackup")}
+          </label>
         </section>
 
         {/if}

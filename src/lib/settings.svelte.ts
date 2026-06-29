@@ -93,6 +93,8 @@ export interface EditorSettings {
   diffBeforeSave: boolean;
   /** Lint YAML/JSON (and other Lezer langs) in the editor and warn before saving. */
   lint: boolean;
+  /** Keep a `.bak` copy of the file on the server before overwriting (Phase 12.6). */
+  backupOnSave: boolean;
 }
 
 /** SFTP behaviour (Phase 12). */
@@ -261,7 +263,7 @@ const DEFAULTS: Settings = {
   recordMaskPasswords: true,
   recordMode: "full",
   recordIdlePauseSecs: 20,
-  editor: { diffBeforeSave: true, lint: true },
+  editor: { diffBeforeSave: true, lint: true, backupOnSave: false },
   sftp: { maxOpenMb: 2 },
   hostKeyPolicy: "ask",
 };

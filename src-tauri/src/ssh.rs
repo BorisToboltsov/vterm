@@ -211,6 +211,37 @@ impl SshSession {
         }
         Ok(String::from_utf8_lossy(&out).into_owned())
     }
+
+    /// Like [`run_command`](Self::run_command) but writes `stdin` to the command
+    /// first (then EOF). Used to feed a `sudo -S` password without it appearing in
+    /// the process list. Only stdout is collected.
+    pub async fn run_command_stdin(&self, command: &str, stdin: &[u8]) -> AppResult<String> {
+        let mut channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("exec channel failed: {e}"))?;
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| format!("exec failed: {e}"))?;
+        if !stdin.is_empty() {
+            channel
+                .data(stdin)
+                .await
+                .map_err(|e| format!("stdin write failed: {e}"))?;
+            let _ = channel.eof().await;
+        }
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
 }
 
 impl Drop for SshSession {

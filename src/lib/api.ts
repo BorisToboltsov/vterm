@@ -11,7 +11,7 @@ import type {
   WriteResult,
 } from "./types";
 
-import type { HashEntry, SyncAction, SyncStats } from "./sync";
+import type { HashEntry, SyncAction, SyncStats, GrepMatch } from "./sync";
 
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
 export const FILE_CHANGED_MARKER = "file-changed";
@@ -19,6 +19,17 @@ export const FILE_CHANGED_MARKER = "file-changed";
 /** True when a thrown invoke error means the file changed on the server. */
 export function isFileChangedError(err: unknown): boolean {
   return String(err).includes(FILE_CHANGED_MARKER);
+}
+
+/**
+ * True when a remote read/write failed because the path isn't accessible to the
+ * user — i.e. sudo could help. Covers both "Permission denied" and "No such file":
+ * some SFTP servers report a write into a non-writable directory (the staging temp)
+ * as `No such file` rather than `Permission denied`. The file is known to exist
+ * (it was listed / just opened), so either ⇒ an access problem, not a missing file.
+ */
+export function isPermissionError(err: unknown): boolean {
+  return /permission denied|no such file/i.test(String(err));
 }
 
 // ── Server profiles ───────────────────────────────────────────────────────────
@@ -373,8 +384,10 @@ export function sftpReadText(
   sessionId: string,
   path: string,
   maxBytes?: number,
+  sudo?: boolean,
+  sudoPassword?: string,
 ): Promise<TextFile> {
-  return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes });
+  return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo, sudoPassword });
 }
 
 /** Open a LOCAL file as text in the editor (throws on large/binary files). */
@@ -431,6 +444,17 @@ export function localHashTree(path: string): Promise<HashEntry[]> {
   return invoke<HashEntry[]>("local_hash_tree", { path });
 }
 
+/** Content search under a remote directory (grep over SSH). */
+export function sftpGrep(
+  sessionId: string,
+  dir: string,
+  query: string,
+  caseInsensitive: boolean,
+  fixed: boolean,
+): Promise<GrepMatch[]> {
+  return invoke<GrepMatch[]>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed });
+}
+
 /** Apply a computed sync plan (uploads/downloads/deletes); returns counts. */
 export function sftpSyncApply(
   sessionId: string,
@@ -454,6 +478,7 @@ export function sftpWriteText(
   content: string,
   eol: "lf" | "crlf",
   expectedSha256: string | null,
+  opts: { sudo?: boolean; sudoPassword?: string; backup?: boolean } = {},
 ): Promise<WriteResult> {
   return invoke<WriteResult>("sftp_write_text", {
     sessionId,
@@ -461,6 +486,9 @@ export function sftpWriteText(
     content,
     eol,
     expectedSha256,
+    sudo: opts.sudo,
+    sudoPassword: opts.sudoPassword,
+    backup: opts.backup,
   });
 }
 
@@ -507,6 +535,12 @@ export async function pickUploadFiles(): Promise<string[]> {
   const res = await open({ multiple: true, directory: false, title: "Upload files" });
   if (!res) return [];
   return Array.isArray(res) ? res : [res];
+}
+
+/** Pick a single local file to open in the editor (palette "Open file…"). */
+export async function pickOpenFile(): Promise<string | null> {
+  const res = await open({ multiple: false, directory: false, title: "Open file" });
+  return typeof res === "string" ? res : null;
 }
 
 /** Pick a local destination path for a file download. */

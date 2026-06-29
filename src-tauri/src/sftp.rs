@@ -118,6 +118,21 @@ pub async fn create_file(sftp: &SftpSession, path: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Write bytes to a new (or truncated) remote file. **Always go through `create`**:
+/// russh-sftp's `SftpSession::write` opens WRITE-only without `CREATE`, so it fails
+/// with "No such file" on a fresh path (staging temps, `.bak` copies, sudo temp).
+pub(crate) async fn write_bytes(sftp: &SftpSession, path: &str, data: &[u8]) -> AppResult<()> {
+    let mut f = sftp
+        .create(path.to_string())
+        .await
+        .map_err(|e| format!("create {path}: {e}"))?;
+    f.write_all(data)
+        .await
+        .map_err(|e| format!("write {path}: {e}"))?;
+    f.shutdown().await.map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// A text file opened in the in-app editor.
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -204,6 +219,7 @@ pub async fn write_text(
     content: &str,
     eol: &str,
     expected_sha256: Option<&str>,
+    backup: bool,
 ) -> AppResult<WriteResult> {
     // Existing file: capture mode + verify it hasn't changed under us.
     let existing = sftp.metadata(path).await.ok();
@@ -220,13 +236,18 @@ pub async fn write_text(
         }
     }
 
+    // Optional backup of the current file before overwriting (`path.bak`).
+    if backup && existing.is_some() {
+        if let Ok(cur) = sftp.read(path).await {
+            let _ = write_bytes(sftp, &format!("{path}.bak"), &cur).await;
+        }
+    }
+
     let out = apply_eol(content, eol);
     let bytes = out.as_bytes();
 
     let tmp = temp_sibling(path);
-    sftp.write(tmp.clone(), bytes)
-        .await
-        .map_err(|e| format!("write {tmp}: {e}"))?;
+    write_bytes(sftp, &tmp, bytes).await?;
     // Preserve the original permission bits on the replacement.
     if let Some(perm) = mode {
         let attrs = FileAttributes {

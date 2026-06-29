@@ -19,9 +19,11 @@
     sftpReadText,
     sftpWriteText,
     isFileChangedError,
+    isPermissionError,
     readLocalText,
     writeLocalText,
     takePendingOpens,
+    pickOpenFile,
     OPEN_FILE_EVENT,
   } from "$lib/api";
   import type { AuthMethod, ServerProfile } from "$lib/types";
@@ -67,6 +69,7 @@
     closeEditor as closeEditorStore,
     setActiveView,
     findEditorByPath,
+    setEditorSudo,
     markSaved,
     isDirty,
     removeWorkspace,
@@ -408,6 +411,12 @@
       title: layout.sftpCollapsed ? t("palette.showSftp") : t("palette.hideSftp"),
       icon: "file", group: t("palette.groupActions"), keywords: "sftp panel toggle панель",
       run: () => (layout.sftpCollapsed = !layout.sftpCollapsed) },
+    { id: "act:new-local", title: t("palette.newLocalTerminal"), icon: "terminal",
+      group: t("palette.groupActions"), keywords: "local terminal shell new локальный терминал новый",
+      run: () => openLocalTab() },
+    { id: "act:open-local-file", title: t("palette.openLocalFile"), icon: "pencil",
+      group: t("palette.groupActions"), keywords: "open local file edit editor открыть локальный файл редактор",
+      run: () => openLocalFileFromDialog() },
     ...servers.map((s): CommandItem => ({
       id: `srv:${s.id}`,
       title: s.alias,
@@ -722,8 +731,33 @@
   /** Configured editor open-size limit, in bytes. */
   const editorMaxBytes = () => settings.sftp.maxOpenMb * 1024 * 1024;
 
+  // Sudo prompt: reopen a permission-denied file as root, or retry a save as root.
+  let sudoPrompt = $state<
+    | { kind: "open"; path: string; name: string; gotoLine?: number }
+    | { kind: "save"; sid: string; doc: EditorDoc }
+    | null
+  >(null);
+  let sudoPasswordInput = $state("");
+  const sudoPromptPath = $derived(
+    sudoPrompt?.kind === "open"
+      ? sudoPrompt.path
+      : sudoPrompt?.kind === "save"
+        ? sudoPrompt.doc.path
+        : "",
+  );
+  const sudoPromptTitle = $derived(
+    sudoPrompt?.kind === "save" ? t("editor.sudoSaveTitle") : t("editor.sudoTitle"),
+  );
+  const sudoPromptConfirm = $derived(
+    sudoPrompt?.kind === "save" ? t("editor.save") : t("editor.sudoOpen"),
+  );
+
   /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
-  async function openFileInEditor(path: string, name: string) {
+  async function openFileInEditor(
+    path: string,
+    name: string,
+    opts: { gotoLine?: number; sudo?: boolean; sudoPassword?: string } = {},
+  ) {
     const sid = tabsState.activeId;
     if (!sid) return;
     // Any file opens in the editor; unknown/extensionless types fall back to plain
@@ -737,13 +771,40 @@
     // Read first, so binary/too-large files just toast instead of opening a tab.
     let file;
     try {
-      file = await sftpReadText(sid, path, editorMaxBytes());
+      file = await sftpReadText(sid, path, editorMaxBytes(), opts.sudo, opts.sudoPassword);
     } catch (e) {
+      // No read access on a non-sudo read → offer to reopen as root.
+      if (!opts.sudo && isPermissionError(e)) {
+        sudoPasswordInput = "";
+        sudoPrompt = { kind: "open", path, name, gotoLine: opts.gotoLine };
+        return;
+      }
       notifyError(String(e));
       return;
     }
-    const id = addEditor(sid, path, name, lang, "sftp");
+    const id = addEditor(sid, path, name, lang, "sftp", {
+      gotoLine: opts.gotoLine,
+      sudo: opts.sudo,
+      sudoPassword: opts.sudoPassword,
+    });
     fillEditor(sid, id, file);
+  }
+
+  /** Confirm the sudo prompt: reopen the pending file as root, or retry the save. */
+  function confirmSudo() {
+    const p = sudoPrompt;
+    const pw = sudoPasswordInput;
+    sudoPrompt = null;
+    sudoPasswordInput = "";
+    if (!p) return;
+    if (p.kind === "open") {
+      void openFileInEditor(p.path, p.name, { gotoLine: p.gotoLine, sudo: true, sudoPassword: pw });
+    } else {
+      // Remember sudo on the doc (future saves reuse it), then retry from the store.
+      setEditorSudo(p.sid, p.doc.id, pw);
+      const updated = findEditorByPath(p.sid, p.doc.path);
+      if (updated) void doWriteEditor(p.sid, updated, updated.baseSha256);
+    }
   }
 
   /** Open a LOCAL file in a given workspace's editor (from "Open with vterm"). */
@@ -763,6 +824,12 @@
     }
     const id = addEditor(sid, path, name, editorLangOrPlain(name), "local");
     fillEditor(sid, id, file);
+  }
+
+  /** Palette "Open local file…": pick a file and open it (like OS open-with). */
+  async function openLocalFileFromDialog() {
+    const path = await pickOpenFile();
+    if (path) handleOpenFile(path);
   }
 
   /** OS asked to open a file: ensure a local terminal tab, then open the editor. */
@@ -798,7 +865,11 @@
       const res =
         doc.source === "local"
           ? await writeLocalText(doc.path, doc.content, doc.eol, expectedSha)
-          : await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha);
+          : await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha, {
+              sudo: doc.sudo,
+              sudoPassword: doc.sudoPassword,
+              backup: settings.editor.backupOnSave,
+            });
       const stat = lineDiffStat(before, doc.content);
       markSaved(sid, doc.id, res);
       notifySuccess(t("editor.saved", { name: doc.name }));
@@ -816,11 +887,15 @@
           const cur =
             doc.source === "local"
               ? await readLocalText(doc.path, editorMaxBytes())
-              : await sftpReadText(sid, doc.path, editorMaxBytes());
+              : await sftpReadText(sid, doc.path, editorMaxBytes(), doc.sudo, doc.sudoPassword);
           conflict = { sid, doc, serverText: cur.content };
         } catch {
           notifyError(t("editor.conflict", { name: doc.name }));
         }
+      } else if (!doc.sudo && doc.source === "sftp" && isPermissionError(e)) {
+        // Can't write into the target dir (no permission) → offer to save as root.
+        sudoPasswordInput = "";
+        sudoPrompt = { kind: "save", sid, doc };
       } else {
         notifyError(String(e));
       }
@@ -849,7 +924,11 @@
     if (!c) return;
     closeEditorStore(c.sid, c.doc.id);
     if (c.doc.source === "local") void openLocalFileInEditor(c.sid, c.doc.path);
-    else void openFileInEditor(c.doc.path, c.doc.name);
+    else
+      void openFileInEditor(c.doc.path, c.doc.name, {
+        sudo: c.doc.sudo,
+        sudoPassword: c.doc.sudoPassword,
+      });
   }
 
   /** Close an editor sub-tab, confirming first when it has unsaved changes. */
@@ -1339,7 +1418,8 @@
                   bind:collapsed={layout.sftpCollapsed}
                   sessionReady={sftpReady}
                   animateWidth={resizing !== "sftp"}
-                  onOpenFile={openFileInEditor}
+                  onOpenFile={(path, name, gotoLine) =>
+                    openFileInEditor(path, name, { gotoLine })}
                 />
               {:else}
                 <LocalFilePanel
@@ -1515,6 +1595,37 @@
   <span class="text-white">{closeEditorConfirm?.doc.name}</span>
   {t("editor.discardBody2")}
 </ConfirmDialog>
+
+<!-- Sudo prompt: reopen (or re-save) a permission-denied file as root -->
+<Modal open={!!sudoPrompt} title={sudoPromptTitle} onclose={() => (sudoPrompt = null)}>
+  <form
+    onsubmit={(e) => {
+      e.preventDefault();
+      confirmSudo();
+    }}
+  >
+    <p class="mb-2 break-all text-xs text-muted">{sudoPromptPath}</p>
+    <input
+      type="password"
+      autocomplete="off"
+      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      placeholder={t("editor.sudoPassword")}
+      bind:value={sudoPasswordInput}
+    />
+    <div class="mt-4 flex justify-end gap-2">
+      <button
+        type="button"
+        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+        onclick={() => (sudoPrompt = null)}>{t("common.cancel")}</button
+      >
+      <button
+        type="submit"
+        class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
+        >{sudoPromptConfirm}</button
+      >
+    </div>
+  </form>
+</Modal>
 
 <!-- Pre-save diff: server version ⇄ what we'll write (settings-gated) -->
 <DiffModal

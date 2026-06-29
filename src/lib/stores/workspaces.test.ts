@@ -12,6 +12,7 @@ import {
   fillEditor,
   failEditor,
   setEditorContent,
+  setEditorSudo,
   markSaved,
   setActiveView,
   findEditorByPath,
@@ -37,6 +38,9 @@ function doc(over: Partial<EditorDoc> = {}): EditorDoc {
     readOnly: false,
     loading: false,
     loadError: null,
+    sudo: false,
+    sudoPassword: "",
+    gotoLine: null,
     ...over,
   };
 }
@@ -123,6 +127,15 @@ describe("store mutators", () => {
     const d = getWorkspace("s1").editors[0];
     expect(isDirty(d)).toBe(false);
     expect(d.baseSha256).toBe("sha-v2");
+  });
+
+  it("setEditorSudo marks the doc elevated and stores the password", () => {
+    const id = addEditor("s1", "/etc/hosts", "hosts", LANG);
+    fillEditor("s1", id, file("127.0.0.1 localhost\n"));
+    setEditorSudo("s1", id, "secret");
+    const d = getWorkspace("s1").editors[0];
+    expect(d.sudo).toBe(true);
+    expect(d.sudoPassword).toBe("secret");
   });
 
   it("failEditor records the error and stops loading", () => {

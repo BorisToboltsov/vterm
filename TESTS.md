@@ -146,9 +146,11 @@ pnpm check
   parent + bare-имя); async round-trip read/write с **конфликт-проверкой** по sha
   (правильный sha → запись, устаревший → `file-changed`); отказ на **бинаре** (NUL) и
   **слишком большом** файле (через `tokio::test` + `tempfile`).
-- `sync.rs` (Фаза 12.5, синхронизация) — `shell_quote` (экранирование `'`), `remote_hash_command`
+- `sync.rs` (Фаза 12.5–12.6) — `shell_quote` (экранирование `'`), `remote_hash_command`
   (квотирование пути + fallback `sha256sum`→`shasum`), `parse_hashsum` (hash+относительный путь,
-  `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`.
+  `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`;
+  **grep** — `grep_command` (флаги `-rnIi`/`-F`/`-E`, квотирование) и `parse_grep`
+  (`path:line:text`, пропуск битых строк).
 - `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
   `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
   `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
@@ -318,7 +320,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `annotate_recording`, `fetchMetricsDetail` → `fetch_metrics_detail`, `fetchPendingUpdates` →
   `fetch_pending_updates`,
   `exportBackup`/`importBackup` и backup-диалоги) + `isFileChangedError`
-  (матч маркера `file-changed`, игнор посторонних ошибок);
+  (матч маркера `file-changed`, игнор посторонних ошибок) + `isPermissionError`
+  (матч `permission denied`/`no such file` — отказ доступа, при котором предлагается sudo);
 - `editorlang.ts` (Фаза 12.2) — `baseName`/`fileExt` (lower-case расширения, dotfile
   без расширения), `editorLangFor` (известные расширения → язык: config-форматы, **скрипты/
   ЯП** Python/JS/TS/Java/Go/Rust/Ruby/C·C++·C#/SQL/PowerShell/Lua/Perl, **markup** HTML/CSS/
@@ -338,6 +341,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   path-anchored + всё под ним, пустые паттерны), `parseExcludes` (split по `\n`/`,`),
   `diffTrees` (push/pull/bi: новые/изменённые/удаление по флагу, bi → конфликт на расхождении,
   учёт исключений), `applicable` (отбрасывает конфликты), `summarize` (счётчики по op);
+- `fileicon.ts` (Фаза 12.6) — `fileIconName`: папка/симлинк сохраняют иконки, маппинг по
+  расширению (код/конфиг/shell/образ/архив/ключ), fallback на `file`;
+- `snippets.ts` (Фаза 12.6) — `snippetsForLang` (фильтр по языку + универсальные, пусто для языка
+  без шаблонов), уникальность id и непустые body/name;
 - `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
   [EditorTab.svelte](src/lib/EditorTab.svelte) и [DiffModal.svelte](src/lib/DiffModal.svelte)

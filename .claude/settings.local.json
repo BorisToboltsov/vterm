@@ -101,7 +101,11 @@
       "Bash(grep -n 'from \"\\\\$lib/api\"' src/routes/+page.svelte)",
       "Bash(grep -n \"широкого набора языков\\\\|Terraform.$\\\\|Дальше — diff\" README.md)",
       "Bash(grep -n 'from \"./settings.svelte\"\\\\|from \"\\\\$lib/settings.svelte\"\\\\|import.*settings' src/lib/SettingsPanel.svelte)",
-      "Bash(grep -n \"take_pending_opens\\\\`, \\\\`annotateRecording\" TESTS.md)"
+      "Bash(grep -n \"take_pending_opens\\\\`, \\\\`annotateRecording\" TESTS.md)",
+      "Bash(grep -n 'pickSaveDir,\\\\|pickSaveDir$\\\\|from \"\\\\$lib/api\"' src/routes/+page.svelte)",
+      "Bash(grep -rn 'PermissionDenied\\\\|permission denied\\\\|impl.*Display.*for.*Error\\\\|StatusCode\\\\|fn fmt' __TRACKED_VAR__/src/error.rs __TRACKED_VAR__/src/protocol/*.rs)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }

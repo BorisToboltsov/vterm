@@ -25,6 +25,13 @@ export interface SyncStats {
   deleted: number;
 }
 
+/** One content-search hit (grep over SSH). */
+export interface GrepMatch {
+  path: string;
+  line: number;
+  text: string;
+}
+
 /** Translate a single glob (`*`, `?`) into an anchored regex (no `/` crossing). */
 function globToRegex(glob: string): RegExp {
   let re = "";

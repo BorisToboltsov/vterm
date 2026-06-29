@@ -1646,16 +1646,30 @@ async fn sftp_read_text(
     session_id: String,
     path: String,
     max_bytes: Option<u64>,
+    sudo: Option<bool>,
+    sudo_password: Option<String>,
 ) -> AppResult<sftp::TextFile> {
     let limit = max_bytes
         .unwrap_or(sftp::MAX_EDIT_SIZE)
         .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
+    if sudo == Some(true) {
+        let session = session_arc(&state, &session_id).await?;
+        return sync::sudo_read(
+            &session,
+            &path,
+            limit,
+            sudo_password.as_deref().unwrap_or(""),
+        )
+        .await;
+    }
     let sftp = get_sftp(&state, &session_id).await?;
     sftp::read_text(&sftp, &path, limit).await
 }
 
 /// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
+/// `sudo` writes root-owned files via `sudo cp`; `backup` keeps a `.bak` copy.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn sftp_write_text(
     state: State<'_, AppState>,
     session_id: String,
@@ -1663,9 +1677,36 @@ async fn sftp_write_text(
     content: String,
     eol: String,
     expected_sha256: Option<String>,
+    sudo: Option<bool>,
+    sudo_password: Option<String>,
+    backup: Option<bool>,
 ) -> AppResult<sftp::WriteResult> {
+    let backup = backup.unwrap_or(false);
+    if sudo == Some(true) {
+        let session = session_arc(&state, &session_id).await?;
+        let sftp = session.sftp().await?;
+        return sync::sudo_write(
+            &session,
+            &sftp,
+            &path,
+            &content,
+            &eol,
+            expected_sha256.as_deref(),
+            backup,
+            sudo_password.as_deref().unwrap_or(""),
+        )
+        .await;
+    }
     let sftp = get_sftp(&state, &session_id).await?;
-    sftp::write_text(&sftp, &path, &content, &eol, expected_sha256.as_deref()).await
+    sftp::write_text(
+        &sftp,
+        &path,
+        &content,
+        &eol,
+        expected_sha256.as_deref(),
+        backup,
+    )
+    .await
 }
 
 /// Open a LOCAL file as text in the editor ("Open with vterm" flow). Same guards
@@ -1758,6 +1799,26 @@ async fn sftp_sync_apply(
 ) -> AppResult<sync::SyncStats> {
     let sftp = get_sftp(&state, &session_id).await?;
     sync::apply(&app, &sftp, &local_root, &remote_root, actions).await
+}
+
+/// Content search under a remote directory via `grep -rn` over SSH (Phase 12.6).
+#[tauri::command]
+async fn sftp_grep(
+    state: State<'_, AppState>,
+    session_id: String,
+    dir: String,
+    query: String,
+    case_insensitive: bool,
+    fixed: bool,
+) -> AppResult<Vec<sync::GrepMatch>> {
+    if query.trim().is_empty() {
+        return Ok(vec![]);
+    }
+    let session = session_arc(&state, &session_id).await?;
+    let out = session
+        .run_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
+        .await?;
+    Ok(sync::parse_grep(&out))
 }
 
 #[tauri::command]
@@ -2067,6 +2128,7 @@ pub fn run() {
             sftp_hash_tree,
             local_hash_tree,
             sftp_sync_apply,
+            sftp_grep,
             sftp_delete,
             sftp_upload,
             sftp_download,

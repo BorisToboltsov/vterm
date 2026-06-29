@@ -11,6 +11,7 @@
     localDelete,
   } from "./api";
   import type { FileEntry } from "./types";
+  import { fileIconName } from "./fileicon";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -296,11 +297,7 @@
                 class="flex min-w-0 flex-1 items-center gap-2 text-left"
                 ondblclick={() => open(entry)}
               >
-                <Icon
-                  name={entry.isSymlink ? "symlink" : entry.isDir ? "folder" : "file"}
-                  size={15}
-                  class="shrink-0 text-muted"
-                />
+                <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
                 <span class="truncate">{entry.name}</span>
                 {#if !entry.isDir}
                   <span class="ml-auto shrink-0 text-xs text-muted">{fmtSize(entry.size)}</span>

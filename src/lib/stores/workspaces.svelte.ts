@@ -34,6 +34,19 @@ export interface EditorDoc {
   loading: boolean;
   /** Load error message, or null. */
   loadError: string | null;
+  /** Opened/saved with sudo (root-owned file); save reuses it. */
+  sudo: boolean;
+  /** sudo password (in-memory only, never persisted) when `sudo` is set. */
+  sudoPassword: string;
+  /** 1-based line to scroll to on open (e.g. from a grep hit), or null. */
+  gotoLine: number | null;
+}
+
+/** Options passed when opening an editor (sudo / line jump). */
+export interface OpenEditorOpts {
+  sudo?: boolean;
+  sudoPassword?: string;
+  gotoLine?: number;
 }
 
 export interface Workspace {
@@ -113,6 +126,7 @@ export function addEditor(
   name: string,
   lang: EditorLang,
   source: "sftp" | "local" = "sftp",
+  opts: OpenEditorOpts = {},
 ): string {
   const id = crypto.randomUUID();
   const doc: EditorDoc = {
@@ -129,6 +143,9 @@ export function addEditor(
     readOnly: false,
     loading: true,
     loadError: null,
+    sudo: opts.sudo ?? false,
+    sudoPassword: opts.sudoPassword ?? "",
+    gotoLine: opts.gotoLine ?? null,
   };
   const ws = ensure(sessionId);
   patch(sessionId, { editors: [...ws.editors, doc], active: id });
@@ -164,6 +181,11 @@ export function failEditor(sessionId: string, id: string, message: string): void
 /** Live edit from the editor component. */
 export function setEditorContent(sessionId: string, id: string, content: string): void {
   updateDoc(sessionId, id, { content });
+}
+
+/** Mark an editor as elevated (sudo) and remember its password for later saves. */
+export function setEditorSudo(sessionId: string, id: string, password: string): void {
+  updateDoc(sessionId, id, { sudo: true, sudoPassword: password });
 }
 
 /** Adopt fresh metadata after a successful save (clears the dirty state). */

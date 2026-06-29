@@ -77,6 +77,7 @@
   import type { EditorLangKind } from "./editorlang";
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
   import { renderMarkdown } from "./markdown";
+  import { snippetsForLang } from "./snippets";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -105,6 +106,18 @@
   let preview = $state(false);
   // Live-rendered HTML (CodeMirror stays mounted, so doc.content tracks edits).
   const previewHtml = $derived(isMarkdown && preview ? renderMarkdown(doc.content) : "");
+
+  // Config snippets/templates relevant to this file's language.
+  const snippets = $derived(snippetsForLang(doc.lang.kind));
+  let showSnippets = $state(false);
+
+  /** Insert a snippet body at the cursor (replacing any selection). */
+  function insertSnippet(body: string) {
+    showSnippets = false;
+    if (doc.readOnly || !view) return;
+    view.dispatch(view.state.replaceSelection(body));
+    view.focus();
+  }
 
   /** Generic linter: flag error nodes in the syntax tree (works for any Lezer
    *  language — YAML/JSON/Python/JS/…; StreamLanguage modes simply yield none). */
@@ -324,6 +337,12 @@
       ],
     });
     view = new EditorView({ state, parent: host });
+    // Jump to a requested line (e.g. from a content-search hit).
+    if (doc.gotoLine && doc.gotoLine > 1) {
+      const n = Math.min(doc.gotoLine, view.state.doc.lines);
+      const line = view.state.doc.line(n);
+      view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+    }
   });
 
   // Re-theme live when the user switches themes (settings.theme is a rune).
@@ -387,6 +406,33 @@
             <Icon name="eye" size={13} />
             {t("editor.viewPreview")}
           </button>
+        </div>
+      {/if}
+      {#if snippets.length > 0 && !doc.readOnly && !preview}
+        <div class="relative">
+          <button
+            class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white"
+            title={t("editor.snippets")}
+            aria-label={t("editor.snippets")}
+            onclick={() => (showSnippets = !showSnippets)}
+          >
+            <Icon name="filePlus" size={13} />
+            {t("editor.snippets")}
+          </button>
+          {#if showSnippets}
+            <div
+              class="absolute right-0 z-20 mt-1 w-56 overflow-hidden rounded border border-edge bg-panel-alt shadow-lg"
+            >
+              {#each snippets as s (s.id)}
+                <button
+                  class="block w-full truncate px-3 py-1.5 text-left text-xs text-muted hover:bg-edge hover:text-white"
+                  onclick={() => insertSnippet(s.body)}
+                >
+                  {s.name}
+                </button>
+              {/each}
+            </div>
+          {/if}
         </div>
       {/if}
       <button

@@ -10,13 +10,16 @@
     sftpCreateFile,
     sftpDelete,
     sftpDownload,
+    sftpGrep,
     sftpHome,
     sftpList,
     sftpMkdir,
     sftpUpload,
     type SftpProgress,
   } from "./api";
+  import type { GrepMatch } from "./sync";
   import type { FileEntry } from "./types";
+  import { fileIconName } from "./fileicon";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import SyncModal from "./SyncModal.svelte";
@@ -41,8 +44,8 @@
     sessionReady?: boolean;
     /** Animate width changes (collapse). Disabled while the user drags-resizes. */
     animateWidth?: boolean;
-    /** Open an editable file in the in-app editor (double-click). */
-    onOpenFile?: (path: string, name: string) => void;
+    /** Open a file in the in-app editor (optionally jumping to a line, e.g. grep). */
+    onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
   } = $props();
 
   let cwd = $state("");
@@ -60,6 +63,32 @@
   let mkfileName = $state("");
   let confirmTarget = $state<FileEntry | null>(null);
   let showSync = $state(false);
+  // Content search (grep over SSH).
+  let showSearch = $state(false);
+  let searchQuery = $state("");
+  let searchResults = $state<GrepMatch[] | null>(null);
+  let searching = $state(false);
+  let caseSensitive = $state(false);
+  let useRegex = $state(false);
+
+  async function runSearch() {
+    const q = searchQuery.trim();
+    if (!q) return;
+    searching = true;
+    try {
+      searchResults = await sftpGrep(sessionId, cwd || ".", q, !caseSensitive, !useRegex);
+    } catch (e) {
+      notifyError(String(e));
+      searchResults = [];
+    } finally {
+      searching = false;
+    }
+  }
+
+  function openMatch(m: GrepMatch) {
+    const name = m.path.split("/").pop() ?? m.path;
+    onOpenFile?.(join(cwd, m.path), name, m.line);
+  }
 
   const unlisten: UnlistenFn[] = [];
 
@@ -305,7 +334,15 @@
           <Icon name="filePlus" size={14} />
         </button>
         <button
-          class="ml-auto flex items-center rounded p-1.5 text-muted hover:text-accent"
+          class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+          title={t("search.contentSearch")}
+          aria-label={t("search.contentSearch")}
+          onclick={() => (showSearch = !showSearch)}
+        >
+          <Icon name="search" size={14} />
+        </button>
+        <button
+          class="flex items-center rounded p-1.5 text-muted hover:text-accent"
           title={t("sync.button")}
           aria-label={t("sync.button")}
           onclick={() => (showSync = true)}
@@ -349,6 +386,54 @@
   <div class="truncate border-b border-edge px-2 py-1 text-xs text-muted" title={cwd}>
     {cwd || "/"}
   </div>
+
+  {#if showSearch}
+    <!-- Content search (grep over SSH) under the current folder -->
+    <div class="border-b border-edge px-2 py-1.5">
+      <form
+        class="flex gap-1"
+        onsubmit={(e) => {
+          e.preventDefault();
+          runSearch();
+        }}
+      >
+        <input
+          class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+          placeholder={t("search.contentPlaceholder")}
+          bind:value={searchQuery}
+        />
+        <button class="shrink-0 rounded bg-accent px-2 py-1 text-xs text-panel-alt" disabled={searching}>
+          {searching ? t("search.searching") : t("search.go")}
+        </button>
+      </form>
+      <div class="mt-1 flex gap-3 text-[11px] text-muted">
+        <label class="flex items-center gap-1">
+          <input type="checkbox" bind:checked={caseSensitive} />
+          {t("search.caseSensitive")}
+        </label>
+        <label class="flex items-center gap-1">
+          <input type="checkbox" bind:checked={useRegex} />
+          {t("search.regex")}
+        </label>
+      </div>
+      {#if searchResults}
+        <div class="mt-1 max-h-48 overflow-auto rounded border border-edge">
+          {#each searchResults as m (m.path + ":" + m.line)}
+            <button
+              class="block w-full truncate px-2 py-1 text-left text-[11px] hover:bg-edge"
+              onclick={() => openMatch(m)}
+              title={m.text}
+            >
+              <span class="text-accent">{m.path}:{m.line}</span>
+              <span class="text-muted">{m.text}</span>
+            </button>
+          {:else}
+            <div class="px-2 py-2 text-[11px] text-muted">{t("search.noResults")}</div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if showMkdir}
     <form
@@ -429,11 +514,7 @@
             class="flex min-w-0 flex-1 items-center gap-2 text-left"
             ondblclick={() => open(entry)}
           >
-            <Icon
-              name={entry.isSymlink ? "symlink" : entry.isDir ? "folder" : "file"}
-              size={15}
-              class="shrink-0 text-muted"
-            />
+            <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
             <span class="truncate">{entry.name}</span>
             {#if !entry.isDir}
               <span class="ml-auto shrink-0 text-xs text-muted">
