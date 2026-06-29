@@ -756,6 +756,52 @@ pnpm test:coverage
   SFTP-панели, клик открывает файл на строке (`EditorDoc.gotoLine` → CM scroll в onMount). Команды
   палитры: новый локальный терминал, открыть локальный файл (через `pickOpenFile` → `handleOpenFile`).
 
+- **`ls`-подсветка и владелец в файловых панелях (12.x).** `FileEntry` несёт `mode`/`uid`/`gid`/
+  `user`/`group`. Имена владельца **резолвятся на бэкенде** (sftp `getent passwd/group` → чистый
+  `parse_id_names`, кеш `AppState.id_names` на сессию, чистится в `disconnect`; локально — uid/gid
+  через `MetadataExt`). Фронт — чистый [lscolors.ts](src/lib/lscolors.ts): `lsColorKey` (тип/право/
+  расширение → ключ палитры терминала, дефолты GNU dircolors: dir=blue, symlink=cyan, exec=green,
+  archive=red, media=magenta), цвет берётся из **активной темы терминала** (`activeTerminalTheme()`),
+  как в шелле; `formatMode` (`drwxr-xr-x`, вкл. setuid/setgid/sticky), `ownerLabel`/`fileTooltip`
+  (права + владелец в `title` при наведении). Применено в SftpPanel **и** LocalFilePanel.
+
+- **Серверный линт по SSH (12.7).** Кнопка «Линт» в тулбаре редактора для **SSH-файлов** языков
+  с линтером (`hasRemoteLinter`): буфер стейджится во временный файл в `$HOME`, на сервере
+  запускается реальный инструмент, вывод парсится в кликабельные результаты с переходом к строке.
+  Команда `lint_remote(session, content, kind)` ([lib.rs](src-tauri/src/lib.rs)): `command -v`
+  (детект инструмента) → `sftp::write_bytes` temp → `run_command` (stderr слит в stdout `2>&1`) →
+  `remove_file`; temp-путь в выводе заменяется на `FILE`. Таблица `lint_tool`/`lint_command` —
+  [sync.rs](src-tauri/src/sync.rs) (YAML→yamllint, Shell→shellcheck, Dockerfile→hadolint,
+  Python→ruff, nginx→`nginx -t`). Парсер вывода — **чистый** [remotelint.ts](src/lib/remotelint.ts)
+  (`parseLint(output, format)`, форматы `colon`/`nginx`; уровень из ключевых слов). **Новый линтер =
+  запись в `lint_tool` + при ином формате ветка в `parseLint`** (+ kind в `LINTER_KINDS`). Это
+  закрывает серверные конфиги (nginx/Ansible/Dockerfile/…), у которых нет браузерного линтера;
+  «тяжёлые» браузерные (shellcheck/ESLint/ruff WASM) остаются опцией (см. ROADMAP).
+
+- **Помощь установки серверных инструментов (12.8).** Реестр опциональных тулзов (линтеры +
+  `sensors`) — **бэкенд** [servertools.rs](src-tauri/src/servertools.rs) (чистые `TOOLS`/
+  `install_command(tool, mgr)`/`parse_status`/`build_status`/`sudoize`, тестируемы). Команды:
+  `server_tools_status(session)` — детект менеджера (`apt/dnf/yum/apk/pacman/zypper/brew/pkg`) +
+  `command -v` всех тулзов **за один round-trip**; `run_tool_install(session, command, sudoPassword)`
+  — one-click (первый `sudo`→`sudo -S` по stdin, прочие — на кеш-креденшел sudo). UI: раздел
+  «Серверные инструменты» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte)
+  ([ServerToolsPanel.svelte](src/lib/ServerToolsPanel.svelte), статус на **активном SSH**) + общий
+  [ToolInstallDialog.svelte](src/lib/ToolInstallDialog.svelte): **«Выполнить в терминале»**
+  (`writeToTerminal` в активную вкладку, пользователь жмёт Enter — прозрачно) или **«через sudo»**.
+  Инлайн-CTA: `lint_remote` `found=false` → `EditorTab.onLintMissing` → `offerLintInstall` открывает
+  тот же диалог. Новый инструмент = запись в `TOOLS` + ветка в `install_command` (+ purpose-ключ
+  i18n). Установка идёт на сервере его менеджером/сетью — офлайн-инвариант vterm не нарушается;
+  sudo-пароль только в памяти.
+
+- **Шаблоны редактора — редактируемые (12.8).** Сниппеты хранятся в `settings.snippets`
+  (персист, как `highlightRules`): дефолты `defaultSnippets()` (расширенный набор nginx/Dockerfile/
+  compose/k8s/systemd/bash/GH-Actions), санитайз импорта `sanitizeSnippets`. Чистые в
+  [snippets.ts](src/lib/snippets.ts) (`snippetsForLang(kind, list)` — **над переданным списком**;
+  `newSnippet`/`SNIPPET_LANGS`). Редактор берёт `snippetsForLang(doc.lang.kind, settings.snippets)`.
+  Раздел «Шаблоны редактора» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte) (имя/язык-select/
+  тело-textarea; add/reset; delete через `ConfirmDialog`). Несколько шаблонов на язык — норма. Новый
+  встроенный шаблон = запись в `defaultSnippets()`; новый язык в выпадашке = запись в `SNIPPET_LANGS`.
+
 ## Интернационализация (i18n) — ЗАКРЕПЛЕНО
 
 > **Главное правило (требование пользователя).** **Весь** пользовательский текст

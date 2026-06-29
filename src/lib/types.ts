@@ -30,6 +30,14 @@ export interface FileEntry {
   size: number;
   /** Modification time, epoch seconds. */
   modified: number | null;
+  /** Unix permission bits (the entry's own), if reported. */
+  mode: number | null;
+  /** Owner user/group ids. */
+  uid: number | null;
+  gid: number | null;
+  /** Resolved owner names (or null → frontend shows the numeric id). */
+  user: string | null;
+  group: string | null;
 }
 
 /** A remote text file opened in the editor (mirrors sftp.rs TextFile). */

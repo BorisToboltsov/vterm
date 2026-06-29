@@ -159,6 +159,23 @@ describe("invoke wrappers pass the right command + args", () => {
       caseInsensitive: true,
       fixed: false,
     });
+    await api.lintRemote("sess", "key: val\n", "yaml");
+    expect(invoke).toHaveBeenCalledWith("lint_remote", {
+      sessionId: "sess",
+      content: "key: val\n",
+      kind: "yaml",
+    });
+  });
+
+  it("server tools commands", async () => {
+    await api.serverToolsStatus("sess");
+    expect(invoke).toHaveBeenCalledWith("server_tools_status", { sessionId: "sess" });
+    await api.runToolInstall("sess", "sudo apt-get install -y shellcheck", "pw");
+    expect(invoke).toHaveBeenCalledWith("run_tool_install", {
+      sessionId: "sess",
+      command: "sudo apt-get install -y shellcheck",
+      sudoPassword: "pw",
+    });
   });
 
   it("sftpReadText/WriteText forward sudo + backup options", async () => {

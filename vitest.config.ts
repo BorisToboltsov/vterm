@@ -53,6 +53,9 @@ export default defineConfig({
         "src/lib/DiffModal.svelte",
         // Sync dialog — thin shell over sync.ts (covered) + native dialogs/api.
         "src/lib/SyncModal.svelte",
+        // Server-tools install helper — thin shells over the api + native flows.
+        "src/lib/ServerToolsPanel.svelte",
+        "src/lib/ToolInstallDialog.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

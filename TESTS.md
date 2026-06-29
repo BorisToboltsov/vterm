@@ -146,11 +146,18 @@ pnpm check
   parent + bare-имя); async round-trip read/write с **конфликт-проверкой** по sha
   (правильный sha → запись, устаревший → `file-changed`); отказ на **бинаре** (NUL) и
   **слишком большом** файле (через `tokio::test` + `tempfile`).
+- `servertools.rs` (Фаза 12.8) — `parse_status` (mgr + present-bins), `install_command`
+  (команда под менеджер: системные с sudo, fallback `pip --user` для yamllint/ruff, distro-имена
+  для sensors, бинарь для hadolint, `None` для неизвестного), `sudoize` (первый `sudo`→`sudo -S`,
+  pip/brew без изменений, мульти-sudo — только первый), `build_status` (installed-флаг).
+- `sftp.rs` → `parse_id_names` (ls-владелец) — разбор `/etc/passwd`/`/etc/group`
+  (`name:x:id:…`, первое имя на id, пропуск битых строк; один парсер для users и groups).
 - `sync.rs` (Фаза 12.5–12.6) — `shell_quote` (экранирование `'`), `remote_hash_command`
   (квотирование пути + fallback `sha256sum`→`shasum`), `parse_hashsum` (hash+относительный путь,
   `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`;
   **grep** — `grep_command` (флаги `-rnIi`/`-F`/`-E`, квотирование) и `parse_grep`
-  (`path:line:text`, пропуск битых строк).
+  (`path:line:text`, пропуск битых строк); **lint** — `lint_tool` (язык→инструмент, неизвестный →
+  `None`) и `lint_command` (`bin args 'tmp' 2>&1`).
 - `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
   `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
   `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
@@ -343,8 +350,18 @@ pnpm test:coverage   # прогон + покрытие + гейты
   учёт исключений), `applicable` (отбрасывает конфликты), `summarize` (счётчики по op);
 - `fileicon.ts` (Фаза 12.6) — `fileIconName`: папка/симлинк сохраняют иконки, маппинг по
   расширению (код/конфиг/shell/образ/архив/ключ), fallback на `file`;
-- `snippets.ts` (Фаза 12.6) — `snippetsForLang` (фильтр по языку + универсальные, пусто для языка
-  без шаблонов), уникальность id и непустые body/name;
+- `servertools.ts` (Фаза 12.8) — `commandNeedsSudo` (sudo-команды → true, pip/brew → false);
+- `remotelint.ts` (Фаза 12.7, серверный линт) — `hasRemoteLinter` (какие языки поддержаны),
+  `parseLint`: формат `colon` (`FILE:line[:col]: msg`, уровень из ключевых слов, пропуск
+  пустых/несовпадающих) и `nginx` (`[emerg] … in FILE:line`, успех → пусто);
+- `lscolors.ts` (Фаза 12.x, ls-подсветка) — `isExecutable` (любой x-бит), `lsColorKey`
+  (dir/symlink/exec/archive/media → ключ палитры; приоритет symlink>dir>exec), `formatMode`
+  (`drwxr-xr-x` + setuid/setgid/sticky, `?` при null), `ownerLabel` (имена → fallback uid/gid),
+  `fileTooltip` (права + владелец);
+- `snippets.ts` (Фаза 12.6, редактируемые в 12.8) — `defaultSnippets` (уникальные id, непустые
+  body/name, свежая копия каждый раз), `snippetsForLang(kind, list)` (фильтр по языку + универсальные
+  `null`, над переданным списком), `sanitizeSnippets` (отбрасывает мусор, нормализует неизвестный язык
+  в `null`, не-массив → дефолты), `newSnippet` (свежий id);
 - `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
   [EditorTab.svelte](src/lib/EditorTab.svelte) и [DiffModal.svelte](src/lib/DiffModal.svelte)

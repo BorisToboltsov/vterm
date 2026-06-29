@@ -12,6 +12,8 @@ import type {
 } from "./types";
 
 import type { HashEntry, SyncAction, SyncStats, GrepMatch } from "./sync";
+import type { RemoteLintResult } from "./remotelint";
+import type { ToolsStatus } from "./servertools";
 
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
 export const FILE_CHANGED_MARKER = "file-changed";
@@ -442,6 +444,29 @@ export function sftpHashTree(sessionId: string, path: string): Promise<HashEntry
 /** Hash a local directory tree. */
 export function localHashTree(path: string): Promise<HashEntry[]> {
   return invoke<HashEntry[]>("local_hash_tree", { path });
+}
+
+/** Detect the server's package manager + which optional tools are installed. */
+export function serverToolsStatus(sessionId: string): Promise<ToolsStatus> {
+  return invoke<ToolsStatus>("server_tools_status", { sessionId });
+}
+
+/** Run a tool install command on the server (one-click); returns its output. */
+export function runToolInstall(
+  sessionId: string,
+  command: string,
+  sudoPassword?: string,
+): Promise<string> {
+  return invoke<string>("run_tool_install", { sessionId, command, sudoPassword });
+}
+
+/** Lint the editor buffer with a real tool on the server (Phase 12.7). */
+export function lintRemote(
+  sessionId: string,
+  content: string,
+  kind: string,
+): Promise<RemoteLintResult> {
+  return invoke<RemoteLintResult>("lint_remote", { sessionId, content, kind });
 }
 
 /** Content search under a remote directory (grep over SSH). */

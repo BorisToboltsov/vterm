@@ -5,6 +5,7 @@ mod model;
 mod pty;
 mod recording;
 mod secrets;
+mod servertools;
 mod sftp;
 mod ssh;
 mod store;
@@ -48,7 +49,13 @@ struct AppState {
     /// Files vterm was asked to open (CLI args / macOS `Opened`), drained by the
     /// frontend on startup via `take_pending_opens`.
     pending_opens: Mutex<Vec<String>>,
+    /// Per-session uid→name / gid→name maps (fetched once from passwd/group), so
+    /// the SFTP listing can show owner names like `ls -l`.
+    id_names: Mutex<HashMap<String, IdNames>>,
 }
+
+/// (uid→name, gid→name) maps resolved from passwd/group for one session.
+type IdNames = (HashMap<u32, String>, HashMap<u32, String>);
 
 /// Clone out the session for `session_id`, releasing the registry lock before
 /// any network round-trip so other sessions aren't blocked.
@@ -779,7 +786,38 @@ async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult
     state.cpu_samples.lock().unwrap().remove(&session_id);
     state.core_samples.lock().unwrap().remove(&session_id);
     state.ctxintr_samples.lock().unwrap().remove(&session_id);
+    state.id_names.lock().unwrap().remove(&session_id);
     Ok(())
+}
+
+/// Per-session uid→name / gid→name maps (fetched once from passwd/group and
+/// cached) so the SFTP listing can show owner names. Returns empty maps if the
+/// lookup fails (the frontend then falls back to numeric uid/gid).
+async fn ensure_id_names(state: &State<'_, AppState>, session_id: &str) -> IdNames {
+    if let Some(cached) = state.id_names.lock().unwrap().get(session_id) {
+        return cached.clone();
+    }
+    let maps = match session_arc(state, session_id).await {
+        Ok(session) => {
+            let out = session
+                .run_command(
+                    "getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null; \
+                     echo '@@VTERM@@'; \
+                     getent group 2>/dev/null || cat /etc/group 2>/dev/null",
+                )
+                .await
+                .unwrap_or_default();
+            let (p, g) = out.split_once("@@VTERM@@").unwrap_or((out.as_str(), ""));
+            (sftp::parse_id_names(p), sftp::parse_id_names(g))
+        }
+        Err(_) => (HashMap::new(), HashMap::new()),
+    };
+    state
+        .id_names
+        .lock()
+        .unwrap()
+        .insert(session_id.to_string(), maps.clone());
+    maps
 }
 
 // ── Session recording (asciicast v2) ───────────────────────────────────────────
@@ -1618,7 +1656,18 @@ async fn sftp_list(
     path: String,
 ) -> AppResult<Vec<FileEntry>> {
     let sftp = get_sftp(&state, &session_id).await?;
-    sftp::list(&sftp, &path).await
+    let mut entries = sftp::list(&sftp, &path).await?;
+    // Fill owner names from a cached passwd/group map (SFTP attrs rarely carry them).
+    let (users, groups) = ensure_id_names(&state, &session_id).await;
+    for e in &mut entries {
+        if e.user.is_none() {
+            e.user = e.uid.and_then(|u| users.get(&u).cloned());
+        }
+        if e.group.is_none() {
+            e.group = e.gid.and_then(|g| groups.get(&g).cloned());
+        }
+    }
+    Ok(entries)
 }
 
 #[tauri::command]
@@ -1785,6 +1834,86 @@ async fn sftp_hash_tree(
 #[tauri::command]
 async fn local_hash_tree(path: String) -> AppResult<Vec<sync::HashEntry>> {
     localfile::hash_tree(&path).await
+}
+
+/// Lint the editor buffer with a real tool on the server (Phase 12.7): stage the
+/// content to a temp file, run the language's linter, return its output. `found`
+/// is false when no linter maps to the language or the tool isn't installed.
+#[tauri::command]
+async fn lint_remote(
+    state: State<'_, AppState>,
+    session_id: String,
+    content: String,
+    kind: String,
+) -> AppResult<sync::LintResult> {
+    let Some(tool) = sync::lint_tool(&kind) else {
+        return Ok(sync::LintResult::default());
+    };
+    let session = session_arc(&state, &session_id).await?;
+    // Is the tool installed?
+    let chk = session
+        .run_command(&format!(
+            "command -v {} >/dev/null 2>&1 && echo __VTERM_OK__",
+            tool.bin
+        ))
+        .await
+        .unwrap_or_default();
+    if !chk.contains("__VTERM_OK__") {
+        return Ok(sync::LintResult {
+            tool: tool.bin.to_string(),
+            found: false,
+            format: tool.format.to_string(),
+            ..Default::default()
+        });
+    }
+    // Stage the buffer to a temp file in the user's home, lint it, then remove it.
+    let sftp = session.sftp().await?;
+    let home = sftp
+        .canonicalize(".")
+        .await
+        .map_err(|e| format!("home dir: {e}"))?;
+    let tmp = format!("{}/.vterm-lint-{}", home.trim_end_matches('/'), uuid_like());
+    sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
+    let out = session
+        .run_command(&sync::lint_command(&tool, &tmp))
+        .await
+        .unwrap_or_default();
+    let _ = sftp.remove_file(tmp.clone()).await;
+    Ok(sync::LintResult {
+        tool: tool.bin.to_string(),
+        found: true,
+        output: out.replace(&tmp, "FILE"),
+        format: tool.format.to_string(),
+    })
+}
+
+/// Detect the server's package manager and which optional tools are installed
+/// (Phase 12.8). One round-trip; resolves the install command per tool/distro.
+#[tauri::command]
+async fn server_tools_status(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<servertools::ToolsStatus> {
+    let session = session_arc(&state, &session_id).await?;
+    let raw = session.run_command(&servertools::status_command()).await?;
+    let (manager, have) = servertools::parse_status(&raw);
+    Ok(servertools::build_status(&manager, &have))
+}
+
+/// Run an install command on the server (one-click path). A leading `sudo` is fed
+/// the password via stdin; non-sudo commands (pip/brew) run as-is. Returns output.
+#[tauri::command]
+async fn run_tool_install(
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+    sudo_password: Option<String>,
+) -> AppResult<String> {
+    let session = session_arc(&state, &session_id).await?;
+    let cmd = format!("{} 2>&1", servertools::sudoize(&command));
+    let mut pw = sudo_password.unwrap_or_default().into_bytes();
+    pw.push(b'\n');
+    session.run_command_stdin(&cmd, &pw).await
 }
 
 /// Apply a computed sync plan: upload/download changed files, delete extraneous.
@@ -2061,6 +2190,7 @@ pub fn run() {
         core_samples: Mutex::new(HashMap::new()),
         ctxintr_samples: Mutex::new(HashMap::new()),
         pending_opens: Mutex::new(initial_files),
+        id_names: Mutex::new(HashMap::new()),
     };
 
     let app = tauri::Builder::default()
@@ -2129,6 +2259,9 @@ pub fn run() {
             local_hash_tree,
             sftp_sync_apply,
             sftp_grep,
+            lint_remote,
+            server_tools_status,
+            run_tool_install,
             sftp_delete,
             sftp_upload,
             sftp_download,

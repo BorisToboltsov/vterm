@@ -24,6 +24,8 @@
     writeLocalText,
     takePendingOpens,
     pickOpenFile,
+    writeToTerminal,
+    serverToolsStatus,
     OPEN_FILE_EVENT,
   } from "$lib/api";
   import type { AuthMethod, ServerProfile } from "$lib/types";
@@ -60,6 +62,8 @@
   import LocalFilePanel from "$lib/LocalFilePanel.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
+  import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
+  import type { ToolStatus } from "$lib/servertools";
   import { editorLangOrPlain } from "$lib/editorlang";
   import { lineDiffStat } from "$lib/util";
   import {
@@ -826,6 +830,38 @@
     fillEditor(sid, id, file);
   }
 
+  // ── Server tools install helper (Phase 12.8) ────────────────────────────────
+  const toolsSessionId = $derived(activeTab?.kind === "ssh" ? activeTab.sessionId : null);
+  let installTool = $state<{ sessionId: string; tool: ToolStatus } | null>(null);
+
+  /** Open the install dialog for a tool on the active SSH connection. */
+  function openToolInstall(tool: ToolStatus) {
+    if (toolsSessionId) installTool = { sessionId: toolsSessionId, tool };
+  }
+
+  /** Type an install command into the active terminal (user reviews + runs it). */
+  function runInstallInTerminal(command: string) {
+    const sid = installTool?.sessionId ?? toolsSessionId;
+    if (!sid) return;
+    setActiveView(sid, TERMINAL_VIEW);
+    showSettings = false;
+    void writeToTerminal(sid, new TextEncoder().encode(command));
+    notifyInfo(t("servertools.typed"));
+  }
+
+  /** Lint reported a missing tool: fetch its install command and offer to install. */
+  async function offerLintInstall(toolName: string) {
+    const sid = toolsSessionId;
+    if (!sid) return;
+    try {
+      const status = await serverToolsStatus(sid);
+      const tool = status.tools.find((t) => t.name === toolName || t.id === toolName);
+      if (tool && !tool.installed) installTool = { sessionId: sid, tool };
+    } catch {
+      /* ignore — the toast already told the user it's missing */
+    }
+  }
+
   /** Palette "Open local file…": pick a file and open it (like OS open-with). */
   async function openLocalFileFromDialog() {
     const path = await pickOpenFile();
@@ -1387,6 +1423,7 @@
                         doc={ed}
                         saving={savingEditorId === ed.id}
                         onsave={() => saveEditor(tab.sessionId, ed)}
+                        onLintMissing={offerLintInstall}
                       />
                     {/if}
                   </div>
@@ -1482,7 +1519,21 @@
   </div>
 {/if}
 
-<SettingsPanel bind:open={showSettings} onImported={refresh} />
+<SettingsPanel
+  bind:open={showSettings}
+  onImported={refresh}
+  {toolsSessionId}
+  onInstallTool={openToolInstall}
+/>
+
+<!-- Server tool install dialog (Phase 12.8) -->
+<ToolInstallDialog
+  open={!!installTool}
+  sessionId={installTool?.sessionId ?? ""}
+  tool={installTool?.tool ?? null}
+  onRunInTerminal={runInstallInTerminal}
+  onclose={() => (installTool = null)}
+/>
 <HelpPanel bind:open={showHelp} bind:tab={helpTab} />
 
 <!-- New folder -->

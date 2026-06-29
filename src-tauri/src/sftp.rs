@@ -36,6 +36,15 @@ pub struct FileEntry {
     pub size: u64,
     /// Modification time, epoch seconds.
     pub modified: Option<u64>,
+    /// Unix permission bits (the entry's own, like `ls -l`), if reported.
+    pub mode: Option<u32>,
+    /// Owner user/group ids.
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    /// Resolved owner names (filled by the command from a cached passwd/group map;
+    /// SFTP attrs rarely carry names, so the backend looks them up by uid/gid).
+    pub user: Option<String>,
+    pub group: Option<String>,
 }
 
 #[derive(Serialize, Clone)]
@@ -92,6 +101,11 @@ pub async fn list(sftp: &SftpSession, path: &str) -> AppResult<Vec<FileEntry>> {
             is_symlink,
             size: meta.size.unwrap_or(0),
             modified: meta.mtime.map(|m| m as u64),
+            mode: meta.permissions,
+            uid: meta.uid,
+            gid: meta.gid,
+            user: meta.user,
+            group: meta.group,
             name,
         });
     }
@@ -506,6 +520,24 @@ fn base_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_string()
 }
 
+/// Parse `/etc/passwd` or `/etc/group` (or `getent` output) into an id→name map.
+/// Both share the `name:x:id:…` layout (field 0 = name, field 2 = numeric id), so
+/// one parser serves users and groups. First name per id wins.
+pub(crate) fn parse_id_names(text: &str) -> std::collections::HashMap<u32, String> {
+    let mut map = std::collections::HashMap::new();
+    for line in text.lines() {
+        let mut it = line.split(':');
+        let name = it.next().unwrap_or("");
+        let _ = it.next(); // password placeholder
+        if let Some(id) = it.next().and_then(|s| s.trim().parse::<u32>().ok()) {
+            if !name.is_empty() {
+                map.entry(id).or_insert_with(|| name.to_string());
+            }
+        }
+    }
+    map
+}
+
 /// A hidden, time-stamped sibling path used as the atomic-write staging file.
 fn temp_sibling(path: &str) -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -615,6 +647,18 @@ mod tests {
         assert!(!is_read_only(Some(0o644)));
         assert!(!is_read_only(Some(0o600)));
         assert!(!is_read_only(None));
+    }
+
+    #[test]
+    fn parse_id_names_reads_name_and_id() {
+        let passwd = "root:x:0:0:root:/root:/bin/bash\nboris:x:1000:1000:Boris:/home/boris:/bin/bash\n# comment\nbad line\n";
+        let m = parse_id_names(passwd);
+        assert_eq!(m.get(&0).map(String::as_str), Some("root"));
+        assert_eq!(m.get(&1000).map(String::as_str), Some("boris"));
+        assert_eq!(m.len(), 2);
+        // Group format is identical (name:x:gid:...).
+        let group = parse_id_names("docker:x:998:boris\n");
+        assert_eq!(group.get(&998).map(String::as_str), Some("docker"));
     }
 
     #[test]

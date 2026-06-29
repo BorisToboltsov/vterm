@@ -50,6 +50,44 @@ pub struct GrepMatch {
     pub text: String,
 }
 
+/// A real linter to run on the server for a given language (Phase 12.7).
+pub struct LintTool {
+    pub bin: &'static str,
+    pub args: &'static str,
+    /// Output-format id the frontend parser switches on (`colon` | `nginx`).
+    pub format: &'static str,
+}
+
+/// Result of a server-side lint run, sent to the frontend.
+#[derive(Serialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LintResult {
+    pub tool: String,
+    /// False when no linter maps to the language, or the tool isn't installed.
+    pub found: bool,
+    /// Combined stdout+stderr with the temp path replaced by `FILE`.
+    pub output: String,
+    pub format: String,
+}
+
+/// The linter for an editor language kind, or `None` if none is wired.
+pub fn lint_tool(kind: &str) -> Option<LintTool> {
+    let (bin, args, format) = match kind {
+        "yaml" => ("yamllint", "-f parsable", "colon"),
+        "shell" => ("shellcheck", "-f gcc", "colon"),
+        "dockerfile" => ("hadolint", "--no-color", "colon"),
+        "python" => ("ruff", "check --quiet --output-format concise", "colon"),
+        "nginx" => ("nginx", "-t -c", "nginx"),
+        _ => return None,
+    };
+    Some(LintTool { bin, args, format })
+}
+
+/// Command to lint the staged temp file (stderr merged into stdout for capture).
+pub fn lint_command(tool: &LintTool, tmp: &str) -> String {
+    format!("{} {} {} 2>&1", tool.bin, tool.args, shell_quote(tmp))
+}
+
 /// `grep -rnI` over SSH under `dir`. `-F` (fixed string) or `-E` (regex), optional
 /// case-insensitivity; output capped so a broad search can't flood the channel.
 pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool) -> String {
@@ -361,6 +399,19 @@ mod tests {
     fn parse_hashsum_skips_non_hex_and_empty() {
         let bad = format!("{}  ./x\n", "z".repeat(64));
         assert!(parse_hashsum(&bad).is_empty());
+    }
+
+    #[test]
+    fn lint_tool_and_command() {
+        assert!(lint_tool("rust").is_none());
+        let t = lint_tool("yaml").unwrap();
+        assert_eq!(t.bin, "yamllint");
+        assert_eq!(t.format, "colon");
+        assert_eq!(
+            lint_command(&t, "/home/u/.vterm-lint-1"),
+            "yamllint -f parsable '/home/u/.vterm-lint-1' 2>&1"
+        );
+        assert_eq!(lint_tool("nginx").unwrap().format, "nginx");
     }
 
     #[test]

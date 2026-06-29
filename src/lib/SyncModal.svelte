@@ -3,6 +3,7 @@
   // panel's current remote folder (dry-run), then apply only the changed files.
   import Modal from "./Modal.svelte";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import { pickSaveDir, localHashTree, sftpHashTree, sftpSyncApply } from "./api";
   import {
     diffTrees,
@@ -102,11 +103,16 @@
     conflict: "sync.opConflict",
   };
 
-  const DIRECTIONS: [SyncDirection, MessageKey][] = [
-    ["push", "sync.push"],
-    ["pull", "sync.pull"],
-    ["bi", "sync.bi"],
+  const DIRECTIONS: { val: SyncDirection; short: MessageKey; full: MessageKey; icon: IconName }[] = [
+    { val: "push", short: "sync.pushShort", full: "sync.push", icon: "upload" },
+    { val: "pull", short: "sync.pullShort", full: "sync.pull", icon: "download" },
+    { val: "bi", short: "sync.biShort", full: "sync.bi", icon: "arrowsUpDown" },
   ];
+
+  /** Arrow shown between the Local and Remote cards, reflecting the direction. */
+  const betweenIcon: IconName = $derived(
+    direction === "push" ? "arrowRight" : direction === "pull" ? "arrowLeft" : "arrowsLeftRight",
+  );
 
   function opClass(op: SyncOp): string {
     if (op === "conflict") return "text-warn";
@@ -117,47 +123,56 @@
 
 <Modal {open} title={t("sync.title")} width="w-[90vw] max-w-2xl" {onclose}>
   <div class="space-y-3 text-xs">
-    <!-- Folders -->
-    <div class="flex items-center gap-2">
-      <span class="w-16 shrink-0 text-muted">{t("sync.localFolder")}</span>
-      <span class="min-w-0 flex-1 truncate text-white" title={localPath}>
-        {localPath || "—"}
-      </span>
-      <button
-        class="shrink-0 rounded bg-edge px-2 py-1 hover:bg-accent hover:text-panel-alt"
-        onclick={chooseLocal}>{t("sync.choose")}</button
-      >
-    </div>
-    <div class="flex items-center gap-2">
-      <span class="w-16 shrink-0 text-muted">{t("sync.remoteFolder")}</span>
-      <span class="min-w-0 flex-1 truncate text-white" title={remotePath}>{remotePath}</span>
+    <!-- Folders as two cards with a direction-aware arrow between them -->
+    <div class="flex items-stretch gap-2">
+      <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
+        <div class="text-[11px] text-muted">{t("sync.localFolder")}</div>
+        <div class="mt-1 flex items-center gap-2">
+          <span class="min-w-0 flex-1 truncate text-white" title={localPath}>{localPath || "—"}</span>
+          <button
+            class="shrink-0 rounded bg-edge px-2 py-0.5 hover:bg-accent hover:text-panel-alt"
+            onclick={chooseLocal}>{t("sync.choose")}</button
+          >
+        </div>
+      </div>
+      <div class="flex shrink-0 items-center text-accent" title={t(DIRECTIONS.find((d) => d.val === direction)?.full ?? "sync.push")}>
+        <Icon name={betweenIcon} size={20} />
+      </div>
+      <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
+        <div class="text-[11px] text-muted">{t("sync.remoteFolder")}</div>
+        <div class="mt-1 truncate text-white" title={remotePath}>{remotePath}</div>
+      </div>
     </div>
 
-    <!-- Direction -->
-    <div class="flex items-center gap-3">
-      <span class="w-16 shrink-0 text-muted">{t("sync.direction")}</span>
-      {#each DIRECTIONS as [val, key] (val)}
-        <label class="flex items-center gap-1 text-muted">
-          <input
-            type="radio"
-            name="sync-dir"
-            value={val}
-            checked={direction === val}
-            onchange={() => {
-              direction = val;
+    <!-- Direction as a segmented control -->
+    <div class="flex justify-center">
+      <div class="flex overflow-hidden rounded border border-edge">
+        {#each DIRECTIONS as d (d.val)}
+          <button
+            type="button"
+            class="flex items-center gap-1 border-r border-edge px-3 py-1 last:border-r-0 {direction ===
+            d.val
+              ? 'bg-edge text-accent'
+              : 'text-muted hover:text-white'}"
+            aria-pressed={direction === d.val}
+            title={t(d.full)}
+            onclick={() => {
+              direction = d.val;
               invalidate();
             }}
-          />
-          {t(key)}
-        </label>
-      {/each}
+          >
+            <Icon name={d.icon} size={13} />
+            {t(d.short)}
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Excludes -->
     <label class="block text-muted">
       {t("sync.exclude")}
       <textarea
-        rows="2"
+        rows="4"
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-white outline-none focus:border-accent"
         placeholder={t("sync.excludePlaceholder")}
         bind:value={excludeText}

@@ -44,12 +44,18 @@ pub async fn list(path: &str) -> AppResult<Vec<FileEntry>> {
             ftype.map(|t| t.is_dir()).unwrap_or(false)
         };
         let meta = entry.metadata().await.ok();
+        let (uid, gid) = meta.as_ref().map(file_owner).unwrap_or((None, None));
         out.push(FileEntry {
             path: full,
             is_dir,
             is_symlink,
             size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
             modified: meta.as_ref().and_then(mtime_secs),
+            mode: meta.as_ref().and_then(file_mode),
+            uid,
+            gid,
+            user: None,
+            group: None,
             name,
         });
     }
@@ -139,6 +145,20 @@ fn file_mode(meta: &std::fs::Metadata) -> Option<u32> {
     {
         let _ = meta;
         None
+    }
+}
+
+/// Unix owner uid/gid of a file (None on non-unix).
+fn file_owner(meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        (Some(meta.uid()), Some(meta.gid()))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        (None, None)
     }
 }
 

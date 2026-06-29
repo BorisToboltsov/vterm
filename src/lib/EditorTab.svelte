@@ -78,6 +78,9 @@
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
   import { renderMarkdown } from "./markdown";
   import { snippetsForLang } from "./snippets";
+  import { lintRemote } from "./api";
+  import { hasRemoteLinter, parseLint, type LintMsg } from "./remotelint";
+  import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -86,6 +89,7 @@
     doc,
     saving = false,
     onsave,
+    onLintMissing,
   }: {
     sessionId: string;
     doc: EditorDoc;
@@ -93,6 +97,8 @@
     saving?: boolean;
     /** Invoked by the Save button / Ctrl+S. */
     onsave?: () => void;
+    /** Server linter isn't installed — let the page offer to install it. */
+    onLintMissing?: (tool: string) => void;
   } = $props();
 
   let host: HTMLDivElement;
@@ -107,8 +113,8 @@
   // Live-rendered HTML (CodeMirror stays mounted, so doc.content tracks edits).
   const previewHtml = $derived(isMarkdown && preview ? renderMarkdown(doc.content) : "");
 
-  // Config snippets/templates relevant to this file's language.
-  const snippets = $derived(snippetsForLang(doc.lang.kind));
+  // Config snippets/templates relevant to this file's language (from settings).
+  const snippets = $derived(snippetsForLang(doc.lang.kind, settings.snippets));
   let showSnippets = $state(false);
 
   /** Insert a snippet body at the cursor (replacing any selection). */
@@ -116,6 +122,40 @@
     showSnippets = false;
     if (doc.readOnly || !view) return;
     view.dispatch(view.state.replaceSelection(body));
+    view.focus();
+  }
+
+  // Server-side lint (Phase 12.7): run a real tool on the buffer over SSH.
+  const canRemoteLint = $derived(doc.source === "sftp" && hasRemoteLinter(doc.lang.kind));
+  let linting = $state(false);
+  let lintMessages = $state<LintMsg[] | null>(null);
+
+  async function runRemoteLint() {
+    linting = true;
+    try {
+      const res = await lintRemote(sessionId, doc.content, doc.lang.kind);
+      if (!res.found) {
+        lintMessages = null;
+        notifyError(t("editor.lintMissing", { tool: res.tool || doc.lang.label }));
+        if (res.tool) onLintMissing?.(res.tool);
+        return;
+      }
+      const msgs = parseLint(res.output, res.format);
+      lintMessages = msgs;
+      if (msgs.length === 0) notifySuccess(t("editor.lintClean", { tool: res.tool }));
+    } catch (e) {
+      notifyError(String(e));
+    } finally {
+      linting = false;
+    }
+  }
+
+  /** Jump the cursor to a 1-based line (from a lint result). */
+  function jumpToLine(line: number) {
+    if (!view) return;
+    const n = Math.min(Math.max(1, line), view.state.doc.lines);
+    const l = view.state.doc.line(n);
+    view.dispatch({ selection: { anchor: l.from }, scrollIntoView: true });
     view.focus();
   }
 
@@ -408,6 +448,18 @@
           </button>
         </div>
       {/if}
+      {#if canRemoteLint && !preview}
+        <button
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+          title={t("editor.lintServer")}
+          aria-label={t("editor.lintServer")}
+          disabled={linting}
+          onclick={runRemoteLint}
+        >
+          <Icon name="check" size={13} />
+          {linting ? t("editor.linting") : t("editor.lintServer")}
+        </button>
+      {/if}
       {#if snippets.length > 0 && !doc.readOnly && !preview}
         <div class="relative">
           <button
@@ -455,6 +507,40 @@
   {#if isMarkdown && preview}
     <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm">
       {@html previewHtml}
+    </div>
+  {/if}
+  {#if lintMessages && lintMessages.length > 0}
+    <!-- Server-side lint results (Phase 12.7): click to jump to the line. -->
+    <div class="max-h-40 shrink-0 overflow-auto border-t border-edge text-xs">
+      <div
+        class="sticky top-0 flex items-center justify-between border-b border-edge bg-panel-alt px-2 py-1 text-[11px] text-muted"
+      >
+        <span>{t("editor.lintIssues", { n: lintMessages.length })}</span>
+        <button
+          class="hover:text-white"
+          aria-label={t("common.dismiss")}
+          onclick={() => (lintMessages = null)}
+        >
+          <Icon name="close" size={13} />
+        </button>
+      </div>
+      {#each lintMessages as m, i (i)}
+        <button
+          class="flex w-full items-start gap-2 px-2 py-1 text-left hover:bg-edge"
+          onclick={() => jumpToLine(m.line)}
+        >
+          <span
+            class="shrink-0 tabular-nums {m.level === 'error'
+              ? 'text-danger'
+              : m.level === 'warning'
+                ? 'text-warn'
+                : 'text-muted'}"
+          >
+            {m.line}{#if m.col}:{m.col}{/if}
+          </span>
+          <span class="min-w-0 flex-1 break-words">{m.message}</span>
+        </button>
+      {/each}
     </div>
   {/if}
 </div>

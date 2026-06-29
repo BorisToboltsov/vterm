@@ -11,6 +11,7 @@ import {
   type TerminalTheme,
 } from "./themes";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "./i18n/locales";
+import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type BellStyle = "none" | "sound" | "visual";
@@ -159,6 +160,8 @@ export interface Settings {
   recordIdlePauseSecs: number;
   // Config editor (Phase 12)
   editor: EditorSettings;
+  /** User-editable config snippets/templates (Phase 12.8). */
+  snippets: Snippet[];
   // SFTP (Phase 12)
   sftp: SftpSettings;
   // Security
@@ -264,6 +267,7 @@ const DEFAULTS: Settings = {
   recordMode: "full",
   recordIdlePauseSecs: 20,
   editor: { diffBeforeSave: true, lint: true, backupOnSave: false },
+  snippets: defaultSnippets(),
   sftp: { maxOpenMb: 2 },
   hostKeyPolicy: "ask",
 };
@@ -349,6 +353,7 @@ function load(): Settings {
           ? Math.floor(raw.recordIdlePauseSecs)
           : DEFAULTS.recordIdlePauseSecs,
       editor: { ...DEFAULTS.editor, ...(raw.editor ?? {}) },
+      snippets: "snippets" in raw ? sanitizeSnippets(raw.snippets) : defaultSnippets(),
       sftp: { maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb) },
     };
   } catch {
@@ -361,6 +366,7 @@ function load(): Settings {
       highlightRules: defaultHighlightRules(),
       searchOptions: { ...DEFAULTS.searchOptions },
       editor: { ...DEFAULTS.editor },
+      snippets: defaultSnippets(),
       sftp: { ...DEFAULTS.sftp },
     };
   }
@@ -386,6 +392,7 @@ export function resetSettings(): void {
     highlightRules: defaultHighlightRules(),
     searchOptions: { ...DEFAULTS.searchOptions },
     editor: { ...DEFAULTS.editor },
+    snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
   });
 }
@@ -407,6 +414,7 @@ export function applyImportedSettings(raw: unknown): void {
     highlightRules: defaultHighlightRules(),
     searchOptions: { ...DEFAULTS.searchOptions },
     editor: { ...DEFAULTS.editor },
+    snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
   };
   const sink = next as unknown as Record<string, unknown>;
@@ -418,6 +426,7 @@ export function applyImportedSettings(raw: unknown): void {
     "highlightRules",
     "searchOptions",
     "editor",
+    "snippets",
     "sftp",
   ];
   for (const key of Object.keys(DEFAULTS)) {
@@ -443,6 +452,9 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.highlightRules !== undefined) {
     next.highlightRules = mergeHighlightRules(r.highlightRules);
+  }
+  if (r.snippets !== undefined) {
+    next.snippets = sanitizeSnippets(r.snippets);
   }
   if (r.searchOptions && typeof r.searchOptions === "object") {
     next.searchOptions = { ...DEFAULTS.searchOptions, ...(r.searchOptions as Partial<SearchOptions>) };

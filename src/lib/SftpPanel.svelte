@@ -20,6 +20,8 @@
   import type { GrepMatch } from "./sync";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
+  import { lsColorKey, fileTooltip } from "./lscolors";
+  import { activeTerminalTheme } from "./settings.svelte";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import SyncModal from "./SyncModal.svelte";
@@ -238,6 +240,12 @@
 
   function join(dir: string, name: string): string {
     return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
+  }
+
+  /** `ls`-style colour for a file name, from the active terminal palette. */
+  function nameStyle(entry: FileEntry): string {
+    const key = lsColorKey(entry);
+    return key ? `color:${activeTerminalTheme()[key]}` : "";
   }
 
   function fmtSize(n: number): string {
@@ -512,10 +520,11 @@
         <div class="group flex items-center gap-2 px-2 py-1 hover:bg-edge">
           <button
             class="flex min-w-0 flex-1 items-center gap-2 text-left"
+            title={fileTooltip(entry)}
             ondblclick={() => open(entry)}
           >
             <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
-            <span class="truncate">{entry.name}</span>
+            <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
             {#if !entry.isDir}
               <span class="ml-auto shrink-0 text-xs text-muted">
                 {fmtSize(entry.size)}
