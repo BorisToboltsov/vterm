@@ -105,7 +105,8 @@
       "Bash(grep -n 'pickSaveDir,\\\\|pickSaveDir$\\\\|from \"\\\\$lib/api\"' src/routes/+page.svelte)",
       "Bash(grep -rn 'PermissionDenied\\\\|permission denied\\\\|impl.*Display.*for.*Error\\\\|StatusCode\\\\|fn fmt' __TRACKED_VAR__/src/error.rs __TRACKED_VAR__/src/protocol/*.rs)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }
