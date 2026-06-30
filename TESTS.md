@@ -223,6 +223,11 @@ pnpm test:coverage   # прогон + покрытие + гейты
   существует в `icons.ts`), `memPct`, `fmtPct` (округление + «%», прочерк),
   `diskFree` (статус-бар), `isUnlimitedLimit`/`fmtLimit` (потолок ~i64::MAX →
   «без лимита»/`∞`, реалистичные значения и null — ограничены/прочерк);
+- `monhealth.ts` — health-уровень по блокам: `worstLevel` (выбор худшего),
+  `loadCoreLevel`, `sensorLevel` (свои crit/high → иначе cpuTemp-порог), `cpuHealth`/
+  `memHealth`/`fsHealth` (по порогам из настроек, ∞-FD игнор), `loadHealth` (load1 +
+  load/ядро), `netHealth` (warn при errors/drops), `tempHealth`/`hasTempData`,
+  `extrasHealth` (SMART≠PASSED→crit, OOM→warn).
 - `thresholds.ts` — `thresholdLevel` (ok/warn/crit, включительные границы, crit
   важнее warn, null-значение/порог → ok, по-уровнево отключаемые границы),
   `levelTextClass`/`thresholdClass` (уровень → `text-warn`/`text-danger`);
@@ -444,7 +449,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   установки lm-sensors** при пустых датчиках (клик → `onInstallTool("sensors")`);
   **CPU-разбивка** (stacked-бар) и **таблицы топ-процессов** (по CPU и по памяти);
   **скаляры здоровья**
-  (failed-юниты/conntrack/синхр. времени) в блоке «Система»; **per-interface сеть**,
+  (failed-юниты/conntrack/синхр. времени) в блоке «Система»; **сводка health-бейджей**
+  (`health-summary`) и точки-индикаторы в заголовках; **per-interface сеть**,
   **per-device disk I/O** и **таблица сессий**; безлимитный потолок дескрипторов
   рендерится как `∞`; **ленивая** секция «Дополнительно» (GPU/Docker/SMART/OOM,
   `fetchExtras` после первого рендера); **ленивая** подгрузка

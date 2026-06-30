@@ -16,6 +16,7 @@
     type MetricsDetail,
     type PendingUpdates,
     type Psi,
+    type Sensor,
   } from "./api";
   import {
     fmtBytes,
@@ -28,7 +29,19 @@
     osIconFor,
   } from "./format";
   import { settings } from "./settings.svelte";
-  import { levelTextClass, thresholdClass, thresholdLevel, type ThresholdLevel } from "./thresholds";
+  import { levelTextClass, thresholdClass, type ThresholdLevel } from "./thresholds";
+  import {
+    cpuHealth,
+    extrasHealth,
+    fsHealth,
+    hasTempData,
+    loadHealth,
+    memHealth,
+    netHealth,
+    sensorLevel as sensorLevelOf,
+    tempHealth,
+    worstLevel,
+  } from "./monhealth";
   import { isHidden } from "./util";
   import Modal from "./Modal.svelte";
   import Icon from "./Icon.svelte";
@@ -180,13 +193,62 @@
   const loadCores = $derived(
     metrics?.load1 != null && cores.length > 0 ? metrics.load1 / cores.length : null,
   );
-  // Load-vs-capacity badge: <0.7/core ok, 0.7–1 high, ≥1 overloaded.
-  const loadStatus = $derived.by(() => {
-    if (loadCores == null) return null;
-    if (loadCores >= 1) return { label: t("mon.loadOver"), cls: "text-danger" };
-    if (loadCores >= 0.7) return { label: t("mon.loadHigh"), cls: "text-warn" };
-    return { label: t("mon.loadOk"), cls: "text-green-500" };
-  });
+  // ── Per-block health (ok|warn|crit) — see monhealth.ts for the derivation. ──
+  const cpuLvl = $derived(cpuHealth(metrics, th));
+  const memLvl = $derived(memHealth(metrics, th));
+  const fsLvl = $derived(fsHealth(detail, th));
+  const loadLvl = $derived(loadHealth(metrics?.load1 ?? null, loadCores, th.load));
+  const netLvl = $derived(netHealth(detail));
+  const tempLvl = $derived(tempHealth(detail, metrics, th));
+  const extrasLvl = $derived(extrasHealth(extras));
+  const tempShown = $derived(hasTempData(detail, metrics));
+
+  // A small dot colour + a pill text-colour class for a health level (ok = green).
+  function dotColor(l: ThresholdLevel): string {
+    return l === "crit" ? "var(--color-danger)" : l === "warn" ? "var(--color-warn)" : "var(--color-green-500)";
+  }
+  function pillCls(l: ThresholdLevel): string {
+    return l === "crit" ? "text-danger" : l === "warn" ? "text-warn" : "text-green-500";
+  }
+
+  // At-a-glance health summary (clickable chips → scroll to the section).
+  const extrasShown = $derived(
+    !!extras &&
+      (extras.gpus.length > 0 ||
+        extras.docker.length > 0 ||
+        extras.smart.length > 0 ||
+        (extras.oomKills ?? 0) > 0),
+  );
+  const healthItems = $derived(
+    [
+      { id: "mon-cpu", label: t("mon.cpu"), level: cpuLvl, show: true },
+      { id: "mon-memory", label: t("mon.memory"), level: memLvl, show: true },
+      { id: "mon-fs", label: t("mon.filesystems"), level: fsLvl, show: true },
+      { id: "mon-load", label: t("mon.loadHistory"), level: loadLvl, show: true },
+      { id: "mon-network", label: t("mon.network"), level: netLvl, show: true },
+      { id: "mon-temp", label: t("mon.temperature"), level: tempLvl, show: tempShown },
+      { id: "mon-extras", label: t("mon.extras"), level: extrasLvl, show: extrasShown },
+    ].filter((i) => i.show),
+  );
+  const overallLvl = $derived(worstLevel(healthItems.map((i) => i.level)));
+  const overallText = $derived(
+    overallLvl === "crit"
+      ? t("mon.healthCrit")
+      : overallLvl === "warn"
+        ? t("mon.healthWarn")
+        : t("mon.healthOk"),
+  );
+
+  // Expand-and-scroll to a section when its health chip is clicked.
+  function focusSection(id: string) {
+    const reduce =
+      typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() =>
+      document
+        .getElementById(id)
+        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }),
+    );
+  }
 
   function partPct(used: number, total: number): number | null {
     return total > 0 ? (used / total) * 100 : null;
@@ -203,13 +265,8 @@
   const sensors = $derived(detail?.sensors ?? []);
   const coreSensors = $derived(sensors.filter((s) => /^core\s*\d+/i.test(s.label)));
 
-  // A sensor breaches at its own crit/high first, else falls back to the CPU-temp
-  // thresholds so a chip without published limits still gets coloured.
-  function sensorLevel(s: { temp: number; high: number | null; crit: number | null }): ThresholdLevel {
-    if (s.crit != null && s.temp >= s.crit) return "crit";
-    if (s.high != null && s.temp >= s.high) return "warn";
-    return thresholdLevel(s.temp, th.cpuTemp);
-  }
+  // Per-sensor level (shared rule in monhealth) bound to the current cpuTemp threshold.
+  const sensorLevel = (s: Sensor) => sensorLevelOf(s, th.cpuTemp);
   function sensorFill(s: { temp: number; crit: number | null }): number {
     return s.crit ? Math.min(100, (s.temp / s.crit) * 100) : Math.min(100, s.temp);
   }
@@ -252,6 +309,22 @@
           <Icon name={osIconFor(metrics)} size={16} class="text-muted" />
           <span class="text-sm text-text">{metrics.user || "—"}@{metrics.hostname || "—"}</span>
           <span class="text-xs text-muted">{metrics.prettyName || metrics.os || "—"}</span>
+          <span class="ml-auto flex items-center gap-1.5 text-xs {pillCls(overallLvl)}">
+            <span class="h-2 w-2 rounded-full" style="background-color: {dotColor(overallLvl)}"></span>
+            {overallText}
+          </span>
+        </div>
+        <!-- Health summary: one chip per block, click to jump to it -->
+        <div class="mb-3 flex flex-wrap gap-1.5" data-testid="health-summary">
+          {#each healthItems as h (h.id)}
+            <button
+              type="button"
+              onclick={() => focusSection(h.id)}
+              class="rounded bg-edge px-2 py-0.5 text-[11px] hover:opacity-80 {pillCls(h.level)}"
+            >
+              {h.label}
+            </button>
+          {/each}
         </div>
         {#snippet sysGroup(title: string, body: import("svelte").Snippet)}
           <div>
@@ -309,6 +382,7 @@
         <section id="mon-cpu" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="cpu" size={14} /> {t("mon.cpu")}
+            <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(cpuLvl)}"></span>
           </h3>
           <div class="mb-2 flex items-end justify-between gap-3">
             <span class="text-2xl font-semibold tabular-nums {thresholdClass(cpu, th.cpu)}">{fmtPct(cpu)}</span>
@@ -414,6 +488,7 @@
         <section id="mon-memory" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="memory" size={14} /> {t("mon.memory")}
+            <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(memLvl)}"></span>
           </h3>
           <div class="mb-2 flex items-end justify-between gap-3">
             <span class="text-2xl font-semibold tabular-nums {thresholdClass(ramPct, th.ram)}">{fmtPct(ramPct)}</span>
@@ -499,6 +574,7 @@
         <section id="mon-fs" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="disk" size={14} /> {t("mon.filesystems")}
+            <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(fsLvl)}"></span>
           </h3>
           {#if detail?.partitions && detail.partitions.length > 0}
             <div class="space-y-2" data-testid="partitions">
@@ -580,14 +656,10 @@
         <section id="mon-load" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="gauge" size={14} /> {t("mon.loadHistory")}
+            <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(loadLvl)}" data-testid="load-badge"></span>
           </h3>
           <div class="mb-1 flex items-end justify-between gap-3">
-            <div class="flex items-baseline gap-2">
-              <span class="text-2xl font-semibold tabular-nums {thresholdClass(metrics.load1, th.load)}">{metrics.load1?.toFixed(2) ?? "—"}</span>
-              {#if loadStatus}
-                <span class="rounded bg-edge px-1.5 py-0.5 text-[11px] {loadStatus.cls}" data-testid="load-badge">{loadStatus.label}</span>
-              {/if}
-            </div>
+            <span class="text-2xl font-semibold tabular-nums {thresholdClass(metrics.load1, th.load)}">{metrics.load1?.toFixed(2) ?? "—"}</span>
             <Chart
               class="h-10 w-40"
               testid="load-history"
@@ -625,6 +697,7 @@
         <section id="mon-network" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="plug" size={14} /> {t("mon.network")}
+            <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(netLvl)}"></span>
           </h3>
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
             <dt class="flex items-center gap-1 text-muted"><Icon name="download" size={12} /> {t("mon.rx")}</dt>
@@ -733,6 +806,9 @@
         <section id="mon-temp" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="thermometer" size={14} /> {t("mon.temperature")}
+            {#if tempShown}
+              <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(tempLvl)}"></span>
+            {/if}
           </h3>
           {#if sensors.length > 0}
             {#if coreSensors.length >= 2}
@@ -798,6 +874,7 @@
           >
             <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
               <Icon name="activity" size={14} /> {t("mon.extras")}
+              <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(extrasLvl)}"></span>
             </h3>
             {#if extras.gpus.length > 0}
               <div class="mb-2" data-testid="gpu-list">

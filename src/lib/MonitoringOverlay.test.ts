@@ -141,8 +141,10 @@ describe("MonitoringOverlay", () => {
     // Memory section: top-by-memory table (mirrors the CPU top-process table).
     expect(screen.getByTestId("top-mem")).toBeInTheDocument();
     expect(screen.getByText("redis-server")).toBeInTheDocument();
-    // Load average section owns the load-vs-capacity badge (0.5/4 cores → normal).
-    expect(screen.getByTestId("load-badge")).toHaveTextContent("normal");
+    // Load average header carries a health dot like every other section.
+    expect(screen.getByTestId("load-badge")).toBeInTheDocument();
+    // Health summary chips in the System block (all green/ok in the fixture).
+    expect(screen.getByTestId("health-summary")).toBeInTheDocument();
     // 13.5: per-interface network, per-device disk I/O, sessions.
     expect(screen.getByTestId("net-ifaces")).toBeInTheDocument();
     expect(screen.getByTestId("disk-devs")).toBeInTheDocument();
@@ -240,7 +242,7 @@ describe("MonitoringOverlay", () => {
   it("colours a partition red when usage exceeds the limit threshold", async () => {
     settings.statusBarThresholds.disk = { warn: 1, crit: 2 }; // 5% usage → crit
     render(MonitoringOverlay, { props: { open: true, sessionId: "s3" } });
-    await screen.findByText("Filesystems");
+    await screen.findByTestId("partitions");
     const usage = await screen.findByText(/5\.0 GiB \/ 100\.0 GiB \(5%\)/);
     expect(usage).toHaveClass("text-danger");
   });
