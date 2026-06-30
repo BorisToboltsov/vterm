@@ -387,6 +387,8 @@ export interface MetricsDetail {
   cpuBreakdown: CpuBreakdown | null;
   /** Top processes by CPU. */
   topProcs: Proc[];
+  /** Top processes by memory (same shape, sorted by %MEM). */
+  topMemProcs: Proc[];
   failedUnits: number | null;
   listenPorts: number | null;
   conntrack: number | null;

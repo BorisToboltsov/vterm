@@ -92,7 +92,8 @@ pnpm check
   TCP), `parse_sensors` (датчики lm-sensors: label/temp/high/crit, пустые
   high/crit → None, нет строки → пусто), `cpu_breakdown` (user/system/iowait/steal/
   idle % из двух jiffy-сэмплов, нет прироста → None), `parse_top_procs` (pid|user|cpu|
-  mem|comm-записи), `parse_netdev`/`parse_diskdev`/`parse_sessions` (per-interface
+  mem|comm-записи; один парсер по ключу — `topcpu=` для CPU и `topmemp=` для ОЗУ),
+  `parse_netdev`/`parse_diskdev`/`parse_sessions` (per-interface
   сеть, per-device диск ×512, сессии `who`), `dev_rate_map` (per-second дельты по
   устройствам, первый опрос → пусто), `parse_detail` (mem/filenr/ulimit/procs +
   **health-скаляры** failed/listen/conntrack/timesync, пустое → None) и `parse_pending`
@@ -437,22 +438,20 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (жёлтый при превышении среднего, красный — предельного, без цвета ниже порогов) и
   кнопка `open-monitoring` (вызывает `onOpenMonitoring`).
 - `MonitoringOverlay.test.ts` — smoke-тест страницы мониторинга (API замокан):
-  блок «Система» и **KPI-плитки** видны всегда; **детальные секции скрыты в компакте
-  и появляются в расширенном** (`monitorExpanded`, ядра/разделы/TCP); композитная
+  блок «Система» и **детальные секции** (ядра/разделы/TCP) видны всегда (единый
+  режим, без плиток); композитная
   полоса памяти; **таблица датчиков температуры** + per-core heatmap, **карточка
   установки lm-sensors** при пустых датчиках (клик → `onInstallTool("sensors")`);
-  **CPU-разбивка** (stacked-бар) и **таблица топ-процессов**; **скаляры здоровья**
+  **CPU-разбивка** (stacked-бар) и **таблицы топ-процессов** (по CPU и по памяти);
+  **скаляры здоровья**
   (failed-юниты/conntrack/синхр. времени) в блоке «Система»; **per-interface сеть**,
   **per-device disk I/O** и **таблица сессий**; безлимитный потолок дескрипторов
   рендерится как `∞`; **ленивая** секция «Дополнительно» (GPU/Docker/SMART/OOM,
   `fetchExtras` после первого рендера); **ленивая** подгрузка
-  pending-updates после первого рендера, красная подсветка раздела при превышении
+  pending-updates после первого рендера (+ **скелетон** в группе «Обновления», пока
+  промис не разрешён); **скелетоны дельтовых метрик** (per-core/разбивка CPU/per-device
+  I/O) пока `pollCount < 2`; красная подсветка раздела при превышении
   порога диска, отсутствие опроса при закрытой странице.
-- `Gauge.test.ts` — центрированный текст = accessible-name, цвет дуги по уровню
-  порога (`crit` → `--color-danger`), отсутствие дуги при `fill=null`.
-- `MetricTile.test.ts` — большое число с цветом порога без gauge, рендер gauge с
-  текстом при `gaugeFill`, кнопка с `onclick` (тег `BUTTON`, клик вызывает колбэк) и
-  обычный `div` без него.
 - `Chart.test.ts` — линия-`path` на серию (атрибут `d` начинается с `M`, цвет
   `stroke`), доп. area-`path` при `fill`, одна линия на серию для мульти-серии,
   пустая серия не рисует ничего.

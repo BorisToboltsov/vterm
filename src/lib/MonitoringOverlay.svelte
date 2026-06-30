@@ -34,7 +34,6 @@
   import Icon from "./Icon.svelte";
   import Chart from "./Chart.svelte";
   import StackedBar from "./StackedBar.svelte";
-  import MetricTile from "./MetricTile.svelte";
   import Skeleton from "./Skeleton.svelte";
   import { t } from "./i18n";
 
@@ -66,6 +65,10 @@
   let pending = $state<PendingUpdates | null>(null);
   let pendingLoading = $state(false);
   let extras = $state<Extras | null>(null);
+  // Successful polls so far. Delta metrics (per-core, CPU breakdown, ctx/intr rates,
+  // per-device disk I/O) need two samples, so they're empty until the 2nd poll —
+  // we show skeletons while pollCount < 2.
+  let pollCount = $state(0);
   let timer: ReturnType<typeof setInterval> | undefined;
 
   // Rolling histories (built up from the moment the overlay opens).
@@ -98,14 +101,16 @@
       load15Hist = pushHist(load15Hist, m.load15);
       netRxHist = pushHist(netRxHist, m.netRxRate);
       netTxHist = pushHist(netTxHist, m.netTxRate);
+      pollCount += 1;
     } catch {
       failed = true;
     }
   }
 
   // Pending updates are heavy: fetch once, lazily, AFTER the overlay has rendered.
+  // Surfaced inline in the System block (static-info group); while in flight the
+  // group shows a skeleton (like SFTP loading).
   async function loadPending() {
-    pendingLoading = true;
     try {
       pending = await fetchPendingUpdates(sessionId);
     } catch {
@@ -128,7 +133,9 @@
     metrics = null;
     detail = null;
     pending = null;
+    pendingLoading = false;
     extras = null;
+    pollCount = 0;
     failed = false;
     cpuHist = [];
     ramHist = [];
@@ -149,6 +156,7 @@
     }
     const everyMs = Math.max(2, settings.statusPollInterval) * 1000;
     void sessionId;
+    pendingLoading = true;
     poll();
     // Defer the heavy pending-updates + extras probes so the page paints first.
     const pendingTimer = setTimeout(loadPending, 300);
@@ -167,18 +175,22 @@
   const ramPct = $derived(memPct(metrics?.memUsed ?? null, metrics?.memTotal ?? null));
   const swapPctV = $derived(memPct(metrics?.swapUsed ?? null, metrics?.swapTotal ?? null));
   const cores = $derived(detail?.perCpu ?? []);
+  // True while delta metrics aren't ready yet (only one poll done) — drives skeletons.
+  const loadingDelta = $derived(pollCount < 2);
   const loadCores = $derived(
     metrics?.load1 != null && cores.length > 0 ? metrics.load1 / cores.length : null,
   );
+  // Load-vs-capacity badge: <0.7/core ok, 0.7–1 high, ≥1 overloaded.
+  const loadStatus = $derived.by(() => {
+    if (loadCores == null) return null;
+    if (loadCores >= 1) return { label: t("mon.loadOver"), cls: "text-danger" };
+    if (loadCores >= 0.7) return { label: t("mon.loadHigh"), cls: "text-warn" };
+    return { label: t("mon.loadOk"), cls: "text-green-500" };
+  });
 
   function partPct(used: number, total: number): number | null {
     return total > 0 ? (used / total) * 100 : null;
   }
-  const diskPct = $derived(
-    metrics?.diskUsed != null && metrics?.diskTotal
-      ? (metrics.diskUsed / metrics.diskTotal) * 100
-      : null,
-  );
   // A ~i64::MAX `fs.file-max` means "no limit": skip the percentage/threshold and
   // render the ceiling as ∞ instead of an astronomical number.
   const fdUnlimited = $derived(isUnlimitedLimit(detail?.fileNrMax ?? null));
@@ -188,17 +200,6 @@
       : null,
   );
 
-  // Jump from a KPI tile to its detail section (expanding the page if needed).
-  function focusSection(id: string) {
-    settings.monitorExpanded = true;
-    const reduce =
-      typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    requestAnimationFrame(() =>
-      document
-        .getElementById(id)
-        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" }),
-    );
-  }
   const sensors = $derived(detail?.sensors ?? []);
   const coreSensors = $derived(sensors.filter((s) => /^core\s*\d+/i.test(s.label)));
 
@@ -230,7 +231,7 @@
 >
   {#if !metrics && !failed}
     <!-- First paint before the first poll resolves. -->
-    <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="monitoring-loading">
+    <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="monitoring-loading">
       {#each Array(6) as _, i (i)}
         <Skeleton height="160px" class="rounded" />
       {/each}
@@ -245,119 +246,65 @@
       </div>
     {/snippet}
     <div class="max-h-[80vh] overflow-y-auto pr-1">
-      <!-- System block (grouped static info) + density toggle -->
-      <div class="mb-3 flex items-start gap-3">
-        <section data-testid="system" class="min-w-0 flex-1 rounded border border-edge bg-panel p-3">
-          <div class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <Icon name={osIconFor(metrics)} size={16} class="text-muted" />
-            <span class="text-sm text-text">{metrics.user || "—"}@{metrics.hostname || "—"}</span>
-            <span class="text-xs text-muted">{metrics.prettyName || metrics.os || "—"}</span>
-          </div>
-          <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-3">
-            {#if metrics.kernel}{@render sysField(t("mon.kernel"), metrics.kernel)}{/if}
-            {#if metrics.uptimeSecs != null}{@render sysField(t("mon.uptimeLabel"), fmtUptime(metrics.uptimeSecs))}{/if}
-            {#if metrics.ip}{@render sysField(t("mon.ipLabel"), metrics.ip)}{/if}
-            {#if metrics.serverTime}{@render sysField(t("mon.serverTimeLabel"), metrics.serverTime)}{/if}
-            {#if cores.length > 0}{@render sysField(t("mon.coresLabel"), String(cores.length))}{/if}
-            {#if detail?.timeSynced != null}{@render sysField(t("mon.timeSync"), detail.timeSynced ? t("mon.synced") : t("mon.notSynced"), detail.timeSynced ? undefined : "text-warn")}{/if}
-            {#if detail?.failedUnits != null}{@render sysField(t("mon.failedUnits"), String(detail.failedUnits), detail.failedUnits > 0 ? "text-danger" : undefined)}{/if}
-            {#if detail?.listenPorts != null}{@render sysField(t("mon.listening"), String(detail.listenPorts))}{/if}
-            {#if detail?.conntrack != null}{@render sysField(t("mon.conntrack"), detail.conntrackMax ? `${detail.conntrack} / ${detail.conntrackMax}` : String(detail.conntrack))}{/if}
-          </dl>
-        </section>
-        <div
-          role="group"
-          aria-label={t("mon.title")}
-          class="flex shrink-0 overflow-hidden rounded border border-edge text-xs"
-        >
-          <button
-            type="button"
-            onclick={() => (settings.monitorExpanded = false)}
-            aria-pressed={!settings.monitorExpanded}
-            class="px-2 py-1 {!settings.monitorExpanded
-              ? 'bg-edge text-text'
-              : 'text-muted hover:text-accent'}">{t("mon.compact")}</button
-          >
-          <button
-            type="button"
-            onclick={() => (settings.monitorExpanded = true)}
-            aria-pressed={settings.monitorExpanded}
-            class="px-2 py-1 {settings.monitorExpanded
-              ? 'bg-edge text-accent'
-              : 'text-muted hover:text-accent'}">{t("mon.detailed")}</button
-          >
+      <!-- System block (grouped static info) -->
+      <section data-testid="system" class="mb-3 rounded border border-edge bg-panel p-3">
+        <div class="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <Icon name={osIconFor(metrics)} size={16} class="text-muted" />
+          <span class="text-sm text-text">{metrics.user || "—"}@{metrics.hostname || "—"}</span>
+          <span class="text-xs text-muted">{metrics.prettyName || metrics.os || "—"}</span>
         </div>
-      </div>
+        {#snippet sysGroup(title: string, body: import("svelte").Snippet)}
+          <div>
+            <div class="mb-1 text-[11px] uppercase tracking-wider text-muted">{title}</div>
+            <dl class="space-y-0.5">{@render body()}</dl>
+          </div>
+        {/snippet}
+        <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-xs sm:grid-cols-4">
+          {#if metrics.kernel || metrics.uptimeSecs != null || cores.length > 0 || metrics.serverTime}
+            {#snippet hostBody()}
+              {#if metrics!.kernel}{@render sysField(t("mon.kernel"), metrics!.kernel)}{/if}
+              {#if metrics!.uptimeSecs != null}{@render sysField(t("mon.uptimeLabel"), fmtUptime(metrics!.uptimeSecs))}{/if}
+              {#if cores.length > 0}{@render sysField(t("mon.coresLabel"), String(cores.length))}{/if}
+              {#if metrics!.serverTime}{@render sysField(t("mon.serverTimeLabel"), metrics!.serverTime)}{/if}
+            {/snippet}
+            {@render sysGroup(t("mon.groupHost"), hostBody)}
+          {/if}
+          {#if metrics.ip || detail?.listenPorts != null || detail?.conntrack != null}
+            {#snippet netBody()}
+              {#if metrics!.ip}{@render sysField(t("mon.ipLabel"), metrics!.ip)}{/if}
+              {#if detail?.listenPorts != null}{@render sysField(t("mon.listening"), String(detail.listenPorts))}{/if}
+              {#if detail?.conntrack != null}{@render sysField(t("mon.conntrack"), detail.conntrackMax ? `${detail.conntrack} / ${detail.conntrackMax}` : String(detail.conntrack))}{/if}
+            {/snippet}
+            {@render sysGroup(t("mon.network"), netBody)}
+          {/if}
+          {#if detail?.timeSynced != null || detail?.failedUnits != null}
+            {#snippet healthBody()}
+              {#if detail?.timeSynced != null}{@render sysField(t("mon.timeSync"), detail.timeSynced ? t("mon.synced") : t("mon.notSynced"), detail.timeSynced ? undefined : "text-warn")}{/if}
+              {#if detail?.failedUnits != null}{@render sysField(t("mon.failedUnits"), String(detail.failedUnits), detail.failedUnits > 0 ? "text-danger" : undefined)}{/if}
+            {/snippet}
+            {@render sysGroup(t("mon.groupHealth"), healthBody)}
+          {/if}
+          {#if pendingLoading || (pending && pending.manager)}
+            {#snippet updatesBody()}
+              {#if pending && pending.manager}
+                {@render sysField(t("mon.manager"), pending.manager)}
+                {@render sysField(t("mon.updatesAvailable"), String(pending.updates ?? 0), (pending.updates ?? 0) > 0 ? "text-warn" : undefined)}
+                {#if pending.security != null}{@render sysField(t("mon.security"), String(pending.security), (pending.security ?? 0) > 0 ? "text-danger" : undefined)}{/if}
+                {@render sysField(t("mon.rebootRequired"), pending.rebootRequired ? t("mon.yes") : t("mon.no"), pending.rebootRequired ? "text-danger" : undefined)}
+              {:else}
+                <div class="space-y-1" data-testid="updates-skeleton" aria-hidden="true">
+                  <Skeleton height="12px" width="70%" />
+                  <Skeleton height="12px" width="55%" />
+                  <Skeleton height="12px" width="60%" />
+                </div>
+              {/if}
+            {/snippet}
+            {@render sysGroup(t("mon.groupUpdates"), updatesBody)}
+          {/if}
+        </div>
+      </section>
 
-      <!-- KPI tiles — always visible (compact + detailed) -->
-      <div class="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6" data-testid="kpi-tiles">
-        <MetricTile
-          icon="cpu"
-          label={t("mon.cpu")}
-          level={thresholdLevel(cpu, th.cpu)}
-          gaugeFill={cpu}
-          gaugeText={fmtPct(cpu)}
-          history={cpuHist}
-          historyColor={C_CPU}
-          onclick={() => focusSection("mon-cpu")}
-          testid="tile-cpu"
-        />
-        <MetricTile
-          icon="memory"
-          label={t("mon.memory")}
-          level={thresholdLevel(ramPct, th.ram)}
-          gaugeFill={ramPct}
-          gaugeText={fmtPct(ramPct)}
-          history={ramHist}
-          historyColor={C_RAM}
-          onclick={() => focusSection("mon-memory")}
-          testid="tile-ram"
-        />
-        <MetricTile
-          icon="disk"
-          label={t("mon.diskLabel")}
-          level={thresholdLevel(diskPct, th.disk)}
-          gaugeFill={diskPct}
-          gaugeText={fmtPct(diskPct)}
-          sub="{fmtBytes(metrics.diskUsed)} / {fmtBytes(metrics.diskTotal)}"
-          onclick={() => focusSection("mon-fs")}
-          testid="tile-disk"
-        />
-        <MetricTile
-          icon="gauge"
-          label={t("mon.loadLabel")}
-          level={thresholdLevel(metrics.load1, th.load)}
-          big={metrics.load1?.toFixed(2) ?? "—"}
-          history={loadHist}
-          historyMax={Math.max(1, cores.length)}
-          historyColor={C_LOAD}
-          sub="{metrics.load5?.toFixed(2) ?? '—'} / {metrics.load15?.toFixed(2) ?? '—'}"
-          onclick={() => focusSection("mon-load")}
-          testid="tile-load"
-        />
-        {#if metrics.cpuTemp != null}
-          <MetricTile
-            icon="thermometer"
-            label={t("mon.temperature")}
-            level={thresholdLevel(metrics.cpuTemp, th.cpuTemp)}
-            gaugeFill={metrics.cpuTemp}
-            gaugeText="{Math.round(metrics.cpuTemp)}°"
-            onclick={() => focusSection("mon-temp")}
-            testid="tile-temp"
-          />
-        {/if}
-        <MetricTile
-          icon="download"
-          label={t("mon.network")}
-          big={fmtRate(metrics.netRxRate)}
-          sub="{t('mon.tx')} {fmtRate(metrics.netTxRate)}"
-          onclick={() => focusSection("mon-network")}
-          testid="tile-net"
-        />
-      </div>
-
-      {#if settings.monitorExpanded}
-      <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-testid="detail-sections">
+      <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="detail-sections">
         <!-- ── CPU ── -->
         <section id="mon-cpu" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
@@ -385,31 +332,30 @@
                 {/each}
               </div>
             </div>
+          {:else if loadingDelta}
+            <div class="mb-2" data-testid="per-core-skeleton" aria-hidden="true">
+              <Skeleton height="10px" width="40%" class="mb-1" />
+              <Skeleton height="48px" />
+            </div>
           {/if}
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-            <dt class="text-muted">{t("mon.load")}</dt>
-            <dd class="text-right tabular-nums {thresholdClass(metrics.load1, th.load)}">
-              {metrics.load1?.toFixed(2) ?? "—"} / {metrics.load5?.toFixed(2) ?? "—"} / {metrics.load15?.toFixed(2) ?? "—"}
-            </dd>
             {#if loadCores != null}
               <dt class="text-muted">{t("mon.loadPerCore")}</dt>
               <dd class="text-right tabular-nums">{loadCores.toFixed(2)}</dd>
             {/if}
-            {#if detail?.psiCpu}
-              <dt class="text-muted" title={t("mon.psiCpuTitle")}>PSI CPU</dt>
-              <dd class="text-right tabular-nums">{psiLabel(detail.psiCpu)}</dd>
-            {/if}
             {#if detail?.ctxtRate != null}
               <dt class="text-muted">{t("mon.ctxSwitch")}</dt>
               <dd class="text-right tabular-nums">{detail.ctxtRate.toLocaleString()}</dd>
+            {:else if loadingDelta}
+              <dt class="text-muted">{t("mon.ctxSwitch")}</dt>
+              <dd class="flex justify-end"><Skeleton height="12px" width="44px" /></dd>
             {/if}
             {#if detail?.intrRate != null}
               <dt class="text-muted">{t("mon.interrupts")}</dt>
               <dd class="text-right tabular-nums">{detail.intrRate.toLocaleString()}</dd>
-            {/if}
-            {#if detail?.procsRunning != null}
-              <dt class="text-muted">{t("mon.procsRunBlk")}</dt>
-              <dd class="text-right tabular-nums">{detail.procsRunning} / {detail.procsBlocked ?? 0}</dd>
+            {:else if loadingDelta}
+              <dt class="text-muted">{t("mon.interrupts")}</dt>
+              <dd class="flex justify-end"><Skeleton height="12px" width="44px" /></dd>
             {/if}
             {#if metrics.cpuTemp != null}
               <dt class="text-muted">{t("mon.temperature")}</dt>
@@ -428,6 +374,10 @@
                 { label: t("mon.idle"), value: detail.cpuBreakdown.idle, color: "var(--color-edge)" },
               ]}
             />
+          {:else if loadingDelta}
+            <div class="mt-2" data-testid="cpu-breakdown-skeleton" aria-hidden="true">
+              <Skeleton height="10px" class="rounded-full" />
+            </div>
           {/if}
           {#if detail?.topProcs && detail.topProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="top-procs">
@@ -456,66 +406,6 @@
           {:else if topCpuProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
               {t("mon.topCpu")} <span class="text-text">{topCpuProcs.join(", ")}</span>
-            </div>
-          {/if}
-        </section>
-
-        <!-- ── Temperature (lm-sensors) ── -->
-        <section id="mon-temp" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
-          <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="thermometer" size={14} /> {t("mon.temperature")}
-          </h3>
-          {#if sensors.length > 0}
-            {#if coreSensors.length >= 2}
-              <div class="mb-2" data-testid="core-temps">
-                <div class="mb-1 text-[11px] text-muted">{t("mon.coreTemps")}</div>
-                <div class="flex h-10 items-end gap-0.5">
-                  {#each coreSensors as c, i (i)}
-                    <span
-                      class="min-w-0 flex-1 rounded-[1px]"
-                      title="{c.label}: {Math.round(c.temp)}°C"
-                      style="height: {Math.max(8, sensorFill(c))}%; background-color: var({sensorLevel(c) === 'crit' ? '--color-danger' : sensorLevel(c) === 'warn' ? '--color-warn' : '--color-accent'})"
-                    ></span>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-            <table class="w-full text-xs" data-testid="sensors-table">
-              <thead>
-                <tr class="text-left text-muted">
-                  <th class="font-medium">{t("mon.sensor")}</th>
-                  <th class="text-right font-medium">{t("mon.current")}</th>
-                  <th class="text-right font-medium">{t("mon.high")}</th>
-                  <th class="text-right font-medium">{t("mon.crit")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each sensors as s, i (i)}
-                  <tr class="border-t border-edge/40">
-                    <td class="truncate py-0.5 text-text" title={s.label}>{s.label}</td>
-                    <td class="py-0.5 text-right tabular-nums {levelTextClass(sensorLevel(s))}">{Math.round(s.temp)}°C</td>
-                    <td class="py-0.5 text-right tabular-nums text-muted">{s.high != null ? Math.round(s.high) + "°" : "—"}</td>
-                    <td class="py-0.5 text-right tabular-nums text-muted">{s.crit != null ? Math.round(s.crit) + "°" : "—"}</td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          {:else}
-            <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-install">
-              <Icon name="info" size={15} class="mt-0.5 shrink-0 text-warn" />
-              <div class="min-w-0 flex-1">
-                <p class="text-xs text-text">{t("mon.sensorsUnavailable")}</p>
-                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsHint")}</p>
-                {#if onInstallTool}
-                  <button
-                    type="button"
-                    onclick={() => onInstallTool?.("sensors")}
-                    class="mt-2 rounded bg-edge px-3 py-1 text-xs font-medium hover:bg-accent hover:text-panel-alt"
-                  >
-                    {t("mon.installSensors")}
-                  </button>
-                {/if}
-              </div>
             </div>
           {/if}
         </section>
@@ -574,7 +464,31 @@
               <dd class="text-right tabular-nums">{psiLabel(detail.psiMem)}</dd>
             {/if}
           </dl>
-          {#if topMemProcs.length > 0}
+          {#if detail?.topMemProcs && detail.topMemProcs.length > 0}
+            <div class="mt-2 border-t border-edge pt-2" data-testid="top-mem">
+              <div class="mb-1 text-[11px] text-muted">{t("mon.topMemProcs")}</div>
+              <table class="w-full text-[11px]">
+                <thead>
+                  <tr class="text-left text-muted">
+                    <th class="font-medium">PID</th>
+                    <th class="font-medium">{t("mon.process")}</th>
+                    <th class="text-right font-medium">MEM</th>
+                    <th class="text-right font-medium">CPU</th>
+                  </tr>
+                </thead>
+                <tbody class="font-mono">
+                  {#each detail.topMemProcs as p (p.pid)}
+                    <tr class="border-t border-edge/40">
+                      <td class="py-0.5 tabular-nums text-muted">{p.pid}</td>
+                      <td class="truncate py-0.5 text-text" title="{p.user} · {p.comm}">{p.comm}</td>
+                      <td class="py-0.5 text-right tabular-nums">{p.mem.toFixed(1)}%</td>
+                      <td class="py-0.5 text-right tabular-nums text-muted">{p.cpu.toFixed(1)}%</td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {:else if topMemProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
               {t("mon.topMem")} <span class="text-text">{topMemProcs.join(", ")}</span>
             </div>
@@ -654,7 +568,57 @@
                 </tbody>
               </table>
             </div>
+          {:else if loadingDelta}
+            <div class="mt-2 space-y-1 border-t border-edge pt-2" data-testid="disk-devs-skeleton" aria-hidden="true">
+              <Skeleton height="12px" width="40%" />
+              <Skeleton height="12px" width="55%" />
+            </div>
           {/if}
+        </section>
+
+        <!-- ── Load average ── -->
+        <section id="mon-load" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
+          <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
+            <Icon name="gauge" size={14} /> {t("mon.loadHistory")}
+          </h3>
+          <div class="mb-1 flex items-end justify-between gap-3">
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-semibold tabular-nums {thresholdClass(metrics.load1, th.load)}">{metrics.load1?.toFixed(2) ?? "—"}</span>
+              {#if loadStatus}
+                <span class="rounded bg-edge px-1.5 py-0.5 text-[11px] {loadStatus.cls}" data-testid="load-badge">{loadStatus.label}</span>
+              {/if}
+            </div>
+            <Chart
+              class="h-10 w-40"
+              testid="load-history"
+              max={Math.max(1, cores.length)}
+              series={[
+                { values: loadHist, color: C_LOAD, fill: true },
+                { values: load5Hist, color: C_LOAD5 },
+                { values: load15Hist, color: C_LOAD15 },
+              ]}
+            />
+          </div>
+          <div class="mb-2 flex gap-3 text-[11px] text-muted">
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD}"></span>1m</span>
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD5}"></span>5m</span>
+            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD15}"></span>15m</span>
+          </div>
+          <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <dt class="text-muted">{t("mon.load")}</dt>
+            <dd class="text-right tabular-nums {thresholdClass(metrics.load1, th.load)}">
+              {metrics.load1?.toFixed(2) ?? "—"} / {metrics.load5?.toFixed(2) ?? "—"} / {metrics.load15?.toFixed(2) ?? "—"}
+            </dd>
+            {#if detail?.psiCpu}
+              <dt class="text-muted" title={t("mon.psiCpuTitle")}>PSI CPU</dt>
+              <dd class="text-right tabular-nums">{psiLabel(detail.psiCpu)}</dd>
+            {/if}
+            {#if detail?.procsRunning != null}
+              <dt class="text-muted">{t("mon.procsRunBlk")}</dt>
+              <dd class="text-right tabular-nums">{detail.procsRunning} / {detail.procsBlocked ?? 0}</dd>
+            {/if}
+          </dl>
+          <p class="mt-1 text-[11px] text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
         </section>
 
         <!-- ── Network ── -->
@@ -765,30 +729,64 @@
           {/if}
         </section>
 
-        <!-- ── Load history ── -->
-        <section id="mon-load" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
+        <!-- ── Temperature (lm-sensors) ── -->
+        <section id="mon-temp" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="gauge" size={14} /> {t("mon.loadHistory")}
+            <Icon name="thermometer" size={14} /> {t("mon.temperature")}
           </h3>
-          <div class="mb-1 flex items-end justify-between gap-3">
-            <span class="text-2xl font-semibold tabular-nums {thresholdClass(metrics.load1, th.load)}">{metrics.load1?.toFixed(2) ?? "—"}</span>
-            <Chart
-              class="h-10 w-40"
-              testid="load-history"
-              max={Math.max(1, cores.length)}
-              series={[
-                { values: loadHist, color: C_LOAD, fill: true },
-                { values: load5Hist, color: C_LOAD5 },
-                { values: load15Hist, color: C_LOAD15 },
-              ]}
-            />
-          </div>
-          <div class="mb-1 flex gap-3 text-[11px] text-muted">
-            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD}"></span>1m</span>
-            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD5}"></span>5m</span>
-            <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD15}"></span>15m</span>
-          </div>
-          <p class="text-[11px] text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
+          {#if sensors.length > 0}
+            {#if coreSensors.length >= 2}
+              <div class="mb-2" data-testid="core-temps">
+                <div class="mb-1 text-[11px] text-muted">{t("mon.coreTemps")}</div>
+                <div class="flex h-10 items-end gap-0.5">
+                  {#each coreSensors as c, i (i)}
+                    <span
+                      class="min-w-0 flex-1 rounded-[1px]"
+                      title="{c.label}: {Math.round(c.temp)}°C"
+                      style="height: {Math.max(8, sensorFill(c))}%; background-color: var({sensorLevel(c) === 'crit' ? '--color-danger' : sensorLevel(c) === 'warn' ? '--color-warn' : '--color-accent'})"
+                    ></span>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            <table class="w-full text-xs" data-testid="sensors-table">
+              <thead>
+                <tr class="text-left text-muted">
+                  <th class="font-medium">{t("mon.sensor")}</th>
+                  <th class="text-right font-medium">{t("mon.current")}</th>
+                  <th class="text-right font-medium">{t("mon.high")}</th>
+                  <th class="text-right font-medium">{t("mon.crit")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each sensors as s, i (i)}
+                  <tr class="border-t border-edge/40">
+                    <td class="truncate py-0.5 text-text" title={s.label}>{s.label}</td>
+                    <td class="py-0.5 text-right tabular-nums {levelTextClass(sensorLevel(s))}">{Math.round(s.temp)}°C</td>
+                    <td class="py-0.5 text-right tabular-nums text-muted">{s.high != null ? Math.round(s.high) + "°" : "—"}</td>
+                    <td class="py-0.5 text-right tabular-nums text-muted">{s.crit != null ? Math.round(s.crit) + "°" : "—"}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {:else}
+            <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-install">
+              <Icon name="info" size={15} class="mt-0.5 shrink-0 text-warn" />
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-text">{t("mon.sensorsUnavailable")}</p>
+                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsHint")}</p>
+                {#if onInstallTool}
+                  <button
+                    type="button"
+                    onclick={() => onInstallTool?.("sensors")}
+                    class="mt-2 rounded bg-edge px-3 py-1 text-xs font-medium hover:bg-accent hover:text-panel-alt"
+                  >
+                    {t("mon.installSensors")}
+                  </button>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </section>
 
         <!-- ── Extras (lazy: GPU / Docker / SMART / OOM) ── -->
@@ -860,33 +858,7 @@
             {/if}
           </section>
         {/if}
-
-        <!-- ── Updates (lazy) ── -->
-        <section id="mon-updates" class="scroll-mt-2 rounded border border-edge bg-panel p-3" data-testid="updates-card">
-          <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Icon name="refresh" size={14} /> {t("mon.updates")}
-          </h3>
-          {#if pendingLoading}
-            <Skeleton height="20px" width="60%" />
-          {:else if pending && pending.manager}
-            <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-              <dt class="text-muted">{t("mon.manager")}</dt>
-              <dd class="text-right">{pending.manager}</dd>
-              <dt class="text-muted">{t("mon.updatesAvailable")}</dt>
-              <dd class="text-right tabular-nums {(pending.updates ?? 0) > 0 ? 'text-warn' : ''}">{pending.updates ?? "—"}</dd>
-              {#if pending.security != null}
-                <dt class="text-muted">{t("mon.security")}</dt>
-                <dd class="text-right tabular-nums {(pending.security ?? 0) > 0 ? 'text-danger' : ''}">{pending.security}</dd>
-              {/if}
-              <dt class="text-muted">{t("mon.rebootRequired")}</dt>
-              <dd class="text-right {pending.rebootRequired ? 'text-danger' : ''}">{pending.rebootRequired ? t("mon.yes") : t("mon.no")}</dd>
-            </dl>
-          {:else}
-            <p class="text-xs text-muted">{t("mon.pmUnknown")}</p>
-          {/if}
-        </section>
       </div>
-      {/if}
     </div>
   {/if}
 </Modal>

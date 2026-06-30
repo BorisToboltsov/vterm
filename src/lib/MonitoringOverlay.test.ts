@@ -84,6 +84,10 @@ const detail: MetricsDetail = {
     { pid: 1234, user: "root", cpu: 12.5, mem: 3.1, comm: "nginx" },
     { pid: 5678, user: "www", cpu: 4, mem: 1.2, comm: "php-fpm" },
   ],
+  topMemProcs: [
+    { pid: 99, user: "postgres", cpu: 2, mem: 41, comm: "postgres" },
+    { pid: 4321, user: "redis", cpu: 1, mem: 8.5, comm: "redis-server" },
+  ],
   failedUnits: 1,
   listenPorts: 9,
   conntrack: 120,
@@ -121,25 +125,10 @@ beforeEach(() => {
 });
 
 describe("MonitoringOverlay", () => {
-  it("always shows the system block and KPI tiles from a live poll", async () => {
+  it("renders the system block and all detail sections from a live poll", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s1" } });
     expect(await screen.findByTestId("system")).toBeInTheDocument();
-    expect(screen.getByTestId("kpi-tiles")).toBeInTheDocument();
-    expect(screen.getByTestId("tile-cpu")).toBeInTheDocument();
-    // CPU% headline shows in the gauge text even in compact mode.
-    expect(screen.getAllByText("42%").length).toBeGreaterThan(0);
-  });
-
-  it("hides detail sections in compact mode and reveals them when detailed", async () => {
-    settings.monitorExpanded = false;
-    const { rerender } = render(MonitoringOverlay, { props: { open: true, sessionId: "s1b" } });
-    await screen.findByTestId("kpi-tiles");
-    expect(screen.queryByTestId("detail-sections")).toBeNull();
-    expect(screen.queryByTestId("per-core")).toBeNull();
-
-    settings.monitorExpanded = true;
-    await rerender({ open: true, sessionId: "s1b" });
-    expect(await screen.findByTestId("detail-sections")).toBeInTheDocument();
+    expect(screen.getByTestId("detail-sections")).toBeInTheDocument();
     expect(screen.getByTestId("per-core")).toBeInTheDocument();
     expect(screen.getByTestId("partitions")).toBeInTheDocument();
     expect(screen.getByTestId("tcp-states")).toBeInTheDocument();
@@ -149,24 +138,33 @@ describe("MonitoringOverlay", () => {
     expect(screen.getByTestId("cpu-breakdown")).toBeInTheDocument();
     expect(screen.getByTestId("top-procs")).toBeInTheDocument();
     expect(screen.getByText("nginx")).toBeInTheDocument();
+    // Memory section: top-by-memory table (mirrors the CPU top-process table).
+    expect(screen.getByTestId("top-mem")).toBeInTheDocument();
+    expect(screen.getByText("redis-server")).toBeInTheDocument();
+    // Load average section owns the load-vs-capacity badge (0.5/4 cores → normal).
+    expect(screen.getByTestId("load-badge")).toHaveTextContent("normal");
     // 13.5: per-interface network, per-device disk I/O, sessions.
     expect(screen.getByTestId("net-ifaces")).toBeInTheDocument();
     expect(screen.getByTestId("disk-devs")).toBeInTheDocument();
     expect(screen.getByTestId("sessions")).toBeInTheDocument();
     expect(screen.getByText("eth0")).toBeInTheDocument();
     expect(screen.getByText("192.168.1.50")).toBeInTheDocument();
+    // CPU% headline from the metrics poll.
+    expect(screen.getByText("42%")).toBeInTheDocument();
   });
 
-  it("surfaces system-health scalars in the always-visible system block", async () => {
+  it("surfaces system-health scalars grouped in the system block", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-health" } });
     const sys = await screen.findByTestId("system");
-    // Failed units (>0 → danger) and time-sync status show regardless of mode.
+    // Logical group headers within the System block.
+    expect(within(sys).getByText("Host")).toBeInTheDocument();
     expect(within(sys).getByText("synced")).toBeInTheDocument();
     expect(within(sys).getByText("120 / 65536")).toBeInTheDocument();
+    // The Updates group appears once the lazy pending probe resolves.
+    expect(await within(sys).findByText("Updates")).toBeInTheDocument();
   });
 
-  it("shows the temperature sensors table in detailed mode", async () => {
-    settings.monitorExpanded = true;
+  it("shows the temperature sensors table with a per-core heatmap", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-temp" } });
     expect(await screen.findByTestId("sensors-table")).toBeInTheDocument();
     expect(screen.getByText("Package id 0")).toBeInTheDocument();
@@ -175,7 +173,6 @@ describe("MonitoringOverlay", () => {
   });
 
   it("offers to install lm-sensors when no sensor data is available", async () => {
-    settings.monitorExpanded = true;
     fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [] });
     const onInstallTool = vi.fn();
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-noterm", onInstallTool } });
@@ -185,17 +182,34 @@ describe("MonitoringOverlay", () => {
     expect(onInstallTool).toHaveBeenCalledWith("sensors");
   });
 
+  it("shows skeletons for delta metrics until the second poll", async () => {
+    // First real poll has no per-core/breakdown/ctx/per-device data (needs 2 samples).
+    fetchMetricsDetail.mockResolvedValue({
+      ...detail,
+      perCpu: [],
+      cpuBreakdown: null,
+      ctxtRate: null,
+      intrRate: null,
+      diskDevs: [],
+    });
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-delta" } });
+    await screen.findByTestId("system");
+    expect(screen.getByTestId("per-core-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("cpu-breakdown-skeleton")).toBeInTheDocument();
+    expect(screen.getByTestId("disk-devs-skeleton")).toBeInTheDocument();
+    // The real per-core bars are not shown yet.
+    expect(screen.queryByTestId("per-core")).toBeNull();
+  });
+
   it("renders an unlimited file-descriptor ceiling as ∞", async () => {
-    settings.monitorExpanded = true;
     render(MonitoringOverlay, { props: { open: true, sessionId: "s1c" } });
     // fileNrMax is i64::MAX in the fixture → ∞, with the percentage suppressed.
     expect(await screen.findByText(/1,536 \/ ∞ \(—\)/)).toBeInTheDocument();
   });
 
   it("lazily loads extras (GPU/Docker/SMART/OOM) after the first paint", async () => {
-    settings.monitorExpanded = true;
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-extras" } });
-    await screen.findByTestId("kpi-tiles");
+    await screen.findByTestId("system");
     expect(await screen.findByTestId("extras-card")).toBeInTheDocument();
     expect(screen.getByTestId("gpu-list")).toBeInTheDocument();
     expect(screen.getByTestId("smart-list")).toBeInTheDocument();
@@ -204,22 +218,29 @@ describe("MonitoringOverlay", () => {
     expect(fetchExtras).toHaveBeenCalledWith("s-extras");
   });
 
+  it("shows the Updates group header with a skeleton while pending loads", async () => {
+    let resolve: (v: PendingUpdates) => void = () => {};
+    fetchPendingUpdates.mockReturnValue(new Promise<PendingUpdates>((r) => (resolve = r)));
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-upd" } });
+    const sys = await screen.findByTestId("system");
+    // Header is shown immediately; the body is a skeleton until the probe resolves.
+    expect(await within(sys).findByText("Updates")).toBeInTheDocument();
+    expect(within(sys).getByTestId("updates-skeleton")).toBeInTheDocument();
+    resolve(pending); // let it finish so there are no dangling promises
+  });
+
   it("lazily loads pending updates after the first paint", async () => {
-    settings.monitorExpanded = true;
     render(MonitoringOverlay, { props: { open: true, sessionId: "s2" } });
-    await screen.findByTestId("kpi-tiles");
+    await screen.findByTestId("system");
     // Pending fetch is deferred (~300ms); the manager appears once it resolves.
     expect(await screen.findByText("apt")).toBeInTheDocument();
     expect(fetchPendingUpdates).toHaveBeenCalledWith("s2");
   });
 
   it("colours a partition red when usage exceeds the limit threshold", async () => {
-    settings.monitorExpanded = true;
     settings.statusBarThresholds.disk = { warn: 1, crit: 2 }; // 5% usage → crit
     render(MonitoringOverlay, { props: { open: true, sessionId: "s3" } });
     await screen.findByText("Filesystems");
-    // The "/" partition usage figure is red. Include the "(5%)" so this matches
-    // the partition row, not the disk KPI tile's "5.0 GiB / 100.0 GiB" sub-line.
     const usage = await screen.findByText(/5\.0 GiB \/ 100\.0 GiB \(5%\)/);
     expect(usage).toHaveClass("text-danger");
   });

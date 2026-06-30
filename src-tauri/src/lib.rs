@@ -1335,6 +1335,7 @@ printf 'tcp=%s\\n' \"$(ss -tanH 2>/dev/null | awk '{print $1}' | sort | uniq -c 
 printf 'sensors=%s\\n' \"$(sensors -u 2>/dev/null | awk '/^[^ ].*:$/{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}l=$0;sub(/:$/,\"\",l);gsub(/,/,\"\",l);v=\"\";h=\"\";c=\"\";next}/temp[0-9]+_input:/{v=$2+0}/temp[0-9]+_max:/{h=$2+0}/temp[0-9]+_crit:/{c=$2+0}END{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}}')\"; \
 printf 'cpubreak=%s\\n' \"$(awk '/^cpu /{print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat 2>/dev/null)\"; \
 printf 'topcpu=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k3 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
+printf 'topmemp=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k4 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
 printf 'failed=%s\\n' \"$(command -v systemctl >/dev/null 2>&1 && systemctl --failed --no-legend 2>/dev/null | wc -l | tr -d ' ')\"; \
 printf 'listen=%s\\n' \"$(command -v ss >/dev/null 2>&1 && ss -tlnH 2>/dev/null | wc -l | tr -d ' ')\"; \
 printf 'conntrack=%s %s\\n' \"$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)\" \"$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)\"; \
@@ -1464,6 +1465,8 @@ struct MetricsDetail {
     cpu_breakdown: Option<CpuBreakdown>,
     /// Top processes by CPU (pid/user/cpu/mem/comm).
     top_procs: Vec<Proc>,
+    /// Top processes by memory (same shape, sorted by %MEM).
+    top_mem_procs: Vec<Proc>,
     /// Failed systemd units / listening TCP sockets / nf_conntrack usage.
     failed_units: Option<u64>,
     listen_ports: Option<u64>,
@@ -1616,12 +1619,10 @@ fn cpu_breakdown(prev: &[u64; 8], cur: &[u64; 8]) -> Option<CpuBreakdown> {
     })
 }
 
-/// Parse the `topcpu=pid|user|cpu|mem|comm;…` line into process rows.
-fn parse_top_procs(raw: &str) -> Vec<Proc> {
-    let line = raw
-        .lines()
-        .find_map(|l| l.strip_prefix("topcpu="))
-        .unwrap_or("");
+/// Parse a `<key>pid|user|cpu|mem|comm;…` process-table line (e.g. `topcpu=` /
+/// `topmemp=`) into process rows.
+fn parse_top_procs(raw: &str, key: &str) -> Vec<Proc> {
+    let line = raw.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("");
     line.split(';')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
@@ -1817,7 +1818,8 @@ fn parse_detail(raw: &str) -> MetricsDetail {
     d.psi_io = parse_psi(raw, "psiio");
     d.tcp = parse_tcp(raw);
     d.sensors = parse_sensors(raw);
-    d.top_procs = parse_top_procs(raw);
+    d.top_procs = parse_top_procs(raw, "topcpu=");
+    d.top_mem_procs = parse_top_procs(raw, "topmemp=");
     d.failed_units = raw
         .lines()
         .find_map(|l| l.strip_prefix("failed="))
@@ -3055,14 +3057,20 @@ mod tests {
 
     #[test]
     fn parse_top_procs_reads_pipe_records() {
-        let raw = "topcpu=1234|root|12.5|3.1|nginx;5678|www|4.0|1.2|php-fpm;";
-        let p = parse_top_procs(raw);
+        let raw = "topcpu=1234|root|12.5|3.1|nginx;5678|www|4.0|1.2|php-fpm;\n\
+                   topmemp=99|postgres|2.0|41.0|postgres;";
+        let p = parse_top_procs(raw, "topcpu=");
         assert_eq!(p.len(), 2);
         assert_eq!(p[0].pid, 1234);
         assert_eq!(p[0].user, "root");
         assert_eq!(p[0].cpu, 12.5);
         assert_eq!(p[0].comm, "nginx");
-        assert!(parse_top_procs("os=Linux").is_empty());
+        // Same parser drives the by-memory table via its own key.
+        let m = parse_top_procs(raw, "topmemp=");
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].comm, "postgres");
+        assert_eq!(m[0].mem, 41.0);
+        assert!(parse_top_procs("os=Linux", "topcpu=").is_empty());
     }
 
     #[test]
@@ -3141,6 +3149,7 @@ mod tests {
             "sensors=",
             "cpubreak=",
             "topcpu=",
+            "topmemp=",
             "failed=",
             "listen=",
             "conntrack=",
