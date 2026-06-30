@@ -1499,7 +1499,11 @@
 </div>
 
 {#if tabsState.activeId}
-  <MonitoringOverlay bind:open={showMonitoring} sessionId={tabsState.activeId} />
+  <MonitoringOverlay
+    bind:open={showMonitoring}
+    sessionId={tabsState.activeId}
+    onInstallTool={offerLintInstall}
+  />
 {/if}
 
 <!-- While resizing: keep the col-resize cursor and suppress text selection. -->

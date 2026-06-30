@@ -63,6 +63,21 @@ export function diskFree(used: number | null, total: number | null): number | nu
   return total != null && used != null ? total - used : null;
 }
 
+// A ceiling reported around i64::MAX means "no limit" — e.g. an unlimited
+// `fs.file-max`, which would otherwise render as 9,223,372,036,854,776,000.
+const UNLIMITED_MIN = 1e15;
+
+/** True when a numeric ceiling is effectively unlimited (~i64::MAX sentinel). */
+export function isUnlimitedLimit(n: number | null): boolean {
+  return n != null && n >= UNLIMITED_MIN;
+}
+
+/** Format a ceiling: "∞" when effectively unlimited, localized count, else "—". */
+export function fmtLimit(n: number | null): string {
+  if (n == null) return "—";
+  return isUnlimitedLimit(n) ? "∞" : n.toLocaleString();
+}
+
 /** Convenience wrapper: pick the OS icon straight from a Metrics object. */
 export const osIconFor = (m: Pick<Metrics, "os" | "prettyName">): IconName =>
   osIcon(m.os, m.prettyName);

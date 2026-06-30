@@ -335,9 +335,68 @@ pnpm test:coverage
   `settings.statusBarThresholds` по ключам `ThresholdKey`; новый числовой показатель =
   новый ключ + дефолт + поле в свёрнутом под-разделе настроек. Не дублируй
   пороговую логику в компонентах.
-- **Графики — через [Sparkline.svelte](src/lib/Sparkline.svelte)** (бар-спарклайн,
-  заполнение справа, левый паддинг нулями для стабильной ширины). Один компонент и
-  для CPU-спарклайна бара, и для историй страницы — не инлайнь свои бар-чарты.
+- **Графики — два компонента, не инлайнить свои.**
+  [Sparkline.svelte](src/lib/Sparkline.svelte) (бар-спарклайн, заполнение справа,
+  левый паддинг нулями) — **закреплён за статус-баром** (CPU-спарклайн); его вид не
+  меняем. Для **страницы мониторинга** — [Chart.svelte](src/lib/Chart.svelte)
+  (area/line + **мульти-серия**, `non-scaling-stroke`, авто/заданный `max`) и
+  [StackedBar.svelte](src/lib/StackedBar.svelte) (композитная полоса + легенда) и
+  [Gauge.svelte](src/lib/Gauge.svelte) (радиальный). Новый тип графика страницы =
+  расширение `Chart`/новый примитив, а не инлайн-SVG в `MonitoringOverlay`. Цвет
+  серии — данные (проп `color`, hex или CSS-переменная), уровни — через `thresholdLevel`.
+
+## Страница мониторинга — KPI-дашборд (Фаза 13 — в работе)
+
+- **Каркас (13.1).** [MonitoringOverlay.svelte](src/lib/MonitoringOverlay.svelte) —
+  KPI-ориентированный дашборд: вверху **блок «Система»** (сгруппированная статика:
+  `user@host` + иконка ОС, OS, kernel, uptime, ip, server time, число ядер) + **ряд
+  KPI-плиток** ([MetricTile.svelte](src/lib/MetricTile.svelte)), ниже — детальные
+  секции. Плитки видны всегда; **детальные секции — только в расширенном режиме**.
+- **Два режима плотности** — `settings.monitorExpanded` (дефолт **компакт**), тоггл-
+  сегмент по образцу `statusBarExpanded`. Компакт = «Система» + плитки; расширенный
+  добавляет детальные `<section>` (у каждой свой `id="mon-*"` + `scroll-mt-2`).
+- **Плитки** ([MetricTile.svelte](src/lib/MetricTile.svelte)): иконка+лейбл, затем
+  **радиальный [Gauge.svelte](src/lib/Gauge.svelte)** (для ограниченных %) **или**
+  крупное число, плюс опц. спарклайн и под-строка. Цвет — через `thresholdLevel`
+  (единый источник порогов). С `onclick` плитка — `<button>`, ведёт к своей секции
+  (`focusSection` → `monitorExpanded=true` + `scrollIntoView`, под guard
+  `prefers-reduced-motion`). Новый показатель-плитка = новый `<MetricTile>` + `id`
+  на детальной секции; не верстай плитки вручную.
+- **Лимиты «без потолка».** Числовой потолок ~i64::MAX (`fs.file-max` unlimited)
+  показывается как `∞` через `fmtLimit`/`isUnlimitedLimit` ([format.ts](src/lib/format.ts)),
+  процент/порог при этом подавляются. Применяй к любым «безлимитным» ceiling-метрикам.
+- **Температура и датчики (13.3).** Датчики (`Sensor`: label/temp/high/crit) парсятся
+  из `sensors -u` (lm-sensors) **awk-строкой в `DETAIL_SCRIPT`** и едут в `MetricsDetail.sensors`
+  (тяжёлый `fetch_metrics_detail`, не `METRICS_SCRIPT`). Уровень датчика — `sensorLevel`
+  (свои `crit`/`high`, фолбэк на `th.cpuTemp`). **Новая ресурсная метрика, требующая
+  серверного инструмента**, — по этому же образцу: парсинг в `DETAIL_SCRIPT`/новой
+  команде + **карточка установки через механизм Фазы 12.8** (проп `onInstallTool` →
+  `offerLintInstall` в [+page.svelte](src/routes/+page.svelte) → `ToolInstallDialog`),
+  а не статичная команда. Каталог инструментов — [servertools.rs](src-tauri/src/servertools.rs)
+  (`lm-sensors`/`smartmontools`/`sysstat` уже заведены).
+- **Доп. метрики (13.4).** CPU-разбивка user/system/iowait/**steal**/idle — дельта
+  агрегатной строки `/proc/stat` (пер-сессионный сэмпл `cpu_stat_samples` в `AppState`,
+  чистится в `disconnect` — как `core_samples`/`ctxintr_samples`). Топ-процессы
+  (`top_procs`), здоровье системы (failed-юниты/порты/conntrack/time-sync) собираются
+  в `DETAIL_SCRIPT` и парсятся чистыми функциями (`parse_cpu_jiffies`/`cpu_breakdown`/
+  `parse_top_procs`). **Новая ресурсная метрика — туда же:** сбор в `DETAIL_SCRIPT`,
+  чистый парсер + тест, пер-сессионные сэмплы для дельт чистятся в `disconnect`;
+  «здоровье» с порогом красит через `text-warn`/`text-danger`. Метрики, которых хост
+  не отдаёт, **авто-скрываются** (Option=None), а не висят прочерком.
+- **Per-device дельты (13.5).** Per-interface сеть и per-device disk I/O считают
+  скорости общим `dev_rate_map` поверх пер-сессионных, **пер-устройство** сэмплов
+  (`DevSampleStore` = `Mutex<HashMap<session, HashMap<dev, (a,b,Instant)>>>`,
+  поля `iface_samples`/`diskdev_samples`, чистятся в `disconnect`). Новую
+  «многоустройственную» rate-метрику строй так же: парс сырых счётчиков в
+  `DETAIL_SCRIPT` + `dev_rate_map`, не плоди отдельную дельта-логику. Сессии (`who`)
+  и прочие точечные строки — обычные чистые парсеры в `parse_detail`.
+- **Ленивые extras (13.6).** Тяжёлые/точечные/опц.-рантайм источники (GPU
+  `nvidia-smi`, Docker, SMART `smartctl`, OOM `dmesg`) — **отдельная команда**
+  `fetch_extras`/`EXTRAS_SCRIPT` (raw-строка `r#"…"#`), опрашивается **один раз при
+  открытии** оверлея по таймеру (как `fetch_pending_updates`), а **не** в per-poll
+  `DETAIL_SCRIPT`. Всё guarded `command -v`, best-effort; **SMART требует root**
+  (наполняется для root-сессий, иначе пуст + карточка установки `smartmontools`).
+  Новый тяжёлый/опц. источник добавляй сюда, не в `DETAIL_SCRIPT`/`METRICS_SCRIPT`.
 
 ## Логи и текст (Фаза 10) — ЗАКРЕПЛЕНО
 

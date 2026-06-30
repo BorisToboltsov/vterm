@@ -25,6 +25,10 @@ use ssh::{ConnectOptions, Credential, HostKeyPolicy, SshSession};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+/// Per-session, per-device cumulative `(a, b)` counters + sample instant, used for
+/// per-interface network and per-device disk throughput deltas.
+type DevSampleStore = Mutex<HashMap<String, HashMap<String, (u64, u64, Instant)>>>;
+
 /// Application state: persisted server profiles + the registry of live SSH sessions.
 #[derive(Default)]
 struct AppState {
@@ -44,6 +48,11 @@ struct AppState {
     disk_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
     /// Last per-core `/proc/stat` (idle, total) jiffies per session, for per-core CPU%.
     core_samples: Mutex<HashMap<String, Vec<(u64, u64)>>>,
+    /// Last aggregate `/proc/stat` cpu jiffies per session, for the CPU breakdown.
+    cpu_stat_samples: Mutex<HashMap<String, [u64; 8]>>,
+    /// Per-interface network and per-device disk throughput sample stores.
+    iface_samples: DevSampleStore,
+    diskdev_samples: DevSampleStore,
     /// Last cumulative (ctxt, intr) counters + instant per session, for rate deltas.
     ctxintr_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
     /// Files vterm was asked to open (CLI args / macOS `Opened`), drained by the
@@ -785,6 +794,9 @@ async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult
     state.local_ptys.lock().unwrap().remove(&session_id);
     state.cpu_samples.lock().unwrap().remove(&session_id);
     state.core_samples.lock().unwrap().remove(&session_id);
+    state.cpu_stat_samples.lock().unwrap().remove(&session_id);
+    state.iface_samples.lock().unwrap().remove(&session_id);
+    state.diskdev_samples.lock().unwrap().remove(&session_id);
     state.ctxintr_samples.lock().unwrap().remove(&session_id);
     state.id_names.lock().unwrap().remove(&session_id);
     Ok(())
@@ -1320,6 +1332,16 @@ printf 'psicpu=%s\\n' \"$(grep '^some' /proc/pressure/cpu 2>/dev/null)\"; \
 printf 'psimem=%s\\n' \"$(grep '^some' /proc/pressure/memory 2>/dev/null)\"; \
 printf 'psiio=%s\\n' \"$(grep '^some' /proc/pressure/io 2>/dev/null)\"; \
 printf 'tcp=%s\\n' \"$(ss -tanH 2>/dev/null | awk '{print $1}' | sort | uniq -c | awk '{printf \"%s:%s \",$2,$1}')\"; \
+printf 'sensors=%s\\n' \"$(sensors -u 2>/dev/null | awk '/^[^ ].*:$/{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}l=$0;sub(/:$/,\"\",l);gsub(/,/,\"\",l);v=\"\";h=\"\";c=\"\";next}/temp[0-9]+_input:/{v=$2+0}/temp[0-9]+_max:/{h=$2+0}/temp[0-9]+_crit:/{c=$2+0}END{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}}')\"; \
+printf 'cpubreak=%s\\n' \"$(awk '/^cpu /{print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat 2>/dev/null)\"; \
+printf 'topcpu=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k3 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
+printf 'failed=%s\\n' \"$(command -v systemctl >/dev/null 2>&1 && systemctl --failed --no-legend 2>/dev/null | wc -l | tr -d ' ')\"; \
+printf 'listen=%s\\n' \"$(command -v ss >/dev/null 2>&1 && ss -tlnH 2>/dev/null | wc -l | tr -d ' ')\"; \
+printf 'conntrack=%s %s\\n' \"$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)\" \"$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)\"; \
+printf 'timesync=%s\\n' \"$(command -v timedatectl >/dev/null 2>&1 && timedatectl show -p NTPSynchronized --value 2>/dev/null)\"; \
+printf 'netdev=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\");if($1!=\"lo\")printf \"%s,%s,%s,%s,%s,%s,%s;\",$1,$2,$4,$5,$10,$12,$13}' /proc/net/dev 2>/dev/null)\"; \
+printf 'diskdev=%s\\n' \"$(awk '$3!~/^(loop|ram|dm-|sr)/ && ($6>0||$10>0){printf \"%s,%s,%s;\",$3,$6,$10}' /proc/diskstats 2>/dev/null)\"; \
+printf 'sessions=%s\\n' \"$(who 2>/dev/null | awk '{f=\"\";if($NF ~ /^\\(.*\\)$/){f=$NF;gsub(/[()]/,\"\",f)}printf \"%s,%s,%s %s,%s;\",$1,$2,$3,$4,f}')\"; \
 printf 'ctxintr=%s\\n' \"$(awk '/^ctxt /{c=$2}/^intr /{i=$2}END{printf \"%d %d\",c,i}' /proc/stat 2>/dev/null)\"; \
 printf 'procs=%s\\n' \"$(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' /proc/stat 2>/dev/null)\"";
 
@@ -1350,6 +1372,70 @@ struct TcpState {
     count: u64,
 }
 
+/// One temperature sensor reading from lm-sensors (`sensors -u`).
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Sensor {
+    label: String,
+    temp: f64,
+    high: Option<f64>,
+    crit: Option<f64>,
+}
+
+/// CPU time breakdown over the last interval (percentages summing to ~100).
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct CpuBreakdown {
+    user: f64,
+    system: f64,
+    iowait: f64,
+    steal: f64,
+    idle: f64,
+}
+
+/// One process row for the top-CPU table.
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Proc {
+    pid: u32,
+    user: String,
+    cpu: f64,
+    mem: f64,
+    comm: String,
+}
+
+/// Per-interface network: rx/tx bytes-per-second + cumulative error/drop counters.
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct NetIface {
+    name: String,
+    rx_rate: u64,
+    tx_rate: u64,
+    rx_errs: u64,
+    rx_drop: u64,
+    tx_errs: u64,
+    tx_drop: u64,
+}
+
+/// Per-device disk throughput (bytes/sec) from `/proc/diskstats` sector deltas.
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DiskDev {
+    name: String,
+    read_rate: u64,
+    write_rate: u64,
+}
+
+/// One logged-in session from `who` (tty, origin, login time).
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Session {
+    user: String,
+    tty: String,
+    from: String,
+    login: String,
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct MetricsDetail {
@@ -1372,6 +1458,23 @@ struct MetricsDetail {
     psi_mem: Option<Psi>,
     psi_io: Option<Psi>,
     tcp: Vec<TcpState>,
+    /// Temperature sensors (lm-sensors); empty when `sensors` isn't installed.
+    sensors: Vec<Sensor>,
+    /// CPU time split (user/system/iowait/steal/idle %); None on the first poll.
+    cpu_breakdown: Option<CpuBreakdown>,
+    /// Top processes by CPU (pid/user/cpu/mem/comm).
+    top_procs: Vec<Proc>,
+    /// Failed systemd units / listening TCP sockets / nf_conntrack usage.
+    failed_units: Option<u64>,
+    listen_ports: Option<u64>,
+    conntrack: Option<u64>,
+    conntrack_max: Option<u64>,
+    /// NTP clock synchronization (timedatectl); None when unknown.
+    time_synced: Option<bool>,
+    /// Per-interface network and per-device disk throughput + logged-in sessions.
+    net_ifaces: Vec<NetIface>,
+    disk_devs: Vec<DiskDev>,
+    sessions: Vec<Session>,
     /// Context switches / interrupts per second (rate from cumulative counters).
     ctxt_rate: Option<u64>,
     intr_rate: Option<u64>,
@@ -1481,6 +1584,186 @@ fn parse_partitions(raw: &str) -> Vec<Partition> {
     out
 }
 
+/// Parse the `cpubreak=` aggregate `/proc/stat` jiffies (user nice system idle
+/// iowait irq softirq steal) into 8 cumulative counters.
+fn parse_cpu_jiffies(raw: &str) -> Option<[u64; 8]> {
+    let line = raw.lines().find_map(|l| l.strip_prefix("cpubreak="))?;
+    let n: Vec<u64> = line
+        .split_whitespace()
+        .filter_map(|x| x.parse().ok())
+        .collect();
+    if n.len() < 8 {
+        return None;
+    }
+    Some([n[0], n[1], n[2], n[3], n[4], n[5], n[6], n[7]])
+}
+
+/// CPU time breakdown from two jiffy samples. `None` when the interval didn't
+/// advance. Percentages: user(+nice), system(+irq+softirq), iowait, steal, idle.
+fn cpu_breakdown(prev: &[u64; 8], cur: &[u64; 8]) -> Option<CpuBreakdown> {
+    let d: Vec<i64> = (0..8).map(|i| cur[i] as i64 - prev[i] as i64).collect();
+    let tot: i64 = d.iter().map(|v| v.max(&0)).sum();
+    if tot <= 0 {
+        return None;
+    }
+    let pct = |v: i64| (v.max(0) as f64 / tot as f64) * 100.0;
+    Some(CpuBreakdown {
+        user: pct(d[0] + d[1]),
+        system: pct(d[2] + d[5] + d[6]),
+        iowait: pct(d[4]),
+        steal: pct(d[7]),
+        idle: pct(d[3]),
+    })
+}
+
+/// Parse the `topcpu=pid|user|cpu|mem|comm;…` line into process rows.
+fn parse_top_procs(raw: &str) -> Vec<Proc> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("topcpu="))
+        .unwrap_or("");
+    line.split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').collect();
+            if f.len() != 5 {
+                return None;
+            }
+            Some(Proc {
+                pid: f[0].trim().parse().ok()?,
+                user: f[1].trim().to_string(),
+                cpu: f[2].trim().parse().ok()?,
+                mem: f[3].trim().parse().ok()?,
+                comm: f[4].trim().to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Per-device byte rates: for each `(name, a, b)` cumulative counter, return the
+/// per-second delta against this session's previous sample (updating it). Devices
+/// with no prior sample (first poll) are omitted from the result.
+fn dev_rate_map(
+    store: &DevSampleStore,
+    session_id: &str,
+    cur: &[(String, u64, u64)],
+) -> HashMap<String, (u64, u64)> {
+    let now = Instant::now();
+    let mut guard = store.lock().unwrap();
+    let prevs = guard.entry(session_id.to_string()).or_default();
+    let mut out = HashMap::new();
+    let mut next = HashMap::new();
+    for (name, a, b) in cur {
+        if let Some(&(pa, pb, pt)) = prevs.get(name) {
+            let dt = now.duration_since(pt).as_secs_f64();
+            if dt > 0.0 {
+                let ra = (a.saturating_sub(pa) as f64 / dt) as u64;
+                let rb = (b.saturating_sub(pb) as f64 / dt) as u64;
+                out.insert(name.clone(), (ra, rb));
+            }
+        }
+        next.insert(name.clone(), (*a, *b, now));
+    }
+    *prevs = next;
+    out
+}
+
+/// Parse `netdev=name,rxBytes,rxErrs,rxDrop,txBytes,txErrs,txDrop;…` into raw rows
+/// (rates are derived separately from two samples).
+#[allow(clippy::type_complexity)]
+fn parse_netdev(raw: &str) -> Vec<(String, u64, u64, u64, u64, u64, u64)> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("netdev="))
+        .unwrap_or("");
+    line.split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split(',').collect();
+            if f.len() != 7 {
+                return None;
+            }
+            let n = |i: usize| f[i].parse::<u64>().ok();
+            Some((f[0].to_string(), n(1)?, n(2)?, n(3)?, n(4)?, n(5)?, n(6)?))
+        })
+        .collect()
+}
+
+/// Parse `diskdev=name,readSectors,writeSectors;…` into `(name, readBytes, writeBytes)`
+/// (sectors are 512 bytes).
+fn parse_diskdev(raw: &str) -> Vec<(String, u64, u64)> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("diskdev="))
+        .unwrap_or("");
+    line.split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split(',').collect();
+            if f.len() != 3 {
+                return None;
+            }
+            Some((
+                f[0].to_string(),
+                f[1].parse::<u64>().ok()? * 512,
+                f[2].parse::<u64>().ok()? * 512,
+            ))
+        })
+        .collect()
+}
+
+/// Parse `sessions=user,tty,login,from;…` into session rows.
+fn parse_sessions(raw: &str) -> Vec<Session> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("sessions="))
+        .unwrap_or("");
+    line.split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split(',').collect();
+            if f.len() != 4 || f[0].is_empty() {
+                return None;
+            }
+            Some(Session {
+                user: f[0].to_string(),
+                tty: f[1].to_string(),
+                login: f[2].trim().to_string(),
+                from: f[3].to_string(),
+            })
+        })
+        .collect()
+}
+
+/// Parse the `sensors=label,temp,high,crit;…` line into sensor readings. `high`
+/// and `crit` are optional (empty field → `None`); records without a numeric temp
+/// are skipped.
+fn parse_sensors(raw: &str) -> Vec<Sensor> {
+    let line = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("sensors="))
+        .unwrap_or("");
+    line.split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let mut f = rec.split(',');
+            let label = f.next()?.trim().to_string();
+            let temp: f64 = f.next()?.parse().ok()?;
+            if label.is_empty() {
+                return None;
+            }
+            let high = f.next().and_then(|s| s.parse().ok());
+            let crit = f.next().and_then(|s| s.parse().ok());
+            Some(Sensor {
+                label,
+                temp,
+                high,
+                crit,
+            })
+        })
+        .collect()
+}
+
 /// Parse the `tcp=STATE:count …` line into per-state counts.
 fn parse_tcp(raw: &str) -> Vec<TcpState> {
     let line = raw
@@ -1533,6 +1816,29 @@ fn parse_detail(raw: &str) -> MetricsDetail {
     d.psi_mem = parse_psi(raw, "psimem");
     d.psi_io = parse_psi(raw, "psiio");
     d.tcp = parse_tcp(raw);
+    d.sensors = parse_sensors(raw);
+    d.top_procs = parse_top_procs(raw);
+    d.failed_units = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("failed="))
+        .and_then(|s| s.trim().parse().ok());
+    d.listen_ports = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("listen="))
+        .and_then(|s| s.trim().parse().ok());
+    if let Some((c, m)) = parse_pair(raw, "conntrack") {
+        d.conntrack = Some(c);
+        d.conntrack_max = Some(m);
+    }
+    d.time_synced = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("timesync="))
+        .and_then(|s| match s.trim() {
+            "yes" | "true" | "1" => Some(true),
+            "no" | "false" | "0" => Some(false),
+            _ => None,
+        });
+    d.sessions = parse_sessions(raw);
     if let Some((r, b)) = parse_pair(raw, "procs") {
         d.procs_running = Some(r);
         d.procs_blocked = Some(b);
@@ -1558,6 +1864,54 @@ async fn fetch_metrics_detail(
             d.per_cpu = percpu_delta(prev, &cur);
         }
         samples.insert(session_id.clone(), cur);
+    }
+
+    // CPU time breakdown (user/system/iowait/steal/idle) from two jiffy samples.
+    if let Some(cur) = parse_cpu_jiffies(&raw) {
+        let mut samples = state.cpu_stat_samples.lock().unwrap();
+        if let Some(prev) = samples.get(&session_id) {
+            d.cpu_breakdown = cpu_breakdown(prev, &cur);
+        }
+        samples.insert(session_id.clone(), cur);
+    }
+
+    // Per-interface network rates (rx/tx bytes/s) from two samples; error/drop
+    // counters are cumulative and carried through as-is.
+    let nd = parse_netdev(&raw);
+    if !nd.is_empty() {
+        let cur: Vec<(String, u64, u64)> = nd.iter().map(|r| (r.0.clone(), r.1, r.4)).collect();
+        let rates = dev_rate_map(&state.iface_samples, &session_id, &cur);
+        d.net_ifaces = nd
+            .into_iter()
+            .map(|(name, _rxb, rx_errs, rx_drop, _txb, tx_errs, tx_drop)| {
+                let (rx_rate, tx_rate) = rates.get(&name).copied().unwrap_or((0, 0));
+                NetIface {
+                    name,
+                    rx_rate,
+                    tx_rate,
+                    rx_errs,
+                    rx_drop,
+                    tx_errs,
+                    tx_drop,
+                }
+            })
+            .collect();
+    }
+
+    // Per-device disk throughput (bytes/s) from sector-count deltas.
+    let dd = parse_diskdev(&raw);
+    if !dd.is_empty() {
+        let rates = dev_rate_map(&state.diskdev_samples, &session_id, &dd);
+        d.disk_devs = dd
+            .into_iter()
+            .filter_map(|(name, _r, _w)| {
+                rates.get(&name).map(|&(read_rate, write_rate)| DiskDev {
+                    name,
+                    read_rate,
+                    write_rate,
+                })
+            })
+            .collect();
     }
 
     // Context-switch / interrupt rates (delta of cumulative counters).
@@ -1632,6 +1986,139 @@ async fn fetch_pending_updates(
     let session = session_arc(&state, &session_id).await?;
     let raw = session.run_command(PENDING_SCRIPT).await?;
     Ok(parse_pending(&raw))
+}
+
+/// Optional "extras" probed once when the monitoring overlay opens: NVIDIA GPUs,
+/// Docker containers, disk SMART health and the OOM-kill count. Heavy/optional and
+/// best-effort (each guarded by `command -v`; SMART needs root, so it populates for
+/// root sessions and is empty otherwise) — never part of the per-poll detail probe.
+const EXTRAS_SCRIPT: &str = r#"
+gpu=""
+if command -v nvidia-smi >/dev/null 2>&1; then
+  gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F', *' '{printf "%s|%s|%s|%s|%s;",$1,$2,$3,$4,$5}')
+fi
+printf 'gpu=%s\n' "$gpu"
+docker=""
+if command -v docker >/dev/null 2>&1; then
+  docker=$(docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}' 2>/dev/null | awk '{gsub(/%/,"");printf "%s;",$0}')
+fi
+printf 'docker=%s\n' "$docker"
+printf 'oom=%s\n' "$(dmesg 2>/dev/null | grep -ic 'out of memory')"
+smart=""
+for d in $(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
+  o=$(smartctl -H -A /dev/$d 2>/dev/null)
+  [ -z "$o" ] && continue
+  h=$(printf '%s\n' "$o" | awk '/overall-health/{print $NF}')
+  t=$(printf '%s\n' "$o" | awk '/Temperature_Celsius/{print $10} /^Temperature:/{print $2}' | head -1)
+  p=$(printf '%s\n' "$o" | awk '/Power_On_Hours/{print $10} /Power On Hours/{print $NF}' | head -1)
+  smart="$smart$d|$h|$t|$p;"
+done
+printf 'smart=%s\n' "$smart"
+"#;
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct Gpu {
+    name: String,
+    util: f64,
+    /// VRAM used / total in MiB (as reported by nvidia-smi `nounits`).
+    mem_used: u64,
+    mem_total: u64,
+    temp: f64,
+}
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DockerStat {
+    name: String,
+    cpu: f64,
+    /// Memory usage string, e.g. "1.2GiB / 3.8GiB".
+    mem: String,
+}
+
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SmartDisk {
+    device: String,
+    health: String,
+    temp: Option<f64>,
+    power_on_hours: Option<u64>,
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct Extras {
+    gpus: Vec<Gpu>,
+    docker: Vec<DockerStat>,
+    smart: Vec<SmartDisk>,
+    oom_kills: Option<u64>,
+}
+
+fn parse_extras(raw: &str) -> Extras {
+    let field = |key: &str| raw.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("");
+    let gpus = field("gpu=")
+        .split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').collect();
+            if f.len() != 5 {
+                return None;
+            }
+            Some(Gpu {
+                name: f[0].trim().to_string(),
+                util: f[1].trim().parse().unwrap_or(0.0),
+                mem_used: f[2].trim().parse().unwrap_or(0),
+                mem_total: f[3].trim().parse().unwrap_or(0),
+                temp: f[4].trim().parse().unwrap_or(0.0),
+            })
+        })
+        .collect();
+    let docker = field("docker=")
+        .split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').collect();
+            if f.len() != 3 {
+                return None;
+            }
+            Some(DockerStat {
+                name: f[0].trim().to_string(),
+                cpu: f[1].trim().parse().unwrap_or(0.0),
+                mem: f[2].trim().to_string(),
+            })
+        })
+        .collect();
+    let smart = field("smart=")
+        .split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').collect();
+            if f.len() != 4 || f[0].is_empty() {
+                return None;
+            }
+            Some(SmartDisk {
+                device: f[0].trim().to_string(),
+                health: f[1].trim().to_string(),
+                temp: f[2].trim().parse().ok(),
+                power_on_hours: f[3].trim().parse().ok(),
+            })
+        })
+        .collect();
+    let oom_kills = field("oom=").trim().parse().ok();
+    Extras {
+        gpus,
+        docker,
+        smart,
+        oom_kills,
+    }
+}
+
+/// Probe optional extras (GPU/Docker/SMART/OOM) — lazy, once per overlay open.
+#[tauri::command]
+async fn fetch_extras(state: State<'_, AppState>, session_id: String) -> AppResult<Extras> {
+    let session = session_arc(&state, &session_id).await?;
+    let raw = session.run_command(EXTRAS_SCRIPT).await?;
+    Ok(parse_extras(&raw))
 }
 
 // ── SFTP commands ─────────────────────────────────────────────────────────────
@@ -2188,6 +2675,9 @@ pub fn run() {
         net_samples: Mutex::new(HashMap::new()),
         disk_samples: Mutex::new(HashMap::new()),
         core_samples: Mutex::new(HashMap::new()),
+        cpu_stat_samples: Mutex::new(HashMap::new()),
+        iface_samples: Mutex::new(HashMap::new()),
+        diskdev_samples: Mutex::new(HashMap::new()),
         ctxintr_samples: Mutex::new(HashMap::new()),
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
@@ -2241,6 +2731,7 @@ pub fn run() {
             fetch_metrics,
             fetch_metrics_detail,
             fetch_pending_updates,
+            fetch_extras,
             sftp_home,
             sftp_list,
             sftp_mkdir,
@@ -2510,6 +3001,104 @@ mod tests {
     }
 
     #[test]
+    fn parse_netdev_diskdev_sessions_rows() {
+        let nd = parse_netdev("netdev=eth0,1000,1,2,500,3,4;wlan0,9,0,0,8,0,0;");
+        assert_eq!(nd.len(), 2);
+        assert_eq!(nd[0], ("eth0".into(), 1000, 1, 2, 500, 3, 4));
+
+        // Sectors → bytes (×512).
+        let dd = parse_diskdev("diskdev=sda,10,20;");
+        assert_eq!(dd, vec![("sda".to_string(), 5120, 10240)]);
+
+        let s = parse_sessions(
+            "sessions=root,pts/0,2026-06-29 14:00,10.0.0.5;bob,tty1,2026-06-29 09:00,;",
+        );
+        assert_eq!(s.len(), 2);
+        assert_eq!(s[0].user, "root");
+        assert_eq!(s[0].from, "10.0.0.5");
+        assert_eq!(s[1].from, "");
+        assert!(parse_netdev("os=Linux").is_empty());
+    }
+
+    #[test]
+    fn dev_rate_map_computes_per_second_deltas() {
+        let store: DevSampleStore = Mutex::new(HashMap::new());
+        // First call: no prior sample → empty.
+        let r1 = dev_rate_map(&store, "s1", &[("eth0".into(), 1000, 2000)]);
+        assert!(r1.is_empty());
+        // Backdate the stored sample by 1s so the next delta yields a rate.
+        {
+            let mut g = store.lock().unwrap();
+            let e = g.get_mut("s1").unwrap().get_mut("eth0").unwrap();
+            e.2 -= std::time::Duration::from_secs(1);
+        }
+        let r2 = dev_rate_map(&store, "s1", &[("eth0".into(), 1500, 2400)]);
+        let (rx, tx) = r2["eth0"];
+        assert!((490..=510).contains(&rx), "rx ~500, got {rx}");
+        assert!((390..=410).contains(&tx), "tx ~400, got {tx}");
+    }
+
+    #[test]
+    fn cpu_breakdown_splits_user_system_iowait_steal() {
+        // prev → cur: 100 user, 50 system, 20 iowait, 30 steal, 800 idle ticks.
+        let prev = [0u64, 0, 0, 0, 0, 0, 0, 0];
+        let cur = [100u64, 0, 50, 800, 20, 0, 0, 30];
+        let b = cpu_breakdown(&prev, &cur).unwrap();
+        assert_eq!(b.user.round(), 10.0);
+        assert_eq!(b.system.round(), 5.0);
+        assert_eq!(b.iowait.round(), 2.0);
+        assert_eq!(b.steal.round(), 3.0);
+        assert_eq!(b.idle.round(), 80.0);
+        // No advance → None.
+        assert!(cpu_breakdown(&cur, &cur).is_none());
+    }
+
+    #[test]
+    fn parse_top_procs_reads_pipe_records() {
+        let raw = "topcpu=1234|root|12.5|3.1|nginx;5678|www|4.0|1.2|php-fpm;";
+        let p = parse_top_procs(raw);
+        assert_eq!(p.len(), 2);
+        assert_eq!(p[0].pid, 1234);
+        assert_eq!(p[0].user, "root");
+        assert_eq!(p[0].cpu, 12.5);
+        assert_eq!(p[0].comm, "nginx");
+        assert!(parse_top_procs("os=Linux").is_empty());
+    }
+
+    #[test]
+    fn parse_detail_reads_health_scalars() {
+        let raw = "failed=2\nlisten=9\nconntrack=120 65536\ntimesync=yes\n";
+        let d = parse_detail(raw);
+        assert_eq!(d.failed_units, Some(2));
+        assert_eq!(d.listen_ports, Some(9));
+        assert_eq!(d.conntrack, Some(120));
+        assert_eq!(d.conntrack_max, Some(65536));
+        assert_eq!(d.time_synced, Some(true));
+        // Empty/absent → None.
+        let e = parse_detail("timesync=\nfailed=\n");
+        assert_eq!(e.time_synced, None);
+        assert_eq!(e.failed_units, None);
+    }
+
+    #[test]
+    fn parse_sensors_reads_label_temp_high_crit() {
+        let raw = "sensors=Package id 0,45,84,100;Core 0,43,,100;Composite,35.85,,88.85;";
+        let s = parse_sensors(raw);
+        assert_eq!(s.len(), 3);
+        assert_eq!(s[0].label, "Package id 0");
+        assert_eq!(s[0].temp, 45.0);
+        assert_eq!(s[0].high, Some(84.0));
+        assert_eq!(s[0].crit, Some(100.0));
+        // Empty `high` field → None.
+        assert_eq!(s[1].label, "Core 0");
+        assert_eq!(s[1].high, None);
+        assert_eq!(s[1].crit, Some(100.0));
+        assert_eq!(s[2].temp, 35.85);
+        // No sensors line → empty.
+        assert!(parse_sensors("os=Linux").is_empty());
+    }
+
+    #[test]
     fn parse_detail_reads_mem_filenr_ulimit_and_procs() {
         let raw = "memdetail=8000 1000 4000 200 2000\n\
                    topmem=node 12%, postgres 8%\n\
@@ -2549,6 +3138,16 @@ mod tests {
             "filenr=",
             "ulimit=",
             "tcp=",
+            "sensors=",
+            "cpubreak=",
+            "topcpu=",
+            "failed=",
+            "listen=",
+            "conntrack=",
+            "timesync=",
+            "netdev=",
+            "diskdev=",
+            "sessions=",
         ] {
             assert!(text.contains(key), "DETAIL_SCRIPT missing {key}: {text}");
         }
@@ -2566,6 +3165,50 @@ mod tests {
         for key in ["mgr=", "updates=", "security=", "reboot="] {
             assert!(text.contains(key), "PENDING_SCRIPT missing {key}: {text}");
         }
+    }
+
+    #[test]
+    fn extras_script_runs_in_a_shell_and_emits_keys() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(EXTRAS_SCRIPT)
+            .output()
+            .expect("spawn sh");
+        assert!(out.status.success(), "EXTRAS_SCRIPT exited non-zero");
+        let text = String::from_utf8_lossy(&out.stdout);
+        for key in ["gpu=", "docker=", "oom=", "smart="] {
+            assert!(text.contains(key), "EXTRAS_SCRIPT missing {key}: {text}");
+        }
+    }
+
+    #[test]
+    fn parse_extras_reads_gpu_docker_smart_oom() {
+        let raw = "gpu=GeForce RTX 4090|35|1024|24576|61;\n\
+                   docker=web|12.5|1.2GiB / 3.8GiB;db|3.0|512MiB / 2GiB;\n\
+                   oom=2\n\
+                   smart=sda|PASSED|38|12345;nvme0n1|PASSED||678;";
+        let e = parse_extras(raw);
+        assert_eq!(e.gpus.len(), 1);
+        assert_eq!(e.gpus[0].name, "GeForce RTX 4090");
+        assert_eq!(e.gpus[0].util, 35.0);
+        assert_eq!(e.gpus[0].mem_total, 24576);
+        assert_eq!(e.docker.len(), 2);
+        assert_eq!(e.docker[0].name, "web");
+        assert_eq!(e.docker[0].cpu, 12.5);
+        assert_eq!(e.docker[0].mem, "1.2GiB / 3.8GiB");
+        assert_eq!(e.oom_kills, Some(2));
+        assert_eq!(e.smart.len(), 2);
+        assert_eq!(e.smart[0].device, "sda");
+        assert_eq!(e.smart[0].health, "PASSED");
+        assert_eq!(e.smart[0].temp, Some(38.0));
+        assert_eq!(e.smart[0].power_on_hours, Some(12345));
+        // Missing temp field → None.
+        assert_eq!(e.smart[1].temp, None);
+        assert_eq!(e.smart[1].power_on_hours, Some(678));
+        // Empty input → all empty.
+        let empty = parse_extras("gpu=\ndocker=\noom=\nsmart=\n");
+        assert!(empty.gpus.is_empty() && empty.docker.is_empty() && empty.smart.is_empty());
+        assert_eq!(empty.oom_kills, None);
     }
 
     #[test]

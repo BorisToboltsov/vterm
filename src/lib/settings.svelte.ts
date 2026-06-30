@@ -144,6 +144,8 @@ export interface Settings {
   // Status bar
   showStatusBar: boolean;
   statusBarExpanded: boolean; // false = compact (icons + percentages)
+  /** Monitoring page density: false = compact (KPI tiles only), true = detailed. */
+  monitorExpanded: boolean;
   statusBarItems: StatusBarItems;
   statusBarThresholds: StatusBarThresholds;
   statusPollInterval: number; // seconds
@@ -224,6 +226,7 @@ const DEFAULTS: Settings = {
   defaultPort: 22,
   showStatusBar: true,
   statusBarExpanded: false,
+  monitorExpanded: false,
   statusBarItems: {
     os: true,
     host: true,

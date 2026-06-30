@@ -308,6 +308,58 @@ export interface TcpState {
   count: number;
 }
 
+/** One temperature sensor reading from lm-sensors. */
+export interface Sensor {
+  label: string;
+  temp: number;
+  high: number | null;
+  crit: number | null;
+}
+
+/** CPU time breakdown over the last interval (percentages). */
+export interface CpuBreakdown {
+  user: number;
+  system: number;
+  iowait: number;
+  steal: number;
+  idle: number;
+}
+
+/** One process row for the top-CPU table. */
+export interface Proc {
+  pid: number;
+  user: string;
+  cpu: number;
+  mem: number;
+  comm: string;
+}
+
+/** Per-interface network: rx/tx bytes/sec + cumulative error/drop counters. */
+export interface NetIface {
+  name: string;
+  rxRate: number;
+  txRate: number;
+  rxErrs: number;
+  rxDrop: number;
+  txErrs: number;
+  txDrop: number;
+}
+
+/** Per-device disk throughput (bytes/sec). */
+export interface DiskDev {
+  name: string;
+  readRate: number;
+  writeRate: number;
+}
+
+/** One logged-in session from `who`. */
+export interface Session {
+  user: string;
+  tty: string;
+  from: string;
+  login: string;
+}
+
 /** Heavier per-page metrics, fetched only while the monitoring overlay is open. */
 export interface MetricsDetail {
   /** Per-core CPU utilization 0–100 (empty until the second poll). */
@@ -329,6 +381,21 @@ export interface MetricsDetail {
   psiMem: Psi | null;
   psiIo: Psi | null;
   tcp: TcpState[];
+  /** Temperature sensors (lm-sensors); empty when `sensors` isn't installed. */
+  sensors: Sensor[];
+  /** CPU time split (user/system/iowait/steal/idle %); null on the first poll. */
+  cpuBreakdown: CpuBreakdown | null;
+  /** Top processes by CPU. */
+  topProcs: Proc[];
+  failedUnits: number | null;
+  listenPorts: number | null;
+  conntrack: number | null;
+  conntrackMax: number | null;
+  timeSynced: boolean | null;
+  /** Per-interface network, per-device disk I/O, and logged-in sessions. */
+  netIfaces: NetIface[];
+  diskDevs: DiskDev[];
+  sessions: Session[];
   ctxtRate: number | null;
   intrRate: number | null;
   procsRunning: number | null;
@@ -351,6 +418,43 @@ export interface PendingUpdates {
 /** Lazily probe pending package updates (heavy — overlay only, deferred). */
 export function fetchPendingUpdates(sessionId: string): Promise<PendingUpdates> {
   return invoke<PendingUpdates>("fetch_pending_updates", { sessionId });
+}
+
+/** An NVIDIA GPU (nvidia-smi); VRAM is in MiB. */
+export interface Gpu {
+  name: string;
+  util: number;
+  memUsed: number;
+  memTotal: number;
+  temp: number;
+}
+
+/** A running Docker container's live stats. */
+export interface DockerStat {
+  name: string;
+  cpu: number;
+  mem: string;
+}
+
+/** One disk's SMART summary (smartctl). */
+export interface SmartDisk {
+  device: string;
+  health: string;
+  temp: number | null;
+  powerOnHours: number | null;
+}
+
+/** Optional extras probed once on overlay open (GPU/Docker/SMART/OOM). */
+export interface Extras {
+  gpus: Gpu[];
+  docker: DockerStat[];
+  smart: SmartDisk[];
+  oomKills: number | null;
+}
+
+/** Lazily probe optional extras (heavy/optional — overlay only, deferred). */
+export function fetchExtras(sessionId: string): Promise<Extras> {
+  return invoke<Extras>("fetch_extras", { sessionId });
 }
 
 /** Event name carrying raw output bytes for a session (mirrors ssh.rs). */

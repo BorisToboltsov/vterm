@@ -89,8 +89,19 @@ pnpm check
   (rx/tx сети и disk I/O), `uuid_like`; **детальные метрики мониторинга** —
   `parse_percpu`/`percpu_delta` (per-core CPU%), `parse_psi` (PSI some-средние),
   `parse_partitions` (слияние места и inodes по mount), `parse_tcp` (состояния
-  TCP), `parse_detail` (mem/filenr/ulimit/procs) и `parse_pending` (распознавание
-  пакетного менеджера и счётчиков обновлений);
+  TCP), `parse_sensors` (датчики lm-sensors: label/temp/high/crit, пустые
+  high/crit → None, нет строки → пусто), `cpu_breakdown` (user/system/iowait/steal/
+  idle % из двух jiffy-сэмплов, нет прироста → None), `parse_top_procs` (pid|user|cpu|
+  mem|comm-записи), `parse_netdev`/`parse_diskdev`/`parse_sessions` (per-interface
+  сеть, per-device диск ×512, сессии `who`), `dev_rate_map` (per-second дельты по
+  устройствам, первый опрос → пусто), `parse_detail` (mem/filenr/ulimit/procs +
+  **health-скаляры** failed/listen/conntrack/timesync, пустое → None) и `parse_pending`
+  (распознавание пакетного менеджера и счётчиков обновлений); плюс
+  `detail_script_runs_in_a_shell_and_emits_keys` гоняет `DETAIL_SCRIPT` через `sh`
+  (ловит регрессии экранирования awk/ps/ss, в т.ч. строк
+  `sensors=`/`cpubreak=`/`topcpu=`/`netdev=`/`diskdev=`/`sessions=`); `parse_extras`
+  (GPU/Docker/SMART/OOM из ленивого `EXTRAS_SCRIPT`, пустые поля → None) +
+  `extras_script_runs_in_a_shell_and_emits_keys`;
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`** —
   легаси-профиль → `auto_record:false`; round-trip сохраняет `autoRecord:true`);
@@ -148,7 +159,8 @@ pnpm check
   **слишком большом** файле (через `tokio::test` + `tempfile`).
 - `servertools.rs` (Фаза 12.8) — `parse_status` (mgr + present-bins), `install_command`
   (команда под менеджер: системные с sudo, fallback `pip --user` для yamllint/ruff, distro-имена
-  для sensors, бинарь для hadolint, `None` для неизвестного), `sudoize` (первый `sudo`→`sudo -S`,
+  для sensors, бинарь для hadolint, **smartmontools/sysstat по своему имени**, `None` для
+  неизвестного), `sudoize` (первый `sudo`→`sudo -S`,
   pip/brew без изменений, мульти-sudo — только первый), `build_status` (installed-флаг).
 - `sftp.rs` → `parse_id_names` (ls-владелец) — разбор `/etc/passwd`/`/etc/group`
   (`name:x:id:…`, первое имя на id, пропуск битых строк; один парсер для users и groups).
@@ -208,7 +220,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (d/h/m), `osIcon`
   (возвращает имя иконки реестра — Apple/Linux/Windows/BSD/Unknown, и каждое имя
   существует в `icons.ts`), `memPct`, `fmtPct` (округление + «%», прочерк),
-  `diskFree` (статус-бар);
+  `diskFree` (статус-бар), `isUnlimitedLimit`/`fmtLimit` (потолок ~i64::MAX →
+  «без лимита»/`∞`, реалистичные значения и null — ограничены/прочерк);
 - `thresholds.ts` — `thresholdLevel` (ok/warn/crit, включительные границы, crit
   важнее warn, null-значение/порог → ok, по-уровнево отключаемые границы),
   `levelTextClass`/`thresholdClass` (уровень → `text-warn`/`text-danger`);
@@ -424,9 +437,27 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (жёлтый при превышении среднего, красный — предельного, без цвета ниже порогов) и
   кнопка `open-monitoring` (вызывает `onOpenMonitoring`).
 - `MonitoringOverlay.test.ts` — smoke-тест страницы мониторинга (API замокан):
-  рендер карточек из живого опроса (ЦП/память/ФС/ядра/разделы/TCP), **ленивая**
-  подгрузка pending-updates после первого рендера, красная подсветка раздела при
-  превышении порога диска, отсутствие опроса при закрытой странице.
+  блок «Система» и **KPI-плитки** видны всегда; **детальные секции скрыты в компакте
+  и появляются в расширенном** (`monitorExpanded`, ядра/разделы/TCP); композитная
+  полоса памяти; **таблица датчиков температуры** + per-core heatmap, **карточка
+  установки lm-sensors** при пустых датчиках (клик → `onInstallTool("sensors")`);
+  **CPU-разбивка** (stacked-бар) и **таблица топ-процессов**; **скаляры здоровья**
+  (failed-юниты/conntrack/синхр. времени) в блоке «Система»; **per-interface сеть**,
+  **per-device disk I/O** и **таблица сессий**; безлимитный потолок дескрипторов
+  рендерится как `∞`; **ленивая** секция «Дополнительно» (GPU/Docker/SMART/OOM,
+  `fetchExtras` после первого рендера); **ленивая** подгрузка
+  pending-updates после первого рендера, красная подсветка раздела при превышении
+  порога диска, отсутствие опроса при закрытой странице.
+- `Gauge.test.ts` — центрированный текст = accessible-name, цвет дуги по уровню
+  порога (`crit` → `--color-danger`), отсутствие дуги при `fill=null`.
+- `MetricTile.test.ts` — большое число с цветом порога без gauge, рендер gauge с
+  текстом при `gaugeFill`, кнопка с `onclick` (тег `BUTTON`, клик вызывает колбэк) и
+  обычный `div` без него.
+- `Chart.test.ts` — линия-`path` на серию (атрибут `d` начинается с `M`, цвет
+  `stroke`), доп. area-`path` при `fill`, одна линия на серию для мульти-серии,
+  пустая серия не рисует ничего.
+- `StackedBar.test.ts` — пропорциональные сегменты (ширина в `%`) + легенда с
+  подписями, скрытие легенды при `legend=false`, пропуск нулевых сегментов в полосе.
 - `Icon.test.ts` — рендер SVG из реестра, размер, accessible-title.
 - `Toast.test.ts` — рендер тостов из стора, роль `status`, кнопка Dismiss убирает
   тост (синхронизация с `toastsState`).

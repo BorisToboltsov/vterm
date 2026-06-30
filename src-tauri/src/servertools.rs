@@ -41,6 +41,16 @@ pub const TOOLS: &[Tool] = &[
         name: "lm-sensors",
         bin: "sensors",
     },
+    Tool {
+        id: "smartmontools",
+        name: "smartmontools",
+        bin: "smartctl",
+    },
+    Tool {
+        id: "sysstat",
+        name: "sysstat",
+        bin: "iostat",
+    },
 ];
 
 /// One tool's status on the active server, sent to the frontend.
@@ -144,6 +154,10 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
             "zypper" => sys("sensors"),
             _ => None,
         },
+        // smartmontools (smartctl) and sysstat (iostat) are packaged under their
+        // own name on every supported manager.
+        "smartmontools" => sys("smartmontools"),
+        "sysstat" => sys("sysstat"),
         _ => None,
     }
 }
@@ -221,6 +235,15 @@ mod tests {
         assert!(install_command("hadolint", "apt")
             .unwrap()
             .contains("hadolint"));
+        // Monitoring helpers packaged under their own name.
+        assert_eq!(
+            install_command("smartmontools", "apt").as_deref(),
+            Some("sudo apt-get install -y smartmontools")
+        );
+        assert_eq!(
+            install_command("sysstat", "dnf").as_deref(),
+            Some("sudo dnf install -y sysstat")
+        );
         assert!(install_command("nope", "apt").is_none());
     }
 

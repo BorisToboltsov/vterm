@@ -106,7 +106,9 @@
       "Bash(grep -rn 'PermissionDenied\\\\|permission denied\\\\|impl.*Display.*for.*Error\\\\|StatusCode\\\\|fn fmt' __TRACKED_VAR__/src/error.rs __TRACKED_VAR__/src/protocol/*.rs)",
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git check-ignore *)"
+      "Bash(git check-ignore *)",
+      "Bash(sed -i '' 's/\"version\": \"0.12.19\"/\"version\": \"0.13.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.12.19\"/version = \"0.13.0\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

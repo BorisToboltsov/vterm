@@ -5517,7 +5517,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "0.12.19"
+version = "0.13.5"
 dependencies = [
  "directories",
  "keyring",

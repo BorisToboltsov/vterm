@@ -246,6 +246,7 @@ describe("remaining invoke wrappers", () => {
       [api.sftpHome("s"), "sftp_home", { sessionId: "s" }],
       [api.fetchMetricsDetail("s"), "fetch_metrics_detail", { sessionId: "s" }],
       [api.fetchPendingUpdates("s"), "fetch_pending_updates", { sessionId: "s" }],
+      [api.fetchExtras("s"), "fetch_extras", { sessionId: "s" }],
       [api.sftpMkdir("s", "/d"), "sftp_mkdir", { sessionId: "s", path: "/d" }],
       [api.sftpCreateFile("s", "/f"), "sftp_create_file", { sessionId: "s", path: "/f" }],
       [

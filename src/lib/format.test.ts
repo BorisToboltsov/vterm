@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct, osIcon } from "./format";
+import {
+  diskFree,
+  fmtBytes,
+  fmtLimit,
+  fmtPct,
+  fmtRate,
+  fmtUptime,
+  isUnlimitedLimit,
+  memPct,
+  osIcon,
+} from "./format";
 import { ICONS } from "./icons";
 
 describe("fmtBytes", () => {
@@ -98,5 +108,27 @@ describe("diskFree", () => {
   it("is null when either value is missing", () => {
     expect(diskFree(null, 10)).toBeNull();
     expect(diskFree(3, null)).toBeNull();
+  });
+});
+
+describe("isUnlimitedLimit", () => {
+  it("flags a ~i64::MAX ceiling as unlimited", () => {
+    expect(isUnlimitedLimit(9223372036854775807)).toBe(true);
+    expect(isUnlimitedLimit(1e15)).toBe(true);
+  });
+  it("treats realistic ceilings and null as bounded", () => {
+    expect(isUnlimitedLimit(1048576)).toBe(false);
+    expect(isUnlimitedLimit(0)).toBe(false);
+    expect(isUnlimitedLimit(null)).toBe(false);
+  });
+});
+
+describe("fmtLimit", () => {
+  it("renders ∞ for an effectively unlimited ceiling", () => {
+    expect(fmtLimit(9223372036854775807)).toBe("∞");
+  });
+  it("localizes a bounded count and dashes null", () => {
+    expect(fmtLimit(1024)).toBe((1024).toLocaleString());
+    expect(fmtLimit(null)).toBe("—");
   });
 });
