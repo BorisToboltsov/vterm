@@ -1,313 +1,12 @@
-# CONTEXT — рабочие правила проекта vterm
+# Архитектура vterm
 
-Контекст, который нужно учитывать при выполнении **любой** будущей задачи в этом
-репозитории. Читать до начала работы.
-
----
-
-## Рабочий процесс (Definition of Done каждой задачи)
-
-1. **Дорожная карта.** План развития — в [ROADMAP.md](ROADMAP.md). По мере
-   выполнения фазы/задачи **отмечай сделанное** там же (чекбоксы `[x]`, статус
-   фазы `⬜ → ✅`, краткая заметка о статусе) — так же, как оформлены прошлые фазы.
-2. **Тесты обязательны.** После реализации фичи **пиши тесты** на неё. Смотри, как
-   это устроено, в [TESTS.md](TESTS.md), и **добавляй описание новых тестов** в
-   TESTS.md (в соответствующий раздел/таблицу).
-3. **Прогон тестов.** После выполнения задания **прогоняй весь набор**. Если
-   что-то не проходит — **чини**, пока не станет зелёным (см. команды ниже).
-4. **Документация — обязательна наравне с кодом.** При **любом** добавлении или
-   фиксе функционала обновляй документацию **в том же объёме, что ROADMAP, TESTS и
-   CONTEXT**: [README.md](README.md) (возможности, команды, структура каталогов,
-   требования, установка), [ROADMAP.md](ROADMAP.md) (чекбоксы/статус), а при
-   изменении тестов — [TESTS.md](TESTS.md) и при изменении правил/инвариантов —
-   этот [CONTEXT.md](CONTEXT.md). README — не «по необходимости», а обязательный
-   артефакт: фича/фикс без отражения в README считается незавершённым. README
-   также показывается внутри приложения (Help → «Инструкция»), поэтому держи его
-   актуальным и пригодным для чтения конечным пользователем.
-5. **Перевод — обязателен наравне с кодом.** Любой видимый пользователю текст —
-   **только** через `t()` и **сразу на всех** языках системы (см. раздел
-   «Интернационализация (i18n)»). Новая/изменённая надпись без ключа во всех словарях
-   считается незавершённой (к тому же не пройдёт `pnpm check`).
-
-### Полный прогон перед завершением
-
-```sh
-source "$HOME/.cargo/env"                       # cargo не в PATH свежей сессии
-export PATH="$HOME/Library/pnpm/bin:$PATH"      # standalone pnpm
-
-cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test  --manifest-path src-tauri/Cargo.toml
-pnpm check
-pnpm test:coverage
-```
-
-Все пять команд должны быть зелёными. Гейты покрытия (**≥ 90 %** для чистой логики,
-**≥ 80 %** в целом) настроены в [vitest.config.ts](vitest.config.ts) и **роняют**
-прогон, если не достигнуты.
+Как устроен проект: слои, контракты подсистем, карта файлов, спека фич. Это
+описательный слой («как»). Жёсткие контракты («что обязан / чего нельзя») — в
+[INVARIANTS.md](INVARIANTS.md); обоснования решений — в [adr/](adr/); дизайн-система —
+в [DESIGN.md](DESIGN.md); правила процесса — в [../CLAUDE.md](../CLAUDE.md); план — в
+[ROADMAP.md](ROADMAP.md); история — в [../CHANGELOG.md](../CHANGELOG.md).
 
 ---
-
-## Архитектура и инварианты (выработано в Фазе 6 — соблюдать)
-
-Полные обоснования — в [docs/adr/](docs/adr/). Краткие правила:
-
-- **Граница фронт/бэк.** Вся логика SSH/SFTP/секретов/файлов живёт в Rust-бэкенде
-  (`src-tauri/src/`). Svelte-фронтенд ходит к ней только через `invoke()` (команды
-  в `lib.rs`) и каналы событий (`term://…`, `sftp://…`, `menu://…`). Новый
-  функционал такого рода: команда в бэкенде + типизированная обёртка в
-  [src/lib/api.ts](src/lib/api.ts). Не дублируй бизнес-логику на фронте. (ADR 0001)
-  - **Единый контракт терминала.** SSH-сессии ([ssh.rs](src-tauri/src/ssh.rs)) и
-    локальные shell-вкладки ([pty.rs](src-tauri/src/pty.rs), `portable-pty`)
-    используют **один** канал событий (`term://out|closed/{id}`) и **одни** команды
-    (`write_to_terminal`/`resize_pty`/`disconnect`, маршрутизация по `session_id`),
-    поэтому [Terminal.svelte](src/lib/Terminal.svelte) общий для обоих (проп
-    `local`). Новый вид терминала подключай к этому же контракту, а не отдельным.
-  - **Окно подключения (connecting-оверлей).** Пока SSH-вкладка в статусе
-    `Connecting…`, поверх области терминала показывается
-    [ConnectingOverlay.svelte](src/lib/ConnectingOverlay.svelte): орбита-комета вокруг
-    иконки сервера + `alias` + `user@host:port` + **честный** чек-лист фаз. Фазы —
-    **реальные**, из дополнительного канала `term://phase/{id}` ([ssh.rs](src-tauri/src/ssh.rs)
-    `phase_event`, payload `connecting`→`authenticating`→`session`, эмитится по ходу
-    последовательных стадий `connect`); фронт слушает его в `Terminal.svelte` (проп `onphase`,
-    только SSH), а чистый маппинг фаза→состояние-шага — в [connphase.ts](src/lib/connphase.ts)
-    (`phaseSteps`, ADR 0003). Новую стадию подключения добавляй как новый `emit` в `connect` +
-    запись в `PHASE_ORDER`, не плоди отдельные каналы. Анимации — только дешёвые
-    `transform`/`opacity`, под глобальным `prefers-reduced-motion`-guard.
-    **Тот же компонент — экран ошибки/обрыва** (проп `failed`): орбита заменяется
-    статичной иконкой сервера с **красным крестом**, чек-лист **замирает на упавшей
-    фазе** (`phaseSteps(phase, true)` → пройденные `done`, упавшая `error`, дальше
-    `pending`), под ним — заголовок/красная деталь и **кнопки-действия через слот**
-    (`children`). Старую тонкую верхнюю плашку оставляем **только для локальных
-    вкладок**; для SSH — оверлей. Маппинг статуса вкладки в заголовок/деталь/упавшую
-    фазу/действие — `sshErrorView` в [+page.svelte](src/routes/+page.svelte).
-    **Провал аутентификации больше не закрывает вкладку автоматически**: вкладка
-    остаётся с оверлеем (`Соединение ✓ / Аутентификация ✗`), а модалка ввода секрета
-    открывается **по кнопке** «Ввести пароль заново» (`reauth`), а не сразу.
-
-
-- **Ошибки — типизированы.** В Rust возвращай `AppResult<T>`
-  ([error.rs](src-tauri/src/error.rs)), не `String`. Семантические случаи —
-  отдельные варианты (`AuthRejected`, `HostKeyRejected`, `NoSession`,
-  `UnknownServer`); прочее — `AppError::Message`. `AppError` сериализуется в строку,
-  поэтому контракт с фронтом не меняется; маркеры (`auth-rejected` и т.п.) живут в
-  `Display`. (ADR 0002)
-- **Чистая логика — в `.ts`/свободных функциях**, не в `.svelte`/командах: её
-  тестируют без DOM/сети. Фронт: [tree.ts](src/lib/tree.ts),
-  [format.ts](src/lib/format.ts), [util.ts](src/lib/util.ts),
-  [actions/drag.ts](src/lib/actions/drag.ts). Rust: `reprefixed`,
-  `decode_or_default`. (ADR 0003)
-- **Состояние UI — в runes-сторах** `src/lib/stores/*.svelte.ts` (по образцу
-  [settings.svelte.ts](src/lib/settings.svelte.ts)): `layout` (ширины/сворачивание
-  панелей), `tabs` (вкладки терминалов). Не разбрасывай состояние по компонентам. (ADR 0003)
-- **Компоненты декомпозированы.** `+page.svelte` — оркестратор; крупные части
-  вынесены в `TopBar`, `ServerTree`. Переиспользуй примитивы `Modal`,
-  `ConfirmDialog`, `Icon`. Иконки — из реестра [icons.ts](src/lib/icons.ts) через
-  `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`. (ADR 0003)
-  Оформление кнопок/иконок/строк — по закреплённой **дизайн-системе** (см. ниже).
-- **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
-  серверам пользователя. Шрифты встроены (`@fontsource`), внешние ссылки — только
-  по явному клику через `tauri-plugin-opener`. Закреплено гейтом
-  [autonomy.guard.test.ts](src/lib/autonomy.guard.test.ts). (ADR 0004)
-- **Безопасность.** CSP в `tauri.conf.json` держи строгим (никаких удалённых
-  origin'ов; не возвращай `csp: null`); capabilities — минимально необходимые
-  (opener только `https://`, без `dialog:default`/`fs`/`dangerous*`). Секреты —
-  только в keychain, оборачивай копии в `zeroize::Zeroizing`, **никогда не логируй**.
-  Host-key дефолт — не «accept». Зависимости проходят `cargo audit`/`cargo deny`/
-  `pnpm audit`/Semgrep (стадия `security` в CI). Гейты:
-  [tauri-security.guard.test.ts](src/lib/tauri-security.guard.test.ts), `deny.toml`.
-  Полная модель — [SECURITY.md](SECURITY.md).
-- **Контракт типов — camelCase.** Rust-модели — `#[serde(rename_all = "camelCase")]`,
-  зеркало в [src/lib/types.ts](src/lib/types.ts). Новые поля старых структур —
-  `#[serde(default)]`.
-- **Персистентность:** профили/папки/known_hosts — JSON в конфиг-каталоге
-  (`store.rs`); секреты — только в OS keychain (`secrets.rs`), никогда в файлах;
-  настройки/layout UI — `localStorage` (runes-сторы). Для e2e — `data-testid`.
-
-## Дизайн-система (Фаза 7 — ЗАКРЕПЛЕНО, НЕ МЕНЯТЬ без явного запроса)
-
-> **Главный инвариант.** Визуальный язык ниже зафиксирован. Его **нельзя менять**
-> при рефакторинге, чистке, переименованиях, добавлении фич и любых других задачах —
-> **только если пользователь напрямую попросил изменить дизайн**. Новые элементы UI
-> обязаны переиспользовать существующие токены/паттерны, а не вводить свои. Если
-> задача формально требует тронуть оформление, но прямого запроса на это нет —
-> сохраняй текущий вид и спрашивай.
-
-- **Источник цвета.** Только токены `@theme` из [src/app.css](src/app.css)
-  (`panel`, `panel-alt`, `edge`, `accent`, `accent-hover`, `danger`, `warn`,
-  `muted`, `text`) + `green-600/500` для primary-действия (Connect). Никаких сырых
-  hex в компонентах, никаких новых цветов без запроса. `warn` — янтарный
-  семантический «превышен средний порог» (фаза «Расширение мониторинга»); фиксирован
-  по темам, если тема не переопределит `warn` в своём `UiPalette`. Пары
-  «предупреждение/критично» = `text-warn` / `text-danger`.
-- **Иконки.** Единственный источник — реестр [icons.ts](src/lib/icons.ts), рендер
-  через `<Icon name="…" />` ([Icon.svelte](src/lib/Icon.svelte)): line-стиль,
-  24×24, `currentColor`, `stroke-width 1.8`. **Эмодзи запрещены** (вкл. иконки ОС в
-  статус-баре). Иконки папки/файла/символьной ссылки **одинаковы** в левой панели
-  ([ServerTree.svelte](src/lib/ServerTree.svelte)) и в SFTP
-  ([SftpPanel.svelte](src/lib/SftpPanel.svelte)). Новую иконку — добавлять в реестр,
-  не инлайнить SVG в компонентах.
-- **Кнопки с текстом** (база `rounded px-3 py-1 text-sm font-medium`), два варианта:
-  - **primary / green** (действие Connect): `bg-green-600 text-white hover:bg-green-500`
-    (+ `disabled:opacity-40`). Connect **всегда зелёный**.
-  - **neutral**: `bg-edge hover:bg-accent hover:text-panel-alt`.
-- **Иконочные кнопки в тулбарах** (collapse/expand, refresh, new folder, new file,
-  add server, upload): `flex items-center rounded p-1.5 text-muted hover:bg-edge
-  hover:text-white`, иконка `size=14`. **Создание сущности — иконкой с «+»:** новую
-  папку обозначает `folderPlus`, новый файл и «добавить сервер» — `filePlus` (лист с
-  «+», в стиле иконки файла). «Добавить сервер» живёт в тулбаре списка серверов
-  (рядом с «Новая папка»), **не** в верхней панели; «Новый файл» — в тулбаре SFTP
-  (рядом с «Новая папка», создаёт пустой файл через `sftp_create_file`).
-- **Иконочные действия в строках** (edit/download/upload по ховеру строки):
-  `rounded p-0.5 text-muted hover:text-accent`; **удаление** —
-  `hover:text-danger` (иконка `trash`); иконка `size=13`.
-- **Удаление — всегда с подтверждением.** Любое **деструктивное/необратимое** действие
-  (удаление файла/папки/сервера/записи/настройки и т.п.) **обязано** сначала спросить
-  подтверждение через [ConfirmDialog.svelte](src/lib/ConfirmDialog.svelte) (danger-вариант,
-  `confirmLabel` = «Удалить»), а не удалять по первому клику. Кнопка-иконка `trash` лишь
-  **открывает** диалог (заводи `confirmDelete`-стор/стейт с целью удаления), а сам вызов
-  бэкенда — в `onconfirm`; `oncancel`/закрытие панели сбрасывают стейт. Тексты диалога — через
-  `t()` во всех языках (заголовок + тело с именем цели). Так уже сделаны удаление в SFTP,
-  список серверов, очистка лога (JsonLogView) и **библиотека записей** (`RecordingsPanel`).
-- **Появление действий по ховеру — без сдвига.** Группа действий строки
-  резервирует место всегда и показывается через `invisible → group-hover:visible`
-  (**не** `hidden`/`display`-переключение — иначе строка «прыгает»). Подсветка строки
-  (`hover:bg-edge`, выбранное — `border-accent`) меняет только фон/рамку, не геометрию.
-- **Сворачивание панелей** — шевронами из реестра (`chevronLeft`/`chevronRight`),
-  не символами `«`/`»`.
-- **Пустые состояния/онбординг** — через [EmptyState.svelte](src/lib/EmptyState.svelte)
-  (бейдж-иконка в кружке + заголовок + опц. подсказка + слот CTA-кнопок). Используй
-  его для «нет данных»-экранов (пустой список серверов, отсутствие активной сессии),
-  не верстай разрозненные заглушки. CTA — нейтральные/green-кнопки из кнопочной системы.
-- **Тосты/уведомления** ([Toast.svelte](src/lib/Toast.svelte) +
-  [stores/toasts.svelte.ts](src/lib/stores/toasts.svelte.ts)) — единственный канал
-  неблокирующих сообщений. Ошибки операций и статусы показывай через
-  `notifyError`/`notifySuccess`/`notifyInfo`, **не** инлайновыми баннерами (исключение —
-  контекстная валидация прямо в форме/на экране подключения). Контейнер фиксирован
-  снизу-справа; тон по типу: error → `danger` (иконка `alert`), success → `green`
-  (иконка `check`), info → `accent` (иконка `info`); авто-дисмисс по `TOAST_TTL`.
-- **Доступность (a11y).** Диалоги — через [Modal.svelte](src/lib/Modal.svelte)
-  (`ConfirmDialog`/формы строй на нём): он даёт `role="dialog"`/`aria-modal`/`aria-label`,
-  фокус-трап (Tab/Shift+Tab по кругу), автофокус первого контроля и **возврат фокуса**
-  открывшему при закрытии — не дублируй это в новых диалогах. Интерактивные элементы
-  имеют доступное имя (`aria-label`/`title`) и достижимы с клавиатуры; иконочные кнопки —
-  обязательно `aria-label`. Вкладки терминалов — паттерн tablist с роуминг-`tabindex`
-  (активная `0`, прочие `-1`) и навигацией ↑/↓/←/→/Home/End/Enter (чистый
-  `nextTabIndex` в [stores/tabs.svelte.ts](src/lib/stores/tabs.svelte.ts)). Дерево —
-  `role="tree"`/`treeitem`. Не понижай эти гарантии при рефакторинге.
-- **Окна/диалоги адаптивны к размеру главного окна.** Любое всплывающее окно (через
-  `Modal`) **обязано сжиматься вместе с главным окном**: карточка `Modal` ограничена
-  `max-w-[95vw] max-h-[90vh]` и скроллится (`overflow-auto`), поэтому даже при уменьшении
-  окна ОС диалог остаётся целиком виден. **Не задавай фиксированные размеры, способные
-  превысить окно** (ширина через `width`-проп — только как «желаемая», она всё равно
-  клампится вьюпортом). Контент с собственным терминалом (плеер) — внутри прокручиваемой
-  области. Это правило распространяется на все будущие окна.
-- **Командная палитра** (⌘K / Ctrl+K, [CommandPalette.svelte](src/lib/CommandPalette.svelte) +
-  чистая логика [command.ts](src/lib/command.ts)) — top-aligned оверлей: поле поиска
-  (иконка `search`) + ранжированный список команд с клавиатурной навигацией
-  (↑/↓/Enter/Esc), активная строка — `bg-edge`, чип группы — `bg-panel`. Ранжирование/
-  фильтрация — только в `command.ts` (`filterCommands`/`matchScore`); компонент
-  получает `commands` с готовыми `run` от страницы, новые источники команд добавляй
-  там же. Глобальный хоткей ⌘K — `<svelte:window>` в [+page.svelte](src/routes/+page.svelte).
-- **Буфер обмена в полях ввода — обязателен везде.** **Все** текстовые поля
-  (`<input>` типов text/search/url/tel/email/password/number и `<textarea>`)
-  обязаны поддерживать **Cmd/Ctrl + V/C/X/A**. Это обеспечивает **единый
-  глобальный обработчик** `handleClipboardShortcut`
-  ([actions/clipboardKeys.ts](src/lib/actions/clipboardKeys.ts)), повешенный один
-  раз на `document` (capture-фаза) в [+page.svelte](src/routes/+page.svelte) — он
-  работает для текущих и **будущих** полей **без** per-input разметки, так что
-  отдельный `use:`-экшен на инпуты вешать не нужно. Чтение буфера идёт нативно через
-  бэкенд (`read_clipboard_text`), без промпта WebKit. Обработчик **пропускает**
-  служебный `<textarea>` xterm.js (`.xterm`) — терминал владеет ⌘C/⌘V сам; не ломай
-  это исключение.
-- **Анимации/переходы.** Короткие и сдержанные: токены `--motion-fast` (120ms) /
-  `--motion-base` (200ms) в [app.css](src/app.css); анимируй только дешёвые свойства
-  (`opacity`/`transform`/цвет/`width`/`height`), не layout вне панелей.
-  **Всё, что сворачивается/разворачивается, обязано делать это плавно** (как панели
-  `ServerTree`/`SftpPanel` и раздел Theme в настройках): по горизонтали — анимация
-  ширины (`transition-[width]`, выключается на ресайзе), по вертикали — Svelte
-  `transition:slide` (≈200ms). **При горизонтальной анимации ширины контент панели
-  «прикалывай» к целевой ширине и якори к неподвижному краю — через `position:absolute`,
-  а не статичный флекс-ребёнок.** Для правой, докнутой по правому краю `SftpPanel`
-  (у неё при разворачивании движется **левая** граница) контент — внутренний враппер
-  `class="absolute inset-y-0 right-0 …" style="width: {width}px"` внутри `relative`
-  + `overflow-hidden` корня: абсолютный потомок **надёжно отсекается** `overflow-hidden`
-  каждый кадр в WebKit, поэтому растущий контейнер просто **раскрывает** неподвижный,
-  уже свёрстанный контент (clip-reveal). **Не делай это oversize-статичным флекс-ребёнком**
-  (даже с `self-end`): WebKit при анимации ширины предка не переотсекает его каждый кадр
-  и контент «мелькает» за левой границей над терминалом. Левоприжатый/рефлоу-контент
-  тоже нельзя — центрированные элементы (кнопка Connect) прыгают/дрейфуют не в такт с
-  границей. Мгновенных скрытий/показов
-  сворачиваемых блоков не
-  делай. **Уважай
-  `prefers-reduced-motion`** — глобальный guard в `app.css` гасит анимации, не вводи
-  движение в обход него. Паттерны: сворачивание панелей — `transition-[width]`,
-  **выключается на время ресайза** (проп `animateWidth` из `resizing`); состояния
-  строк/drop-таргета — `transition duration-150`; drag-«призраки» — `in:fade` 120ms;
-  загрузка списков — скелетоны через [Skeleton.svelte](src/lib/Skeleton.svelte)
-  (`animate-pulse`, `aria-hidden`), а не текст «Loading…».
-- **Темы и настройки.** Темы — записи `ThemeDef` в [themes.ts](src/lib/themes.ts)
-  (`group: light|modern|retro`), каждая несёт полную терминальную палитру + UI-палитру
-  (`UiPalette` → `--color-*`); добавление темы = один объект + запись в `THEMES`
-  (точка расширения, не правь существующие палитры без запроса). В настройках тема
-  выбирается **визуальным пикером** (кнопки-чипы с образцами `themeSwatches`,
-  `role="radio"`) — раздел **сворачиваемый, по умолчанию свёрнут** (тоггл показывает
-  текущую тему с превью-образцами). Шрифт — **такой же сворачиваемый раздел с сеткой**
-  кнопок-`radio`, каждая отрисована своим начертанием (превью), плюс живой образец кода
-  (`font-preview`). Поиск по настройкам — секции фильтруются `matchesQuery`
-  ([util.ts](src/lib/util.ts)) по ключевым словам; пустой запрос показывает всё.
-- **Панель мониторинга** (нижний статус-бар, [StatusBar.svelte](src/lib/StatusBar.svelte)) —
-  ряд **групп** показаний (OS, user@host, CPU, ОЗУ, диск). Закреплено:
-  - **Структура группы:** иконка (`size=14 text-muted`) + значение(я). Все значения —
-    `tabular-nums`; составное значение собирается в **один** элемент (ОЗУ —
-    `used / total (pct)`, диск — `free / total`), без `&nbsp;`-склеек.
-  - **Интервалы и разделители:** внутри группы — `gap-2`; **между любыми группами**
-    (включая любые новые показатели) **обязательна** тонкая **черточка** `divider()`
-    (`h-3 w-px bg-current`, т.е. цветом текста) с равным `gap-2` по бокам — её рендерит
-    цикл `{#each groups}` через `{#if i > 0}`, поэтому новый показатель = новая запись в
-    `groups`, а не вложение в чужую группу (так load average вынесен из CPU в свою
-    группу). Контейнер — `gap-2`.
-  - **Фиксированная ширина значений (анти-«прыжок»):** значение каждого показателя —
-    в `inline-block` с **двумя плотными ширинами на элемент** через хелпер
-    `w(compact, expanded)` (`tabular-nums`): своя ширина под контент компактного и
-    расширенного режима, чтобы не было ни «прыжка» при смене цифр, ни пустого места.
-    Длинные/переменные тексты (top process, kernel, ip, байтовые строки) — `truncate`
-    (хвост за `…`), полное значение в `title` (top process — топ-3 процесса). Парные
-    скорости (net/disk I/O) — компактный `gap-1`.
-  - **CPU — мини-график** (sparkline, только в расширенном режиме): прямоугольник
-    `h-3.5 w-10` (`border-edge`, фон `bg-panel`) со столбиками; история `CPU_SAMPLES`
-    значений `cpuPct`, левый паддинг нулями (стабильная ширина, рост справа),
-    цвет столбиков — зелёный `#22c55e` (в тон иконке CPU). Не возвращать
-    горизонтальную полосу загрузки.
-  - **Режимы:** `settings.statusBarExpanded` (по умолчанию **компактный**) —
-    компактный показывает иконки + проценты (CPU/ОЗУ/диск %), расширенный добавляет
-    имя ОС, байтовые суммы, sparkline и load-average инлайн. Тоггл — кнопка справа
-    (`statusbar-toggle`), **закреплена у правого края**: бар = `flex items-stretch`
-    из **прокручиваемой** области метрик (`overflow-x-auto`, `flex-1`) и кнопки-тоггла
-    **снаружи** этой области (`self-stretch` + `border-l`), поэтому метрики никогда
-    не видны за стрелкой при горизонтальной прокрутке. Иконки — одинарные шевроны
-    `chevronLeft`/`chevronRight` (как у сворачивания панелей), не двойные.
-  - **Показатели (каждый — своя группа со своей иконкой):** OS, user@host, ip(`globe`),
-    uptime(`power`,`fmtUptime`), kernel(`terminal`), server time(`clock`),
-    CPU(%+sparkline), load average(`gauge`), CPU temp(`thermometer`), top process
-    (`activity`), ОЗУ, swap(`swap`), диск, disk I/O(`diskIo`,`fmtRate`),
-    сеть(`upload`/`download`,`fmtRate`), connections(`plug`), users(`users`, число +
-    список в `title`). Скоростные метрики (сеть, disk I/O) считаются в бэкенде дельтой
-    счётчиков (`/proc/net/dev`, `/proc/diskstats`) через общий `rate_from`
-    (`net_samples`/`disk_samples` + `Instant`), как CPU%.
-  - **Видимость и доступность:** `settings.statusBarItems` (флаг на каждый показатель) —
-    чекбоксы в свёрнутом под-разделе настроек. Группа показывается при флаге **и**
-    наличии данных (метрики, которых хост не отдаёт, авто-скрываются, а не висят
-    прочерком); core (cpu/ram/disk) — всегда при флаге. Контейнер `overflow-x-auto` —
-    при переполнении бар скроллится горизонтально (тонкий скроллбар из `app.css`).
-  - **Индикатор передач SFTP:** при активных передачах — сегмент со стрелкой ↑/↓ и
-    суммарным `%` (в расширенном — N файлов + мини-бар); клик разворачивает панель SFTP
-    (`layout.sftpCollapsed=false`). Состояние передач — общий стор
-    [stores/transfers.svelte.ts](src/lib/stores/transfers.svelte.ts) (подписка на
-    `sftp://progress` — в `+page`), агрегат — чистый `aggregateTransfers`.
-  - **Кнопка подробного мониторинга** — у правого края бара, **после** тоггла
-    компакт/расширенный (иконка `barChart`); снаружи прокручиваемой области, как и
-    тоггл. Открывает оверлей мониторинга.
 
 ## Мониторинг (фаза «Расширение мониторинга» — ЗАКРЕПЛЕНО)
 
@@ -319,7 +18,7 @@ pnpm test:coverage
   `AppState` и чистятся в `disconnect`. Новые ресурсные метрики добавляй сюда, не
   раздувай `METRICS_SCRIPT`.
 - **«Данные только при открытой странице».** Оверлей
-  [MonitoringOverlay.svelte](src/lib/MonitoringOverlay.svelte) (на базе `Modal`)
+  [MonitoringOverlay.svelte](../src/lib/MonitoringOverlay.svelte) (на базе `Modal`)
   запускает петлю опроса на открытии и **гасит её на закрытии** (`$effect` по
   `open`); графики копятся с момента открытия. Pending updates — **лениво**, после
   первого рендера (скелетон), и никогда не из статус-бара. Закрытый оверлей не
@@ -329,25 +28,25 @@ pnpm test:coverage
   страницу мониторинга обязаны **переживать** отключение бара: ⌘K-команда и пункт
   нативного меню (`menu://monitoring`) — помимо кнопки в баре.
 - **Пороги — чистая логика, единый источник.** Классификация значение→уровень — в
-  [thresholds.ts](src/lib/thresholds.ts) (`thresholdLevel`/`thresholdClass`,
+  [thresholds.ts](../src/lib/thresholds.ts) (`thresholdLevel`/`thresholdClass`,
   `ok|warn|crit` → `''`/`text-warn`/`text-danger`), **и бар, и страница** красят
   числовые метрики одинаково. Пороги (`warn`/`crit`, `null`=выкл) — в
   `settings.statusBarThresholds` по ключам `ThresholdKey`; новый числовой показатель =
   новый ключ + дефолт + поле в свёрнутом под-разделе настроек. Не дублируй
   пороговую логику в компонентах.
 - **Графики — два компонента, не инлайнить свои.**
-  [Sparkline.svelte](src/lib/Sparkline.svelte) (бар-спарклайн, заполнение справа,
+  [Sparkline.svelte](../src/lib/Sparkline.svelte) (бар-спарклайн, заполнение справа,
   левый паддинг нулями) — **закреплён за статус-баром** (CPU-спарклайн); его вид не
-  меняем. Для **страницы мониторинга** — [Chart.svelte](src/lib/Chart.svelte)
+  меняем. Для **страницы мониторинга** — [Chart.svelte](../src/lib/Chart.svelte)
   (area/line + **мульти-серия**, `non-scaling-stroke`, авто/заданный `max`) и
-  [StackedBar.svelte](src/lib/StackedBar.svelte) (композитная полоса + легенда) и
-  [Gauge.svelte](src/lib/Gauge.svelte) (радиальный). Новый тип графика страницы =
+  [StackedBar.svelte](../src/lib/StackedBar.svelte) (композитная полоса + легенда).
+  Новый тип графика страницы =
   расширение `Chart`/новый примитив, а не инлайн-SVG в `MonitoringOverlay`. Цвет
   серии — данные (проп `color`, hex или CSS-переменная), уровни — через `thresholdLevel`.
 
 ## Страница мониторинга — дашборд (Фаза 13)
 
-- **Структура.** [MonitoringOverlay.svelte](src/lib/MonitoringOverlay.svelte) —
+- **Структура.** [MonitoringOverlay.svelte](../src/lib/MonitoringOverlay.svelte) —
   полноэкранный оверлей: вверху **блок «Система»** (сгруппированная статика:
   `user@host` + иконка ОС, OS, kernel, uptime, ip, server time, число ядер +
   health-скаляры + **обновления ОС**: manager/доступные/security/reboot, лениво из
@@ -371,7 +70,7 @@ pnpm test:coverage
   топ); Load average = «спрос/давление/очередь» (load 1/5/15, PSI CPU, процессы
   run/blocked) + бейдж по load/ядро (`loadStatus`). Новый показатель =
   новая `<section>`/строка в существующей, на токенах и через `thresholdClass`.
-- **Health-бейджи блоков (0.13.16) — единый источник [monhealth.ts](src/lib/monhealth.ts).**
+- **Health-бейджи блоков (0.13.16) — единый источник [monhealth.ts](../src/lib/monhealth.ts).**
   У каждой детальной секции в заголовке — **точка-индикатор** `ok|warn|crit` (ok =
   **зелёный**, warn = `--color-warn`, не серый), **единообразно для всех** (включая
   Load). В блоке «Система» — **кликабельная сводка**
@@ -389,7 +88,7 @@ pnpm test:coverage
   - Новый показатель в блоке = добавить его в соответствующую `*Health`-функцию (и
     порог-ключ, если числовой), не считать health «на глаз» в компоненте.
 - **Лимиты «без потолка».** Числовой потолок ~i64::MAX (`fs.file-max` unlimited)
-  показывается как `∞` через `fmtLimit`/`isUnlimitedLimit` ([format.ts](src/lib/format.ts)),
+  показывается как `∞` через `fmtLimit`/`isUnlimitedLimit` ([format.ts](../src/lib/format.ts)),
   процент/порог при этом подавляются. Применяй к любым «безлимитным» ceiling-метрикам.
 - **Температура и датчики (13.3).** Датчики (`Sensor`: label/temp/high/crit) парсятся
   из `sensors -u` (lm-sensors) **awk-строкой в `DETAIL_SCRIPT`** и едут в `MetricsDetail.sensors`
@@ -397,8 +96,8 @@ pnpm test:coverage
   (свои `crit`/`high`, фолбэк на `th.cpuTemp`). **Новая ресурсная метрика, требующая
   серверного инструмента**, — по этому же образцу: парсинг в `DETAIL_SCRIPT`/новой
   команде + **карточка установки через механизм Фазы 12.8** (проп `onInstallTool` →
-  `offerLintInstall` в [+page.svelte](src/routes/+page.svelte) → `ToolInstallDialog`),
-  а не статичная команда. Каталог инструментов — [servertools.rs](src-tauri/src/servertools.rs)
+  `offerLintInstall` в [+page.svelte](../src/routes/+page.svelte) → `ToolInstallDialog`),
+  а не статичная команда. Каталог инструментов — [servertools.rs](../src-tauri/src/servertools.rs)
   (`lm-sensors`/`smartmontools`/`sysstat` уже заведены).
 - **Доп. метрики (13.4).** CPU-разбивка user/system/iowait/**steal**/idle — дельта
   агрегатной строки `/proc/stat` (пер-сессионный сэмпл `cpu_stat_samples` в `AppState`,
@@ -435,7 +134,7 @@ pnpm test:coverage
   новый флаг в `SmartLogs` + дефолт + тумблер в этом разделе; гейт читается как
   `settings.smartLogs.enabled && settings.smartLogs.<feature>`.
 - **Поиск принадлежит терминалу.** Полнобуферный поиск реализован **внутри**
-  [Terminal.svelte](src/lib/Terminal.svelte) через `@xterm/addon-search` (аддон
+  [Terminal.svelte](../src/lib/Terminal.svelte) через `@xterm/addon-search` (аддон
   грузится всегда — дёшево; UI/хоткей гейтятся настройкой реактивно, без ремоунта).
   Хоткей — **Cmd+F / Ctrl+Shift+F** через `attachCustomKeyEventHandler` (по образцу
   ⌘C/⌘V — **plain Ctrl+F не перехватываем**, он уходит в удалённый shell).
@@ -450,7 +149,7 @@ pnpm test:coverage
   `prefers-reduced-motion`). **Терминал создаётся с `allowProposedApi: true`** —
   decoration-API xterm 6 (подсветка совпадений, а в дальнейшем и regex-подсветка)
   ещё «proposed» и без флага `findNext`/`registerDecoration` кидают исключение. Чистая логика (`buildMatcher`/`findMatchRows`/
-  `contextSnippet`/`matchCountLabel`) — в [search.ts](src/lib/search.ts) (ADR 0003),
+  `contextSnippet`/`matchCountLabel`) — в [search.ts](../src/lib/search.ts) (ADR 0003),
   компонент только связывает её с буфером xterm. Поле ввода поиска — обычный
   `<input>`, поэтому глобальный clipboard-обработчик работает в нём (не `.xterm`).
   Опции регистр/слово/regex живут в `settings.searchOptions` (**запоминаются**, общие на
@@ -461,7 +160,7 @@ pnpm test:coverage
   лога делается **вставкой ANSI-SGR-кодов** в поток вывода **до** `term.write`
   (приём grc/ccze), а не decoration-API: цвет — **базовый ANSI** (`31`..`37`),
   поэтому рендерится **цветами активной темы** автоматически (правило «red» → красный
-  темы). Чистая логика — [highlight.ts](src/lib/highlight.ts) (`compileRules`/
+  темы). Чистая логика — [highlight.ts](../src/lib/highlight.ts) (`compileRules`/
   `applyHighlight`/`colorToSgr`, ADR 0003): не матчит **внутри** escape-последова­
   тельностей (не ломает существующие коды), приоритет — самое раннее совпадение.
   Применяется **только к нормальному буферу** (`term.buffer.active.type==="normal"`)
@@ -480,12 +179,12 @@ pnpm test:coverage
   во внешнем браузере через `openUrl` (`tauri-plugin-opener`) — офлайн-инвариант
   (только по явному клику, без рантайм-сети) соблюдён, как в HelpPanel.
 - **Структурный вид — мультиформатный, парсинг только при открытом виде.** Оверлей
-  [JsonLogView.svelte](src/lib/JsonLogView.svelte) поверх терминала (переключатель
-  режима — **сегмент «Raw | Table»** [ViewModeToggle.svelte](src/lib/ViewModeToggle.svelte),
+  [JsonLogView.svelte](../src/lib/JsonLogView.svelte) поверх терминала (переключатель
+  режима — **сегмент «Raw | Table»** [ViewModeToggle.svelte](../src/lib/ViewModeToggle.svelte),
   при `smartLogs.jsonView`; имя файла историческое — формат**ов** много).
   Парсинг потока (`feedJson`) идёт **только пока `structured` включён** — нулевой оверхед
   иначе; при включении — **посев из текущего scrollback** (`seedJsonFromBuffer`) + живой
-  разбор, буфер ограничен `MAX_JSON_ENTRIES`. Чистая логика — [jsonlog.ts](src/lib/jsonlog.ts)
+  разбор, буфер ограничен `MAX_JSON_ENTRIES`. Чистая логика — [jsonlog.ts](../src/lib/jsonlog.ts)
   (ADR 0003): **`toLogEntry` авто-определяет формат построчно** по порядку
   `parseLogLine`(JSON) → `parseNginx` → `parseSyslog` → `parseDmesg` → `parseLogfmt`
   (logfmt последним, т.к. самый «жадный»; сам гард требует ≥2 пары и покрытие всей строки),
@@ -509,7 +208,7 @@ pnpm test:coverage
   ждём новый. Маркер авто-инвалидируется, когда строка уходит из scrollback → откат на
   полный посев. Кнопка «Clear» стоит **слева от чипов уровня**, отделена вертикальным
   разделителем. **Переключатель режима — единый сегмент `Raw | Table`**
-  ([ViewModeToggle.svelte](src/lib/ViewModeToggle.svelte), иконки `terminal`/`table`),
+  ([ViewModeToggle.svelte](../src/lib/ViewModeToggle.svelte), иконки `terminal`/`table`),
   живёт в **двух взаимоисключающих** местах (состояние `structured` — в Terminal, лифтинг
   не нужен): в **raw**-режиме плавает в правом-верхнем углу (`absolute right-2 top-2 z-30`
   во Terminal), в **table**-режиме — **крайний правый элемент тулбара** JsonLogView (проп
@@ -518,26 +217,26 @@ pnpm test:coverage
   (`top-11` вместо `top-2`), а не перекрывается.
   **Колонки изменяются по ширине мышью**: таблица — `table-layout: fixed` + `<colgroup>`
   с пиксельными ширинами, drag-ручка на правом краю каждого заголовка через **общий**
-  экшен `resizableHandle` ([actions/drag.ts](src/lib/actions/drag.ts), как ресайз панелей),
+  экшен `resizableHandle` ([actions/drag.ts](../src/lib/actions/drag.ts), как ресайз панелей),
   ширины — в локальном стейте компонента (ключи `time`/`level`/`message`/`x:<field>`),
   математика ширины — чистые `colWidth`/`resizedWidth` (jsonlog.ts, мин. `COL_MIN`). Ручка —
   `aria-hidden` (только мышь, чтобы не попадать в accessible-name заголовка); при переполнении
   таблица скроллится по горизонтали в своём контейнере. Таблица
-  ([JsonLogView.svelte](src/lib/JsonLogView.svelte)) презентационна; парсинг/состояние
+  ([JsonLogView.svelte](../src/lib/JsonLogView.svelte)) презентационна; парсинг/состояние
   потока — в Terminal.svelte.
 
 ## Запись сессий (Фаза 11) — ЗАКРЕПЛЕНО
 
-- **Пишем на бэкенде, пер-сессия.** `Recorder` ([recording.rs](src-tauri/src/recording.rs))
+- **Пишем на бэкенде, пер-сессия.** `Recorder` ([recording.rs](../src-tauri/src/recording.rs))
   живёт **внутри** `SshSession`/`LocalPty` (`Arc<Mutex<Option<Recorder>>>`); вывод пишет
   ридер (ssh-таск / pty-поток), ввод — `write_input`. Формат — **asciicast v2** (NDJSON:
   заголовок + `[t,"o"|"i",data]`), файлы — `data_dir/recordings/*.cast`. Команды
   `start/stop/list/delete/set_recording_meta/read/export_recording`; `read`/`delete`/
   `set_recording_meta` ограничены каталогом записей (`is_recording_path`). Старт/стоп — кнопка
   **REC** в полосе вкладок + команды палитры; красный индикатор на вкладке; состояние — стор
-  [recordings.svelte.ts](src/lib/stores/recordings.svelte.ts) (sessionId→path), чистится
+  [recordings.svelte.ts](../src/lib/stores/recordings.svelte.ts) (sessionId→path), чистится
   на `closed`/disconnect.
-- **Диалог заголовка/описания** [RecordingSaveDialog.svelte](src/lib/RecordingSaveDialog.svelte)
+- **Диалог заголовка/описания** [RecordingSaveDialog.svelte](../src/lib/RecordingSaveDialog.svelte)
   (на `Modal`): поля **заголовок** + **краткое описание**, проп `heading`. Два режима по наличию
   `ondelete`: **после стопа** — кнопки **Удалить** (danger, `delete_recording`) + **Сохранить**;
   **редактирование из библиотеки** (карандаш `pencil` в строке, как в панели серверов) — **Отмена**
@@ -552,7 +251,7 @@ pnpm test:coverage
   (иконка `server`), поиск (`filterRecordings`) ищет по заголовку/описанию/серверу/файлу/дате.
 - **Автозапись прод-серверов.** Per-server флаг **`autoRecord`** (`ServerProfile`,
   `#[serde(default)]`; чекбокс «Автозапись сессий» в форме сервера). Когда SSH-сессия к серверу
-  с флагом переходит в `connected`, [+page.svelte](src/routes/+page.svelte) `maybeAutoRecord`
+  с флагом переходит в `connected`, [+page.svelte](../src/routes/+page.svelte) `maybeAutoRecord`
   стартует запись **тем же путём, что ручной REC** (`startSessionRecording` — общий хелпер;
   режим/маскирование/env как обычно), с тостом `recordings.autoStarted`. **Финализация на
   закрытии:** на `closed` `finalizeRecordingOnClose` зовёт `stop_recording` (ставит `endedAt`)
@@ -565,11 +264,11 @@ pnpm test:coverage
   timed-режима паузная длительность вычитается из таймстемпов (`paused_total`), чтобы в
   воспроизведении не было дыр. **Любой `input` авто-возобновляет** (`input` снимает паузу
   первым делом — чтобы вывод после нажатия не потерялся). Оркестрация — на фронте
-  ([+page.svelte](src/routes/+page.svelte)): `$effect` держит запущенной **только активную**
+  ([+page.svelte](../src/routes/+page.svelte)): `$effect` держит запущенной **только активную**
   записываемую вкладку, фоновые — на паузе; **переключение** вкладок паузит/возобновляет;
   **простой** активной вкладки дольше `settings.recordIdlePauseSecs` (по умолчанию 20с, поле в
   настройках; `0` = выкл) ставит на паузу по таймеру, а активность терминала (`onactivity` из
-  [Terminal.svelte](src/lib/Terminal.svelte), хук `term.onData`) перевзводит таймер (бэкенд сам
+  [Terminal.svelte](../src/lib/Terminal.svelte), хук `term.onData`) перевзводит таймер (бэкенд сам
   возобновил по input). Резюм активной вкладки в `$effect` шлётся только при **смене** активной
   записи (`resumedTab`-гард), чтобы не сбить idle-паузу при перерисовках. **Состояние паузы —
   во фронт-сторе** `recordingPaused` (рядом с `recordingState`, чистится в `clearRecording`):
@@ -580,7 +279,7 @@ pnpm test:coverage
   печатается оболочкой **до** старта записи, поэтому в поток не попадает (у последующих команд
   приглашение приходит как обычный вывод). Чтобы первая команда **во всех режимах** была с
   приглашением, фронт на старте REC читает текущую строку терминала до курсора
-  (`currentPromptLine` в [Terminal.svelte](src/lib/Terminal.svelte):
+  (`currentPromptLine` в [Terminal.svelte](../src/lib/Terminal.svelte):
   `buffer.getLine(...).translateToString(false, 0, cursorX)` — сохраняет хвостовой пробел без
   паддинга) и передаёт её в `start_recording`; `Recorder::start` пишет её **первым `o`-событием
   при `t=0`** (если непустая). Секрет тут не пишем — это видимое приглашение, не пароль.
@@ -629,7 +328,7 @@ pnpm test:coverage
   SSH-пароль в поток **не попадает** (идёт через `connect`). Секреты по-прежнему не
   логируем — это единственное место, где stdin вообще сохраняется, и оно редактируется.
 - **ИИ — только экспорт, офлайн-инвариант цел.** Никаких рантайм-вызовов ИИ из
-  приложения. Чистый `extractTranscript` ([recording.ts](src/lib/recording.ts)) собирает
+  приложения. Чистый `extractTranscript` ([recording.ts](../src/lib/recording.ts)) собирает
   читаемый транскрипт из `o`-потока (снять ANSI, схлопнуть CR-перерисовки) — для экспорта
   наружу — в одном из 4 форматов: **Markdown «команды+вывод»** (`extractMarkdown`,
   лучший для ИИ), **только команды** (`extractCommands`), **транскрипт** и **сырой .cast**.
@@ -651,12 +350,12 @@ pnpm test:coverage
   в Markdown — `- **Label:** value`-список в шапке, в `.txt`/команды — `#`-комментарии перед телом;
   сырой `.cast` уже несёт всё в заголовке. Поля заголовка читаются в `CastHeader.vterm`. **Выбор
   формата экспорта — отдельная `Modal` поверх библиотеки** (а не выпадашка в строке: в узком окне её клиппило).
-  Библиотека — [RecordingsPanel.svelte](src/lib/RecordingsPanel.svelte)
+  Библиотека — [RecordingsPanel.svelte](../src/lib/RecordingsPanel.svelte)
   (список/поиск/**многоуровневая сортировка**/воспроизведение/редактирование/удаление/экспорт);
   поиск+сортировка — чистые `filterRecordings`/`sortRecordingsBy`
   (recording.ts, критерии — цепочка приоритетов); запись/экспорт пишутся в путь из
   нативного диалога (как бэкап).
-- **Плеер** — [RecordingPlayer.svelte](src/lib/RecordingPlayer.svelte): read-only xterm,
+- **Плеер** — [RecordingPlayer.svelte](../src/lib/RecordingPlayer.svelte): read-only xterm,
   воспроизведение `o`-потока по rAF (инкрементально), **перемотка = reset + `outputUpTo`**
   (состояние терминала кумулятивно), скорость/время — чистые `outputUpTo`/`formatTime`/
   `castDuration` (recording.ts). Открывается внутри модалки библиотеки (список↔плеер),
@@ -679,18 +378,18 @@ pnpm test:coverage
 > **CodeMirror 6** (не Monaco: легче, дружит со строгим CSP и офлайн-инвариантом,
 > встроенный diff/merge). Когда дойдём до UI: CodeMirror и грамматики **бандлятся
 > локально** (без CDN — иначе падает `autonomy.guard`), тема редактора строится из
-> **токенов активной темы** (как xterm в [themes.ts](src/lib/themes.ts)), кнопки/иконки/
+> **токенов активной темы** (как xterm в [themes.ts](../src/lib/themes.ts)), кнопки/иконки/
 > диалоги — из залоченной дизайн-системы (реестр иконок, `Modal`/`ConfirmDialog`).
 > Глобальный clipboard-обработчик должен **пропускать** CodeMirror (он сам владеет
 > копипастой), как уже пропускает `.xterm`.
 
-- **Чтение/запись текста — в бэкенде** ([sftp.rs](src-tauri/src/sftp.rs)), как и весь
+- **Чтение/запись текста — в бэкенде** ([sftp.rs](../src-tauri/src/sftp.rs)), как и весь
   SFTP. `sftp_read_text(path, maxBytes)` → `TextFile{content, eol, size, mode, mtime, sha256,
   readOnly}`: гарды по размеру и бинарь (NUL-байт **или** не-UTF-8) → отказ «качай как файл,
   не редактор». **Лимит размера настраиваемый** — `settings.sftp.maxOpenMb` (дефолт 2 МБ),
   фронт шлёт его в байтах, backend клампит в `[1, HARD_MAX_EDIT_SIZE=64 МБ]`
   (`MAX_EDIT_SIZE` = дефолт при отсутствии). Чистый `clampMaxOpenMb` — в
-  [settings.svelte.ts](src/lib/settings.svelte.ts). Контент **нормализуется в LF** для
+  [settings.svelte.ts](../src/lib/settings.svelte.ts). Контент **нормализуется в LF** для
   редактора, исходный стиль переносов несётся в `eol` и **восстанавливается на запись**.
 - **Запись на сервер — только через `create`.** russh-sftp `SftpSession::write` открывает файл
   во flags **`WRITE` без `CREATE`** → «No such file» на новом пути. Поэтому стейджинг temp,
@@ -706,27 +405,27 @@ pnpm test:coverage
   **открыл** файл; перед записью бэкенд сверяет его с текущим на сервере и при
   расхождении возвращает `AppError::FileChangedOnServer` (маркер **`file-changed`**, как
   `auth-rejected`/`host-key-rejected`). Фронт матчит его через `isFileChangedError`
-  ([api.ts](src/lib/api.ts)) и предлагает передоткрыть/перезаписать (новый семантический
+  ([api.ts](../src/lib/api.ts)) и предлагает передоткрыть/перезаписать (новый семантический
   вариант ошибки, **не** `Message`).
 - **Чистая логика — в свободных функциях** sftp.rs (`looks_binary`/`detect_eol`/
   `apply_eol`/`is_read_only`/`sha256_hex`/`temp_sibling`), тестируется без сервера; сами
   `read_text`/`write_text` требуют живой `SftpSession` (как `list`/`upload`). Хэши —
   `sha2` (RustCrypto, без C-зависимостей), тот же крейт пойдёт на хэш-дерево синка (12.5).
 - **Workspace с под-вкладками (12.2).** Каждое соединение = workspace в
-  [stores/workspaces.svelte.ts](src/lib/stores/workspaces.svelte.ts) (`active` = `TERMINAL_VIEW`
+  [stores/workspaces.svelte.ts](../src/lib/stores/workspaces.svelte.ts) (`active` = `TERMINAL_VIEW`
   или id редактора + `editors[]`). Строка под-вкладок рендерится **внутри** контейнера своей
   вкладки (между панелью вкладок и областью контента), поэтому **терминал всегда смонтирован**
   (скрывается `invisible`, не размонтируется — поток не рвётся), а редакторы живут рядом
   абсолютными слоями и переживают переключение вкладок. Чистые `isDirty`/`hasUnsaved`/
   `nextActiveAfterClose` — в сторе (тестируются без DOM); компонент-страница только оркестрирует.
   Закрытие вкладки соединения зовёт `removeWorkspace` (общий `closeTabFully`).
-- **Редактор — CodeMirror 6** ([EditorTab.svelte](src/lib/EditorTab.svelte), исключён из
+- **Редактор — CodeMirror 6** ([EditorTab.svelte](../src/lib/EditorTab.svelte), исключён из
   coverage как Terminal/SftpPanel — логика в чистых `.ts`). **Бандлится локально** (пакеты
   `@codemirror/*` + `@codemirror/legacy-modes`, без CDN — `autonomy.guard`). **Тема — из
-  токенов активной темы** ([cmtheme.ts](src/lib/cmtheme.ts) `editorTheme(activeTerminalTheme())`,
+  токенов активной темы** ([cmtheme.ts](../src/lib/cmtheme.ts) `editorTheme(activeTerminalTheme())`,
   live-реконфиг через `Compartment` при смене темы): дизайн-система не нарушается, сырых hex в
   редакторе нет. **Открыть можно ЛЮБОЙ файл** (двойной клик/карандаш в SFTP на чём угодно,
-  включая без расширения): язык по имени — чистый [editorlang.ts](src/lib/editorlang.ts)
+  включая без расширения): язык по имени — чистый [editorlang.ts](../src/lib/editorlang.ts)
   (`editorLangFor` → язык или `null`; **`editorLangOrPlain` всегда отдаёт язык**, неизвестное →
   `plain` Text — его и зовёт `openFileInEditor`). `isEditable` — лишь признак «известный тип»
   (для подсказок), **не** гейт открытия; бинарь/слишком большой отсекает backend-read (тост).
@@ -746,17 +445,17 @@ pnpm test:coverage
   бинарь/большой → тост, без вкладки). Save шлёт `sftp_write_text` с `baseSha256`, на успех
   `markSaved` снимает dirty. Закрытие изменённого редактора — через `ConfirmDialog`.
 - **Diff перед сохранением (12.3) — по настройке** `settings.editor.diffBeforeSave` (дефолт on):
-  [DiffModal.svelte](src/lib/DiffModal.svelte) на CM `MergeView` (read-only, тема из активной
+  [DiffModal.svelte](../src/lib/DiffModal.svelte) на CM `MergeView` (read-only, тема из активной
   темы; исключён из coverage как Terminal/EditorTab). Выключено → пишем сразу. Тот же DiffModal —
   для **разрешения конфликта** `file-changed`: подтягиваем текущий серверный текст и даём
   **Переоткрыть** (`closeEditor`+`openFileInEditor` заново) / **Перезаписать** (`doWriteEditor`
-  с `expectedSha=null` — форс) / Отмена. Поток в [+page.svelte](src/routes/+page.svelte):
+  с `expectedSha=null` — форс) / Отмена. Поток в [+page.svelte](../src/routes/+page.svelte):
   `saveEditor` (гейт+diff) → `doWriteEditor(expectedSha)` → `markSaved`/конфликт.
 - **Аудит-связка с Фазой 11.** На успешном сохранении при активной записи (`isRecording`) фронт
   зовёт `annotate_recording(session_id, text)` → `SshSession/LocalPty::annotate_recording` →
   `Recorder::annotate` пишет **видимое cyan `o`-событие** `[vterm] правка {path} (+N −M строк)`
   в asciicast (пишется **даже на паузе** — это намеренное низкочастотное событие). Метрика строк —
-  чистый `lineDiffStat` ([util.ts](src/lib/util.ts), multiset-разница). Новые «аудит-факты»
+  чистый `lineDiffStat` ([util.ts](../src/lib/util.ts), multiset-разница). Новые «аудит-факты»
   редактора веди тем же путём (annotate), а не отдельным каналом.
 - **Офлайн-линт (12.3) — по настройке** `settings.editor.lint` (дефолт on, `lintC`-Compartment,
   live-тоггл): JSON — точный `jsonParseLinter` (`@codemirror/lang-json`); прочие **Lezer**-языки —
@@ -770,17 +469,17 @@ pnpm test:coverage
   отдельная под-фаза 12.7; «тяжёлые» браузерные линтеры (shellcheck/ESLint/ruff WASM) — опционально
   (см. конец Фазы 12 в ROADMAP).
 - **Настройки редактора** — `settings.editor` (`EditorSettings{diffBeforeSave,lint}`), раздел
-  «Редактор конфигов» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte) (`SECTIONS` id
+  «Редактор конфигов» в [SettingsPanel.svelte](../src/lib/SettingsPanel.svelte) (`SECTIONS` id
   `editor`, двуязычные keywords); как все настройки — мерджится в load/reset/applyImportedSettings.
   Лимит размера открытия — `settings.sftp.maxOpenMb` (раздел SFTP), см. секцию 12.1 выше.
-- **Markdown-превью (12.4).** В [EditorTab.svelte](src/lib/EditorTab.svelte) для `markdown`-доков —
+- **Markdown-превью (12.4).** В [EditorTab.svelte](../src/lib/EditorTab.svelte) для `markdown`-доков —
   тумблер «Код ⇄ Превью» (иконки `code`/`eye`), `.md` открывается в превью по умолчанию (ставится
-  один раз в `onMount`). Рендер — существующий `renderMarkdown` ([markdown.ts](src/lib/markdown.ts))
+  один раз в `onMount`). Рендер — существующий `renderMarkdown` ([markdown.ts](../src/lib/markdown.ts))
   через `{@html}`; стили `.markdown-preview :global(...)` из токенов темы (как HelpPanel).
   **CodeMirror остаётся смонтированным** (скрыт `hidden`), поэтому правки текут в стор и превью
   (`$derived`) обновляется живо. Офлайн: никакого внешнего рендера/сети.
 - **Локальные файлы (12.4) — `EditorDoc.source` (`sftp`|`local`)**. Бэкенд
-  [localfile.rs](src-tauri/src/localfile.rs) `read_text`/`write_text` — **локальный двойник**
+  [localfile.rs](../src-tauri/src/localfile.rs) `read_text`/`write_text` — **локальный двойник**
   sftp.rs (переиспользует его `pub(crate)` чистые хелперы; тот же `TextFile`/`WriteResult`,
   атомарная temp+rename, сохранение прав, sha-конфликт; `tokio::fs`). Команды `read_local_text`/
   `write_local_text` (лимит как у SFTP — клампится). На фронте `saveEditor`/конфликт/переоткрытие
@@ -789,7 +488,7 @@ pnpm test:coverage
   путь сохранения.
 - **«Открыть с помощью vterm» (12.4).** `tauri-plugin-single-instance` (**регистрируется первым**;
   второй запуск с файлом форвардит argv в текущее окно), `bundle.fileAssociations` в
-  [tauri.conf.json](src-tauri/tauri.conf.json) (Info.plist / Windows registry). Пути приходят:
+  [tauri.conf.json](../src-tauri/tauri.conf.json) (Info.plist / Windows registry). Пути приходят:
   argv (Win/Linux, первый запуск → `AppState.pending_opens`), `RunEvent::Opened` (**только macOS**,
   обязательно под `#[cfg(target_os="macos")]` — иначе не собирается на Windows). И то и другое →
   очередь `pending_opens` + событие **`vterm://open-file`**. Фронт: на старте `take_pending_opens`,
@@ -797,29 +496,29 @@ pnpm test:coverage
   открывает редактор-вкладку `source:"local"`; md → превью). Дедуп по пути (`findEditorByPath`).
   `.run()` заменён на `.build()?.run(|app, event| …)` ради `Opened`.
 - **Локальная файловая панель (12.4).** Для **локальных** терминал-вкладок справа рендерится
-  [LocalFilePanel.svelte](src/lib/LocalFilePanel.svelte) — локальный аналог `SftpPanel` (тот же
+  [LocalFilePanel.svelte](../src/lib/LocalFilePanel.svelte) — локальный аналог `SftpPanel` (тот же
   докинг/ресайз/`layout.sftpWidth`+`sftpCollapsed`, дизайн-токены, иконки папка/файл/символ-ссылка),
   но **без connect-шага и трансферов** (локальная ФС всегда доступна; файл открывается прямо в
   редакторе). Backend `local_home`/`local_list`/`local_mkdir`/`local_create_file`/`local_delete`
-  ([localfile.rs](src-tauri/src/localfile.rs), отдают `sftp::FileEntry`); удаление — через
+  ([localfile.rs](../src-tauri/src/localfile.rs), отдают `sftp::FileEntry`); удаление — через
   `ConfirmDialog` (правило деструктива). `onOpenFile(path)` → `openLocalFileInEditor` в воркспейсе
   активной локальной вкладки. Путь-сепаратор детектится из строки (`/` и `\`). Исключён из coverage
-  (как SftpPanel/Terminal). В [+page.svelte](src/routes/+page.svelte) правый блок выбирает панель по
+  (как SftpPanel/Terminal). В [+page.svelte](../src/routes/+page.svelte) правый блок выбирает панель по
   `activeTab.kind` (ssh → SftpPanel, local → LocalFilePanel).
 - **Синхронизация директорий (12.5).** Хэш-деревья считаются на бэкенде: **удалённое** —
   `sftp_hash_tree` через **SSH exec** `sha256sum`/`shasum` (без скачивания; команда+парсер в
-  [sync.rs](src-tauri/src/sync.rs), `remote_hash_command`/`parse_hashsum`), **локальное** —
-  `local_hash_tree` (обход ФС, `sha256_hex`; [localfile.rs](src-tauri/src/localfile.rs)). Обе
+  [sync.rs](../src-tauri/src/sync.rs), `remote_hash_command`/`parse_hashsum`), **локальное** —
+  `local_hash_tree` (обход ФС, `sha256_hex`; [localfile.rs](../src-tauri/src/localfile.rs)). Обе
   стороны — `HashEntry{path,sha256}` с `/`-относительными путями. **Diff — чистый TS**
-  [sync.ts](src/lib/sync.ts) (`diffTrees`/`compileExclude`/`parseExcludes`/`applicable`/
+  [sync.ts](../src/lib/sync.ts) (`diffTrees`/`compileExclude`/`parseExcludes`/`applicable`/
   `summarize`), тестируется без бэкенда; направление push/pull/**bi** (bi: union-добавление,
   расхождение → `conflict`, пропускается), exclude gitignore-lite. **Apply** — `sftp_sync_apply`
   → `sync::apply` (mkdir-p родителей, переиспользует `sftp::upload`/`download`, opt-in удаление;
-  `SyncStats`). UI — [SyncModal.svelte](src/lib/SyncModal.svelte) (кнопка `sync` в тулбаре SFTP,
+  `SyncStats`). UI — [SyncModal.svelte](../src/lib/SyncModal.svelte) (кнопка `sync` в тулбаре SFTP,
   dry-run превью; исключён из coverage). `uuid_like` сделан `pub(crate)` для переиспользования.
   Новый источник хэшей/направление — добавляй в `diffTrees`/`apply`, не дублируй обход.
 - **sudo-правка (12.6).** `sftp_read_text`/`sftp_write_text` принимают `sudo`+`sudoPassword`:
-  чтение — `sudo cat | head -c` ([sync.rs](src-tauri/src/sync.rs) `sudo_read`), запись —
+  чтение — `sudo cat | head -c` ([sync.rs](../src-tauri/src/sync.rs) `sudo_read`), запись —
   staged-temp (mode 0600 в `$HOME`) + `sudo cp` поверх цели (`sudo_write`, сохраняет владельца/
   права). **Пароль sudo идёт в stdin** через `ssh::run_command_stdin` (`sudo -S -p ''`, не в `ps`/
   history); успех проверяется маркером `__VTERM_OK__` (exit-статус по exec не виден). UI: единый
@@ -827,16 +526,16 @@ pnpm test:coverage
   на **чтении**, и **«Сохранить от root» при permission-denied на записи** (readable-but-not-
   writable файл редактируется обычным юзером, на `Ctrl+S` → промпт → `setEditorSudo` помечает
   `doc.sudo` и повторяет `doWriteEditor`; дальнейшие сохранения уже sudo). Отказ доступа ловится
-  чистой `isPermissionError` ([api.ts](src/lib/api.ts)) — **и `permission denied`, и `no such file`**:
+  чистой `isPermissionError` ([api.ts](../src/lib/api.ts)) — **и `permission denied`, и `no such file`**:
   staged-temp создаётся **в той же папке** (`{dir}/.{name}.vterm-tmp-…`), и при не-записываемой папке
   некоторые SFTP-серверы отдают `No such file` вместо `Permission denied` (файл точно существует — он
   был открыт/в листинге, значит это отказ, а не отсутствие). Пароль
   хранится в `EditorDoc.sudoPassword` **только в памяти** (стор не персистится), save переиспользует
   `doc.sudo`. **`.bak`** — `settings.editor.
   backupOnSave` (копия `path.bak` перед перезаписью, в обычной и sudo-записи).
-- **Прочее 12.6.** Иконки типов файлов — чистый [fileicon.ts](src/lib/fileicon.ts) (`fileIconName`,
+- **Прочее 12.6.** Иконки типов файлов — чистый [fileicon.ts](../src/lib/fileicon.ts) (`fileIconName`,
   ext→иконка реестра; папка/симлинк не трогаем), в обеих файловых панелях. **Сниппеты** —
-  [snippets.ts](src/lib/snippets.ts) (`snippetsForLang`), меню в тулбаре редактора, вставка по
+  [snippets.ts](../src/lib/snippets.ts) (`snippetsForLang`), меню в тулбаре редактора, вставка по
   курсору. **Grep по SSH** — `sftp_grep` (`grep -rnI`, регистр/regex, cap) + `parse_grep`; UI в
   SFTP-панели, клик открывает файл на строке (`EditorDoc.gotoLine` → CM scroll в onMount). Команды
   палитры: новый локальный терминал, открыть локальный файл (через `pickOpenFile` → `handleOpenFile`).
@@ -844,7 +543,7 @@ pnpm test:coverage
 - **`ls`-подсветка и владелец в файловых панелях (12.x).** `FileEntry` несёт `mode`/`uid`/`gid`/
   `user`/`group`. Имена владельца **резолвятся на бэкенде** (sftp `getent passwd/group` → чистый
   `parse_id_names`, кеш `AppState.id_names` на сессию, чистится в `disconnect`; локально — uid/gid
-  через `MetadataExt`). Фронт — чистый [lscolors.ts](src/lib/lscolors.ts): `lsColorKey` (тип/право/
+  через `MetadataExt`). Фронт — чистый [lscolors.ts](../src/lib/lscolors.ts): `lsColorKey` (тип/право/
   расширение → ключ палитры терминала, дефолты GNU dircolors: dir=blue, symlink=cyan, exec=green,
   archive=red, media=magenta), цвет берётся из **активной темы терминала** (`activeTerminalTheme()`),
   как в шелле; `formatMode` (`drwxr-xr-x`, вкл. setuid/setgid/sticky), `ownerLabel`/`fileTooltip`
@@ -853,25 +552,25 @@ pnpm test:coverage
 - **Серверный линт по SSH (12.7).** Кнопка «Линт» в тулбаре редактора для **SSH-файлов** языков
   с линтером (`hasRemoteLinter`): буфер стейджится во временный файл в `$HOME`, на сервере
   запускается реальный инструмент, вывод парсится в кликабельные результаты с переходом к строке.
-  Команда `lint_remote(session, content, kind)` ([lib.rs](src-tauri/src/lib.rs)): `command -v`
+  Команда `lint_remote(session, content, kind)` ([lib.rs](../src-tauri/src/lib.rs)): `command -v`
   (детект инструмента) → `sftp::write_bytes` temp → `run_command` (stderr слит в stdout `2>&1`) →
   `remove_file`; temp-путь в выводе заменяется на `FILE`. Таблица `lint_tool`/`lint_command` —
-  [sync.rs](src-tauri/src/sync.rs) (YAML→yamllint, Shell→shellcheck, Dockerfile→hadolint,
-  Python→ruff, nginx→`nginx -t`). Парсер вывода — **чистый** [remotelint.ts](src/lib/remotelint.ts)
+  [sync.rs](../src-tauri/src/sync.rs) (YAML→yamllint, Shell→shellcheck, Dockerfile→hadolint,
+  Python→ruff, nginx→`nginx -t`). Парсер вывода — **чистый** [remotelint.ts](../src/lib/remotelint.ts)
   (`parseLint(output, format)`, форматы `colon`/`nginx`; уровень из ключевых слов). **Новый линтер =
   запись в `lint_tool` + при ином формате ветка в `parseLint`** (+ kind в `LINTER_KINDS`). Это
   закрывает серверные конфиги (nginx/Ansible/Dockerfile/…), у которых нет браузерного линтера;
   «тяжёлые» браузерные (shellcheck/ESLint/ruff WASM) остаются опцией (см. ROADMAP).
 
 - **Помощь установки серверных инструментов (12.8).** Реестр опциональных тулзов (линтеры +
-  `sensors`) — **бэкенд** [servertools.rs](src-tauri/src/servertools.rs) (чистые `TOOLS`/
+  `sensors`) — **бэкенд** [servertools.rs](../src-tauri/src/servertools.rs) (чистые `TOOLS`/
   `install_command(tool, mgr)`/`parse_status`/`build_status`/`sudoize`, тестируемы). Команды:
   `server_tools_status(session)` — детект менеджера (`apt/dnf/yum/apk/pacman/zypper/brew/pkg`) +
   `command -v` всех тулзов **за один round-trip**; `run_tool_install(session, command, sudoPassword)`
   — one-click (первый `sudo`→`sudo -S` по stdin, прочие — на кеш-креденшел sudo). UI: раздел
-  «Серверные инструменты» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte)
-  ([ServerToolsPanel.svelte](src/lib/ServerToolsPanel.svelte), статус на **активном SSH**) + общий
-  [ToolInstallDialog.svelte](src/lib/ToolInstallDialog.svelte): **«Выполнить в терминале»**
+  «Серверные инструменты» в [SettingsPanel.svelte](../src/lib/SettingsPanel.svelte)
+  ([ServerToolsPanel.svelte](../src/lib/ServerToolsPanel.svelte), статус на **активном SSH**) + общий
+  [ToolInstallDialog.svelte](../src/lib/ToolInstallDialog.svelte): **«Выполнить в терминале»**
   (`writeToTerminal` в активную вкладку, пользователь жмёт Enter — прозрачно) или **«через sudo»**.
   Инлайн-CTA: `lint_remote` `found=false` → `EditorTab.onLintMissing` → `offerLintInstall` открывает
   тот же диалог. Новый инструмент = запись в `TOOLS` + ветка в `install_command` (+ purpose-ключ
@@ -881,9 +580,9 @@ pnpm test:coverage
 - **Шаблоны редактора — редактируемые (12.8).** Сниппеты хранятся в `settings.snippets`
   (персист, как `highlightRules`): дефолты `defaultSnippets()` (расширенный набор nginx/Dockerfile/
   compose/k8s/systemd/bash/GH-Actions), санитайз импорта `sanitizeSnippets`. Чистые в
-  [snippets.ts](src/lib/snippets.ts) (`snippetsForLang(kind, list)` — **над переданным списком**;
+  [snippets.ts](../src/lib/snippets.ts) (`snippetsForLang(kind, list)` — **над переданным списком**;
   `newSnippet`/`SNIPPET_LANGS`). Редактор берёт `snippetsForLang(doc.lang.kind, settings.snippets)`.
-  Раздел «Шаблоны редактора» в [SettingsPanel.svelte](src/lib/SettingsPanel.svelte) (имя/язык-select/
+  Раздел «Шаблоны редактора» в [SettingsPanel.svelte](../src/lib/SettingsPanel.svelte) (имя/язык-select/
   тело-textarea; add/reset; delete через `ConfirmDialog`). Несколько шаблонов на язык — норма. Новый
   встроенный шаблон = запись в `defaultSnippets()`; новый язык в выпадашке = запись в `SNIPPET_LANGS`.
 
@@ -898,17 +597,17 @@ pnpm test:coverage
 > (ключ есть в одном языке, нет в другом) **не компилируется** (см. ниже) и считается
 > незавершённой работой наравне с отсутствием тестов/документации.
 
-- **Где живёт.** Модуль [src/lib/i18n/](src/lib/i18n/):
-  - [locales.ts](src/lib/i18n/locales.ts) — реестр языков `LOCALES` (точка
+- **Где живёт.** Модуль [src/lib/i18n/](../src/lib/i18n/):
+  - [locales.ts](../src/lib/i18n/locales.ts) — реестр языков `LOCALES` (точка
     расширения: один новый язык = одна запись + словарь), тип `Locale`,
     `DEFAULT_LOCALE` (**en**), гард `isLocale`. Чистый дата-модуль без зависимостей.
-  - [messages.ts](src/lib/i18n/messages.ts) — словари. `en` — **канонический**
+  - [messages.ts](../src/lib/i18n/messages.ts) — словари. `en` — **канонический**
     набор: его ключи задают тип `MessageKey`. Любой другой язык типизирован как
     `Record<MessageKey, string>`, поэтому пропущенный ключ — **ошибка компиляции**
     (`pnpm check`). Плейсхолдеры — синтаксис `{name}`.
-  - [translate.ts](src/lib/i18n/translate.ts) — **чистые** `resolve`/`interpolate`
+  - [translate.ts](../src/lib/i18n/translate.ts) — **чистые** `resolve`/`interpolate`
     (тестируются без DOM, по ADR 0003); фолбэк на `DEFAULT_LOCALE`, затем на сам ключ.
-  - [index.ts](src/lib/i18n/index.ts) — реактивный слой: `t(key, params?)` читает
+  - [index.ts](../src/lib/i18n/index.ts) — реактивный слой: `t(key, params?)` читает
     `settings.language` (руна), поэтому `{t("…")}` в разметке **сам**
     перерисовывается при смене языка; плюс `setLocale`, `currentLocale`,
     `availableLocales`.
@@ -919,64 +618,172 @@ pnpm test:coverage
 - **Что НЕ переводим — доменные/технические термины** оставляем идентичными во всех
   языках: `CPU`, `RAM`, `Swap`, `Load average`, `Disk I/O`, `IP`, `Uptime`, `PSI`,
   `TCP`, `SFTP`, `SSH`, `inodes`, `ulimit`, `keychain`, `passphrase`, имена тем/шрифтов.
-  (Гейт: тест в [i18n.test.ts](src/lib/i18n/i18n.test.ts) проверяет совпадение части
+  (Гейт: тест в [i18n.test.ts](../src/lib/i18n/i18n.test.ts) проверяет совпадение части
   таких ключей между языками.)
 - **Стабильные ключи для логики.** Если строка используется и для отображения, и для
   логики (напр. статус вкладки: `.startsWith("Connected")`), храни **канонический
   английский** в состоянии, а локализуй **только при выводе** (`localizedStatus`
-  в [tabs.svelte.ts](src/lib/stores/tabs.svelte.ts)). Не завязывай логику на
+  в [tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts)). Не завязывай логику на
   переведённый текст.
 - **Поиск по настройкам** (`SECTIONS.keywords`) держи **двуязычным** (EN + RU термины
   в одной строке), чтобы фильтрация работала независимо от выбранного языка.
 - **Нативное меню** строится в Rust, но язык живёт на фронте, поэтому метки берутся
   из тех же словарей и **пушатся в бэкенд**: команда `set_menu_language`
-  ([lib.rs](src-tauri/src/lib.rs), `build_app_menu(labels)`, стабильные id пунктов)
-  вызывается из `$effect` в [+page.svelte](src/routes/+page.svelte) на старте и при
+  ([lib.rs](../src-tauri/src/lib.rs), `build_app_menu(labels)`, стабильные id пунктов)
+  вызывается из `$effect` в [+page.svelte](../src/routes/+page.svelte) на старте и при
   смене языка (меню пересобирается). Новый пункт меню = новый ключ `menu.*` + поле в
-  `MenuLabels` (Rust + [api.ts](src/lib/api.ts)).
+  `MenuLabels` (Rust + [api.ts](../src/lib/api.ts)).
 - **Коллизия имени `t`.** Переменную цикла `{#each … as t}` нельзя называть `t` в
   файлах, импортирующих функцию перевода — переименовывай (`themeDef`, `tcp`, `tr` и т.п.).
 
-## Сборка: два артефакта на каждой фазе
 
-Требование пользователя: **каждая фаза** даёт **два** дистрибутива — macOS
-(`.app`/`.dmg`) и Windows (`.msi`/`.exe`). Единый кросс-ОС файл невозможен; Windows
-на этом Mac не собирается → механизм — **GitLab CI** ([.gitlab-ci.yml](.gitlab-ci.yml),
-self-hosted раннеры, теги-плейсхолдеры `[macos]`/`[windows]`/`[linux]`). CI устроен
-как `lint → test → build → release`: сборка идёт только после зелёных тестов.
+---
 
-## Версионирование
+## Обзор кода: стек, диаграмма, структура каталогов
 
-Схема — `0.<фаза>.<фикс>` (валидный SemVer из **трёх** чисел):
+> Перенесено из README при переходе к продуктовому виду (Фаза 14).
 
-- 1-я цифра — **основная версия** (пока `0`, до релиза).
-- 2-я цифра — **номер фазы** (минорная); поднимается при переходе на новую фазу.
-- 3-я цифра — **номер фикса/хотфикса/правки бага** (патч); поднимается при каждом
-  баг-фиксе/хотфиксе **внутри** текущей фазы.
+## Технологический стек
 
-**Сброс последней цифры в 0** при изменении любой более старшей цифры (новая фаза
-или смена основной версии).
+| Слой | Технология | Назначение |
+|------|-----------|-----------|
+| GUI-фреймворк | **Tauri 2** | Нативное окно + WebView, Rust-бэкенд, нативное меню |
+| Бэкенд | **Rust** (stable) | Команды, состояние, SSH/SFTP/секреты, метрики |
+| Фронтенд | **SvelteKit** (Svelte 5, runes) | Реактивный UI в режиме SPA |
+| Стилизация | **Tailwind CSS v4** | Утилитарный CSS (плагин Vite, без PostCSS-конфига) |
+| Сборка фронта | **Vite 6** | Dev-сервер и бандлинг |
+| Терминал | **xterm.js 6** + addon-fit/webgl/search/web-links | Веб-терминал с ANSI, поиск по буферу, кликабельные ссылки |
+| SSH | **russh 0.61** | Чистый Rust SSH-клиент (пароль/ключ, PTY, shell, exec) |
+| Локальный PTY | **portable-pty 0.9** | Локальный терминал (forkpty/ConPTY) |
+| SFTP | **russh-sftp 2** | Передача файлов поверх SSH-сессии |
+| Секреты | **keyring 3** | Keychain (macOS) / Credential Manager (Windows) |
+| Диалоги | **tauri-plugin-dialog** | Нативный выбор файла ключа |
+| Буфер обмена | **objc2-app-kit** (macOS) | Нативное чтение NSPasteboard без промпта WebKit |
+| Тесты | **cargo test** · **Vitest** · **WebdriverIO** | Юнит/компонентные/E2E + покрытие |
+| Пакетный менеджер | **pnpm** + **cargo** | Зависимости JS и Rust |
 
-> **Почему 3 числа, а не 4.** Хотелось «`0.0.0.0`», где последняя цифра — фикс, но
-> Cargo/SemVer (и `package.json`, и `tauri.conf.json`) принимают **только три**
-> числа — `0.8.0.0` не парсится. Поэтому **номер фичи в версии не кодируется** — он
-> ведётся в [ROADMAP.md](ROADMAP.md) (заметки «Феатура N (vX)»), а версия отражает
-> фазу и номер фикса.
+> **Примечание о Tailwind.** В исходном плане значился Tailwind 3.x, но используется
+> **v4**: он подключается одним плагином Vite и не требует `tailwind.config.js` /
+> PostCSS. Кастомные токены темы заданы прямо в CSS через `@theme`
+> (см. [src/app.css](../src/app.css)).
 
-Поднимай версию согласованно в [package.json](package.json),
-[src-tauri/Cargo.toml](src-tauri/Cargo.toml) и
-[src-tauri/tauri.conf.json](src-tauri/tauri.conf.json); затем `cargo check` для
-синхронизации `Cargo.lock`. Версию приложение читает из `tauri.conf.json`
-(`getVersion`) и показывает в окне About.
+---
 
-## Toolchain (нестандартный на этой машине)
+## Архитектура
 
-- `cargo`/`rustc` ставились через rustup, но **не в PATH** свежей сессии →
-  `source "$HOME/.cargo/env"`.
-- `pnpm` — standalone в `$HOME/Library/pnpm/bin` (corepack-шим сломан под Node 25)
-  → `export PATH="$HOME/Library/pnpm/bin:$PATH"`.
-- pnpm гейтит нативные build-скрипты; esbuild разрешён через
-  `allowBuilds: { esbuild: true }` в [pnpm-workspace.yaml](pnpm-workspace.yaml).
-- Запуск приложения: `pnpm tauri dev` (первая Rust-сборка ~1–2 мин).
-- `tauri-driver` (E2E) работает только на **Linux/Windows**, не на macOS — E2E
-  прогоняет CI; локально на macOS гоняй `pnpm test`.
+Главный принцип: **вся «тяжёлая» логика живёт в Rust-бэкенде**, а фронтенд —
+тонкий UI. Граница между ними проходит по двум каналам Tauri:
+
+```
+┌───────────────────────────────┐         ┌──────────────────────────────┐
+│        Фронтенд (WebView)      │         │        Бэкенд (Rust)         │
+│  SvelteKit + Tailwind + (xterm)│         │           Tauri 2            │
+│                                │         │                              │
+│  +page.svelte ── UI            │         │  lib.rs ── #[tauri::command] │
+│        │                       │         │     ├─ list_servers          │
+│  lib/api.ts ──invoke()────────────────▶  │     ├─ add_server            │
+│        ▲                       │ команды │     ├─ delete_server         │
+│        │                       │         │     └─ connect_session       │
+│  xterm.js ◀───event()──────────────────  │  model.rs ── ServerProfile   │
+│   (поток терминала, Фаза 1)    │ события │  AppState (Mutex<…>)         │
+└───────────────────────────────┘         └──────────────────────────────┘
+```
+
+- **Команды** (`invoke`) — запрос/ответ: фронтенд вызывает функции Rust
+  (`list_servers`, `add_server`, …). Все вызовы инкапсулированы в
+  [src/lib/api.ts](../src/lib/api.ts), UI не работает со строками-именами команд
+  напрямую.
+- **События** (`event`) — поток данных от бэкенда к фронту. В Фазе 1 по этому
+  каналу пойдёт вывод PTY с удалённого сервера прямо в xterm.js, а нажатия клавиш
+  пойдут обратно командой.
+- **Модель данных** ([src-tauri/src/model.rs](../src-tauri/src/model.rs)) сериализуется
+  через `serde` с `rename_all = "camelCase"`, чтобы поля совпадали с TypeScript-типами
+  ([src/lib/types.ts](../src/lib/types.ts)). Пароли в модели **не хранятся** — они
+  пойдут в системный keychain (Фаза 2).
+
+---
+
+## Структура каталогов
+
+```
+vterm/
+├── README.md                 # витрина проекта (продуктовая страница)
+├── CLAUDE.md                 # правила разработки (авто-загрузка Claude Code)
+├── CHANGELOG.md              # история по фазам/версиям
+├── LICENSE                   # MIT
+├── docs/                     # документация: GUIDE/INSTALL/TROUBLESHOOTING/
+│   │                         #   ARCHITECTURE/DESIGN/ROADMAP/TESTS + adr/
+├── .gitlab-ci.yml            # CI: сборка macOS + Windows (два артефакта)
+├── package.json              # JS-зависимости и скрипты
+├── pnpm-workspace.yaml       # настройки pnpm (в т.ч. allowBuilds: esbuild)
+├── svelte.config.js          # SvelteKit: adapter-static (SPA)
+├── vite.config.js            # Vite + плагины tailwind/sveltekit, порт 1420
+├── tsconfig.json
+│
+├── src/                      # ── ФРОНТЕНД (SvelteKit) ──
+│   ├── app.html              # HTML-обёртка, <title>vterm</title>
+│   ├── app.css               # Tailwind v4 (@import) + токены темы (@theme)
+│   ├── lib/
+│   │   ├── api.ts                # типизированные обёртки над invoke()
+│   │   ├── types.ts              # TS-типы, зеркало моделей Rust
+│   │   ├── settings.svelte.ts    # реактивный store настроек (localStorage)
+│   │   ├── themes.ts             # палитры тем (терминал + UI), применение к CSS
+│   │   ├── icons.ts              # единый реестр line-SVG иконок (рендер <Icon>)
+│   │   ├── command.ts            # чистая логика ранжирования команд (палитра ⌘K)
+│   │   ├── tree.ts               # чистая логика дерева серверов/папок
+│   │   ├── format.ts / util.ts   # форматтеры (байты/проценты/иконка ОС), поиск
+│   │   ├── thresholds.ts         # чистая логика порогов метрик (ok/warn/crit → цвет)
+│   │   ├── search.ts             # чистая логика поиска по буферу (Фаза 10)
+│   │   ├── highlight.ts          # чистая логика regex-подсветки логов (Фаза 10)
+│   │   ├── jsonlog.ts            # чистая логика парсера JSON-логов (Фаза 10)
+│   │   ├── JsonLogView.svelte    # табличный просмотр JSON-логов (Фаза 10)
+│   │   ├── recording.ts          # чистая логика записей: parse/transcript (Фаза 11)
+│   │   ├── RecordingsPanel.svelte# библиотека записей сессий (Фаза 11)
+│   │   ├── RecordingPlayer.svelte# встроенный плеер asciicast (Фаза 11)
+│   │   ├── clipboard.ts          # copy/paste (нативное чтение буфера через бэкенд)
+│   │   ├── markdown.ts           # мини-рендер Markdown → HTML для встроенной инструкции
+│   │   ├── actions/              # Svelte-экшены: drag.ts, clipboardKeys.ts
+│   │   ├── stores/               # рун-сторы: layout, tabs, toasts, transfers, recordings
+│   │   ├── Terminal.svelte       # компонент xterm.js (ввод/вывод, темы, copy/paste)
+│   │   ├── ServerTree.svelte     # левая панель: дерево серверов/папок, drag-n-drop
+│   │   ├── TopBar.svelte         # верхняя панель действий
+│   │   ├── SftpPanel.svelte      # файловый менеджер SFTP (листинг, upload/download)
+│   │   ├── SettingsPanel.svelte  # окно настроек (тема, шрифт, соединение, …)
+│   │   ├── HelpPanel.svelte      # окно Help / Инструкция / About (рендер README)
+│   │   ├── CommandPalette.svelte # оверлей командной палитры ⌘K
+│   │   ├── StatusBar.svelte      # нижний статус-бар (метрики, график ЦП, пороги)
+│   │   ├── MonitoringOverlay.svelte # страница подробных метрик (графики, разделы, FD)
+│   │   ├── Sparkline.svelte      # переиспользуемый мини-график (бар-спарклайн)
+│   │   ├── Toast.svelte / EmptyState.svelte / Skeleton.svelte
+│   │   └── Modal.svelte / ConfirmDialog.svelte / Icon.svelte  # общие примитивы
+│   └── routes/
+│       ├── +layout.ts        # ssr=false (SPA-режим для Tauri)
+│       ├── +layout.svelte    # подключение глобального CSS
+│       └── +page.svelte      # главный экран: панели, вкладки, дерево папок, модалки
+│
+├── static/                   # статические ассеты (иконки)
+│
+└── src-tauri/                # ── БЭКЕНД (Rust + Tauri) ──
+    ├── Cargo.toml            # crate "vterm", lib "vterm_lib"
+    ├── build.rs
+    ├── tauri.conf.json       # конфиг приложения (окно 1100×720, identifier, bundle)
+    ├── capabilities/
+    │   └── default.json      # разрешения (permissions) главного окна
+    ├── icons/                # иконки приложения под все платформы
+    └── src/
+        ├── main.rs           # точка входа бинаря → vterm_lib::run()
+        ├── lib.rs            # tauri::Builder, меню, состояние, #[tauri::command]
+        │                     #   (метрики статус-бара + детальные/pending для мониторинга)
+        ├── model.rs          # ServerProfile (+ group/tags) / NewServerProfile / AuthMethod
+        ├── error.rs          # AppError/AppResult (типизированные ошибки команд)
+        ├── store.rs          # JSON-персистентность: профили, папки, known_hosts
+        ├── backup.rs         # экспорт/импорт бэкапа настроек
+        ├── secrets.rs        # пароли/passphrase в системном keychain (keyring)
+        ├── ssh.rs            # SSH-сессия на russh: пароль/ключ (+дефолтный ~/.ssh), PTY, SFTP, host-key, exec
+        ├── pty.rs            # локальный терминал (portable-pty): forkpty/ConPTY, общий контракт событий
+        ├── recording.rs      # запись сессий в asciicast v2 (+маскирование паролей, Фаза 11)
+        └── sftp.rs           # SFTP-операции: листинг, mkdir/create-file/delete, upload/download
+```
+
+> Каталоги `node_modules/`, `build/`, `.svelte-kit/` (фронт) и `src-tauri/target/`
+> (Rust) генерируются при сборке и в репозиторий не попадают.

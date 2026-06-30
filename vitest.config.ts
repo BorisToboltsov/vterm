@@ -30,7 +30,7 @@ export default defineConfig({
         // Heavy interactive components driven by native APIs (xterm.js, native
         // dialogs, pointer DnD). Their pure logic lives in covered .ts modules
         // (tree.ts, drag.ts); behaviour is exercised by the E2E suite (e2e/) and
-        // a smoke component test — not jsdom branch coverage. See TESTS.md.
+        // a smoke component test — not jsdom branch coverage. See docs/TESTS.md.
         "src/lib/Terminal.svelte",
         "src/lib/SftpPanel.svelte",
         "src/lib/LocalFilePanel.svelte",
@@ -47,7 +47,7 @@ export default defineConfig({
         "src/lib/RecordingPlayer.svelte",
         // CodeMirror-driven config editor; pure logic (language detection,
         // workspace bookkeeping, theme glue) lives in editorlang.ts /
-        // workspaces.svelte.ts / cmtheme.ts (covered). See TESTS.md.
+        // workspaces.svelte.ts / cmtheme.ts (covered). See docs/TESTS.md.
         "src/lib/EditorTab.svelte",
         // CodeMirror MergeView diff dialog (driven by the merge addon).
         "src/lib/DiffModal.svelte",

@@ -5,7 +5,7 @@ End-to-end tests that drive the **real native window** via
 
 > ⚠️ **`tauri-driver` supports Linux and Windows only — not macOS.**
 > On macOS run the unit/component suites (`pnpm test`) and let CI run E2E on its
-> Linux runner. See the root [TESTS.md](../TESTS.md) for the full picture.
+> Linux runner. See the root [TESTS.md](../docs/TESTS.md) for the full picture.
 
 ## Prerequisites
 

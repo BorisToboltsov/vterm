@@ -62,9 +62,11 @@ describe("HelpPanel", () => {
     expect(openUrl).toHaveBeenCalledWith("https://t.me/BorisToboltsov");
   });
 
-  it("renders the bundled README on the Manual tab", () => {
+  it("renders the bundled user guide on the Manual tab", () => {
     render(HelpPanel, { props: { open: true, tab: "manual" } });
-    // The README's top-level heading is the project name.
-    expect(screen.getByRole("heading", { name: "vterm", level: 1 })).toBeInTheDocument();
+    // The guide's (docs/GUIDE.md) top-level heading.
+    expect(
+      screen.getByRole("heading", { name: "Руководство пользователя vterm", level: 1 }),
+    ).toBeInTheDocument();
   });
 });

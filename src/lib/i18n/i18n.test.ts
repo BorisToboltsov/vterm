@@ -54,7 +54,7 @@ describe("dictionary completeness", () => {
   });
 
   it("keeps technical terms identical across languages", () => {
-    // Domain terms must not be "translated" (project rule in CONTEXT.md).
+    // Domain terms must not be "translated" (project rule in CLAUDE.md).
     const technical: MessageKey[] = [
       "settings.metric.cpu",
       "settings.metric.ram",

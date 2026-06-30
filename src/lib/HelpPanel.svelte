@@ -3,7 +3,7 @@
   import { getName, getVersion, getTauriVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "./markdown";
-  import readme from "../../README.md?raw";
+  import guide from "../../docs/GUIDE.md?raw";
   import { t, type MessageKey } from "./i18n";
 
   let {
@@ -15,8 +15,8 @@
   let version = $state("");
   let tauriVersion = $state("");
 
-  // The bundled README, rendered once (static content, no user input).
-  const manualHtml = renderMarkdown(readme);
+  // The bundled user guide (docs/GUIDE.md), rendered once (static content, no user input).
+  const manualHtml = renderMarkdown(guide);
 
   onMount(async () => {
     try {

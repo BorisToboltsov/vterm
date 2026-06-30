@@ -5,7 +5,7 @@
 //
 // Placeholders use `{name}` syntax and are filled by `interpolate` (translate.ts).
 //
-// IMPORTANT (project rule, see CONTEXT.md): domain/technical terms are kept
+// IMPORTANT (project rule, see CLAUDE.md): domain/technical terms are kept
 // identical across languages on purpose — e.g. `CPU`, `RAM`, `Swap`,
 // `Load average`, `Disk I/O`, `IP`, `PSI`, `TCP`, `SFTP`, `SSH`, `ulimit`,
 // `keychain`, `passphrase`. Do NOT "translate" these into Russian.

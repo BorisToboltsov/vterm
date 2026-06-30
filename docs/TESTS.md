@@ -200,9 +200,9 @@ cargo llvm-cov report --manifest-path src-tauri/Cargo.toml
 
 ## Фронтенд-тесты (Vitest)
 
-Конфигурация — [vitest.config.ts](vitest.config.ts) (отдельная от dev-конфига
+Конфигурация — [vitest.config.ts](../vitest.config.ts) (отдельная от dev-конфига
 Tauri/SvelteKit): плагин Svelte + `svelteTesting()`, среда **jsdom**, алиас
-`$lib`. Глобальная подготовка — [vitest-setup.ts](vitest-setup.ts) (матчеры
+`$lib`. Глобальная подготовка — [vitest-setup.ts](../vitest-setup.ts) (матчеры
 `jest-dom`, детерминированный `localStorage` и no-op `Element.prototype.animate` —
 jsdom не реализует Web Animations API, который используют Svelte-переходы
 `slide`/`fade`).
@@ -383,7 +383,7 @@ pnpm test:coverage   # прогон + покрытие + гейты
   в `null`, не-массив → дефолты), `newSnippet` (свежий id);
 - `cmtheme.ts` (Фаза 12.2) — `isDark` (классификация фона по яркости, мусор → dark) и
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
-  [EditorTab.svelte](src/lib/EditorTab.svelte) и [DiffModal.svelte](src/lib/DiffModal.svelte)
+  [EditorTab.svelte](../src/lib/EditorTab.svelte) и [DiffModal.svelte](../src/lib/DiffModal.svelte)
   исключены из покрытия (CodeMirror/MergeView-driven, как Terminal/SftpPanel — логика в `.ts`);
 - `util.ts` → `lineDiffStat` (Фаза 12.3) — 0/0 для идентичного текста; счёт added/removed;
   multiset (порядок не важен, дубликаты учитываются) — метрика для аудит-записи правок;
@@ -394,7 +394,7 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `settings.svelte.ts` — `applyImportedSettings` (применение бэкапа: известные
   ключи, дефолты для отсутствующих, merge `customTheme`, игнор мусора) + `language`
   (дефолт `en`, персист, валидация валидного/невалидного кода при импорте);
-- `i18n/` — локализация ([i18n.test.ts](src/lib/i18n/i18n.test.ts)): реестр языков и
+- `i18n/` — локализация ([i18n.test.ts](../src/lib/i18n/i18n.test.ts)): реестр языков и
   гард `isLocale`, `availableLocales` (native-имена); **полнота словарей** (каждый
   язык покрывает все `MessageKey`) и **отсутствие лишних ключей**; **неизменность
   технических терминов** между языками (`CPU`/`RAM`/`Load average`/`Disk I/O`/…);
@@ -413,15 +413,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
 **Гейты безопасности (юнит, в обычном `pnpm test`):**
 
 - `autonomy.guard.test.ts` — нет runtime-обращений в сеть (fetch/WebSocket/CDN/
-  аналитика). См. [Сеть и автономность](README.md#сеть-и-автономность).
+  аналитика). См. [Сеть и автономность](../README.md#сеть-и-автономность).
 - `tauri-security.guard.test.ts` — CSP задан и строгий, capabilities минимальны,
-  opener ограничен `https://`, нет `dangerous*`. См. [SECURITY.md](SECURITY.md).
+  opener ограничен `https://`, нет `dangerous*`. См. [SECURITY.md](../SECURITY.md).
 
 **Supply-chain / SAST (отдельная стадия `security` в CI, локально по желанию):**
 `cargo audit` + `cargo deny check` (Rust), `pnpm audit` + **Semgrep**
 (`p/typescript`/`p/javascript`/`p/secrets`), **Trivy** (`fs`). Принятые
-исключения и обоснования — [SECURITY.md](SECURITY.md) и
-[src-tauri/deny.toml](src-tauri/deny.toml).
+исключения и обоснования — [SECURITY.md](../SECURITY.md) и
+[src-tauri/deny.toml](../src-tauri/deny.toml).
 
 > Чистая логика дерева и форматтеры вынесены из `+page.svelte` / `StatusBar.svelte`
 > в отдельные `.ts`-модули (Фаза 5.8), поэтому тестируются без DOM.
@@ -515,7 +515,7 @@ pnpm test:coverage   # прогон + покрытие + гейты
 
 ## E2E-тесты
 
-Каталог [e2e/](e2e/) — самодостаточный (свой `package.json`). Драйвит **реальное
+Каталог [e2e/](../e2e/) — самодостаточный (свой `package.json`). Драйвит **реальное
 нативное окно** через WebdriverIO + `tauri-driver`.
 
 > ⚠️ `tauri-driver` поддерживает **только Linux и Windows** — на macOS E2E не
@@ -533,7 +533,7 @@ docker compose -f docker-compose.ssh.yml down
 тестовому SSH → ввести команду → проверить вывод. Селекторы используют
 `data-testid` (`add-server`, `field-alias/host/username`, `save-server`,
 `server-row`, `connect`, `secret-input`, `secret-connect`), расставленные в
-`+page.svelte` (Фаза 5.8). Подробности — [e2e/README.md](e2e/README.md).
+`+page.svelte` (Фаза 5.8). Подробности — [e2e/README.md](../e2e/README.md).
 
 ---
 
@@ -557,7 +557,7 @@ docker compose -f e2e/docker-compose.ssh.yml up -d
 
 | Область | Гейт | Где настроен |
 |---------|------|--------------|
-| Чистая логика фронта (`tree`, `format`, `themes`, `clipboard`) | **≥ 90 %** по строкам/ветвям/функциям | `thresholds` в [vitest.config.ts](vitest.config.ts) |
+| Чистая логика фронта (`tree`, `format`, `themes`, `clipboard`) | **≥ 90 %** по строкам/ветвям/функциям | `thresholds` в [vitest.config.ts](../vitest.config.ts) |
 | Фронтенд в целом (в пределах `include`) | **≥ 80 %** | там же |
 | Rust | Cobertura-отчёт в MR-виджете | job `test:rust` |
 
@@ -569,7 +569,7 @@ Cobertura (`coverage/cobertura-coverage.xml`) и JSON-summary для CI.
 
 ## CI-пайплайн
 
-[.gitlab-ci.yml](.gitlab-ci.yml), стадии **`lint` → `test` → `build` → `release`**.
+[.gitlab-ci.yml](../.gitlab-ci.yml), стадии **`lint` → `test` → `build` → `release`**.
 Сборка дистрибутивов запускается только после зелёных линтеров и тестов:
 
 - **`lint`** — `cargo fmt --check`, `cargo clippy -D warnings`, `pnpm check`.
