@@ -21,6 +21,7 @@
   } from "./api";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Icon from "./Icon.svelte";
+  import DisclosureRow from "./DisclosureRow.svelte";
   import ServerToolsPanel from "./ServerToolsPanel.svelte";
   import {
     defaultSnippets,
@@ -30,27 +31,54 @@
   } from "./snippets";
   import type { EditorLangKind } from "./editorlang";
   import { slide } from "svelte/transition";
-  import { matchesQuery } from "./util";
+  import {
+    SETTINGS_GROUPS,
+    DEFAULT_SETTINGS_GROUP,
+    visibleSectionIds,
+    groupMatchCounts,
+    groupForSection,
+  } from "./settingsNav";
   import { t, availableLocales, type MessageKey } from "./i18n";
+
+  // Sidebar group labels (data-driven keys would not type-check against MessageKey).
+  const GROUP_LABEL: Record<string, MessageKey> = {
+    general: "settings.groupGeneral",
+    appearance: "settings.groupAppearance",
+    terminal: "settings.groupTerminal",
+    connection: "settings.groupConnection",
+    files: "settings.groupFiles",
+    sessions: "settings.groupSessions",
+  };
 
   let {
     open = $bindable(false),
     onImported,
     toolsSessionId = null,
     onInstallTool,
+    initialSection = null,
   }: {
     open?: boolean;
     onImported?: () => void;
     /** Active SSH session id for the server-tools catalogue (Phase 12.8). */
     toolsSessionId?: string | null;
     onInstallTool?: (tool: import("./servertools").ToolStatus) => void;
+    /** Deep-link: open the panel focused on this section's group (Phase 15.3). */
+    initialSection?: string | null;
   } = $props();
 
-  // ── Config snippets (Phase 12.8) ───────────────────────────────────────────
+  // ── Config snippets (Phase 12.8; Phase 15: collapsed + language filter) ──────
   let snippetDeleteId = $state<string | null>(null);
+  let snippetsOpen = $state(false);
+  let snippetLangFilter = $state("");
+  const filteredSnippets = $derived(
+    snippetLangFilter
+      ? settings.snippets.filter((s) => (s.lang ?? "") === snippetLangFilter)
+      : settings.snippets,
+  );
 
   function addSnippet() {
     settings.snippets = [...settings.snippets, newSnippet()];
+    snippetLangFilter = ""; // ensure the freshly added (language-less) snippet is visible
   }
   function removeSnippet(id: string) {
     settings.snippets = settings.snippets.filter((s) => s.id !== id);
@@ -309,33 +337,51 @@ print(greet("world"))  # => 12345`;
     { key: "cpuTemp", labelKey: "settings.metric.cpuTemp", unit: "°C" },
   ];
 
-  // ── Settings search ────────────────────────────────────────────────────────
+  // ── Settings navigation (two-pane: group sidebar + cross-group search) ───────
+  // Section data + grouping + visibility logic live in settingsNav.ts (pure,
+  // unit-tested). The right pane renders the active group's sections, or — while
+  // searching — every section matching the query across all groups.
   let search = $state("");
-  // Each section is filterable by its title + keywords.
-  // Keywords are intentionally bilingual (EN + RU) so search matches regardless
-  // of the current UI language. They are not displayed.
-  const SECTIONS: { id: string; keywords: string }[] = [
-    { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
-    { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
-    { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
-    { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click терминал буфер сигнал копировать вставка" },
-    { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
-    { id: "recording", keywords: "Recording session asciicast password mask privacy idle pause auto запись сессий пароль маскирование приватность простой пауза автозапись" },
-    { id: "sftp", keywords: "SFTP files file size open editor megabytes mb limit max файлы файл размер открыть редактор мегабайт лимит" },
-    { id: "servertools", keywords: "server tools install linter linters yamllint shellcheck hadolint ruff sensors temperature lm-sensors monitoring package manager apt dnf серверные инструменты установка линтер линтеры датчики температура мониторинг пакетный менеджер" },
-    { id: "snippets", keywords: "snippets templates editor insert dockerfile nginx compose systemd kubernetes bash шаблоны сниппеты вставка редактор докерфайл" },
-    { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка" },
-    { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
-    { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
-    { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
-    { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
-    { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
-  ];
-  const visibleIds = $derived(
-    new Set(SECTIONS.filter((s) => matchesQuery(s.keywords, search)).map((s) => s.id)),
-  );
+  let activeGroup = $state<string>(DEFAULT_SETTINGS_GROUP);
+  const searching = $derived(search.trim().length > 0);
+  const visibleIds = $derived(visibleSectionIds(search, activeGroup));
   const show = (id: string) => visibleIds.has(id);
   const noResults = $derived(visibleIds.size === 0);
+  const matchCounts = $derived(groupMatchCounts(search));
+  function selectGroup(id: string) {
+    activeGroup = id;
+    search = "";
+  }
+
+  // Deep-link: when opened with an initialSection, focus its group.
+  $effect(() => {
+    if (open && initialSection) {
+      const gid = groupForSection(initialSection);
+      if (gid) {
+        activeGroup = gid;
+        search = "";
+      }
+    }
+  });
+
+  // Roving keyboard navigation for the group sidebar (Arrow/Home/End).
+  let navEl = $state<HTMLElement>();
+  function focusGroup(id: string) {
+    (navEl?.querySelector(`[data-testid="settings-group-${id}"]`) as HTMLElement | null)?.focus();
+  }
+  function onNavKey(e: KeyboardEvent, idx: number) {
+    const n = SETTINGS_GROUPS.length;
+    let next = -1;
+    if (e.key === "ArrowDown") next = (idx + 1) % n;
+    else if (e.key === "ArrowUp") next = (idx - 1 + n) % n;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = n - 1;
+    else return;
+    e.preventDefault();
+    const g = SETTINGS_GROUPS[next];
+    selectGroup(g.id);
+    focusGroup(g.id);
+  }
 </script>
 
 {#if open}
@@ -346,7 +392,7 @@ print(greet("world"))  # => 12345`;
       onclick={() => (open = false)}
     ></button>
     <div
-      class="relative flex max-h-[85vh] w-[32rem] flex-col rounded-lg border border-edge bg-panel-alt"
+      class="relative flex max-h-[85vh] w-[46rem] flex-col rounded-lg border border-edge bg-panel-alt"
     >
       <div class="flex items-center justify-between border-b border-edge px-4 py-3">
         <h2 class="text-sm font-semibold text-accent">{t("settings.title")}</h2>
@@ -368,10 +414,48 @@ print(greet("world"))  # => 12345`;
         />
       </div>
 
-      <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 text-sm">
-        {#if noResults}
-          <p class="py-6 text-center text-xs text-muted">{t("common.nothingFound")}</p>
-        {/if}
+      <div class="flex min-h-0 flex-1 overflow-hidden">
+        <!-- Group sidebar (Phase 15: two-pane navigation) -->
+        <nav
+          bind:this={navEl}
+          class="w-44 shrink-0 overflow-y-auto border-r border-edge p-2"
+          aria-label={t("settings.groupsAria")}
+        >
+          {#each SETTINGS_GROUPS as g, gi (g.id)}
+            <button
+              type="button"
+              data-testid={`settings-group-${g.id}`}
+              tabindex={activeGroup === g.id ? 0 : -1}
+              class="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm {!searching &&
+              activeGroup === g.id
+                ? 'bg-edge text-white'
+                : 'text-muted hover:bg-edge/50 hover:text-white'}"
+              aria-current={!searching && activeGroup === g.id ? "page" : undefined}
+              onclick={() => selectGroup(g.id)}
+              onkeydown={(e) => onNavKey(e, gi)}
+            >
+              <Icon name={g.icon} class="h-4 w-4 shrink-0" />
+              <span class="flex-1 truncate">{t(GROUP_LABEL[g.id])}</span>
+              {#if searching && matchCounts[g.id] > 0}
+                <span class="rounded bg-accent/20 px-1.5 text-[10px] text-accent"
+                  >{matchCounts[g.id]}</span
+                >
+              {/if}
+            </button>
+          {/each}
+        </nav>
+
+        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 text-sm">
+          <!-- Sticky header: active group name, or search-results mode (Phase 15.3) -->
+          <div
+            class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-white"
+            data-testid="settings-active-header"
+          >
+            {searching ? t("settings.searchResults") : t(GROUP_LABEL[activeGroup])}
+          </div>
+          {#if noResults}
+            <p class="py-6 text-center text-xs text-muted">{t("common.nothingFound")}</p>
+          {/if}
         {#if show("language")}
         <!-- Language -->
         <section>
@@ -396,15 +480,8 @@ print(greet("world"))  # => 12345`;
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionAppearance")}</h3>
           <div class="mb-2">
-            <button
-              type="button"
-              data-testid="theme-toggle"
-              aria-expanded={themeOpen}
-              onclick={() => (themeOpen = !themeOpen)}
-              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
-            >
-              <span>{t("settings.theme")}</span>
-              <span class="flex min-w-0 items-center gap-2">
+            <DisclosureRow bind:open={themeOpen} testid="theme-toggle" label={t("settings.theme")}>
+              {#snippet preview()}
                 {#if currentTheme}
                   <span class="flex shrink-0 overflow-hidden rounded border border-edge">
                     {#each themeSwatches(currentTheme) as c, ci (ci)}
@@ -412,14 +489,9 @@ print(greet("world"))  # => 12345`;
                     {/each}
                   </span>
                 {/if}
-                <span class="truncate text-white">{currentThemeName}</span>
-                <Icon
-                  name={themeOpen ? "chevronDown" : "chevronRight"}
-                  size={14}
-                  class="shrink-0"
-                />
-              </span>
-            </button>
+                <span class="truncate">{currentThemeName}</span>
+              {/snippet}
+            </DisclosureRow>
             {#if themeOpen}
             <div transition:slide={{ duration: 200 }}>
             <div role="radiogroup" aria-label={t("settings.theme")} class="mt-2 space-y-2">
@@ -486,23 +558,11 @@ print(greet("world"))  # => 12345`;
           </div>
 
           <div class="mb-2">
-            <button
-              type="button"
-              data-testid="font-toggle"
-              aria-expanded={fontOpen}
-              onclick={() => (fontOpen = !fontOpen)}
-              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
-            >
-              <span>{t("settings.font")}</span>
-              <span class="flex min-w-0 items-center gap-2">
-                <span class="truncate text-white">{currentFontLabel}</span>
-                <Icon
-                  name={fontOpen ? "chevronDown" : "chevronRight"}
-                  size={14}
-                  class="shrink-0"
-                />
-              </span>
-            </button>
+            <DisclosureRow bind:open={fontOpen} testid="font-toggle" label={t("settings.font")}>
+              {#snippet preview()}
+                <span class="truncate">{currentFontLabel}</span>
+              {/snippet}
+            </DisclosureRow>
             {#if fontOpen}
               <div transition:slide={{ duration: 200 }}>
                 <div role="radiogroup" aria-label={t("settings.font")} class="mt-2 space-y-2">
@@ -648,25 +708,18 @@ print(greet("world"))  # => 12345`;
                 <input type="checkbox" bind:checked={settings.smartLogs.search} />
                 {t("settings.smartLogsSearch")}
               </label>
-              <div class="flex items-center gap-2">
-                <label class="flex flex-1 items-center gap-2 text-xs text-muted">
-                  <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
-                  {t("settings.smartLogsHighlight")}
-                </label>
-                {#if settings.smartLogs.highlight}
-                  <button
-                    type="button"
-                    data-testid="highlight-rules-toggle"
-                    aria-expanded={highlightRulesOpen}
-                    onclick={() => (highlightRulesOpen = !highlightRulesOpen)}
-                    title={t("highlight.rulesSection")}
-                    aria-label={t("highlight.rulesSection")}
-                    class="rounded p-0.5 text-muted hover:text-white"
-                  >
-                    <Icon name={highlightRulesOpen ? "chevronDown" : "chevronRight"} size={14} />
-                  </button>
-                {/if}
-              </div>
+              <label class="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
+                {t("settings.smartLogsHighlight")}
+              </label>
+              {#if settings.smartLogs.highlight}
+                <DisclosureRow
+                  bind:open={highlightRulesOpen}
+                  testid="highlight-rules-toggle"
+                  label={t("highlight.rulesSection")}
+                  count={settings.highlightRules.length}
+                />
+              {/if}
 
               {#if settings.smartLogs.highlight && highlightRulesOpen}
                 <div transition:slide={{ duration: 200 }} class="mt-1 space-y-2">
@@ -836,57 +889,82 @@ print(greet("world"))  # => 12345`;
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSnippets")}</h3>
           <p class="mb-2 text-[11px] text-muted">{t("settings.snippetsNote")}</p>
-          <div class="space-y-2">
-            {#each settings.snippets as snippet (snippet.id)}
-              <div class="rounded border border-edge p-2">
-                <div class="flex items-center gap-2">
-                  <input
-                    class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
-                    placeholder={t("settings.snippetName")}
-                    bind:value={snippet.name}
-                  />
-                  <select
-                    class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
-                    value={snippet.lang ?? ""}
-                    onchange={(e) => setSnippetLang(snippet, e.currentTarget.value)}
-                  >
-                    {#each SNIPPET_LANGS as o (o.label)}
-                      <option value={o.lang ?? ""}>{o.label}</option>
-                    {/each}
-                  </select>
-                  <button
-                    class="shrink-0 rounded p-1 text-muted hover:text-danger"
-                    title={t("common.delete")}
-                    aria-label={t("common.delete")}
-                    onclick={() => (snippetDeleteId = snippet.id)}
-                  >
-                    <Icon name="trash" size={14} />
-                  </button>
-                </div>
-                <textarea
-                  rows="4"
-                  spellcheck="false"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none focus:border-accent"
-                  bind:value={snippet.body}
-                ></textarea>
+          <DisclosureRow
+            bind:open={snippetsOpen}
+            testid="snippets-toggle"
+            label={t("settings.snippetsToggle")}
+            count={settings.snippets.length}
+          />
+          {#if snippetsOpen}
+            <div class="mt-2 space-y-2" transition:slide>
+              <label class="flex items-center gap-2 text-[11px] text-muted">
+                {t("settings.snippetFilterLang")}
+                <select
+                  data-testid="snippet-lang-filter"
+                  class="rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
+                  bind:value={snippetLangFilter}
+                >
+                  <option value="">{t("settings.snippetAllLangs")}</option>
+                  {#each SNIPPET_LANGS as o (o.label)}
+                    {#if o.lang}
+                      <option value={o.lang}>{o.label}</option>
+                    {/if}
+                  {/each}
+                </select>
+              </label>
+              <div class="space-y-2">
+                {#each filteredSnippets as snippet (snippet.id)}
+                  <div class="rounded border border-edge p-2">
+                    <div class="flex items-center gap-2">
+                      <input
+                        class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+                        placeholder={t("settings.snippetName")}
+                        bind:value={snippet.name}
+                      />
+                      <select
+                        class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
+                        value={snippet.lang ?? ""}
+                        onchange={(e) => setSnippetLang(snippet, e.currentTarget.value)}
+                      >
+                        {#each SNIPPET_LANGS as o (o.label)}
+                          <option value={o.lang ?? ""}>{o.label}</option>
+                        {/each}
+                      </select>
+                      <button
+                        class="shrink-0 rounded p-1 text-muted hover:text-danger"
+                        title={t("common.delete")}
+                        aria-label={t("common.delete")}
+                        onclick={() => (snippetDeleteId = snippet.id)}
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    </div>
+                    <textarea
+                      rows="4"
+                      spellcheck="false"
+                      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none focus:border-accent"
+                      bind:value={snippet.body}
+                    ></textarea>
+                  </div>
+                {/each}
               </div>
-            {/each}
-          </div>
-          <div class="mt-2 flex gap-2">
-            <button
-              class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt"
-              onclick={addSnippet}
-            >
-              <Icon name="filePlus" size={13} />
-              {t("settings.addSnippet")}
-            </button>
-            <button
-              class="rounded px-2 py-1 text-xs text-muted hover:text-white"
-              onclick={resetSnippets}
-            >
-              {t("settings.resetSnippets")}
-            </button>
-          </div>
+              <div class="flex gap-2">
+                <button
+                  class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt"
+                  onclick={addSnippet}
+                >
+                  <Icon name="filePlus" size={13} />
+                  {t("settings.addSnippet")}
+                </button>
+                <button
+                  class="rounded px-2 py-1 text-xs text-muted hover:text-white"
+                  onclick={resetSnippets}
+                >
+                  {t("settings.resetSnippets")}
+                </button>
+              </div>
+            </div>
+          {/if}
         </section>
 
         {/if}
@@ -1014,20 +1092,11 @@ print(greet("world"))  # => 12345`;
           </label>
 
           <div class="mt-2">
-            <button
-              type="button"
-              data-testid="metrics-toggle"
-              aria-expanded={metricsOpen}
-              onclick={() => (metricsOpen = !metricsOpen)}
-              class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
-            >
-              <span>{t("settings.shownMetrics")}</span>
-              <Icon
-                name={metricsOpen ? "chevronDown" : "chevronRight"}
-                size={14}
-                class="shrink-0"
-              />
-            </button>
+            <DisclosureRow
+              bind:open={metricsOpen}
+              testid="metrics-toggle"
+              label={t("settings.shownMetrics")}
+            />
             {#if metricsOpen}
               <div transition:slide={{ duration: 200 }} class="mt-2 grid grid-cols-2 gap-1.5">
                 {#each STATUS_ITEMS as it (it.key)}
@@ -1148,6 +1217,7 @@ print(greet("world"))  # => 12345`;
           {/if}
         </section>
         {/if}
+        </div>
       </div>
 
       <div class="flex items-center justify-between border-t border-edge px-4 py-3">

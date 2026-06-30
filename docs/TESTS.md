@@ -492,6 +492,14 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `Modal.test.ts` — `Modal` (рендер/закрытие по фону и Escape; a11y: `role="dialog"`/
   `aria-modal`/`aria-label`, автофокус первого контроля, фокус-трап Tab/Shift+Tab по
   кругу) и `ConfirmDialog` (колбэки confirm/cancel, accent/danger).
+- `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
+  в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
+  поиск), `groupMatchCounts`, `groupForSection` (deep-link).
+- `DisclosureRow.test.ts` (Фаза 15) — единый сворачиваемый блок: рендер лейбла/счётчика,
+  свёрнут по умолчанию, переключение `aria-expanded` по клику.
+- `SettingsPanel.test.ts` — двухпанельная навигация (выбор группы из sidebar, deep-link
+  `initialSection`, липкий заголовок, стрелки по группам), кросс-группный поиск, бэкап,
+  тема/шрифт, метрики и шаблоны под disclosure.
 - `TopBar.test.ts` — рендер статуса подключения; проверка, что кнопки «Add server»
   в верхней панели больше нет (перенесена в тулбар списка серверов).
 - `ServerTree.test.ts` — рендер папок/серверов, выбор, dbl-click → connect,

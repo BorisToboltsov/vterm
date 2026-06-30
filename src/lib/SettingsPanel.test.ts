@@ -108,6 +108,7 @@ describe("SettingsPanel — backup", () => {
 describe("SettingsPanel — appearance & search", () => {
   it("theme picker is collapsed by default and expands on click", async () => {
     render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-appearance"));
     // Collapsed: no theme options rendered yet.
     expect(screen.queryByTitle("GitHub Light")).toBeNull();
     await userEvent.click(screen.getByTestId("theme-toggle"));
@@ -116,6 +117,7 @@ describe("SettingsPanel — appearance & search", () => {
 
   it("selects a theme from the visual picker", async () => {
     render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-appearance"));
     await userEvent.click(screen.getByTestId("theme-toggle"));
     const gh = screen.getByTitle("GitHub Light");
     expect(gh).toHaveAttribute("aria-checked", "false");
@@ -125,6 +127,7 @@ describe("SettingsPanel — appearance & search", () => {
 
   it("font picker is collapsed by default and reveals a live preview", async () => {
     render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-appearance"));
     expect(screen.queryByTestId("font-preview")).toBeNull();
     await userEvent.click(screen.getByTestId("font-toggle"));
     const preview = screen.getByTestId("font-preview");
@@ -134,6 +137,7 @@ describe("SettingsPanel — appearance & search", () => {
 
   it("selects a font from the grid", async () => {
     render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-appearance"));
     await userEvent.click(screen.getByTestId("font-toggle"));
     const jb = screen.getByTitle("JetBrains Mono");
     expect(jb).toHaveAttribute("aria-checked", "false");
@@ -141,15 +145,25 @@ describe("SettingsPanel — appearance & search", () => {
     expect(screen.getByTitle("JetBrains Mono")).toHaveAttribute("aria-checked", "true");
   });
 
-  it("filters sections by search query", async () => {
+  it("filters sections across groups by search query", async () => {
     render(SettingsPanel, { props: { open: true } });
-    // Everything visible by default.
-    expect(screen.getByText("Security")).toBeInTheDocument();
-    expect(screen.getByText("Backup")).toBeInTheDocument();
-
-    await userEvent.type(screen.getByTestId("settings-search"), "backup");
+    // Default group (General) shows Backup; Security lives in another group.
     expect(screen.getByText("Backup")).toBeInTheDocument();
     expect(screen.queryByText("Security")).toBeNull();
+
+    // Searching matches across all groups, ignoring the active group.
+    await userEvent.type(screen.getByTestId("settings-search"), "security");
+    expect(screen.getByText("Security")).toBeInTheDocument();
+    expect(screen.queryByText("Backup")).toBeNull();
+  });
+
+  it("navigates groups via the sidebar", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    // Terminal section is not in the default General group.
+    expect(screen.queryByTestId("metrics-toggle")).toBeNull();
+    await userEvent.click(screen.getByTestId("settings-group-sessions"));
+    // Status-bar (in Sessions & monitoring) is now visible.
+    expect(screen.getByTestId("metrics-toggle")).toBeInTheDocument();
   });
 
   it("shows an empty state when nothing matches", async () => {
@@ -170,9 +184,39 @@ describe("SettingsPanel — appearance & search", () => {
 
   it("status-bar metric checkboxes are collapsible", async () => {
     render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-sessions"));
     expect(screen.queryByLabelText("CPU")).toBeNull();
     await userEvent.click(screen.getByTestId("metrics-toggle"));
     expect(screen.getByLabelText("CPU")).toBeInTheDocument();
     expect(screen.getByLabelText("Disk")).toBeInTheDocument();
+  });
+
+  it("templates (snippets) are collapsed under a disclosure", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-files"));
+    // Collapsed by default: language filter (inside the disclosure) is hidden.
+    expect(screen.queryByTestId("snippet-lang-filter")).toBeNull();
+    await userEvent.click(screen.getByTestId("snippets-toggle"));
+    expect(screen.getByTestId("snippet-lang-filter")).toBeInTheDocument();
+  });
+
+  it("deep-links to a section's group via initialSection", () => {
+    render(SettingsPanel, { props: { open: true, initialSection: "statusbar" } });
+    // statusbar lives in Sessions & monitoring — shown without manual navigation.
+    expect(screen.getByTestId("metrics-toggle")).toBeInTheDocument();
+  });
+
+  it("reflects the active group in the sticky header", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("General");
+    await userEvent.click(screen.getByTestId("settings-group-terminal"));
+    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Terminal");
+  });
+
+  it("moves between groups with arrow keys", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    screen.getByTestId("settings-group-general").focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Appearance");
   });
 });
