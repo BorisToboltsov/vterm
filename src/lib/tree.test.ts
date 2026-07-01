@@ -23,6 +23,8 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     tags: [],
     autoRecord: false,
     noAi: false,
+    chatPromptId: null,
+    execMode: null,
     ...p,
   };
 }

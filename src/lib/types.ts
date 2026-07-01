@@ -1,5 +1,7 @@
 // Shared types mirroring the Rust backend models (src-tauri/src/model.rs).
 
+import type { AiExecMode } from "./ai";
+
 export type AuthMethod = "password" | "key";
 
 export interface ServerProfile {
@@ -21,6 +23,10 @@ export interface ServerProfile {
   autoRecord: boolean;
   /** Mark off-limits to the AI assistant (blocks context/execution/auto). */
   noAi: boolean;
+  /** Chat prompt id used on this server (from settings.ai.prompts.chat), or null. */
+  chatPromptId: string | null;
+  /** Per-server command-execution mode override, or null to use the global one. */
+  execMode: AiExecMode | null;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -77,6 +83,8 @@ export interface NewServerProfile {
   tags: string[];
   autoRecord: boolean;
   noAi: boolean;
+  chatPromptId: string | null;
+  execMode: AiExecMode | null;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

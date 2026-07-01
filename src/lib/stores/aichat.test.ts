@@ -4,11 +4,13 @@ import type { AiChatRequest, AiSettings } from "../ai";
 // Mock the backend + event bus so startChat/runCommand can be driven in tests.
 const aiChat = vi.fn<(req: AiChatRequest) => Promise<void>>();
 const cancelAiChat = vi.fn<(streamId: string) => Promise<void>>();
+const aiExec = vi.fn<(id: string, cmd: string, t: number) => Promise<unknown>>();
 const writeToTerminal = vi.fn<(id: string, data: Uint8Array) => Promise<void>>();
 const annotateRecording = vi.fn<(id: string, text: string) => Promise<void>>();
 vi.mock("../api", () => ({
   aiChat: (req: AiChatRequest) => aiChat(req),
   cancelAiChat: (streamId: string) => cancelAiChat(streamId),
+  aiExec: (id: string, cmd: string, tmo: number) => aiExec(id, cmd, tmo),
   writeToTerminal: (id: string, data: Uint8Array) => writeToTerminal(id, data),
   annotateRecording: (id: string, text: string) => annotateRecording(id, text),
 }));
@@ -34,10 +36,13 @@ import {
   startChat,
   stopChat,
   runCommand,
+  confirmDialogStep,
+  skipDialogStep,
   KEY_NONE,
   type StartChatOpts,
 } from "./aichat.svelte";
 import { defaultAiSettings } from "../ai";
+import { settings } from "../settings.svelte";
 
 function readySettings(over: Partial<AiSettings> = {}): AiSettings {
   return {
@@ -65,11 +70,15 @@ function opts(over: Partial<StartChatOpts> = {}): StartChatOpts {
   };
 }
 
+const flush = () => new Promise((r) => setTimeout(r, 0));
+
 beforeEach(() => {
   aiChatState.map = {};
+  settings.ai = defaultAiSettings();
   for (const k of Object.keys(handlers)) delete handlers[k];
   aiChat.mockReset().mockResolvedValue(undefined);
   cancelAiChat.mockReset().mockResolvedValue(undefined);
+  aiExec.mockReset().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
   writeToTerminal.mockReset().mockResolvedValue(undefined);
   annotateRecording.mockReset().mockResolvedValue(undefined);
 });
@@ -82,6 +91,13 @@ describe("aichat store slots", () => {
     expect(c.streaming).toBe(false);
     getChat("s1").messages.push({ role: "user", content: "hi" });
     expect(getChat("s1").messages).toHaveLength(1);
+  });
+
+  it("initializes per-chat context tiers from the global defaults", () => {
+    settings.ai.includeMetadata = true;
+    const c = getChat("fresh");
+    expect(c.context.includeMetadata).toBe(true);
+    expect(c.context.includeBuffer).toBe(false);
   });
 
   it("keeps sessions independent and falls back to a shared key", () => {
@@ -147,6 +163,14 @@ describe("startChat streaming", () => {
     expect(c.streaming).toBe(false);
   });
 
+  it("translates a marked error into a friendly message", async () => {
+    await startChat(opts());
+    emit("error", "auth-rejected: wrong key");
+    const c = getChat("s1");
+    expect(c.error).not.toContain("auth-rejected"); // mapped to a localized hint
+    expect(c.error).toBeTruthy();
+  });
+
   it("auto-runs runnable blocks on done in auto mode (non-prod)", async () => {
     await startChat(opts({ execMode: "auto" }));
     emit("out", "```bash\nls -la\n```");
@@ -208,5 +232,72 @@ describe("runCommand", () => {
     const c = getChat("s1");
     await runCommand("s1", c, "0:0", "ls", false);
     expect(c.executed["0:0"]).toBe(false);
+  });
+});
+
+describe("dialog loop (17.8)", () => {
+  it("runs a command, feeds the result back, and stops when no command remains", async () => {
+    await startChat(opts({ execMode: "dialog", question: "install nginx" }));
+    emit("out", "```bash\napt install nginx\n```");
+    emit("done");
+    await flush();
+
+    expect(aiExec).toHaveBeenCalledOnce();
+    expect(aiExec.mock.calls[0][1]).toBe("apt install nginx");
+    // The redacted result was sent back as a new turn (second broker call).
+    expect(aiChat).toHaveBeenCalledTimes(2);
+
+    // Second reply has no command → loop ends.
+    emit("out", "Done — nginx is installed.");
+    emit("done");
+    await flush();
+    expect(getChat("s1").dialogRunning).toBe(false);
+    expect(aiExec).toHaveBeenCalledOnce();
+  });
+
+  it("dialogConfirm waits for confirmation before running", async () => {
+    await startChat(opts({ execMode: "dialogConfirm" }));
+    emit("out", "```bash\nls\n```");
+    emit("done");
+    await flush();
+
+    const c = getChat("s1");
+    expect(c.pending?.command).toBe("ls");
+    expect(aiExec).not.toHaveBeenCalled();
+
+    confirmDialogStep("s1");
+    await flush();
+    expect(aiExec).toHaveBeenCalledOnce();
+    expect(c.pending).toBeNull();
+  });
+
+  it("skip ends the loop without running", async () => {
+    await startChat(opts({ execMode: "dialogConfirm" }));
+    emit("out", "```bash\nls\n```");
+    emit("done");
+    await flush();
+    skipDialogStep("s1");
+    expect(aiExec).not.toHaveBeenCalled();
+    expect(getChat("s1").dialogRunning).toBe(false);
+  });
+
+  it("auto dialog still confirms an obviously dangerous command", async () => {
+    await startChat(opts({ execMode: "dialog" }));
+    emit("out", "```bash\nrm -rf /data\n```");
+    emit("done");
+    await flush();
+    expect(getChat("s1").pending?.command).toContain("rm -rf");
+    expect(aiExec).not.toHaveBeenCalled();
+  });
+
+  it("does not loop on a prod server", async () => {
+    await startChat(opts({ execMode: "dialog", prod: true }));
+    emit("out", "```bash\nls\n```");
+    emit("done");
+    await flush();
+    const c = getChat("s1");
+    expect(c.pending).toBeNull();
+    expect(c.dialogRunning).toBe(false);
+    expect(aiExec).not.toHaveBeenCalled();
   });
 });

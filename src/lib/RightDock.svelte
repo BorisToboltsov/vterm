@@ -8,6 +8,7 @@
   import LocalFilePanel from "./LocalFilePanel.svelte";
   import AiChat from "./AiChat.svelte";
   import type { RawContext } from "./aicontext";
+  import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -18,6 +19,8 @@
     animateWidth = true,
     kind,
     sessionId,
+    chatPromptId = null,
+    serverExecMode = null,
     sessionReady = false,
     onOpenFile,
     onOpenLocalFile,
@@ -31,6 +34,10 @@
     animateWidth?: boolean;
     kind: "ssh" | "local";
     sessionId: string;
+    /** The active server's chosen chat prompt id (server-scoped AI persona). */
+    chatPromptId?: string | null;
+    /** Per-server execution-mode override, or null to use the global setting. */
+    serverExecMode?: AiExecMode | null;
     sessionReady?: boolean;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onOpenLocalFile?: (path: string) => void;
@@ -120,7 +127,14 @@
             <LocalFilePanel embedded onOpenFile={onOpenLocalFile} />
           {/if}
         {:else}
-          <AiChat getContext={getAiContext} {sessionId} prod={aiProd} noAi={aiNoAi} />
+          <AiChat
+            getContext={getAiContext}
+            {sessionId}
+            {chatPromptId}
+            {serverExecMode}
+            prod={aiProd}
+            noAi={aiNoAi}
+          />
         {/if}
       </div>
     </div>

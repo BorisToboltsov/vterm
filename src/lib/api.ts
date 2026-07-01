@@ -2,7 +2,7 @@
 // so the UI never deals with command-name strings directly.
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import type { AiChatRequest } from "./ai";
+import type { AiChatRequest, AiProvider } from "./ai";
 import type {
   FileEntry,
   NewServerProfile,
@@ -838,6 +838,36 @@ export function aiChat(req: AiChatRequest): Promise<void> {
 /** Stop an in-flight chat stream (the chat's Stop button). No-op if already done. */
 export function cancelAiChat(streamId: string): Promise<void> {
   return invoke<void>("cancel_ai_chat", { streamId });
+}
+
+/** Request to list an endpoint's available models (also a reachability check). */
+export interface AiModelsRequest {
+  endpointId: string;
+  provider: AiProvider;
+  baseUrl: string;
+}
+
+/** List an endpoint's installed models (throws if unreachable). */
+export function aiModels(req: AiModelsRequest): Promise<string[]> {
+  return invoke<string[]>("ai_models", { req });
+}
+
+/** Result of an AI agent command execution (17.8, mirror of lib.rs AiExecResult). */
+export interface AiExecResult {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+  timedOut: boolean;
+}
+
+/** Run one command for the AI dialog/agent loop, capturing stdout/stderr/exit code.
+ *  Mirrored into the live terminal + recording by the backend. SSH sessions only. */
+export function aiExec(
+  sessionId: string,
+  command: string,
+  timeoutSecs: number,
+): Promise<AiExecResult> {
+  return invoke<AiExecResult>("ai_exec", { sessionId, command, timeoutSecs });
 }
 
 /** Store an AI endpoint's API key in the OS keychain. */

@@ -140,7 +140,10 @@
       "Bash(grep -n 'export\\\\|function\\\\|Icon name\\\\|button\\\\|onclick\\\\|readRecording\\\\|extractTranscript\\\\|extract\\\\|props\\\\|$props\\\\|import ' src/lib/RecordingsPanel.svelte)",
       "Bash(sed -n '/async function refresh/,/^ }/p' src/lib/RecordingsPanel.svelte)",
       "Bash(grep -n '\\\\$effect\\\\|open\\)' src/lib/RecordingsPanel.svelte)",
-      "Bash(grep -n 'from \"\\\\$lib/stores/workspaces.svelte\"' src/routes/+page.svelte)"
+      "Bash(grep -n 'from \"\\\\$lib/stores/workspaces.svelte\"' src/routes/+page.svelte)",
+      "Bash(perl -0pi -e 's/\\\\n  \"settings\\\\.aiPromptServer\": \"[^\"]*\",\\\\n  \"settings\\\\.aiPromptServerAny\": \"[^\"]*\",//g' src/lib/i18n/messages.ts)",
+      "Bash(perl -0pi -e 's/\\(\\\\n\\(\\\\s*\\)chat_prompt_id: None,\\)/$1\\\\n$2exec_mode: None,/' src-tauri/src/store.rs src-tauri/src/backup.rs)",
+      "Bash(grep -n 'from \"\\\\$lib/ai\"' src/routes/+page.svelte)"
     ]
   }
 }

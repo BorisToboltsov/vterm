@@ -653,15 +653,47 @@
   `openai_delta`/`anthropic_delta`/`anthropic_done` (тестируются без сети). Новый провайдер =
   новый адаптер + экстрактор, не отдельный канал.
 - **Конфиг — чистый.** [ai.ts](../src/lib/ai.ts) (`AiProvider`/`AiEndpoint`/`AiSettings`, санитайз,
-  `activeEndpoint`/`aiReady`/`buildChatRequest`) в `settings.ai`. **Системные промты редактируемы**
-  (`chatSystem`/`runbookSystem`, дефолты `DEFAULT_CHAT_SYSTEM`/`DEFAULT_RUNBOOK_SYSTEM`; пустое поле
-  санитайзится в дефолт) — правятся в `AiSettingsSection`, используются `AiChat`/`RecordingsPanel`.
+  `activeEndpoint`/`aiReady`/`buildChatRequest`) в `settings.ai`. **Промты — списки по видам.**
+  `settings.ai.prompts: Record<AiPromptKind, AiPromptSet>` (виды `chat`/`runbook`/`sh`/`ansible`);
+  `AiPromptSet` = список `AiPrompt` (`id`/`name`/`content`) + `activeId`. Дефолты — `DEFAULT_PROMPT[kind]`;
+  санитайз мигрирует старые одиночные строки (`chatSystem`…) в списки. Разрешение — чистый
+  `resolvePromptContent(set, preferredId, fallback)`: **предпочтённый по id промт главнее активного**,
+  иначе активный, иначе дефолт. **Привязка чат-промта к серверу — на стороне сервера**
+  (`ServerProfile.chatPromptId`, единый источник правды): `+page` берёт его у активного сервера и
+  передаёт `chatPromptId` в `AiChat`. `RecordingsPanel` — активный промт нужного вида. Управление
+  (свёрнутые секции + список промтов с выбором активного) — в `AiSettingsSection`; выбор чат-промта
+  для сервера — в форме сервера.
   **Ключи API — только в keychain**
   (`vterm:ai-key`, команды `set_ai_key`/`forget_ai_key`), никогда в настройках/логах/файлах.
-  Обёртки — [api.ts](../src/lib/api.ts) (`aiChat`/`setAiKey`/`forgetAiKey`).
+  Обёртки — [api.ts](../src/lib/api.ts) (`aiChat`/`cancelAiChat`/`aiModels`/`setAiKey`/`forgetAiKey`).
+  **Пер-эндпоинт (сворачиваемый блок «Дополнительно»):** `basePrompt` — «Общий промпт модели»,
+  который `buildChatRequest` **склеивает** перед промтом задачи (`base\n\nprompt`), т.е. слои:
+  общий промт модели → промт задачи (чат/runbook/…, с серверным override) → диалог-суффикс; `params`
+  — сырой JSON доп-параметров (temperature/top_p/max_tokens…), `parseParams` валидирует (объект или
+  ничего), а Rust `merge_params` мёржит их в тело верхним уровнем, **защищая** `model`/`messages`/
+  `stream`/`system` от переопределения.
+- **Список моделей.** Модель не хардкодится: команда `ai_models` ([ai.rs](../src-tauri/src/ai.rs))
+  делает `GET {base}/models` (OpenAI-совместимо — Ollama `/v1/models`≈`/api/tags`, vLLM, LM Studio) или
+  `/v1/models` для Anthropic и возвращает список (`parse_models` понимает `data[].id` и
+  `models[].name`). Она же — «проверка подключения». В настройках кнопка **«Проверить подключение»**
+  показывает статус + модели-чипы (клик проставляет `model`), поля ввода `baseUrl`/`model` остаются
+  ручными на всякий случай. **Модель выбирается в чате** — селектор в шапке `AiChat` (`mergeModelOptions`
+  = загруженные ∪ текущая), выбор пишет `endpoint.model`. Пред-проверка `/api/ps` не нужна: первый
+  запрос сам подгружает модель, а стрим переживает задержку.
+- **Ошибки — типизированы (как в остальном приложении).** `ai_chat`/`ai_models` возвращают маркеры:
+  401/403 → `AppError::AuthRejected` (`auth-rejected`), сбой соединения → `ai-unreachable: …`, прочее
+  → `ai endpoint {status}: …`, причём тело провайдера **разворачивается** в человекочитаемое
+  (`provider_error_message` достаёт `error.message` — «Your credit balance is too low…», без сырого
+  JSON). Фронт: чистый `aiErrorKind` ([ai.ts](../src/lib/ai.ts)) → `describeAiError`
+  ([aierror.ts](../src/lib/aierror.ts), отдельный модуль, чтобы не создавать цикл `ai↔i18n↔settings`)
+  даёт локализованный текст: ключ / адрес / **недостаточно средств-квоты (billing)** / **лимит запросов
+  (rate)** / сырой детейл. Используется в чате (`ai://error` + catch), проверке подключения и генерации.
 - **UI.** Секция настроек [AiSettingsSection.svelte](../src/lib/AiSettingsSection.svelte) (группа
   «Ассистент»: мастер-выключатель, эндпоинты, контракт вывода markdown/tools, режим исполнения
-  suggest/confirm/auto, контекст). Чат — вкладка в едином правом доке
+  suggest/confirm/auto, контекст). **Карточка эндпоинта:** свёрнутая сводка (точка статуса · имя ·
+  провайдер · модель · «N моделей»), активный по умолчанию развёрнут; развёрнутый вид — метки слева,
+  статус в шапке, проверка подключения строкой внизу (после ключа — чтобы порядок «сначала ключ»
+  читался), модель как `<select>` из найденных + ручной ввод. Чат — вкладка в едином правом доке
   [RightDock.svelte](../src/lib/RightDock.svelte) (вкладки «SFTP»/«ИИ»; содержимое чата —
   [AiChat.svelte](../src/lib/AiChat.svelte), content-only).
 - **Контекст сессии — manual-first, чистый, с согласием (17.3).** Сбор контекста импурный
@@ -669,15 +701,20 @@
   и живёт в `+page` (`gatherAiContext`); **чистые** части — [redact.ts](../src/lib/redact.ts)
   (маскирование секретов маркером `‹redacted›`, **тем же**, что в [recording.rs](../src-tauri/src/recording.rs))
   и [aicontext.ts](../src/lib/aicontext.ts) (`buildContext` по уровням selection/buffer/recording/
-  metadata + `withContext`). Перед отправкой — [AiConsentDialog.svelte](../src/lib/AiConsentDialog.svelte)
-  («N строк → эндпоинт» + предпросмотр замаскированного текста). **RULE:** контекст не покидает
-  машину без редакции и явного согласия — даже на локальный эндпоинт.
+  metadata + `withContext`); `buildContext(raw, tiers: ContextTiers)`. **Уровни выбираются по чату**
+  (поповер у кнопки «Контекст» в `AiChat`, привязан к `SessionChat.context`; дефолт для новых чатов —
+  `settings.ai.include*`). `+page.gatherAiContext` читает уровни активного чата (`getChat(id).context`),
+  чтобы гейтить дорогие чтения (запись/`fetchMetrics`). Перед отправкой —
+  [AiConsentDialog.svelte](../src/lib/AiConsentDialog.svelte) («N строк → эндпоинт» + предпросмотр
+  замаскированного текста). **RULE:** контекст не покидает машину без редакции и явного согласия.
 - **Исполнитель — чистый парсер + тонкий эффект (17.4).** [aiexec.ts](../src/lib/aiexec.ts)
   (`parseChatSegments` разбивает ответ на text/code-сегменты с языком fence и `runnable`/`closed`;
   `isRunnableLang`, `toTerminalInput`, `auditLabel`, `isProdServer`) — вся логика без DOM. `AiChat`
   рендерит по сегментам и на «Выполнить»/авто зовёт `writeToTerminal` (+`\n`) и `annotateRecording`
-  (аудит в запись). Режимы `suggest`/`confirm`/`auto` из `settings.ai.execMode`; **auto — только
-  не-прод** (`aiProd` из `+page` через тег `prod`; полноценный флаг сервера `noAi` — в 17.7).
+  (аудит в запись). Режимы `suggest`/`confirm`/`auto`: **эффективный режим** =
+  `effectiveExecMode(server.execMode, settings.ai.execMode)` — **пер-серверный override главнее
+  глобального** (`ServerProfile.exec_mode`, `#[serde(default)]`, выбор в форме сервера; `+page`
+  прокидывает `serverExecMode`). **auto — только не-прод** (`aiProd` через тег `prod`) и не на `noAi`.
   **RULE:** авто-исполнение никогда не запускается на прод-сервере.
 - **План-runbook из записи (17.5).** Чистый [airunbook.ts](../src/lib/airunbook.ts)
   (`buildRunbookContext` — редакция транскрипта + форма `BuiltContext` для переиспользования

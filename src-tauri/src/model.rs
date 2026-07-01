@@ -42,6 +42,14 @@ pub struct ServerProfile {
     /// (Phase 17.7 — production safety).
     #[serde(default)]
     pub no_ai: bool,
+    /// Chat prompt (by id, from `settings.ai.prompts.chat`) the assistant uses on
+    /// this server; None → the active chat prompt. Frontend-owned reference.
+    #[serde(default)]
+    pub chat_prompt_id: Option<String>,
+    /// Per-server command-execution mode override (`suggest`/`confirm`/`auto`);
+    /// None → the global `settings.ai.execMode`. Frontend-owned value.
+    #[serde(default)]
+    pub exec_mode: Option<String>,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -64,6 +72,10 @@ pub struct NewServerProfile {
     pub auto_record: bool,
     #[serde(default)]
     pub no_ai: bool,
+    #[serde(default)]
+    pub chat_prompt_id: Option<String>,
+    #[serde(default)]
+    pub exec_mode: Option<String>,
 }
 
 #[cfg(test)]
@@ -95,6 +107,8 @@ mod tests {
             tags: vec!["web".into(), "eu".into()],
             auto_record: true,
             no_ai: true,
+            chat_prompt_id: Some("p-1".into()),
+            exec_mode: Some("confirm".into()),
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
@@ -110,6 +124,8 @@ mod tests {
         assert_eq!(back.tags, vec!["web", "eu"]);
         assert!(back.auto_record);
         assert!(back.no_ai);
+        assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
+        assert_eq!(back.exec_mode.as_deref(), Some("confirm"));
     }
 
     #[test]
@@ -130,6 +146,8 @@ mod tests {
         assert!(p.tags.is_empty());
         assert!(!p.auto_record); // legacy profiles default to off
         assert!(!p.no_ai); // legacy profiles default to AI-allowed
+        assert_eq!(p.chat_prompt_id, None);
+        assert_eq!(p.exec_mode, None);
     }
 
     #[test]

@@ -10,12 +10,20 @@
 // startChat / runCommand.
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { aiChat, cancelAiChat, writeToTerminal, annotateRecording } from "../api";
+import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from "../api";
 import { buildChatRequest, type AiSettings, type AiExecMode } from "../ai";
-import { withContext } from "../aicontext";
+import { withContext, type ContextTiers } from "../aicontext";
+import { settings } from "../settings.svelte";
 import { parseChatSegments, toTerminalInput, auditLabel } from "../aiexec";
+import { nextCommand, buildFeedback, isDangerousCommand } from "../aidialog";
 import { notifySuccess } from "./toasts.svelte";
+import { describeAiError } from "../aierror";
 import { t } from "../i18n";
+
+/** Dialog-loop guards (17.8). Configurable defaults land in 17.8.5. */
+const DIALOG_MAX_STEPS = 10;
+const EXEC_TIMEOUT_SECS = 60;
+const isDialog = (m: AiExecMode) => m === "dialog" || m === "dialogConfirm";
 
 /** One chat turn. `sent` is the full content sent to the model (question +
  *  context); the UI shows `content`. */
@@ -34,6 +42,14 @@ export interface SessionChat {
   streaming: boolean;
   /** Last error for this session's chat, or null. */
   error: string | null;
+  /** Dialog-loop step count for the current run (17.8). */
+  dialogStep: number;
+  /** A dialog loop is active (streaming or awaiting confirmation). */
+  dialogRunning: boolean;
+  /** A command awaiting the user's go-ahead (dialogConfirm / dangerous), or null. */
+  pending: { command: string; opts: StartChatOpts } | null;
+  /** Per-chat context tiers (chosen in the Context popover; default from settings). */
+  context: ContextTiers;
 }
 
 /** Key used when there is no active session (AiChat is normally session-scoped). */
@@ -54,7 +70,21 @@ const encoder = new TextEncoder();
 export function getChat(sessionId: string | undefined): SessionChat {
   const id = sessionId ?? KEY_NONE;
   if (!aiChatState.map[id]) {
-    aiChatState.map[id] = { messages: [], executed: {}, streaming: false, error: null };
+    aiChatState.map[id] = {
+      messages: [],
+      executed: {},
+      streaming: false,
+      error: null,
+      dialogStep: 0,
+      dialogRunning: false,
+      pending: null,
+      // New chats inherit the global tier defaults; then chosen per-chat.
+      context: {
+        includeBuffer: settings.ai.includeBuffer,
+        includeRecording: settings.ai.includeRecording,
+        includeMetadata: settings.ai.includeMetadata,
+      },
+    };
   }
   return aiChatState.map[id];
 }
@@ -65,6 +95,9 @@ export function clearChat(sessionId: string | undefined): void {
   c.messages = [];
   c.executed = {};
   c.error = null;
+  c.dialogStep = 0;
+  c.dialogRunning = false;
+  c.pending = null;
 }
 
 /** Drop a session's conversation entirely (its tab was closed). */
@@ -92,7 +125,11 @@ export function stopChat(sessionId: string | undefined): void {
   if (a) void cancelAiChat(a.streamId);
   stopStream(key);
   const c = aiChatState.map[key];
-  if (c) c.streaming = false;
+  if (c) {
+    c.streaming = false;
+    c.dialogRunning = false;
+    c.pending = null;
+  }
 }
 
 /** Options for {@link startChat}. Exec context is captured at send time. */
@@ -107,6 +144,8 @@ export interface StartChatOpts {
   /** Server flags for auto-run gating (prod bars auto; noAi bars execution). */
   prod: boolean;
   noAi: boolean;
+  /** Internal: this turn is a dialog-loop feedback message (don't reset the loop). */
+  feedback?: boolean;
 }
 
 /**
@@ -116,9 +155,16 @@ export interface StartChatOpts {
  * (`auto` mode, non-prod, AI allowed) runnable blocks are auto-executed.
  */
 export async function startChat(opts: StartChatOpts): Promise<void> {
-  const { sessionId, question, context, system, settings, execMode, prod, noAi } = opts;
+  const { sessionId, question, context, system, settings } = opts;
   const key = sessionId ?? KEY_NONE;
   const c = getChat(sessionId);
+
+  // A fresh user turn resets the dialog loop; a feedback turn continues it.
+  if (!opts.feedback) {
+    c.dialogStep = 0;
+    c.pending = null;
+    c.dialogRunning = isDialog(opts.execMode) && !opts.prod && !opts.noAi && !!sessionId;
+  }
 
   c.messages.push({
     role: "user",
@@ -151,12 +197,12 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   un.push(
     await listen(`ai://done/${streamId}`, () => {
       finish();
-      autoRun(sessionId, c, idx, execMode, prod, noAi);
+      afterReply(c, idx, opts);
     }),
   );
   un.push(
     await listen<string>(`ai://error/${streamId}`, (e) => {
-      c.error = e.payload || t("ai.errorGeneric");
+      c.error = describeAiError(e.payload);
       finish();
     }),
   );
@@ -166,10 +212,79 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
     await aiChat(req);
   } catch (e) {
     if (c.streaming) {
-      c.error = e instanceof Error ? e.message : String(e);
+      c.error = describeAiError(e);
       finish();
     }
   }
+}
+
+/** Dispatch after a reply finishes: auto-run all blocks, or drive the dialog loop. */
+function afterReply(c: SessionChat, msgIdx: number, opts: StartChatOpts): void {
+  if (opts.execMode === "auto") {
+    autoRun(opts.sessionId, c, msgIdx, opts.execMode, opts.prod, opts.noAi);
+  } else if (isDialog(opts.execMode)) {
+    void maybeContinueDialog(c, msgIdx, opts);
+  }
+}
+
+/**
+ * Dialog loop: take the model's proposed command, run it (or wait for the user to
+ * confirm in `dialogConfirm` / for a dangerous command), feed the captured result
+ * back, and repeat — bounded by {@link DIALOG_MAX_STEPS}. Barred on prod/noAi.
+ */
+async function maybeContinueDialog(c: SessionChat, msgIdx: number, opts: StartChatOpts): Promise<void> {
+  const { sessionId, execMode, prod, noAi } = opts;
+  if (!sessionId || prod || noAi) {
+    c.dialogRunning = false;
+    return;
+  }
+  const cmd = nextCommand(c.messages[msgIdx].content);
+  if (!cmd) {
+    c.dialogRunning = false; // no command → the task is done
+    return;
+  }
+  if (c.dialogStep >= DIALOG_MAX_STEPS) {
+    c.error = t("ai.dialog.maxSteps", { max: String(DIALOG_MAX_STEPS) });
+    c.dialogRunning = false;
+    return;
+  }
+  c.dialogRunning = true;
+  // Confirm each step in dialogConfirm; always confirm an obviously destructive one.
+  if (execMode === "dialogConfirm" || isDangerousCommand(cmd)) {
+    c.pending = { command: cmd, opts };
+    return;
+  }
+  await runDialogStep(c, cmd, opts);
+}
+
+/** Execute one dialog command and feed its (redacted) result back to the model. */
+async function runDialogStep(c: SessionChat, command: string, opts: StartChatOpts): Promise<void> {
+  c.pending = null;
+  c.dialogStep += 1;
+  let result;
+  try {
+    result = await aiExec(opts.sessionId as string, command, EXEC_TIMEOUT_SECS);
+  } catch (e) {
+    c.error = describeAiError(e);
+    c.dialogRunning = false;
+    return;
+  }
+  // The backend already mirrored the step into the terminal + recording.
+  await startChat({ ...opts, question: buildFeedback(command, result), context: "", feedback: true });
+}
+
+/** Confirm the pending dialog command (the "Run" control in dialogConfirm). */
+export function confirmDialogStep(sessionId: string | undefined): void {
+  const c = getChat(sessionId);
+  const p = c.pending;
+  if (p) void runDialogStep(c, p.command, p.opts);
+}
+
+/** Skip the pending dialog command and end the loop (the "Skip" control). */
+export function skipDialogStep(sessionId: string | undefined): void {
+  const c = getChat(sessionId);
+  c.pending = null;
+  c.dialogRunning = false;
 }
 
 /** Auto-execute every runnable block of a finished reply — non-prod + auto only. */

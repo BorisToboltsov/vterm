@@ -34,11 +34,19 @@
   import { onDestroy } from "svelte";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { settings } from "./settings.svelte";
-  import { aiReady, activeEndpoint, buildChatRequest } from "./ai";
+  import {
+    aiReady,
+    activeEndpoint,
+    buildChatRequest,
+    resolvePromptContent,
+    DEFAULT_PROMPT,
+    type AiPromptKind,
+  } from "./ai";
   import { buildRunbookContext } from "./airunbook";
   import { extractScript, scriptFileName, type ScriptKind } from "./aiscript";
   import type { BuiltContext } from "./aicontext";
   import AiConsentDialog from "./AiConsentDialog.svelte";
+  import { describeAiError } from "./aierror";
   import { renderMarkdown } from "./markdown";
   import { writeClipboard } from "./clipboard";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
@@ -95,12 +103,11 @@
   let genKind = $state<GenKind>("plan");
   let planUnlisten: UnlistenFn[] = [];
 
-  const systemFor = (kind: GenKind): string =>
-    kind === "sh"
-      ? settings.ai.scriptShSystem
-      : kind === "ansible"
-        ? settings.ai.scriptAnsibleSystem
-        : settings.ai.runbookSystem;
+  // Recording generators use the active prompt of the matching kind (plan→runbook).
+  const systemFor = (kind: GenKind): string => {
+    const pk: AiPromptKind = kind === "plan" ? "runbook" : kind;
+    return resolvePromptContent(settings.ai.prompts[pk], null, DEFAULT_PROMPT[pk]);
+  };
 
   function cleanupPlan() {
     for (const u of planUnlisten) u();
@@ -165,7 +172,7 @@
     planUnlisten.push(await listen(`ai://done/${streamId}`, finish));
     planUnlisten.push(
       await listen<string>(`ai://error/${streamId}`, (e) => {
-        planError = e.payload || t("ai.errorGeneric");
+        planError = describeAiError(e.payload);
         finish();
       }),
     );
@@ -173,7 +180,7 @@
       await aiChat(req);
     } catch (e) {
       if (planStreaming) {
-        planError = e instanceof Error ? e.message : String(e);
+        planError = describeAiError(e);
         finish();
       }
     }

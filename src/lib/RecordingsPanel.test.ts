@@ -118,7 +118,7 @@ describe("RecordingsPanel — AI generation (Phase 17.5–17.6)", () => {
     const sent = aiChat.mock.calls[0][0].messages.at(-1)?.content ?? "";
     expect(sent).toContain("‹redacted›");
     expect(sent).not.toContain("abc123");
-    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.runbookSystem);
+    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.prompts.runbook.prompts[0].content);
 
     emit("out", "## Runbook\n1. Restart nginx");
     emit("done");
@@ -138,7 +138,7 @@ describe("RecordingsPanel — AI generation (Phase 17.5–17.6)", () => {
     await user.click(await screen.findByTestId("ai-consent-confirm"));
 
     await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
-    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.scriptShSystem);
+    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.prompts.sh.prompts[0].content);
 
     emit("out", "```bash\n#!/usr/bin/env bash\nsystemctl restart nginx\n```");
     emit("done");
@@ -160,7 +160,7 @@ describe("RecordingsPanel — AI generation (Phase 17.5–17.6)", () => {
     await user.click(await screen.findByTestId("ai-consent-confirm"));
 
     await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
-    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.scriptAnsibleSystem);
+    expect(aiChat.mock.calls[0][0].system).toBe(settings.ai.prompts.ansible.prompts[0].content);
 
     emit("out", "```yaml\n- hosts: all\n  tasks: []\n```");
     emit("done");

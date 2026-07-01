@@ -101,6 +101,8 @@ fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResult<Se
         tags: profile.tags,
         auto_record: profile.auto_record,
         no_ai: profile.no_ai,
+        chat_prompt_id: profile.chat_prompt_id,
+        exec_mode: profile.exec_mode,
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -131,6 +133,8 @@ fn update_server(
                 server.tags = profile.tags;
                 server.auto_record = profile.auto_record;
                 server.no_ai = profile.no_ai;
+                server.chat_prompt_id = profile.chat_prompt_id;
+                server.exec_mode = profile.exec_mode;
             }
             None => return Err(AppError::UnknownServer),
         }
@@ -1028,6 +1032,52 @@ async fn annotate_recording(
         }
     }
     Ok(())
+}
+
+/// Result of an AI agent command execution (17.8), returned to the dialog loop.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AiExecResult {
+    stdout: String,
+    stderr: String,
+    exit_code: i32,
+    timed_out: bool,
+}
+
+/// Execute a single command for the AI dialog/agent loop (17.8) on a dedicated
+/// exec channel, capturing stdout/stderr/exit code. The step is mirrored into the
+/// live terminal (`term://out`) and the active recording so the agent's actions
+/// stay visible and audited. SSH sessions only; the frontend gates this by mode
+/// and bars it on prod/`noAi` servers.
+#[tauri::command]
+async fn ai_exec(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+    timeout_secs: u64,
+) -> AppResult<AiExecResult> {
+    let session = session_arc(&state, &session_id).await?;
+    let outcome = session.exec_captured(&command, timeout_secs).await?;
+
+    // Mirror the step into the live terminal + recording so it stays visible + audited.
+    let mirror = ai::agent_mirror(
+        &command,
+        &outcome.stdout,
+        &outcome.stderr,
+        outcome.exit_code,
+        outcome.timed_out,
+        timeout_secs,
+    );
+    let _ = app.emit(&ssh::output_event(&session_id), mirror.clone().into_bytes());
+    session.record_output(mirror.as_bytes());
+
+    Ok(AiExecResult {
+        stdout: outcome.stdout,
+        stderr: outcome.stderr,
+        exit_code: outcome.exit_code,
+        timed_out: outcome.timed_out,
+    })
 }
 
 /// List stored recordings (newest first), reading metadata from each header.
@@ -2788,6 +2838,8 @@ pub fn run() {
             import_recording,
             ai::ai_chat,
             ai::cancel_ai_chat,
+            ai::ai_models,
+            ai_exec,
             set_ai_key,
             forget_ai_key
         ])

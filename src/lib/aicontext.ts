@@ -11,7 +11,14 @@
 // DOM/network-free → unit-tested directly.
 
 import { redactSecrets } from "./redact";
-import type { AiSettings } from "./ai";
+
+/** Opt-in context tiers that widen the base (selection / recent tail). Chosen
+ *  per-chat in the Context popover (default from `settings.ai`). */
+export interface ContextTiers {
+  includeBuffer: boolean;
+  includeRecording: boolean;
+  includeMetadata: boolean;
+}
 
 /** Default tail size when no selection exists and the whole buffer isn't attached. */
 export const DEFAULT_TAIL_LINES = 200;
@@ -59,12 +66,12 @@ function clean(s: string | undefined): string {
 }
 
 /**
- * Decide which sources to include from the raw strings + settings tiers, then
+ * Decide which sources to include from the raw strings + chosen tiers, then
  * redact and assemble them into one labelled block. The default tier is the
  * selection when present, otherwise the recent tail; `includeBuffer` widens the
  * terminal section to the whole scrollback (and supersedes the tail).
  */
-export function buildContext(raw: RawContext, s: AiSettings): BuiltContext {
+export function buildContext(raw: RawContext, s: ContextTiers): BuiltContext {
   const pieces: { source: ContextSource; text: string }[] = [];
 
   const selection = clean(raw.selection);

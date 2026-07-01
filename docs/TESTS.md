@@ -105,7 +105,8 @@ pnpm check
   `extras_script_runs_in_a_shell_and_emits_keys`;
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`**/**`noAi`** —
-  легаси-профиль → `auto_record:false`/`no_ai:false`; round-trip сохраняет `autoRecord`/`noAi:true`);
+  легаси-профиль → `auto_record:false`/`no_ai:false`/`chat_prompt_id:None`/`exec_mode:None`; round-trip
+  сохраняет `autoRecord`/`noAi:true`/`chatPromptId`/`execMode`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
   файловый round-trip во временном каталоге (`tempfile`);
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
@@ -184,9 +185,14 @@ pnpm check
   (`choices[0].delta.content`, None для role-only), `anthropic_delta`/`anthropic_done`
   (`content_block_delta`→`delta.text`, `message_stop`), сборка тел `openai_body`
   (system первым сообщением, `stream:true`) / `anthropic_body` (`max_tokens` дефолт 4096,
-  `system` отдельным полем), char-safe `truncate`. Отмена: `cancel_ai_chat` на неизвестном id —
-  no-op; на зарегистрированном стриме `notify_one` будит ожидание (`#[tokio::test]`). Сетевой вызов
-  (reqwest) не тестируется.
+  `system` отдельным полем), char-safe `truncate`; `merge_params` (доп-параметры мёржатся верхним
+  уровнем, `model`/`messages`/`stream`/`system` защищены; `max_tokens` из params перекрывает дефолт
+  Anthropic). Отмена: `cancel_ai_chat` на неизвестном id —
+  no-op; на зарегистрированном стриме `notify_one` будит ожидание (`#[tokio::test]`). Список моделей:
+  `parse_models` понимает OpenAI (`data[].id`) и Ollama (`models[].name`/`.model`), сортирует+дедупит,
+  пустое на неизвестной форме. Ошибки типизированы: 401/403 → `AuthRejected`, сбой соединения →
+  маркер `ai-unreachable`; `provider_error_message` достаёт `error.message` из тела Anthropic/OpenAI
+  (иначе None → сырое тело). Классификация на фронте — `aiErrorKind`. Сетевой вызов (reqwest) не тестируется.
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты
@@ -505,11 +511,22 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `ai.test.ts` (Фаза 17, чистая логика) — конфигурация ИИ-ассистента: дефолты (opt-in/off,
   Anthropic→`claude-opus-4-8`), `sanitizeEndpoint`/`sanitizeAiSettings` (отброс мусора,
   сброс висячего active), `activeEndpoint`/`aiReady`, `buildChatRequest` (null когда выкл;
-  max_tokens=4096 для anthropic). **Редактируемые системные промты**: дефолты `chatSystem`/
-  `runbookSystem` непустые, кастомные значения сохраняются, пустые/отсутствующие санитайзятся в
-  дефолт (`AiChat.test.ts` дополнительно проверяет, что `req.system` = `settings.ai.chatSystem`).
-  UI ИИ (`AiSettingsSection`/`RightDock`) — coverage-excluded, проверяется через
-  `SettingsPanel.test.ts` (вкладка-группа «Ассистент»).
+  max_tokens=4096 для anthropic); `mergeModelOptions` (загруженные ∪ текущая, сорт+дедуп, пустые
+  отброшены); `parseParams` (объект / пусто / битое / массив → null); `buildChatRequest` склеивает
+  `basePrompt` перед системным промтом и прикладывает распарсенные `params`; `aiErrorKind` (auth: `auth-rejected`/401/permission denied; unreachable:
+  `ai-unreachable`/connection refused; billing: credit/quota; rate: 429; иначе other).
+  **Промты-списки:** дефолт — один активный промт на вид с встроенным текстом; `sanitizeAiSettings`
+  мигрирует легаси-строки (`chatSystem`…) в списки (trim), хранит валидные списки с корректным
+  `activeId`, для отсутствующих видов даёт дефолт; `resolvePromptContent` (предпочтённый по id промт
+  главнее активного, фолбэк при пустом наборе). `AiChat.test.ts` проверяет, что `req.system` = контент
+  активного промта, а при заданном `chatPromptId` — выбранного. Привязка чат-промта к серверу — поле
+  `ServerProfile.chatPromptId` (`model.rs` round-trip). `effectiveExecMode` (валидный override сервера
+  главнее глобального, иначе глобальный); `AiChat.test.ts` — `serverExecMode="suggest"` убирает кнопку
+  «Выполнить» даже при глобальном `confirm` (поле `ServerProfile.execMode`). UI ИИ (`AiSettingsSection`/`RightDock`) —
+  coverage-excluded, проверяется через `SettingsPanel.test.ts` (вкладка-группа «Ассистент»).
+- `aierror.test.ts` (Фаза 17, чистая логика) — `describeAiError`: маркеры → локализованные подсказки
+  (auth → про ключ, unreachable → про адрес, billing → про средства/квоту, rate → про лимит),
+  сырой детейл для прочего, дефолт при пустом.
 - `redact.test.ts` (Фаза 17.3, чистая логика) — маскирование секретов перед отправкой
   контекста ИИ: `KEY=value`/`key: value`/`--password=…`, токены `Bearer`/`Authorization`,
   пароли в URL, AWS-ключи (`AKIA…`), тело PEM-блока (с сохранением fence), эхо `Password:`;
@@ -518,6 +535,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (`buildContext`): выделение приоритетнее tail; `includeBuffer` заменяет tail полным буфером;
   `includeRecording`/`includeMetadata` подключаются только при включённых флагах; редакция и
   подсчёт строк/секретов; пропуск пустых источников; `withContext` (склейка вопроса с контекстом).
+  `buildContext` берёт `ContextTiers` (уровни выбираются по чату — поповер `AiChat`, `AiChat.test.ts`
+  проверяет, что включённый «весь буфер» расширяет предпросмотр; `stores/aichat.test.ts` — что новый
+  чат наследует уровни-дефолты из `settings.ai`).
 - `aiexec.test.ts` (Фаза 17.4, чистая логика) — исполнитель: `parseChatSegments` (текст+код в
   порядке, язык fence, `runnable` только для shell, `closed=false` для незакрытого стрим-fence,
   многострочные блоки, пропуск пустого текста); `isRunnableLang`; `isProdServer` (теги
@@ -540,7 +560,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   создаёт/возвращает, сессии независимы, `undefined`→`KEY_NONE`, `clearChat`/`removeChat`
   идемпотентно); `startChat` (пуш user+assistant, стрим дельт `ai://out`, `done` снимает
   `streaming`, склейка контекста в `sent` при показе только вопроса, ошибка при выключенном ИИ,
-  событие `ai://error`, авто-исполнение по `done` в `auto`/не-прод и его блок на проде);
+  событие `ai://error` (+ перевод маркера в дружелюбный текст через `describeAiError`),
+  авто-исполнение по `done` в `auto`/не-прод и его блок на проде);
   `runCommand` (запись в терминал + аудит, идемпотентность, блок при `noAi`, сброс отметки при сбое);
   `stopChat` (зовёт `cancelAiChat` с тем же `streamId`, снимает `streaming`, сохраняет частичный
   текст, глушит поздние события; no-op без активного стрима). Моки `../api` + канал событий.
@@ -558,7 +579,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   а **стрим продолжается после размонтирования** компонента (уход на другую вкладку) — ответ
   дописывается в слот и виден при возврате. **Стоп:** во время генерации вместо «Отправить»
   показывается кнопка-квадрат «Остановить», клик зовёт `cancelAiChat` и возвращает «Отправить».
-  Покрывает и `AiConsentDialog`.
+  **Выбор модели:** селектор в шапке заполняется из `aiModels`, выбор пишет `endpoint.model`; при
+  ошибке запроса остаётся ручная модель. Покрывает и `AiConsentDialog`.
 - `DisclosureRow.test.ts` (Фаза 15) — единый сворачиваемый блок: рендер лейбла/счётчика,
   свёрнут по умолчанию, переключение `aria-expanded` по клику.
 - `SettingsPanel.test.ts` — двухпанельная навигация (выбор группы из sidebar, deep-link

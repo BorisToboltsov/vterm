@@ -139,6 +139,8 @@ mod tests {
             tags: vec!["web".into()],
             auto_record: false,
             no_ai: false,
+            chat_prompt_id: None,
+            exec_mode: None,
         }
     }
 

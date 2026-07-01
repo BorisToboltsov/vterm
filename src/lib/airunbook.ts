@@ -9,10 +9,10 @@
 import { redactSecrets } from "./redact";
 import type { BuiltContext } from "./aicontext";
 
-// The instruction is a single editable text: the runbook system prompt
-// (`settings.ai.runbookSystem`, default `DEFAULT_RUNBOOK_SYSTEM` in ai.ts). The
-// user message carries only the redacted transcript — no extra wrapper — so what
-// governs the output lives in one place the user can edit.
+// The instruction is the active runbook prompt (`settings.ai.prompts.runbook`,
+// resolved via `resolvePromptContent` in ai.ts). The user message carries only the
+// redacted transcript — no extra wrapper — so what governs the output lives in the
+// user-editable prompt.
 
 /**
  * Redact the transcript and shape it as a {@link BuiltContext} so the same

@@ -80,7 +80,7 @@
     TERMINAL_VIEW,
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
-  import { removeChat } from "$lib/stores/aichat.svelte";
+  import { removeChat, getChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
@@ -123,6 +123,7 @@
   import { extractTranscript } from "$lib/recording";
   import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
   import { isProdServer } from "$lib/aiexec";
+  import type { AiExecMode } from "$lib/ai";
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
@@ -179,6 +180,10 @@
   let tagsInput = $state("");
   let autoRecord = $state(false);
   let noAi = $state(false);
+  // Chat prompt scoped to this server (id, or "" for the general default).
+  let aiPromptId = $state("");
+  // Per-server command-execution override ("" = use the global setting).
+  let aiExecMode = $state("");
 
   // Folders
   let folders = $state<string[]>([]);
@@ -232,13 +237,15 @@
     const id = tabsState.activeId;
     if (!id) return {};
     const ref = termRefs[id];
+    // Tiers are chosen per-chat (Context popover); gate the expensive reads by them.
+    const tiers = getChat(id).context;
     const raw: RawContext = {};
     if (ref?.selectionText) raw.selection = ref.selectionText();
     if (ref?.bufferText) {
       raw.buffer = ref.bufferText();
       raw.tail = ref.bufferText(DEFAULT_TAIL_LINES);
     }
-    if (settings.ai.includeRecording) {
+    if (tiers.includeRecording) {
       const path = recordingState[id];
       if (path) {
         try {
@@ -248,7 +255,7 @@
         }
       }
     }
-    if (settings.ai.includeMetadata) raw.metadata = await aiMetadataBlock(id);
+    if (tiers.includeMetadata) raw.metadata = await aiMetadataBlock(id);
     return raw;
   }
 
@@ -1160,6 +1167,8 @@
     tagsInput = "";
     autoRecord = false;
     noAi = false;
+    aiPromptId = "";
+    aiExecMode = "";
     showForm = true;
   }
 
@@ -1177,6 +1186,8 @@
     tagsInput = server.tags.join(", ");
     autoRecord = server.autoRecord;
     noAi = server.noAi;
+    aiPromptId = server.chatPromptId ?? "";
+    aiExecMode = server.execMode ?? "";
     showForm = true;
   }
 
@@ -1214,6 +1225,8 @@
       tags,
       autoRecord,
       noAi,
+      chatPromptId: aiPromptId || null,
+      execMode: (aiExecMode || null) as AiExecMode | null,
     };
     try {
       if (formMode === "edit" && editId) {
@@ -1567,6 +1580,12 @@
                 animateWidth={resizing !== "sftp"}
                 kind={activeTab?.kind === "ssh" ? "ssh" : "local"}
                 sessionId={tabsState.activeId}
+                chatPromptId={activeTab?.kind === "ssh"
+                  ? (servers.find((s) => s.id === activeTab.serverId)?.chatPromptId ?? null)
+                  : null}
+                serverExecMode={activeTab?.kind === "ssh"
+                  ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
+                  : null}
                 sessionReady={sftpReady}
                 getAiContext={gatherAiContext}
                 {aiProd}
@@ -1984,6 +2003,40 @@
       {t("page.noAi")}
     </label>
     <p class="mb-2 text-[11px] text-muted">{t("page.noAiHint")}</p>
+
+    {#if settings.ai.prompts.chat.prompts.length > 1}
+      <label class="mb-2 block text-xs text-text">
+        {t("page.aiPrompt")}
+        <select
+          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          data-testid="server-ai-prompt"
+          bind:value={aiPromptId}
+        >
+          <option value="">{t("page.aiPromptDefault")}</option>
+          {#each settings.ai.prompts.chat.prompts as p (p.id)}
+            <option value={p.id}>{p.name}</option>
+          {/each}
+        </select>
+      </label>
+      <p class="mb-2 text-[11px] text-muted">{t("page.aiPromptHint")}</p>
+    {/if}
+
+    <label class="mb-2 block text-xs text-text">
+      {t("page.aiExec")}
+      <select
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        data-testid="server-ai-exec"
+        bind:value={aiExecMode}
+      >
+        <option value="">{t("page.aiExecDefault")}</option>
+        <option value="suggest">{t("settings.aiExecSuggest")}</option>
+        <option value="confirm">{t("settings.aiExecConfirm")}</option>
+        <option value="auto">{t("settings.aiExecAuto")}</option>
+        <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
+        <option value="dialog">{t("settings.aiExecDialog")}</option>
+      </select>
+    </label>
+    <p class="mb-2 text-[11px] text-muted">{t("page.aiExecHint")}</p>
 
     <div class="mt-3 flex items-center gap-2">
       {#if formMode === "edit"}
