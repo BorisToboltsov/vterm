@@ -323,6 +323,40 @@
     return line ? line.translateToString(false, 0, buf.cursorX) : "";
   }
 
+  /** The current text selection (empty when nothing is selected). For AI context. */
+  export function selectionText(): string {
+    return term?.getSelection() ?? "";
+  }
+
+  /**
+   * Plain-text scrollback, wrapped rows stitched back into logical lines and
+   * trailing blank lines trimmed. With `maxLines`, only the last N lines are
+   * returned (the recent output tail — the default AI context tier). Feeds the
+   * assistant; redaction + consent happen before anything leaves the machine.
+   */
+  export function bufferText(maxLines?: number): string {
+    if (!term) return "";
+    const buf = term.buffer.active;
+    const lines: string[] = [];
+    let acc = "";
+    let started = false;
+    for (let i = 0; i < buf.length; i++) {
+      const line = buf.getLine(i);
+      const text = line?.translateToString(true) ?? "";
+      if (line?.isWrapped) {
+        acc += line.translateToString(false);
+      } else {
+        if (started) lines.push(acc);
+        acc = text;
+        started = true;
+      }
+    }
+    if (started) lines.push(acc);
+    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    const slice = maxLines && maxLines > 0 ? lines.slice(-maxLines) : lines;
+    return slice.join("\n");
+  }
+
   onMount(async () => {
     const t = activeTerminalTheme();
     term = new Terminal({

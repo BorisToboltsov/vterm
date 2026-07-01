@@ -152,6 +152,43 @@ export function addEditor(
   return id;
 }
 
+/**
+ * Add an already-filled scratch editor (e.g. an AI-generated script) and return
+ * its id. Unlike {@link addEditor}, there is no file to fetch: the content is
+ * supplied directly and `baseContent` stays empty so the doc is dirty (unsaved) —
+ * `baseSha256: ""` marks it as new, and the server linter still lints the buffer.
+ */
+export function addScratchEditor(
+  sessionId: string,
+  name: string,
+  lang: EditorLang,
+  content: string,
+  source: "sftp" | "local" = "sftp",
+): string {
+  const id = crypto.randomUUID();
+  const doc: EditorDoc = {
+    id,
+    source,
+    path: name,
+    name,
+    lang,
+    content,
+    baseContent: "",
+    baseSha256: "",
+    eol: "lf",
+    mode: null,
+    readOnly: false,
+    loading: false,
+    loadError: null,
+    sudo: false,
+    sudoPassword: "",
+    gotoLine: null,
+  };
+  const ws = ensure(sessionId);
+  patch(sessionId, { editors: [...ws.editors, doc], active: id });
+  return id;
+}
+
 function updateDoc(sessionId: string, id: string, next: Partial<EditorDoc>): void {
   const ws = ensure(sessionId);
   patch(sessionId, {

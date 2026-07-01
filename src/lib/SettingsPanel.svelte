@@ -22,6 +22,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Icon from "./Icon.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
+  import AiSettingsSection from "./AiSettingsSection.svelte";
   import ServerToolsPanel from "./ServerToolsPanel.svelte";
   import {
     defaultSnippets,
@@ -48,6 +49,7 @@
     connection: "settings.groupConnection",
     files: "settings.groupFiles",
     sessions: "settings.groupSessions",
+    assistant: "settings.groupAssistant",
   };
 
   let {
@@ -1215,6 +1217,14 @@ print(greet("world"))  # => 12345`;
               {backupMsg}
             </p>
           {/if}
+        </section>
+        {/if}
+
+        {#if show("ai")}
+        <!-- AI assistant (Phase 17, opt-in) -->
+        <section>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionAi")}</h3>
+          <AiSettingsSection />
         </section>
         {/if}
         </div>

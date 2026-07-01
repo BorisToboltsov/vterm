@@ -104,8 +104,8 @@ pnpm check
   (GPU/Docker/SMART/OOM из ленивого `EXTRAS_SCRIPT`, пустые поля → None) +
   `extras_script_runs_in_a_shell_and_emits_keys`;
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
-  (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`** —
-  легаси-профиль → `auto_record:false`; round-trip сохраняет `autoRecord:true`);
+  (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`**/**`noAi`** —
+  легаси-профиль → `auto_record:false`/`no_ai:false`; round-trip сохраняет `autoRecord`/`noAi:true`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
   файловый round-trip во временном каталоге (`tempfile`);
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
@@ -180,6 +180,13 @@ pnpm check
 - `backup.rs` — экспорт/импорт бэкапа: round-trip серверов/папок/настроек
   (camelCase), отсутствие секретов в JSON, отказ на мусоре и будущей версии,
   минимальный документ, нормализация папок.
+- `ai.rs` (Фаза 17, ИИ-брокер) — чистые экстракторы дельт стрима: `openai_delta`
+  (`choices[0].delta.content`, None для role-only), `anthropic_delta`/`anthropic_done`
+  (`content_block_delta`→`delta.text`, `message_stop`), сборка тел `openai_body`
+  (system первым сообщением, `stream:true`) / `anthropic_body` (`max_tokens` дефолт 4096,
+  `system` отдельным полем), char-safe `truncate`. Отмена: `cancel_ai_chat` на неизвестном id —
+  no-op; на зарегистрированном стриме `notify_one` будит ожидание (`#[tokio::test]`). Сетевой вызов
+  (reqwest) не тестируется.
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты
@@ -495,6 +502,63 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).
+- `ai.test.ts` (Фаза 17, чистая логика) — конфигурация ИИ-ассистента: дефолты (opt-in/off,
+  Anthropic→`claude-opus-4-8`), `sanitizeEndpoint`/`sanitizeAiSettings` (отброс мусора,
+  сброс висячего active), `activeEndpoint`/`aiReady`, `buildChatRequest` (null когда выкл;
+  max_tokens=4096 для anthropic). **Редактируемые системные промты**: дефолты `chatSystem`/
+  `runbookSystem` непустые, кастомные значения сохраняются, пустые/отсутствующие санитайзятся в
+  дефолт (`AiChat.test.ts` дополнительно проверяет, что `req.system` = `settings.ai.chatSystem`).
+  UI ИИ (`AiSettingsSection`/`RightDock`) — coverage-excluded, проверяется через
+  `SettingsPanel.test.ts` (вкладка-группа «Ассистент»).
+- `redact.test.ts` (Фаза 17.3, чистая логика) — маскирование секретов перед отправкой
+  контекста ИИ: `KEY=value`/`key: value`/`--password=…`, токены `Bearer`/`Authorization`,
+  пароли в URL, AWS-ключи (`AKIA…`), тело PEM-блока (с сохранением fence), эхо `Password:`;
+  счётчик скрытых секретов; пустой ввод и текст без секретов — без изменений.
+- `aicontext.test.ts` (Фаза 17.3, чистая логика) — сборка контекста по уровням
+  (`buildContext`): выделение приоритетнее tail; `includeBuffer` заменяет tail полным буфером;
+  `includeRecording`/`includeMetadata` подключаются только при включённых флагах; редакция и
+  подсчёт строк/секретов; пропуск пустых источников; `withContext` (склейка вопроса с контекстом).
+- `aiexec.test.ts` (Фаза 17.4, чистая логика) — исполнитель: `parseChatSegments` (текст+код в
+  порядке, язык fence, `runnable` только для shell, `closed=false` для незакрытого стрим-fence,
+  многострочные блоки, пропуск пустого текста); `isRunnableLang`; `isProdServer` (теги
+  prod/production, регистр/пробелы, пустое/`null`); `toTerminalInput` (ровно один `\n`,
+  внутренние переводы строк сохраняются); `auditLabel` (одна строка / «… (+N)» / пусто).
+- `airunbook.test.ts` (Фаза 17.5, чистая логика) — план из записи: `buildRunbookContext` (редакция
+  секретов + счётчик, подсчёт строк с обрезкой хвоста, `sources=["recording"]`, пустой транскрипт →
+  пусто). Инструкция — единый редактируемый `runbookSystem` (дефолт покрыт в `ai.test.ts`).
+- `aiscript.test.ts` (Фаза 17.6, чистая логика) — скрипты из записи: `extractScript` (достаёт блок
+  нужного языка, предпочитает совпавший/длиннейший, фолбэк на любой код-блок → на весь ответ);
+  `scriptFileName` (слаг + `.sh`/`.yml`, дефолт `runbook`, обрезка длинных); `scriptExt`.
+- `RecordingsPanel.test.ts` (Фаза 17.5–17.6) — кнопка ✨ скрыта при выключенном ИИ; клик открывает
+  меню (план/sh/ansible). **План:** диалог согласия с **замаскированным** транскриптом (секрет не
+  виден), до подтверждения `aiChat` не зовётся, `system`=`runbookSystem`, стрим в просмотрщик.
+  **Скрипты:** `system`=`scriptShSystem`/`scriptAnsibleSystem`, по завершении `onOpenScript`
+  получает имя (`deploy-nginx.sh`/`.yml`) и извлечённый код. Моки `./api` + канал событий.
+- `workspaces.test.ts` (доп. 17.6) — `addScratchEditor`: заполненный, «грязный» (пустой
+  `baseContent`), новый (`baseSha256=""`) документ, сразу активен.
+- `stores/aichat.test.ts` — пер-сессионный стор + сервис стрима диалога ИИ: слоты (`getChat`
+  создаёт/возвращает, сессии независимы, `undefined`→`KEY_NONE`, `clearChat`/`removeChat`
+  идемпотентно); `startChat` (пуш user+assistant, стрим дельт `ai://out`, `done` снимает
+  `streaming`, склейка контекста в `sent` при показе только вопроса, ошибка при выключенном ИИ,
+  событие `ai://error`, авто-исполнение по `done` в `auto`/не-прод и его блок на проде);
+  `runCommand` (запись в терминал + аудит, идемпотентность, блок при `noAi`, сброс отметки при сбое);
+  `stopChat` (зовёт `cancelAiChat` с тем же `streamId`, снимает `streaming`, сохраняет частичный
+  текст, глушит поздние события; no-op без активного стрима). Моки `../api` + канал событий.
+- `AiChat.test.ts` (Фаза 17.3–17.4) — **контекст+согласие:** без контекста отправка сразу;
+  кнопка «Контекст» открывает диалог с **замаскированным** предпросмотром, до подтверждения
+  `aiChat` не зовётся; подтверждение шлёт вопрос, склеенный с редактированным контекстом (секрет
+  не утёк, в пузыре только вопрос); отмена не шлёт; «Контекст» неактивна без провайдера. **Испол-
+  нитель:** мок канала `ai://out|done/{id}` прогоняет ответ с ```bash-блоком — `confirm` даёт
+  кнопку «Выполнить» → `writeToTerminal` (`ls -la\n`) + `annotateRecording` (аудит), повторный
+  клик заблокирован; `suggest` — кнопки нет; `auto` на не-прод запускает без клика, на прод —
+  только кнопка; без `sessionId` исполнение недоступно. **Прод-защита (17.7):** на сервере с
+  `noAi` кнопка «Контекст» неактивна и видна плашка, кнопок «Выполнить» нет даже в `confirm`,
+  авто-запуск заблокирован. **Пер-сессионность:** диалог хранится по `sessionId`, переключение
+  вкладок (смена пропа) восстанавливает переписку, «Очистить» чистит только активную сессию,
+  а **стрим продолжается после размонтирования** компонента (уход на другую вкладку) — ответ
+  дописывается в слот и виден при возврате. **Стоп:** во время генерации вместо «Отправить»
+  показывается кнопка-квадрат «Остановить», клик зовёт `cancelAiChat` и возвращает «Отправить».
+  Покрывает и `AiConsentDialog`.
 - `DisclosureRow.test.ts` (Фаза 15) — единый сворачиваемый блок: рендер лейбла/счётчика,
   свёрнут по умолчанию, переключение `aria-expanded` по клику.
 - `SettingsPanel.test.ts` — двухпанельная навигация (выбор группы из sidebar, deep-link

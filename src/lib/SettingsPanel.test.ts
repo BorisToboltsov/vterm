@@ -219,4 +219,14 @@ describe("SettingsPanel — appearance & search", () => {
     await userEvent.keyboard("{ArrowDown}");
     expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Appearance");
   });
+
+  it("AI assistant (Phase 17): off by default, can add an endpoint", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-assistant"));
+    const toggle = screen.getByTestId("ai-enabled") as HTMLInputElement;
+    expect(toggle.checked).toBe(false); // opt-in
+    expect(screen.queryByTestId("ai-endpoint")).toBeNull();
+    await userEvent.click(screen.getByTestId("ai-add-local"));
+    expect(screen.getAllByTestId("ai-endpoint").length).toBeGreaterThanOrEqual(1);
+  });
 });

@@ -29,11 +29,29 @@
     pickExportSavePath,
     importRecording,
     pickRecordingFile,
+    aiChat,
   } from "./api";
+  import { onDestroy } from "svelte";
+  import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+  import { settings } from "./settings.svelte";
+  import { aiReady, activeEndpoint, buildChatRequest } from "./ai";
+  import { buildRunbookContext } from "./airunbook";
+  import { extractScript, scriptFileName, type ScriptKind } from "./aiscript";
+  import type { BuiltContext } from "./aicontext";
+  import AiConsentDialog from "./AiConsentDialog.svelte";
+  import { renderMarkdown } from "./markdown";
+  import { writeClipboard } from "./clipboard";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import type { RecordingMeta } from "./types";
 
-  let { open = $bindable(false) }: { open?: boolean } = $props();
+  let {
+    open = $bindable(false),
+    onOpenScript,
+  }: {
+    open?: boolean;
+    /** Open a generated script (name + content) in the editor; omitted = no session. */
+    onOpenScript?: (name: string, content: string) => void;
+  } = $props();
 
   let items = $state<RecordingMeta[]>([]);
   let loading = $state(false);
@@ -57,6 +75,116 @@
   };
 
   const view = $derived(sortRecordingsBy(filterRecordings(items, query), criteria));
+
+  // ── AI generation: runbook plan / shell script / Ansible playbook (17.5–17.6) ─
+  /** What the AI turns the transcript into. `plan` shows in a viewer; scripts open in the editor. */
+  type GenKind = "plan" | ScriptKind;
+
+  const aiOn = $derived(aiReady(settings.ai));
+  const planEndpoint = $derived(activeEndpoint(settings.ai));
+  // The per-recording AI action menu (plan / sh / ansible).
+  let aiMenuFor = $state<RecordingMeta | null>(null);
+  // Consent gate before a transcript is sent (redacted preview + endpoint).
+  let genConsent = $state<{ ctx: BuiltContext; kind: GenKind; rec: RecordingMeta } | null>(null);
+  // The streaming viewer (plan output, or script progress before it opens in the editor).
+  let planOpen = $state(false);
+  let planTitle = $state("");
+  let planText = $state("");
+  let planStreaming = $state(false);
+  let planError = $state<string | null>(null);
+  let genKind = $state<GenKind>("plan");
+  let planUnlisten: UnlistenFn[] = [];
+
+  const systemFor = (kind: GenKind): string =>
+    kind === "sh"
+      ? settings.ai.scriptShSystem
+      : kind === "ansible"
+        ? settings.ai.scriptAnsibleSystem
+        : settings.ai.runbookSystem;
+
+  function cleanupPlan() {
+    for (const u of planUnlisten) u();
+    planUnlisten = [];
+  }
+
+  /** Read a recording, redact its transcript, and open the consent dialog. */
+  async function startGen(rec: RecordingMeta, kind: GenKind) {
+    aiMenuFor = null;
+    try {
+      const transcript = extractTranscript(await readRecording(rec.path));
+      const ctx = buildRunbookContext(transcript);
+      if (!ctx.text) {
+        notifyError(t("recordings.planEmpty"));
+        return;
+      }
+      planTitle = rec.title || baseName(rec.path);
+      genConsent = { ctx, kind, rec };
+    } catch {
+      notifyError(t("recordings.planFailed"));
+    }
+  }
+
+  function confirmGen() {
+    const g = genConsent;
+    if (!g) return;
+    genConsent = null;
+    runGen(g.ctx.text, g.kind, g.rec);
+  }
+
+  /** Stream the artifact from the AI broker; scripts open in the editor when done. */
+  async function runGen(transcript: string, kind: GenKind, rec: RecordingMeta) {
+    planText = "";
+    planError = null;
+    planStreaming = true;
+    genKind = kind;
+    planOpen = true;
+    const streamId = crypto.randomUUID();
+    const req = buildChatRequest(
+      settings.ai,
+      streamId,
+      [{ role: "user", content: transcript }],
+      systemFor(kind),
+    );
+    if (!req) {
+      planError = t("ai.disabledHint");
+      planStreaming = false;
+      return;
+    }
+    const finish = () => {
+      planStreaming = false;
+      cleanupPlan();
+      // Scripts (sh/ansible) become an editor document; plans stay in the viewer.
+      if (kind !== "plan" && !planError && planText.trim()) {
+        onOpenScript?.(scriptFileName(rec.title || baseName(rec.path), kind), extractScript(planText, kind));
+        planOpen = false;
+      }
+    };
+    planUnlisten.push(
+      await listen<string>(`ai://out/${streamId}`, (e) => (planText += e.payload)),
+    );
+    planUnlisten.push(await listen(`ai://done/${streamId}`, finish));
+    planUnlisten.push(
+      await listen<string>(`ai://error/${streamId}`, (e) => {
+        planError = e.payload || t("ai.errorGeneric");
+        finish();
+      }),
+    );
+    try {
+      await aiChat(req);
+    } catch (e) {
+      if (planStreaming) {
+        planError = e instanceof Error ? e.message : String(e);
+        finish();
+      }
+    }
+  }
+
+  function closePlan() {
+    planOpen = false;
+    cleanupPlan();
+  }
+
+  onDestroy(cleanupPlan);
 
   /** Click a column: add (asc) → flip to desc → remove, preserving priority order. */
   function cycleSort(key: RecordingSortKey) {
@@ -296,6 +424,18 @@
             </div>
           </div>
           <div class="flex shrink-0 items-center gap-1">
+            {#if aiOn}
+              <button
+                type="button"
+                data-testid="rec-ai"
+                onclick={() => (aiMenuFor = rec)}
+                title={t("recordings.ai")}
+                aria-label={t("recordings.ai")}
+                class="rounded p-0.5 text-muted hover:text-accent"
+              >
+                <Icon name="sparkles" size={14} />
+              </button>
+            {/if}
             <button
               type="button"
               onclick={() => play(rec)}
@@ -352,6 +492,86 @@
     })}
   {/if}
 </ConfirmDialog>
+
+<!-- AI action chooser for a recording: plan / shell script / Ansible playbook.
+     Same look as the export-format chooser below. -->
+<Modal
+  open={aiMenuFor !== null}
+  width="w-80"
+  title={t("recordings.ai")}
+  onclose={() => (aiMenuFor = null)}
+>
+  <div class="flex flex-col gap-1">
+    <button
+      type="button"
+      data-testid="rec-gen-plan"
+      onclick={() => aiMenuFor && startGen(aiMenuFor, "plan")}
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+    >
+      {t("recordings.genPlan")}
+    </button>
+    <button
+      type="button"
+      data-testid="rec-gen-sh"
+      onclick={() => aiMenuFor && startGen(aiMenuFor, "sh")}
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+    >
+      {t("recordings.genSh")}
+    </button>
+    <button
+      type="button"
+      data-testid="rec-gen-ansible"
+      onclick={() => aiMenuFor && startGen(aiMenuFor, "ansible")}
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+    >
+      {t("recordings.genAnsible")}
+    </button>
+  </div>
+</Modal>
+
+{#if genConsent && planEndpoint}
+  <AiConsentDialog
+    open
+    context={genConsent.ctx}
+    endpointName={planEndpoint.name}
+    endpointUrl={planEndpoint.baseUrl}
+    onconfirm={confirmGen}
+    oncancel={() => (genConsent = null)}
+  />
+{/if}
+
+<Modal open={planOpen} title={t("recordings.planTitle")} width="w-[42rem]" onclose={closePlan}>
+  <div class="flex items-center justify-between gap-2 border-b border-edge pb-2">
+    <span class="truncate text-xs text-muted" title={planTitle}>{planTitle}</span>
+    <div class="flex items-center gap-2">
+      {#if planStreaming}
+        <span class="text-[11px] text-muted">{t("recordings.planStreaming")}</span>
+      {/if}
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:text-white disabled:opacity-50"
+        disabled={!planText}
+        onclick={() => {
+          writeClipboard(planText);
+          notifySuccess(t("ai.exec.copied"));
+        }}
+      >
+        <Icon name="copy" size={12} />
+        {t("ai.exec.copy")}
+      </button>
+    </div>
+  </div>
+  <div class="mt-2 max-h-[60vh] overflow-auto text-sm" data-testid="rec-plan-view">
+    {#if planError}
+      <p class="text-[12px] text-danger">{planError}</p>
+    {:else if !planText && planStreaming}
+      <p class="py-6 text-center text-[11px] text-muted">{t("recordings.planStreaming")}</p>
+    {:else}
+      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+      <div class="markdown-preview">{@html renderMarkdown(planText)}</div>
+    {/if}
+  </div>
+</Modal>
 
 <RecordingSaveDialog
   open={editRec !== null}

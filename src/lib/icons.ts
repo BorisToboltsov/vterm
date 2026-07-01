@@ -28,6 +28,9 @@ export const ICONS = {
     '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  // Attach session context to the AI chat — a paperclip.
+  paperclip:
+    '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
   trash:
     '<path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -47,6 +50,8 @@ export const ICONS = {
   copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="1"/><path d="M3 9h18M3 14h18M9 4v16"/>',
   play: '<path d="M7 5v14l11-7z"/>',
+  // Stop — a filled square (halts an in-flight AI request).
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
   chevronsLeft: '<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>',
   chevronsRight: '<path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>',
@@ -93,6 +98,9 @@ export const ICONS = {
   // Kernel — a terminal/console window.
   terminal:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+  // AI assistant — sparkles.
+  sparkles:
+    '<path d="M11 3l1.6 4.4L17 9l-4.4 1.6L11 15l-1.6-4.4L5 9l4.4-1.6z"/><path d="M18 13l.9 2.1 2.1.9-2.1.9L18 19l-.9-2.1-2.1-.9 2.1-.9z"/>',
 
   // OS family marks for the status bar (line style, matching the icon set).
   osApple:

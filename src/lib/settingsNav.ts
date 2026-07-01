@@ -36,6 +36,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
   { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
   { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
+  { id: "ai", keywords: "AI assistant LLM chat model endpoint api key qwen ollama vllm claude anthropic openai prod ИИ ассистент чат модель эндпоинт ключ помощник нейросеть" },
 ];
 
 // Sidebar groups. Every section id appears in exactly one group (guarded by a test).
@@ -46,6 +47,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "connection", icon: "plug", sections: ["connection", "security"] },
   { id: "files", icon: "code", sections: ["sftp", "editor", "snippets"] },
   { id: "sessions", icon: "activity", sections: ["recording", "statusbar", "servertools"] },
+  { id: "assistant", icon: "sparkles", sections: ["ai"] },
 ];
 
 export const DEFAULT_SETTINGS_GROUP = SETTINGS_GROUPS[0].id;

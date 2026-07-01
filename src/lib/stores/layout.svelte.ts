@@ -10,6 +10,9 @@ export const LEFT_MAX = 560;
 export const SFTP_MIN = 240;
 export const SFTP_MAX = 720;
 
+/** Which tab the right dock shows (Phase 17.2: SFTP/files vs AI chat). */
+export type DockTab = "files" | "ai";
+
 /** Clamp `v` into the inclusive `[lo, hi]` range. */
 export const clamp = (v: number, lo: number, hi: number): number =>
   Math.max(lo, Math.min(hi, v));
@@ -19,6 +22,8 @@ export interface Layout {
   leftCollapsed: boolean;
   sftpWidth: number;
   sftpCollapsed: boolean;
+  /** Active right-dock tab (persisted). */
+  dockTab: DockTab;
 }
 
 const STORAGE_KEY = "vterm.layout";
@@ -28,6 +33,7 @@ const DEFAULTS: Layout = {
   leftCollapsed: false,
   sftpWidth: 384,
   sftpCollapsed: true,
+  dockTab: "files",
 };
 
 function load(): Layout {
@@ -45,6 +51,7 @@ function load(): Layout {
           : DEFAULTS.sftpWidth,
       // Not persisted — always starts collapsed.
       sftpCollapsed: true,
+      dockTab: raw.dockTab === "ai" ? "ai" : "files",
     };
   } catch {
     return { ...DEFAULTS };
@@ -65,6 +72,7 @@ $effect.root(() => {
       leftWidth: layout.leftWidth,
       leftCollapsed: layout.leftCollapsed,
       sftpWidth: layout.sftpWidth,
+      dockTab: layout.dockTab,
     });
     try {
       localStorage.setItem(STORAGE_KEY, data);

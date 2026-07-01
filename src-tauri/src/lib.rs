@@ -1,3 +1,4 @@
+mod ai;
 mod backup;
 mod error;
 mod localfile;
@@ -99,6 +100,7 @@ fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResult<Se
         group: profile.group,
         tags: profile.tags,
         auto_record: profile.auto_record,
+        no_ai: profile.no_ai,
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -128,6 +130,7 @@ fn update_server(
                 server.group = profile.group;
                 server.tags = profile.tags;
                 server.auto_record = profile.auto_record;
+                server.no_ai = profile.no_ai;
             }
             None => return Err(AppError::UnknownServer),
         }
@@ -152,6 +155,18 @@ async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<()> 
     // Drop any live session for this server (Drop closes the connection).
     state.sessions.lock().await.remove(&id);
     Ok(())
+}
+
+/// Store an AI endpoint's API key in the keychain (Phase 17). Never logged.
+#[tauri::command]
+fn set_ai_key(endpoint_id: String, key: String) -> AppResult<()> {
+    secrets::set_ai_key(&endpoint_id, &key)
+}
+
+/// Forget an AI endpoint's API key (on key clear or endpoint removal).
+#[tauri::command]
+fn forget_ai_key(endpoint_id: String) -> AppResult<()> {
+    secrets::delete_ai_key(&endpoint_id)
 }
 
 /// Forget any stored password/passphrase for a server.
@@ -2770,7 +2785,11 @@ pub fn run() {
             set_recording_meta,
             read_recording,
             export_recording,
-            import_recording
+            import_recording,
+            ai::ai_chat,
+            ai::cancel_ai_chat,
+            set_ai_key,
+            forget_ai_key
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

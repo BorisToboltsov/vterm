@@ -138,6 +138,7 @@ mod tests {
             group: Some("Prod".into()),
             tags: vec!["web".into()],
             auto_record: false,
+            no_ai: false,
         }
     }
 

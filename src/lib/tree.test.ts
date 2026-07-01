@@ -22,6 +22,7 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     group: null,
     tags: [],
     autoRecord: false,
+    noAi: false,
     ...p,
   };
 }

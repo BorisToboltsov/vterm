@@ -9,6 +9,7 @@ import {
   workspacesState,
   getWorkspace,
   addEditor,
+  addScratchEditor,
   fillEditor,
   failEditor,
   setEditorContent,
@@ -103,6 +104,17 @@ describe("store mutators", () => {
   it("addEditor records a local source when given", () => {
     const id = addEditor("s1", "/home/me/n.md", "n.md", LANG, "local");
     expect(getWorkspace("s1").editors.find((e) => e.id === id)?.source).toBe("local");
+  });
+
+  it("addScratchEditor opens a filled, dirty, new doc and activates it", () => {
+    const id = addScratchEditor("s1", "runbook.sh", LANG, "#!/bin/sh\nls", "sftp");
+    const d = getWorkspace("s1").editors.find((e) => e.id === id)!;
+    expect(getWorkspace("s1").active).toBe(id);
+    expect(d.loading).toBe(false);
+    expect(d.content).toBe("#!/bin/sh\nls");
+    expect(d.baseContent).toBe(""); // dirty — nothing saved yet
+    expect(d.baseSha256).toBe(""); // marks a new file
+    expect(isDirty(d)).toBe(true);
   });
 
   it("fillEditor loads content and clears dirty; setEditorContent makes it dirty", () => {

@@ -24,11 +24,14 @@
     width = 384,
     collapsed = $bindable(false),
     animateWidth = true,
+    embedded = false,
     onOpenFile,
   }: {
     width?: number;
     collapsed?: boolean;
     animateWidth?: boolean;
+    /** Render content-only (Phase 17.2): the shared RightDock owns collapse/tabs. */
+    embedded?: boolean;
     onOpenFile?: (path: string) => void;
   } = $props();
 
@@ -161,12 +164,14 @@
 </script>
 
 <div
-  style="width: {collapsed ? COLLAPSED_W : width}px"
-  class="relative flex h-full shrink-0 flex-col overflow-hidden border-l border-edge bg-panel-alt {animateWidth
+  style={embedded ? "" : `width: ${collapsed ? COLLAPSED_W : width}px`}
+  class="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-panel-alt {embedded
+    ? ''
+    : 'border-l border-edge'} {!embedded && animateWidth
     ? 'transition-[width] duration-200 ease-out'
     : ''}"
 >
-  {#if collapsed}
+  {#if !embedded && collapsed}
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
@@ -181,17 +186,22 @@
       </span>
     </div>
   {:else}
-    <div class="absolute inset-y-0 right-0 flex flex-col" style="width: {width}px">
+    <div
+      class={embedded ? "flex h-full min-h-0 flex-col" : "absolute inset-y-0 right-0 flex flex-col"}
+      style={embedded ? "" : `width: ${width}px`}
+    >
       <!-- Toolbar -->
       <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
-        <button
-          class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-          title={t("localfiles.collapsePanel")}
-          aria-label={t("localfiles.collapsePanel")}
-          onclick={() => (collapsed = true)}
-        >
-          <Icon name="chevronRight" size={16} />
-        </button>
+        {#if !embedded}
+          <button
+            class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+            title={t("localfiles.collapsePanel")}
+            aria-label={t("localfiles.collapsePanel")}
+            onclick={() => (collapsed = true)}
+          >
+            <Icon name="chevronRight" size={16} />
+          </button>
+        {/if}
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
           title={t("sftp.refresh")}

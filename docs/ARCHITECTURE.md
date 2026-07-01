@@ -637,6 +637,83 @@
   файлах, импортирующих функцию перевода — переименовывай (`themeDef`, `tcp`, `tr` и т.п.).
 
 
+## ИИ-ассистент (Фаза 17 — opt-in, выключен по умолчанию)
+
+Полный план и зафиксированные решения — в [ROADMAP.md](ROADMAP.md) «Фаза 17». Как устроено сейчас
+(17.1–17.7):
+
+- **Офлайн-инвариант сохранён через бэкенд.** Весь LLM-трафик идёт из Rust
+  ([ai.rs](../src-tauri/src/ai.rs), `reqwest`/rustls), **никогда из WebView**, поэтому CSP остаётся
+  строгим, а фронт-гейт `autonomy.guard` — зелёным. Включается только мастер-выключателем
+  (`settings.ai.enabled`, off по умолчанию); зашитых облачных эндпоинтов нет — только
+  пользовательские (см. [INVARIANTS.md](INVARIANTS.md), [SECURITY.md](../SECURITY.md)).
+- **Брокер и адаптеры.** `ai.rs` — команда `ai_chat`, стрим токенов через `ai://out/{id}` →
+  `ai://done/{id}` / `ai://error/{id}`. Адаптеры: **openai-compatible** (`/chat/completions` —
+  Ollama/vLLM/локальный Qwen/OpenAI) и **anthropic** (`/v1/messages`). Чистые экстракторы дельт
+  `openai_delta`/`anthropic_delta`/`anthropic_done` (тестируются без сети). Новый провайдер =
+  новый адаптер + экстрактор, не отдельный канал.
+- **Конфиг — чистый.** [ai.ts](../src/lib/ai.ts) (`AiProvider`/`AiEndpoint`/`AiSettings`, санитайз,
+  `activeEndpoint`/`aiReady`/`buildChatRequest`) в `settings.ai`. **Системные промты редактируемы**
+  (`chatSystem`/`runbookSystem`, дефолты `DEFAULT_CHAT_SYSTEM`/`DEFAULT_RUNBOOK_SYSTEM`; пустое поле
+  санитайзится в дефолт) — правятся в `AiSettingsSection`, используются `AiChat`/`RecordingsPanel`.
+  **Ключи API — только в keychain**
+  (`vterm:ai-key`, команды `set_ai_key`/`forget_ai_key`), никогда в настройках/логах/файлах.
+  Обёртки — [api.ts](../src/lib/api.ts) (`aiChat`/`setAiKey`/`forgetAiKey`).
+- **UI.** Секция настроек [AiSettingsSection.svelte](../src/lib/AiSettingsSection.svelte) (группа
+  «Ассистент»: мастер-выключатель, эндпоинты, контракт вывода markdown/tools, режим исполнения
+  suggest/confirm/auto, контекст). Чат — вкладка в едином правом доке
+  [RightDock.svelte](../src/lib/RightDock.svelte) (вкладки «SFTP»/«ИИ»; содержимое чата —
+  [AiChat.svelte](../src/lib/AiChat.svelte), content-only).
+- **Контекст сессии — manual-first, чистый, с согласием (17.3).** Сбор контекста импурный
+  (`Terminal.selectionText()`/`bufferText()`, `extractTranscript` записи, `fetchMetrics` метаданных)
+  и живёт в `+page` (`gatherAiContext`); **чистые** части — [redact.ts](../src/lib/redact.ts)
+  (маскирование секретов маркером `‹redacted›`, **тем же**, что в [recording.rs](../src-tauri/src/recording.rs))
+  и [aicontext.ts](../src/lib/aicontext.ts) (`buildContext` по уровням selection/buffer/recording/
+  metadata + `withContext`). Перед отправкой — [AiConsentDialog.svelte](../src/lib/AiConsentDialog.svelte)
+  («N строк → эндпоинт» + предпросмотр замаскированного текста). **RULE:** контекст не покидает
+  машину без редакции и явного согласия — даже на локальный эндпоинт.
+- **Исполнитель — чистый парсер + тонкий эффект (17.4).** [aiexec.ts](../src/lib/aiexec.ts)
+  (`parseChatSegments` разбивает ответ на text/code-сегменты с языком fence и `runnable`/`closed`;
+  `isRunnableLang`, `toTerminalInput`, `auditLabel`, `isProdServer`) — вся логика без DOM. `AiChat`
+  рендерит по сегментам и на «Выполнить»/авто зовёт `writeToTerminal` (+`\n`) и `annotateRecording`
+  (аудит в запись). Режимы `suggest`/`confirm`/`auto` из `settings.ai.execMode`; **auto — только
+  не-прод** (`aiProd` из `+page` через тег `prod`; полноценный флаг сервера `noAi` — в 17.7).
+  **RULE:** авто-исполнение никогда не запускается на прод-сервере.
+- **План-runbook из записи (17.5).** Чистый [airunbook.ts](../src/lib/airunbook.ts)
+  (`buildRunbookContext` — редакция транскрипта + форма `BuiltContext` для переиспользования
+  консент-диалога). Инструкция — **единый редактируемый** системный промт `runbookSystem`
+  (дефолт `DEFAULT_RUNBOOK_SYSTEM`); в `user`-сообщение идёт только сам транскрипт, без обёртки.
+  `RecordingsPanel` (меню ✨) берёт запись → `extractTranscript` → согласие → стрим `ai://…/{id}` в
+  модалку-просмотрщик. Тот же контракт событий/`buildChatRequest`, что и чат — не отдельный канал.
+- **Скрипты `sh`/Ansible из записи (17.6).** То же меню ✨ генерит скрипт; чистый
+  [aiscript.ts](../src/lib/aiscript.ts) (`extractScript` вытаскивает код из ответа модели,
+  `scriptFileName` — имя с `.sh`/`.yml`) отдаёт его в редактор через `addScratchEditor`
+  ([workspaces](../src/lib/stores/workspaces.svelte.ts)) — заполненный «новый» док без файла на
+  диске. На SSH-вкладке это `sftp`-док, и `lint_remote` линтит **буфер** (shellcheck/yamllint), не
+  требуя сохранения. Промты генераторов редактируемы (`scriptShSystem`/`scriptAnsibleSystem`).
+- **Прод-защита (17.7).** Флаг сервера `no_ai`/`noAi` ([model.rs](../src-tauri/src/model.rs) →
+  [types.ts](../src/lib/types.ts), `#[serde(default)]`) с чекбоксом в мастере сервера. `+page`
+  выводит `aiNoAi` для активного сервера → `RightDock` → `AiChat`, который на `noAi` **блокирует**
+  контекст (`canAttach=false`), исполнение (`canExecute=false`, guard в `runCommand`/`autoRun`) и
+  показывает плашку. **RULE:** на `noAi`-сервере ассистент не получает контекст и не выполняет команд.
+- **Диалог + стрим чата — по сессии, в сторе.** Переписка, отметки выполненных команд, флаг
+  `streaming` и `error` живут в [stores/aichat.svelte.ts](../src/lib/stores/aichat.svelte.ts)
+  (`getChat`/`clearChat`/`removeChat` + сервис `startChat`/`runCommand`), ключ — `sessionId`.
+  **Слушатели `ai://out|done|error/{id}` регистрируются на уровне модуля, а не компонента**, поэтому
+  ответ продолжает наполнять слот сессии, даже когда её вкладка ушла в фон (`AiChat` при переключении
+  размонтируется). `AiChat` — тонкое реактивное представление активного слота: рендерит и вызывает
+  `startChat`/`stopChat`/`runCommand`; ввод/согласие/скролл остаются локальным транзиентным
+  состоянием. Диалог сбрасывается только по «Очистить» или при закрытии вкладки (`closeTabFully` →
+  `removeChat`, рядом с `removeWorkspace`, что также снимает активные слушатели). Авто-исполнение по
+  `done` тоже живёт в сервисе (с захваченными `execMode`/`prod`/`noAi`), поэтому срабатывает и при
+  фоновом завершении. **Остановка (кнопка-квадрат):** `stopChat` зовёт команду
+  `cancel_ai_chat(streamId)` ([ai.rs](../src-tauri/src/ai.rs) держит реестр `Notify` на каждый стрим;
+  `tokio::select!` роняет `run_chat`, обрывая reqwest-поток, и это трактуется как штатная остановка —
+  `ai://done`), снимает слушатели и флаг `streaming`; уже полученный текст сохраняется.
+- **RULE:** весь HTTP к LLM живёт в `ai.rs` (никогда во фронте) — это держит офлайн-гейт зелёным.
+  Содержимое панелей (`SftpPanel`/`LocalFilePanel`/`AiChat`) — content-only (проп `embedded`);
+  обвязка дока (свернуть/вкладки) живёт только в `RightDock`.
+
 ---
 
 ## Обзор кода: стек, диаграмма, структура каталогов

@@ -1,6 +1,11 @@
-// Autonomy guard (Phase 6.2): vterm must be fully offline except outbound SSH to
-// the user's own servers. This test scans the frontend source for runtime network
-// access (HTTP/WebSocket/CDN/telemetry) and fails if any is introduced.
+// Autonomy guard (Phase 6.2): vterm is offline except outbound SSH to the user's
+// own servers and — when the opt-in AI assistant is enabled (Phase 17) — outbound
+// to the user-configured LLM endpoint. This test scans the FRONTEND source for
+// runtime network access (HTTP/WebSocket/CDN/telemetry) and fails if any is
+// introduced. The AI exception lives entirely in the Rust backend (ai.rs, reqwest)
+// so the WebView CSP stays strict and the frontend still makes zero network calls —
+// hence this guard remains green. There are no hardcoded cloud endpoints: every AI
+// endpoint is user-configured and AI is disabled by default (see ai.ts).
 //
 // Allowed: external links opened via the Tauri opener on an explicit user action
 // (HelpPanel "About"), and bundled @fontsource fonts (no network at runtime).

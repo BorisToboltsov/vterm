@@ -12,6 +12,8 @@ use zeroize::Zeroizing;
 
 const PASSWORD_SERVICE: &str = "vterm:password";
 const PASSPHRASE_SERVICE: &str = "vterm:passphrase";
+/// AI endpoint API key, keyed by endpoint id (Phase 17). Never logged.
+const AI_KEY_SERVICE: &str = "vterm:ai-key";
 
 /// Read a secret, wrapped in `Zeroizing` so vterm's in-memory copy is wiped on
 /// drop (the keychain remains the authoritative store).
@@ -58,6 +60,18 @@ pub fn set_passphrase(id: &str, value: &str) -> AppResult<()> {
 }
 pub fn delete_passphrase(id: &str) -> AppResult<()> {
     delete(PASSPHRASE_SERVICE, id)
+}
+
+// ── AI endpoint API key (Phase 17) ──────────────────────────────────────────────
+
+pub fn get_ai_key(id: &str) -> Option<Zeroizing<String>> {
+    read(AI_KEY_SERVICE, id)
+}
+pub fn set_ai_key(id: &str, value: &str) -> AppResult<()> {
+    write(AI_KEY_SERVICE, id, value)
+}
+pub fn delete_ai_key(id: &str) -> AppResult<()> {
+    delete(AI_KEY_SERVICE, id)
 }
 
 /// Remove all secrets for a server (used when the profile is deleted).

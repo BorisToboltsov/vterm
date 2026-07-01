@@ -2,6 +2,7 @@
 // so the UI never deals with command-name strings directly.
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import type { AiChatRequest } from "./ai";
 import type {
   FileEntry,
   NewServerProfile,
@@ -823,4 +824,28 @@ export async function pickRecordingFile(): Promise<string | null> {
     filters: [{ name: "asciicast", extensions: ["cast"] }],
   });
   return typeof res === "string" ? res : null;
+}
+
+// ── AI assistant (Phase 17, opt-in) ─────────────────────────────────────────────
+// All LLM HTTP happens in the Rust broker; the frontend only invokes a command and
+// listens on `ai://out|done|error/{streamId}` events. Keys live in the keychain.
+
+/** Start a streaming chat; tokens arrive on `ai://out/{streamId}` events. */
+export function aiChat(req: AiChatRequest): Promise<void> {
+  return invoke<void>("ai_chat", { req });
+}
+
+/** Stop an in-flight chat stream (the chat's Stop button). No-op if already done. */
+export function cancelAiChat(streamId: string): Promise<void> {
+  return invoke<void>("cancel_ai_chat", { streamId });
+}
+
+/** Store an AI endpoint's API key in the OS keychain. */
+export function setAiKey(endpointId: string, key: string): Promise<void> {
+  return invoke<void>("set_ai_key", { endpointId, key });
+}
+
+/** Forget an AI endpoint's API key (on clear or endpoint removal). */
+export function forgetAiKey(endpointId: string): Promise<void> {
+  return invoke<void>("forget_ai_key", { endpointId });
 }

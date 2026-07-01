@@ -37,6 +37,11 @@ pub struct ServerProfile {
     /// (e.g. for production servers — an audit trail of every session).
     #[serde(default)]
     pub auto_record: bool,
+    /// Mark this server off-limits to the AI assistant: the frontend blocks
+    /// attaching session context, executing proposed commands, and auto-run
+    /// (Phase 17.7 — production safety).
+    #[serde(default)]
+    pub no_ai: bool,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -57,6 +62,8 @@ pub struct NewServerProfile {
     pub tags: Vec<String>,
     #[serde(default)]
     pub auto_record: bool,
+    #[serde(default)]
+    pub no_ai: bool,
 }
 
 #[cfg(test)]
@@ -87,6 +94,7 @@ mod tests {
             group: Some("Prod/EU".into()),
             tags: vec!["web".into(), "eu".into()],
             auto_record: true,
+            no_ai: true,
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
@@ -94,12 +102,14 @@ mod tests {
         assert!(json.contains("\"keyPath\""));
         assert!(json.contains("\"hasSavedPassword\":true"));
         assert!(json.contains("\"autoRecord\":true"));
+        assert!(json.contains("\"noAi\":true"));
         let back: ServerProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "srv-1");
         assert_eq!(back.port, 2222);
         assert_eq!(back.auth_method, AuthMethod::Key);
         assert_eq!(back.tags, vec!["web", "eu"]);
         assert!(back.auto_record);
+        assert!(back.no_ai);
     }
 
     #[test]
@@ -119,6 +129,7 @@ mod tests {
         assert_eq!(p.group, None);
         assert!(p.tags.is_empty());
         assert!(!p.auto_record); // legacy profiles default to off
+        assert!(!p.no_ai); // legacy profiles default to AI-allowed
     }
 
     #[test]

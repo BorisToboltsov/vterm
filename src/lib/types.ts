@@ -19,6 +19,8 @@ export interface ServerProfile {
   tags: string[];
   /** Auto-start recording whenever a session to this server connects. */
   autoRecord: boolean;
+  /** Mark off-limits to the AI assistant (blocks context/execution/auto). */
+  noAi: boolean;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -74,6 +76,7 @@ export interface NewServerProfile {
   group: string | null;
   tags: string[];
   autoRecord: boolean;
+  noAi: boolean;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

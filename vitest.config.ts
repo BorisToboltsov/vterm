@@ -56,6 +56,11 @@ export default defineConfig({
         // Server-tools install helper — thin shells over the api + native flows.
         "src/lib/ServerToolsPanel.svelte",
         "src/lib/ToolInstallDialog.svelte",
+        // AI assistant settings — thin shell over settings.ai + keychain api (Phase 17).
+        "src/lib/AiSettingsSection.svelte",
+        // AI chat dock — event-stream glue over the broker (Phase 17.2).
+        "src/lib/AiChat.svelte",
+        "src/lib/RightDock.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

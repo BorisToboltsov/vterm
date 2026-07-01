@@ -12,6 +12,7 @@ import {
 } from "./themes";
 import { DEFAULT_LOCALE, isLocale, type Locale } from "./i18n/locales";
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
+import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type BellStyle = "none" | "sound" | "visual";
@@ -166,6 +167,8 @@ export interface Settings {
   sftp: SftpSettings;
   // Security
   hostKeyPolicy: HostKeyPolicy;
+  // AI assistant (Phase 17, opt-in)
+  ai: AiSettings;
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
@@ -270,6 +273,7 @@ const DEFAULTS: Settings = {
   snippets: defaultSnippets(),
   sftp: { maxOpenMb: 2 },
   hostKeyPolicy: "ask",
+  ai: defaultAiSettings(),
 };
 
 /** Clamp the editor open-size setting to a sane positive range (1…limit MB). */
@@ -355,6 +359,7 @@ function load(): Settings {
       editor: { ...DEFAULTS.editor, ...(raw.editor ?? {}) },
       snippets: "snippets" in raw ? sanitizeSnippets(raw.snippets) : defaultSnippets(),
       sftp: { maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb) },
+      ai: sanitizeAiSettings(raw.ai),
     };
   } catch {
     return {
@@ -368,6 +373,7 @@ function load(): Settings {
       editor: { ...DEFAULTS.editor },
       snippets: defaultSnippets(),
       sftp: { ...DEFAULTS.sftp },
+      ai: defaultAiSettings(),
     };
   }
 }
@@ -416,6 +422,7 @@ export function applyImportedSettings(raw: unknown): void {
     editor: { ...DEFAULTS.editor },
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
+    ai: defaultAiSettings(),
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -428,6 +435,7 @@ export function applyImportedSettings(raw: unknown): void {
     "editor",
     "snippets",
     "sftp",
+    "ai",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -464,6 +472,9 @@ export function applyImportedSettings(raw: unknown): void {
   }
   if (r.sftp && typeof r.sftp === "object") {
     next.sftp = { maxOpenMb: clampMaxOpenMb((r.sftp as Partial<SftpSettings>).maxOpenMb) };
+  }
+  if (r.ai !== undefined) {
+    next.ai = sanitizeAiSettings(r.ai);
   }
   Object.assign(settings, next);
 }

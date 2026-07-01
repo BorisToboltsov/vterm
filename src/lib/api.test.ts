@@ -25,6 +25,23 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("list_servers");
   });
 
+  it("AI wrappers (Phase 17): aiChat / setAiKey / forgetAiKey", async () => {
+    const req = {
+      streamId: "s1",
+      endpointId: "e1",
+      provider: "openai" as const,
+      baseUrl: "http://h/v1",
+      model: "qwen",
+      messages: [{ role: "user" as const, content: "hi" }],
+    };
+    await api.aiChat(req);
+    expect(invoke).toHaveBeenCalledWith("ai_chat", { req });
+    await api.setAiKey("e1", "sk-x");
+    expect(invoke).toHaveBeenCalledWith("set_ai_key", { endpointId: "e1", key: "sk-x" });
+    await api.forgetAiKey("e1");
+    expect(invoke).toHaveBeenCalledWith("forget_ai_key", { endpointId: "e1" });
+  });
+
   it("addServer / updateServer / deleteServer", async () => {
     const profile = { alias: "a" } as never;
     await api.addServer(profile);

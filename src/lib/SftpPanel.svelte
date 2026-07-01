@@ -35,6 +35,7 @@
     collapsed = $bindable(false),
     sessionReady = false,
     animateWidth = true,
+    embedded = false,
     onOpenFile,
   }: {
     sessionId: string;
@@ -46,6 +47,8 @@
     sessionReady?: boolean;
     /** Animate width changes (collapse). Disabled while the user drags-resizes. */
     animateWidth?: boolean;
+    /** Render content-only (Phase 17.2): the shared RightDock owns collapse/tabs. */
+    embedded?: boolean;
     /** Open a file in the in-app editor (optionally jumping to a line, e.g. grep). */
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
   } = $props();
@@ -269,12 +272,14 @@
 </script>
 
 <div
-  style="width: {collapsed ? COLLAPSED_W : width}px"
-  class="relative flex h-full shrink-0 flex-col overflow-hidden border-l border-edge bg-panel-alt {animateWidth
+  style={embedded ? "" : `width: ${collapsed ? COLLAPSED_W : width}px`}
+  class="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-panel-alt {embedded
+    ? ''
+    : 'border-l border-edge'} {!embedded && animateWidth
     ? 'transition-[width] duration-200 ease-out'
     : ''} {dragOver ? 'ring-2 ring-inset ring-accent' : ''}"
 >
-  {#if collapsed}
+  {#if !embedded && collapsed}
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
@@ -298,17 +303,22 @@
          oversized static flex child, which flickered past the left edge over the
          terminal). The content stays visually stationary and the moving left border
          simply reveals it (clip) — content and border stay perfectly in sync. -->
-    <div class="absolute inset-y-0 right-0 flex flex-col" style="width: {width}px">
+    <div
+      class={embedded ? "flex h-full min-h-0 flex-col" : "absolute inset-y-0 right-0 flex flex-col"}
+      style={embedded ? "" : `width: ${width}px`}
+    >
     <!-- Toolbar -->
     <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
-      <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title={t("sftp.collapsePanel")}
-        aria-label={t("sftp.collapsePanel")}
-        onclick={() => (collapsed = true)}
-      >
-        <Icon name="chevronRight" size={16} />
-      </button>
+      {#if !embedded}
+        <button
+          class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+          title={t("sftp.collapsePanel")}
+          aria-label={t("sftp.collapsePanel")}
+          onclick={() => (collapsed = true)}
+        >
+          <Icon name="chevronRight" size={16} />
+        </button>
+      {/if}
       {#if connected}
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

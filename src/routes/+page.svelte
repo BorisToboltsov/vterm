@@ -58,8 +58,7 @@
   import TerminalView from "$lib/Terminal.svelte";
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
-  import SftpPanel from "$lib/SftpPanel.svelte";
-  import LocalFilePanel from "$lib/LocalFilePanel.svelte";
+  import RightDock from "$lib/RightDock.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
   import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
@@ -69,6 +68,7 @@
   import {
     getWorkspace,
     addEditor,
+    addScratchEditor,
     fillEditor,
     closeEditor as closeEditorStore,
     setActiveView,
@@ -80,6 +80,7 @@
     TERMINAL_VIEW,
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
+  import { removeChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
@@ -117,7 +118,11 @@
     deleteRecording,
     annotateRecording,
     fetchMetrics,
+    readRecording,
   } from "$lib/api";
+  import { extractTranscript } from "$lib/recording";
+  import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
+  import { isProdServer } from "$lib/aiexec";
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
@@ -138,8 +143,16 @@
 
   // Last-known terminal dimensions per session (for the recording header).
   const termDims = $state<Record<string, { cols: number; rows: number }>>({});
-  // Live terminal components per session, for reading the current prompt at REC start.
-  const termRefs: Record<string, { currentPromptLine?: () => string }> = {};
+  // Live terminal components per session, for reading the current prompt at REC
+  // start and for collecting AI context (selection / buffer) on demand.
+  const termRefs: Record<
+    string,
+    {
+      currentPromptLine?: () => string;
+      selectionText?: () => string;
+      bufferText?: (maxLines?: number) => string;
+    }
+  > = {};
   // Current SSH connection phase per session, driving the connecting overlay.
   const connPhase = $state<Record<string, ConnPhase>>({});
 
@@ -165,6 +178,7 @@
   let group = $state("");
   let tagsInput = $state("");
   let autoRecord = $state(false);
+  let noAi = $state(false);
 
   // Folders
   let folders = $state<string[]>([]);
@@ -185,6 +199,18 @@
   // Raw status drives logic (startsWith checks); localize only for the top bar.
   const status = $derived(localizedStatus(activeTab?.status ?? "Not connected"));
   const sftpReady = $derived(activeTab ? activeTab.status.startsWith("Connected") : false);
+  // Prod-flagged active server (by tag) → the AI assistant may not auto-execute (17.4).
+  const aiProd = $derived(
+    activeTab?.kind === "ssh"
+      ? isProdServer(servers.find((s) => s.id === activeTab.serverId)?.tags)
+      : false,
+  );
+  // `noAi`-flagged active server → AI context + execution are fully blocked (17.7).
+  const aiNoAi = $derived(
+    activeTab?.kind === "ssh"
+      ? servers.find((s) => s.id === activeTab.serverId)?.noAi === true
+      : false,
+  );
 
   /** Open the detailed monitoring overlay (needs a connected SSH session). */
   function openMonitoring() {
@@ -193,6 +219,56 @@
     } else {
       notifyError(t("page.monitoringNeedsSsh"));
     }
+  }
+
+  /**
+   * Collect the live session context the AI tab offers (Phase 17.3). Reads the
+   * terminal selection + buffer always; the recording transcript and host
+   * metadata only when their (opt-in) tiers are enabled — so the expensive
+   * recording read / metrics probe runs only when actually attached. All of it
+   * is redacted + shown in the consent dialog (in AiChat) before it is sent.
+   */
+  async function gatherAiContext(): Promise<RawContext> {
+    const id = tabsState.activeId;
+    if (!id) return {};
+    const ref = termRefs[id];
+    const raw: RawContext = {};
+    if (ref?.selectionText) raw.selection = ref.selectionText();
+    if (ref?.bufferText) {
+      raw.buffer = ref.bufferText();
+      raw.tail = ref.bufferText(DEFAULT_TAIL_LINES);
+    }
+    if (settings.ai.includeRecording) {
+      const path = recordingState[id];
+      if (path) {
+        try {
+          raw.recording = extractTranscript(await readRecording(path));
+        } catch {
+          /* recording unreadable — skip this tier */
+        }
+      }
+    }
+    if (settings.ai.includeMetadata) raw.metadata = await aiMetadataBlock(id);
+    return raw;
+  }
+
+  /** Host/session metadata block for the AI metadata tier (best-effort). */
+  async function aiMetadataBlock(id: string): Promise<string> {
+    const tab = findTab(id);
+    const lines: string[] = [];
+    const srv = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
+    if (srv) {
+      lines.push(`Host: ${srv.host}:${srv.port}`, `User: ${srv.username}`, `Alias: ${srv.alias}`);
+    } else if (tab) {
+      lines.push(`Session: ${recordingTitle(tab)}`);
+    }
+    try {
+      const m = await fetchMetrics(id);
+      lines.push(`OS: ${m.prettyName || m.os}`, `Hostname: ${m.hostname}`, `Kernel: ${m.kernel}`);
+    } catch {
+      /* metrics probe failed — keep profile-derived fields */
+    }
+    return lines.join("\n");
   }
 
   /** Title for a recording: the tab's server alias (or "Local shell"). */
@@ -413,8 +489,22 @@
       run: () => (layout.leftCollapsed = !layout.leftCollapsed) },
     { id: "act:toggle-sftp",
       title: layout.sftpCollapsed ? t("palette.showSftp") : t("palette.hideSftp"),
-      icon: "file", group: t("palette.groupActions"), keywords: "sftp panel toggle панель",
-      run: () => (layout.sftpCollapsed = !layout.sftpCollapsed) },
+      icon: "file", group: t("palette.groupActions"), keywords: "sftp files panel toggle панель файлы",
+      run: () => {
+        if (layout.sftpCollapsed) {
+          layout.dockTab = "files";
+          layout.sftpCollapsed = false;
+        } else {
+          layout.sftpCollapsed = true;
+        }
+      } },
+    { id: "act:toggle-ai",
+      title: t("palette.showAi"),
+      icon: "sparkles", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
+      run: () => {
+        layout.dockTab = "ai";
+        layout.sftpCollapsed = false;
+      } },
     { id: "act:new-local", title: t("palette.newLocalTerminal"), icon: "terminal",
       group: t("palette.groupActions"), keywords: "local terminal shell new локальный терминал новый",
       run: () => openLocalTab() },
@@ -719,9 +809,10 @@
     else closeTabFully(sessionId);
   }
 
-  /** Drop a tab and its workspace (open editors) together. */
+  /** Drop a tab and its workspace (open editors) + AI conversation together. */
   function closeTabFully(sessionId: string) {
     removeWorkspace(sessionId);
+    removeChat(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -828,6 +919,24 @@
     }
     const id = addEditor(sid, path, name, editorLangOrPlain(name), "local");
     fillEditor(sid, id, file);
+  }
+
+  /**
+   * Open an AI-generated script (17.6) as a scratch editor in the active
+   * workspace. On an SSH tab it opens as an sftp doc so the server-side linter
+   * (shellcheck/yamllint) runs on the buffer; on a local tab it opens locally
+   * (syntax lint only). Needs an active session to host the editor.
+   */
+  function openGeneratedScript(name: string, content: string) {
+    const sid = tabsState.activeId;
+    if (!sid || (activeTab?.kind !== "ssh" && activeTab?.kind !== "local")) {
+      notifyError(t("recordings.scriptNeedsSession"));
+      return;
+    }
+    const source = activeTab.kind === "ssh" ? "sftp" : "local";
+    const id = addScratchEditor(sid, name, editorLangOrPlain(name), content, source);
+    setActiveView(sid, id);
+    showRecordings = false;
   }
 
   // ── Server tools install helper (Phase 12.8) ────────────────────────────────
@@ -1050,6 +1159,7 @@
     group = prefillGroup;
     tagsInput = "";
     autoRecord = false;
+    noAi = false;
     showForm = true;
   }
 
@@ -1066,6 +1176,7 @@
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     autoRecord = server.autoRecord;
+    noAi = server.noAi;
     showForm = true;
   }
 
@@ -1102,6 +1213,7 @@
       group: group.trim() || null,
       tags,
       autoRecord,
+      noAi,
     };
     try {
       if (formMode === "edit" && editId) {
@@ -1448,26 +1560,23 @@
               ></div>
             {/if}
             {#key tabsState.activeId}
-              {#if activeTab?.kind === "ssh"}
-                <SftpPanel
-                  sessionId={tabsState.activeId}
-                  width={layout.sftpWidth}
-                  bind:collapsed={layout.sftpCollapsed}
-                  sessionReady={sftpReady}
-                  animateWidth={resizing !== "sftp"}
-                  onOpenFile={(path, name, gotoLine) =>
-                    openFileInEditor(path, name, { gotoLine })}
-                />
-              {:else}
-                <LocalFilePanel
-                  width={layout.sftpWidth}
-                  bind:collapsed={layout.sftpCollapsed}
-                  animateWidth={resizing !== "sftp"}
-                  onOpenFile={(path) => {
-                    if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
-                  }}
-                />
-              {/if}
+              <RightDock
+                width={layout.sftpWidth}
+                bind:collapsed={layout.sftpCollapsed}
+                bind:activeTab={layout.dockTab}
+                animateWidth={resizing !== "sftp"}
+                kind={activeTab?.kind === "ssh" ? "ssh" : "local"}
+                sessionId={tabsState.activeId}
+                sessionReady={sftpReady}
+                getAiContext={gatherAiContext}
+                {aiProd}
+                {aiNoAi}
+                onOpenFile={(path, name, gotoLine) =>
+                  openFileInEditor(path, name, { gotoLine })}
+                onOpenLocalFile={(path) => {
+                  if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
+                }}
+              />
             {/key}
           {/if}
         </div>
@@ -1870,6 +1979,12 @@
     </label>
     <p class="mb-2 text-[11px] text-muted">{t("page.autoRecordHint")}</p>
 
+    <label class="mb-2 flex items-center gap-2 text-xs text-text">
+      <input type="checkbox" data-testid="server-no-ai" bind:checked={noAi} />
+      {t("page.noAi")}
+    </label>
+    <p class="mb-2 text-[11px] text-muted">{t("page.noAiHint")}</p>
+
     <div class="mt-3 flex items-center gap-2">
       {#if formMode === "edit"}
         <button
@@ -1916,7 +2031,7 @@
 <CommandPalette bind:open={showPalette} commands={paletteCommands} />
 
 <!-- Session recordings library (Phase 11) -->
-<RecordingsPanel bind:open={showRecordings} />
+<RecordingsPanel bind:open={showRecordings} onOpenScript={openGeneratedScript} />
 
 <!-- Global non-blocking notifications -->
 <Toast />
