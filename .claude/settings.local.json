@@ -167,7 +167,24 @@
       "Bash(grep -n 'from \"$lib/stores\\\\|from \"\\\\./\\\\|from \"$lib' src/routes/+page.svelte)",
       "Bash(grep -nF '$state' src/routes/+page.svelte)",
       "Bash(grep -nF '$derived' src/routes/+page.svelte)",
-      "Bash(grep -nF '$effect' src/routes/+page.svelte)"
+      "Bash(grep -nF '$effect' src/routes/+page.svelte)",
+      "Bash(grep -n 'openTabStore\\\\|openTab\\\\b\\\\|from \"$lib/stores/tabs' src/routes/+page.svelte)",
+      "Bash(sed -i '' '690,700d' src/lib/SettingsPanel.svelte)",
+      "Bash(sed -i '' '69,91d' src/lib/SettingsPanel.svelte)",
+      "Bash(sed -i '' '564,576d' src/lib/SettingsPanel.svelte)",
+      "Bash(sed -i '' '61,115d' src/lib/SettingsPanel.svelte)",
+      "Bash(grep -rn \"lib.rs\\\\`.*fetch_metrics\\\\|METRICS_SCRIPT\\\\|DETAIL_SCRIPT\\\\|fetch_metrics\\\\|list_servers\\\\|add_server\\\\|api.ts\\\\|src/lib/api\" docs/ARCHITECTURE.md docs/INVARIANTS.md)",
+      "Bash(sed -i '' 's/\"version\": \"0.17.2\"/\"version\": \"0.18.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.17.2\"/version = \"0.18.0\"/' src-tauri/Cargo.toml)",
+      "Bash(cd /Users/boristoboltsov/project/project/vterm/src-tauri *)",
+      "Bash(git reset *)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(gh api *)",
+      "WebFetch(domain:crates.io)",
+      "WebFetch(domain:docs.rs)",
+      "Bash(gh release *)",
+      "WebFetch(domain:github.com)",
+      "Bash(REG=\"$HOME/.cargo/registry/src\"; find \"$REG\" -maxdepth 2 -type d \\\\\\( -name \"apple-native-keyring-store-*\" -o -name \"keyring-4.1.2\" -o -name \"keyring-core-*\" \\\\\\) 2>/dev/null)"
     ]
   }
 }

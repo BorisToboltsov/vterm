@@ -50,15 +50,29 @@ export function buildFeedback(command: string, result: AiExecResult): string {
 }
 
 // Obvious footguns — flagged so the loop forces confirmation even in auto dialog.
+// Best-effort, biased toward over-flagging (a false positive just forces a confirm):
+// this is NOT the security boundary — prod/noAi gating + consent + redaction are.
+// Phase 20.1 widened it against flag-form and obfuscation bypasses (long/split rm
+// flags, --no-preserve-root, find -delete/-exec rm, pipe-to-shell, base64/eval,
+// recursive chmod/chown on the filesystem root).
 const DANGEROUS: RegExp[] = [
-  /\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r/i, // rm -rf / rm -fr
+  /\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r/i, // rm -rf / rm -fr (combined flags)
   /\brm\s+-[a-z]*r[a-z]*\s+(\/|~|\*)/i, // rm -r on / ~ *
+  /\brm\s+-[a-z]*r[a-z]*\s+-[a-z]*f|\brm\s+-[a-z]*f[a-z]*\s+-[a-z]*r/i, // rm -r … -f (split flags)
+  /\brm\b[^\n]*--recursive\b/i, // rm --recursive … (long-form)
+  /\brm\b[^\n]*--no-preserve-root\b/i, // rm … --no-preserve-root
+  /\bfind\b[^\n]*\s-delete\b/i, // find … -delete
+  /\bfind\b[^\n]*-exec\s+rm\b/i, // find … -exec rm
   /\bmkfs\b/i,
   /\bdd\b\s+.*\bof=/i,
   /\b(shutdown|reboot|halt|poweroff)\b/i,
   /:\(\)\s*\{.*\};?\s*:/, // fork bomb :(){ :|:& };:
-  /\bchmod\s+-R\s+0*777\b/i,
+  /\bchmod\s+-R\s+0*777\b/i, // world-writable recursive
+  /\bch(mod|own)\s+-R\b[^\n|;&]*\s\/(\s|$)/i, // recursive chmod/chown on the filesystem root
   /(^|[^>])>>?\s*\/(etc|dev|sys|boot|usr|bin|sbin|proc)\b/i, // redirect into system paths
+  /\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh)\b/i, // piping opaque content into a shell (curl|sh)
+  /\bbase64\b[^\n]*(?:\s-[a-z]*d\b|--decode)/i, // base64 decode — obfuscated payloads
+  /\beval\b/i, // eval — arbitrary/obfuscated execution
 ];
 
 /** Whether a command looks destructive → require confirmation even in auto mode. */

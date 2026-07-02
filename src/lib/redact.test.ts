@@ -65,6 +65,34 @@ describe("redactSecrets", () => {
     expect(r.text).toBe(`Password: ${REDACTED}`);
   });
 
+  // Phase 20.2 — self-identifying tokens that leak outside a KEY= / Bearer context.
+  it("masks standalone self-identifying tokens", () => {
+    const cases: [string, string][] = [
+      // JWT (three base64url segments)
+      [
+        "token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+      ],
+      ["ghp_0123456789ABCDEFabcdef0123456789ABCD", "ghp_0123456789ABCDEFabcdef0123456789ABCD"],
+      ["github_pat_11ABCDEFG0123456789_abcdefghij", "github_pat_11ABCDEFG0123456789_abcdefghij"],
+      ["xoxb-123456789012-abcdefABCDEF12", "xoxb-123456789012-abcdefABCDEF12"],
+      ["sk_live_abcdEFGH1234567890", "sk_live_abcdEFGH1234567890"],
+      ["AIzaSyD1234567890abcdefghijklmnopqrstuv", "AIzaSyD1234567890abcdefghijklmnopqrstuv"],
+      ["ya29.a0AfB_1234567890abcdefghijklmnop", "ya29.a0AfB_1234567890abcdefghijklmnop"],
+    ];
+    for (const [input, secret] of cases) {
+      const r = redactSecrets(`found: ${input} end`);
+      expect(r.text, input).not.toContain(secret);
+      expect(r.text, input).toContain(REDACTED);
+    }
+  });
+
+  it("does not flag ordinary base64url-ish words as tokens", () => {
+    const t = "the review meeting is at noon; see notes.md and eyJson is not a token here x";
+    // "eyJson" has no dotted JWT structure → left alone.
+    expect(redactSecrets(t).text).toBe(t);
+  });
+
   it("counts multiple secrets across a transcript", () => {
     const t = [
       "git clone https://user:tok@github.com/x/y",

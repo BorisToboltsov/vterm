@@ -527,10 +527,13 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `aierror.test.ts` (Фаза 17, чистая логика) — `describeAiError`: маркеры → локализованные подсказки
   (auth → про ключ, unreachable → про адрес, billing → про средства/квоту, rate → про лимит),
   сырой детейл для прочего, дефолт при пустом.
-- `redact.test.ts` (Фаза 17.3, чистая логика) — маскирование секретов перед отправкой
+- `redact.test.ts` (Фаза 17.3 + 20.2, чистая логика) — маскирование секретов перед отправкой
   контекста ИИ: `KEY=value`/`key: value`/`--password=…`, токены `Bearer`/`Authorization`,
   пароли в URL, AWS-ключи (`AKIA…`), тело PEM-блока (с сохранением fence), эхо `Password:`;
   счётчик скрытых секретов; пустой ввод и текст без секретов — без изменений.
+  **Фаза 20.2:** standalone self-identifying токены вне `KEY=`/`Bearer` — JWT (`eyJ…`),
+  GitHub (`ghp_`/`github_pat_`), Slack (`xox…`), Stripe (`sk_live_…`), GCP (`AIza…`),
+  Google OAuth (`ya29.…`); и что обычные слова (`eyJson` без dotted-структуры) не маскируются.
 - `aicontext.test.ts` (Фаза 17.3, чистая логика) — сборка контекста по уровням
   (`buildContext`): выделение приоритетнее tail; `includeBuffer` заменяет tail полным буфером;
   `includeRecording`/`includeMetadata` подключаются только при включённых флагах; редакция и
@@ -541,8 +544,17 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `aiexec.test.ts` (Фаза 17.4, чистая логика) — исполнитель: `parseChatSegments` (текст+код в
   порядке, язык fence, `runnable` только для shell, `closed=false` для незакрытого стрим-fence,
   многострочные блоки, пропуск пустого текста); `isRunnableLang`; `isProdServer` (теги
-  prod/production, регистр/пробелы, пустое/`null`); `toTerminalInput` (ровно один `\n`,
-  внутренние переводы строк сохраняются); `auditLabel` (одна строка / «… (+N)» / пусто).
+  prod/production, регистр/пробелы, пустое/`null`; **Фаза 20.3** — контракт точного тега:
+  `prod-eu`/`non-prod`/`preprod`/`product` намеренно **не** prod); `toTerminalInput` (ровно
+  один `\n`, внутренние переводы строк сохраняются); `auditLabel` (одна строка / «… (+N)» / пусто).
+- `aidialog.test.ts` (Фаза 17.8 + 20.1, чистая логика) — петля диалог-агента: `nextCommand`
+  (первый runnable+closed shell-блок, `null` без команды/для незакрытого fence/не-shell);
+  `buildFeedback` (статус exit/timeout, склейка stdout+stderr, **редакция секретов**, обрезка до
+  `FEEDBACK_MAX_LINES`); `DIALOG_SYSTEM_SUFFIX`. **Фаза 20.1** — `isDangerousCommand`: базовый
+  деструктив плюс закрытые обходы — длинные/раздельные флаги `rm` (`--recursive --force`, `-r -f`),
+  `--no-preserve-root`, `find -delete`/`-exec rm`, пайп в шелл (`curl|sh`), `base64 -d`/`--decode`,
+  `eval`, рекурсивный `chmod/chown -R` на `/`; и что обычные команды (`git log | less`,
+  `base64 file > out`, `rm build/x.o`) не флагаются.
 - `airunbook.test.ts` (Фаза 17.5, чистая логика) — план из записи: `buildRunbookContext` (редакция
   секретов + счётчик, подсчёт строк с обрезкой хвоста, `sources=["recording"]`, пустой транскрипт →
   пусто). Инструкция — единый редактируемый `runbookSystem` (дефолт покрыт в `ai.test.ts`).

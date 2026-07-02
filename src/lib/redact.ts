@@ -56,6 +56,17 @@ const RULES: Rule[] = [
   },
   // Inline password prompt that did echo a value, e.g. "Password: hunter2".
   { re: /\b((?:password|passphrase)\s*:\s+)(\S+)/gi, groups: [2] },
+  // Self-identifying tokens (Phase 20.2). Like AWS key ids these carry a
+  // recognisable prefix/shape, so they leak even outside a KEY=value assignment
+  // or a Bearer header. Placed after the assignment/Bearer rules so a value
+  // already masked above is not re-scanned. Whole match is masked.
+  { re: /\beyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+\.[A-Za-z0-9_=-]+/g, groups: [0] }, // JWT
+  { re: /\bgh[posru]_[A-Za-z0-9]{20,}\b/g, groups: [0] }, // GitHub token (ghp_/gho_/…)
+  { re: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, groups: [0] }, // GitHub fine-grained PAT
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, groups: [0] }, // Slack token
+  { re: /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{10,}\b/g, groups: [0] }, // Stripe-style key
+  { re: /\bAIza[0-9A-Za-z_-]{35}\b/g, groups: [0] }, // Google API key
+  { re: /\bya29\.[A-Za-z0-9_-]{20,}/g, groups: [0] }, // Google OAuth token
 ];
 
 /** Replace recognised secrets in `text` with {@link REDACTED}; report the count. */

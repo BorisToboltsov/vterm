@@ -72,6 +72,36 @@ describe("isProdServer", () => {
     expect(isProdServer(null)).toBe(false);
     expect(isProdServer(undefined)).toBe(false);
   });
+
+  // Phase 20.3 — lock the case/whitespace robustness against regressions.
+  it("matches prod/production across case and surrounding whitespace", () => {
+    for (const tag of ["prod", "PROD", "Prod", "production", "PRODUCTION", " prod ", "\tprod\n", "Production "]) {
+      expect(isProdServer([tag]), tag).toBe(true);
+    }
+    // Any exact prod tag among others still counts.
+    expect(isProdServer(["web", "prod", "eu"])).toBe(true);
+  });
+
+  // Phase 20.3 — the exact-tag contract is deliberate: DO NOT loosen to substring/
+  // token matching, or "non-prod"/"pre-prod" (staging) would be wrongly flagged as
+  // production and lose their intended non-prod auto-exec. Users tag exactly
+  // `prod`/`production` (or set per-server noAi/execMode) for affixed environments.
+  it("uses exact-tag matching: affixed and negated variants are intentionally not prod", () => {
+    for (const tag of [
+      "prod-eu",
+      "eu-prod",
+      "production-db",
+      "prod.web",
+      "preprod",
+      "pre-prod",
+      "non-prod",
+      "nonprod",
+      "product",
+      "reproduce",
+    ]) {
+      expect(isProdServer([tag]), tag).toBe(false);
+    }
+  });
 });
 
 describe("toTerminalInput", () => {
