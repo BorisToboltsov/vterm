@@ -7,6 +7,38 @@
 
 ---
 
+## ✅ Фаза 19 — Мажорные версии зависимостей (v0.19.0)
+
+Обновление зависимостей с мажорными семвер-скачками — отдельно от рефакторинга,
+т.к. это поведенческий риск (каждый под-шаг — свой коммит для атрибуции регрессий).
+Полный гейт (`cargo fmt/clippy/test` + `cargo deny` + `pnpm check` + `test:coverage`
++ `pnpm build`) зелёный после каждого шага; правок прикладного кода не потребовалось.
+
+- **`sha2` 0.10 → 0.11** (19.1): API `Digest`-трейта неизменен — `sha256_hex`
+  ([sftp.rs](src-tauri/src/sftp.rs)) без правок. Рантайм-граф на 0.11; 0.10 остаётся
+  лишь как build-time proc-macro у `tauri-codegen`. Затрагивает конфликт-детект
+  редактора и sync-хэши (значения детерминированы, байт-в-байт совпадают).
+- **`reqwest` 0.12 → 0.13** (19.2): фича `rustls-tls` переименована в `rustls`;
+  0.13 убрал публичный ring-провайдер, поэтому `rustls` теперь на **aws-lc-rs** —
+  том же провайдере, что уже тянет `russh`. Итог: reqwest и russh делят один
+  крипто-провайдер, **ring полностью ушёл** из дерева. Корневые сертификаты:
+  bundled `webpki-roots` → `rustls-platform-verifier` (системный trust-store).
+  Код [ai.rs](src-tauri/src/ai.rs) без правок. `deny.toml`: разрешена
+  `CDLA-Permissive-2.0` для CA-набора `webpki-root-certs`.
+- **`keyring` 3.6 → 4.1** (19.3): 4.x разбит на `keyring-core` + backend-крейты;
+  фичи `apple-native`/`windows-native` убраны, дефолтная `v1` бандлит нативные
+  стораджи (macOS Keychain, Windows Credential Manager) и авто-выбирает платформу.
+  Код [secrets.rs](src-tauri/src/secrets.rs) без правок (`Entry`/`Error::NoEntry`/
+  `get_set`/`delete_credential` стабильны). Совместимость с записями 3.x проверена
+  по исходникам `apple-native-keyring-store` (тот же мап `service`→kSecAttrService,
+  `user`→account) — сохранённые секреты читаются после апгрейда.
+- **vite 6→8 + `@sveltejs/vite-plugin-svelte` 5→7 + typescript 5.6→6** (19.4):
+  связка сцеплена, двигалась вместе. Peer-матрица (vps 7, SvelteKit 2.69,
+  vitest 4.1.9, `@tailwindcss/vite` 4.3, svelte-check 4.7) принимает vite ^8 и
+  TS ≥5. svelte-check под TS 6 — 0 ошибок; vite 8 бандлит через **rolldown**.
+  Правок исходников нет. `pnpm-workspace.yaml`: `vite@8.1.3` пропущен через
+  `minimumReleaseAge`-гейт (осознанный ревью-апгрейд).
+
 ## ✅ Фаза 18 — Крупный структурный рефакторинг (v0.18.0)
 
 Разгрузка «god-файлов» без изменения поведения; полный гейт (теперь включая
