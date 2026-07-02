@@ -61,6 +61,9 @@ export default defineConfig({
         // AI chat dock — event-stream glue over the broker (Phase 17.2).
         "src/lib/AiChat.svelte",
         "src/lib/RightDock.svelte",
+        // Add/edit server form — UI shell over the server api + native key picker
+        // (extracted from +page.svelte in Phase 18.4.2).
+        "src/lib/ServerFormModal.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

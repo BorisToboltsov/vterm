@@ -162,7 +162,12 @@
       "Bash(sed -i '' '178,368d' lib.rs)",
       "Bash(sed -i '' '164,176d' lib.rs)",
       "Bash(sed -i '' '72,150d' lib.rs)",
-      "Bash(awk 'NR>=408 && NR<=520 && /cols|rows/' ssh.rs)"
+      "Bash(awk 'NR>=408 && NR<=520 && /cols|rows/' ssh.rs)",
+      "Bash(grep -n '$state\\\\|$derived\\\\|$effect' src/routes/+page.svelte)",
+      "Bash(grep -n 'from \"$lib/stores\\\\|from \"\\\\./\\\\|from \"$lib' src/routes/+page.svelte)",
+      "Bash(grep -nF '$state' src/routes/+page.svelte)",
+      "Bash(grep -nF '$derived' src/routes/+page.svelte)",
+      "Bash(grep -nF '$effect' src/routes/+page.svelte)"
     ]
   }
 }

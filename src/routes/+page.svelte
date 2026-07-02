@@ -28,7 +28,7 @@
     serverToolsStatus,
     OPEN_FILE_EVENT,
   } from "$lib/api";
-  import type { AuthMethod, ServerProfile } from "$lib/types";
+  import type { ServerProfile } from "$lib/types";
   import { nameOf } from "$lib/tree";
   import {
     clamp,
@@ -58,6 +58,7 @@
   import TerminalView from "$lib/Terminal.svelte";
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
+  import { sshErrorView } from "$lib/ssherror";
   import RightDock from "$lib/RightDock.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
@@ -82,6 +83,7 @@
   } from "$lib/stores/workspaces.svelte";
   import { removeChat, getChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
+  import ServerFormModal from "$lib/ServerFormModal.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
@@ -123,16 +125,14 @@
   import { extractTranscript } from "$lib/recording";
   import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
   import { isProdServer } from "$lib/aiexec";
-  import type { AiExecMode } from "$lib/ai";
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
-  let showForm = $state(false);
-  let formMode = $state<"add" | "edit">("add");
-  let editId = $state<string | null>(null);
+  // Add/edit server form (owns its own field state); opened via its exported methods.
+  let serverForm: ServerFormModal | undefined = $state();
   let showSettings = $state(false);
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
@@ -167,23 +167,6 @@
   let secretValue = $state("");
   let rememberSecret = $state(false);
   let secretError = $state("");
-  let confirmForget = $state(false);
-
-  // Add/Edit form fields
-  let alias = $state("");
-  let host = $state("");
-  let port = $state(22);
-  let username = $state("");
-  let authMethod = $state<AuthMethod>("password");
-  let keyPath = $state<string | null>(null);
-  let group = $state("");
-  let tagsInput = $state("");
-  let autoRecord = $state(false);
-  let noAi = $state(false);
-  // Chat prompt scoped to this server (id, or "" for the general default).
-  let aiPromptId = $state("");
-  // Per-server command-execution override ("" = use the global setting).
-  let aiExecMode = $state("");
 
   // Folders
   let folders = $state<string[]>([]);
@@ -471,7 +454,7 @@
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
-      keywords: "add server new сервер добавить", run: () => openAdd() },
+      keywords: "add server new сервер добавить", run: () => serverForm?.openAdd() },
     { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
       keywords: "folder new папка новая", run: () => openFolderForm("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
@@ -537,7 +520,7 @@
       icon: "folder",
       group: t("palette.groupFolders"),
       keywords: "folder add server папка добавить",
-      run: () => openAdd(f),
+      run: () => serverForm?.openAdd(f),
     })),
   ]);
 
@@ -755,48 +738,6 @@
    * Maps a tab's terminal status to a title, optional red detail, the phase that
    * failed (so the checklist freezes on it) and which action button to show.
    */
-  function sshErrorView(
-    sessionId: string,
-    status: string,
-  ): {
-    title: string;
-    detail?: string;
-    phase: ConnPhase;
-    showSteps: boolean;
-    action: "reconnect" | "reauth";
-  } {
-    if (status.startsWith("Disconnected")) {
-      // Dropped after a successful connect — not a phase failure.
-      return { title: t("connecting.lost"), phase: "session", showSteps: false, action: "reconnect" };
-    }
-    const raw = status.replace(/^Error:\s*/, "");
-    if (raw.includes("auth-rejected")) {
-      return {
-        title: t("connecting.authFailed"),
-        detail: t("connecting.authFailedDetail"),
-        phase: "authenticating",
-        showSteps: true,
-        action: "reauth",
-      };
-    }
-    if (raw.includes("host-key-rejected")) {
-      return {
-        title: t("connecting.hostKeyFailed"),
-        detail: t("connecting.hostKeyDetail"),
-        phase: connPhase[sessionId] ?? "connecting",
-        showSteps: true,
-        action: "reconnect",
-      };
-    }
-    return {
-      title: t("connecting.connectFailed"),
-      detail: raw,
-      phase: connPhase[sessionId] ?? "connecting",
-      showSteps: true,
-      action: "reconnect",
-    };
-  }
-
   function submitSecret(event: Event) {
     event.preventDefault();
     if (!secretTarget) return;
@@ -1156,95 +1097,6 @@
   }
 
   // ── Server CRUD ────────────────────────────────────────────────────────────
-  function openAdd(prefillGroup = "") {
-    formMode = "add";
-    editId = null;
-    alias = host = username = "";
-    port = settings.defaultPort;
-    authMethod = "password";
-    keyPath = null;
-    group = prefillGroup;
-    tagsInput = "";
-    autoRecord = false;
-    noAi = false;
-    aiPromptId = "";
-    aiExecMode = "";
-    showForm = true;
-  }
-
-  function openEdit(server: ServerProfile) {
-    selectedId = server.id;
-    formMode = "edit";
-    editId = server.id;
-    alias = server.alias;
-    host = server.host;
-    port = server.port;
-    username = server.username;
-    authMethod = server.authMethod;
-    keyPath = server.keyPath;
-    group = server.group ?? "";
-    tagsInput = server.tags.join(", ");
-    autoRecord = server.autoRecord;
-    noAi = server.noAi;
-    aiPromptId = server.chatPromptId ?? "";
-    aiExecMode = server.execMode ?? "";
-    showForm = true;
-  }
-
-  async function browseKey() {
-    const picked = await pickKeyFile();
-    if (picked) keyPath = picked;
-  }
-
-  async function forgetSaved() {
-    if (!editId) return;
-    try {
-      await forgetSecrets(editId);
-      servers = servers.map((s) => (s.id === editId ? { ...s, hasSavedPassword: false } : s));
-      notifySuccess(t("page.savedSecretRemoved"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  async function submitForm(event: Event) {
-    event.preventDefault();
-    if (!alias || !host || !username) return;
-    const tags = tagsInput
-      .split(",")
-      .map((t) => t.trim())
-      .filter(Boolean);
-    const payload = {
-      alias,
-      host,
-      port,
-      username,
-      authMethod,
-      keyPath,
-      group: group.trim() || null,
-      tags,
-      autoRecord,
-      noAi,
-      chatPromptId: aiPromptId || null,
-      execMode: (aiExecMode || null) as AiExecMode | null,
-    };
-    try {
-      if (formMode === "edit" && editId) {
-        const updated = await updateServer(editId, payload);
-        servers = servers.map((s) => (s.id === updated.id ? updated : s));
-        notifySuccess(t("page.serverUpdated", { alias: updated.alias }));
-      } else {
-        const created = await addServer(payload);
-        servers = [...servers, created];
-        selectedId = created.id;
-        notifySuccess(t("page.serverAdded", { alias: created.alias }));
-      }
-      showForm = false;
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
   let serverToDelete = $state<ServerProfile | null>(null);
 
   async function doDeleteServer(id: string) {
@@ -1277,8 +1129,11 @@
       {selectedId}
       onSelect={(id) => (selectedId = id)}
       onConnect={startConnect}
-      onAddServer={() => openAdd()}
-      onEditServer={openEdit}
+      onAddServer={() => serverForm?.openAdd()}
+      onEditServer={(s) => {
+        selectedId = s.id;
+        serverForm?.openEdit(s);
+      }}
       onDeleteServer={(s) => (serverToDelete = s)}
       onNewFolder={openFolderForm}
       onRenameFolder={openFolderRename}
@@ -1467,14 +1322,17 @@
                   />
                 {:else if tab.kind === "ssh" && (tab.status.startsWith("Error") || tab.status.startsWith("Disconnected"))}
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
-                  {@const ev = sshErrorView(tab.sessionId, tab.status)}
+                  {@const ev = sshErrorView(
+                    tab.status,
+                    connPhase[tab.sessionId] ?? "connecting",
+                  )}
                   <ConnectingOverlay
                     failed
                     alias={tab.alias}
                     host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
                     phase={ev.phase}
-                    title={ev.title}
-                    detail={ev.detail}
+                    title={t(ev.titleKey)}
+                    detail={ev.detailKey ? t(ev.detailKey) : ev.detailText}
                     showSteps={ev.showSteps}
                   >
                     {#if ev.action === "reauth"}
@@ -1905,180 +1763,21 @@
   {/if}
 </Modal>
 
-<!-- Add / Edit server modal -->
-<Modal
-  open={showForm}
-  title={formMode === "edit" ? t("page.editServerTitle") : t("page.newServerTitle")}
-  onclose={() => (showForm = false)}
->
-  <form onsubmit={submitForm}>
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.alias")}
-      <input
-        data-testid="field-alias"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        bind:value={alias}
-        placeholder={t("page.aliasPlaceholder")}
-      />
-    </label>
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.hostIp")}
-      <input
-        data-testid="field-host"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        bind:value={host}
-        placeholder="192.168.1.10"
-      />
-    </label>
-    <div class="mb-2 flex gap-2">
-      <label class="block w-20 text-xs text-muted">
-        {t("page.port")}
-        <input
-          type="number"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          bind:value={port}
-        />
-      </label>
-      <label class="block flex-1 text-xs text-muted">
-        {t("page.username")}
-        <input
-          data-testid="field-username"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          bind:value={username}
-          placeholder="root"
-        />
-      </label>
-    </div>
-
-    <div class="mb-2 text-xs text-muted">
-      {t("page.authentication")}
-      <div class="mt-1 flex gap-3 text-sm text-white">
-        <label class="flex items-center gap-1">
-          <input type="radio" value="password" bind:group={authMethod} />
-          {t("page.authPassword")}
-        </label>
-        <label class="flex items-center gap-1">
-          <input type="radio" value="key" bind:group={authMethod} />
-          {t("page.authKey")}
-        </label>
-      </div>
-    </div>
-
-    {#if authMethod === "key"}
-      <label class="mb-2 block text-xs text-muted">
-        {t("page.privateKeyFile")}
-        <div class="mt-1 flex gap-2">
-          <input
-            readonly
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
-            value={keyPath ?? ""}
-            placeholder="~/.ssh/id_ed25519"
-          />
-          <button
-            type="button"
-            class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-            onclick={browseKey}>{t("common.browse")}</button
-          >
-        </div>
-      </label>
-    {/if}
-
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.tags")}
-      <input
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        bind:value={tagsInput}
-        placeholder="web, eu"
-      />
-    </label>
-
-    <label class="mb-2 flex items-center gap-2 text-xs text-text">
-      <input type="checkbox" bind:checked={autoRecord} />
-      {t("page.autoRecord")}
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.autoRecordHint")}</p>
-
-    <label class="mb-2 flex items-center gap-2 text-xs text-text">
-      <input type="checkbox" data-testid="server-no-ai" bind:checked={noAi} />
-      {t("page.noAi")}
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.noAiHint")}</p>
-
-    {#if settings.ai.prompts.chat.prompts.length > 1}
-      <label class="mb-2 block text-xs text-text">
-        {t("page.aiPrompt")}
-        <select
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          data-testid="server-ai-prompt"
-          bind:value={aiPromptId}
-        >
-          <option value="">{t("page.aiPromptDefault")}</option>
-          {#each settings.ai.prompts.chat.prompts as p (p.id)}
-            <option value={p.id}>{p.name}</option>
-          {/each}
-        </select>
-      </label>
-      <p class="mb-2 text-[11px] text-muted">{t("page.aiPromptHint")}</p>
-    {/if}
-
-    <label class="mb-2 block text-xs text-text">
-      {t("page.aiExec")}
-      <select
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        data-testid="server-ai-exec"
-        bind:value={aiExecMode}
-      >
-        <option value="">{t("page.aiExecDefault")}</option>
-        <option value="suggest">{t("settings.aiExecSuggest")}</option>
-        <option value="confirm">{t("settings.aiExecConfirm")}</option>
-        <option value="auto">{t("settings.aiExecAuto")}</option>
-        <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
-        <option value="dialog">{t("settings.aiExecDialog")}</option>
-      </select>
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.aiExecHint")}</p>
-
-    <div class="mt-3 flex items-center gap-2">
-      {#if formMode === "edit"}
-        <button
-          type="button"
-          class="rounded px-2 py-1 text-xs text-danger hover:underline"
-          onclick={() => (confirmForget = true)}
-          title={t("page.forgetSavedSecretTitle")}
-        >
-          {t("page.forgetSavedSecret")}
-        </button>
-      {/if}
-      <div class="ml-auto flex gap-2">
-        <button
-          type="button"
-          class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (showForm = false)}>{t("common.cancel")}</button
-        >
-        <button
-          type="submit"
-          data-testid="save-server"
-          class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-          >{formMode === "edit" ? t("common.update") : t("common.save")}</button
-        >
-      </div>
-    </div>
-  </form>
-</Modal>
-
-<!-- Forget-secret confirmation -->
-<ConfirmDialog
-  open={confirmForget}
-  title={t("page.forgetSecretTitle")}
-  confirmLabel={t("common.forget")}
-  onconfirm={async () => {
-    await forgetSaved();
-    confirmForget = false;
+<!-- Add / Edit server modal (owns its own form state; Phase 18.4.2) -->
+<ServerFormModal
+  bind:this={serverForm}
+  onsaved={(server, mode) => {
+    if (mode === "edit") {
+      servers = servers.map((s) => (s.id === server.id ? server : s));
+    } else {
+      servers = [...servers, server];
+      selectedId = server.id;
+    }
   }}
-  oncancel={() => (confirmForget = false)}
->
-  {t("page.forgetSecretBody")}
-</ConfirmDialog>
+  onforgotten={(id) => {
+    servers = servers.map((s) => (s.id === id ? { ...s, hasSavedPassword: false } : s));
+  }}
+/>
 
 <!-- Command palette (⌘K) -->
 <CommandPalette bind:open={showPalette} commands={paletteCommands} />

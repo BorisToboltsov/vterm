@@ -25,6 +25,7 @@
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import SyncModal from "./SyncModal.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { transfersState } from "./stores/transfers.svelte";
   import { t } from "./i18n";
@@ -612,32 +613,20 @@
   {/if}
 </div>
 
-<!-- Delete confirmation -->
-{#if confirmTarget}
-  <div class="fixed inset-0 flex items-center justify-center">
-    <button
-      class="absolute inset-0 bg-black/50"
-      aria-label={t("common.closeDialog")}
-      onclick={() => (confirmTarget = null)}
-    ></button>
-    <div class="relative w-80 rounded-lg border border-edge bg-panel-alt p-4">
-      <h2 class="mb-2 text-sm font-semibold text-danger">{t("sftp.deleteTitle")}</h2>
-      <p class="mb-4 break-all text-xs text-muted">
-        {confirmTarget.isDir ? t("sftp.folder") : t("sftp.file")}: {confirmTarget.path}
-      </p>
-      <div class="flex justify-end gap-2">
-        <button
-          class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (confirmTarget = null)}>{t("common.cancel")}</button
-        >
-        <button
-          class="rounded bg-danger px-3 py-1 text-sm text-panel-alt hover:opacity-90"
-          onclick={() => confirmTarget && remove(confirmTarget)}>{t("common.delete")}</button
-        >
-      </div>
-    </div>
-  </div>
-{/if}
+<!-- Delete confirmation (shared ConfirmDialog: gets the modal's z-40 + focus trap;
+     a hand-rolled fixed overlay was unclickable once SftpPanel became embedded). -->
+<ConfirmDialog
+  open={!!confirmTarget}
+  title={t("sftp.deleteTitle")}
+  confirmLabel={t("common.delete")}
+  danger
+  onconfirm={() => confirmTarget && remove(confirmTarget)}
+  oncancel={() => (confirmTarget = null)}
+>
+  {confirmTarget?.isDir ? t("sftp.folder") : t("sftp.file")}: <span class="break-all text-white"
+    >{confirmTarget?.path}</span
+  >
+</ConfirmDialog>
 
 <!-- Directory sync (compares local folder ⇄ current remote folder) -->
 <SyncModal

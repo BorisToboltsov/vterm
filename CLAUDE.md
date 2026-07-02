@@ -41,10 +41,15 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test  --manifest-path src-tauri/Cargo.toml
 pnpm check
 pnpm test:coverage
+pnpm build          # production vite build — ловит поломки релизной сборки
 ```
 
-Все пять команд должны быть зелёными. Гейты покрытия (**≥ 90 %** чистая логика,
+Все шесть команд должны быть зелёными. Гейты покрытия (**≥ 90 %** чистая логика,
 **≥ 80 %** в целом) настроены в [vitest.config.ts](vitest.config.ts) и **роняют** прогон.
+`pnpm build` обязателен отдельно от `pnpm check`: `check` — это только `svelte-check`
+(типы), а `pnpm build` (`vite build`, rollup/SSR) ловит поломки production-сборки,
+которые `check` пропускает (например, несовместимость версии зависимости —
+`pnpm tauri build` собирает тот же бандл).
 
 ---
 
