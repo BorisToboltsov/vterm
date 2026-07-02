@@ -42,8 +42,11 @@ portable-pty = "0.9.0"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # AI broker (Phase 17, opt-in): all LLM HTTP lives in the backend so the WebView
-# CSP stays strict. Pure-Rust TLS (rustls) — no OpenSSL — keeps the build portable.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# CSP stays strict. TLS is rustls (never native-tls/OpenSSL) so the build stays
+# portable. reqwest 0.13 renamed `rustls-tls`→`rustls` and dropped the public ring
+# feature; `rustls` now uses the aws-lc-rs provider — the same one russh already
+# pulls in, so this shares a single crypto provider instead of also compiling ring.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls"] }
 futures-util = "0.3"
 
 # Read the OS clipboard in-process so the frontend can avoid

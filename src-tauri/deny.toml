@@ -70,6 +70,10 @@ allow = [
   "CC0-1.0",
   "BSL-1.0",
   "OpenSSL",
+  # webpki-root-certs (fallback CA bundle via rustls-platform-verifier, reqwest
+  # 0.13's default root source) ships the Mozilla CA set under CDLA-Permissive-2.0
+  # — a permissive data license (certificates are data, not code).
+  "CDLA-Permissive-2.0",
 ]
 
 [bans]
