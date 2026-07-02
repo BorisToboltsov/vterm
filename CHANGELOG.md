@@ -7,6 +7,34 @@
 
 ---
 
+## ✅ Фаза 18 — Крупный структурный рефакторинг (v0.18.0)
+
+Разгрузка «god-файлов» без изменения поведения; полный гейт (теперь включая
+`pnpm build`) после каждого под-шага. История и обоснования решений — в
+[docs/ROADMAP.md](docs/ROADMAP.md) «Фаза 18».
+
+- **Backend:** из `lib.rs` (**3318→~1560** строк) вынесены домен-модули —
+  `metrics.rs` (скрипты `METRICS/DETAIL/PENDING/EXTRAS` + парсеры + `fetch_*` +
+  `MetricsSamples`), `servers.rs` (CRUD серверов), `folders.rs` (папки +
+  `set_server_group`). Сняты 5 из 8 `#[allow(too_many_arguments)]` — внутренние
+  функции переведены на param/options-структуры (`ConnectOptions`+cols/rows,
+  `Transfer`, `TextWrite`, `RecorderConfig`); 3 оставшихся — на tauri-командах
+  (аргументы по имени из JS), задокументированы.
+- **Frontend:** `+page.svelte` **2090→1602** — вынесены `ssherror.ts` (+тесты) и
+  модалки `ServerFormModal`/`FolderModals`/`SecretPrompt`; recording- и editor/sudo-
+  потоки осознанно оставлены (легитимная component-оркестрация). `SettingsPanel`
+  **1270→462** — 5 секций с логикой вынесены в `*SettingsSection.svelte`. `api.ts`
+  (881) разложен по доменам в `src/lib/api/` + barrel (ноль churn у потребителей).
+- **Производительность:** оконная виртуализация SFTP- и локального листинга
+  (`virtuallist.ts` + `SftpPanel`/`LocalFilePanel`) — директории с десятками тысяч
+  файлов больше не фризят UI (в DOM только видимое окно).
+- **Исправленные баги:** утечка `net_samples`/`disk_samples` в `clear_session`
+  (+regression-тест); некликабельный самописный диалог удаления в SFTP → общий
+  `ConfirmDialog` + guard-тест `overlay.guard.test.ts`; сломанная релизная сборка
+  из-за override `cookie` (переразрешился в 2.0.1) → пин `^0.7.0`.
+- **Гейт:** в DoD добавлен `pnpm build` (`vite build` ловит поломки production-
+  сборки, которые `pnpm check` пропускает).
+
 ## ✅ Фаза 15 — Переработка панели настроек (v0.15.0)
 
 - **Двухпанельная панель настроек:** sidebar из 6 групп (Общие, Внешний вид, Терминал,

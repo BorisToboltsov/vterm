@@ -16,7 +16,7 @@
   (`src-tauri/src/`). Svelte-фронтенд ходит к ней только через `invoke()` (команды
   в `lib.rs`) и каналы событий (`term://…`, `sftp://…`, `menu://…`). Новый
   функционал такого рода: команда в бэкенде + типизированная обёртка в
-  [src/lib/api.ts](../src/lib/api.ts). Не дублируй бизнес-логику на фронте. (ADR 0001)
+  [src/lib/api/](../src/lib/api/). Не дублируй бизнес-логику на фронте. (ADR 0001)
   - **Единый контракт терминала.** SSH-сессии ([ssh.rs](../src-tauri/src/ssh.rs)) и
     локальные shell-вкладки ([pty.rs](../src-tauri/src/pty.rs), `portable-pty`)
     используют **один** канал событий (`term://out|closed/{id}`) и **одни** команды
@@ -55,15 +55,22 @@
 - **Чистая логика — в `.ts`/свободных функциях**, не в `.svelte`/командах: её
   тестируют без DOM/сети. Фронт: [tree.ts](../src/lib/tree.ts),
   [format.ts](../src/lib/format.ts), [util.ts](../src/lib/util.ts),
-  [actions/drag.ts](../src/lib/actions/drag.ts). Rust: `reprefixed`,
-  `decode_or_default`. (ADR 0003)
+  [actions/drag.ts](../src/lib/actions/drag.ts), [ssherror.ts](../src/lib/ssherror.ts)
+  (статус SSH → оверлей), [virtuallist.ts](../src/lib/virtuallist.ts) (оконная
+  виртуализация). Rust: `reprefixed`, `decode_or_default`, парсеры метрик в
+  [metrics.rs](../src-tauri/src/metrics.rs). (ADR 0003)
 - **Состояние UI — в runes-сторах** `src/lib/stores/*.svelte.ts` (по образцу
   [settings.svelte.ts](../src/lib/settings.svelte.ts)): `layout` (ширины/сворачивание
   панелей), `tabs` (вкладки терминалов). Не разбрасывай состояние по компонентам. (ADR 0003)
 - **Компоненты декомпозированы.** `+page.svelte` — оркестратор; крупные части
-  вынесены в `TopBar`, `ServerTree`. Переиспользуй примитивы `Modal`,
-  `ConfirmDialog`, `Icon`. Иконки — из реестра [icons.ts](../src/lib/icons.ts) через
-  `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`. (ADR 0003)
+  вынесены в `TopBar`, `ServerTree`, а самодостаточные модалки — в `ServerFormModal`,
+  `FolderModals`, `SecretPrompt` (Фаза 18.4). `SettingsPanel` — тонкий shell, секции
+  живут в `*SettingsSection.svelte` (Фаза 18.5). `api.ts` разложен по доменам в
+  `src/lib/api/` с barrel-реэкспортом (Фаза 18.6). **Оверлеи всегда с явным
+  `z-index`** (или через `Modal`/`ConfirmDialog`) — закреплено гейтом
+  [overlay.guard.test.ts](../src/lib/overlay.guard.test.ts). Переиспользуй примитивы
+  `Modal`, `ConfirmDialog`, `Icon`. Иконки — из реестра [icons.ts](../src/lib/icons.ts)
+  через `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`. (ADR 0003)
   Оформление кнопок/иконок/строк — по закреплённой **дизайн-системе** (см. [DESIGN.md](DESIGN.md)).
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя **и** — при включённом opt-in ИИ-ассистенте (Фаза 17) —

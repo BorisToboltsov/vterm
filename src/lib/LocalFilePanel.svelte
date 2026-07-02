@@ -12,6 +12,7 @@
   } from "./api";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
+  import { windowRange } from "./virtuallist";
   import { lsColorKey, fileTooltip } from "./lscolors";
   import { activeTerminalTheme } from "./settings.svelte";
   import Icon from "./Icon.svelte";
@@ -37,6 +38,27 @@
 
   let cwd = $state("");
   let entries = $state<FileEntry[]>([]);
+
+  // Virtualized listing (Phase 18.7): render only the visible window of fixed-height
+  // (`h-7`, 28px) rows so huge directories don't freeze the UI. Item 0 is the ".."
+  // parent-nav when not at the root.
+  const ROW_H = 28;
+  let listScrollTop = $state(0);
+  let listViewportH = $state(600);
+  const hasParent = $derived(!!cwd && cwd !== "/");
+  const rowCount = $derived((hasParent ? 1 : 0) + entries.length);
+  const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
+  const visibleItems = $derived.by(() => {
+    const items: { key: string; entry: FileEntry | null }[] = [];
+    for (let i = win.start; i < win.end; i++) {
+      if (hasParent && i === 0) items.push({ key: "..", entry: null });
+      else {
+        const e = entries[i - (hasParent ? 1 : 0)];
+        items.push({ key: e.path, entry: e });
+      }
+    }
+    return items;
+  });
   let loading = $state(false);
   let error = $state("");
 
@@ -288,7 +310,11 @@
       {/if}
 
       <!-- Listing -->
-      <div class="min-h-0 flex-1 overflow-y-auto text-sm">
+      <div
+        bind:clientHeight={listViewportH}
+        onscroll={(e) => (listScrollTop = e.currentTarget.scrollTop)}
+        class="min-h-0 flex-1 overflow-y-auto text-sm"
+      >
         {#if loading}
           <div class="py-1">
             {#each Array(7) as _, i (i)}
@@ -299,53 +325,61 @@
             {/each}
           </div>
         {:else}
-          {#if cwd && cwd !== "/"}
-            <button
-              class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge"
-              ondblclick={goUp}
-              title={t("sftp.goUp")}
-            >
-              <Icon name="folder" size={15} class="text-muted" />
-              <span class="truncate text-muted">..</span>
-            </button>
-          {/if}
-          {#each entries as entry (entry.path)}
-            <div class="group flex items-center gap-2 px-2 py-1 hover:bg-edge">
-              <button
-                class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                title={fileTooltip(entry)}
-                ondblclick={() => open(entry)}
-              >
-                <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
-                <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
-                {#if !entry.isDir}
-                  <span class="ml-auto shrink-0 text-xs text-muted">{fmtSize(entry.size)}</span>
-                {/if}
-              </button>
-              <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
-                {#if !entry.isDir && onOpenFile}
+          <!-- Virtual window (Phase 18.7): only the visible slice is rendered. -->
+          <div style="height: {win.totalHeight}px; position: relative;">
+            <div style="transform: translateY({win.padTop}px);">
+              {#each visibleItems as item (item.key)}
+                {#if item.entry === null}
                   <button
-                    class="rounded p-0.5 text-muted hover:text-accent"
-                    title={t("sftp.editFile")}
-                    aria-label={t("sftp.editFile")}
-                    onclick={() => onOpenFile?.(entry.path)}
+                    class="flex h-7 w-full items-center gap-2 px-2 text-left hover:bg-edge"
+                    ondblclick={goUp}
+                    title={t("sftp.goUp")}
                   >
-                    <Icon name="pencil" size={13} />
+                    <Icon name="folder" size={15} class="text-muted" />
+                    <span class="truncate text-muted">..</span>
                   </button>
+                {:else}
+                  {@const entry = item.entry}
+                  <div class="group flex h-7 items-center gap-2 px-2 hover:bg-edge">
+                    <button
+                      class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                      title={fileTooltip(entry)}
+                      ondblclick={() => open(entry)}
+                    >
+                      <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
+                      <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
+                      {#if !entry.isDir}
+                        <span class="ml-auto shrink-0 text-xs text-muted">{fmtSize(entry.size)}</span>
+                      {/if}
+                    </button>
+                    <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
+                      {#if !entry.isDir && onOpenFile}
+                        <button
+                          class="rounded p-0.5 text-muted hover:text-accent"
+                          title={t("sftp.editFile")}
+                          aria-label={t("sftp.editFile")}
+                          onclick={() => onOpenFile?.(entry.path)}
+                        >
+                          <Icon name="pencil" size={13} />
+                        </button>
+                      {/if}
+                      <button
+                        class="rounded p-0.5 text-muted hover:text-danger"
+                        title={t("common.delete")}
+                        aria-label={t("common.delete")}
+                        onclick={() => (confirmTarget = entry)}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </div>
                 {/if}
-                <button
-                  class="rounded p-0.5 text-muted hover:text-danger"
-                  title={t("common.delete")}
-                  aria-label={t("common.delete")}
-                  onclick={() => (confirmTarget = entry)}
-                >
-                  <Icon name="trash" size={13} />
-                </button>
-              </div>
+              {/each}
             </div>
-          {:else}
+          </div>
+          {#if entries.length === 0}
             <div class="px-3 py-4 text-xs text-muted">{t("sftp.emptyDir")}</div>
-          {/each}
+          {/if}
         {/if}
       </div>
     </div>

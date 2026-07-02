@@ -64,6 +64,18 @@ export default defineConfig({
         // Add/edit server form — UI shell over the server api + native key picker
         // (extracted from +page.svelte in Phase 18.4.2).
         "src/lib/ServerFormModal.svelte",
+        // Folder create/rename/delete modals — UI shell over the folder api
+        // (extracted from +page.svelte in Phase 18.4.3).
+        "src/lib/FolderModals.svelte",
+        // Password/passphrase prompt — UI shell over the tab store (Phase 18.4.4).
+        "src/lib/SecretPrompt.svelte",
+        // Settings sections — UI shells over the settings store, split out of
+        // SettingsPanel in Phase 18.5 (like AiSettingsSection).
+        "src/lib/AppearanceSettings.svelte",
+        "src/lib/SmartLogsSettings.svelte",
+        "src/lib/StatusBarSettings.svelte",
+        "src/lib/SnippetsSettings.svelte",
+        "src/lib/BackupSettings.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

@@ -13,7 +13,7 @@
 | 15 | Переработка панели настроек (двухпанельная, группы, disclosure) | ✅ Реализовано |
 | 16 | Сборка и CI/CD (релиз) | ⬜ |
 | 17 | ИИ-агент (opt-in): чат, исполнитель, планы/скрипты из записей | ✅ Реализовано |
-| 18 | Крупный структурный рефакторинг (`lib.rs`/`+page.svelte`/`api.ts`) + SFTP-перф | 🔜 Следующее |
+| 18 | Крупный структурный рефакторинг (`lib.rs`/`+page.svelte`/`api.ts`) + SFTP-перф | ✅ Реализовано |
 | 19 | Мажорные версии зависимостей (`keyring`/`reqwest`/`sha2`/vite-стек) | ⬜ Запланировано |
 | 20 | ИИ-агент: security-аудит (adversarial pass) | ⬜ Запланировано |
 
@@ -227,7 +227,7 @@ GitLab Release для обеих ОС.
   Под-фазы:
   - **17.8.1 ✅** — бэкенд: `SshSession::exec_captured` (stdout/stderr/exit + таймаут) + команда
     `ai_exec` с зеркалированием шага в `term://out` и запись (`agent_mirror`, LF→CRLF); обёртка
-    `aiExec`/`AiExecResult` в [api.ts](../src/lib/api.ts). Гейты зелёные (672 fe + 119 Rust).
+    `aiExec`/`AiExecResult` в [api.ts](../src/lib/api/). Гейты зелёные (672 fe + 119 Rust).
   - **17.8.2 ✅** — чистая логика цикла ([aidialog.ts](../src/lib/aidialog.ts)): `nextCommand`,
     `buildFeedback` (редакция+обрезка до N строк), `isDangerousCommand`, `DIALOG_SYSTEM_SUFFIX`.
   - **17.8.3 ✅** — сервис цикла в сторе `aichat` (`startChat` feedback-петля, `confirmDialogStep`/
@@ -277,7 +277,7 @@ GitLab Release для обеих ОС.
 
 ---
 
-## 🔜 Фаза 18 — Крупный структурный рефакторинг (v0.18.0)
+## ✅ Фаза 18 — Крупный структурный рефакторинг (v0.18.0)
 
 **Цель:** разгрузить хабы, которые за 17 фаз продавили собственный принцип
 декомпозиции из [INVARIANTS.md](INVARIANTS.md) — `lib.rs` (3318 строк, 60 команд +
@@ -302,38 +302,52 @@ language`, `@codemirror/view`, `@tailwindcss/vite`, `@tauri-apps/cli`, `svelte`
 RUSTSEC-2026-0190 (unsoundness, свежая, пока мягкое предупреждение в `cargo
 audit`) — если нет, задокументировать игнор в `deny.toml` с обоснованием.
 
-- [ ] **18.1** Rust: вынос `metrics.rs` из `lib.rs` — `METRICS_SCRIPT`/`DETAIL_SCRIPT`/
-      `PENDING_SCRIPT`/`EXTRAS_SCRIPT` (~1000 строк) + их парсеры + команды
-      `fetch_metrics`/`fetch_metrics_detail`/`fetch_pending_updates`/`fetch_extras`.
-      Заодно оценить группировку сэмпл-полей `AppState` (`core_samples`/
-      `ctxintr_samples`/`cpu_stat_samples`/`iface_samples`/`diskdev_samples`) в
-      один под-стор.
-- [ ] **18.2** Rust: вынос `servers.rs`/`folders.rs` (CRUD серверов/папок:
-      `list/add/update/delete_server`, `list/add/delete/move/rename_folder`,
-      `set_server_group`) из `lib.rs`.
-- [ ] **18.3** Rust: 6 команд с `#[allow(clippy::too_many_arguments)]` (`lib.rs` ×3,
-      `ssh.rs`, `sftp.rs` ×2) → `#[derive(Deserialize)] #[serde(rename_all=
-      "camelCase")]`-структуры параметров, снять `#[allow]`.
-- [ ] **18.4** Frontend: оркестрация `+page.svelte` (sudo-prompt flow, recording
-      lifecycle glue, sync flow, AI-consent flow, управление модалками/диалогами)
-      → `.svelte.ts`-сторы по образцу `workspaces.svelte.ts`/`aichat.svelte.ts`.
-      `+page.svelte` возвращается к роли тонкого оркестратора (ADR 0003).
-- [ ] **18.5** Frontend: остальные инлайн-секции `SettingsPanel.svelte` (тема,
-      пороги статус-бара, правила подсветки, SFTP, редактор, поиск) →
-      `*SettingsSection.svelte` по образцу `AiSettingsSection.svelte`.
-- [ ] **18.6** Frontend: `api.ts` (881 строка) → `src/lib/api/{servers,sftp,
-      recording,ai,sync,localfile,metrics}.ts` + барель-реэкспорт, зеркалит
-      границы бэкенд-модулей из 18.1–18.2.
-- [ ] **18.7** Производительность: лимит/виртуализация SFTP-листинга. Подтверждено:
-      `sftp::list`/`local_list` отдают ВСЕ записи директории без ограничения,
-      `SftpPanel.svelte` рендерит их без виртуализации — директория с десятками
-      тысяч файлов (лог-папки, кэши) подвесит UI. Решение: серверный cap
-      (N записей + флаг `truncated`) и/или клиентская виртуализация списка.
-      *(Виртуализация ServerTree/RecordingsPanel/JsonLogView, отложенная ещё в
-      Фазе 6, — не включена: счётчики там малы, приоритет ниже.)*
-- [ ] **18.8** Докс-свип: сверка ARCHITECTURE.md/INVARIANTS.md на ссылки на
-      переехавший код; версия → **0.18.0** в package.json/Cargo.toml/
-      tauri.conf.json + `cargo check` (синк `Cargo.lock`).
+- [x] **18.1** Rust: вынос `metrics.rs` из `lib.rs` — 4 скрипта + парсеры + 4 команды
+      `fetch_*`; 8 сэмпл-полей `AppState` схлопнуты в `metrics::MetricsSamples`.
+      `lib.rs` 3318→~1900. _Найден+исправлен баг:_ `clear_session` не чистил
+      `net_samples`/`disk_samples` (латентная утечка) — фикс + regression-тест.
+- [x] **18.2** Rust: вынос `servers.rs` (CRUD серверов + `forget_secrets`) и
+      `folders.rs` (папки + `set_server_group` + `normalize_path`/`reprefixed`) из
+      `lib.rs`. `uuid_like` оставлен общим `pub(crate)`. `lib.rs` →~1580.
+- [x] **18.3** Rust: снято 5 из 8 `#[allow(too_many_arguments)]` — 5 внутренних
+      функций (`ssh::connect`, `sftp::copy_with_progress`/`emit`, `sync::sudo_write`,
+      `recording::Recorder::start`) переведены на param/options-структуры
+      (`ConnectOptions`+cols/rows, `Transfer`, `TextWrite`, `RecorderConfig`).
+      3 оставшихся — на tauri-командах (аргументы по имени из JS, менять нельзя),
+      allow задокументированы.
+- [x] **18.4** Frontend: `+page.svelte` **2090→1602** (−488). Вынесены
+      **самодостаточные UI+state юниты**: чистый `ssherror.ts` (+тесты, 18.4.1),
+      child-компоненты `ServerFormModal` (18.4.2), `FolderModals` (18.4.3),
+      `SecretPrompt` (18.4.4). **Recording lifecycle (18.4.5) и editor/sudo-поток
+      (18.4.6) осознанно оставлены в +page** — это легитимная component-оркестрация
+      (координация termRefs↔workspace-стор↔диалоги↔API), вынос дал бы индирекцию и
+      фрагментацию цельной фичи, а не чистоту (решение с пользователем). _Найден+
+      исправлен баг:_ самописный диалог удаления в SFTP без z-index был некликабелен
+      после встраивания в RightDock (17.2) → заменён на `ConfirmDialog` + заведён
+      guard-тест `overlay.guard.test.ts`. _Найден+исправлен баг сборки:_ Шаг 1
+      переразрешил `cookie` в 2.0.1 → сломал `vite build`; фикс — override `^0.7.0`;
+      `pnpm build` добавлен в гейт.
+- [x] **18.5** Frontend: 5 инлайн-секций `SettingsPanel.svelte` с реальной логикой
+      вынесены в `{Appearance,SmartLogs,StatusBar,Snippets,Backup}SettingsSection.svelte`
+      (по образцу `AiSettingsSection`). `SettingsPanel` **1270→462** — тонкий shell
+      (Modal + сайдбар групп + поиск). Тривиальные секции-биндинги (language/cursor/
+      terminal/recording/sftp/editor/behavior/connection/security) осознанно оставлены
+      инлайн — вынос был бы чистым churn (смешанный паттерн уже узаконен).
+- [x] **18.6** Frontend: `api.ts` (881 строка) → `src/lib/api/{core,servers,session,
+      files,recording,ai}.ts` + barrel `index.ts` (умеренный split ~6 файлов). Ноль
+      churn у потребителей — `import from "$lib/api"` резолвится в barrel.
+- [x] **18.7** Производительность: **оконная виртуализация** SFTP- и локального
+      листинга — чистый `virtuallist.ts` (`windowRange`, +тесты) + `SftpPanel`/
+      `LocalFilePanel` рендерят только видимое окно (~30 строк) при любом N, так что
+      директория с десятками тысяч файлов не фризит UI. (CSS/`content-visibility` не
+      подходит — Svelte создаёт узел на каждый элемент; серверный cap не стал делать:
+      windowing покрывает реалистичные кейсы, cap инвазивен и ограничил бы
+      функциональность. *ServerTree/RecordingsPanel/JsonLogView не тронуты — счётчики
+      малы.*)
+- [x] **18.8** Докс-свип: ARCHITECTURE.md (dir-tree, диаграмма, метрик-секция) +
+      INVARIANTS.md (граница фронт/бэк → `api/`, примеры чистой логики/компонентов,
+      overlay-гейт) сверены; версия → **0.18.0** в package.json/Cargo.toml/
+      tauri.conf.json + `cargo check`.
 
 **Артефакт:** та же функциональность, но `lib.rs`/`+page.svelte`/`SettingsPanel.svelte`
 разложены по модулям/секциям/сторам; SFTP-листинг не подвешивает UI на больших

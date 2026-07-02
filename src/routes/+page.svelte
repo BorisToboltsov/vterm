@@ -3,19 +3,13 @@
   import { fade } from "svelte/transition";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
-    addFolder,
-    addServer,
     connectPlan,
-    deleteFolder,
     deleteServer,
     forgetSecrets,
     listFolders,
     listServers,
     moveFolder,
-    pickKeyFile,
-    renameFolder,
     setServerGroup,
-    updateServer,
     sftpReadText,
     sftpWriteText,
     isFileChangedError,
@@ -84,6 +78,8 @@
   import { removeChat, getChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import ServerFormModal from "$lib/ServerFormModal.svelte";
+  import FolderModals from "$lib/FolderModals.svelte";
+  import SecretPrompt from "$lib/SecretPrompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
@@ -133,6 +129,8 @@
   let selectedId = $state<string | null>(null);
   // Add/edit server form (owns its own field state); opened via its exported methods.
   let serverForm: ServerFormModal | undefined = $state();
+  // Folder create/rename/delete modals (own their own state); opened via exports.
+  let folderModals: FolderModals | undefined = $state();
   let showSettings = $state(false);
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
@@ -161,12 +159,8 @@
   let resizing = $state<null | "left" | "sftp">(null);
   let resizeStartW = 0;
 
-  // Secret prompt state (password or key passphrase)
-  let secretTarget = $state<ServerProfile | null>(null);
-  let secretLabel = $state("Password");
-  let secretValue = $state("");
-  let rememberSecret = $state(false);
-  let secretError = $state("");
+  // Password / passphrase prompt (owns its own state); opened via its export.
+  let secretPrompt: SecretPrompt | undefined = $state();
 
   // Folders
   let folders = $state<string[]>([]);
@@ -456,7 +450,7 @@
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
       keywords: "add server new сервер добавить", run: () => serverForm?.openAdd() },
     { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
-      keywords: "folder new папка новая", run: () => openFolderForm("") },
+      keywords: "folder new папка новая", run: () => folderModals?.openCreate("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
       keywords: "settings preferences параметры настройки", run: () => (showSettings = true) },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
@@ -599,68 +593,7 @@
   }
   const endResize = () => (resizing = null);
 
-  // ── Folder create / rename / delete ────────────────────────────────────────
-  let showFolderForm = $state(false);
-  let folderParent = $state("");
-  let folderName = $state("");
-  let folderToDelete = $state<string | null>(null);
-  let folderToRename = $state<string | null>(null);
-  let renameName = $state("");
-
-  function openFolderForm(parent: string) {
-    folderParent = parent;
-    folderName = "";
-    showFolderForm = true;
-  }
-
-  async function submitFolder(event: Event) {
-    event.preventDefault();
-    const name = folderName.trim();
-    if (!name) return;
-    const path = folderParent ? `${folderParent}/${name}` : name;
-    try {
-      folders = await addFolder(path);
-      showFolderForm = false;
-      notifySuccess(t("page.folderCreated", { name }));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  function openFolderRename(path: string) {
-    folderToRename = path;
-    renameName = nameOf(path);
-  }
-
-  async function submitFolderRename(event: Event) {
-    event.preventDefault();
-    const name = renameName.trim();
-    if (!folderToRename || !name || name === nameOf(folderToRename)) {
-      folderToRename = null;
-      return;
-    }
-    try {
-      await renameFolder(folderToRename, name);
-      [servers, folders] = await Promise.all([listServers(), listFolders()]);
-    } catch (e) {
-      notifyError(String(e));
-    }
-    folderToRename = null;
-  }
-
-  async function confirmDeleteFolder() {
-    if (!folderToDelete) return;
-    const path = folderToDelete;
-    folderToDelete = null;
-    try {
-      await deleteFolder(path);
-      [servers, folders] = await Promise.all([listServers(), listFolders()]);
-      notifySuccess(t("page.folderDeleted", { name: nameOf(path) }));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
+  // ── Folder drag (move a server into a group / a folder under a new parent) ──
   async function moveServerToGroup(id: string, groupPath: string | null) {
     try {
       const updated = await setServerGroup(id, groupPath);
@@ -688,7 +621,7 @@
   async function connectServer(server: ServerProfile) {
     try {
       const plan = await connectPlan(server.id);
-      if (plan.needsSecret) promptSecret(server, plan.secretLabel);
+      if (plan.needsSecret) secretPrompt?.prompt(server, plan.secretLabel);
       else openTabStore(server.id, server.alias, null, false);
     } catch (e) {
       notifyError(String(e));
@@ -697,14 +630,6 @@
 
   async function startConnect() {
     if (selected) await connectServer(selected);
-  }
-
-  function promptSecret(server: ServerProfile, label: string, error = "") {
-    secretTarget = server;
-    secretLabel = label;
-    secretValue = "";
-    rememberSecret = false;
-    secretError = error;
   }
 
   /**
@@ -729,22 +654,8 @@
         plan.secretLabel === "Passphrase"
           ? t("page.passphraseRejected")
           : t("page.passwordRejected");
-      promptSecret(server, plan.secretLabel, msg);
+      secretPrompt?.prompt(server, plan.secretLabel, msg);
     }
-  }
-
-  /**
-   * Presentation for the connection-error overlay (ConnectingOverlay `failed`).
-   * Maps a tab's terminal status to a title, optional red detail, the phase that
-   * failed (so the checklist freezes on it) and which action button to show.
-   */
-  function submitSecret(event: Event) {
-    event.preventDefault();
-    if (!secretTarget) return;
-    openTabStore(secretTarget.id, secretTarget.alias, secretValue, rememberSecret);
-    secretTarget = null;
-    secretValue = "";
-    rememberSecret = false;
   }
 
   // Confirmation before closing a live tab (settings-gated).
@@ -1111,10 +1022,6 @@
       notifyError(String(e));
     }
   }
-
-  function focusOnMount(node: HTMLElement) {
-    node.focus();
-  }
 </script>
 
 <svelte:window onkeydown={onGlobalKey} />
@@ -1135,9 +1042,9 @@
         serverForm?.openEdit(s);
       }}
       onDeleteServer={(s) => (serverToDelete = s)}
-      onNewFolder={openFolderForm}
-      onRenameFolder={openFolderRename}
-      onDeleteFolder={(p) => (folderToDelete = p)}
+      onNewFolder={(p) => folderModals?.openCreate(p)}
+      onRenameFolder={(p) => folderModals?.openRename(p)}
+      onDeleteFolder={(p) => folderModals?.openDelete(p)}
       onMoveServer={moveServerToGroup}
       onMoveFolder={moveFolderAndRefresh}
       animateWidth={resizing !== "left"}
@@ -1526,69 +1433,13 @@
 />
 <HelpPanel bind:open={showHelp} bind:tab={helpTab} />
 
-<!-- New folder -->
-<Modal open={showFolderForm} title={t("page.newFolderTitle")} onclose={() => (showFolderForm = false)}>
-  <form onsubmit={submitFolder}>
-    {#if folderParent}
-      <p class="mb-3 text-xs text-muted">
-        {t("page.inside")} <span class="text-white">{folderParent}</span>
-      </p>
-    {/if}
-    <input
-      use:focusOnMount
-      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-      placeholder={t("sftp.folderNamePlaceholder")}
-      bind:value={folderName}
-    />
-    <div class="mt-4 flex justify-end gap-2">
-      <button
-        type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-        onclick={() => (showFolderForm = false)}>{t("common.cancel")}</button
-      >
-      <button
-        type="submit"
-        class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-        >{t("common.create")}</button
-      >
-    </div>
-  </form>
-</Modal>
-
-<!-- Rename folder -->
-<Modal open={!!folderToRename} title={t("page.renameFolderTitle")} onclose={() => (folderToRename = null)}>
-  <form onsubmit={submitFolderRename}>
-    <input
-      use:focusOnMount
-      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-      placeholder={t("sftp.folderNamePlaceholder")}
-      bind:value={renameName}
-    />
-    <div class="mt-4 flex justify-end gap-2">
-      <button
-        type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-        onclick={() => (folderToRename = null)}>{t("common.cancel")}</button
-      >
-      <button
-        type="submit"
-        class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-        >{t("common.rename")}</button
-      >
-    </div>
-  </form>
-</Modal>
-
-<!-- Delete folder confirmation -->
-<ConfirmDialog
-  open={!!folderToDelete}
-  title={t("page.deleteFolderTitle")}
-  confirmLabel={t("common.delete")}
-  onconfirm={confirmDeleteFolder}
-  oncancel={() => (folderToDelete = null)}
->
-  {t("page.deleteFolderBody1")} <span class="text-white">{folderToDelete}</span> {t("page.deleteFolderBody2")}
-</ConfirmDialog>
+<!-- Folder create / rename / delete modals (own their own state; Phase 18.4.3) -->
+<FolderModals
+  bind:this={folderModals}
+  onchanged={async () => {
+    [servers, folders] = await Promise.all([listServers(), listFolders()]);
+  }}
+/>
 
 <!-- Delete server confirmation -->
 <ConfirmDialog
@@ -1722,46 +1573,8 @@
   onclose={() => (saveRec = null)}
 />
 
-<!-- Secret prompt (password or key passphrase) -->
-<Modal open={!!secretTarget} title={t("page.secretTitle")} onclose={() => (secretTarget = null)}>
-  {#if secretTarget}
-    <form onsubmit={submitSecret}>
-      <p class="mb-3 text-xs text-muted">
-        {secretTarget.username}@{secretTarget.host}:{secretTarget.port}
-      </p>
-      {#if secretError}
-        <p class="mb-3 rounded border border-danger px-2 py-1 text-xs text-danger">{secretError}</p>
-      {/if}
-      <label class="block text-xs text-muted">
-        {secretLabel === "Passphrase" ? t("page.secretPassphrase") : t("page.secretPassword")}
-        <input
-          type="password"
-          data-testid="secret-input"
-          use:focusOnMount
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          bind:value={secretValue}
-        />
-      </label>
-      <label class="mt-3 flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" bind:checked={rememberSecret} />
-        {t("page.rememberKeychain")}
-      </label>
-      <div class="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          class="rounded px-3 py-1 text-sm text-muted hover:text-white"
-          onclick={() => (secretTarget = null)}>{t("common.cancel")}</button
-        >
-        <button
-          type="submit"
-          data-testid="secret-connect"
-          class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
-          >{t("common.connect")}</button
-        >
-      </div>
-    </form>
-  {/if}
-</Modal>
+<!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->
+<SecretPrompt bind:this={secretPrompt} />
 
 <!-- Add / Edit server modal (owns its own form state; Phase 18.4.2) -->
 <ServerFormModal

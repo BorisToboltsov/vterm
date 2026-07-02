@@ -10,12 +10,18 @@
 
 ## Мониторинг (фаза «Расширение мониторинга» — ЗАКРЕПЛЕНО)
 
+> **Фаза 18.1:** все скрипты (`METRICS_SCRIPT`/`DETAIL_SCRIPT`/`PENDING_SCRIPT`/
+> `EXTRAS_SCRIPT`), парсеры и команды `fetch_*` вынесены из `lib.rs` в
+> [metrics.rs](../src-tauri/src/metrics.rs); пер-сессионные сэмпл-стора сгруппированы
+> в `MetricsSamples` (поле `AppState.metrics_samples`, очистка — `clear_session` в
+> `disconnect`). Пути в тексте ниже читай относительно `metrics.rs`.
+
 - **Два уровня метрик, два контракта.** Лёгкий опрос статус-бара —
   `fetch_metrics`/`METRICS_SCRIPT` (один exec-канал раз в N c). **Тяжёлые** метрики
   страницы — **отдельная** команда `fetch_metrics_detail`/`DETAIL_SCRIPT`, а
   **очень** тяжёлый подсчёт обновлений — `fetch_pending_updates` (distro-aware).
   Дельтовые величины (per-core CPU%, ctxt/intr) держат пер-сессионные сэмплы в
-  `AppState` и чистятся в `disconnect`. Новые ресурсные метрики добавляй сюда, не
+  `MetricsSamples` и чистятся в `disconnect`. Новые ресурсные метрики добавляй сюда, не
   раздувай `METRICS_SCRIPT`.
 - **«Данные только при открытой странице».** Оверлей
   [MonitoringOverlay.svelte](../src/lib/MonitoringOverlay.svelte) (на базе `Modal`)
@@ -405,7 +411,7 @@
   **открыл** файл; перед записью бэкенд сверяет его с текущим на сервере и при
   расхождении возвращает `AppError::FileChangedOnServer` (маркер **`file-changed`**, как
   `auth-rejected`/`host-key-rejected`). Фронт матчит его через `isFileChangedError`
-  ([api.ts](../src/lib/api.ts)) и предлагает передоткрыть/перезаписать (новый семантический
+  ([api.ts](../src/lib/api/)) и предлагает передоткрыть/перезаписать (новый семантический
   вариант ошибки, **не** `Message`).
 - **Чистая логика — в свободных функциях** sftp.rs (`looks_binary`/`detect_eol`/
   `apply_eol`/`is_read_only`/`sha256_hex`/`temp_sibling`), тестируется без сервера; сами
@@ -526,7 +532,7 @@
   на **чтении**, и **«Сохранить от root» при permission-denied на записи** (readable-but-not-
   writable файл редактируется обычным юзером, на `Ctrl+S` → промпт → `setEditorSudo` помечает
   `doc.sudo` и повторяет `doWriteEditor`; дальнейшие сохранения уже sudo). Отказ доступа ловится
-  чистой `isPermissionError` ([api.ts](../src/lib/api.ts)) — **и `permission denied`, и `no such file`**:
+  чистой `isPermissionError` ([api.ts](../src/lib/api/)) — **и `permission denied`, и `no such file`**:
   staged-temp создаётся **в той же папке** (`{dir}/.{name}.vterm-tmp-…`), и при не-записываемой папке
   некоторые SFTP-серверы отдают `No such file` вместо `Permission denied` (файл точно существует — он
   был открыт/в листинге, значит это отказ, а не отсутствие). Пароль
@@ -632,7 +638,7 @@
   ([lib.rs](../src-tauri/src/lib.rs), `build_app_menu(labels)`, стабильные id пунктов)
   вызывается из `$effect` в [+page.svelte](../src/routes/+page.svelte) на старте и при
   смене языка (меню пересобирается). Новый пункт меню = новый ключ `menu.*` + поле в
-  `MenuLabels` (Rust + [api.ts](../src/lib/api.ts)).
+  `MenuLabels` (Rust + [api.ts](../src/lib/api/)).
 - **Коллизия имени `t`.** Переменную цикла `{#each … as t}` нельзя называть `t` в
   файлах, импортирующих функцию перевода — переименовывай (`themeDef`, `tcp`, `tr` и т.п.).
 
@@ -665,7 +671,7 @@
   для сервера — в форме сервера.
   **Ключи API — только в keychain**
   (`vterm:ai-key`, команды `set_ai_key`/`forget_ai_key`), никогда в настройках/логах/файлах.
-  Обёртки — [api.ts](../src/lib/api.ts) (`aiChat`/`cancelAiChat`/`aiModels`/`setAiKey`/`forgetAiKey`).
+  Обёртки — [api.ts](../src/lib/api/) (`aiChat`/`cancelAiChat`/`aiModels`/`setAiKey`/`forgetAiKey`).
   **Пер-эндпоинт (сворачиваемый блок «Дополнительно»):** `basePrompt` — «Общий промпт модели»,
   который `buildChatRequest` **склеивает** перед промтом задачи (`base\n\nprompt`), т.е. слои:
   общий промт модели → промт задачи (чат/runbook/…, с серверным override) → диалог-суффикс; `params`
@@ -793,11 +799,11 @@
 │        Фронтенд (WebView)      │         │        Бэкенд (Rust)         │
 │  SvelteKit + Tailwind + (xterm)│         │           Tauri 2            │
 │                                │         │                              │
-│  +page.svelte ── UI            │         │  lib.rs ── #[tauri::command] │
+│  +page.svelte ── UI            │         │  servers.rs ─ #[command]     │
 │        │                       │         │     ├─ list_servers          │
-│  lib/api.ts ──invoke()────────────────▶  │     ├─ add_server            │
+│  lib/api/ ──invoke()──────────────────▶  │     ├─ add_server            │
 │        ▲                       │ команды │     ├─ delete_server         │
-│        │                       │         │     └─ connect_session       │
+│        │                       │         │  lib.rs ─ connect_session    │
 │  xterm.js ◀───event()──────────────────  │  model.rs ── ServerProfile   │
 │   (поток терминала, Фаза 1)    │ события │  AppState (Mutex<…>)         │
 └───────────────────────────────┘         └──────────────────────────────┘
@@ -805,7 +811,7 @@
 
 - **Команды** (`invoke`) — запрос/ответ: фронтенд вызывает функции Rust
   (`list_servers`, `add_server`, …). Все вызовы инкапсулированы в
-  [src/lib/api.ts](../src/lib/api.ts), UI не работает со строками-именами команд
+  [src/lib/api/](../src/lib/api/), UI не работает со строками-именами команд
   напрямую.
 - **События** (`event`) — поток данных от бэкенда к фронту. В Фазе 1 по этому
   каналу пойдёт вывод PTY с удалённого сервера прямо в xterm.js, а нажатия клавиш
@@ -838,7 +844,8 @@ vterm/
 │   ├── app.html              # HTML-обёртка, <title>vterm</title>
 │   ├── app.css               # Tailwind v4 (@import) + токены темы (@theme)
 │   ├── lib/
-│   │   ├── api.ts                # типизированные обёртки над invoke()
+│   │   ├── api/                  # типизированные обёртки над invoke(), по доменам
+│   │   │                         #   (Фаза 18.6): core/servers/session/files/recording/ai + barrel index.ts
 │   │   ├── types.ts              # TS-типы, зеркало моделей Rust
 │   │   ├── settings.svelte.ts    # реактивный store настроек (localStorage)
 │   │   ├── themes.ts             # палитры тем (терминал + UI), применение к CSS
@@ -861,8 +868,12 @@ vterm/
 │   │   ├── Terminal.svelte       # компонент xterm.js (ввод/вывод, темы, copy/paste)
 │   │   ├── ServerTree.svelte     # левая панель: дерево серверов/папок, drag-n-drop
 │   │   ├── TopBar.svelte         # верхняя панель действий
-│   │   ├── SftpPanel.svelte      # файловый менеджер SFTP (листинг, upload/download)
-│   │   ├── SettingsPanel.svelte  # окно настроек (тема, шрифт, соединение, …)
+│   │   ├── SftpPanel.svelte      # файловый менеджер SFTP (виртуализ. листинг, upload/download)
+│   │   ├── virtuallist.ts        # чистая логика оконной виртуализации списков (Фаза 18.7)
+│   │   ├── ssherror.ts           # чистый маппинг статуса SSH → оверлей ошибки (Фаза 18.4.1)
+│   │   ├── ServerFormModal / FolderModals / SecretPrompt .svelte  # модалки, вынесенные из +page (Фаза 18.4)
+│   │   ├── SettingsPanel.svelte  # тонкий shell настроек (сайдбар групп + поиск); секции — ниже
+│   │   ├── {Appearance,SmartLogs,StatusBar,Snippets,Backup,Ai}SettingsSection.svelte  # секции настроек (Фаза 18.5/17)
 │   │   ├── HelpPanel.svelte      # окно Help / Инструкция / About (рендер README)
 │   │   ├── CommandPalette.svelte # оверлей командной палитры ⌘K
 │   │   ├── StatusBar.svelte      # нижний статус-бар (метрики, график ЦП, пороги)
@@ -886,8 +897,12 @@ vterm/
     ├── icons/                # иконки приложения под все платформы
     └── src/
         ├── main.rs           # точка входа бинаря → vterm_lib::run()
-        ├── lib.rs            # tauri::Builder, меню, состояние, #[tauri::command]
-        │                     #   (метрики статус-бара + детальные/pending для мониторинга)
+        ├── lib.rs            # tauri::Builder, меню, AppState, тонкий оркестратор команд
+        │                     #   (Фаза 18: 3318→~1560 строк; домены вынесены в модули ниже)
+        ├── metrics.rs        # метрики (Фаза 18.1): METRICS/DETAIL/PENDING/EXTRAS-скрипты +
+        │                     #   парсеры + fetch_* + MetricsSamples (per-session сэмплы)
+        ├── servers.rs        # CRUD профилей серверов (Фаза 18.2): list/add/update/delete + forget_secrets
+        ├── folders.rs        # дерево папок + set_server_group + normalize_path/reprefixed (Фаза 18.2)
         ├── model.rs          # ServerProfile (+ group/tags) / NewServerProfile / AuthMethod
         ├── error.rs          # AppError/AppResult (типизированные ошибки команд)
         ├── store.rs          # JSON-персистентность: профили, папки, known_hosts
@@ -896,6 +911,7 @@ vterm/
         ├── ssh.rs            # SSH-сессия на russh: пароль/ключ (+дефолтный ~/.ssh), PTY, SFTP, host-key, exec
         ├── pty.rs            # локальный терминал (portable-pty): forkpty/ConPTY, общий контракт событий
         ├── recording.rs      # запись сессий в asciicast v2 (+маскирование паролей, Фаза 11)
+        ├── sync.rs / localfile.rs / servertools.rs / ai.rs  # sync, локальная ФС, установка инструментов, ИИ-брокер
         └── sftp.rs           # SFTP-операции: листинг, mkdir/create-file/delete, upload/download
 ```
 
