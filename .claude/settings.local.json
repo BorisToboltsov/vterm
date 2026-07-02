@@ -143,7 +143,13 @@
       "Bash(grep -n 'from \"\\\\$lib/stores/workspaces.svelte\"' src/routes/+page.svelte)",
       "Bash(perl -0pi -e 's/\\\\n  \"settings\\\\.aiPromptServer\": \"[^\"]*\",\\\\n  \"settings\\\\.aiPromptServerAny\": \"[^\"]*\",//g' src/lib/i18n/messages.ts)",
       "Bash(perl -0pi -e 's/\\(\\\\n\\(\\\\s*\\)chat_prompt_id: None,\\)/$1\\\\n$2exec_mode: None,/' src-tauri/src/store.rs src-tauri/src/backup.rs)",
-      "Bash(grep -n 'from \"\\\\$lib/ai\"' src/routes/+page.svelte)"
+      "Bash(grep -n 'from \"\\\\$lib/ai\"' src/routes/+page.svelte)",
+      "Bash(xargs cat)",
+      "Bash(grep -n '^\\\\s*function \\\\|^\\\\s*async function \\\\|^\\\\s*const .*=.*=>\\\\|^\\\\s*$effect\\\\|^\\\\s*let ' src/routes/+page.svelte)",
+      "Bash(awk '/METRICS_SCRIPT.*r#\"/{s=NR} /DETAIL_SCRIPT.*r#\"/{print \"METRICS_SCRIPT approx lines:\", NR-s} ' src-tauri/src/lib.rs)",
+      "Bash(jobs -l)",
+      "Bash(ls /Users/boristoboltsov/.claude/projects/-Users-boristoboltsov-project-project-vterm/memory/)",
+      "Bash(cd /Users/boristoboltsam/project/project/vterm 2>/dev/null; cd /Users/boristoboltsov/project/project/vterm *)"
     ]
   }
 }
