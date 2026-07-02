@@ -296,17 +296,19 @@ pub async fn sudo_read(
 
 /// Write a root-owned file via sudo: stage a temp in the user's home (mode 0600),
 /// optionally back up, then `sudo cp` over the target (preserving its owner/perms).
-#[allow(clippy::too_many_arguments)]
 pub async fn sudo_write(
     session: &SshSession,
     sftp: &SftpSession,
-    path: &str,
-    content: &str,
-    eol: &str,
-    expected_sha256: Option<&str>,
-    backup: bool,
+    req: &sftp::TextWrite<'_>,
     password: &str,
 ) -> AppResult<WriteResult> {
+    let sftp::TextWrite {
+        path,
+        content,
+        eol,
+        expected_sha256,
+        backup,
+    } = *req;
     if !sudo_ok(session, "true", password).await? {
         return Err(AppError::Message("sudo authentication failed".into()));
     }

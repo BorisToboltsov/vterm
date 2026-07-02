@@ -223,18 +223,29 @@ pub async fn read_text(sftp: &SftpSession, path: &str, max_bytes: u64) -> AppRes
     })
 }
 
+/// A text-write request: the target path, the content plus its line-ending style,
+/// an optional expected-hash conflict guard, and whether to keep a `.bak`. Shared
+/// by the direct [`write_text`] and the privileged [`crate::sync::sudo_write`].
+pub(crate) struct TextWrite<'a> {
+    pub path: &'a str,
+    pub content: &'a str,
+    pub eol: &'a str,
+    pub expected_sha256: Option<&'a str>,
+    pub backup: bool,
+}
+
 /// Write text back to `path`. Writes a sibling temp file then renames over the
 /// target (so a failed/partial write never truncates the original), preserving
 /// the original permission bits. When `expected_sha256` is given and the file
 /// still exists, a mismatch means it changed on the server → `FileChangedOnServer`.
-pub async fn write_text(
-    sftp: &SftpSession,
-    path: &str,
-    content: &str,
-    eol: &str,
-    expected_sha256: Option<&str>,
-    backup: bool,
-) -> AppResult<WriteResult> {
+pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<WriteResult> {
+    let TextWrite {
+        path,
+        content,
+        eol,
+        expected_sha256,
+        backup,
+    } = *req;
     // Existing file: capture mode + verify it hasn't changed under us.
     let existing = sftp.metadata(path).await.ok();
     let mode = existing.as_ref().and_then(|m| m.permissions);
@@ -316,7 +327,14 @@ pub async fn upload(
         .create(remote)
         .await
         .map_err(|e| format!("create {remote}: {e}"))?;
-    copy_with_progress(app, &id, &name, "upload", total, &mut src, &mut dst, true).await?;
+    let t = Transfer {
+        app,
+        id: &id,
+        name: &name,
+        direction: "upload",
+        total,
+    };
+    copy_with_progress(&t, &mut src, &mut dst, true).await?;
     dst.shutdown().await.map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -393,20 +411,25 @@ pub async fn download_dir(
         if cancel.load(Ordering::Relaxed) {
             break;
         }
-        emit(
+        Transfer {
             app,
-            &id,
-            &base_name(remote),
-            "download",
-            done,
+            id: &id,
+            name: &base_name(remote),
+            direction: "download",
             total,
-            false,
-            true,
-        );
+        }
+        .emit(done, false, true);
         download_file(app, &id, sftp, remote, local, false).await?;
         done += 1;
     }
-    emit(app, &id, &folder, "download", done, total, true, true);
+    Transfer {
+        app,
+        id: &id,
+        name: &folder,
+        direction: "download",
+        total,
+    }
+    .emit(done, true, true);
     Ok(())
 }
 
@@ -431,24 +454,51 @@ async fn download_file(
     let mut dst = tokio::fs::File::create(local)
         .await
         .map_err(|e| format!("create {local}: {e}"))?;
-    copy_with_progress(
-        app, id, &name, "download", total, &mut src, &mut dst, report,
-    )
-    .await?;
+    let t = Transfer {
+        app,
+        id,
+        name: &name,
+        direction: "download",
+        total,
+    };
+    copy_with_progress(&t, &mut src, &mut dst, report).await?;
     dst.flush().await.map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// The invariant descriptor of one transfer, shared by the copy loop and its
+/// progress events: `app`/`id`/`name`/`direction`/`total` don't change mid-copy.
+struct Transfer<'a> {
+    app: &'a AppHandle,
+    id: &'a str,
+    name: &'a str,
+    direction: &'static str,
+    total: u64,
+}
+
+impl Transfer<'_> {
+    /// Emit one `sftp://progress` event for this transfer.
+    fn emit(&self, transferred: u64, done: bool, is_folder: bool) {
+        let _ = self.app.emit(
+            "sftp://progress",
+            Progress {
+                id: self.id.to_string(),
+                name: self.name.to_string(),
+                direction: self.direction,
+                transferred,
+                total: self.total,
+                done,
+                is_folder,
+            },
+        );
+    }
 }
 
 /// Copy with optional progress reporting. When `report` is false (used for the
 /// individual files inside a folder download) no per-file events are emitted —
 /// the caller emits an aggregate file-count progress instead.
-#[allow(clippy::too_many_arguments)]
 async fn copy_with_progress<R, W>(
-    app: &AppHandle,
-    id: &str,
-    name: &str,
-    direction: &'static str,
-    total: u64,
+    t: &Transfer<'_>,
     src: &mut R,
     dst: &mut W,
     report: bool,
@@ -464,48 +514,23 @@ where
         let n = src
             .read(&mut buf)
             .await
-            .map_err(|e| format!("read {name}: {e}"))?;
+            .map_err(|e| format!("read {}: {e}", t.name))?;
         if n == 0 {
             break;
         }
         dst.write_all(&buf[..n])
             .await
-            .map_err(|e| format!("write {name}: {e}"))?;
+            .map_err(|e| format!("write {}: {e}", t.name))?;
         transferred += n as u64;
         if report && transferred - last_emit >= PROGRESS_STEP {
             last_emit = transferred;
-            emit(app, id, name, direction, transferred, total, false, false);
+            t.emit(transferred, false, false);
         }
     }
     if report {
-        emit(app, id, name, direction, transferred, total, true, false);
+        t.emit(transferred, true, false);
     }
     Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit(
-    app: &AppHandle,
-    id: &str,
-    name: &str,
-    direction: &'static str,
-    transferred: u64,
-    total: u64,
-    done: bool,
-    is_folder: bool,
-) {
-    let _ = app.emit(
-        "sftp://progress",
-        Progress {
-            id: id.to_string(),
-            name: name.to_string(),
-            direction,
-            transferred,
-            total,
-            done,
-            is_folder,
-        },
-    );
 }
 
 fn join(dir: &str, name: &str) -> String {

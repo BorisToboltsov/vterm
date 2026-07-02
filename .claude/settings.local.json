@@ -149,7 +149,20 @@
       "Bash(awk '/METRICS_SCRIPT.*r#\"/{s=NR} /DETAIL_SCRIPT.*r#\"/{print \"METRICS_SCRIPT approx lines:\", NR-s} ' src-tauri/src/lib.rs)",
       "Bash(jobs -l)",
       "Bash(ls /Users/boristoboltsov/.claude/projects/-Users-boristoboltsov-project-project-vterm/memory/)",
-      "Bash(cd /Users/boristoboltsam/project/project/vterm 2>/dev/null; cd /Users/boristoboltsov/project/project/vterm *)"
+      "Bash(cd /Users/boristoboltsam/project/project/vterm 2>/dev/null; cd /Users/boristoboltsov/project/project/vterm *)",
+      "Bash(awk -F: '$1>2882')",
+      "Bash(awk 'NR>=1183 && NR<=2189 && /^\\(const |struct |fn |async fn |type |impl |#\\\\[derive|#\\\\[tauri::command\\\\]|#\\\\[serde|\\\\/\\\\/ ──\\)/ {printf \"%d: %s\\\\n\", NR, $0}' lib.rs)",
+      "Bash(awk 'NR>=1183 && NR<=2189' lib.rs)",
+      "Bash(awk 'NR>=2925 && NR<=3308' lib.rs)",
+      "Bash(awk 'NR<1183 || NR>2189' lib.rs)",
+      "Bash(sed -i '' '2923,3306d' lib.rs)",
+      "Bash(sed -i '' '1183,2189d' lib.rs)",
+      "Bash(awk -F: '$1>1840')",
+      "Bash(sed -i '' '1853,1889d' lib.rs)",
+      "Bash(sed -i '' '178,368d' lib.rs)",
+      "Bash(sed -i '' '164,176d' lib.rs)",
+      "Bash(sed -i '' '72,150d' lib.rs)",
+      "Bash(awk 'NR>=408 && NR<=520 && /cols|rows/' ssh.rs)"
     ]
   }
 }

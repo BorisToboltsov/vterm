@@ -274,23 +274,38 @@ pub struct Recorder {
     paused_total: Duration, // accumulated paused time, subtracted from timed stamps
 }
 
+/// Everything needed to open a recording. Grouped so [`Recorder::start`] takes one
+/// argument: the output path, the initial PTY size, the asciicast title, the
+/// on-screen prompt seed, the `vterm` env-metadata JSON, whether to mask password
+/// prompts, and the record mode.
+pub struct RecorderConfig<'a> {
+    pub path: PathBuf,
+    pub cols: u32,
+    pub rows: u32,
+    pub title: &'a str,
+    pub prompt: &'a str,
+    pub env_json: &'a str,
+    pub mask_enabled: bool,
+    pub mode: RecordMode,
+}
+
 impl Recorder {
     /// Create the file, write the header, and start the clock. `prompt` is the
     /// shell prompt line currently on screen (captured by the frontend at REC
     /// time): it's printed *before* recording begins, so the first command would
     /// otherwise have no prompt in front of it. We seed it as the first output
     /// event so every recorded command — in all modes — is preceded by a prompt.
-    #[allow(clippy::too_many_arguments)] // cohesive recorder construction
-    pub fn start(
-        path: PathBuf,
-        cols: u32,
-        rows: u32,
-        title: &str,
-        prompt: &str,
-        env_json: &str,
-        mask_enabled: bool,
-        mode: RecordMode,
-    ) -> AppResult<Recorder> {
+    pub fn start(cfg: RecorderConfig) -> AppResult<Recorder> {
+        let RecorderConfig {
+            path,
+            cols,
+            rows,
+            title,
+            prompt,
+            env_json,
+            mask_enabled,
+            mode,
+        } = cfg;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("create recordings dir: {e}"))?;
         }
@@ -705,19 +720,19 @@ mod tests {
     fn header_embeds_vterm_env_metadata_and_end_time() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "web",
-            "",
-            r#"{"hostname":"web-1","ip":"10.0.0.5","username":"root","os":"Ubuntu 22.04","kernel":"5.15.0"}"#,
-            false,
-            RecordMode {
+        let rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "web",
+            prompt: "",
+            env_json: r#"{"hostname":"web-1","ip":"10.0.0.5","username":"root","os":"Ubuntu 22.04","kernel":"5.15.0"}"#,
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         drop(rec);
 
@@ -743,16 +758,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
         // Local shells / failed probes pass no env — recordMode/startedAt still set.
-        let rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "x",
-            "",
-            "",
-            false,
-            RecordMode::parse("full"),
-        )
+        let rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "x",
+            prompt: "",
+            env_json: "",
+            mask_enabled: false,
+            mode: RecordMode::parse("full"),
+        })
         .unwrap();
         drop(rec);
         let content = std::fs::read_to_string(&path).unwrap();
@@ -766,16 +781,16 @@ mod tests {
     fn annotate_writes_a_visible_audit_event() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "x",
-            "",
-            "",
-            false,
-            RecordMode::parse("full"),
-        )
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "x",
+            prompt: "",
+            env_json: "",
+            mask_enabled: false,
+            mode: RecordMode::parse("full"),
+        })
         .unwrap();
         rec.annotate("edited /etc/nginx.conf (2 lines changed)");
         // Annotations are recorded even while paused (deliberate audit events).
@@ -876,19 +891,20 @@ mod tests {
     fn commands_mode_types_command_then_dumps_output_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "root@host:~# ", // captured prompt, seeded before the first command
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "root@host:~# ",
+            env_json: // captured prompt, seeded before the first command
             "{}",
-            false,
-            RecordMode {
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         rec.input(b"ls\r"); // typed command (echoed char by char)
         rec.output(b"file1\r\n"); // its result, in two chunks
@@ -915,19 +931,20 @@ mod tests {
     fn full_no_timing_dumps_output_at_once() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "", // no captured prompt → nothing seeded
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: // no captured prompt → nothing seeded
             "{}",
-            false,
-            RecordMode {
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: false,
             },
-        )
+        })
         .unwrap();
         // Per-keystroke typing (input + its echo), then a multi-chunk result.
         rec.input(b"l");
@@ -959,19 +976,19 @@ mod tests {
     fn commands_mode_ignores_bare_enter() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "root@host:~# ",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "root@host:~# ",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         // User mashes Enter on an empty line; the shell echoes a blank line and
         // reprints the prompt each time — none of it should be recorded.
@@ -1004,19 +1021,19 @@ mod tests {
     fn commands_mode_ignores_arrow_keys() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         // Type a command then move around with arrow keys before pressing Enter.
         rec.input(b"cd /etc/systemd");
@@ -1036,19 +1053,19 @@ mod tests {
     fn recorded_command(input: &[&[u8]]) -> String {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         for chunk in input {
             rec.input(chunk);
@@ -1097,19 +1114,19 @@ mod tests {
         // exactly the recalled line, even though no keystrokes spelled it out.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "root@host:~# ",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "root@host:~# ",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         rec.input(b"\x1bOA"); // Up (SS3 form, application cursor mode)
         rec.output(b"\rroot@host:~# ls -la /var\x1b[K"); // shell redraws the recalled line
@@ -1125,19 +1142,19 @@ mod tests {
         // The edits apply to the recalled line, not an empty buffer.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "root@host:~# ",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "root@host:~# ",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         rec.input(b"\x1b[A"); // Up (CSI form)
         rec.output(b"\rroot@host:~# cd /etc/systemd\x1b[K");
@@ -1153,19 +1170,19 @@ mod tests {
     fn recorded_with_io(steps: &[(&str, &[u8])]) -> String {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "root@host:~# ",
-            "{}",
-            false,
-            RecordMode {
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "root@host:~# ",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode {
                 timed: false,
                 per_line: true,
             },
-        )
+        })
         .unwrap();
         for (kind, bytes) in steps {
             match *kind {
@@ -1210,16 +1227,16 @@ mod tests {
     fn paused_drops_output_and_input_resumes() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("t.cast");
-        let mut rec = Recorder::start(
-            path.clone(),
-            80,
-            24,
-            "t",
-            "",
-            "{}",
-            false,
-            RecordMode::parse("full"),
-        )
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode::parse("full"),
+        })
         .unwrap();
         rec.output(b"before\r\n"); // recorded
         rec.set_paused(true);

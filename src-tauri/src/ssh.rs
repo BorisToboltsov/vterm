@@ -385,16 +385,18 @@ pub enum Credential {
     },
 }
 
-/// Tunables passed from the frontend Settings panel.
+/// Tunables passed from the frontend Settings panel, plus the initial PTY size.
 pub struct ConnectOptions {
     pub term_type: String,
     pub connect_timeout: Duration,
     pub keepalive_interval: Duration,
     pub host_key_policy: HostKeyPolicy,
+    /// Initial terminal size for the shell's PTY request.
+    pub cols: u32,
+    pub rows: u32,
 }
 
 /// Open a connection, authenticate, and start an interactive shell.
-#[allow(clippy::too_many_arguments)]
 pub async fn connect(
     app: AppHandle,
     session_id: String,
@@ -402,8 +404,6 @@ pub async fn connect(
     port: u16,
     username: &str,
     cred: Credential,
-    cols: u32,
-    rows: u32,
     opts: ConnectOptions,
 ) -> AppResult<SshSession> {
     let connect_timeout = opts.connect_timeout;
@@ -490,7 +490,7 @@ pub async fn connect(
         .await
         .map_err(|e| format!("could not open channel: {e}"))?;
     channel
-        .request_pty(true, &opts.term_type, cols, rows, 0, 0, &[])
+        .request_pty(true, &opts.term_type, opts.cols, opts.rows, 0, 0, &[])
         .await
         .map_err(|e| format!("pty request failed: {e}"))?;
     channel
