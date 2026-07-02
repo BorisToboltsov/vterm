@@ -30,7 +30,10 @@ russh-sftp = "2.3.0"
 tokio = { version = "1.52.3", features = ["full"] }
 directories = "6.0.0"
 tauri-plugin-dialog = "2.7.1"
-keyring = { version = "^3", features = ["apple-native", "windows-native"] }
+# keyring 4.x reorganised features: the 3.x `apple-native`/`windows-native` flags
+# are gone; the default `v1` feature bundles the native stores (macOS Keychain,
+# Windows Credential Manager). API (Entry/Error/get_set/delete_credential) unchanged.
+keyring = "4"
 thiserror = "2"
 zeroize = "1"
 # SHA-256 for the config editor: conflict detection (compare on-server hash vs the
