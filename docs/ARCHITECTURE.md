@@ -501,6 +501,16 @@
   затем слушает событие → `handleOpenFile` (переиспользует/создаёт локальный терминал-таб +
   открывает редактор-вкладку `source:"local"`; md → превью). Дедуп по пути (`findEditorByPath`).
   `.run()` заменён на `.build()?.run(|app, event| …)` ради `Opened`.
+- **Старт без белой вспышки (20.10).** В dev `app.css` инжектится через JS, поэтому
+  первый HTML-кадр рисуется без стилей = белым. Фикс — анти-FOUC в
+  [app.html](../src/app.html): статический инлайн `<style>` с тёмным фоном + инлайн-`<script>`
+  в `<head>`, синхронно читающий `localStorage['vterm.chromePanel']` и красящий фон/`--color-panel`
+  в цвет последней темы (до любого CSS/JS). Значение пишет `applyActiveTheme()`
+  ([settings.svelte.ts](../src/lib/settings.svelte.ts)) — зеркалит панель на
+  `documentElement` и персистит в `CHROME_PANEL_KEY`. В конфиге оставлен
+  `backgroundColor: "#1e1e2e"` (подложка вебвью до загрузки HTML). Подход **фронтовый** →
+  применяется на перезагрузке вебвью, без ребилда Rust. *(Отклонён `visible:false`+`show()`:
+  скрытое окно не рисуется, показ ждал фронт → «зависание», и WKWebView всё равно мигал белым.)*
 - **Локальная файловая панель (12.4).** Для **локальных** терминал-вкладок справа рендерится
   [LocalFilePanel.svelte](../src/lib/LocalFilePanel.svelte) — локальный аналог `SftpPanel` (тот же
   докинг/ресайз/`layout.sftpWidth`+`sftpCollapsed`, дизайн-токены, иконки папка/файл/символ-ссылка),

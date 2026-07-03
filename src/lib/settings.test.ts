@@ -1,8 +1,11 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  activeChromePanel,
   activeTerminalTheme,
+  applyActiveTheme,
   applyImportedSettings,
+  CHROME_PANEL_KEY,
   clampMaxOpenMb,
   resetSettings,
   settings,
@@ -15,6 +18,46 @@ beforeEach(() => {
   localStorage.clear();
   resetSettings();
   flushSync();
+});
+
+describe("applyActiveTheme", () => {
+  it("pushes a preset's chrome palette onto the document root", () => {
+    settings.theme = "dracula";
+    flushSync();
+    document.documentElement.removeAttribute("style"); // isolate from the effect
+    applyActiveTheme();
+    expect(document.documentElement.style.getPropertyValue("--color-panel")).toBe(
+      getTheme("dracula").ui.panel,
+    );
+  });
+
+  it("leaves the chrome CSS var on defaults for a custom theme", () => {
+    settings.theme = "custom";
+    flushSync();
+    document.documentElement.removeAttribute("style");
+    applyActiveTheme();
+    // No preset palette pushed, so the `--color-panel` var stays unset…
+    expect(document.documentElement.style.getPropertyValue("--color-panel")).toBe("");
+    // …but the neutral dark panel still backs the root element.
+    expect(document.documentElement.style.backgroundColor).toBeTruthy();
+  });
+
+  it("mirrors the panel colour onto the root background and persists it for the boot script", () => {
+    settings.theme = "dracula";
+    flushSync();
+    document.documentElement.removeAttribute("style");
+    localStorage.removeItem(CHROME_PANEL_KEY);
+
+    applyActiveTheme();
+
+    const panel = getTheme("dracula").ui.panel;
+    expect(activeChromePanel()).toBe(panel);
+    // documentElement.style.backgroundColor is normalised to rgb() by jsdom, so
+    // assert it's set rather than string-equal to the hex.
+    expect(document.documentElement.style.backgroundColor).not.toBe("");
+    // The persisted hex is what app.html's pre-CSS boot script reads next launch.
+    expect(localStorage.getItem(CHROME_PANEL_KEY)).toBe(panel);
+  });
 });
 
 describe("defaults", () => {

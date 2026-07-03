@@ -5,6 +5,28 @@
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>vterm</title>
+    <!-- Anti-FOUC: paint a dark background on the very first frame, before app.css
+         (which is injected via JS in dev) or any theme JS runs. The inline script
+         upgrades it to the last-used theme's panel colour from localStorage so the
+         first paint matches the active theme (see settings.svelte.ts CHROME_PANEL_KEY). -->
+    <style>
+      html,
+      body {
+        background-color: #1e1e2e;
+      }
+    </style>
+    <script>
+      try {
+        var c = localStorage.getItem("vterm.chromePanel");
+        if (c) {
+          var s = document.documentElement.style;
+          s.backgroundColor = c;
+          s.setProperty("--color-panel", c);
+        }
+      } catch (e) {
+        /* localStorage unavailable — the static dark background above still applies */
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">

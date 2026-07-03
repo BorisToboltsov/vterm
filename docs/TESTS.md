@@ -319,6 +319,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `applyUiPalette`;
 - `settings.svelte.ts` — дефолты (в т.ч. `recordIdlePauseSecs: 20` — пауза записи при простое),
   persist в `localStorage`, `activeTerminalTheme`,
+  `applyActiveTheme` (Фаза 20.10 — пресет пушит `--color-*` на `documentElement`,
+  зеркалит панель на `documentElement.style.backgroundColor` и персистит в
+  `CHROME_PANEL_KEY` для анти-FOUC boot-скрипта в `app.html`; custom-тема оставляет
+  CSS-дефолты),
   `resetSettings` (рунический модуль — эффекты прогоняются через `flushSync`),
   `statusBarThresholds` (числовые дефолты, deep-merge бэкапа с сохранением
   дефолтов для отсутствующих метрик, явный `null` = отключено, отсев мусора),

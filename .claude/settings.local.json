@@ -190,7 +190,20 @@
       "Bash(grep -nE 'function |$derived|valid|test|ping|redact|mask|parse' src/lib/AiSettingsSection.svelte)",
       "Bash(sed -i '' 's/\"version\": \"0.20.0\"/\"version\": \"0.20.1\"/' package.json)",
       "Bash(sed -i '' 's/\"version\": \"0.20.0\"/\"version\": \"0.20.1\"/' src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.20.0\"/version = \"0.20.1\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.20.0\"/version = \"0.20.1\"/' src-tauri/Cargo.toml)",
+      "Bash(xargs -I{} sh -c 'grep -o \"backgroundColor[^,]*\" {} | head -3')",
+      "Bash(python3 -c ' *)",
+      "Bash(awk '/name = \"tauri\"/{getline; print; exit}' src-tauri/Cargo.lock)",
+      "Bash(curl -s http://localhost:1420/)",
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(awk '{print $5, $9}')",
+      "Bash(xargs ls -l)",
+      "Bash(sort -k5 -n -r)",
+      "Bash(awk '{printf \"%d KB  %s\\\\n\", $5/1024, $9}')",
+      "Bash(awk '{printf \"%d KB total\\\\n\", $1/1024}')",
+      "Bash(gzip -c build/_app/immutable/nodes/2.*.js)",
+      "Bash(awk '{printf \"%d KB gzipped\\\\n\", $1/1024}')",
+      "Bash(awk '{printf \"%d KB raw\\\\n\", $5/1024}')"
     ]
   }
 }

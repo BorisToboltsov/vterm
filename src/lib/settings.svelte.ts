@@ -479,6 +479,42 @@ export function applyImportedSettings(raw: unknown): void {
   Object.assign(settings, next);
 }
 
+/** localStorage key holding the last chrome panel colour, read by the pre-CSS
+ *  boot script in `app.html` to paint the first frame before styles load. */
+export const CHROME_PANEL_KEY = "vterm.chromePanel";
+
+/**
+ * The active chrome panel colour (hex) — the preset's `ui.panel`, or the neutral
+ * dark default for a custom terminal theme (whose chrome stays on `app.css`
+ * defaults).
+ */
+export function activeChromePanel(): string {
+  return settings.theme !== "custom" ? getTheme(settings.theme).ui.panel : "#1e1e2e";
+}
+
+/**
+ * Push the active theme's chrome palette onto the document. For a custom
+ * terminal theme the surrounding chrome stays on the neutral dark defaults
+ * (from `app.css`); presets carry their own coordinated UI palette. Also mirrors
+ * the panel colour onto `documentElement`'s background and persists it under
+ * `CHROME_PANEL_KEY` so the next launch's pre-CSS boot script (in `app.html`)
+ * paints the very first frame in the theme colour — no white startup flash.
+ */
+export function applyActiveTheme(): void {
+  if (settings.theme !== "custom") {
+    applyUiPalette(getTheme(settings.theme).ui);
+  }
+  const panel = activeChromePanel();
+  if (typeof document !== "undefined") {
+    document.documentElement.style.backgroundColor = panel;
+  }
+  try {
+    localStorage.setItem(CHROME_PANEL_KEY, panel);
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 // Persist on any change and keep the UI chrome in sync with the chosen theme.
 // `$effect.root` lives for the whole app session (never torn down).
 $effect.root(() => {
@@ -491,10 +527,6 @@ $effect.root(() => {
   });
 
   $effect(() => {
-    // For a custom terminal theme keep the surrounding chrome on a neutral dark
-    // palette; presets carry their own coordinated UI palette.
-    if (settings.theme !== "custom") {
-      applyUiPalette(getTheme(settings.theme).ui);
-    }
+    applyActiveTheme();
   });
 });
