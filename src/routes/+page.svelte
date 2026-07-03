@@ -127,6 +127,9 @@
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
+  // Highlighted folder in the left tree. When set, "Add server" pre-fills this
+  // folder as the new server's group. Mutually exclusive with a selected server.
+  let selectedFolder = $state<string | null>(null);
   // Add/edit server form (owns its own field state); opened via its exported methods.
   let serverForm: ServerFormModal | undefined = $state();
   // Folder create/rename/delete modals (own their own state); opened via exports.
@@ -177,6 +180,10 @@
   );
 
   const selected = $derived(servers.find((s) => s.id === selectedId) ?? null);
+  // Drop a stale folder highlight after the folder is renamed/deleted.
+  $effect(() => {
+    if (selectedFolder !== null && !folders.includes(selectedFolder)) selectedFolder = null;
+  });
   const activeTab = $derived(findTab(tabsState.activeId));
   // Raw status drives logic (startsWith checks); localize only for the top bar.
   const status = $derived(localizedStatus(activeTab?.status ?? "Not connected"));
@@ -448,7 +455,7 @@
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
-      keywords: "add server new сервер добавить", run: () => serverForm?.openAdd() },
+      keywords: "add server new сервер добавить", run: () => serverForm?.openAdd(selectedFolder ?? "") },
     { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
       keywords: "folder new папка новая", run: () => folderModals?.openCreate("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
@@ -1034,9 +1041,17 @@
       {servers}
       {folders}
       {selectedId}
-      onSelect={(id) => (selectedId = id)}
+      {selectedFolder}
+      onSelect={(id) => {
+        selectedId = id;
+        selectedFolder = null;
+      }}
+      onSelectFolder={(p) => {
+        selectedFolder = p;
+        selectedId = null;
+      }}
       onConnect={startConnect}
-      onAddServer={() => serverForm?.openAdd()}
+      onAddServer={() => serverForm?.openAdd(selectedFolder ?? "")}
       onEditServer={(s) => {
         selectedId = s.id;
         serverForm?.openEdit(s);
@@ -1585,6 +1600,7 @@
     } else {
       servers = [...servers, server];
       selectedId = server.id;
+      selectedFolder = null;
     }
   }}
   onforgotten={(id) => {

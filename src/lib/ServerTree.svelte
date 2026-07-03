@@ -22,7 +22,9 @@
     servers,
     folders,
     selectedId,
+    selectedFolder,
     onSelect,
+    onSelectFolder,
     onConnect,
     onAddServer,
     onEditServer,
@@ -37,7 +39,10 @@
     servers: ServerProfile[];
     folders: string[];
     selectedId: string | null;
+    /** Highlighted folder path; a new server created while set lands in it. */
+    selectedFolder: string | null;
     onSelect: (id: string) => void;
+    onSelectFolder: (path: string) => void;
     onConnect: () => void;
     onAddServer: () => void;
     onEditServer: (server: ServerProfile) => void;
@@ -236,15 +241,23 @@
         {#if row.kind === "folder"}
           <div
             data-drop={row.path}
+            data-testid="folder-row"
+            data-folder-path={row.path}
             role="treeitem"
-            aria-selected="false"
+            aria-selected={selectedFolder === row.path}
             tabindex="-1"
             style="padding-left: {row.depth * 16}px"
             onpointerdown={(e) => folderPointerDown(e, row.path)}
-            class="group relative flex cursor-grab items-center gap-1 border-l-2 border-transparent py-1 pr-2 text-sm transition duration-150 {dropTarget ===
-              row.path && dropAllowed(row.path)
+            onclick={() => onSelectFolder(row.path)}
+            onkeydown={(e) => e.key === "Enter" && onSelectFolder(row.path)}
+            class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
+            row.path
+              ? 'border-accent'
+              : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
               ? 'bg-accent/20 ring-1 ring-inset ring-accent'
-              : 'hover:bg-edge'} {dragKind === 'folder' && dragId === row.path
+              : selectedFolder === row.path
+                ? 'bg-edge'
+                : 'hover:bg-edge'} {dragKind === 'folder' && dragId === row.path
               ? 'opacity-50'
               : ''}"
           >
@@ -253,7 +266,10 @@
               class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-white"
               title={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
               aria-label={t("tree.toggleFolder")}
-              onclick={() => toggleFolder(row.path)}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleFolder(row.path);
+              }}
             >
               <Icon name={collapsedFolders.includes(row.path) ? "chevronRight" : "chevronDown"} size={14} />
             </button>
@@ -267,7 +283,10 @@
                 class="rounded p-0.5 text-muted hover:text-accent"
                 title={t("tree.renameFolder")}
                 aria-label={t("tree.renameFolder")}
-                onclick={() => onRenameFolder(row.path)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onRenameFolder(row.path);
+                }}
               >
                 <Icon name="pencil" size={13} />
               </button>
@@ -275,7 +294,10 @@
                 class="rounded p-0.5 text-muted hover:text-accent"
                 title={t("tree.newSubfolder")}
                 aria-label={t("tree.newSubfolder")}
-                onclick={() => onNewFolder(row.path)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onNewFolder(row.path);
+                }}
               >
                 <Icon name="plus" size={13} />
               </button>
@@ -283,7 +305,10 @@
                 class="rounded p-0.5 text-muted hover:text-danger"
                 title={t("tree.deleteFolder")}
                 aria-label={t("tree.deleteFolder")}
-                onclick={() => onDeleteFolder(row.path)}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onDeleteFolder(row.path);
+                }}
               >
                 <Icon name="trash" size={13} />
               </button>

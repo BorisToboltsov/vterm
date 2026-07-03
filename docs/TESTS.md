@@ -505,10 +505,18 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `Modal.test.ts` — `Modal` (рендер/закрытие по фону и Escape; a11y: `role="dialog"`/
   `aria-modal`/`aria-label`, автофокус первого контроля, фокус-трап Tab/Shift+Tab по
   кругу) и `ConfirmDialog` (колбэки confirm/cancel, accent/danger).
+- `serverform.test.ts` (Фаза 20.7, чистая логика) — валидаторы формы сервера:
+  `isValidPort` (1…65535, отказ на `null`/дробном/вне диапазона) и `isValidHost` —
+  IPv4 (октеты 0–255, без ведущих нулей), IPv6 (`::`-сжатие, zone-id, встроенный IPv4),
+  RFC-1123 hostname (метки, дефисы, чисто-числовой TLD мультиметочного имени → отказ),
+  trim + пустая строка.
 - `ServerFormModal.test.ts` (Фаза 20.5) — валидация обязательных полей формы сервера
   (`api` замокан): submit при пустых `alias`/`host`/`username` подсвечивает все три
   (`aria-invalid`, «This field is required» ×3 + сводка) и **не** зовёт `addServer`;
   ошибка поля снимается по заполнению; whitespace-only не проходит (`.trim()`);
+  **host** — мусорный (`256.300.1.1`) блокирует сейв с отдельным сообщением «Enter a
+  valid host name or IP address», исправление на валидный (`example.com`) пропускает;
+  пустой host даёт «required», не «invalid»;
   **порт** — очистка блокирует сейв («Port must be between 1 and 65535», `aria-invalid`)
   и не шлёт `null` в бэкенд, вне-диапазонный (`99999`) отклоняется, повторный ввод
   валидного порта снимает ошибку и пропускает сейв (`port: 2222` в payload); при
@@ -612,7 +620,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `ServerTree.test.ts` — рендер папок/серверов, выбор, dbl-click → connect,
   сворачивание папки, фильтр поиска, кнопка «New folder», кнопка «Add server» в
   тулбаре (`add-server` → `onAddServer`), пустое состояние с CTA «Добавить сервер»
-  (`empty-add-server` → `onAddServer`).
+  (`empty-add-server` → `onAddServer`). **Выделение папки (Фаза 20.6):** клик по строке
+  папки → `onSelectFolder(path)`; выделенная папка помечена `aria-selected`/`border-accent`;
+  тоггл сворачивания и кнопки действий (rename/subfolder/delete) **не** выделяют папку
+  (`stopPropagation`).
 - `SettingsPanel.test.ts` — секция Backup: экспорт по выбранному пути со снимком
   настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
   визуальный пикер тем (свёрнут/раскрытие, выбор → `aria-checked`), сетка шрифтов с

@@ -28,7 +28,9 @@ const baseProps = () => ({
   servers: [] as ServerProfile[],
   folders: [] as string[],
   selectedId: null as string | null,
+  selectedFolder: null as string | null,
   onSelect: noop,
+  onSelectFolder: noop,
   onConnect: noop,
   onAddServer: noop,
   onEditServer: noop,
@@ -118,5 +120,53 @@ describe("ServerTree", () => {
     render(ServerTree, { props: { ...baseProps(), onAddServer } });
     await userEvent.click(screen.getByTestId("add-server"));
     expect(onAddServer).toHaveBeenCalledOnce();
+  });
+
+  it("clicking a folder row reports it as the selected folder", async () => {
+    const onSelectFolder = vi.fn();
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod"], onSelectFolder },
+    });
+    await userEvent.click(screen.getByTestId("folder-row"));
+    expect(onSelectFolder).toHaveBeenCalledWith("Prod");
+  });
+
+  it("highlights the selected folder (aria-selected)", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod", "Dev"], selectedFolder: "Prod" },
+    });
+    const rows = screen.getAllByTestId("folder-row");
+    const prod = rows.find((r) => r.getAttribute("data-folder-path") === "Prod")!;
+    const dev = rows.find((r) => r.getAttribute("data-folder-path") === "Dev")!;
+    expect(prod).toHaveAttribute("aria-selected", "true");
+    expect(prod.className).toContain("border-accent");
+    expect(dev).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("the folder toggle does not select the folder (stops propagation)", async () => {
+    const onSelectFolder = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        onSelectFolder,
+      },
+    });
+    await userEvent.click(screen.getByLabelText("Toggle folder"));
+    expect(onSelectFolder).not.toHaveBeenCalled();
+    // …and it still collapsed the folder.
+    expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("folder action buttons do not also select the folder", async () => {
+    const onSelectFolder = vi.fn();
+    const onRenameFolder = vi.fn();
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod"], onSelectFolder, onRenameFolder },
+    });
+    await userEvent.click(screen.getByLabelText("Rename folder"));
+    expect(onRenameFolder).toHaveBeenCalledWith("Prod");
+    expect(onSelectFolder).not.toHaveBeenCalled();
   });
 });

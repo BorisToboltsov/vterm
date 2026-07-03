@@ -57,7 +57,8 @@
   [format.ts](../src/lib/format.ts), [util.ts](../src/lib/util.ts),
   [actions/drag.ts](../src/lib/actions/drag.ts), [ssherror.ts](../src/lib/ssherror.ts)
   (статус SSH → оверлей), [virtuallist.ts](../src/lib/virtuallist.ts) (оконная
-  виртуализация). Rust: `reprefixed`, `decode_or_default`, парсеры метрик в
+  виртуализация), [serverform.ts](../src/lib/serverform.ts) (валидаторы host/IP и порта
+  формы сервера). Rust: `reprefixed`, `decode_or_default`, парсеры метрик в
   [metrics.rs](../src-tauri/src/metrics.rs). (ADR 0003)
 - **Состояние UI — в runes-сторах** `src/lib/stores/*.svelte.ts` (по образцу
   [settings.svelte.ts](../src/lib/settings.svelte.ts)): `layout` (ширины/сворачивание

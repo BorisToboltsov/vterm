@@ -83,6 +83,45 @@ describe("ServerFormModal validation", () => {
     expect(addServer).not.toHaveBeenCalled();
   });
 
+  it("rejects a malformed host/IP with a distinct message", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "256.300.1.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByText("Enter a valid host name or IP address")).toBeInTheDocument();
+    expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+
+    // Fixing it to a valid host clears the error and lets the save through.
+    await userEvent.clear(screen.getByTestId("field-host"));
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    expect(screen.queryByText("Enter a valid host name or IP address")).toBeNull();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ host: "example.com" }));
+  });
+
+  it("shows the required message (not the invalid one) when host is left empty", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Enter a valid host name or IP address")).toBeNull();
+    // Alias/host/username all empty-required → 2 remain empty (alias & username
+    // are filled here, so only host); assert host shows the required copy.
+    expect(screen.getAllByText("This field is required").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("blocks save when the port is cleared (would send null to a u16 backend)", async () => {
     const { comp } = renderForm();
     comp.openAdd();

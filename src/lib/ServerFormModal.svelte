@@ -10,6 +10,7 @@
   import { addServer, updateServer, forgetSecrets, pickKeyFile } from "./api";
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
+  import { isValidHost, isValidPort } from "./serverform";
   import { t } from "./i18n";
 
   let {
@@ -43,15 +44,12 @@
   // as the user types (derived below) and reset when the form (re)opens.
   let submitted = $state(false);
 
-  /** A valid SSH port is an integer in 1…65535 (backend stores it as u16). */
-  function portValid(p: number | null): p is number {
-    return p != null && Number.isInteger(p) && p >= 1 && p <= 65535;
-  }
-
   const aliasError = $derived(submitted && !alias.trim());
-  const hostError = $derived(submitted && !host.trim());
+  // Empty → "required"; non-empty but malformed → "invalid host/IP".
+  const hostEmpty = $derived(submitted && !host.trim());
+  const hostError = $derived(submitted && !isValidHost(host));
   const usernameError = $derived(submitted && !username.trim());
-  const portError = $derived(submitted && !portValid(port));
+  const portError = $derived(submitted && !isValidPort(port));
   const hasErrors = $derived(aliasError || hostError || usernameError || portError);
 
   /** Open the form to add a new server, optionally pre-filling its folder group. */
@@ -111,7 +109,7 @@
   async function submit(event: Event) {
     event.preventDefault();
     submitted = true;
-    if (!alias.trim() || !host.trim() || !username.trim() || !portValid(port)) return;
+    if (!alias.trim() || !isValidHost(host) || !username.trim() || !isValidPort(port)) return;
     const tags = tagsInput
       .split(",")
       .map((s) => s.trim())
@@ -180,7 +178,9 @@
         placeholder="192.168.1.10"
       />
       {#if hostError}
-        <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+        <span class="mt-1 block text-[11px] text-danger"
+          >{hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
+        >
       {/if}
     </label>
     <div class="mb-2 flex gap-2">
