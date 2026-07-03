@@ -456,6 +456,13 @@
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
       keywords: "add server new сервер добавить", run: () => serverForm?.openAdd(selectedFolder ?? "") },
+    // Duplicate acts on the currently selected server; hidden when none is selected.
+    ...(selected
+      ? [{ id: "act:duplicate", title: t("palette.duplicateServer"), icon: "copy",
+          group: t("palette.groupActions"),
+          keywords: "duplicate copy clone дублировать копировать копия",
+          run: () => serverForm?.openDuplicate(selected) } satisfies CommandItem]
+      : []),
     { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
       keywords: "folder new папка новая", run: () => folderModals?.openCreate("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
@@ -1055,6 +1062,10 @@
       onEditServer={(s) => {
         selectedId = s.id;
         serverForm?.openEdit(s);
+      }}
+      onDuplicateServer={(s) => {
+        selectedId = s.id;
+        serverForm?.openDuplicate(s);
       }}
       onDeleteServer={(s) => (serverToDelete = s)}
       onNewFolder={(p) => folderModals?.openCreate(p)}

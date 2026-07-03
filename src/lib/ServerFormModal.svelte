@@ -90,6 +90,31 @@
     open = true;
   }
 
+  /**
+   * Open the form pre-filled from an existing server to create a copy. This is
+   * an "add" (new id), so the saved secret is intentionally NOT carried over —
+   * secrets live in the keychain keyed by server id. Alias gets a "(copy)"
+   * suffix so the duplicate is distinguishable at a glance.
+   */
+  export function openDuplicate(server: ServerProfile) {
+    mode = "add";
+    editId = null;
+    alias = t("page.copyOfAlias", { alias: server.alias });
+    host = server.host;
+    port = server.port;
+    username = server.username;
+    authMethod = server.authMethod;
+    keyPath = server.keyPath;
+    group = server.group ?? "";
+    tagsInput = server.tags.join(", ");
+    autoRecord = server.autoRecord;
+    noAi = server.noAi;
+    aiPromptId = server.chatPromptId ?? "";
+    aiExecMode = server.execMode ?? "";
+    submitted = false;
+    open = true;
+  }
+
   async function browseKey() {
     const picked = await pickKeyFile();
     if (picked) keyPath = picked;

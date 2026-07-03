@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ServerTree from "./ServerTree.svelte";
@@ -34,6 +34,7 @@ const baseProps = () => ({
   onConnect: noop,
   onAddServer: noop,
   onEditServer: noop,
+  onDuplicateServer: noop,
   onDeleteServer: noop,
   onNewFolder: noop,
   onRenameFolder: noop,
@@ -157,6 +158,35 @@ describe("ServerTree", () => {
     expect(onSelectFolder).not.toHaveBeenCalled();
     // …and it still collapsed the folder.
     expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("the row duplicate button requests a copy of that server (without selecting it via bubbling)", async () => {
+    const onDuplicateServer = vi.fn();
+    const onSelect = vi.fn();
+    const server = srv({ id: "1", alias: "Web" });
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [server], onDuplicateServer, onSelect },
+    });
+    await userEvent.click(screen.getByLabelText("Duplicate server"));
+    expect(onDuplicateServer).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("disables text selection while pressing a row, and restores it on release", async () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })] },
+    });
+    const list = screen.getByRole("tree");
+    expect(list.className).not.toContain("select-none");
+
+    // Press on a server row → the list turns off text selection so a drag can't
+    // start selecting the rows below it.
+    await fireEvent.pointerDown(screen.getByTestId("server-row"));
+    expect(list.className).toContain("select-none");
+
+    // Releasing restores normal selection.
+    await fireEvent.pointerUp(list);
+    expect(list.className).not.toContain("select-none");
   });
 
   it("folder action buttons do not also select the folder", async () => {

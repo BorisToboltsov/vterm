@@ -516,7 +516,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   ошибка поля снимается по заполнению; whitespace-only не проходит (`.trim()`);
   **host** — мусорный (`256.300.1.1`) блокирует сейв с отдельным сообщением «Enter a
   valid host name or IP address», исправление на валидный (`example.com`) пропускает;
-  пустой host даёт «required», не «invalid»;
+  пустой host даёт «required», не «invalid»; **дублирование (Фаза 20.9):**
+  `openDuplicate(server)` предзаполняет форму полями оригинала, алиас → `{alias} (copy)`,
+  сохранение зовёт `addServer` (не `updateServer`), а сохранённый секрет в payload не
+  попадает;
   **порт** — очистка блокирует сейв («Port must be between 1 and 65535», `aria-invalid`)
   и не шлёт `null` в бэкенд, вне-диапазонный (`99999`) отклоняется, повторный ввод
   валидного порта снимает ошибку и пропускает сейв (`port: 2222` в payload); при
@@ -623,7 +626,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (`empty-add-server` → `onAddServer`). **Выделение папки (Фаза 20.6):** клик по строке
   папки → `onSelectFolder(path)`; выделенная папка помечена `aria-selected`/`border-accent`;
   тоггл сворачивания и кнопки действий (rename/subfolder/delete) **не** выделяют папку
-  (`stopPropagation`).
+  (`stopPropagation`). **Drag-выделение (Фаза 20.8):** нажатие на строку сервера вешает
+  `select-none` на список (чтобы drag не выделял текст строк ниже), отпускание — снимает.
+  **Дублирование (Фаза 20.9):** кнопка copy в строке → `onDuplicateServer(server)`, без
+  выделения сервера через bubbling (`stopPropagation`).
 - `SettingsPanel.test.ts` — секция Backup: экспорт по выбранному пути со снимком
   настроек, отмена экспорта, импорт после подтверждения + вызов `onImported`;
   визуальный пикер тем (свёрнут/раскрытие, выбор → `aria-checked`), сетка шрифтов с

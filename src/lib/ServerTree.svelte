@@ -28,6 +28,7 @@
     onConnect,
     onAddServer,
     onEditServer,
+    onDuplicateServer,
     onDeleteServer,
     onNewFolder,
     onRenameFolder,
@@ -46,6 +47,7 @@
     onConnect: () => void;
     onAddServer: () => void;
     onEditServer: (server: ServerProfile) => void;
+    onDuplicateServer: (server: ServerProfile) => void;
     onDeleteServer: (server: ServerProfile) => void;
     onNewFolder: (parent: string) => void;
     onRenameFolder: (path: string) => void;
@@ -96,6 +98,9 @@
   let dragCandidate: DragItem | null = null;
   let dragKind = $state<"server" | "folder" | null>(null);
   let dragId = $state<string | null>(null);
+  // True from pointer-press on a draggable row until release. Drives `select-none`
+  // on the list so a press-drag never starts native text selection of the rows.
+  let pressing = $state(false);
   let dropTarget = $state<string | null>(null);
   let startX = 0;
   let startY = 0;
@@ -115,6 +120,7 @@
     dragCandidate = item;
     startX = event.clientX;
     startY = event.clientY;
+    pressing = true;
   }
   const serverPointerDown = (e: PointerEvent, id: string) =>
     startDrag(e, { kind: "server", id });
@@ -128,6 +134,8 @@
       dragKind = dragCandidate.kind;
       dragId = dragCandidate.id;
       listEl.setPointerCapture(event.pointerId);
+      // Drop any selection that slipped in before `select-none` took effect.
+      window.getSelection()?.removeAllRanges();
     }
     dragX = event.clientX;
     dragY = event.clientY;
@@ -155,6 +163,7 @@
     dragKind = null;
     dragId = null;
     dropTarget = null;
+    pressing = false;
   }
 </script>
 
@@ -226,7 +235,10 @@
       tabindex="-1"
       onpointermove={listPointerMove}
       onpointerup={listPointerUp}
-      class="min-h-0 flex-1 overflow-y-auto {dragId ? 'cursor-grabbing select-none' : ''}"
+      onpointercancel={listPointerUp}
+      class="min-h-0 flex-1 overflow-y-auto {pressing ? 'select-none' : ''} {dragId
+        ? 'cursor-grabbing'
+        : ''}"
     >
       <!-- Vertical guides marking each nesting level. -->
       {#snippet guides(depth: number)}
@@ -361,6 +373,17 @@
                 }}
               >
                 <Icon name="pencil" size={13} />
+              </button>
+              <button
+                class="rounded p-0.5 text-muted hover:text-accent"
+                title={t("tree.duplicateServer")}
+                aria-label={t("tree.duplicateServer")}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onDuplicateServer(row.server);
+                }}
+              >
+                <Icon name="copy" size={13} />
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-danger"

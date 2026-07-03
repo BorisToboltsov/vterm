@@ -515,6 +515,32 @@ audit`) — если нет, задокументировать игнор в `d
       [serverform.test.ts](../src/lib/serverform.test.ts) (IPv4/IPv6/hostname + границы)
       и +2 в [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts) (мусорный host
       блокирует сейв с нужным сообщением; пустой host даёт «required»). Гейты зелёные.
+- [x] **20.8** Фикс выделения текста при drag сервера в папку (v0.20.4): при
+      перетаскивании строки сервера в дереве браузер начинал нативное выделение текста —
+      подсвечивались все строки ниже. Причина: `select-none` вешался только после
+      прохождения 5px-порога (когда выставлялся `dragId`), а выделение стартовало в окне
+      до порога. Теперь в [ServerTree](../src/lib/ServerTree.svelte) есть реактивный
+      `pressing` (взводится в `startDrag` на pointer-press по строке, сбрасывается на
+      pointerup/pointercancel) → `select-none` на списке действует **с момента нажатия**;
+      при старте перетаскивания дополнительно чистим случайно начавшееся выделение
+      (`getSelection().removeAllRanges()`). Добавлен `onpointercancel` для сброса
+      состояния. Тест — [ServerTree.test.ts](../src/lib/ServerTree.test.ts) (+1: press →
+      `select-none`, release → снят). i18n не трогали. Гейты зелёные.
+- [x] **20.9** Дублирование сервера (v0.20.5): чтобы не заводить похожий сервер с нуля.
+      Иконка `copy` в ховер-кластере строки сервера ([ServerTree](../src/lib/ServerTree.svelte),
+      между «редактировать» и «удалить», `stopPropagation`) + команда «Duplicate server»
+      в палитре ⌘K (показывается только когда есть выделенный сервер). Обе открывают
+      **предзаполненную форму добавления** — новый экспорт `openDuplicate(server)` в
+      [ServerFormModal](../src/lib/ServerFormModal.svelte): это `mode="add"` (новый id),
+      поля скопированы из оригинала, алиас → `{alias} (copy)` (ключ `page.copyOfAlias`).
+      **Секрет намеренно не копируется** — пароли/passphrase живут в keychain по id
+      сервера, у копии `hasSavedPassword: false` (вводится при первом подключении). Копия
+      попадает в ту же папку (`group`). Новые ключи `tree.duplicateServer`/
+      `palette.duplicateServer`/`page.copyOfAlias` (en+ru). Тесты — +1 в
+      [ServerTree.test.ts](../src/lib/ServerTree.test.ts) (кнопка → `onDuplicateServer`,
+      без выделения по bubbling) и новый блок в
+      [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts) (предзаполнение,
+      алиас-суффикс, `addServer` а не `updateServer`, секрет не уходит). Гейты зелёные.
 
 ---
 

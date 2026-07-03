@@ -24,8 +24,27 @@ function renderForm() {
   const comp = result.component as unknown as {
     openAdd: (g?: string) => void;
     openEdit: (s: ServerProfile) => void;
+    openDuplicate: (s: ServerProfile) => void;
   };
   return { ...result, comp, onsaved, onforgotten };
+}
+
+function server(p: Partial<ServerProfile> & { id: string; alias: string }): ServerProfile {
+  return {
+    host: "10.0.0.1",
+    port: 2222,
+    username: "root",
+    authMethod: "password",
+    keyPath: null,
+    hasSavedPassword: true,
+    group: "Prod",
+    tags: ["web", "eu"],
+    autoRecord: true,
+    noAi: true,
+    chatPromptId: null,
+    execMode: null,
+    ...p,
+  };
 }
 
 describe("ServerFormModal validation", () => {
@@ -189,5 +208,44 @@ describe("ServerFormModal validation", () => {
     comp.openAdd();
     await tick();
     expect(screen.queryByText("This field is required")).toBeNull();
+  });
+});
+
+describe("ServerFormModal duplicate", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s2", alias: "Web (copy)" });
+  });
+
+  it("opens pre-filled from the source with a '(copy)' alias and adds a new server", async () => {
+    const { comp, onsaved } = renderForm();
+    comp.openDuplicate(server({ id: "orig", alias: "Web" }));
+    await tick();
+
+    // Fields carried over from the source; alias gets the copy suffix.
+    expect(screen.getByTestId("field-alias")).toHaveValue("Web (copy)");
+    expect(screen.getByTestId("field-host")).toHaveValue("10.0.0.1");
+    expect(screen.getByTestId("field-username")).toHaveValue("root");
+    expect(screen.getByTestId("field-port")).toHaveValue(2222);
+
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    // It's an add (new id), not an update — and the copied secret is NOT sent.
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(updateServer).not.toHaveBeenCalled();
+    const payload = addServer.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      alias: "Web (copy)",
+      host: "10.0.0.1",
+      port: 2222,
+      username: "root",
+      group: "Prod",
+      tags: ["web", "eu"],
+      autoRecord: true,
+      noAi: true,
+    });
+    expect(payload).not.toHaveProperty("hasSavedPassword");
+    expect(onsaved).toHaveBeenCalledWith(expect.anything(), "add");
   });
 });
