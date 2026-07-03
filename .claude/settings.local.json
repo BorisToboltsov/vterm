@@ -184,7 +184,13 @@
       "WebFetch(domain:docs.rs)",
       "Bash(gh release *)",
       "WebFetch(domain:github.com)",
-      "Bash(REG=\"$HOME/.cargo/registry/src\"; find \"$REG\" -maxdepth 2 -type d \\\\\\( -name \"apple-native-keyring-store-*\" -o -name \"keyring-4.1.2\" -o -name \"keyring-core-*\" \\\\\\) 2>/dev/null)"
+      "Bash(REG=\"$HOME/.cargo/registry/src\"; find \"$REG\" -maxdepth 2 -type d \\\\\\( -name \"apple-native-keyring-store-*\" -o -name \"keyring-4.1.2\" -o -name \"keyring-core-*\" \\\\\\) 2>/dev/null)",
+      "Bash(awk -F: '{s+=$2} END{print s}')",
+      "Bash(grep -nE 'function |const [a-zA-Z]+ = |$derived|valid|trim|Number\\\\\\(|parseInt|error|port' src/lib/ServerFormModal.svelte)",
+      "Bash(grep -nE 'function |$derived|valid|test|ping|redact|mask|parse' src/lib/AiSettingsSection.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.20.0\"/\"version\": \"0.20.1\"/' package.json)",
+      "Bash(sed -i '' 's/\"version\": \"0.20.0\"/\"version\": \"0.20.1\"/' src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.20.0\"/version = \"0.20.1\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

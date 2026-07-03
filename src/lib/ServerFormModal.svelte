@@ -27,7 +27,8 @@
   let editId = $state<string | null>(null);
   let alias = $state("");
   let host = $state("");
-  let port = $state(22);
+  // `null` when the number input is cleared (invalid — backend port is a u16).
+  let port = $state<number | null>(22);
   let username = $state("");
   let authMethod = $state<AuthMethod>("password");
   let keyPath = $state<string | null>(null);
@@ -38,6 +39,20 @@
   let aiPromptId = $state("");
   let aiExecMode = $state("");
   let confirmForget = $state(false);
+  // Set on a failed submit so empty required fields light up; cleared per field
+  // as the user types (derived below) and reset when the form (re)opens.
+  let submitted = $state(false);
+
+  /** A valid SSH port is an integer in 1…65535 (backend stores it as u16). */
+  function portValid(p: number | null): p is number {
+    return p != null && Number.isInteger(p) && p >= 1 && p <= 65535;
+  }
+
+  const aliasError = $derived(submitted && !alias.trim());
+  const hostError = $derived(submitted && !host.trim());
+  const usernameError = $derived(submitted && !username.trim());
+  const portError = $derived(submitted && !portValid(port));
+  const hasErrors = $derived(aliasError || hostError || usernameError || portError);
 
   /** Open the form to add a new server, optionally pre-filling its folder group. */
   export function openAdd(prefillGroup = "") {
@@ -53,6 +68,7 @@
     noAi = false;
     aiPromptId = "";
     aiExecMode = "";
+    submitted = false;
     open = true;
   }
 
@@ -72,6 +88,7 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
+    submitted = false;
     open = true;
   }
 
@@ -93,7 +110,8 @@
 
   async function submit(event: Event) {
     event.preventDefault();
-    if (!alias || !host || !username) return;
+    submitted = true;
+    if (!alias.trim() || !host.trim() || !username.trim() || !portValid(port)) return;
     const tags = tagsInput
       .split(",")
       .map((s) => s.trim())
@@ -139,26 +157,42 @@
       {t("page.alias")}
       <input
         data-testid="field-alias"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {aliasError
+          ? 'border-danger'
+          : 'border-edge'}"
+        aria-invalid={aliasError}
         bind:value={alias}
         placeholder={t("page.aliasPlaceholder")}
       />
+      {#if aliasError}
+        <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+      {/if}
     </label>
     <label class="mb-2 block text-xs text-muted">
       {t("page.hostIp")}
       <input
         data-testid="field-host"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {hostError
+          ? 'border-danger'
+          : 'border-edge'}"
+        aria-invalid={hostError}
         bind:value={host}
         placeholder="192.168.1.10"
       />
+      {#if hostError}
+        <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+      {/if}
     </label>
     <div class="mb-2 flex gap-2">
       <label class="block w-20 text-xs text-muted">
         {t("page.port")}
         <input
           type="number"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          data-testid="field-port"
+          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {portError
+            ? 'border-danger'
+            : 'border-edge'}"
+          aria-invalid={portError}
           bind:value={port}
         />
       </label>
@@ -166,12 +200,21 @@
         {t("page.username")}
         <input
           data-testid="field-username"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {usernameError
+            ? 'border-danger'
+            : 'border-edge'}"
+          aria-invalid={usernameError}
           bind:value={username}
           placeholder="root"
         />
+        {#if usernameError}
+          <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+        {/if}
       </label>
     </div>
+    {#if portError}
+      <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
+    {/if}
 
     <div class="mb-2 text-xs text-muted">
       {t("page.authentication")}
@@ -260,6 +303,10 @@
       </select>
     </label>
     <p class="mb-2 text-[11px] text-muted">{t("page.aiExecHint")}</p>
+
+    {#if hasErrors}
+      <p class="mb-2 text-xs text-danger" role="alert">{t("page.fixRequiredFields")}</p>
+    {/if}
 
     <div class="mt-3 flex items-center gap-2">
       {#if mode === "edit"}

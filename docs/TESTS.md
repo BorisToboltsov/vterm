@@ -505,6 +505,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `Modal.test.ts` — `Modal` (рендер/закрытие по фону и Escape; a11y: `role="dialog"`/
   `aria-modal`/`aria-label`, автофокус первого контроля, фокус-трап Tab/Shift+Tab по
   кругу) и `ConfirmDialog` (колбэки confirm/cancel, accent/danger).
+- `ServerFormModal.test.ts` (Фаза 20.5) — валидация обязательных полей формы сервера
+  (`api` замокан): submit при пустых `alias`/`host`/`username` подсвечивает все три
+  (`aria-invalid`, «This field is required» ×3 + сводка) и **не** зовёт `addServer`;
+  ошибка поля снимается по заполнению; whitespace-only не проходит (`.trim()`);
+  **порт** — очистка блокирует сейв («Port must be between 1 and 65535», `aria-invalid`)
+  и не шлёт `null` в бэкенд, вне-диапазонный (`99999`) отклоняется, повторный ввод
+  валидного порта снимает ошибку и пропускает сейв (`port: 2222` в payload); при
+  валидных данных `addServer` вызывается один раз с payload и `onsaved(_, "add")`;
+  повторное открытие формы сбрасывает подсветку.
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).
