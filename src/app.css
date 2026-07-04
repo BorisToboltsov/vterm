@@ -44,6 +44,47 @@ body {
   --motion-base: 200ms;
 }
 
+/* Tooltip bubble (Phase 20.17). Mounted on <body> by the `tooltip` action, so it
+   lives outside any scroll container and needs global (unscoped) styling. Fade-in
+   is a plain opacity transition — the reduce-motion guard below collapses it. */
+.vt-tooltip {
+  position: fixed;
+  z-index: 60;
+  max-width: 15rem;
+  padding: 6px 9px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--color-text);
+  background: var(--color-panel);
+  border: 1px solid var(--color-edge);
+  border-radius: 7px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45);
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+.vt-tooltip.vt-tooltip-in {
+  opacity: 1;
+}
+.vt-tooltip-arrow {
+  position: absolute;
+  bottom: -4px;
+  width: 8px;
+  height: 8px;
+  background: var(--color-panel);
+  border-right: 1px solid var(--color-edge);
+  border-bottom: 1px solid var(--color-edge);
+  transform: rotate(45deg);
+}
+.vt-tooltip-arrow.vt-tooltip-arrow-below {
+  bottom: auto;
+  top: -4px;
+  border-right: none;
+  border-bottom: none;
+  border-left: 1px solid var(--color-edge);
+  border-top: 1px solid var(--color-edge);
+}
+
 /* Accessibility: honour "reduce motion". Collapse all animations/transitions to
    an instant so the UI still updates but without movement. */
 @media (prefers-reduced-motion: reduce) {

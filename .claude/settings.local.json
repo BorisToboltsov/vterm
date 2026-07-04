@@ -213,7 +213,8 @@
       "Bash(sed -i '' 's/^version = \"0.20.14\"/version = \"0.20.15\"/' src-tauri/Cargo.toml)",
       "Bash(grep -rn 'from \"./api\"\\\\|from \"$lib/api\"' src/lib/Terminal.svelte)",
       "Bash(grep -n 'class\\\\|$props\\\\|export' src/lib/Icon.svelte)",
-      "Bash(awk '/function onGlobalKey/,/^  }$/' src/routes/+page.svelte)"
+      "Bash(awk '/function onGlobalKey/,/^  }$/' src/routes/+page.svelte)",
+      "Bash(sort -t: -k2 -rn)"
     ]
   }
 }

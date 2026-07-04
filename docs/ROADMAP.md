@@ -709,6 +709,31 @@ audit`) — если нет, задокументировать игнор в `d
     `parse_extras_reads_hardware` и в фикстуре/ассерте
     [MonitoringOverlay.test.ts](../src/lib/MonitoringOverlay.test.ts).
 
+- [x] **20.17** Редизайн окна создания/редактирования сервера (v0.20.20): раньше форма
+  была узкой колонкой (`w-80`) с ~11 полями и длинными абзацами-подсказками — приходилось
+  скроллить. Теперь [ServerFormModal](../src/lib/ServerFormModal.svelte) — **широкая
+  карточка в две колонки** (`w-[42rem]`, адаптив `sm:grid-cols-2`): слева группа
+  **«Подключение»** (псевдоним, хост/IP, порт+юзер, аутентификация, ключ, теги), справа
+  **«Запись и ИИ»** (автозапись, запрет ИИ, промпт чата, исполнение команд). Длинные
+  абзацы-подсказки **свёрнуты в иконки «ⓘ»** (`<Icon name="info">` + нативный `title`/
+  `aria-label` — не обрезается `overflow` модалки, доступно для screen-reader). Кнопки —
+  на всю ширину снизу над разделителем. Логика полей/валидация не изменились
+  (`data-testid` сохранены). Ключи `page.groupConnection`/`page.groupRecordingAi` (EN+RU).
+  Тест: две колонки + подсказка-тултип в
+  [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts).
+  - **20.17.1 Красивые тултипы (v0.20.21):** нативный `title` тормозил (задержка
+    браузера) и не стилизовался. Заменён на переиспользуемый Svelte-экшен
+    [`use:tooltip`](../src/lib/actions/tooltip.ts): тёмный пузырёк со стрелкой над
+    триггером, мгновенно по **hover и focus** (клавиатура). Монтируется в
+    `document.body` (portal, `position:fixed` по rect триггера), поэтому `overflow`
+    модалки его **не обрезает**; при нехватке места сверху — авто-падение вниз. Стили
+    глобальные в [app.css](../src/app.css) (`.vt-tooltip`, под reduce-motion-guard).
+    В форме иконка «ⓘ» — теперь `<button>` вне `<label>` (клик не тоглит чекбокс), текст
+    остаётся в `aria-label`. Экшен переиспользуемый — можно вешать где угодно вместо
+    `title`. Тесты: [tooltip.test.ts](../src/lib/actions/tooltip.test.ts) (hover/focus/
+    update/destroy/portal) + обновлённый ассерт в
+    [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts).
+
 ---
 
 ## Заметки по архитектурным решениям

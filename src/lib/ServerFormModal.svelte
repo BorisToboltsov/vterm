@@ -4,6 +4,7 @@
   // the `servers` list and reacts via `onsaved`/`onforgotten`. Open it through the
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
+  import Icon from "./Icon.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type { AuthMethod, ServerProfile } from "./types";
   import type { AiExecMode } from "./ai";
@@ -11,6 +12,7 @@
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
   import { isValidHost, isValidPort } from "./serverform";
+  import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   let {
@@ -172,168 +174,201 @@
 
 <Modal
   {open}
+  width="w-[42rem]"
   title={mode === "edit" ? t("page.editServerTitle") : t("page.newServerTitle")}
   onclose={() => (open = false)}
 >
   <form onsubmit={submit}>
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.alias")}
-      <input
-        data-testid="field-alias"
-        class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {aliasError
-          ? 'border-danger'
-          : 'border-edge'}"
-        aria-invalid={aliasError}
-        bind:value={alias}
-        placeholder={t("page.aliasPlaceholder")}
-      />
-      {#if aliasError}
-        <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
-      {/if}
-    </label>
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.hostIp")}
-      <input
-        data-testid="field-host"
-        class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {hostError
-          ? 'border-danger'
-          : 'border-edge'}"
-        aria-invalid={hostError}
-        bind:value={host}
-        placeholder="192.168.1.10"
-      />
-      {#if hostError}
-        <span class="mt-1 block text-[11px] text-danger"
-          >{hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
-        >
-      {/if}
-    </label>
-    <div class="mb-2 flex gap-2">
-      <label class="block w-20 text-xs text-muted">
-        {t("page.port")}
-        <input
-          type="number"
-          data-testid="field-port"
-          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {portError
-            ? 'border-danger'
-            : 'border-edge'}"
-          aria-invalid={portError}
-          bind:value={port}
-        />
-      </label>
-      <label class="block flex-1 text-xs text-muted">
-        {t("page.username")}
-        <input
-          data-testid="field-username"
-          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {usernameError
-            ? 'border-danger'
-            : 'border-edge'}"
-          aria-invalid={usernameError}
-          bind:value={username}
-          placeholder="root"
-        />
-        {#if usernameError}
-          <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+    <!-- Compact "info" tooltip: replaces the long hint paragraphs so the form stays
+         short. A styled bubble (use:tooltip) portalled to <body>, so the modal's
+         overflow doesn't clip it; a <button> (not a span in a <label>) so clicking
+         the icon can't toggle a checkbox, and its aria-label stays accessible.
+         (Phase 20.17). -->
+    {#snippet info(hint: string)}
+      <button
+        type="button"
+        aria-label={hint}
+        class="inline-flex cursor-help align-middle text-muted/60 outline-none hover:text-muted focus-visible:text-accent"
+        use:tooltip={hint}
+      >
+        <Icon name="info" size={12} />
+      </button>
+    {/snippet}
+    <!-- Two columns: connection on the left, recording + AI on the right (Phase 20.17). -->
+    <div class="grid gap-x-6 gap-y-0 sm:grid-cols-2">
+      <!-- ── Connection ── -->
+      <div>
+        <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted">{t("page.groupConnection")}</h3>
+        <label class="mb-2 block text-xs text-muted">
+          {t("page.alias")}
+          <input
+            data-testid="field-alias"
+            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {aliasError
+              ? 'border-danger'
+              : 'border-edge'}"
+            aria-invalid={aliasError}
+            bind:value={alias}
+            placeholder={t("page.aliasPlaceholder")}
+          />
+          {#if aliasError}
+            <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+          {/if}
+        </label>
+        <label class="mb-2 block text-xs text-muted">
+          {t("page.hostIp")}
+          <input
+            data-testid="field-host"
+            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {hostError
+              ? 'border-danger'
+              : 'border-edge'}"
+            aria-invalid={hostError}
+            bind:value={host}
+            placeholder="192.168.1.10"
+          />
+          {#if hostError}
+            <span class="mt-1 block text-[11px] text-danger"
+              >{hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
+            >
+          {/if}
+        </label>
+        <div class="mb-2 flex gap-2">
+          <label class="block w-20 text-xs text-muted">
+            {t("page.port")}
+            <input
+              type="number"
+              data-testid="field-port"
+              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {portError
+                ? 'border-danger'
+                : 'border-edge'}"
+              aria-invalid={portError}
+              bind:value={port}
+            />
+          </label>
+          <label class="block flex-1 text-xs text-muted">
+            {t("page.username")}
+            <input
+              data-testid="field-username"
+              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {usernameError
+                ? 'border-danger'
+                : 'border-edge'}"
+              aria-invalid={usernameError}
+              bind:value={username}
+              placeholder="root"
+            />
+            {#if usernameError}
+              <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+            {/if}
+          </label>
+        </div>
+        {#if portError}
+          <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
         {/if}
-      </label>
-    </div>
-    {#if portError}
-      <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
-    {/if}
 
-    <div class="mb-2 text-xs text-muted">
-      {t("page.authentication")}
-      <div class="mt-1 flex gap-3 text-sm text-white">
-        <label class="flex items-center gap-1">
-          <input type="radio" value="password" bind:group={authMethod} />
-          {t("page.authPassword")}
+        <div class="mb-2 text-xs text-muted">
+          {t("page.authentication")}
+          <div class="mt-1 flex gap-3 text-sm text-white">
+            <label class="flex items-center gap-1">
+              <input type="radio" value="password" bind:group={authMethod} />
+              {t("page.authPassword")}
+            </label>
+            <label class="flex items-center gap-1">
+              <input type="radio" value="key" bind:group={authMethod} />
+              {t("page.authKey")}
+            </label>
+          </div>
+        </div>
+
+        {#if authMethod === "key"}
+          <label class="mb-2 block text-xs text-muted">
+            {t("page.privateKeyFile")}
+            <div class="mt-1 flex gap-2">
+              <input
+                readonly
+                class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
+                value={keyPath ?? ""}
+                placeholder="~/.ssh/id_ed25519"
+              />
+              <button
+                type="button"
+                class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+                onclick={browseKey}>{t("common.browse")}</button
+              >
+            </div>
+          </label>
+        {/if}
+
+        <label class="mb-2 block text-xs text-muted">
+          {t("page.tags")}
+          <input
+            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            bind:value={tagsInput}
+            placeholder="web, eu"
+          />
         </label>
-        <label class="flex items-center gap-1">
-          <input type="radio" value="key" bind:group={authMethod} />
-          {t("page.authKey")}
-        </label>
+      </div>
+
+      <!-- ── Recording & AI ── -->
+      <div>
+        <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted">{t("page.groupRecordingAi")}</h3>
+        <div class="mb-3 flex items-center gap-2 text-xs text-text">
+          <input type="checkbox" id="srv-auto-record" bind:checked={autoRecord} />
+          <label for="srv-auto-record">{t("page.autoRecord")}</label>
+          {@render info(t("page.autoRecordHint"))}
+        </div>
+
+        <div class="mb-3 flex items-center gap-2 text-xs text-text">
+          <input type="checkbox" id="srv-no-ai" data-testid="server-no-ai" bind:checked={noAi} />
+          <label for="srv-no-ai">{t("page.noAi")}</label>
+          {@render info(t("page.noAiHint"))}
+        </div>
+
+        {#if settings.ai.prompts.chat.prompts.length > 1}
+          <div class="mb-3 text-xs text-text">
+            <div class="mb-1 flex items-center gap-1">
+              <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
+              {@render info(t("page.aiPromptHint"))}
+            </div>
+            <select
+              id="srv-ai-prompt"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              data-testid="server-ai-prompt"
+              bind:value={aiPromptId}
+            >
+              <option value="">{t("page.aiPromptDefault")}</option>
+              {#each settings.ai.prompts.chat.prompts as p (p.id)}
+                <option value={p.id}>{p.name}</option>
+              {/each}
+            </select>
+          </div>
+        {/if}
+
+        <div class="mb-3 text-xs text-text">
+          <div class="mb-1 flex items-center gap-1">
+            <label for="srv-ai-exec">{t("page.aiExec")}</label>
+            {@render info(t("page.aiExecHint"))}
+          </div>
+          <select
+            id="srv-ai-exec"
+            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            data-testid="server-ai-exec"
+            bind:value={aiExecMode}
+          >
+            <option value="">{t("page.aiExecDefault")}</option>
+            <option value="suggest">{t("settings.aiExecSuggest")}</option>
+            <option value="confirm">{t("settings.aiExecConfirm")}</option>
+            <option value="auto">{t("settings.aiExecAuto")}</option>
+            <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
+            <option value="dialog">{t("settings.aiExecDialog")}</option>
+          </select>
+        </div>
       </div>
     </div>
 
-    {#if authMethod === "key"}
-      <label class="mb-2 block text-xs text-muted">
-        {t("page.privateKeyFile")}
-        <div class="mt-1 flex gap-2">
-          <input
-            readonly
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
-            value={keyPath ?? ""}
-            placeholder="~/.ssh/id_ed25519"
-          />
-          <button
-            type="button"
-            class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-            onclick={browseKey}>{t("common.browse")}</button
-          >
-        </div>
-      </label>
-    {/if}
-
-    <label class="mb-2 block text-xs text-muted">
-      {t("page.tags")}
-      <input
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        bind:value={tagsInput}
-        placeholder="web, eu"
-      />
-    </label>
-
-    <label class="mb-2 flex items-center gap-2 text-xs text-text">
-      <input type="checkbox" bind:checked={autoRecord} />
-      {t("page.autoRecord")}
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.autoRecordHint")}</p>
-
-    <label class="mb-2 flex items-center gap-2 text-xs text-text">
-      <input type="checkbox" data-testid="server-no-ai" bind:checked={noAi} />
-      {t("page.noAi")}
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.noAiHint")}</p>
-
-    {#if settings.ai.prompts.chat.prompts.length > 1}
-      <label class="mb-2 block text-xs text-text">
-        {t("page.aiPrompt")}
-        <select
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          data-testid="server-ai-prompt"
-          bind:value={aiPromptId}
-        >
-          <option value="">{t("page.aiPromptDefault")}</option>
-          {#each settings.ai.prompts.chat.prompts as p (p.id)}
-            <option value={p.id}>{p.name}</option>
-          {/each}
-        </select>
-      </label>
-      <p class="mb-2 text-[11px] text-muted">{t("page.aiPromptHint")}</p>
-    {/if}
-
-    <label class="mb-2 block text-xs text-text">
-      {t("page.aiExec")}
-      <select
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        data-testid="server-ai-exec"
-        bind:value={aiExecMode}
-      >
-        <option value="">{t("page.aiExecDefault")}</option>
-        <option value="suggest">{t("settings.aiExecSuggest")}</option>
-        <option value="confirm">{t("settings.aiExecConfirm")}</option>
-        <option value="auto">{t("settings.aiExecAuto")}</option>
-        <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
-        <option value="dialog">{t("settings.aiExecDialog")}</option>
-      </select>
-    </label>
-    <p class="mb-2 text-[11px] text-muted">{t("page.aiExecHint")}</p>
-
     {#if hasErrors}
-      <p class="mb-2 text-xs text-danger" role="alert">{t("page.fixRequiredFields")}</p>
+      <p class="mb-2 mt-1 text-xs text-danger" role="alert">{t("page.fixRequiredFields")}</p>
     {/if}
 
-    <div class="mt-3 flex items-center gap-2">
+    <div class="mt-3 flex items-center gap-2 border-t border-edge pt-3">
       {#if mode === "edit"}
         <button
           type="button"

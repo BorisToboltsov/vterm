@@ -318,6 +318,8 @@ export const en = {
   // Add / edit server modal
   "page.editServerTitle": "Edit server",
   "page.newServerTitle": "New server",
+  "page.groupConnection": "Connection",
+  "page.groupRecordingAi": "Recording & AI",
   "page.copyOfAlias": "{alias} (copy)",
   "page.alias": "Alias",
   "page.aliasPlaceholder": "My VPS",
@@ -1175,6 +1177,8 @@ const ru: Record<MessageKey, string> = {
 
   "page.editServerTitle": "Редактировать сервер",
   "page.newServerTitle": "Новый сервер",
+  "page.groupConnection": "Подключение",
+  "page.groupRecordingAi": "Запись и ИИ",
   "page.copyOfAlias": "{alias} (копия)",
   "page.alias": "Псевдоним",
   "page.aliasPlaceholder": "Мой VPS",

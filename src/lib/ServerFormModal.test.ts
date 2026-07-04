@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
@@ -208,6 +208,27 @@ describe("ServerFormModal validation", () => {
     comp.openAdd();
     await tick();
     expect(screen.queryByText("This field is required")).toBeNull();
+  });
+
+  it("lays out two columns and folds hints into info tooltips (Phase 20.17)", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    // Both group headings are present (Connection | Recording & AI).
+    expect(screen.getByText("Connection")).toBeInTheDocument();
+    expect(screen.getByText("Recording & AI")).toBeInTheDocument();
+
+    // The auto-record hint is no longer a paragraph — it's a focusable info button
+    // whose accessible name carries the text, with a live tooltip on hover/focus.
+    const hint = "Start recording automatically when connecting (e.g. production servers).";
+    expect(screen.queryByText(hint)).toBeNull();
+    const trigger = screen.getByRole("button", { name: hint });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await fireEvent.focus(trigger);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(hint);
+    await fireEvent.blur(trigger);
+    expect(screen.queryByRole("tooltip")).toBeNull();
   });
 });
 
