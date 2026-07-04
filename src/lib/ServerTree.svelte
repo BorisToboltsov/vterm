@@ -13,6 +13,7 @@
   } from "./tree";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
   import { layout } from "./stores/layout.svelte";
+  import { serverDots } from "./stores/tabs.svelte";
   import Icon from "./Icon.svelte";
   import { fade } from "svelte/transition";
   import EmptyState from "./EmptyState.svelte";
@@ -23,6 +24,7 @@
     folders,
     selectedId,
     selectedFolder,
+    connections,
     onSelect,
     onSelectFolder,
     onConnect,
@@ -42,6 +44,8 @@
     selectedId: string | null;
     /** Highlighted folder path; a new server created while set lands in it. */
     selectedFolder: string | null;
+    /** serverId → statuses of its open SSH tabs, for the connection dots. */
+    connections: Record<string, string[]>;
     onSelect: (id: string) => void;
     onSelectFolder: (path: string) => void;
     onConnect: () => void;
@@ -327,6 +331,7 @@
             </div>
           </div>
         {:else}
+          {@const dots = serverDots(connections[row.server.id] ?? [])}
           <div
             data-testid="server-row"
             data-server-alias={row.server.alias}
@@ -348,7 +353,34 @@
             <!-- Empty toggle column so servers align with folder icons. -->
             <span class="h-4 w-4 shrink-0"></span>
             <div class="min-w-0 flex-1">
-              <div class="font-medium">{row.server.alias}</div>
+              <!-- Alias + connection dots on one line, hugging the text (not the
+                   right edge) so the hover action buttons never overlap them. One
+                   dot per open SSH tab, overlapping, coloured by status with a thin
+                   tonal ring; a connecting tab's dot gently pulses. -->
+              <div class="flex min-w-0 items-center gap-1.5">
+                <span class="min-w-0 truncate font-medium">{row.server.alias}</span>
+                {#if dots.dots.length > 0}
+                  <div
+                    data-testid="conn-dots"
+                    class="flex shrink-0 items-center"
+                    title={t("tree.activeConnections", {
+                      count: (connections[row.server.id] ?? []).length,
+                    })}
+                  >
+                    <div class="flex items-center -space-x-[3px]">
+                      {#each dots.dots as dot, i (i)}
+                        <span
+                          class="h-2.5 w-2.5 rounded-full {dot.cls}"
+                          class:pulse-dot={dot.pulse}
+                        ></span>
+                      {/each}
+                    </div>
+                    {#if dots.extra > 0}
+                      <span class="pl-1.5 text-[10px] font-medium text-muted">+{dots.extra}</span>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
               <div class="text-xs text-muted">
                 {row.server.username}@{row.server.host}:{row.server.port}
               </div>
@@ -445,3 +477,22 @@
     <span class="font-medium">{nameOf(draggingFolder)}</span>
   </div>
 {/if}
+
+<style>
+  /* A connecting tab's dot gently breathes. Cheap transform/opacity only; the
+     global prefers-reduced-motion guard (app.css) collapses it to no motion. */
+  .pulse-dot {
+    animation: conn-breathe 1.8s ease-in-out infinite;
+  }
+  @keyframes conn-breathe {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 1;
+    }
+    50% {
+      transform: scale(0.75);
+      opacity: 0.55;
+    }
+  }
+</style>

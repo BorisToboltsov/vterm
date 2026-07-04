@@ -152,15 +152,6 @@ describe("StatusBar — thresholds & monitoring", () => {
     expect(cpu).not.toHaveClass("text-warn");
     expect(cpu).not.toHaveClass("text-danger");
   });
-
-  it("fires onOpenMonitoring when the monitoring button is clicked", async () => {
-    const onOpenMonitoring = vi.fn();
-    fetchMetrics.mockResolvedValue(linux);
-    render(StatusBar, { props: { sessionId: "mon", onOpenMonitoring } });
-    await screen.findByTitle("Linux");
-    await userEvent.click(screen.getByTestId("open-monitoring"));
-    expect(onOpenMonitoring).toHaveBeenCalledOnce();
-  });
 });
 
 describe("StatusBar — transfers & states", () => {

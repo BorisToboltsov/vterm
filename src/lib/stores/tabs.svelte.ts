@@ -65,6 +65,74 @@ export function dotClass(statusText: string): string {
 export const isLive = (status: string): boolean =>
   status.startsWith("Connected") || status.startsWith("Connecting");
 
+/** What a Cmd/Ctrl+T should open (Phase 20.15). */
+export type NewTabAction = { kind: "ssh"; serverId: string } | { kind: "local" };
+
+/**
+ * Decide what Cmd/Ctrl+T opens: a fresh tab of the active server when the active
+ * tab is an SSH session, otherwise a local shell — which also covers the case where
+ * no tab is open (`activeTab` is null). Pure so the decision is unit-tested without
+ * the DOM/store; the page resolves the server id and does the actual open (ADR 0003).
+ */
+export function newTabAction(
+  activeTab: Pick<Tab, "kind" | "serverId"> | null | undefined,
+): NewTabAction {
+  if (activeTab?.kind === "ssh") return { kind: "ssh", serverId: activeTab.serverId };
+  return { kind: "local" };
+}
+
+/** Severity order for the server-row dots: problems first so a dropped/erroring
+ *  connection is never the one hidden by the cap. Error → connecting → connected. */
+function statusRank(statusText: string): number {
+  if (statusText.startsWith("Error")) return 0;
+  if (statusText.startsWith("Connecting")) return 1;
+  if (statusText.startsWith("Connected")) return 2;
+  return 3;
+}
+
+/** A single overlapping connection dot in the tree. */
+export interface StatusDot {
+  /** Fill colour + a thin (1px) tonal ring in the same hue (`ring-1 ring-[…]`). */
+  cls: string;
+  /** True for a connecting tab — the dot gently breathes (pulses). */
+  pulse: boolean;
+}
+
+/** Fill + tonal-ring classes and pulse flag for one tab status. The ring is a
+ *  darker shade of the fill so overlapping dots separate softly (no harsh edge). */
+function dotStyle(statusText: string): StatusDot {
+  if (statusText.startsWith("Connected"))
+    return { cls: "bg-green-500 ring-1 ring-[#166534]", pulse: false };
+  if (statusText.startsWith("Connecting"))
+    return { cls: "bg-yellow-500 ring-1 ring-[#854d0e]", pulse: true };
+  if (statusText.startsWith("Error"))
+    return { cls: "bg-danger ring-1 ring-[#7d3350]", pulse: false };
+  return { cls: "bg-muted ring-1 ring-[#3f3f5a]", pulse: false };
+}
+
+/**
+ * Overlapping status dots for a server row in the tree, from the statuses of its
+ * open SSH tabs (in tab order — newest last). Displayed in **tab order** so a
+ * newly opened tab's dot appears at the end of the stack, not reshuffled to the
+ * front. When there are more than `max`, the ones shown are picked severity-first
+ * (so an error/drop is never the one hidden), but still rendered in tab order;
+ * the remainder is reported as `extra` (rendered "+N").
+ */
+export function serverDots(
+  statuses: string[],
+  max = 3,
+): { dots: StatusDot[]; extra: number } {
+  const shown = statuses
+    .map((s, i) => ({ s, i }))
+    .sort((a, b) => statusRank(a.s) - statusRank(b.s)) // pick which to show…
+    .slice(0, max)
+    .sort((a, b) => a.i - b.i); // …but render in tab order (newest last)
+  return {
+    dots: shown.map(({ s }) => dotStyle(s)),
+    extra: Math.max(0, statuses.length - max),
+  };
+}
+
 /**
  * Roving keyboard navigation for the tab bar (a11y): given the current index,
  * how many tabs there are and the pressed key, return the index to move to —

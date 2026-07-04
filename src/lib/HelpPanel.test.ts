@@ -25,6 +25,9 @@ describe("HelpPanel", () => {
     expect(screen.getByText("Hotkeys")).toBeInTheDocument();
     expect(screen.getByText("Copy selection")).toBeInTheDocument();
     expect(screen.getByText("Interrupt (SIGINT)")).toBeInTheDocument();
+    // The Cmd/Ctrl+T new-tab shortcut is documented (Phase 20.15).
+    expect(screen.getByText("New tab (same server, or local shell)")).toBeInTheDocument();
+    expect(screen.getByText(/⌘T\s*\/\s*Ctrl\+T/)).toBeInTheDocument();
   });
 
   it("shows the app version from Tauri on the About tab", async () => {

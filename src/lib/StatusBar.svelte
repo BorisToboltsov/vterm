@@ -18,8 +18,7 @@
   import { aggregateTransfers, transfersState } from "./stores/transfers.svelte";
   import { t } from "./i18n";
 
-  let { sessionId, onOpenMonitoring }: { sessionId: string; onOpenMonitoring?: () => void } =
-    $props();
+  let { sessionId }: { sessionId: string } = $props();
 
   let metrics = $state<Metrics | null>(null);
   let failed = $state(false);
@@ -335,17 +334,6 @@
       onclick={() => (settings.statusBarExpanded = !settings.statusBarExpanded)}
     >
       <Icon name={expanded ? "chevronLeft" : "chevronRight"} size={14} />
-    </button>
-    <!-- Open the detailed monitoring overlay. Sits after the compact/expanded
-         toggle at the very right edge. -->
-    <button
-      data-testid="open-monitoring"
-      class="flex shrink-0 items-center self-stretch border-l border-edge px-2 text-muted hover:text-white"
-      title={t("bar.detailedMonitoring")}
-      aria-label={t("bar.openMonitoringAria")}
-      onclick={() => onOpenMonitoring?.()}
-    >
-      <Icon name="barChart" size={14} />
     </button>
   {/if}
 </div>

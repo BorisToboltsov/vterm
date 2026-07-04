@@ -206,6 +206,36 @@ describe("SettingsPanel — appearance & search", () => {
     expect(screen.getByTestId("metrics-toggle")).toBeInTheDocument();
   });
 
+  it("deep-links to Server tools (the top-bar gear target)", () => {
+    const { container } = render(SettingsPanel, {
+      props: { open: true, initialSection: "servertools" },
+    });
+    // Server tools lives in Sessions & monitoring — shown without manual navigation.
+    expect(container.querySelector('[data-settings-section="servertools"]')).not.toBeNull();
+    expect(screen.getByText("Server tools")).toBeInTheDocument();
+  });
+
+  it("re-scrolls the deep-linked section to the top when its content grows", async () => {
+    const ResizeObserverMock = globalThis.ResizeObserver as unknown as {
+      instances: { cb: ResizeObserverCallback }[];
+    };
+    ResizeObserverMock.instances.length = 0;
+    const scrollSpy = vi.spyOn(Element.prototype, "scrollIntoView");
+    render(SettingsPanel, { props: { open: true, initialSection: "servertools" } });
+
+    // First scroll happens after tick + rAF and registers a ResizeObserver.
+    await waitFor(() => expect(ResizeObserverMock.instances.length).toBeGreaterThanOrEqual(1));
+    expect(scrollSpy).toHaveBeenCalled();
+    const before = scrollSpy.mock.calls.length;
+
+    // Simulate the server-tools list loading and growing the section: the
+    // observer must re-scroll so the heading lands at the top, not short of it.
+    const observer = ResizeObserverMock.instances[ResizeObserverMock.instances.length - 1];
+    observer.cb([], {} as ResizeObserver);
+    expect(scrollSpy.mock.calls.length).toBeGreaterThan(before);
+    scrollSpy.mockRestore();
+  });
+
   it("reflects the active group in the sticky header", async () => {
     render(SettingsPanel, { props: { open: true } });
     expect(screen.getByTestId("settings-active-header")).toHaveTextContent("General");

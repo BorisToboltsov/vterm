@@ -10,10 +10,13 @@
   let {
     sessionId,
     onInstall,
+    reloadToken = 0,
   }: {
     /** Active SSH session id, or null when none is connected. */
     sessionId: string | null;
     onInstall: (tool: ToolStatus) => void;
+    /** Bump to force a re-check after an install finishes (Phase 20.14). */
+    reloadToken?: number;
   } = $props();
 
   let status = $state<ToolsStatus | null>(null);
@@ -44,9 +47,10 @@
     }
   }
 
-  // (Re)load whenever the active connection changes.
+  // (Re)load whenever the active connection changes or an install finishes.
   $effect(() => {
     void sessionId;
+    void reloadToken;
     load();
   });
 </script>

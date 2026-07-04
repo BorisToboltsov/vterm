@@ -304,3 +304,5 @@ export const outputEvent = (sessionId: string) => `term://out/${sessionId}`;
 export const closedEvent = (sessionId: string) => `term://closed/${sessionId}`;
 /** Event name carrying SSH connection-phase progress (mirrors ssh.rs). */
 export const phaseEvent = (sessionId: string) => `term://phase/${sessionId}`;
+/** Event name carrying live server-tool install output chunks (mirrors ssh.rs). */
+export const installOutputEvent = (sessionId: string) => `install://out/${sessionId}`;

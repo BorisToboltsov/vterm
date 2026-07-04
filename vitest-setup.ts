@@ -29,6 +29,30 @@ class MemoryStorage {
   }
 }
 
+// jsdom doesn't implement scrollIntoView; provide a no-op so deep-link scrolling
+// (SettingsPanel) doesn't emit "Not implemented" noise in tests.
+if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function scrollIntoView() {};
+}
+
+// jsdom doesn't implement ResizeObserver, which SettingsPanel uses to re-scroll a
+// deep-linked section after its async content grows. Provide a controllable mock:
+// tests can grab the latest instance and fire its callback to simulate a resize.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class ResizeObserverMock {
+    static instances: ResizeObserverMock[] = [];
+    cb: ResizeObserverCallback;
+    constructor(cb: ResizeObserverCallback) {
+      this.cb = cb;
+      ResizeObserverMock.instances.push(this);
+    }
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = ResizeObserverMock as unknown as typeof ResizeObserver;
+}
+
 // jsdom lacks the Web Animations API that Svelte 5 transitions (slide/fade) use.
 // Provide a no-op `Element.prototype.animate` so transitions don't crash in tests
 // (the element is still inserted/removed; only the visual tween is skipped).

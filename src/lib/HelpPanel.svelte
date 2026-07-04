@@ -60,6 +60,7 @@
   // are pure symbols (⌘K …) stay literal; descriptive ones are translated.
   const hotkeys: [MessageKey, string, MessageKey?][] = [
     ["help.hkCommandPalette", "⌘K  /  Ctrl+K"],
+    ["help.hkNewTab", "⌘T  /  Ctrl+T"],
     ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],
     ["help.hkPaste", "⌘V  /  Ctrl+Shift+V"],
     ["help.hkInterrupt", "Ctrl+C"],

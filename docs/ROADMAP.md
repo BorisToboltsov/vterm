@@ -563,6 +563,120 @@ audit`) — если нет, задокументировать игнор в `d
       на перезагрузке вебвью — полный ребилд Rust не нужен. Тесты — +3 в
       [settings.test.ts](../src/lib/settings.test.ts) (`applyActiveTheme` пушит палитру,
       зеркалит фон и персистит `CHROME_PANEL_KEY`; custom оставляет CSS-дефолты). Гейты зелёные.
+- [x] **20.11** Скрыть переключатель Raw↔Table на время подключения (v0.20.7): плавающая
+      кнопка переключения в structured-вид ([ViewModeToggle](../src/lib/ViewModeToggle.svelte),
+      `z-30` в [Terminal.svelte](../src/lib/Terminal.svelte)) торчала поверх connecting-оверлея,
+      пока SSH-вкладка ещё устанавливала сессию. Добавлен латч `connected` в `Terminal.svelte`
+      (сбрасывается на `connecting`, взводится на `connected`); тумблер рендерится только
+      при `jsonViewEnabled && connected`, и оффсет поиск-оверлея учитывает это. Локальные
+      shell-вкладки коннектятся мгновенно → визуально без разницы. i18n не трогали.
+      `Terminal.svelte` исключён из unit-покрытия (xterm/WebGL не поднимается в jsdom) —
+      поведение проверяется E2E/вручную. Гейты зелёные.
+- [x] **20.12** Индикатор активных подключений у сервера в дереве (v0.20.8): справа в
+      строке сервера ([ServerTree](../src/lib/ServerTree.svelte)) — наложенные кружки, по
+      одному на открытую SSH-вкладку этого сервера, цвет по статусу (🟢 connected / 🟡
+      connecting / 🔴 error — через `dotClass`). Кап 3 кружка, дальше `+N`. Чистый хелпер
+      `serverDots(statuses, max=3)` в [tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts):
+      сортирует **severity-first** (ошибка/обрыв не прячется под капом), режет до `max`,
+      считает overflow. Данные: `+page.svelte` собирает `serverId → статусы SSH-вкладок`
+      (`serverConnections`, `$derived.by`) и отдаёт пропом `connections`. Кружки прячутся
+      на ховере (там появляются кнопки действий). Title — `tree.activeConnections` (en+ru).
+      Тесты: +5 на `serverDots` в [tabs.test.ts](../src/lib/stores/tabs.test.ts), +3 в
+      [ServerTree.test.ts](../src/lib/ServerTree.test.ts) (кружок на вкладку, кап `+N`,
+      нет вкладок → нет кружков). Гейты зелёные.
+  - **20.12.1 Полировка дизайна (v0.20.9):** грубое тёмное кольцо `ring-2 ring-panel-alt`
+    заменено на **тонкую (1px) тональную обводку** — оттенок того же цвета (green `#166534`
+    / yellow `#854d0e` / danger `#7d3350`), нахлёст уменьшен до `-3px`. Вкладка в статусе
+    `Connecting` теперь **мягко пульсирует** (keyframe `conn-breathe`, scale+opacity, под
+    глобальным `prefers-reduced-motion`-guard из `app.css`). `serverDots` возвращает
+    `dots: {cls, pulse}[]` вместо строк-классов; варианты обсуждались с мокапами (выбран
+    «A + пульс на жёлтом»). Тесты обновлены (пульс на connecting, tonal-классы, fallback
+    `bg-muted`). Гейты зелёные.
+  - **20.12.2 Размещение (v0.20.10):** кружки перенесены **в одну строку с алиасом**
+    (прижаты к тексту), а не к правому краю — раньше на ховере они попадали под кнопки
+    действий (edit/copy/delete). Теперь кружки слева у названия, кнопки — справа
+    (`absolute`), пересечения нет; скрытие на ховере (`group-hover:invisible`) убрано,
+    статус виден всегда. Алиас — `truncate` в общей flex-строке `min-w-0`.
+  - **20.12.3 Порядок кружков (v0.20.11):** кружки отображаются в **порядке вкладок**
+    (новая вкладка → кружок в конец стопки, поверх/справа), а не severity-first — раньше
+    новый зелёный вставал перед серыми (обрыв) и оказывался первым. `serverDots` теперь:
+    _выбирает_ какие показать при переполнении по важности (ошибка не прячется под капом),
+    но _рендерит_ в tab-order. Тест на «новый connected → последний».
+- [x] **20.13** Верхняя полоса → хлебные крошки + быстрые действия (v0.20.12): старый
+      [TopBar](../src/lib/TopBar.svelte) (бренд «vterm» + текст статуса) занимал строку зря
+      (бренд дублирует заголовок окна ОС, статус есть на вкладке). Обсудили мокапы (выбран
+      «вариант C»): теперь тонкая (`py-1.5`) полоса = **хлебные крошки активного подключения**
+      (`server`-иконка + `alias · user@host:port`) слева и **быстрые действия** справа —
+      🔧 настройки (всегда) и 📊 мониторинг (только при активном connected-SSH). Кнопка
+      мониторинга **перенесена снизу** (из [StatusBar](../src/lib/StatusBar.svelte)) наверх —
+      в StatusBar её больше нет (проп `onOpenMonitoring` и ключи `bar.detailedMonitoring`/
+      `bar.openMonitoringAria` удалены). Командную палитру в полосу не добавляли (доступна по
+      ⌘K/меню). `+page.svelte`: derived `topTitle`/`topSubtitle`/`topConnected` (алиас — из
+      `activeTab`, `user@host:port` — из профиля активного сервера); старый derived `status`
+      убран. Новые ключи `topbar.monitoring`/`topbar.settings` (en+ru). Тесты: переписан
+      [TopBar.test.ts](../src/lib/TopBar.test.ts) (крошки, обе кнопки, скрытие мониторинга без
+      коннекта, нет бренда), из [StatusBar.test.ts](../src/lib/StatusBar.test.ts) убран тест
+      кнопки мониторинга. Гейты зелёные.
+  - **20.13.1 Шестерёнка → Серверные инструменты + иконка (v0.20.13):** клик по шестерёнке
+    в верхней полосе теперь открывает настройки **сразу на группе «Сессии и мониторинг»,
+    секции «Серверные инструменты»** (`openSettings("servertools")` → проп `initialSection`).
+    Deep-link [SettingsPanel](../src/lib/SettingsPanel.svelte) не только фокусирует группу
+    (как в 15.3), но и **скроллит** секцию в вид (`data-settings-section` + `scrollIntoView`
+    после `tick`; jsdom-полифилл `scrollIntoView` в `vitest-setup`). Иконка настроек заменена
+    с неоднозначного «пёрышка»-cog на **чёткую шестерёнку** (Heroicons cog-6-tooth) в
+    [icons.ts](../src/lib/icons.ts) — обновилась везде (верхняя полоса, группа «Общие», ⌘K).
+    Тест: deep-link на `servertools` в [SettingsPanel.test.ts](../src/lib/SettingsPanel.test.ts).
+  - **20.13.2 Скролл к заголовку (v0.20.14):** deep-link недоскролливал — заголовок
+    «Серверные инструменты» прятался под липким заголовком группы. Решено декларативно:
+    на скролл-области `scroll-pt-14` (≈ высота sticky-заголовка + зазор), а сам скролл —
+    `scrollIntoView({block:"start"})` после `tick`+`requestAnimationFrame` (ждём завершения
+    open-транзишена и лейаута). Проверено в браузере: заголовок встаёт ~на 8px ниже липкой
+    шапки (вплотную к верху). `scroll-padding-top` — идиоматичный способ учесть sticky-хедер.
+  - **20.13.3 Доскролл после подгрузки каталога (v0.20.15):** скролл всё равно замирал на
+    «Пауза записи…» и не доводил заголовок «Серверные инструменты» до верха. Причина:
+    `servertools` — **последняя** секция группы, а её каталог инструментов подгружается
+    **асинхронно** ([ServerToolsPanel](../src/lib/ServerToolsPanel.svelte)). На момент
+    `scrollIntoView` секция ещё короткая, и как последняя не может дотянуться до верха
+    (контента снизу не хватает); когда список приходит и секция вырастает, позиция скролла
+    остаётся прежней. Решение: deep-link-эффект в [SettingsPanel](../src/lib/SettingsPanel.svelte)
+    вешает `ResizeObserver` на целевую секцию и **пере-скроллит** её к верху, когда контент
+    подгружается и меняет высоту; observer снимается в cleanup эффекта. Полифилл-мок
+    `ResizeObserver` в `vitest-setup`. Тест: пере-скролл по ресайзу в
+    [SettingsPanel.test.ts](../src/lib/SettingsPanel.test.ts).
+
+- [x] **20.14** Прогресс установки серверных инструментов (v0.20.16): раньше клик
+  «Установить через sudo» лишь менял подпись кнопки — при длинном `apt install`
+  казалось, что ничего не происходит. Теперь установка **потоковая и наглядная**:
+  - **Бэкенд стримит вывод.** `run_command_stdin_streaming` в [ssh.rs](../src-tauri/src/ssh.rs)
+    зовёт колбэк на каждый чанк; команда `run_tool_install` ([lib.rs](../src-tauri/src/lib.rs))
+    эмитит их в новый канал `install://out/{id}` ([`install_output_event`](../src-tauri/src/ssh.rs)),
+    сохраняя одноразовый контракт (полный вывод по-прежнему возвращается строкой).
+  - **Живая консоль + индикаторы.** [ToolInstallDialog](../src/lib/ToolInstallDialog.svelte)
+    слушает канал и наполняет терминал-подобную консоль по мере установки; сверху —
+    спиннер (`animate-spin`) + **индетерминантная полоса** (без ложных процентов, т.к.
+    длительность удалённой установки неизвестна) + мигающий курсор. Финиш — явное
+    состояние успеха (зелёная галка + `servertools.installDone`) и тост.
+  - **Авто-рефреш каталога.** После установки `onInstalled` бампает `toolsReloadToken`
+    ([+page.svelte](../src/routes/+page.svelte) → [SettingsPanel](../src/lib/SettingsPanel.svelte)
+    → [ServerToolsPanel](../src/lib/ServerToolsPanel.svelte)), каталог перепроверяется и
+    инструмент **сам** становится «✓ Установлен» без ручного обновления. Общий диалог —
+    поэтому фикс покрывает все три точки входа (настройки, lint-CTA редактора,
+    установка lm-sensors в оверлее мониторинга).
+  - Анимации — дешёвые `transform`/`opacity` под глобальным `prefers-reduced-motion`.
+    Ключ `servertools.installDone` (EN+RU). Тесты: стрим→консоль→успех и провал→тост в
+    [ToolInstallDialog.test.ts](../src/lib/ToolInstallDialog.test.ts).
+
+- [x] **20.15** Горячая клавиша ⌘/Ctrl+T — новая вкладка (v0.20.17): на активной
+  вкладке **сервера** открывает **новую вкладку того же сервера**; если активная
+  вкладка не SSH (локальная консоль) или **не открыто ни одной** — открывает
+  **локальную консоль**. Решение — чистая функция `newTabAction(activeTab)` в
+  [tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts) (юнит-тест без DOM, ADR 0003);
+  [+page.svelte](../src/routes/+page.svelte) `onGlobalKey` резолвит `serverId` в профиль
+  и зовёт `connectServer`/`openLocalTab` (модификатор-точное совпадение, чтобы не
+  перехватывать ⌘⇧T). Комбинация добавлена в таблицу горячих клавиш окна
+  Справка/О программе ([HelpPanel](../src/lib/HelpPanel.svelte), ключ `help.hkNewTab`,
+  EN+RU). Тесты: `newTabAction` в [tabs.test.ts](../src/lib/stores/tabs.test.ts) и
+  наличие строки в [HelpPanel.test.ts](../src/lib/HelpPanel.test.ts).
 
 ---
 

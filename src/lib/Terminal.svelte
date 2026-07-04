@@ -115,6 +115,10 @@
   // seeds from the existing scrollback so recent logs show immediately.
   const MAX_JSON_ENTRIES = 2000;
   const jsonViewEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.jsonView);
+  // Latched once the session first connects. The raw↔table toggle is hidden until
+  // then so it doesn't float over the connecting overlay while a tab is still
+  // establishing its SSH session (local shells connect near-instantly).
+  let connected = $state(false);
   let structured = $state(false);
   let jsonEntries = $state<JsonLogEntry[]>([]);
   let jsonBuffer = "";
@@ -478,6 +482,7 @@
       );
     }
 
+    connected = false;
     onstatus?.("connecting");
     try {
       if (local) {
@@ -498,6 +503,7 @@
           },
         );
       }
+      connected = true;
       onstatus?.("connected");
       term.focus();
     } catch (err) {
@@ -632,7 +638,7 @@
     <div class="absolute inset-0 z-10">
       <JsonLogView entries={jsonEntries} onClear={clearJson} onShowRaw={() => setStructured(false)} />
     </div>
-  {:else if jsonViewEnabled}
+  {:else if jsonViewEnabled && connected}
     <div class="absolute right-2 top-2 z-30">
       <ViewModeToggle {structured} onSelect={setStructured} />
     </div>
@@ -642,6 +648,7 @@
     <!-- Stacks below the floating raw↔table toggle (top-right) when it's shown. -->
     <div
       class="absolute right-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg {jsonViewEnabled &&
+      connected &&
       !structured
         ? 'top-11'
         : 'top-2'}"

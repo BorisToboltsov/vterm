@@ -203,7 +203,17 @@
       "Bash(awk '{printf \"%d KB total\\\\n\", $1/1024}')",
       "Bash(gzip -c build/_app/immutable/nodes/2.*.js)",
       "Bash(awk '{printf \"%d KB gzipped\\\\n\", $1/1024}')",
-      "Bash(awk '{printf \"%d KB raw\\\\n\", $5/1024}')"
+      "Bash(awk '{printf \"%d KB raw\\\\n\", $5/1024}')",
+      "Bash(grep -nE '\\\\$state|history|series|\\\\.push|\\\\.slice|shift|MAX|samples|\\\\[\\\\]' src/lib/MonitoringOverlay.svelte)",
+      "Bash(grep -nE 'onstatus\\\\\\(|status\\\\b|let status|\\\\$state.*[Ss]tatus|emitStatus|connected|connecting' src/lib/Terminal.svelte)",
+      "Bash(grep -n 'tabsState\\\\|from \"$lib/stores/tabs' src/routes/+page.svelte)",
+      "Bash(grep -n \"const status =\\\\|{status}\\\\| status \\\\|\\(status\\)\\\\|status,\" src/routes/+page.svelte)",
+      "Bash(grep -rn 'onload\\\\|loaded\\\\|await\\\\|serverToolsStatus\\\\|$effect\\\\|onMount\\\\|status' src/lib/ServerToolsPanel.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.20.14\"/\"version\": \"0.20.15\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.20.14\"/version = \"0.20.15\"/' src-tauri/Cargo.toml)",
+      "Bash(grep -rn 'from \"./api\"\\\\|from \"$lib/api\"' src/lib/Terminal.svelte)",
+      "Bash(grep -n 'class\\\\|$props\\\\|export' src/lib/Icon.svelte)",
+      "Bash(awk '/function onGlobalKey/,/^  }$/' src/routes/+page.svelte)"
     ]
   }
 }

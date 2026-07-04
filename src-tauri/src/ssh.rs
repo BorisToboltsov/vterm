@@ -58,6 +58,13 @@ pub fn closed_event(session_id: &str) -> String {
     format!("term://closed/{session_id}")
 }
 
+/// Event name carrying live output chunks of a server-tool install (Phase 20.14).
+/// Payload is a UTF-8 string chunk; the frontend appends it to the install dialog's
+/// streaming console so a long `apt install` shows progress instead of a dead button.
+pub fn install_output_event(session_id: &str) -> String {
+    format!("install://out/{session_id}")
+}
+
 /// Event name carrying connection-phase progress for the connecting overlay.
 /// Payload is one of `"connecting"` (TCP + SSH handshake), `"authenticating"`,
 /// `"session"` (opening the channel / PTY / shell). These mirror the sequential
@@ -236,6 +243,47 @@ impl SshSession {
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// Like [`run_command_stdin`](Self::run_command_stdin) but invokes `on_chunk`
+    /// with each output chunk as it arrives, so callers can stream progress live
+    /// (server-tool install console, Phase 20.14). Still accumulates and returns the
+    /// full output so the one-shot contract is preserved. The command is expected to
+    /// merge stderr into stdout (`2>&1`); `ExtendedData` is folded in for safety.
+    pub async fn run_command_stdin_streaming<F: FnMut(&[u8])>(
+        &self,
+        command: &str,
+        stdin: &[u8],
+        mut on_chunk: F,
+    ) -> AppResult<String> {
+        let mut channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("exec channel failed: {e}"))?;
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| format!("exec failed: {e}"))?;
+        if !stdin.is_empty() {
+            channel
+                .data(stdin)
+                .await
+                .map_err(|e| format!("stdin write failed: {e}"))?;
+            let _ = channel.eof().await;
+        }
+        let mut out: Vec<u8> = Vec::new();
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) | Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    on_chunk(&data);
+                    out.extend_from_slice(&data);
+                }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                 _ => {}
             }

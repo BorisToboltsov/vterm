@@ -39,6 +39,7 @@
     findTab,
     isLive,
     moveTab,
+    newTabAction,
     nextTabIndex,
     openTab as openTabStore,
     openLocalTab,
@@ -135,6 +136,13 @@
   // Folder create/rename/delete modals (own their own state); opened via exports.
   let folderModals: FolderModals | undefined = $state();
   let showSettings = $state(false);
+  // Deep-link target section when opening settings (null = default group).
+  let settingsSection = $state<string | null>(null);
+  /** Open the settings panel, optionally focused on a section's group. */
+  function openSettings(section: string | null = null) {
+    settingsSection = section;
+    showSettings = true;
+  }
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
   let showPalette = $state(false);
@@ -185,9 +193,28 @@
     if (selectedFolder !== null && !folders.includes(selectedFolder)) selectedFolder = null;
   });
   const activeTab = $derived(findTab(tabsState.activeId));
-  // Raw status drives logic (startsWith checks); localize only for the top bar.
-  const status = $derived(localizedStatus(activeTab?.status ?? "Not connected"));
+  // serverId → statuses of its open SSH tabs, for the connection dots in the tree.
+  const serverConnections = $derived.by(() => {
+    const map: Record<string, string[]> = {};
+    for (const tab of tabsState.list) {
+      if (tab.kind !== "ssh") continue;
+      (map[tab.serverId] ??= []).push(tab.status);
+    }
+    return map;
+  });
   const sftpReady = $derived(activeTab ? activeTab.status.startsWith("Connected") : false);
+  // Top-bar breadcrumb of the active connection. Alias comes from the tab (SSH
+  // alias or "Local shell"); the `user@host:port` line needs the SSH profile.
+  const activeServer = $derived(
+    activeTab?.kind === "ssh" ? (servers.find((s) => s.id === activeTab.serverId) ?? null) : null,
+  );
+  const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
+  const topSubtitle = $derived(
+    activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
+  );
+  const topConnected = $derived(
+    activeTab?.kind === "ssh" && (activeTab?.status.startsWith("Connected") ?? false),
+  );
   // Prod-flagged active server (by tag) → the AI assistant may not auto-execute (17.4).
   const aiProd = $derived(
     activeTab?.kind === "ssh"
@@ -466,7 +493,7 @@
     { id: "act:newfolder", title: t("palette.newFolder"), icon: "folderPlus", group: t("palette.groupActions"),
       keywords: "folder new папка новая", run: () => folderModals?.openCreate("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
-      keywords: "settings preferences параметры настройки", run: () => (showSettings = true) },
+      keywords: "settings preferences параметры настройки", run: () => openSettings() },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
       keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
     { id: "act:record",
@@ -551,13 +578,29 @@
     if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
       e.preventDefault();
       showPalette = !showPalette;
+      return;
+    }
+    // Cmd/Ctrl+T — new tab of the active server, or a local shell when the active
+    // tab isn't SSH (including when nothing is open). Modifier-exact so it doesn't
+    // steal Cmd+Shift+T etc. (Phase 20.15).
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "t" || e.key === "T")) {
+      e.preventDefault();
+      const action = newTabAction(activeTab);
+      if (action.kind === "ssh") {
+        const server = servers.find((s) => s.id === action.serverId);
+        if (server) {
+          void connectServer(server);
+          return;
+        }
+      }
+      openLocalTab();
     }
   }
 
   onMount(() => {
     refresh();
     const unlisteners: UnlistenFn[] = [];
-    listen("menu://settings", () => (showSettings = true)).then((u) => unlisteners.push(u));
+    listen("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));
     listen("menu://about", () => {
       helpTab = "about";
       showHelp = true;
@@ -815,6 +858,9 @@
   // ── Server tools install helper (Phase 12.8) ────────────────────────────────
   const toolsSessionId = $derived(activeTab?.kind === "ssh" ? activeTab.sessionId : null);
   let installTool = $state<{ sessionId: string; tool: ToolStatus } | null>(null);
+  // Bumped after a sudo install finishes so the Settings catalogue re-checks and the
+  // tool flips to ✓ Installed without a manual refresh (Phase 20.14).
+  let toolsReloadToken = $state(0);
 
   /** Open the install dialog for a tool on the active SSH connection. */
   function openToolInstall(tool: ToolStatus) {
@@ -1041,7 +1087,13 @@
 <svelte:window onkeydown={onGlobalKey} />
 
 <div class="flex h-screen w-screen flex-col">
-  <TopBar {status} />
+  <TopBar
+    title={topTitle}
+    subtitle={topSubtitle}
+    connected={topConnected}
+    onOpenMonitoring={openMonitoring}
+    onOpenSettings={() => openSettings("servertools")}
+  />
 
   <div class="flex min-h-0 flex-1">
     <ServerTree
@@ -1049,6 +1101,7 @@
       {folders}
       {selectedId}
       {selectedFolder}
+      connections={serverConnections}
       onSelect={(id) => {
         selectedId = id;
         selectedFolder = null;
@@ -1412,7 +1465,7 @@
 
   {#if settings.showStatusBar && tabsState.activeId && activeTab?.kind === "ssh" && activeTab?.status.startsWith("Connected")}
     {#key tabsState.activeId}
-      <StatusBar sessionId={tabsState.activeId} onOpenMonitoring={openMonitoring} />
+      <StatusBar sessionId={tabsState.activeId} />
     {/key}
   {/if}
 </div>
@@ -1446,7 +1499,9 @@
   bind:open={showSettings}
   onImported={refresh}
   {toolsSessionId}
+  {toolsReloadToken}
   onInstallTool={openToolInstall}
+  initialSection={settingsSection}
 />
 
 <!-- Server tool install dialog (Phase 12.8) -->
@@ -1455,6 +1510,7 @@
   sessionId={installTool?.sessionId ?? ""}
   tool={installTool?.tool ?? null}
   onRunInTerminal={runInstallInTerminal}
+  onInstalled={() => (toolsReloadToken += 1)}
   onclose={() => (installTool = null)}
 />
 <HelpPanel bind:open={showHelp} bind:tab={helpTab} />

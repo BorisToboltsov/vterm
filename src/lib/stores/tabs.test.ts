@@ -7,10 +7,12 @@ import {
   isLive,
   localizedStatus,
   moveTab,
+  newTabAction,
   nextTabIndex,
   openTab,
   openLocalTab,
   reconnectTab,
+  serverDots,
   setTabStatus,
   statusLabel,
   tabsState,
@@ -31,11 +33,72 @@ describe("pure helpers", () => {
     expect(statusLabel("error")).toBe("Error: unknown");
   });
 
+  it("newTabAction opens the active server, else a local shell", () => {
+    // On an SSH tab → a fresh tab of that same server.
+    expect(newTabAction({ kind: "ssh", serverId: "srv-1" })).toEqual({
+      kind: "ssh",
+      serverId: "srv-1",
+    });
+    // On a local tab → another local shell.
+    expect(newTabAction({ kind: "local", serverId: "" })).toEqual({ kind: "local" });
+    // Nothing open → local shell.
+    expect(newTabAction(null)).toEqual({ kind: "local" });
+    expect(newTabAction(undefined)).toEqual({ kind: "local" });
+  });
+
   it("dotClass picks a colour from a label", () => {
     expect(dotClass("Connected")).toBe("bg-green-500");
     expect(dotClass("Connecting…")).toBe("bg-yellow-500");
     expect(dotClass("Error: x")).toBe("bg-danger");
     expect(dotClass("Disconnected")).toBe("bg-muted");
+  });
+
+  it("serverDots keeps tab order (newest last) with a connecting pulse", () => {
+    // Rendered in the order given (tab order), not reshuffled by severity.
+    const { dots, extra } = serverDots(["Connected", "Connecting…"]);
+    expect(dots.map((d) => d.cls)).toEqual([
+      "bg-green-500 ring-1 ring-[#166534]",
+      "bg-yellow-500 ring-1 ring-[#854d0e]",
+    ]);
+    // Only the connecting dot pulses.
+    expect(dots.map((d) => d.pulse)).toEqual([false, true]);
+    expect(extra).toBe(0);
+  });
+
+  it("serverDots appends a newly connected tab at the end of the stack", () => {
+    // Two dropped (muted) tabs, then a new connected one → green stays last.
+    const { dots } = serverDots(["Disconnected", "Disconnected", "Connected"]);
+    expect(dots[2].cls).toContain("bg-green-500");
+  });
+
+  it("serverDots caps at 3 and reports the remainder", () => {
+    const { dots, extra } = serverDots(["Connected", "Connected", "Connected", "Connected"]);
+    expect(dots).toHaveLength(3);
+    expect(extra).toBe(1);
+  });
+
+  it("serverDots picks shown dots severity-first so an error is never hidden by the cap", () => {
+    // 3 connected + 1 error (newest); cap 3 → error must survive (an older
+    // connected overflows), but the error stays in tab order → last.
+    const { dots, extra } = serverDots([
+      "Connected",
+      "Connected",
+      "Connected",
+      "Error: dropped",
+    ]);
+    expect(dots.some((d) => d.cls.includes("bg-danger"))).toBe(true);
+    expect(dots[dots.length - 1].cls).toContain("bg-danger");
+    expect(dots).toHaveLength(3);
+    expect(extra).toBe(1);
+  });
+
+  it("serverDots falls back to a muted, non-pulsing dot for other statuses", () => {
+    const { dots } = serverDots(["Disconnected"]);
+    expect(dots[0]).toEqual({ cls: "bg-muted ring-1 ring-[#3f3f5a]", pulse: false });
+  });
+
+  it("serverDots handles an empty list", () => {
+    expect(serverDots([])).toEqual({ dots: [], extra: 0 });
   });
 
   it("isLive is true only while connected/connecting", () => {

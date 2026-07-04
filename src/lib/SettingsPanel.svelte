@@ -21,6 +21,7 @@
     groupForSection,
   } from "./settingsNav";
   import { t, availableLocales, type MessageKey } from "./i18n";
+  import { tick } from "svelte";
 
   // Sidebar group labels (data-driven keys would not type-check against MessageKey).
   const GROUP_LABEL: Record<string, MessageKey> = {
@@ -37,6 +38,7 @@
     open = $bindable(false),
     onImported,
     toolsSessionId = null,
+    toolsReloadToken = 0,
     onInstallTool,
     initialSection = null,
   }: {
@@ -44,6 +46,8 @@
     onImported?: () => void;
     /** Active SSH session id for the server-tools catalogue (Phase 12.8). */
     toolsSessionId?: string | null;
+    /** Bump to re-check the server-tools catalogue after an install (Phase 20.14). */
+    toolsReloadToken?: number;
     onInstallTool?: (tool: import("./servertools").ToolStatus) => void;
     /** Deep-link: open the panel focused on this section's group (Phase 15.3). */
     initialSection?: string | null;
@@ -66,15 +70,38 @@
     search = "";
   }
 
-  // Deep-link: when opened with an initialSection, focus its group.
+  // Deep-link: when opened with an initialSection, focus its group and scroll the
+  // section to the top. The scroll area carries `scroll-pt-*` matching the sticky
+  // header height, so `scrollIntoView` lands the heading just below it (not under).
+  // rAF waits for the open transition + layout to settle before measuring.
+  //
+  // The server-tools section is last in its group and fills its catalogue in
+  // asynchronously, so the first scroll can't reach the top yet (the section is
+  // still short). A ResizeObserver re-scrolls once the content lands and grows
+  // the section, so the heading settles at the top rather than stopping short.
   $effect(() => {
-    if (open && initialSection) {
-      const gid = groupForSection(initialSection);
-      if (gid) {
-        activeGroup = gid;
-        search = "";
-      }
+    if (!open || !initialSection) return;
+    const gid = groupForSection(initialSection);
+    if (gid) {
+      activeGroup = gid;
+      search = "";
     }
+    const section = initialSection;
+    const scrollToTop = () =>
+      document.querySelector(`[data-settings-section="${section}"]`)?.scrollIntoView({ block: "start" });
+
+    let observer: ResizeObserver | undefined;
+    tick().then(() =>
+      requestAnimationFrame(() => {
+        scrollToTop();
+        const el = document.querySelector(`[data-settings-section="${section}"]`);
+        if (el && typeof ResizeObserver !== "undefined") {
+          observer = new ResizeObserver(() => scrollToTop());
+          observer.observe(el);
+        }
+      }),
+    );
+    return () => observer?.disconnect();
   });
 
   // Roving keyboard navigation for the group sidebar (Arrow/Home/End).
@@ -158,7 +185,7 @@
           {/each}
         </nav>
 
-        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4 text-sm">
+        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto scroll-pt-14 px-4 py-4 text-sm">
           <!-- Sticky header: active group name, or search-results mode (Phase 15.3) -->
           <div
             class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-white"
@@ -298,10 +325,14 @@
 
         {#if show("servertools")}
         <!-- Server tools install helper (Phase 12.8) -->
-        <section>
+        <section data-settings-section="servertools">
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionServerTools")}</h3>
           <p class="mb-2 text-[11px] text-muted">{t("settings.serverToolsNote")}</p>
-          <ServerToolsPanel sessionId={toolsSessionId} onInstall={(tool) => onInstallTool?.(tool)} />
+          <ServerToolsPanel
+            sessionId={toolsSessionId}
+            reloadToken={toolsReloadToken}
+            onInstall={(tool) => onInstallTool?.(tool)}
+          />
         </section>
 
         {/if}

@@ -29,6 +29,7 @@ const baseProps = () => ({
   folders: [] as string[],
   selectedId: null as string | null,
   selectedFolder: null as string | null,
+  connections: {} as Record<string, string[]>,
   onSelect: noop,
   onSelectFolder: noop,
   onConnect: noop,
@@ -121,6 +122,42 @@ describe("ServerTree", () => {
     render(ServerTree, { props: { ...baseProps(), onAddServer } });
     await userEvent.click(screen.getByTestId("add-server"));
     expect(onAddServer).toHaveBeenCalledOnce();
+  });
+
+  it("shows a connection dot per open SSH tab of a server", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" }), srv({ id: "2", alias: "Db" })],
+        connections: { "1": ["Connected", "Connecting…"] },
+      },
+    });
+    const dots = screen.getByTestId("conn-dots");
+    // Two tabs → two dots (green + yellow); the connecting one pulses.
+    const circles = dots.querySelectorAll("span.rounded-full");
+    expect(circles).toHaveLength(2);
+    expect(dots.querySelectorAll("span.pulse-dot")).toHaveLength(1);
+    expect(dots.textContent).not.toContain("+"); // no overflow badge
+  });
+
+  it("caps the dots at 3 and shows a +N overflow badge", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        connections: { "1": ["Connected", "Connected", "Connected", "Connected", "Connected"] },
+      },
+    });
+    const dots = screen.getByTestId("conn-dots");
+    expect(dots.querySelectorAll("span.rounded-full")).toHaveLength(3);
+    expect(dots.textContent).toContain("+2");
+  });
+
+  it("renders no dots for a server with no open tabs", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], connections: {} },
+    });
+    expect(screen.queryByTestId("conn-dots")).toBeNull();
   });
 
   it("clicking a folder row reports it as the selected folder", async () => {

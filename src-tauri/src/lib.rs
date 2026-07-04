@@ -1148,9 +1148,12 @@ async fn server_tools_status(
 }
 
 /// Run an install command on the server (one-click path). A leading `sudo` is fed
-/// the password via stdin; non-sudo commands (pip/brew) run as-is. Returns output.
+/// the password via stdin; non-sudo commands (pip/brew) run as-is. Streams output
+/// live over `install://out/{id}` (Phase 20.14) so the dialog console fills in as the
+/// install runs, and also returns the full output so the one-shot contract holds.
 #[tauri::command]
 async fn run_tool_install(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     command: String,
@@ -1160,7 +1163,12 @@ async fn run_tool_install(
     let cmd = format!("{} 2>&1", servertools::sudoize(&command));
     let mut pw = sudo_password.unwrap_or_default().into_bytes();
     pw.push(b'\n');
-    session.run_command_stdin(&cmd, &pw).await
+    let event = ssh::install_output_event(&session_id);
+    session
+        .run_command_stdin_streaming(&cmd, &pw, |chunk| {
+            let _ = app.emit(&event, String::from_utf8_lossy(chunk).into_owned());
+        })
+        .await
 }
 
 /// Apply a computed sync plan: upload/download changed files, delete extraneous.
