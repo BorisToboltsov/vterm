@@ -285,12 +285,32 @@ export interface SmartDisk {
   powerOnHours: number | null;
 }
 
-/** Optional extras probed once on overlay open (GPU/Docker/SMART/OOM). */
+/** Static machine spec (mirrors metrics.rs `Hardware`); all best-effort/root-free. */
+export interface Hardware {
+  cpuModel: string;
+  /** Physical cores (cores-per-socket × sockets) and logical threads. */
+  cpuCores: number | null;
+  cpuThreads: number | null;
+  cpuSockets: number | null;
+  /** Max CPU frequency in MHz (falls back to current when max is unavailable). */
+  cpuMhz: number | null;
+  arch: string;
+  /** systemd-detect-virt output ("none" on bare metal). */
+  virt: string;
+  machine: string;
+  /** DMI baseboard/motherboard (vendor + name). */
+  board: string;
+  bios: string;
+}
+
+/** Optional extras probed once on overlay open (GPU/Docker/SMART/OOM + hardware). */
 export interface Extras {
   gpus: Gpu[];
   docker: DockerStat[];
   smart: SmartDisk[];
   oomKills: number | null;
+  /** Optional on the wire only defensively — the backend always sends it. */
+  hardware?: Hardware;
 }
 
 /** Lazily probe optional extras (heavy/optional — overlay only, deferred). */

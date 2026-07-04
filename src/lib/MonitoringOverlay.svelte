@@ -202,6 +202,36 @@
   const tempLvl = $derived(tempHealth(detail, metrics, th));
   const extrasLvl = $derived(extrasHealth(extras));
   const tempShown = $derived(hasTempData(detail, metrics));
+  // Static hardware spec (Фаза 20.16), part of the once-on-open extras probe.
+  const hw = $derived(extras?.hardware ?? null);
+  const hasHw = $derived(
+    !!hw &&
+      !!(
+        hw.cpuModel ||
+        hw.arch ||
+        hw.machine ||
+        hw.board ||
+        hw.virt ||
+        hw.bios ||
+        hw.cpuThreads != null
+      ),
+  );
+  // Show the virtualization badge only when it's a guest (kvm/vmware/docker/lxc…),
+  // not on bare metal ("none") or when undetectable (empty).
+  const virtBadge = $derived(hw?.virt && hw.virt !== "none" ? hw.virt : null);
+
+  /** MHz → "2.40 GHz" (or "800 MHz" below 1 GHz); empty when unknown. */
+  function fmtFreq(mhz: number | null | undefined): string {
+    if (mhz == null) return "";
+    return mhz >= 1000 ? `${(mhz / 1000).toFixed(2)} GHz` : `${Math.round(mhz)} MHz`;
+  }
+  /** "8 / 16" cores/threads, tolerating a missing half. */
+  function fmtCores(cores: number | null | undefined, threads: number | null | undefined): string {
+    if (cores != null && threads != null) return `${cores} / ${threads}`;
+    if (threads != null) return String(threads);
+    if (cores != null) return String(cores);
+    return "";
+  }
 
   // A small dot colour + a pill text-colour class for a health level (ok = green).
   function dotColor(l: ThresholdLevel): string {
@@ -309,6 +339,13 @@
           <Icon name={osIconFor(metrics)} size={16} class="text-muted" />
           <span class="text-sm text-text">{metrics.user || "—"}@{metrics.hostname || "—"}</span>
           <span class="text-xs text-muted">{metrics.prettyName || metrics.os || "—"}</span>
+          {#if virtBadge}
+            <span
+              class="rounded bg-edge px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent"
+              data-testid="virt-badge"
+              title={t("mon.hwVirt")}>{virtBadge}</span
+            >
+          {/if}
           <span class="ml-auto flex items-center gap-1.5 text-xs {pillCls(overallLvl)}">
             <span class="h-2 w-2 rounded-full" style="background-color: {dotColor(overallLvl)}"></span>
             {overallText}
@@ -373,6 +410,23 @@
               {/if}
             {/snippet}
             {@render sysGroup(t("mon.groupUpdates"), updatesBody)}
+          {/if}
+          {#if hasHw}
+            <div class="col-span-2" data-testid="hardware">
+              <div class="mb-1 text-[11px] uppercase tracking-wider text-muted">{t("mon.groupHardware")}</div>
+              <dl class="grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
+                {#if hw!.cpuModel}{@render sysField("CPU", hw!.cpuModel)}{/if}
+                {#if fmtCores(hw!.cpuCores, hw!.cpuThreads)}{@render sysField(t("mon.hwCores"), fmtCores(hw!.cpuCores, hw!.cpuThreads))}{/if}
+                {#if hw!.cpuSockets != null}{@render sysField(t("mon.hwSockets"), String(hw!.cpuSockets))}{/if}
+                {#if fmtFreq(hw!.cpuMhz)}{@render sysField(t("mon.hwFreq"), fmtFreq(hw!.cpuMhz))}{/if}
+                {#if hw!.arch}{@render sysField(t("mon.hwArch"), hw!.arch)}{/if}
+                {#if hw!.virt}{@render sysField(t("mon.hwVirt"), hw!.virt)}{/if}
+                {#if hw!.machine}{@render sysField(t("mon.hwMachine"), hw!.machine)}{/if}
+                {#if hw!.board}{@render sysField(t("mon.hwBoard"), hw!.board)}{/if}
+                {#if hw!.bios}{@render sysField("BIOS", hw!.bios)}{/if}
+                {#if metrics.memTotal}{@render sysField("RAM", fmtBytes(metrics.memTotal))}{/if}
+              </dl>
+            </div>
           {/if}
         </div>
       </section>
@@ -491,7 +545,12 @@
             <span class="ml-auto h-2 w-2 rounded-full" style="background-color: {dotColor(memLvl)}"></span>
           </h3>
           <div class="mb-2 flex items-end justify-between gap-3">
-            <span class="text-2xl font-semibold tabular-nums {thresholdClass(ramPct, th.ram)}">{fmtPct(ramPct)}</span>
+            <div class="flex items-baseline gap-2">
+              <span class="text-2xl font-semibold tabular-nums {thresholdClass(ramPct, th.ram)}">{fmtPct(ramPct)}</span>
+              {#if metrics.memTotal}
+                <span class="text-xs text-muted">{t("mon.ofTotal", { size: fmtBytes(metrics.memTotal) })}</span>
+              {/if}
+            </div>
             <Chart series={[{ values: ramHist, color: C_RAM, fill: true }]} class="h-10 w-40" />
           </div>
           {#if detail?.memCached != null && detail?.memFree != null}
@@ -514,8 +573,10 @@
             </div>
           {/if}
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
+            <dt class="text-muted">{t("mon.total")}</dt>
+            <dd class="text-right tabular-nums">{fmtBytes(metrics.memTotal)}</dd>
             <dt class="text-muted">{t("mon.used")}</dt>
-            <dd class="text-right tabular-nums">{fmtBytes(metrics.memUsed)} / {fmtBytes(metrics.memTotal)}</dd>
+            <dd class="text-right tabular-nums">{fmtBytes(metrics.memUsed)}</dd>
             {#if detail?.memAvailable != null}
               <dt class="text-muted">{t("mon.available")}</dt>
               <dd class="text-right tabular-nums">{fmtBytes(detail.memAvailable)}</dd>

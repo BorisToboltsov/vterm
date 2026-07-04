@@ -963,6 +963,25 @@ for d in $(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
   smart="$smart$d|$h|$t|$p;"
 done
 printf 'smart=%s\n' "$smart"
+printf 'arch=%s\n' "$(uname -m 2>/dev/null)"
+cpumodel=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+[ -z "$cpumodel" ] && cpumodel=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
+printf 'cpumodel=%s\n' "$cpumodel"
+printf 'cputhreads=%s\n' "$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)"
+lc=$(lscpu 2>/dev/null)
+cps=$(printf '%s\n' "$lc" | awk -F: '/^Core\(s\) per socket/{gsub(/ /,"",$2);print $2}')
+sk=$(printf '%s\n' "$lc" | awk -F: '/^Socket\(s\)/{gsub(/ /,"",$2);print $2}')
+printf 'cpusockets=%s\n' "$sk"
+if [ -n "$cps" ] && [ -n "$sk" ]; then printf 'cpucores=%s\n' "$((cps*sk))"; else printf 'cpucores=\n'; fi
+mhz=$(printf '%s\n' "$lc" | awk -F: '/^CPU max MHz/{gsub(/ /,"",$2);print $2;exit}')
+[ -z "$mhz" ] && mhz=$(awk -F': ' '/^cpu MHz/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
+printf 'cpumhz=%s\n' "$mhz"
+printf 'virt=%s\n' "$(systemd-detect-virt 2>/dev/null)"
+printf 'vendor=%s\n' "$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null)"
+printf 'product=%s\n' "$(cat /sys/class/dmi/id/product_name 2>/dev/null)"
+printf 'boardvendor=%s\n' "$(cat /sys/class/dmi/id/board_vendor 2>/dev/null)"
+printf 'boardname=%s\n' "$(cat /sys/class/dmi/id/board_name 2>/dev/null)"
+printf 'bios=%s\n' "$(cat /sys/class/dmi/id/bios_version 2>/dev/null)"
 "#;
 
 #[derive(Serialize, Default, Clone)]
@@ -994,6 +1013,31 @@ pub struct SmartDisk {
     power_on_hours: Option<u64>,
 }
 
+/// Static machine spec (Фаза 20.16) — probed once with the extras (never changes),
+/// all fields best-effort and **root-free** (missing tool/file → empty → dash).
+#[derive(Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Hardware {
+    /// CPU brand string, e.g. "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz".
+    cpu_model: String,
+    /// Physical cores (cores-per-socket × sockets) and logical threads.
+    cpu_cores: Option<u32>,
+    cpu_threads: Option<u32>,
+    cpu_sockets: Option<u32>,
+    /// Max CPU frequency in MHz (falls back to the current freq when max is absent).
+    cpu_mhz: Option<f64>,
+    /// CPU architecture from `uname -m`, e.g. "x86_64".
+    arch: String,
+    /// Hypervisor/container from `systemd-detect-virt` ("none" on bare metal).
+    virt: String,
+    /// DMI machine identity, e.g. "Dell Inc. PowerEdge R740" (vendor + product).
+    machine: String,
+    /// DMI baseboard/motherboard, e.g. "ASUSTeK PRIME B550-PLUS" (vendor + name).
+    board: String,
+    /// DMI BIOS/firmware version.
+    bios: String,
+}
+
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Extras {
@@ -1001,6 +1045,21 @@ pub struct Extras {
     docker: Vec<DockerStat>,
     smart: Vec<SmartDisk>,
     oom_kills: Option<u64>,
+    hardware: Hardware,
+}
+
+/// Merge a DMI vendor + name pair (system product or baseboard) into one label,
+/// avoiding duplication when the name already carries the vendor (e.g. vendor
+/// "QEMU", name "Standard PC …").
+fn combine_machine(vendor: &str, name: &str) -> String {
+    let (v, p) = (vendor.trim(), name.trim());
+    match (v.is_empty(), p.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => p.to_string(),
+        (false, true) => v.to_string(),
+        (false, false) if p.contains(v) => p.to_string(),
+        (false, false) => format!("{v} {p}"),
+    }
 }
 
 fn parse_extras(raw: &str) -> Extras {
@@ -1054,11 +1113,29 @@ fn parse_extras(raw: &str) -> Extras {
         })
         .collect();
     let oom_kills = field("oom=").trim().parse().ok();
+    // Collapse repeated whitespace in the CPU brand string (cpuinfo pads it).
+    let cpu_model = field("cpumodel=")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let hardware = Hardware {
+        cpu_model,
+        cpu_cores: field("cpucores=").trim().parse().ok(),
+        cpu_threads: field("cputhreads=").trim().parse().ok(),
+        cpu_sockets: field("cpusockets=").trim().parse().ok(),
+        cpu_mhz: field("cpumhz=").trim().parse().ok(),
+        arch: field("arch=").trim().to_string(),
+        virt: field("virt=").trim().to_string(),
+        machine: combine_machine(field("vendor="), field("product=")),
+        board: combine_machine(field("boardvendor="), field("boardname=")),
+        bios: field("bios=").trim().to_string(),
+    };
     Extras {
         gpus,
         docker,
         smart,
         oom_kills,
+        hardware,
     }
 }
 
@@ -1410,7 +1487,24 @@ mod tests {
             .expect("spawn sh");
         assert!(out.status.success(), "EXTRAS_SCRIPT exited non-zero");
         let text = String::from_utf8_lossy(&out.stdout);
-        for key in ["gpu=", "docker=", "oom=", "smart="] {
+        for key in [
+            "gpu=",
+            "docker=",
+            "oom=",
+            "smart=",
+            "arch=",
+            "cpumodel=",
+            "cputhreads=",
+            "cpucores=",
+            "cpusockets=",
+            "cpumhz=",
+            "virt=",
+            "vendor=",
+            "product=",
+            "boardvendor=",
+            "boardname=",
+            "bios=",
+        ] {
             assert!(text.contains(key), "EXTRAS_SCRIPT missing {key}: {text}");
         }
     }
@@ -1443,6 +1537,50 @@ mod tests {
         let empty = parse_extras("gpu=\ndocker=\noom=\nsmart=\n");
         assert!(empty.gpus.is_empty() && empty.docker.is_empty() && empty.smart.is_empty());
         assert_eq!(empty.oom_kills, None);
+    }
+
+    #[test]
+    fn parse_extras_reads_hardware() {
+        let raw = "gpu=\ndocker=\noom=\nsmart=\n\
+                   arch=x86_64\n\
+                   cpumodel=Intel(R)  Xeon(R) CPU E5-2680 v4  @ 2.40GHz\n\
+                   cputhreads=16\ncpucores=8\ncpusockets=1\ncpumhz=3300.00\n\
+                   virt=kvm\nvendor=Dell Inc.\nproduct=PowerEdge R740\n\
+                   boardvendor=Dell Inc.\nboardname=0YWR7D\nbios=2.8.1\n";
+        let h = parse_extras(raw).hardware;
+        // Repeated whitespace in the brand string is collapsed.
+        assert_eq!(h.cpu_model, "Intel(R) Xeon(R) CPU E5-2680 v4 @ 2.40GHz");
+        assert_eq!(h.cpu_cores, Some(8));
+        assert_eq!(h.cpu_threads, Some(16));
+        assert_eq!(h.cpu_sockets, Some(1));
+        assert_eq!(h.cpu_mhz, Some(3300.0));
+        assert_eq!(h.arch, "x86_64");
+        assert_eq!(h.virt, "kvm");
+        assert_eq!(h.machine, "Dell Inc. PowerEdge R740");
+        assert_eq!(h.board, "Dell Inc. 0YWR7D");
+        assert_eq!(h.bios, "2.8.1");
+        // Missing/empty hardware → defaults (empty strings, None numbers).
+        let bare = parse_extras("gpu=\ndocker=\noom=\nsmart=\n").hardware;
+        assert_eq!(bare.cpu_model, "");
+        assert_eq!(bare.cpu_cores, None);
+        assert_eq!(bare.arch, "");
+        assert_eq!(bare.machine, "");
+    }
+
+    #[test]
+    fn combine_machine_dedupes_vendor() {
+        assert_eq!(
+            combine_machine("Dell Inc.", "PowerEdge R740"),
+            "Dell Inc. PowerEdge R740"
+        );
+        // Product already carries the vendor → no duplication.
+        assert_eq!(
+            combine_machine("QEMU", "QEMU Standard PC"),
+            "QEMU Standard PC"
+        );
+        assert_eq!(combine_machine("", "MacBookPro18,1"), "MacBookPro18,1");
+        assert_eq!(combine_machine("LENOVO", ""), "LENOVO");
+        assert_eq!(combine_machine("", ""), "");
     }
 
     #[test]

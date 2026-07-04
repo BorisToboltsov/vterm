@@ -114,6 +114,18 @@ const extras: Extras = {
   docker: [{ name: "web", cpu: 12.5, mem: "1.2GiB / 3.8GiB" }],
   smart: [{ device: "sda", health: "PASSED", temp: 38, powerOnHours: 12345 }],
   oomKills: 2,
+  hardware: {
+    cpuModel: "Intel Xeon E5-2680 v4",
+    cpuCores: 8,
+    cpuThreads: 16,
+    cpuSockets: 1,
+    cpuMhz: 3300,
+    arch: "x86_64",
+    virt: "kvm",
+    machine: "Dell Inc. PowerEdge R740",
+    board: "Dell Inc. 0YWR7D",
+    bios: "2.8.1",
+  },
 };
 
 beforeEach(() => {
@@ -218,6 +230,28 @@ describe("MonitoringOverlay", () => {
     expect(screen.getByTestId("docker-list")).toBeInTheDocument();
     expect(screen.getByText("RTX 4090")).toBeInTheDocument();
     expect(fetchExtras).toHaveBeenCalledWith("s-extras");
+  });
+
+  it("shows the Hardware group and a virtualization badge from extras (Фаза 20.16)", async () => {
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-hw" } });
+    const hw = await screen.findByTestId("hardware");
+    expect(within(hw).getByText("Hardware")).toBeInTheDocument();
+    expect(within(hw).getByText("Intel Xeon E5-2680 v4")).toBeInTheDocument();
+    expect(within(hw).getByText("8 / 16")).toBeInTheDocument();
+    expect(within(hw).getByText("3.30 GHz")).toBeInTheDocument();
+    expect(within(hw).getByText("x86_64")).toBeInTheDocument();
+    expect(within(hw).getByText("Dell Inc. PowerEdge R740")).toBeInTheDocument();
+    expect(within(hw).getByText("Dell Inc. 0YWR7D")).toBeInTheDocument();
+    // Guest badge appears in the System header (kvm ≠ bare metal).
+    expect(await screen.findByTestId("virt-badge")).toHaveTextContent("kvm");
+  });
+
+  it("shows an explicit total-RAM row and 'of total' subtitle (Фаза 20.16)", async () => {
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-ram" } });
+    await screen.findByTestId("system");
+    // memTotal is 8 GiB in the fixture → distinct Total row + subtitle by the %.
+    expect(await screen.findByText("Total")).toBeInTheDocument();
+    expect(screen.getByText(/of 8(\.0)? GiB/)).toBeInTheDocument();
   });
 
   it("shows the Updates group header with a skeleton while pending loads", async () => {

@@ -128,6 +128,11 @@
   `DETAIL_SCRIPT`. Всё guarded `command -v`, best-effort; **SMART требует root**
   (наполняется для root-сессий, иначе пуст + карточка установки `smartmontools`).
   Новый тяжёлый/опц. источник добавляй сюда, не в `DETAIL_SCRIPT`/`METRICS_SCRIPT`.
+  **Статическое железо (20.16)** — часть того же `EXTRAS_SCRIPT` (структура `Hardware`
+  в `Extras`): модель/ядра/частота CPU, arch, виртуализация, DMI-машина, BIOS. Тоже
+  best-effort, но **без root** (`/proc/cpuinfo`, `lscpu`, `uname -m`,
+  `systemd-detect-virt`, `/sys/class/dmi/id/*`); рендерится группой «Оборудование» в
+  статическом блоке «Система».
 
 ## Логи и текст (Фаза 10) — ЗАКРЕПЛЕНО
 

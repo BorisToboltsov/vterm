@@ -102,7 +102,11 @@ pnpm check
   (ловит регрессии экранирования awk/ps/ss, в т.ч. строк
   `sensors=`/`cpubreak=`/`topcpu=`/`netdev=`/`diskdev=`/`sessions=`); `parse_extras`
   (GPU/Docker/SMART/OOM из ленивого `EXTRAS_SCRIPT`, пустые поля → None) +
-  `extras_script_runs_in_a_shell_and_emits_keys`;
+  `extras_script_runs_in_a_shell_and_emits_keys` (в т.ч. hardware-ключи
+  `arch=`/`cpumodel=`/`cpucores=`/`virt=`/`vendor=`/`boardname=`/`bios=`…, Фаза 20.16);
+  `parse_extras_reads_hardware` (CPU-модель со схлопыванием пробелов, ядра/потоки/сокеты/
+  частота, arch/virt/машина/**плата**/bios; пусто → дефолты) и `combine_machine_dedupes_vendor`
+  (vendor+name, дедуп когда name уже содержит vendor);
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`**/**`noAi`** —
   легаси-профиль → `auto_record:false`/`no_ai:false`/`chat_prompt_id:None`/`exec_mode:None`; round-trip
@@ -482,7 +486,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (`health-summary`) и точки-индикаторы в заголовках; **per-interface сеть**,
   **per-device disk I/O** и **таблица сессий**; безлимитный потолок дескрипторов
   рендерится как `∞`; **ленивая** секция «Дополнительно» (GPU/Docker/SMART/OOM,
-  `fetchExtras` после первого рендера); **ленивая** подгрузка
+  `fetchExtras` после первого рендера); **группа «Оборудование»** (модель CPU,
+  ядра/потоки, частота, arch, машина, плата) и **бейдж виртуализации** в шапке «Система»
+  из `extras.hardware`, а также **строка «Всего»** и подпись «из N GiB» в блоке ОЗУ
+  (Фаза 20.16); **ленивая** подгрузка
   pending-updates после первого рендера (+ **скелетон** в группе «Обновления», пока
   промис не разрешён); **скелетоны дельтовых метрик** (per-core/разбивка CPU/per-device
   I/O) пока `pollCount < 2`; красная подсветка раздела при превышении

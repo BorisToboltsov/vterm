@@ -678,6 +678,37 @@ audit`) — если нет, задокументировать игнор в `d
   EN+RU). Тесты: `newTabAction` в [tabs.test.ts](../src/lib/stores/tabs.test.ts) и
   наличие строки в [HelpPanel.test.ts](../src/lib/HelpPanel.test.ts).
 
+- [x] **20.16** Расширенный мониторинг: явный объём ОЗУ + блок «Оборудование»
+  (v0.20.18):
+  - **ОЗУ — «Всего».** Раньше общий объём был только внутри строки «Использовано»
+    (`used / total`). Теперь в блоке «Память» ([MonitoringOverlay.svelte](../src/lib/MonitoringOverlay.svelte))
+    — **отдельная строка «Всего»** и подпись **«из N GiB»** рядом с процентом; строка
+    «Использовано» показывает только использованное. Ключи `mon.total`/`mon.ofTotal`.
+  - **Данные о железе.** В блок «Система» (сгруппированные статические данные) добавлена
+    группа **«Оборудование»**: модель CPU, ядра/потоки, сокеты, частота, архитектура,
+    виртуализация, модель машины (DMI vendor+product), BIOS и общий объём RAM. Все поля
+    **best-effort и без root** — пробятся один раз при открытии оверлея вместе с extras
+    ([`EXTRAS_SCRIPT`](../src-tauri/src/metrics.rs), новая структура `Hardware` в `Extras`,
+    `#[serde(default)]`-совместимо; отсутствующий инструмент/файл → пустое → прочерк).
+    Источники: `/proc/cpuinfo`·`sysctl` (модель), `nproc`·`lscpu` (ядра/сокеты/частота),
+    `uname -m` (арх.), `systemd-detect-virt` (виртуализация), `/sys/class/dmi/id/*`
+    (машина/BIOS). Виртуализация вдобавок **вынесена бейджем** в шапку «Система», когда
+    это гость (не `none`).
+  - Ключи `mon.groupHardware`/`mon.hwCores`/`mon.hwSockets`/`mon.hwFreq`/`mon.hwArch`/
+    `mon.hwVirt`/`mon.hwMachine` (EN+RU; CPU/BIOS/RAM — доменные термины, без перевода).
+    Тесты: `parse_extras_reads_hardware` + `combine_machine_dedupes_vendor` в
+    [metrics.rs](../src-tauri/src/metrics.rs) (+ ключи в `extras_script`-тесте); группа
+    «Оборудование», бейдж виртуализации и строка «Всего» — в
+    [MonitoringOverlay.test.ts](../src/lib/MonitoringOverlay.test.ts).
+  - **20.16.1 Модель материнской платы (v0.20.19):** в группу «Оборудование» добавлена
+    строка **«Плата»** — DMI baseboard (`/sys/class/dmi/id/board_vendor` + `board_name`,
+    без root, best-effort), поле `board` в `Hardware`, тот же `combine_machine`-дедуп
+    vendor+name. Отдельно от «Модель машины» (`product_name`): на самосборах плата —
+    реальная модель, на серверах — парт-номер (напр. «Dell 0YWR7D»). Ключ `mon.hwBoard`
+    (EN+RU). Покрытие: `boardvendor=`/`boardname=` в `extras_script`-тесте, `board` в
+    `parse_extras_reads_hardware` и в фикстуре/ассерте
+    [MonitoringOverlay.test.ts](../src/lib/MonitoringOverlay.test.ts).
+
 ---
 
 ## Заметки по архитектурным решениям
