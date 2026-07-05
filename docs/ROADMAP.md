@@ -733,6 +733,34 @@ audit`) — если нет, задокументировать игнор в `d
     `title`. Тесты: [tooltip.test.ts](../src/lib/actions/tooltip.test.ts) (hover/focus/
     update/destroy/portal) + обновлённый ассерт в
     [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts).
+  - **20.17.2 Раскатка `use:tooltip` по приложению (v0.20.22):** нативный `title`
+    заменён на `use:tooltip` в **109 местах в 21 файле** — иконки-кнопки тулбаров
+    (SFTP, дерево серверов, терминал, редактор, записи, ИИ…) и подсказки-расшифровки
+    метрик статус-бара / меток мониторинга. **Не тронуты:** заголовки-пропы
+    (`<Modal>`/`<ConfirmDialog>`/`<EmptyState>`/`<Icon>`), `title` для раскрытия
+    обрезанного текста (пути/имена/статусы — там нативный уместен) и `os` в статус-баре
+    (маркер идентификатора ОС). Для 4 icon-only кнопок без подписи добавлен `aria-label`
+    (у остальных доступное имя уже было из текста/`aria-label` — дубли не плодили). Тесты,
+    искавшие элементы по снятому `title` (`getByTitle`), переведены на роль/hover→tooltip
+    (StatusBar users, JsonLogView grip, ViewModeToggle).
+  - **20.17.3 Задержка появления + skip-window (v0.20.24):** мгновенные подсказки
+    «мигали» при беглом проведении мыши по рядам иконок. Тайминг приведён к модели
+    Radix/MUI ([tooltip.ts](../src/lib/actions/tooltip.ts)): **~500мс open-delay по
+    hover**, но **`focus` (клавиатура) и скрытие — мгновенно**; общий **skip-window
+    ~300мс** (модульный `lastHidden`) показывает следующую подсказку **сразу**, пока
+    курсор скользит по плотному тулбару (ждёшь только первую). Тесты: задержка/отмена/
+    focus-мгновенно/skip-window в [tooltip.test.ts](../src/lib/actions/tooltip.test.ts)
+    (fake timers); StatusBar hover-тест переведён на fake timers.
+
+- [x] **20.18** Точечные правки подсказок (v0.20.25): 1) права файла в панели SFTP
+  ([SftpPanel](../src/lib/SftpPanel.svelte), `fileTooltip`) переведены с нативного
+  `title` на `use:tooltip`; 2) подсказка на метрике **CPU** статус-бара (показывала
+  Load average) **убрана совсем** — вместе с `loadTitle`-derived и мёртвыми ключами
+  `bar.titleCpuUtil`/`bar.titleLoadAvg`; 3) подсказка **RAM** теперь показывает
+  **реальные значения** (`bar.titleRam` = `RAM {used} / {total}` →
+  `fmtBytes(memUsed)`/`fmtBytes(memTotal)`) вместо статичной надписи; 4) кнопка **REC**
+  ([+page.svelte](../src/routes/+page.svelte)) переведена на `use:tooltip`. Тест:
+  реальные значения RAM в hover-подсказке ([StatusBar.test.ts](../src/lib/StatusBar.test.ts)).
 
 ---
 

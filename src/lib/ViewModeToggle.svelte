@@ -4,6 +4,7 @@
   // the raw terminal (Terminal.svelte) and as the rightmost item of the table
   // toolbar (JsonLogView.svelte). Presentational — the parent owns the state.
   import Icon from "./Icon.svelte";
+  import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   // `compact` collapses the labels to icons-only once the surrounding
@@ -32,7 +33,7 @@
     type="button"
     onclick={() => onSelect(false)}
     aria-pressed={!structured}
-    title={t("jsonlog.toggleRaw")}
+    use:tooltip={t("jsonlog.toggleRaw")}
     class="flex items-center gap-1 px-2 py-1 {!structured
       ? 'bg-edge text-text'
       : 'text-muted hover:text-accent'}"
@@ -44,7 +45,7 @@
     type="button"
     onclick={() => onSelect(true)}
     aria-pressed={structured}
-    title={t("jsonlog.toggleStructured")}
+    use:tooltip={t("jsonlog.toggleStructured")}
     class="flex items-center gap-1 px-2 py-1 {structured
       ? 'bg-edge text-accent'
       : 'text-muted hover:text-accent'}"

@@ -3,6 +3,7 @@
   // plus quick actions — monitoring (only while an SSH session is connected) and
   // settings. Pure presentational; the parent wires the callbacks and the copy.
   import Icon from "./Icon.svelte";
+  import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   let {
@@ -37,7 +38,7 @@
     {#if connected}
       <button
         class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        title={t("topbar.monitoring")}
+        use:tooltip={t("topbar.monitoring")}
         aria-label={t("topbar.monitoring")}
         data-testid="topbar-monitoring"
         onclick={onOpenMonitoring}
@@ -47,7 +48,7 @@
     {/if}
     <button
       class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-      title={t("topbar.settings")}
+      use:tooltip={t("topbar.settings")}
       aria-label={t("topbar.settings")}
       data-testid="topbar-settings"
       onclick={onOpenSettings}

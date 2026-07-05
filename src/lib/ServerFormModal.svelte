@@ -4,6 +4,7 @@
   // the `servers` list and reacts via `onsaved`/`onforgotten`. Open it through the
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
+  import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type { AuthMethod, ServerProfile } from "./types";
@@ -12,7 +13,6 @@
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
   import { isValidHost, isValidPort } from "./serverform";
-  import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   let {
@@ -374,7 +374,7 @@
           type="button"
           class="rounded px-2 py-1 text-xs text-danger hover:underline"
           onclick={() => (confirmForget = true)}
-          title={t("page.forgetSavedSecretTitle")}
+          use:tooltip={t("page.forgetSavedSecretTitle")}
         >
           {t("page.forgetSavedSecret")}
         </button>

@@ -4,6 +4,7 @@
   // search/collapse/drag UI state and emits intents via callbacks; all data
   // mutation (persisting moves, opening modals) happens in the parent.
   import type { ServerProfile } from "./types";
+  import { tooltip } from "./actions/tooltip";
   import {
     buildTreeRows,
     dropAllowed as treeDropAllowed,
@@ -181,7 +182,7 @@
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title={t("tree.expandList")}
+        use:tooltip={t("tree.expandList")}
         aria-label={t("tree.expandList")}
         onclick={() => (layout.leftCollapsed = false)}
       >
@@ -200,7 +201,7 @@
       <span>{t("tree.savedServers")}</span>
       <button
         class="rounded p-0.5 hover:bg-edge hover:text-white"
-        title={t("tree.collapseList")}
+        use:tooltip={t("tree.collapseList")}
         aria-label={t("tree.collapseList")}
         onclick={() => (layout.leftCollapsed = true)}
       >
@@ -216,7 +217,7 @@
       />
       <button
         class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        title={t("tree.newFolder")}
+        use:tooltip={t("tree.newFolder")}
         aria-label={t("tree.newFolder")}
         onclick={() => onNewFolder("")}
       >
@@ -225,7 +226,7 @@
       <button
         data-testid="add-server"
         class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        title={t("tree.addServer")}
+        use:tooltip={t("tree.addServer")}
         aria-label={t("tree.addServer")}
         onclick={onAddServer}
       >
@@ -280,7 +281,7 @@
             {@render guides(row.depth)}
             <button
               class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-white"
-              title={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
+              use:tooltip={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
               aria-label={t("tree.toggleFolder")}
               onclick={(e) => {
                 e.stopPropagation();
@@ -297,7 +298,7 @@
             >
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title={t("tree.renameFolder")}
+                use:tooltip={t("tree.renameFolder")}
                 aria-label={t("tree.renameFolder")}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -308,7 +309,7 @@
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title={t("tree.newSubfolder")}
+                use:tooltip={t("tree.newSubfolder")}
                 aria-label={t("tree.newSubfolder")}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -319,7 +320,7 @@
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-danger"
-                title={t("tree.deleteFolder")}
+                use:tooltip={t("tree.deleteFolder")}
                 aria-label={t("tree.deleteFolder")}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -363,7 +364,7 @@
                   <div
                     data-testid="conn-dots"
                     class="flex shrink-0 items-center"
-                    title={t("tree.activeConnections", {
+                    use:tooltip={t("tree.activeConnections", {
                       count: (connections[row.server.id] ?? []).length,
                     })}
                   >
@@ -397,7 +398,7 @@
             >
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title={t("tree.editServer")}
+                use:tooltip={t("tree.editServer")}
                 aria-label={t("tree.editServer")}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -408,7 +409,7 @@
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"
-                title={t("tree.duplicateServer")}
+                use:tooltip={t("tree.duplicateServer")}
                 aria-label={t("tree.duplicateServer")}
                 onclick={(e) => {
                   e.stopPropagation();
@@ -419,7 +420,7 @@
               </button>
               <button
                 class="rounded p-0.5 text-muted hover:text-danger"
-                title={t("tree.deleteServer")}
+                use:tooltip={t("tree.deleteServer")}
                 aria-label={t("tree.deleteServer")}
                 onclick={(e) => {
                   e.stopPropagation();

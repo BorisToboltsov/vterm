@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import { type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import {
@@ -306,7 +307,7 @@
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title={t("sftp.expandPanel")}
+        use:tooltip={t("sftp.expandPanel")}
         aria-label={t("sftp.expandPanel")}
         onclick={() => (collapsed = false)}
       >
@@ -335,7 +336,7 @@
       {#if !embedded}
         <button
           class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.collapsePanel")}
+          use:tooltip={t("sftp.collapsePanel")}
           aria-label={t("sftp.collapsePanel")}
           onclick={() => (collapsed = true)}
         >
@@ -345,7 +346,7 @@
       {#if connected}
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.refresh")}
+          use:tooltip={t("sftp.refresh")}
           aria-label={t("sftp.refresh")}
           onclick={refresh}
         >
@@ -353,7 +354,7 @@
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.newFolder")}
+          use:tooltip={t("sftp.newFolder")}
           aria-label={t("sftp.newFolder")}
           onclick={() => {
             showMkdir = !showMkdir;
@@ -365,7 +366,7 @@
         <button
           data-testid="sftp-new-file"
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.newFile")}
+          use:tooltip={t("sftp.newFile")}
           aria-label={t("sftp.newFile")}
           onclick={() => {
             showMkfile = !showMkfile;
@@ -376,7 +377,7 @@
         </button>
         <button
           class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("search.contentSearch")}
+          use:tooltip={t("search.contentSearch")}
           aria-label={t("search.contentSearch")}
           onclick={() => (showSearch = !showSearch)}
         >
@@ -384,7 +385,7 @@
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:text-accent"
-          title={t("sync.button")}
+          use:tooltip={t("sync.button")}
           aria-label={t("sync.button")}
           onclick={() => (showSync = true)}
         >
@@ -392,7 +393,7 @@
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:text-accent"
-          title={t("sftp.upload")}
+          use:tooltip={t("sftp.upload")}
           aria-label={t("sftp.upload")}
           onclick={uploadFiles}
         >
@@ -552,7 +553,7 @@
               <button
                 class="flex h-7 w-full items-center gap-2 px-2 text-left hover:bg-edge"
                 ondblclick={goUp}
-                title={t("sftp.goUp")}
+                aria-label={t("sftp.goUp")} use:tooltip={t("sftp.goUp")}
               >
                 <Icon name="folder" size={15} class="text-muted" />
                 <span class="truncate text-muted">..</span>
@@ -562,7 +563,7 @@
               <div class="group flex h-7 items-center gap-2 px-2 hover:bg-edge">
                 <button
                   class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                  title={fileTooltip(entry)}
+                  use:tooltip={fileTooltip(entry)}
                   ondblclick={() => open(entry)}
                 >
                   <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
@@ -577,7 +578,7 @@
                   {#if !entry.isDir && onOpenFile}
                     <button
                       class="rounded p-0.5 text-muted hover:text-accent"
-                      title={t("sftp.editFile")}
+                      use:tooltip={t("sftp.editFile")}
                       aria-label={t("sftp.editFile")}
                       onclick={() => onOpenFile?.(entry.path, entry.name)}
                     >
@@ -586,7 +587,7 @@
                   {/if}
                   <button
                     class="rounded p-0.5 text-muted hover:text-accent"
-                    title={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
+                    use:tooltip={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
                     aria-label={entry.isDir ? t("sftp.downloadFolder") : t("sftp.download")}
                     onclick={() => download(entry)}
                   >
@@ -594,7 +595,7 @@
                   </button>
                   <button
                     class="rounded p-0.5 text-muted hover:text-danger"
-                    title={t("common.delete")}
+                    use:tooltip={t("common.delete")}
                     aria-label={t("common.delete")}
                     onclick={() => (confirmTarget = entry)}
                   >
@@ -627,7 +628,7 @@
               {#if tr.isFolder && !tr.done}
                 <button
                   class="hidden items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white group-hover:inline-flex"
-                  title={t("sftp.stopDownload")}
+                  use:tooltip={t("sftp.stopDownload")}
                   aria-label={t("sftp.stopDownload")}
                   onclick={() => sftpCancel(tr.id)}
                 >

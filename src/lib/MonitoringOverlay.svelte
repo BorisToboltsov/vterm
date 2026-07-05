@@ -18,6 +18,7 @@
     type Psi,
     type Sensor,
   } from "./api";
+  import { tooltip } from "./actions/tooltip";
   import {
     fmtBytes,
     fmtLimit,
@@ -343,7 +344,7 @@
             <span
               class="rounded bg-edge px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent"
               data-testid="virt-badge"
-              title={t("mon.hwVirt")}>{virtBadge}</span
+              use:tooltip={t("mon.hwVirt")}>{virtBadge}</span
             >
           {/if}
           <span class="ml-auto flex items-center gap-1.5 text-xs {pillCls(overallLvl)}">
@@ -667,13 +668,13 @@
           {/if}
           <dl class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-t border-edge pt-2 text-xs">
             {#if detail?.fileNrUsed != null}
-              <dt class="text-muted" title={t("mon.descriptorsTitle")}>{t("mon.descriptors")}</dt>
+              <dt class="text-muted" use:tooltip={t("mon.descriptorsTitle")}>{t("mon.descriptors")}</dt>
               <dd class="text-right tabular-nums {thresholdClass(fdPct, th.fd)}">
                 {detail.fileNrUsed.toLocaleString()} / {fmtLimit(detail.fileNrMax)} ({fmtPct(fdPct)})
               </dd>
             {/if}
             {#if detail?.ulimitSoft != null}
-              <dt class="text-muted" title={t("mon.ulimitTitle")}>ulimit -n</dt>
+              <dt class="text-muted" use:tooltip={t("mon.ulimitTitle")}>ulimit -n</dt>
               <dd class="text-right tabular-nums">{detail.ulimitSoft} / {detail.ulimitHard}</dd>
             {/if}
             <dt class="text-muted">{t("mon.diskIoRw")}</dt>
@@ -743,7 +744,7 @@
               {metrics.load1?.toFixed(2) ?? "—"} / {metrics.load5?.toFixed(2) ?? "—"} / {metrics.load15?.toFixed(2) ?? "—"}
             </dd>
             {#if detail?.psiCpu}
-              <dt class="text-muted" title={t("mon.psiCpuTitle")}>PSI CPU</dt>
+              <dt class="text-muted" use:tooltip={t("mon.psiCpuTitle")}>PSI CPU</dt>
               <dd class="text-right tabular-nums">{psiLabel(detail.psiCpu)}</dd>
             {/if}
             {#if detail?.procsRunning != null}

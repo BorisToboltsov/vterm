@@ -7,6 +7,7 @@
   // (per AI settings tiers) are collected, redacted, and shown in a consent
   // dialog before anything is sent.
   import { tick } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import { settings } from "./settings.svelte";
   import {
     aiReady,
@@ -229,7 +230,7 @@
       <select
         data-testid="ai-model"
         class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
-        title={t("ai.model")}
+        use:tooltip={t("ai.model")}
         value={endpoint.model}
         onchange={(e) => setModel(e.currentTarget.value)}
       >
@@ -239,7 +240,7 @@
       </select>
       <button
         class="shrink-0 rounded p-1 text-muted hover:text-white disabled:opacity-50"
-        title={t("ai.modelRefresh")}
+        use:tooltip={t("ai.modelRefresh")}
         aria-label={t("ai.modelRefresh")}
         disabled={loadingModels}
         onclick={refreshModels}
@@ -277,7 +278,7 @@
         <div class="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted">
           <span>{m.role === "user" ? t("ai.you") : t("ai.assistant")}</span>
           {#if m.withContext}
-            <span class="flex items-center gap-0.5 text-accent" title={t("ai.context.attached")}>
+            <span class="flex items-center gap-0.5 text-accent" use:tooltip={t("ai.context.attached")}>
               <Icon name="paperclip" size={10} />
             </span>
           {/if}
@@ -298,7 +299,7 @@
                   <div class="flex items-center gap-1">
                     <button
                       class="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:text-white"
-                      title={t("ai.exec.copy")}
+                      aria-label={t("ai.exec.copy")} use:tooltip={t("ai.exec.copy")}
                       onclick={() => copyBlock(seg.content)}
                     >
                       <Icon name="copy" size={11} />
@@ -378,7 +379,7 @@
             : 'text-muted hover:text-white'}"
           disabled={!canAttach}
           aria-pressed={attach}
-          title={t("ai.context.toggleHint")}
+          use:tooltip={t("ai.context.toggleHint")}
           onclick={() => (attach = !attach)}
         >
           <Icon name="paperclip" size={13} />
@@ -390,7 +391,7 @@
           class="rounded-r px-1 py-1 text-[11px] text-muted hover:text-white disabled:opacity-40"
           disabled={!canAttach}
           aria-label={t("ai.context.tiers")}
-          title={t("ai.context.tiers")}
+          use:tooltip={t("ai.context.tiers")}
           onclick={() => (showTiers = !showTiers)}
         >
           <Icon name={showTiers ? "chevronDown" : "chevronUp"} size={12} />
@@ -427,7 +428,7 @@
           data-testid="ai-stop"
           type="button"
           class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-danger hover:text-panel-alt"
-          title={t("ai.stop")}
+          use:tooltip={t("ai.stop")}
           onclick={() => stopChat(sessionId)}
         >
           <Icon name="stop" size={12} />

@@ -71,7 +71,10 @@
   `z-index`** (или через `Modal`/`ConfirmDialog`) — закреплено гейтом
   [overlay.guard.test.ts](../src/lib/overlay.guard.test.ts). Переиспользуй примитивы
   `Modal`, `ConfirmDialog`, `Icon`. Иконки — из реестра [icons.ts](../src/lib/icons.ts)
-  через `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`. (ADR 0003)
+  через `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`.
+  Подсказки — через `use:tooltip` ([actions/tooltip.ts](../src/lib/actions/tooltip.ts)),
+  **не** нативный `title` (кроме заголовков-пропов и раскрытия обрезанного текста);
+  у icon-only кнопок обязателен `aria-label`. (ADR 0003)
   Оформление кнопок/иконок/строк — по закреплённой **дизайн-системе** (см. [DESIGN.md](DESIGN.md)).
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя **и** — при включённом opt-in ИИ-ассистенте (Фаза 17) —

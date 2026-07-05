@@ -2,6 +2,7 @@
   // Directory sync dialog (Phase 12.5): compare a local folder against the SFTP
   // panel's current remote folder (dry-run), then apply only the changed files.
   import Modal from "./Modal.svelte";
+  import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
   import { pickSaveDir, localHashTree, sftpHashTree, sftpSyncApply } from "./api";
@@ -135,7 +136,7 @@
           >
         </div>
       </div>
-      <div class="flex shrink-0 items-center text-accent" title={t(DIRECTIONS.find((d) => d.val === direction)?.full ?? "sync.push")}>
+      <div class="flex shrink-0 items-center text-accent" use:tooltip={t(DIRECTIONS.find((d) => d.val === direction)?.full ?? "sync.push")}>
         <Icon name={betweenIcon} size={20} />
       </div>
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
@@ -155,7 +156,7 @@
               ? 'bg-edge text-accent'
               : 'text-muted hover:text-white'}"
             aria-pressed={direction === d.val}
-            title={t(d.full)}
+            aria-label={t(d.full)} use:tooltip={t(d.full)}
             onclick={() => {
               direction = d.val;
               invalidate();

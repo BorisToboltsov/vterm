@@ -4,6 +4,7 @@
   // expanded: horizontal tabs above the active tab's content. The content panels
   // are rendered embedded (content-only) — this component owns the chrome.
   import type { DockTab } from "./stores/layout.svelte";
+  import { tooltip } from "./actions/tooltip";
   import SftpPanel from "./SftpPanel.svelte";
   import LocalFilePanel from "./LocalFilePanel.svelte";
   import AiChat from "./AiChat.svelte";
@@ -72,7 +73,7 @@
     <div class="flex w-9 flex-col items-center gap-2 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title={t("sftp.expandPanel")}
+        use:tooltip={t("sftp.expandPanel")}
         aria-label={t("sftp.expandPanel")}
         onclick={() => (collapsed = false)}
       >
@@ -98,7 +99,7 @@
       <div class="flex items-center border-b border-edge text-xs">
         <button
           class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.collapsePanel")}
+          use:tooltip={t("sftp.collapsePanel")}
           aria-label={t("sftp.collapsePanel")}
           onclick={() => (collapsed = true)}
         >

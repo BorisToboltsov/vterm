@@ -4,6 +4,7 @@
   // Extracted from SettingsPanel.svelte in Phase 18.5; owns its delete-confirm
   // dialog and reads/writes the settings store directly.
   import { settings } from "./settings.svelte";
+  import { tooltip } from "./actions/tooltip";
   import { defaultSnippets, newSnippet, SNIPPET_LANGS, type Snippet } from "./snippets";
   import type { EditorLangKind } from "./editorlang";
   import Icon from "./Icon.svelte";
@@ -84,7 +85,7 @@
               </select>
               <button
                 class="shrink-0 rounded p-1 text-muted hover:text-danger"
-                title={t("common.delete")}
+                use:tooltip={t("common.delete")}
                 aria-label={t("common.delete")}
                 onclick={() => (snippetDeleteId = snippet.id)}
               >

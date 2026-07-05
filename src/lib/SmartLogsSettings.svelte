@@ -9,6 +9,7 @@
     activeTerminalTheme,
     type HighlightColor,
   } from "./settings.svelte";
+  import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t } from "./i18n";
@@ -122,7 +123,7 @@
                   type="button"
                   onclick={() => moveRule(i, -1)}
                   disabled={i === 0}
-                  title={t("highlight.moveUp")}
+                  use:tooltip={t("highlight.moveUp")}
                   aria-label={t("highlight.moveUp")}
                   class="rounded p-0.5 text-muted hover:text-accent disabled:opacity-30 disabled:hover:text-muted"
                 >
@@ -132,7 +133,7 @@
                   type="button"
                   onclick={() => moveRule(i, 1)}
                   disabled={i === settings.highlightRules.length - 1}
-                  title={t("highlight.moveDown")}
+                  use:tooltip={t("highlight.moveDown")}
                   aria-label={t("highlight.moveDown")}
                   class="rounded p-0.5 text-muted hover:text-accent disabled:opacity-30 disabled:hover:text-muted"
                 >
@@ -141,7 +142,7 @@
                 <button
                   type="button"
                   onclick={() => removeRule(rule.id)}
-                  title={t("highlight.deleteRule")}
+                  use:tooltip={t("highlight.deleteRule")}
                   aria-label={t("highlight.deleteRule")}
                   class="rounded p-0.5 text-muted hover:text-danger"
                 >
@@ -163,7 +164,7 @@
                     type="button"
                     onclick={() => (rule.color = c)}
                     aria-label={t("highlight.color", { color: c })}
-                    title={t("highlight.color", { color: c })}
+                    use:tooltip={t("highlight.color", { color: c })}
                     class="h-4 w-4 rounded-full border {rule.color === c
                       ? 'ring-2 ring-accent'
                       : 'border-edge'}"

@@ -214,7 +214,11 @@
       "Bash(grep -rn 'from \"./api\"\\\\|from \"$lib/api\"' src/lib/Terminal.svelte)",
       "Bash(grep -n 'class\\\\|$props\\\\|export' src/lib/Icon.svelte)",
       "Bash(awk '/function onGlobalKey/,/^  }$/' src/routes/+page.svelte)",
-      "Bash(sort -t: -k2 -rn)"
+      "Bash(sort -t: -k2 -rn)",
+      "Bash(awk '/onShowRaw when the toolbar/{p=1} p{print} /raw\\\\\\).toBe|toHaveBeenCalled|^  }\\\\\\);/{if\\(p\\){c++; if\\(c>=1 && /^  }\\\\\\);/\\){exit}}}' src/lib/JsonLogView.test.ts)",
+      "Bash(awk '/widens a column/{p=1} p{print} /^  }\\\\\\);/{if\\(p\\)exit}' src/lib/JsonLogView.test.ts)",
+      "Bash(sed -i '' 's/\\(v0.20.23\\)/\\(v0.20.24\\)/' docs/ROADMAP.md)",
+      "Bash(sed -i '' 's/## ✅ v0.20.23 — Подсказки: небольшая задержка появления/## ✅ v0.20.24 — Подсказки: небольшая задержка появления/' CHANGELOG.md)"
     ]
   }
 }

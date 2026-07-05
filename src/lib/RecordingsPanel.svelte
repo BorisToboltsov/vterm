@@ -3,6 +3,7 @@
   // metadata and offers: play back, export an AI-friendly transcript, export the
   // raw .cast, or delete. Presentational + thin API; playback in RecordingPlayer.
   import Modal from "./Modal.svelte";
+  import { tooltip } from "./actions/tooltip";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import RecordingSaveDialog from "./RecordingSaveDialog.svelte";
   import Icon from "./Icon.svelte";
@@ -436,7 +437,7 @@
                 type="button"
                 data-testid="rec-ai"
                 onclick={() => (aiMenuFor = rec)}
-                title={t("recordings.ai")}
+                use:tooltip={t("recordings.ai")}
                 aria-label={t("recordings.ai")}
                 class="rounded p-0.5 text-muted hover:text-accent"
               >
@@ -446,7 +447,7 @@
             <button
               type="button"
               onclick={() => play(rec)}
-              title={t("recordings.play")}
+              use:tooltip={t("recordings.play")}
               aria-label={t("recordings.play")}
               class="rounded p-0.5 text-muted hover:text-accent"
             >
@@ -455,7 +456,7 @@
             <button
               type="button"
               onclick={() => (editRec = rec)}
-              title={t("recordings.edit")}
+              use:tooltip={t("recordings.edit")}
               aria-label={t("recordings.edit")}
               class="rounded p-0.5 text-muted hover:text-accent"
             >
@@ -464,7 +465,7 @@
             <button
               type="button"
               onclick={() => (exportFor = rec)}
-              title={t("recordings.export")}
+              use:tooltip={t("recordings.export")}
               aria-label={t("recordings.export")}
               class="rounded p-0.5 text-muted hover:text-accent"
             >
@@ -473,7 +474,7 @@
             <button
               type="button"
               onclick={() => (confirmDelete = rec)}
-              title={t("recordings.delete")}
+              use:tooltip={t("recordings.delete")}
               aria-label={t("recordings.delete")}
               class="rounded p-0.5 text-muted hover:text-danger"
             >

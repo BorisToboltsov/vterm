@@ -127,7 +127,7 @@ describe("JsonLogView", () => {
     const timeCol = () => container.querySelectorAll("colgroup col")[1] as HTMLElement;
     const before = parseInt(timeCol().style.width, 10);
 
-    const [timeGrip] = screen.getAllByTitle("Drag to resize column");
+    const timeGrip = container.querySelectorAll<HTMLElement>(".cursor-col-resize")[0];
     await fireEvent.pointerDown(timeGrip, { clientX: 100, pointerId: 1 });
     await fireEvent.pointerMove(timeGrip, { clientX: 160, pointerId: 1 });
     await fireEvent.pointerUp(timeGrip, { clientX: 160, pointerId: 1 });

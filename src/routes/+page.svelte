@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { tooltip } from "$lib/actions/tooltip";
   import { fade } from "svelte/transition";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
@@ -1182,7 +1183,7 @@
               {:else}
                 <span
                   class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-danger"
-                  title={t("recordings.recording")}
+                  use:tooltip={t("recordings.recording")}
                   aria-label={t("recordings.recording")}
                 ></span>
               {/if}
@@ -1205,7 +1206,7 @@
         <button
           data-testid="new-local-terminal"
           class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("tab.openLocalTerminal")}
+          use:tooltip={t("tab.openLocalTerminal")}
           aria-label={t("tab.openLocalTerminal")}
           onclick={() => openLocalTab()}
         >
@@ -1221,7 +1222,7 @@
               isRecording(activeTab.sessionId)
                 ? 'text-danger'
                 : 'text-muted hover:bg-edge hover:text-white'}"
-              title={activeTab && isRecording(activeTab.sessionId)
+              use:tooltip={activeTab && isRecording(activeTab.sessionId)
                 ? t("recordings.stop")
                 : t("recordings.start")}
               aria-label={activeTab && isRecording(activeTab.sessionId)
@@ -1241,7 +1242,7 @@
           <button
             data-testid="open-recordings"
             class="flex items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
-            title={t("recordings.title")}
+            use:tooltip={t("recordings.title")}
             aria-label={t("recordings.title")}
             onclick={() => (showRecordings = true)}
           >
@@ -1283,7 +1284,7 @@
                           <Icon name="file" size={13} />
                           <span class="max-w-32 truncate">{ed.name}</span>
                           {#if isDirty(ed)}
-                            <span class="h-1.5 w-1.5 rounded-full bg-accent" title={t("editor.unsaved")}></span>
+                            <span class="h-1.5 w-1.5 rounded-full bg-accent" use:tooltip={t("editor.unsaved")}></span>
                           {/if}
                         </button>
                         <button

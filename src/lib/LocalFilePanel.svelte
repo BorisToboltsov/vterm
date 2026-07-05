@@ -3,6 +3,7 @@
   // local counterpart of SftpPanel (Phase 12.4). No connect step or transfers:
   // the local FS is always available; files open straight in the editor.
   import { onMount } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import {
     localHome,
     localList,
@@ -197,7 +198,7 @@
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-        title={t("localfiles.expandPanel")}
+        use:tooltip={t("localfiles.expandPanel")}
         aria-label={t("localfiles.expandPanel")}
         onclick={() => (collapsed = false)}
       >
@@ -217,7 +218,7 @@
         {#if !embedded}
           <button
             class="rounded p-1 text-muted hover:bg-edge hover:text-white"
-            title={t("localfiles.collapsePanel")}
+            use:tooltip={t("localfiles.collapsePanel")}
             aria-label={t("localfiles.collapsePanel")}
             onclick={() => (collapsed = true)}
           >
@@ -226,7 +227,7 @@
         {/if}
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.refresh")}
+          use:tooltip={t("sftp.refresh")}
           aria-label={t("sftp.refresh")}
           onclick={refresh}
         >
@@ -234,7 +235,7 @@
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.newFolder")}
+          use:tooltip={t("sftp.newFolder")}
           aria-label={t("sftp.newFolder")}
           onclick={() => {
             showMkdir = !showMkdir;
@@ -245,7 +246,7 @@
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-          title={t("sftp.newFile")}
+          use:tooltip={t("sftp.newFile")}
           aria-label={t("sftp.newFile")}
           onclick={() => {
             showMkfile = !showMkfile;
@@ -333,7 +334,7 @@
                   <button
                     class="flex h-7 w-full items-center gap-2 px-2 text-left hover:bg-edge"
                     ondblclick={goUp}
-                    title={t("sftp.goUp")}
+                    aria-label={t("sftp.goUp")} use:tooltip={t("sftp.goUp")}
                   >
                     <Icon name="folder" size={15} class="text-muted" />
                     <span class="truncate text-muted">..</span>
@@ -356,7 +357,7 @@
                       {#if !entry.isDir && onOpenFile}
                         <button
                           class="rounded p-0.5 text-muted hover:text-accent"
-                          title={t("sftp.editFile")}
+                          use:tooltip={t("sftp.editFile")}
                           aria-label={t("sftp.editFile")}
                           onclick={() => onOpenFile?.(entry.path)}
                         >
@@ -365,7 +366,7 @@
                       {/if}
                       <button
                         class="rounded p-0.5 text-muted hover:text-danger"
-                        title={t("common.delete")}
+                        use:tooltip={t("common.delete")}
                         aria-label={t("common.delete")}
                         onclick={() => (confirmTarget = entry)}
                       >

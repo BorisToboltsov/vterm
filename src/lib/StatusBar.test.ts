@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Metrics } from "./api";
@@ -87,8 +87,25 @@ describe("StatusBar — compact (default)", () => {
     expect(screen.getByText("node 87%")).toBeInTheDocument();
     expect(screen.getByText("6.1.0")).toBeInTheDocument();
     expect(screen.getByText("42")).toBeInTheDocument(); // connections
-    // Users: count shown, names in the tooltip (newline-separated).
-    expect(screen.getByTitle(/Logged-in users:[\s\S]*root[\s\S]*alice/)).toBeInTheDocument();
+    // Users: count shown; names surface in the hover tooltip after the open-delay.
+    const usersCount = screen.getByText("2");
+    vi.useFakeTimers();
+    await fireEvent.mouseEnter(usersCount.parentElement as HTMLElement);
+    vi.advanceTimersByTime(550);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(/Logged-in users:[\s\S]*root[\s\S]*alice/);
+    vi.useRealTimers();
+  });
+
+  it("shows real RAM used/total in the hover tooltip, not a static label", async () => {
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "ram" } });
+    await screen.findByTitle("Linux");
+    const ramPct = screen.getByText("25%"); // 2 GiB / 8 GiB
+    vi.useFakeTimers();
+    await fireEvent.mouseEnter(ramPct.parentElement as HTMLElement);
+    vi.advanceTimersByTime(550);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("RAM 2.0 GiB / 8.0 GiB");
+    vi.useRealTimers();
   });
 
   it("hides a metric group when its toggle is off", async () => {

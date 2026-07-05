@@ -4,6 +4,7 @@
   // replay output up to t" (terminal state is cumulative). Pure timing helpers
   // (outputUpTo/formatTime/castDuration) live in recording.ts.
   import { onMount, onDestroy } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
@@ -158,7 +159,7 @@
       type="button"
       onclick={onback}
       class="flex items-center gap-1 rounded p-1 text-muted hover:text-accent"
-      title={t("player.back")}
+      use:tooltip={t("player.back")}
       aria-label={t("player.back")}
     >
       <Icon name="chevronLeft" size={16} />
@@ -181,7 +182,7 @@
         type="button"
         onclick={toggle}
         class="flex items-center rounded p-1 text-muted hover:text-accent"
-        title={playing ? t("player.pause") : t("player.play")}
+        use:tooltip={playing ? t("player.pause") : t("player.play")}
         aria-label={playing ? t("player.pause") : t("player.play")}
       >
         <Icon name={playing ? "pause" : "play"} size={18} />
@@ -190,7 +191,7 @@
         type="button"
         onclick={() => seek(0)}
         class="flex items-center rounded p-1 text-muted hover:text-accent"
-        title={t("player.restart")}
+        use:tooltip={t("player.restart")}
         aria-label={t("player.restart")}
       >
         <Icon name="refresh" size={15} />

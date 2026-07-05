@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import { EditorState, Compartment, type Extension } from "@codemirror/state";
   import {
     EditorView,
@@ -428,7 +429,7 @@
               ? 'text-muted hover:text-accent'
               : 'bg-edge text-text'}"
             aria-pressed={!preview}
-            title={t("editor.viewCode")}
+            use:tooltip={t("editor.viewCode")}
             onclick={() => (preview = false)}
           >
             <Icon name="code" size={13} />
@@ -440,7 +441,7 @@
               ? 'bg-edge text-accent'
               : 'text-muted hover:text-accent'}"
             aria-pressed={preview}
-            title={t("editor.viewPreview")}
+            use:tooltip={t("editor.viewPreview")}
             onclick={() => (preview = true)}
           >
             <Icon name="eye" size={13} />
@@ -451,7 +452,7 @@
       {#if canRemoteLint && !preview}
         <button
           class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
-          title={t("editor.lintServer")}
+          use:tooltip={t("editor.lintServer")}
           aria-label={t("editor.lintServer")}
           disabled={linting}
           onclick={runRemoteLint}
@@ -464,7 +465,7 @@
         <div class="relative">
           <button
             class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white"
-            title={t("editor.snippets")}
+            use:tooltip={t("editor.snippets")}
             aria-label={t("editor.snippets")}
             onclick={() => (showSnippets = !showSnippets)}
           >
@@ -489,7 +490,7 @@
       {/if}
       <button
         class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
-        title={t("editor.save")}
+        use:tooltip={t("editor.save")}
         aria-label={t("editor.save")}
         disabled={doc.readOnly || saving || doc.content === doc.baseContent}
         onclick={() => onsave?.()}

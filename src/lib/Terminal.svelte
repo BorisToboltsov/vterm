@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
+  import { tooltip } from "./actions/tooltip";
   import { Terminal, type IMarker } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
@@ -681,7 +682,7 @@
           settings.searchOptions.caseSensitive = !opts.caseSensitive;
           runSearch();
         }}
-        title={t("search.caseSensitive")}
+        use:tooltip={t("search.caseSensitive")}
         aria-label={t("search.caseSensitive")}
         aria-pressed={opts.caseSensitive}
         class="rounded px-1 text-xs font-medium {opts.caseSensitive
@@ -694,7 +695,7 @@
           settings.searchOptions.wholeWord = !opts.wholeWord;
           runSearch();
         }}
-        title={t("search.wholeWord")}
+        use:tooltip={t("search.wholeWord")}
         aria-label={t("search.wholeWord")}
         aria-pressed={opts.wholeWord}
         class="rounded px-1 text-xs font-medium {opts.wholeWord
@@ -707,7 +708,7 @@
           settings.searchOptions.regex = !opts.regex;
           runSearch();
         }}
-        title={t("search.regex")}
+        use:tooltip={t("search.regex")}
         aria-label={t("search.regex")}
         aria-pressed={opts.regex}
         class="rounded px-1 text-xs font-medium {opts.regex
@@ -717,7 +718,7 @@
       <button
         type="button"
         onclick={prevMatch}
-        title={t("search.prev")}
+        use:tooltip={t("search.prev")}
         aria-label={t("search.prev")}
         class="rounded p-0.5 text-muted hover:text-accent"
       >
@@ -726,7 +727,7 @@
       <button
         type="button"
         onclick={nextMatch}
-        title={t("search.next")}
+        use:tooltip={t("search.next")}
         aria-label={t("search.next")}
         class="rounded p-0.5 text-muted hover:text-accent"
       >
@@ -735,7 +736,7 @@
       <button
         type="button"
         onclick={copyContext}
-        title={t("search.copyContext")}
+        use:tooltip={t("search.copyContext")}
         aria-label={t("search.copyContext")}
         class="rounded p-0.5 text-muted hover:text-accent"
       >
@@ -744,7 +745,7 @@
       <button
         type="button"
         onclick={closeSearch}
-        title={t("search.close")}
+        use:tooltip={t("search.close")}
         aria-label={t("search.close")}
         class="rounded p-0.5 text-muted hover:text-danger"
       >

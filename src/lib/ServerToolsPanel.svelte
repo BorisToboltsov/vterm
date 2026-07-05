@@ -2,6 +2,7 @@
   // Catalogue of optional server tools for the Settings panel (Phase 12.8): shows
   // each tool's install status on the active SSH connection and an Install action.
   import { serverToolsStatus } from "./api";
+  import { tooltip } from "./actions/tooltip";
   import type { ToolStatus, ToolsStatus } from "./servertools";
   import Icon from "./Icon.svelte";
   import { notifyError } from "./stores/toasts.svelte";
@@ -64,7 +65,7 @@
     {/if}
     <button
       class="ml-auto flex items-center gap-1 rounded p-1 hover:bg-edge hover:text-white"
-      title={t("sftp.refresh")}
+      use:tooltip={t("sftp.refresh")}
       aria-label={t("sftp.refresh")}
       onclick={load}
     >

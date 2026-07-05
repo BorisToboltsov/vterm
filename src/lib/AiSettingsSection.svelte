@@ -4,6 +4,7 @@
   // API keys never live in settings — they go straight to the keychain via the
   // backend; here we only track the `hasKey` flag.
   import { settings } from "./settings.svelte";
+  import { tooltip } from "./actions/tooltip";
   import {
     newAiEndpoint,
     newAiPrompt,
@@ -194,7 +195,7 @@
           </span>
           <button
             class="shrink-0 rounded p-1 text-muted hover:text-white"
-            title={t("settings.aiCollapse")}
+            use:tooltip={t("settings.aiCollapse")}
             aria-label={t("settings.aiCollapse")}
             onclick={() => toggleExpanded(ep.id)}
           >
@@ -202,7 +203,7 @@
           </button>
           <button
             class="shrink-0 rounded p-1 text-muted hover:text-danger"
-            title={t("common.delete")}
+            use:tooltip={t("common.delete")}
             aria-label={t("common.delete")}
             onclick={() => (deleteId = ep.id)}
           >
@@ -250,7 +251,7 @@
               {/if}
               <button
                 class="shrink-0 rounded bg-edge px-2 py-1 text-muted hover:bg-accent hover:text-panel-alt disabled:opacity-50"
-                title={t("ai.modelRefresh")}
+                use:tooltip={t("ai.modelRefresh")}
                 aria-label={t("ai.modelRefresh")}
                 disabled={checking[ep.id]}
                 onclick={() => checkConn(ep)}
@@ -426,7 +427,7 @@
                   <div class="mb-1 flex items-center gap-2">
                     <label
                       class="flex shrink-0 items-center gap-1 text-[10px] text-muted"
-                      title={t("settings.aiPromptActive")}
+                      use:tooltip={t("settings.aiPromptActive")}
                     >
                       <input
                         type="radio"
@@ -443,7 +444,7 @@
                     />
                     <button
                       class="shrink-0 rounded p-1 text-muted hover:text-white disabled:opacity-40"
-                      title={t("settings.aiPromptReset")}
+                      use:tooltip={t("settings.aiPromptReset")}
                       aria-label={t("settings.aiPromptReset")}
                       disabled={p.content === DEFAULT_PROMPT[kind]}
                       onclick={() => (p.content = DEFAULT_PROMPT[kind])}
@@ -452,7 +453,7 @@
                     </button>
                     <button
                       class="shrink-0 rounded p-1 text-muted hover:text-danger disabled:opacity-40"
-                      title={t("common.delete")}
+                      use:tooltip={t("common.delete")}
                       aria-label={t("common.delete")}
                       disabled={set.prompts.length <= 1}
                       onclick={() => removePrompt(kind, p.id)}

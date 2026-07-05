@@ -18,6 +18,7 @@
     type JsonLogEntry,
     type LevelCat,
   } from "./jsonlog";
+  import { tooltip } from "./actions/tooltip";
   import { resizableHandle } from "./actions/drag";
   import Icon from "./Icon.svelte";
   import ViewModeToggle from "./ViewModeToggle.svelte";
@@ -133,7 +134,7 @@
       onclick={() => toggleLevel(cat)}
       aria-pressed={activeLevels.includes(cat)}
       aria-label={t("jsonlog.toggleLevel", { level: cat })}
-      title={t("jsonlog.toggleLevel", { level: cat })}
+      use:tooltip={t("jsonlog.toggleLevel", { level: cat })}
       class="rounded px-1.5 py-0.5 text-[11px] font-medium {activeLevels.includes(cat)
         ? `bg-edge ${levelClass(cat)}`
         : 'text-muted/50 hover:text-muted'}">{cat}</button
@@ -171,7 +172,7 @@
           type="button"
           onclick={() => (showLevels = !showLevels)}
           aria-expanded={showLevels}
-          title={t("jsonlog.levels")}
+          use:tooltip={t("jsonlog.levels")}
           aria-label={t("jsonlog.levels")}
           class="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-muted hover:text-accent"
         >
@@ -192,7 +193,7 @@
           type="button"
           onclick={() => (showColumns = !showColumns)}
           aria-expanded={showColumns}
-          title={t("jsonlog.columns")}
+          use:tooltip={t("jsonlog.columns")}
           aria-label={t("jsonlog.columns")}
           class="flex items-center gap-1 rounded p-1 text-muted hover:text-accent"
         >
@@ -237,7 +238,7 @@
            hidden from the a11y tree (kept out of the column header's name). -->
       <div
         aria-hidden="true"
-        title={t("jsonlog.resizeColumn")}
+        use:tooltip={t("jsonlog.resizeColumn")}
         class="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize hover:bg-accent {resizingCol ===
         key
           ? 'bg-accent'
@@ -288,7 +289,7 @@
                   onclick={() => toggleExpand(e.seq)}
                   aria-expanded={expanded.has(e.seq)}
                   aria-label={t("jsonlog.details")}
-                  title={t("jsonlog.details")}
+                  use:tooltip={t("jsonlog.details")}
                   class="rounded p-0.5 text-muted hover:text-accent"
                 >
                   <Icon name={expanded.has(e.seq) ? "chevronDown" : "chevronRight"} size={12} />
@@ -316,7 +317,7 @@
                       type="button"
                       onclick={() => copyRow(e)}
                       class="flex items-center gap-1 rounded p-0.5 text-muted hover:text-accent"
-                      title={t("jsonlog.copy")}
+                      use:tooltip={t("jsonlog.copy")}
                       aria-label={t("jsonlog.copy")}
                     >
                       <Icon name="copy" size={13} />
