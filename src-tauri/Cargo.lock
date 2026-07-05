@@ -5930,7 +5930,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "0.20.25"
+version = "0.20.28"
 dependencies = [
  "directories",
  "futures-util",

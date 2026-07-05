@@ -8,6 +8,7 @@
   import { defaultSnippets, newSnippet, SNIPPET_LANGS, type Snippet } from "./snippets";
   import type { EditorLangKind } from "./editorlang";
   import Icon from "./Icon.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { t } from "./i18n";
@@ -40,8 +41,9 @@
 
 <!-- Editor snippets/templates (Phase 12.8) — user-editable -->
 <section>
-  <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSnippets")}</h3>
-  <p class="mb-2 text-[11px] text-muted">{t("settings.snippetsNote")}</p>
+  <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+    {t("settings.sectionSnippets")}<InfoHint text={t("settings.snippetsNote")} />
+  </h3>
   <DisclosureRow
     bind:open={snippetsOpen}
     testid="snippets-toggle"

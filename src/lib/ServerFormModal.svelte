@@ -4,8 +4,8 @@
   // the `servers` list and reacts via `onsaved`/`onforgotten`. Open it through the
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import { tooltip } from "./actions/tooltip";
-  import Icon from "./Icon.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type { AuthMethod, ServerProfile } from "./types";
   import type { AiExecMode } from "./ai";
@@ -179,21 +179,8 @@
   onclose={() => (open = false)}
 >
   <form onsubmit={submit}>
-    <!-- Compact "info" tooltip: replaces the long hint paragraphs so the form stays
-         short. A styled bubble (use:tooltip) portalled to <body>, so the modal's
-         overflow doesn't clip it; a <button> (not a span in a <label>) so clicking
-         the icon can't toggle a checkbox, and its aria-label stays accessible.
-         (Phase 20.17). -->
-    {#snippet info(hint: string)}
-      <button
-        type="button"
-        aria-label={hint}
-        class="inline-flex cursor-help align-middle text-muted/60 outline-none hover:text-muted focus-visible:text-accent"
-        use:tooltip={hint}
-      >
-        <Icon name="info" size={12} />
-      </button>
-    {/snippet}
+    <!-- Long hint paragraphs are folded into ⓘ tooltips (InfoHint) so the form stays
+         compact; ⓘ is outside the checkbox <label> so clicking it can't toggle. -->
     <!-- Two columns: connection on the left, recording + AI on the right (Phase 20.17). -->
     <div class="grid gap-x-6 gap-y-0 sm:grid-cols-2">
       <!-- ── Connection ── -->
@@ -313,20 +300,20 @@
         <div class="mb-3 flex items-center gap-2 text-xs text-text">
           <input type="checkbox" id="srv-auto-record" bind:checked={autoRecord} />
           <label for="srv-auto-record">{t("page.autoRecord")}</label>
-          {@render info(t("page.autoRecordHint"))}
+          <InfoHint text={t("page.autoRecordHint")} />
         </div>
 
         <div class="mb-3 flex items-center gap-2 text-xs text-text">
           <input type="checkbox" id="srv-no-ai" data-testid="server-no-ai" bind:checked={noAi} />
           <label for="srv-no-ai">{t("page.noAi")}</label>
-          {@render info(t("page.noAiHint"))}
+          <InfoHint text={t("page.noAiHint")} />
         </div>
 
         {#if settings.ai.prompts.chat.prompts.length > 1}
           <div class="mb-3 text-xs text-text">
             <div class="mb-1 flex items-center gap-1">
               <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
-              {@render info(t("page.aiPromptHint"))}
+              <InfoHint text={t("page.aiPromptHint")} />
             </div>
             <select
               id="srv-ai-prompt"
@@ -345,7 +332,7 @@
         <div class="mb-3 text-xs text-text">
           <div class="mb-1 flex items-center gap-1">
             <label for="srv-ai-exec">{t("page.aiExec")}</label>
-            {@render info(t("page.aiExecHint"))}
+            <InfoHint text={t("page.aiExecHint")} />
           </div>
           <select
             id="srv-ai-exec"

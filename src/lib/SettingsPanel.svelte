@@ -6,6 +6,7 @@
     MAX_OPEN_MB_LIMIT,
   } from "./settings.svelte";
   import Icon from "./Icon.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import AiSettingsSection from "./AiSettingsSection.svelte";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
@@ -303,13 +304,17 @@
               <option value="commands">{t("settings.recordModeCommands")}</option>
             </select>
           </label>
-          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
-            <input type="checkbox" bind:checked={settings.recordMaskPasswords} />
-            {t("settings.recordMaskPasswords")}
-          </label>
-          <p class="mt-1 text-[11px] text-muted/80">{t("settings.recordMaskPasswordsHint")}</p>
+          <div class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <label class="flex items-center gap-2">
+              <input type="checkbox" bind:checked={settings.recordMaskPasswords} />
+              {t("settings.recordMaskPasswords")}
+            </label>
+            <InfoHint text={t("settings.recordMaskPasswordsHint")} />
+          </div>
           <label class="mt-3 block text-xs text-muted">
-            {t("settings.recordIdlePause")}
+            <span class="flex items-center gap-1"
+              >{t("settings.recordIdlePause")}<InfoHint text={t("settings.recordIdlePauseHint")} /></span
+            >
             <input
               type="number"
               min="0"
@@ -318,7 +323,6 @@
               bind:value={settings.recordIdlePauseSecs}
             />
           </label>
-          <p class="mt-1 text-[11px] text-muted/80">{t("settings.recordIdlePauseHint")}</p>
         </section>
 
         {/if}
@@ -326,8 +330,9 @@
         {#if show("servertools")}
         <!-- Server tools install helper (Phase 12.8) -->
         <section data-settings-section="servertools">
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionServerTools")}</h3>
-          <p class="mb-2 text-[11px] text-muted">{t("settings.serverToolsNote")}</p>
+          <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+            {t("settings.sectionServerTools")}<InfoHint text={t("settings.serverToolsNote")} />
+          </h3>
           <ServerToolsPanel
             sessionId={toolsSessionId}
             reloadToken={toolsReloadToken}
@@ -346,7 +351,9 @@
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSftp")}</h3>
           <label class="block w-40 text-xs text-muted">
-            {t("settings.sftpMaxOpenMb")}
+            <span class="flex items-center gap-1"
+              >{t("settings.sftpMaxOpenMb")}<InfoHint text={t("settings.sftpMaxOpenMbHint")} /></span
+            >
             <input
               type="number"
               min="1"
@@ -356,7 +363,6 @@
               onchange={(e) => (settings.sftp.maxOpenMb = clampMaxOpenMb(e.currentTarget.valueAsNumber))}
             />
           </label>
-          <p class="mt-1 text-[11px] text-muted">{t("settings.sftpMaxOpenMbHint")}</p>
         </section>
 
         {/if}
@@ -400,10 +406,9 @@
         {#if show("connection")}
         <!-- Connection -->
         <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">
-            {t("settings.sectionConnection")}
+          <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+            {t("settings.sectionConnection")}<InfoHint text={t("settings.connectionNote")} />
           </h3>
-          <p class="mb-2 text-[11px] text-muted">{t("settings.connectionNote")}</p>
           <div class="flex gap-2">
             <label class="block flex-1 text-xs text-muted">
               {t("settings.connectTimeout")}
@@ -468,11 +473,8 @@
         {/if}
 
         {#if show("ai")}
-        <!-- AI assistant (Phase 17, opt-in) -->
-        <section>
-          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionAi")}</h3>
-          <AiSettingsSection />
-        </section>
+        <!-- AI assistant (Phase 17, opt-in) — heading + intro live inside the section. -->
+        <AiSettingsSection />
         {/if}
         </div>
       </div>

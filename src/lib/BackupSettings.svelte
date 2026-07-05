@@ -12,6 +12,7 @@
     type BackupKind,
   } from "./api";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import { t } from "./i18n";
 
   let { onImported }: { onImported?: () => void } = $props();
@@ -74,8 +75,9 @@
 
 <!-- Backup -->
 <section>
-  <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionBackup")}</h3>
-  <p class="mb-2 text-[11px] text-muted">{t("settings.backupNote")}</p>
+  <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+    {t("settings.sectionBackup")}<InfoHint text={t("settings.backupNote")} />
+  </h3>
   <label class="mb-2 flex items-center gap-2 text-xs text-muted" for="backup-kind">
     {t("settings.backupWhat")}
     <select

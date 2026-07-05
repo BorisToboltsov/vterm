@@ -11,6 +11,7 @@
   } from "./settings.svelte";
   import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t } from "./i18n";
   import { slide } from "svelte/transition";
@@ -80,11 +81,13 @@
 <!-- Logs & text (Phase 10) -->
 <section>
   <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSmartLogs")}</h3>
-  <label class="flex items-center gap-2 text-xs text-muted">
-    <input type="checkbox" bind:checked={settings.smartLogs.enabled} />
-    {t("settings.smartLogsEnabled")}
-  </label>
-  <p class="mt-1 text-[11px] text-muted/80">{t("settings.smartLogsEnabledHint")}</p>
+  <div class="flex items-center gap-2 text-xs text-muted">
+    <label class="flex items-center gap-2">
+      <input type="checkbox" bind:checked={settings.smartLogs.enabled} />
+      {t("settings.smartLogsEnabled")}
+    </label>
+    <InfoHint text={t("settings.smartLogsEnabledHint")} />
+  </div>
   {#if settings.smartLogs.enabled}
     <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
       <label class="flex items-center gap-2 text-xs text-muted">

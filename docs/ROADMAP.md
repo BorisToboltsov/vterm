@@ -762,6 +762,33 @@ audit`) — если нет, задокументировать игнор в `d
   ([+page.svelte](../src/routes/+page.svelte)) переведена на `use:tooltip`. Тест:
   реальные значения RAM в hover-подсказке ([StatusBar.test.ts](../src/lib/StatusBar.test.ts)).
 
+- [x] **20.19** Описания-абзацы в настройках → иконки «ⓘ» (v0.20.26): длинные подсказки
+  под полями/селектами/чекбоксами в настройках свёрнуты в **ⓘ рядом с меткой** (как в
+  форме сервера). Введён переиспользуемый компонент
+  [InfoHint.svelte](../src/lib/InfoHint.svelte) (`<button aria-label>` + `use:tooltip` +
+  иконка `info`); на него **мигрирована и форма сервера** (убран локальный сниппет). Свёрнуто
+  **13 подсказок** в [SettingsPanel](../src/lib/SettingsPanel.svelte) (запись/SFTP),
+  [AiSettingsSection](../src/lib/AiSettingsSection.svelte) (base-prompt, params, contract,
+  exec, context, prompts), [SmartLogsSettings](../src/lib/SmartLogsSettings.svelte),
+  [StatusBarSettings](../src/lib/StatusBarSettings.svelte) (пороги). У чекбоксов ⓘ
+  вынесена **из `<label>`** (клик не тоглит). **Вводные описания секций** (`aiNote`,
+  `connectionNote`, `serverToolsNote`, `backupNote`, `snippetsNote`) оставлены текстом —
+  это вступление к секции, не к полю. Покрытие ⓘ-подсказок — через
+  [ServerFormModal.test.ts](../src/lib/ServerFormModal.test.ts) (`InfoHint`: кнопка +
+  `role="tooltip"` по фокусу).
+  - **20.19.1 Вводные описания секций → ⓘ у заголовка (v0.20.27):** по просьбе — 5
+    вступительных абзацев секций тоже свёрнуты в `InfoHint` **рядом с заголовком
+    секции** (`<h3>`): `backupNote` («Резервная копия»), `connectionNote`
+    («Подключение»), `snippetsNote` («Шаблоны редактора»), `serverToolsNote`
+    («Серверные инструменты»), `aiNote` («ИИ-ассистент»). Заголовок `sectionAi` живёт
+    в [SettingsPanel](../src/lib/SettingsPanel.svelte), поэтому его ⓘ добавлена там, а
+    абзац `aiNote` убран из [AiSettingsSection](../src/lib/AiSettingsSection.svelte).
+  - **20.19.2 Заголовок секции ИИ → внутрь компонента (v0.20.28):** для консистентности
+    с остальными вынесенными секциями (Snippets/Backup/SmartLogs/StatusBar сами содержат
+    свой `<section>` + `<h3>`) заголовок `sectionAi` + ⓘ `aiNote` **перенесён из
+    `SettingsPanel` внутрь `AiSettingsSection`**. Теперь `SettingsPanel` рендерит просто
+    `<AiSettingsSection />`, как и другие секции.
+
 ---
 
 ## Заметки по архитектурным решениям

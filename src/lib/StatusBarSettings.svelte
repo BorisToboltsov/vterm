@@ -4,6 +4,7 @@
   // SettingsPanel.svelte in Phase 18.5; reads/writes the settings store directly.
   import { settings, type StatusBarItems, type ThresholdKey } from "./settings.svelte";
   import Icon from "./Icon.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
   import { slide } from "svelte/transition";
@@ -94,7 +95,9 @@
     {#if thresholdsOpen}
       <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
         <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-[10px] uppercase tracking-wider text-muted">
-          <span>{t("settings.thresholdMetric")}</span>
+          <span class="flex items-center gap-1"
+            >{t("settings.thresholdMetric")}<InfoHint text={t("settings.thresholdNote")} /></span
+          >
           <span class="w-20 text-center text-warn">{t("settings.thresholdAverage")}</span>
           <span class="w-20 text-center text-danger">{t("settings.thresholdLimit")}</span>
         </div>
@@ -117,7 +120,6 @@
             />
           </div>
         {/each}
-        <p class="text-[11px] text-muted">{t("settings.thresholdNote")}</p>
       </div>
     {/if}
   </div>

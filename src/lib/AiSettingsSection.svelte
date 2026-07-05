@@ -20,6 +20,7 @@
   import { describeAiError } from "./aierror";
   import DisclosureRow from "./DisclosureRow.svelte";
   import Icon from "./Icon.svelte";
+  import InfoHint from "./InfoHint.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { t } from "./i18n";
 
@@ -135,7 +136,10 @@
     "w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent";
 </script>
 
-<p class="mb-2 text-[11px] text-muted">{t("settings.aiNote")}</p>
+<section>
+  <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+    {t("settings.sectionAi")}<InfoHint text={t("settings.aiNote")} />
+  </h3>
 
 <label class="mb-3 flex items-center gap-2 text-xs text-muted">
   <input type="checkbox" data-testid="ai-enabled" bind:checked={settings.ai.enabled} />
@@ -292,7 +296,9 @@
             {#if advancedOpen[ep.id]}
               <div class="mt-2 space-y-2">
                 <label class="block text-[10px] text-muted">
-                  {t("settings.aiBasePrompt")}
+                  <span class="flex items-center gap-1"
+                    >{t("settings.aiBasePrompt")}<InfoHint text={t("settings.aiBasePromptHint")} /></span
+                  >
                   <textarea
                     data-testid="ai-base-prompt"
                     rows="3"
@@ -300,9 +306,10 @@
                     bind:value={ep.basePrompt}
                   ></textarea>
                 </label>
-                <p class="text-[10px] text-muted">{t("settings.aiBasePromptHint")}</p>
                 <label class="block border-t border-edge pt-2 text-[10px] text-muted">
-                  {t("settings.aiParams")}
+                  <span class="flex items-center gap-1"
+                    >{t("settings.aiParams")}<InfoHint text={t("settings.aiParamsHint")} /></span
+                  >
                   <textarea
                     data-testid="ai-params"
                     rows="3"
@@ -316,8 +323,6 @@
                   <p class="text-[10px] text-danger" data-testid="ai-params-error">
                     {t("settings.aiParamsInvalid")}
                   </p>
-                {:else}
-                  <p class="text-[10px] text-muted">{t("settings.aiParamsHint")}</p>
                 {/if}
               </div>
             {/if}
@@ -369,17 +374,20 @@
 
 <!-- Output contract -->
 <label class="mt-3 block text-xs text-muted">
-  {t("settings.aiContract")}
+  <span class="flex items-center gap-1"
+    >{t("settings.aiContract")}<InfoHint text={t("settings.aiContractHint")} /></span
+  >
   <select class="mt-1 {inputCls}" bind:value={settings.ai.contract}>
     <option value="markdown">{t("settings.aiContractMarkdown")}</option>
     <option value="tools">{t("settings.aiContractTools")}</option>
   </select>
 </label>
-<p class="mt-0.5 text-[10px] text-muted">{t("settings.aiContractHint")}</p>
 
 <!-- Executor mode -->
 <label class="mt-3 block text-xs text-muted">
-  {t("settings.aiExecMode")}
+  <span class="flex items-center gap-1"
+    >{t("settings.aiExecMode")}<InfoHint text={t("settings.aiExecHint")} /></span
+  >
   <select class="mt-1 {inputCls}" bind:value={settings.ai.execMode}>
     <option value="suggest">{t("settings.aiExecSuggest")}</option>
     <option value="confirm">{t("settings.aiExecConfirm")}</option>
@@ -388,10 +396,11 @@
     <option value="dialog">{t("settings.aiExecDialog")}</option>
   </select>
 </label>
-<p class="mt-0.5 text-[10px] text-muted">{t("settings.aiExecHint")}</p>
 
 <!-- Context tiers -->
-<div class="mt-3 text-xs text-muted">{t("settings.aiContext")}</div>
+<div class="mt-3 flex items-center gap-1 text-xs text-muted">
+  {t("settings.aiContext")}<InfoHint text={t("settings.aiContextHint")} />
+</div>
 <label class="mt-1 flex items-center gap-2 text-xs text-muted">
   <input type="checkbox" bind:checked={settings.ai.includeBuffer} />
   {t("settings.aiIncludeBuffer")}
@@ -404,11 +413,17 @@
   <input type="checkbox" bind:checked={settings.ai.includeMetadata} />
   {t("settings.aiIncludeMetadata")}
 </label>
-<p class="mt-0.5 text-[10px] text-muted">{t("settings.aiContextHint")}</p>
 
 <!-- System prompts — collapsible section; each kind is a collapsible list. -->
 <div class="mt-3">
-  <DisclosureRow bind:open={promptsOpen} label={t("settings.aiPrompts")} testid="ai-prompts" />
+  <div class="flex items-center gap-1">
+    <div class="min-w-0 flex-1">
+      <DisclosureRow bind:open={promptsOpen} label={t("settings.aiPrompts")} testid="ai-prompts" />
+    </div>
+    <InfoHint
+      text={t("settings.aiPromptsHint") + "\n\n" + t("settings.aiPromptsModelHint")}
+    />
+  </div>
   {#if promptsOpen}
     <div class="mt-2 space-y-2 border-l border-edge pl-2">
       {#each AI_PROMPT_KINDS as kind (kind)}
@@ -481,11 +496,10 @@
           {/if}
         </div>
       {/each}
-      <p class="text-[10px] text-muted">{t("settings.aiPromptsHint")}</p>
-      <p class="text-[10px] text-muted">{t("settings.aiPromptsModelHint")}</p>
     </div>
   {/if}
 </div>
+</section>
 
 <ConfirmDialog
   open={!!deleteId}
