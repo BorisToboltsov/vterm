@@ -327,11 +327,13 @@
 
   <!-- Compact/expanded toggle — sibling of the scroll region (not inside it), so
        it stays fixed at the right edge and metrics never show through behind it.
-       Single chevron, like the SFTP/server panel collapse toggles. -->
+       Single chevron, like the SFTP/server panel collapse toggles. Fixed 36px
+       (w-9) matches the collapsed RightDock strip so their left borders line up
+       into one continuous vertical divider. -->
   {#if metrics}
     <button
       data-testid="statusbar-toggle"
-      class="flex shrink-0 items-center self-stretch border-l border-edge px-2 text-muted hover:text-white"
+      class="flex w-9 shrink-0 items-center justify-center self-stretch border-l border-edge text-muted hover:text-white"
       use:tooltip={expanded ? t("bar.compactView") : t("bar.expandedView")}
       aria-label={expanded ? t("bar.compactAria") : t("bar.expandedAria")}
       aria-pressed={expanded}
