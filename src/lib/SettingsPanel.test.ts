@@ -237,18 +237,23 @@ describe("SettingsPanel — appearance & search", () => {
     scrollSpy.mockRestore();
   });
 
-  it("reflects the active group in the sticky header", async () => {
+  it("shows no group-name header while browsing (the sidebar tab already names it)", async () => {
     render(SettingsPanel, { props: { open: true } });
-    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("General");
+    // Browsing a group: no header (it would duplicate the active tab).
+    expect(screen.queryByTestId("settings-active-header")).toBeNull();
     await userEvent.click(screen.getByTestId("settings-group-terminal"));
-    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Terminal");
+    expect(screen.queryByTestId("settings-active-header")).toBeNull();
+    // Searching spans groups, so a "Search results" header labels the matches.
+    await userEvent.type(screen.getByTestId("settings-search"), "security");
+    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Search results");
   });
 
   it("moves between groups with arrow keys", async () => {
     render(SettingsPanel, { props: { open: true } });
     screen.getByTestId("settings-group-general").focus();
     await userEvent.keyboard("{ArrowDown}");
-    expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Appearance");
+    // Group change is reflected on the sidebar tab (aria-current), not a header.
+    expect(screen.getByTestId("settings-group-appearance")).toHaveAttribute("aria-current", "page");
   });
 
   it("reset-to-defaults asks for confirmation before wiping settings", async () => {

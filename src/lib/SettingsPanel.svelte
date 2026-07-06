@@ -189,14 +189,20 @@
           {/each}
         </nav>
 
-        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto scroll-pt-14 px-4 py-4 text-sm">
-          <!-- Sticky header: active group name, or search-results mode (Phase 15.3) -->
-          <div
-            class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-white"
-            data-testid="settings-active-header"
-          >
-            {searching ? t("settings.searchResults") : t(GROUP_LABEL[activeGroup])}
-          </div>
+        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto {searching
+          ? 'scroll-pt-14'
+          : 'scroll-pt-4'} px-4 py-4 text-sm">
+          <!-- While searching, a sticky header labels the cross-group matches.
+               While browsing a single group the sidebar tab already names it, so no
+               header is shown — it would just duplicate the tab (v0.21.8). -->
+          {#if searching}
+            <div
+              class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-white"
+              data-testid="settings-active-header"
+            >
+              {t("settings.searchResults")}
+            </div>
+          {/if}
           {#if noResults}
             <p class="py-6 text-center text-xs text-muted">{t("common.nothingFound")}</p>
           {/if}
