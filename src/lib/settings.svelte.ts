@@ -10,7 +10,7 @@ import {
   getTheme,
   type TerminalTheme,
 } from "./themes";
-import { DEFAULT_LOCALE, isLocale, type Locale } from "./i18n/locales";
+import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locales";
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 
@@ -207,8 +207,20 @@ export function defaultHighlightRules(): HighlightRule[] {
   ];
 }
 
+/**
+ * The default UI language: the OS/browser locale when we ship it, else English.
+ * `navigator.language(s)` reflects the OS locale inside the Tauri WebView; the
+ * pure pick lives in `locales.ts`. Applies on first run (no saved settings) and
+ * on reset-to-defaults; an explicit choice in Settings always wins and persists.
+ */
+function detectOsLocale(): Locale {
+  if (typeof navigator === "undefined") return DEFAULT_LOCALE;
+  const prefs = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return pickLocale(prefs);
+}
+
 const DEFAULTS: Settings = {
-  language: DEFAULT_LOCALE,
+  language: detectOsLocale(),
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",

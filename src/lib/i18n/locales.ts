@@ -34,3 +34,17 @@ export const DEFAULT_LOCALE: Locale = "en";
 export function isLocale(v: unknown): v is Locale {
   return typeof v === "string" && v in LOCALES;
 }
+
+/**
+ * Pick the first supported locale from an ordered list of BCP-47 language tags
+ * (e.g. `navigator.languages`), matching on the primary subtag so `"ru-RU"` maps
+ * to `"ru"`. Falls back to {@link DEFAULT_LOCALE} when none is one we ship — pure,
+ * so the caller reads `navigator` and passes the tags in (keeps this module DOM-free).
+ */
+export function pickLocale(preferred: readonly string[]): Locale {
+  for (const tag of preferred) {
+    const base = tag?.toLowerCase().split("-")[0];
+    if (isLocale(base)) return base;
+  }
+  return DEFAULT_LOCALE;
+}

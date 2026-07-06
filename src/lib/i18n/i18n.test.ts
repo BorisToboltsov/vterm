@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { settings } from "../settings.svelte";
 import { en, messages, type MessageKey } from "./messages";
-import { LOCALE_IDS, isLocale, DEFAULT_LOCALE } from "./locales";
+import { LOCALE_IDS, isLocale, DEFAULT_LOCALE, pickLocale } from "./locales";
 import { interpolate, resolve } from "./translate";
 import { t, currentLocale, setLocale, availableLocales } from "./index";
 
@@ -29,6 +29,23 @@ describe("locale registry", () => {
     const ids = availableLocales.map((l) => l.id);
     expect(ids).toEqual(LOCALE_IDS);
     expect(availableLocales.find((l) => l.id === "ru")?.nativeName).toBe("Русский");
+  });
+
+  describe("pickLocale (OS-locale default)", () => {
+    it("matches on the primary subtag, ignoring region", () => {
+      expect(pickLocale(["ru-RU"])).toBe("ru");
+      expect(pickLocale(["en-GB"])).toBe("en");
+      expect(pickLocale(["RU"])).toBe("ru"); // case-insensitive
+    });
+
+    it("takes the first supported tag in the preference list", () => {
+      expect(pickLocale(["fr-FR", "ru", "en"])).toBe("ru");
+    });
+
+    it("falls back to the default when the OS language isn't shipped", () => {
+      expect(pickLocale(["de-DE", "fr"])).toBe(DEFAULT_LOCALE);
+      expect(pickLocale([])).toBe(DEFAULT_LOCALE);
+    });
   });
 });
 
