@@ -230,7 +230,11 @@
       "Bash(git --no-pager diff --stat -- src-tauri/src src/lib src/routes)",
       "Bash(grep -nE 'name|IconName|type|props|$props|:')",
       "Bash(sed -i '' 's/\"version\": \"0.21.3\"/\"version\": \"0.21.4\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.3\"/version = \"0.21.4\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.3\"/version = \"0.21.4\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.4\"/\"version\": \"0.21.5\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.4\"/version = \"0.21.5\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.5\"/\"version\": \"0.21.6\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.5\"/version = \"0.21.6\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

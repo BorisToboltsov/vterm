@@ -111,6 +111,15 @@ describe("ServerTree", () => {
     expect(rows[0]).toHaveAttribute("data-server-alias", "Alpha");
   });
 
+  it("the expanded header matches the tab-bar height (min-h-8) so it abuts the tab bar", () => {
+    render(ServerTree, { props: baseProps() });
+    // The "Saved servers" title lives in the panel header row; that row must carry
+    // min-h-8 (32px) — the same height as the terminal tab bar — so the open panel
+    // lines up with the tab strip instead of sitting ~5px lower.
+    const header = screen.getByText("Saved servers").closest("div");
+    expect(header?.className).toContain("min-h-8");
+  });
+
   it("the new-folder button requests a root folder", async () => {
     const onNewFolder = vi.fn();
     render(ServerTree, { props: { ...baseProps(), onNewFolder } });

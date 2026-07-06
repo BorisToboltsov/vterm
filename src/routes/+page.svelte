@@ -1130,11 +1130,13 @@
       animateWidth={resizing !== "left"}
     />
     {#if !layout.leftCollapsed}
-      <!-- Drag handle to resize the server list -->
+      <!-- Drag handle to resize the server list. -mx-0.5 cancels its 4px layout
+           width so the panel border sits flush against the tab bar; the strip
+           overlays the seam (blue on hover) instead of wedging a gap into it. -->
       <div
         role="separator"
         aria-orientation="vertical"
-        class="w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'left'
+        class="relative z-10 -mx-0.5 w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'left'
           ? 'bg-accent'
           : 'bg-transparent'}"
         use:resizableHandle={{
@@ -1411,7 +1413,7 @@
               <div
                 role="separator"
                 aria-orientation="vertical"
-                class="w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'sftp'
+                class="relative z-10 -mx-0.5 w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'sftp'
                   ? 'bg-accent'
                   : 'bg-transparent'}"
                 use:resizableHandle={{
