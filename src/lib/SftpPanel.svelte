@@ -23,7 +23,8 @@
   import { fileIconName } from "./fileicon";
   import { lsColorKey, fileTooltip } from "./lscolors";
   import { windowRange } from "./virtuallist";
-  import { activeTerminalTheme } from "./settings.svelte";
+  import { filterHiddenFiles } from "./util";
+  import { activeTerminalTheme, settings } from "./settings.svelte";
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import SyncModal from "./SyncModal.svelte";
@@ -67,14 +68,17 @@
   let listScrollTop = $state(0);
   let listViewportH = $state(600);
   const hasParent = $derived(!!cwd && cwd !== "/");
-  const rowCount = $derived((hasParent ? 1 : 0) + entries.length);
+  // Dotfiles are hidden unless the toolbar eye toggle (settings.sftp.showHiddenFiles)
+  // is on. Filtering the derived listing keeps the raw `entries` intact.
+  const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
+  const rowCount = $derived((hasParent ? 1 : 0) + shownEntries.length);
   const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
   const visibleItems = $derived.by(() => {
     const items: { key: string; entry: FileEntry | null }[] = [];
     for (let i = win.start; i < win.end; i++) {
       if (hasParent && i === 0) items.push({ key: "..", entry: null });
       else {
-        const e = entries[i - (hasParent ? 1 : 0)];
+        const e = shownEntries[i - (hasParent ? 1 : 0)];
         items.push({ key: e.path, entry: e });
       }
     }
@@ -353,6 +357,18 @@
           <Icon name="refresh" size={14} />
         </button>
         <button
+          data-testid="sftp-toggle-hidden"
+          class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:bg-edge hover:text-white'}"
+          use:tooltip={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
+          aria-label={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
+          aria-pressed={settings.sftp.showHiddenFiles}
+          onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
+        >
+          <Icon name="eye" size={14} />
+        </button>
+        <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
           use:tooltip={t("sftp.newFolder")}
           aria-label={t("sftp.newFolder")}
@@ -607,7 +623,7 @@
           {/each}
         </div>
       </div>
-      {#if entries.length === 0}
+      {#if shownEntries.length === 0}
         <div class="px-3 py-4 text-xs text-muted">{t("sftp.emptyDir")}</div>
       {/if}
     {/if}

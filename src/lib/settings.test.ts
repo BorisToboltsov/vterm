@@ -188,8 +188,17 @@ describe("editor settings (Phase 12)", () => {
 });
 
 describe("sftp settings (Phase 12)", () => {
-  it("defaults max open size to 2 MB", () => {
-    expect(settings.sftp).toEqual({ maxOpenMb: 2 });
+  it("defaults max open size to 2 MB and hides dotfiles", () => {
+    expect(settings.sftp).toEqual({ maxOpenMb: 2, showHiddenFiles: false });
+  });
+
+  it("imports and persists the show-hidden-files toggle (junk → false)", () => {
+    applyImportedSettings({ sftp: { maxOpenMb: 2, showHiddenFiles: true } });
+    flushSync();
+    expect(settings.sftp.showHiddenFiles).toBe(true);
+    applyImportedSettings({ sftp: { maxOpenMb: 2, showHiddenFiles: "yes" } });
+    flushSync();
+    expect(settings.sftp.showHiddenFiles).toBe(false); // only literal true enables it
   });
 
   it("clamps an imported value to the 1…64 MB range", () => {

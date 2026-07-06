@@ -103,6 +103,8 @@ export interface EditorSettings {
 export interface SftpSettings {
   /** Largest file (in MB) that may be opened in the in-app editor. */
   maxOpenMb: number;
+  /** Show dotfiles in the SFTP listing (off by default). */
+  showHiddenFiles: boolean;
 }
 
 /** Hard ceiling (MB) for the editor open size — the setting is clamped to this. */
@@ -283,7 +285,7 @@ const DEFAULTS: Settings = {
   recordIdlePauseSecs: 20,
   editor: { diffBeforeSave: true, lint: true, backupOnSave: false },
   snippets: defaultSnippets(),
-  sftp: { maxOpenMb: 2 },
+  sftp: { maxOpenMb: 2, showHiddenFiles: false },
   hostKeyPolicy: "ask",
   ai: defaultAiSettings(),
 };
@@ -370,7 +372,10 @@ function load(): Settings {
           : DEFAULTS.recordIdlePauseSecs,
       editor: { ...DEFAULTS.editor, ...(raw.editor ?? {}) },
       snippets: "snippets" in raw ? sanitizeSnippets(raw.snippets) : defaultSnippets(),
-      sftp: { maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb) },
+      sftp: {
+        maxOpenMb: clampMaxOpenMb((raw.sftp ?? {}).maxOpenMb),
+        showHiddenFiles: (raw.sftp ?? {}).showHiddenFiles === true,
+      },
       ai: sanitizeAiSettings(raw.ai),
     };
   } catch {
@@ -483,7 +488,11 @@ export function applyImportedSettings(raw: unknown): void {
     next.editor = { ...DEFAULTS.editor, ...(r.editor as Partial<EditorSettings>) };
   }
   if (r.sftp && typeof r.sftp === "object") {
-    next.sftp = { maxOpenMb: clampMaxOpenMb((r.sftp as Partial<SftpSettings>).maxOpenMb) };
+    const s = r.sftp as Partial<SftpSettings>;
+    next.sftp = {
+      maxOpenMb: clampMaxOpenMb(s.maxOpenMb),
+      showHiddenFiles: s.showHiddenFiles === true,
+    };
   }
   if (r.ai !== undefined) {
     next.ai = sanitizeAiSettings(r.ai);

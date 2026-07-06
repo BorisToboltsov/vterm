@@ -6,6 +6,18 @@ export function isHidden(): boolean {
 }
 
 /**
+ * Drop dotfiles from a directory listing unless `showHidden` is set. A hidden
+ * entry is one whose name starts with a dot (Unix convention). Pure and
+ * order-preserving; the parent-nav (`..`) is not part of `entries` here.
+ */
+export function filterHiddenFiles<T extends { name: string }>(
+  entries: readonly T[],
+  showHidden: boolean,
+): T[] {
+  return showHidden ? entries.slice() : entries.filter((e) => !e.name.startsWith("."));
+}
+
+/**
  * Case-insensitive AND-substring match: every whitespace-separated term in
  * `query` must appear somewhere in `haystack`. An empty query matches anything
  * (used for settings search / list filtering).

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { debounce, isHidden, lineDiffStat, matchesQuery } from "./util";
+import { debounce, filterHiddenFiles, isHidden, lineDiffStat, matchesQuery } from "./util";
 
 describe("lineDiffStat", () => {
   it("is 0/0 for identical text", () => {
@@ -57,6 +57,33 @@ describe("matchesQuery", () => {
   it("requires every whitespace-separated term to be present", () => {
     expect(matchesQuery("Connection timeout keepalive port", "timeout port")).toBe(true);
     expect(matchesQuery("Connection timeout keepalive", "timeout nope")).toBe(false);
+  });
+});
+
+describe("filterHiddenFiles", () => {
+  const files = [
+    { name: "app.js" },
+    { name: ".env" },
+    { name: "README.md" },
+    { name: ".git" },
+  ];
+
+  it("drops dotfiles when showHidden is false", () => {
+    expect(filterHiddenFiles(files, false).map((f) => f.name)).toEqual(["app.js", "README.md"]);
+  });
+
+  it("keeps everything (order preserved) when showHidden is true", () => {
+    expect(filterHiddenFiles(files, true).map((f) => f.name)).toEqual([
+      "app.js",
+      ".env",
+      "README.md",
+      ".git",
+    ]);
+  });
+
+  it("returns a fresh array, not the input reference", () => {
+    expect(filterHiddenFiles(files, true)).not.toBe(files);
+    expect(filterHiddenFiles([], false)).toEqual([]);
   });
 });
 

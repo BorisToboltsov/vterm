@@ -792,7 +792,7 @@ audit`) — если нет, задокументировать игнор в `d
 
 ---
 
-## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.10)
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.11)
 
 Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
 сервера** (у одного может быть proxy, у другого нет). Реализованы **все три типа**:
@@ -879,6 +879,15 @@ audit`) — если нет, задокументировать игнор в `d
   презентационным: `+page.svelte` прокидывает `canRecord`/`recording`/`onToggleRecording`/
   `onOpenRecordings`. Тесты `TopBar.test.ts` (видимость REC по `canRecord`, тоггл + `aria-pressed`,
   открытие библиотеки, порядок перед gear). Проверено вживую.
+- **Тумблер скрытых файлов** (v0.21.11). Кнопка-глаз в тулбаре (рядом с refresh) в
+  **обеих** панелях — [SftpPanel](../src/lib/SftpPanel.svelte) и
+  [LocalFilePanel](../src/lib/LocalFilePanel.svelte) — показывает/скрывает dotfiles;
+  активное состояние — идиом тумблера `bg-edge text-accent` + `aria-pressed`, тултип
+  «показать↔скрыть». Состояние **общее** — `settings.sftp.showHiddenFiles` (по умолчанию
+  `false`, персистится). Фильтр — чистая `filterHiddenFiles` в [util.ts](../src/lib/util.ts).
+  Тесты: `util.test.ts` (фильтр), `settings.test.ts` (дефолт + импорт/санитайз флага).
+  LocalFilePanel проверен вживую (тоггл: `aria-pressed`, `bg-edge text-accent`, флаг в
+  сторе); живой SFTP не гонялся (нужен SSH-бэкенд), но кнопка идентична.
 
 ---
 
