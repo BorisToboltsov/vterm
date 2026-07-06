@@ -21,11 +21,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use model::{AuthMethod, ServerProfile};
+use model::{AuthMethod, ProxyKind, ServerProfile};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use sftp::FileEntry;
-use ssh::{ConnectOptions, Credential, HostKeyPolicy, SshSession};
+use ssh::{ConnectOptions, Credential, HostKeyPolicy, ProxyJump, SshSession};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -401,6 +401,41 @@ async fn connect_session(
         }
     };
 
+    // Resolve an optional proxy/jump host. Only the SSH jump kind is implemented;
+    // socks5/http are accepted by the data model but rejected here (typed
+    // `proxy-unsupported`) until those transports land. The jump host's secret
+    // lives in the keychain under the proxy-scoped id (entered via the form).
+    let proxy = match &profile.proxy {
+        None => None,
+        Some(px) => {
+            if !matches!(px.kind, ProxyKind::Jump) {
+                return Err(AppError::ProxyUnsupported);
+            }
+            let cred = match px.auth_method {
+                AuthMethod::Password => {
+                    let password = secrets::get_proxy_password(&server_id).ok_or_else(|| {
+                        "proxy password required — set it in the server form".to_string()
+                    })?;
+                    Credential::Password(password)
+                }
+                AuthMethod::Key => {
+                    let path = ssh::resolve_key_path(px.key_path.as_deref()).ok_or_else(|| {
+                        "no proxy SSH key set and none found in ~/.ssh — pick a private key file"
+                            .to_string()
+                    })?;
+                    let passphrase = secrets::get_proxy_passphrase(&server_id);
+                    Credential::Key { path, passphrase }
+                }
+            };
+            Some(ProxyJump {
+                host: px.host.clone(),
+                port: px.port,
+                username: px.username.clone(),
+                cred,
+            })
+        }
+    };
+
     // Replace any existing session with the same session id.
     state.sessions.lock().await.remove(&session_id);
 
@@ -414,6 +449,7 @@ async fn connect_session(
             .unwrap_or(HostKeyPolicy::TofuReject),
         cols,
         rows,
+        proxy,
     };
 
     let session = ssh::connect(
@@ -1475,6 +1511,7 @@ pub fn run() {
             servers::update_server,
             servers::delete_server,
             servers::forget_secrets,
+            servers::save_proxy_secret,
             folders::list_folders,
             folders::add_folder,
             folders::delete_folder,

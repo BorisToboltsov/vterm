@@ -56,4 +56,23 @@ describe("ConnectingOverlay", () => {
     });
     expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   });
+
+  it("adds the proxy step and 'via' line only when hasProxy is set", () => {
+    const { rerender } = render(ConnectingOverlay, {
+      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "connecting" },
+    });
+    // Direct connection: no proxy step, no via line (variant A).
+    expect(screen.queryByText("Proxy")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connecting-via")).not.toBeInTheDocument();
+
+    rerender({
+      alias: "prod-db",
+      host: "deploy@10.0.0.5:22",
+      phase: "proxy",
+      hasProxy: true,
+      via: "bastion.corp:22",
+    });
+    expect(screen.getByText("Proxy…")).toBeInTheDocument();
+    expect(screen.getByTestId("connecting-via")).toHaveTextContent("via bastion.corp:22");
+  });
 });

@@ -1306,6 +1306,8 @@
                     alias={tab.alias}
                     host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
                     phase={connPhase[tab.sessionId] ?? "connecting"}
+                    hasProxy={!!srv?.proxy}
+                    via={srv?.proxy ? `${srv.proxy.host}:${srv.proxy.port}` : undefined}
                   />
                 {:else if tab.kind === "ssh" && (tab.status.startsWith("Error") || tab.status.startsWith("Disconnected"))}
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
@@ -1321,6 +1323,8 @@
                     title={t(ev.titleKey)}
                     detail={ev.detailKey ? t(ev.detailKey) : ev.detailText}
                     showSteps={ev.showSteps}
+                    hasProxy={!!srv?.proxy}
+                    via={srv?.proxy ? `${srv.proxy.host}:${srv.proxy.port}` : undefined}
                   >
                     {#if ev.action === "reauth"}
                       <button

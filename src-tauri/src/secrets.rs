@@ -4,6 +4,9 @@
 //! - the login password (service `vterm:password`)
 //! - the private-key passphrase (service `vterm:passphrase`)
 //!
+//! A server's proxy/jump host reuses the same two services under a proxy-scoped
+//! id (`{id}::proxy`) so the target and the jump host keep independent secrets.
+//!
 //! macOS uses the Keychain, Windows the Credential Manager.
 
 use crate::error::AppResult;
@@ -62,6 +65,32 @@ pub fn delete_passphrase(id: &str) -> AppResult<()> {
     delete(PASSPHRASE_SERVICE, id)
 }
 
+// ── Proxy / jump-host secrets ───────────────────────────────────────────────────
+
+/// Keychain id for a server's proxy secret — namespaced so the jump host's
+/// password/passphrase never collides with the target server's own.
+fn proxy_scope(id: &str) -> String {
+    format!("{id}::proxy")
+}
+
+pub fn get_proxy_password(id: &str) -> Option<Zeroizing<String>> {
+    read(PASSWORD_SERVICE, &proxy_scope(id))
+}
+pub fn set_proxy_password(id: &str, value: &str) -> AppResult<()> {
+    write(PASSWORD_SERVICE, &proxy_scope(id), value)
+}
+pub fn get_proxy_passphrase(id: &str) -> Option<Zeroizing<String>> {
+    read(PASSPHRASE_SERVICE, &proxy_scope(id))
+}
+pub fn set_proxy_passphrase(id: &str, value: &str) -> AppResult<()> {
+    write(PASSPHRASE_SERVICE, &proxy_scope(id), value)
+}
+fn delete_proxy(id: &str) -> AppResult<()> {
+    let scope = proxy_scope(id);
+    delete(PASSWORD_SERVICE, &scope)?;
+    delete(PASSPHRASE_SERVICE, &scope)
+}
+
 // ── AI endpoint API key (Phase 17) ──────────────────────────────────────────────
 
 pub fn get_ai_key(id: &str) -> Option<Zeroizing<String>> {
@@ -74,8 +103,10 @@ pub fn delete_ai_key(id: &str) -> AppResult<()> {
     delete(AI_KEY_SERVICE, id)
 }
 
-/// Remove all secrets for a server (used when the profile is deleted).
+/// Remove all secrets for a server — its own and its proxy's (used when the
+/// profile is deleted or the user forgets its saved secrets).
 pub fn delete_all(id: &str) -> AppResult<()> {
     delete_password(id)?;
-    delete_passphrase(id)
+    delete_passphrase(id)?;
+    delete_proxy(id)
 }

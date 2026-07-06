@@ -9,6 +9,47 @@ pub enum AuthMethod {
     Key,
 }
 
+/// Kind of proxy used to reach a server. Only `Jump` (an SSH bastion / ProxyJump)
+/// is implemented so far; `Socks5`/`Http` are reserved so the data model and UI
+/// are ready — selecting them yields a typed `proxy-unsupported` error at connect
+/// time until the transports land (see ssh.rs / lib.rs `connect_session`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyKind {
+    /// Intermediate SSH server (bastion): a `direct-tcpip` tunnel to the target.
+    #[default]
+    Jump,
+    /// Generic SOCKS5 proxy (reserved — not yet implemented).
+    Socks5,
+    /// HTTP CONNECT proxy (reserved — not yet implemented).
+    Http,
+}
+
+/// A proxy/jump host a server connects through. Mirrors `ServerProxy` in
+/// src/lib/types.ts. Like the parent profile, secrets never live here — the jump
+/// host's password/passphrase are in the keychain under a proxy-scoped id
+/// (`secrets.rs`); `has_saved_password` is a UI hint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerProxy {
+    #[serde(default)]
+    pub kind: ProxyKind,
+    pub host: String,
+    pub port: u16,
+    /// Login on the jump host (SSH jump kind).
+    #[serde(default)]
+    pub username: String,
+    /// Auth method for the jump host (SSH jump kind).
+    #[serde(default)]
+    pub auth_method: AuthMethod,
+    /// Path to the jump host's private key (used when `auth_method == Key`).
+    #[serde(default)]
+    pub key_path: Option<String>,
+    /// Whether a proxy secret is stored in the keychain — a UI hint.
+    #[serde(default)]
+    pub has_saved_password: bool,
+}
+
 /// A saved SSH server. Mirrors `ServerProfile` in src/lib/types.ts.
 /// Note: secrets are never stored on this struct — passwords and key passphrases
 /// live in the OS keychain (see secrets.rs). `has_saved_password` is a UI hint.
@@ -50,6 +91,9 @@ pub struct ServerProfile {
     /// None → the global `settings.ai.execMode`. Frontend-owned value.
     #[serde(default)]
     pub exec_mode: Option<String>,
+    /// Optional proxy/jump host this server connects through (None → direct).
+    #[serde(default)]
+    pub proxy: Option<ServerProxy>,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -76,6 +120,8 @@ pub struct NewServerProfile {
     pub chat_prompt_id: Option<String>,
     #[serde(default)]
     pub exec_mode: Option<String>,
+    #[serde(default)]
+    pub proxy: Option<ServerProxy>,
 }
 
 #[cfg(test)]
@@ -109,6 +155,15 @@ mod tests {
             no_ai: true,
             chat_prompt_id: Some("p-1".into()),
             exec_mode: Some("confirm".into()),
+            proxy: Some(ServerProxy {
+                kind: ProxyKind::Jump,
+                host: "bastion.corp".into(),
+                port: 22,
+                username: "jump".into(),
+                auth_method: AuthMethod::Key,
+                key_path: Some("/home/u/.ssh/jump".into()),
+                has_saved_password: false,
+            }),
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
@@ -117,6 +172,8 @@ mod tests {
         assert!(json.contains("\"hasSavedPassword\":true"));
         assert!(json.contains("\"autoRecord\":true"));
         assert!(json.contains("\"noAi\":true"));
+        assert!(json.contains("\"proxy\":{"));
+        assert!(json.contains("\"kind\":\"jump\""));
         let back: ServerProfile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, "srv-1");
         assert_eq!(back.port, 2222);
@@ -126,6 +183,21 @@ mod tests {
         assert!(back.no_ai);
         assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
         assert_eq!(back.exec_mode.as_deref(), Some("confirm"));
+        let proxy = back.proxy.expect("proxy round-trips");
+        assert_eq!(proxy.kind, ProxyKind::Jump);
+        assert_eq!(proxy.host, "bastion.corp");
+        assert_eq!(proxy.auth_method, AuthMethod::Key);
+    }
+
+    #[test]
+    fn proxy_kind_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&ProxyKind::Jump).unwrap(), "\"jump\"");
+        assert_eq!(
+            serde_json::to_string(&ProxyKind::Socks5).unwrap(),
+            "\"socks5\""
+        );
+        assert_eq!(serde_json::to_string(&ProxyKind::Http).unwrap(), "\"http\"");
+        assert_eq!(ProxyKind::default(), ProxyKind::Jump);
     }
 
     #[test]
@@ -148,6 +220,7 @@ mod tests {
         assert!(!p.no_ai); // legacy profiles default to AI-allowed
         assert_eq!(p.chat_prompt_id, None);
         assert_eq!(p.exec_mode, None);
+        assert!(p.proxy.is_none()); // legacy profiles default to a direct connection
     }
 
     #[test]

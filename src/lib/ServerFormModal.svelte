@@ -7,9 +7,15 @@
   import InfoHint from "./InfoHint.svelte";
   import { tooltip } from "./actions/tooltip";
   import ConfirmDialog from "./ConfirmDialog.svelte";
-  import type { AuthMethod, ServerProfile } from "./types";
+  import type { AuthMethod, ProxyKind, ServerProfile } from "./types";
   import type { AiExecMode } from "./ai";
-  import { addServer, updateServer, forgetSecrets, pickKeyFile } from "./api";
+  import {
+    addServer,
+    updateServer,
+    forgetSecrets,
+    pickKeyFile,
+    saveProxySecret,
+  } from "./api";
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
   import { isValidHost, isValidPort } from "./serverform";
@@ -41,6 +47,18 @@
   let noAi = $state(false);
   let aiPromptId = $state("");
   let aiExecMode = $state("");
+  // Proxy / jump host (Phase 21). `proxySecret` is the just-typed jump-host
+  // password/passphrase (never persisted on the profile — saved to the keychain
+  // via `saveProxySecret`); `proxyHasSavedPassword` mirrors the stored hint.
+  let useProxy = $state(false);
+  let proxyKind = $state<ProxyKind>("jump");
+  let proxyHost = $state("");
+  let proxyPort = $state<number | null>(22);
+  let proxyUsername = $state("");
+  let proxyAuthMethod = $state<AuthMethod>("password");
+  let proxyKeyPath = $state<string | null>(null);
+  let proxySecret = $state("");
+  let proxyHasSavedPassword = $state(false);
   let confirmForget = $state(false);
   // Set on a failed submit so empty required fields light up; cleared per field
   // as the user types (derived below) and reset when the form (re)opens.
@@ -52,7 +70,37 @@
   const hostError = $derived(submitted && !isValidHost(host));
   const usernameError = $derived(submitted && !username.trim());
   const portError = $derived(submitted && !isValidPort(port));
-  const hasErrors = $derived(aliasError || hostError || usernameError || portError);
+  // Proxy validation only applies when the proxy is enabled.
+  const proxyHostError = $derived(submitted && useProxy && !isValidHost(proxyHost));
+  const proxyHostEmpty = $derived(submitted && useProxy && !proxyHost.trim());
+  const proxyPortError = $derived(submitted && useProxy && !isValidPort(proxyPort));
+  const proxyUserError = $derived(
+    submitted && useProxy && proxyKind === "jump" && !proxyUsername.trim(),
+  );
+  const hasErrors = $derived(
+    aliasError ||
+      hostError ||
+      usernameError ||
+      portError ||
+      proxyHostError ||
+      proxyPortError ||
+      proxyUserError,
+  );
+
+  /** Reset the proxy fields from a profile's proxy (or to defaults when none).
+   *  `keepSaved` carries the saved-secret hint (edit) or drops it (add/duplicate,
+   *  where secrets never transfer since the keychain is keyed by server id). */
+  function loadProxy(proxy: ServerProfile["proxy"], keepSaved: boolean) {
+    useProxy = !!proxy;
+    proxyKind = proxy?.kind ?? "jump";
+    proxyHost = proxy?.host ?? "";
+    proxyPort = proxy?.port ?? 22;
+    proxyUsername = proxy?.username ?? "";
+    proxyAuthMethod = proxy?.authMethod ?? "password";
+    proxyKeyPath = proxy?.keyPath ?? null;
+    proxySecret = "";
+    proxyHasSavedPassword = keepSaved && !!proxy?.hasSavedPassword;
+  }
 
   /** Open the form to add a new server, optionally pre-filling its folder group. */
   export function openAdd(prefillGroup = "") {
@@ -68,6 +116,7 @@
     noAi = false;
     aiPromptId = "";
     aiExecMode = "";
+    loadProxy(null, false);
     submitted = false;
     open = true;
   }
@@ -88,6 +137,7 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
+    loadProxy(server.proxy, true);
     submitted = false;
     open = true;
   }
@@ -113,6 +163,8 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
+    // A duplicate is a new id, so the proxy secret is intentionally not carried.
+    loadProxy(server.proxy, false);
     submitted = false;
     open = true;
   }
@@ -120,6 +172,11 @@
   async function browseKey() {
     const picked = await pickKeyFile();
     if (picked) keyPath = picked;
+  }
+
+  async function browseProxyKey() {
+    const picked = await pickKeyFile();
+    if (picked) proxyKeyPath = picked;
   }
 
   async function forget() {
@@ -137,10 +194,30 @@
     event.preventDefault();
     submitted = true;
     if (!alias.trim() || !isValidHost(host) || !username.trim() || !isValidPort(port)) return;
+    if (
+      useProxy &&
+      (!isValidHost(proxyHost) ||
+        !isValidPort(proxyPort) ||
+        (proxyKind === "jump" && !proxyUsername.trim()))
+    )
+      return;
     const tags = tagsInput
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
+    // Secrets never live on the profile — the saved-secret hint is true when one
+    // is already stored or the user just typed one (persisted via saveProxySecret).
+    const proxy = useProxy
+      ? {
+          kind: proxyKind,
+          host: proxyHost,
+          port: proxyPort as number,
+          username: proxyUsername,
+          authMethod: proxyAuthMethod,
+          keyPath: proxyKeyPath,
+          hasSavedPassword: proxySecret.trim() ? true : proxyHasSavedPassword,
+        }
+      : null;
     const payload = {
       alias,
       host,
@@ -154,17 +231,24 @@
       noAi,
       chatPromptId: aiPromptId || null,
       execMode: (aiExecMode || null) as AiExecMode | null,
+      proxy,
     };
     try {
-      if (mode === "edit" && editId) {
-        const updated = await updateServer(editId, payload);
-        onsaved(updated, "edit");
-        notifySuccess(t("page.serverUpdated", { alias: updated.alias }));
-      } else {
-        const created = await addServer(payload);
-        onsaved(created, "add");
-        notifySuccess(t("page.serverAdded", { alias: created.alias }));
+      const saved =
+        mode === "edit" && editId
+          ? await updateServer(editId, payload)
+          : await addServer(payload);
+      // Store a just-typed jump-host secret in the keychain (kind follows the
+      // proxy's auth method, handled backend-side).
+      if (useProxy && proxyKind === "jump" && proxySecret.trim()) {
+        await saveProxySecret(saved.id, proxySecret);
       }
+      onsaved(saved, mode === "edit" && editId ? "edit" : "add");
+      notifySuccess(
+        mode === "edit" && editId
+          ? t("page.serverUpdated", { alias: saved.alias })
+          : t("page.serverAdded", { alias: saved.alias }),
+      );
       open = false;
     } catch (e) {
       notifyError(String(e));
@@ -349,6 +433,143 @@
           </select>
         </div>
       </div>
+    </div>
+
+    <!-- ── Proxy / jump host (Phase 21) ── -->
+    <div class="mt-3 border-t border-edge pt-3">
+      <div class="flex items-center gap-2 text-xs text-text">
+        <input
+          type="checkbox"
+          id="srv-use-proxy"
+          data-testid="server-use-proxy"
+          bind:checked={useProxy}
+        />
+        <label for="srv-use-proxy">{t("page.useProxy")}</label>
+        <InfoHint text={t("page.useProxyHint")} />
+      </div>
+
+      {#if useProxy}
+        <div class="mt-3 grid gap-x-6 gap-y-0 sm:grid-cols-2">
+          <div>
+            <label class="mb-2 block text-xs text-muted">
+              {t("page.proxyType")}
+              <select
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                data-testid="proxy-kind"
+                bind:value={proxyKind}
+              >
+                <option value="jump">{t("page.proxyKindJump")}</option>
+                <option value="socks5">{t("page.proxyKindSocks5")} — {t("page.proxySoon")}</option>
+                <option value="http">{t("page.proxyKindHttp")} — {t("page.proxySoon")}</option>
+              </select>
+            </label>
+            {#if proxyKind !== "jump"}
+              <p class="mb-2 text-[11px] text-amber-400" role="note">{t("page.proxyUnsupportedNote")}</p>
+            {/if}
+
+            <label class="mb-2 block text-xs text-muted">
+              {t("page.proxyHost")}
+              <input
+                data-testid="proxy-host"
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyHostError
+                  ? 'border-danger'
+                  : 'border-edge'}"
+                aria-invalid={proxyHostError}
+                bind:value={proxyHost}
+                placeholder="bastion.corp"
+              />
+              {#if proxyHostError}
+                <span class="mt-1 block text-[11px] text-danger"
+                  >{proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
+                >
+              {/if}
+            </label>
+            <label class="mb-2 block w-20 text-xs text-muted">
+              {t("page.port")}
+              <input
+                type="number"
+                data-testid="proxy-port"
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyPortError
+                  ? 'border-danger'
+                  : 'border-edge'}"
+                aria-invalid={proxyPortError}
+                bind:value={proxyPort}
+              />
+            </label>
+            {#if proxyPortError}
+              <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
+            {/if}
+          </div>
+
+          {#if proxyKind === "jump"}
+            <div>
+              <label class="mb-2 block text-xs text-muted">
+                {t("page.proxyUsername")}
+                <input
+                  data-testid="proxy-username"
+                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyUserError
+                    ? 'border-danger'
+                    : 'border-edge'}"
+                  aria-invalid={proxyUserError}
+                  bind:value={proxyUsername}
+                  placeholder="jump"
+                />
+                {#if proxyUserError}
+                  <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+                {/if}
+              </label>
+
+              <div class="mb-2 text-xs text-muted">
+                {t("page.authentication")}
+                <div class="mt-1 flex gap-3 text-sm text-white">
+                  <label class="flex items-center gap-1">
+                    <input type="radio" value="password" bind:group={proxyAuthMethod} />
+                    {t("page.authPassword")}
+                  </label>
+                  <label class="flex items-center gap-1">
+                    <input type="radio" value="key" bind:group={proxyAuthMethod} />
+                    {t("page.authKey")}
+                  </label>
+                </div>
+              </div>
+
+              {#if proxyAuthMethod === "key"}
+                <label class="mb-2 block text-xs text-muted">
+                  {t("page.privateKeyFile")}
+                  <div class="mt-1 flex gap-2">
+                    <input
+                      readonly
+                      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
+                      value={proxyKeyPath ?? ""}
+                      placeholder="~/.ssh/id_ed25519"
+                    />
+                    <button
+                      type="button"
+                      class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+                      onclick={browseProxyKey}>{t("common.browse")}</button
+                    >
+                  </div>
+                </label>
+              {/if}
+
+              <label class="mb-1 block text-xs text-muted">
+                <span class="flex items-center gap-1">
+                  {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
+                  <InfoHint text={t("page.proxySecretHint")} />
+                </span>
+                <input
+                  type="password"
+                  data-testid="proxy-secret"
+                  autocomplete="off"
+                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                  bind:value={proxySecret}
+                  placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
+                />
+              </label>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
 
     {#if hasErrors}

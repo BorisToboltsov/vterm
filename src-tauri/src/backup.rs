@@ -211,6 +211,7 @@ mod tests {
             no_ai: false,
             chat_prompt_id: None,
             exec_mode: None,
+            proxy: None,
         }
     }
 

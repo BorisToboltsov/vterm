@@ -66,9 +66,11 @@ pub fn install_output_event(session_id: &str) -> String {
 }
 
 /// Event name carrying connection-phase progress for the connecting overlay.
-/// Payload is one of `"connecting"` (TCP + SSH handshake), `"authenticating"`,
-/// `"session"` (opening the channel / PTY / shell). These mirror the sequential
-/// stages of [`connect`] below, so the UI shows a real (not faux) step indicator.
+/// Payload is one of `"proxy"` (connecting + authenticating to the jump host,
+/// emitted only when a proxy is configured), `"connecting"` (TCP + SSH handshake
+/// with the target), `"authenticating"`, `"session"` (opening the channel / PTY /
+/// shell). These mirror the sequential stages of [`connect`] below, so the UI
+/// shows a real (not faux) step indicator.
 pub fn phase_event(session_id: &str) -> String {
     format!("term://phase/{session_id}")
 }
@@ -121,6 +123,9 @@ pub struct SshSession {
     sftp: Mutex<Option<Arc<SftpSession>>>,
     /// Active session recorder, if recording (shared with the reader task).
     recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>>,
+    /// The proxy/jump host connection, when this session is tunneled through one.
+    /// Held only to keep it alive — dropping it closes the underlying tunnel.
+    _proxy_handle: Option<Handle<ClientHandler>>,
 }
 
 impl SshSession {
@@ -433,6 +438,16 @@ pub enum Credential {
     },
 }
 
+/// A jump host to tunnel the real connection through (SSH ProxyJump). vterm first
+/// connects and authenticates here, then opens a `direct-tcpip` channel to the
+/// target and runs the real SSH session over it.
+pub struct ProxyJump {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub cred: Credential,
+}
+
 /// Tunables passed from the frontend Settings panel, plus the initial PTY size.
 pub struct ConnectOptions {
     pub term_type: String,
@@ -442,6 +457,61 @@ pub struct ConnectOptions {
     /// Initial terminal size for the shell's PTY request.
     pub cols: u32,
     pub rows: u32,
+    /// Optional jump host to tunnel through (None → connect directly).
+    pub proxy: Option<ProxyJump>,
+}
+
+/// Map a russh handshake error to a typed `AppError`, recognizing a rejected host
+/// key (russh reports it as a generic handshake error).
+fn map_handshake_err(e: russh::Error) -> AppError {
+    let msg = e.to_string();
+    if msg.contains("UnknownKey") || msg.to_lowercase().contains("key") {
+        AppError::HostKeyRejected
+    } else {
+        AppError::Message(format!("connection failed: {e}"))
+    }
+}
+
+/// Authenticate an open SSH transport with a password or public key. Returns
+/// whether the server accepted the credential. Shared by the target connection
+/// and the proxy/jump host so both honour the same timeout and key handling.
+async fn authenticate(
+    handle: &mut Handle<ClientHandler>,
+    username: &str,
+    cred: Credential,
+    timeout_dur: Duration,
+) -> AppResult<bool> {
+    let auth = match cred {
+        Credential::Password(password) => timeout(
+            timeout_dur,
+            handle.authenticate_password(username, password.to_string()),
+        )
+        .await
+        .map_err(|_| "authentication timed out".to_string())?
+        .map_err(|e| format!("authentication error: {e}"))?,
+
+        Credential::Key { path, passphrase } => {
+            let key = load_secret_key(&path, passphrase.as_ref().map(|p| p.as_str()))
+                .map_err(|e| format!("could not load key {path}: {e}"))?;
+            // RSA needs a modern signature hash; the server tells us which it accepts.
+            let hash_alg = if key.algorithm().is_rsa() {
+                handle
+                    .best_supported_rsa_hash()
+                    .await
+                    .ok()
+                    .flatten()
+                    .flatten()
+            } else {
+                None
+            };
+            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
+            timeout(timeout_dur, handle.authenticate_publickey(username, key))
+                .await
+                .map_err(|_| "authentication timed out".to_string())?
+                .map_err(|e| format!("authentication error: {e}"))?
+        }
+    };
+    Ok(auth.success())
 }
 
 /// Open a connection, authenticate, and start an interactive shell.
@@ -466,66 +536,76 @@ pub async fn connect(
         port,
         policy: opts.host_key_policy,
     };
-    // Phase 1: TCP connect + SSH transport handshake (host-key check).
-    let _ = app.emit(&phase_event(&session_id), "connecting");
-    let mut handle = timeout(
-        connect_timeout,
-        client::connect(config, (host, port), handler),
-    )
-    .await
-    .map_err(|_| {
-        AppError::Message(format!(
-            "connection timed out after {}s",
-            connect_timeout.as_secs()
-        ))
-    })?
-    .map_err(|e| {
-        // russh reports a rejected host key as a generic handshake error; surface
-        // a recognizable marker so the UI can explain it.
-        let msg = e.to_string();
-        if msg.contains("UnknownKey") || msg.to_lowercase().contains("key") {
-            AppError::HostKeyRejected
-        } else {
-            AppError::Message(format!("connection failed: {e}"))
+
+    // Optional proxy hop (Phase 0): connect + authenticate to the jump host, then
+    // open a `direct-tcpip` channel to the target. The jump handle is kept alive
+    // for the session's lifetime — dropping it would tear down the tunnel.
+    let mut proxy_handle: Option<Handle<ClientHandler>> = None;
+    let target_stream = if let Some(p) = opts.proxy {
+        let _ = app.emit(&phase_event(&session_id), "proxy");
+        let jump_handler = ClientHandler {
+            host: p.host.clone(),
+            port: p.port,
+            policy: opts.host_key_policy,
+        };
+        let mut jump = timeout(
+            connect_timeout,
+            client::connect(config.clone(), (p.host.as_str(), p.port), jump_handler),
+        )
+        .await
+        .map_err(|_| {
+            AppError::Message(format!(
+                "proxy connection timed out after {}s",
+                connect_timeout.as_secs()
+            ))
+        })?
+        .map_err(map_handshake_err)?;
+        if !authenticate(&mut jump, &p.username, p.cred, connect_timeout).await? {
+            return Err(AppError::ProxyAuthRejected);
         }
-    })?;
+        let channel = jump
+            .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
+            .await
+            .map_err(|e| format!("proxy tunnel to {host}:{port} failed: {e}"))?;
+        proxy_handle = Some(jump);
+        Some(channel.into_stream())
+    } else {
+        None
+    };
+
+    // Phase 1: TCP connect + SSH transport handshake (host-key check) — over the
+    // proxy tunnel when present, otherwise a direct TCP connection.
+    let _ = app.emit(&phase_event(&session_id), "connecting");
+    let mut handle = match target_stream {
+        Some(stream) => timeout(
+            connect_timeout,
+            client::connect_stream(config, stream, handler),
+        )
+        .await
+        .map_err(|_| {
+            AppError::Message(format!(
+                "connection timed out after {}s",
+                connect_timeout.as_secs()
+            ))
+        })?
+        .map_err(map_handshake_err)?,
+        None => timeout(
+            connect_timeout,
+            client::connect(config, (host, port), handler),
+        )
+        .await
+        .map_err(|_| {
+            AppError::Message(format!(
+                "connection timed out after {}s",
+                connect_timeout.as_secs()
+            ))
+        })?
+        .map_err(map_handshake_err)?,
+    };
 
     // Phase 2: authentication (password or public key).
     let _ = app.emit(&phase_event(&session_id), "authenticating");
-    let auth = match cred {
-        Credential::Password(password) => timeout(
-            connect_timeout,
-            handle.authenticate_password(username, password.to_string()),
-        )
-        .await
-        .map_err(|_| "authentication timed out".to_string())?
-        .map_err(|e| format!("authentication error: {e}"))?,
-
-        Credential::Key { path, passphrase } => {
-            let key = load_secret_key(&path, passphrase.as_ref().map(|p| p.as_str()))
-                .map_err(|e| format!("could not load key {path}: {e}"))?;
-            // RSA needs a modern signature hash; the server tells us which it accepts.
-            let hash_alg = if key.algorithm().is_rsa() {
-                handle
-                    .best_supported_rsa_hash()
-                    .await
-                    .ok()
-                    .flatten()
-                    .flatten()
-            } else {
-                None
-            };
-            let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-            timeout(
-                connect_timeout,
-                handle.authenticate_publickey(username, key),
-            )
-            .await
-            .map_err(|_| "authentication timed out".to_string())?
-            .map_err(|e| format!("authentication error: {e}"))?
-        }
-    };
-    if !auth.success() {
+    if !authenticate(&mut handle, username, cred, connect_timeout).await? {
         // Recognizable marker so the UI can offer to re-enter the secret
         // (distinct from network/timeout errors above).
         return Err(AppError::AuthRejected);
@@ -580,6 +660,7 @@ pub async fn connect(
         reader,
         sftp: Mutex::new(None),
         recorder,
+        _proxy_handle: proxy_handle,
     })
 }
 

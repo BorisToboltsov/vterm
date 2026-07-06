@@ -18,6 +18,8 @@
     detail,
     title,
     showSteps = true,
+    hasProxy = false,
+    via,
     children,
   }: {
     alias: string;
@@ -32,19 +34,25 @@
     title?: string;
     /** Show the phase checklist (hidden for a plain drop after connect). */
     showSteps?: boolean;
+    /** This server connects through a jump host — add the `proxy` step (variant A). */
+    hasProxy?: boolean;
+    /** Jump host address (`host:port`) shown under the target as "via …". */
+    via?: string;
     /** Action buttons (reconnect / re-enter secret), rendered below the host. */
     children?: Snippet;
   } = $props();
 
-  const steps = $derived(phaseSteps(phase, failed));
+  const steps = $derived(phaseSteps(phase, failed, hasProxy));
   const heading = $derived(title ?? t("connecting.connectingTo", { alias }));
 
   function phaseLabel(p: ConnPhase): string {
-    return p === "connecting"
-      ? t("connecting.phaseConnecting")
-      : p === "authenticating"
-        ? t("connecting.phaseAuth")
-        : t("connecting.phaseSession");
+    return p === "proxy"
+      ? t("connecting.phaseProxy")
+      : p === "connecting"
+        ? t("connecting.phaseConnecting")
+        : p === "authenticating"
+          ? t("connecting.phaseAuth")
+          : t("connecting.phaseSession");
   }
 
   const labelClass: Record<string, string> = {
@@ -107,7 +115,14 @@
     </ul>
   {/if}
 
-  <p class="font-mono text-xs text-muted">{host}</p>
+  <div class="space-y-0.5 text-center">
+    <p class="font-mono text-xs text-muted">{host}</p>
+    {#if via}
+      <p class="font-mono text-[11px] text-accent/80" data-testid="connecting-via">
+        {t("connecting.viaProxy", { proxy: via })}
+      </p>
+    {/if}
+  </div>
 
   {#if children}
     <div class="flex flex-wrap items-center justify-center gap-2">

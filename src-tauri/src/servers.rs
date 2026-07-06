@@ -4,9 +4,10 @@
 //! `lib.rs` in Phase 18.2.
 
 use tauri::State;
+use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
-use crate::model::{NewServerProfile, ServerProfile};
+use crate::model::{AuthMethod, NewServerProfile, ServerProfile};
 use crate::{secrets, store, uuid_like, AppState};
 
 #[tauri::command]
@@ -31,6 +32,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         no_ai: profile.no_ai,
         chat_prompt_id: profile.chat_prompt_id,
         exec_mode: profile.exec_mode,
+        proxy: profile.proxy,
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -63,6 +65,7 @@ pub fn update_server(
                 server.no_ai = profile.no_ai;
                 server.chat_prompt_id = profile.chat_prompt_id;
                 server.exec_mode = profile.exec_mode;
+                server.proxy = profile.proxy;
             }
             None => return Err(AppError::UnknownServer),
         }
@@ -89,7 +92,7 @@ pub async fn delete_server(id: String, state: State<'_, AppState>) -> AppResult<
     Ok(())
 }
 
-/// Forget any stored password/passphrase for a server.
+/// Forget any stored password/passphrase for a server — including its proxy's.
 #[tauri::command]
 pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
     secrets::delete_all(&id)?;
@@ -97,7 +100,42 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
         let mut servers = state.servers.lock().unwrap();
         if let Some(p) = servers.iter_mut().find(|p| p.id == id) {
             p.has_saved_password = false;
+            if let Some(px) = p.proxy.as_mut() {
+                px.has_saved_password = false;
+            }
         }
+        servers.clone()
+    };
+    store::save_servers(&snapshot)
+}
+
+/// Store a proxy/jump host secret (password or key passphrase) in the keychain
+/// and mark the proxy as having a saved secret. The kind of secret follows the
+/// proxy's own auth method. Called by the server form after add/update when the
+/// user typed a proxy secret (secrets are never persisted on the profile JSON).
+#[tauri::command]
+pub fn save_proxy_secret(
+    server_id: String,
+    secret: String,
+    state: State<AppState>,
+) -> AppResult<()> {
+    // Wrap so vterm's own in-memory copy is wiped on drop (keychain stays canonical).
+    let secret = Zeroizing::new(secret);
+    let snapshot = {
+        let mut servers = state.servers.lock().unwrap();
+        let server = servers
+            .iter_mut()
+            .find(|s| s.id == server_id)
+            .ok_or(AppError::UnknownServer)?;
+        let proxy = server
+            .proxy
+            .as_mut()
+            .ok_or_else(|| AppError::Message("server has no proxy configured".to_string()))?;
+        match proxy.auth_method {
+            AuthMethod::Password => secrets::set_proxy_password(&server_id, &secret)?,
+            AuthMethod::Key => secrets::set_proxy_passphrase(&server_id, &secret)?,
+        }
+        proxy.has_saved_password = true;
         servers.clone()
     };
     store::save_servers(&snapshot)

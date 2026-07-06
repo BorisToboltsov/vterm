@@ -24,9 +24,15 @@ export function deleteServer(id: string): Promise<void> {
   return invoke<void>("delete_server", { id });
 }
 
-/** Forget any stored password/passphrase for a server. */
+/** Forget any stored password/passphrase for a server (including its proxy's). */
 export function forgetSecrets(id: string): Promise<void> {
   return invoke<void>("forget_secrets", { id });
+}
+
+/** Store a server's proxy/jump host secret (password or passphrase) in the OS
+ *  keychain. The secret kind follows the proxy's own auth method. */
+export function saveProxySecret(serverId: string, secret: string): Promise<void> {
+  return invoke<void>("save_proxy_secret", { serverId, secret });
 }
 
 // ── Folders ─────────────────────────────────────────────────────────────────

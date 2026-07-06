@@ -9,11 +9,13 @@ import type { ServerProfile } from "./types";
 // can assert whether a save was actually attempted.
 const addServer = vi.fn();
 const updateServer = vi.fn();
+const saveProxySecret = vi.fn();
 vi.mock("./api", () => ({
   addServer: (...args: unknown[]) => addServer(...args),
   updateServer: (...args: unknown[]) => updateServer(...args),
   forgetSecrets: vi.fn(),
   pickKeyFile: vi.fn(),
+  saveProxySecret: (...args: unknown[]) => saveProxySecret(...args),
 }));
 
 function renderForm() {
@@ -43,6 +45,7 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     noAi: true,
     chatPromptId: null,
     execMode: null,
+    proxy: null,
     ...p,
   };
 }
@@ -51,7 +54,9 @@ describe("ServerFormModal validation", () => {
   beforeEach(() => {
     addServer.mockReset();
     updateServer.mockReset();
+    saveProxySecret.mockReset();
     addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
+    saveProxySecret.mockResolvedValue(undefined);
   });
 
   it("highlights empty required fields on submit instead of silently doing nothing", async () => {
@@ -229,6 +234,72 @@ describe("ServerFormModal validation", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent(hint);
     await fireEvent.blur(trigger);
     expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+});
+
+describe("ServerFormModal proxy", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveProxySecret.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
+    saveProxySecret.mockResolvedValue(undefined);
+  });
+
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+  }
+
+  it("is a direct connection by default — no proxy fields, no proxy in payload", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    expect(screen.queryByTestId("proxy-host")).toBeNull();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ proxy: null }));
+  });
+
+  it("sends the jump-host proxy and stores its secret in the keychain", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await userEvent.type(screen.getByTestId("proxy-host"), "bastion.corp");
+    await userEvent.type(screen.getByTestId("proxy-username"), "jump");
+    await userEvent.type(screen.getByTestId("proxy-secret"), "s3cret");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({
+          kind: "jump",
+          host: "bastion.corp",
+          username: "jump",
+          authMethod: "password",
+          hasSavedPassword: true,
+        }),
+      }),
+    );
+    // The typed secret is persisted separately to the keychain (never on the profile).
+    expect(saveProxySecret).toHaveBeenCalledWith("s1", "s3cret");
+  });
+
+  it("blocks save when the proxy is enabled but its host is invalid", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    // Leave proxy host empty and username empty → validation blocks the save.
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getByTestId("proxy-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
   });
 });
 

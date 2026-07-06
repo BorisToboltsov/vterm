@@ -35,6 +35,26 @@ export function sshErrorView(status: string, currentPhase: ConnPhase): SshErrorV
     };
   }
   const raw = status.replace(/^Error:\s*/, "");
+  // Proxy markers are checked before the generic `auth-rejected` since the proxy
+  // marker (`proxy-auth-rejected`) also contains that substring.
+  if (raw.includes("proxy-auth-rejected")) {
+    return {
+      titleKey: "connecting.proxyAuthFailed",
+      detailKey: "connecting.proxyAuthDetail",
+      phase: "proxy",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
+  if (raw.includes("proxy-unsupported")) {
+    return {
+      titleKey: "connecting.proxyUnsupported",
+      detailKey: "connecting.proxyUnsupportedDetail",
+      phase: "proxy",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
   if (raw.includes("auth-rejected")) {
     return {
       titleKey: "connecting.authFailed",

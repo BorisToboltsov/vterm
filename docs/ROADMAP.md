@@ -16,6 +16,7 @@
 | 18 | Крупный структурный рефакторинг (`lib.rs`/`+page.svelte`/`api.ts`) + SFTP-перф | ✅ Реализовано |
 | 19 | Мажорные версии зависимостей (`keyring`/`reqwest`/`sha2`/vite-стек) | ✅ Реализовано |
 | 20 | ИИ-агент: security-аудит (adversarial pass) | ✅ Реализовано |
+| 21 | Proxy/jump host на запись сервера (SSH ProxyJump; SOCKS5/HTTP — заложены) | ✅ Реализовано |
 
 ---
 
@@ -788,6 +789,44 @@ audit`) — если нет, задокументировать игнор в `d
     свой `<section>` + `<h3>`) заголовок `sectionAi` + ⓘ `aiNote` **перенесён из
     `SettingsPanel` внутрь `AiSettingsSection`**. Теперь `SettingsPanel` рендерит просто
     `<AiSettingsSection />`, как и другие секции.
+
+---
+
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0)
+
+Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
+сервера** (у одного может быть proxy, у другого нет). На старте реализован **SSH jump
+host (ProxyJump)**; типы `SOCKS5`/`HTTP CONNECT` **заложены в модель и UI** (выбор типа
+виден, помечен «скоро»), но при подключении возвращают типизированную ошибку
+`proxy-unsupported` — до реализации транспорта следующим шагом.
+
+- **Модель данных (оба стека).** `ProxyKind` (`jump`/`socks5`/`http`) + `ServerProxy`
+  (`kind`, `host`, `port`, `username`, `authMethod`, `keyPath`, `hasSavedPassword`);
+  поле `proxy: Option<ServerProxy>` на `ServerProfile`/`NewServerProfile`
+  (`#[serde(default)]` — старые профили остаются валидными). Зеркало —
+  [types.ts](../src/lib/types.ts).
+- **Транспорт jump host** ([ssh.rs](../src-tauri/src/ssh.rs)). Отдельная фаза
+  подключения `proxy`: сперва connect + auth к jump-хосту (свой host-key-чек и секреты),
+  затем `channel_open_direct_tcpip` → `connect_stream` реальной SSH-сессии по туннелю.
+  Хендл jump-хоста хранится в `SshSession` (живёт весь сеанс — иначе туннель рвётся).
+  Общий помощник `authenticate` для цели и прокси; `map_handshake_err` для host-key.
+- **Секреты прокси.** Пароль/passphrase jump-хоста — в **keychain** под proxy-scoped id
+  (`{id}::proxy`, [secrets.rs](../src-tauri/src/secrets.rs)), вводятся в **форме сервера**
+  и сохраняются командой `save_proxy_secret`. `forget_secrets`/`delete_all` чистят и
+  прокси-секреты. Типизированные ошибки `ProxyAuthRejected`/`ProxyUnsupported`
+  ([error.rs](../src-tauri/src/error.rs), маркеры `proxy-auth-rejected`/`proxy-unsupported`).
+- **Экран загрузки — вариант A** (скрыт, когда не используется). `phaseSteps(current,
+  errored, hasProxy)` **добавляет шаг `proxy` только при наличии прокси** — прямое
+  подключение выглядит как раньше (3 шага). [ConnectingOverlay](../src/lib/ConnectingOverlay.svelte)
+  получает `hasProxy` + строку «через {host:port}»; провал на фазе прокси замирает на
+  `Proxy ✗` ([ssherror.ts](../src/lib/ssherror.ts)).
+- **Форма сервера** ([ServerFormModal](../src/lib/ServerFormModal.svelte)) — секция «Proxy /
+  jump host»: чекбокс включения, выбор типа (jump активен; socks5/http — «скоро» + предупреждение),
+  host/port/user/auth/ключ/секрет с валидацией.
+- **Тесты:** `model.rs` (round-trip + `ProxyKind`), `connphase.test.ts` (шаг proxy,
+  вариант A), `ssherror.test.ts` (proxy-маркеры), `ConnectingOverlay.test.ts` (шаг+«через»),
+  `ServerFormModal.test.ts` (payload proxy + `saveProxySecret` + валидация). Доки:
+  GUIDE/README/INVARIANTS/TESTS.
 
 ---
 

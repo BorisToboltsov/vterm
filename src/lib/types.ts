@@ -4,6 +4,28 @@ import type { AiExecMode } from "./ai";
 
 export type AuthMethod = "password" | "key";
 
+/** Kind of proxy a server connects through. Only "jump" (an SSH bastion) is
+ *  implemented; "socks5"/"http" are reserved — selecting them errors at connect
+ *  time until those transports land (mirrors ProxyKind in model.rs). */
+export type ProxyKind = "jump" | "socks5" | "http";
+
+/** A proxy/jump host a server tunnels through (mirrors ServerProxy in model.rs).
+ *  Secrets are never stored here — the jump host's password/passphrase live in
+ *  the keychain under a proxy-scoped id; `hasSavedPassword` is a UI hint. */
+export interface ServerProxy {
+  kind: ProxyKind;
+  host: string;
+  port: number;
+  /** Login on the jump host (SSH jump kind). */
+  username: string;
+  /** Auth method for the jump host (SSH jump kind). */
+  authMethod: AuthMethod;
+  /** Path to the jump host's private key (used when authMethod === "key"). */
+  keyPath: string | null;
+  /** Whether a proxy secret is stored in the OS keychain. */
+  hasSavedPassword: boolean;
+}
+
 export interface ServerProfile {
   id: string;
   alias: string;
@@ -27,6 +49,8 @@ export interface ServerProfile {
   chatPromptId: string | null;
   /** Per-server command-execution mode override, or null to use the global one. */
   execMode: AiExecMode | null;
+  /** Proxy/jump host this server connects through, or null for a direct connection. */
+  proxy: ServerProxy | null;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -85,6 +109,7 @@ export interface NewServerProfile {
   noAi: boolean;
   chatPromptId: string | null;
   execMode: AiExecMode | null;
+  proxy: ServerProxy | null;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

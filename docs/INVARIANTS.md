@@ -28,11 +28,14 @@
     [ConnectingOverlay.svelte](../src/lib/ConnectingOverlay.svelte): орбита-комета вокруг
     иконки сервера + `alias` + `user@host:port` + **честный** чек-лист фаз. Фазы —
     **реальные**, из дополнительного канала `term://phase/{id}` ([ssh.rs](../src-tauri/src/ssh.rs)
-    `phase_event`, payload `connecting`→`authenticating`→`session`, эмитится по ходу
+    `phase_event`, payload `proxy`(опц.)→`connecting`→`authenticating`→`session`, эмитится по ходу
     последовательных стадий `connect`); фронт слушает его в `Terminal.svelte` (проп `onphase`,
     только SSH), а чистый маппинг фаза→состояние-шага — в [connphase.ts](../src/lib/connphase.ts)
-    (`phaseSteps`, ADR 0003). Новую стадию подключения добавляй как новый `emit` в `connect` +
-    запись в `PHASE_ORDER`, не плоди отдельные каналы. Анимации — только дешёвые
+    (`phaseSteps`, ADR 0003). Новую **обязательную** стадию добавляй как новый `emit` в `connect` +
+    запись в `PHASE_ORDER`, не плоди отдельные каналы. **Опциональная** стадия `proxy`
+    (Фаза 21, только при наличии jump host) **не входит в `PHASE_ORDER`**: `phaseSteps(current,
+    errored, hasProxy)` **добавляет** её первой лишь когда `hasProxy` (вариант A — прямое
+    подключение выглядит как раньше). Анимации — только дешёвые
     `transform`/`opacity`, под глобальным `prefers-reduced-motion`-guard.
     **Тот же компонент — экран ошибки/обрыва** (проп `failed`): орбита заменяется
     статичной иконкой сервера с **красным крестом**, чек-лист **замирает на упавшей
@@ -117,3 +120,6 @@
 - **Персистентность:** профили/папки/known_hosts — JSON в конфиг-каталоге
   (`store.rs`); секреты — только в OS keychain (`secrets.rs`), никогда в файлах;
   настройки/layout UI — `localStorage` (runes-сторы). Для e2e — `data-testid`.
+  **Секрет proxy/jump host** (Фаза 21) — тоже только в keychain, но под
+  **proxy-scoped id** (`{id}::proxy`, `secrets.rs`), чтобы не конфликтовать с
+  секретом самой цели; чистится в `delete_all`/`forget_secrets`.

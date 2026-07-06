@@ -110,7 +110,9 @@ pnpm check
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`**/**`noAi`** —
   легаси-профиль → `auto_record:false`/`no_ai:false`/`chat_prompt_id:None`/`exec_mode:None`; round-trip
-  сохраняет `autoRecord`/`noAi:true`/`chatPromptId`/`execMode`);
+  сохраняет `autoRecord`/`noAi:true`/`chatPromptId`/`execMode`); **Фаза 21:** round-trip
+  вложенного `proxy` (`ProxyKind::Jump`, host/authMethod), легаси-профиль → `proxy:None`,
+  `ProxyKind` сериализуется в lowercase (`jump`/`socks5`/`http`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
   файловый round-trip во временном каталоге (`tempfile`);
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
@@ -358,7 +360,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `connphase.ts` — окно подключения (0.11.2): `phaseSteps` (первая фаза `active`,
   остальные `pending`; ранние → `done`, поздние → `pending`; `errored` красит
   активную фазу в `error`; неизвестная фаза → первый шаг `active`) и порядок
-  `PHASE_ORDER`, совпадающий со стадиями бэкенда;
+  `PHASE_ORDER`, совпадающий со стадиями бэкенда; **Фаза 21 (proxy):** без `hasProxy`
+  шаг `proxy` **не** добавляется (вариант A); с `hasProxy` он идёт первым (`active`/
+  `done`/`error` по позиции);
 - `stores/toasts.svelte.ts` — `notify`/`notifyError`/`notifySuccess`/`notifyInfo`,
   авто-дисмисс по `TOAST_TTL` (fake-таймеры), кастомный ttl и sticky (`ttl=0`),
   `dismissToast` (снятие таймера), `clearToasts`;
@@ -519,7 +523,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `alias` и подпись `user@host:port`, `role="status"`; активная фаза с акцентным
   цветом и многоточием, предыдущая фаза как «done». Режим ошибки (0.11.3, проп
   `failed`): упавшая фаза в `text-danger`, заголовок/красная деталь и `role="alert"`,
-  скрытие чек-листа при `showSteps={false}`.
+  скрытие чек-листа при `showSteps={false}`. **Фаза 21 (proxy):** без `hasProxy` нет
+  шага «Proxy» и строки «через …»; с `hasProxy` + `via` появляются оба.
 - `JsonLogView.test.ts` — табличный JSON-вид (Фаза 10): пустое состояние без записей,
   строка на запись с сообщением, цвет уровня `error` (`text-danger`) в ячейке,
   фильтрация по вводу с обновлением счётчика, нота «нет подходящих записей»,
@@ -560,7 +565,12 @@ pnpm test:coverage   # прогон + покрытие + гейты
   колонки с заголовками «Connection» / «Recording & AI», а подсказки свёрнуты в
   info-тултипы (Фаза 20.17.1, компонент `InfoHint` — 20.19) — абзац-хинт автозаписи не
   рендерится текстом; «ⓘ» — фокусируемая кнопка с `aria-label`, по фокусу появляется
-  `role="tooltip"`, по blur исчезает.
+  `role="tooltip"`, по blur исчезает. **Proxy (Фаза 21):** по умолчанию прямое
+  подключение — полей прокси нет, в payload `proxy: null`; включение прокси и заполнение
+  jump-хоста шлёт объект `proxy` (`kind: "jump"`, host/username/authMethod,
+  `hasSavedPassword: true` при введённом секрете) и зовёт `saveProxySecret(id, secret)`
+  (секрет не попадает в профиль); при включённом прокси с невалидным host сейв блокируется
+  (`aria-invalid` на `proxy-host`, `addServer` не вызван).
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).

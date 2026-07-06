@@ -37,4 +37,39 @@ describe("phaseSteps", () => {
   it("keeps the phase order aligned with the backend stages", () => {
     expect(PHASE_ORDER).toEqual(["connecting", "authenticating", "session"]);
   });
+
+  it("omits the proxy step by default (variant A: direct connection)", () => {
+    expect(phaseSteps("connecting").map((s) => s.phase)).toEqual([
+      "connecting",
+      "authenticating",
+      "session",
+    ]);
+  });
+
+  it("prepends the proxy step when hasProxy is set", () => {
+    expect(phaseSteps("proxy", false, true)).toEqual([
+      { phase: "proxy", state: "active" },
+      { phase: "connecting", state: "pending" },
+      { phase: "authenticating", state: "pending" },
+      { phase: "session", state: "pending" },
+    ]);
+  });
+
+  it("marks the proxy step done once past it", () => {
+    expect(phaseSteps("connecting", false, true).map((s) => s.state)).toEqual([
+      "done",
+      "active",
+      "pending",
+      "pending",
+    ]);
+  });
+
+  it("renders the proxy step as error when the jump host failed", () => {
+    expect(phaseSteps("proxy", true, true).map((s) => s.state)).toEqual([
+      "error",
+      "pending",
+      "pending",
+      "pending",
+    ]);
+  });
 });
