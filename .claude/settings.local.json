@@ -234,7 +234,9 @@
       "Bash(sed -i '' 's/\"version\": \"0.21.4\"/\"version\": \"0.21.5\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.21.4\"/version = \"0.21.5\"/' src-tauri/Cargo.toml)",
       "Bash(sed -i '' 's/\"version\": \"0.21.5\"/\"version\": \"0.21.6\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.5\"/version = \"0.21.6\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.5\"/version = \"0.21.6\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.6\"/\"version\": \"0.21.7\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.6\"/version = \"0.21.7\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

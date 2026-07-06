@@ -63,6 +63,9 @@
   let container: HTMLDivElement;
   let term: Terminal;
   let fit: FitAddon;
+  // Terminal background for the container's padding strip (see the markup below),
+  // so the inset around the text matches xterm's canvas instead of the panel.
+  const termBg = $derived(activeTerminalTheme().background ?? "");
   let webgl: WebglAddon | undefined;
   let observer: ResizeObserver;
   let flashing = $state(false);
@@ -627,11 +630,15 @@
 </script>
 
 <div class="relative h-full w-full">
+  <!-- px-2 pt-1: lift the console text off the left edge and the tab-bar border.
+       FitAddon reads the container's content width (padding excluded), so columns
+       still fit exactly; the padding strip is tinted with the terminal bg to blend. -->
   <div
     bind:this={container}
     onmousedown={onMouseDown}
     role="presentation"
-    class="h-full w-full"
+    class="h-full w-full px-2 pt-1"
+    style="background-color: {termBg}"
   ></div>
   <!-- Structured JSON log view + raw↔table toggle (Phase 10). In structured mode
        the toggle lives inside the table toolbar; in raw mode it floats top-right. -->
