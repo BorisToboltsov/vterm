@@ -335,7 +335,10 @@
       class={embedded ? "flex h-full min-h-0 flex-col" : "absolute inset-y-0 right-0 flex flex-col"}
       style={embedded ? "" : `width: ${width}px`}
     >
-    <!-- Toolbar -->
+    <!-- Toolbar. When embedded (RightDock owns the tab) and not yet connected the
+         bar would hold only a redundant "SFTP" label — the tab already names it — so
+         it's dropped entirely; the Connect action sits straight under the tab. -->
+    {#if connected || !embedded}
     <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
       {#if !embedded}
         <button
@@ -361,8 +364,8 @@
           class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
             ? 'bg-edge text-accent'
             : 'text-muted hover:bg-edge hover:text-white'}"
-          use:tooltip={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
-          aria-label={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
+          use:tooltip={t("sftp.hiddenFiles")}
+          aria-label={t("sftp.hiddenFiles")}
           aria-pressed={settings.sftp.showHiddenFiles}
           onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
         >
@@ -419,6 +422,7 @@
         <span class="ml-1 uppercase tracking-wider text-muted">SFTP</span>
       {/if}
     </div>
+    {/if}
 
   {#if !connected}
     <!-- Not yet connected: offer an explicit SFTP connect action -->

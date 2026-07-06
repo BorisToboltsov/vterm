@@ -242,8 +242,8 @@
           class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
             ? 'bg-edge text-accent'
             : 'text-muted hover:bg-edge hover:text-white'}"
-          use:tooltip={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
-          aria-label={settings.sftp.showHiddenFiles ? t("sftp.hideHidden") : t("sftp.showHidden")}
+          use:tooltip={t("sftp.hiddenFiles")}
+          aria-label={t("sftp.hiddenFiles")}
           aria-pressed={settings.sftp.showHiddenFiles}
           onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
         >
@@ -271,7 +271,10 @@
         >
           <Icon name="filePlus" size={14} />
         </button>
-        <span class="ml-auto uppercase tracking-wider text-muted">{t("localfiles.label")}</span>
+        {#if !embedded}
+          <!-- The RightDock tab already names this panel; skip the duplicate label. -->
+          <span class="ml-auto uppercase tracking-wider text-muted">{t("localfiles.label")}</span>
+        {/if}
       </div>
 
       <!-- Current path -->
@@ -360,7 +363,7 @@
                   <div class="group flex h-7 items-center gap-2 px-2 hover:bg-edge">
                     <button
                       class="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      title={fileTooltip(entry)}
+                      use:tooltip={fileTooltip(entry)}
                       ondblclick={() => open(entry)}
                     >
                       <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
