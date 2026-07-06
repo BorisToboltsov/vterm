@@ -1092,6 +1092,10 @@
     title={topTitle}
     subtitle={topSubtitle}
     connected={topConnected}
+    canRecord={!!(activeTab && isLive(activeTab.status))}
+    recording={!!(activeTab && isRecording(activeTab.sessionId))}
+    onToggleRecording={toggleRecording}
+    onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
     onOpenSettings={() => openSettings("servertools")}
   />
@@ -1214,43 +1218,6 @@
         >
           <Icon name="plus" size={14} />
         </button>
-
-        <!-- Recording controls (right-aligned). -->
-        <div class="ml-auto flex shrink-0 items-center">
-          {#if activeTab && isLive(activeTab.status)}
-            <button
-              data-testid="record-toggle"
-              class="flex items-center gap-1 px-2.5 py-1.5 text-xs {activeTab &&
-              isRecording(activeTab.sessionId)
-                ? 'text-danger'
-                : 'text-muted hover:bg-edge hover:text-white'}"
-              use:tooltip={activeTab && isRecording(activeTab.sessionId)
-                ? t("recordings.stop")
-                : t("recordings.start")}
-              aria-label={activeTab && isRecording(activeTab.sessionId)
-                ? t("recordings.stop")
-                : t("recordings.start")}
-              aria-pressed={!!(activeTab && isRecording(activeTab.sessionId))}
-              onclick={toggleRecording}
-            >
-              <span
-                class="h-2.5 w-2.5 rounded-full {activeTab && isRecording(activeTab.sessionId)
-                  ? 'animate-pulse bg-danger'
-                  : 'border border-current'}"
-              ></span>
-              REC
-            </button>
-          {/if}
-          <button
-            data-testid="open-recordings"
-            class="flex items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
-            use:tooltip={t("recordings.title")}
-            aria-label={t("recordings.title")}
-            onclick={() => (showRecordings = true)}
-          >
-            <Icon name="activity" size={14} />
-          </button>
-        </div>
       </div>
 
       {#if tabsState.list.length > 0}

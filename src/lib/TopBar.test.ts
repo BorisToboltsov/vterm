@@ -7,6 +7,8 @@ const base = {
   title: "Timeweb",
   subtitle: "root@31.130.129.206:22",
   connected: true,
+  onToggleRecording: () => {},
+  onOpenRecordings: () => {},
   onOpenMonitoring: () => {},
   onOpenSettings: () => {},
 };
@@ -43,5 +45,44 @@ describe("TopBar", () => {
     render(TopBar, { props: { ...base } });
     expect(screen.queryByText("vterm")).not.toBeInTheDocument();
     expect(screen.queryByTestId("add-server")).not.toBeInTheDocument();
+  });
+
+  it("opens the recordings library from its button", async () => {
+    const onOpenRecordings = vi.fn();
+    render(TopBar, { props: { ...base, onOpenRecordings } });
+    await userEvent.click(screen.getByTestId("open-recordings"));
+    expect(onOpenRecordings).toHaveBeenCalledOnce();
+  });
+
+  it("shows the REC toggle only when the active tab can be recorded", () => {
+    const { unmount } = render(TopBar, { props: { ...base, canRecord: false } });
+    expect(screen.queryByTestId("record-toggle")).not.toBeInTheDocument();
+    unmount();
+    render(TopBar, { props: { ...base, canRecord: true } });
+    expect(screen.getByTestId("record-toggle")).toBeInTheDocument();
+  });
+
+  it("toggles recording and reflects the running state via aria-pressed", async () => {
+    const onToggleRecording = vi.fn();
+    const { unmount } = render(TopBar, {
+      props: { ...base, canRecord: true, recording: false, onToggleRecording },
+    });
+    const rec = screen.getByTestId("record-toggle");
+    expect(rec).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(rec);
+    expect(onToggleRecording).toHaveBeenCalledOnce();
+    unmount();
+    render(TopBar, { props: { ...base, canRecord: true, recording: true } });
+    expect(screen.getByTestId("record-toggle")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("places the recording controls before the settings gear", () => {
+    render(TopBar, { props: { ...base, canRecord: true } });
+    const rec = screen.getByTestId("record-toggle");
+    const lib = screen.getByTestId("open-recordings");
+    const gear = screen.getByTestId("topbar-settings");
+    // DOM order: REC → library → settings (rec/library sit before the gear).
+    expect(rec.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(lib.compareDocumentPosition(gear) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

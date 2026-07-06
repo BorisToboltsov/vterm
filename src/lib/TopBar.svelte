@@ -1,7 +1,8 @@
 <script lang="ts">
   // Application top bar: a breadcrumb of the active connection (alias · user@host:port)
-  // plus quick actions — monitoring (only while an SSH session is connected) and
-  // settings. Pure presentational; the parent wires the callbacks and the copy.
+  // plus quick actions — recording (REC toggle + library), monitoring (only while an
+  // SSH session is connected) and settings. Pure presentational; the parent wires the
+  // callbacks, the copy and the recording state.
   import Icon from "./Icon.svelte";
   import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
@@ -10,6 +11,10 @@
     title,
     subtitle,
     connected,
+    canRecord = false,
+    recording = false,
+    onToggleRecording,
+    onOpenRecordings,
     onOpenMonitoring,
     onOpenSettings,
   }: {
@@ -19,6 +24,12 @@
     subtitle: string;
     /** SSH session is connected — enables the monitoring action. */
     connected: boolean;
+    /** The active tab is live, so its session can be recorded (shows REC). */
+    canRecord?: boolean;
+    /** A recording is currently running on the active tab. */
+    recording?: boolean;
+    onToggleRecording: () => void;
+    onOpenRecordings: () => void;
     onOpenMonitoring: () => void;
     onOpenSettings: () => void;
   } = $props();
@@ -46,6 +57,34 @@
         <Icon name="barChart" size={15} />
       </button>
     {/if}
+    {#if canRecord}
+      <button
+        data-testid="record-toggle"
+        class="flex items-center gap-1 rounded px-2 py-1 text-xs {recording
+          ? 'text-danger'
+          : 'text-muted hover:bg-edge hover:text-white'}"
+        use:tooltip={recording ? t("recordings.stop") : t("recordings.start")}
+        aria-label={recording ? t("recordings.stop") : t("recordings.start")}
+        aria-pressed={recording}
+        onclick={onToggleRecording}
+      >
+        <span
+          class="h-2.5 w-2.5 rounded-full {recording
+            ? 'animate-pulse bg-danger'
+            : 'border border-current'}"
+        ></span>
+        REC
+      </button>
+    {/if}
+    <button
+      data-testid="open-recordings"
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      use:tooltip={t("recordings.title")}
+      aria-label={t("recordings.title")}
+      onclick={onOpenRecordings}
+    >
+      <Icon name="activity" size={15} />
+    </button>
     <button
       class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
       use:tooltip={t("topbar.settings")}
