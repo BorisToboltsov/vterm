@@ -228,7 +228,9 @@
       "Read(//Users/boristoboltsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/async-http-proxy-1.2.5/src/**)",
       "Read(//Users/boristoboltsov/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/tokio-socks-0.5.3/src/**)",
       "Bash(git --no-pager diff --stat -- src-tauri/src src/lib src/routes)",
-      "Bash(grep -nE 'name|IconName|type|props|$props|:')"
+      "Bash(grep -nE 'name|IconName|type|props|$props|:')",
+      "Bash(sed -i '' 's/\"version\": \"0.21.3\"/\"version\": \"0.21.4\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.3\"/version = \"0.21.4\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

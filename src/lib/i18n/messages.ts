@@ -490,6 +490,10 @@ export const en = {
   "palette.hideAi": "Hide AI chat",
   "settings.close": "Close settings",
   "settings.resetDefaults": "Reset to defaults",
+  "settings.resetConfirmTitle": "Reset all settings?",
+  "settings.resetConfirmBody":
+    "This resets ALL settings to their defaults: appearance, terminal, connection, files, sessions and the assistant. This cannot be undone.",
+  "settings.resetConfirm": "Reset everything",
 
   "settings.sectionAppearance": "Appearance",
   "settings.theme": "Theme",
@@ -1364,6 +1368,10 @@ const ru: Record<MessageKey, string> = {
   "palette.hideAi": "Скрыть ИИ-чат",
   "settings.close": "Закрыть настройки",
   "settings.resetDefaults": "Сбросить к значениям по умолчанию",
+  "settings.resetConfirmTitle": "Сбросить все настройки?",
+  "settings.resetConfirmBody":
+    "Это сбросит ВСЕ настройки к значениям по умолчанию: оформление, терминал, подключение, файлы, сессии и ассистента. Отменить это действие нельзя.",
+  "settings.resetConfirm": "Сбросить всё",
 
   "settings.sectionAppearance": "Внешний вид",
   "settings.theme": "Тема",

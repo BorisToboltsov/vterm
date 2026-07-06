@@ -7,6 +7,7 @@
   } from "./settings.svelte";
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
   import AiSettingsSection from "./AiSettingsSection.svelte";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
@@ -61,6 +62,8 @@
   // searching — every section matching the query across all groups.
   let search = $state("");
   let activeGroup = $state<string>(DEFAULT_SETTINGS_GROUP);
+  // Reset-to-defaults requires explicit confirmation — it wipes every setting.
+  let resetConfirm = $state(false);
   const searching = $derived(search.trim().length > 0);
   const visibleIds = $derived(visibleSectionIds(search, activeGroup));
   const show = (id: string) => visibleIds.has(id);
@@ -481,8 +484,9 @@
 
       <div class="flex items-center justify-between border-t border-edge px-4 py-3">
         <button
+          data-testid="settings-reset"
           class="rounded px-2 py-1 text-xs text-muted hover:text-danger"
-          onclick={resetSettings}>{t("settings.resetDefaults")}</button
+          onclick={() => (resetConfirm = true)}>{t("settings.resetDefaults")}</button
         >
         <button
           class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
@@ -491,5 +495,18 @@
       </div>
     </div>
   </div>
+
+  <ConfirmDialog
+    open={resetConfirm}
+    title={t("settings.resetConfirmTitle")}
+    confirmLabel={t("settings.resetConfirm")}
+    onconfirm={() => {
+      resetSettings();
+      resetConfirm = false;
+    }}
+    oncancel={() => (resetConfirm = false)}
+  >
+    {t("settings.resetConfirmBody")}
+  </ConfirmDialog>
 {/if}
 

@@ -16,6 +16,7 @@ vi.mock("./api", () => ({
 
 import SettingsPanel from "./SettingsPanel.svelte";
 import { settings } from "./settings.svelte";
+import { DEFAULT_THEME_ID } from "./themes";
 
 beforeEach(() => {
   localStorage.clear();
@@ -248,6 +249,28 @@ describe("SettingsPanel — appearance & search", () => {
     screen.getByTestId("settings-group-general").focus();
     await userEvent.keyboard("{ArrowDown}");
     expect(screen.getByTestId("settings-active-header")).toHaveTextContent("Appearance");
+  });
+
+  it("reset-to-defaults asks for confirmation before wiping settings", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    // Change a setting away from its default so we can see the reset take effect.
+    settings.theme = "nord";
+
+    // Clicking the footer button only opens the confirmation dialog — nothing reset yet.
+    await userEvent.click(screen.getByTestId("settings-reset"));
+    expect(screen.getByText("Reset all settings?")).toBeInTheDocument();
+    expect(settings.theme).toBe("nord");
+
+    // Cancelling leaves settings untouched and closes the dialog.
+    await userEvent.click(screen.getByText("Cancel"));
+    expect(screen.queryByText("Reset all settings?")).toBeNull();
+    expect(settings.theme).toBe("nord");
+
+    // Confirming actually resets to defaults.
+    await userEvent.click(screen.getByTestId("settings-reset"));
+    await userEvent.click(screen.getByTestId("confirm"));
+    expect(settings.theme).toBe(DEFAULT_THEME_ID);
+    expect(screen.queryByText("Reset all settings?")).toBeNull();
   });
 
   it("AI assistant (Phase 17): off by default, can add an endpoint", async () => {
