@@ -290,6 +290,41 @@ describe("ServerFormModal proxy", () => {
     expect(saveProxySecret).toHaveBeenCalledWith("s1", "s3cret");
   });
 
+  it("sends a SOCKS5 proxy with optional basic auth and no SSH-only fields", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
+    // SOCKS5 shows optional basic auth (hint), not the SSH auth-method radios.
+    expect(
+      screen.getByRole("button", {
+        name: "Optional — only if the proxy requires authentication.",
+      }),
+    ).toBeInTheDocument();
+    await userEvent.type(screen.getByTestId("proxy-host"), "socks.corp");
+    await userEvent.clear(screen.getByTestId("proxy-port"));
+    await userEvent.type(screen.getByTestId("proxy-port"), "1080");
+    await userEvent.type(screen.getByTestId("proxy-username"), "u");
+    await userEvent.type(screen.getByTestId("proxy-secret"), "p");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({
+          kind: "socks5",
+          host: "socks.corp",
+          port: 1080,
+          username: "u",
+          hasSavedPassword: true,
+        }),
+      }),
+    );
+    expect(saveProxySecret).toHaveBeenCalledWith("s1", "p");
+  });
+
   it("blocks save when the proxy is enabled but its host is invalid", async () => {
     const { comp } = renderForm();
     comp.openAdd();

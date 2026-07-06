@@ -360,9 +360,11 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `connphase.ts` — окно подключения (0.11.2): `phaseSteps` (первая фаза `active`,
   остальные `pending`; ранние → `done`, поздние → `pending`; `errored` красит
   активную фазу в `error`; неизвестная фаза → первый шаг `active`) и порядок
-  `PHASE_ORDER`, совпадающий со стадиями бэкенда; **Фаза 21 (proxy):** без `hasProxy`
-  шаг `proxy` **не** добавляется (вариант A); с `hasProxy` он идёт первым (`active`/
-  `done`/`error` по позиции);
+  `PHASE_ORDER`, совпадающий со стадиями бэкенда; **Фаза 21 (proxy-подстадии):** без
+  `proxy` группы нет (все шаги `group:"server"`); `proxy:"jump"` даёт три подшага
+  (`proxyConnecting`/`proxyAuthenticating`/`proxyTunnel`, `group:"proxy"`) перед целью,
+  `proxy:"tcp"` — два (`proxyConnecting`/`proxyHandshake`); состояние `done`/`active`/
+  `error` по позиции, провал замирает на нужном подшаге;
 - `stores/toasts.svelte.ts` — `notify`/`notifyError`/`notifySuccess`/`notifyInfo`,
   авто-дисмисс по `TOAST_TTL` (fake-таймеры), кастомный ttl и sticky (`ttl=0`),
   `dismissToast` (снятие таймера), `clearToasts`;
@@ -523,8 +525,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `alias` и подпись `user@host:port`, `role="status"`; активная фаза с акцентным
   цветом и многоточием, предыдущая фаза как «done». Режим ошибки (0.11.3, проп
   `failed`): упавшая фаза в `text-danger`, заголовок/красная деталь и `role="alert"`,
-  скрытие чек-листа при `showSteps={false}`. **Фаза 21 (proxy):** без `hasProxy` нет
-  шага «Proxy» и строки «через …»; с `hasProxy` + `via` появляются оба.
+  скрытие чек-листа при `showSteps={false}`. **Фаза 21 (proxy-подстадии):** без `proxy` —
+  плоский чек-лист без групп-заголовков; `proxy:"jump"` + `via` рисует две группы
+  (заголовки-адреса прокси/сервера), подшаг «Туннель» и активную «Аутентификация…»;
+  `proxy:"tcp"` показывает «Рукопожатие» и **не** содержит «Туннель».
 - `JsonLogView.test.ts` — табличный JSON-вид (Фаза 10): пустое состояние без записей,
   строка на запись с сообщением, цвет уровня `error` (`text-danger`) в ячейке,
   фильтрация по вводу с обновлением счётчика, нота «нет подходящих записей»,
@@ -569,7 +573,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   подключение — полей прокси нет, в payload `proxy: null`; включение прокси и заполнение
   jump-хоста шлёт объект `proxy` (`kind: "jump"`, host/username/authMethod,
   `hasSavedPassword: true` при введённом секрете) и зовёт `saveProxySecret(id, secret)`
-  (секрет не попадает в профиль); при включённом прокси с невалидным host сейв блокируется
+  (секрет не попадает в профиль); выбор **SOCKS5** показывает необязательный basic-auth
+  (хинт, без SSH-радио), шлёт `kind: "socks5"` с host/port/username и сохраняет пароль
+  через `saveProxySecret`; при включённом прокси с невалидным host сейв блокируется
   (`aria-invalid` на `proxy-host`, `addServer` не вызван).
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный

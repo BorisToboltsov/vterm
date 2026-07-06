@@ -8,7 +8,7 @@
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
-  import { phaseSteps, type ConnPhase } from "./connphase";
+  import { phaseSteps, type ConnPhase, type ProxyShape, type PhaseStep } from "./connphase";
 
   let {
     alias,
@@ -18,7 +18,7 @@
     detail,
     title,
     showSteps = true,
-    hasProxy = false,
+    proxy = null,
     via,
     children,
   }: {
@@ -34,25 +34,35 @@
     title?: string;
     /** Show the phase checklist (hidden for a plain drop after connect). */
     showSteps?: boolean;
-    /** This server connects through a jump host — add the `proxy` step (variant A). */
-    hasProxy?: boolean;
-    /** Jump host address (`host:port`) shown under the target as "via …". */
+    /** Proxy shape — adds the grouped proxy sub-steps (variant B); null → direct. */
+    proxy?: ProxyShape | null;
+    /** Proxy address (`host:port`) shown as the proxy group header. */
     via?: string;
     /** Action buttons (reconnect / re-enter secret), rendered below the host. */
     children?: Snippet;
   } = $props();
 
-  const steps = $derived(phaseSteps(phase, failed, hasProxy));
+  const steps = $derived(phaseSteps(phase, failed, proxy));
+  const proxySteps = $derived(steps.filter((s) => s.group === "proxy"));
+  const serverSteps = $derived(steps.filter((s) => s.group === "server"));
   const heading = $derived(title ?? t("connecting.connectingTo", { alias }));
 
   function phaseLabel(p: ConnPhase): string {
-    return p === "proxy"
-      ? t("connecting.phaseProxy")
-      : p === "connecting"
-        ? t("connecting.phaseConnecting")
-        : p === "authenticating"
-          ? t("connecting.phaseAuth")
-          : t("connecting.phaseSession");
+    switch (p) {
+      // Proxy connect/auth reuse the target labels (the group header disambiguates).
+      case "proxyConnecting":
+      case "connecting":
+        return t("connecting.phaseConnecting");
+      case "proxyAuthenticating":
+      case "authenticating":
+        return t("connecting.phaseAuth");
+      case "proxyTunnel":
+        return t("connecting.phaseTunnel");
+      case "proxyHandshake":
+        return t("connecting.phaseHandshake");
+      default:
+        return t("connecting.phaseSession");
+    }
   }
 
   const labelClass: Record<string, string> = {
@@ -62,6 +72,25 @@
     pending: "text-muted",
   };
 </script>
+
+{#snippet stepRow(step: PhaseStep)}
+  <li class="flex items-center gap-2.5 text-xs">
+    <span class="flex w-4 shrink-0 items-center justify-center">
+      {#if step.state === "done"}
+        <Icon name="check" size={14} class="text-green-500" />
+      {:else if step.state === "error"}
+        <Icon name="close" size={14} class="text-danger" />
+      {:else if step.state === "active"}
+        <span class="conn-spin"></span>
+      {:else}
+        <span class="conn-pending"></span>
+      {/if}
+    </span>
+    <span class={labelClass[step.state]}>
+      {phaseLabel(step.phase)}{step.state === "active" ? "…" : ""}
+    </span>
+  </li>
+{/snippet}
 
 <div
   data-testid="connecting-overlay"
@@ -93,36 +122,45 @@
   </div>
 
   {#if showSteps}
-    <ul class="flex flex-col gap-2.5">
-      {#each steps as step (step.phase)}
-        <li class="flex items-center gap-2.5 text-xs">
-          <span class="flex w-4 shrink-0 items-center justify-center">
-            {#if step.state === "done"}
-              <Icon name="check" size={14} class="text-green-500" />
-            {:else if step.state === "error"}
-              <Icon name="close" size={14} class="text-danger" />
-            {:else if step.state === "active"}
-              <span class="conn-spin"></span>
-            {:else}
-              <span class="conn-pending"></span>
-            {/if}
-          </span>
-          <span class={labelClass[step.state]}>
-            {phaseLabel(step.phase)}{step.state === "active" ? "…" : ""}
-          </span>
-        </li>
-      {/each}
-    </ul>
+    {#if proxy}
+      <!-- Grouped checklist (variant B): proxy sub-steps under the proxy address,
+           then the target steps under the server address. -->
+      <div class="flex flex-col gap-3" data-testid="connecting-groups">
+        <div>
+          <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
+            <Icon name="lock" size={13} class="text-muted" />
+            <span class="font-mono" data-testid="connecting-proxy-header">{via}</span>
+          </div>
+          <ul class="ml-1.5 flex flex-col gap-2 border-l border-edge pl-3">
+            {#each proxySteps as step (step.phase)}
+              {@render stepRow(step)}
+            {/each}
+          </ul>
+        </div>
+        <div>
+          <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
+            <Icon name="server" size={13} class="text-muted" />
+            <span class="font-mono" data-testid="connecting-server-header">{host}</span>
+          </div>
+          <ul class="ml-1.5 flex flex-col gap-2 border-l border-edge pl-3">
+            {#each serverSteps as step (step.phase)}
+              {@render stepRow(step)}
+            {/each}
+          </ul>
+        </div>
+      </div>
+    {:else}
+      <ul class="flex flex-col gap-2.5">
+        {#each serverSteps as step (step.phase)}
+          {@render stepRow(step)}
+        {/each}
+      </ul>
+    {/if}
   {/if}
 
-  <div class="space-y-0.5 text-center">
+  {#if !proxy}
     <p class="font-mono text-xs text-muted">{host}</p>
-    {#if via}
-      <p class="font-mono text-[11px] text-accent/80" data-testid="connecting-via">
-        {t("connecting.viaProxy", { proxy: via })}
-      </p>
-    {/if}
-  </div>
+  {/if}
 
   {#if children}
     <div class="flex flex-wrap items-center justify-center gap-2">

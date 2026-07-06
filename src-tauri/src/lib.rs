@@ -25,7 +25,7 @@ use model::{AuthMethod, ProxyKind, ServerProfile};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use sftp::FileEntry;
-use ssh::{ConnectOptions, Credential, HostKeyPolicy, ProxyJump, SshSession};
+use ssh::{ConnectOptions, Credential, HostKeyPolicy, Proxy, ProxyJump, ProxyTcpAuth, SshSession};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -401,39 +401,58 @@ async fn connect_session(
         }
     };
 
-    // Resolve an optional proxy/jump host. Only the SSH jump kind is implemented;
-    // socks5/http are accepted by the data model but rejected here (typed
-    // `proxy-unsupported`) until those transports land. The jump host's secret
-    // lives in the keychain under the proxy-scoped id (entered via the form).
+    // Resolve an optional proxy to reach the server through. The jump host uses
+    // SSH credentials (password/passphrase in the keychain under the proxy-scoped
+    // id); SOCKS5/HTTP use optional basic auth (a username on the profile + an
+    // optional password in the keychain, same proxy-scoped id).
     let proxy = match &profile.proxy {
         None => None,
-        Some(px) => {
-            if !matches!(px.kind, ProxyKind::Jump) {
-                return Err(AppError::ProxyUnsupported);
+        Some(px) => Some(match px.kind {
+            ProxyKind::Jump => {
+                let cred = match px.auth_method {
+                    AuthMethod::Password => {
+                        let password =
+                            secrets::get_proxy_password(&server_id).ok_or_else(|| {
+                                "proxy password required — set it in the server form".to_string()
+                            })?;
+                        Credential::Password(password)
+                    }
+                    AuthMethod::Key => {
+                        let path = ssh::resolve_key_path(px.key_path.as_deref()).ok_or_else(|| {
+                            "no proxy SSH key set and none found in ~/.ssh — pick a private key file"
+                                .to_string()
+                        })?;
+                        let passphrase = secrets::get_proxy_passphrase(&server_id);
+                        Credential::Key { path, passphrase }
+                    }
+                };
+                Proxy::Jump(ProxyJump {
+                    host: px.host.clone(),
+                    port: px.port,
+                    username: px.username.clone(),
+                    cred,
+                })
             }
-            let cred = match px.auth_method {
-                AuthMethod::Password => {
-                    let password = secrets::get_proxy_password(&server_id).ok_or_else(|| {
-                        "proxy password required — set it in the server form".to_string()
-                    })?;
-                    Credential::Password(password)
+            ProxyKind::Socks5 | ProxyKind::Http => {
+                // Basic auth is optional: only send a username (and read its
+                // password from the keychain) when the profile carries one.
+                let username = Some(px.username.trim())
+                    .filter(|u| !u.is_empty())
+                    .map(str::to_string);
+                let password = if username.is_some() {
+                    secrets::get_proxy_password(&server_id)
+                } else {
+                    None
+                };
+                let auth = ProxyTcpAuth { username, password };
+                let (host, port) = (px.host.clone(), px.port);
+                if matches!(px.kind, ProxyKind::Socks5) {
+                    Proxy::Socks5 { host, port, auth }
+                } else {
+                    Proxy::Http { host, port, auth }
                 }
-                AuthMethod::Key => {
-                    let path = ssh::resolve_key_path(px.key_path.as_deref()).ok_or_else(|| {
-                        "no proxy SSH key set and none found in ~/.ssh — pick a private key file"
-                            .to_string()
-                    })?;
-                    let passphrase = secrets::get_proxy_passphrase(&server_id);
-                    Credential::Key { path, passphrase }
-                }
-            };
-            Some(ProxyJump {
-                host: px.host.clone(),
-                port: px.port,
-                username: px.username.clone(),
-                cred,
-            })
-        }
+            }
+        }),
     };
 
     // Replace any existing session with the same session id.

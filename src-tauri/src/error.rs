@@ -25,12 +25,6 @@ pub enum AppError {
     #[error("proxy-auth-rejected: jump host rejected the credentials")]
     ProxyAuthRejected,
 
-    /// A proxy kind that isn't implemented yet was selected (`socks5`/`http`).
-    /// The data model accepts it, but the transport doesn't exist — surface a
-    /// recognizable marker so the UI can explain it.
-    #[error("proxy-unsupported: this proxy type is not implemented yet")]
-    ProxyUnsupported,
-
     /// No live SSH session is registered for the given id.
     #[error("no active session")]
     NoSession,
@@ -97,9 +91,6 @@ mod tests {
         assert!(AppError::ProxyAuthRejected
             .to_string()
             .contains("proxy-auth-rejected"));
-        assert!(AppError::ProxyUnsupported
-            .to_string()
-            .contains("proxy-unsupported"));
         assert!(AppError::FileChangedOnServer
             .to_string()
             .contains("file-changed"));

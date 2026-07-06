@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.21.0"
+version = "0.21.2"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -28,6 +28,12 @@ serde_json = "1"
 russh = "0.61.2"
 russh-sftp = "2.3.0"
 tokio = { version = "1.52.3", features = ["full"] }
+# Proxy transports for reaching a server (Phase 21): SOCKS5 via tokio-socks and
+# HTTP CONNECT via async-http-proxy. Both hand back a plain byte stream that
+# russh's `connect_stream` runs the SSH session over — same shape as the jump
+# host's `direct-tcpip` channel. (SSH jump host needs no extra crate.)
+tokio-socks = "0.5.2"
+async-http-proxy = { version = "1.2.5", features = ["runtime-tokio", "basic-auth"] }
 directories = "6.0.0"
 tauri-plugin-dialog = "2.7.1"
 # keyring 4.x reorganised features: the 3.x `apple-native`/`windows-native` flags

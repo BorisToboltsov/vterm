@@ -48,21 +48,14 @@ describe("sshErrorView", () => {
     expect(v.detailText).toBe("something went wrong");
   });
 
-  it("maps proxy-auth-rejected to the proxy-auth view, pinned to the proxy phase", () => {
+  it("maps proxy-auth-rejected to the proxy-auth view, pinned to the jump auth sub-step", () => {
     // Checked before the generic auth-rejected (whose text it also contains).
     const v = sshErrorView("Error: proxy-auth-rejected", "connecting");
     expect(v.titleKey).toBe("connecting.proxyAuthFailed");
     expect(v.detailKey).toBe("connecting.proxyAuthDetail");
-    expect(v.phase).toBe("proxy");
+    expect(v.phase).toBe("proxyAuthenticating");
     expect(v.showSteps).toBe(true);
     expect(v.action).toBe("reconnect");
   });
 
-  it("maps proxy-unsupported to the unsupported view on the proxy phase", () => {
-    const v = sshErrorView("Error: proxy-unsupported", "proxy");
-    expect(v.titleKey).toBe("connecting.proxyUnsupported");
-    expect(v.detailKey).toBe("connecting.proxyUnsupportedDetail");
-    expect(v.phase).toBe("proxy");
-    expect(v.action).toBe("reconnect");
-  });
 });

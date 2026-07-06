@@ -41,16 +41,8 @@ export function sshErrorView(status: string, currentPhase: ConnPhase): SshErrorV
     return {
       titleKey: "connecting.proxyAuthFailed",
       detailKey: "connecting.proxyAuthDetail",
-      phase: "proxy",
-      showSteps: true,
-      action: "reconnect",
-    };
-  }
-  if (raw.includes("proxy-unsupported")) {
-    return {
-      titleKey: "connecting.proxyUnsupported",
-      detailKey: "connecting.proxyUnsupportedDetail",
-      phase: "proxy",
+      // Freeze on the jump host's own authentication sub-step.
+      phase: "proxyAuthenticating",
       showSteps: true,
       action: "reconnect",
     };

@@ -57,22 +57,45 @@ describe("ConnectingOverlay", () => {
     expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   });
 
-  it("adds the proxy step and 'via' line only when hasProxy is set", () => {
-    const { rerender } = render(ConnectingOverlay, {
+  it("renders a flat checklist with no group headers for a direct connection", () => {
+    render(ConnectingOverlay, {
       props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "connecting" },
     });
-    // Direct connection: no proxy step, no via line (variant A).
-    expect(screen.queryByText("Proxy")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("connecting-via")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connecting-groups")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("connecting-proxy-header")).not.toBeInTheDocument();
+  });
 
-    rerender({
-      alias: "prod-db",
-      host: "deploy@10.0.0.5:22",
-      phase: "proxy",
-      hasProxy: true,
-      via: "bastion.corp:22",
+  it("groups jump-host sub-steps under the proxy address, target steps under the host", () => {
+    render(ConnectingOverlay, {
+      props: {
+        alias: "prod-db",
+        host: "deploy@10.0.0.5:22",
+        phase: "proxyAuthenticating",
+        proxy: "jump" as const,
+        via: "bastion.corp:22",
+      },
     });
-    expect(screen.getByText("Proxy…")).toBeInTheDocument();
-    expect(screen.getByTestId("connecting-via")).toHaveTextContent("via bastion.corp:22");
+    // Two group headers with the proxy and server addresses.
+    expect(screen.getByTestId("connecting-proxy-header")).toHaveTextContent("bastion.corp:22");
+    expect(screen.getByTestId("connecting-server-header")).toHaveTextContent("deploy@10.0.0.5:22");
+    // Jump host's own auth sub-step is active (accent + ellipsis).
+    expect(screen.getByText("Authentication…").className).toContain("text-accent");
+    // Tunnel sub-step (jump-only) is present and pending.
+    expect(screen.getByText("Tunnel")).toBeInTheDocument();
+  });
+
+  it("shows only connect + handshake proxy sub-steps for a tcp proxy", () => {
+    render(ConnectingOverlay, {
+      props: {
+        alias: "prod-db",
+        host: "deploy@10.0.0.5:22",
+        phase: "proxyHandshake",
+        proxy: "tcp" as const,
+        via: "socks.corp:1080",
+      },
+    });
+    expect(screen.getByText("Handshake…")).toBeInTheDocument();
+    // No SSH "Tunnel" sub-step for a dumb TCP proxy.
+    expect(screen.queryByText("Tunnel")).not.toBeInTheDocument();
   });
 });

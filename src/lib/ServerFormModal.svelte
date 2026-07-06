@@ -238,9 +238,10 @@
         mode === "edit" && editId
           ? await updateServer(editId, payload)
           : await addServer(payload);
-      // Store a just-typed jump-host secret in the keychain (kind follows the
-      // proxy's auth method, handled backend-side).
-      if (useProxy && proxyKind === "jump" && proxySecret.trim()) {
+      // Store a just-typed proxy secret in the keychain — the jump host's
+      // password/passphrase, or the SOCKS5/HTTP basic-auth password (the secret
+      // kind follows the proxy's auth method, handled backend-side).
+      if (useProxy && proxySecret.trim()) {
         await saveProxySecret(saved.id, proxySecret);
       }
       onsaved(saved, mode === "edit" && editId ? "edit" : "add");
@@ -459,13 +460,10 @@
                 bind:value={proxyKind}
               >
                 <option value="jump">{t("page.proxyKindJump")}</option>
-                <option value="socks5">{t("page.proxyKindSocks5")} — {t("page.proxySoon")}</option>
-                <option value="http">{t("page.proxyKindHttp")} — {t("page.proxySoon")}</option>
+                <option value="socks5">{t("page.proxyKindSocks5")}</option>
+                <option value="http">{t("page.proxyKindHttp")}</option>
               </select>
             </label>
-            {#if proxyKind !== "jump"}
-              <p class="mb-2 text-[11px] text-amber-400" role="note">{t("page.proxyUnsupportedNote")}</p>
-            {/if}
 
             <label class="mb-2 block text-xs text-muted">
               {t("page.proxyHost")}
@@ -555,6 +553,37 @@
               <label class="mb-1 block text-xs text-muted">
                 <span class="flex items-center gap-1">
                   {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
+                  <InfoHint text={t("page.proxySecretHint")} />
+                </span>
+                <input
+                  type="password"
+                  data-testid="proxy-secret"
+                  autocomplete="off"
+                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                  bind:value={proxySecret}
+                  placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
+                />
+              </label>
+            </div>
+          {:else}
+            <!-- SOCKS5 / HTTP CONNECT: optional basic auth (username + password). -->
+            <div>
+              <div class="mb-1 flex items-center gap-1 text-xs text-muted">
+                {t("page.authentication")}
+                <InfoHint text={t("page.proxyOptionalAuth")} />
+              </div>
+              <label class="mb-2 block text-xs text-muted">
+                {t("page.proxyUsername")}
+                <input
+                  data-testid="proxy-username"
+                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                  bind:value={proxyUsername}
+                  placeholder="user"
+                />
+              </label>
+              <label class="mb-1 block text-xs text-muted">
+                <span class="flex items-center gap-1">
+                  {t("page.proxyPassword")}
                   <InfoHint text={t("page.proxySecretHint")} />
                 </span>
                 <input

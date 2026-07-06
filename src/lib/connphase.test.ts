@@ -4,9 +4,9 @@ import { phaseSteps, PHASE_ORDER, type ConnPhase } from "./connphase";
 describe("phaseSteps", () => {
   it("marks the first phase active with the rest pending", () => {
     expect(phaseSteps("connecting")).toEqual([
-      { phase: "connecting", state: "active" },
-      { phase: "authenticating", state: "pending" },
-      { phase: "session", state: "pending" },
+      { phase: "connecting", state: "active", group: "server" },
+      { phase: "authenticating", state: "pending", group: "server" },
+      { phase: "session", state: "pending", group: "server" },
     ]);
   });
 
@@ -38,35 +38,63 @@ describe("phaseSteps", () => {
     expect(PHASE_ORDER).toEqual(["connecting", "authenticating", "session"]);
   });
 
-  it("omits the proxy step by default (variant A: direct connection)", () => {
+  it("has no proxy group by default (direct connection)", () => {
     expect(phaseSteps("connecting").map((s) => s.phase)).toEqual([
       "connecting",
       "authenticating",
       "session",
     ]);
+    expect(phaseSteps("connecting").every((s) => s.group === "server")).toBe(true);
   });
 
-  it("prepends the proxy step when hasProxy is set", () => {
-    expect(phaseSteps("proxy", false, true)).toEqual([
-      { phase: "proxy", state: "active" },
-      { phase: "connecting", state: "pending" },
-      { phase: "authenticating", state: "pending" },
-      { phase: "session", state: "pending" },
+  it("prepends the jump host's three sub-phases under the proxy group", () => {
+    const steps = phaseSteps("proxyConnecting", false, "jump");
+    expect(steps.map((s) => s.phase)).toEqual([
+      "proxyConnecting",
+      "proxyAuthenticating",
+      "proxyTunnel",
+      "connecting",
+      "authenticating",
+      "session",
     ]);
+    expect(steps.map((s) => s.group)).toEqual([
+      "proxy",
+      "proxy",
+      "proxy",
+      "server",
+      "server",
+      "server",
+    ]);
+    expect(steps[0].state).toBe("active");
   });
 
-  it("marks the proxy step done once past it", () => {
-    expect(phaseSteps("connecting", false, true).map((s) => s.state)).toEqual([
+  it("gives a tcp proxy (SOCKS5/HTTP) two sub-phases: connect + handshake", () => {
+    const steps = phaseSteps("proxyHandshake", false, "tcp");
+    expect(steps.filter((s) => s.group === "proxy").map((s) => s.phase)).toEqual([
+      "proxyConnecting",
+      "proxyHandshake",
+    ]);
+    // Past the connect sub-phase → done, handshake active, target pending.
+    expect(steps.map((s) => s.state)).toEqual([
       "done",
       "active",
       "pending",
       "pending",
+      "pending",
     ]);
   });
 
-  it("renders the proxy step as error when the jump host failed", () => {
-    expect(phaseSteps("proxy", true, true).map((s) => s.state)).toEqual([
+  it("marks all proxy sub-phases done once on a target phase", () => {
+    const steps = phaseSteps("connecting", false, "jump");
+    expect(steps.slice(0, 3).every((s) => s.state === "done")).toBe(true);
+    expect(steps[3].state).toBe("active");
+  });
+
+  it("freezes the failing proxy sub-phase as error", () => {
+    expect(phaseSteps("proxyAuthenticating", true, "jump").map((s) => s.state)).toEqual([
+      "done",
       "error",
+      "pending",
       "pending",
       "pending",
       "pending",

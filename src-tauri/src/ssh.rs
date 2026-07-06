@@ -7,6 +7,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::store;
+use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
 use russh::client::{self, Handle, Msg};
 use russh::keys::{load_secret_key, ssh_key, PrivateKeyWithHashAlg};
 use russh::{ChannelMsg, ChannelWriteHalf};
@@ -14,9 +15,11 @@ use russh_sftp::client::SftpSession;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
+use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
+use tokio_socks::tcp::Socks5Stream;
 use zeroize::Zeroizing;
 
 /// After `KEEPALIVE_MAX` unanswered keepalives the connection is dropped
@@ -66,11 +69,12 @@ pub fn install_output_event(session_id: &str) -> String {
 }
 
 /// Event name carrying connection-phase progress for the connecting overlay.
-/// Payload is one of `"proxy"` (connecting + authenticating to the jump host,
-/// emitted only when a proxy is configured), `"connecting"` (TCP + SSH handshake
-/// with the target), `"authenticating"`, `"session"` (opening the channel / PTY /
-/// shell). These mirror the sequential stages of [`connect`] below, so the UI
-/// shows a real (not faux) step indicator.
+/// Payloads mirror the sequential stages of [`connect`], so the UI shows a real
+/// (not faux) step indicator. When a proxy is configured its own sub-phases are
+/// emitted first: jump host → `"proxyConnecting"`, `"proxyAuthenticating"`,
+/// `"proxyTunnel"`; SOCKS5/HTTP → `"proxyConnecting"`, `"proxyHandshake"`. Then
+/// the target: `"connecting"` (TCP + SSH handshake), `"authenticating"`,
+/// `"session"` (opening the channel / PTY / shell).
 pub fn phase_event(session_id: &str) -> String {
     format!("term://phase/{session_id}")
 }
@@ -448,6 +452,31 @@ pub struct ProxyJump {
     pub cred: Credential,
 }
 
+/// Optional basic auth for a "dumb" TCP proxy (SOCKS5 / HTTP CONNECT): a
+/// username with an optional password. `None` username → connect without auth.
+pub struct ProxyTcpAuth {
+    pub username: Option<String>,
+    pub password: Option<Zeroizing<String>>,
+}
+
+/// A proxy to reach the target server through. `Jump` tunnels via an intermediate
+/// SSH server (`direct-tcpip`); `Socks5`/`Http` route the target TCP connection
+/// through a generic proxy. All three produce a byte stream the real SSH session
+/// then runs over via `connect_stream`.
+pub enum Proxy {
+    Jump(ProxyJump),
+    Socks5 {
+        host: String,
+        port: u16,
+        auth: ProxyTcpAuth,
+    },
+    Http {
+        host: String,
+        port: u16,
+        auth: ProxyTcpAuth,
+    },
+}
+
 /// Tunables passed from the frontend Settings panel, plus the initial PTY size.
 pub struct ConnectOptions {
     pub term_type: String,
@@ -457,8 +486,93 @@ pub struct ConnectOptions {
     /// Initial terminal size for the shell's PTY request.
     pub cols: u32,
     pub rows: u32,
-    /// Optional jump host to tunnel through (None → connect directly).
-    pub proxy: Option<ProxyJump>,
+    /// Optional proxy to reach the server through (None → connect directly).
+    pub proxy: Option<Proxy>,
+}
+
+/// The generic "connection timed out" error, shared by direct and proxied paths.
+fn conn_timeout(d: Duration) -> AppError {
+    AppError::Message(format!("connection timed out after {}s", d.as_secs()))
+}
+
+/// Open a plain TCP connection to a SOCKS5/HTTP proxy. Kept separate from the
+/// proxy handshake so each is its own observable phase (`proxyConnecting` then
+/// `proxyHandshake`) — the connecting overlay shows real, not faux, sub-steps.
+async fn proxy_tcp_connect(host: &str, port: u16, timeout_dur: Duration) -> AppResult<TcpStream> {
+    timeout(timeout_dur, TcpStream::connect((host, port)))
+        .await
+        .map_err(|_| {
+            AppError::Message(format!(
+                "proxy connection timed out after {}s",
+                timeout_dur.as_secs()
+            ))
+        })?
+        .map_err(|e| AppError::Message(format!("proxy connection failed: {e}")))
+}
+
+/// SOCKS5 negotiation over an already-connected `socket` (optional user/pass
+/// auth). The returned stream is what the SSH session runs over.
+async fn socks5_negotiate(
+    socket: TcpStream,
+    target_host: &str,
+    target_port: u16,
+    auth: &ProxyTcpAuth,
+    timeout_dur: Duration,
+) -> AppResult<Socks5Stream<TcpStream>> {
+    let target = (target_host, target_port);
+    let negotiate = async {
+        match &auth.username {
+            Some(user) => {
+                let pass = auth.password.as_deref().map(|p| p.as_str()).unwrap_or("");
+                Socks5Stream::connect_with_password_and_socket(socket, target, user, pass).await
+            }
+            None => Socks5Stream::connect_with_socket(socket, target).await,
+        }
+    };
+    timeout(timeout_dur, negotiate)
+        .await
+        .map_err(|_| {
+            AppError::Message(format!(
+                "SOCKS5 handshake timed out after {}s",
+                timeout_dur.as_secs()
+            ))
+        })?
+        .map_err(|e| AppError::Message(format!("SOCKS5 proxy failed: {e}")))
+}
+
+/// HTTP CONNECT handshake over an already-connected `socket` (optional basic
+/// auth). The returned stream is what the SSH session runs over.
+async fn http_negotiate(
+    mut socket: TcpStream,
+    target_host: &str,
+    target_port: u16,
+    auth: &ProxyTcpAuth,
+    timeout_dur: Duration,
+) -> AppResult<TcpStream> {
+    let negotiate = async {
+        match &auth.username {
+            Some(user) => {
+                let pass = auth.password.as_deref().map(|p| p.as_str()).unwrap_or("");
+                http_connect_tokio_with_basic_auth(
+                    &mut socket,
+                    target_host,
+                    target_port,
+                    user,
+                    pass,
+                )
+                .await
+            }
+            None => http_connect_tokio(&mut socket, target_host, target_port).await,
+        }
+        .map_err(|e| AppError::Message(format!("HTTP CONNECT failed: {e}")))?;
+        Ok::<TcpStream, AppError>(socket)
+    };
+    timeout(timeout_dur, negotiate).await.map_err(|_| {
+        AppError::Message(format!(
+            "HTTP CONNECT timed out after {}s",
+            timeout_dur.as_secs()
+        ))
+    })?
 }
 
 /// Map a russh handshake error to a typed `AppError`, recognizing a rejected host
@@ -537,70 +651,96 @@ pub async fn connect(
         policy: opts.host_key_policy,
     };
 
-    // Optional proxy hop (Phase 0): connect + authenticate to the jump host, then
-    // open a `direct-tcpip` channel to the target. The jump handle is kept alive
-    // for the session's lifetime — dropping it would tear down the tunnel.
+    // Phase 1: reach the target's SSH transport (host-key check), optionally via a
+    // proxy. Each branch yields the target `Handle`. The jump host emits its own
+    // `proxy` phase first and its SSH `Handle` is kept alive for the session's
+    // lifetime (dropping it tears down the `direct-tcpip` tunnel); SOCKS5/HTTP
+    // hand ownership of their stream to `connect_stream`, so nothing extra to keep.
     let mut proxy_handle: Option<Handle<ClientHandler>> = None;
-    let target_stream = if let Some(p) = opts.proxy {
-        let _ = app.emit(&phase_event(&session_id), "proxy");
-        let jump_handler = ClientHandler {
-            host: p.host.clone(),
-            port: p.port,
-            policy: opts.host_key_policy,
-        };
-        let mut jump = timeout(
-            connect_timeout,
-            client::connect(config.clone(), (p.host.as_str(), p.port), jump_handler),
-        )
-        .await
-        .map_err(|_| {
-            AppError::Message(format!(
-                "proxy connection timed out after {}s",
-                connect_timeout.as_secs()
-            ))
-        })?
-        .map_err(map_handshake_err)?;
-        if !authenticate(&mut jump, &p.username, p.cred, connect_timeout).await? {
-            return Err(AppError::ProxyAuthRejected);
-        }
-        let channel = jump
-            .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
+    let mut handle = match opts.proxy {
+        None => {
+            let _ = app.emit(&phase_event(&session_id), "connecting");
+            timeout(
+                connect_timeout,
+                client::connect(config, (host, port), handler),
+            )
             .await
-            .map_err(|e| format!("proxy tunnel to {host}:{port} failed: {e}"))?;
-        proxy_handle = Some(jump);
-        Some(channel.into_stream())
-    } else {
-        None
-    };
-
-    // Phase 1: TCP connect + SSH transport handshake (host-key check) — over the
-    // proxy tunnel when present, otherwise a direct TCP connection.
-    let _ = app.emit(&phase_event(&session_id), "connecting");
-    let mut handle = match target_stream {
-        Some(stream) => timeout(
-            connect_timeout,
-            client::connect_stream(config, stream, handler),
-        )
-        .await
-        .map_err(|_| {
-            AppError::Message(format!(
-                "connection timed out after {}s",
-                connect_timeout.as_secs()
-            ))
-        })?
-        .map_err(map_handshake_err)?,
-        None => timeout(
-            connect_timeout,
-            client::connect(config, (host, port), handler),
-        )
-        .await
-        .map_err(|_| {
-            AppError::Message(format!(
-                "connection timed out after {}s",
-                connect_timeout.as_secs()
-            ))
-        })?
-        .map_err(map_handshake_err)?,
+            .map_err(|_| conn_timeout(connect_timeout))?
+            .map_err(map_handshake_err)?
+        }
+        Some(Proxy::Jump(p)) => {
+            // Jump host mirrors a full SSH connect: its own connect → auth →
+            // tunnel sub-phases, each a real emitted stage.
+            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            let jump_handler = ClientHandler {
+                host: p.host.clone(),
+                port: p.port,
+                policy: opts.host_key_policy,
+            };
+            let mut jump = timeout(
+                connect_timeout,
+                client::connect(config.clone(), (p.host.as_str(), p.port), jump_handler),
+            )
+            .await
+            .map_err(|_| conn_timeout(connect_timeout))?
+            .map_err(map_handshake_err)?;
+            let _ = app.emit(&phase_event(&session_id), "proxyAuthenticating");
+            if !authenticate(&mut jump, &p.username, p.cred, connect_timeout).await? {
+                return Err(AppError::ProxyAuthRejected);
+            }
+            let _ = app.emit(&phase_event(&session_id), "proxyTunnel");
+            let channel = jump
+                .channel_open_direct_tcpip(host.to_string(), port as u32, "127.0.0.1", 0)
+                .await
+                .map_err(|e| format!("proxy tunnel to {host}:{port} failed: {e}"))?;
+            proxy_handle = Some(jump);
+            let _ = app.emit(&phase_event(&session_id), "connecting");
+            timeout(
+                connect_timeout,
+                client::connect_stream(config, channel.into_stream(), handler),
+            )
+            .await
+            .map_err(|_| conn_timeout(connect_timeout))?
+            .map_err(map_handshake_err)?
+        }
+        Some(Proxy::Socks5 {
+            host: phost,
+            port: pport,
+            auth,
+        }) => {
+            // TCP connect and SOCKS negotiation are separate awaits → separate
+            // `proxyConnecting` / `proxyHandshake` sub-phases.
+            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
+            let _ = app.emit(&phase_event(&session_id), "proxyHandshake");
+            let stream = socks5_negotiate(socket, host, port, &auth, connect_timeout).await?;
+            let _ = app.emit(&phase_event(&session_id), "connecting");
+            timeout(
+                connect_timeout,
+                client::connect_stream(config, stream, handler),
+            )
+            .await
+            .map_err(|_| conn_timeout(connect_timeout))?
+            .map_err(map_handshake_err)?
+        }
+        Some(Proxy::Http {
+            host: phost,
+            port: pport,
+            auth,
+        }) => {
+            let _ = app.emit(&phase_event(&session_id), "proxyConnecting");
+            let socket = proxy_tcp_connect(&phost, pport, connect_timeout).await?;
+            let _ = app.emit(&phase_event(&session_id), "proxyHandshake");
+            let stream = http_negotiate(socket, host, port, &auth, connect_timeout).await?;
+            let _ = app.emit(&phase_event(&session_id), "connecting");
+            timeout(
+                connect_timeout,
+                client::connect_stream(config, stream, handler),
+            )
+            .await
+            .map_err(|_| conn_timeout(connect_timeout))?
+            .map_err(map_handshake_err)?
+        }
     };
 
     // Phase 2: authentication (password or public key).

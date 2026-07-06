@@ -16,7 +16,7 @@
 | 18 | Крупный структурный рефакторинг (`lib.rs`/`+page.svelte`/`api.ts`) + SFTP-перф | ✅ Реализовано |
 | 19 | Мажорные версии зависимостей (`keyring`/`reqwest`/`sha2`/vite-стек) | ✅ Реализовано |
 | 20 | ИИ-агент: security-аудит (adversarial pass) | ✅ Реализовано |
-| 21 | Proxy/jump host на запись сервера (SSH ProxyJump; SOCKS5/HTTP — заложены) | ✅ Реализовано |
+| 21 | Proxy/jump host на запись сервера (SSH ProxyJump + SOCKS5 + HTTP CONNECT) | ✅ Реализовано |
 
 ---
 
@@ -792,41 +792,53 @@ audit`) — если нет, задокументировать игнор в `d
 
 ---
 
-## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0)
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.2)
 
 Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
-сервера** (у одного может быть proxy, у другого нет). На старте реализован **SSH jump
-host (ProxyJump)**; типы `SOCKS5`/`HTTP CONNECT` **заложены в модель и UI** (выбор типа
-виден, помечен «скоро»), но при подключении возвращают типизированную ошибку
-`proxy-unsupported` — до реализации транспорта следующим шагом.
+сервера** (у одного может быть proxy, у другого нет). Реализованы **все три типа**:
+**SSH jump host (ProxyJump)** (v0.21.0), **SOCKS5** и **HTTP CONNECT** (v0.21.1). Все
+три отдают russh готовый байтовый поток, поверх которого идёт реальная SSH-сессия
+(`connect_stream`), поэтому вся текущая аутентификация/SFTP не меняется.
 
 - **Модель данных (оба стека).** `ProxyKind` (`jump`/`socks5`/`http`) + `ServerProxy`
   (`kind`, `host`, `port`, `username`, `authMethod`, `keyPath`, `hasSavedPassword`);
   поле `proxy: Option<ServerProxy>` на `ServerProfile`/`NewServerProfile`
   (`#[serde(default)]` — старые профили остаются валидными). Зеркало —
   [types.ts](../src/lib/types.ts).
-- **Транспорт jump host** ([ssh.rs](../src-tauri/src/ssh.rs)). Отдельная фаза
-  подключения `proxy`: сперва connect + auth к jump-хосту (свой host-key-чек и секреты),
-  затем `channel_open_direct_tcpip` → `connect_stream` реальной SSH-сессии по туннелю.
-  Хендл jump-хоста хранится в `SshSession` (живёт весь сеанс — иначе туннель рвётся).
-  Общий помощник `authenticate` для цели и прокси; `map_handshake_err` для host-key.
-- **Секреты прокси.** Пароль/passphrase jump-хоста — в **keychain** под proxy-scoped id
-  (`{id}::proxy`, [secrets.rs](../src-tauri/src/secrets.rs)), вводятся в **форме сервера**
-  и сохраняются командой `save_proxy_secret`. `forget_secrets`/`delete_all` чистят и
-  прокси-секреты. Типизированные ошибки `ProxyAuthRejected`/`ProxyUnsupported`
-  ([error.rs](../src-tauri/src/error.rs), маркеры `proxy-auth-rejected`/`proxy-unsupported`).
-- **Экран загрузки — вариант A** (скрыт, когда не используется). `phaseSteps(current,
-  errored, hasProxy)` **добавляет шаг `proxy` только при наличии прокси** — прямое
-  подключение выглядит как раньше (3 шага). [ConnectingOverlay](../src/lib/ConnectingOverlay.svelte)
-  получает `hasProxy` + строку «через {host:port}»; провал на фазе прокси замирает на
-  `Proxy ✗` ([ssherror.ts](../src/lib/ssherror.ts)).
+- **Транспорты** ([ssh.rs](../src-tauri/src/ssh.rs), enum `Proxy`). Отдельная фаза
+  `proxy` эмитится первой при любом типе.
+  - **jump host:** connect + auth к бастиону (свой host-key-чек и секреты), затем
+    `channel_open_direct_tcpip` → `connect_stream` по туннелю. Хендл jump-хоста хранится
+    в `SshSession` (живёт весь сеанс — иначе туннель рвётся).
+  - **SOCKS5** (`tokio-socks`) и **HTTP CONNECT** (`async-http-proxy`): TCP-поток к цели
+    через прокси (опциональный basic-auth: username на профиле + пароль в keychain), затем
+    тот же `connect_stream`. Владение потоком уходит в SSH-сессию, доп. хендл не нужен.
+  - Общий помощник `authenticate` для jump/цели; `map_handshake_err` для host-key;
+    `conn_timeout`/таймауты на каждый прокси.
+- **Секреты прокси.** Секрет (пароль/passphrase jump-хоста или пароль SOCKS5/HTTP) — в
+  **keychain** под proxy-scoped id (`{id}::proxy`, [secrets.rs](../src-tauri/src/secrets.rs)),
+  вводится в **форме сервера**, сохраняется командой `save_proxy_secret`.
+  `forget_secrets`/`delete_all` чистят и прокси-секреты. Ошибка `ProxyAuthRejected`
+  ([error.rs](../src-tauri/src/error.rs), маркер `proxy-auth-rejected`; матчинг проверяется
+  раньше общего `auth-rejected`, чей текст он содержит).
+- **Экран загрузки — сгруппированные подстадии** (v0.21.2, вариант B). Прокси
+  эмитит **свои подстадии** отдельными событиями: jump host →
+  `proxyConnecting`/`proxyAuthenticating`/`proxyTunnel` (как полноценный SSH-connect к
+  бастиону), SOCKS5/HTTP → `proxyConnecting`/`proxyHandshake` (TCP-connect и негоциация —
+  раздельные `await`, для SOCKS5 через socket-вариант `tokio-socks`). Чистый маппинг —
+  `phaseSteps(current, errored, proxy)` (`proxy: "jump"|"tcp"|null`) возвращает шаги с
+  тегом группы `proxy`/`server`; [ConnectingOverlay](../src/lib/ConnectingOverlay.svelte)
+  рисует две группы с заголовками (адрес прокси / адрес сервера) и отступом. Без прокси —
+  плоский чек-лист, как раньше (3 шага). Провал замирает на конкретном подшаге
+  (`proxy-auth-rejected` → `proxyAuthenticating`, [ssherror.ts](../src/lib/ssherror.ts)).
 - **Форма сервера** ([ServerFormModal](../src/lib/ServerFormModal.svelte)) — секция «Proxy /
-  jump host»: чекбокс включения, выбор типа (jump активен; socks5/http — «скоро» + предупреждение),
-  host/port/user/auth/ключ/секрет с валидацией.
+  jump host»: чекбокс включения, выбор типа, host/port; для **jump** — username + метод
+  аутентификации (пароль/ключ) + файл ключа + секрет; для **SOCKS5/HTTP** — опциональные
+  username + пароль (basic-auth). Валидация host/port (и username для jump).
 - **Тесты:** `model.rs` (round-trip + `ProxyKind`), `connphase.test.ts` (шаг proxy,
-  вариант A), `ssherror.test.ts` (proxy-маркеры), `ConnectingOverlay.test.ts` (шаг+«через»),
-  `ServerFormModal.test.ts` (payload proxy + `saveProxySecret` + валидация). Доки:
-  GUIDE/README/INVARIANTS/TESTS.
+  вариант A), `ssherror.test.ts` (`proxy-auth-rejected`), `ConnectingOverlay.test.ts`
+  (шаг+«через»), `ServerFormModal.test.ts` (payload jump + socks5, `saveProxySecret`,
+  валидация). Доки: GUIDE/README/INVARIANTS/TESTS.
 
 ---
 
