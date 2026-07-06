@@ -7,6 +7,7 @@
   // owns the phase/identity props and wires the reconnect/re-auth actions.
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import { t } from "./i18n";
   import { phaseSteps, type ConnPhase, type ProxyShape, type PhaseStep } from "./connphase";
 
@@ -92,6 +93,20 @@
   </li>
 {/snippet}
 
+{#snippet group(icon: IconName, label: string, testid: string, groupSteps: PhaseStep[])}
+  <div>
+    <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
+      <Icon name={icon} size={13} class="text-muted" />
+      <span class="font-mono" data-testid={testid}>{label}</span>
+    </div>
+    <ul class="ml-1.5 flex flex-col gap-2 border-l border-edge pl-3">
+      {#each groupSteps as step (step.phase)}
+        {@render stepRow(step)}
+      {/each}
+    </ul>
+  </div>
+{/snippet}
+
 <div
   data-testid="connecting-overlay"
   class="absolute inset-0 z-20 flex flex-col items-center justify-center gap-5 bg-panel p-6"
@@ -122,43 +137,15 @@
   </div>
 
   {#if showSteps}
-    {#if proxy}
-      <!-- Grouped checklist (variant B): proxy sub-steps under the proxy address,
-           then the target steps under the server address. -->
-      <div class="flex flex-col gap-3" data-testid="connecting-groups">
-        <div>
-          <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
-            <Icon name="lock" size={13} class="text-muted" />
-            <span class="font-mono" data-testid="connecting-proxy-header">{via}</span>
-          </div>
-          <ul class="ml-1.5 flex flex-col gap-2 border-l border-edge pl-3">
-            {#each proxySteps as step (step.phase)}
-              {@render stepRow(step)}
-            {/each}
-          </ul>
-        </div>
-        <div>
-          <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
-            <Icon name="server" size={13} class="text-muted" />
-            <span class="font-mono" data-testid="connecting-server-header">{host}</span>
-          </div>
-          <ul class="ml-1.5 flex flex-col gap-2 border-l border-edge pl-3">
-            {#each serverSteps as step (step.phase)}
-              {@render stepRow(step)}
-            {/each}
-          </ul>
-        </div>
-      </div>
-    {:else}
-      <ul class="flex flex-col gap-2.5">
-        {#each serverSteps as step (step.phase)}
-          {@render stepRow(step)}
-        {/each}
-      </ul>
-    {/if}
-  {/if}
-
-  {#if !proxy}
+    <!-- Grouped checklist (variant B): the server steps always sit under a server
+         header; when a proxy is used its sub-steps sit under a proxy header above. -->
+    <div class="flex flex-col gap-3" data-testid="connecting-groups">
+      {#if proxySteps.length > 0}
+        {@render group("lock", via ?? "", "connecting-proxy-header", proxySteps)}
+      {/if}
+      {@render group("server", host, "connecting-server-header", serverSteps)}
+    </div>
+  {:else}
     <p class="font-mono text-xs text-muted">{host}</p>
   {/if}
 

@@ -57,11 +57,13 @@ describe("ConnectingOverlay", () => {
     expect(screen.queryByText("Connection")).not.toBeInTheDocument();
   });
 
-  it("renders a flat checklist with no group headers for a direct connection", () => {
+  it("nests a direct connection under a single server group (no proxy header)", () => {
     render(ConnectingOverlay, {
       props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "connecting" },
     });
-    expect(screen.queryByTestId("connecting-groups")).not.toBeInTheDocument();
+    // Unified nested look: a server group header with the host, but no proxy group.
+    expect(screen.getByTestId("connecting-groups")).toBeInTheDocument();
+    expect(screen.getByTestId("connecting-server-header")).toHaveTextContent("deploy@10.0.0.5:22");
     expect(screen.queryByTestId("connecting-proxy-header")).not.toBeInTheDocument();
   });
 
