@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.21.17"
+version = "0.21.18"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"

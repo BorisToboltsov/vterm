@@ -30,6 +30,7 @@
     writeToTerminal,
   } from "./api";
   import type { ConnPhase } from "./connphase";
+  import { accumulatePinch } from "./termzoom";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { readClipboard, writeClipboard } from "./clipboard";
 
@@ -397,6 +398,9 @@
     fit.fit();
     onresize?.(term.cols, term.rows);
 
+    // Capture-phase, non-passive so preventDefault beats xterm's scroll + page zoom.
+    container.addEventListener("wheel", onZoomWheel, { capture: true, passive: false });
+
     // Shell integration: OSC 7 reports the shell's cwd (file:// URI) on `cd`. We
     // surface it so the file panels can follow the terminal (opt-in per tab). No-op
     // when the shell doesn't emit it — we never guess the path from the prompt.
@@ -553,6 +557,21 @@
     }
   }
 
+  // Trackpad pinch (and Ctrl+wheel) zoom the console font. The browser reports
+  // both as a wheel event with ctrlKey set. Handled in the capture phase so we
+  // preventDefault before xterm's own viewport handler scrolls the buffer, and
+  // before the WebView zooms the whole page. Stepping math lives in termzoom.ts.
+  let pinchAccum = 0;
+  function onZoomWheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const { size, accum } = accumulatePinch(settings.fontSize, pinchAccum, e.deltaY);
+    pinchAccum = accum;
+    // The appearance $effect live-applies the new size and refits the terminal.
+    if (size !== settings.fontSize) settings.fontSize = size;
+  }
+
   // A short WebAudio blip for the audible bell (no asset needed).
   function beep() {
     try {
@@ -632,6 +651,7 @@
 
   onDestroy(() => {
     observer?.disconnect();
+    container?.removeEventListener("wheel", onZoomWheel, { capture: true });
     unlisten.forEach((u) => u());
     disconnect(sessionId).catch(() => {});
     searchAddon?.dispose();
