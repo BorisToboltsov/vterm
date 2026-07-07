@@ -441,7 +441,7 @@
                 aria-label={t("recordings.ai")}
                 class="rounded p-0.5 text-muted hover:text-accent"
               >
-                <Icon name="sparkles" size={14} />
+                <Icon name="aiMark" size={14} />
               </button>
             {/if}
             <button

@@ -47,7 +47,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "connection", icon: "plug", sections: ["connection", "security"] },
   { id: "files", icon: "code", sections: ["sftp", "editor", "snippets"] },
   { id: "sessions", icon: "activity", sections: ["recording", "statusbar", "servertools"] },
-  { id: "assistant", icon: "sparkles", sections: ["ai"] },
+  { id: "assistant", icon: "aiMark", sections: ["ai"] },
 ];
 
 export const DEFAULT_SETTINGS_GROUP = SETTINGS_GROUPS[0].id;

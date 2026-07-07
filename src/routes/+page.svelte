@@ -535,7 +535,7 @@
       } },
     { id: "act:toggle-ai",
       title: t("palette.showAi"),
-      icon: "sparkles", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
+      icon: "aiMark", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
       run: () => {
         layout.dockTab = "ai";
         layout.sftpCollapsed = false;

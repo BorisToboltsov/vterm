@@ -28,7 +28,18 @@ describe("Icon", () => {
 
   it("every registry entry is non-empty markup", () => {
     for (const [name, markup] of Object.entries(ICONS)) {
-      expect(markup, name).toMatch(/<(path|rect|circle)/);
+      // Almost all icons are stroke shapes; aiMark is the one text wordmark.
+      expect(markup, name).toMatch(/<(path|rect|circle|ellipse|text)/);
     }
+  });
+
+  it("renders the aiMark wordmark as fill text, not a stroke", () => {
+    const { container, getByText } = render(Icon, { props: { name: "aiMark", size: 16 } });
+    const text = container.querySelector("text")!;
+    expect(text).toBeTruthy();
+    // Overrides the svg's stroke/fill so the letters are solid, not outlined.
+    expect(text.getAttribute("fill")).toBe("currentColor");
+    expect(text.getAttribute("stroke")).toBe("none");
+    expect(getByText("Ai")).toBeInTheDocument();
   });
 });

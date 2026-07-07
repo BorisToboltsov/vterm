@@ -98,9 +98,11 @@ export const ICONS = {
   // Kernel — a terminal/console window.
   terminal:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
-  // AI assistant — sparkles.
-  sparkles:
-    '<path d="M11 3l1.6 4.4L17 9l-4.4 1.6L11 15l-1.6-4.4L5 9l4.4-1.6z"/><path d="M18 13l.9 2.1 2.1.9-2.1.9L18 19l-.9-2.1-2.1-.9 2.1-.9z"/>',
+  // AI assistant — an "Ai" wordmark. Unlike the stroke line-icons, this entry is
+  // fill-based text (mono, matching the terminal), so it overrides the svg's
+  // stroke/fill on the <text> element itself. Scales with `size` via the viewBox.
+  aiMark:
+    '<text x="12" y="13" text-anchor="middle" dominant-baseline="central" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" font-weight="500" fill="currentColor" stroke="none">Ai</text>',
 
   // OS family marks for the status bar (line style, matching the icon set).
   osApple:
