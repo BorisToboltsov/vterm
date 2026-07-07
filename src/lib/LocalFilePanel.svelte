@@ -2,7 +2,7 @@
   // Local-filesystem browser docked to the right of a local-terminal tab — the
   // local counterpart of SftpPanel (Phase 12.4). No connect step or transfers:
   // the local FS is always available; files open straight in the editor.
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { tooltip } from "./actions/tooltip";
   import {
     localHome,
@@ -28,6 +28,9 @@
     collapsed = $bindable(false),
     animateWidth = true,
     embedded = false,
+    terminalCwd = null,
+    followTerminal = false,
+    onToggleFollowTerminal,
     onOpenFile,
   }: {
     width?: number;
@@ -35,6 +38,11 @@
     animateWidth?: boolean;
     /** Render content-only (Phase 17.2): the shared RightDock owns collapse/tabs. */
     embedded?: boolean;
+    /** Latest terminal cwd (OSC 7); the panel follows it while `followTerminal` is on. */
+    terminalCwd?: string | null;
+    /** Follow the local terminal's cwd — per-tab toggle (state owned by the page). */
+    followTerminal?: boolean;
+    onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string) => void;
   } = $props();
 
@@ -74,6 +82,12 @@
   let confirmTarget = $state<FileEntry | null>(null);
 
   onMount(async () => {
+    // When following the terminal and a cwd is already known (e.g. re-mount after a
+    // tab switch), land there instead of home — avoids a home→cwd flash.
+    if (followTerminal && terminalCwd) {
+      await load(terminalCwd);
+      return;
+    }
     let start = ".";
     try {
       start = await localHome();
@@ -120,6 +134,16 @@
   function refresh() {
     load(cwd || ".");
   }
+
+  // Follow the local terminal: navigate when a new terminal cwd (OSC 7) arrives and
+  // the toggle is on. `cwd` is read untracked so manual navigation isn't snapped back
+  // and a successful load doesn't re-trigger the effect (deps: followTerminal/terminalCwd).
+  $effect(() => {
+    if (!followTerminal || !terminalCwd) return;
+    untrack(() => {
+      if (terminalCwd !== cwd) load(terminalCwd);
+    });
+  });
 
   function open(entry: FileEntry) {
     if (entry.isDir) load(entry.path);
@@ -248,6 +272,18 @@
           onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
         >
           <Icon name="eye" size={14} />
+        </button>
+        <button
+          data-testid="localfiles-follow-terminal"
+          class="flex items-center rounded p-1.5 {followTerminal
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:bg-edge hover:text-white'}"
+          use:tooltip={t("sftp.followTerminal")}
+          aria-label={t("sftp.followTerminal")}
+          aria-pressed={followTerminal}
+          onclick={() => onToggleFollowTerminal?.()}
+        >
+          <Icon name="terminal" size={14} />
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

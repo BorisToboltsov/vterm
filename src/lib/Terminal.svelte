@@ -10,6 +10,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "./util";
+  import { parseOsc7 } from "./osc";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
@@ -44,6 +45,7 @@
     onphase,
     onresize,
     onactivity,
+    oncwd,
   }: {
     sessionId: string;
     serverId: string;
@@ -58,6 +60,8 @@
     onresize?: (cols: number, rows: number) => void;
     /** Fired on user keystrokes (used to re-arm the recording idle timer). */
     onactivity?: () => void;
+    /** The shell's cwd, parsed from an OSC 7 sequence (shell integration). */
+    oncwd?: (path: string) => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -392,6 +396,15 @@
     term.open(container);
     fit.fit();
     onresize?.(term.cols, term.rows);
+
+    // Shell integration: OSC 7 reports the shell's cwd (file:// URI) on `cd`. We
+    // surface it so the file panels can follow the terminal (opt-in per tab). No-op
+    // when the shell doesn't emit it — we never guess the path from the prompt.
+    term.parser.registerOscHandler(7, (payload) => {
+      const path = parseOsc7(payload);
+      if (path) oncwd?.(path);
+      return true;
+    });
 
     // GPU-accelerated rendering for smooth output under heavy load. Falls back
     // to the DOM renderer if WebGL is unavailable or its context is lost.

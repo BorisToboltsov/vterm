@@ -455,6 +455,17 @@ pnpm test:coverage   # прогон + покрытие + гейты
   с экранированием, pipe-таблицы, цитаты, `<hr>`, абзацы, закрытие списка перед
   заголовком, отличие `-` пункта от `---`).
 
+**«Следовать за терминалом» (OSC 7 shell-integration, Фаза 21):**
+
+- `osc.test.ts` — `parseOsc7`: `file://host/path` → путь, URL-декод, Windows-URI,
+  корень, невалидные/относительные payload'ы → null.
+- `oscpipe.test.ts` — реальный `@xterm/xterm` вызывает наш OSC 7-обработчик как для
+  сырой последовательности, так и после `applyHighlight` (эскейпы не ломаются).
+- `localfollow.test.ts` / `sftpfollow.test.ts` — панель навигирует при смене пропа
+  `terminalCwd` (для SFTP — после connect); ручная навигация не «отскакивает».
+- `shellintegration.test.ts` — `OSC7_SETUP`: содержит `printf` OSC 7, идемпотентен,
+  ведущий пробел (вне истории), немедленный вызов эмиттера; `osc7SetupDisplay()` без пробела.
+
 **Гейты безопасности (юнит, в обычном `pnpm test`):**
 
 - `autonomy.guard.test.ts` — нет runtime-обращений в сеть (fetch/WebSocket/CDN/

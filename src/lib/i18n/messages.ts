@@ -105,6 +105,11 @@ export const en = {
   "sftp.collapsePanel": "Collapse SFTP panel",
   "sftp.refresh": "Refresh",
   "sftp.hiddenFiles": "Hidden files",
+  "sftp.followTerminal": "Follow terminal path",
+  "sftp.followSetupTitle": "Enable directory tracking?",
+  "sftp.followSetupBody":
+    "To follow the terminal, the shell must report its current directory. Yours doesn't do this by default, so vterm will type the command below into this terminal session (bash/zsh) and run it. It affects only this session — nothing is saved on the server.",
+  "sftp.followSetupConfirm": "Type command & enable",
   "sftp.newFolder": "New folder",
   "sftp.newFile": "New file",
   "sftp.upload": "Upload",
@@ -990,6 +995,11 @@ const ru: Record<MessageKey, string> = {
   "sftp.collapsePanel": "Свернуть панель SFTP",
   "sftp.refresh": "Обновить",
   "sftp.hiddenFiles": "Скрытые файлы",
+  "sftp.followTerminal": "Следовать за путём терминала",
+  "sftp.followSetupTitle": "Включить отслеживание каталога?",
+  "sftp.followSetupBody":
+    "Чтобы следовать за терминалом, шелл должен сообщать текущий каталог. По умолчанию он этого не делает, поэтому vterm впишет в эту сессию терминала команду ниже (bash/zsh) и выполнит её. Действует только в текущей сессии — на сервере ничего не сохраняется.",
+  "sftp.followSetupConfirm": "Вписать команду и включить",
   "sftp.newFolder": "Новая папка",
   "sftp.newFile": "Новый файл",
   "sftp.upload": "Загрузить",

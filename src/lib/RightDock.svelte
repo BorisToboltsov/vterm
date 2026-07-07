@@ -23,6 +23,9 @@
     chatPromptId = null,
     serverExecMode = null,
     sessionReady = false,
+    terminalCwd = null,
+    followTerminal = false,
+    onToggleFollowTerminal,
     onOpenFile,
     onOpenLocalFile,
     getAiContext,
@@ -40,6 +43,11 @@
     /** Per-server execution-mode override, or null to use the global setting. */
     serverExecMode?: AiExecMode | null;
     sessionReady?: boolean;
+    /** Terminal cwd (OSC 7) for this session — the file panel follows it when on. */
+    terminalCwd?: string | null;
+    /** Whether the file panel should follow the terminal's cwd (per-tab toggle). */
+    followTerminal?: boolean;
+    onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onOpenLocalFile?: (path: string) => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
@@ -123,9 +131,23 @@
       <div class="min-h-0 flex-1">
         {#if activeTab === "files"}
           {#if kind === "ssh"}
-            <SftpPanel embedded {sessionId} {sessionReady} {onOpenFile} />
+            <SftpPanel
+              embedded
+              {sessionId}
+              {sessionReady}
+              {terminalCwd}
+              {followTerminal}
+              {onToggleFollowTerminal}
+              {onOpenFile}
+            />
           {:else}
-            <LocalFilePanel embedded onOpenFile={onOpenLocalFile} />
+            <LocalFilePanel
+              embedded
+              {terminalCwd}
+              {followTerminal}
+              {onToggleFollowTerminal}
+              onOpenFile={onOpenLocalFile}
+            />
           {/if}
         {:else}
           <AiChat

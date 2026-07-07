@@ -792,7 +792,7 @@ audit`) — если нет, задокументировать игнор в `d
 
 ---
 
-## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.14)
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.16)
 
 Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
 сервера** (у одного может быть proxy, у другого нет). Реализованы **все три типа**:
@@ -905,6 +905,29 @@ audit`) — если нет, задокументировать игнор в `d
   меняющегося показать/скрыть; состояние вкл/выкл читается по подсветке и `aria-pressed`.
   Ключи `sftp.showHidden`/`sftp.hideHidden` удалены. Проверено вживую (подпись одинакова
   в обоих состояниях).
+- **Панель файлов следует за путём терминала** (v0.21.15). Тумблер (иконка `terminal`) в
+  тулбаре [SftpPanel](../src/lib/SftpPanel.svelte) и [LocalFilePanel](../src/lib/LocalFilePanel.svelte):
+  при включении панель переходит в текущий каталог терминала. Путь — из **OSC 7**
+  (`term.parser.registerOscHandler(7, …)` в [Terminal.svelte](../src/lib/Terminal.svelte),
+  чистый парсер `parseOsc7` в [osc.ts](../src/lib/osc.ts)); `Terminal` отдаёт `oncwd`,
+  [+page.svelte](../src/routes/+page.svelte) хранит cwd **и тумблер per-tab** (`terminalCwd`/
+  `followTerminal` по sessionId) и прокидывает через `RightDock` в панели. Эффект в панели
+  навигирует при смене `terminalCwd` (deps: `followTerminal`/`terminalCwd`/`connected`),
+  `cwd` читается `untrack` — ручная навигация не отскакивает, петли нет. Односторонне
+  (терминал → панель). Если шелл не шлёт OSC 7 — no-op (prompt не парсим). Тесты:
+  `osc.test.ts` (парсер), `oscpipe.test.ts` (xterm-обработчик OSC 7 сквозь highlight),
+  `localfollow.test.ts`/`sftpfollow.test.ts` (навигация панели по смене `terminalCwd`).
+  Живьё проверено сквозняком (реальный OSC 7 → панель получает cwd).
+- **Shell-integration для «следовать» (session-only, с подтверждением)** (v0.21.16). Т.к.
+  bash на Ubuntu 24.04 / OEL9 по SSH **не шлёт OSC 7**, при включении тумблера
+  [+page.svelte](../src/routes/+page.svelte) открывает `ConfirmDialog` с описанием и
+  **точной командой** (`osc7SetupDisplay()`); по подтверждению команда
+  ([shellintegration.ts](../src/lib/shellintegration.ts), `OSC7_SETUP` — bash/zsh,
+  идемпотентна, ведущий пробел = вне истории) вписывается в терминал через
+  `writeToTerminal` **только в текущую сессию**, флаг `shellIntegrated[session]`; повторное
+  включение окно не показывает, как и если cwd уже известен (`fish`). Прод не
+  затрагивается (действие только по явному клику+подтверждению). Тест —
+  `shellintegration.test.ts`. Проверено вживую (диалог, confirm→вкл, повторное вкл без окна).
 
 ---
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { tooltip } from "./actions/tooltip";
   import { type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -40,6 +40,9 @@
     sessionReady = false,
     animateWidth = true,
     embedded = false,
+    terminalCwd = null,
+    followTerminal = false,
+    onToggleFollowTerminal,
     onOpenFile,
   }: {
     sessionId: string;
@@ -53,6 +56,11 @@
     animateWidth?: boolean;
     /** Render content-only (Phase 17.2): the shared RightDock owns collapse/tabs. */
     embedded?: boolean;
+    /** Latest terminal cwd (OSC 7); the panel follows it while `followTerminal` is on. */
+    terminalCwd?: string | null;
+    /** Follow the terminal's cwd — per-tab toggle (state owned by the page). */
+    followTerminal?: boolean;
+    onToggleFollowTerminal?: () => void;
     /** Open a file in the in-app editor (optionally jumping to a line, e.g. grep). */
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
   } = $props();
@@ -133,11 +141,15 @@
   async function connect() {
     connecting = true;
     error = "";
-    let start = ".";
-    try {
-      start = await sftpHome(sessionId);
-    } catch {
-      /* fall back to "." */
+    // When following the terminal and its cwd is known, open there directly instead
+    // of home — avoids a home→cwd flash right after connecting.
+    let start = followTerminal && terminalCwd ? terminalCwd : ".";
+    if (!(followTerminal && terminalCwd)) {
+      try {
+        start = await sftpHome(sessionId);
+      } catch {
+        /* fall back to "." */
+      }
     }
     await load(start);
     connecting = false;
@@ -185,6 +197,17 @@
   function refresh() {
     load(cwd || ".");
   }
+
+  // Follow the terminal: when the toggle is on and a new terminal cwd arrives (OSC 7),
+  // navigate there. Deps are followTerminal/terminalCwd/connected only — `cwd` is read
+  // untracked so the user's own SFTP navigation isn't snapped back, and a successful
+  // load (which sets `cwd`) doesn't re-trigger this effect.
+  $effect(() => {
+    if (!followTerminal || !terminalCwd || !connected) return;
+    untrack(() => {
+      if (terminalCwd !== cwd) load(terminalCwd);
+    });
+  });
 
   function open(entry: FileEntry) {
     // Any file can be opened in the editor (binary/oversize files are rejected by
@@ -370,6 +393,18 @@
           onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
         >
           <Icon name="eye" size={14} />
+        </button>
+        <button
+          data-testid="sftp-follow-terminal"
+          class="flex items-center rounded p-1.5 {followTerminal
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:bg-edge hover:text-white'}"
+          use:tooltip={t("sftp.followTerminal")}
+          aria-label={t("sftp.followTerminal")}
+          aria-pressed={followTerminal}
+          onclick={() => onToggleFollowTerminal?.()}
+        >
+          <Icon name="terminal" size={14} />
         </button>
         <button
           class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

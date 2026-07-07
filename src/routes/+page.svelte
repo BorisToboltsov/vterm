@@ -89,6 +89,7 @@
   import ServerTree from "$lib/ServerTree.svelte";
   import Modal from "$lib/Modal.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import { OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
@@ -166,6 +167,14 @@
   > = {};
   // Current SSH connection phase per session, driving the connecting overlay.
   const connPhase = $state<Record<string, ConnPhase>>({});
+  // Latest terminal cwd (OSC 7) per session, and whether the file panel should
+  // follow it — both **per tab** (each session keeps its own toggle).
+  const terminalCwd = $state<Record<string, string>>({});
+  const followTerminal = $state<Record<string, boolean>>({});
+  // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
+  // session awaiting the user's confirmation before we type it.
+  const shellIntegrated = $state<Record<string, boolean>>({});
+  let pendingFollowSession = $state<string | null>(null);
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -868,6 +877,36 @@
     if (toolsSessionId) installTool = { sessionId: toolsSessionId, tool };
   }
 
+  /**
+   * Toggle "follow terminal" for the active session. Turning it off is immediate.
+   * Turning it on: if the shell already reports its cwd (OSC 7 seen) or we've already
+   * set it up this session, just enable; otherwise open a confirm dialog before typing
+   * the shell-integration snippet (session-only, nothing saved on the server).
+   */
+  function toggleFollowTerminal() {
+    const id = tabsState.activeId;
+    if (!id) return;
+    if (followTerminal[id]) {
+      followTerminal[id] = false;
+      return;
+    }
+    if (terminalCwd[id] || shellIntegrated[id]) {
+      followTerminal[id] = true;
+      return;
+    }
+    pendingFollowSession = id;
+  }
+
+  /** User confirmed: type the OSC 7 setup into the shell and enable following. */
+  function confirmFollowSetup() {
+    const id = pendingFollowSession;
+    pendingFollowSession = null;
+    if (!id) return;
+    writeToTerminal(id, new TextEncoder().encode(OSC7_SETUP + "\n")).catch(() => {});
+    shellIntegrated[id] = true;
+    followTerminal[id] = true;
+  }
+
   /** Type an install command into the active terminal (user reviews + runs it). */
   function runInstallInTerminal(command: string) {
     const sid = installTool?.sessionId ?? toolsSessionId;
@@ -1336,6 +1375,7 @@
                     local={tab.kind === "local"}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
+                    oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
@@ -1405,6 +1445,11 @@
                   ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
                   : null}
                 sessionReady={sftpReady}
+                terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
+                followTerminal={tabsState.activeId
+                  ? (followTerminal[tabsState.activeId] ?? false)
+                  : false}
+                onToggleFollowTerminal={toggleFollowTerminal}
                 getAiContext={gatherAiContext}
                 {aiProd}
                 {aiNoAi}
@@ -1509,6 +1554,21 @@
   oncancel={() => (serverToDelete = null)}
 >
   {t("page.deleteServerBody1")} <span class="text-white">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
+</ConfirmDialog>
+
+<!-- Shell-integration consent for "follow terminal" (session-only OSC 7 setup) -->
+<ConfirmDialog
+  open={pendingFollowSession !== null}
+  title={t("sftp.followSetupTitle")}
+  confirmLabel={t("sftp.followSetupConfirm")}
+  danger={false}
+  onconfirm={confirmFollowSetup}
+  oncancel={() => (pendingFollowSession = null)}
+>
+  <p class="mb-2">{t("sftp.followSetupBody")}</p>
+  <pre
+    class="overflow-x-auto rounded border border-edge bg-panel p-2 text-[11px] leading-relaxed text-muted"
+  >{osc7SetupDisplay()}</pre>
 </ConfirmDialog>
 
 <!-- Tab close confirmation -->
