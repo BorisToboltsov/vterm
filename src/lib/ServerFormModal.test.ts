@@ -46,6 +46,7 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     chatPromptId: null,
     execMode: null,
     proxy: null,
+    notes: "",
     ...p,
   };
 }

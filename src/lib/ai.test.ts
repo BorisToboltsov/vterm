@@ -14,6 +14,9 @@ import {
   effectiveExecMode,
   parseParams,
   aiErrorKind,
+  sanitizeDangerousPatterns,
+  MAX_DANGEROUS_PATTERNS,
+  MAX_DANGEROUS_PATTERN_LEN,
 } from "./ai";
 
 describe("ai defaults", () => {
@@ -29,6 +32,8 @@ describe("ai defaults", () => {
     expect(d.prompts.chat.prompts[0].content).toContain("```bash");
     expect(d.prompts.chat.activeId).toBe(d.prompts.chat.prompts[0].id);
     expect(d.prompts.runbook.prompts[0].content.toLowerCase()).toContain("runbook");
+    // No custom confirm-patterns until the user adds them.
+    expect(d.dangerousPatterns).toEqual([]);
   });
 
   it("provides sensible per-provider defaults", () => {
@@ -105,6 +110,32 @@ describe("sanitizeAiSettings", () => {
     expect(s.prompts.chat.activeId).toBe("p2");
     // A kind with no stored data still gets its default.
     expect(s.prompts.ansible.prompts).toHaveLength(1);
+  });
+
+  it("keeps and cleans stored custom confirm-patterns", () => {
+    const s = sanitizeAiSettings({ dangerousPatterns: ["  terraform destroy  ", "", "Kubectl Delete"] });
+    expect(s.dangerousPatterns).toEqual(["terraform destroy", "Kubectl Delete"]);
+    // Missing → empty (not undefined).
+    expect(sanitizeAiSettings({}).dangerousPatterns).toEqual([]);
+  });
+});
+
+describe("sanitizeDangerousPatterns", () => {
+  it("trims, drops empties and de-dupes case-insensitively", () => {
+    expect(sanitizeDangerousPatterns(["  rm  ", "", "   ", "RM", "dd"])).toEqual(["rm", "dd"]);
+  });
+
+  it("returns [] for non-array / junk", () => {
+    expect(sanitizeDangerousPatterns(null)).toEqual([]);
+    expect(sanitizeDangerousPatterns("rm")).toEqual([]);
+    expect(sanitizeDangerousPatterns(42)).toEqual([]);
+  });
+
+  it("clips each pattern length and the whole list count", () => {
+    const long = "a".repeat(MAX_DANGEROUS_PATTERN_LEN + 50);
+    expect(sanitizeDangerousPatterns([long])[0]).toHaveLength(MAX_DANGEROUS_PATTERN_LEN);
+    const many = Array.from({ length: MAX_DANGEROUS_PATTERNS + 20 }, (_, i) => `p${i}`);
+    expect(sanitizeDangerousPatterns(many)).toHaveLength(MAX_DANGEROUS_PATTERNS);
   });
 });
 

@@ -608,6 +608,16 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (хинт, без SSH-радио), шлёт `kind: "socks5"` с host/port/username и сохраняет пароль
   через `saveProxySecret`; при включённом прокси с невалидным host сейв блокируется
   (`aria-invalid` на `proxy-host`, `addServer` не вызван).
+- `notes.test.ts` (Фаза 21, чистая логика) — заметки к серверу: `noteStats`
+  (символы/слова/строки, пустой/whitespace → `empty`, счёт code point'ов для emoji),
+  `notesDirty` (точное сравнение draft↔saved), `hasNotes` (непустой после trim,
+  null/undefined → false).
+- `NotesModal.test.ts` (Фаза 21, компонентный) — редактор заметок: textarea засеян из
+  `server.notes`; ввод запускает **дебаунс-автосохранение** (`onsave` зовётся один раз
+  с последним текстом только после 800 мс); «Сохранить и закрыть» флашит правку и зовёт
+  `onclose` (без двойного сохранения от таймера); без изменений `onsave` не зовётся, но
+  окно закрывается; переключение на «Просмотр» рендерит Markdown. Компонент
+  coverage-excluded (оболочка), чистая логика — в `notes.ts`.
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).

@@ -3,6 +3,7 @@ import {
   nextCommand,
   buildFeedback,
   isDangerousCommand,
+  BUILTIN_DANGEROUS_LABELS,
   DIALOG_SYSTEM_SUFFIX,
   FEEDBACK_MAX_LINES,
 } from "./aidialog";
@@ -139,6 +140,41 @@ describe("isDangerousCommand", () => {
     ]) {
       expect(isDangerousCommand(c), c).toBe(false);
     }
+  });
+
+  describe("custom (user) patterns", () => {
+    it("flags a command containing a user substring, case-insensitively", () => {
+      const extra = ["terraform destroy", "kubectl delete"];
+      expect(isDangerousCommand("terraform destroy -auto-approve", extra)).toBe(true);
+      expect(isDangerousCommand("TERRAFORM DESTROY", extra)).toBe(true);
+      expect(isDangerousCommand("kubectl delete pod x", extra)).toBe(true);
+    });
+
+    it("leaves a command that matches no custom pattern", () => {
+      expect(isDangerousCommand("terraform plan", ["terraform destroy"])).toBe(false);
+    });
+
+    it("still flags built-ins even with an empty custom list (default arg)", () => {
+      expect(isDangerousCommand("rm -rf /")).toBe(true);
+      expect(isDangerousCommand("ls", [])).toBe(false);
+    });
+
+    it("ignores blank / whitespace-only custom patterns", () => {
+      expect(isDangerousCommand("anything at all", ["", "   "])).toBe(false);
+    });
+
+    it("only widens — a custom pattern cannot switch a built-in off", () => {
+      // There is no way to pass a negative pattern; a built-in match always wins.
+      expect(isDangerousCommand("rm -rf /", ["safe"])).toBe(true);
+    });
+  });
+});
+
+describe("BUILTIN_DANGEROUS_LABELS", () => {
+  it("lists a human-readable label per built-in category", () => {
+    expect(BUILTIN_DANGEROUS_LABELS.length).toBeGreaterThan(10);
+    expect(BUILTIN_DANGEROUS_LABELS).toContain("rm -rf");
+    expect(BUILTIN_DANGEROUS_LABELS.every((l) => l.trim().length > 0)).toBe(true);
   });
 });
 

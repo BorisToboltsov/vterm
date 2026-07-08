@@ -11,6 +11,7 @@
     listServers,
     moveFolder,
     setServerGroup,
+    setServerNotes,
     sftpReadText,
     sftpWriteText,
     isFileChangedError,
@@ -80,6 +81,8 @@
   import { removeChat, getChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import ServerFormModal from "$lib/ServerFormModal.svelte";
+  import NotesModal from "$lib/NotesModal.svelte";
+  import { hasNotes } from "$lib/notes";
   import FolderModals from "$lib/FolderModals.svelte";
   import SecretPrompt from "$lib/SecretPrompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
@@ -150,6 +153,8 @@
   let showPalette = $state(false);
   let showMonitoring = $state(false);
   let showRecordings = $state(false);
+  // The server whose notes window is open (snapshot at open time), or null.
+  let notesServer = $state<ServerProfile | null>(null);
   // After stopping a recording: prompt to name/describe or discard it.
   let saveRec = $state<{ path: string; defaultTitle: string } | null>(null);
 
@@ -660,6 +665,13 @@
   }
   const endResize = () => (resizing = null);
 
+  // Persist the notes window's edits and reflect them in the local server list
+  // (so the top-bar "has notes" dot updates). Throws so NotesModal shows an error.
+  async function saveNotes(id: string, notes: string) {
+    const updated = await setServerNotes(id, notes);
+    servers = servers.map((s) => (s.id === updated.id ? updated : s));
+  }
+
   // ── Folder drag (move a server into a group / a folder under a new parent) ──
   async function moveServerToGroup(id: string, groupPath: string | null) {
     try {
@@ -1137,6 +1149,9 @@
     onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
     onOpenSettings={() => openSettings("servertools")}
+    showNotes={!!selected}
+    hasNotes={hasNotes(selected?.notes)}
+    onOpenNotes={() => (notesServer = selected)}
   />
 
   <div class="flex min-h-0 flex-1">
@@ -1533,6 +1548,15 @@
   onclose={() => (installTool = null)}
 />
 <HelpPanel bind:open={showHelp} bind:tab={helpTab} />
+
+<!-- Per-server notes editor (opened from the top bar for the selected server). -->
+{#if notesServer}
+  <NotesModal
+    server={notesServer}
+    onsave={(notes) => saveNotes(notesServer!.id, notes)}
+    onclose={() => (notesServer = null)}
+  />
+{/if}
 
 <!-- Folder create / rename / delete modals (own their own state; Phase 18.4.3) -->
 <FolderModals

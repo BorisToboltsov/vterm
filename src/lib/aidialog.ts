@@ -75,7 +75,39 @@ const DANGEROUS: RegExp[] = [
   /\beval\b/i, // eval — arbitrary/obfuscated execution
 ];
 
-/** Whether a command looks destructive → require confirmation even in auto mode. */
-export function isDangerousCommand(command: string): boolean {
-  return DANGEROUS.some((re) => re.test(command));
+// Human-readable labels for the built-in patterns above — shown read-only in
+// settings so the user sees the always-on minimum without exposing raw regexes
+// (which are footguns to edit and would allow catastrophic backtracking). Grouped
+// for readability (some labels cover several DANGEROUS entries, e.g. the rm flag
+// variants), so keep this list in sync by hand when adding a new rule.
+export const BUILTIN_DANGEROUS_LABELS: readonly string[] = [
+  "rm -rf",
+  "rm -r / ~ *",
+  "rm --recursive",
+  "rm --no-preserve-root",
+  "find … -delete / -exec rm",
+  "mkfs",
+  "dd of=",
+  "shutdown / reboot / halt / poweroff",
+  "fork bomb",
+  "chmod -R 777",
+  "chmod/chown -R /",
+  "> /etc /dev /sys …",
+  "curl … | sh",
+  "base64 --decode",
+  "eval",
+];
+
+/**
+ * Whether a command looks destructive → require confirmation even in auto mode.
+ * `extra` are the user's custom substrings (case-insensitive `includes`), which
+ * only ever *widen* the built-in list — they cannot switch a built-in rule off.
+ */
+export function isDangerousCommand(command: string, extra: readonly string[] = []): boolean {
+  if (DANGEROUS.some((re) => re.test(command))) return true;
+  const lower = command.toLowerCase();
+  return extra.some((p) => {
+    const needle = p.trim().toLowerCase();
+    return needle !== "" && lower.includes(needle);
+  });
 }

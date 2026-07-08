@@ -1,9 +1,32 @@
 <!-- Master source for the app icon. Regenerate the full icon set with:
        pnpm tauri icon src-tauri/icons/icon-source.svg
      then delete the extra android/ios/64x64 outputs (this app ships macOS + Windows).
-     Mark: a >_ terminal prompt (accent #61afef) on a dark rounded square (One Dark #21252b). -->
+     Mark: a >_ terminal prompt (accent #61afef) on a dark rounded square (One Dark #21252b).
+     The squircle sits inside a ~100px transparent safe-area margin (824x824 body on a
+     1024 canvas) so it matches the size of stock macOS dock icons, with a subtle
+     diagonal bevel edge (light top-left → dark bottom-right) like the other icons. -->
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <rect x="0" y="0" width="1024" height="1024" rx="236" fill="#21252b"/>
-  <path d="M304 336 L464 512 L304 688" fill="none" stroke="#61afef" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="512" y="608" width="208" height="64" rx="32" fill="#61afef"/>
+  <defs>
+    <!-- Diagonal bevel: light catch at the top-left, shadow at the bottom-right. -->
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </linearGradient>
+    <!-- Faint top-down sheen for depth. -->
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.06"/>
+      <stop offset="0.4" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <!-- Body (824x824, centred, 100px safe-area margin). -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#21252b"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sheen)"/>
+  <!-- Diagonal bevel edge, kept just inside the body. -->
+  <rect x="102" y="102" width="820" height="820" rx="183" fill="none" stroke="url(#edge)" stroke-width="4"/>
+  <!-- >_ mark, scaled to the 824 body around the centre. -->
+  <g transform="translate(512 512) scale(0.8047) translate(-512 -512)">
+    <path d="M304 336 L464 512 L304 688" fill="none" stroke="#61afef" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="512" y="608" width="208" height="64" rx="32" fill="#61afef"/>
+  </g>
 </svg>

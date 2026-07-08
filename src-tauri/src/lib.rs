@@ -1568,6 +1568,7 @@ pub fn run() {
             servers::list_servers,
             servers::add_server,
             servers::update_server,
+            servers::set_server_notes,
             servers::delete_server,
             servers::forget_secrets,
             servers::save_proxy_secret,

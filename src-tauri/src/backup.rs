@@ -212,6 +212,7 @@ mod tests {
             chat_prompt_id: None,
             exec_mode: None,
             proxy: None,
+            notes: String::new(),
         }
     }
 

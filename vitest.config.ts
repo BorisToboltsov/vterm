@@ -69,6 +69,9 @@ export default defineConfig({
         "src/lib/FolderModals.svelte",
         // Password/passphrase prompt — UI shell over the tab store (Phase 18.4.4).
         "src/lib/SecretPrompt.svelte",
+        // Per-server notes editor — UI shell over the notes api; pure counting/
+        // dirty logic lives in notes.ts (covered). A behavior test still runs.
+        "src/lib/NotesModal.svelte",
         // Settings sections — UI shells over the settings store, split out of
         // SettingsPanel in Phase 18.5 (like AiSettingsSection).
         "src/lib/AppearanceSettings.svelte",

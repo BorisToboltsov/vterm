@@ -18,6 +18,8 @@
   } from "./ai";
   import { setAiKey, forgetAiKey, aiModels } from "./api";
   import { describeAiError } from "./aierror";
+  import { BUILTIN_DANGEROUS_LABELS } from "./aidialog";
+  import { MAX_DANGEROUS_PATTERNS } from "./ai";
   import DisclosureRow from "./DisclosureRow.svelte";
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
@@ -26,6 +28,25 @@
 
   // Collapsible prompt sections (whole section + per kind).
   let promptsOpen = $state(false);
+
+  // Custom "always confirm" command patterns (additive to the built-in list).
+  let dangerOpen = $state(false);
+  let patternDraft = $state("");
+  function addPattern() {
+    const p = patternDraft.trim();
+    if (!p) return;
+    const list = settings.ai.dangerousPatterns;
+    if (list.length >= MAX_DANGEROUS_PATTERNS) return;
+    if (list.some((x) => x.toLowerCase() === p.toLowerCase())) {
+      patternDraft = "";
+      return;
+    }
+    settings.ai.dangerousPatterns = [...list, p];
+    patternDraft = "";
+  }
+  function removePattern(p: string) {
+    settings.ai.dangerousPatterns = settings.ai.dangerousPatterns.filter((x) => x !== p);
+  }
   let kindOpen = $state<Record<AiPromptKind, boolean>>({
     chat: false,
     runbook: false,
@@ -396,6 +417,80 @@
     <option value="dialog">{t("settings.aiExecDialog")}</option>
   </select>
 </label>
+
+<!-- Commands that always require confirmation — built-in list (read-only) plus
+     the user's own additive patterns. Collapsible. -->
+<div class="mt-3">
+  <div class="flex items-center gap-1">
+    <div class="min-w-0 flex-1">
+      <DisclosureRow
+        bind:open={dangerOpen}
+        label={t("settings.aiDanger")}
+        count={settings.ai.dangerousPatterns.length}
+        testid="ai-danger"
+      />
+    </div>
+    <InfoHint text={t("settings.aiDangerHint")} />
+  </div>
+  {#if dangerOpen}
+    <div class="mt-2 space-y-3 border-l border-edge pl-2">
+      <div>
+        <div class="mb-1 text-[10px] uppercase tracking-wider text-muted">
+          {t("settings.aiDangerBuiltin")}
+        </div>
+        <div class="flex flex-wrap gap-1.5">
+          {#each BUILTIN_DANGEROUS_LABELS as label (label)}
+            <span
+              class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
+              >{label}</span
+            >
+          {/each}
+        </div>
+      </div>
+      <div>
+        <div class="mb-1 text-[10px] uppercase tracking-wider text-muted">
+          {t("settings.aiDangerCustom")}
+        </div>
+        {#if settings.ai.dangerousPatterns.length > 0}
+          <div class="mb-2 space-y-1">
+            {#each settings.ai.dangerousPatterns as p (p)}
+              <div class="flex items-center gap-2" data-testid="ai-danger-item">
+                <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-white">{p}</span>
+                <button
+                  class="shrink-0 rounded p-1 text-muted hover:text-danger"
+                  use:tooltip={t("common.delete")}
+                  aria-label={t("common.delete")}
+                  onclick={() => removePattern(p)}
+                >
+                  <Icon name="trash" size={13} />
+                </button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+        <div class="flex gap-2">
+          <input
+            class="min-w-0 flex-1 {inputCls}"
+            data-testid="ai-danger-input"
+            placeholder={t("settings.aiDangerPlaceholder")}
+            bind:value={patternDraft}
+            onkeydown={(e) => e.key === "Enter" && (e.preventDefault(), addPattern())}
+          />
+          <button
+            class="flex shrink-0 items-center gap-1 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt disabled:opacity-40"
+            data-testid="ai-danger-add"
+            disabled={!patternDraft.trim() ||
+              settings.ai.dangerousPatterns.length >= MAX_DANGEROUS_PATTERNS}
+            onclick={addPattern}
+          >
+            <Icon name="plus" size={12} />
+            {t("settings.aiDangerAdd")}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+</div>
 
 <!-- Context tiers -->
 <div class="mt-3 flex items-center gap-1 text-xs text-muted">

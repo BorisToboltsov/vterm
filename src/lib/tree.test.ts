@@ -26,6 +26,7 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     chatPromptId: null,
     execMode: null,
     proxy: null,
+    notes: "",
     ...p,
   };
 }

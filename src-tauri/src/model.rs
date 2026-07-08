@@ -94,6 +94,11 @@ pub struct ServerProfile {
     /// Optional proxy/jump host this server connects through (None → direct).
     #[serde(default)]
     pub proxy: Option<ServerProxy>,
+    /// Free-form user notes (Markdown) about this server. Edited in the notes
+    /// window, not the server form; `update_server` leaves it untouched so the two
+    /// paths never clobber each other. Persisted inline in the profiles JSON.
+    #[serde(default)]
+    pub notes: String,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -164,6 +169,7 @@ mod tests {
                 key_path: Some("/home/u/.ssh/jump".into()),
                 has_saved_password: false,
             }),
+            notes: "deploys via CI\nkeep npm cache warm".into(),
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
@@ -183,6 +189,7 @@ mod tests {
         assert!(back.no_ai);
         assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
         assert_eq!(back.exec_mode.as_deref(), Some("confirm"));
+        assert_eq!(back.notes, "deploys via CI\nkeep npm cache warm");
         let proxy = back.proxy.expect("proxy round-trips");
         assert_eq!(proxy.kind, ProxyKind::Jump);
         assert_eq!(proxy.host, "bastion.corp");

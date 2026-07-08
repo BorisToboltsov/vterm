@@ -63,6 +63,34 @@ export interface AiSettings {
   /** Editable system prompts per kind — each a list with an active default and
    *  optional per-server scoping (see {@link resolvePromptContent}). */
   prompts: Record<AiPromptKind, AiPromptSet>;
+  /** User-added substrings that additionally force a confirmation before the
+   *  assistant runs a command (case-insensitive `includes`). Additive only — they
+   *  extend the built-in destructive-command list in `aidialog.ts`, never weaken
+   *  it. See {@link sanitizeDangerousPatterns} for the stored shape/limits. */
+  dangerousPatterns: string[];
+}
+
+/** Caps on the user's custom confirm-patterns list (guards against junk/DoS). */
+export const MAX_DANGEROUS_PATTERNS = 100;
+export const MAX_DANGEROUS_PATTERN_LEN = 200;
+
+/** Normalise the custom confirm-patterns list: trim, drop empties, de-dupe
+ *  case-insensitively, clip each to {@link MAX_DANGEROUS_PATTERN_LEN} and the whole
+ *  list to {@link MAX_DANGEROUS_PATTERNS}. Non-array / junk → []. */
+export function sanitizeDangerousPatterns(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    const p = str(v).trim().slice(0, MAX_DANGEROUS_PATTERN_LEN);
+    if (!p) continue;
+    const key = p.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+    if (out.length >= MAX_DANGEROUS_PATTERNS) break;
+  }
+  return out;
 }
 
 /** One chat turn sent to the backend broker. */
@@ -207,6 +235,7 @@ export function defaultAiSettings(): AiSettings {
       sh: defaultPromptSet("sh"),
       ansible: defaultPromptSet("ansible"),
     },
+    dangerousPatterns: [],
   };
 }
 
@@ -304,6 +333,7 @@ export function sanitizeAiSettings(raw: unknown): AiSettings {
         ansible: sanitizePromptSet(rp.ansible, "ansible", str(r.scriptAnsibleSystem)),
       };
     })(),
+    dangerousPatterns: sanitizeDangerousPatterns(r.dangerousPatterns),
   };
 }
 

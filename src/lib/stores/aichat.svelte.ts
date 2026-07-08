@@ -250,7 +250,7 @@ async function maybeContinueDialog(c: SessionChat, msgIdx: number, opts: StartCh
   }
   c.dialogRunning = true;
   // Confirm each step in dialogConfirm; always confirm an obviously destructive one.
-  if (execMode === "dialogConfirm" || isDangerousCommand(cmd)) {
+  if (execMode === "dialogConfirm" || isDangerousCommand(cmd, settings.ai.dangerousPatterns)) {
     c.pending = { command: cmd, opts };
     return;
   }

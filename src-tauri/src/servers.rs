@@ -33,6 +33,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         chat_prompt_id: profile.chat_prompt_id,
         exec_mode: profile.exec_mode,
         proxy: profile.proxy,
+        notes: String::new(),
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -67,6 +68,30 @@ pub fn update_server(
                 server.exec_mode = profile.exec_mode;
                 server.proxy = profile.proxy;
             }
+            None => return Err(AppError::UnknownServer),
+        }
+        servers.clone()
+    };
+    store::save_servers(&snapshot)?;
+    snapshot
+        .into_iter()
+        .find(|s| s.id == id)
+        .ok_or(AppError::UnknownServer)
+}
+
+/// Save the free-form notes for a server. A dedicated command (not part of
+/// `update_server`) so editing notes in the notes window and editing the profile
+/// in the server form never clobber each other, and the payload stays small.
+#[tauri::command]
+pub fn set_server_notes(
+    id: String,
+    notes: String,
+    state: State<AppState>,
+) -> AppResult<ServerProfile> {
+    let snapshot = {
+        let mut servers = state.servers.lock().unwrap();
+        match servers.iter_mut().find(|s| s.id == id) {
+            Some(server) => server.notes = notes,
             None => return Err(AppError::UnknownServer),
         }
         servers.clone()

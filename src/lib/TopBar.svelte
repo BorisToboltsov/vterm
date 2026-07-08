@@ -17,6 +17,9 @@
     onOpenRecordings,
     onOpenMonitoring,
     onOpenSettings,
+    showNotes = false,
+    hasNotes = false,
+    onOpenNotes,
   }: {
     /** Active connection alias (or a fallback like "Not connected"). */
     title: string;
@@ -32,6 +35,12 @@
     onOpenRecordings: () => void;
     onOpenMonitoring: () => void;
     onOpenSettings: () => void;
+    /** A server is selected in the tree → show the notes action (even when not
+     *  connected). Tied to the selection, not the active session. */
+    showNotes?: boolean;
+    /** The selected server has non-blank notes → show a filled indicator dot. */
+    hasNotes?: boolean;
+    onOpenNotes?: () => void;
   } = $props();
 </script>
 
@@ -46,6 +55,23 @@
   {/if}
 
   <div class="ml-auto flex shrink-0 items-center gap-1">
+    {#if showNotes}
+      <button
+        class="relative flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+        use:tooltip={t("topbar.notes")}
+        aria-label={t("topbar.notes")}
+        data-testid="topbar-notes"
+        onclick={() => onOpenNotes?.()}
+      >
+        <Icon name="note" size={15} />
+        {#if hasNotes}
+          <span
+            class="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent"
+            data-testid="topbar-notes-dot"
+          ></span>
+        {/if}
+      </button>
+    {/if}
     {#if connected}
       <button
         class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

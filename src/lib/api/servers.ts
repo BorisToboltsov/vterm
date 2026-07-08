@@ -24,6 +24,12 @@ export function deleteServer(id: string): Promise<void> {
   return invoke<void>("delete_server", { id });
 }
 
+/** Save a server's free-form notes (Markdown). Dedicated to the notes window so it
+ *  never clobbers a concurrent profile edit; returns the updated profile. */
+export function setServerNotes(id: string, notes: string): Promise<ServerProfile> {
+  return invoke<ServerProfile>("set_server_notes", { id, notes });
+}
+
 /** Forget any stored password/passphrase for a server (including its proxy's). */
 export function forgetSecrets(id: string): Promise<void> {
   return invoke<void>("forget_secrets", { id });

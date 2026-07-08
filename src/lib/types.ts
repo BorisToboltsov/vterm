@@ -51,6 +51,9 @@ export interface ServerProfile {
   execMode: AiExecMode | null;
   /** Proxy/jump host this server connects through, or null for a direct connection. */
   proxy: ServerProxy | null;
+  /** Free-form user notes (Markdown) about this server. Edited in the notes
+   *  window (not the server form); saved via the dedicated `setServerNotes`. */
+  notes: string;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */

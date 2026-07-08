@@ -50,6 +50,8 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("update_server", { id: "id1", profile });
     await api.deleteServer("id1");
     expect(invoke).toHaveBeenCalledWith("delete_server", { id: "id1" });
+    await api.setServerNotes("id1", "deploy notes");
+    expect(invoke).toHaveBeenCalledWith("set_server_notes", { id: "id1", notes: "deploy notes" });
   });
 
   it("folder commands", async () => {
