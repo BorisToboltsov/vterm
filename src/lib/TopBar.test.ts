@@ -34,9 +34,16 @@ describe("TopBar", () => {
     expect(onOpenMonitoring).toHaveBeenCalledOnce();
   });
 
-  it("hides the monitoring button when not connected", () => {
-    render(TopBar, { props: { ...base, connected: false } });
-    expect(screen.queryByTestId("topbar-monitoring")).not.toBeInTheDocument();
+  it("keeps the monitoring button in its slot but disabled when not connected", async () => {
+    // Fixed layout: the button stays put (so nothing reflows on connect) but is
+    // dimmed + disabled and does not fire until a session exists.
+    const onOpenMonitoring = vi.fn();
+    render(TopBar, { props: { ...base, connected: false, onOpenMonitoring } });
+    const mon = screen.getByTestId("topbar-monitoring");
+    expect(mon).toBeInTheDocument();
+    expect(mon).toBeDisabled();
+    await userEvent.click(mon);
+    expect(onOpenMonitoring).not.toHaveBeenCalled();
     // Settings stays available regardless.
     expect(screen.getByTestId("topbar-settings")).toBeInTheDocument();
   });
@@ -54,12 +61,14 @@ describe("TopBar", () => {
     expect(onOpenRecordings).toHaveBeenCalledOnce();
   });
 
-  it("shows the REC toggle only when the active tab can be recorded", () => {
+  it("keeps the REC toggle in its slot, disabled until the tab can be recorded", () => {
     const { unmount } = render(TopBar, { props: { ...base, canRecord: false } });
-    expect(screen.queryByTestId("record-toggle")).not.toBeInTheDocument();
+    const rec = screen.getByTestId("record-toggle");
+    expect(rec).toBeInTheDocument();
+    expect(rec).toBeDisabled();
     unmount();
     render(TopBar, { props: { ...base, canRecord: true } });
-    expect(screen.getByTestId("record-toggle")).toBeInTheDocument();
+    expect(screen.getByTestId("record-toggle")).toBeEnabled();
   });
 
   it("toggles recording and reflects the running state via aria-pressed", async () => {

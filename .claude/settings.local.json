@@ -273,7 +273,9 @@
       "Bash(rm -f 64x64.png)",
       "Bash(grep -n 'import ServerFormModal\\\\|import TopBar\\\\|from \"$lib/api\"\\\\|setServerGroup\\\\|updateServer\\\\|showRecordings = \\\\|let selectedId\\\\|const selected =' src/routes/+page.svelte)",
       "Bash(sed -i '' 's/\"version\": \"0.21.31\"/\"version\": \"0.21.32\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.31\"/version = \"0.21.32\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.31\"/version = \"0.21.32\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.32\"/\"version\": \"0.21.33\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.32\"/version = \"0.21.33\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

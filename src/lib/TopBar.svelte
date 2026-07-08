@@ -72,36 +72,40 @@
         {/if}
       </button>
     {/if}
-    {#if connected}
-      <button
-        class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
-        use:tooltip={t("topbar.monitoring")}
-        aria-label={t("topbar.monitoring")}
-        data-testid="topbar-monitoring"
-        onclick={onOpenMonitoring}
-      >
-        <Icon name="barChart" size={15} />
-      </button>
-    {/if}
-    {#if canRecord}
-      <button
-        data-testid="record-toggle"
-        class="flex items-center gap-1 rounded px-2 py-1 text-xs {recording
+    <!-- Monitoring and REC keep their slots even without a live session so the
+         cluster never reflows; they're dimmed + disabled until a session exists. -->
+    <button
+      class="flex items-center rounded p-1.5 {connected
+        ? 'text-muted hover:bg-edge hover:text-white'
+        : 'cursor-not-allowed text-muted opacity-40'}"
+      use:tooltip={t("topbar.monitoring")}
+      aria-label={t("topbar.monitoring")}
+      data-testid="topbar-monitoring"
+      disabled={!connected}
+      onclick={onOpenMonitoring}
+    >
+      <Icon name="barChart" size={15} />
+    </button>
+    <button
+      data-testid="record-toggle"
+      class="flex items-center gap-1 rounded px-2 py-1 text-xs {!canRecord
+        ? 'cursor-not-allowed text-muted opacity-40'
+        : recording
           ? 'text-danger'
           : 'text-muted hover:bg-edge hover:text-white'}"
-        use:tooltip={recording ? t("recordings.stop") : t("recordings.start")}
-        aria-label={recording ? t("recordings.stop") : t("recordings.start")}
-        aria-pressed={recording}
-        onclick={onToggleRecording}
-      >
-        <span
-          class="h-2.5 w-2.5 rounded-full {recording
-            ? 'animate-pulse bg-danger'
-            : 'border border-current'}"
-        ></span>
-        REC
-      </button>
-    {/if}
+      use:tooltip={recording ? t("recordings.stop") : t("recordings.start")}
+      aria-label={recording ? t("recordings.stop") : t("recordings.start")}
+      aria-pressed={recording}
+      disabled={!canRecord}
+      onclick={onToggleRecording}
+    >
+      <span
+        class="h-2.5 w-2.5 rounded-full {recording
+          ? 'animate-pulse bg-danger'
+          : 'border border-current'}"
+      ></span>
+      REC
+    </button>
     <button
       data-testid="open-recordings"
       class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
