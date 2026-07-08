@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { baseName, checkMove, joinPath, parentDir } from "./filemove";
+import { baseName, checkMove, joinPath, parentDir, uniqueCopyName } from "./filemove";
 
 describe("parentDir", () => {
   it("returns the containing directory", () => {
@@ -24,6 +24,36 @@ describe("joinPath", () => {
     expect(joinPath("/a/b", "c")).toBe("/a/b/c");
     expect(joinPath("/", "c")).toBe("/c");
     expect(joinPath("/a/", "c")).toBe("/a/c");
+  });
+});
+
+describe("uniqueCopyName", () => {
+  it("appends ' copy' before the extension", () => {
+    expect(uniqueCopyName("report.txt", new Set(["report.txt"]))).toBe("report copy.txt");
+  });
+
+  it("keeps a base with no extension intact", () => {
+    expect(uniqueCopyName("project", new Set(["project"]))).toBe("project copy");
+  });
+
+  it("numbers further copies", () => {
+    const existing = new Set(["report.txt", "report copy.txt"]);
+    expect(uniqueCopyName("report.txt", existing)).toBe("report copy 2.txt");
+  });
+
+  it("skips over gaps to the first free number", () => {
+    const existing = new Set(["a.txt", "a copy.txt", "a copy 2.txt", "a copy 3.txt"]);
+    expect(uniqueCopyName("a.txt", existing)).toBe("a copy 4.txt");
+  });
+
+  it("normalizes an existing ' copy'/' copy N' suffix to the original stem", () => {
+    const existing = new Set(["a copy.txt"]);
+    expect(uniqueCopyName("a copy.txt", existing)).toBe("a copy 2.txt");
+    expect(uniqueCopyName("a copy 5.txt", new Set(["a copy.txt"]))).toBe("a copy 2.txt");
+  });
+
+  it("treats dotfiles as a base with no extension", () => {
+    expect(uniqueCopyName(".bashrc", new Set([".bashrc"]))).toBe(".bashrc copy");
   });
 });
 

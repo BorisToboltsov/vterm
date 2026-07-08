@@ -86,6 +86,11 @@ export function localRename(from: string, to: string): Promise<void> {
   return invoke<void>("local_rename", { from, to });
 }
 
+/** Copy a local file/folder (recursively) to `to`. Rejects if `to` exists. */
+export function localCopy(from: string, to: string): Promise<void> {
+  return invoke<void>("local_copy", { from, to });
+}
+
 // ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
 
 /** Hash a remote directory tree via sha256sum over SSH (no download). */
@@ -180,6 +185,11 @@ export function sftpDelete(
 /** Move a remote file/folder to `to` (drag-to-move). Rejects if `to` exists. */
 export function sftpRename(sessionId: string, from: string, to: string): Promise<void> {
   return invoke<void>("sftp_rename", { sessionId, from, to });
+}
+
+/** Copy a remote file/folder (recursively) to `to`. Rejects if `to` exists. */
+export function sftpCopy(sessionId: string, from: string, to: string): Promise<void> {
+  return invoke<void>("sftp_copy", { sessionId, from, to });
 }
 
 export function sftpUpload(

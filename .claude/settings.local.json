@@ -249,7 +249,14 @@
       "Bash(sed -i '' 's/\"version\": \"0.21.18\"/\"version\": \"0.21.19\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.21.18\"/version = \"0.21.19\"/' src-tauri/Cargo.toml)",
       "Bash(sed -i '' 's/\"version\": \"0.21.19\"/\"version\": \"0.21.20\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.19\"/version = \"0.21.20\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.19\"/version = \"0.21.20\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.20\"/\"version\": \"0.21.21\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.20\"/version = \"0.21.21\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.21\"/\"version\": \"0.21.22\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.21\"/version = \"0.21.22\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.22\"/\"version\": \"0.21.23\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.22\"/version = \"0.21.23\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\\(v0.21.0 → v0.21.22\\)/\\(v0.21.0 → v0.21.23\\)/' docs/ROADMAP.md)"
     ]
   }
 }

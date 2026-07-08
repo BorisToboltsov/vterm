@@ -324,6 +324,51 @@ pub async fn rename(sftp: &SftpSession, from: &str, to: &str) -> AppResult<()> {
         .map_err(|e| e.to_string().into())
 }
 
+/// Copy a remote file/folder to `to` (recursively), entirely inside the SFTP
+/// subsystem — no shell exec, so there's no command-injection surface. Refuses if
+/// `to` exists (frontend maps `DestinationExists` to a conflict toast). Symlinks
+/// inside a tree are skipped to avoid following link targets / cycles.
+pub async fn copy(sftp: &SftpSession, from: &str, to: &str) -> AppResult<()> {
+    if sftp.metadata(to.to_string()).await.is_ok() {
+        return Err(AppError::DestinationExists);
+    }
+    copy_recursive(sftp, from, to).await
+}
+
+async fn copy_recursive(sftp: &SftpSession, from: &str, to: &str) -> AppResult<()> {
+    let meta = sftp
+        .metadata(from.to_string())
+        .await
+        .map_err(|e| format!("stat {from}: {e}"))?;
+    if meta.is_dir() {
+        sftp.create_dir(to)
+            .await
+            .map_err(|e| format!("create dir {to}: {e}"))?;
+        for entry in list(sftp, from).await? {
+            if entry.is_symlink {
+                continue;
+            }
+            let child_to = join(to, &entry.name);
+            Box::pin(copy_recursive(sftp, &entry.path, &child_to)).await?;
+        }
+        Ok(())
+    } else {
+        let mut src = sftp
+            .open(from)
+            .await
+            .map_err(|e| format!("open {from}: {e}"))?;
+        let mut dst = sftp
+            .create(to)
+            .await
+            .map_err(|e| format!("create {to}: {e}"))?;
+        tokio::io::copy(&mut src, &mut dst)
+            .await
+            .map_err(|e| format!("copy {from} → {to}: {e}"))?;
+        dst.shutdown().await.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+}
+
 pub async fn upload(
     app: &AppHandle,
     id: String,

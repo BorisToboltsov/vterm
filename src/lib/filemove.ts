@@ -30,6 +30,31 @@ export function joinPath(dir: string, name: string): string {
   return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
 }
 
+/** Split a file name into base + extension ("a.tar.gz" → "a.tar" + ".gz"). A
+ *  leading dot (dotfiles like ".bashrc") is treated as part of the base. */
+function splitExt(name: string): { base: string; ext: string } {
+  const i = name.lastIndexOf(".");
+  return i > 0 ? { base: name.slice(0, i), ext: name.slice(i) } : { base: name, ext: "" };
+}
+
+const COPY_SUFFIX = / copy( \d+)?$/;
+
+/**
+ * A free "… copy" name for duplicating `name` into a folder that already holds
+ * `existing` names (Finder-style): "report.txt" → "report copy.txt" →
+ * "report copy 2.txt". An existing " copy"/" copy N" suffix is normalized so
+ * duplicating a copy keeps numbering the original stem rather than nesting.
+ */
+export function uniqueCopyName(name: string, existing: Set<string>): string {
+  const { base, ext } = splitExt(name);
+  const root = base.replace(COPY_SUFFIX, "");
+  const first = `${root} copy${ext}`;
+  if (!existing.has(first)) return first;
+  let n = 2;
+  while (existing.has(`${root} copy ${n}${ext}`)) n += 1;
+  return `${root} copy ${n}${ext}`;
+}
+
 export type MoveCheck =
   | { ok: true; dest: string }
   | { ok: false; reason: "noop" | "self" | "into-descendant" };

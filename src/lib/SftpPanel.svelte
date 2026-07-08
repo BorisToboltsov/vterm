@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { tooltip } from "./actions/tooltip";
   import { type UnlistenFn } from "@tauri-apps/api/event";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
@@ -16,12 +16,15 @@
     sftpList,
     sftpMkdir,
     sftpRename,
+    sftpCopy,
     sftpUpload,
     type SftpProgress,
   } from "./api";
+  import { writeClipboard } from "./clipboard";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
-  import { checkMove, parentDir } from "./filemove";
+  import { checkMove, parentDir, uniqueCopyName } from "./filemove";
   import { clickSelect, emptySelection, type SelectionState } from "./multiselect";
+  import { nextCursor, scrollForCursor } from "./filekeys";
   import type { GrepMatch } from "./sync";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
@@ -106,7 +109,9 @@
   let mkdirName = $state("");
   let showMkfile = $state(false);
   let mkfileName = $state("");
-  let confirmTarget = $state<FileEntry | null>(null);
+  let deleteTargets = $state<FileEntry[]>([]);
+  let renameTarget = $state<FileEntry | null>(null);
+  let renameName = $state("");
   let showSync = $state(false);
   // Content search (grep over SSH).
   let showSearch = $state(false);
@@ -192,6 +197,7 @@
       entries = next;
       error = "";
       selection = emptySelection();
+      cursor = -1;
     } catch (e) {
       error = String(e);
     } finally {
@@ -221,9 +227,27 @@
     else onOpenFile?.(entry.path, entry.name);
   }
 
-  function goUp() {
-    const parent = cwd.replace(/\/[^/]+\/?$/, "");
-    load(parent === "" ? "/" : parent);
+  /** Enter a folder from the keyboard, keeping focus on the list for arrow keys. */
+  async function enterDir(entry: FileEntry) {
+    await load(entry.path);
+    await tick();
+    cursor = rowCount ? 0 : -1;
+    listEl?.focus();
+    ensureCursorVisible();
+  }
+
+  /** Go up a level. After navigating, keep focus on the list and put the cursor
+   *  on the folder we just came out of (so arrow keys continue from there). */
+  async function goUp() {
+    if (!hasParent) return;
+    const fromPath = cwd;
+    const parent = parentDir(cwd);
+    await load(parent);
+    await tick();
+    const idx = shownEntries.findIndex((e) => e.path === fromPath);
+    cursor = idx >= 0 ? (hasParent ? idx + 1 : idx) : rowCount ? 0 : -1;
+    listEl?.focus();
+    ensureCursorVisible();
   }
 
   async function createFolder() {
@@ -254,15 +278,22 @@
     }
   }
 
-  async function remove(entry: FileEntry) {
-    confirmTarget = null;
-    try {
-      await sftpDelete(sessionId, entry.path, entry.isDir);
-      await refresh();
-      notifySuccess(t("sftp.deleted", { name: entry.name }));
-    } catch (e) {
-      notifyError(String(e));
+  async function removeMany(targets: FileEntry[]) {
+    deleteTargets = [];
+    let lastName = "";
+    let failed = "";
+    for (const entry of targets) {
+      try {
+        await sftpDelete(sessionId, entry.path, entry.isDir);
+        lastName = entry.name;
+      } catch (e) {
+        failed = String(e);
+      }
     }
+    await refresh();
+    if (targets.length === 1 && !failed) notifySuccess(t("sftp.deleted", { name: lastName }));
+    else if (!failed) notifySuccess(t("sftp.deleted", { name: `${targets.length}` }));
+    if (failed) notifyError(failed);
   }
 
   // ── Drag-to-move within the panel ──────────────────────────────────────────
@@ -274,6 +305,22 @@
   // Dragging any selected row moves the whole selection; the pure reducer lives in
   // multiselect.ts. Selection is cleared whenever the listing reloads.
   let selection = $state<SelectionState>(emptySelection());
+  // Keyboard cursor (roving focus) and the file clipboard (cut/copy → paste).
+  // The cursor indexes the full visible list, including the ".." row at index 0
+  // when present (so it can be navigated to and Enter'd to go up a level).
+  let cursor = $state(-1);
+  let clipboard = $state<{ mode: "copy" | "cut"; items: { path: string; name: string }[] } | null>(
+    null,
+  );
+  const cursorOnParent = $derived(hasParent && cursor === 0);
+  const cursorEntry = $derived.by(() =>
+    cursor < 0 || cursorOnParent ? null : (shownEntries[hasParent ? cursor - 1 : cursor] ?? null),
+  );
+  const cursorPath = $derived(cursorEntry?.path ?? null);
+
+  function selectedEntries(): FileEntry[] {
+    return entries.filter((e) => selection.selected.has(e.path));
+  }
 
   function rowClick(e: MouseEvent, entry: FileEntry) {
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
@@ -281,6 +328,7 @@
       suppressNextClick = false;
       return;
     }
+    cursor = (hasParent ? 1 : 0) + shownEntries.findIndex((x) => x.path === entry.path);
     selection = clickSelect(
       selection,
       entry.path,
@@ -289,18 +337,169 @@
     );
   }
 
-  function rowKeydown(e: KeyboardEvent, entry: FileEntry) {
-    if (e.key === "Enter") {
+  // A click on empty space in the list (not on a row or button) clears selection.
+  function onBackgroundClick(e: MouseEvent) {
+    const el = e.target as HTMLElement;
+    if (!el.closest('[role="treeitem"]') && !el.closest("button") && selection.selected.size)
+      selection = emptySelection();
+  }
+
+  function ensureCursorVisible() {
+    if (cursor < 0 || !listEl) return;
+    // Cursor is already an absolute row index (".." included), so no header offset.
+    const top = scrollForCursor(cursor, ROW_H, listViewportH, listScrollTop, 0);
+    if (top !== listScrollTop) {
+      listEl.scrollTop = top;
+      listScrollTop = top;
+    }
+  }
+
+  // All keyboard interaction is driven from the focusable list container, so the
+  // individual rows don't each need key handlers (roving focus at the tree level).
+  function onListKeydown(e: KeyboardEvent) {
+    const order = shownEntries.map((x) => x.path);
+    const pageRows = Math.max(1, Math.floor(listViewportH / ROW_H));
+    const nav = nextCursor(e.key, cursor, rowCount, pageRows);
+    if (nav !== null) {
       e.preventDefault();
-      open(entry);
+      const prev = cursor;
+      cursor = nav;
+      // Plain arrow moves the cursor frame only — selection is left untouched.
+      // Shift+arrow extends a selection range: anchored at the last Space/anchor,
+      // or at the row we started from if there's no anchor yet.
+      if (e.shiftKey && !(hasParent && cursor === 0)) {
+        const path = shownEntries[hasParent ? cursor - 1 : cursor].path;
+        let sel = selection;
+        if (!sel.anchor && prev >= 0 && !(hasParent && prev === 0)) {
+          const start = shownEntries[hasParent ? prev - 1 : prev].path;
+          sel = { selected: new Set([start]), anchor: start };
+        }
+        selection = clickSelect(sel, path, { toggle: false, range: true }, order);
+      }
+      ensureCursorVisible();
+      return;
+    }
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === "Enter" || e.key === "ArrowRight") {
+      if (cursorOnParent) {
+        e.preventDefault();
+        goUp();
+      } else if (cursorEntry) {
+        e.preventDefault();
+        if (cursorEntry.isDir) enterDir(cursorEntry);
+        else open(cursorEntry);
+      }
+    } else if (e.key === "ArrowLeft") {
+      if (hasParent) {
+        e.preventDefault();
+        goUp();
+      }
     } else if (e.key === " ") {
+      if (cursorEntry) {
+        e.preventDefault();
+        selection = clickSelect(selection, cursorEntry.path, { toggle: true, range: false }, order);
+      }
+    } else if (e.key === "Escape") {
+      if (showSearch) showSearch = false;
+      else if (selection.selected.size) selection = emptySelection();
+    } else if (mod && (e.key === "a" || e.key === "A")) {
       e.preventDefault();
-      selection = clickSelect(
-        selection,
-        entry.path,
-        { toggle: true, range: false },
-        shownEntries.map((x) => x.path),
-      );
+      selection = { selected: new Set(order), anchor: selection.anchor };
+    } else if (e.key === "Delete" || e.key === "Backspace") {
+      const items = selectedEntries();
+      if (items.length) {
+        e.preventDefault();
+        deleteTargets = items;
+      }
+    } else if (e.key === "F2") {
+      if (cursorEntry) {
+        e.preventDefault();
+        startRename(cursorEntry);
+      }
+    } else if (mod && (e.key === "x" || e.key === "X")) {
+      e.preventDefault();
+      cutOrCopy("cut");
+    } else if (mod && (e.key === "c" || e.key === "C")) {
+      e.preventDefault();
+      if (e.shiftKey) copyPaths();
+      else cutOrCopy("copy");
+    } else if (mod && (e.key === "v" || e.key === "V")) {
+      e.preventDefault();
+      paste();
+    }
+  }
+
+  function cutOrCopy(mode: "cut" | "copy") {
+    const items = selectedEntries().map((e) => ({ path: e.path, name: e.name }));
+    if (items.length) clipboard = { mode, items };
+  }
+
+  async function copyPaths() {
+    const paths = selectedEntries().map((e) => e.path);
+    if (!paths.length) return;
+    await writeClipboard(paths.join("\n"));
+    notifySuccess(t("sftp.pathCopied", { count: paths.length }));
+  }
+
+  async function paste() {
+    const cb = clipboard;
+    if (!cb) return;
+    // Copying onto an existing name duplicates it as "… copy" (Finder-style)
+    // rather than skipping; moving still refuses to clobber.
+    const taken = new Set(entries.map((e) => e.name));
+    let done = 0;
+    let skipped = 0;
+    let hardError = "";
+    let lastName = "";
+    for (const item of cb.items) {
+      const name = cb.mode === "copy" && taken.has(item.name)
+        ? uniqueCopyName(item.name, taken)
+        : item.name;
+      const dest = join(cwd, name);
+      try {
+        if (cb.mode === "cut") await sftpRename(sessionId, item.path, dest);
+        else await sftpCopy(sessionId, item.path, dest);
+        taken.add(name);
+        done += 1;
+        lastName = name;
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("dest-exists")) skipped += 1;
+        else hardError = msg;
+      }
+    }
+    await refresh();
+    if (cb.mode === "cut") clipboard = null; // sources moved away
+    const okKey = cb.mode === "cut" ? "sftp.moved" : "sftp.copied";
+    const okKeyMulti = cb.mode === "cut" ? "sftp.movedMulti" : "sftp.copiedMulti";
+    if (done === 1) notifySuccess(t(okKey, { name: lastName, dest: cwd }));
+    else if (done > 1) notifySuccess(t(okKeyMulti, { count: done, dest: cwd }));
+    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }));
+    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }));
+  }
+
+  function startRename(entry: FileEntry) {
+    renameTarget = entry;
+    renameName = entry.name;
+  }
+
+  async function commitRename() {
+    const target = renameTarget;
+    const name = renameName.trim();
+    if (!target || !name || name === target.name) {
+      renameTarget = null;
+      return;
+    }
+    renameTarget = null;
+    try {
+      await sftpRename(sessionId, target.path, join(cwd, name));
+      await refresh();
+      notifySuccess(t("sftp.renamed", { name }));
+    } catch (e) {
+      const msg = String(e);
+      if (msg.includes("dest-exists"))
+        notifyError(t("sftp.moveConflict", { name, dest: cwd }));
+      else notifyError(String(e));
     }
   }
 
@@ -703,6 +902,26 @@
     </form>
   {/if}
 
+  {#if renameTarget}
+    <!-- svelte-ignore a11y_autofocus -->
+    <form
+      class="flex gap-1 border-b border-edge px-2 py-1"
+      onsubmit={(e) => {
+        e.preventDefault();
+        commitRename();
+      }}
+    >
+      <input
+        autofocus
+        class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+        placeholder={t("sftp.renamePlaceholder")}
+        bind:value={renameName}
+        onkeydown={(e) => e.key === "Escape" && (renameTarget = null)}
+      />
+      <button class="rounded bg-accent px-2 py-1 text-xs text-panel-alt">{t("common.rename")}</button>
+    </form>
+  {/if}
+
   <!-- Error banner (non-blocking: the listing stays visible) -->
   {#if error}
     <div
@@ -727,9 +946,16 @@
     onpointermove={listPointerMove}
     onpointerup={listPointerUp}
     onpointercancel={listPointerUp}
+    onkeydown={onListKeydown}
+    onclick={onBackgroundClick}
+    onfocus={() => {
+      if (cursor < 0 && shownEntries.length) cursor = 0;
+    }}
     role="tree"
-    tabindex="-1"
-    class="min-h-0 flex-1 overflow-y-auto text-sm {dragEntry ? 'select-none cursor-grabbing' : ''}"
+    tabindex="0"
+    class="min-h-0 flex-1 overflow-y-auto text-sm outline-none {dragEntry
+      ? 'select-none cursor-grabbing'
+      : ''}"
   >
     {#if loading}
       <!-- Skeleton rows while the directory listing loads. -->
@@ -750,9 +976,12 @@
             {#if item.entry === null}
               <button
                 data-drop={parentPath ?? undefined}
+                onclick={() => (cursor = 0)}
                 class="flex h-7 w-full items-center gap-2 px-2 text-left {dropOk(parentPath)
                   ? 'bg-accent/20 ring-1 ring-inset ring-accent'
-                  : 'hover:bg-edge'}"
+                  : 'hover:bg-edge'} {cursorOnParent
+                  ? 'outline outline-1 -outline-offset-1 outline-accent/70'
+                  : ''}"
                 ondblclick={goUp}
                 aria-label={t("sftp.goUp")} use:tooltip={t("sftp.goUp")}
               >
@@ -761,11 +990,15 @@
               </button>
             {:else}
               {@const entry = item.entry}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- Keyboard is handled at the focusable tree container (roving focus).
+                   The row itself is not a <button> so Space toggles selection (via
+                   the container handler) instead of activating a button. -->
               <div
                 data-drop={entry.isDir ? entry.path : undefined}
                 onpointerdown={(e) => startMove(e, entry)}
                 onclick={(e) => rowClick(e, entry)}
-                onkeydown={(e) => rowKeydown(e, entry)}
+                ondblclick={() => open(entry)}
                 role="treeitem"
                 aria-selected={selection.selected.has(entry.path)}
                 tabindex="-1"
@@ -773,14 +1006,13 @@
                   ? 'bg-accent/20 ring-1 ring-inset ring-accent'
                   : selection.selected.has(entry.path)
                     ? 'bg-accent/25'
-                    : 'hover:bg-edge'} {dragEntry && selection.selected.has(entry.path)
-                  ? 'opacity-50'
-                  : ''}"
+                    : 'hover:bg-edge'} {cursorPath === entry.path
+                  ? 'outline outline-1 -outline-offset-1 outline-accent/70'
+                  : ''} {dragEntry && selection.selected.has(entry.path) ? 'opacity-50' : ''}"
               >
-                <button
+                <div
                   class="flex min-w-0 flex-1 items-center gap-2 text-left"
                   use:tooltip={fileTooltip(entry)}
-                  ondblclick={() => open(entry)}
                 >
                   <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
                   <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
@@ -789,7 +1021,7 @@
                       {fmtSize(entry.size)}
                     </span>
                   {/if}
-                </button>
+                </div>
                 <div
                   data-nodrag
                   class="invisible flex shrink-0 items-center gap-1 group-hover:visible"
@@ -816,7 +1048,7 @@
                     class="rounded p-0.5 text-muted hover:text-danger"
                     use:tooltip={t("common.delete")}
                     aria-label={t("common.delete")}
-                    onclick={() => (confirmTarget = entry)}
+                    onclick={() => (deleteTargets = [entry])}
                   >
                     <Icon name="trash" size={13} />
                   </button>
@@ -871,16 +1103,20 @@
 <!-- Delete confirmation (shared ConfirmDialog: gets the modal's z-40 + focus trap;
      a hand-rolled fixed overlay was unclickable once SftpPanel became embedded). -->
 <ConfirmDialog
-  open={!!confirmTarget}
+  open={deleteTargets.length > 0}
   title={t("sftp.deleteTitle")}
   confirmLabel={t("common.delete")}
   danger
-  onconfirm={() => confirmTarget && remove(confirmTarget)}
-  oncancel={() => (confirmTarget = null)}
+  onconfirm={() => removeMany(deleteTargets)}
+  oncancel={() => (deleteTargets = [])}
 >
-  {confirmTarget?.isDir ? t("sftp.folder") : t("sftp.file")}: <span class="break-all text-white"
-    >{confirmTarget?.path}</span
-  >
+  {#if deleteTargets.length === 1}
+    {deleteTargets[0].isDir ? t("sftp.folder") : t("sftp.file")}: <span class="break-all text-white"
+      >{deleteTargets[0].path}</span
+    >
+  {:else if deleteTargets.length > 1}
+    {t("sftp.deleteMulti", { count: deleteTargets.length })}
+  {/if}
 </ConfirmDialog>
 
 <!-- Move confirmation (drag-to-move within the panel). -->

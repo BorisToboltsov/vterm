@@ -140,6 +140,12 @@ export const en = {
   "sftp.movedMulti": "Moved {count} items to “{dest}”",
   "sftp.moveSkipped": "Skipped {count} — a name already exists at the destination",
   "sftp.dragCount": "{count} items",
+  "sftp.copied": "Copied “{name}” to “{dest}”",
+  "sftp.copiedMulti": "Copied {count} items to “{dest}”",
+  "sftp.pathCopied": "Copied {count} path(s) to the clipboard",
+  "sftp.deleteMulti": "Delete {count} selected items?",
+  "sftp.renamePlaceholder": "New name",
+  "sftp.renamed": "Renamed to “{name}”",
 
   // ── Config editor (Phase 12) ──
   "workspace.terminal": "Terminal",
@@ -1040,6 +1046,12 @@ const ru: Record<MessageKey, string> = {
   "sftp.movedMulti": "Перемещено: {count} → «{dest}»",
   "sftp.moveSkipped": "Пропущено: {count} (имя уже занято в папке назначения)",
   "sftp.dragCount": "объектов: {count}",
+  "sftp.copied": "«{name}» скопировано в «{dest}»",
+  "sftp.copiedMulti": "Скопировано: {count} → «{dest}»",
+  "sftp.pathCopied": "Скопировано путей: {count}",
+  "sftp.deleteMulti": "Удалить выбранное ({count})?",
+  "sftp.renamePlaceholder": "Новое имя",
+  "sftp.renamed": "Переименовано в «{name}»",
 
   // ── Config editor (Phase 12) ──
   "workspace.terminal": "Терминал",

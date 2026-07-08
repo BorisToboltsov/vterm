@@ -106,6 +106,35 @@ pub async fn rename(from: &str, to: &str) -> AppResult<()> {
         .map_err(|e| e.to_string().into())
 }
 
+/// Copy a local file/folder to `to` (recursively). Refuses if `to` already exists.
+/// Symlinks inside a tree are skipped (parity with the SFTP copy).
+pub async fn copy(from: &str, to: &str) -> AppResult<()> {
+    if tokio::fs::symlink_metadata(to).await.is_ok() {
+        return Err(AppError::DestinationExists);
+    }
+    copy_recursive(Path::new(from), Path::new(to)).await
+}
+
+async fn copy_recursive(from: &Path, to: &Path) -> AppResult<()> {
+    let meta = tokio::fs::symlink_metadata(from).await?;
+    if meta.is_dir() {
+        tokio::fs::create_dir(to).await?;
+        let mut rd = tokio::fs::read_dir(from).await?;
+        while let Some(entry) = rd.next_entry().await? {
+            if entry.file_type().await?.is_symlink() {
+                continue;
+            }
+            Box::pin(copy_recursive(&entry.path(), &to.join(entry.file_name()))).await?;
+        }
+        Ok(())
+    } else {
+        tokio::fs::copy(from, to)
+            .await
+            .map(|_| ())
+            .map_err(Into::into)
+    }
+}
+
 /// SHA-256 every file under `root` (skipping symlinks), returning `/`-separated
 /// relative paths sorted by path — the local side of directory sync (Phase 12.5).
 pub async fn hash_tree(root: &str) -> AppResult<Vec<crate::sync::HashEntry>> {
@@ -373,5 +402,41 @@ mod tests {
         // The existing target is untouched.
         assert_eq!(tokio::fs::read_to_string(&dest).await.unwrap(), "hi");
         assert!(other.exists());
+    }
+
+    #[tokio::test]
+    async fn copy_duplicates_tree_and_refuses_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("proj");
+        tokio::fs::create_dir(&src).await.unwrap();
+        tokio::fs::write(src.join("a.txt"), b"A").await.unwrap();
+        tokio::fs::create_dir(src.join("sub")).await.unwrap();
+        tokio::fs::write(src.join("sub/b.txt"), b"B").await.unwrap();
+
+        let dest = dir.path().join("proj-copy");
+        copy(src.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap();
+        // Original is intact, and the whole tree was duplicated.
+        assert_eq!(
+            tokio::fs::read_to_string(src.join("a.txt")).await.unwrap(),
+            "A"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dest.join("a.txt")).await.unwrap(),
+            "A"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(dest.join("sub/b.txt"))
+                .await
+                .unwrap(),
+            "B"
+        );
+
+        // Copying onto an existing path is refused, not merged/clobbered.
+        let err = copy(src.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("dest-exists"));
     }
 }
