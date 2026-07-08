@@ -130,6 +130,16 @@ export const en = {
   "sftp.fileCreated": "File “{name}” created",
   "sftp.deleted": "Deleted: {name}",
   "sftp.editFile": "Edit",
+  "sftp.moveTitle": "Move?",
+  "sftp.moveBody": "Move “{name}” to “{dest}”?",
+  "sftp.moveConfirm": "Move",
+  "sftp.moved": "Moved “{name}” to “{dest}”",
+  "sftp.moveConflict": "“{name}” already exists in “{dest}”",
+  "sftp.moveFailed": "Couldn’t move “{name}”: {error}",
+  "sftp.moveBodyMulti": "Move {count} selected items to “{dest}”?",
+  "sftp.movedMulti": "Moved {count} items to “{dest}”",
+  "sftp.moveSkipped": "Skipped {count} — a name already exists at the destination",
+  "sftp.dragCount": "{count} items",
 
   // ── Config editor (Phase 12) ──
   "workspace.terminal": "Terminal",
@@ -1020,6 +1030,16 @@ const ru: Record<MessageKey, string> = {
   "sftp.fileCreated": "Файл «{name}» создан",
   "sftp.deleted": "Удалено: {name}",
   "sftp.editFile": "Редактировать",
+  "sftp.moveTitle": "Переместить?",
+  "sftp.moveBody": "Переместить «{name}» в «{dest}»?",
+  "sftp.moveConfirm": "Переместить",
+  "sftp.moved": "«{name}» перемещено в «{dest}»",
+  "sftp.moveConflict": "«{name}» уже существует в «{dest}»",
+  "sftp.moveFailed": "Не удалось переместить «{name}»: {error}",
+  "sftp.moveBodyMulti": "Переместить выбранное ({count}) в «{dest}»?",
+  "sftp.movedMulti": "Перемещено: {count} → «{dest}»",
+  "sftp.moveSkipped": "Пропущено: {count} (имя уже занято в папке назначения)",
+  "sftp.dragCount": "объектов: {count}",
 
   // ── Config editor (Phase 12) ──
   "workspace.terminal": "Терминал",

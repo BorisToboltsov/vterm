@@ -39,6 +39,11 @@ pub enum AppError {
     #[error("file-changed: file modified on server since it was opened")]
     FileChangedOnServer,
 
+    /// A drag-move target path already exists. Refused rather than clobbered; the
+    /// frontend matches the `dest-exists` marker to show a name-conflict toast.
+    #[error("dest-exists: a file or folder with that name already exists")]
+    DestinationExists,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -94,6 +99,9 @@ mod tests {
         assert!(AppError::FileChangedOnServer
             .to_string()
             .contains("file-changed"));
+        assert!(AppError::DestinationExists
+            .to_string()
+            .contains("dest-exists"));
     }
 
     #[test]

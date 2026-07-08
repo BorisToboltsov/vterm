@@ -1115,6 +1115,13 @@ async fn local_delete(path: String, is_dir: bool) -> AppResult<()> {
     localfile::remove(&path, is_dir).await
 }
 
+/// Move a local file/folder to a new path (drag-to-move within the local panel).
+/// Refuses if `to` already exists.
+#[tauri::command]
+async fn local_rename(from: String, to: String) -> AppResult<()> {
+    localfile::rename(&from, &to).await
+}
+
 // ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
 
 /// Hash every file under a remote directory via `sha256sum` over the SSH exec
@@ -1269,6 +1276,19 @@ async fn sftp_delete(
 ) -> AppResult<()> {
     let sftp = get_sftp(&state, &session_id).await?;
     sftp::remove(&sftp, &path, is_dir).await
+}
+
+/// Move a remote file/folder to a new path (drag-to-move within the SFTP panel).
+/// Refuses if `to` already exists; both paths are on the same session.
+#[tauri::command]
+async fn sftp_rename(
+    state: State<'_, AppState>,
+    session_id: String,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    let sftp = get_sftp(&state, &session_id).await?;
+    sftp::rename(&sftp, &from, &to).await
 }
 
 #[tauri::command]
@@ -1563,6 +1583,7 @@ pub fn run() {
             local_mkdir,
             local_create_file,
             local_delete,
+            local_rename,
             sftp_hash_tree,
             local_hash_tree,
             sftp_sync_apply,
@@ -1571,6 +1592,7 @@ pub fn run() {
             server_tools_status,
             run_tool_install,
             sftp_delete,
+            sftp_rename,
             sftp_upload,
             sftp_download,
             sftp_cancel,

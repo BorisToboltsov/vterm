@@ -81,6 +81,11 @@ export function localDelete(path: string, isDir: boolean): Promise<void> {
   return invoke<void>("local_delete", { path, isDir });
 }
 
+/** Move a local file/folder to `to` (drag-to-move). Rejects if `to` exists. */
+export function localRename(from: string, to: string): Promise<void> {
+  return invoke<void>("local_rename", { from, to });
+}
+
 // ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
 
 /** Hash a remote directory tree via sha256sum over SSH (no download). */
@@ -170,6 +175,11 @@ export function sftpDelete(
   isDir: boolean,
 ): Promise<void> {
   return invoke<void>("sftp_delete", { sessionId, path, isDir });
+}
+
+/** Move a remote file/folder to `to` (drag-to-move). Rejects if `to` exists. */
+export function sftpRename(sessionId: string, from: string, to: string): Promise<void> {
+  return invoke<void>("sftp_rename", { sessionId, from, to });
 }
 
 export function sftpUpload(

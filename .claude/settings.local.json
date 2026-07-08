@@ -245,7 +245,11 @@
       "Bash(sed -i '' 's/^version = \"0.21.9\"/version = \"0.21.10\"/' src-tauri/Cargo.toml)",
       "Bash(grep -n 'writeToTerminal\\\\|TextEncoder\\\\|encoder\\\\|import.*ConfirmDialog\\\\|from \"$lib/api\"' src/routes/+page.svelte)",
       "Bash(sed -i '' 's/\"version\": \"0.21.17\"/\"version\": \"0.21.18\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.17\"/version = \"0.21.18\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.17\"/version = \"0.21.18\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.18\"/\"version\": \"0.21.19\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.18\"/version = \"0.21.19\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.19\"/\"version\": \"0.21.20\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.19\"/version = \"0.21.20\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

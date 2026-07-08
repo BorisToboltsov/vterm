@@ -311,6 +311,19 @@ pub async fn remove(sftp: &SftpSession, path: &str, is_dir: bool) -> AppResult<(
     }
 }
 
+/// Move (rename) `from` to `to` on the remote host. Refuses if `to` already
+/// exists so a drag-move never clobbers an unrelated file — the frontend maps
+/// `DestinationExists` to a name-conflict toast. Both paths must be on the same
+/// SFTP session (same host); a plain `rename` is atomic within one filesystem.
+pub async fn rename(sftp: &SftpSession, from: &str, to: &str) -> AppResult<()> {
+    if sftp.metadata(to.to_string()).await.is_ok() {
+        return Err(AppError::DestinationExists);
+    }
+    sftp.rename(from.to_string(), to.to_string())
+        .await
+        .map_err(|e| e.to_string().into())
+}
+
 pub async fn upload(
     app: &AppHandle,
     id: String,

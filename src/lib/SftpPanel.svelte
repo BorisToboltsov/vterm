@@ -15,9 +15,13 @@
     sftpHome,
     sftpList,
     sftpMkdir,
+    sftpRename,
     sftpUpload,
     type SftpProgress,
   } from "./api";
+  import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { checkMove, parentDir } from "./filemove";
+  import { clickSelect, emptySelection, type SelectionState } from "./multiselect";
   import type { GrepMatch } from "./sync";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
@@ -187,6 +191,7 @@
       cwd = path;
       entries = next;
       error = "";
+      selection = emptySelection();
     } catch (e) {
       error = String(e);
     } finally {
@@ -258,6 +263,138 @@
     } catch (e) {
       notifyError(String(e));
     }
+  }
+
+  // ── Drag-to-move within the panel ──────────────────────────────────────────
+  // Pointer-drag (native DnD is unreliable in WKWebView) a row onto a folder row
+  // or the ".." entry to move it there. Drop targets carry `data-drop={dir}`;
+  // validation + destination path come from filemove.ts. Always confirmed before
+  // the actual rename; the backend refuses to clobber an existing name.
+  // OS-style multi-select: plain click = one, Ctrl/Cmd = toggle, Shift = range.
+  // Dragging any selected row moves the whole selection; the pure reducer lives in
+  // multiselect.ts. Selection is cleared whenever the listing reloads.
+  let selection = $state<SelectionState>(emptySelection());
+
+  function rowClick(e: MouseEvent, entry: FileEntry) {
+    if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      return;
+    }
+    selection = clickSelect(
+      selection,
+      entry.path,
+      { toggle: e.metaKey || e.ctrlKey, range: e.shiftKey },
+      shownEntries.map((x) => x.path),
+    );
+  }
+
+  function rowKeydown(e: KeyboardEvent, entry: FileEntry) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      open(entry);
+    } else if (e.key === " ") {
+      e.preventDefault();
+      selection = clickSelect(
+        selection,
+        entry.path,
+        { toggle: true, range: false },
+        shownEntries.map((x) => x.path),
+      );
+    }
+  }
+
+  let listEl = $state<HTMLDivElement>();
+  let dragCandidate: FileEntry | null = null;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let suppressNextClick = false;
+  let dragEntry = $state<FileEntry | null>(null);
+  let dragX = $state(0);
+  let dragY = $state(0);
+  let dropDir = $state<string | null>(null);
+  let moveTarget = $state<{ items: FileEntry[]; destDir: string } | null>(null);
+  const parentPath = $derived(hasParent ? parentDir(cwd) : null);
+
+  function startMove(e: PointerEvent, entry: FileEntry) {
+    if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
+    dragCandidate = entry;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
+  }
+
+  function listPointerMove(e: PointerEvent) {
+    if (!dragCandidate || !listEl) return;
+    if (!dragEntry) {
+      if (!passedThreshold(dragStartX, dragStartY, e.clientX, e.clientY, 5)) return;
+      // Dragging a row that isn't part of the selection makes it the selection.
+      if (!selection.selected.has(dragCandidate.path))
+        selection = { selected: new Set([dragCandidate.path]), anchor: dragCandidate.path };
+      dragEntry = dragCandidate;
+      listEl.setPointerCapture(e.pointerId);
+      window.getSelection()?.removeAllRanges();
+    }
+    dragX = e.clientX;
+    dragY = e.clientY;
+    dropDir = dropTargetAt(e.clientX, e.clientY);
+  }
+
+  function listPointerUp(e: PointerEvent) {
+    const entry = dragEntry;
+    const dir = dropDir;
+    if (entry) {
+      try {
+        listEl?.releasePointerCapture(e.pointerId);
+      } catch {
+        /* already released */
+      }
+      if (dir !== null) {
+        // All selected rows live in the current dir; keep only structurally-valid moves.
+        const items = entries.filter(
+          (x) => selection.selected.has(x.path) && checkMove(x.path, dir).ok,
+        );
+        if (items.length) moveTarget = { items, destDir: dir };
+      }
+      suppressNextClick = true;
+    }
+    dragCandidate = null;
+    dragEntry = null;
+    dropDir = null;
+  }
+
+  /** Is `dir` the folder under the pointer, and a valid drop for the dragged row? */
+  function dropOk(dir: string | null): boolean {
+    return (
+      dragEntry !== null && dir !== null && dropDir === dir && checkMove(dragEntry.path, dir).ok
+    );
+  }
+
+  async function doMove() {
+    const m = moveTarget;
+    moveTarget = null;
+    if (!m) return;
+    let moved = 0;
+    let skipped = 0;
+    let hardError = "";
+    let lastName = "";
+    for (const entry of m.items) {
+      const chk = checkMove(entry.path, m.destDir);
+      if (!chk.ok) continue;
+      try {
+        await sftpRename(sessionId, entry.path, join(m.destDir, entry.name));
+        moved += 1;
+        lastName = entry.name;
+      } catch (e) {
+        const msg = String(e);
+        if (msg.includes("dest-exists")) skipped += 1;
+        else hardError = msg;
+      }
+    }
+    await refresh();
+    if (moved === 1) notifySuccess(t("sftp.moved", { name: lastName, dest: m.destDir }));
+    else if (moved > 1) notifySuccess(t("sftp.movedMulti", { count: moved, dest: m.destDir }));
+    if (skipped) notifyError(t("sftp.moveSkipped", { count: skipped }));
+    if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }));
   }
 
   async function uploadFiles() {
@@ -584,9 +721,15 @@
 
   <!-- Listing -->
   <div
+    bind:this={listEl}
     bind:clientHeight={listViewportH}
     onscroll={(e) => (listScrollTop = e.currentTarget.scrollTop)}
-    class="min-h-0 flex-1 overflow-y-auto text-sm"
+    onpointermove={listPointerMove}
+    onpointerup={listPointerUp}
+    onpointercancel={listPointerUp}
+    role="tree"
+    tabindex="-1"
+    class="min-h-0 flex-1 overflow-y-auto text-sm {dragEntry ? 'select-none cursor-grabbing' : ''}"
   >
     {#if loading}
       <!-- Skeleton rows while the directory listing loads. -->
@@ -606,7 +749,10 @@
           {#each visibleItems as item (item.key)}
             {#if item.entry === null}
               <button
-                class="flex h-7 w-full items-center gap-2 px-2 text-left hover:bg-edge"
+                data-drop={parentPath ?? undefined}
+                class="flex h-7 w-full items-center gap-2 px-2 text-left {dropOk(parentPath)
+                  ? 'bg-accent/20 ring-1 ring-inset ring-accent'
+                  : 'hover:bg-edge'}"
                 ondblclick={goUp}
                 aria-label={t("sftp.goUp")} use:tooltip={t("sftp.goUp")}
               >
@@ -615,7 +761,22 @@
               </button>
             {:else}
               {@const entry = item.entry}
-              <div class="group flex h-7 items-center gap-2 px-2 hover:bg-edge">
+              <div
+                data-drop={entry.isDir ? entry.path : undefined}
+                onpointerdown={(e) => startMove(e, entry)}
+                onclick={(e) => rowClick(e, entry)}
+                onkeydown={(e) => rowKeydown(e, entry)}
+                role="treeitem"
+                aria-selected={selection.selected.has(entry.path)}
+                tabindex="-1"
+                class="group flex h-7 cursor-grab items-center gap-2 px-2 {dropOk(entry.path)
+                  ? 'bg-accent/20 ring-1 ring-inset ring-accent'
+                  : selection.selected.has(entry.path)
+                    ? 'bg-accent/25'
+                    : 'hover:bg-edge'} {dragEntry && selection.selected.has(entry.path)
+                  ? 'opacity-50'
+                  : ''}"
+              >
                 <button
                   class="flex min-w-0 flex-1 items-center gap-2 text-left"
                   use:tooltip={fileTooltip(entry)}
@@ -629,7 +790,10 @@
                     </span>
                   {/if}
                 </button>
-                <div class="invisible flex shrink-0 items-center gap-1 group-hover:visible">
+                <div
+                  data-nodrag
+                  class="invisible flex shrink-0 items-center gap-1 group-hover:visible"
+                >
                   {#if !entry.isDir && onOpenFile}
                     <button
                       class="rounded p-0.5 text-muted hover:text-accent"
@@ -718,6 +882,34 @@
     >{confirmTarget?.path}</span
   >
 </ConfirmDialog>
+
+<!-- Move confirmation (drag-to-move within the panel). -->
+<ConfirmDialog
+  open={!!moveTarget}
+  title={t("sftp.moveTitle")}
+  confirmLabel={t("sftp.moveConfirm")}
+  onconfirm={doMove}
+  oncancel={() => (moveTarget = null)}
+>
+  {#if moveTarget}
+    {moveTarget.items.length === 1
+      ? t("sftp.moveBody", { name: moveTarget.items[0].name, dest: moveTarget.destDir })
+      : t("sftp.moveBodyMulti", { count: moveTarget.items.length, dest: moveTarget.destDir })}
+  {/if}
+</ConfirmDialog>
+
+<!-- Drag ghost (pointer-events-none so elementFromPoint still sees the drop row). -->
+{#if dragEntry}
+  <div
+    class="pointer-events-none fixed z-50 flex items-center gap-1 rounded border border-accent bg-panel px-2 py-1 text-xs shadow-lg"
+    style="left: {dragX + 12}px; top: {dragY + 8}px;"
+  >
+    <Icon name={fileIconName(dragEntry)} size={13} class="text-muted" />
+    <span class="font-medium text-white">
+      {selection.selected.size > 1 ? t("sftp.dragCount", { count: selection.selected.size }) : dragEntry.name}
+    </span>
+  </div>
+{/if}
 
 <!-- Directory sync (compares local folder ⇄ current remote folder) -->
 <SyncModal

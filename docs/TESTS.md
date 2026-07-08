@@ -164,7 +164,8 @@ pnpm check
 - `localfile.rs` (Фаза 12.4, локальные файлы) — `local_temp` (скрытый sibling, корректный
   parent + bare-имя); async round-trip read/write с **конфликт-проверкой** по sha
   (правильный sha → запись, устаревший → `file-changed`); отказ на **бинаре** (NUL) и
-  **слишком большом** файле (через `tokio::test` + `tempfile`).
+  **слишком большом** файле; `rename` (Фаза 21) — перемещение файла в подпапку и **отказ**
+  `dest-exists` при занятом имени (через `tokio::test` + `tempfile`).
 - `servertools.rs` (Фаза 12.8) — `parse_status` (mgr + present-bins), `install_command`
   (команда под менеджер: системные с sudo, fallback `pip --user` для yamllint/ruff, distro-имена
   для sensors, бинарь для hadolint, **smartmontools/sysstat по своему имени**, `None` для
@@ -465,6 +466,17 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `terminalCwd` (для SFTP — после connect); ручная навигация не «отскакивает».
 - `shellintegration.test.ts` — `OSC7_SETUP`: содержит `printf` OSC 7, идемпотентен,
   ведущий пробел (вне истории), немедленный вызов эмиттера; `osc7SetupDisplay()` без пробела.
+- `termzoom.test.ts` (Фаза 21, чистая логика) — `accumulatePinch`: порог шага,
+  рост/уменьшение по знаку `deltaY`, мультишаг с остатком, накопление дробных дельт,
+  кламп на границах 8–32 с дренажом аккумулятора.
+- `filemove.test.ts` (Фаза 21, чистая логика) — `parentDir`/`baseName`/`joinPath` и
+  `checkMove` (перемещение внутри панели): корректный путь-назначение, отказы
+  self / в-свой-потомок / no-op, различение соседа с общим префиксом имени
+  (`/a/proj` vs `/a/proj2`), нормализация хвостовых слэшей.
+- `multiselect.test.ts` (Фаза 21, чистая логика) — `clickSelect`: обычный клик
+  (одна запись + якорь), Ctrl/Cmd-клик (добавить/убрать), Shift-диапазон в обе
+  стороны, замена диапазона с сохранением якоря, фолбэк на одиночный выбор при
+  отсутствующем/устаревшем якоре.
 
 **Гейты безопасности (юнит, в обычном `pnpm test`):**
 

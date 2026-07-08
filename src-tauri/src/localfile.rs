@@ -93,6 +93,19 @@ pub async fn remove(path: &str, is_dir: bool) -> AppResult<()> {
     r.map_err(|e| e.to_string().into())
 }
 
+/// Move (rename) `from` to `to` on the local filesystem. Refuses if `to` already
+/// exists so a drag-move never clobbers an unrelated file — the frontend maps
+/// `DestinationExists` to a name-conflict toast. `rename` is atomic within one
+/// filesystem; a cross-device move (EXDEV) surfaces as a plain error toast.
+pub async fn rename(from: &str, to: &str) -> AppResult<()> {
+    if tokio::fs::symlink_metadata(to).await.is_ok() {
+        return Err(AppError::DestinationExists);
+    }
+    tokio::fs::rename(from, to)
+        .await
+        .map_err(|e| e.to_string().into())
+}
+
 /// SHA-256 every file under `root` (skipping symlinks), returning `/`-separated
 /// relative paths sorted by path — the local side of directory sync (Phase 12.5).
 pub async fn hash_tree(root: &str) -> AppResult<Vec<crate::sync::HashEntry>> {
@@ -332,5 +345,33 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("too large"));
+    }
+
+    #[tokio::test]
+    async fn rename_moves_into_subdir_and_refuses_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("note.txt");
+        let sub = dir.path().join("sub");
+        tokio::fs::write(&src, b"hi").await.unwrap();
+        tokio::fs::create_dir(&sub).await.unwrap();
+        let dest = sub.join("note.txt");
+
+        // Moves the file into the subdirectory.
+        rename(src.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap();
+        assert!(!src.exists());
+        assert_eq!(tokio::fs::read_to_string(&dest).await.unwrap(), "hi");
+
+        // A second file with the same target name is refused, not clobbered.
+        let other = dir.path().join("note.txt");
+        tokio::fs::write(&other, b"other").await.unwrap();
+        let err = rename(other.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("dest-exists"));
+        // The existing target is untouched.
+        assert_eq!(tokio::fs::read_to_string(&dest).await.unwrap(), "hi");
+        assert!(other.exists());
     }
 }
