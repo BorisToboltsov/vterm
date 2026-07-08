@@ -246,4 +246,144 @@ describe("ServerTree", () => {
     expect(onRenameFolder).toHaveBeenCalledWith("Prod");
     expect(onSelectFolder).not.toHaveBeenCalled();
   });
+
+  // ── Keyboard navigation (arrows move a frame-cursor; Enter/Delete act) ──────
+  it("ArrowDown from no selection moves the frame to the first row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("ArrowDown moves the frame to the next row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        selectedId: "1",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("2");
+  });
+
+  it("ArrowUp moves the frame to the previous row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        selectedId: "2",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowUp" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("ArrowDown steps from a folder row into its first server", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("Enter on a server row connects it", async () => {
+    const onSelect = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onSelect,
+        onConnect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+    expect(onConnect).toHaveBeenCalled();
+  });
+
+  it("Enter on a folder row toggles its collapse", async () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+      },
+    });
+    expect(screen.getByTestId("server-row")).toBeInTheDocument();
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter" });
+    expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("Delete on a server row requests its deletion", async () => {
+    const onDeleteServer = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onDeleteServer,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Delete" });
+    expect(onDeleteServer).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
+  });
+
+  it("Delete on a folder row requests its deletion", async () => {
+    const onDeleteFolder = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+        onDeleteFolder,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Delete" });
+    expect(onDeleteFolder).toHaveBeenCalledWith("Prod");
+  });
+
+  it("Space does not change the selection (no space-select)", async () => {
+    const onSelect = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onSelect,
+        onConnect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: " " });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("draws an accent frame around the selected row", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], selectedId: "1" },
+    });
+    expect(screen.getByTestId("server-row").className).toContain("outline-accent/70");
+  });
 });

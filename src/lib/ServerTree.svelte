@@ -13,6 +13,7 @@
     type TreeRow,
   } from "./tree";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { nextCursor } from "./filekeys";
   import { layout } from "./stores/layout.svelte";
   import { serverDots } from "./stores/tabs.svelte";
   import Icon from "./Icon.svelte";
@@ -95,6 +96,59 @@
     collapsedFolders = collapsedFolders.includes(path)
       ? collapsedFolders.filter((p) => p !== path)
       : [...collapsedFolders, path];
+  }
+
+  // ── Keyboard navigation (roving frame-cursor at the tree level) ────────────
+  // The cursor is simply the currently-selected row: `↑`/`↓` move the single
+  // selection through the flat row list (server → `onSelect`, folder →
+  // `onSelectFolder`), drawing an accent frame around it. `Enter` connects a
+  // server or toggles a folder's collapse (по аналогии с SFTP-панелью); `Delete`
+  // removes the server/folder (with the parent's confirmation). No Space-select
+  // and no other combos — mirrors the request. Keydown is handled once on the
+  // focusable list container; rows carry roving `tabindex="-1"`.
+  const cursorIndex = $derived(
+    treeRows.findIndex((r) =>
+      r.kind === "server" ? r.server.id === selectedId : r.path === selectedFolder,
+    ),
+  );
+
+  function selectRow(row: TreeRow) {
+    if (row.kind === "folder") onSelectFolder(row.path);
+    else onSelect(row.server.id);
+  }
+
+  function scrollRowIntoView(i: number) {
+    const els = listEl?.querySelectorAll<HTMLElement>(
+      '[data-testid="folder-row"],[data-testid="server-row"]',
+    );
+    els?.[i]?.scrollIntoView({ block: "nearest" });
+  }
+
+  function onTreeKeydown(event: KeyboardEvent) {
+    const rows = treeRows;
+    if (rows.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      const next = nextCursor(event.key, cursorIndex, rows.length, 1);
+      if (next === null) return;
+      event.preventDefault();
+      selectRow(rows[next]);
+      scrollRowIntoView(next);
+      return;
+    }
+    const row = rows[cursorIndex];
+    if (!row) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (row.kind === "folder") toggleFolder(row.path);
+      else {
+        onSelect(row.server.id);
+        onConnect();
+      }
+    } else if (event.key === "Delete" || event.key === "Backspace") {
+      event.preventDefault();
+      if (row.kind === "folder") onDeleteFolder(row.path);
+      else onDeleteServer(row.server);
+    }
   }
 
   // ── Drag servers and folders into folders (pointer-based) ──────────────────
@@ -237,7 +291,8 @@
       bind:this={listEl}
       data-drop=""
       role="tree"
-      tabindex="-1"
+      tabindex="0"
+      onkeydown={onTreeKeydown}
       onpointermove={listPointerMove}
       onpointerup={listPointerUp}
       onpointercancel={listPointerUp}
@@ -256,6 +311,8 @@
       {/snippet}
       {#each treeRows as row (row.kind === "folder" ? "f:" + row.path : "s:" + row.server.id)}
         {#if row.kind === "folder"}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- Keyboard is handled at the focusable list container (roving focus). -->
           <div
             data-drop={row.path}
             data-testid="folder-row"
@@ -265,11 +322,13 @@
             tabindex="-1"
             style="padding-left: {row.depth * 16}px"
             onpointerdown={(e) => folderPointerDown(e, row.path)}
-            onclick={() => onSelectFolder(row.path)}
-            onkeydown={(e) => e.key === "Enter" && onSelectFolder(row.path)}
+            onclick={() => {
+              onSelectFolder(row.path);
+              listEl?.focus();
+            }}
             class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
             row.path
-              ? 'border-accent'
+              ? 'border-accent outline outline-1 -outline-offset-1 outline-accent/70'
               : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
               ? 'bg-accent/20 ring-1 ring-inset ring-accent'
               : selectedFolder === row.path
@@ -333,22 +392,26 @@
           </div>
         {:else}
           {@const dots = serverDots(connections[row.server.id] ?? [])}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- Keyboard is handled at the focusable list container (roving focus). -->
           <div
             data-testid="server-row"
             data-server-alias={row.server.alias}
             role="button"
-            tabindex="0"
+            tabindex="-1"
             style="padding-left: {row.depth * 16}px"
             class="group relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
             row.server.id
-              ? 'border-accent bg-edge'
+              ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'
               : 'border-transparent'} {dragKind === 'server' && dragId === row.server.id
               ? 'opacity-50'
               : ''}"
             onpointerdown={(e) => serverPointerDown(e, row.server.id)}
-            onclick={() => onSelect(row.server.id)}
+            onclick={() => {
+              onSelect(row.server.id);
+              listEl?.focus();
+            }}
             ondblclick={onConnect}
-            onkeydown={(e) => e.key === "Enter" && onSelect(row.server.id)}
           >
             {@render guides(row.depth)}
             <!-- Empty toggle column so servers align with folder icons. -->
