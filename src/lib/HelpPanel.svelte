@@ -58,9 +58,21 @@
 
   // [label message-key, key combo, optional combo message-key]. Key combos that
   // are pure symbols (⌘K …) stay literal; descriptive ones are translated.
+  // Feature names shown as chips above the hotkeys (SSH/SFTP first, then by theme).
+  const features: MessageKey[] = [
+    "help.featSsh",
+    "help.featSftp",
+    "help.featEditor",
+    "help.featStructuredLogs",
+    "help.featMonitoring",
+    "help.featRecording",
+    "help.featAi",
+  ];
+
   const hotkeys: [MessageKey, string, MessageKey?][] = [
     ["help.hkCommandPalette", "⌘K  /  Ctrl+K"],
     ["help.hkNewTab", "⌘T  /  Ctrl+T"],
+    ["help.hkSearch", "⌘F  /  Ctrl+Shift+F"],
     ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],
     ["help.hkPaste", "⌘V  /  Ctrl+Shift+V"],
     ["help.hkInterrupt", "Ctrl+C"],
@@ -111,6 +123,15 @@
       <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm">
         {#if tab === "help"}
           <p class="mb-3 text-xs text-muted">{t("help.intro")}</p>
+          <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("help.features")}</h3>
+          <div class="mb-3 flex flex-wrap gap-1.5">
+            {#each features as f (f)}
+              <span
+                class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
+                >{t(f)}</span
+              >
+            {/each}
+          </div>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("help.hotkeys")}</h3>
           <table class="w-full text-xs">
             <tbody>

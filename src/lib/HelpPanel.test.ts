@@ -28,6 +28,17 @@ describe("HelpPanel", () => {
     // The Cmd/Ctrl+T new-tab shortcut is documented (Phase 20.15).
     expect(screen.getByText("New tab (same server, or local shell)")).toBeInTheDocument();
     expect(screen.getByText(/⌘T\s*\/\s*Ctrl\+T/)).toBeInTheDocument();
+    // The terminal-search shortcut (Phase 21).
+    expect(screen.getByText("Search terminal buffer")).toBeInTheDocument();
+    expect(screen.getByText(/⌘F\s*\/\s*Ctrl\+Shift\+F/)).toBeInTheDocument();
+  });
+
+  it("lists the key features as chips on the Help tab", () => {
+    render(HelpPanel, { props: { open: true, tab: "help" } });
+    expect(screen.getByText("Features")).toBeInTheDocument();
+    expect(screen.getByText("Structured logs")).toBeInTheDocument();
+    expect(screen.getByText("Session recording, playback and export")).toBeInTheDocument();
+    expect(screen.getByText("AI assistant")).toBeInTheDocument();
   });
 
   it("shows the app version from Tauri on the About tab", async () => {

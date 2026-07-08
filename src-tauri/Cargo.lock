@@ -5966,7 +5966,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "0.21.23"
+version = "0.21.24"
 dependencies = [
  "async-http-proxy",
  "directories",
