@@ -792,7 +792,7 @@ audit`) — если нет, задокументировать игнор в `d
 
 ---
 
-## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.25)
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.29)
 
 Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
 сервера** (у одного может быть proxy, у другого нет). Реализованы **все три типа**:
@@ -1035,6 +1035,44 @@ audit`) — если нет, задокументировать игнор в `d
   ([filekeys.ts](../src/lib/filekeys.ts), уже покрыт тестами). Клик по строке фокусирует
   список, чтобы клавиатура работала сразу. Тесты — `ServerTree.test.ts` (+9). GUIDE/README
   обновлены.
+- **Крестик закрытия в диалогах + мягкая подсветка крестиков вкладок** (v0.21.26).
+  (1) [Modal.svelte](../src/lib/Modal.svelte) получил проп `showClose`: кнопка-иконка
+  `close` в правом-верхнем углу карточки (`text-muted hover:text-danger`), включена на
+  диалогах, где было неочевидно, как закрыть, — **мониторинг**
+  ([MonitoringOverlay](../src/lib/MonitoringOverlay.svelte)), **библиотека записей**
+  ([RecordingsPanel](../src/lib/RecordingsPanel.svelte)), **форма сервера**
+  ([ServerFormModal](../src/lib/ServerFormModal.svelte)), **создание/переименование папки**
+  ([FolderModals](../src/lib/FolderModals.svelte)), **синхронизация**
+  ([SyncModal](../src/lib/SyncModal.svelte)). Крестик — сиблинг скролл-карточки (обёртка
+  `relative`), поэтому не крадёт стартовый фокус у первого поля и не уезжает при скролле
+  содержимого. (2) Крестик закрытия **вкладки сервера/терминала** в
+  [+page.svelte](../src/routes/+page.svelte) больше не рисует красный прямоугольник
+  (`hover:bg-danger hover:text-white`) — теперь только красная иконка `hover:text-danger`,
+  как у вкладок редактора. Тесты — `Modal.test.ts` (+3). DESIGN/GUIDE обновлены.
+- **Единый крестик в «Настройках» и «О программе»** (v0.21.27). Эти два окна не на
+  `Modal` (свой оверлей), поэтому у них оставался старый крестик-глиф `×` с подсветкой
+  `hover:text-white`. Заменён на `<Icon name="close" size={16} />` с `hover:text-danger` —
+  так же, как в модальных диалогах (мониторинг и др.):
+  [SettingsPanel](../src/lib/SettingsPanel.svelte) и
+  [HelpPanel](../src/lib/HelpPanel.svelte) (вкладки Справка/Инструкция/О программе).
+  Тесты — `HelpPanel.test.ts`/`SettingsPanel.test.ts` (+2, закрытие по крестику).
+- **Тема по умолчанию — One Dark** (v0.21.28). `DEFAULT_THEME_ID` в
+  [themes.ts](../src/lib/themes.ts) переключён с `catppuccin` на `one-dark`. Синхронно
+  обновлены **три first-paint фолбэка** под панель One Dark (`#282c34`), чтобы новый
+  пользователь не видел вспышку прежней палитры: `@theme`-токены в
+  [app.css](../src/app.css), анти-FOUC статический фон в [app.html](../src/app.html) и
+  `backgroundColor` окна в [tauri.conf.json](../src-tauri/tauri.conf.json). Существующие
+  пользователи сохраняют выбранную тему (`localStorage`), фолбэк на них не влияет. Тест —
+  `themes.test.ts` (+1, дефолт = One Dark). GUIDE обновлён.
+- **Новый логотип приложения** (v0.21.29). Иконка ОС заменена на минималистичную марку
+  **`>_`** (терминальный промпт, accent `#61afef`) на тёмном скруглённом квадрате
+  (One Dark `#21252b`). Мастер-исходник — [icon-source.svg](../src-tauri/icons/icon-source.svg),
+  полный набор (`.png`/`.icns`/`.ico`/Store-логотипы) перегенерирован
+  `pnpm tauri icon` (лишние android/ios/64x64 удалены — приложение под macOS+Windows).
+  Та же марка добавлена **на вкладку «Справка»** — **перед вступительным слоганом**
+  («Vterm — …») через инлайн-SVG на **тематических токенах** (`--color-panel`/
+  `--color-edge`/`--color-accent`), поэтому подстраивается под активную тему. Тест —
+  `HelpPanel.test.ts` (+1, `app-logo`). DESIGN обновлён.
 
 ---
 

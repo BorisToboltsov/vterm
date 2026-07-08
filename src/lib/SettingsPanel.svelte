@@ -141,10 +141,12 @@
       <div class="flex items-center justify-between border-b border-edge px-4 py-3">
         <h2 class="text-sm font-semibold text-accent">{t("settings.title")}</h2>
         <button
-          class="rounded px-2 text-muted hover:text-white"
+          class="rounded p-0.5 text-muted hover:text-danger"
           aria-label={t("common.close")}
-          onclick={() => (open = false)}>×</button
+          onclick={() => (open = false)}
         >
+          <Icon name="close" size={16} />
+        </button>
       </div>
 
       <div class="border-b border-edge px-4 py-2">

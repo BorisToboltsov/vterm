@@ -1236,7 +1236,7 @@
             <span class="truncate">{tabAlias(tab)}</span>
             <button
               data-close
-              class="shrink-0 rounded p-0.5 text-muted hover:bg-danger hover:text-white"
+              class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
               aria-label={t("tab.close")}
               onclick={(e) => {
                 e.stopPropagation();

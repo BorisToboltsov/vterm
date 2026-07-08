@@ -87,7 +87,7 @@
 </script>
 
 <!-- New folder -->
-<Modal open={showCreate} title={t("page.newFolderTitle")} onclose={() => (showCreate = false)}>
+<Modal open={showCreate} title={t("page.newFolderTitle")} showClose onclose={() => (showCreate = false)}>
   <form onsubmit={submitCreate}>
     {#if createParent}
       <p class="mb-3 text-xs text-muted">
@@ -116,7 +116,7 @@
 </Modal>
 
 <!-- Rename folder -->
-<Modal open={!!toRename} title={t("page.renameFolderTitle")} onclose={() => (toRename = null)}>
+<Modal open={!!toRename} title={t("page.renameFolderTitle")} showClose onclose={() => (toRename = null)}>
   <form onsubmit={submitRename}>
     <input
       use:focusOnMount

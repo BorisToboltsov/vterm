@@ -261,6 +261,7 @@
   {open}
   width="w-[42rem]"
   title={mode === "edit" ? t("page.editServerTitle") : t("page.newServerTitle")}
+  showClose
   onclose={() => (open = false)}
 >
   <form onsubmit={submit}>

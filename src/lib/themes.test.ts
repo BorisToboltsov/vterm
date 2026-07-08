@@ -56,6 +56,13 @@ describe("themeSwatches", () => {
   });
 });
 
+describe("default theme", () => {
+  it("is One Dark", () => {
+    expect(DEFAULT_THEME_ID).toBe("one-dark");
+    expect(getTheme(DEFAULT_THEME_ID).name).toBe("One Dark");
+  });
+});
+
 describe("getTheme", () => {
   it("returns the requested theme", () => {
     expect(getTheme("dracula").id).toBe("dracula");

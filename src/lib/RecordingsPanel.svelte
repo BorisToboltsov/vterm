@@ -332,6 +332,7 @@
   {open}
   width={playing ? "w-[60rem]" : "w-[44rem]"}
   title={t("recordings.title")}
+  showClose
   onclose={() => (open = false)}
 >
   {#if playing}

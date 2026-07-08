@@ -259,7 +259,16 @@
       "Bash(sed -i '' 's/\\(v0.21.0 → v0.21.22\\)/\\(v0.21.0 → v0.21.23\\)/' docs/ROADMAP.md)",
       "Bash(sed -i '' 's/\"version\": \"0.21.23\"/\"version\": \"0.21.24\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.21.23\"/version = \"0.21.24\"/' src-tauri/Cargo.toml)",
-      "Bash(sed -i '' 's/\\(v0.21.0 → v0.21.23\\)/\\(v0.21.0 → v0.21.24\\)/' docs/ROADMAP.md)"
+      "Bash(sed -i '' 's/\\(v0.21.0 → v0.21.23\\)/\\(v0.21.0 → v0.21.24\\)/' docs/ROADMAP.md)",
+      "Bash(grep -rln 'import Modal from \"./Modal.svelte\"\\\\|import Modal from \"$lib/Modal.svelte\"' src/)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.25\"/\"version\": \"0.21.26\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.25\"/version = \"0.21.26\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.26\"/\"version\": \"0.21.27\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.26\"/version = \"0.21.27\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.27\"/\"version\": \"0.21.28\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.27\"/version = \"0.21.28\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.21.28\"/\"version\": \"0.21.29\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.28\"/version = \"0.21.29\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

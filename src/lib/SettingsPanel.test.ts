@@ -287,4 +287,12 @@ describe("SettingsPanel — appearance & search", () => {
     await userEvent.click(screen.getByTestId("ai-add-local"));
     expect(screen.getAllByTestId("ai-endpoint").length).toBeGreaterThanOrEqual(1);
   });
+
+  it("closes via the header × button", async () => {
+    render(SettingsPanel, { props: { open: true } });
+    expect(screen.getByText("Settings")).toBeInTheDocument();
+    // The header × (aria-label "Close"), distinct from the backdrop ("Close settings").
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByText("Settings")).toBeNull();
+  });
 });

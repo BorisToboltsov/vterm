@@ -1,19 +1,22 @@
 @import "tailwindcss";
 
-/* Custom theme tokens for vterm (Tailwind v4 @theme) */
+/* Custom theme tokens for vterm (Tailwind v4 @theme). These are the first-paint
+   fallback; at runtime `applyUiPalette` overrides them from the active theme.
+   Kept in sync with the default theme (One Dark, `DEFAULT_THEME_ID`) so the very
+   first frame before JS runs already matches the default. */
 @theme {
-  --color-panel: #1e1e2e;
-  --color-panel-alt: #181825;
-  --color-edge: #313244;
-  --color-accent: #89b4fa;
-  --color-accent-hover: #b4befe;
-  --color-danger: #f38ba8;
+  --color-panel: #282c34;
+  --color-panel-alt: #21252b;
+  --color-edge: #3e4451;
+  --color-accent: #61afef;
+  --color-accent-hover: #c678dd;
+  --color-danger: #e06c75;
   /* Warning/threshold amber (Phase «Расширение мониторинга»): a semantic alert
      colour for "average threshold exceeded". Fixed across themes unless a theme
      overrides `warn` in its UiPalette. */
   --color-warn: #e5a50a;
-  --color-muted: #6c7086;
-  --color-text: #cdd6f4;
+  --color-muted: #5c6370;
+  --color-text: #abb2bf;
 }
 
 html,

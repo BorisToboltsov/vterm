@@ -56,6 +56,18 @@ describe("HelpPanel", () => {
     expect(await screen.findByText("0.4.0")).toBeInTheDocument();
   });
 
+  it("closes via the header × button", async () => {
+    render(HelpPanel, { props: { open: true, tab: "help" } });
+    expect(screen.getByText("Hotkeys")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByText("Hotkeys")).toBeNull();
+  });
+
+  it("shows the app logo at the top of the panel", () => {
+    render(HelpPanel, { props: { open: true, tab: "help" } });
+    expect(screen.getByTestId("app-logo")).toBeInTheDocument();
+  });
+
   it("opens external links through the Tauri opener", async () => {
     const user = userEvent.setup();
     render(HelpPanel, { props: { open: true, tab: "about" } });

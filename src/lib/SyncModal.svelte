@@ -122,7 +122,7 @@
   }
 </script>
 
-<Modal {open} title={t("sync.title")} width="w-[90vw] max-w-2xl" {onclose}>
+<Modal {open} title={t("sync.title")} width="w-[90vw] max-w-2xl" showClose {onclose}>
   <div class="space-y-3 text-xs">
     <!-- Folders as two cards with a direction-aware arrow between them -->
     <div class="flex items-stretch gap-2">

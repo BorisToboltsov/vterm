@@ -315,6 +315,7 @@
   {open}
   title={t("mon.title")}
   width="w-[min(96vw,1180px)]"
+  showClose
   onclose={() => (open = false)}
 >
   {#if !metrics && !failed}

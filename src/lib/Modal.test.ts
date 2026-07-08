@@ -48,6 +48,26 @@ describe("Modal", () => {
     expect(onclose).not.toHaveBeenCalled();
   });
 
+  it("shows no close (×) button by default", () => {
+    render(Modal, { props: { open: true, title: "Hi", onclose: vi.fn(), children: text("body") } });
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+  });
+
+  it("shows a close (×) button when showClose is set, and clicking it closes", async () => {
+    const onclose = vi.fn();
+    render(Modal, {
+      props: { open: true, title: "Hi", showClose: true, onclose, children: text("body") },
+    });
+    await userEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onclose).toHaveBeenCalledOnce();
+  });
+
+  it("keeps initial focus on the first form control even with a close button", () => {
+    // The × lives outside the dialog/trap, so it must not steal the opening focus.
+    render(Modal, { props: { open: true, title: "T", showClose: true, onclose: vi.fn(), children: twoButtons } });
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "one" }));
+  });
+
   it("exposes dialog semantics (role/aria-modal/aria-label)", () => {
     render(Modal, { props: { open: true, title: "Edit server", children: text("body") } });
     const dialog = screen.getByRole("dialog");

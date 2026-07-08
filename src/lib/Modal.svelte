@@ -2,6 +2,7 @@
   // Reusable modal shell: dimmed backdrop + centered card. Controlled via `open`
   // + `onclose` (backdrop click or Escape). Content is passed as children.
   import type { Snippet } from "svelte";
+  import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
   let {
@@ -9,6 +10,7 @@
     title,
     titleClass = "text-accent",
     width = "w-80",
+    showClose = false,
     onclose,
     children,
   }: {
@@ -17,6 +19,8 @@
     titleClass?: string;
     /** Tailwind width class for the card. */
     width?: string;
+    /** Show a close (×) button pinned to the card's top-right corner. */
+    showClose?: boolean;
     onclose?: () => void;
     children?: Snippet;
   } = $props();
@@ -74,18 +78,33 @@
       aria-label={t("common.closeDialog")}
       onclick={() => onclose?.()}
     ></button>
-    <div
-      use:trap
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      tabindex="-1"
-      class="relative {width} max-h-[90vh] max-w-[95vw] overflow-auto rounded-lg border border-edge bg-panel-alt p-4 outline-none"
-    >
-      {#if title}
-        <h2 class="mb-3 text-sm font-semibold {titleClass}">{title}</h2>
+    <!-- Wrapper shrink-wraps the card so the close button (a sibling of the
+         scrolling card, not a child) stays pinned to the corner and never
+         scrolls away — and stays outside the focus trap so it can't steal the
+         initial focus from the first form control. -->
+    <div class="relative">
+      <div
+        use:trap
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabindex="-1"
+        class="relative {width} max-h-[90vh] max-w-[95vw] overflow-auto rounded-lg border border-edge bg-panel-alt p-4 outline-none"
+      >
+        {#if title}
+          <h2 class="mb-3 text-sm font-semibold {titleClass}">{title}</h2>
+        {/if}
+        {@render children?.()}
+      </div>
+      {#if showClose && onclose}
+        <button
+          class="absolute right-2 top-2 z-10 rounded p-0.5 text-muted hover:text-danger"
+          aria-label={t("common.close")}
+          onclick={() => onclose?.()}
+        >
+          <Icon name="close" size={16} />
+        </button>
       {/if}
-      {@render children?.()}
     </div>
   </div>
 {/if}

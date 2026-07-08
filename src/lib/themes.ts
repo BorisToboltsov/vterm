@@ -641,10 +641,11 @@ export const THEMES: ThemeDef[] = [
   c64,
 ];
 
-export const DEFAULT_THEME_ID = catppuccin.id;
+export const DEFAULT_THEME_ID = oneDark.id;
 
 export function getTheme(id: string): ThemeDef {
-  return THEMES.find((t) => t.id === id) ?? catppuccin;
+  // Unknown ids fall back to the default theme (kept in sync with DEFAULT_THEME_ID).
+  return THEMES.find((t) => t.id === id) ?? oneDark;
 }
 
 /** Representative colors for a theme preview chip (bg, fg, accent, ok, warn, err). */

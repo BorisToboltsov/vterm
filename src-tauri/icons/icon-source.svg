@@ -1,0 +1,9 @@
+<!-- Master source for the app icon. Regenerate the full icon set with:
+       pnpm tauri icon src-tauri/icons/icon-source.svg
+     then delete the extra android/ios/64x64 outputs (this app ships macOS + Windows).
+     Mark: a >_ terminal prompt (accent #61afef) on a dark rounded square (One Dark #21252b). -->
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="1024" height="1024" rx="236" fill="#21252b"/>
+  <path d="M304 336 L464 512 L304 688" fill="none" stroke="#61afef" stroke-width="64" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="512" y="608" width="208" height="64" rx="32" fill="#61afef"/>
+</svg>
