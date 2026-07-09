@@ -100,6 +100,17 @@ export const ICONS = {
   // Kernel — a terminal/console window.
   terminal:
     '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
+  // Synchronous multi-server input — a broadcast antenna radiating waves.
+  broadcast:
+    '<circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.5 5.5a9 9 0 0 0 0 13M18.5 5.5a9 9 0 0 1 0 13"/>',
+  // Send the composed command to every target — a paper plane.
+  send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
+  // Broadcast layout: tiled terminals.
+  layoutGrid:
+    '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+  // Broadcast layout: one focused terminal + a roster list.
+  layoutFocus:
+    '<rect x="3" y="4" width="11" height="16" rx="1.5"/><path d="M17 6h4M17 10h4M17 14h4M17 18h4"/>',
   // AI assistant — an "Ai" wordmark. Unlike the stroke line-icons, this entry is
   // fill-based text (mono, matching the terminal), so it overrides the svg's
   // stroke/fill on the <text> element itself. Scales with `size` via the viewBox.

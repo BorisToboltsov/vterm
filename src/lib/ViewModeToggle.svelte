@@ -8,8 +8,9 @@
   import { t } from "./i18n";
 
   // `compact` collapses the labels to icons-only once the surrounding
-  // `@container` toolbar is too narrow — set by JsonLogView; the floating
-  // Terminal.svelte usage leaves it off and always shows the text.
+  // `@container` is too narrow (< 460px). Both usages set it: the JsonLogView
+  // table toolbar and the floating raw-mode toggle in Terminal.svelte (whose
+  // `.relative.@container` terminal pane is the query container).
   let {
     structured,
     onSelect,

@@ -282,7 +282,23 @@
       "Bash(ls /tmp/newicons.svg.png)",
       "Bash(grep -n \"round-trip в \\\\`model.rs\\\\`\\\\.\" docs/ROADMAP.md)",
       "Bash(sed -i '' 's/0\\\\.21\\\\.35/0.21.36/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.35\"/version = \"0.21.36\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.35\"/version = \"0.21.36\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.21\\\\.36/0.22.0/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.36\"/version = \"0.22.0\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.0/0.22.1/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.0\"/version = \"0.22.1\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.1/0.22.2/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.1\"/version = \"0.22.2\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.2/0.22.3/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.2\"/version = \"0.22.3\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.3/0.22.4/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.3\"/version = \"0.22.4\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.4/0.22.5/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.4\"/version = \"0.22.5\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.5/0.22.6/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.5\"/version = \"0.22.6\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/0\\\\.22\\\\.6/0.22.7/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.6\"/version = \"0.22.7\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

@@ -22,4 +22,15 @@ describe("ViewModeToggle", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Raw" }));
     expect(onSelect).toHaveBeenCalledWith(false);
   });
+
+  it("collapses the labels via a container query when compact", () => {
+    render(ViewModeToggle, { props: { structured: false, compact: true, onSelect: () => {} } });
+    expect(screen.getByText("Raw")).toHaveClass("@max-[460px]:hidden");
+    expect(screen.getByText("Table")).toHaveClass("@max-[460px]:hidden");
+  });
+
+  it("keeps the labels always visible when not compact", () => {
+    render(ViewModeToggle, { props: { structured: false, onSelect: () => {} } });
+    expect(screen.getByText("Raw")).not.toHaveClass("@max-[460px]:hidden");
+  });
 });

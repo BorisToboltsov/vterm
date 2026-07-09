@@ -130,6 +130,24 @@
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
+  import BroadcastBar from "$lib/BroadcastBar.svelte";
+  import BroadcastRoster from "$lib/BroadcastRoster.svelte";
+  import {
+    broadcastState,
+    isBroadcastMember,
+    toggleBroadcastMember,
+    setBroadcastMembers,
+    clearBroadcastMembers,
+    removeBroadcastMember,
+    effectiveLayout,
+  } from "$lib/stores/broadcast.svelte";
+  import {
+    eligibleMembers,
+    frameCommand,
+    groupHasProd,
+    gridColumns,
+    prodMembers,
+  } from "$lib/broadcast";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
@@ -226,6 +244,89 @@
   // Notes belong to the active SSH tab's server when one is focused; on a local
   // tab (or with no tab) they fall back to the tree-selected server.
   const notesServerTarget = $derived(notesTarget(activeServer, selected));
+
+  // ── Broadcast: synchronous multi-server input (Phase 22) ───────────────────
+  // Broadcast mode is bound to the active tab: we're "in broadcast" whenever the
+  // active tab belongs to the group, so switching tabs enters/leaves the mode.
+  const bcOn = $derived(
+    !!tabsState.activeId && isBroadcastMember(tabsState.activeId),
+  );
+  // Measured width of the terminal area → how many grid columns stay readable.
+  let bcAreaWidth = $state(0);
+  // Open tabs in the group, in tab order (may include connecting/errored ones,
+  // which still tile so their overlay is visible).
+  const bcMemberTabs = $derived(
+    tabsState.list.filter((tab) => isBroadcastMember(tab.sessionId)),
+  );
+  // Live members that would actually receive a sent command.
+  const bcTargets = $derived(eligibleMembers(broadcastState.members, tabsState.list));
+  const bcLayout = $derived(effectiveLayout(bcTargets.length));
+  // The focused member (focus layout) is simply the active tab.
+  const bcFocusId = $derived(tabsState.activeId);
+  const bcHasProd = $derived(groupHasProd(bcTargets, tabsState.list, servers));
+  const bcCols = $derived(gridColumns(bcAreaWidth || 1200, bcMemberTabs.length));
+  // Roster rows (focus layout): every member except the focused one.
+  const bcRosterRows = $derived(
+    bcMemberTabs
+      .filter((tab) => tab.sessionId !== bcFocusId)
+      .map((tab) => {
+        const srv = servers.find((s) => s.id === tab.serverId);
+        return {
+          sessionId: tab.sessionId,
+          alias: tabAlias(tab),
+          host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
+          status: localizedStatus(tab.status),
+          dot: dotClass(tab.status),
+          isProd: !!srv && isProdServer(srv.tags),
+        };
+      }),
+  );
+
+  /** Add/remove the active tab to/from the group (entering/leaving broadcast). */
+  function toggleActiveBroadcast() {
+    const id = tabsState.activeId;
+    if (id) toggleBroadcastMember(id);
+  }
+
+  /** Add every live SSH/local session to the group (keeps existing members). */
+  function addAllConnected() {
+    setBroadcastMembers([
+      ...broadcastState.members,
+      ...tabsState.list
+        .filter((tab) => (tab.kind === "ssh" || tab.kind === "local") && isLive(tab.status))
+        .map((tab) => tab.sessionId),
+    ]);
+  }
+
+  // A command awaiting confirmation because the group includes a prod server.
+  let pendingBroadcast = $state<{ frame: string; targets: string[] } | null>(null);
+  const pendingProdAliases = $derived(
+    pendingBroadcast
+      ? prodMembers(pendingBroadcast.targets, tabsState.list, servers).map((id) => {
+          const tab = findTab(id);
+          return tab ? tabAlias(tab) : id;
+        })
+      : [],
+  );
+
+  /** Send the composed command to every live member (prod → confirm first). */
+  function requestBroadcast(cmd: string) {
+    const frame = frameCommand(cmd);
+    if (!frame) return;
+    const targets = eligibleMembers(broadcastState.members, tabsState.list);
+    if (targets.length === 0) return;
+    if (groupHasProd(targets, tabsState.list, servers)) {
+      pendingBroadcast = { frame, targets };
+      return;
+    }
+    doBroadcast(frame, targets);
+  }
+
+  /** The actual fan-out: one `write_to_terminal` per target (reused contract). */
+  function doBroadcast(frame: string, targets: string[]) {
+    const bytes = new TextEncoder().encode(frame);
+    for (const id of targets) writeToTerminal(id, bytes).catch(() => {});
+  }
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
   const topSubtitle = $derived(
     activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
@@ -754,6 +855,7 @@
   function closeTabFully(sessionId: string) {
     removeWorkspace(sessionId);
     removeChat(sessionId);
+    removeBroadcastMember(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -1152,6 +1254,9 @@
     onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
     onOpenSettings={() => openSettings("servertools")}
+    canBroadcast={!!tabsState.activeId}
+    broadcastActive={bcOn}
+    onToggleBroadcast={toggleActiveBroadcast}
     showNotes={!!notesServerTarget}
     hasNotes={hasNotes(notesServerTarget?.notes)}
     onOpenNotes={() => (notesServer = notesServerTarget)}
@@ -1234,23 +1339,36 @@
               : 'text-muted hover:bg-edge'}"
             title={localizedStatus(tab.status)}
           >
-            <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
-            {#if recordingState[tab.sessionId]}
-              {#if recordingPaused[tab.sessionId]}
-                <Icon
-                  name="pause"
-                  size={12}
-                  class="shrink-0 text-green-500"
-                  title={t("recordings.paused")}
-                />
-              {:else}
+            <!-- Status / recording / broadcast dots grouped tightly together. -->
+            <span class="flex shrink-0 items-center gap-0.5">
+              <span class="h-2 w-2 rounded-full {dotClass(tab.status)}"></span>
+              {#if recordingState[tab.sessionId]}
+                {#if recordingPaused[tab.sessionId]}
+                  <Icon
+                    name="pause"
+                    size={12}
+                    class="text-green-500"
+                    title={t("recordings.paused")}
+                  />
+                {:else}
+                  <span
+                    class="h-2 w-2 animate-pulse rounded-full bg-danger"
+                    use:tooltip={t("recordings.recording")}
+                    aria-label={t("recordings.recording")}
+                  ></span>
+                {/if}
+              {/if}
+              <!-- Broadcast membership indicator: a blue dot, only while in broadcast
+                   mode and this tab belongs to the group. -->
+              {#if bcOn && isBroadcastMember(tab.sessionId)}
                 <span
-                  class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-danger"
-                  use:tooltip={t("recordings.recording")}
-                  aria-label={t("recordings.recording")}
+                  data-broadcast-member
+                  class="h-2 w-2 rounded-full bg-blue-500"
+                  use:tooltip={t("broadcast.memberDot")}
+                  aria-label={t("broadcast.memberDot")}
                 ></span>
               {/if}
-            {/if}
+            </span>
             <span class="truncate">{tabAlias(tab)}</span>
             <button
               data-close
@@ -1279,11 +1397,85 @@
 
       {#if tabsState.list.length > 0}
         <div class="flex min-h-0 flex-1">
-          <div class="relative min-h-0 min-w-0 flex-1">
+          <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+            {#if bcOn}
+              <!-- Broadcast toolbar: group size, layout, quick actions, exit. -->
+              <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 text-xs">
+                <Icon name="broadcast" size={14} class="text-accent" />
+                <span class="font-medium text-white">{t("broadcast.title")}</span>
+                <span class="text-muted">{t("broadcast.targetCount", { count: bcTargets.length })}</span>
+                <div class="mx-1 flex items-center gap-0.5 rounded bg-panel p-0.5">
+                  <button
+                    class="rounded p-1 {bcLayout === 'grid' ? 'bg-edge text-white' : 'text-muted hover:text-white'}"
+                    onclick={() => (broadcastState.layoutMode = "grid")}
+                    use:tooltip={t("broadcast.layoutGrid")}
+                    aria-label={t("broadcast.layoutGrid")}
+                  >
+                    <Icon name="layoutGrid" size={14} />
+                  </button>
+                  <button
+                    class="rounded p-1 {bcLayout === 'focus' ? 'bg-edge text-white' : 'text-muted hover:text-white'}"
+                    onclick={() => (broadcastState.layoutMode = "focus")}
+                    use:tooltip={t("broadcast.layoutFocus")}
+                    aria-label={t("broadcast.layoutFocus")}
+                  >
+                    <Icon name="layoutFocus" size={14} />
+                  </button>
+                </div>
+                <button class="rounded px-2 py-0.5 text-muted hover:text-white" onclick={addAllConnected}>
+                  {t("broadcast.addAllConnected")}
+                </button>
+                <button class="rounded px-2 py-0.5 text-muted hover:text-white" onclick={clearBroadcastMembers}>
+                  {t("broadcast.clear")}
+                </button>
+                <div class="flex-1"></div>
+                <button
+                  class="rounded px-2 py-0.5 text-muted hover:text-white"
+                  onclick={() => {
+                    if (tabsState.activeId) removeBroadcastMember(tabsState.activeId);
+                  }}
+                >
+                  {t("broadcast.exit")}
+                </button>
+              </div>
+            {/if}
+            <div
+              bind:clientWidth={bcAreaWidth}
+              class={bcOn
+                ? bcLayout === "grid"
+                  ? "grid min-h-0 min-w-0 flex-1 gap-1 overflow-y-auto p-1"
+                  : "flex min-h-0 min-w-0 flex-1 gap-1 p-1"
+                : "relative min-h-0 min-w-0 flex-1"}
+              style={bcOn && bcLayout === "grid"
+                ? `grid-template-columns: repeat(${bcCols}, minmax(0, 1fr)); grid-auto-rows: minmax(220px, 1fr);`
+                : ""}
+            >
             {#each tabsState.list as tab (tab.sessionId)}
               {@const ws = getWorkspace(tab.sessionId)}
-              <div class="absolute inset-0 flex flex-col {tabsState.activeId === tab.sessionId ? '' : 'invisible'}">
-                {#if ws.editors.length > 0}
+              {@const bcTile = bcOn && (bcLayout === "grid" ? isBroadcastMember(tab.sessionId) : tab.sessionId === bcFocusId)}
+              {@const bcSrv = servers.find((s) => s.id === tab.serverId)}
+              <div
+                class={bcOn && !bcTile
+                  ? "hidden"
+                  : bcTile
+                    ? bcLayout === "grid"
+                      ? "relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-edge"
+                      : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-edge"
+                    : `absolute inset-0 flex flex-col ${tabsState.activeId === tab.sessionId ? "" : "invisible"}`}
+              >
+                {#if bcTile}
+                  <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-[11px]">
+                    <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
+                    <span class="shrink-0 truncate text-white">{tabAlias(tab)}</span>
+                    <span class="min-w-0 flex-1 truncate text-muted">
+                      {bcSrv ? `${bcSrv.username}@${bcSrv.host}:${bcSrv.port}` : ""}
+                    </span>
+                    {#if bcSrv && isProdServer(bcSrv.tags)}
+                      <span class="shrink-0 rounded bg-danger/30 px-1 text-[10px] text-danger">prod</span>
+                    {/if}
+                  </div>
+                {/if}
+                {#if ws.editors.length > 0 && !bcOn}
                   <!-- Workspace sub-tabs: terminal + open editors (Phase 12). -->
                   <div class="flex shrink-0 items-stretch overflow-x-auto border-b border-edge bg-panel-alt text-xs">
                     <button
@@ -1325,7 +1517,7 @@
                   </div>
                 {/if}
                 <div class="relative min-h-0 flex-1 p-1">
-                <div class="absolute inset-0 {ws.active === TERMINAL_VIEW ? '' : 'invisible'}">
+                <div class="absolute inset-0 {ws.active === TERMINAL_VIEW || bcOn ? '' : 'invisible'}">
                 {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
                   <ConnectingOverlay
@@ -1412,6 +1604,7 @@
                   />
                 {/key}
                 </div>
+                {#if !bcOn}
                 {#each ws.editors as ed (ed.id)}
                   <div class="absolute inset-0 {ws.active === ed.id ? '' : 'invisible'}">
                     {#if ed.loadError}
@@ -1429,9 +1622,26 @@
                     {/if}
                   </div>
                 {/each}
+                {/if}
                 </div>
               </div>
             {/each}
+              {#if bcOn && bcLayout === "focus" && bcMemberTabs.length > 0}
+                <BroadcastRoster
+                  rows={bcRosterRows}
+                  onfocus={(id) => (tabsState.activeId = id)}
+                  onremove={removeBroadcastMember}
+                />
+              {/if}
+            </div>
+            {#if bcOn}
+              <BroadcastBar
+                targetCount={bcTargets.length}
+                disabled={bcTargets.length === 0}
+                prodWarn={bcHasProd}
+                onsend={requestBroadcast}
+              />
+            {/if}
           </div>
           {#if tabsState.activeId && (activeTab?.kind === "ssh" || activeTab?.kind === "local")}
             {#if !layout.sftpCollapsed}
@@ -1581,6 +1791,27 @@
   oncancel={() => (serverToDelete = null)}
 >
   {t("page.deleteServerBody1")} <span class="text-white">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
+</ConfirmDialog>
+
+<!-- Broadcast: confirm before sending to a group that includes a prod server -->
+<ConfirmDialog
+  open={!!pendingBroadcast}
+  title={t("broadcast.prodConfirmTitle")}
+  confirmLabel={t("broadcast.prodConfirmSend")}
+  danger
+  onconfirm={() => {
+    if (pendingBroadcast) doBroadcast(pendingBroadcast.frame, pendingBroadcast.targets);
+    pendingBroadcast = null;
+  }}
+  oncancel={() => (pendingBroadcast = null)}
+>
+  {t("broadcast.prodConfirmBody1")}
+  <span class="text-white">{pendingBroadcast?.targets.length ?? 0}</span>
+  {t("broadcast.prodConfirmBody2")}
+  <span class="text-danger">{pendingProdAliases.join(", ")}</span>
+  <pre
+    class="mt-2 overflow-x-auto rounded border border-edge bg-panel p-2 text-[11px] leading-relaxed text-muted"
+  >{pendingBroadcast ? pendingBroadcast.frame.replace(/\n$/, "") : ""}</pre>
 </ConfirmDialog>
 
 <!-- Shell-integration consent for "follow terminal" (session-only OSC 7 setup) -->

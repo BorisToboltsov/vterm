@@ -85,6 +85,38 @@ describe("TopBar", () => {
     expect(screen.getByTestId("record-toggle")).toHaveAttribute("aria-pressed", "true");
   });
 
+  it("keeps the broadcast button in its slot but disabled without an active tab", async () => {
+    const onToggleBroadcast = vi.fn();
+    render(TopBar, { props: { ...base, canBroadcast: false, onToggleBroadcast } });
+    const btn = screen.getByTestId("topbar-broadcast");
+    expect(btn).toBeInTheDocument();
+    expect(btn).toBeDisabled();
+    await userEvent.click(btn);
+    expect(onToggleBroadcast).not.toHaveBeenCalled();
+  });
+
+  it("toggles broadcast and reflects membership via aria-pressed", async () => {
+    const onToggleBroadcast = vi.fn();
+    const { unmount } = render(TopBar, {
+      props: { ...base, canBroadcast: true, broadcastActive: false, onToggleBroadcast },
+    });
+    const btn = screen.getByTestId("topbar-broadcast");
+    expect(btn).toBeEnabled();
+    expect(btn).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(btn);
+    expect(onToggleBroadcast).toHaveBeenCalledOnce();
+    unmount();
+    render(TopBar, { props: { ...base, canBroadcast: true, broadcastActive: true } });
+    expect(screen.getByTestId("topbar-broadcast")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("places the broadcast button before the notes button", () => {
+    render(TopBar, { props: { ...base, canBroadcast: true, showNotes: true } });
+    const bc = screen.getByTestId("topbar-broadcast");
+    const notes = screen.getByTestId("topbar-notes");
+    expect(bc.compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("places the recording controls before the settings gear", () => {
     render(TopBar, { props: { ...base, canRecord: true } });
     const rec = screen.getByTestId("record-toggle");

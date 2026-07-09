@@ -17,6 +17,9 @@
     onOpenRecordings,
     onOpenMonitoring,
     onOpenSettings,
+    canBroadcast = false,
+    broadcastActive = false,
+    onToggleBroadcast,
     showNotes = false,
     hasNotes = false,
     onOpenNotes,
@@ -35,6 +38,12 @@
     onOpenRecordings: () => void;
     onOpenMonitoring: () => void;
     onOpenSettings: () => void;
+    /** There is an active tab → the broadcast action is enabled (kept in its slot,
+     *  dimmed + disabled otherwise, like REC/monitoring). */
+    canBroadcast?: boolean;
+    /** The active tab is a broadcast-group member → highlight + "remove" tooltip. */
+    broadcastActive?: boolean;
+    onToggleBroadcast?: () => void;
     /** A server is selected in the tree → show the notes action (even when not
      *  connected). Tied to the selection, not the active session. */
     showNotes?: boolean;
@@ -55,6 +64,21 @@
   {/if}
 
   <div class="ml-auto flex shrink-0 items-center gap-1">
+    <button
+      class="flex items-center rounded p-1.5 {!canBroadcast
+        ? 'cursor-not-allowed text-muted opacity-40'
+        : broadcastActive
+          ? 'text-accent hover:bg-edge'
+          : 'text-muted hover:bg-edge hover:text-white'}"
+      use:tooltip={broadcastActive ? t("broadcast.removeFromGroup") : t("broadcast.addToGroup")}
+      aria-label={broadcastActive ? t("broadcast.removeFromGroup") : t("broadcast.addToGroup")}
+      aria-pressed={broadcastActive}
+      data-testid="topbar-broadcast"
+      disabled={!canBroadcast}
+      onclick={() => onToggleBroadcast?.()}
+    >
+      <Icon name="broadcast" size={15} />
+    </button>
     {#if showNotes}
       <button
         class="relative flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

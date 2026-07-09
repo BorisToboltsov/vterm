@@ -662,7 +662,7 @@
   });
 </script>
 
-<div class="relative h-full w-full">
+<div class="relative h-full w-full @container">
   <!-- px-2 pt-1: lift the console text off the left edge and the tab-bar border.
        FitAddon reads the container's content width (padding excluded), so columns
        still fit exactly; the padding strip is tinted with the terminal bg to blend. -->
@@ -681,7 +681,7 @@
     </div>
   {:else if jsonViewEnabled && connected}
     <div class="absolute right-2 top-2 z-30">
-      <ViewModeToggle {structured} onSelect={setStructured} />
+      <ViewModeToggle {structured} compact onSelect={setStructured} />
     </div>
   {/if}
   <!-- Full-buffer search overlay (Phase 10). -->

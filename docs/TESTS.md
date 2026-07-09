@@ -551,7 +551,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `EmptyState.test.ts` — рендер иконки/заголовка/подсказки, опциональность подсказки,
   слот CTA-кнопок.
 - `ViewModeToggle.test.ts` — сегмент «Raw | Table» (0.11.5): `aria-pressed` на
-  активном сегменте по пропу `structured`, вызов `onSelect(true/false)` по клику.
+  активном сегменте по пропу `structured`, вызов `onSelect(true/false)` по клику; при
+  `compact` подписи схлопываются контейнерным запросом (`@max-[460px]:hidden`), без — всегда видны.
 - `ConnectingOverlay.test.ts` — окно ожидания подключения (0.11.2): заголовок с
   `alias` и подпись `user@host:port`, `role="status"`; активная фаза с акцентным
   цветом и многоточием, предыдущая фаза как «done». Режим ошибки (0.11.3, проп
@@ -631,6 +632,16 @@ pnpm test:coverage   # прогон + покрытие + гейты
   (двусторонний `bind`). В `ServerFormModal.test.ts` добавлен тест: раскрытие секции, затем выбор
   глифа (`server-icon-database`) и цвета (`server-color-green`) попадает в payload `addServer`
   (`icon`/`iconColor`).
+- `broadcast.test.ts` (Фаза 22, чистая логика) — синхронный ввод: `eligibleMembers`
+  (только открытые живые члены, в порядке вкладок; закрытые/ошибочные/чужие id отброшены),
+  `prodMembers`/`groupHasProd` (только SSH с prod-тегом; local и неизвестный сервер — не prod),
+  `frameCommand` (команда + `\n`, без trim, null для пустой), `pickLayout` (сетка ≤ порога,
+  дальше фокус), `gridColumns` (кол-во колонок по ширине/мин-плитке, кап 4, минимум 1).
+- `BroadcastBar.test.ts` (Фаза 22, компонентный) — командная строка: отправка по кнопке и по
+  Enter (`onsend` с текстом, поле очищается), пустая команда не отправляется, при
+  `disabled`/0 целей ввод инертен и кнопка `disabled`.
+- `BroadcastRoster.test.ts` (Фаза 22, компонентный) — ростер фокус-раскладки: список членов с
+  алиасами, prod-бейдж у prod-члена, клик по строке → `onfocus(id)`, кнопка удаления → `onremove(id)`.
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).
