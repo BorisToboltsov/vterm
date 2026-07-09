@@ -54,6 +54,11 @@ export function setRecordingMeta(path: string, title: string, description: strin
   return invoke<void>("set_recording_meta", { path, title, description });
 }
 
+/** Name a broadcast bundle: writes `label` into every recording of `batchId`. */
+export function setBatchLabel(batchId: string, label: string): Promise<void> {
+  return invoke<void>("set_batch_label", { batchId, label });
+}
+
 /** Delete a stored recording by path. */
 export function deleteRecording(path: string): Promise<void> {
   return invoke<void>("delete_recording", { path });

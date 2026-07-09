@@ -88,6 +88,23 @@ pub fn with_ended_at(content: &str, ended_at: u64) -> Option<String> {
     Some(format!("{header}{rest}"))
 }
 
+/// Rewrite the asciicast header's `vterm.batchLabel` (the user-given name of a
+/// broadcast group recording). Preserves events and other fields; returns `None`
+/// if the first line isn't a JSON object header.
+pub fn with_batch_label(content: &str, label: &str) -> Option<String> {
+    let nl = content.find('\n')?;
+    let (first, rest) = content.split_at(nl);
+    let mut header: serde_json::Value = serde_json::from_str(first.trim()).ok()?;
+    if !header.is_object() {
+        return None;
+    }
+    if !header.get("vterm").is_some_and(|v| v.is_object()) {
+        header["vterm"] = serde_json::json!({});
+    }
+    header["vterm"]["batchLabel"] = serde_json::json!(label);
+    Some(format!("{header}{rest}"))
+}
+
 /// One asciicast event line `[t, kind, data]` (no trailing newline). `t` is
 /// rounded to microseconds; `data` is JSON-escaped by serde.
 pub fn event_line(t: f64, kind: char, data: &str) -> String {
@@ -714,6 +731,22 @@ mod tests {
     fn update_meta_rejects_non_header() {
         assert!(with_updated_meta("not json\n[0,\"o\",\"x\"]\n", "t", "d").is_none());
         assert!(with_updated_meta("", "t", "d").is_none());
+    }
+
+    #[test]
+    fn with_batch_label_sets_vterm_field_preserving_events() {
+        let content = format!(
+            "{}\n{}\n",
+            asciicast_header(80, 24, 1_700_000_000, "web", false),
+            event_line(0.0, 'o', "hi"),
+        );
+        let updated = with_batch_label(&content, "Nightly deploy").unwrap();
+        let header: serde_json::Value =
+            serde_json::from_str(updated.lines().next().unwrap()).unwrap();
+        assert_eq!(header["vterm"]["batchLabel"], "Nightly deploy");
+        assert!(updated.contains(r#"[0.0,"o","hi"]"#));
+        // Rejects a non-header first line.
+        assert!(with_batch_label("nope\n", "x").is_none());
     }
 
     #[test]

@@ -623,6 +623,25 @@ struct RecordingMeta {
     height: u32,
     timestamp: u64,
     size: u64,
+    /// Broadcast batch id (group recording) — set only for recordings made as
+    /// part of a synchronous-input group; absent for ordinary recordings.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_id: Option<String>,
+    /// User-given name of the broadcast bundle, written to every member on stop.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    batch_label: Option<String>,
+}
+
+/// Read the broadcast batch id from an asciicast header's `vterm.batch` (a plain
+/// string written by the frontend's recording env). Pure → unit-tested.
+fn batch_id_from_header(header: &serde_json::Value) -> Option<String> {
+    header["vterm"]["batch"].as_str().map(str::to_owned)
+}
+
+/// Read the broadcast bundle name from `vterm.batchLabel` (set when the user
+/// names the group recording after stopping it).
+fn batch_label_from_header(header: &serde_json::Value) -> Option<String> {
+    header["vterm"]["batchLabel"].as_str().map(str::to_owned)
 }
 
 /// True if `path` is a `.cast` file directly inside the recordings directory
@@ -672,6 +691,8 @@ fn meta_for_path(path: &std::path::Path) -> RecordingMeta {
         height: header["height"].as_u64().unwrap_or(24) as u32,
         timestamp: header["timestamp"].as_u64().unwrap_or(0),
         size,
+        batch_id: batch_id_from_header(&header),
+        batch_label: batch_label_from_header(&header),
     }
 }
 
@@ -918,6 +939,41 @@ fn set_recording_meta(path: String, title: String, description: String) -> AppRe
     let updated = recording::with_updated_meta(&content, &title, &description)
         .ok_or_else(|| AppError::Message("invalid recording header".into()))?;
     std::fs::write(&p, updated).map_err(|e| format!("write recording: {e}"))?;
+    Ok(())
+}
+
+/// Name a broadcast bundle: write `label` into `vterm.batchLabel` of every
+/// recording that shares `batch_id`. Used by the "name this broadcast" prompt
+/// after stopping a group recording.
+#[tauri::command]
+fn set_batch_label(batch_id: String, label: String) -> AppResult<()> {
+    let Some(dir) = recording::recordings_dir() else {
+        return Ok(());
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.extension().is_none_or(|e| e != "cast") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(&p) else {
+            continue;
+        };
+        let matches = content
+            .lines()
+            .next()
+            .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .and_then(|h| batch_id_from_header(&h))
+            .is_some_and(|id| id == batch_id);
+        if !matches {
+            continue;
+        }
+        if let Some(updated) = recording::with_batch_label(&content, &label) {
+            let _ = std::fs::write(&p, updated);
+        }
+    }
     Ok(())
 }
 
@@ -1628,6 +1684,7 @@ pub fn run() {
             list_recordings,
             delete_recording,
             set_recording_meta,
+            set_batch_label,
             read_recording,
             export_recording,
             import_recording,
@@ -1686,5 +1743,37 @@ mod tests {
         assert!(a["srv-".len()..].chars().all(|c| c.is_ascii_hexdigit()));
         let b = uuid_like();
         assert_ne!(a, b);
+    }
+
+    // ── batch_id_from_header ──────────────────────────────────────────────────
+    #[test]
+    fn batch_id_read_from_vterm() {
+        let h = serde_json::json!({ "vterm": { "batch": "bcast-42" } });
+        assert_eq!(batch_id_from_header(&h), Some("bcast-42".to_owned()));
+    }
+
+    #[test]
+    fn batch_id_absent_for_ordinary_recordings() {
+        assert_eq!(
+            batch_id_from_header(&serde_json::json!({ "vterm": {} })),
+            None
+        );
+        assert_eq!(batch_id_from_header(&serde_json::json!({})), None);
+        // A non-string batch is ignored, not coerced.
+        let h = serde_json::json!({ "vterm": { "batch": 5 } });
+        assert_eq!(batch_id_from_header(&h), None);
+    }
+
+    #[test]
+    fn batch_label_read_from_vterm() {
+        let h = serde_json::json!({ "vterm": { "batchLabel": "Nightly deploy" } });
+        assert_eq!(
+            batch_label_from_header(&h),
+            Some("Nightly deploy".to_owned())
+        );
+        assert_eq!(
+            batch_label_from_header(&serde_json::json!({ "vterm": {} })),
+            None
+        );
     }
 }

@@ -52,6 +52,7 @@
   import { writeClipboard } from "./clipboard";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import type { RecordingMeta } from "./types";
+  import { groupRecordings, type RecGroupEntry } from "./recgroup";
 
   let {
     open = $bindable(false),
@@ -84,6 +85,29 @@
   };
 
   const view = $derived(sortRecordingsBy(filterRecordings(items, query), criteria));
+  // Collapse broadcast (group-recording) bundles into one expandable entry.
+  const entries = $derived(groupRecordings(view));
+  let expandedBatches = $state<Set<string>>(new Set());
+  let confirmDeleteGroup = $state<RecGroupEntry | null>(null);
+
+  function toggleBatch(id: string) {
+    const next = new Set(expandedBatches);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    expandedBatches = next;
+  }
+
+  async function removeGroup(group: RecGroupEntry) {
+    confirmDeleteGroup = null;
+    for (const rec of group.items) {
+      try {
+        await deleteRecording(rec.path);
+      } catch {
+        /* keep going; report nothing per-file to avoid a toast storm */
+      }
+    }
+    items = items.filter((r) => r.batchId !== group.batchId);
+  }
 
   // ── AI generation: runbook plan / shell script / Ansible playbook (17.5–17.6) ─
   /** What the AI turns the transcript into. `plan` shows in a viewer; scripts open in the editor. */
@@ -410,79 +434,127 @@
     {#if view.length === 0}
       <p class="px-3 py-6 text-center text-xs text-muted">{t("recordings.noMatches")}</p>
     {/if}
-    <div class="max-h-[60vh] space-y-1.5 overflow-auto">
-      {#each view as rec (rec.path)}
-        <div class="group flex items-center gap-2 rounded border border-edge px-2 py-1.5 hover:bg-edge">
-          <Icon name="activity" size={14} class="shrink-0 text-muted" />
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-sm text-text" title={baseName(rec.path)}>
-              {rec.title || baseName(rec.path)}
-            </div>
-            {#if rec.description}
-              <div class="truncate text-xs text-muted" title={rec.description}>
-                {rec.description}
-              </div>
-            {/if}
-            <div class="flex items-center gap-1 text-[11px] text-muted">
-              {#if rec.server}
-                <Icon name="server" size={12} class="shrink-0" />
-                <span class="truncate" title={rec.server}>{rec.server}</span>
-                <span aria-hidden="true">·</span>
-              {/if}
-              <span class="tabular-nums">{fmtDate(rec.timestamp)} · {fmtBytes(rec.size)}</span>
-            </div>
+    {#snippet recRow(rec: RecordingMeta)}
+      <div class="group flex items-center gap-2 rounded border border-edge px-2 py-1.5 hover:bg-edge">
+        <Icon name="activity" size={14} class="shrink-0 text-muted" />
+        <div class="min-w-0 flex-1">
+          <div class="truncate text-sm text-text" title={baseName(rec.path)}>
+            {rec.title || baseName(rec.path)}
           </div>
-          <div class="flex shrink-0 items-center gap-1">
-            {#if aiOn}
-              <button
-                type="button"
-                data-testid="rec-ai"
-                onclick={() => (aiMenuFor = rec)}
-                use:tooltip={t("recordings.ai")}
-                aria-label={t("recordings.ai")}
-                class="rounded p-0.5 text-muted hover:text-accent"
-              >
-                <Icon name="aiMark" size={14} />
-              </button>
+          {#if rec.description}
+            <div class="truncate text-xs text-muted" title={rec.description}>
+              {rec.description}
+            </div>
+          {/if}
+          <div class="flex items-center gap-1 text-[11px] text-muted">
+            {#if rec.server}
+              <Icon name="server" size={12} class="shrink-0" />
+              <span class="truncate" title={rec.server}>{rec.server}</span>
+              <span aria-hidden="true">·</span>
             {/if}
-            <button
-              type="button"
-              onclick={() => play(rec)}
-              use:tooltip={t("recordings.play")}
-              aria-label={t("recordings.play")}
-              class="rounded p-0.5 text-muted hover:text-accent"
-            >
-              <Icon name="play" size={14} />
-            </button>
-            <button
-              type="button"
-              onclick={() => (editRec = rec)}
-              use:tooltip={t("recordings.edit")}
-              aria-label={t("recordings.edit")}
-              class="rounded p-0.5 text-muted hover:text-accent"
-            >
-              <Icon name="pencil" size={13} />
-            </button>
-            <button
-              type="button"
-              onclick={() => (exportFor = rec)}
-              use:tooltip={t("recordings.export")}
-              aria-label={t("recordings.export")}
-              class="rounded p-0.5 text-muted hover:text-accent"
-            >
-              <Icon name="download" size={14} />
-            </button>
-            <button
-              type="button"
-              onclick={() => (confirmDelete = rec)}
-              use:tooltip={t("recordings.delete")}
-              aria-label={t("recordings.delete")}
-              class="rounded p-0.5 text-muted hover:text-danger"
-            >
-              <Icon name="trash" size={14} />
-            </button>
+            <span class="tabular-nums">{fmtDate(rec.timestamp)} · {fmtBytes(rec.size)}</span>
           </div>
         </div>
+        <div class="flex shrink-0 items-center gap-1">
+          {#if aiOn}
+            <button
+              type="button"
+              data-testid="rec-ai"
+              onclick={() => (aiMenuFor = rec)}
+              use:tooltip={t("recordings.ai")}
+              aria-label={t("recordings.ai")}
+              class="rounded p-0.5 text-muted hover:text-accent"
+            >
+              <Icon name="aiMark" size={14} />
+            </button>
+          {/if}
+          <button
+            type="button"
+            onclick={() => play(rec)}
+            use:tooltip={t("recordings.play")}
+            aria-label={t("recordings.play")}
+            class="rounded p-0.5 text-muted hover:text-accent"
+          >
+            <Icon name="play" size={14} />
+          </button>
+          <button
+            type="button"
+            onclick={() => (editRec = rec)}
+            use:tooltip={t("recordings.edit")}
+            aria-label={t("recordings.edit")}
+            class="rounded p-0.5 text-muted hover:text-accent"
+          >
+            <Icon name="pencil" size={13} />
+          </button>
+          <button
+            type="button"
+            onclick={() => (exportFor = rec)}
+            use:tooltip={t("recordings.export")}
+            aria-label={t("recordings.export")}
+            class="rounded p-0.5 text-muted hover:text-accent"
+          >
+            <Icon name="download" size={14} />
+          </button>
+          <button
+            type="button"
+            onclick={() => (confirmDelete = rec)}
+            use:tooltip={t("recordings.delete")}
+            aria-label={t("recordings.delete")}
+            class="rounded p-0.5 text-muted hover:text-danger"
+          >
+            <Icon name="trash" size={14} />
+          </button>
+        </div>
+      </div>
+    {/snippet}
+
+    <div class="max-h-[60vh] space-y-1.5 overflow-auto">
+      {#each entries as entry (entry.kind === "group" ? entry.batchId : entry.rec.path)}
+        {#if entry.kind === "single"}
+          {@render recRow(entry.rec)}
+        {:else}
+          <div class="rounded border border-edge">
+            <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-edge">
+              <button
+                type="button"
+                onclick={() => toggleBatch(entry.batchId)}
+                aria-expanded={expandedBatches.has(entry.batchId)}
+                class="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <Icon
+                  name={expandedBatches.has(entry.batchId) ? "chevronDown" : "chevronRight"}
+                  size={14}
+                  class="shrink-0 text-muted"
+                />
+                <Icon name="broadcast" size={14} class="shrink-0 text-accent" />
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-sm text-text">
+                    {entry.label || t("recordings.broadcastBundle", { count: entry.items.length })}
+                  </div>
+                  <div class="text-[11px] tabular-nums text-muted">
+                    {t("recordings.broadcastBundle", { count: entry.items.length })} · {fmtDate(entry.timestamp)}
+                  </div>
+                </div>
+              </button>
+              <button
+                type="button"
+                onclick={() => (confirmDeleteGroup = entry)}
+                use:tooltip={t("recordings.deleteGroup")}
+                aria-label={t("recordings.deleteGroup")}
+                class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
+              >
+                <Icon name="trash" size={14} />
+              </button>
+            </div>
+            {#if expandedBatches.has(entry.batchId)}
+              <div class="space-y-1.5 border-t border-edge p-1.5">
+                {#each entry.items as rec (rec.path)}
+                  {@render recRow(rec)}
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
       {/each}
     </div>
   {/if}
@@ -499,6 +571,19 @@
     {t("recordings.deleteConfirmBody", {
       name: confirmDelete.title || baseName(confirmDelete.path),
     })}
+  {/if}
+</ConfirmDialog>
+
+<!-- Delete a whole broadcast bundle (all member recordings) at once. -->
+<ConfirmDialog
+  open={confirmDeleteGroup !== null}
+  title={t("recordings.deleteGroupTitle")}
+  confirmLabel={t("recordings.delete")}
+  onconfirm={() => confirmDeleteGroup && removeGroup(confirmDeleteGroup)}
+  oncancel={() => (confirmDeleteGroup = null)}
+>
+  {#if confirmDeleteGroup}
+    {t("recordings.deleteGroupBody", { count: confirmDeleteGroup.items.length })}
   {/if}
 </ConfirmDialog>
 

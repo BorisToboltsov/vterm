@@ -1199,7 +1199,8 @@ audit`) — если нет, задокументировать игнор в `d
   (`bcOn`) и вкладка входит в группу. Историю см. в CHANGELOG (v0.22.2 иконка при `members>0`;
   v0.22.5 всегда; v0.22.6 синяя точка-кнопка; v0.22.7 — некликабельный индикатор, только в
   режиме). Управление составом группы — кнопкой в верхней полосе (активная вкладка) и «добавить
-  все подключённые» / «Удалить из группы» / «Очистить» в тулбаре. Главная кнопка
+  все подключённые» / «Удалить из группы» / «Очистить» в тулбаре. Кнопки тулбара и отправки —
+  **иконки** (`plus`/`trash`/`minus`/`send`) с `aria-label` + тултипом, без текстовых подписей (v0.22.9). Главная кнопка
   «добавить активную вкладку» переехала в **верхнюю полосу** ([TopBar.svelte](../src/lib/TopBar.svelte),
   пропы `canBroadcast`/`broadcastActive`/`onToggleBroadcast`) **перед иконкой-заметкой** (v0.22.3).
   Кнопка **всегда в своём слоте**: без открытых вкладок — приглушена и `disabled` (как REC/
@@ -1209,6 +1210,28 @@ audit`) — если нет, задокументировать игнор в `d
   i18n — ключи `broadcast.*` (en+ru).
 - **Тесты** — `broadcast.test.ts` (все чистые функции), `BroadcastBar.test.ts` (send/Enter/
   пусто/disabled), `BroadcastRoster.test.ts` (рендер, prod-бейдж, focus/remove).
+- **Групповая запись** (v0.22.10). REC в режиме broadcast пишет **всю группу**: фан-аут
+  `start_recording`/`stop_recording` на живых членах (`startGroupRecording`/`stopGroupRecording`/
+  `syncBatchRecording` в [+page.svelte](../src/routes/+page.svelte), джойн/лив членов
+  реконсилится). Каждая запись тегается общим `batchId` — он едет в env-метаданных →
+  `header.vterm.batch` ([recording.rs](../src-tauri/src/recording.rs)/env), читается обратно в
+  `RecordingMeta` (`batch_id_from_header` в [lib.rs](../src-tauri/src/lib.rs), зеркало
+  `batchId?` в [types.ts](../src/lib/types.ts)). Библиотека
+  ([RecordingsPanel.svelte](../src/lib/RecordingsPanel.svelte)) свор­ачивает записи одного
+  `batchId` в **бандл «Broadcast → N»** (чистая группировка `groupRecordings` в
+  [recgroup.ts](../src/lib/recgroup.ts)); удаление бандла — одним действием. Каждая команда —
+  маркер `broadcast: <cmd>` через `annotate_recording` в пишущиеся члены. Бродкаст на **prod**
+  авто-стартует групповую запись перед отправкой. Без новых тумблеров в настройках. Тесты —
+  `recgroup.test.ts`, `RecordingsPanel.test.ts` (+бандл), Rust `batch_id_from_header`.
+- **Имя бандла** (v0.22.11). При остановке групповой записи открывается тот же
+  `RecordingSaveDialog` («Название бродкаста»): имя пишется в `vterm.batchLabel` **всех** файлов
+  батча командой `set_batch_label(batch_id, label)` ([lib.rs](../src-tauri/src/lib.rs) +
+  `with_batch_label` в [recording.rs](../src-tauri/src/recording.rs)), читается в `RecordingMeta`
+  (`batch_label_from_header`, зеркало `batchLabel?` в [types.ts](../src/lib/types.ts)) и в
+  `groupRecordings` ([recgroup.ts](../src/lib/recgroup.ts) — `label` группы). Библиотека
+  показывает имя заголовком бандла (подзаголовок — «Broadcast → N · дата»); «Удалить» в диалоге
+  сносит весь бандл. Тесты — `recgroup.test.ts` (label), `RecordingsPanel.test.ts` (имя бандла),
+  Rust `with_batch_label`/`batch_label_from_header`.
 
 ---
 

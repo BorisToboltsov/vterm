@@ -119,6 +119,7 @@
     stopRecording,
     setRecordingPaused,
     setRecordingMeta,
+    setBatchLabel,
     deleteRecording,
     annotateRecording,
     fetchMetrics,
@@ -286,6 +287,7 @@
   function toggleActiveBroadcast() {
     const id = tabsState.activeId;
     if (id) toggleBroadcastMember(id);
+    void syncBatchRecording();
   }
 
   /** Add every live SSH/local session to the group (keeps existing members). */
@@ -296,10 +298,86 @@
         .filter((tab) => (tab.kind === "ssh" || tab.kind === "local") && isLive(tab.status))
         .map((tab) => tab.sessionId),
     ]);
+    void syncBatchRecording();
+  }
+
+  // ── Group recording for broadcast (Phase 22) ───────────────────────────────
+  // While a broadcast group is being recorded, `broadcastBatch` holds the shared
+  // batch id (tags every member's cast → the library bundles them). Recordings are
+  // still per-session under the hood; this just fans start/stop out to the group.
+  let broadcastBatch = $state<string | null>(null);
+  let batchRecMembers = new Set<string>();
+
+  /** Start recording the whole group under a fresh batch id. */
+  async function startGroupRecording() {
+    broadcastBatch = `bcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    batchRecMembers = new Set();
+    await syncBatchRecording();
+  }
+
+  /** Stop every recording started as part of the current batch; returns the batch
+   *  id + saved file paths so the caller can offer to name (or discard) the bundle. */
+  async function stopGroupRecording(): Promise<{ batchId: string; paths: string[] } | null> {
+    const batchId = broadcastBatch;
+    const ids = [...batchRecMembers];
+    broadcastBatch = null;
+    batchRecMembers = new Set();
+    const paths: string[] = [];
+    for (const id of ids) {
+      const path = recordingState[id];
+      if (isRecording(id)) {
+        try {
+          await stopRecording(id);
+        } catch {
+          /* file is flushed regardless */
+        }
+        clearRecording(id);
+      }
+      if (path) paths.push(path);
+    }
+    return batchId ? { batchId, paths } : null;
+  }
+
+  /** Reconcile group recording with the live members: start missing, stop gone. */
+  async function syncBatchRecording() {
+    const batch = broadcastBatch;
+    if (!batch) return;
+    const live = new Set(eligibleMembers(broadcastState.members, tabsState.list));
+    const starts: Promise<void>[] = [];
+    for (const id of live) {
+      if (batchRecMembers.has(id) || isRecording(id)) continue;
+      batchRecMembers.add(id);
+      const tab = findTab(id);
+      if (tab) {
+        starts.push(
+          startSessionRecording(tab, batch).catch(() => {
+            batchRecMembers.delete(id);
+          }),
+        );
+      }
+    }
+    for (const id of [...batchRecMembers]) {
+      if (live.has(id)) continue;
+      batchRecMembers.delete(id);
+      if (isRecording(id)) {
+        try {
+          await stopRecording(id);
+        } catch {
+          /* gone */
+        }
+        clearRecording(id);
+      }
+    }
+    await Promise.all(starts);
+  }
+
+  /** Start the group recording if it isn't running (prod broadcast audit). */
+  async function ensureGroupRecording() {
+    if (!broadcastBatch) await startGroupRecording();
   }
 
   // A command awaiting confirmation because the group includes a prod server.
-  let pendingBroadcast = $state<{ frame: string; targets: string[] } | null>(null);
+  let pendingBroadcast = $state<{ frame: string; targets: string[]; cmd: string } | null>(null);
   const pendingProdAliases = $derived(
     pendingBroadcast
       ? prodMembers(pendingBroadcast.targets, tabsState.list, servers).map((id) => {
@@ -316,16 +394,20 @@
     const targets = eligibleMembers(broadcastState.members, tabsState.list);
     if (targets.length === 0) return;
     if (groupHasProd(targets, tabsState.list, servers)) {
-      pendingBroadcast = { frame, targets };
+      pendingBroadcast = { frame, targets, cmd };
       return;
     }
-    doBroadcast(frame, targets);
+    doBroadcast(frame, targets, cmd);
   }
 
-  /** The actual fan-out: one `write_to_terminal` per target (reused contract). */
-  function doBroadcast(frame: string, targets: string[]) {
+  /** The actual fan-out: one `write_to_terminal` per target (reused contract),
+   *  plus an audit marker of the command into every member that's recording. */
+  function doBroadcast(frame: string, targets: string[], cmd: string) {
     const bytes = new TextEncoder().encode(frame);
-    for (const id of targets) writeToTerminal(id, bytes).catch(() => {});
+    for (const id of targets) {
+      writeToTerminal(id, bytes).catch(() => {});
+      if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(() => {});
+    }
   }
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
   const topSubtitle = $derived(
@@ -451,13 +533,24 @@
 
   /** Start recording a session (no-op if already recording). Used by the manual
    *  REC toggle and by auto-record on connect. */
-  async function startSessionRecording(tab: Tab) {
+  async function startSessionRecording(tab: Tab, batchId?: string) {
     const id = tab.sessionId;
     if (isRecording(id)) return;
     const dims = termDims[id] ?? { cols: 80, rows: 24 };
     // Seed the recording with the on-screen prompt so the first command has one.
     const prompt = termRefs[id]?.currentPromptLine?.() ?? "";
-    const env = await recordingEnv(tab);
+    let env = await recordingEnv(tab);
+    // Broadcast group recording: tag each member's cast with the batch id so the
+    // library can bundle them (rides in the `vterm` env metadata → header).
+    if (batchId) {
+      try {
+        const obj = JSON.parse(env);
+        obj.batch = batchId;
+        env = JSON.stringify(obj);
+      } catch {
+        /* keep the plain env if it somehow isn't valid JSON */
+      }
+    }
     const path = await startRecording(
       id,
       recordingTitle(tab),
@@ -471,8 +564,25 @@
     setRecording(id, path);
   }
 
-  /** Start/stop recording the active session (manual REC button / palette). */
+  /** Start/stop recording the active session (manual REC button / palette). In
+   *  broadcast mode this records the whole group instead of a single tab. */
   async function toggleRecording() {
+    if (bcOn) {
+      try {
+        if (broadcastBatch) {
+          const res = await stopGroupRecording();
+          // Offer to name (or discard) the bundle, like the single-recording flow.
+          if (res && res.paths.length > 0) saveBatch = { batchId: res.batchId, paths: res.paths };
+          else notifySuccess(t("recordings.groupStopped"));
+        } else {
+          await startGroupRecording();
+          notifySuccess(t("recordings.groupStarted", { count: bcTargets.length }));
+        }
+      } catch (e) {
+        notifyError(String(e));
+      }
+      return;
+    }
     const tab = activeTab;
     if (!tab || !isLive(tab.status)) {
       notifyError(t("recordings.needsSession"));
@@ -512,6 +622,7 @@
 
   /** Finalize a recording when its session closes (stamps end time), then clear. */
   async function finalizeRecordingOnClose(sessionId: string) {
+    batchRecMembers.delete(sessionId);
     if (isRecording(sessionId)) {
       try {
         await stopRecording(sessionId);
@@ -596,6 +707,37 @@
     } catch (e) {
       notifyError(String(e));
     }
+  }
+
+  // Naming prompt for a just-stopped broadcast bundle (batch id + member paths).
+  let saveBatch = $state<{ batchId: string; paths: string[] } | null>(null);
+
+  /** Name the broadcast bundle: writes the label into every member recording. */
+  async function saveBatchName(title: string) {
+    const b = saveBatch;
+    saveBatch = null;
+    if (!b) return;
+    try {
+      if (title) await setBatchLabel(b.batchId, title);
+      notifySuccess(t("recordings.groupStopped"));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
+  /** Discard the whole just-made broadcast bundle (delete every member file). */
+  async function discardBatch() {
+    const b = saveBatch;
+    saveBatch = null;
+    if (!b) return;
+    for (const path of b.paths) {
+      try {
+        await deleteRecording(path);
+      } catch {
+        /* keep going; avoid a toast storm on partial failure */
+      }
+    }
+    notifyInfo(t("recordings.discarded"));
   }
 
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
@@ -1248,8 +1390,8 @@
     title={topTitle}
     subtitle={topSubtitle}
     connected={topConnected}
-    canRecord={!!(activeTab && isLive(activeTab.status))}
-    recording={!!(activeTab && isRecording(activeTab.sessionId))}
+    canRecord={bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status))}
+    recording={bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId))}
     onToggleRecording={toggleRecording}
     onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
@@ -1422,20 +1564,33 @@
                     <Icon name="layoutFocus" size={14} />
                   </button>
                 </div>
-                <button class="rounded px-2 py-0.5 text-muted hover:text-white" onclick={addAllConnected}>
-                  {t("broadcast.addAllConnected")}
+                <button
+                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white"
+                  onclick={addAllConnected}
+                  use:tooltip={t("broadcast.addAllConnected")}
+                  aria-label={t("broadcast.addAllConnected")}
+                >
+                  <Icon name="plus" size={14} />
                 </button>
-                <button class="rounded px-2 py-0.5 text-muted hover:text-white" onclick={clearBroadcastMembers}>
-                  {t("broadcast.clear")}
+                <button
+                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-danger"
+                  onclick={clearBroadcastMembers}
+                  use:tooltip={t("broadcast.clear")}
+                  aria-label={t("broadcast.clear")}
+                >
+                  <Icon name="trash" size={14} />
                 </button>
                 <div class="flex-1"></div>
                 <button
-                  class="rounded px-2 py-0.5 text-muted hover:text-white"
+                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white"
                   onclick={() => {
                     if (tabsState.activeId) removeBroadcastMember(tabsState.activeId);
+                    void syncBatchRecording();
                   }}
+                  use:tooltip={t("broadcast.exit")}
+                  aria-label={t("broadcast.exit")}
                 >
-                  {t("broadcast.exit")}
+                  <Icon name="minus" size={14} />
                 </button>
               </div>
             {/if}
@@ -1630,7 +1785,10 @@
                 <BroadcastRoster
                   rows={bcRosterRows}
                   onfocus={(id) => (tabsState.activeId = id)}
-                  onremove={removeBroadcastMember}
+                  onremove={(id) => {
+                    removeBroadcastMember(id);
+                    void syncBatchRecording();
+                  }}
                 />
               {/if}
             </div>
@@ -1799,9 +1957,13 @@
   title={t("broadcast.prodConfirmTitle")}
   confirmLabel={t("broadcast.prodConfirmSend")}
   danger
-  onconfirm={() => {
-    if (pendingBroadcast) doBroadcast(pendingBroadcast.frame, pendingBroadcast.targets);
+  onconfirm={async () => {
+    const pb = pendingBroadcast;
     pendingBroadcast = null;
+    if (!pb) return;
+    // Prod broadcast → auto-record the whole group first (audit trail), then send.
+    await ensureGroupRecording();
+    doBroadcast(pb.frame, pb.targets, pb.cmd);
   }}
   oncancel={() => (pendingBroadcast = null)}
 >
@@ -1945,6 +2107,15 @@
   onsave={saveRecording}
   ondelete={discardRecording}
   onclose={() => (saveRec = null)}
+/>
+
+<!-- Name (or discard) a just-stopped broadcast bundle. -->
+<RecordingSaveDialog
+  open={saveBatch !== null}
+  heading={t("recordings.saveBroadcastTitle")}
+  onsave={(title) => saveBatchName(title)}
+  ondelete={discardBatch}
+  onclose={() => (saveBatch = null)}
 />
 
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->

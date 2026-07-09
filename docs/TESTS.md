@@ -642,6 +642,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `disabled`/0 целей ввод инертен и кнопка `disabled`.
 - `BroadcastRoster.test.ts` (Фаза 22, компонентный) — ростер фокус-раскладки: список членов с
   алиасами, prod-бейдж у prod-члена, клик по строке → `onfocus(id)`, кнопка удаления → `onremove(id)`.
+- `recgroup.test.ts` (Фаза 22, чистая логика) — группировка записей в бандлы: `groupRecordings`
+  (записи без `batchId` — одиночные; общий `batchId` схлопывается в группу на месте первого члена;
+  одинокий член батча — тоже группа; разные батчи не смешиваются; `timestamp` группы = минимальный).
+  В `RecordingsPanel.test.ts` добавлен тест: записи одного `batchId` показываются свёрнутым бандлом
+  «Broadcast → N servers», разворачивается по клику. `groupRecordings` также берёт `label` бандла
+  из любого члена (имя бродкаста), а именованный бандл в панели показывается своим именем
+  (подзаголовок — счётчик + дата). Rust `batch_id_from_header`/`batch_label_from_header` — чтение
+  `vterm.batch`/`vterm.batchLabel` (строка → `Some`, отсутствие/не-строка → `None`);
+  `with_batch_label` — запись `vterm.batchLabel` в заголовок с сохранением событий.
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).

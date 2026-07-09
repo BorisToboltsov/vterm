@@ -3,6 +3,7 @@
   // selected server at once. The bar is presentational — it emits `onsend(cmd)`
   // and the page does the eligibility/prod gating and the actual fan-out writes.
   import Icon from "./Icon.svelte";
+  import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   let {
@@ -64,12 +65,13 @@
     />
     <button
       data-testid="broadcast-send"
-      class="flex shrink-0 items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-sm text-panel-alt hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
+      class="flex shrink-0 items-center rounded bg-accent p-2 text-panel-alt hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-40"
       onclick={send}
       disabled={disabled || value.length === 0}
+      use:tooltip={t("broadcast.send")}
+      aria-label={t("broadcast.send")}
     >
-      <Icon name="send" size={14} />
-      {t("broadcast.send")}
+      <Icon name="send" size={16} />
     </button>
   </div>
 </div>

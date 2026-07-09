@@ -149,6 +149,34 @@ describe("RecordingsPanel — AI generation (Phase 17.5–17.6)", () => {
     expect(content).toBe("#!/usr/bin/env bash\nsystemctl restart nginx");
   });
 
+  it("collapses same-batch recordings into an expandable bundle", async () => {
+    listRecordings.mockResolvedValue([
+      { ...REC, path: "/recs/web1.cast", title: "Deploy web1", server: "host-a", batchId: "b1", timestamp: 1_700_000_100 },
+      { ...REC, path: "/recs/web2.cast", title: "Deploy web2", server: "host-b", batchId: "b1", timestamp: 1_700_000_200 },
+    ]);
+    const user = userEvent.setup();
+    render(RecordingsPanel, { props: { open: true } });
+
+    // The bundle header appears; members stay hidden until it's expanded.
+    await screen.findByText("Broadcast → 2 servers");
+    expect(screen.queryByText("Deploy web1")).toBeNull();
+
+    await user.click(screen.getByText("Broadcast → 2 servers"));
+    await screen.findByText("Deploy web1");
+    expect(screen.getByText("Deploy web2")).toBeInTheDocument();
+  });
+
+  it("shows the bundle's given name when it has one", async () => {
+    listRecordings.mockResolvedValue([
+      { ...REC, path: "/recs/w1.cast", batchId: "b2", batchLabel: "Nightly deploy" },
+      { ...REC, path: "/recs/w2.cast", batchId: "b2", batchLabel: "Nightly deploy" },
+    ]);
+    render(RecordingsPanel, { props: { open: true } });
+    await screen.findByText("Nightly deploy");
+    // The generic "→ N servers" count still appears as the subtitle.
+    expect(screen.getByText(/Broadcast → 2 servers ·/)).toBeInTheDocument();
+  });
+
   it("uses the Ansible prompt and a .yml filename for a playbook", async () => {
     enableAi();
     const onOpenScript = vi.fn();

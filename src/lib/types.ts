@@ -135,4 +135,9 @@ export interface RecordingMeta {
   timestamp: number;
   /** File size in bytes. */
   size: number;
+  /** Broadcast batch id — set only for group (synchronous-input) recordings; groups
+   *  recordings made from one broadcast session into a bundle in the library. */
+  batchId?: string;
+  /** User-given name of the broadcast bundle (set when naming the group on stop). */
+  batchLabel?: string;
 }
