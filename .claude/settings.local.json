@@ -275,7 +275,14 @@
       "Bash(sed -i '' 's/\"version\": \"0.21.31\"/\"version\": \"0.21.32\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.21.31\"/version = \"0.21.32\"/' src-tauri/Cargo.toml)",
       "Bash(sed -i '' 's/\"version\": \"0.21.32\"/\"version\": \"0.21.33\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.21.32\"/version = \"0.21.33\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.21.32\"/version = \"0.21.33\"/' src-tauri/Cargo.toml)",
+      "Read(//tmp/**)",
+      "Bash(which rsvg-convert *)",
+      "Bash(qlmanage -t -s 560 -o /tmp /tmp/newicons.svg)",
+      "Bash(ls /tmp/newicons.svg.png)",
+      "Bash(grep -n \"round-trip в \\\\`model.rs\\\\`\\\\.\" docs/ROADMAP.md)",
+      "Bash(sed -i '' 's/0\\\\.21\\\\.35/0.21.36/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.21.35\"/version = \"0.21.36\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

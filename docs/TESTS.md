@@ -611,13 +611,26 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `notes.test.ts` (Фаза 21, чистая логика) — заметки к серверу: `noteStats`
   (символы/слова/строки, пустой/whitespace → `empty`, счёт code point'ов для emoji),
   `notesDirty` (точное сравнение draft↔saved), `hasNotes` (непустой после trim,
-  null/undefined → false).
+  null/undefined → false), `notesTarget` (активная вкладка сервера выигрывает у
+  выделения, фолбэк на выделение на локальной вкладке, null без обоих).
 - `NotesModal.test.ts` (Фаза 21, компонентный) — редактор заметок: textarea засеян из
   `server.notes`; ввод запускает **дебаунс-автосохранение** (`onsave` зовётся один раз
   с последним текстом только после 800 мс); «Сохранить и закрыть» флашит правку и зовёт
   `onclose` (без двойного сохранения от таймера); без изменений `onsave` не зовётся, но
   окно закрывается; переключение на «Просмотр» рендерит Markdown. Компонент
   coverage-excluded (оболочка), чистая логика — в `notes.ts`.
+- `servericons.test.ts` (Фаза 21, чистая логика) — пиктограммы серверов: `SERVER_ICONS`
+  (уникальные ключи, есть `generic`, каждый глиф существует в реестре `icons.ts`),
+  `resolveServerIcon` (известный ключ → глиф; пусто/неизвестно/null → `server`),
+  `SERVER_COLORS` (уникальные ключи, классы `text-`/`bg-`), `resolveServerColorClass`
+  (известный → text-класс; иначе `text-muted`).
+- `ServerIconPicker.test.ts` (Фаза 21, компонентный) — пикер иконки+цвета (сворачиваемый):
+  по умолчанию **свёрнут** — превью выбора (`server-icon-preview`) есть, сетки/свотчей нет;
+  раскрытие (`server-icon-section`) показывает сетку глифов и свотчи (в т.ч. «none»);
+  `aria-pressed` на выбранных глифе/цвете; клик по другому глифу/свотчу переносит выделение
+  (двусторонний `bind`). В `ServerFormModal.test.ts` добавлен тест: раскрытие секции, затем выбор
+  глифа (`server-icon-database`) и цвета (`server-color-green`) попадает в payload `addServer`
+  (`icon`/`iconColor`).
 - `settingsNav.test.ts` (Фаза 15, чистая логика) — группы настроек: каждый раздел ровно
   в одной группе (1:1 покрытие), `visibleSectionIds` (активная группа vs кросс-группный
   поиск), `groupMatchCounts`, `groupForSection` (deep-link).

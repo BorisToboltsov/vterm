@@ -82,7 +82,7 @@
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import ServerFormModal from "$lib/ServerFormModal.svelte";
   import NotesModal from "$lib/NotesModal.svelte";
-  import { hasNotes } from "$lib/notes";
+  import { hasNotes, notesTarget } from "$lib/notes";
   import FolderModals from "$lib/FolderModals.svelte";
   import SecretPrompt from "$lib/SecretPrompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
@@ -223,6 +223,9 @@
   const activeServer = $derived(
     activeTab?.kind === "ssh" ? (servers.find((s) => s.id === activeTab.serverId) ?? null) : null,
   );
+  // Notes belong to the active SSH tab's server when one is focused; on a local
+  // tab (or with no tab) they fall back to the tree-selected server.
+  const notesServerTarget = $derived(notesTarget(activeServer, selected));
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
   const topSubtitle = $derived(
     activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
@@ -1149,9 +1152,9 @@
     onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
     onOpenSettings={() => openSettings("servertools")}
-    showNotes={!!selected}
-    hasNotes={hasNotes(selected?.notes)}
-    onOpenNotes={() => (notesServer = selected)}
+    showNotes={!!notesServerTarget}
+    hasNotes={hasNotes(notesServerTarget?.notes)}
+    onOpenNotes={() => (notesServer = notesServerTarget)}
   />
 
   <div class="flex min-h-0 flex-1">

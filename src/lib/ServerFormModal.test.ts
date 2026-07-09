@@ -47,6 +47,8 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     execMode: null,
     proxy: null,
     notes: "",
+    icon: "",
+    iconColor: "",
     ...p,
   };
 }
@@ -106,6 +108,26 @@ describe("ServerFormModal validation", () => {
 
     expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "true");
     expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("carries the chosen pictogram and colour into the payload", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "db");
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    // The icon section is collapsed by default — expand it before picking.
+    await userEvent.click(screen.getByTestId("server-icon-section"));
+    await userEvent.click(screen.getByTestId("server-icon-database"));
+    await userEvent.click(screen.getByTestId("server-color-green"));
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: "database", iconColor: "green" }),
+    );
   });
 
   it("rejects a malformed host/IP with a distinct message", async () => {

@@ -21,6 +21,8 @@ function server(notes = ""): ServerProfile {
     execMode: null,
     proxy: null,
     notes,
+    icon: "",
+    iconColor: "",
   };
 }
 

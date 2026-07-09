@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { noteStats, notesDirty, hasNotes } from "./notes";
+import { noteStats, notesDirty, hasNotes, notesTarget } from "./notes";
 
 describe("noteStats", () => {
   it("counts chars, words and lines", () => {
@@ -41,5 +41,24 @@ describe("hasNotes", () => {
     expect(hasNotes("")).toBe(false);
     expect(hasNotes(null)).toBe(false);
     expect(hasNotes(undefined)).toBe(false);
+  });
+});
+
+describe("notesTarget", () => {
+  const active = { id: "a" };
+  const sel = { id: "s" };
+
+  it("prefers the active SSH tab's server when one is focused", () => {
+    // Focused server tab wins even if a different server is selected in the tree.
+    expect(notesTarget(active, sel)).toBe(active);
+    expect(notesTarget(active, null)).toBe(active);
+  });
+
+  it("falls back to the selected server on a local tab (no active server)", () => {
+    expect(notesTarget(null, sel)).toBe(sel);
+  });
+
+  it("is null when there is neither an active server nor a selection", () => {
+    expect(notesTarget(null, null)).toBeNull();
   });
 });

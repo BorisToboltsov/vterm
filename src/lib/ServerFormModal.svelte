@@ -5,6 +5,7 @@
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import ServerIconPicker from "./ServerIconPicker.svelte";
   import { tooltip } from "./actions/tooltip";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type { AuthMethod, ProxyKind, ServerProfile } from "./types";
@@ -43,6 +44,10 @@
   let keyPath = $state<string | null>(null);
   let group = $state("");
   let tagsInput = $state("");
+  // Pictogram (icons.ts key via servericons.ts) + colour key, shown before the
+  // alias in the list. "" = generic glyph / muted colour.
+  let icon = $state("");
+  let iconColor = $state("");
   let autoRecord = $state(false);
   let noAi = $state(false);
   let aiPromptId = $state("");
@@ -112,6 +117,8 @@
     keyPath = null;
     group = prefillGroup;
     tagsInput = "";
+    icon = "";
+    iconColor = "";
     autoRecord = false;
     noAi = false;
     aiPromptId = "";
@@ -133,6 +140,8 @@
     keyPath = server.keyPath;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
+    icon = server.icon;
+    iconColor = server.iconColor;
     autoRecord = server.autoRecord;
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
@@ -159,6 +168,8 @@
     keyPath = server.keyPath;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
+    icon = server.icon;
+    iconColor = server.iconColor;
     autoRecord = server.autoRecord;
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
@@ -232,6 +243,8 @@
       chatPromptId: aiPromptId || null,
       execMode: (aiExecMode || null) as AiExecMode | null,
       proxy,
+      icon,
+      iconColor,
     };
     try {
       const saved =
@@ -287,6 +300,14 @@
             <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
           {/if}
         </label>
+        <div class="mb-2">
+          <ServerIconPicker
+            bind:icon
+            bind:color={iconColor}
+            label={t("page.icon")}
+            hint={t("page.iconHint")}
+          />
+        </div>
         <label class="mb-2 block text-xs text-muted">
           {t("page.hostIp")}
           <input

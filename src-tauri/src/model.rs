@@ -99,6 +99,13 @@ pub struct ServerProfile {
     /// paths never clobber each other. Persisted inline in the profiles JSON.
     #[serde(default)]
     pub notes: String,
+    /// Pictogram key shown before the alias in the list (see `servericons.ts`).
+    /// Empty → the generic server glyph. Frontend-owned value.
+    #[serde(default)]
+    pub icon: String,
+    /// Colour key tinting the pictogram (see `servericons.ts`). Empty → muted.
+    #[serde(default)]
+    pub icon_color: String,
 }
 
 /// Payload for creating/updating a profile. The backend assigns the `id`.
@@ -127,6 +134,10 @@ pub struct NewServerProfile {
     pub exec_mode: Option<String>,
     #[serde(default)]
     pub proxy: Option<ServerProxy>,
+    #[serde(default)]
+    pub icon: String,
+    #[serde(default)]
+    pub icon_color: String,
 }
 
 #[cfg(test)]
@@ -170,6 +181,8 @@ mod tests {
                 has_saved_password: false,
             }),
             notes: "deploys via CI\nkeep npm cache warm".into(),
+            icon: "database".into(),
+            icon_color: "green".into(),
         };
         let json = serde_json::to_string(&p).unwrap();
         // Field names must be camelCase for the TS frontend.
@@ -190,6 +203,9 @@ mod tests {
         assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
         assert_eq!(back.exec_mode.as_deref(), Some("confirm"));
         assert_eq!(back.notes, "deploys via CI\nkeep npm cache warm");
+        assert_eq!(back.icon, "database");
+        assert_eq!(back.icon_color, "green");
+        assert!(json.contains("\"iconColor\":\"green\"")); // camelCase for the TS frontend
         let proxy = back.proxy.expect("proxy round-trips");
         assert_eq!(proxy.kind, ProxyKind::Jump);
         assert_eq!(proxy.host, "bastion.corp");

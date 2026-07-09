@@ -54,6 +54,10 @@ export interface ServerProfile {
   /** Free-form user notes (Markdown) about this server. Edited in the notes
    *  window (not the server form); saved via the dedicated `setServerNotes`. */
   notes: string;
+  /** Pictogram key shown before the alias (see servericons.ts); "" = generic. */
+  icon: string;
+  /** Colour key tinting the pictogram (see servericons.ts); "" = muted. */
+  iconColor: string;
 }
 
 /** A remote file/directory entry from SFTP (mirrors sftp.rs FileEntry). */
@@ -113,6 +117,8 @@ export interface NewServerProfile {
   chatPromptId: string | null;
   execMode: AiExecMode | null;
   proxy: ServerProxy | null;
+  icon: string;
+  iconColor: string;
 }
 
 /** Metadata about a stored session recording (from its asciicast header). */

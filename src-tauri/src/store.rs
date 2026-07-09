@@ -143,6 +143,8 @@ mod tests {
             exec_mode: None,
             proxy: None,
             notes: String::new(),
+            icon: String::new(),
+            icon_color: String::new(),
         }
     }
 

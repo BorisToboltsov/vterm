@@ -34,6 +34,8 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         exec_mode: profile.exec_mode,
         proxy: profile.proxy,
         notes: String::new(),
+        icon: profile.icon,
+        icon_color: profile.icon_color,
     };
     let snapshot = {
         let mut servers = state.servers.lock().unwrap();
@@ -67,6 +69,8 @@ pub fn update_server(
                 server.chat_prompt_id = profile.chat_prompt_id;
                 server.exec_mode = profile.exec_mode;
                 server.proxy = profile.proxy;
+                server.icon = profile.icon;
+                server.icon_color = profile.icon_color;
             }
             None => return Err(AppError::UnknownServer),
         }

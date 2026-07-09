@@ -28,6 +28,12 @@
   ([ServerTree.svelte](../src/lib/ServerTree.svelte)) и в SFTP
   ([SftpPanel.svelte](../src/lib/SftpPanel.svelte)). Новую иконку — добавлять в реестр,
   не инлайнить SVG в компонентах.
+- **Пиктограммы серверов.** Курируемый набор (~24 глифа) для пометки профиля —
+  [servericons.ts](../src/lib/servericons.ts) (ключ → глиф реестра + i18n-метка); выбор
+  в форме сервера через [ServerIconPicker.svelte](../src/lib/ServerIconPicker.svelte),
+  показ **перед именем** в списке. Цвет — из фикс. палитры 7 хью Tailwind
+  (`text-sky-400`…), читается на любой теме (как status-точки); пусто → `text-muted`,
+  пустой глиф → generic `server`. Набор расширяем через `SERVER_ICONS`/`SERVER_COLORS`.
 - **Логотип приложения** (бренд-марка) — минималистичный терминальный промпт **`>_`**
   на тёмном скруглённом квадрате. Мастер-исходник —
   [icon-source.svg](../src-tauri/icons/icon-source.svg) (accent `#61afef` на

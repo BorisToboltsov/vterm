@@ -21,6 +21,8 @@ function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerP
     execMode: null,
     proxy: null,
     notes: "",
+    icon: "",
+    iconColor: "",
     ...p,
   };
 }

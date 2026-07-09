@@ -792,7 +792,7 @@ audit`) — если нет, задокументировать игнор в `d
 
 ---
 
-## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.33)
+## ✅ Фаза 21 — Proxy / jump host на запись сервера (v0.21.0 → v0.21.35)
 
 Подключение к серверу **через промежуточный хост**. Настройка — **на каждой записи
 сервера** (у одного может быть proxy, у другого нет). Реализованы **все три типа**:
@@ -1122,6 +1122,40 @@ audit`) — если нет, задокументировать игнор в `d
   (мониторинг белеет на hover, REC краснеет при записи). Порядок слева-направо фиксирован:
   заметки · мониторинг · REC · библиотека · настройки. Тесты `TopBar.test.ts` обновлены
   (кнопки присутствуют, но `disabled`, и не зовут обработчик кликом в отключённом состоянии).
+- **Пиктограммы серверов** (v0.21.34). Профиль получил поля `icon: String` и `iconColor: String`
+  (`#[serde(default)]` в [model.rs](../src-tauri/src/model.rs) + `NewServerProfile`, зеркало в
+  [types.ts](../src/lib/types.ts)) — редактируются в форме сервера, поэтому идут обычным путём
+  `add_server`/`update_server` (в отличие от заметок). Курируемый набор (~24 глифа) и палитра
+  (7 цветов) — чистый модуль [servericons.ts](../src/lib/servericons.ts) (`SERVER_ICONS`,
+  `SERVER_COLORS`, `resolveServerIcon`/`resolveServerColorClass` с фолбэком на generic `server` /
+  `text-muted`). В реестр [icons.ts](../src/lib/icons.ts) добавлено 11 глифов (database, bolt,
+  cloud, container, kubernetes, shield, gateway, network, loadBalancer, mail, rocket), остальные
+  переиспользованы. Пикер — [ServerIconPicker.svelte](../src/lib/ServerIconPicker.svelte)
+  (превью + сетка глифов + свотчи цветов, `bind:icon`/`bind:color`), встроен в
+  [ServerFormModal.svelte](../src/lib/ServerFormModal.svelte) под полем alias (чтобы alias
+  оставался первым фокусом). В списке — глиф перед именем в
+  [ServerTree.svelte](../src/lib/ServerTree.svelte), тонированный `iconColor`. Цвета — фикс. хью
+  Tailwind (`text-sky-400`…), читаются на любой теме, как status-точки. Тесты — `servericons.test.ts`
+  (резолверы/фолбэки, все глифы есть в реестре), `ServerIconPicker.test.ts` (сетка/свотчи,
+  `aria-pressed`, клики), `ServerFormModal.test.ts` (+1: выбор глифа/цвета попадает в payload),
+  round-trip в `model.rs`.
+- **Пиктограммы: сворачиваемый выбор** (v0.21.35). Пикер
+  [ServerIconPicker.svelte](../src/lib/ServerIconPicker.svelte) стал disclosure на
+  [DisclosureRow.svelte](../src/lib/DisclosureRow.svelte): сетка глифов и свотчи скрыты по
+  умолчанию, но **выбранный глиф + его название** всегда видны в заголовке (`preview`-сниппет),
+  так что выбор не прячется. Добавлен резолвер `resolveServerIconLabelKey` в
+  [servericons.ts](../src/lib/servericons.ts). Пропы `open` (bindable), `label`, `hint` (InfoHint
+  переехал внутрь пикера). Тесты `ServerIconPicker.test.ts` обновлены (свёрнут по умолчанию —
+  превью есть, сетки нет; раскрытие показывает сетку), `ServerFormModal.test.ts` — раскрытие
+  секции перед выбором глифа.
+- **Заметки следуют активной вкладке** (v0.21.36). Раньше кнопка-заметка всегда брала
+  сервер из **выделения в дереве** (`selected`). Теперь целью служит
+  `notesTarget(activeServer, selected)` ([notes.ts](../src/lib/notes.ts)): если открыта и
+  активна **вкладка SSH-сервера** — его заметки (при переключении вкладок цель меняется на
+  сервер новой вкладки); на **локальной вкладке** (или без вкладок) `activeServer` пуст и
+  цель откатывается к выделенному в дереве серверу. В [+page.svelte](../src/routes/+page.svelte)
+  `showNotes`/`hasNotes`/`onOpenNotes` считаются от `notesServerTarget`. Тесты —
+  `notes.test.ts` (`notesTarget`: активный сервер выигрывает, фолбэк на выделение, null без обоих).
 
 ---
 

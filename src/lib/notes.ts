@@ -34,3 +34,12 @@ export function notesDirty(current: string, saved: string): boolean {
 export function hasNotes(notes: string | null | undefined): boolean {
   return !!notes && notes.trim() !== "";
 }
+
+/**
+ * Which server the top-bar notes button targets. When an SSH tab is focused its
+ * server wins (so notes follow the active tab); on a local tab (or with no tab)
+ * `activeServer` is null and we fall back to the tree-selected server.
+ */
+export function notesTarget<T>(activeServer: T | null, selected: T | null): T | null {
+  return activeServer ?? selected;
+}

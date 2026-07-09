@@ -17,6 +17,7 @@
   import { layout } from "./stores/layout.svelte";
   import { serverDots } from "./stores/tabs.svelte";
   import Icon from "./Icon.svelte";
+  import { resolveServerIcon, resolveServerColorClass } from "./servericons";
   import { fade } from "svelte/transition";
   import EmptyState from "./EmptyState.svelte";
   import { t } from "./i18n";
@@ -422,6 +423,11 @@
                    dot per open SSH tab, overlapping, coloured by status with a thin
                    tonal ring; a connecting tab's dot gently pulses. -->
               <div class="flex min-w-0 items-center gap-1.5">
+                <Icon
+                  name={resolveServerIcon(row.server.icon)}
+                  size={15}
+                  class="shrink-0 {resolveServerColorClass(row.server.iconColor)}"
+                />
                 <span class="min-w-0 truncate font-medium">{row.server.alias}</span>
                 {#if dots.dots.length > 0}
                   <div
