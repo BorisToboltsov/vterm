@@ -156,6 +156,7 @@
         type="button"
         onclick={() => (confirmClear = true)}
         class="shrink-0 rounded px-2 py-0.5 text-xs font-medium text-muted hover:text-danger"
+        use:tooltip={t("jsonlog.clearHint")}
       >
         {t("jsonlog.clear")}
       </button>

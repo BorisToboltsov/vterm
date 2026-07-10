@@ -524,12 +524,19 @@
       {#each AI_PROMPT_KINDS as kind (kind)}
         {@const set = settings.ai.prompts[kind]}
         <div>
-          <DisclosureRow
-            bind:open={kindOpen[kind]}
-            label={kindLabel(kind)}
-            count={set.prompts.length}
-            testid={`ai-prompts-${kind}`}
-          />
+          <div class="flex items-center gap-1">
+            <div class="min-w-0 flex-1">
+              <DisclosureRow
+                bind:open={kindOpen[kind]}
+                label={kindLabel(kind)}
+                count={set.prompts.length}
+                testid={`ai-prompts-${kind}`}
+              />
+            </div>
+            {#if kind !== "chat"}
+              <InfoHint text={t("settings.aiGenPromptHint")} />
+            {/if}
+          </div>
           {#if kindOpen[kind]}
             <div class="mt-1 space-y-2 pl-4">
               {#each set.prompts as p (p.id)}

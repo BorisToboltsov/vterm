@@ -2136,6 +2136,7 @@
   onforgotten={(id) => {
     servers = servers.map((s) => (s.id === id ? { ...s, hasSavedPassword: false } : s));
   }}
+  onOpenAiPrompts={() => openSettings("ai")}
 />
 
 <!-- Command palette (⌘K) -->

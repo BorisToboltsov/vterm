@@ -25,11 +25,14 @@
   let {
     onsaved,
     onforgotten,
+    onOpenAiPrompts,
   }: {
     /** A server was created ("add") or updated ("edit") — merge it into the list. */
     onsaved: (server: ServerProfile, mode: "add" | "edit") => void;
     /** The saved secret for `id` was forgotten — clear its `hasSavedPassword`. */
     onforgotten: (id: string) => void;
+    /** Deep-link from the AI-prompt hint: open Settings → AI assistant → System prompts. */
+    onOpenAiPrompts?: () => void;
   } = $props();
 
   let open = $state(false);
@@ -301,12 +304,7 @@
           {/if}
         </label>
         <div class="mb-2">
-          <ServerIconPicker
-            bind:icon
-            bind:color={iconColor}
-            label={t("page.icon")}
-            hint={t("page.iconHint")}
-          />
+          <ServerIconPicker bind:icon bind:color={iconColor} label={t("page.icon")} />
         </div>
         <label class="mb-2 block text-xs text-muted">
           {t("page.hostIp")}
@@ -416,25 +414,31 @@
           <InfoHint text={t("page.noAiHint")} />
         </div>
 
-        {#if settings.ai.prompts.chat.prompts.length > 1}
-          <div class="mb-3 text-xs text-text">
-            <div class="mb-1 flex items-center gap-1">
-              <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
-              <InfoHint text={t("page.aiPromptHint")} />
-            </div>
-            <select
-              id="srv-ai-prompt"
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-              data-testid="server-ai-prompt"
-              bind:value={aiPromptId}
-            >
-              <option value="">{t("page.aiPromptDefault")}</option>
-              {#each settings.ai.prompts.chat.prompts as p (p.id)}
-                <option value={p.id}>{p.name}</option>
-              {/each}
-            </select>
+        <div class="mb-3 text-xs text-text">
+          <div class="mb-1 flex items-center gap-1">
+            <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
+            <InfoHint
+              text={t("page.aiPromptHint")}
+              onclick={onOpenAiPrompts
+                ? () => {
+                    open = false;
+                    onOpenAiPrompts();
+                  }
+                : undefined}
+            />
           </div>
-        {/if}
+          <select
+            id="srv-ai-prompt"
+            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            data-testid="server-ai-prompt"
+            bind:value={aiPromptId}
+          >
+            <option value="">{t("page.aiPromptDefault")}</option>
+            {#each settings.ai.prompts.chat.prompts as p (p.id)}
+              <option value={p.id}>{p.name}</option>
+            {/each}
+          </select>
+        </div>
 
         <div class="mb-3 text-xs text-text">
           <div class="mb-1 flex items-center gap-1">

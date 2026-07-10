@@ -6,14 +6,23 @@
   import Icon from "./Icon.svelte";
   import { tooltip } from "./actions/tooltip";
 
-  let { text, size = 12 }: { text: string; size?: number } = $props();
+  // `onclick` makes the ⓘ a deep-link (e.g. "open Settings → …"): the tooltip still
+  // explains on hover, but a click navigates. Without it the icon is hover-only help.
+  let {
+    text,
+    size = 12,
+    onclick = undefined,
+  }: { text: string; size?: number; onclick?: () => void } = $props();
 </script>
 
 <button
   type="button"
   aria-label={text}
-  class="inline-flex cursor-help align-middle text-muted/60 outline-none hover:text-muted focus-visible:text-accent"
+  class="inline-flex align-middle text-muted/60 outline-none hover:text-muted focus-visible:text-accent {onclick
+    ? 'cursor-pointer'
+    : 'cursor-help'}"
   use:tooltip={text}
+  {onclick}
 >
   <Icon name="info" {size} />
 </button>

@@ -258,6 +258,31 @@ describe("ServerFormModal validation", () => {
     await fireEvent.blur(trigger);
     expect(screen.queryByRole("tooltip")).toBeNull();
   });
+
+  it("always shows the AI chat prompt selector, even with only the default prompt", async () => {
+    // Regression (v0.22.12): the selector used to be gated behind `prompts > 1`,
+    // which hid it — and the ⓘ deep-link to create prompts — in the default setup.
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    expect(screen.getByTestId("server-ai-prompt")).toBeInTheDocument();
+  });
+
+  it("the AI-prompt ⓘ deep-links to Settings via onOpenAiPrompts", async () => {
+    const onsaved = vi.fn();
+    const onforgotten = vi.fn();
+    const onOpenAiPrompts = vi.fn();
+    const result = render(ServerFormModal, { props: { onsaved, onforgotten, onOpenAiPrompts } });
+    (result.component as unknown as { openAdd: () => void }).openAdd();
+    await tick();
+
+    const hint =
+      "Use a specific chat prompt when the assistant works on this server. Click to open Settings → AI assistant → System prompts.";
+    await fireEvent.click(screen.getByRole("button", { name: hint }));
+    expect(onOpenAiPrompts).toHaveBeenCalledOnce();
+    // The form closes so the settings panel underneath is reachable.
+    expect(screen.queryByTestId("field-alias")).toBeNull();
+  });
 });
 
 describe("ServerFormModal proxy", () => {

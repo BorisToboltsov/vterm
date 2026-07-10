@@ -52,7 +52,7 @@ describe("StatusBar — compact (default)", () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "s1" } });
 
-    expect(await screen.findByTitle("Linux")).toBeInTheDocument();
+    expect(await screen.findByTestId("bar-os")).toBeInTheDocument();
     expect(screen.getByText("root@web01")).toBeInTheDocument();
     // Compact: percentages only — no pretty name, no byte totals, no chart.
     expect(screen.queryByText("Ubuntu 24.04 LTS")).toBeNull();
@@ -69,7 +69,7 @@ describe("StatusBar — compact (default)", () => {
   it("the toggle switches to the expanded view", async () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "s2" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
 
     await userEvent.click(screen.getByTestId("statusbar-toggle"));
     expect(screen.getByText("Ubuntu 24.04 LTS")).toBeInTheDocument();
@@ -80,7 +80,7 @@ describe("StatusBar — compact (default)", () => {
   it("shows the extended metrics (uptime, ip, temp, users count) with data-gating", async () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "ext" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     expect(screen.getByText("1d 1h")).toBeInTheDocument();
     expect(screen.getByText("10.0.0.5")).toBeInTheDocument();
     expect(screen.getByText("56°C")).toBeInTheDocument();
@@ -99,20 +99,60 @@ describe("StatusBar — compact (default)", () => {
   it("shows real RAM used/total in the hover tooltip, not a static label", async () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "ram" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     const ramPct = screen.getByText("25%"); // 2 GiB / 8 GiB
     vi.useFakeTimers();
     await fireEvent.mouseEnter(ramPct.parentElement as HTMLElement);
     vi.advanceTimersByTime(550);
-    expect(screen.getByRole("tooltip")).toHaveTextContent("RAM 2.0 GiB / 8.0 GiB");
+    // Includes the percentage too (v0.22.13) so it stays discoverable even when the
+    // expanded inline value is tight.
+    expect(screen.getByRole("tooltip")).toHaveTextContent("RAM 2.0 GiB / 8.0 GiB (25%)");
     vi.useRealTimers();
+  });
+
+  it("shows hover tooltips on OS, host and CPU (like the other bar elements)", async () => {
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "tips" } });
+    const os = await screen.findByTestId("bar-os");
+
+    const hover = (el: HTMLElement) => {
+      vi.useFakeTimers();
+      fireEvent.mouseEnter(el);
+      vi.advanceTimersByTime(550);
+      const text = screen.getByRole("tooltip").textContent ?? "";
+      fireEvent.mouseLeave(el);
+      vi.advanceTimersByTime(550);
+      vi.useRealTimers();
+      return text;
+    };
+
+    expect(hover(os)).toContain("OS version: Ubuntu 24.04 LTS");
+    expect(hover(screen.getByTestId("bar-host"))).toContain("whoami@hostname");
+    expect(hover(screen.getByText("42%").parentElement as HTMLElement)).toContain("CPU usage");
+  });
+
+  it("shows swap when enabled even if the host reports no swap", async () => {
+    // Regression (v0.22.13): swap used to be gated on a non-zero swapTotal, so
+    // toggling it on did nothing on swapless hosts (cloud VMs, containers).
+    fetchMetrics.mockResolvedValue({ ...linux, swapUsed: null, swapTotal: null });
+    settings.statusBarItems.swap = true;
+    render(StatusBar, { props: { sessionId: "sw" } });
+    expect(await screen.findByTestId("bar-swap")).toBeInTheDocument();
+  });
+
+  it("hides swap when its toggle is off", async () => {
+    settings.statusBarItems.swap = false;
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "sw2" } });
+    await screen.findByTestId("bar-os");
+    expect(screen.queryByTestId("bar-swap")).toBeNull();
   });
 
   it("hides a metric group when its toggle is off", async () => {
     settings.statusBarItems.disk = false;
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "s3" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     expect(screen.queryByText("5%")).toBeNull(); // disk hidden
     expect(screen.getByText("25%")).toBeInTheDocument(); // RAM still shown
   });
@@ -126,7 +166,7 @@ describe("StatusBar — expanded", () => {
     render(StatusBar, { props: { sessionId: "e1" } });
 
     expect(await screen.findByText("Ubuntu 24.04 LTS")).toBeInTheDocument();
-    expect(screen.getByTitle("Linux")).toBeInTheDocument();
+    expect(screen.getByTestId("bar-os")).toBeInTheDocument();
     expect(screen.getByText("root@web01")).toBeInTheDocument();
     expect(screen.getByText("2.0 GiB / 8.0 GiB (25%)")).toBeInTheDocument();
     expect(screen.getByText("95.0 GiB free / 100.0 GiB")).toBeInTheDocument();
@@ -150,13 +190,13 @@ describe("StatusBar — thresholds & monitoring", () => {
     settings.statusBarThresholds.cpu = { warn: 40, crit: 90 };
     fetchMetrics.mockResolvedValue(linux); // cpuPct = 42
     const { unmount } = render(StatusBar, { props: { sessionId: "th1" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     expect(screen.getByText("42%")).toHaveClass("text-warn");
     unmount();
 
     settings.statusBarThresholds.cpu = { warn: 10, crit: 40 };
     render(StatusBar, { props: { sessionId: "th2" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     expect(screen.getByText("42%")).toHaveClass("text-danger");
   });
 
@@ -164,7 +204,7 @@ describe("StatusBar — thresholds & monitoring", () => {
     settings.statusBarThresholds.cpu = { warn: 80, crit: 95 };
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "th3" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     const cpu = screen.getByText("42%");
     expect(cpu).not.toHaveClass("text-warn");
     expect(cpu).not.toHaveClass("text-danger");
@@ -175,7 +215,7 @@ describe("StatusBar — transfers & states", () => {
   it("shows the SFTP transfer indicator from the shared store", async () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "t1" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
 
     expect(screen.queryByTestId("transfer-indicator")).toBeNull();
     applyProgress({
@@ -194,7 +234,7 @@ describe("StatusBar — transfers & states", () => {
     layout.sftpCollapsed = true;
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "t2" } });
-    await screen.findByTitle("Linux");
+    await screen.findByTestId("bar-os");
     applyProgress({
       id: "y",
       name: "f",
@@ -245,7 +285,13 @@ describe("StatusBar — transfers & states", () => {
     };
     fetchMetrics.mockResolvedValue(sparse);
     render(StatusBar, { props: { sessionId: "s5" } });
-    expect(await screen.findByTitle("Unknown OS")).toBeInTheDocument();
+    const os = await screen.findByTestId("bar-os");
+    // Empty os falls back to "Unknown OS" in the hover tooltip.
+    vi.useFakeTimers();
+    await fireEvent.mouseEnter(os);
+    vi.advanceTimersByTime(550);
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Unknown OS");
+    vi.useRealTimers();
     expect(screen.getAllByText("—").length).toBeGreaterThan(0);
   });
 });

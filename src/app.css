@@ -57,6 +57,7 @@ body {
   padding: 6px 9px;
   font-size: 11px;
   line-height: 1.45;
+  white-space: pre-line;
   color: var(--color-text);
   background: var(--color-panel);
   border: 1px solid var(--color-edge);

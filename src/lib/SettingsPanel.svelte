@@ -273,7 +273,9 @@
               />
             </label>
             <label class="block flex-1 text-xs text-muted">
-              {t("settings.bell")}
+              <span class="flex items-center gap-1"
+                >{t("settings.bell")}<InfoHint text={t("settings.bellHint")} /></span
+              >
               <select
                 class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
                 bind:value={settings.bell}

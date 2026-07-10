@@ -108,7 +108,9 @@
 
   // Which metric groups are visible: per-metric toggle AND data availability
   // (so metrics a host doesn't expose, e.g. CPU temp, auto-hide rather than show
-  // a dash forever). CPU/RAM/disk are core and always shown when enabled.
+  // a dash forever). CPU/RAM/swap/disk are core and always shown when enabled —
+  // swap in particular is reported by every Linux host (0 when off), so the toggle
+  // is authoritative rather than gated on non-zero swap.
   const groups = $derived.by(() => {
     const m = metrics;
     if (!m) return [] as string[];
@@ -125,7 +127,7 @@
     if (it.cpuTemp && m.cpuTemp != null) g.push("cpuTemp");
     if (it.topProc && m.topProc) g.push("topProc");
     if (it.ram) g.push("ram");
-    if (it.swap && m.swapTotal) g.push("swap");
+    if (it.swap) g.push("swap");
     if (it.disk) g.push("disk");
     if (it.diskio && (m.diskReadRate != null || m.diskWriteRate != null)) g.push("diskio");
     if (it.net && (m.netRxRate != null || m.netTxRate != null)) g.push("net");
@@ -155,19 +157,22 @@
       {#each groups as g, i (g)}
         {#if i > 0}{@render divider()}{/if}
         {#if g === "os"}
-          <span class="flex items-center gap-2">
-            <Icon
-              name={osIconFor(metrics)}
-              size={14}
-              class="text-muted"
-              title={metrics.os || t("bar.osUnknown")}
-            />
+          <span
+            class="flex items-center gap-2"
+            data-testid="bar-os"
+            use:tooltip={t("bar.titleOs", {
+              os: metrics.prettyName || metrics.os || t("bar.osUnknown"),
+            })}
+          >
+            <Icon name={osIconFor(metrics)} size={14} class="text-muted" />
             {#if expanded}<span>{metrics.prettyName || metrics.os || "—"}</span>{/if}
           </span>
         {:else if g === "host"}
-          <span>{metrics.user || "—"}@{metrics.hostname || "—"}</span>
+          <span data-testid="bar-host" use:tooltip={t("bar.titleHost")}
+            >{metrics.user || "—"}@{metrics.hostname || "—"}</span
+          >
         {:else if g === "cpu"}
-          <span class="flex items-center gap-2">
+          <span class="flex items-center gap-2" use:tooltip={t("bar.titleCpu")}>
             <Icon name="cpu" size={14} class="text-muted" />
             {#if expanded}
               <Sparkline testid="cpu-chart" values={cpuBars} />
@@ -189,10 +194,10 @@
             use:tooltip={t("bar.titleRam", {
               used: fmtBytes(metrics.memUsed),
               total: fmtBytes(metrics.memTotal),
-            })}
+            }) + (memPct != null ? ` (${memPct}%)` : "")}
           >
             <Icon name="memory" size={14} class="text-muted" />
-            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {ramClass}">
+            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[10.5rem]')} {ramClass}">
               {#if expanded}{fmtBytes(metrics.memUsed)} / {fmtBytes(metrics.memTotal)}{memPct !=
                 null
                   ? ` (${memPct}%)`
@@ -261,9 +266,9 @@
             >
           </span>
         {:else if g === "swap"}
-          <span class="flex items-center gap-2" use:tooltip={t("bar.titleSwap")}>
+          <span class="flex items-center gap-2" data-testid="bar-swap" use:tooltip={t("bar.titleSwap")}>
             <Icon name="swap" size={14} class="text-muted" />
-            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[8.5rem]')} {swapClass}">
+            <span class="inline-block truncate text-center tabular-nums {w('w-8', 'w-[10.5rem]')} {swapClass}">
               {#if expanded}{fmtBytes(metrics.swapUsed)} / {fmtBytes(metrics.swapTotal)}{swapPct !=
                 null
                   ? ` (${swapPct}%)`
