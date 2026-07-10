@@ -266,21 +266,21 @@
   const bcFocusId = $derived(tabsState.activeId);
   const bcHasProd = $derived(groupHasProd(bcTargets, tabsState.list, servers));
   const bcCols = $derived(gridColumns(bcAreaWidth || 1200, bcMemberTabs.length));
-  // Roster rows (focus layout): every member except the focused one.
+  // Roster rows (focus layout): the full group, including the focused member
+  // (marked `active`), so the whole list stays visible in the sidebar.
   const bcRosterRows = $derived(
-    bcMemberTabs
-      .filter((tab) => tab.sessionId !== bcFocusId)
-      .map((tab) => {
-        const srv = servers.find((s) => s.id === tab.serverId);
-        return {
-          sessionId: tab.sessionId,
-          alias: tabAlias(tab),
-          host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
-          status: localizedStatus(tab.status),
-          dot: dotClass(tab.status),
-          isProd: !!srv && isProdServer(srv.tags),
-        };
-      }),
+    bcMemberTabs.map((tab) => {
+      const srv = servers.find((s) => s.id === tab.serverId);
+      return {
+        sessionId: tab.sessionId,
+        alias: tabAlias(tab),
+        host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
+        status: localizedStatus(tab.status),
+        dot: dotClass(tab.status),
+        isProd: !!srv && isProdServer(srv.tags),
+        active: tab.sessionId === bcFocusId,
+      };
+    }),
   );
 
   /** Add/remove the active tab to/from the group (entering/leaving broadcast). */
@@ -1519,9 +1519,10 @@
                   ></span>
                 {/if}
               {/if}
-              <!-- Broadcast membership indicator: a blue dot, only while in broadcast
-                   mode and this tab belongs to the group. -->
-              {#if bcOn && isBroadcastMember(tab.sessionId)}
+              <!-- Broadcast membership indicator: a blue dot on every tab that
+                   belongs to the group — shown regardless of which tab is active,
+                   so the group stays visible while viewing a non-member tab. -->
+              {#if isBroadcastMember(tab.sessionId)}
                 <span
                   data-broadcast-member
                   class="h-2 w-2 rounded-full bg-blue-500"
@@ -1813,7 +1814,6 @@
             </div>
             {#if bcOn}
               <BroadcastBar
-                targetCount={bcTargets.length}
                 disabled={bcTargets.length === 0}
                 prodWarn={bcHasProd}
                 onsend={requestBroadcast}

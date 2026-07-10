@@ -7,13 +7,10 @@
   import { t } from "./i18n";
 
   let {
-    targetCount,
     disabled = false,
     prodWarn = false,
     onsend,
   }: {
-    /** How many live sessions the command would reach. */
-    targetCount: number;
     /** No live targets → input and button are inert. */
     disabled?: boolean;
     /** Group includes a prod server → show the amber caution line. */
@@ -47,10 +44,6 @@
     </div>
   {/if}
   <div class="flex items-center gap-2">
-    <Icon name="broadcast" size={16} class="shrink-0 text-accent" />
-    <span class="shrink-0 whitespace-nowrap text-xs text-muted">
-      {t("broadcast.targetCount", { count: targetCount })}
-    </span>
     <input
       bind:this={inputEl}
       bind:value

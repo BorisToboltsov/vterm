@@ -17,6 +17,8 @@
     /** Tailwind status-dot class (see tabs store `dotClass`). */
     dot: string;
     isProd: boolean;
+    /** The currently focused member (shown in the big pane) — highlighted here. */
+    active: boolean;
   }
 
   let {
@@ -37,9 +39,11 @@
   <div class="min-h-0 flex-1 overflow-y-auto">
     {#each rows as row (row.sessionId)}
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 {row.isProd
-          ? 'bg-danger/10'
-          : ''}"
+        class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 {row.active
+          ? 'bg-accent/15'
+          : row.isProd
+            ? 'bg-danger/10'
+            : ''}"
       >
         <button
           class="flex min-w-0 flex-1 items-center gap-2 text-left"

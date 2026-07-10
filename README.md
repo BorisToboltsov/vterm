@@ -4,12 +4,11 @@
 
 **Кроссплатформенный SSH-терминал и SFTP-клиент для системных администраторов, DevOps и SRE.**
 
-Графический инструмент в духе [iTerm2](https://iterm2.com/) и
-[MobaXterm](https://mobaxterm.mobatek.net/): слева — список серверов, справа — живой
+Графический инструмент: слева — список серверов, справа — живой
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-0.20.0-blue)
+![version](https://img.shields.io/badge/version-0.22.13-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -120,7 +119,7 @@ pnpm tauri dev    # запуск в режиме разработки (перв�
 ## Сеть и автономность
 
 vterm работает **полностью офлайн**. Единственный сетевой доступ — исходящие
-**SSH-подключения к серверам, которые вы сами добавили**. Нет CDN, телеметрии и
+**SSH-подключения к серверам, которые вы сами добавили**. Соединение с эндпоинтом ИИ если вы его добавили. Нет CDN, телеметрии и
 аналитики; шрифты встроены, секреты — локально в системном keychain. Инвариант
 закреплён тест-гейтами (подробнее — в [docs/GUIDE.md](docs/GUIDE.md) и
 [SECURITY.md](SECURITY.md)).

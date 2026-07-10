@@ -5,7 +5,7 @@ import BroadcastBar from "./BroadcastBar.svelte";
 describe("BroadcastBar", () => {
   it("sends the typed command and clears the input", async () => {
     const onsend = vi.fn();
-    render(BroadcastBar, { props: { targetCount: 3, onsend } });
+    render(BroadcastBar, { props: { onsend } });
     const input = screen.getByTestId("broadcast-input") as HTMLInputElement;
     await fireEvent.input(input, { target: { value: "uptime" } });
     await fireEvent.click(screen.getByTestId("broadcast-send"));
@@ -15,7 +15,7 @@ describe("BroadcastBar", () => {
 
   it("sends on Enter", async () => {
     const onsend = vi.fn();
-    render(BroadcastBar, { props: { targetCount: 2, onsend } });
+    render(BroadcastBar, { props: { onsend } });
     const input = screen.getByTestId("broadcast-input");
     await fireEvent.input(input, { target: { value: "ls" } });
     await fireEvent.keyDown(input, { key: "Enter" });
@@ -24,14 +24,14 @@ describe("BroadcastBar", () => {
 
   it("does not send an empty command", async () => {
     const onsend = vi.fn();
-    render(BroadcastBar, { props: { targetCount: 1, onsend } });
+    render(BroadcastBar, { props: { onsend } });
     await fireEvent.click(screen.getByTestId("broadcast-send"));
     expect(onsend).not.toHaveBeenCalled();
   });
 
   it("is inert when there are no live targets", async () => {
     const onsend = vi.fn();
-    render(BroadcastBar, { props: { targetCount: 0, disabled: true, onsend } });
+    render(BroadcastBar, { props: { disabled: true, onsend } });
     const input = screen.getByTestId("broadcast-input");
     await fireEvent.input(input, { target: { value: "reboot" } });
     await fireEvent.keyDown(input, { key: "Enter" });

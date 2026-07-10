@@ -311,7 +311,9 @@
       "Bash(sed -i '' 's/^version = \"0.22.13\"/version = \"0.22.14\"/' src-tauri/Cargo.toml)",
       "Bash(awk 'NR>=305 && NR<=330' src/lib/MonitoringOverlay.svelte)",
       "Bash(grep -n 'ConfirmDialog\\\\|removeEndpoint\\\\|removeEndpointId\\\\|confirm\\\\|Confirm\\\\|$state' src/lib/AiSettingsSection.svelte)",
-      "Bash(xargs -I{} echo {})"
+      "Bash(xargs -I{} echo {})",
+      "Bash(auto)",
+      "Bash(grep -n \"auto.*режим\\\\|авто-режим\\\\|execMode.*auto\\\\|\\\\\"auto\\\\\"\\\\|`auto`\" SECURITY.md)"
     ]
   }
 }
