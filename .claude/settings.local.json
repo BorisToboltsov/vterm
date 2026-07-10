@@ -313,7 +313,9 @@
       "Bash(grep -n 'ConfirmDialog\\\\|removeEndpoint\\\\|removeEndpointId\\\\|confirm\\\\|Confirm\\\\|$state' src/lib/AiSettingsSection.svelte)",
       "Bash(xargs -I{} echo {})",
       "Bash(auto)",
-      "Bash(grep -n \"auto.*режим\\\\|авто-режим\\\\|execMode.*auto\\\\|\\\\\"auto\\\\\"\\\\|`auto`\" SECURITY.md)"
+      "Bash(grep -n \"auto.*режим\\\\|авто-режим\\\\|execMode.*auto\\\\|\\\\\"auto\\\\\"\\\\|`auto`\" SECURITY.md)",
+      "Bash(sed -i '' 's/\"version\": \"0.22.15\"/\"version\": \"0.22.16\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '3s/version = \"0.22.15\"/version = \"0.22.16\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

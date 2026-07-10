@@ -52,7 +52,14 @@
   import { writeClipboard } from "./clipboard";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import type { RecordingMeta } from "./types";
-  import { groupRecordings, type RecGroupEntry } from "./recgroup";
+  import {
+    groupRecordings,
+    sectionRecordings,
+    type RecGroupEntry,
+    type RecEntry,
+    type RecGroupBy,
+    type RecSectionBucket,
+  } from "./recgroup";
 
   let {
     open = $bindable(false),
@@ -87,14 +94,62 @@
   const view = $derived(sortRecordingsBy(filterRecordings(items, query), criteria));
   // Collapse broadcast (group-recording) bundles into one expandable entry.
   const entries = $derived(groupRecordings(view));
+  // Outer "group by" layer over the bundle-collapsed entries (none/server/date).
+  let groupBy = $state<RecGroupBy>("none");
+  const sections = $derived(sectionRecordings(entries, groupBy, Date.now() / 1000));
   let expandedBatches = $state<Set<string>>(new Set());
+  // Section keys the user has collapsed (default: all expanded).
+  let collapsedSections = $state<Set<string>>(new Set());
   let confirmDeleteGroup = $state<RecGroupEntry | null>(null);
+
+  const GROUP_BY: { mode: RecGroupBy; label: () => string }[] = [
+    { mode: "none", label: () => t("recordings.groupNone") },
+    { mode: "server", label: () => t("recordings.groupServer") },
+    { mode: "date", label: () => t("recordings.groupDate") },
+  ];
+
+  // Localized header for a section (server sections use their literal name).
+  function sectionLabel(bucket: RecSectionBucket, label: string): string {
+    switch (bucket) {
+      case "server":
+        return label;
+      case "noServer":
+        return t("recordings.groupNoServer");
+      case "broadcast":
+        return t("recordings.groupBroadcast");
+      case "today":
+        return t("recordings.dateToday");
+      case "yesterday":
+        return t("recordings.dateYesterday");
+      case "week":
+        return t("recordings.dateWeek");
+      case "month":
+        return t("recordings.dateMonth");
+      case "older":
+        return t("recordings.dateOlder");
+      case "unknownDate":
+        return t("recordings.dateUnknown");
+      default:
+        return "";
+    }
+  }
+
+  function entryKey(entry: RecEntry): string {
+    return entry.kind === "group" ? entry.batchId : entry.rec.path;
+  }
 
   function toggleBatch(id: string) {
     const next = new Set(expandedBatches);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     expandedBatches = next;
+  }
+
+  function toggleSection(key: string) {
+    const next = new Set(collapsedSections);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    collapsedSections = next;
   }
 
   async function removeGroup(group: RecGroupEntry) {
@@ -431,6 +486,27 @@
       {/each}
     </div>
 
+    <!-- Group by: partition the list into collapsible server / date sections
+         (single-select). "None" is the flat list. Bundles stay collapsed under
+         either mode; when grouping by server they land in a broadcast section. -->
+    <div class="mb-2 flex flex-nowrap items-center gap-1.5">
+      <span class="shrink-0 text-[11px] text-muted">{t("recordings.groupBy")}:</span>
+      {#each GROUP_BY as opt}
+        <button
+          type="button"
+          data-testid="rec-groupby-{opt.mode}"
+          onclick={() => (groupBy = opt.mode)}
+          aria-pressed={groupBy === opt.mode}
+          class="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs {groupBy ===
+          opt.mode
+            ? 'border-accent text-accent'
+            : 'border-edge text-muted hover:text-white'}"
+        >
+          {opt.label()}
+        </button>
+      {/each}
+    </div>
+
     {#if view.length === 0}
       <p class="px-3 py-6 text-center text-xs text-muted">{t("recordings.noMatches")}</p>
     {/if}
@@ -508,52 +584,90 @@
       </div>
     {/snippet}
 
-    <div class="max-h-[60vh] space-y-1.5 overflow-auto">
-      {#each entries as entry (entry.kind === "group" ? entry.batchId : entry.rec.path)}
-        {#if entry.kind === "single"}
-          {@render recRow(entry.rec)}
-        {:else}
-          <div class="rounded border border-edge">
-            <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-edge">
-              <button
-                type="button"
-                onclick={() => toggleBatch(entry.batchId)}
-                aria-expanded={expandedBatches.has(entry.batchId)}
-                class="flex min-w-0 flex-1 items-center gap-2 text-left"
-              >
-                <Icon
-                  name={expandedBatches.has(entry.batchId) ? "chevronDown" : "chevronRight"}
-                  size={14}
-                  class="shrink-0 text-muted"
-                />
-                <Icon name="broadcast" size={14} class="shrink-0 text-accent" />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm text-text">
-                    {entry.label || t("recordings.broadcastBundle", { count: entry.items.length })}
-                  </div>
-                  <div class="text-[11px] tabular-nums text-muted">
-                    {t("recordings.broadcastBundle", { count: entry.items.length })} · {fmtDate(entry.timestamp)}
-                  </div>
+    {#snippet entryRow(entry: RecEntry)}
+      {#if entry.kind === "single"}
+        {@render recRow(entry.rec)}
+      {:else}
+        <div class="rounded border border-edge">
+          <div class="flex items-center gap-2 px-2 py-1.5 hover:bg-edge">
+            <button
+              type="button"
+              onclick={() => toggleBatch(entry.batchId)}
+              aria-expanded={expandedBatches.has(entry.batchId)}
+              class="flex min-w-0 flex-1 items-center gap-2 text-left"
+            >
+              <Icon
+                name={expandedBatches.has(entry.batchId) ? "chevronDown" : "chevronRight"}
+                size={14}
+                class="shrink-0 text-muted"
+              />
+              <Icon name="broadcast" size={14} class="shrink-0 text-accent" />
+              <div class="min-w-0 flex-1">
+                <div class="truncate text-sm text-text">
+                  {entry.label || t("recordings.broadcastBundle", { count: entry.items.length })}
                 </div>
-              </button>
-              <button
-                type="button"
-                onclick={() => (confirmDeleteGroup = entry)}
-                use:tooltip={t("recordings.deleteGroup")}
-                aria-label={t("recordings.deleteGroup")}
-                class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
-              >
-                <Icon name="trash" size={14} />
-              </button>
-            </div>
-            {#if expandedBatches.has(entry.batchId)}
-              <div class="space-y-1.5 border-t border-edge p-1.5">
-                {#each entry.items as rec (rec.path)}
-                  {@render recRow(rec)}
-                {/each}
+                <div class="text-[11px] tabular-nums text-muted">
+                  {t("recordings.broadcastBundle", { count: entry.items.length })} · {fmtDate(entry.timestamp)}
+                </div>
               </div>
-            {/if}
+            </button>
+            <button
+              type="button"
+              onclick={() => (confirmDeleteGroup = entry)}
+              use:tooltip={t("recordings.deleteGroup")}
+              aria-label={t("recordings.deleteGroup")}
+              class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
+            >
+              <Icon name="trash" size={14} />
+            </button>
           </div>
+          {#if expandedBatches.has(entry.batchId)}
+            <div class="space-y-1.5 border-t border-edge p-1.5">
+              {#each entry.items as rec (rec.path)}
+                {@render recRow(rec)}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    {/snippet}
+
+    <div class="max-h-[60vh] space-y-1.5 overflow-auto">
+      {#each sections as section (section.key)}
+        {#if section.bucket === "all"}
+          {#each section.entries as entry (entryKey(entry))}
+            {@render entryRow(entry)}
+          {/each}
+        {:else}
+          {@const collapsed = collapsedSections.has(section.key)}
+          <!-- Collapsible section header (server name / date bucket) with a count. -->
+          <button
+            type="button"
+            data-testid="rec-section"
+            onclick={() => toggleSection(section.key)}
+            aria-expanded={!collapsed}
+            class="flex w-full items-center gap-1.5 px-1 pt-1 text-left"
+          >
+            <Icon
+              name={collapsed ? "chevronRight" : "chevronDown"}
+              size={13}
+              class="shrink-0 text-muted"
+            />
+            <span
+              class="truncate text-[11px] font-medium uppercase tracking-wide text-muted"
+              title={sectionLabel(section.bucket, section.label)}
+            >
+              {sectionLabel(section.bucket, section.label)}
+            </span>
+            <span class="shrink-0 text-[11px] tabular-nums text-muted opacity-70">{section.count}</span>
+          </button>
+          {#if !collapsed}
+            <div class="space-y-1.5">
+              {#each section.entries as entry (entryKey(entry))}
+                {@render entryRow(entry)}
+              {/each}
+            </div>
+          {/if}
         {/if}
       {/each}
     </div>
