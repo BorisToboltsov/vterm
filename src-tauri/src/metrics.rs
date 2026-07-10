@@ -279,6 +279,7 @@ printf 'psimem=%s\\n' \"$(grep '^some' /proc/pressure/memory 2>/dev/null)\"; \
 printf 'psiio=%s\\n' \"$(grep '^some' /proc/pressure/io 2>/dev/null)\"; \
 printf 'tcp=%s\\n' \"$(ss -tanH 2>/dev/null | awk '{print $1}' | sort | uniq -c | awk '{printf \"%s:%s \",$2,$1}')\"; \
 printf 'sensors=%s\\n' \"$(sensors -u 2>/dev/null | awk '/^[^ ].*:$/{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}l=$0;sub(/:$/,\"\",l);gsub(/,/,\"\",l);v=\"\";h=\"\";c=\"\";next}/temp[0-9]+_input:/{v=$2+0}/temp[0-9]+_max:/{h=$2+0}/temp[0-9]+_crit:/{c=$2+0}END{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}}')\"; \
+printf 'sensorsbin=%s\\n' \"$(command -v sensors >/dev/null 2>&1 && echo 1)\"; \
 printf 'cpubreak=%s\\n' \"$(awk '/^cpu /{print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat 2>/dev/null)\"; \
 printf 'topcpu=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k3 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
 printf 'topmemp=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k4 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
@@ -407,6 +408,9 @@ pub struct MetricsDetail {
     tcp: Vec<TcpState>,
     /// Temperature sensors (lm-sensors); empty when `sensors` isn't installed.
     sensors: Vec<Sensor>,
+    /// Whether the `sensors` binary exists — lets the UI tell "not installed"
+    /// (offer install) apart from "installed but no chips detected".
+    sensors_installed: bool,
     /// CPU time split (user/system/iowait/steal/idle %); None on the first poll.
     cpu_breakdown: Option<CpuBreakdown>,
     /// Top processes by CPU (pid/user/cpu/mem/comm).
@@ -764,6 +768,10 @@ fn parse_detail(raw: &str) -> MetricsDetail {
     d.psi_io = parse_psi(raw, "psiio");
     d.tcp = parse_tcp(raw);
     d.sensors = parse_sensors(raw);
+    d.sensors_installed = raw
+        .lines()
+        .find_map(|l| l.strip_prefix("sensorsbin="))
+        .is_some_and(|s| s.trim() == "1");
     d.top_procs = parse_top_procs(raw, "topcpu=");
     d.top_mem_procs = parse_top_procs(raw, "topmemp=");
     d.failed_units = raw

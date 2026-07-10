@@ -222,6 +222,9 @@ export interface MetricsDetail {
   tcp: TcpState[];
   /** Temperature sensors (lm-sensors); empty when `sensors` isn't installed. */
   sensors: Sensor[];
+  /** Whether the `sensors` binary exists — distinguishes "not installed" (offer
+   *  install) from "installed but no chips detected". */
+  sensorsInstalled: boolean;
   /** CPU time split (user/system/iowait/steal/idle %); null on the first poll. */
   cpuBreakdown: CpuBreakdown | null;
   /** Top processes by CPU. */

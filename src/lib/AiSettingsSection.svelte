@@ -46,6 +46,7 @@
   }
   function removePattern(p: string) {
     settings.ai.dangerousPatterns = settings.ai.dangerousPatterns.filter((x) => x !== p);
+    deletePattern = null;
   }
   let kindOpen = $state<Record<AiPromptKind, boolean>>({
     chat: false,
@@ -71,6 +72,7 @@
   }
   function removePrompt(kind: AiPromptKind, id: string) {
     const set = settings.ai.prompts[kind];
+    deletePromptTarget = null;
     if (set.prompts.length <= 1) return;
     set.prompts = set.prompts.filter((p) => p.id !== id);
     if (set.activeId === id) set.activeId = set.prompts[0]?.id ?? null;
@@ -79,6 +81,9 @@
   // Transient API-key drafts — never persisted (keys live in the keychain).
   let keyDrafts = $state<Record<string, string>>({});
   let deleteId = $state<string | null>(null);
+  let clearKeyId = $state<string | null>(null);
+  let deletePattern = $state<string | null>(null);
+  let deletePromptTarget = $state<{ kind: AiPromptKind; id: string } | null>(null);
   // Connection-check state per endpoint (transient).
   let checking = $state<Record<string, boolean>>({});
   let checkResult = $state<Record<string, { ok: boolean; models: string[]; error?: string }>>({});
@@ -126,6 +131,7 @@
     await forgetAiKey(id);
     const ep = settings.ai.endpoints.find((e) => e.id === id);
     if (ep) ep.hasKey = false;
+    clearKeyId = null;
   }
 
   async function removeEndpoint(id: string) {
@@ -301,15 +307,16 @@
               {#if ep.hasKey}
                 <button
                   class="shrink-0 rounded px-2 py-1 text-[11px] text-muted hover:text-danger"
-                  onclick={() => clearKey(ep.id)}>{t("settings.aiKeyClear")}</button
+                  onclick={() => (clearKeyId = ep.id)}>{t("settings.aiKeyClear")}</button
                 >
               {/if}
             </div>
           </div>
 
           <!-- Advanced: model-wide base prompt + extra params JSON (collapsible). -->
-          <div class="mt-2 border-t border-edge pt-2">
+          <div class="mt-2">
             <DisclosureRow
+              variant="list"
               bind:open={advancedOpen[ep.id]}
               label={t("settings.aiAdvanced")}
               testid={`ai-advanced-${ep.id}`}
@@ -412,7 +419,6 @@
   <select class="mt-1 {inputCls}" bind:value={settings.ai.execMode}>
     <option value="suggest">{t("settings.aiExecSuggest")}</option>
     <option value="confirm">{t("settings.aiExecConfirm")}</option>
-    <option value="auto">{t("settings.aiExecAuto")}</option>
     <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
     <option value="dialog">{t("settings.aiExecDialog")}</option>
   </select>
@@ -421,17 +427,15 @@
 <!-- Commands that always require confirmation — built-in list (read-only) plus
      the user's own additive patterns. Collapsible. -->
 <div class="mt-3">
-  <div class="flex items-center gap-1">
-    <div class="min-w-0 flex-1">
-      <DisclosureRow
-        bind:open={dangerOpen}
-        label={t("settings.aiDanger")}
-        count={settings.ai.dangerousPatterns.length}
-        testid="ai-danger"
-      />
-    </div>
-    <InfoHint text={t("settings.aiDangerHint")} />
-  </div>
+  <DisclosureRow
+    variant="list"
+    bind:open={dangerOpen}
+    label={t("settings.aiDanger")}
+    count={settings.ai.dangerousPatterns.length}
+    testid="ai-danger"
+  >
+    {#snippet trailing()}<InfoHint text={t("settings.aiDangerHint")} />{/snippet}
+  </DisclosureRow>
   {#if dangerOpen}
     <div class="mt-2 space-y-3 border-l border-edge pl-2">
       <div>
@@ -460,7 +464,7 @@
                   class="shrink-0 rounded p-1 text-muted hover:text-danger"
                   use:tooltip={t("common.delete")}
                   aria-label={t("common.delete")}
-                  onclick={() => removePattern(p)}
+                  onclick={() => (deletePattern = p)}
                 >
                   <Icon name="trash" size={13} />
                 </button>
@@ -511,32 +515,29 @@
 
 <!-- System prompts — collapsible section; each kind is a collapsible list. -->
 <div class="mt-3">
-  <div class="flex items-center gap-1">
-    <div class="min-w-0 flex-1">
-      <DisclosureRow bind:open={promptsOpen} label={t("settings.aiPrompts")} testid="ai-prompts" />
-    </div>
-    <InfoHint
-      text={t("settings.aiPromptsHint") + "\n\n" + t("settings.aiPromptsModelHint")}
-    />
-  </div>
+  <DisclosureRow variant="list" bind:open={promptsOpen} label={t("settings.aiPrompts")} testid="ai-prompts">
+    {#snippet trailing()}<InfoHint
+        text={t("settings.aiPromptsHint") + "\n\n" + t("settings.aiPromptsModelHint")}
+      />{/snippet}
+  </DisclosureRow>
   {#if promptsOpen}
     <div class="mt-2 space-y-2 border-l border-edge pl-2">
       {#each AI_PROMPT_KINDS as kind (kind)}
         {@const set = settings.ai.prompts[kind]}
         <div>
-          <div class="flex items-center gap-1">
-            <div class="min-w-0 flex-1">
-              <DisclosureRow
-                bind:open={kindOpen[kind]}
-                label={kindLabel(kind)}
-                count={set.prompts.length}
-                testid={`ai-prompts-${kind}`}
-              />
-            </div>
-            {#if kind !== "chat"}
-              <InfoHint text={t("settings.aiGenPromptHint")} />
-            {/if}
-          </div>
+          <DisclosureRow
+            variant="list"
+            bind:open={kindOpen[kind]}
+            label={kindLabel(kind)}
+            count={set.prompts.length}
+            testid={`ai-prompts-${kind}`}
+          >
+            {#snippet trailing()}
+              {#if kind !== "chat"}
+                <InfoHint text={t("settings.aiGenPromptHint")} />
+              {/if}
+            {/snippet}
+          </DisclosureRow>
           {#if kindOpen[kind]}
             <div class="mt-1 space-y-2 pl-4">
               {#each set.prompts as p (p.id)}
@@ -573,7 +574,7 @@
                       use:tooltip={t("common.delete")}
                       aria-label={t("common.delete")}
                       disabled={set.prompts.length <= 1}
-                      onclick={() => removePrompt(kind, p.id)}
+                      onclick={() => (deletePromptTarget = { kind, id: p.id })}
                     >
                       <Icon name="trash" size={13} />
                     </button>
@@ -612,4 +613,37 @@
   oncancel={() => (deleteId = null)}
 >
   {t("settings.aiDeleteBody")}
+</ConfirmDialog>
+
+<ConfirmDialog
+  open={!!clearKeyId}
+  title={t("settings.aiKeyClearTitle")}
+  confirmLabel={t("settings.aiKeyClear")}
+  danger
+  onconfirm={() => clearKeyId && clearKey(clearKeyId)}
+  oncancel={() => (clearKeyId = null)}
+>
+  {t("settings.aiKeyClearBody")}
+</ConfirmDialog>
+
+<ConfirmDialog
+  open={!!deletePattern}
+  title={t("settings.aiDangerRemoveTitle")}
+  confirmLabel={t("common.delete")}
+  danger
+  onconfirm={() => deletePattern && removePattern(deletePattern)}
+  oncancel={() => (deletePattern = null)}
+>
+  {t("settings.aiDangerRemoveBody", { pattern: deletePattern ?? "" })}
+</ConfirmDialog>
+
+<ConfirmDialog
+  open={!!deletePromptTarget}
+  title={t("settings.aiPromptDeleteTitle")}
+  confirmLabel={t("common.delete")}
+  danger
+  onconfirm={() => deletePromptTarget && removePrompt(deletePromptTarget.kind, deletePromptTarget.id)}
+  oncancel={() => (deletePromptTarget = null)}
+>
+  {t("settings.aiPromptDeleteBody")}
 </ConfirmDialog>

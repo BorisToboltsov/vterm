@@ -14,7 +14,7 @@ import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from
 import { buildChatRequest, type AiSettings, type AiExecMode } from "../ai";
 import { withContext, type ContextTiers } from "../aicontext";
 import { settings } from "../settings.svelte";
-import { parseChatSegments, toTerminalInput, auditLabel } from "../aiexec";
+import { toTerminalInput, auditLabel } from "../aiexec";
 import { nextCommand, buildFeedback, isDangerousCommand } from "../aidialog";
 import { notifySuccess } from "./toasts.svelte";
 import { describeAiError } from "../aierror";
@@ -218,11 +218,9 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   }
 }
 
-/** Dispatch after a reply finishes: auto-run all blocks, or drive the dialog loop. */
+/** Dispatch after a reply finishes: drive the dialog loop (other modes are manual). */
 function afterReply(c: SessionChat, msgIdx: number, opts: StartChatOpts): void {
-  if (opts.execMode === "auto") {
-    autoRun(opts.sessionId, c, msgIdx, opts.execMode, opts.prod, opts.noAi);
-  } else if (isDialog(opts.execMode)) {
+  if (isDialog(opts.execMode)) {
     void maybeContinueDialog(c, msgIdx, opts);
   }
 }
@@ -285,23 +283,6 @@ export function skipDialogStep(sessionId: string | undefined): void {
   const c = getChat(sessionId);
   c.pending = null;
   c.dialogRunning = false;
-}
-
-/** Auto-execute every runnable block of a finished reply — non-prod + auto only. */
-function autoRun(
-  sessionId: string | undefined,
-  c: SessionChat,
-  msgIdx: number,
-  execMode: AiExecMode,
-  prod: boolean,
-  noAi: boolean,
-): void {
-  if (execMode !== "auto" || prod || noAi || !sessionId) return;
-  parseChatSegments(c.messages[msgIdx].content).forEach((seg, si) => {
-    if (seg.kind === "code" && seg.runnable && seg.closed) {
-      void runCommand(sessionId, c, `${msgIdx}:${si}`, seg.content, noAi);
-    }
-  });
 }
 
 /** Write a proposed command block to the terminal + audit it in the recording. */

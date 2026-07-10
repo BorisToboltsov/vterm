@@ -229,30 +229,6 @@ describe("AiChat — executor (Phase 17.4)", () => {
     expect(screen.queryByTestId("ai-run")).toBeNull();
   });
 
-  it("auto mode on a non-prod server runs the command without a click", async () => {
-    enableAi("auto");
-    render(AiChat, { props: { sessionId: "sess1", prod: false } });
-
-    await ask("list files");
-    emit("out", REPLY);
-    emit("done");
-
-    await waitFor(() => expect(writeToTerminal).toHaveBeenCalledOnce());
-    expect(writeToTerminal.mock.calls[0][0]).toBe("sess1");
-  });
-
-  it("auto mode is barred on a prod-flagged server (button only)", async () => {
-    enableAi("auto");
-    render(AiChat, { props: { sessionId: "sess1", prod: true } });
-
-    await ask("list files");
-    emit("out", REPLY);
-    emit("done");
-
-    await screen.findByTestId("ai-run");
-    expect(writeToTerminal).not.toHaveBeenCalled();
-  });
-
   it("a per-server execMode override wins over the global setting", async () => {
     enableAi("confirm"); // global = confirm (would show a Run button)
     render(AiChat, { props: { sessionId: "sess1", serverExecMode: "suggest" } });
@@ -300,8 +276,8 @@ describe("AiChat — noAi server block (Phase 17.7)", () => {
     expect(screen.queryByTestId("ai-run")).toBeNull();
   });
 
-  it("bars auto-run on a noAi server", async () => {
-    enableAi("auto");
+  it("bars dialog auto-execution on a noAi server", async () => {
+    enableAi("dialog");
     render(AiChat, { props: { sessionId: "sess1", noAi: true } });
 
     await ask("list files");

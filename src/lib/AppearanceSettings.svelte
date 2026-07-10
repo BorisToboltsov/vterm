@@ -106,7 +106,7 @@ print(greet("world"))  # => 12345`;
 <section>
   <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionAppearance")}</h3>
   <div class="mb-2">
-    <DisclosureRow bind:open={themeOpen} testid="theme-toggle" label={t("settings.theme")}>
+    <DisclosureRow variant="list" bind:open={themeOpen} testid="theme-toggle" label={t("settings.theme")}>
       {#snippet preview()}
         {#if currentTheme}
           <span class="flex shrink-0 overflow-hidden rounded border border-edge">
@@ -184,7 +184,7 @@ print(greet("world"))  # => 12345`;
   </div>
 
   <div class="mb-2">
-    <DisclosureRow bind:open={fontOpen} testid="font-toggle" label={t("settings.font")}>
+    <DisclosureRow variant="list" bind:open={fontOpen} testid="font-toggle" label={t("settings.font")}>
       {#snippet preview()}
         <span class="truncate">{currentFontLabel}</span>
       {/snippet}

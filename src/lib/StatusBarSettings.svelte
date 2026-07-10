@@ -3,7 +3,6 @@
   // checklist, and the warn/crit thresholds editor. Extracted from
   // SettingsPanel.svelte in Phase 18.5; reads/writes the settings store directly.
   import { settings, type StatusBarItems, type ThresholdKey } from "./settings.svelte";
-  import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
@@ -68,7 +67,12 @@
   </label>
 
   <div class="mt-2">
-    <DisclosureRow bind:open={metricsOpen} testid="metrics-toggle" label={t("settings.shownMetrics")} />
+    <DisclosureRow
+      variant="list"
+      bind:open={metricsOpen}
+      testid="metrics-toggle"
+      label={t("settings.shownMetrics")}
+    />
     {#if metricsOpen}
       <div transition:slide={{ duration: 200 }} class="mt-2 grid grid-cols-2 gap-1.5">
         {#each STATUS_ITEMS as it (it.key)}
@@ -82,16 +86,17 @@
   </div>
 
   <div class="mt-2">
-    <button
-      type="button"
-      data-testid="thresholds-toggle"
-      aria-expanded={thresholdsOpen}
-      onclick={() => (thresholdsOpen = !thresholdsOpen)}
-      class="flex w-full items-center justify-between rounded text-xs text-muted hover:text-white"
-    >
-      <span>{t("settings.thresholdsPre")}<span class="text-warn">{t("settings.thresholdsAmber")}</span>{t("settings.thresholdsMid")}<span class="text-danger">{t("settings.thresholdsRed")}</span>{t("settings.thresholdsPost")}</span>
-      <Icon name={thresholdsOpen ? "chevronDown" : "chevronRight"} size={14} class="shrink-0" />
-    </button>
+    {#snippet thresholdsLabel()}
+      {t("settings.thresholdsPre")}<span class="text-warn">{t("settings.thresholdsAmber")}</span>{t(
+        "settings.thresholdsMid",
+      )}<span class="text-danger">{t("settings.thresholdsRed")}</span>{t("settings.thresholdsPost")}
+    {/snippet}
+    <DisclosureRow
+      variant="list"
+      bind:open={thresholdsOpen}
+      testid="thresholds-toggle"
+      labelSnippet={thresholdsLabel}
+    />
     {#if thresholdsOpen}
       <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
         <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-[10px] uppercase tracking-wider text-muted">

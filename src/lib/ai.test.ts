@@ -234,9 +234,11 @@ describe("resolvePromptContent", () => {
 describe("effectiveExecMode", () => {
   it("uses a valid per-server override, else the global mode", () => {
     expect(effectiveExecMode("suggest", "confirm")).toBe("suggest");
-    expect(effectiveExecMode("auto", "confirm")).toBe("auto");
+    expect(effectiveExecMode("dialog", "confirm")).toBe("dialog");
     expect(effectiveExecMode(null, "confirm")).toBe("confirm");
-    expect(effectiveExecMode("", "auto")).toBe("auto");
+    expect(effectiveExecMode("", "dialogConfirm")).toBe("dialogConfirm");
+    // The removed "auto" mode is no longer valid → falls back to the global mode.
+    expect(effectiveExecMode("auto", "confirm")).toBe("confirm");
     expect(effectiveExecMode("bogus", "confirm")).toBe("confirm");
   });
 });

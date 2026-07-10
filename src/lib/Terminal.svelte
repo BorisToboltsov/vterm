@@ -91,7 +91,7 @@
     index: -1,
     count: 0,
   });
-  const searchEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.search);
+  const searchEnabled = $derived(settings.smartLogs.enabled);
   const countLabel = $derived(matchCountLabel(search.index, search.count));
   // In regex mode, a malformed pattern matches nothing — surface that instead of
   // failing silently (mirrors the highlight-rules editor).
@@ -111,7 +111,7 @@
   // buffer (not a full-screen TUI), matched tokens are wrapped in ANSI colours
   // before reaching xterm. Pure logic lives in highlight.ts.
   const decoder = new TextDecoder();
-  const highlightEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.highlight);
+  const highlightEnabled = $derived(settings.smartLogs.enabled);
   const compiledRules = $derived(
     highlightEnabled ? compileRules(settings.highlightRules) : [],
   );
@@ -123,7 +123,7 @@
   // structured view is open (zero overhead otherwise); toggling it on first
   // seeds from the existing scrollback so recent logs show immediately.
   const MAX_JSON_ENTRIES = 2000;
-  const jsonViewEnabled = $derived(settings.smartLogs.enabled && settings.smartLogs.jsonView);
+  const jsonViewEnabled = $derived(settings.smartLogs.enabled);
   // Latched once the session first connects. The raw↔table toggle is hidden until
   // then so it doesn't float over the connecting overlay while a tab is still
   // establishing its SSH session (local shells connect near-instantly).

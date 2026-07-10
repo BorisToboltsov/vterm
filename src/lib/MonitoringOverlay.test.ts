@@ -79,6 +79,7 @@ const detail: MetricsDetail = {
     { label: "Core 0", temp: 50, high: 84, crit: 100 },
     { label: "Core 1", temp: 52, high: 84, crit: 100 },
   ],
+  sensorsInstalled: true,
   cpuBreakdown: { user: 10, system: 5, iowait: 2, steal: 3, idle: 80 },
   topProcs: [
     { pid: 1234, user: "root", cpu: 12.5, mem: 3.1, comm: "nginx" },
@@ -186,14 +187,22 @@ describe("MonitoringOverlay", () => {
     expect(screen.getByTestId("core-temps")).toBeInTheDocument();
   });
 
-  it("offers to install lm-sensors when no sensor data is available", async () => {
-    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [] });
+  it("offers to install lm-sensors when the binary is missing", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
     const onInstallTool = vi.fn();
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-noterm", onInstallTool } });
     const card = await screen.findByTestId("sensors-install");
     expect(card).toBeInTheDocument();
     await fireEvent.click(within(card).getByRole("button"));
     expect(onInstallTool).toHaveBeenCalledWith("sensors");
+  });
+
+  it("shows a 'no sensors detected' note (not the install CTA) when lm-sensors is installed but exposes no chips", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: true });
+    const onInstallTool = vi.fn();
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-nosens", onInstallTool } });
+    expect(await screen.findByTestId("sensors-none")).toBeInTheDocument();
+    expect(screen.queryByTestId("sensors-install")).toBeNull();
   });
 
   it("shows skeletons for delta metrics until the second poll", async () => {

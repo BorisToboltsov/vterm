@@ -306,7 +306,12 @@
       "Bash(sed -i '' 's/0\\\\.22\\\\.10/0.22.11/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.22.10\"/version = \"0.22.11\"/' src-tauri/Cargo.toml)",
       "Bash(sed -i '' 's/\"version\": \"0.22.12\"/\"version\": \"0.22.13\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.22.12\"/version = \"0.22.13\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.22.12\"/version = \"0.22.13\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.22.13\"/\"version\": \"0.22.14\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.22.13\"/version = \"0.22.14\"/' src-tauri/Cargo.toml)",
+      "Bash(awk 'NR>=305 && NR<=330' src/lib/MonitoringOverlay.svelte)",
+      "Bash(grep -n 'ConfirmDialog\\\\|removeEndpoint\\\\|removeEndpointId\\\\|confirm\\\\|Confirm\\\\|$state' src/lib/AiSettingsSection.svelte)",
+      "Bash(xargs -I{} echo {})"
     ]
   }
 }

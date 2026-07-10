@@ -80,34 +80,24 @@
 
 <!-- Logs & text (Phase 10) -->
 <section>
-  <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionSmartLogs")}</h3>
-  <div class="flex items-center gap-2 text-xs text-muted">
-    <label class="flex items-center gap-2">
-      <input type="checkbox" bind:checked={settings.smartLogs.enabled} />
-      {t("settings.smartLogsEnabled")}
-    </label>
-    <InfoHint text={t("settings.smartLogsEnabledHint")} />
-  </div>
+  <h3 class="mb-2 flex items-center gap-1 text-xs uppercase tracking-wider text-muted">
+    {t("settings.sectionSmartLogs")}<InfoHint text={t("settings.sectionSmartLogsHint")} />
+  </h3>
+  <label class="flex items-center gap-2 text-xs text-muted">
+    <input type="checkbox" bind:checked={settings.smartLogs.enabled} />
+    {t("settings.smartLogsAll")}
+  </label>
   {#if settings.smartLogs.enabled}
     <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
-      <label class="flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" bind:checked={settings.smartLogs.search} />
-        {t("settings.smartLogsSearch")}
-      </label>
-      <label class="flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" bind:checked={settings.smartLogs.highlight} />
-        {t("settings.smartLogsHighlight")}
-      </label>
-      {#if settings.smartLogs.highlight}
-        <DisclosureRow
-          bind:open={highlightRulesOpen}
-          testid="highlight-rules-toggle"
-          label={t("highlight.rulesSection")}
-          count={settings.highlightRules.length}
-        />
-      {/if}
+      <DisclosureRow
+        variant="list"
+        bind:open={highlightRulesOpen}
+        testid="highlight-rules-toggle"
+        label={t("highlight.rulesSection")}
+        count={settings.highlightRules.length}
+      />
 
-      {#if settings.smartLogs.highlight && highlightRulesOpen}
+      {#if highlightRulesOpen}
         <div transition:slide={{ duration: 200 }} class="mt-1 space-y-2">
           {#each settings.highlightRules as rule, i (rule.id)}
             <div class="space-y-1.5 rounded border border-edge p-2">
@@ -214,11 +204,6 @@
           </div>
         </div>
       {/if}
-
-      <label class="flex items-center gap-2 text-xs text-muted">
-        <input type="checkbox" bind:checked={settings.smartLogs.jsonView} />
-        {t("settings.smartLogsJson")}
-      </label>
     </div>
   {/if}
 </section>

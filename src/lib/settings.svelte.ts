@@ -67,10 +67,10 @@ export type StatusBarThresholds = Record<ThresholdKey, Threshold>;
  * per-feature flags below.
  */
 export interface SmartLogs {
-  enabled: boolean; // master toggle
-  search: boolean; // full-buffer search (Cmd/Ctrl+F)
-  highlight: boolean; // regex highlighting (added in a later task)
-  jsonView: boolean; // structured JSON log view (added in a later task)
+  // Single master toggle for the whole "Logs & text" feature set — full-buffer
+  // search, regex highlighting, clickable links and the structured log view.
+  // (The per-feature sub-flags were folded into this one switch.)
+  enabled: boolean;
 }
 
 /** Named highlight colour — rendered in the active theme's ANSI palette. */
@@ -93,8 +93,6 @@ export interface HighlightRule {
 export interface EditorSettings {
   /** Show a before/after diff dialog before writing a changed file to the server. */
   diffBeforeSave: boolean;
-  /** Lint YAML/JSON (and other Lezer langs) in the editor and warn before saving. */
-  lint: boolean;
   /** Keep a `.bak` copy of the file on the server before overwriting (Phase 12.6). */
   backupOnSave: boolean;
 }
@@ -137,8 +135,6 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
-  // Behavior
-  confirmCloseTab: boolean;
   // Connection
   connectTimeout: number; // seconds
   keepaliveInterval: number; // seconds
@@ -234,7 +230,6 @@ const DEFAULTS: Settings = {
   bell: "none",
   copyOnSelect: false,
   middleClickPaste: false,
-  confirmCloseTab: true,
   connectTimeout: 10,
   keepaliveInterval: 15,
   termType: "xterm-256color",
@@ -274,16 +269,13 @@ const DEFAULTS: Settings = {
   autoReconnect: false,
   smartLogs: {
     enabled: true,
-    search: true,
-    highlight: true,
-    jsonView: true,
   },
   highlightRules: defaultHighlightRules(),
   searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
   recordMaskPasswords: true,
   recordMode: "full",
   recordIdlePauseSecs: 20,
-  editor: { diffBeforeSave: true, lint: true, backupOnSave: false },
+  editor: { diffBeforeSave: true, backupOnSave: false },
   snippets: defaultSnippets(),
   sftp: { maxOpenMb: 2, showHiddenFiles: false },
   hostKeyPolicy: "ask",
@@ -473,7 +465,12 @@ export function applyImportedSettings(raw: unknown): void {
     next.statusBarThresholds = mergeThresholds(r.statusBarThresholds);
   }
   if (r.smartLogs && typeof r.smartLogs === "object") {
-    next.smartLogs = { ...DEFAULTS.smartLogs, ...(r.smartLogs as Partial<SmartLogs>) };
+    // Only `enabled` survives now; ignore any stale per-feature sub-flags from
+    // settings saved before the switches were folded into one.
+    const raw = r.smartLogs as Partial<SmartLogs>;
+    next.smartLogs = {
+      enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULTS.smartLogs.enabled,
+    };
   }
   if (r.highlightRules !== undefined) {
     next.highlightRules = mergeHighlightRules(r.highlightRules);

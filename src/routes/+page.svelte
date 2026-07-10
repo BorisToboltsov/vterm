@@ -989,7 +989,7 @@
 
   function requestCloseTab(sessionId: string) {
     const tab = findTab(sessionId);
-    if (tab && isLive(tab.status) && settings.confirmCloseTab) closeConfirmId = sessionId;
+    if (tab && isLive(tab.status)) closeConfirmId = sessionId;
     else closeTabFully(sessionId);
   }
 
@@ -1134,6 +1134,25 @@
   /** Open the install dialog for a tool on the active SSH connection. */
   function openToolInstall(tool: ToolStatus) {
     if (toolsSessionId) installTool = { sessionId: toolsSessionId, tool };
+  }
+
+  /**
+   * Open the install dialog for a tool by id/name (used by the monitoring overlay's
+   * "Install lm-sensors" CTA). Unlike `offerLintInstall`, it opens the dialog even
+   * when the tool reports installed (e.g. `sensors` present but unconfigured — the
+   * very case the CTA appears) and surfaces a toast instead of failing silently.
+   */
+  async function openToolInstallByName(toolName: string) {
+    const sid = toolsSessionId;
+    if (!sid) return;
+    try {
+      const status = await serverToolsStatus(sid);
+      const tool = status.tools.find((t) => t.name === toolName || t.id === toolName);
+      if (tool) installTool = { sessionId: sid, tool };
+      else notifyError(t("servertools.notFound", { tool: toolName }));
+    } catch {
+      notifyError(t("servertools.statusFailed"));
+    }
   }
 
   /**
@@ -1879,7 +1898,7 @@
   <MonitoringOverlay
     bind:open={showMonitoring}
     sessionId={tabsState.activeId}
-    onInstallTool={offerLintInstall}
+    onInstallTool={openToolInstallByName}
   />
 {/if}
 

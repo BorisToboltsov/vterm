@@ -177,10 +177,9 @@
     });
   }
 
-  /** Lint extensions for the current doc, gated by the setting. JSON gets precise
-   *  parse messages; everything else uses the generic syntax-error linter. */
+  /** Lint extensions for the current doc (always on). JSON gets precise parse
+   *  messages; everything else uses the generic syntax-error linter. */
   function lintExt() {
-    if (!settings.editor.lint) return [];
     const which = doc.lang.kind === "json" ? linter(jsonParseLinter()) : syntaxErrorLinter();
     return [lintGutter(), which];
   }
@@ -392,12 +391,6 @@
     void settings.theme;
     void settings.customTheme;
     view?.dispatch({ effects: themeC.reconfigure(editorTheme(activeTerminalTheme())) });
-  });
-
-  // Toggle linting live when the setting changes.
-  $effect(() => {
-    void settings.editor.lint;
-    view?.dispatch({ effects: lintC.reconfigure(lintExt()) });
   });
 
   onDestroy(() => view?.destroy());

@@ -307,7 +307,9 @@
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionRecording")}</h3>
           <label class="block text-xs text-muted">
-            {t("settings.recordMode")}
+            <span class="flex items-center gap-1"
+              >{t("settings.recordMode")}<InfoHint text={t("settings.recordModeHint")} /></span
+            >
             <select
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
               bind:value={settings.recordMode}
@@ -389,10 +391,6 @@
             {t("settings.editorDiffBeforeSave")}
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
-            <input type="checkbox" bind:checked={settings.editor.lint} />
-            {t("settings.editorLint")}
-          </label>
-          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.editor.backupOnSave} />
             {t("settings.editorBackup")}
           </label>
@@ -405,10 +403,6 @@
         <section>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionBehavior")}</h3>
           <label class="flex items-center gap-2 text-xs text-muted">
-            <input type="checkbox" bind:checked={settings.confirmCloseTab} />
-            {t("settings.confirmCloseTab")}
-          </label>
-          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.autoReconnect} />
             {t("settings.autoReconnect")}
           </label>

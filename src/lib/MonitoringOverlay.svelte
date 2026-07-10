@@ -908,6 +908,15 @@
                 {/each}
               </tbody>
             </table>
+          {:else if detail?.sensorsInstalled}
+            <!-- Installed but no readable chips (VMs/containers): inform, don't offer install. -->
+            <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-none">
+              <Icon name="info" size={15} class="mt-0.5 shrink-0 text-muted" />
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-text">{t("mon.sensorsNone")}</p>
+                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsNoneHint")}</p>
+              </div>
+            </div>
           {:else}
             <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-install">
               <Icon name="info" size={15} class="mt-0.5 shrink-0 text-warn" />

@@ -11,9 +11,9 @@ export type AiProvider = "openai" | "anthropic";
 /** How the model returns runnable commands (switchable in settings, Phase 17). */
 export type AiOutputContract = "markdown" | "tools";
 
-/** How proposed commands reach the terminal. `auto`/`dialog`/`dialogConfirm` are
- *  honoured on non-prod only. `dialog*` run an execute→read-output→next-step loop. */
-export type AiExecMode = "suggest" | "confirm" | "auto" | "dialog" | "dialogConfirm";
+/** How proposed commands reach the terminal. `dialog`/`dialogConfirm` are honoured
+ *  on non-prod only and run an execute→read-output→next-step loop. */
+export type AiExecMode = "suggest" | "confirm" | "dialog" | "dialogConfirm";
 
 export interface AiEndpoint {
   id: string;
@@ -116,7 +116,7 @@ export interface AiChatRequest {
 
 const PROVIDERS: AiProvider[] = ["openai", "anthropic"];
 const CONTRACTS: AiOutputContract[] = ["markdown", "tools"];
-const EXEC_MODES: AiExecMode[] = ["suggest", "confirm", "auto", "dialog", "dialogConfirm"];
+const EXEC_MODES: AiExecMode[] = ["suggest", "confirm", "dialog", "dialogConfirm"];
 
 /** Default system prompt for the chat assistant (user-editable in settings). */
 export const DEFAULT_CHAT_SYSTEM =

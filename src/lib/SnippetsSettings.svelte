@@ -15,6 +15,7 @@
   import { slide } from "svelte/transition";
 
   let snippetDeleteId = $state<string | null>(null);
+  let snippetResetOpen = $state(false);
   let snippetsOpen = $state(false);
   let snippetLangFilter = $state("");
   const filteredSnippets = $derived(
@@ -33,6 +34,7 @@
   }
   function resetSnippets() {
     settings.snippets = defaultSnippets();
+    snippetResetOpen = false;
   }
   function setSnippetLang(snippet: Snippet, value: string) {
     snippet.lang = (value || null) as EditorLangKind | null;
@@ -45,6 +47,7 @@
     {t("settings.sectionSnippets")}<InfoHint text={t("settings.snippetsNote")} />
   </h3>
   <DisclosureRow
+    variant="list"
     bind:open={snippetsOpen}
     testid="snippets-toggle"
     label={t("settings.snippetsToggle")}
@@ -113,7 +116,7 @@
         </button>
         <button
           class="rounded px-2 py-1 text-xs text-muted hover:text-white"
-          onclick={resetSnippets}
+          onclick={() => (snippetResetOpen = true)}
         >
           {t("settings.resetSnippets")}
         </button>
@@ -131,4 +134,15 @@
   oncancel={() => (snippetDeleteId = null)}
 >
   {t("settings.snippetDeleteBody")}
+</ConfirmDialog>
+
+<ConfirmDialog
+  open={snippetResetOpen}
+  title={t("settings.snippetResetTitle")}
+  confirmLabel={t("settings.resetSnippets")}
+  danger
+  onconfirm={resetSnippets}
+  oncancel={() => (snippetResetOpen = false)}
+>
+  {t("settings.snippetResetBody")}
 </ConfirmDialog>

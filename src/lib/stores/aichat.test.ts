@@ -171,16 +171,8 @@ describe("startChat streaming", () => {
     expect(c.error).toBeTruthy();
   });
 
-  it("auto-runs runnable blocks on done in auto mode (non-prod)", async () => {
-    await startChat(opts({ execMode: "auto" }));
-    emit("out", "```bash\nls -la\n```");
-    emit("done");
-    expect(writeToTerminal).toHaveBeenCalledOnce();
-    expect(writeToTerminal.mock.calls[0][0]).toBe("s1");
-  });
-
-  it("does not auto-run on a prod server", async () => {
-    await startChat(opts({ execMode: "auto", prod: true }));
+  it("never auto-runs a proposed block in confirm mode (auto mode was removed)", async () => {
+    await startChat(opts({ execMode: "confirm" }));
     emit("out", "```bash\nls -la\n```");
     emit("done");
     expect(writeToTerminal).not.toHaveBeenCalled();

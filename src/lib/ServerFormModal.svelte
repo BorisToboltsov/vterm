@@ -454,7 +454,6 @@
             <option value="">{t("page.aiExecDefault")}</option>
             <option value="suggest">{t("settings.aiExecSuggest")}</option>
             <option value="confirm">{t("settings.aiExecConfirm")}</option>
-            <option value="auto">{t("settings.aiExecAuto")}</option>
             <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
             <option value="dialog">{t("settings.aiExecDialog")}</option>
           </select>

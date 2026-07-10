@@ -141,49 +141,40 @@ describe("statusBarThresholds", () => {
 });
 
 describe("smartLogs (Phase 10)", () => {
-  it("defaults to all enabled", () => {
-    expect(settings.smartLogs).toEqual({
-      enabled: true,
-      search: true,
-      highlight: true,
-      jsonView: true,
-    });
+  it("defaults to the single master toggle on", () => {
+    expect(settings.smartLogs).toEqual({ enabled: true });
   });
 
-  it("merges a partial backup snapshot onto defaults", () => {
-    applyImportedSettings({ smartLogs: { enabled: false } });
+  it("merges a partial backup snapshot onto defaults, ignoring stale sub-flags", () => {
+    // Old backups may carry the removed per-feature flags — only `enabled` is kept.
+    applyImportedSettings({ smartLogs: { enabled: false, search: false } as never });
     flushSync();
-    expect(settings.smartLogs.enabled).toBe(false);
-    // Absent sub-flags keep their defaults rather than vanishing.
-    expect(settings.smartLogs.search).toBe(true);
+    expect(settings.smartLogs).toEqual({ enabled: false });
   });
 
   it("is restored to defaults by resetSettings", () => {
     settings.smartLogs.enabled = false;
-    settings.smartLogs.search = false;
     resetSettings();
     expect(settings.smartLogs.enabled).toBe(true);
-    expect(settings.smartLogs.search).toBe(true);
   });
 });
 
 describe("editor settings (Phase 12)", () => {
-  it("defaults to diff-before-save and lint on", () => {
-    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true, backupOnSave: false });
+  it("defaults to diff-before-save on", () => {
+    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false });
   });
 
   it("merges a partial backup snapshot onto defaults", () => {
     applyImportedSettings({ editor: { diffBeforeSave: false } });
     flushSync();
     expect(settings.editor.diffBeforeSave).toBe(false);
-    expect(settings.editor.lint).toBe(true); // absent flag keeps its default
+    expect(settings.editor.backupOnSave).toBe(false); // absent flag keeps its default
   });
 
   it("is restored to defaults by resetSettings", () => {
     settings.editor.diffBeforeSave = false;
-    settings.editor.lint = false;
     resetSettings();
-    expect(settings.editor).toEqual({ diffBeforeSave: true, lint: true, backupOnSave: false });
+    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false });
   });
 });
 
