@@ -29,6 +29,9 @@
     yamllint: "servertools.purposeYaml",
     hadolint: "servertools.purposeDocker",
     ruff: "servertools.purposePython",
+    "ansible-lint": "servertools.purposeAnsible",
+    actionlint: "servertools.purposeActions",
+    kubeconform: "servertools.purposeK8s",
     sensors: "servertools.purposeTemp",
   };
 

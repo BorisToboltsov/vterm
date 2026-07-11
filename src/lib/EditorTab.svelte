@@ -45,7 +45,7 @@
   import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
   import { lua } from "@codemirror/legacy-modes/mode/lua";
   import { perl } from "@codemirror/legacy-modes/mode/perl";
-  import { nginx } from "@codemirror/legacy-modes/mode/nginx";
+  import { nginx } from "./nginxmode";
   import { cmake } from "@codemirror/legacy-modes/mode/cmake";
   import { diff } from "@codemirror/legacy-modes/mode/diff";
   import { http } from "@codemirror/legacy-modes/mode/http";
@@ -134,7 +134,12 @@
   async function runRemoteLint() {
     linting = true;
     try {
-      const res = await lintRemote(sessionId, doc.content, doc.lang.kind);
+      const res = await lintRemote(sessionId, doc.content, doc.lang.kind, {
+        name: doc.name,
+        // sshd -t needs root to read host keys — reuse the same sudo password the
+        // file was opened-as-root with (never a fresh prompt just to lint).
+        sudoPassword: doc.sudo ? doc.sudoPassword : undefined,
+      });
       if (!res.found) {
         lintMessages = null;
         notifyError(t("editor.lintMissing", { tool: res.tool || doc.lang.label }));
@@ -240,6 +245,23 @@
         return xml();
       case "nginx":
         return StreamLanguage.define(nginx);
+      // Daemon configs (Phase A): approximate highlighting — systemd units and the
+      // key/value daemon configs are INI-shaped; BIND's braces/semicolons fit nginx.
+      case "systemd":
+      case "sshdconfig":
+      case "sudoers":
+      case "haproxy":
+        return StreamLanguage.define(properties);
+      case "bind":
+        return StreamLanguage.define(nginx);
+      // YAML-family dialects (Phase B) are highlighted as YAML; only their server
+      // validator differs (docker compose config / actionlint / kubeconform / …).
+      case "compose":
+      case "ghactions":
+      case "prometheus":
+      case "ansible":
+      case "k8s":
+        return yaml();
       case "cmake":
         return StreamLanguage.define(cmake);
       case "diff":

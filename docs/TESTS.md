@@ -170,7 +170,8 @@ pnpm check
 - `servertools.rs` (Фаза 12.8) — `parse_status` (mgr + present-bins), `install_command`
   (команда под менеджер: системные с sudo, fallback `pip --user` для yamllint/ruff, distro-имена
   для sensors, бинарь для hadolint, **smartmontools/sysstat по своему имени**, `None` для
-  неизвестного), `sudoize` (первый `sudo`→`sudo -S`,
+  неизвестного; **Фаза B** `install_commands_for_yaml_linters` — `ansible-lint` pip/brew,
+  `actionlint`/`kubeconform` brew или серверная загрузка бинаря), `sudoize` (первый `sudo`→`sudo -S`,
   pip/brew без изменений, мульти-sudo — только первый), `build_status` (installed-флаг).
 - `sftp.rs` → `parse_id_names` (ls-владелец) — разбор `/etc/passwd`/`/etc/group`
   (`name:x:id:…`, первое имя на id, пропуск битых строк; один парсер для users и groups).
@@ -179,7 +180,12 @@ pnpm check
   `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`;
   **grep** — `grep_command` (флаги `-rnIi`/`-F`/`-E`, квотирование) и `parse_grep`
   (`path:line:text`, пропуск битых строк); **lint** — `lint_tool` (язык→инструмент, неизвестный →
-  `None`) и `lint_command` (`bin args 'tmp' 2>&1`).
+  `None`) и `lint_command` (`bin args 'tmp' 2>&1`); **валидаторы демонов (Фаза A)** —
+  `lint_tool_daemon_validators` (sshd/sudoers/haproxy/bind/systemd: bin/format/`sudo`/`suffix`,
+  форма команды у tool с пустыми args), `lint_check_command_includes_sbin` (sbin в `PATH`),
+  `lint_tmp_ext_maps_unit_types` (расширение юнита, регистронезависимо, дефолт `service`);
+  **YAML-семейство (Фаза B)** — `lint_tool_yaml_dialects` (compose с плейсхолдером `{}` в
+  `lint_command` → `docker compose -f 'FILE' config`, ghactions/prometheus/ansible/k8s: bin/format).
 - `sftp.rs` (Фаза 12.1, редактор конфигов) — чистые хелперы чтения/записи текста:
   `sha256_hex` против эталонных векторов SHA-256 (пустая строка, `"abc"`);
   `detect_eol` (lf/crlf/одна строка); `apply_eol` (LF→CRLF и обратно, идемпотентность
@@ -396,7 +402,14 @@ pnpm test:coverage   # прогон + покрытие + гейты
   SCSS/Less/XML, **DevOps** nginx/CMake/diff/Protobuf/Puppet, Groovy/Scala/Kotlin/Dart/Swift/
   Clojure/Haskell/Erlang/Elm/R/Julia/CoffeeScript/OCaml/F#/Tcl и др.; **Dockerfile** по
   имени/расширению + Gemfile/Containerfile/Vagrantfile/`nginx.conf`/`CMakeLists.txt`/
-  `build.gradle`; well-known dotfile `.env`/`.bashrc`; неизвестное → `null`), `isEditable`
+  `build.gradle`; well-known dotfile `.env`/`.bashrc`; **валидаторы демонов (Фаза A)** —
+  `sshd_config`+`sshd_config.d/` (и негатив на клиентский `ssh_config`), `sudoers`+`sudoers.d/`,
+  `haproxy.cfg`/дерево `haproxy/` (негатив на одиночный `.cfg`), `named.conf*` (BIND),
+  systemd-юниты по расширению; **YAML-диалекты (Фаза B)** — `docker-compose`/`compose` по имени,
+  `.github/workflows/` (негатив на yaml вне workflows), `prometheus.yml`, Ansible (плейбуки/роли),
+  плюс `yamlDialectFromContent`/`editorLangWithDialect` (k8s по `apiVersion`+`kind`, Ansible по
+  `hosts`+`tasks`, апгрейд только generic-`yaml`, имя-детект compose не перебивается); неизвестное →
+  `null`), `isEditable`
   (true ⇔ язык распознан), **`editorLangOrPlain`** (всегда отдаёт язык: известный → его,
   неизвестное/без расширения → `plain` Text — позволяет открыть любой файл);
 - `stores/workspaces.svelte.ts` (Фаза 12.2) — чистые `isDirty` (content vs base, не при
@@ -417,9 +430,16 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `install://out/{id}` (замок `listen`) попадает в консоль; завершение → состояние
   успеха + `onInstalled` + `notifySuccess` + снятие слушателя; провал → `notifyError`
   без успеха, кнопки восстановлены;
-- `remotelint.ts` (Фаза 12.7, серверный линт) — `hasRemoteLinter` (какие языки поддержаны),
-  `parseLint`: формат `colon` (`FILE:line[:col]: msg`, уровень из ключевых слов, пропуск
-  пустых/несовпадающих) и `nginx` (`[emerg] … in FILE:line`, успех → пусто);
+- `remotelint.ts` (Фаза 12.7, серверный линт) — `hasRemoteLinter` (какие языки поддержаны,
+  включая валидаторы демонов Фазы A), `parseLint`: формат `colon` (`FILE:line[:col]: msg`,
+  уровень из ключевых слов, пропуск пустых/несовпадающих) и `nginx` (`[emerg] … in FILE:line`,
+  успех → пусто); **валидаторы демонов (Фаза A)** — `sshd` (`FILE: line N:` + сводки без номера,
+  пустой вывод → чисто), `visudo` (`near line N`, снятие `>>> … <<<`, `parsed OK` → чисто),
+  `haproxy` (тег `[ALERT]`/`[WARNING]` → уровень + `[FILE:N]`, `valid` → пусто), `systemd`
+  (ключевые `FILE:N:` + непривязанные ошибки на строке 1, чистый юнит → пусто); **YAML-семейство
+  (Фаза B)** — `hasRemoteLinter` для compose/ghactions/prometheus/ansible/k8s и формат `generic`
+  (compose/promtool/kubeconform: только строки-проблемы, номер строки если есть, success/пусто →
+  чисто, kubeconform `invalid`-строка на строке 1);
 - `lscolors.ts` (Фаза 12.x, ls-подсветка) — `isExecutable` (любой x-бит), `lsColorKey`
   (dir/symlink/exec/archive/media → ключ палитры; приоритет symlink>dir>exec), `formatMode`
   (`drwxr-xr-x` + setuid/setgid/sticky, `?` при null), `ownerLabel` (имена → fallback uid/gid),

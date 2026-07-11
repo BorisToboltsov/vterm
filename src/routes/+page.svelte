@@ -22,6 +22,7 @@
     pickOpenFile,
     writeToTerminal,
     serverToolsStatus,
+    nginxConfigFiles,
     OPEN_FILE_EVENT,
   } from "$lib/api";
   import type { ServerProfile } from "$lib/types";
@@ -61,7 +62,12 @@
   import DiffModal from "$lib/DiffModal.svelte";
   import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
   import type { ToolStatus } from "$lib/servertools";
-  import { editorLangOrPlain } from "$lib/editorlang";
+  import {
+    editorLangOrPlain,
+    editorLangWithIncludes,
+    editorLangWithDialect,
+    couldBeNginxInclude,
+  } from "$lib/editorlang";
   import { lineDiffStat } from "$lib/util";
   import {
     getWorkspace,
@@ -998,6 +1004,7 @@
     removeWorkspace(sessionId);
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
+    nginxConfigCache.delete(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -1032,6 +1039,32 @@
     sudoPrompt?.kind === "save" ? t("editor.save") : t("editor.sudoOpen"),
   );
 
+  // Per-session cache of the paths nginx actually loads (`nginx -T`), so files that
+  // include-outside `/etc/nginx/` still get nginx highlighting + lint. Fetched lazily
+  // once per session, best-effort (empty set on error). Cleared in closeTabFully.
+  const nginxConfigCache = new Map<
+    string,
+    { promise: Promise<ReadonlySet<string>>; sudo: boolean }
+  >();
+  async function ensureNginxConfigs(
+    sid: string,
+    sudoPassword?: string,
+  ): Promise<ReadonlySet<string>> {
+    const cached = nginxConfigCache.get(sid);
+    if (cached) {
+      const set = await cached.promise;
+      // Reuse the cached result, except retry with sudo when a plain fetch came back
+      // empty and we now hold a password (an open-as-root can read a config tree the
+      // plain user can't) — this is silent, no fresh prompt.
+      if (!(set.size === 0 && sudoPassword && !cached.sudo)) return set;
+    }
+    const promise = nginxConfigFiles(sid, sudoPassword)
+      .then((list) => new Set(list) as ReadonlySet<string>)
+      .catch(() => new Set<string>() as ReadonlySet<string>);
+    nginxConfigCache.set(sid, { promise, sudo: !!sudoPassword });
+    return promise;
+  }
+
   /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
   async function openFileInEditor(
     path: string,
@@ -1042,12 +1075,21 @@
     if (!sid) return;
     // Any file opens in the editor; unknown/extensionless types fall back to plain
     // text (binary/oversize files are still rejected by the backend read below).
-    const lang = editorLangOrPlain(name);
+    // Pass the full path so custom nginx configs (conf.d, sites-available…) are
+    // detected by directory, not just `nginx.conf` by name.
+    let lang = editorLangOrPlain(path);
     const existing = findEditorByPath(sid, path);
     if (existing) {
       setActiveView(sid, existing.id);
       return;
     }
+    // For a config-shaped file not already recognised as nginx, also consult the set
+    // of configs nginx actually loads (nginx -T) — catches includes outside the
+    // `/etc/nginx/` tree. Fetched in parallel with the read; resolved just before open.
+    const nginxSetP =
+      lang.kind !== "nginx" && couldBeNginxInclude(path)
+        ? ensureNginxConfigs(sid, opts.sudoPassword)
+        : null;
     // Read first, so binary/too-large files just toast instead of opening a tab.
     let file;
     try {
@@ -1062,6 +1104,10 @@
       notifyError(String(e));
       return;
     }
+    if (nginxSetP) lang = editorLangWithIncludes(path, await nginxSetP);
+    // Content-based YAML dialects (k8s/Ansible) have no distinguishing name — upgrade
+    // once the buffer is read so kubeconform/ansible-lint can run (no-op for non-YAML).
+    lang = editorLangWithDialect(lang, file.content);
     const id = addEditor(sid, path, name, lang, "sftp", {
       gotoLine: opts.gotoLine,
       sudo: opts.sudo,
@@ -1102,7 +1148,7 @@
       notifyError(String(e));
       return;
     }
-    const id = addEditor(sid, path, name, editorLangOrPlain(name), "local");
+    const id = addEditor(sid, path, name, editorLangOrPlain(path), "local");
     fillEditor(sid, id, file);
   }
 

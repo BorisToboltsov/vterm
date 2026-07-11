@@ -1229,6 +1229,30 @@ async fn local_hash_tree(path: String) -> AppResult<Vec<sync::HashEntry>> {
     localfile::hash_tree(&path).await
 }
 
+/// List every config file nginx actually loads on the server, via `nginx -T` (it
+/// resolves `include` globs/recursion itself). Used by the editor to recognise nginx
+/// configs that live outside the `/etc/nginx/` tree. Best-effort: empty list when
+/// nginx is absent or its config isn't readable. When a `sudo_password` is supplied
+/// (reused from an open-as-root, never a fresh prompt) the dump runs under sudo, so a
+/// root-only config tree is still resolved; otherwise the caller falls back to path
+/// detection without interrupting the user.
+#[tauri::command]
+async fn nginx_config_files(
+    state: State<'_, AppState>,
+    session_id: String,
+    sudo_password: Option<String>,
+) -> AppResult<Vec<String>> {
+    let session = session_arc(&state, &session_id).await?;
+    if let Some(pw) = sudo_password.filter(|p| !p.is_empty()) {
+        return sync::nginx_config_files_sudo(&session, &pw).await;
+    }
+    let out = session
+        .run_command(sync::nginx_config_dump_command())
+        .await
+        .unwrap_or_default();
+    Ok(sync::parse_nginx_config_files(&out))
+}
+
 /// Lint the editor buffer with a real tool on the server (Phase 12.7): stage the
 /// content to a temp file, run the language's linter, return its output. `found`
 /// is false when no linter maps to the language or the tool isn't installed.
@@ -1238,17 +1262,16 @@ async fn lint_remote(
     session_id: String,
     content: String,
     kind: String,
+    name: Option<String>,
+    sudo_password: Option<String>,
 ) -> AppResult<sync::LintResult> {
     let Some(tool) = sync::lint_tool(&kind) else {
         return Ok(sync::LintResult::default());
     };
     let session = session_arc(&state, &session_id).await?;
-    // Is the tool installed?
+    // Is the tool installed? (sbin is on PATH for daemon validators.)
     let chk = session
-        .run_command(&format!(
-            "command -v {} >/dev/null 2>&1 && echo __VTERM_OK__",
-            tool.bin
-        ))
+        .run_command(&sync::lint_check_command(&tool))
         .await
         .unwrap_or_default();
     if !chk.contains("__VTERM_OK__") {
@@ -1260,22 +1283,30 @@ async fn lint_remote(
         });
     }
     // Stage the buffer to a temp file in the user's home, lint it, then remove it.
+    // Suffix-sensitive tools (systemd-analyze) keep the source file's unit extension.
     let sftp = session.sftp().await?;
     let home = sftp
         .canonicalize(".")
         .await
         .map_err(|e| format!("home dir: {e}"))?;
-    let tmp = format!("{}/.vterm-lint-{}", home.trim_end_matches('/'), uuid_like());
+    let mut tmp = format!("{}/.vterm-lint-{}", home.trim_end_matches('/'), uuid_like());
+    if tool.suffix {
+        tmp = format!(
+            "{tmp}.{}",
+            sync::lint_tmp_ext(name.as_deref().unwrap_or(""))
+        );
+    }
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
-    let out = session
-        .run_command(&sync::lint_command(&tool, &tmp))
-        .await
-        .unwrap_or_default();
+    let out = sync::run_lint(&session, &tool, &tmp, sudo_password.as_deref()).await;
     let _ = sftp.remove_file(tmp.clone()).await;
+    // Replace both the full temp path and its basename with `FILE`, since validators
+    // vary in which they print.
+    let base = tmp.rsplit('/').next().unwrap_or(&tmp).to_string();
+    let output = out.replace(&tmp, "FILE").replace(&base, "FILE");
     Ok(sync::LintResult {
         tool: tool.bin.to_string(),
         found: true,
-        output: out.replace(&tmp, "FILE"),
+        output,
         format: tool.format.to_string(),
     })
 }
@@ -1689,6 +1720,7 @@ pub fn run() {
             sftp_sync_apply,
             sftp_grep,
             lint_remote,
+            nginx_config_files,
             server_tools_status,
             run_tool_install,
             sftp_delete,

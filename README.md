@@ -10,7 +10,7 @@
 
 ![version](https://img.shields.io/badge/version-0.22.13-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey)
+![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
 ![Rust](https://img.shields.io/badge/Rust-stable-DEA584)
 ![Svelte](https://img.shields.io/badge/Svelte-5-FF3E00)
@@ -54,12 +54,14 @@
   сервера, хранится в профиле и попадает в бэкап.
 - 🎨 **Пиктограммы серверов**: иконка (набор ~24 глифа) и цвет на каждый профиль —
   показываются перед именем в списке для быстрого поиска глазами.
-- 🔐 **Секреты в системном keychain** (macOS Keychain / Windows Credential Manager),
-  профили в JSON, проверка отпечатка хоста.
+- 🔐 **Секреты в системном keychain** (macOS Keychain / Windows Credential Manager /
+  Linux Secret Service), профили в JSON, проверка отпечатка хоста.
 - 📁 **SFTP-менеджер**: обзор, навигация, upload/download, drag-and-drop, прогресс.
 - 📝 **Редактор конфигов** (CodeMirror, 50+ языков): правка файлов на сервере и
-  локально, diff перед сохранением, линт (локальный и серверный), markdown-превью,
-  sudo-правка root-конфигов, синхронизация папок по SHA-256, grep по содержимому.
+  локально, diff перед сохранением, линт (локальный и серверный — вкл. проверку
+  конфигов демонов `sshd`/`sudoers`/`haproxy`/BIND/systemd их родными командами и
+  YAML-семейство `docker-compose`/Ansible/Kubernetes/GitHub Actions/Prometheus),
+  markdown-превью, sudo-правка root-конфигов, синхронизация папок по SHA-256, grep по содержимому.
 - 📈 **Мониторинг**: KPI-дашборд (блок «Система», графики ЦП/ОЗУ/сети, температуры,
   SMART/Docker/GPU, health-сводка) + нижний статус-бар с порогами.
 - 🔎 **Логи и текст**: поиск по всему буферу, regex-подсветка, структурный

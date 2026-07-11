@@ -447,7 +447,32 @@
   Scala/Kotlin/Dart/Swift/Clojure/Haskell/Erlang/Elm/R/Julia/Lua/Perl/….
   **Новый язык = запись в `EXT_LANG`/`NAME_LANG` + ветка в `langExt` EditorTab** (официальный
   пакет ставить только если в legacy-modes нет нужного режима). Метки языков (YAML/JSON/…)
-  **не переводятся** (как бейджи логов/имена тем).
+  **не переводятся** (как бейджи логов/имена тем). **Исключение — nginx:** режим взят не из
+  legacy-modes напрямую, а вендорится с фиксом в [nginxmode.ts](../src/lib/nginxmode.ts) — upstream
+  считает `/* … */` и `<!-- … -->` комментариями, которых в nginx нет (только `#`), из-за чего `/*`
+  внутри `include …/*.conf;` (стоковый Debian-конфиг) открывал незакрытый C-комментарий и гасил
+  подсветку всего файла ниже. Копия убирает обе неверные ветки комментариев; поведение в остальном
+  идентично. Гейт — [nginxmode.test.ts](../src/lib/nginxmode.test.ts). **Детект по каталогу:** кастомные конфиги
+  nginx (`conf.d/*.conf`, `sites-available`/`sites-enabled`, `snippets`, params-инклюды) не имеют
+  своего имени/расширения — их `.conf` и безрасширенные файлы под деревом `…/nginx/…` относит к
+  языку `nginx` (`isNginxConfigPath` → сегмент пути `nginx`, а не generic Config·ini), поэтому у
+  них есть подсветка и бейдж серверного линта `nginx -t`. Ключ именно по сегменту `nginx`, чтобы
+  одноимённые каталоги apache (`conf.d`/`sites-available` под `apache2`/`httpd`) не попадали ложно.
+  **Инклюды вне дерева `nginx/`** ловятся отдельно — по авторитетному списку от самого nginx:
+  бэкенд-команда `nginx_config_files` гоняет `nginx -T` (nginx сам разворачивает `include`-globs и
+  рекурсию), фильтрует строки `# configuration file <path>` (чистый парсер `parse_nginx_config_files`
+  в [sync.rs](../src-tauri/src/sync.rs)) → `string[]`. Фронт кеширует набор **на сессию** (Map в
+  [+page.svelte](../src/routes/+page.svelte), чистится в `closeTabFully`) и тянет его **лениво** —
+  только при открытии файла-кандидата (`.conf`/без расширения, `couldBeNginxInclude`), который
+  путь-эвристика не распознала; фетч идёт **параллельно** с чтением файла, а `editorLangWithIncludes`
+  апгрейдит язык до nginx, если путь есть в наборе. **sudo — молча переиспользуется**, без своей
+  модалки: когда файл открывается как root (штатный sudo-попап редактора уже сработал), тот же
+  пароль уходит в `nginx_config_files` (`nginx_config_files_sudo` → `sudo nginx -T`), и root-only
+  дерево конфигов тоже резолвится. Если plain-фетч вернул пусто и позже появился пароль — один
+  апгрейд-ретрай под sudo (флаг `sudo` в записи кеша, `set.size===0` триггер). Отдельного попапа
+  ради подсветки нет — детект не должен прерывать пользователя. Best-effort: нет nginx/неверный
+  пароль → пустой набор и фолбэк на эвристику. Смена include'ов подхватывается после переподключения
+  (кеш живёт на сессию).
 - **Буфер обмена редактора.** CodeMirror — `contenteditable`, не `<input>/<textarea>`, поэтому
   глобальный `handleClipboardShortcut` его **не трогает** (как `.xterm`). Cmd/Ctrl+C/X/V
   привязаны внутри EditorTab к **нативному** буферу (`clipboard.ts`), как у xterm в Terminal —
@@ -582,6 +607,44 @@
   запись в `lint_tool` + при ином формате ветка в `parseLint`** (+ kind в `LINTER_KINDS`). Это
   закрывает серверные конфиги (nginx/Ansible/Dockerfile/…), у которых нет браузерного линтера;
   «тяжёлые» браузерные (shellcheck/ESLint/ruff WASM) остаются опцией (см. ROADMAP).
+
+- **Валидаторы конфигов демонов (Фаза A, v0.24.0).** Расширение того же контракта 12.7 на
+  «родные» `-t`-проверки, которые идут в комплекте с самим демоном (в каталог установки
+  `servertools.rs` не добавляются, ровно как nginx): `sshdconfig`→`sshd -t -f`, `sudoers`→`visudo
+  -c -f`, `haproxy`→`haproxy -c -f`, `bind`→`named-checkconf`, `systemd`→`systemd-analyze verify`.
+  Детект языка — **по имени/каталогу** (`daemonConfigLang` в [editorlang.ts](../src/lib/editorlang.ts):
+  `sshd_config`+`sshd_config.d/`, `sudoers`+`sudoers.d/`, `haproxy.cfg`/дерево `haproxy/`,
+  `named.conf*`), **кроме systemd-юнитов** — те по расширению (`.service`/`.timer`/…) в `EXT_LANG`.
+  Подсветка приближённая: юниты и key/value-конфиги — режимом `properties` (INI), BIND —
+  `nginx`-режимом (фигурные скобки/`;`). Две тонкости в бэкенде ([sync.rs](../src-tauri/src/sync.rs)):
+  (1) бинарники в `sbin` — `lint_check_command`/`run_lint` кладут `/usr/sbin:/sbin:/usr/local/sbin`
+  в `PATH` (под sudo это уже покрывает `secure_path`); (2) `LintTool.sudo` (sshd читает host-ключи →
+  `sudo -S` тем же паролем, что и правка root-файла; нет пароля → best-effort без root) и
+  `LintTool.suffix` (systemd-analyze определяет тип по расширению → temp-файл получает суффикс
+  юнита через `lint_tmp_ext`). `lint_remote` получил параметры `name`/`sudoPassword`. Форматы
+  вывода `sshd`/`visudo`/`haproxy`/`systemd` — новые ветки `parseLint`; BIND переиспользует `colon`.
+
+- **Линтеры YAML-семейства (Фаза B, v0.25.0).** Один и тот же YAML-файл может требовать разного
+  валидатора — но `lint_tool` выбирает по `kind`, а `kind: yaml` занят yamllint. Решение: **новые
+  kinds-диалекты** (`compose`/`ghactions`/`prometheus`/`ansible`/`k8s`), которые **подсвечиваются как
+  YAML** (`langExt` → `yaml()`), но маппятся на свой валидатор. Детект — двухуровневый:
+  **по имени/пути** (`yamlToolLang` в [editorlang.ts](../src/lib/editorlang.ts): `docker-compose*.yml`/
+  `compose.yml`, `.github/workflows/`, `prometheus.yml`, плейбуки/`roles/*/tasks|handlers`) и — для
+  **Kubernetes-манифестов, у которых нет канонного имени** — **по содержимому**
+  (`yamlDialectFromContent`: `apiVersion:`+`kind:`; также усиливает Ansible по `hosts:`+`tasks:`).
+  Контент-детект применяется апгрейдом `editorLangWithDialect(lang, content)` **только к generic
+  `yaml`** (имя/путь всегда важнее), вызывается в `openFileInEditor` после чтения буфера — по образцу
+  nginx-инклюдов. Валидаторы: `compose`→`docker compose -f {} config -q` (файл **не последний** аргумент
+  → `lint_command` поддерживает плейсхолдер `{}`), `ghactions`→`actionlint` (формат `colon`),
+  `prometheus`→`promtool check config`, `ansible`→`ansible-lint -f pep8` (`colon`), `k8s`→`kubeconform
+  -ignore-missing-schemas`. Для тулзов без стабильного `FILE:line:col` (compose/promtool/kubeconform) —
+  **новый best-effort парсер `generic`**: оставляет только строки-проблемы (валидный конфиг → пусто),
+  тянет номер строки если он есть. Установка: `ansible-lint`/`actionlint`/`kubeconform` добавлены в
+  `TOOLS` (`ansible-lint`→pip/brew; `actionlint`/`kubeconform`→brew или серверная загрузка релизного
+  бинаря); `docker`/`promtool` идут с платформой и в каталог не добавляются. Ограничения (best-effort,
+  зафиксированы в GUIDE): линт по буферу одного файла; `kubeconform` может ходить в сеть за схемами
+  (это egress **сервера**, не WebView — офлайн-инвариант vterm не нарушается); rule-файлы Prometheus
+  (`promtool check rules`) отложены.
 
 - **Помощь установки серверных инструментов (12.8).** Реестр опциональных тулзов (линтеры +
   `sensors`) — **бэкенд** [servertools.rs](../src-tauri/src/servertools.rs) (чистые `TOOLS`/
@@ -848,7 +911,7 @@ vterm/
 ├── LICENSE                   # MIT
 ├── docs/                     # документация: GUIDE/INSTALL/TROUBLESHOOTING/
 │   │                         #   ARCHITECTURE/DESIGN/ROADMAP/TESTS + adr/
-├── .gitlab-ci.yml            # CI: сборка macOS + Windows (два артефакта)
+├── .gitlab-ci.yml            # CI: сборка macOS + Windows + Linux (три артефакта)
 ├── package.json              # JS-зависимости и скрипты
 ├── pnpm-workspace.yaml       # настройки pnpm (в т.ч. allowBuilds: esbuild)
 ├── svelte.config.js          # SvelteKit: adapter-static (SPA)

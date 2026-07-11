@@ -392,7 +392,8 @@
   активной теме), правка и сохранение по `Ctrl/Cmd+S` прямо на сервер, индикатор
   несохранённых изменений и защита при закрытии. Подсветка для **50+ языков и форматов**:
   YAML, JSON, TOML, ini/conf, Markdown, Shell/bash, PowerShell, Python, JavaScript/TypeScript,
-  Java, Dockerfile, Go, Rust, Ruby, C/C++/C#, SQL, HTML, CSS/SCSS/Less, XML, nginx, CMake,
+  Java, Dockerfile, Go, Rust, Ruby, C/C++/C#, SQL, HTML, CSS/SCSS/Less, XML, nginx, sshd_config,
+  sudoers, HAProxy, BIND, systemd-юниты, Compose, Ansible, Kubernetes, GitHub Actions, Prometheus, CMake,
   diff, Protobuf, Puppet, Groovy/Gradle, Scala, Kotlin, Dart, Swift, Clojure, Haskell, Erlang,
   Elm, Lua, Perl, R, Julia, и др. **Открыть можно любой файл** — даже с незнакомым расширением
   или без расширения (откроется как обычный текст; предельный размер файла для открытия —
@@ -413,7 +414,31 @@
   типов файлов**, правка root-конфигов **через sudo** (пароль не сохраняется) и опциональный
   `.bak` перед перезаписью. **Серверный линт по SSH** (кнопка «Линт» в редакторе): запускает
   реальный инструмент на сервере (`yamllint`/`shellcheck`/`hadolint`/`ruff`/`nginx -t`) и
-  показывает кликабельные результаты с переходом к строке. **Помощь установки** этих инструментов
+  показывает кликабельные результаты с переходом к строке. **Валидаторы конфигов демонов**
+  (v0.24.0) — проверка типовых конфигов их же родными командами, ставить ничего не нужно (идут в
+  комплекте с сервисом): **`sshd_config`** → `sshd -t` (защита от локаута перед reload; `sshd -t`
+  читает host-ключи, поэтому запускается под sudo **тем же паролем**, что и правка root-файла),
+  **`sudoers`** и `sudoers.d/*` → `visudo -c`, **`haproxy.cfg`** → `haproxy -c`, **`named.conf`**
+  (BIND) → `named-checkconf`, **юниты systemd** (`.service`/`.timer`/`.socket`/…) →
+  `systemd-analyze verify`. Определяются по имени/каталогу (sshd_config, sudoers.d, haproxy,
+  named.conf) или расширению (юниты). **Линтеры YAML-семейства** (v0.25.0) — для YAML-файлов, у
+  которых есть свой специализированный валидатор: **docker-compose** (`docker-compose.yml`/
+  `compose.yml`) → `docker compose config` (установка не нужна — docker уже стоит),
+  **GitHub Actions** (`.github/workflows/*.yml`) → `actionlint`, **Prometheus** (`prometheus.yml`) →
+  `promtool check config`, **Ansible** (плейбуки/роли) → `ansible-lint`, **Kubernetes-манифесты**
+  (по содержимому — `apiVersion`+`kind`) → `kubeconform`. `Dockerfile` линтится `hadolint` (с
+  Фазы 12.7). Отдельные линтеры (`ansible-lint`/`actionlint`/`kubeconform`) ставятся из раздела
+  «Серверные инструменты», как остальные; проверка идёт по буферу одного файла (best-effort:
+  `kubeconform` может тянуть схемы из сети на стороне сервера, `promtool` идёт в комплекте с
+  Prometheus). Линт `nginx -t` появляется не только
+  на `nginx.conf`, но и на **кастомных конфигах** в дереве `…/nginx/…` — файлы в `conf.d`
+  (на любой глубине вложенности), `sites-available`/`sites-enabled`, `snippets` и безрасширенные
+  инклюды распознаются как nginx по каталогу (одноимённые каталоги apache под этот детект не
+  попадают). Конфиги, которые nginx подключает **вне** дерева `/etc/nginx/` (через `include`),
+  подхватываются автоматически: приложение спрашивает у сервера список реально загружаемых файлов
+  (`nginx -T`) и распознаёт их как nginx, даже если они лежат в нестандартном месте. Если конфиги
+  nginx доступны только root — список берётся под sudo **тем же паролем**, что вы вводите при
+  открытии root-файла (отдельного окна ввода пароля ради подсветки не появляется). **Помощь установки** этих инструментов
   (и мониторинговые `lm-sensors`/`smartmontools`/`sysstat`) — раздел «Серверные инструменты» в
   настройках: статус на сервере + установка в один клик (в терминал или через sudo), с учётом
   пакетного менеджера дистрибутива. При установке через sudo видно, **что идёт установка**:

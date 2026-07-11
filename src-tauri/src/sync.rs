@@ -54,8 +54,14 @@ pub struct GrepMatch {
 pub struct LintTool {
     pub bin: &'static str,
     pub args: &'static str,
-    /// Output-format id the frontend parser switches on (`colon` | `nginx`).
+    /// Output-format id the frontend parser switches on (`colon`/`nginx`/`sshd`/
+    /// `visudo`/`haproxy`/`systemd`).
     pub format: &'static str,
+    /// Run under `sudo -S` — the validator needs root (`sshd -t` reads host keys).
+    pub sudo: bool,
+    /// The temp file must carry the source file's suffix for the tool to recognise
+    /// its type (`systemd-analyze verify` infers the unit type from the extension).
+    pub suffix: bool,
 }
 
 /// Result of a server-side lint run, sent to the frontend.
@@ -70,22 +76,166 @@ pub struct LintResult {
     pub format: String,
 }
 
-/// The linter for an editor language kind, or `None` if none is wired.
+/// The linter for an editor language kind, or `None` if none is wired. `sudo`/`suffix`
+/// flags: daemon validators (Phase A) may need root (`sshd -t`) or a typed temp file
+/// (`systemd-analyze`).
 pub fn lint_tool(kind: &str) -> Option<LintTool> {
-    let (bin, args, format) = match kind {
-        "yaml" => ("yamllint", "-f parsable", "colon"),
-        "shell" => ("shellcheck", "-f gcc", "colon"),
-        "dockerfile" => ("hadolint", "--no-color", "colon"),
-        "python" => ("ruff", "check --quiet --output-format concise", "colon"),
-        "nginx" => ("nginx", "-t -c", "nginx"),
+    let (bin, args, format, sudo, suffix) = match kind {
+        "yaml" => ("yamllint", "-f parsable", "colon", false, false),
+        "shell" => ("shellcheck", "-f gcc", "colon", false, false),
+        "dockerfile" => ("hadolint", "--no-color", "colon", false, false),
+        "python" => (
+            "ruff",
+            "check --quiet --output-format concise",
+            "colon",
+            false,
+            false,
+        ),
+        "nginx" => ("nginx", "-t -c", "nginx", false, false),
+        // Daemon config validators — shipped with their daemon (no install needed).
+        "sshdconfig" => ("sshd", "-t -f", "sshd", true, false),
+        "sudoers" => ("visudo", "-c -f", "visudo", false, false),
+        "haproxy" => ("haproxy", "-c -f", "haproxy", false, false),
+        "bind" => ("named-checkconf", "", "colon", false, false),
+        "systemd" => ("systemd-analyze", "verify", "systemd", false, true),
+        // YAML-family dialects (Phase B). `{}` marks where the file goes when it isn't
+        // the trailing arg (docker compose wants `-f FILE config`).
+        "compose" => ("docker", "compose -f {} config -q", "generic", false, false),
+        "ghactions" => ("actionlint", "-no-color", "colon", false, false),
+        "prometheus" => ("promtool", "check config", "generic", false, false),
+        "ansible" => ("ansible-lint", "--nocolor -f pep8", "colon", false, false),
+        "k8s" => (
+            "kubeconform",
+            "-ignore-missing-schemas",
+            "generic",
+            false,
+            false,
+        ),
         _ => return None,
     };
-    Some(LintTool { bin, args, format })
+    Some(LintTool {
+        bin,
+        args,
+        format,
+        sudo,
+        suffix,
+    })
 }
 
-/// Command to lint the staged temp file (stderr merged into stdout for capture).
+/// Dirs prepended to `PATH` so daemon validators in `sbin` (sshd, haproxy, visudo)
+/// are found in a non-login shell. Under sudo, `secure_path` already covers these.
+const LINT_PATH: &str = "/usr/sbin:/sbin:/usr/local/sbin:$PATH";
+
+/// Probe whether a linter binary exists on the server (`sbin` included).
+pub fn lint_check_command(tool: &LintTool) -> String {
+    format!(
+        "PATH=\"{LINT_PATH}\" command -v {} >/dev/null 2>&1 && echo __VTERM_OK__",
+        tool.bin
+    )
+}
+
+/// The temp-file extension a suffix-sensitive linter needs. systemd-analyze infers
+/// the unit type from it; unknown/absent → `service`. Returns a `&'static` so callers
+/// can build the temp path without allocating the suffix.
+pub fn lint_tmp_ext(name: &str) -> &'static str {
+    const UNITS: &[&str] = &[
+        "service",
+        "timer",
+        "socket",
+        "mount",
+        "automount",
+        "swap",
+        "target",
+        "path",
+        "slice",
+        "scope",
+    ];
+    let ext = name.rsplit('.').next().unwrap_or("");
+    UNITS
+        .iter()
+        .copied()
+        .find(|u| ext.eq_ignore_ascii_case(u))
+        .unwrap_or("service")
+}
+
+/// Run a linter on the staged temp file, returning combined stdout+stderr. sudo tools
+/// (`sshd -t`) run under `sudo -S` when a password is supplied (falling back to a
+/// best-effort non-root run otherwise); the rest run with `sbin` on `PATH`.
+pub async fn run_lint(
+    session: &SshSession,
+    tool: &LintTool,
+    tmp: &str,
+    password: Option<&str>,
+) -> String {
+    let core = lint_command(tool, tmp);
+    let res = match (tool.sudo, password) {
+        (true, Some(pw)) if !pw.is_empty() => sudo_run(session, &core, pw).await,
+        _ => {
+            session
+                .run_command(&format!("PATH=\"{LINT_PATH}\" {core}"))
+                .await
+        }
+    };
+    res.unwrap_or_default()
+}
+
+/// Command to lint the staged temp file (stderr merged into stdout for capture). A
+/// `{}` in `args` is replaced by the quoted path (for tools where the file isn't the
+/// trailing arg, e.g. `docker compose -f FILE config`); otherwise it's appended.
 pub fn lint_command(tool: &LintTool, tmp: &str) -> String {
-    format!("{} {} {} 2>&1", tool.bin, tool.args, shell_quote(tmp))
+    let q = shell_quote(tmp);
+    if tool.args.contains("{}") {
+        format!("{} {} 2>&1", tool.bin, tool.args.replace("{}", &q))
+    } else {
+        format!("{} {} {} 2>&1", tool.bin, tool.args, q)
+    }
+}
+
+/// Shell command listing every config file nginx actually loads. `nginx -T` dumps
+/// the fully-resolved config (it expands `include` globs and recursion itself) and
+/// prefixes each source file with `# configuration file <path>:`; we keep only those
+/// markers. Guarded on nginx being installed and best-effort without sudo — stderr is
+/// dropped and `|| true` keeps a non-zero exit (permission/parse error) from failing
+/// the channel, so callers get an empty list and fall back to path-based detection.
+pub fn nginx_config_dump_command() -> &'static str {
+    "command -v nginx >/dev/null 2>&1 && \
+     nginx -T 2>/dev/null | grep -a '^# configuration file ' || true"
+}
+
+/// The pipeline that extracts loaded-config markers from `nginx -T`, run under sudo.
+/// Only `nginx` runs as root; `grep` filters its output as the user. `|| true` keeps a
+/// wrong password / missing binary from failing the channel (→ empty list, fall back).
+const NGINX_DUMP_PIPE: &str = "nginx -T 2>/dev/null | grep -a '^# configuration file ' || true";
+
+/// Parse `nginx -T` markers (`# configuration file <path>:`) into a de-duplicated
+/// list of absolute config paths. Blank/prefix-less lines are skipped.
+pub fn parse_nginx_config_files(out: &str) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    for line in out.lines() {
+        let Some(rest) = line.strip_prefix("# configuration file ") else {
+            continue;
+        };
+        let path = rest.trim().trim_end_matches(':').trim();
+        if path.is_empty() || files.iter().any(|f| f == path) {
+            continue;
+        }
+        files.push(path.to_string());
+    }
+    files
+}
+
+/// The list of nginx-loaded config files via `sudo nginx -T`, reusing a password the
+/// user already entered to open a root-owned file. Best-effort: a wrong password or
+/// missing nginx yields an empty list (caller falls back to path-based detection), so
+/// this never surfaces an error just to decide syntax highlighting.
+pub async fn nginx_config_files_sudo(
+    session: &SshSession,
+    password: &str,
+) -> AppResult<Vec<String>> {
+    let out = sudo_run(session, NGINX_DUMP_PIPE, password)
+        .await
+        .unwrap_or_default();
+    Ok(parse_nginx_config_files(&out))
 }
 
 /// `grep -rnI` over SSH under `dir`. `-F` (fixed string) or `-E` (regex), optional
@@ -414,6 +564,91 @@ mod tests {
             "yamllint -f parsable '/home/u/.vterm-lint-1' 2>&1"
         );
         assert_eq!(lint_tool("nginx").unwrap().format, "nginx");
+    }
+
+    #[test]
+    fn lint_tool_daemon_validators() {
+        // sshd needs root; systemd needs a typed temp file.
+        let sshd = lint_tool("sshdconfig").unwrap();
+        assert_eq!(
+            (sshd.bin, sshd.format, sshd.sudo, sshd.suffix),
+            ("sshd", "sshd", true, false)
+        );
+        let sd = lint_tool("systemd").unwrap();
+        assert_eq!(
+            (sd.bin, sd.format, sd.sudo, sd.suffix),
+            ("systemd-analyze", "systemd", false, true)
+        );
+        assert_eq!(lint_tool("sudoers").unwrap().bin, "visudo");
+        assert_eq!(lint_tool("haproxy").unwrap().format, "haproxy");
+        // BIND reuses the generic colon parser.
+        assert_eq!(lint_tool("bind").unwrap().format, "colon");
+        // The command shape holds for empty-args tools too.
+        assert_eq!(
+            lint_command(&lint_tool("bind").unwrap(), "/t/f"),
+            "named-checkconf  '/t/f' 2>&1"
+        );
+        assert_eq!(lint_command(&sshd, "/t/f"), "sshd -t -f '/t/f' 2>&1");
+    }
+
+    #[test]
+    fn lint_tool_yaml_dialects() {
+        // docker compose puts the file mid-command via the `{}` placeholder.
+        let compose = lint_tool("compose").unwrap();
+        assert_eq!((compose.bin, compose.format), ("docker", "generic"));
+        assert_eq!(
+            lint_command(&compose, "/t/f"),
+            "docker compose -f '/t/f' config -q 2>&1"
+        );
+        // The rest append the file as the trailing arg.
+        assert_eq!(lint_tool("ghactions").unwrap().bin, "actionlint");
+        assert_eq!(lint_tool("ghactions").unwrap().format, "colon");
+        assert_eq!(lint_tool("prometheus").unwrap().bin, "promtool");
+        assert_eq!(lint_tool("ansible").unwrap().format, "colon");
+        assert_eq!(lint_tool("k8s").unwrap().bin, "kubeconform");
+        assert_eq!(
+            lint_command(&lint_tool("ansible").unwrap(), "/t/f"),
+            "ansible-lint --nocolor -f pep8 '/t/f' 2>&1"
+        );
+    }
+
+    #[test]
+    fn lint_check_command_includes_sbin() {
+        let cmd = lint_check_command(&lint_tool("haproxy").unwrap());
+        assert!(cmd.contains("/usr/sbin"));
+        assert!(cmd.contains("command -v haproxy"));
+        assert!(cmd.contains("__VTERM_OK__"));
+    }
+
+    #[test]
+    fn lint_tmp_ext_maps_unit_types() {
+        assert_eq!(lint_tmp_ext("web.service"), "service");
+        assert_eq!(lint_tmp_ext("backup.TIMER"), "timer"); // case-insensitive
+        assert_eq!(lint_tmp_ext("app.socket"), "socket");
+        // Unknown/absent extension → the default unit type.
+        assert_eq!(lint_tmp_ext("noext"), "service");
+        assert_eq!(lint_tmp_ext("foo.conf"), "service");
+    }
+
+    #[test]
+    fn parse_nginx_config_files_extracts_and_dedups() {
+        let out = "# configuration file /etc/nginx/nginx.conf:\n\
+                   worker_processes auto;\n\
+                   # configuration file /srv/app/nginx/site.conf:\n\
+                   server { listen 80; }\n\
+                   # configuration file /etc/nginx/nginx.conf:\n\
+                   # not a marker line\n";
+        let files = parse_nginx_config_files(out);
+        assert_eq!(
+            files,
+            vec![
+                "/etc/nginx/nginx.conf".to_string(),
+                "/srv/app/nginx/site.conf".to_string(),
+            ]
+        );
+        assert!(parse_nginx_config_files("").is_empty());
+        assert!(nginx_config_dump_command().contains("nginx -T"));
+        assert!(NGINX_DUMP_PIPE.contains("nginx -T") && NGINX_DUMP_PIPE.contains("grep"));
     }
 
     #[test]

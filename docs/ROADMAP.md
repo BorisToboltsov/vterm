@@ -20,21 +20,24 @@
 
 ---
 
-## 🔁 Принцип сборки: два файла на каждом этапе
+## 🔁 Принцип сборки: три файла на каждом этапе
 
-Один файл, работающий и на Windows, и на macOS, **невозможен** (разные форматы
-исполняемых файлов). Поэтому **на каждой фазе собираются два артефакта**:
+Один файл, работающий на Windows, macOS и Linux, **невозможен** (разные форматы
+исполняемых файлов). Поэтому **на каждой фазе собираются три артефакта**:
 
 - **macOS** — `.app` (портативный бандл) + `.dmg`;
-- **Windows** — `.msi` / NSIS `.exe` (+ портативный `vterm.exe`).
+- **Windows** — `.msi` / NSIS `.exe` (+ портативный `vterm.exe`);
+- **Linux** — `.deb` + `.rpm` + AppImage (x86_64).
 
-**Definition of Done каждой фазы** включает зелёную CI-сборку обеих ОС. Механизм —
-**GitLab CI** [.gitlab-ci.yml](../.gitlab-ci.yml) (задачи `build:macos` + `build:windows`):
-push в дефолтную ветку/MR/ручной запуск → артефакты пайплайна; push тега `v*` →
-GitLab Release для обеих ОС.
+**Definition of Done каждой фазы** включает зелёную CI-сборку всех трёх ОС. Механизм —
+**GitLab CI** [.gitlab-ci.yml](../.gitlab-ci.yml) (задачи `build:macos` + `build:windows` +
+`build:linux`): push в дефолтную ветку/MR/ручной запуск → артефакты пайплайна; push тега
+`v*` → GitLab Release для всех трёх ОС.
 
-> Локально доступна сборка только под текущую ОС (`pnpm tauri build`). Windows-файл
-> на macOS не собрать — для него нужен Windows-раннер из CI.
+> Локально доступна сборка только под текущую ОС (`pnpm tauri build`). Windows- и
+> Linux-файлы на macOS нативно не собрать (кросс-компиляция Tauri между ОС нерабочая:
+> Linux линкует WebKitGTK) — для них нужны соответствующие раннеры из CI. Linux-пакеты
+> можно собрать и локально в Linux-контейнере (Docker), но постоянный механизм — CI.
 
 ---
 
@@ -1347,6 +1350,113 @@ audit`) — если нет, задокументировать игнор в `d
   - i18n EN+RU (`history.*`, `settings.historySearch*`, `help.hkHistory`), иконка `history` в
     реестре, 9 тестов компонента ([CommandHistory.test.ts](../src/lib/CommandHistory.test.ts) —
     включая закрытие по крестику). Все шесть гейтов зелёные.
+
+- **Линт `nginx -t` на кастомных конфигах** (v0.23.1). Раньше бейдж серверного линта и подсветка
+  nginx появлялись только на файле по имени `nginx.conf`; кастомные конфиги (`conf.d/*.conf`,
+  `sites-available`/`sites-enabled`, `snippets`, params-инклюды) распознавались как generic
+  Config(ini) и линта не получали. Теперь [editorlang.ts](../src/lib/editorlang.ts) детектит их
+  **по каталогу**: `isNginxConfigPath` относит `.conf` и безрасширенные файлы под деревом
+  `…/nginx/…` к языку `nginx`. Ключ по сегменту пути `nginx` (а не по `conf.d`/`sites-available`,
+  которые есть и у apache) — одноимённые каталоги apache под `apache2/`/`httpd/` под детект не
+  попадают. Детект работает на **любой глубине** вложенности (`conf.d/common/common.conf`), т.к.
+  ключ — сегмент пути, а не непосредственный родитель. Открытие файла теперь передаёт **полный
+  путь** в `editorLangOrPlain` ([+page.svelte](../src/routes/+page.svelte), SFTP и локальный
+  редактор). **Инклюды вне `/etc/nginx/`** — авто-подхват по `nginx -T`: бэкенд-команда
+  `nginx_config_files` ([lib.rs](../src-tauri/src/lib.rs)) гоняет `nginx -T` (nginx сам разворачивает
+  `include`-globs/рекурсию), чистый парсер `parse_nginx_config_files` ([sync.rs](../src-tauri/src/sync.rs))
+  извлекает пути `# configuration file …`; фронт кеширует набор на сессию, тянет **лениво** только
+  для файлов-кандидатов (`couldBeNginxInclude`), параллельно с чтением, и `editorLangWithIncludes`
+  апгрейдит язык до nginx по членству в наборе. **sudo переиспользуется молча** — при открытии файла
+  как root тот же пароль уходит в `nginx_config_files_sudo` (`sudo nginx -T`), root-only дерево тоже
+  резолвится; пустой plain-фетч + появившийся пароль → один sudo-ретрай (флаг `sudo` в кеше). Своей
+  модалки ради подсветки нет. Best-effort (нет nginx/неверный пароль → фолбэк на эвристику); смена
+  include'ов подхватывается после переподключения. Тесты — новые describe-блоки в
+  [editorlang.test.ts](../src/lib/editorlang.test.ts) (сегмент-детект, apache-негатив, приоритет
+  явного расширения, gate/upgrade по набору инклюдов) + Rust-тест `parse_nginx_config_files`.
+  Все шесть гейтов зелёные.
+
+- **Фикс подсветки nginx** (v0.23.2). Часть `nginx.conf` ниже строки
+  `include /etc/nginx/modules-enabled/*.conf;` рендерилась серым — режим из
+  `@codemirror/legacy-modes` трактует `/* … */` как C-комментарий (в nginx их нет), и `/*` внутри
+  `…/*.conf` открывал незакрытый комментарий до конца файла. Режим вынесен в локальную исправленную
+  копию [nginxmode.ts](../src/lib/nginxmode.ts) без ветвей `/* */`/`<!-- -->` (плюс фикс битого
+  ключевого слова `xslt_types`); [EditorTab](../src/lib/EditorTab.svelte) импортит её вместо legacy.
+  Регресс-тест [nginxmode.test.ts](../src/lib/nginxmode.test.ts) воспроизводит стоковый Debian-конфиг.
+  Затронутые гейты (`pnpm check`, `pnpm test:coverage`, `pnpm build`) зелёные.
+
+---
+
+## ✅ Фаза 24 — Валидаторы конфигов демонов (v0.24.0)
+
+Расширение серверного линта (контракт 12.7) «родными» `-t`-проверками системных сервисов —
+ценно для sysadmin/DevOps/SRE и не требует установки (валидаторы идут в комплекте с демоном,
+как nginx). **Группа A** (эта фаза); YAML-семейство (ansible-lint/promtool/kubeconform/actionlint)
+вынесено в отдельную **Группу B** (следующая фаза).
+
+- [x] **5 валидаторов**: `sshd_config`→`sshd -t -f` (под sudo — читает host-ключи),
+  `sudoers`/`sudoers.d/*`→`visudo -c -f`, `haproxy.cfg`→`haproxy -c -f`, `named.conf*` (BIND)→
+  `named-checkconf`, юниты systemd (`.service`/`.timer`/`.socket`/…)→`systemd-analyze verify`.
+- [x] **Детект языка** ([editorlang.ts](../src/lib/editorlang.ts)) — по имени/каталогу
+  (`daemonConfigLang`, по образцу `isNginxConfigPath`), systemd-юниты — по расширению (`EXT_LANG`).
+  Подсветка: юниты и key/value-конфиги — `properties` (INI), BIND — `nginx`-режим.
+- [x] **Бэкенд** ([sync.rs](../src-tauri/src/sync.rs)/[lib.rs](../src-tauri/src/lib.rs)):
+  `LintTool.sudo`/`LintTool.suffix`; `run_lint` (sudo-путь тем же паролем, что и правка root-файла;
+  `sbin` в `PATH` для non-login shell); `lint_tmp_ext` (суффикс temp-файла для systemd-analyze);
+  `lint_check_command`; `lint_remote` получил параметры `name`/`sudoPassword`.
+- [x] **Парсеры вывода** ([remotelint.ts](../src/lib/remotelint.ts)) — форматы `sshd`/`visudo`/
+  `haproxy`/`systemd` (BIND переиспользует `colon`); +5 kinds в `LINTER_KINDS`.
+- [x] **Тесты**: `editorlang.test.ts` (детект + негативы `ssh_config`/одиночный `.cfg`),
+  `remotelint.test.ts` (5 форматов, «чисто» на пустом выводе), Rust `lint_tool_daemon_validators`/
+  `lint_check_command_includes_sbin`/`lint_tmp_ext_maps_unit_types`.
+- [x] **Доки**: GUIDE (список валидаторов + языков), ARCHITECTURE (под-раздел Фазы A), TESTS.
+  Установка в settings не нужна (нативные тулзы). Версия 0.24.0 в трёх манифестах.
+
+---
+
+## ✅ Фаза 25 — Линтеры YAML-семейства (v0.25.0)
+
+**Группа B** к Фазе 24: YAML-файлы, у которых есть специализированный валидатор. Архитектурно
+сложнее Группы A — `lint_tool` выбирает по `kind`, а все они `yaml`, поэтому введены
+**kinds-диалекты** (подсветка YAML, свой линтер) + детект по имени/пути и **по содержимому**
+(для k8s-манифестов без канонного имени).
+
+- [x] **6 линтеров** (вкл. docker-compose по запросу): `compose`→`docker compose config -q`
+  (установка не нужна), `ghactions`→`actionlint`, `prometheus`→`promtool check config`,
+  `ansible`→`ansible-lint`, `k8s`→`kubeconform`. Dockerfile уже покрыт `hadolint` (Фаза 12.7).
+- [x] **Детект** ([editorlang.ts](../src/lib/editorlang.ts)): `yamlToolLang` (имя/путь —
+  `docker-compose*`/`compose`, `.github/workflows/`, `prometheus.yml`, плейбуки/роли);
+  `yamlDialectFromContent` (k8s по `apiVersion`+`kind`, Ansible по `hosts`+`tasks`); апгрейд
+  `editorLangWithDialect` только для generic-`yaml`, вызывается после чтения буфера в
+  `openFileInEditor`. Подсветка новых kinds → `yaml()`.
+- [x] **Бэкенд**: `lint_tool` ветки; `lint_command` поддерживает плейсхолдер `{}` (docker
+  compose — файл не последний аргумент). Формат вывода **`generic`** (best-effort) для
+  compose/promtool/kubeconform в [remotelint.ts](../src/lib/remotelint.ts).
+- [x] **Установка** ([servertools.rs](../src-tauri/src/servertools.rs)): `ansible-lint` (pip/brew),
+  `actionlint`/`kubeconform` (brew или серверная загрузка бинаря) в `TOOLS` + `install_command`;
+  purpose-ключи i18n (EN+RU). `docker`/`promtool` идут с платформой — в каталог не добавлены.
+- [x] **Тесты**: editorlang (диалекты по имени/пути + контент-детект), remotelint (формат
+  `generic`, `hasRemoteLinter`), Rust `lint_tool_yaml_dialects`/`install_commands_for_yaml_linters`.
+- [x] **Доки**: GUIDE/ARCHITECTURE/TESTS/README, CHANGELOG. Версия 0.25.0 в трёх манифестах.
+- [x] **Ограничения** (best-effort, зафиксированы): линт по буферу одного файла; `kubeconform`
+  может тянуть схемы из сети (egress **сервера**, не WebView — офлайн-инвариант vterm цел);
+  rule-файлы Prometheus (`promtool check rules`) отложены.
+
+### v0.25.1 — Linux-дистрибутивы в CI (.deb/.rpm/AppImage)
+
+Третий целевой артефакт наравне с macOS/Windows. Нативно на macOS не собирается
+(кросс-компиляция Tauri между ОС нерабочая — Linux линкует WebKitGTK), поэтому — job
+CI на Linux-раннере (или Docker-контейнер локально). Приоритет x86_64; arm64 отложен.
+
+- [x] **CI** ([.gitlab-ci.yml](../.gitlab-ci.yml)): job `build:linux` (образ
+  `node:20-bookworm`, `manual`+`allow_failure` как у mac/win). Ставит зависимости Tauri 2
+  (`libwebkit2gtk-4.1-dev`, GTK/ayatana-tray, `librsvg2`, `patchelf`, `rpm`), собирает
+  `pnpm tauri build`; артефакты — `deb/*.deb`, `rpm/*.rpm`, `appimage/*.AppImage`.
+  `release` расширен на Linux (`needs` + описание). Таргеты берутся из `bundle.targets:"all"`.
+- [x] **Доки**: CLAUDE.md (раздел сборки «три артефакта» + пункт DoD), ROADMAP (принцип
+  сборки), ARCHITECTURE (структура), README (бейдж платформы + Linux Secret Service). Версия
+  0.25.1 в трёх манифестах.
+- [ ] **Owed:** зарегистрировать Linux build-раннер (тег-плейсхолдер `[linux]`) и один раз
+  прогнать `build:linux` — сборку Linux-пакетов нельзя проверить на macOS-хосте.
 
 ---
 

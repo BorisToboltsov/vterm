@@ -51,6 +51,23 @@ pub const TOOLS: &[Tool] = &[
         name: "sysstat",
         bin: "iostat",
     },
+    // YAML-family linters (Phase B). docker-compose (`docker`) and promtool ship with
+    // their platform, so they're validated but not offered for one-click install here.
+    Tool {
+        id: "ansible-lint",
+        name: "ansible-lint",
+        bin: "ansible-lint",
+    },
+    Tool {
+        id: "actionlint",
+        name: "actionlint",
+        bin: "actionlint",
+    },
+    Tool {
+        id: "kubeconform",
+        name: "kubeconform",
+        bin: "kubeconform",
+    },
 ];
 
 /// One tool's status on the active server, sent to the frontend.
@@ -158,6 +175,42 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
         // own name on every supported manager.
         "smartmontools" => sys("smartmontools"),
         "sysstat" => sys("sysstat"),
+        // ansible-lint is a Python package everywhere except brew.
+        "ansible-lint" => {
+            if mgr == "brew" {
+                sys("ansible-lint")
+            } else {
+                pip("ansible-lint")
+            }
+        }
+        // actionlint / kubeconform: brew where available, else fetch the release
+        // binary server-side (not packaged in distro repos).
+        "actionlint" => {
+            if mgr == "brew" {
+                sys("actionlint")
+            } else {
+                Some(
+                    "sudo sh -c 'curl -fsSL \
+                     https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/\
+                     download-actionlint.bash | bash -s -- latest /usr/local/bin'"
+                        .into(),
+                )
+            }
+        }
+        "kubeconform" => {
+            if mgr == "brew" {
+                sys("kubeconform")
+            } else {
+                Some(
+                    "sudo sh -c 'curl -fsSL \
+                     \"https://github.com/yannh/kubeconform/releases/latest/download/\
+                     kubeconform-$(uname -s | tr A-Z a-z)-$(uname -m | \
+                     sed s/x86_64/amd64/\\;s/aarch64/arm64/).tar.gz\" \
+                     | tar -xz -C /usr/local/bin kubeconform'"
+                        .into(),
+                )
+            }
+        }
         _ => None,
     }
 }
@@ -245,6 +298,30 @@ mod tests {
             Some("sudo dnf install -y sysstat")
         );
         assert!(install_command("nope", "apt").is_none());
+    }
+
+    #[test]
+    fn install_commands_for_yaml_linters() {
+        // ansible-lint is a pip package off brew.
+        assert_eq!(
+            install_command("ansible-lint", "apt").as_deref(),
+            Some("pip install --user ansible-lint")
+        );
+        assert_eq!(
+            install_command("ansible-lint", "brew").as_deref(),
+            Some("brew install ansible-lint")
+        );
+        // actionlint/kubeconform: brew package, else server-side binary fetch.
+        assert_eq!(
+            install_command("actionlint", "brew").as_deref(),
+            Some("brew install actionlint")
+        );
+        assert!(install_command("actionlint", "apt")
+            .unwrap()
+            .contains("download-actionlint.bash"));
+        assert!(install_command("kubeconform", "dnf")
+            .unwrap()
+            .contains("kubeconform-"));
     }
 
     #[test]

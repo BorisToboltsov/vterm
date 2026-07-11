@@ -316,7 +316,12 @@
       "Bash(grep -n \"auto.*режим\\\\|авто-режим\\\\|execMode.*auto\\\\|\\\\\"auto\\\\\"\\\\|`auto`\" SECURITY.md)",
       "Bash(sed -i '' 's/\"version\": \"0.22.15\"/\"version\": \"0.22.16\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' '3s/version = \"0.22.15\"/version = \"0.22.16\"/' src-tauri/Cargo.toml)",
-      "Bash(grep -n 'let search\\\\b\\\\|let searchInput\\\\|search = $state\\\\|searchInput = $state\\\\|function openSearch\\\\|searchEnabled' src/lib/Terminal.svelte)"
+      "Bash(grep -n 'let search\\\\b\\\\|let searchInput\\\\|search = $state\\\\|searchInput = $state\\\\|function openSearch\\\\|searchEnabled' src/lib/Terminal.svelte)",
+      "Bash(node -p \"require\\('./package.json'\\).version\")",
+      "Bash(grep -n 'from \"$lib/editorlang\"\\\\|from \"$lib/api\"\\\\|editorLangOrPlain\\\\|from \"./editorlang\"' src/routes/+page.svelte)",
+      "Bash(grep -n 'sftpReadText\\\\|from \"$lib/api\"\\\\|lintRemote\\\\|} from \"$lib/api' src/routes/+page.svelte)",
+      "Bash(grep -rn -i -E 'два \\(артефакт|дистрибутив\\)|macOS.{0,3}\\(\\\\+|и\\).{0,3}Windows|two \\(artifact|distribut\\)' CLAUDE.md README.md docs/ROADMAP.md docs/ARCHITECTURE.md .gitlab-ci.yml)",
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('.gitlab-ci.yml'\\)\\); print\\('OK, jobs:', [k for k in d if isinstance\\(d[k],dict\\) and 'stage' in d[k]]\\)\")"
     ]
   }
 }

@@ -117,13 +117,33 @@ export function runToolInstall(
   return invoke<string>("run_tool_install", { sessionId, command, sudoPassword });
 }
 
-/** Lint the editor buffer with a real tool on the server (Phase 12.7). */
+/**
+ * Lint the editor buffer with a real tool on the server (Phase 12.7). `name` is the
+ * file's basename — some validators infer the type from it (systemd-analyze needs the
+ * unit suffix). `sudoPassword` (reused from an open-as-root, never a fresh prompt) runs
+ * validators that require root (`sshd -t`) under sudo.
+ */
 export function lintRemote(
   sessionId: string,
   content: string,
   kind: string,
+  opts: { name?: string; sudoPassword?: string } = {},
 ): Promise<RemoteLintResult> {
-  return invoke<RemoteLintResult>("lint_remote", { sessionId, content, kind });
+  return invoke<RemoteLintResult>("lint_remote", {
+    sessionId,
+    content,
+    kind,
+    name: opts.name,
+    sudoPassword: opts.sudoPassword,
+  });
+}
+
+/** List every config file nginx loads on the server (`nginx -T`), for detecting
+ *  nginx configs outside the `/etc/nginx/` tree. Empty when nginx is absent/unreadable.
+ *  `sudoPassword` (reused from an open-as-root, never a fresh prompt) runs the dump under
+ *  sudo so a root-only config tree still resolves. */
+export function nginxConfigFiles(sessionId: string, sudoPassword?: string): Promise<string[]> {
+  return invoke<string[]>("nginx_config_files", { sessionId, sudoPassword });
 }
 
 /** Content search under a remote directory (grep over SSH). */
