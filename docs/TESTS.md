@@ -118,6 +118,9 @@ pnpm check
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
   shell-вкладки (`portable-pty`) проверяется вживую/E2E, а не юнит-тестом
   (нужен реальный tty + Tauri-события).
+- `lib.rs` — `program_on_path` (Фаза 26, детект шелла для `shell_exists`): резолв
+  абсолютного пути к `current_exe`, отказ на пустом/пробельном/несуществующем имени
+  и на явном несуществующем пути.
 - `recording.rs` — запись сессий (Фаза 11), чистые хелперы: `asciicast_header`
   (валидный JSON v2, кламп нулевых размеров, **флаг-расширение `timed`** — `true`/`false`
   в заголовке, плюс поле **`server`** = creation-title), `with_updated_meta` (перезапись
@@ -353,7 +356,9 @@ pnpm test:coverage   # прогон + покрытие + гейты
   стилей `wholeLine/bold/background`; санитизация импортируемого массива — отсев
   мусора, фолбэк цвета/`enabled`, коэрсия булевых стилей; восстановление `resetSettings`),
   `searchOptions` (Фаза 10: дефолты off; persist/reload; merge частичного бэкапа;
-  восстановление `resetSettings`);
+  восстановление `resetSettings`),
+  `windowsShell`/`localShellPath` (Фаза 26 — локальный шелл: дефолт `cmd`/пусто,
+  persist выбора и custom-пути, импорт валидных значений с фолбэком мусора к дефолтам);
 - `stores/layout.svelte.ts` — дефолты, persist ширин/сворачивания, `clamp`;
 - `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
@@ -393,9 +398,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `sftp_hash_tree`/`local_hash_tree`/`sftp_sync_apply` (синхронизация), `annotateRecording` →
   `annotate_recording`, `fetchMetricsDetail` → `fetch_metrics_detail`, `fetchPendingUpdates` →
   `fetch_pending_updates`,
-  `exportBackup`/`importBackup` и backup-диалоги) + `isFileChangedError`
+  `exportBackup`/`importBackup` и backup-диалоги, **Фаза 26:** `hostOs` → `host_os`,
+  `shellExists` → `shell_exists`, `openLocalTerminal` с `shell` (`null` по умолчанию и
+  явная программа)) + `isFileChangedError`
   (матч маркера `file-changed`, игнор посторонних ошибок) + `isPermissionError`
   (матч `permission denied`/`no such file` — отказ доступа, при котором предлагается sudo);
+- `localshell.ts` (Фаза 26, чистый резолв локального шелла) — `windowsShellProgram`
+  (пресеты → `powershell.exe`/`pwsh.exe`, `cmd`/`custom` → `null`), `resolveLocalShell`
+  на Windows (пресеты, custom с trim/фолбэком, игнор `localShellPath` для не-custom) и на
+  macOS/Linux (непустой путь = override `$SHELL`, пусто = дефолт ОС);
 - `editorlang.ts` (Фаза 12.2) — `baseName`/`fileExt` (lower-case расширения, dotfile
   без расширения), `editorLangFor` (известные расширения → язык: config-форматы, **скрипты/
   ЯП** Python/JS/TS/Java/Go/Rust/Ruby/C·C++·C#/SQL/PowerShell/Lua/Perl, **markup** HTML/CSS/

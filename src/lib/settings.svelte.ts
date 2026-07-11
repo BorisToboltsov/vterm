@@ -12,6 +12,7 @@ import {
 } from "./themes";
 import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locales";
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
+import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 
 export type CursorStyle = "block" | "bar" | "underline";
@@ -137,6 +138,11 @@ export interface Settings {
   middleClickPaste: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
+  /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
+  windowsShell: WindowsShell;
+  /** Custom local-shell program/path: used on Windows when `windowsShell` is
+   *  `custom`, and on macOS/Linux as a `$SHELL` override when non-empty. */
+  localShellPath: string;
   // Connection
   connectTimeout: number; // seconds
   keepaliveInterval: number; // seconds
@@ -233,6 +239,8 @@ const DEFAULTS: Settings = {
   copyOnSelect: false,
   middleClickPaste: false,
   historySearch: true,
+  windowsShell: "cmd",
+  localShellPath: "",
   connectTimeout: 10,
   keepaliveInterval: 15,
   termType: "xterm-256color",
@@ -350,6 +358,11 @@ function load(): Settings {
       ...DEFAULTS,
       ...raw,
       language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
+      windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
+        ? raw.windowsShell
+        : DEFAULTS.windowsShell,
+      localShellPath:
+        typeof raw.localShellPath === "string" ? raw.localShellPath : DEFAULTS.localShellPath,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
       statusBarItems: { ...DEFAULTS.statusBarItems, ...(raw.statusBarItems ?? {}) },
       statusBarThresholds: mergeThresholds(raw.statusBarThresholds),
@@ -455,6 +468,8 @@ export function applyImportedSettings(raw: unknown): void {
     }
   }
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
+  if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
+  if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
   }

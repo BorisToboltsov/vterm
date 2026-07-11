@@ -12,6 +12,9 @@ vi.mock("./api", () => ({
   importBackup: (...a: unknown[]) => importBackup(...a),
   pickBackupSavePath: (...a: unknown[]) => pickBackupSavePath(...a),
   pickBackupFile: (...a: unknown[]) => pickBackupFile(...a),
+  // The local-shell picker (Terminal section) queries the host OS and probes pwsh.
+  hostOs: () => Promise.resolve("macos"),
+  shellExists: () => Promise.resolve(true),
 }));
 
 import SettingsPanel from "./SettingsPanel.svelte";

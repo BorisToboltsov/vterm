@@ -9,6 +9,7 @@
   import InfoHint from "./InfoHint.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import AiSettingsSection from "./AiSettingsSection.svelte";
+  import LocalShellSettings from "./LocalShellSettings.svelte";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
   import StatusBarSettings from "./StatusBarSettings.svelte";
@@ -298,6 +299,7 @@
             <input type="checkbox" bind:checked={settings.historySearch} />
             {t("settings.historySearch")}<InfoHint text={t("settings.historySearchHint")} />
           </label>
+          <LocalShellSettings />
         </section>
 
         {/if}

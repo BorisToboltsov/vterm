@@ -321,7 +321,11 @@
       "Bash(grep -n 'from \"$lib/editorlang\"\\\\|from \"$lib/api\"\\\\|editorLangOrPlain\\\\|from \"./editorlang\"' src/routes/+page.svelte)",
       "Bash(grep -n 'sftpReadText\\\\|from \"$lib/api\"\\\\|lintRemote\\\\|} from \"$lib/api' src/routes/+page.svelte)",
       "Bash(grep -rn -i -E 'два \\(артефакт|дистрибутив\\)|macOS.{0,3}\\(\\\\+|и\\).{0,3}Windows|two \\(artifact|distribut\\)' CLAUDE.md README.md docs/ROADMAP.md docs/ARCHITECTURE.md .gitlab-ci.yml)",
-      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('.gitlab-ci.yml'\\)\\); print\\('OK, jobs:', [k for k in d if isinstance\\(d[k],dict\\) and 'stage' in d[k]]\\)\")"
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('.gitlab-ci.yml'\\)\\); print\\('OK, jobs:', [k for k in d if isinstance\\(d[k],dict\\) and 'stage' in d[k]]\\)\")",
+      "Bash(sed -i '' 's/\"version\": \"0.25.1\"/\"version\": \"0.26.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.25.1\"/version = \"0.26.0\"/' src-tauri/Cargo.toml)",
+      "Bash(grep -n \"settings.test\\\\|api.test\\\\|\\\\`settings\\\\`\\\\|\\\\`api\\\\`\\\\|settings\\\\.svelte\\\\|broadcast.test\\\\|connphase\" docs/TESTS.md)",
+      "Bash(grep -n \"обёртк\\\\|host_os\\\\|hostOs\\\\|open_local\\\\|openLocalTerminal\\\\|- \\\\`api\" docs/TESTS.md)"
     ]
   }
 }

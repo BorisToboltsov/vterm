@@ -349,6 +349,33 @@ describe("applyImportedSettings", () => {
   });
 });
 
+describe("local shell picker", () => {
+  it("defaults to cmd with no custom path", () => {
+    expect(settings.windowsShell).toBe("cmd");
+    expect(settings.localShellPath).toBe("");
+  });
+
+  it("persists a shell choice and custom path", () => {
+    settings.windowsShell = "pwsh";
+    settings.localShellPath = "/bin/zsh";
+    flushSync();
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}");
+    expect(stored.windowsShell).toBe("pwsh");
+    expect(stored.localShellPath).toBe("/bin/zsh");
+  });
+
+  it("imports valid values and rejects junk", () => {
+    applyImportedSettings({ windowsShell: "powershell", localShellPath: "/x/sh" });
+    flushSync();
+    expect(settings.windowsShell).toBe("powershell");
+    expect(settings.localShellPath).toBe("/x/sh");
+    applyImportedSettings({ windowsShell: "bogus", localShellPath: 42 });
+    flushSync();
+    expect(settings.windowsShell).toBe("cmd"); // junk → default
+    expect(settings.localShellPath).toBe(""); // non-string → default
+  });
+});
+
 describe("language", () => {
   it("defaults to English", () => {
     expect(settings.language).toBe("en");

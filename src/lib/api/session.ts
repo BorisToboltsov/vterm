@@ -51,13 +51,18 @@ export function connectSession(
   });
 }
 
-/** Open a local-shell terminal (a PTY on the machine running vterm). */
+/**
+ * Open a local-shell terminal (a PTY on the machine running vterm). `shell` is an
+ * explicit program/path (Windows cmd/PowerShell/pwsh preset or a custom path);
+ * `null` lets the backend use the OS default ($SHELL / %ComSpec%).
+ */
 export function openLocalTerminal(
   sessionId: string,
   cols: number,
   rows: number,
+  shell: string | null = null,
 ): Promise<void> {
-  return invoke<void>("open_local_terminal", { sessionId, cols, rows });
+  return invoke<void>("open_local_terminal", { sessionId, cols, rows, shell });
 }
 
 /** Send user keystrokes (UTF-8 bytes) to the remote shell. */

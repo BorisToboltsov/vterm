@@ -521,18 +521,71 @@ async fn open_local_terminal(
     session_id: String,
     cols: u32,
     rows: u32,
+    shell: Option<String>,
 ) -> AppResult<()> {
     // Replace any existing session registered under this id.
     state.sessions.lock().await.remove(&session_id);
     state.local_ptys.lock().unwrap().remove(&session_id);
 
-    let local = pty::open_local(app, session_id.clone(), cols, rows)?;
+    let local = pty::open_local(app, session_id.clone(), cols, rows, shell)?;
     state
         .local_ptys
         .lock()
         .unwrap()
         .insert(session_id, Arc::new(local));
     Ok(())
+}
+
+/// The host OS the app is running on (`std::env::consts::OS`: "windows"/"macos"/
+/// "linux"/…). Lets the frontend gate OS-specific settings — e.g. the Windows
+/// local-shell picker — without pulling a runtime OS plugin into the WebView.
+#[tauri::command]
+fn host_os() -> &'static str {
+    std::env::consts::OS
+}
+
+/// Whether `program` resolves to an executable — used by the local-shell picker to
+/// gray out pwsh when PowerShell 7 isn't installed and to validate a custom shell
+/// path. A path (containing a separator) is checked directly; a bare name is
+/// looked up across `PATH` (honouring `PATHEXT` on Windows). Never spawns.
+#[tauri::command]
+fn shell_exists(program: String) -> bool {
+    program_on_path(program.trim())
+}
+
+/// True when `prog` names an existing executable file: an explicit path is
+/// checked as-is, a bare name is searched on each `PATH` entry (with `PATHEXT`
+/// fallbacks on Windows).
+fn program_on_path(prog: &str) -> bool {
+    if prog.is_empty() {
+        return false;
+    }
+    let path = std::path::Path::new(prog);
+    if path.is_absolute() || path.components().count() > 1 {
+        return executable_candidate(path);
+    }
+    let Some(paths) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&paths).any(|dir| executable_candidate(&dir.join(prog)))
+}
+
+/// Whether `path` (or, on Windows, a `PATHEXT` variant of it) is an existing file.
+fn executable_candidate(path: &std::path::Path) -> bool {
+    if path.is_file() {
+        return true;
+    }
+    #[cfg(windows)]
+    if path.extension().is_none() {
+        if let Some(exts) = std::env::var_os("PATHEXT") {
+            return std::env::split_paths(&exts).any(|ext| {
+                let ext = ext.to_string_lossy();
+                let ext = ext.trim().trim_start_matches('.');
+                !ext.is_empty() && path.with_extension(ext).is_file()
+            });
+        }
+    }
+    false
 }
 
 #[tauri::command]
@@ -1691,6 +1744,8 @@ pub fn run() {
             connect_plan,
             connect_session,
             open_local_terminal,
+            host_os,
+            shell_exists,
             write_to_terminal,
             read_shell_history,
             resize_pty,
@@ -1797,6 +1852,22 @@ mod tests {
         assert!(a["srv-".len()..].chars().all(|c| c.is_ascii_hexdigit()));
         let b = uuid_like();
         assert_ne!(a, b);
+    }
+
+    // ── program_on_path ───────────────────────────────────────────────────────
+    #[test]
+    fn program_on_path_finds_current_exe_by_absolute_path() {
+        let exe = std::env::current_exe().unwrap();
+        assert!(program_on_path(exe.to_str().unwrap()));
+    }
+
+    #[test]
+    fn program_on_path_rejects_empty_and_missing() {
+        assert!(!program_on_path(""));
+        assert!(!program_on_path("   "));
+        assert!(!program_on_path("vterm-definitely-not-a-real-program-xyz"));
+        // An explicit path that does not exist is not resolved.
+        assert!(!program_on_path("/no/such/dir/nope-shell"));
     }
 
     // ── batch_id_from_header ──────────────────────────────────────────────────

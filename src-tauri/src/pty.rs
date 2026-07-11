@@ -100,13 +100,27 @@ impl Drop for LocalPty {
 /// Spawn the user's default shell in a fresh PTY and stream its output to the
 /// frontend. The reader runs on a dedicated OS thread because portable-pty I/O
 /// is blocking; it emits output chunks and a final close event on EOF.
-pub fn open_local(app: AppHandle, session_id: String, cols: u32, rows: u32) -> AppResult<LocalPty> {
+pub fn open_local(
+    app: AppHandle,
+    session_id: String,
+    cols: u32,
+    rows: u32,
+    shell: Option<String>,
+) -> AppResult<LocalPty> {
     let pair = native_pty_system()
         .openpty(pty_size(cols, rows))
         .map_err(|e| format!("could not open pty: {e}"))?;
 
-    // Default shell: $SHELL on Unix, %ComSpec% on Windows (portable-pty picks it).
-    let mut cmd = CommandBuilder::new_default_prog();
+    // Explicit program (Windows cmd/PowerShell/pwsh preset or a custom path)
+    // overrides the OS default; `None`/blank falls back to $SHELL on Unix and
+    // %ComSpec% on Windows (portable-pty picks it). Program lookup honours PATH.
+    let mut cmd = match shell
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
+        Some(prog) => CommandBuilder::new(prog),
+        None => CommandBuilder::new_default_prog(),
+    };
     cmd.env("TERM", "xterm-256color");
     if let Some(dirs) = directories::UserDirs::new() {
         cmd.cwd(dirs.home_dir());

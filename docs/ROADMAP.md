@@ -1460,6 +1460,33 @@ CI на Linux-раннере (или Docker-контейнер локально)
 
 ---
 
+## ✅ Фаза 26 — Выбор шелла для локального терминала (v0.26.0)
+
+Локальная вкладка («+») спавнила только шелл по умолчанию ОС (`%ComSpec%`/`$SHELL`).
+Теперь на **Windows** можно выбрать cmd / Windows PowerShell / PowerShell 7 (pwsh) / свой
+путь, а на **macOS/Linux** — переопределить `$SHELL` произвольным путём. Всё поверх того же
+контракта терминала (та же команда `open_local_terminal` + канал `term://…`), без нового
+бэкенда/канала.
+
+- [x] **Детект ОС** без runtime-плагина: команда `host_os` (`std::env::consts::OS`) в
+  [lib.rs](../src-tauri/src/lib.rs); реактивный кэш [hostenv.svelte.ts](../src/lib/stores/hostenv.svelte.ts)
+  гейтит Windows-селектор.
+- [x] **Резолв шелла** — чистая логика [localshell.ts](../src/lib/localshell.ts)
+  (`resolveLocalShell`/`windowsShellProgram`): пресет→программа или `null` (дефолт ОС,
+  сохраняет прежнее поведение для `cmd`).
+- [x] **Бэкенд**: `pty::open_local(…, shell: Option<String>)` — `Some(непусто)` →
+  `CommandBuilder::new(prog)` (поиск по PATH), иначе `new_default_prog()`; параметр
+  проброшен через `open_local_terminal`. Команда `shell_exists` (обход PATH + `PATHEXT`
+  на Windows, без спавна) — гасит pwsh если не установлен и валидирует custom-путь.
+- [x] **Настройки**: `windowsShell` (дефолт `cmd`) + `localShellPath` в
+  [settings.svelte.ts](../src/lib/settings.svelte.ts) (валидация в `load`/import);
+  UI — [LocalShellSettings.svelte](../src/lib/LocalShellSettings.svelte) в секции «Терминал».
+- [x] **i18n** (EN+RU), **тесты**: `localshell.test.ts`, api-обёртки (`hostOs`/`shellExists`/
+  `openLocalTerminal` с `shell`), персист/импорт настроек, Rust `program_on_path_*`.
+- [x] **Доки**: GUIDE/README/TESTS/INVARIANTS/ROADMAP. Версия 0.26.0 в трёх манифестах.
+
+---
+
 ## Заметки по архитектурным решениям
 
 - **`portable-pty` — для локального терминала.** SSH-вкладки используют удалённый

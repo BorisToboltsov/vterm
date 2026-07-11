@@ -34,6 +34,8 @@
   } from "./api";
   import type { ConnPhase } from "./connphase";
   import { accumulatePinch } from "./termzoom";
+  import { resolveLocalShell } from "./localshell";
+  import { hostEnv } from "./stores/hostenv.svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { readClipboard, writeClipboard } from "./clipboard";
 
@@ -575,7 +577,9 @@
     onstatus?.("connecting");
     try {
       if (local) {
-        await openLocalTerminal(sessionId, term.cols, term.rows);
+        const os = await hostEnv.resolve();
+        const shell = resolveLocalShell(os, settings.windowsShell, settings.localShellPath);
+        await openLocalTerminal(sessionId, term.cols, term.rows, shell);
       } else {
         await connectSession(
           sessionId,

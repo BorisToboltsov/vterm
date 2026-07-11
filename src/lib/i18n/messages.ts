@@ -671,6 +671,16 @@ export const en = {
   "settings.historySearch": "Ctrl+R searches command history",
   "settings.historySearchHint":
     "Opens an overlay to search this session's shell history and put a command on the prompt. Off = the shell's own Ctrl+R reverse-search.",
+  "settings.localShell": "Local shell",
+  "settings.localShellHint":
+    "Which program a local (“+”) terminal tab launches. On Windows, choose cmd, Windows PowerShell, PowerShell 7 (pwsh), or a custom path. On macOS/Linux, leave blank to use your $SHELL, or set a custom path.",
+  "settings.localShellCmd": "cmd",
+  "settings.localShellPowershell": "Windows PowerShell",
+  "settings.localShellPwsh": "PowerShell 7 (pwsh)",
+  "settings.localShellCustom": "Custom path…",
+  "settings.localShellNotFound": "not found",
+  "settings.localShellPwshMissing":
+    "PowerShell 7 (pwsh) wasn't found on PATH. Install it, or the tab will fall back to failing to start.",
 
   "settings.sectionSmartLogs": "Logs & text",
   "settings.sectionSmartLogsHint": "Structured log view (JSON/logfmt/syslog/nginx/dmesg), full-buffer terminal search (⌘/Ctrl+F), clickable links and rule-based highlighting — in the main terminal window.",
@@ -1700,6 +1710,16 @@ const ru: Record<MessageKey, string> = {
   "settings.historySearch": "Ctrl+R ищет по истории команд",
   "settings.historySearchHint":
     "Открывает окно для поиска по истории шелла этой сессии и вставки команды в строку. Выкл — родной reverse-search шелла по Ctrl+R.",
+  "settings.localShell": "Локальный шелл",
+  "settings.localShellHint":
+    "Какую программу запускает локальная вкладка терминала («+»). На Windows выберите cmd, Windows PowerShell, PowerShell 7 (pwsh) или произвольный путь. На macOS/Linux оставьте пустым для $SHELL или укажите свой путь.",
+  "settings.localShellCmd": "cmd",
+  "settings.localShellPowershell": "Windows PowerShell",
+  "settings.localShellPwsh": "PowerShell 7 (pwsh)",
+  "settings.localShellCustom": "Свой путь…",
+  "settings.localShellNotFound": "не найден",
+  "settings.localShellPwshMissing":
+    "PowerShell 7 (pwsh) не найден в PATH. Установите его, иначе вкладка не сможет запуститься.",
 
   "settings.sectionSmartLogs": "Логи и текст",
   "settings.sectionSmartLogsHint": "Структурный вид логов (JSON/logfmt/syslog/nginx/dmesg), поиск по всему буферу терминала (⌘/Ctrl+F), кликабельные ссылки и подсветка по правилам — в окне основного терминала.",

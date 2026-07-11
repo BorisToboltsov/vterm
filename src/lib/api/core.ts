@@ -30,6 +30,26 @@ export function readClipboardText(): Promise<string> {
   return invoke<string>("read_clipboard_text");
 }
 
+// ── Host environment ────────────────────────────────────────────────────────
+
+/**
+ * The host OS the app runs on ("windows"/"macos"/"linux"/…), from the Rust
+ * backend (`std::env::consts::OS`). Lets the UI gate OS-specific settings — e.g.
+ * the Windows local-shell picker — without a runtime OS plugin in the WebView.
+ */
+export function hostOs(): Promise<string> {
+  return invoke<string>("host_os");
+}
+
+/**
+ * Whether `program` resolves to an executable (an explicit path checked as-is, a
+ * bare name searched on PATH). Used to gray out pwsh when it isn't installed and
+ * to validate a custom local-shell path.
+ */
+export function shellExists(program: string): Promise<boolean> {
+  return invoke<boolean>("shell_exists", { program });
+}
+
 // ── Native menu ───────────────────────────────────────────────────────────────
 
 /** Localized labels for the native application menu (mirrors `MenuLabels` in Rust). */

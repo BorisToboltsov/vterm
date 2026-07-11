@@ -255,8 +255,15 @@ describe("remaining invoke wrappers", () => {
       [
         api.openLocalTerminal("s", 80, 24),
         "open_local_terminal",
-        { sessionId: "s", cols: 80, rows: 24 },
+        { sessionId: "s", cols: 80, rows: 24, shell: null },
       ],
+      [
+        api.openLocalTerminal("s", 80, 24, "powershell.exe"),
+        "open_local_terminal",
+        { sessionId: "s", cols: 80, rows: 24, shell: "powershell.exe" },
+      ],
+      [api.hostOs(), "host_os", undefined as never],
+      [api.shellExists("pwsh.exe"), "shell_exists", { program: "pwsh.exe" }],
       [api.deleteFolder("Prod"), "delete_folder", { path: "Prod" }],
       [api.connectPlan("id1"), "connect_plan", { id: "id1" }],
       [api.resizePty("s", 80, 24), "resize_pty", { sessionId: "s", cols: 80, rows: 24 }],
