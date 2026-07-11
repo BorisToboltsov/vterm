@@ -19,6 +19,8 @@
   import { toLogEntry, type JsonLogEntry } from "./jsonlog";
   import JsonLogView from "./JsonLogView.svelte";
   import ViewModeToggle from "./ViewModeToggle.svelte";
+  import CommandHistory from "./CommandHistory.svelte";
+  import { recentUniqueCommands, mergeCommands, createCommandCapture } from "./history";
   import {
     closedEvent,
     connectSession,
@@ -26,6 +28,7 @@
     openLocalTerminal,
     outputEvent,
     phaseEvent,
+    readShellHistory,
     resizePty,
     writeToTerminal,
   } from "./api";
@@ -104,6 +107,57 @@
         wholeWord: opts.wholeWord,
       }) === null,
   );
+
+  // ── Ctrl+R command-history overlay (Phase 23) ──────────────────────────────
+  // Reverse-search over the session's shell history file (read on open via the
+  // backend). Gated by settings.historySearch; when off, Ctrl+R passes through to
+  // the remote shell's own reverse-search. Accepting a command clears the current
+  // prompt line and types it (no newline) — the user reviews and runs it.
+  const historyEnabled = $derived(settings.historySearch);
+  let history = $state({
+    open: false,
+    loading: false,
+    error: null as string | null,
+    items: [] as string[],
+  });
+
+  // Client-side capture (source A): commands typed in this session, newest-first,
+  // so the Ctrl+R list has the current session's history before the shell flushes
+  // its file on exit. Fed from `term.onData`; merged above the file history.
+  const capture = createCommandCapture();
+  let capturedCommands: string[] = [];
+  const CAPTURE_CAP = 500;
+
+  function recordTyped(data: string) {
+    for (const cmd of capture.feed(data)) {
+      capturedCommands = [cmd, ...capturedCommands.filter((c) => c !== cmd)].slice(0, CAPTURE_CAP);
+    }
+  }
+
+  async function openHistory() {
+    history.open = true;
+    history.loading = true;
+    history.error = null;
+    try {
+      const raw = await readShellHistory(sessionId);
+      // Live-typed commands first, then the shell history file (deduped).
+      history.items = mergeCommands(capturedCommands, recentUniqueCommands(raw));
+    } catch (e) {
+      // Even if the file read fails, still show what we captured this session.
+      history.items = capturedCommands;
+      history.error = capturedCommands.length ? null : String(e);
+    } finally {
+      history.loading = false;
+    }
+  }
+
+  /** Put a recalled command on the prompt: clear the line (Ctrl-A, Ctrl-K) then
+   *  type it, leaving the cursor at the end for review — never auto-runs. */
+  function acceptHistory(command: string) {
+    history.open = false;
+    writeToTerminal(sessionId, encoder.encode(`\x01\x0b${command}`)).catch(() => {});
+    term?.focus();
+  }
 
   // ── Regex highlighting + clickable links (Phase 10) ────────────────────────
   // Output is decoded with a streaming decoder (handles multibyte chars split
@@ -398,6 +452,12 @@
     fit.fit();
     onresize?.(term.cols, term.rows);
 
+    // Moving focus back to the terminal (e.g. a click on the console) closes the
+    // Ctrl+R history palette — xterm focuses its hidden textarea on such clicks.
+    term.textarea?.addEventListener("focus", () => {
+      if (history.open) history.open = false;
+    });
+
     // Capture-phase, non-passive so preventDefault beats xterm's scroll + page zoom.
     container.addEventListener("wheel", onZoomWheel, { capture: true, passive: false });
 
@@ -427,6 +487,7 @@
     // Forward keystrokes to the remote shell.
     term.onData((d) => {
       onactivity?.();
+      if (historyEnabled) recordTyped(d);
       writeToTerminal(sessionId, encoder.encode(d)).catch(() => {});
     });
 
@@ -454,6 +515,13 @@
       if (findCombo && searchEnabled) {
         e.preventDefault();
         openSearch();
+        return false;
+      }
+      // Ctrl+R opens our command-history overlay instead of the shell's
+      // reverse-search (opt-out via settings.historySearch).
+      if (historyEnabled && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === "r") {
+        e.preventDefault();
+        openHistory();
         return false;
       }
       const copyCombo =
@@ -684,6 +752,18 @@
       <ViewModeToggle {structured} compact onSelect={setStructured} />
     </div>
   {/if}
+  <!-- Ctrl+R command-history overlay (Phase 23). -->
+  <CommandHistory
+    open={history.open}
+    items={history.items}
+    loading={history.loading}
+    error={history.error}
+    onaccept={acceptHistory}
+    onclose={() => {
+      history.open = false;
+      term?.focus();
+    }}
+  />
   <!-- Full-buffer search overlay (Phase 10). -->
   {#if search.open}
     <!-- Stacks below the floating raw↔table toggle (top-right) when it's shown. -->

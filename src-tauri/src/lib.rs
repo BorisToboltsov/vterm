@@ -551,6 +551,27 @@ async fn write_to_terminal(
     }
 }
 
+/// POSIX-sh one-liner that prints the interactive shell's history file (zsh
+/// preferred, then bash), bounded to the most recent lines. Wrapped in `sh -c` so
+/// it parses the same way regardless of the login shell (fish, etc.). Runs on a
+/// one-shot exec channel for the Ctrl+R history overlay (Phase 23).
+const HISTORY_CMD: &str = "sh -c 'case \"$SHELL\" in *zsh*) F=\"$HOME/.zsh_history\";; *) F=\"$HOME/.bash_history\";; esac; [ -f \"$F\" ] || F=\"$HOME/.zsh_history\"; [ -f \"$F\" ] || F=\"$HOME/.bash_history\"; tail -n 5000 \"$F\" 2>/dev/null'";
+
+/// Read the current session's shell history file (raw text) for the Ctrl+R
+/// command-history overlay. SSH sessions run [`HISTORY_CMD`] on a dedicated exec
+/// channel (not disturbing the interactive shell); local shell tabs read the
+/// on-disk history directly. Parsing happens on the frontend (`history.ts`).
+#[tauri::command]
+async fn read_shell_history(state: State<'_, AppState>, session_id: String) -> AppResult<String> {
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        return session.run_command(HISTORY_CMD).await;
+    }
+    if state.local_ptys.lock().unwrap().contains_key(&session_id) {
+        return localfile::read_shell_history(5000).await;
+    }
+    Err(AppError::NoSession)
+}
+
 #[tauri::command]
 async fn resize_pty(
     state: State<'_, AppState>,
@@ -1640,6 +1661,7 @@ pub fn run() {
             connect_session,
             open_local_terminal,
             write_to_terminal,
+            read_shell_history,
             resize_pty,
             disconnect,
             metrics::fetch_metrics,

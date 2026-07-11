@@ -294,6 +294,10 @@
             <input type="checkbox" bind:checked={settings.middleClickPaste} />
             {t("settings.middleClickPaste")}
           </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.historySearch} />
+            {t("settings.historySearch")}<InfoHint text={t("settings.historySearchHint")} />
+          </label>
         </section>
 
         {/if}

@@ -71,6 +71,14 @@ export function writeToTerminal(
   });
 }
 
+/**
+ * Read the current session's shell history file (raw text) for the Ctrl+R
+ * command-history overlay. Parsing lives in `history.ts`.
+ */
+export function readShellHistory(sessionId: string): Promise<string> {
+  return invoke<string>("read_shell_history", { sessionId });
+}
+
 /** Inform the remote PTY of a new terminal size. */
 export function resizePty(
   sessionId: string,

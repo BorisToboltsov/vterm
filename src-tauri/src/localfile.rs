@@ -265,6 +265,24 @@ pub async fn read_text(path: &str, max_bytes: u64) -> AppResult<TextFile> {
     })
 }
 
+/// Read the local user's shell history (zsh preferred, then bash), returning the
+/// most recent `max_lines` lines as raw text — the local-shell-tab source for the
+/// Ctrl+R command-history overlay (Phase 23). Non-UTF-8 bytes (zsh can metafy
+/// them) are lossily decoded; a missing file yields empty text, not an error.
+pub async fn read_shell_history(max_lines: usize) -> AppResult<String> {
+    let home = home()?;
+    for name in [".zsh_history", ".bash_history"] {
+        let path = format!("{home}/{name}");
+        if let Ok(bytes) = tokio::fs::read(&path).await {
+            let text = String::from_utf8_lossy(&bytes);
+            let lines: Vec<&str> = text.lines().collect();
+            let start = lines.len().saturating_sub(max_lines);
+            return Ok(lines[start..].join("\n"));
+        }
+    }
+    Ok(String::new())
+}
+
 /// Write editor text back to a local file: sibling temp + rename (non-truncating),
 /// preserving the original permission bits; sha256 conflict check like SFTP.
 pub async fn write_text(

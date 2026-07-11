@@ -74,6 +74,7 @@
     ["help.hkCommandPalette", "⌘K  /  Ctrl+K"],
     ["help.hkNewTab", "⌘T  /  Ctrl+T"],
     ["help.hkSearch", "⌘F  /  Ctrl+Shift+F"],
+    ["help.hkHistory", "Ctrl+R"],
     ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],
     ["help.hkPaste", "⌘V  /  Ctrl+Shift+V"],
     ["help.hkInterrupt", "Ctrl+C"],

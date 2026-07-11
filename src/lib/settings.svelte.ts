@@ -135,6 +135,8 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
+  /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
+  historySearch: boolean;
   // Connection
   connectTimeout: number; // seconds
   keepaliveInterval: number; // seconds
@@ -230,6 +232,7 @@ const DEFAULTS: Settings = {
   bell: "none",
   copyOnSelect: false,
   middleClickPaste: false,
+  historySearch: true,
   connectTimeout: 10,
   keepaliveInterval: 15,
   termType: "xterm-256color",

@@ -80,6 +80,9 @@ export const ICONS = {
   power: '<path d="M12 4v8"/><path d="M7.5 7.5a7 7 0 1 0 9 0"/>',
   // Server time — a clock.
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
+  // Command history — a clock with a counter-clockwise recall arrow.
+  history:
+    '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 4v4h4"/><path d="M12 8v4l3 2"/>',
   // Swap — two opposing vertical arrows.
   swap: '<path d="M7 4v14M7 18l-3-3M7 18l3-3"/><path d="M17 20V6M17 6l-3 3M17 6l3 3"/>',
   // Disk I/O — drum/HDD with up/down arrows.
