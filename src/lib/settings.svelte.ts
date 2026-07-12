@@ -14,6 +14,13 @@ import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locale
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
+import {
+  clampIdleTimeout,
+  DEFAULT_IDLE_EFFECT,
+  DEFAULT_IDLE_TIMEOUT,
+  isIdleSetting,
+  type IdleSetting,
+} from "./idle";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type BellStyle = "none" | "sound" | "visual";
@@ -175,6 +182,10 @@ export interface Settings {
   hostKeyPolicy: HostKeyPolicy;
   // AI assistant (Phase 17, opt-in)
   ai: AiSettings;
+  // Idle screensaver (Phase 0.28) — which effect to show after inactivity, and
+  // after how many seconds. "off" disables it. See idle.ts.
+  idleEffect: IdleSetting;
+  idleTimeoutSec: number;
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
@@ -291,6 +302,8 @@ const DEFAULTS: Settings = {
   sftp: { maxOpenMb: 2, showHiddenFiles: false },
   hostKeyPolicy: "ask",
   ai: defaultAiSettings(),
+  idleEffect: DEFAULT_IDLE_EFFECT,
+  idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
 };
 
 /** Clamp the editor open-size setting to a sane positive range (1…limit MB). */
@@ -385,6 +398,8 @@ function load(): Settings {
         showHiddenFiles: (raw.sftp ?? {}).showHiddenFiles === true,
       },
       ai: sanitizeAiSettings(raw.ai),
+      idleEffect: isIdleSetting(raw.idleEffect) ? raw.idleEffect : DEFAULTS.idleEffect,
+      idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
     };
   } catch {
     return {
@@ -470,6 +485,8 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
+  if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
+  next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
   }

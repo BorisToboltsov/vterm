@@ -1523,6 +1523,48 @@ CI на Linux-раннере (или Docker-контейнер локально)
 
 ---
 
+## ✅ Фаза 28 — Заставки простоя (idle screensavers) (v0.28.0)
+
+После простоя (**нет ввода И нет вывода PTY**) поверх терминала показывается
+заставка — **копия** буфера, которая **никогда не пишет в PTY** и не ходит в сеть
+(кроме уже существующего опроса метрик). Тот же слоевой контракт, что и у
+[ThemeOverlay](../src/lib/ThemeOverlay.svelte): canvas над **областью терминала**
+(проп `targetEl`, не сайдбар/таб-бар/док/статус-бар; без вкладок — на всё окно)
+([IdleOverlay.svelte](../src/lib/IdleOverlay.svelte), `z-index:35` ниже модалок),
+под глобальным `prefers-reduced-motion`-guard (рисует статичный кадр). Первое
+нажатие/клик **гасит заставку и глотается** (в терминал не уходит) — безопасно на
+проде. Выбор эффекта и таймаут — в настройках; дефолт «Карточка сервера», 3 мин.
+
+- [x] **Чистая логика** — [idle.ts](../src/lib/idle.ts) (детект простоя `isIdle`/
+  `msUntilIdle`, набор эффектов, `clampIdleTimeout`), [idlefx.ts](../src/lib/idlefx.ts)
+  (буфер→сетка глифов `bufferGrid`, токенизация `tokenizeBuffer`),
+  [connlost.ts](../src/lib/connlost.ts) (классификация закрытия сессии). Тесты:
+  [idle.test.ts](../src/lib/idle.test.ts), [idlefx.test.ts](../src/lib/idlefx.test.ts),
+  [connlost.test.ts](../src/lib/connlost.test.ts).
+- [x] **Эффекты** (canvas, [IdleOverlay.svelte](../src/lib/IdleOverlay.svelte)):
+  **Карточка сервера** (дефолт) — хост, аптайм, CPU/MEM/LOAD + area-график CPU по низу
+  (метрики из `fetchMetrics`; без сессии — ambient-экран «Нет активных сессий» + часы);
+  **Матрица** — насыщенный hex-каскад с глубиной слоёв и разрывами, из копии консоли,
+  бесшовно переходящий в бесконечный дождь; **Параллакс-прожектор** — слова из буфера
+  в движущейся световой полосе; **Слабый сигнал** — читаемая консоль с постоянной
+  немерцающей деградацией (RGB-фриндж/зерно/скан-линии/виньетка) + лёгкая рябь.
+- [x] **NO SIGNAL** — отдельный takeover при **реальном** обрыве соединения (не по
+  таймеру): триггерится из `onstatus("closed")` в [+page.svelte](../src/routes/+page.svelte),
+  только когда вкладка выжила (`findTab`), сессия была подключена и это не ручное
+  закрытие/автопереподключение (`showNoSignal`, [connlost.ts](../src/lib/connlost.ts)).
+- [x] **Контракт «без вывода»** — новый проп `onoutput` у [Terminal.svelte](../src/lib/Terminal.svelte)
+  бампит `idleOutputTick`, сбрасывая таймер простоя (заставка не всплывёт поверх
+  бегущего `tail -f`). Пользовательская активность (клавиши/мышь/фокус) — слушается в оверлее.
+- [x] **Настройки** — поля `idleEffect` + `idleTimeoutSec` в
+  [settings.svelte.ts](../src/lib/settings.svelte.ts) (localStorage, валидация/клэмп);
+  секция [IdleSettings.svelte](../src/lib/IdleSettings.svelte) (группа «Внешний вид»),
+  регистрация в [settingsNav.ts](../src/lib/settingsNav.ts).
+- [x] **i18n** (EN+RU): `settings.sectionIdle`/`idleEffect`/`idleTimeout`/… + `idle.*`.
+  Доменные термины (`CPU`/`RAM`/`NO SIGNAL`) не переводятся.
+- [x] **Доки**: GUIDE/README/INVARIANTS/ROADMAP. Версия 0.28.0 в трёх манифестах.
+
+---
+
 ## Заметки по архитектурным решениям
 
 - **`portable-pty` — для локального терминала.** SSH-вкладки используют удалённый

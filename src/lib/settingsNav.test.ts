@@ -39,7 +39,7 @@ describe("settingsNav groups", () => {
 describe("visibleSectionIds", () => {
   it("shows the active group's sections when not searching", () => {
     const ids = visibleSectionIds("", "appearance");
-    expect(ids).toEqual(new Set(["appearance", "cursor"]));
+    expect(ids).toEqual(new Set(["appearance", "cursor", "idle"]));
   });
 
   it("blank/whitespace query falls back to the active group", () => {

@@ -1055,6 +1055,22 @@ export const en = {
   "bar.titleDiskIo": "Disk I/O — read / write",
   "bar.titleNetConns": "Established connections",
   "bar.titleUsers": "Logged-in users:",
+  // ── Idle screensaver (Phase 0.28) ──
+  "settings.sectionIdle": "Screensaver",
+  "settings.idleNote": "After a period of inactivity (no input and no output), vterm can show a screensaver drawn over the terminal. It never types into the session.",
+  "settings.idleEffect": "Screensaver",
+  "settings.idleOff": "Off",
+  "settings.idleCard": "Server card",
+  "settings.idleMatrix": "Matrix",
+  "settings.idleParallax": "Parallax words",
+  "settings.idleSignal": "Weak signal",
+  "settings.idleTimeout": "Start after",
+  "settings.idleTimeoutUnit": "seconds",
+  "idle.dismissHint": "press any key to resume",
+  "idle.noSessions": "No active sessions",
+  "idle.online": "online",
+  "idle.uptime": "uptime",
+  "idle.connectionLost": "connection lost",
 } as const;
 
 /** The canonical set of message keys (every locale must provide all of them). */
@@ -2093,6 +2109,22 @@ const ru: Record<MessageKey, string> = {
   "bar.titleDiskIo": "Disk I/O — чтение / запись",
   "bar.titleNetConns": "Установленные соединения",
   "bar.titleUsers": "Вошедшие пользователи:",
+  // ── Idle screensaver (Phase 0.28) ──
+  "settings.sectionIdle": "Заставка",
+  "settings.idleNote": "После простоя (нет ввода и нет вывода) vterm может показывать заставку поверх терминала. В сессию она ничего не вводит.",
+  "settings.idleEffect": "Заставка",
+  "settings.idleOff": "Выключена",
+  "settings.idleCard": "Карточка сервера",
+  "settings.idleMatrix": "Матрица",
+  "settings.idleParallax": "Параллакс из слов",
+  "settings.idleSignal": "Слабый сигнал",
+  "settings.idleTimeout": "Запуск через",
+  "settings.idleTimeoutUnit": "секунд",
+  "idle.dismissHint": "нажмите любую клавишу",
+  "idle.noSessions": "Нет активных сессий",
+  "idle.online": "онлайн",
+  "idle.uptime": "аптайм",
+  "idle.connectionLost": "соединение потеряно",
 };
 
 /** All catalogues, keyed by locale code. New locale = new entry here + LOCALES. */

@@ -39,6 +39,10 @@ export default defineConfig({
         // Polling overlay driven by live metrics/native fetches; pure logic lives
         // in thresholds.ts/format.ts (covered) and a smoke test renders it.
         "src/lib/MonitoringOverlay.svelte",
+        // Idle screensaver — heavy canvas rendering over the WebGL terminal driven
+        // by rAF/live metrics. Pure logic (detection, buffer→grid, tokenize, close
+        // classification) lives in idle.ts/idlefx.ts/connlost.ts (covered).
+        "src/lib/IdleOverlay.svelte",
         // Recordings library — thin shell over the recording API + dialogs; pure
         // logic (transcript/parse) lives in recording.ts (covered).
         "src/lib/RecordingsPanel.svelte",
@@ -77,6 +81,7 @@ export default defineConfig({
         "src/lib/AppearanceSettings.svelte",
         "src/lib/SmartLogsSettings.svelte",
         "src/lib/StatusBarSettings.svelte",
+        "src/lib/IdleSettings.svelte",
         "src/lib/SnippetsSettings.svelte",
         "src/lib/BackupSettings.svelte",
       ],

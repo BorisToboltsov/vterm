@@ -13,6 +13,7 @@
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
   import StatusBarSettings from "./StatusBarSettings.svelte";
+  import IdleSettings from "./IdleSettings.svelte";
   import SnippetsSettings from "./SnippetsSettings.svelte";
   import BackupSettings from "./BackupSettings.svelte";
   import ServerToolsPanel from "./ServerToolsPanel.svelte";
@@ -255,6 +256,10 @@
           </div>
         </section>
 
+        {/if}
+
+        {#if show("idle")}
+        <IdleSettings />
         {/if}
 
         {#if show("terminal")}

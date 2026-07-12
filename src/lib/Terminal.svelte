@@ -51,6 +51,7 @@
     onphase,
     onresize,
     onactivity,
+    onoutput,
     oncwd,
   }: {
     sessionId: string;
@@ -66,6 +67,9 @@
     onresize?: (cols: number, rows: number) => void;
     /** Fired on user keystrokes (used to re-arm the recording idle timer). */
     onactivity?: () => void;
+    /** Fired when the session produces output (used to keep the idle screensaver
+     *  from covering a terminal that's actively printing — the "no output" rule). */
+    onoutput?: () => void;
     /** The shell's cwd, parsed from an OSC 7 sequence (shell integration). */
     oncwd?: (path: string) => void;
   } = $props();
@@ -557,6 +561,7 @@
         );
         // Mirror raw output into the structured view while it's open.
         if (structured) feedJson(text);
+        onoutput?.();
       }),
     );
     unlisten.push(

@@ -57,6 +57,7 @@
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
   import { sshErrorView } from "$lib/ssherror";
+  import { showNoSignal } from "$lib/connlost";
   import RightDock from "$lib/RightDock.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
@@ -93,6 +94,7 @@
   import SecretPrompt from "$lib/SecretPrompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import ThemeOverlay from "$lib/ThemeOverlay.svelte";
+  import IdleOverlay from "$lib/IdleOverlay.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
   import TopBar from "$lib/TopBar.svelte";
@@ -202,6 +204,18 @@
   // follow it — both **per tab** (each session keeps its own toggle).
   const terminalCwd = $state<Record<string, string>>({});
   const followTerminal = $state<Record<string, boolean>>({});
+  // ── Idle screensaver (Phase 0.28) ──
+  // Bumped on any terminal output so the screensaver never covers a printing
+  // terminal ("no output" rule). `idleWasConnected` tracks which sessions actually
+  // reached Connected, so an unexpected drop (tab survives) shows NO SIGNAL —
+  // never a manual close (tab is gone) or a failed connect. See connlost.ts.
+  let idleOutputTick = $state(0);
+  const idleWasConnected = new Set<string>();
+  let noSignalSession = $state<string | null>(null);
+  // The central terminal-panes area — the screensaver covers only this, not the
+  // sidebar / tab bar / right dock / status bar. Null when no tabs (overlay then
+  // falls back to the whole window for the ambient card).
+  let terminalArea = $state<HTMLElement>();
   // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
@@ -1455,6 +1469,18 @@
   <!-- Signature-theme depth: a subtle full-window overlay above all content,
        below modals — unifies terminal + chrome without touching the renderer. -->
   <ThemeOverlay />
+  <!-- Idle screensaver (Phase 0.28): full-window canvas over the terminal after
+       inactivity, and the NO SIGNAL takeover on an unexpected drop. Copies the
+       buffer; never writes to the PTY. -->
+  <IdleOverlay
+    sessionId={topConnected && activeTab?.kind === "ssh" ? activeTab.sessionId : null}
+    alias={activeTab?.alias ?? ""}
+    bufferText={() => termRefs[tabsState.activeId ?? ""]?.bufferText?.() ?? ""}
+    outputTick={idleOutputTick}
+    noSignal={noSignalSession !== null}
+    targetEl={terminalArea ?? null}
+    onnosignaldismiss={() => (noSignalSession = null)}
+  />
   <TopBar
     title={topTitle}
     subtitle={topSubtitle}
@@ -1665,6 +1691,7 @@
               </div>
             {/if}
             <div
+              bind:this={terminalArea}
               bind:clientWidth={bcAreaWidth}
               class={bcOn
                 ? bcLayout === "grid"
@@ -1810,12 +1837,29 @@
                     local={tab.kind === "local"}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
+                    onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
-                      if (st === "closed") finalizeRecordingOnClose(tab.sessionId);
+                      if (st === "connected") idleWasConnected.add(tab.sessionId);
+                      if (st === "connecting" && noSignalSession === tab.sessionId)
+                        noSignalSession = null;
+                      if (st === "closed") {
+                        finalizeRecordingOnClose(tab.sessionId);
+                        // Unexpected drop of a connected session (tab survives) →
+                        // NO SIGNAL, unless auto-reconnect will bring it back.
+                        const was = idleWasConnected.delete(tab.sessionId);
+                        if (
+                          findTab(tab.sessionId) &&
+                          !settings.autoReconnect &&
+                          tab.kind === "ssh" &&
+                          showNoSignal({ userInitiated: false, wasConnected: was })
+                        ) {
+                          noSignalSession = tab.sessionId;
+                        }
+                      }
                       if (st === "connected") maybeAutoRecord(tab);
                       // Auth failures now keep the tab and show the error overlay
                       // (the user re-enters the secret via its button), so we no
