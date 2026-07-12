@@ -58,6 +58,30 @@ describe("applyActiveTheme", () => {
     // The persisted hex is what app.html's pre-CSS boot script reads next launch.
     expect(localStorage.getItem(CHROME_PANEL_KEY)).toBe(panel);
   });
+
+  it("sets a dark UA color-scheme for a dark preset so native controls render light glyphs", () => {
+    settings.theme = "dracula"; // group: "modern" (dark)
+    flushSync();
+    document.documentElement.removeAttribute("style");
+    applyActiveTheme();
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+  });
+
+  it("sets a light UA color-scheme for a light preset", () => {
+    settings.theme = "solarized-light"; // group: "light"
+    flushSync();
+    document.documentElement.removeAttribute("style");
+    applyActiveTheme();
+    expect(document.documentElement.style.colorScheme).toBe("light");
+  });
+
+  it("keeps the dark UA color-scheme for a custom theme", () => {
+    settings.theme = "custom";
+    flushSync();
+    document.documentElement.removeAttribute("style");
+    applyActiveTheme();
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+  });
 });
 
 describe("defaults", () => {

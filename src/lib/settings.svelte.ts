@@ -560,6 +560,11 @@ export function applyActiveTheme(): void {
   const panel = activeChromePanel();
   if (typeof document !== "undefined") {
     document.documentElement.style.backgroundColor = panel;
+    // Tell the UA which scheme to paint native controls in (number spinners,
+    // select carets, scrollbars). Custom keeps the neutral dark chrome; presets
+    // follow their group so light themes get dark glyphs and dark themes light.
+    const isLight = settings.theme !== "custom" && getTheme(settings.theme).group === "light";
+    document.documentElement.style.colorScheme = isLight ? "light" : "dark";
   }
   try {
     localStorage.setItem(CHROME_PANEL_KEY, panel);

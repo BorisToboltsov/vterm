@@ -333,7 +333,11 @@
       "Bash(grep -n 'from \"\\\\$lib/ssherror\"\\\\|from \"\\\\$lib/connphase\"\\\\|import { sshErrorView' src/routes/+page.svelte)",
       "Bash(sed -i '' 's/\\\\beffect\\\\b/shownEffect/g; ' src/lib/IdleOverlay.svelte)",
       "Bash(grep -n 'shownEffect\\\\|$shownEffect\\\\|$state<HTMLCanvas\\\\|let canvas' src/lib/IdleOverlay.svelte)",
-      "Bash(grep -n '\\\\$shownEffect\\\\|shownEffect' src/lib/IdleOverlay.svelte)"
+      "Bash(grep -n '\\\\$shownEffect\\\\|shownEffect' src/lib/IdleOverlay.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.28.0\"/\"version\": \"0.28.1\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.28.0\"/version = \"0.28.1\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.28.1\"/\"version\": \"0.28.2\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.28.1\"/version = \"0.28.2\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

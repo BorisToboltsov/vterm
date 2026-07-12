@@ -1562,6 +1562,12 @@ CI на Linux-раннере (или Docker-контейнер локально)
 - [x] **i18n** (EN+RU): `settings.sectionIdle`/`idleEffect`/`idleTimeout`/… + `idle.*`.
   Доменные термины (`CPU`/`RAM`/`NO SIGNAL`) не переводятся.
 - [x] **Доки**: GUIDE/README/INVARIANTS/ROADMAP. Версия 0.28.0 в трёх манифестах.
+- [x] **28.1 Светлые стрелки числовых полей (v0.28.1):** нативные спиннеры `type="number"`
+  в настройках на тёмных темах сливались с фоном. `applyActiveTheme`
+  ([settings.svelte.ts](../src/lib/settings.svelte.ts)) выставляет `document.documentElement
+  .style.colorScheme` = `light` для светлых пресетов, иначе `dark` (тёмные пресеты + `custom`);
+  дефолт `dark` — в [app.css](../src/app.css). Так UA красит все нативные контролы
+  (спиннеры, кареты селектов, скроллбары) под тему. Тесты в `settings.test.ts`.
 
 ---
 

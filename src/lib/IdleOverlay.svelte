@@ -196,8 +196,9 @@
     const ctx = canvas.getContext("2d");
     if (!ctx) return null;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    // Cover only the terminal-panes rect (measured each frame so it tracks panel
-    // resize / window resize / tab changes); fall back to the whole window.
+    // Cover only the target rect (measured each frame so it tracks panel resize /
+    // window resize / tab changes) — the terminal-panes area, or the central
+    // column when no tab is open. Fall back to the whole window only if unset.
     const r = targetEl?.getBoundingClientRect();
     const left = r ? r.left : 0;
     const top = r ? r.top : 0;

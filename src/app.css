@@ -26,6 +26,10 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
+  /* Default the app to dark UA chrome so native controls (number spinners,
+     select carets, scrollbars) render light glyphs. `applyActiveTheme` flips
+     this to `light` for light preset themes. */
+  color-scheme: dark;
   font-family:
     Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   background-color: var(--color-panel);

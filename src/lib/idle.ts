@@ -17,7 +17,7 @@ export const IDLE_EFFECTS: IdleEffectId[] = ["card", "matrix", "parallax", "sign
 export const DEFAULT_IDLE_EFFECT: IdleSetting = "card";
 
 /** Idle timeout bounds and default (seconds). */
-export const DEFAULT_IDLE_TIMEOUT = 180; // 3 minutes
+export const DEFAULT_IDLE_TIMEOUT = 300; // 5 minutes
 export const IDLE_TIMEOUT_MIN = 15;
 export const IDLE_TIMEOUT_MAX = 3600;
 

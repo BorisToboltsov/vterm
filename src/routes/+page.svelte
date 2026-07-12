@@ -213,9 +213,13 @@
   const idleWasConnected = new Set<string>();
   let noSignalSession = $state<string | null>(null);
   // The central terminal-panes area — the screensaver covers only this, not the
-  // sidebar / tab bar / right dock / status bar. Null when no tabs (overlay then
-  // falls back to the whole window for the ambient card).
+  // sidebar / tab bar / right dock / status bar. Null when no tabs; the overlay
+  // then falls back to `mainArea` (the central column) for the ambient card, so
+  // it still never spills onto the sidebar / status bar.
   let terminalArea = $state<HTMLElement>();
+  // The central column (`<main>`), used as the screensaver's fallback target when
+  // no tab is open (so the ambient card stays within the central area).
+  let mainArea = $state<HTMLElement>();
   // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
@@ -1478,7 +1482,7 @@
     bufferText={() => termRefs[tabsState.activeId ?? ""]?.bufferText?.() ?? ""}
     outputTick={idleOutputTick}
     noSignal={noSignalSession !== null}
-    targetEl={terminalArea ?? null}
+    targetEl={terminalArea ?? mainArea ?? null}
     onnosignaldismiss={() => (noSignalSession = null)}
   />
   <TopBar
@@ -1551,7 +1555,7 @@
     {/if}
 
     <!-- Right: tabbed terminals -->
-    <main class="flex min-w-0 flex-1 flex-col bg-panel">
+    <main bind:this={mainArea} class="flex min-w-0 flex-1 flex-col bg-panel">
       <!-- Tab bar always visible so the local-terminal "+" is reachable even
            with no open sessions. -->
       <div

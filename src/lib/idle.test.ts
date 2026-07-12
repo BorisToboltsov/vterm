@@ -23,6 +23,9 @@ describe("isIdleSetting", () => {
 });
 
 describe("clampIdleTimeout", () => {
+  it("defaults to 5 minutes", () => {
+    expect(DEFAULT_IDLE_TIMEOUT).toBe(300);
+  });
   it("keeps in-range whole seconds", () => {
     expect(clampIdleTimeout(180)).toBe(180);
     expect(clampIdleTimeout(20.6)).toBe(21);
