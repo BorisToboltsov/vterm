@@ -5,6 +5,7 @@
   import { renderMarkdown } from "./markdown";
   import guide from "../../docs/GUIDE.md?raw";
   import Icon from "./Icon.svelte";
+  import AppLogo from "./AppLogo.svelte";
   import { t, type MessageKey } from "./i18n";
 
   let {
@@ -126,23 +127,11 @@
 
       <div class="min-h-0 flex-1 overflow-y-auto px-4 py-4 text-sm">
         {#if tab === "help"}
-          <!-- App logo (same mark as the OS icon): a >_ prompt on a rounded square.
-               Uses themed tokens so it matches the active palette in-app. Sits right
-               before the intro slogan. -->
+          <!-- App logo (same mark as the OS icon): two cascading terminal windows
+               with a ›_ prompt. Reflects the active theme's backdrop in-app. Sits
+               right before the intro slogan. -->
           <div class="mb-3 flex items-center gap-3">
-            <svg
-              viewBox="0 0 128 128"
-              width="40"
-              height="40"
-              class="shrink-0"
-              role="img"
-              aria-label={appName}
-              data-testid="app-logo"
-            >
-              <rect x="1" y="1" width="126" height="126" rx="30" fill="var(--color-panel)" stroke="var(--color-edge)" stroke-width="2" />
-              <path d="M38 42 L58 64 L38 86" fill="none" stroke="var(--color-accent)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" />
-              <rect x="64" y="76" width="26" height="8" rx="4" fill="var(--color-accent)" />
-            </svg>
+            <AppLogo size={40} label={appName} />
             <p class="min-w-0 text-xs text-muted">{t("help.intro")}</p>
           </div>
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("help.features")}</h3>

@@ -42,9 +42,25 @@ export interface UiPalette {
 export interface ThemeDef {
   id: string;
   name: string;
-  group: "light" | "modern" | "retro";
+  group: "light" | "modern" | "retro" | "signature";
   terminal: TerminalTheme;
   ui: UiPalette;
+  /**
+   * Signature themes only: a rich CSS `background` gradient used for the **in-app
+   * logo** icon square ([AppLogo.svelte](../AppLogo.svelte)) so the icon re-themes
+   * with the app; it mirrors the static OS bundle icon's look. Classic themes omit
+   * it (the logo falls back to the flat panel colour).
+   */
+  backdrop?: string;
+  /**
+   * Signature themes only: a **subtle** CSS `background` painted as a full-window
+   * layer *on top* of the whole app (pointer-events:none, below modals) via
+   * [ThemeOverlay.svelte](../ThemeOverlay.svelte). Because it sits above the
+   * (opaque, WebGL-rendered) terminal *and* the chrome, both share the same
+   * dimensional tint — no seam, full readability, no renderer/perf cost. Keep it
+   * faint (edge vignette / corner glow / diagonal sheen), never over ~0.3 alpha.
+   */
+  overlay?: string;
 }
 
 // ── Modern schemes ────────────────────────────────────────────────────────────
@@ -623,7 +639,150 @@ const gruvboxLight: ThemeDef = {
   },
 };
 
+// ── Signature schemes (dimensional backdrop, locked palette) ────────────────────
+// These three are vterm's own brand themes: each carries a coordinated palette
+// *and* a `backdrop` gradient that paints the whole app + the in-app logo. Their
+// chrome panels are intentionally translucent (rgba) so the backdrop breathes
+// through; the terminal keeps a solid, readable background. Colours are fixed
+// (no per-theme editing — that stays the "custom" theme's job); only font and
+// spacing remain adjustable. Deep Well is the app default.
+
+const deepWell: ThemeDef = {
+  id: "deep-well",
+  name: "Deep Well",
+  group: "signature",
+  backdrop: "radial-gradient(125% 105% at 50% 40%, #04050a 0%, #0b0f18 60%, #1a2233 100%)",
+  overlay:
+    "radial-gradient(120% 85% at 50% 20%, rgba(125,179,255,0.05), transparent 46%), radial-gradient(150% 130% at 50% 52%, transparent 55%, rgba(0,0,0,0.28))",
+  terminal: {
+    background: "#0b0f18",
+    foreground: "#cdd6e6",
+    cursor: "#7db3ff",
+    selectionBackground: "#24344d",
+    black: "#0b0f18",
+    red: "#f2707a",
+    green: "#5fd39a",
+    yellow: "#e6b866",
+    blue: "#7da7ff",
+    magenta: "#b79cff",
+    cyan: "#67d5e0",
+    white: "#cdd6e6",
+    brightBlack: "#3a465c",
+    brightRed: "#ff8790",
+    brightGreen: "#7fe3b4",
+    brightYellow: "#f4cf8a",
+    brightBlue: "#a9ccff",
+    brightMagenta: "#cdb8ff",
+    brightCyan: "#8fe6ee",
+    brightWhite: "#eef3fb",
+  },
+  ui: {
+    // Opaque, toned to the terminal background (#0b0f18) so terminal + chrome read
+    // as one surface; depth comes from the ThemeOverlay layer, not translucency.
+    panel: "#0d131e",
+    panelAlt: "#0a0f18",
+    edge: "#1e2a3f",
+    accent: "#7db3ff",
+    accentHover: "#a9ccff",
+    danger: "#f2707a",
+    warn: "#e6b866",
+    muted: "#5f6b80",
+    text: "#cdd6e6",
+  },
+};
+
+const aurora: ThemeDef = {
+  id: "aurora",
+  name: "Aurora",
+  group: "signature",
+  backdrop:
+    "radial-gradient(52% 46% at 20% 28%, rgba(52,211,153,0.22), transparent 70%), radial-gradient(56% 52% at 82% 80%, rgba(167,139,250,0.24), transparent 72%), #04060a",
+  overlay:
+    "radial-gradient(46% 42% at 12% 12%, rgba(52,211,153,0.10), transparent 60%), radial-gradient(50% 46% at 90% 92%, rgba(167,139,250,0.12), transparent 62%), radial-gradient(150% 130% at 50% 50%, transparent 58%, rgba(0,0,0,0.26))",
+  terminal: {
+    background: "#080b12",
+    foreground: "#d7e0e8",
+    cursor: "#34d399",
+    selectionBackground: "#38486e",
+    black: "#0c1018",
+    red: "#fb7185",
+    green: "#4ade80",
+    yellow: "#fbbf24",
+    blue: "#818cf8",
+    magenta: "#c084fc",
+    cyan: "#2dd4bf",
+    white: "#d7e0e8",
+    brightBlack: "#3b465f",
+    brightRed: "#ff92a3",
+    brightGreen: "#79f0a0",
+    brightYellow: "#ffd45e",
+    brightBlue: "#a3abff",
+    brightMagenta: "#d9b3ff",
+    brightCyan: "#5fe6d2",
+    brightWhite: "#eef4f6",
+  },
+  ui: {
+    // Opaque, toned to the terminal background (#080b12); depth via ThemeOverlay.
+    panel: "#0a0e16",
+    panelAlt: "#070b12",
+    edge: "#2a3350",
+    accent: "#34d399",
+    accentHover: "#6ee7b7",
+    danger: "#fb7185",
+    warn: "#fbbf24",
+    muted: "#6b7488",
+    text: "#d7e0e8",
+  },
+};
+
+const glass: ThemeDef = {
+  id: "glass",
+  name: "Glass",
+  group: "signature",
+  backdrop:
+    "linear-gradient(118deg, transparent 34%, rgba(255,255,255,0.05) 50%, transparent 66%), linear-gradient(135deg, #151a24 0%, #06070a 100%)",
+  overlay:
+    "linear-gradient(118deg, transparent 40%, rgba(255,255,255,0.06) 50%, transparent 60%), radial-gradient(150% 130% at 50% 50%, transparent 56%, rgba(0,0,0,0.24))",
+  terminal: {
+    background: "#10151d",
+    foreground: "#d4dae2",
+    cursor: "#8ab4d8",
+    selectionBackground: "#283444",
+    black: "#10151d",
+    red: "#dd8b8b",
+    green: "#86c99a",
+    yellow: "#d8c07a",
+    blue: "#86aedd",
+    magenta: "#b49ad0",
+    cyan: "#7fc4cc",
+    white: "#d4dae2",
+    brightBlack: "#3d4756",
+    brightRed: "#e9a6a6",
+    brightGreen: "#a2ddb2",
+    brightYellow: "#e6d29a",
+    brightBlue: "#a6c6e8",
+    brightMagenta: "#ccb4e0",
+    brightCyan: "#9fd8de",
+    brightWhite: "#eaeef3",
+  },
+  ui: {
+    // Opaque, toned to the terminal background (#10151d); depth via ThemeOverlay.
+    panel: "#12171f",
+    panelAlt: "#0e131b",
+    edge: "#283040",
+    accent: "#8ab4d8",
+    accentHover: "#aecce6",
+    danger: "#dd8b8b",
+    warn: "#d8c07a",
+    muted: "#68727f",
+    text: "#d4dae2",
+  },
+};
+
 export const THEMES: ThemeDef[] = [
+  deepWell,
+  aurora,
+  glass,
   catppuccin,
   dracula,
   nord,
@@ -641,11 +800,11 @@ export const THEMES: ThemeDef[] = [
   c64,
 ];
 
-export const DEFAULT_THEME_ID = oneDark.id;
+export const DEFAULT_THEME_ID = deepWell.id;
 
 export function getTheme(id: string): ThemeDef {
   // Unknown ids fall back to the default theme (kept in sync with DEFAULT_THEME_ID).
-  return THEMES.find((t) => t.id === id) ?? oneDark;
+  return THEMES.find((t) => t.id === id) ?? deepWell;
 }
 
 /** Representative colors for a theme preview chip (bg, fg, accent, ok, warn, err). */

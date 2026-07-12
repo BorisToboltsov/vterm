@@ -1487,6 +1487,42 @@ CI на Linux-раннере (или Docker-контейнер локально)
 
 ---
 
+## ✅ Фаза 27 — Новый логотип + фирменные темы (v0.27.0)
+
+Новый логотип приложения — **два каскадных окна терминала с промптом `›_`** на
+переднем (белый), вместо одиночной стрелки-подчёркивания (та слишком перекликалась
+со стоковой иконкой Terminal.app). Плюс три **фирменные темы** (`group: "signature"`)
+с **объёмом**: `Deep Well` (дефолт — глубокий сине-чёрный «колодец»), `Aurora`
+(зелёно-фиолетовая туманность), `Glass` (графит с диагональным бликом). У 15 классических
+схем фон остаётся плоским, у трёх новых объём даёт тонкий слой-оверлей поверх всего окна.
+Цвета фирменных тем зафиксированы (как у любого пресета — редактируется только `custom`);
+шрифт/размер/интервал остаются.
+
+- [x] **Фирменные темы** — `group: "signature"` в [themes.ts](../src/lib/themes.ts); три
+  темы (`deep-well` дефолт, `aurora`, `glass`) с **плотными** (opaque) панелями `ui` в
+  тон терминалу. `DEFAULT_THEME_ID = "deep-well"`.
+- [x] **Объём — оверлеем, не фоном.** Непрозрачный WebGL-терминал загородил бы фон сзади
+  (был бы шов центр/бока), поэтому объём — **слой поверх всего окна**:
+  [ThemeOverlay.svelte](../src/lib/ThemeOverlay.svelte) (поле `ThemeDef.overlay`,
+  `pointer-events:none`, `z-index:30` ниже модалок), смонтирован в
+  [+page.svelte](../src/routes/+page.svelte). Ложится одинаково на chrome и терминал →
+  единая глубина без шва, WebGL/скорость целы. Классическое применение темы
+  (`applyActiveTheme`, `@theme` в app.css, boot в app.html) — плоский `--color-panel`, как
+  раньше. Поле `backdrop` (богатый градиент) — только для логотипа.
+- [x] **Иконка внутри приложения** — [AppLogo.svelte](../src/lib/AppLogo.svelte):
+  новый знак, фон = активный backdrop (icon re-themes вместе с приложением). В
+  [HelpPanel.svelte](../src/lib/HelpPanel.svelte). **Бандл-иконка статична** (Deep Well),
+  перерисована из [icon-source.svg](../src-tauri/icons/icon-source.svg) (`pnpm tauri icon`).
+- [x] **UI** — группа «Фирменные» первой в [AppearanceSettings.svelte](../src/lib/AppearanceSettings.svelte).
+- [x] **i18n** (EN+RU): `settings.themeGroupSignature`. Имена тем — доменные (не переводятся).
+- [x] **Тесты**: [themes.test.ts](../src/lib/themes.test.ts) (signature-группа, наличие
+  `backdrop`+`overlay` у фирменных и отсутствие у классических, дефолт Deep Well),
+  [ThemeOverlay.test.ts](../src/lib/ThemeOverlay.test.ts) (fixed/pointer-events:none слой
+  только для signature, ничего для classic/custom), [AppLogo.test.ts](../src/lib/AppLogo.test.ts).
+- [x] **Доки**: DESIGN/INVARIANTS/GUIDE/README/TESTS/ROADMAP. Версия 0.27.0 в трёх манифестах.
+
+---
+
 ## Заметки по архитектурным решениям
 
 - **`portable-pty` — для локального терминала.** SSH-вкладки используют удалённый

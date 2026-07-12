@@ -12,9 +12,13 @@
   // Theme picker groups (visual swatch chips instead of a plain dropdown). The
   // group label is a message key, resolved reactively in the markup.
   const themeGroups: { labelKey: MessageKey; items: ThemeDef[] }[] = [
-    { labelKey: "settings.themeGroupLight", items: THEMES.filter((th) => th.group === "light") },
+    {
+      labelKey: "settings.themeGroupSignature",
+      items: THEMES.filter((th) => th.group === "signature"),
+    },
     { labelKey: "settings.themeGroupModern", items: THEMES.filter((th) => th.group === "modern") },
     { labelKey: "settings.themeGroupRetro", items: THEMES.filter((th) => th.group === "retro") },
+    { labelKey: "settings.themeGroupLight", items: THEMES.filter((th) => th.group === "light") },
   ];
 
   // Editable swatches for the custom terminal palette.

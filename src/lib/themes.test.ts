@@ -20,6 +20,7 @@ const UI_KEYS: (keyof UiPalette)[] = [
 ];
 
 const isHex = (v: string) => /^#[0-9a-fA-F]{6}$/.test(v);
+const isRgba = (v: string) => /^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(,\s*[\d.]+\s*)?\)$/.test(v);
 
 describe("theme catalogue integrity", () => {
   it("has a unique id per theme", () => {
@@ -28,17 +29,41 @@ describe("theme catalogue integrity", () => {
   });
 
   it.each(THEMES.map((t) => [t.name, t] as const))(
-    "%s has every palette key as a valid hex color",
+    "%s has a valid colour for every palette key",
     (_name, theme) => {
+      // Terminal colours feed xterm.js and must stay plain hex on every theme.
       for (const k of TERMINAL_KEYS) {
         expect(theme.terminal[k], `terminal.${k}`).toSatisfy(isHex);
       }
+      // Signature themes use translucent (rgba) chrome panels so the backdrop
+      // breathes through; classic themes keep flat hex chrome.
+      const uiOk = theme.group === "signature" ? (v: string) => isHex(v) || isRgba(v) : isHex;
       for (const k of UI_KEYS) {
-        expect(theme.ui[k], `ui.${k}`).toSatisfy(isHex);
+        expect(theme.ui[k], `ui.${k}`).toSatisfy(uiOk);
       }
-      expect(["light", "modern", "retro"]).toContain(theme.group);
+      expect(["light", "modern", "retro", "signature"]).toContain(theme.group);
     },
   );
+});
+
+describe("signature themes", () => {
+  const signature = THEMES.filter((t) => t.group === "signature");
+
+  it("ships the three signature themes", () => {
+    expect(signature.map((t) => t.id)).toEqual(["deep-well", "aurora", "glass"]);
+  });
+
+  it("every signature theme carries a logo backdrop + window overlay; no classic theme does", () => {
+    for (const t of THEMES) {
+      if (t.group === "signature") {
+        expect(t.backdrop, `${t.id}.backdrop`).toBeTruthy();
+        expect(t.overlay, `${t.id}.overlay`).toBeTruthy();
+      } else {
+        expect(t.backdrop, `${t.id}.backdrop`).toBeUndefined();
+        expect(t.overlay, `${t.id}.overlay`).toBeUndefined();
+      }
+    }
+  });
 });
 
 describe("light themes", () => {
@@ -57,9 +82,9 @@ describe("themeSwatches", () => {
 });
 
 describe("default theme", () => {
-  it("is One Dark", () => {
-    expect(DEFAULT_THEME_ID).toBe("one-dark");
-    expect(getTheme(DEFAULT_THEME_ID).name).toBe("One Dark");
+  it("is Deep Well", () => {
+    expect(DEFAULT_THEME_ID).toBe("deep-well");
+    expect(getTheme(DEFAULT_THEME_ID).name).toBe("Deep Well");
   });
 });
 

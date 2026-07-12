@@ -325,7 +325,10 @@
       "Bash(sed -i '' 's/\"version\": \"0.25.1\"/\"version\": \"0.26.0\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.25.1\"/version = \"0.26.0\"/' src-tauri/Cargo.toml)",
       "Bash(grep -n \"settings.test\\\\|api.test\\\\|\\\\`settings\\\\`\\\\|\\\\`api\\\\`\\\\|settings\\\\.svelte\\\\|broadcast.test\\\\|connphase\" docs/TESTS.md)",
-      "Bash(grep -n \"обёртк\\\\|host_os\\\\|hostOs\\\\|open_local\\\\|openLocalTerminal\\\\|- \\\\`api\" docs/TESTS.md)"
+      "Bash(grep -n \"обёртк\\\\|host_os\\\\|hostOs\\\\|open_local\\\\|openLocalTerminal\\\\|- \\\\`api\" docs/TESTS.md)",
+      "Bash(grep -n -e theme -e applyUiPalette -e getTheme -e customTheme -e fontFamily -e lineHeight -e '\\\\$effect' -e applyTheme src/lib/settings.svelte.ts)",
+      "Bash(grep -n -e '^## ' -e '^### ' -e -i 'логотип' -e 'иконк' -e 'тема' docs/DESIGN.md)",
+      "Bash(grep -n -e 'import HelpPanel' -e 'import SettingsPanel' -e 'from \"$lib/' -e 'from \"./' src/routes/+page.svelte)"
     ]
   }
 }

@@ -6,13 +6,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>vterm</title>
     <!-- Anti-FOUC: paint a dark background on the very first frame, before app.css
-         (which is injected via JS in dev) or any theme JS runs. The inline script
-         upgrades it to the last-used theme's panel colour from localStorage so the
-         first paint matches the active theme (see settings.svelte.ts CHROME_PANEL_KEY). -->
+         (which is injected via JS in dev) or any theme JS runs. The colour matches
+         the Deep Well default panel. The inline script upgrades it to the last-used
+         theme's panel colour from localStorage so the first paint matches the active
+         theme (see settings.svelte.ts CHROME_PANEL_KEY). Signature-theme depth is a
+         top overlay (ThemeOverlay.svelte), not a first-paint concern. -->
     <style>
       html,
       body {
-        background-color: #282c34;
+        background-color: #0d131e;
       }
     </style>
     <script>

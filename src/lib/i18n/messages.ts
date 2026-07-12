@@ -619,6 +619,7 @@ export const en = {
 
   "settings.sectionAppearance": "Appearance",
   "settings.theme": "Theme",
+  "settings.themeGroupSignature": "Signature",
   "settings.themeGroupLight": "Light",
   "settings.themeGroupModern": "Modern",
   "settings.themeGroupRetro": "Retro",
@@ -1659,6 +1660,7 @@ const ru: Record<MessageKey, string> = {
 
   "settings.sectionAppearance": "Внешний вид",
   "settings.theme": "Тема",
+  "settings.themeGroupSignature": "Фирменные",
   "settings.themeGroupLight": "Светлые",
   "settings.themeGroupModern": "Современные",
   "settings.themeGroupRetro": "Ретро",

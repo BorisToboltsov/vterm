@@ -338,9 +338,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
   hover — с ~500мс задержкой (отменяется, если увести курсор раньше), `focus` —
   мгновенно, а **skip-window** ~300мс показывает подсказку сразу, если другая только
   что закрылась;
-- `themes.ts` — целостность палитр (все ключи — валидный hex, группа
-  light/modern/retro), наличие светлых тем, `themeSwatches`, `getTheme`,
-  `applyUiPalette`;
+- `themes.ts` — целостность палитр (терминал — всегда hex; у фирменных тем `ui`-панели
+  допускают rgba), группа light/modern/retro/**signature**, наличие светлых тем,
+  фирменная тройка `deep-well`/`aurora`/`glass` **с** `backdrop`+`overlay` (у классических
+  их нет), дефолт **Deep Well**, `themeSwatches`, `getTheme`, `applyUiPalette`;
+- `AppLogo.svelte` — `AppLogo.test.ts` (Фаза 27): рендерит логотип с `aria-label`, у
+  фирменной темы фон-квадрат = её `backdrop`-градиент, у классической — `var(--color-panel)`;
+- `ThemeOverlay.svelte` — `ThemeOverlay.test.ts` (Фаза 27): у фирменной темы рендерит
+  полноэкранный `position:fixed; pointer-events:none` слой глубины с градиентом `overlay`;
+  для классической и `custom` — не рендерит ничего;
 - `settings.svelte.ts` — дефолты (в т.ч. `recordIdlePauseSecs: 20` — пауза записи при простое),
   persist в `localStorage`, `activeTerminalTheme`,
   `applyActiveTheme` (Фаза 20.10 — пресет пушит `--color-*` на `documentElement`,

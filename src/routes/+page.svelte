@@ -92,6 +92,7 @@
   import FolderModals from "$lib/FolderModals.svelte";
   import SecretPrompt from "$lib/SecretPrompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
+  import ThemeOverlay from "$lib/ThemeOverlay.svelte";
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
   import TopBar from "$lib/TopBar.svelte";
@@ -1451,6 +1452,9 @@
 <svelte:window onkeydown={onGlobalKey} />
 
 <div class="flex h-screen w-screen flex-col">
+  <!-- Signature-theme depth: a subtle full-window overlay above all content,
+       below modals — unifies terminal + chrome without touching the renderer. -->
+  <ThemeOverlay />
   <TopBar
     title={topTitle}
     subtitle={topSubtitle}
