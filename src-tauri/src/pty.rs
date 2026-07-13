@@ -79,6 +79,16 @@ impl LocalPty {
         }
     }
 
+    /// Inject output bytes into the active recording (no-op if not recording).
+    /// Used to audit git-panel mutations without writing to the live terminal.
+    pub fn record_output(&self, data: &[u8]) {
+        if let Ok(mut g) = self.recorder.lock() {
+            if let Some(r) = g.as_mut() {
+                r.output(data);
+            }
+        }
+    }
+
     /// Inform the kernel (and the child) of a new terminal size.
     pub fn resize(&self, cols: u32, rows: u32) -> AppResult<()> {
         self.master

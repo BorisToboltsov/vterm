@@ -30,6 +30,7 @@
     onOpenFile,
     onOpenLocalFile,
     onOpenGitDiff,
+    onIgnoreGitignore,
     onSftpNavigate,
     getAiContext,
     aiProd = false,
@@ -55,6 +56,8 @@
     onOpenLocalFile?: (path: string) => void;
     /** Open a git-changed file as an editable inline diff (absolute path + HEAD base). */
     onOpenGitDiff?: (absPath: string, gitBase: string) => void;
+    /** Append a pattern to the repo's `.gitignore` (absolute path + pattern). */
+    onIgnoreGitignore?: (gitignorePath: string, pattern: string) => void;
     /** User navigated in the SFTP panel → cd the terminal too (two-way OSC 7). */
     onSftpNavigate?: (path: string) => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
@@ -165,6 +168,7 @@
             {followTerminal}
             {onToggleFollowTerminal}
             onOpenDiff={onOpenGitDiff}
+            onIgnore={onIgnoreGitignore}
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}
           />

@@ -50,13 +50,15 @@ describe("invoke wrappers pass the right command + args", () => {
       cwd: "/repo",
       args: ["status", "--porcelain=v2"],
       timeoutSecs: 30,
+      mirror: false,
     });
-    await api.gitRun("sess1", "/repo", ["fetch"], 120);
+    await api.gitRun("sess1", "/repo", ["commit", "-m", "x"], 120, true);
     expect(invoke).toHaveBeenLastCalledWith("git_run", {
       sessionId: "sess1",
       cwd: "/repo",
-      args: ["fetch"],
+      args: ["commit", "-m", "x"],
       timeoutSecs: 120,
+      mirror: true,
     });
   });
 

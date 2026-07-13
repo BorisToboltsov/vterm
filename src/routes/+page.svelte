@@ -1185,6 +1185,35 @@
     }
   }
 
+  /** Append a pattern to the repo's .gitignore (git panel "Ignore" action). */
+  async function appendGitignore(gitignorePath: string, pattern: string) {
+    const sid = tabsState.activeId;
+    if (!sid) return;
+    const ssh = activeTab?.kind === "ssh";
+    let current = "";
+    try {
+      const f = ssh
+        ? await sftpReadText(sid, gitignorePath, editorMaxBytes())
+        : await readLocalText(gitignorePath, editorMaxBytes());
+      current = f.content;
+    } catch {
+      current = ""; // no .gitignore yet → create it
+    }
+    if (current.split(/\r?\n/).some((l) => l.trim() === pattern)) {
+      notifyInfo(t("git.alreadyIgnored"));
+      return;
+    }
+    const sep = current && !current.endsWith("\n") ? "\n" : "";
+    const next = `${current}${sep}${pattern}\n`;
+    try {
+      if (ssh) await sftpWriteText(sid, gitignorePath, next, "lf", null);
+      else await writeLocalText(gitignorePath, next, "lf", null);
+      notifySuccess(t("git.ignored", { pattern }));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
   /**
    * Open an AI-generated script (17.6) as a scratch editor in the active
    * workspace. On an SSH tab it opens as an sftp doc so the server-side linter
@@ -1989,6 +2018,7 @@
                   if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
                 }}
                 onOpenGitDiff={openGitDiff}
+                onIgnoreGitignore={appendGitignore}
                 onSftpNavigate={cdTerminalTo}
               />
             {/key}

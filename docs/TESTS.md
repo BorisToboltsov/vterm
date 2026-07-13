@@ -212,8 +212,9 @@ pnpm check
   (иначе None → сырое тело). Классификация на фронте — `aiErrorKind`. Сетевой вызов (reqwest) не тестируется.
 - `git.rs` (Фаза 29, git-панель) — `shell_quote` (обёртка в `'…'`, экранирование `'`
   как `'\''`), `ssh_command` (квотинг `cwd` и аргументов; инъекция вида `x; rm -rf /`
-  остаётся одним аргументом). Локальный/SSH-исполнитель (`run_local`/`exec_captured`)
-  и сам `git` не тестируются (внешний процесс/сеть).
+  остаётся одним аргументом), `git_mirror` (аудит-строка `[git] $ … / [git] exit N`,
+  LF→CRLF). Локальный/SSH-исполнитель (`run_local`/`exec_captured`) и сам `git` не
+  тестируются (внешний процесс/сеть).
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты
@@ -651,12 +652,18 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `isUncommittedChangesError` (распознаёт abort «would be overwritten / commit or stash»
   на реальном выводе `git checkout`, не срабатывает на pathspec/not-a-repo — для диалога
   разрешения незакоммиченных изменений); `discardFileArgs` (untracked→`clean -f`,
-  tracked→`checkout HEAD --`), `discardAllArgs`=`reset --hard`; `showFileAtArgs`
-  (`show HEAD:<path>` — база для редактируемого инлайн-diff в редакторе).
+  tracked→`checkout HEAD --`), `discardAllArgs`=`reset --hard`, `cleanArgs`; `showFileAtArgs`
+  (`show HEAD:<path>` — база для редактируемого инлайн-diff в редакторе). Ветко-действия
+  `rebaseArgs`/`setUpstreamArgs`/`compareBranchesArgs`, `branchWebUrl` (`/tree/…`,
+  bitbucket `/branch/…`); stash-превью `stashFilesArgs`/`stashFileDiffArgs`, `stashPushFileArgs`;
+  сеть `isRemoteConnectionError` (обрыв/DNS/auth/host-key) и `parseSyncResult` (up-to-date/
+  диапазон); `parseLog` читает тело (`body`, `-z` NUL-записи).
 - `gitview.test.ts` (Фаза 29) — `fileStatusColor` (буквы статуса → цвет-классы),
-  `relTime` (бакеты now/m/h/d/w/y, клэмп будущих меток).
+  `relTime` (бакеты now/m/h/d/w/y, клэмп будущих меток), `commitTooltip` (заголовок +
+  тело + автор/время/hash; тело опускается, если пустое).
 - `api.test.ts` (Фаза 29) — обёртка `gitRun` передаёт `sessionId`/`cwd`/`args`/
-  `timeoutSecs` в команду `git_run` (в т.ч. дефолт 30с и явный таймаут).
+  `timeoutSecs`/`mirror` в команду `git_run` (дефолт 30с/`mirror:false`; мутация — явный
+  таймаут + `mirror:true`).
 - `ServerFormModal.test.ts` (Фаза 20.5) — валидация обязательных полей формы сервера
   (`api` замокан): submit при пустых `alias`/`host`/`username` подсвечивает все три
   (`aria-invalid`, «This field is required» ×3 + сводка) и **не** зовёт `addServer`;

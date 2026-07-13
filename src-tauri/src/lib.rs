@@ -940,6 +940,9 @@ async fn ai_exec(
 /// building and output parsing are pure frontend logic (`git.ts`); this only
 /// executes and captures. `timed_out` from the SSH path collapses into a
 /// non-zero exit + stderr note so the frontend sees a uniform `GitOutput`.
+/// `mirror` (mutating ops only) audits the command into the active session
+/// recording as `[git] $ …` output — never emitted to the live terminal, so the
+/// GUI stays clean while the recording keeps a complete audit trail.
 #[tauri::command]
 async fn git_run(
     state: State<'_, AppState>,
@@ -947,6 +950,7 @@ async fn git_run(
     cwd: String,
     args: Vec<String>,
     timeout_secs: u64,
+    mirror: bool,
 ) -> AppResult<git::GitOutput> {
     if args.is_empty() {
         return Err(AppError::Message("git: no arguments".into()));
@@ -956,21 +960,32 @@ async fn git_run(
             .exec_captured(&git::ssh_command(&cwd, &args), timeout_secs.max(1))
             .await?;
         let (stderr, exit_code) = if outcome.timed_out {
-            (
-                format!("git timed out after {}s", timeout_secs.max(1)),
-                -1,
-            )
+            (format!("git timed out after {}s", timeout_secs.max(1)), -1)
         } else {
             (outcome.stderr, outcome.exit_code)
         };
+        if mirror {
+            let cmd = format!("git {}", args.join(" "));
+            session.record_output(
+                git::git_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
+            );
+        }
         return Ok(git::GitOutput {
             stdout: outcome.stdout,
             stderr,
             exit_code,
         });
     }
-    if state.local_ptys.lock().unwrap().contains_key(&session_id) {
-        return git::run_local(&cwd, &args, timeout_secs).await;
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        let out = git::run_local(&cwd, &args, timeout_secs).await?;
+        if mirror {
+            let cmd = format!("git {}", args.join(" "));
+            pty.record_output(
+                git::git_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
+            );
+        }
+        return Ok(out);
     }
     Err(AppError::NoSession)
 }

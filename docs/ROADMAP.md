@@ -1625,12 +1625,26 @@ Stash · refresh):
     HEAD-версия тянется `showFileAtArgs("HEAD", path)` и кладётся в `EditorDoc.gitBase`;
     при его наличии EditorTab добавляет merge-расширение (для обычных открытий — без
     изменений). Read-only diff остаётся для файлов **исторических коммитов** в графе.
+    По куску — **только «Откатить к HEAD»** (кастомный `mergeControls`): в диффе
+    «рабочее дерево ↔ HEAD» «Accept» = no-op, поэтому убран; `git add` — во вкладке
+    «Изменения». Иконка-кнопка (`history`), нейтральная → красная на ховере.
 - [x] **Изменения** ([GitChanges.svelte](../src/lib/GitChanges.svelte)) — индекс/
-  рабочее дерево (`status --porcelain=v2 -z`), stage/unstage/discard по файлу и
-  «всё», коммит-бокс (+ «коммит и push»).
+  рабочее дерево (`status --porcelain=v2 -z`), stage/unstage по файлу и «всё»,
+  **мультивыбор чекбоксами** (убрать/добавить выбранные), в заголовке секции —
+  откатить tracked (`restore`), удалить untracked (`clean -f`), stage-all, stash;
+  per-file discard-иконка по типу (откат/удаление); коммит-бокс (+ «коммит и push»).
+  **ПКМ по файлу**: stage/unstage, открыть в редакторе / read-only diff, откатить/
+  удалить, **stash файла** (`stash push -- path`), копировать путь (отн./абс.),
+  **добавить в .gitignore** (`/path` или `*.ext` — дозапись файла через page-callback
+  `appendGitignore`, SSH/локально).
 - [x] **Ветки** ([GitBranches.svelte](../src/lib/GitBranches.svelte)) — локальные/
   удалённые ветки и stash-и: checkout, создать/переименовать/удалить, merge в
-  текущую, stash apply/pop/drop. Тумблер **«выполнять checkout в терминале»** —
+  текущую, stash apply/pop/drop. **Раскрытие stash** по клику — список файлов слоя
+  (`stash show --name-status`) + read-only дифф файла (`git diff 'stash@{N}^1'
+  'stash@{N}' -- file`, т.к. `stash show -p` не берёт pathspec). **ПКМ по ветке**:
+  checkout, merge/**rebase** текущей на эту, создать ветку/тег отсюда, set upstream,
+  rename/delete, **сравнить с текущей** (diff), копировать имя / **веб-ссылку**
+  (`branchWebUrl`, `/tree/…`). Тумблер **«выполнять checkout в терминале»** —
   команда уходит в PTY (аудит в истории), иначе тихий `git_run`.
 - [x] **Дифф** ([GitDiffView.svelte](../src/lib/GitDiffView.svelte)) — парсинг
   унифицированного диффа (`parseDiff`, чистая) с построчной раскраской в `Modal`.
@@ -1648,6 +1662,24 @@ Stash · refresh):
   `git_run`-обёртка в [api.test.ts](../src/lib/api.test.ts), unit-тесты квотинга в
   [git.rs](../src-tauri/src/git.rs). Компоненты — UI-оболочки, исключены из покрытия
   как `RightDock`/`AiChat`/`DiffModal` (логика в покрытых `.ts`).
+- [x] **Тултип коммита** — при наведении на строку графа всплывает сообщение коммита
+  (заголовок + тело + автор/время/hash), `commitTooltip` в [gitview.ts](../src/lib/gitview.ts).
+  Тело добавлено в лог через `git log -z … %b` (NUL-разделённые записи, переносы в теле
+  безопасны); поле `GitCommit.body`.
+- [x] **Статус pull/push + ошибка remote** — под тулбаром полоса «идёт операция»
+  (индетерминированная + спиннер) → итог (`parseSyncResult`: `up-to-date`/диапазон);
+  при недостижимом remote (`isRemoteConnectionError`) — янтарный треугольник на Pull/Push
+  с ошибкой в тултипе. Мутации — таймаут 120с, зависший локальный `git` — `kill_on_drop`.
+- [x] **Аудит git в записи сессии** — мутации (не чтения) пишутся в активную запись как
+  `[git] $ … / [git] exit N` (`git::git_mirror`, пурпурный), **только в запись** (живой
+  терминал чист), через новый флаг `mirror` у `git_run` (`session.record_output` /
+  `LocalPty::record_output`).
+- [x] **Двусторонняя OSC 7** — при включённом «следовать за терминалом» навигация в
+  **SFTP-панели** делает `cd` в терминале (`cdTerminalTo`, только пользовательские
+  переходы `open`/`enterDir`/`goUp` — без петли обратной связи). В пустом состоянии
+  git-панели («нет пути») — кнопка **включить синхронизацию OSC 7**.
+- [x] **Объединённый тулбар** — одна строка: название/ветка · Pull/Push пиктограммами ·
+  Обновить (перечитать локально, без сети) · Fetch (иконка облака, `git fetch`) · follow.
 - [x] **i18n** (EN+RU): ключи `git.*`. Доменные термины (`git`/`Pull`/`Push`/`Fetch`/
   `Stash`) не переводятся.
 - [x] **Доки**: GUIDE/README/INVARIANTS/ROADMAP. Версия 0.29.0 в трёх манифестах.
