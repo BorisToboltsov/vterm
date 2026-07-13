@@ -337,7 +337,14 @@
       "Bash(sed -i '' 's/\"version\": \"0.28.0\"/\"version\": \"0.28.1\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' 's/^version = \"0.28.0\"/version = \"0.28.1\"/' src-tauri/Cargo.toml)",
       "Bash(sed -i '' 's/\"version\": \"0.28.1\"/\"version\": \"0.28.2\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' 's/^version = \"0.28.1\"/version = \"0.28.2\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' 's/^version = \"0.28.1\"/version = \"0.28.2\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.28.2\"/\"version\": \"0.29.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.28.2\"/version = \"0.29.0\"/' src-tauri/Cargo.toml)",
+      "Bash(grep -n \"idle.test\\\\|idlefx.test\\\\|connlost.test\\\\|| \\\\`\\\\|^### \\\\|^## \" docs/TESTS.md)",
+      "Bash(grep -n \"servertools\\\\|metrics.rs\\\\|sync.rs\\\\|- \\\\`\" docs/TESTS.md)",
+      "Bash(grep -rn \"z-\\\\[\\\\|z-50\\\\|z-40\\\\|z-30\\\\|z-\\\\{0,3\\\\}[0-9]\\\\|z-index\\\\|transform\\\\|will-change\" src/routes/+page.svelte src/lib/RightDock.svelte src/lib/IdleOverlay.svelte src/lib/ThemeOverlay.svelte)",
+      "Bash(grep -n \"^import\\\\|^}\\);$\\\\|describe\\(\" src/lib/idle.test.ts)",
+      "Bash(git --version)"
     ]
   }
 }

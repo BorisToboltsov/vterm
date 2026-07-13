@@ -42,6 +42,24 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("forget_ai_key", { endpointId: "e1" });
   });
 
+  it("gitRun (Phase 29) passes session, cwd, args and timeout", async () => {
+    invoke.mockResolvedValue({ stdout: "", stderr: "", exitCode: 0 });
+    await api.gitRun("sess1", "/repo", ["status", "--porcelain=v2"]);
+    expect(invoke).toHaveBeenCalledWith("git_run", {
+      sessionId: "sess1",
+      cwd: "/repo",
+      args: ["status", "--porcelain=v2"],
+      timeoutSecs: 30,
+    });
+    await api.gitRun("sess1", "/repo", ["fetch"], 120);
+    expect(invoke).toHaveBeenLastCalledWith("git_run", {
+      sessionId: "sess1",
+      cwd: "/repo",
+      args: ["fetch"],
+      timeoutSecs: 120,
+    });
+  });
+
   it("addServer / updateServer / deleteServer", async () => {
     const profile = { alias: "a" } as never;
     await api.addServer(profile);

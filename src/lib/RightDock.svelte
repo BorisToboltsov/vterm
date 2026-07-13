@@ -8,6 +8,7 @@
   import SftpPanel from "./SftpPanel.svelte";
   import LocalFilePanel from "./LocalFilePanel.svelte";
   import AiChat from "./AiChat.svelte";
+  import GitPanel from "./GitPanel.svelte";
   import type { RawContext } from "./aicontext";
   import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
@@ -28,6 +29,8 @@
     onToggleFollowTerminal,
     onOpenFile,
     onOpenLocalFile,
+    onOpenGitDiff,
+    onSftpNavigate,
     getAiContext,
     aiProd = false,
     aiNoAi = false,
@@ -50,6 +53,10 @@
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onOpenLocalFile?: (path: string) => void;
+    /** Open a git-changed file as an editable inline diff (absolute path + HEAD base). */
+    onOpenGitDiff?: (absPath: string, gitBase: string) => void;
+    /** User navigated in the SFTP panel → cd the terminal too (two-way OSC 7). */
+    onSftpNavigate?: (path: string) => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
     getAiContext?: () => Promise<RawContext> | RawContext;
     /** The active server is prod-flagged — bars AI auto-execution (17.4). */
@@ -61,6 +68,7 @@
   const COLLAPSED_W = 36;
   const TABS: { id: DockTab; label: string }[] = [
     { id: "files", label: "SFTP" },
+    { id: "git", label: t("git.panelTitle") },
     { id: "ai", label: t("ai.panelTitle") },
   ];
 
@@ -139,6 +147,7 @@
               {followTerminal}
               {onToggleFollowTerminal}
               {onOpenFile}
+              onUserNavigate={onSftpNavigate}
             />
           {:else}
             <LocalFilePanel
@@ -149,6 +158,16 @@
               onOpenFile={onOpenLocalFile}
             />
           {/if}
+        {:else if activeTab === "git"}
+          <GitPanel
+            {sessionId}
+            {terminalCwd}
+            {followTerminal}
+            {onToggleFollowTerminal}
+            onOpenDiff={onOpenGitDiff}
+            prod={aiProd}
+            sessionReady={kind === "ssh" ? sessionReady : true}
+          />
         {:else}
           <AiChat
             getContext={getAiContext}

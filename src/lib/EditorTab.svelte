@@ -2,6 +2,8 @@
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "./actions/tooltip";
   import { EditorState, Compartment, type Extension } from "@codemirror/state";
+  import { unifiedMergeView } from "@codemirror/merge";
+  import { ICONS } from "./icons";
   import {
     EditorView,
     keymap,
@@ -106,6 +108,50 @@
   let view: EditorView | undefined;
   const themeC = new Compartment();
   const lintC = new Compartment();
+
+  // Custom merge-chunk controls for the git inline diff. The buffer IS the
+  // working-tree file (diffed against HEAD), so CodeMirror's "accept" ("keep my
+  // version") is a no-op — we drop it and expose only "revert this hunk to HEAD".
+  // Staging (git add) stays in the Changes tab. Save (Ctrl+S) writes the buffer.
+  function gitMergeControl(type: "accept" | "reject", action: (e: MouseEvent) => void): HTMLElement {
+    if (type === "accept") return document.createElement("span"); // nothing rendered
+    const btn = document.createElement("button");
+    btn.name = "revert";
+    btn.className = "cm-gitMergeBtn cm-gitMergeBtn-revert";
+    const label = t("git.revertHunk");
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+    btn.innerHTML = `<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.history}</svg>`;
+    btn.addEventListener("mousedown", action);
+    return btn;
+  }
+
+  const gitMergeTheme = EditorView.theme({
+    ".cm-chunkButtons .cm-gitMergeBtn": {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: "22px",
+      height: "22px",
+      padding: "0",
+      margin: "0 2px",
+      border: "1px solid transparent",
+      borderRadius: "6px",
+      cursor: "pointer",
+      background: "transparent",
+      transition: "background 120ms ease",
+    },
+    ".cm-chunkButtons .cm-gitMergeBtn-revert": {
+      color: "#9fb0c4",
+      borderColor: "#2b3444",
+      background: "transparent",
+    },
+    ".cm-chunkButtons .cm-gitMergeBtn-revert:hover": {
+      color: "#ef6f74",
+      borderColor: "#7a3336",
+      background: "rgba(210,70,70,0.14)",
+    },
+  });
 
   // Markdown files get a Code ⇄ Preview toggle; they open in preview by default
   // (set once in onMount). `lang.kind` never changes for a mounted editor.
@@ -381,6 +427,15 @@
         highlightSelectionMatches(),
         EditorView.lineWrapping,
         EditorState.readOnly.of(doc.readOnly),
+        // Opened from the git panel → editable inline diff against the HEAD
+        // version (deletions shown struck-through, additions highlighted, with
+        // accept/reject chunk controls). Absent for ordinary file opens.
+        ...(doc.gitBase !== undefined
+          ? [
+              unifiedMergeView({ original: doc.gitBase, mergeControls: gitMergeControl }),
+              gitMergeTheme,
+            ]
+          : []),
         langExt(doc.lang.kind),
         lintC.of(lintExt()),
         themeC.of(editorTheme(activeTerminalTheme())),

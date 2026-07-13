@@ -11,7 +11,7 @@
   // forced via the `noSignal` prop regardless of the idle timer.
   import { untrack } from "svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
-  import { isIdle } from "./idle";
+  import { isIdle, swallowDismiss } from "./idle";
   import { bufferGrid, tokenizeBuffer, type WordToken } from "./idlefx";
   import { fetchMetrics } from "./api";
   import { fmtUptime, memPct } from "./format";
@@ -115,12 +115,18 @@
   }
 
   // Any real user activity re-arms the timer and, if the screensaver is up,
-  // dismisses it — swallowing that first gesture so it never reaches the terminal.
+  // dismisses it. The dismiss gesture is swallowed ONLY when it lands on the
+  // screensaver itself (the canvas covers the terminal region and holds focus),
+  // so it never reaches the terminal beneath. A gesture on other UI — the right
+  // dock (SFTP/AI/git menu), sidebar, modals — dismisses the screensaver but is
+  // let through, so that control still responds to the same click.
   function onUserActivity(e: Event) {
     lastActivity = performance.now();
     if (!active) return;
-    e.preventDefault();
-    e.stopPropagation();
+    if (swallowDismiss(e.target as Node | null, canvas)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     deactivate();
   }
 

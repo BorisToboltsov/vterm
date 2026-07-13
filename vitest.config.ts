@@ -65,6 +65,15 @@ export default defineConfig({
         // AI chat dock — event-stream glue over the broker (Phase 17.2).
         "src/lib/AiChat.svelte",
         "src/lib/RightDock.svelte",
+        // Git panel (Phase 29) — UI shells over git_run + rAF/effects glue. All
+        // pure logic (arg builders, status/log/branch/diff parsers, graph lane
+        // layout, destructive-op classifier, view helpers) lives in git.ts /
+        // gitview.ts (heavily covered). Diff view mirrors DiffModal's exclusion.
+        "src/lib/GitPanel.svelte",
+        "src/lib/GitGraph.svelte",
+        "src/lib/GitChanges.svelte",
+        "src/lib/GitBranches.svelte",
+        "src/lib/GitDiffView.svelte",
         // Add/edit server form — UI shell over the server api + native key picker
         // (extracted from +page.svelte in Phase 18.4.2).
         "src/lib/ServerFormModal.svelte",

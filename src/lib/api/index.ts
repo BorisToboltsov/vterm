@@ -6,3 +6,4 @@ export * from "./session";
 export * from "./files";
 export * from "./recording";
 export * from "./ai";
+export * from "./git";

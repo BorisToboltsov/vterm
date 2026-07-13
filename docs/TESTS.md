@@ -210,6 +210,10 @@ pnpm check
   пустое на неизвестной форме. Ошибки типизированы: 401/403 → `AuthRejected`, сбой соединения →
   маркер `ai-unreachable`; `provider_error_message` достаёт `error.message` из тела Anthropic/OpenAI
   (иначе None → сырое тело). Классификация на фронте — `aiErrorKind`. Сетевой вызов (reqwest) не тестируется.
+- `git.rs` (Фаза 29, git-панель) — `shell_quote` (обёртка в `'…'`, экранирование `'`
+  как `'\''`), `ssh_command` (квотинг `cwd` и аргументов; инъекция вида `x; rm -rf /`
+  остаётся одним аргументом). Локальный/SSH-исполнитель (`run_local`/`exec_captured`)
+  и сам `git` не тестируются (внешний процесс/сеть).
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты
@@ -623,12 +627,36 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `idle.test.ts` (Фаза 28, чистая логика заставки простоя) — `isIdleSetting`/
   `clampIdleTimeout` (валидация настроек, клэмп к [15…3600] c) и детект простоя
   `isIdle`/`msUntilIdle` (порог по «нет активности», обратный отсчёт без отрицательных).
+  `swallowDismiss` (Фаза 29-фикс): жест-дисмисс глотается только если цель — canvas
+  заставки/его потомок; клик по доку (git-меню и пр.) и вырожденные входы (null/undefined) —
+  `false`, чтобы клик дошёл до контрола.
 - `idlefx.test.ts` (Фаза 28) — `bufferGrid` (буфер→сетка `rows×cols`: паддинг пробелами,
   верх-выравнивание при нехватке строк, обрезка, табы, нулевой размер), `classifyToken`
   (keyword/ok/number/plain) и `tokenizeBuffer` (дедуп, отсев 1-символьного шума, обрезка
   краевой пунктуации, перенос семантического класса).
 - `connlost.test.ts` (Фаза 28) — `classifyClose`/`showNoSignal`: NO SIGNAL только при
   неожиданном обрыве подключённой сессии (не ручное закрытие, не провал коннекта).
+- `git.test.ts` (Фаза 29, чистая логика git-панели) — билдеры аргументов (status/log/
+  branch/stage/commit/checkout/push/pull/stash/diff), парсеры `parseStatus`
+  (`--porcelain=v2 -z`: заголовки ветки, ahead/behind, initial/detached, обычные/
+  переименованные/untracked, `stagedFiles`/`unstagedFiles`), `parseLog` (поля/родители/
+  декорации), `parseBranches` (локальные vs удалённые, current, отброс `origin/HEAD`),
+  `parseStashes`, `parseDiff` (типы строк), `parseCommitFiles` (rename-строки),
+  `isDestructive` (force-push/`-D`/`--hard`/discard/merge/stash drop-pop), `buildGraph`
+  (линейная история в одну дорожку, merge → два `out`-сегмента + вторая дорожка,
+  конвергенция → `in`-сегмент), `railColor` (цикл/wrap). Билдеры действий над коммитом
+  (checkout/reset soft-mixed-hard/cherry-pick/revert/tag/diff-vs-working/remote-url) и
+  `commitWebUrl` (ssh-scp/https/ssh → веб-ссылка, bitbucket → `/commits/`, null для
+  локального remote); `parseLog` помечает HEAD (`head`-флаг, `HEAD` вычищается из refs);
+  `isUncommittedChangesError` (распознаёт abort «would be overwritten / commit or stash»
+  на реальном выводе `git checkout`, не срабатывает на pathspec/not-a-repo — для диалога
+  разрешения незакоммиченных изменений); `discardFileArgs` (untracked→`clean -f`,
+  tracked→`checkout HEAD --`), `discardAllArgs`=`reset --hard`; `showFileAtArgs`
+  (`show HEAD:<path>` — база для редактируемого инлайн-diff в редакторе).
+- `gitview.test.ts` (Фаза 29) — `fileStatusColor` (буквы статуса → цвет-классы),
+  `relTime` (бакеты now/m/h/d/w/y, клэмп будущих меток).
+- `api.test.ts` (Фаза 29) — обёртка `gitRun` передаёт `sessionId`/`cwd`/`args`/
+  `timeoutSecs` в команду `git_run` (в т.ч. дефолт 30с и явный таймаут).
 - `ServerFormModal.test.ts` (Фаза 20.5) — валидация обязательных полей формы сервера
   (`api` замокан): submit при пустых `alias`/`host`/`username` подсвечивает все три
   (`aria-invalid`, «This field is required» ×3 + сводка) и **не** зовёт `addServer`;

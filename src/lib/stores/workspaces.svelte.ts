@@ -40,13 +40,20 @@ export interface EditorDoc {
   sudoPassword: string;
   /** 1-based line to scroll to on open (e.g. from a grep hit), or null. */
   gotoLine: number | null;
+  /**
+   * Git HEAD version of the file, set when opened from the git panel. Its
+   * presence turns the editor into an **editable inline diff** (CodeMirror
+   * `unifiedMergeView`) against this base — undefined for ordinary file opens.
+   */
+  gitBase?: string;
 }
 
-/** Options passed when opening an editor (sudo / line jump). */
+/** Options passed when opening an editor (sudo / line jump / git diff base). */
 export interface OpenEditorOpts {
   sudo?: boolean;
   sudoPassword?: string;
   gotoLine?: number;
+  gitBase?: string;
 }
 
 export interface Workspace {
@@ -146,6 +153,7 @@ export function addEditor(
     sudo: opts.sudo ?? false,
     sudoPassword: opts.sudoPassword ?? "",
     gotoLine: opts.gotoLine ?? null,
+    gitBase: opts.gitBase,
   };
   const ws = ensure(sessionId);
   patch(sessionId, { editors: [...ws.editors, doc], active: id });

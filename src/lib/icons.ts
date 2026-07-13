@@ -152,6 +152,15 @@ export const ICONS = {
     '<path d="M6 7c-1-2.5.8-4.2 1.8-3.2M18 7c1-2.5-.8-4.2-1.8-3.2"/><circle cx="12" cy="13" r="7"/><path d="M9.5 12h.01M14.5 12h.01"/><path d="M9.5 16c1.6 1.3 3.4 1.3 5 0"/>',
   osUnknown:
     '<circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.4 2.4 0 0 1 4.6.9c0 1.6-2.2 1.9-2.2 3.4"/><path d="M12 17h.01"/>',
+  // Git panel (Phase 29): branch, single commit on a line, and a merge.
+  gitBranch:
+    '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-6 2-6 5.5"/>',
+  gitCommit:
+    '<circle cx="12" cy="12" r="3.5"/><path d="M3 12h5.5M15.5 12H21"/>',
+  gitMerge:
+    '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="14" r="2.5"/><path d="M6 8.5v7M6 9c0 5 3.5 5 9.5 5"/>',
+  stash:
+    '<path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

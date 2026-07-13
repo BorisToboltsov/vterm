@@ -59,6 +59,9 @@
 - 🔐 **Секреты в системном keychain** (macOS Keychain / Windows Credential Manager /
   Linux Secret Service), профили в JSON, проверка отпечатка хоста.
 - 📁 **SFTP-менеджер**: обзор, навигация, upload/download, drag-and-drop, прогресс.
+- 🌿 **Графический git** по текущему пути терминала (SSH и локально): граф коммитов,
+  индекс/коммит, ветки (checkout/create/merge/rename/delete), stash, Pull/Push/Fetch,
+  диффы. Деструктивные операции на прод-серверах — с подтверждением.
 - 📝 **Редактор конфигов** (CodeMirror, 50+ языков): правка файлов на сервере и
   локально, diff перед сохранением, линт (локальный и серверный — вкл. проверку
   конфигов демонов `sshd`/`sudoers`/`haproxy`/BIND/systemd их родными командами и

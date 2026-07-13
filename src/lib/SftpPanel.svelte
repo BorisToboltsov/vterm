@@ -51,6 +51,7 @@
     followTerminal = false,
     onToggleFollowTerminal,
     onOpenFile,
+    onUserNavigate,
   }: {
     sessionId: string;
     /** Panel width in px (controlled by the parent's resize handle). */
@@ -70,7 +71,17 @@
     onToggleFollowTerminal?: () => void;
     /** Open a file in the in-app editor (optionally jumping to a line, e.g. grep). */
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
+    /**
+     * The user navigated to a folder in the panel (not via following the terminal).
+     * With follow-terminal on this cds the terminal too — two-way OSC 7 sync.
+     */
+    onUserNavigate?: (path: string) => void;
   } = $props();
+
+  /** Mirror a user-initiated folder change into the terminal when following. */
+  function syncTerminalCwd(path: string) {
+    if (followTerminal) onUserNavigate?.(path);
+  }
 
   let cwd = $state("");
   let entries = $state<FileEntry[]>([]);
@@ -223,13 +234,16 @@
   function open(entry: FileEntry) {
     // Any file can be opened in the editor (binary/oversize files are rejected by
     // the backend read with a toast); directories navigate.
-    if (entry.isDir) load(entry.path);
-    else onOpenFile?.(entry.path, entry.name);
+    if (entry.isDir) {
+      load(entry.path);
+      syncTerminalCwd(entry.path);
+    } else onOpenFile?.(entry.path, entry.name);
   }
 
   /** Enter a folder from the keyboard, keeping focus on the list for arrow keys. */
   async function enterDir(entry: FileEntry) {
     await load(entry.path);
+    syncTerminalCwd(entry.path);
     await tick();
     cursor = rowCount ? 0 : -1;
     listEl?.focus();
@@ -243,6 +257,7 @@
     const fromPath = cwd;
     const parent = parentDir(cwd);
     await load(parent);
+    syncTerminalCwd(parent);
     await tick();
     const idx = shownEntries.findIndex((e) => e.path === fromPath);
     cursor = idx >= 0 ? (hasParent ? idx + 1 : idx) : rowCount ? 0 : -1;

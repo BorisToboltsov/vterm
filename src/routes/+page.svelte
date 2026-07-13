@@ -1088,7 +1088,7 @@
   async function openFileInEditor(
     path: string,
     name: string,
-    opts: { gotoLine?: number; sudo?: boolean; sudoPassword?: string } = {},
+    opts: { gotoLine?: number; sudo?: boolean; sudoPassword?: string; gitBase?: string } = {},
   ) {
     const sid = tabsState.activeId;
     if (!sid) return;
@@ -1131,6 +1131,7 @@
       gotoLine: opts.gotoLine,
       sudo: opts.sudo,
       sudoPassword: opts.sudoPassword,
+      gitBase: opts.gitBase,
     });
     fillEditor(sid, id, file);
   }
@@ -1153,7 +1154,7 @@
   }
 
   /** Open a LOCAL file in a given workspace's editor (from "Open with vterm"). */
-  async function openLocalFileInEditor(sid: string, path: string) {
+  async function openLocalFileInEditor(sid: string, path: string, opts: { gitBase?: string } = {}) {
     const name = path.split(/[\\/]/).pop() ?? path;
     const existing = findEditorByPath(sid, path);
     if (existing) {
@@ -1167,8 +1168,21 @@
       notifyError(String(e));
       return;
     }
-    const id = addEditor(sid, path, name, editorLangOrPlain(path), "local");
+    const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
+      gitBase: opts.gitBase,
+    });
     fillEditor(sid, id, file);
+  }
+
+  /** Open a git-changed file as an editable inline diff (from the git panel). */
+  function openGitDiff(absPath: string, gitBase: string) {
+    const sid = tabsState.activeId;
+    if (!sid) return;
+    if (activeTab?.kind === "ssh") {
+      void openFileInEditor(absPath, absPath.split("/").pop() ?? absPath, { gitBase });
+    } else {
+      void openLocalFileInEditor(sid, absPath, { gitBase });
+    }
   }
 
   /**
@@ -1248,6 +1262,19 @@
     writeToTerminal(id, new TextEncoder().encode(OSC7_SETUP + "\n")).catch(() => {});
     shellIntegrated[id] = true;
     followTerminal[id] = true;
+  }
+
+  /**
+   * Two-way OSC 7 sync: when the user navigates in the SFTP panel (follow-terminal
+   * on), cd the terminal to the same folder. Only fires on user navigation (not on
+   * the panel following the terminal), so there's no feedback loop; a no-op when the
+   * terminal is already there.
+   */
+  function cdTerminalTo(path: string) {
+    const id = tabsState.activeId;
+    if (!id || terminalCwd[id] === path) return;
+    const quoted = `'${path.replace(/'/g, "'\\''")}'`;
+    void writeToTerminal(id, new TextEncoder().encode(`cd ${quoted}\n`));
   }
 
   /** Type an install command into the active terminal (user reviews + runs it). */
@@ -1961,6 +1988,8 @@
                 onOpenLocalFile={(path) => {
                   if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
                 }}
+                onOpenGitDiff={openGitDiff}
+                onSftpNavigate={cdTerminalTo}
               />
             {/key}
           {/if}

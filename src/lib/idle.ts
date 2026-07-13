@@ -45,3 +45,16 @@ export function isIdle(lastActivityMs: number, nowMs: number, timeoutSec: number
 export function msUntilIdle(lastActivityMs: number, nowMs: number, timeoutSec: number): number {
   return Math.max(0, lastActivityMs + timeoutSec * 1000 - nowMs);
 }
+
+/**
+ * Whether the dismiss gesture should be *swallowed* (kept from reaching whatever
+ * is underneath). The screensaver canvas covers only the terminal region and
+ * holds keyboard focus, so a gesture on it (or its descendants) targets the
+ * terminal and must be eaten; a gesture elsewhere — the right dock (SFTP/AI/git
+ * context menu), sidebar, modals — dismisses the screensaver but is let through
+ * so that control still responds to the same click. Pure DOM predicate so the
+ * decision is unit-testable without the canvas/rAF machinery.
+ */
+export function swallowDismiss(target: Node | null, canvas: Element | null | undefined): boolean {
+  return !!target && !!canvas && (target === canvas || canvas.contains(target));
+}

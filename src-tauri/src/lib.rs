@@ -2,6 +2,7 @@ mod ai;
 mod backup;
 mod error;
 mod folders;
+mod git;
 mod localfile;
 mod metrics;
 mod model;
@@ -933,6 +934,47 @@ async fn ai_exec(
     })
 }
 
+/// Run one `git` command in `cwd` for the Git panel (Phase 29). Dispatches by
+/// session kind exactly like [`read_shell_history`]: SSH tabs execute remotely
+/// on a dedicated exec channel, local shell tabs spawn `git` locally. Argument
+/// building and output parsing are pure frontend logic (`git.ts`); this only
+/// executes and captures. `timed_out` from the SSH path collapses into a
+/// non-zero exit + stderr note so the frontend sees a uniform `GitOutput`.
+#[tauri::command]
+async fn git_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    cwd: String,
+    args: Vec<String>,
+    timeout_secs: u64,
+) -> AppResult<git::GitOutput> {
+    if args.is_empty() {
+        return Err(AppError::Message("git: no arguments".into()));
+    }
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        let outcome = session
+            .exec_captured(&git::ssh_command(&cwd, &args), timeout_secs.max(1))
+            .await?;
+        let (stderr, exit_code) = if outcome.timed_out {
+            (
+                format!("git timed out after {}s", timeout_secs.max(1)),
+                -1,
+            )
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        return Ok(git::GitOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
+    }
+    if state.local_ptys.lock().unwrap().contains_key(&session_id) {
+        return git::run_local(&cwd, &args, timeout_secs).await;
+    }
+    Err(AppError::NoSession)
+}
+
 /// List stored recordings (newest first), reading metadata from each header.
 #[tauri::command]
 fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
@@ -1801,6 +1843,7 @@ pub fn run() {
             ai::cancel_ai_chat,
             ai::ai_models,
             ai_exec,
+            git_run,
             set_ai_key,
             forget_ai_key
         ])

@@ -8,6 +8,7 @@ import {
   isIdle,
   isIdleSetting,
   msUntilIdle,
+  swallowDismiss,
 } from "./idle";
 
 describe("isIdleSetting", () => {
@@ -38,6 +39,25 @@ describe("clampIdleTimeout", () => {
     expect(clampIdleTimeout("x")).toBe(DEFAULT_IDLE_TIMEOUT);
     expect(clampIdleTimeout(NaN)).toBe(DEFAULT_IDLE_TIMEOUT);
     expect(clampIdleTimeout(undefined)).toBe(DEFAULT_IDLE_TIMEOUT);
+  });
+});
+
+describe("swallowDismiss", () => {
+  it("swallows only gestures on the screensaver canvas, lets dock/menu clicks through", () => {
+    const canvas = document.createElement("canvas");
+    const child = document.createElement("div");
+    canvas.appendChild(child);
+    const dockButton = document.createElement("button"); // e.g. a git menu item
+
+    // On the canvas (or its descendants) → swallow (protects the terminal).
+    expect(swallowDismiss(canvas, canvas)).toBe(true);
+    expect(swallowDismiss(child, canvas)).toBe(true);
+    // Elsewhere (the right dock / context menu) → let through so it still clicks.
+    expect(swallowDismiss(dockButton, canvas)).toBe(false);
+    // Degenerate inputs.
+    expect(swallowDismiss(null, canvas)).toBe(false);
+    expect(swallowDismiss(dockButton, null)).toBe(false);
+    expect(swallowDismiss(dockButton, undefined)).toBe(false);
   });
 });
 
