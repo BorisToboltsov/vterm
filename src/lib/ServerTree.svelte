@@ -20,6 +20,9 @@
   import { resolveServerIcon, resolveServerColorClass } from "./servericons";
   import { fade } from "svelte/transition";
   import EmptyState from "./EmptyState.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { OpenMenu } from "./ctxmenu";
+  import { writeClipboard } from "./clipboard";
   import { t } from "./i18n";
 
   let {
@@ -97,6 +100,78 @@
     collapsedFolders = collapsedFolders.includes(path)
       ? collapsedFolders.filter((p) => p !== path)
       : [...collapsedFolders, path];
+  }
+
+  // ── Right-click menus ───────────────────────────────────────────────────────
+  // Surface the same actions the hover buttons expose. Right-clicking a row
+  // selects it first, so keyboard focus follows the menu target.
+  let ctxMenu = $state<OpenMenu | null>(null);
+
+  function openServerMenu(e: MouseEvent, server: ServerProfile) {
+    e.preventDefault();
+    onSelect(server.id);
+    ctxMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        {
+          icon: "plug",
+          label: t("common.connect"),
+          onSelect: () => {
+            onSelect(server.id);
+            onConnect();
+          },
+        },
+        { icon: "pencil", label: t("tree.editServer"), onSelect: () => onEditServer(server) },
+        { icon: "copy", label: t("tree.duplicateServer"), onSelect: () => onDuplicateServer(server) },
+        { kind: "separator" },
+        {
+          icon: "copy",
+          label: t("ctx.copyHost"),
+          onSelect: () => void writeClipboard(`${server.username}@${server.host}`),
+        },
+        {
+          icon: "copy",
+          label: t("ctx.copyName"),
+          onSelect: () => void writeClipboard(server.alias),
+        },
+        { kind: "separator" },
+        {
+          icon: "trash",
+          danger: true,
+          label: t("tree.deleteServer"),
+          onSelect: () => onDeleteServer(server),
+        },
+      ],
+    };
+  }
+
+  function openFolderMenu(e: MouseEvent, path: string) {
+    e.preventDefault();
+    onSelectFolder(path);
+    ctxMenu = {
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { icon: "folderPlus", label: t("tree.newSubfolder"), onSelect: () => onNewFolder(path) },
+        {
+          icon: "server",
+          label: t("ctx.addServerHere"),
+          onSelect: () => {
+            onSelectFolder(path);
+            onAddServer();
+          },
+        },
+        { icon: "pencil", label: t("tree.renameFolder"), onSelect: () => onRenameFolder(path) },
+        { kind: "separator" },
+        {
+          icon: "trash",
+          danger: true,
+          label: t("tree.deleteFolder"),
+          onSelect: () => onDeleteFolder(path),
+        },
+      ],
+    };
   }
 
   // ── Keyboard navigation (roving frame-cursor at the tree level) ────────────
@@ -323,6 +398,7 @@
             tabindex="-1"
             style="padding-left: {row.depth * 16}px"
             onpointerdown={(e) => folderPointerDown(e, row.path)}
+            oncontextmenu={(e) => openFolderMenu(e, row.path)}
             onclick={() => {
               onSelectFolder(row.path);
               listEl?.focus();
@@ -408,6 +484,7 @@
               ? 'opacity-50'
               : ''}"
             onpointerdown={(e) => serverPointerDown(e, row.server.id)}
+            oncontextmenu={(e) => openServerMenu(e, row.server)}
             onclick={() => {
               onSelect(row.server.id);
               listEl?.focus();
@@ -523,6 +600,8 @@
     </div>
   {/if}
 </aside>
+
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
 
 <!-- Drag ghosts (pointer-events-none so elementFromPoint still sees the target). -->
 {#if draggingServer}

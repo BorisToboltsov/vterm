@@ -74,6 +74,16 @@ export default defineConfig({
         "src/lib/GitChanges.svelte",
         "src/lib/GitBranches.svelte",
         "src/lib/GitDiffView.svelte",
+        // Docker panel (Phase 35) — UI shells over container_run + polling/effects
+        // glue. All pure logic (arg builders, ps/images/networks/volumes/stats
+        // parsers, compose grouping, availability classifier, destructive-op
+        // classifier, view helpers) lives in docker.ts (heavily covered). The text
+        // modal mirrors GitDiffView's exclusion.
+        "src/lib/DockerPanel.svelte",
+        "src/lib/DockerContainers.svelte",
+        "src/lib/DockerImages.svelte",
+        "src/lib/DockerNetworks.svelte",
+        "src/lib/DockerTextModal.svelte",
         // Add/edit server form — UI shell over the server api + native key picker
         // (extracted from +page.svelte in Phase 18.4.2).
         "src/lib/ServerFormModal.svelte",
@@ -93,6 +103,25 @@ export default defineConfig({
         "src/lib/IdleSettings.svelte",
         "src/lib/SnippetsSettings.svelte",
         "src/lib/BackupSettings.svelte",
+        // Utilities panel + tools (Phase 33) — UI shells over pure .ts logic that
+        // is heavily covered: codec.ts, cidr.ts, timeconv.ts, cron.ts, pwgen.ts,
+        // jwt.ts, knownhosts.ts, utilities.ts. The .svelte files
+        // are forms/tables with no logic of their own (same rationale as above).
+        "src/lib/UtilitiesPanel.svelte",
+        "src/lib/UtilKeys.svelte",
+        "src/lib/UtilCodec.svelte",
+        "src/lib/UtilCidr.svelte",
+        "src/lib/UtilTimestamp.svelte",
+        "src/lib/UtilCron.svelte",
+        "src/lib/UtilPassword.svelte",
+        "src/lib/UtilJwt.svelte",
+        "src/lib/UtilKnownHosts.svelte",
+        // Network tools (Phase 34) — UI shells over pure .ts (tls/http) + the
+        // shared probe runner.
+        "src/lib/UtilProbeRunner.svelte",
+        "src/lib/UtilTls.svelte",
+        "src/lib/UtilHttp.svelte",
+        "src/lib/CopyButton.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

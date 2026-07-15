@@ -27,6 +27,8 @@
   import Icon from "./Icon.svelte";
   import Skeleton from "./Skeleton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { t } from "./i18n";
 
@@ -374,6 +376,80 @@
     if (!paths.length) return;
     await writeClipboard(paths.join("\n"));
     notifySuccess(t("sftp.pathCopied", { count: paths.length }));
+  }
+
+  // ── Right-click menus ───────────────────────────────────────────────────────
+  let ctxMenu = $state<OpenMenu | null>(null);
+
+  function openRowMenu(e: MouseEvent, entry: FileEntry) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selection.selected.has(entry.path)) {
+      selection = { selected: new Set([entry.path]), anchor: entry.path };
+      cursor = (hasParent ? 1 : 0) + shownEntries.findIndex((x) => x.path === entry.path);
+    }
+    const sel = selectedEntries();
+    const multi = sel.length > 1;
+    const items: MenuItem[] = [];
+    if (!multi) {
+      items.push({
+        icon: entry.isDir ? "folder" : "file",
+        label: t("ctx.open"),
+        onSelect: () => (entry.isDir ? enterDir(entry) : open(entry)),
+      });
+      items.push({ kind: "separator" });
+      items.push({ icon: "pencil", label: t("ctx.rename"), onSelect: () => startRename(entry) });
+    }
+    items.push({ icon: "arrowsUpDown", label: t("ctx.cut"), onSelect: () => cutOrCopy("cut") });
+    items.push({ icon: "copy", label: t("ctx.copy"), onSelect: () => cutOrCopy("copy") });
+    if (clipboard) {
+      items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
+    }
+    items.push({ icon: "copy", label: t("ctx.copyPath"), onSelect: () => copyPaths() });
+    if (!multi) {
+      items.push({
+        icon: "copy",
+        label: t("ctx.copyName"),
+        onSelect: () => void writeClipboard(entry.name),
+      });
+    }
+    items.push({ kind: "separator" });
+    items.push({
+      icon: "trash",
+      danger: true,
+      label: multi ? t("ctx.deleteN", { count: sel.length }) : t("ctx.delete"),
+      onSelect: () => (deleteTargets = sel),
+    });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  function openBackgroundMenu(e: MouseEvent) {
+    if ((e.target as HTMLElement).closest('[role="treeitem"]')) return;
+    e.preventDefault();
+    const items: MenuItem[] = [
+      {
+        icon: "folderPlus",
+        label: t("ctx.newFolder"),
+        onSelect: () => {
+          mkdirName = "";
+          showMkdir = true;
+        },
+      },
+      {
+        icon: "filePlus",
+        label: t("ctx.newFile"),
+        onSelect: () => {
+          mkfileName = "";
+          showMkfile = true;
+        },
+      },
+    ];
+    if (clipboard) {
+      items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
+    }
+    items.push({ kind: "separator" });
+    items.push({ icon: "refresh", label: t("ctx.refresh"), onSelect: () => refresh() });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   async function paste() {
@@ -733,6 +809,7 @@
         onpointercancel={listPointerUp}
         onkeydown={onListKeydown}
         onclick={onBackgroundClick}
+        oncontextmenu={openBackgroundMenu}
         onfocus={() => {
           if (cursor < 0 && shownEntries.length) cursor = 0;
         }}
@@ -781,6 +858,7 @@
                     data-drop={entry.isDir ? entry.path : undefined}
                     onpointerdown={(e) => startMove(e, entry)}
                     onclick={(e) => rowClick(e, entry)}
+                    oncontextmenu={(e) => openRowMenu(e, entry)}
                     ondblclick={() => open(entry)}
                     role="treeitem"
                     aria-selected={selection.selected.has(entry.path)}
@@ -884,3 +962,5 @@
     </span>
   </div>
 {/if}
+
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />

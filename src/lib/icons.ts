@@ -96,6 +96,12 @@ export const ICONS = {
     '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/>',
   // Top process — activity pulse line.
   activity: '<path d="M3 12h4l3 8 4-16 3 8h4"/>',
+  // TCP port probe — a radar sweep.
+  radar:
+    '<path d="M19.07 4.93A10 10 0 1 0 22 12"/><path d="M12 12l7-5"/><path d="M12 12a4 4 0 1 0 4 4"/><circle cx="12" cy="12" r="1"/>',
+  // External IP — wireless arcs radiating from a point.
+  wifi:
+    '<path d="M5 12.55a11 11 0 0 1 14 0"/><path d="M8.5 16.1a6 6 0 0 1 7 0"/><path d="M12 20h.01"/>',
   // CPU temperature — thermometer.
   thermometer: '<path d="M10 13V5a2 2 0 1 1 4 0v8a4 4 0 1 1-4 0z"/><path d="M12 13.5V8"/>',
   // Network connections — a plug/link.
@@ -161,6 +167,13 @@ export const ICONS = {
     '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="14" r="2.5"/><path d="M6 8.5v7M6 9c0 5 3.5 5 9.5 5"/>',
   stash:
     '<path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4"/>',
+  // A key (Lucide "key") — the SSH-key generator utility and its settings section.
+  key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
+  // Hash/checksum utility — the "#" glyph (four crossing strokes).
+  hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
+  // A wrench (Feather "tool") — the "Utilities" settings group and panel.
+  wrench:
+    '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
 } as const;
 
 export type IconName = keyof typeof ICONS;

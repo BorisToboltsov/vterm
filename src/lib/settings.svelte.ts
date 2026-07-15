@@ -13,6 +13,7 @@ import {
 import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locales";
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
+import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 import {
   clampIdleTimeout,
@@ -143,6 +144,8 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
+  /** Show a right-click menu over the terminal (off = right-click does nothing). */
+  rightClickMenu: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
   /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
@@ -186,6 +189,12 @@ export interface Settings {
   // after how many seconds. "off" disables it. See idle.ts.
   idleEffect: IdleSetting;
   idleTimeoutSec: number;
+  // Docker panel (Phase 35) — how often the live view (list + logs + stats)
+  // re-polls the daemon while the panel is open, in seconds. See docker.ts.
+  dockerRefreshSec: number;
+  // Docker registry credentials (Phase 36) — non-secret half (url + username);
+  // the password lives only in the OS keychain, keyed by url. See docker.ts.
+  dockerRegistries: DockerRegistry[];
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
@@ -249,6 +258,7 @@ const DEFAULTS: Settings = {
   bell: "none",
   copyOnSelect: false,
   middleClickPaste: false,
+  rightClickMenu: true,
   historySearch: true,
   windowsShell: "cmd",
   localShellPath: "",
@@ -304,7 +314,15 @@ const DEFAULTS: Settings = {
   ai: defaultAiSettings(),
   idleEffect: DEFAULT_IDLE_EFFECT,
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
+  dockerRefreshSec: 3,
+  dockerRegistries: [],
 };
+
+/** Clamp the Docker refresh interval to 1…30 s (polling, not streaming). */
+export function clampDockerRefresh(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dockerRefreshSec;
+  return Math.max(1, Math.min(30, n));
+}
 
 /** Clamp the editor open-size setting to a sane positive range (1…limit MB). */
 export function clampMaxOpenMb(v: unknown): number {
@@ -400,6 +418,8 @@ function load(): Settings {
       ai: sanitizeAiSettings(raw.ai),
       idleEffect: isIdleSetting(raw.idleEffect) ? raw.idleEffect : DEFAULTS.idleEffect,
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
+      dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
+      dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
     };
   } catch {
     return {
@@ -414,6 +434,7 @@ function load(): Settings {
       snippets: defaultSnippets(),
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
+      dockerRegistries: [],
     };
   }
 }
@@ -440,6 +461,7 @@ export function resetSettings(): void {
     editor: { ...DEFAULTS.editor },
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
+    dockerRegistries: [],
   });
 }
 
@@ -463,6 +485,7 @@ export function applyImportedSettings(raw: unknown): void {
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
     ai: defaultAiSettings(),
+    dockerRegistries: [],
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -476,6 +499,7 @@ export function applyImportedSettings(raw: unknown): void {
     "snippets",
     "sftp",
     "ai",
+    "dockerRegistries",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -487,6 +511,8 @@ export function applyImportedSettings(raw: unknown): void {
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
+  next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
+  next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
   }

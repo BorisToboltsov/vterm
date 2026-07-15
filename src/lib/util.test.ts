@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { debounce, filterHiddenFiles, isHidden, lineDiffStat, matchesQuery } from "./util";
+import {
+  debounce,
+  filterHiddenFiles,
+  isHidden,
+  lineDiffStat,
+  matchesQuery,
+  suppressContextMenu,
+} from "./util";
 
 describe("lineDiffStat", () => {
   it("is 0/0 for identical text", () => {
@@ -15,6 +22,14 @@ describe("lineDiffStat", () => {
   it("is order-insensitive (multiset) but counts net duplicates", () => {
     expect(lineDiffStat("a\na", "a")).toEqual({ added: 0, removed: 1 });
     expect(lineDiffStat("x\ny", "y\nx")).toEqual({ added: 0, removed: 0 });
+  });
+});
+
+describe("suppressContextMenu", () => {
+  it("prevents the native context menu default", () => {
+    const e = { preventDefault: vi.fn() };
+    suppressContextMenu(e);
+    expect(e.preventDefault).toHaveBeenCalledOnce();
   });
 });
 

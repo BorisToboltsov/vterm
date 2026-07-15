@@ -253,6 +253,42 @@ describe("isFileChangedError", () => {
   });
 });
 
+describe("isKeyExistsError", () => {
+  it("matches the key-exists marker, ignores unrelated errors", () => {
+    expect(api.isKeyExistsError("key-exists: a key file already exists at that path")).toBe(true);
+    expect(api.isKeyExistsError(new Error("key-exists"))).toBe(true);
+    expect(api.isKeyExistsError("dest-exists")).toBe(false);
+    expect(api.isKeyExistsError("some network error")).toBe(false);
+  });
+});
+
+describe("SSH key generation wrappers", () => {
+  it("generateSshKey forwards the request under `req`", async () => {
+    const key = { path: "/h/.ssh/id_ed25519", publicKeyPath: "/h/.ssh/id_ed25519.pub", publicKey: "ssh-ed25519 AAAA", fingerprint: "SHA256:x" };
+    invoke.mockResolvedValueOnce(key);
+    const req = { algorithm: "ed25519", path: "~/.ssh/id_ed25519", overwrite: false };
+    expect(await api.generateSshKey(req)).toEqual(key);
+    expect(invoke).toHaveBeenCalledWith("generate_ssh_key", { req });
+  });
+
+  it("keyPathExists forwards the path", async () => {
+    invoke.mockResolvedValueOnce(true);
+    expect(await api.keyPathExists("~/.ssh/id_ed25519")).toBe(true);
+    expect(invoke).toHaveBeenCalledWith("key_path_exists", { path: "~/.ssh/id_ed25519" });
+  });
+
+  it("savePublicKey forwards path + publicKey", async () => {
+    invoke.mockResolvedValueOnce("/h/.ssh/id_ed25519.pub");
+    expect(await api.savePublicKey("/h/.ssh/id_ed25519", "ssh-ed25519 AAAA")).toBe(
+      "/h/.ssh/id_ed25519.pub",
+    );
+    expect(invoke).toHaveBeenCalledWith("save_public_key", {
+      path: "/h/.ssh/id_ed25519",
+      publicKey: "ssh-ed25519 AAAA",
+    });
+  });
+});
+
 describe("isPermissionError", () => {
   it("matches permission-denied and no-such-file (the staging-temp quirk)", () => {
     expect(api.isPermissionError("open /etc/x: Permission denied")).toBe(true);

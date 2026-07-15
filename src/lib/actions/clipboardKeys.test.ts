@@ -10,11 +10,21 @@ vi.mock("../clipboard", () => ({
 }));
 
 import {
+  copyDocumentSelection,
   handleClipboardShortcut,
   isEditable,
   replaceSelection,
   selectedText,
 } from "./clipboardKeys";
+
+/** Select the full text content of `el` as a real DOM range. */
+function selectContents(el: Element) {
+  const range = document.createRange();
+  range.selectNodeContents(el);
+  const sel = window.getSelection()!;
+  sel.removeAllRanges();
+  sel.addRange(range);
+}
 
 function makeInput(value = "", start = value.length, end = start, type = "text") {
   const node = document.createElement("input");
@@ -37,6 +47,7 @@ function keyEvent(node: EventTarget, key: string, mods: Partial<KeyboardEvent> =
 
 afterEach(() => {
   document.body.innerHTML = "";
+  window.getSelection()?.removeAllRanges();
   readClipboard.mockReset();
   writeClipboard.mockReset();
 });
@@ -92,7 +103,48 @@ describe("selectedText / replaceSelection", () => {
   });
 });
 
+describe("copyDocumentSelection", () => {
+  it("copies a plain-text selection outside form fields (markdown preview)", () => {
+    const div = document.createElement("div");
+    div.className = "markdown-preview";
+    div.textContent = "readme body";
+    document.body.appendChild(div);
+    selectContents(div);
+    expect(copyDocumentSelection()).toBe(true);
+    expect(writeClipboard).toHaveBeenCalledWith("readme body");
+  });
+
+  it("does nothing when the selection is collapsed", () => {
+    expect(copyDocumentSelection()).toBe(false);
+    expect(writeClipboard).not.toHaveBeenCalled();
+  });
+
+  it("leaves CodeMirror and terminal selections to their own copy", () => {
+    for (const cls of ["cm-editor", "xterm"]) {
+      const owner = document.createElement("div");
+      owner.className = cls;
+      owner.textContent = "owned text";
+      document.body.appendChild(owner);
+      selectContents(owner);
+      expect(copyDocumentSelection()).toBe(false);
+      owner.remove();
+    }
+    expect(writeClipboard).not.toHaveBeenCalled();
+  });
+});
+
 describe("handleClipboardShortcut", () => {
+  it("copies a plain-text page selection on Cmd+C and preventDefaults", async () => {
+    const div = document.createElement("div");
+    div.textContent = "copy me";
+    document.body.appendChild(div);
+    selectContents(div);
+    const ev = keyEvent(document.body, "c", { metaKey: true });
+    await handleClipboardShortcut(ev);
+    expect(writeClipboard).toHaveBeenCalledWith("copy me");
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
   it("pastes into a focused text input on Cmd+V", async () => {
     readClipboard.mockResolvedValue("pw");
     const node = makeInput("");

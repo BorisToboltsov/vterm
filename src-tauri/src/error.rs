@@ -44,6 +44,12 @@ pub enum AppError {
     #[error("dest-exists: a file or folder with that name already exists")]
     DestinationExists,
 
+    /// SSH key generation targeted a path that already holds a key file, and the
+    /// caller did not ask to overwrite. The frontend matches the `key-exists`
+    /// marker to offer "overwrite" or "pick another name" (never a silent clobber).
+    #[error("key-exists: a key file already exists at that path")]
+    KeyExists,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -102,6 +108,7 @@ mod tests {
         assert!(AppError::DestinationExists
             .to_string()
             .contains("dest-exists"));
+        assert!(AppError::KeyExists.to_string().contains("key-exists"));
     }
 
     #[test]

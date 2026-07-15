@@ -32,6 +32,7 @@ describe("settingsNav groups", () => {
   it("groupForSection maps a section to its owning group (deep-link)", () => {
     expect(groupForSection("statusbar")).toBe("sessions");
     expect(groupForSection("language")).toBe("general");
+    expect(groupForSection("ai")).toBe("assistant");
     expect(groupForSection("nope")).toBeNull();
   });
 });

@@ -20,6 +20,8 @@
   import JsonLogView from "./JsonLogView.svelte";
   import ViewModeToggle from "./ViewModeToggle.svelte";
   import CommandHistory from "./CommandHistory.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { recentUniqueCommands, mergeCommands, createCommandCapture } from "./history";
   import {
     closedEvent,
@@ -381,6 +383,28 @@
   async function paste() {
     const text = await readClipboard();
     if (text) writeToTerminal(sessionId, encoder.encode(text)).catch(() => {});
+  }
+
+  // ── Right-click menu (Phase 30) ─────────────────────────────────────────────
+  // Opt-out via settings.rightClickMenu — with it off, right-click does nothing
+  // (the native menu is suppressed globally regardless). Middle-click paste stays
+  // a separate setting for terminal-users who prefer that muscle memory.
+  let ctxMenu = $state<OpenMenu | null>(null);
+  function onContextMenu(e: MouseEvent) {
+    if (!settings.rightClickMenu) return;
+    e.preventDefault();
+    const hasSelection = !!term?.getSelection();
+    const items: MenuItem[] = [
+      { icon: "copy", label: t("ctx.copy"), disabled: !hasSelection, onSelect: () => copySelection() },
+      { icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() },
+      { icon: "check", label: t("ctx.selectAll"), onSelect: () => term?.selectAll() },
+      { kind: "separator" },
+    ];
+    if (searchEnabled) {
+      items.push({ icon: "search", label: t("ctx.find"), onSelect: () => openSearch() });
+    }
+    items.push({ icon: "trash", label: t("ctx.clear"), onSelect: () => term?.clear() });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   /**
@@ -746,10 +770,12 @@
   <div
     bind:this={container}
     onmousedown={onMouseDown}
+    oncontextmenu={onContextMenu}
     role="presentation"
     class="h-full w-full px-2 pt-1"
     style="background-color: {termBg}"
   ></div>
+  <ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
   <!-- Structured JSON log view + raw↔table toggle (Phase 10). In structured mode
        the toggle lives inside the table toolbar; in raw mode it floats top-right. -->
   {#if structured}

@@ -7,6 +7,7 @@ import {
   applyImportedSettings,
   CHROME_PANEL_KEY,
   clampMaxOpenMb,
+  clampDockerRefresh,
   resetSettings,
   settings,
 } from "./settings.svelte";
@@ -243,6 +244,17 @@ describe("clampMaxOpenMb", () => {
     expect(clampMaxOpenMb(999)).toBe(64);
     expect(clampMaxOpenMb(NaN)).toBe(2);
     expect(clampMaxOpenMb("x")).toBe(2);
+  });
+});
+
+describe("clampDockerRefresh", () => {
+  it("rounds and clamps to [1, 30], defaulting on non-numbers", () => {
+    expect(clampDockerRefresh(3)).toBe(3);
+    expect(clampDockerRefresh(2.6)).toBe(3);
+    expect(clampDockerRefresh(0)).toBe(1);
+    expect(clampDockerRefresh(999)).toBe(30);
+    expect(clampDockerRefresh(NaN)).toBe(3);
+    expect(clampDockerRefresh("x")).toBe(3);
   });
 });
 

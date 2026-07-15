@@ -351,6 +351,69 @@ impl SshSession {
         })
     }
 
+    /// Like [`exec_captured`](Self::exec_captured) but writes `stdin` to the
+    /// command first (then EOF). Used for `docker login --password-stdin` (Phase
+    /// 36) so the registry password reaches docker over the encrypted channel
+    /// without ever appearing on a command line, while still capturing
+    /// stdout/stderr/exit so login success/failure is known.
+    pub async fn exec_captured_stdin(
+        &self,
+        command: &str,
+        stdin: &[u8],
+        timeout_secs: u64,
+    ) -> AppResult<ExecOutcome> {
+        let mut channel = self
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("exec channel failed: {e}"))?;
+        channel
+            .exec(true, command.as_bytes())
+            .await
+            .map_err(|e| format!("exec failed: {e}"))?;
+        if !stdin.is_empty() {
+            channel
+                .data(stdin)
+                .await
+                .map_err(|e| format!("stdin write failed: {e}"))?;
+            let _ = channel.eof().await;
+        }
+
+        let mut out: Vec<u8> = Vec::new();
+        let mut err: Vec<u8> = Vec::new();
+        let mut code: i32 = -1;
+        let collect = async {
+            loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                    Some(ChannelMsg::ExtendedData { data, ext }) => {
+                        if ext == 1 {
+                            err.extend_from_slice(&data);
+                        } else {
+                            out.extend_from_slice(&data);
+                        }
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
+                    _ => {}
+                }
+            }
+        };
+
+        let timed_out = timeout(Duration::from_secs(timeout_secs.max(1)), collect)
+            .await
+            .is_err();
+        if timed_out {
+            let _ = channel.close().await;
+        }
+        Ok(ExecOutcome {
+            stdout: String::from_utf8_lossy(&out).into_owned(),
+            stderr: String::from_utf8_lossy(&err).into_owned(),
+            exit_code: code,
+            timed_out,
+        })
+    }
+
     /// Push bytes into the active recording as output (no-op if not recording).
     /// Used to mirror AI-executed commands into the session recording (17.8).
     pub fn record_output(&self, data: &[u8]) {

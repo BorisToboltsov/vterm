@@ -9,6 +9,8 @@
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import RecordingPlayer from "./RecordingPlayer.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { t } from "./i18n";
   import { fmtBytes } from "./format";
   import {
@@ -351,6 +353,28 @@
     }
   }
 
+  // ── Right-click menu ────────────────────────────────────────────────────────
+  let ctxMenu = $state<OpenMenu | null>(null);
+  function openRecMenu(e: MouseEvent, rec: RecordingMeta) {
+    e.preventDefault();
+    const items: MenuItem[] = [
+      { icon: "play", label: t("recordings.play"), onSelect: () => void play(rec) },
+      { icon: "pencil", label: t("recordings.edit"), onSelect: () => (editRec = rec) },
+      { icon: "download", label: t("recordings.export"), onSelect: () => (exportFor = rec) },
+    ];
+    if (aiOn) {
+      items.push({ icon: "aiMark", label: t("recordings.ai"), onSelect: () => (aiMenuFor = rec) });
+    }
+    items.push({ kind: "separator" });
+    items.push({
+      icon: "trash",
+      danger: true,
+      label: t("recordings.delete"),
+      onSelect: () => (confirmDelete = rec),
+    });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
+  }
+
   function fmtDate(ts: number): string {
     return ts ? new Date(ts * 1000).toLocaleString() : "";
   }
@@ -511,7 +535,11 @@
       <p class="px-3 py-6 text-center text-xs text-muted">{t("recordings.noMatches")}</p>
     {/if}
     {#snippet recRow(rec: RecordingMeta)}
-      <div class="group flex items-center gap-2 rounded border border-edge px-2 py-1.5 hover:bg-edge">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="group flex items-center gap-2 rounded border border-edge px-2 py-1.5 hover:bg-edge"
+        oncontextmenu={(e) => openRecMenu(e, rec)}
+      >
         <Icon name="activity" size={14} class="shrink-0 text-muted" />
         <div class="min-w-0 flex-1">
           <div class="truncate text-sm text-text" title={baseName(rec.path)}>
@@ -810,3 +838,5 @@
     {/each}
   </div>
 </Modal>
+
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />

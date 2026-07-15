@@ -1,11 +1,14 @@
 mod ai;
 mod backup;
+mod container;
 mod error;
 mod folders;
 mod git;
+mod keygen;
 mod localfile;
 mod metrics;
 mod model;
+mod netprobe;
 mod pty;
 mod recording;
 mod secrets;
@@ -990,6 +993,169 @@ async fn git_run(
     Err(AppError::NoSession)
 }
 
+/// Run one network-diagnostic command for the Utilities panel (Phase 34). SSH
+/// only (variant A): the probe runs on the user's server via a dedicated exec
+/// channel, so the traffic originates from that server — never from the app. A
+/// local tab has no session here; the frontend runs it in the PTY instead
+/// (variant B), so a missing SSH session collapses to `NoSession`. Argument
+/// building and output parsing are pure frontend logic; this only executes and
+/// captures. A timeout collapses into a non-zero exit + stderr note so the
+/// frontend sees a uniform `ProbeOutput`. `mirror` audits the command into the
+/// active session recording as `[util] $ …` output — never emitted to the live
+/// terminal, exactly like `git_run`/`container_run`.
+#[tauri::command]
+async fn probe_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    args: Vec<String>,
+    timeout_secs: u64,
+    mirror: bool,
+) -> AppResult<netprobe::ProbeOutput> {
+    if args.is_empty() {
+        return Err(AppError::Message("probe: no arguments".into()));
+    }
+    let session = session_arc(&state, &session_id).await?;
+    let cmd = netprobe::probe_command(&args);
+    let outcome = session.exec_captured(&cmd, timeout_secs.max(1)).await?;
+    let (stderr, exit_code) = if outcome.timed_out {
+        (
+            format!("probe timed out after {}s", timeout_secs.max(1)),
+            -1,
+        )
+    } else {
+        (outcome.stderr, outcome.exit_code)
+    };
+    if mirror {
+        session.record_output(
+            netprobe::probe_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
+        );
+    }
+    Ok(netprobe::ProbeOutput {
+        stdout: outcome.stdout,
+        stderr,
+        exit_code,
+    })
+}
+
+/// Run one `docker` command for the Docker panel (Phase 35). Dispatches by
+/// session kind exactly like [`git_run`]: SSH tabs execute remotely on a
+/// dedicated exec channel, local shell tabs spawn `docker` locally. `args[0]` is
+/// the program (`docker`), the rest its arguments; argument building and output
+/// parsing are pure frontend logic (`docker.ts`), this only executes and
+/// captures. A timeout collapses into a non-zero exit + stderr note so the
+/// frontend sees a uniform `ContainerOutput`. `mirror` (mutating ops only, set by
+/// the frontend) audits the command into the active session recording as
+/// `[docker] $ …` output — never emitted to the live terminal, exactly like
+/// `git_run`. Reads/polls pass `mirror = false`; registry login goes through the
+/// dedicated `docker_login` (secret on stdin) and is never mirrored.
+#[tauri::command]
+async fn container_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    args: Vec<String>,
+    timeout_secs: u64,
+    mirror: bool,
+) -> AppResult<container::ContainerOutput> {
+    if args.is_empty() {
+        return Err(AppError::Message("container: no arguments".into()));
+    }
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        let outcome = session
+            .exec_captured(&container::container_command(&args), timeout_secs.max(1))
+            .await?;
+        let (stderr, exit_code) = if outcome.timed_out {
+            (
+                format!("docker timed out after {}s", timeout_secs.max(1)),
+                -1,
+            )
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        if mirror {
+            let cmd = args.join(" ");
+            session.record_output(
+                container::container_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
+            );
+        }
+        return Ok(container::ContainerOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        let out = container::run_local(&args, timeout_secs).await?;
+        if mirror {
+            let cmd = args.join(" ");
+            pty.record_output(
+                container::container_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code)
+                    .as_bytes(),
+            );
+        }
+        return Ok(out);
+    }
+    Err(AppError::NoSession)
+}
+
+/// Store a Docker registry password in the OS keychain, keyed by registry url
+/// (Phase 36). The non-secret half (url + username) lives in frontend settings;
+/// the password is only ever here and fed to `docker login --password-stdin`.
+#[tauri::command]
+fn set_registry_secret(url: String, secret: String) -> AppResult<()> {
+    let secret = zeroize::Zeroizing::new(secret);
+    secrets::set_registry_password(&url, &secret)
+}
+
+/// Forget a stored Docker registry password (Phase 36).
+#[tauri::command]
+fn delete_registry_secret(url: String) -> AppResult<()> {
+    secrets::delete_registry_password(&url)
+}
+
+/// Log the session's docker into a registry (Phase 36). Reads the password from
+/// the keychain (never crossing the JS boundary at login time) and feeds it to
+/// `docker login --password-stdin` so it never appears on a command line, in
+/// `ps`, or in the recording. Dispatches by session kind like `container_run`;
+/// the network call originates from the user's host, keeping the offline
+/// invariant intact. `args` is built by the frontend (`docker.ts loginArgs`).
+#[tauri::command]
+async fn docker_login(
+    state: State<'_, AppState>,
+    session_id: String,
+    url: String,
+    args: Vec<String>,
+) -> AppResult<container::ContainerOutput> {
+    if args.is_empty() {
+        return Err(AppError::Message("docker login: no arguments".into()));
+    }
+    let Some(secret) = secrets::get_registry_password(&url) else {
+        return Err(AppError::Message(
+            "no saved password for this registry".into(),
+        ));
+    };
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        let outcome = session
+            .exec_captured_stdin(&container::container_command(&args), secret.as_bytes(), 30)
+            .await?;
+        let (stderr, exit_code) = if outcome.timed_out {
+            ("docker login timed out after 30s".to_string(), -1)
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        return Ok(container::ContainerOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if local.is_some() {
+        return container::run_local_stdin(&args, secret.as_bytes(), 30).await;
+    }
+    Err(AppError::NoSession)
+}
+
 /// List stored recordings (newest first), reading metadata from each header.
 #[tauri::command]
 fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
@@ -1314,6 +1480,58 @@ async fn local_rename(from: String, to: String) -> AppResult<()> {
 #[tauri::command]
 async fn local_copy(from: String, to: String) -> AppResult<()> {
     localfile::copy(&from, &to).await
+}
+
+// ── SSH key generation utility (Phase 32) ──────────────────────────────────────
+
+/// Generate an OpenSSH key pair (local, offline) and write it under the chosen
+/// path. RSA generation is CPU-heavy, so it runs on a blocking thread to keep the
+/// UI responsive.
+#[tauri::command]
+async fn generate_ssh_key(req: keygen::GenerateRequest) -> AppResult<keygen::GeneratedKey> {
+    tokio::task::spawn_blocking(move || keygen::generate(req))
+        .await
+        .map_err(|e| AppError::Message(e.to_string()))?
+}
+
+/// Whether a key file already exists at `path` (`~` expanded). Backs the live
+/// collision hint in the generate dialog.
+#[tauri::command]
+fn key_path_exists(path: String) -> bool {
+    keygen::path_exists(&path)
+}
+
+/// (Re)write the public key to `<path>.pub` — the explicit "Save .pub" button.
+#[tauri::command]
+fn save_public_key(path: String, public_key: String) -> AppResult<String> {
+    keygen::save_public_key(&path, &public_key)
+}
+
+// ── known_hosts manager utility (Phase 33) ─────────────────────────────────────
+
+/// One entry of the vterm-managed known_hosts store, for the manager utility.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct KnownHostEntry {
+    /// `host:port` identifier.
+    id: String,
+    /// Recorded SHA256 host-key fingerprint.
+    fingerprint: String,
+}
+
+/// List every recorded host key (`host:port` → fingerprint). Local file read only.
+#[tauri::command]
+fn list_known_hosts() -> Vec<KnownHostEntry> {
+    store::list_host_keys()
+        .into_iter()
+        .map(|(id, fingerprint)| KnownHostEntry { id, fingerprint })
+        .collect()
+}
+
+/// Forget the recorded host key for `id`. Returns whether an entry was removed.
+#[tauri::command]
+fn remove_known_host(id: String) -> bool {
+    store::forget_host_key(&id)
 }
 
 // ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
@@ -1820,6 +2038,11 @@ pub fn run() {
             read_local_text,
             write_local_text,
             take_pending_opens,
+            generate_ssh_key,
+            key_path_exists,
+            save_public_key,
+            list_known_hosts,
+            remove_known_host,
             local_home,
             local_list,
             local_mkdir,
@@ -1859,6 +2082,11 @@ pub fn run() {
             ai::ai_models,
             ai_exec,
             git_run,
+            probe_run,
+            container_run,
+            docker_login,
+            set_registry_secret,
+            delete_registry_secret,
             set_ai_key,
             forget_ai_key
         ])

@@ -5,8 +5,9 @@
   // (checkout echoed into the PTY as audit) is owned here and passed via `echo`.
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
   import { tooltip } from "./actions/tooltip";
-  import type { IconName } from "./icons";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import type { GitBranch, GitStashEntry, CommitFile, DiffLine } from "./git";
   import {
     checkoutArgs,
@@ -118,25 +119,94 @@
   const urlBranch = (b: GitBranch) => (b.remote ? localName(b.name) : b.name);
 
   // ── Branch context menu (right-click) ──────────────────────────────────────
-  let menu = $state<{ x: number; y: number; branch: GitBranch } | null>(null);
+  // Declarative items for the shared ContextMenu; each closure captures `branch`
+  // directly. Prod-protection unchanged: `run(…, { destructive })` still confirms.
+  let ctxMenu = $state<OpenMenu | null>(null);
   // Create-branch / create-tag from a branch (name prompt).
   let ctxPrompt = $state<{ kind: "branch" | "tag"; from: string } | null>(null);
   let ctxName = $state("");
 
   function openMenu(e: MouseEvent, branch: GitBranch) {
     e.preventDefault();
-    const mx = Math.min(e.clientX, window.innerWidth - 230);
-    const my = Math.min(e.clientY, window.innerHeight - 340);
-    menu = { x: Math.max(4, mx), y: Math.max(4, my), branch };
-  }
-  function closeMenu() {
-    menu = null;
-  }
-  // Capture the branch before closing (menu.branch goes stale once unmounted).
-  function menuAction(fn: (b: GitBranch) => Promise<unknown> | unknown) {
-    const b = menu?.branch;
-    closeMenu();
-    if (b) void fn(b);
+    const items: MenuItem[] = [];
+    if (!branch.remote) {
+      if (!branch.current) {
+        items.push({
+          icon: "gitBranch",
+          label: t("git.checkout"),
+          onSelect: () => run(checkoutArgs(branch.name), { echo: sendToTerminal }),
+        });
+        if (current) {
+          items.push({
+            icon: "gitMerge",
+            label: t("git.mergeInto", { current }),
+            onSelect: () => run(mergeArgs(branch.name), { destructive: true, successKey: "git.merged" }),
+          });
+          items.push({
+            icon: "history",
+            label: t("git.rebaseOnto", { current }),
+            onSelect: () => run(rebaseArgs(branch.name), { destructive: true, successKey: "git.rebased" }),
+          });
+        }
+        items.push({ kind: "separator" });
+      }
+      items.push({
+        icon: "gitBranch",
+        label: t("git.ctxCreateBranch"),
+        onSelect: () => startCtxPrompt("branch", branch.name),
+      });
+      items.push({
+        icon: "check",
+        label: t("git.ctxCreateTag"),
+        onSelect: () => startCtxPrompt("tag", branch.name),
+      });
+      items.push({ icon: "cloud", label: t("git.setUpstream"), onSelect: () => setUpstream(branch) });
+      items.push({ icon: "pencil", label: t("git.rename"), onSelect: () => startRename(branch.name) });
+      if (!branch.current) {
+        items.push({
+          icon: "trash",
+          label: t("git.deleteBranch"),
+          onSelect: () => run(deleteBranchArgs(branch.name), { destructive: true }),
+        });
+      }
+      items.push({ kind: "separator" });
+      if (!branch.current && current) {
+        items.push({
+          icon: "code",
+          label: t("git.compareWithCurrent"),
+          onSelect: () => compareWithCurrent(branch),
+        });
+      }
+      items.push({ icon: "copy", label: t("git.copyBranchName"), onSelect: () => copyName(branch) });
+      items.push({ icon: "cloud", label: t("git.copyBranchLink"), onSelect: () => copyBranchLink(branch) });
+    } else {
+      items.push({
+        icon: "gitBranch",
+        label: t("git.checkoutTracking"),
+        onSelect: () => run(checkoutArgs(localName(branch.name)), { echo: sendToTerminal }),
+      });
+      if (current) {
+        items.push({
+          icon: "gitMerge",
+          label: t("git.mergeInto", { current }),
+          onSelect: () => run(mergeArgs(branch.name), { destructive: true, successKey: "git.merged" }),
+        });
+        items.push({
+          icon: "history",
+          label: t("git.rebaseOnto", { current }),
+          onSelect: () => run(rebaseArgs(branch.name), { destructive: true, successKey: "git.rebased" }),
+        });
+        items.push({ kind: "separator" });
+        items.push({
+          icon: "code",
+          label: t("git.compareWithCurrent"),
+          onSelect: () => compareWithCurrent(branch),
+        });
+      }
+      items.push({ icon: "copy", label: t("git.copyBranchName"), onSelect: () => copyName(branch) });
+      items.push({ icon: "cloud", label: t("git.copyBranchLink"), onSelect: () => copyBranchLink(branch) });
+    }
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   async function copyName(b: GitBranch) {
@@ -308,74 +378,7 @@
   </label>
 </div>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") closeMenu();
-  }}
-/>
-
-<!-- Branch context menu -->
-{#if menu}
-  {@const b = menu.branch}
-  <button
-    type="button"
-    aria-label={t("common.closeDialog")}
-    class="fixed inset-0 z-40 cursor-default"
-    onclick={closeMenu}
-    oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
-  ></button>
-  <div
-    class="fixed z-50 w-56 rounded-md border border-edge bg-panel py-1 text-xs shadow-lg"
-    style="left:{menu.x}px; top:{menu.y}px"
-    role="menu"
-  >
-    {#if !b.remote}
-      {#if !b.current}
-        {@render item("gitBranch", t("git.checkout"), () => menuAction((br) => run(checkoutArgs(br.name), { echo: sendToTerminal })))}
-        {#if current}
-          {@render item("gitMerge", t("git.mergeInto", { current }), () => menuAction((br) => run(mergeArgs(br.name), { destructive: true, successKey: "git.merged" })))}
-          {@render item("history", t("git.rebaseOnto", { current }), () => menuAction((br) => run(rebaseArgs(br.name), { destructive: true, successKey: "git.rebased" })))}
-        {/if}
-        <div class="my-1 border-t border-edge/60"></div>
-      {/if}
-      {@render item("gitBranch", t("git.ctxCreateBranch"), () => menuAction((br) => startCtxPrompt("branch", br.name)))}
-      {@render item("check", t("git.ctxCreateTag"), () => menuAction((br) => startCtxPrompt("tag", br.name)))}
-      {@render item("cloud", t("git.setUpstream"), () => menuAction((br) => setUpstream(br)))}
-      {@render item("pencil", t("git.rename"), () => menuAction((br) => startRename(br.name)))}
-      {#if !b.current}
-        {@render item("trash", t("git.deleteBranch"), () => menuAction((br) => run(deleteBranchArgs(br.name), { destructive: true })))}
-      {/if}
-      <div class="my-1 border-t border-edge/60"></div>
-      {#if !b.current && current}
-        {@render item("code", t("git.compareWithCurrent"), () => menuAction((br) => compareWithCurrent(br)))}
-      {/if}
-      {@render item("copy", t("git.copyBranchName"), () => menuAction((br) => copyName(br)))}
-      {@render item("cloud", t("git.copyBranchLink"), () => menuAction((br) => copyBranchLink(br)))}
-    {:else}
-      {@render item("gitBranch", t("git.checkoutTracking"), () => menuAction((br) => run(checkoutArgs(localName(br.name)), { echo: sendToTerminal })))}
-      {#if current}
-        {@render item("gitMerge", t("git.mergeInto", { current }), () => menuAction((br) => run(mergeArgs(br.name), { destructive: true, successKey: "git.merged" })))}
-        {@render item("history", t("git.rebaseOnto", { current }), () => menuAction((br) => run(rebaseArgs(br.name), { destructive: true, successKey: "git.rebased" })))}
-        <div class="my-1 border-t border-edge/60"></div>
-        {@render item("code", t("git.compareWithCurrent"), () => menuAction((br) => compareWithCurrent(br)))}
-      {/if}
-      {@render item("copy", t("git.copyBranchName"), () => menuAction((br) => copyName(br)))}
-      {@render item("cloud", t("git.copyBranchLink"), () => menuAction((br) => copyBranchLink(br)))}
-    {/if}
-  </div>
-{/if}
-
-{#snippet item(icon: IconName, label: string, onclick: () => void)}
-  <button
-    type="button"
-    class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-white"
-    role="menuitem"
-    {onclick}
-  >
-    <Icon name={icon} size={13} />
-    <span class="truncate">{label}</span>
-  </button>
-{/snippet}
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
 
 <!-- Create branch / tag from a branch -->
 <Modal

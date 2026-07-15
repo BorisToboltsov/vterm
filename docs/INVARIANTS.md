@@ -93,7 +93,15 @@
   `src/lib/api/` с barrel-реэкспортом (Фаза 18.6). **Оверлеи всегда с явным
   `z-index`** (или через `Modal`/`ConfirmDialog`) — закреплено гейтом
   [overlay.guard.test.ts](../src/lib/overlay.guard.test.ts). Переиспользуй примитивы
-  `Modal`, `ConfirmDialog`, `Icon`. Иконки — из реестра [icons.ts](../src/lib/icons.ts)
+  `Modal`, `ConfirmDialog`, `Icon`. **Контекстное меню (ПКМ)** — только через общий
+  примитив [ContextMenu.svelte](../src/lib/ContextMenu.svelte) (Фаза 31): поверхность
+  описывает меню как декларативный список `MenuItem` из [ctxmenu.ts](../src/lib/ctxmenu.ts)
+  (`action`/`separator`/`submenu`, `disabled`/`danger`) и отдаёт примитиву; своего попапа
+  на панель не заводи. Чистая логика (кламп к вьюпорту `clampMenuPosition`, гвард
+  `isAction`) — в `.ts` с тестом. Native-меню WebView подавлено глобально
+  (`suppressContextMenu`, Фаза 30), поэтому там, где своего меню нет, ПКМ не показывает
+  ничего. Меню терминала — под настройкой `settings.rightClickMenu`. Иконки — из реестра
+  [icons.ts](../src/lib/icons.ts)
   через `<Icon name="…" />`, **не эмодзи**. Pointer-drag — через `actions/drag.ts`.
   Подсказки — через `use:tooltip` ([actions/tooltip.ts](../src/lib/actions/tooltip.ts)),
   **не** нативный `title` (кроме заголовков-пропов и раскрытия обрезанного текста);
@@ -169,6 +177,116 @@
   шлёт `cd` в PTY (`cdTerminalTo`) — только на пользовательских переходах, чтобы не было
   петли с follow-эффектом. **Аудит-контракт остаётся**: секретов git не логирует, деструктив
   на проде — через `ConfirmDialog`.
+- **Утилиты — генерация SSH-ключей** (Фаза 32). Первая «утилита» приложения; живёт в
+  **панели «Утилиты»** (Фаза 33, ниже — переехала из настроек), инструмент `keys`.
+  Генерация — **локальная и офлайн**: крейт `ssh-key` (тот же, что тянет
+  `russh`), CSPRNG из `rand`, **без сети и без вызова внешнего `ssh-keygen`** (офлайн-
+  инвариант цел). Бэкенд [keygen.rs](../src-tauri/src/keygen.rs) — **дамповый
+  исполнитель**: одна команда `generate_ssh_key` пишет то, что описала **чистая логика**
+  [sshkeygen.ts](../src/lib/sshkeygen.ts) (реестр алгоритмов, дефолтное имя по типу,
+  сборка пути, валидация). Приватный ключ — `0600`, `~/.ssh` — `0700`; passphrase — в
+  `Zeroizing`, **не логируется и не пишется в keychain** (штатный secret-prompt при
+  коннекте). Коллизия без `overwrite` → типизированная `AppError::KeyExists` (маркер
+  `key-exists`, как `dest-exists`) — **тихой перезаписи нет**, только явный выбор
+  «перезаписать / изменить имя». UI — общий [KeyGenModal.svelte](../src/lib/KeyGenModal.svelte)
+  за двумя входами (панель «Утилиты» → инструмент `keys` и шорткат в форме сервера,
+  подставляющий `keyPath`); новых утилит-команд не плоди — расширяй билдеры/парсеры в `.ts`.
+- **Панель «Утилиты»** (Фаза 33). Набор инструментов DevOps/SRE живёт в **отдельной
+  панели-оверлее** ([UtilitiesPanel.svelte](../src/lib/UtilitiesPanel.svelte),
+  `z-index:40`, как настройки), **не** в секциях настроек (инструмент нужен рядом с
+  терминалом, а не в модалке настроек). Вход — кнопка `wrench` в
+  [TopBar](../src/lib/TopBar.svelte) и командная палитра. Список инструментов —
+  **чистый реестр** [utilities.ts](../src/lib/utilities.ts) (`id`/иконка/i18n-ключ/
+  keywords, поиск `utilitiesMatching`); панель только мапит по нему и переключает
+  компонент. **Каждый инструмент = чистая логика в `.ts` (с тестом) + тонкая
+  UI-оболочка `Util*.svelte`** (форма/таблица без логики). Всё **офлайн**: codec/cidr/
+  timeconv/cron/pwgen/jwt — без сети и без бэкенда; CSPRNG паролей —
+  `crypto.getRandomValues`, словарь passphrase встроен ([wordlist.ts](../src/lib/wordlist.ts)).
+  **Бэкенд — только там, где нужен файл/ОС**: known_hosts-менеджер ходит в
+  `list_known_hosts`/`remove_known_host` (дамповый исполнитель над
+  [store.rs](../src-tauri/src/store.rs)), парсинг/сортировка вида — чистый
+  [knownhosts.ts](../src/lib/knownhosts.ts). Копирование — общий примитив
+  [CopyButton.svelte](../src/lib/CopyButton.svelte). Новый инструмент добавляй так же:
+  запись в реестр + `Util*.svelte` + чистый `.ts` с тестом (UI-оболочку — в exclude
+  покрытия), **не** секцией настроек и **не** новой per-операционной командой без нужды
+  в файле/ОС. Сетевые утилиты (ping/DNS/TLS-проба и т.п.) **нарушают офлайн-инвариант** —
+  их допустимо делать только поверх SSH-сессии (контракт `git_run`), не из WebView/Rust напрямую.
+- **Сетевые утилиты** (Фаза 34; TLS-инспектор + HTTP-клиент — простые однострочники
+  ping/DNS/порт-проба/внешний IP/хеши убраны в Фазе 36.1, их быстрее выполнить прямо в
+  терминале). Реализация ровно по правилу выше —
+  **приложение само в сеть не ходит**, диагностика исполняется **на хосте активной
+  сессии**. Два транспорта, один контракт (как у терминала/`git_run`): на **SSH-вкладке**
+  проба идёт удалённо через одну бэкенд-команду `probe_run` ([netprobe.rs](../src-tauri/src/netprobe.rs)
+  → `SshSession::exec_captured`), трафик — из сети сервера пользователя (**вариант A**,
+  часть пути к его же серверам); на **локальной вкладке** структурный режим недоступен,
+  команда пишется в PTY (`write_to_terminal`) и исполняется шеллом пользователя, вывод —
+  в терминале (**вариант B**). `probe_run` — **дамповый исполнитель** (только SSH →
+  `NoSession` иначе; `probe_command` шелл-квотит каждый токен через `git::shell_quote` —
+  защита от инъекции; пайплайны идут как один токен `sh -c '<pipeline>'`). **Аудит в
+  записи** (Фаза 36.1, как git/docker): флаг `mirror` пишет удалённый прогон в активную
+  запись сессии как `[util] $ … / [util] exit N` (`netprobe::probe_mirror`, **record-only**
+  — в живой терминал не эмитится); фронт (`probeRun`/`UtilProbeRunner`) мирроит по
+  умолчанию. Вся сборка argv и парсинг вывода — **чистая логика в `.ts`**
+  ([probe.ts](../src/lib/probe.ts), [tls.ts](../src/lib/tls.ts),
+  [http.ts](../src/lib/http.ts)); гейт/раннер сессии — общий
+  [UtilProbeRunner.svelte](../src/lib/UtilProbeRunner.svelte), UI — тонкие `Util*.svelte`.
+  На прод-вкладке (`isProdServer`) шумные операции — через `ConfirmDialog`. Новую сетевую
+  утилиту добавляй так же — билдер/парсер в `.ts` + `Util*.svelte` поверх `UtilProbeRunner`,
+  **без** новой per-операционной бэкенд-команды.
+- **Docker-панель** (Фаза 35). Просмотр/управление контейнерами хоста активной сессии —
+  **4-я вкладка правого дока** ([DockerPanel.svelte](../src/lib/DockerPanel.svelte)),
+  `DockTab` += `docker`. **Единый контракт исполнения** (как у git-панели): одна
+  бэкенд-команда `container_run` (`session_id` + вектор аргументов, `args[0]` = `docker`)
+  диспетчеризует транспорт по наличию сессии — **SSH** через `exec_captured` (каждый токен
+  шелл-квотится в [container.rs](../src-tauri/src/container.rs) — защита от инъекции),
+  **локально** через `tokio::process`. Бэкенд — **дамповый исполнитель**: вся сборка argv
+  и парсинг вывода — чистая логика в [docker.ts](../src/lib/docker.ts)
+  (`psArgs`/`imagesArgs`/`statsArgs`/…, `parsePs`/`parseImages`/`parseStats`,
+  `groupByCompose` — группировка по лейблу `com.docker.compose.project`, `parseAvailability`,
+  `isDestructive`, `stateTone`); вывод машиночитаемый через `--format` с US-разделителем
+  (как `git.ts`). Не дублируй docker-логику в компонентах и не вводи новых
+  per-операционных бэкенд-команд — расширяй через новые билдеры/парсеры в `.ts`.
+  **Живой вид — снимок раз в N сек** (`settings.dockerRefreshSec`, дефолт 3, кламп 1…30),
+  **не поток** (`docker stats --no-stream`, `docker logs --tail` без `-f`); поллер
+  живёт только пока вкладка смонтирована. **Логи/inspect** — модалка
+  [DockerTextModal](../src/lib/DockerTextModal.svelte) (выделяемый текст + Cmd/Ctrl+C +
+  `CopyButton`), логи перечитываются на каждом поллинге пока модалка открыта. **Shell в
+  контейнер** — `docker exec -it <id> sh -c 'exec bash || exec sh'` в **новой**
+  терминал-вкладке того же хоста (реюз кредов SSH-вкладки), **поверх терминального
+  контракта** (`pendingCommand` → `write_to_terminal` по статусу `connected` в
+  [+page.svelte](../src/routes/+page.svelte)) — без нового бэкенда/канала и без
+  `container_run`. **Прод-защита**: на прод-вкладке (`isProdServer`) деструктив
+  (`isDestructive`: rm/rmi/prune/compose down) — через `ConfirmDialog` (предохранитель,
+  не граница). **Офлайн цел**: docker-демон — «за сессией пользователя», трафик из
+  Rust/PTY, не из WebView. **k8s** — дизайн-хук на будущее (реестр драйверов оркестрации),
+  кода пока нет; добавлять его — отдельным драйвером с своим видом, не насильно в один
+  список с Docker.
+  - **Доработки (Фаза 36).** (1) **Контекстное меню (ПКМ)** на контейнерах и образах —
+    только через общий примитив [ContextMenu](../src/lib/ContextMenu.svelte) (декларативный
+    `MenuItem[]`, как у git/SFTP), **не** свой попап. Строка контейнера несёт **одну**
+    кнопку «Подробнее» (`onViewDetails`); прежняя пятииконочная лента переехала в
+    **модалку деталей** [DockerDetailModal](../src/lib/DockerDetailModal.svelte) (вкладки
+    Overview/Logs/Inspect + действия start/stop/restart/remove/shell). Модалка — на общем
+    `Modal`, логи live-опрашиваются (как панель), inspect — разово. (2) **Подтверждение на
+    каждом сервере** (не только прод): предикат [needsConfirm](../src/lib/docker.ts)
+    (rm/rmi/prune/compose down **плюс** stop/restart/kill) → `ConfirmDialog`; на прод-вкладке
+    добавляется красное предупреждение. Прод-гейт остаётся под ним (предохранитель, не
+    граница). (3) **Факты контейнера** (status/ports/cpu/mem/net/created) убраны из строки
+    в **hover-карточку** (`containerInfoRows`, чистая логика; `.vt-tooltip` держит
+    многострочность) и в Overview. (4) **Аудит записи** (как у git): мутирующий
+    `container_run(mirror=true)` пишется в активную запись как `[docker] $ … / [docker]
+    exit N` (`container::container_mirror`, **record-only**, в живой терминал не эмитится);
+    чтения/поллинг — `mirror=false`. (5) **Скелет загрузки** до первого `ps` (`firstLoadDone`)
+    — панель не мигает «Нет контейнеров» на хосте, где они есть. (6) **Логин в реестр**
+    (`docker login`): пароль хранится **только в keychain** ([secrets.rs](../src-tauri/src/secrets.rs)
+    `vterm:registry`, ключ = url; `Zeroizing`), **никогда не в settings/бэкапе и не в argv** —
+    отдельная команда `docker_login` читает секрет и подаёт его через `--password-stdin`
+    (`exec_captured_stdin` по SSH / stdin-pipe локально), **не мирроринг в запись**. Несекретная
+    половина (url + username) — в `settings.dockerRegistries` (чистый `sanitizeDockerRegistries`).
+    Это **сетевая** операция → **только по явной кнопке** (ключ в тулбаре панели), трафик из
+    хоста сессии — **офлайн-инвариант цел** (как git fetch/pull/push). Настройка — секция
+    «Docker» в settings ([DockerSettings](../src/lib/DockerSettings.svelte)), не отдельная
+    per-операционная команда сверх нужного. CVE-скан образов **не делаем** (нет офлайн-способа).
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя (в т.ч. **через заданный им proxy** — jump host/SOCKS5/HTTP
   CONNECT, Фаза 21 — это часть пути к его же серверам) **и** — при включённом opt-in

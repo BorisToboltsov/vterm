@@ -87,6 +87,7 @@
   } from "$lib/stores/workspaces.svelte";
   import { removeChat, getChat } from "$lib/stores/aichat.svelte";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
+  import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
   import ServerFormModal from "$lib/ServerFormModal.svelte";
   import NotesModal from "$lib/NotesModal.svelte";
   import { hasNotes, notesTarget } from "$lib/notes";
@@ -101,6 +102,8 @@
   import ServerTree from "$lib/ServerTree.svelte";
   import Modal from "$lib/Modal.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import ContextMenu from "$lib/ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
@@ -137,6 +140,7 @@
   import { extractTranscript } from "$lib/recording";
   import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
   import { isProdServer } from "$lib/aiexec";
+  import type { ProbeSession } from "$lib/probe";
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { localizedStatus } from "$lib/stores/tabs.svelte";
@@ -176,6 +180,14 @@
     settingsSection = section;
     showSettings = true;
   }
+  // Utilities panel (Phase 33) — tool overlay above the working screen.
+  let showUtilities = $state(false);
+  let utilitiesInitial = $state<string | null>(null);
+  /** Open the Utilities panel, optionally focused on a specific tool. */
+  function openUtilities(utility: string | null = null) {
+    utilitiesInitial = utility;
+    showUtilities = true;
+  }
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
   let showPalette = $state(false);
@@ -204,6 +216,9 @@
   // follow it — both **per tab** (each session keeps its own toggle).
   const terminalCwd = $state<Record<string, string>>({});
   const followTerminal = $state<Record<string, boolean>>({});
+  // Command to type into a freshly-opened terminal tab once it connects (Docker
+  // panel "open shell": `docker exec -it … `on a sibling tab of the same host).
+  const pendingCommand: Record<string, string> = {};
   // ── Idle screensaver (Phase 0.28) ──
   // Bumped on any terminal output so the screensaver never covers a printing
   // terminal ("no output" rule). `idleWasConnected` tracks which sessions actually
@@ -267,6 +282,20 @@
   const activeServer = $derived(
     activeTab?.kind === "ssh" ? (servers.find((s) => s.id === activeTab.serverId) ?? null) : null,
   );
+  // Active-tab context for the Utilities network tools (Phase 34): SSH tabs run
+  // the probe remotely (variant A), local tabs run it in the PTY (variant B).
+  const utilSession = $derived.by<ProbeSession | null>(() => {
+    const tab = activeTab;
+    if (!tab || (tab.kind !== "ssh" && tab.kind !== "local")) return null;
+    const srv = tab.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : null;
+    return {
+      id: tab.sessionId,
+      kind: tab.kind,
+      live: isLive(tab.status),
+      host: tab.kind === "ssh" ? (srv?.host ?? tab.alias) : "local",
+      isProd: tab.kind === "ssh" ? isProdServer(srv?.tags) : false,
+    };
+  });
   // Notes belong to the active SSH tab's server when one is focused; on a local
   // tab (or with no tab) they fall back to the tree-selected server.
   const notesServerTarget = $derived(notesTarget(activeServer, selected));
@@ -613,6 +642,15 @@
       notifyError(t("recordings.needsSession"));
       return;
     }
+    await toggleRecordingFor(tab);
+  }
+
+  /** Start/stop recording a specific tab (single-session flow, no broadcast). */
+  async function toggleRecordingFor(tab: Tab) {
+    if (!isLive(tab.status)) {
+      notifyError(t("recordings.needsSession"));
+      return;
+    }
     const id = tab.sessionId;
     try {
       if (isRecording(id)) {
@@ -780,6 +818,8 @@
       keywords: "folder new папка новая", run: () => folderModals?.openCreate("") },
     { id: "act:settings", title: t("palette.settings"), icon: "settings", group: t("palette.groupActions"),
       keywords: "settings preferences параметры настройки", run: () => openSettings() },
+    { id: "act:utilities", title: t("palette.utilities"), icon: "wrench", group: t("palette.groupActions"),
+      keywords: "utilities tools keygen cidr subnet base64 jwt cron password timestamp known hosts tls http утилиты инструменты", run: () => openUtilities() },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
       keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
     { id: "act:record",
@@ -1025,6 +1065,63 @@
     removeBroadcastMember(sessionId);
     nginxConfigCache.delete(sessionId);
     closeTabStore(sessionId);
+  }
+
+  // ── Tab-bar right-click menu ────────────────────────────────────────────────
+  // Bulk-close skips the per-tab confirm dialog (it would stack N dialogs);
+  // closing a single live tab still confirms via requestCloseTab.
+  let tabCtxMenu = $state<OpenMenu | null>(null);
+
+  function closeOtherTabs(keep: string) {
+    for (const tab of [...tabsState.list]) {
+      if (tab.sessionId !== keep) closeTabFully(tab.sessionId);
+    }
+  }
+
+  function closeTabsToRight(sessionId: string) {
+    const idx = tabsState.list.findIndex((t) => t.sessionId === sessionId);
+    if (idx < 0) return;
+    for (const tab of tabsState.list.slice(idx + 1)) closeTabFully(tab.sessionId);
+  }
+
+  function openTabMenu(e: MouseEvent, tab: Tab) {
+    e.preventDefault();
+    const idx = tabsState.list.findIndex((tt) => tt.sessionId === tab.sessionId);
+    const hasOthers = tabsState.list.length > 1;
+    const hasRight = idx >= 0 && idx < tabsState.list.length - 1;
+    const items: MenuItem[] = [
+      { icon: "close", label: t("ctx.closeTab"), onSelect: () => requestCloseTab(tab.sessionId) },
+      {
+        icon: "close",
+        label: t("ctx.closeOthers"),
+        disabled: !hasOthers,
+        onSelect: () => closeOtherTabs(tab.sessionId),
+      },
+      {
+        icon: "arrowRight",
+        label: t("ctx.closeRight"),
+        disabled: !hasRight,
+        onSelect: () => closeTabsToRight(tab.sessionId),
+      },
+    ];
+    if (tab.kind === "ssh") {
+      items.push({ kind: "separator" });
+      items.push({
+        icon: "refresh",
+        label: t("ctx.reconnect"),
+        onSelect: () => reconnectTabStore(tab.sessionId),
+      });
+    }
+    if (!bcOn && isLive(tab.status)) {
+      items.push({ kind: "separator" });
+      const rec = isRecording(tab.sessionId);
+      items.push({
+        icon: rec ? "stop" : "activity",
+        label: rec ? t("ctx.stopRecording") : t("ctx.startRecording"),
+        onSelect: () => void toggleRecordingFor(tab),
+      });
+    }
+    tabCtxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   // ── Config editor (Phase 12) ────────────────────────────────────────────────
@@ -1306,6 +1403,22 @@
     void writeToTerminal(id, new TextEncoder().encode(`cd ${quoted}\n`));
   }
 
+  /**
+   * Docker panel "open shell": open a new terminal tab on the SAME host as the
+   * active session (reusing its credentials for SSH — no re-prompt) and run the
+   * `docker exec -it … `command once it connects. Reuses the terminal contract —
+   * no new backend; `pendingCommand` is flushed in the tab's `onstatus` handler.
+   */
+  function openContainerShell(command: string) {
+    const tab = activeTab;
+    if (!tab) return;
+    const sid =
+      tab.kind === "local"
+        ? openLocalTab()
+        : openTabStore(tab.serverId, tab.alias, tab.secret, tab.remember);
+    pendingCommand[sid] = command;
+  }
+
   /** Type an install command into the active terminal (user reviews + runs it). */
   function runInstallInTerminal(command: string) {
     const sid = installTool?.sessionId ?? toolsSessionId;
@@ -1551,6 +1664,7 @@
     onOpenRecordings={() => (showRecordings = true)}
     onOpenMonitoring={openMonitoring}
     onOpenSettings={() => openSettings("servertools")}
+    onOpenUtilities={() => openUtilities()}
     canBroadcast={!!tabsState.activeId}
     broadcastActive={bcOn}
     onToggleBroadcast={toggleActiveBroadcast}
@@ -1629,6 +1743,7 @@
             tabindex={tabsState.activeId === tab.sessionId ? 0 : -1}
             aria-selected={tabsState.activeId === tab.sessionId}
             onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
+            oncontextmenu={(e) => openTabMenu(e, tab)}
             onkeydown={(e) => onTabKey(e, tab.sessionId)}
             class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
             tab.sessionId
@@ -1904,6 +2019,17 @@
                       setTabStatus(tab.sessionId, st, d);
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "connected") idleWasConnected.add(tab.sessionId);
+                      if (st === "connected" && pendingCommand[tab.sessionId]) {
+                        const cmd = pendingCommand[tab.sessionId];
+                        delete pendingCommand[tab.sessionId];
+                        // Small delay so the login shell prompt is ready first.
+                        setTimeout(() => {
+                          void writeToTerminal(
+                            tab.sessionId,
+                            new TextEncoder().encode(cmd + "\n"),
+                          ).catch(() => {});
+                        }, 500);
+                      }
                       if (st === "connecting" && noSignalSession === tab.sessionId)
                         noSignalSession = null;
                       if (st === "closed") {
@@ -2020,6 +2146,7 @@
                 onOpenGitDiff={openGitDiff}
                 onIgnoreGitignore={appendGitignore}
                 onSftpNavigate={cdTerminalTo}
+                onOpenContainerShell={openContainerShell}
               />
             {/key}
           {/if}
@@ -2084,6 +2211,8 @@
   onInstallTool={openToolInstall}
   initialSection={settingsSection}
 />
+
+<UtilitiesPanel bind:open={showUtilities} initialUtility={utilitiesInitial} session={utilSession} />
 
 <!-- Server tool install dialog (Phase 12.8) -->
 <ToolInstallDialog
@@ -2182,6 +2311,9 @@
   {t("page.closeTabBody1")} <span class="text-white">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
   {t("page.closeTabBody2")}
 </ConfirmDialog>
+
+<!-- Tab-bar right-click menu -->
+<ContextMenu menu={tabCtxMenu} onclose={() => (tabCtxMenu = null)} />
 
 <!-- Discard-unsaved confirmation when closing an edited file -->
 <ConfirmDialog

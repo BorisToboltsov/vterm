@@ -77,16 +77,46 @@ export function replaceSelection(node: Editable, text: string): void {
   node.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
+/** Element the current DOM selection is anchored in, or null when nothing is
+ *  selected (collapsed range). Used to route a plain-text Cmd/Ctrl+C. */
+function selectionHost(): Element | null {
+  const sel = window.getSelection?.();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+  const node = sel.focusNode ?? sel.anchorNode;
+  return node instanceof Element ? node : (node?.parentElement ?? null);
+}
+
+/**
+ * Copy a plain page-text selection that lives outside any `<input>`/`<textarea>`
+ * — the rendered markdown preview, help text, etc. Without a native Edit menu
+ * WKWebView gives these no Copy accelerator, so Cmd/Ctrl+C is dead otherwise.
+ * CodeMirror and xterm own their own clipboard shortcuts, so selections inside
+ * them are left alone. Returns true when it handled the copy.
+ */
+export function copyDocumentSelection(): boolean {
+  const host = selectionHost();
+  if (!host || host.closest(".xterm") || host.closest(".cm-editor")) return false;
+  const text = window.getSelection?.()?.toString() ?? "";
+  if (!text) return false;
+  void writeClipboard(text);
+  return true;
+}
+
 /**
  * Global keydown handler implementing Cmd/Ctrl + V / C / X / A for any focused
  * text input. Install once on the document (capture phase recommended). It is a
- * no-op for non-editable targets, so the terminal, tabs and page shortcuts are
- * untouched. Plain combos only — Alt/Shift-modified chords keep their meaning.
+ * no-op for non-editable targets — except Cmd/Ctrl+C over a plain-text selection
+ * (e.g. the markdown preview), which is copied via the native backend clipboard.
+ * The terminal, tabs and page shortcuts are otherwise untouched. Plain combos
+ * only — Alt/Shift-modified chords keep their meaning.
  */
 export async function handleClipboardShortcut(ev: KeyboardEvent): Promise<void> {
   if (!(ev.metaKey || ev.ctrlKey) || ev.altKey || ev.shiftKey) return;
   const node = ev.target;
-  if (!isEditable(node)) return;
+  if (!isEditable(node)) {
+    if (ev.key.toLowerCase() === "c" && copyDocumentSelection()) ev.preventDefault();
+    return;
+  }
   switch (ev.key.toLowerCase()) {
     case "v": {
       ev.preventDefault();

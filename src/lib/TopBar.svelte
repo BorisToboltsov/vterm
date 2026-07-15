@@ -17,6 +17,7 @@
     onOpenRecordings,
     onOpenMonitoring,
     onOpenSettings,
+    onOpenUtilities,
     canBroadcast = false,
     broadcastActive = false,
     onToggleBroadcast,
@@ -38,6 +39,8 @@
     onOpenRecordings: () => void;
     onOpenMonitoring: () => void;
     onOpenSettings: () => void;
+    /** Open the Utilities panel (keygen, CIDR, codecs, …). */
+    onOpenUtilities?: () => void;
     /** There is an active tab → the broadcast action is enabled (kept in its slot,
      *  dimmed + disabled otherwise, like REC/monitoring). */
     canBroadcast?: boolean;
@@ -138,6 +141,15 @@
       onclick={onOpenRecordings}
     >
       <Icon name="activity" size={15} />
+    </button>
+    <button
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      use:tooltip={t("util.open")}
+      aria-label={t("util.open")}
+      data-testid="topbar-utilities"
+      onclick={() => onOpenUtilities?.()}
+    >
+      <Icon name="wrench" size={15} />
     </button>
     <button
       class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"

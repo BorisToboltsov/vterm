@@ -1,6 +1,7 @@
 // Cross-cutting API helpers: typed-error predicates, native clipboard read,
 // and the native-menu command. Split from api.ts in Phase 18.6.
 import { invoke } from "@tauri-apps/api/core";
+import type { GenerateKeyRequest } from "../sshkeygen";
 
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
 export const FILE_CHANGED_MARKER = "file-changed";
@@ -48,6 +49,65 @@ export function hostOs(): Promise<string> {
  */
 export function shellExists(program: string): Promise<boolean> {
   return invoke<boolean>("shell_exists", { program });
+}
+
+// ── SSH key generation utility (Phase 32) ──────────────────────────────────────
+
+/** Marker (in `AppError::KeyExists`) that a key file already exists at the path. */
+export const KEY_EXISTS_MARKER = "key-exists";
+
+/** True when a generate call was refused because a file already exists there. */
+export function isKeyExistsError(err: unknown): boolean {
+  return String(err).includes(KEY_EXISTS_MARKER);
+}
+
+/** A generated OpenSSH key pair (mirrors `keygen::GeneratedKey`). */
+export interface GeneratedKey {
+  path: string;
+  publicKeyPath: string;
+  /** OpenSSH public-key line, for copying into `authorized_keys`. */
+  publicKey: string;
+  /** SHA-256 fingerprint (`SHA256:…`). */
+  fingerprint: string;
+}
+
+/**
+ * Generate an OpenSSH key pair locally (no network) and write it to disk. Throws
+ * an `AppError::KeyExists` (see {@link isKeyExistsError}) when the target exists
+ * and `req.overwrite` is false.
+ */
+export function generateSshKey(req: GenerateKeyRequest): Promise<GeneratedKey> {
+  return invoke<GeneratedKey>("generate_ssh_key", { req });
+}
+
+/** Whether a key file already exists at `path` (`~` expanded) — live collision hint. */
+export function keyPathExists(path: string): Promise<boolean> {
+  return invoke<boolean>("key_path_exists", { path });
+}
+
+/** (Re)write the public key to `<path>.pub`; resolves to that path. */
+export function savePublicKey(path: string, publicKey: string): Promise<string> {
+  return invoke<string>("save_public_key", { path, publicKey });
+}
+
+// ── known_hosts manager (Phase 33) ──────────────────────────────────────────────
+
+/** One recorded host key (mirrors `KnownHostEntry` in Rust). */
+export interface KnownHostEntry {
+  /** `host:port` identifier. */
+  id: string;
+  /** Recorded SHA256 host-key fingerprint. */
+  fingerprint: string;
+}
+
+/** List every vterm-recorded host key (local file read only). */
+export function listKnownHosts(): Promise<KnownHostEntry[]> {
+  return invoke<KnownHostEntry[]>("list_known_hosts");
+}
+
+/** Forget the recorded host key for `id`; resolves to whether one was removed. */
+export function removeKnownHost(id: string): Promise<boolean> {
+  return invoke<boolean>("remove_known_host", { id });
 }
 
 // ── Native menu ───────────────────────────────────────────────────────────────

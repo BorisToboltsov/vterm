@@ -203,5 +203,16 @@ Windows — VS C++ Build Tools и WebView2 Runtime; Rust и pnpm CI ставит
 | `pnpm test:coverage` | Тесты Vitest с покрытием и гейтами |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust-юнит-тесты |
 | `pnpm tauri --version` | Версия Tauri CLI |
+| `rm -rf src-tauri/target/release/bundle` | Очистка готовых бандлов (.app/.dmg/.msi/.exe) — лёгкая, кэш сборки цел |
+| `cargo clean --manifest-path src-tauri/Cargo.toml` | Полная очистка `src-tauri/target` (десятки ГБ) — следующая сборка будет с нуля |
+
+> **Очистка места.** `src-tauri/target` растёт до десятков ГБ (в основном
+> `target/debug` — инкрементальный кэш компилятора). После зелёного прогона гейтов
+> удаляй **готовые бандлы** — `rm -rf src-tauri/target/release/bundle` (весят больше
+> всего, не нужны после проверки); инкрементальный кэш при этом сохраняется и держит
+> следующую сборку быстрой. Если места критически не хватает — полная очистка
+> `cargo clean` (или `rm -rf src-tauri/target`) сносит **весь** кэш: место
+> освобождается максимально, но ближайшая `pnpm tauri dev`/`build` пересоберёт Rust
+> с нуля (~1–2 мин и дольше).
 
 > Подробно о тестах (E2E, покрытие, CI) — [TESTS.md](TESTS.md).

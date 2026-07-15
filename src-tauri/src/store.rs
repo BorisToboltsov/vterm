@@ -120,6 +120,34 @@ pub fn remember_host_key(id: &str, fingerprint: &str) {
     }
 }
 
+/// All recorded host keys as `(host:port, fingerprint)` pairs. Backs the
+/// known_hosts manager utility (Phase 33).
+pub fn list_host_keys() -> Vec<(String, String)> {
+    load_host_keys().into_iter().collect()
+}
+
+/// Pure helper: the map with `id` removed + whether it was present. Kept separate
+/// so the removal logic is unit-tested without touching the config directory.
+fn map_without(mut map: HashMap<String, String>, id: &str) -> (HashMap<String, String>, bool) {
+    let removed = map.remove(id).is_some();
+    (map, removed)
+}
+
+/// Remove the recorded key for `id`, persisting the result. Returns whether an
+/// entry was actually removed (so the UI can report "not found" vs "removed").
+pub fn forget_host_key(id: &str) -> bool {
+    let (map, removed) = map_without(load_host_keys(), id);
+    if !removed {
+        return false;
+    }
+    if let Some(path) = host_keys_path() {
+        if let Ok(json) = serde_json::to_vec_pretty(&map) {
+            let _ = fs::write(&path, json);
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +215,21 @@ mod tests {
         let bytes = serde_json::to_vec(&folders).unwrap();
         let got: Vec<String> = decode_or_default(&bytes);
         assert_eq!(got, folders);
+    }
+
+    #[test]
+    fn map_without_removes_only_the_named_key() {
+        let mut m = HashMap::new();
+        m.insert("a:22".to_string(), "fp-a".to_string());
+        m.insert("b:22".to_string(), "fp-b".to_string());
+
+        let (after, removed) = map_without(m.clone(), "a:22");
+        assert!(removed);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after.get("b:22").map(String::as_str), Some("fp-b"));
+
+        let (after, removed) = map_without(m, "missing:22");
+        assert!(!removed);
+        assert_eq!(after.len(), 2);
     }
 }

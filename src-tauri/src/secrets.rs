@@ -17,6 +17,9 @@ const PASSWORD_SERVICE: &str = "vterm:password";
 const PASSPHRASE_SERVICE: &str = "vterm:passphrase";
 /// AI endpoint API key, keyed by endpoint id (Phase 17). Never logged.
 const AI_KEY_SERVICE: &str = "vterm:ai-key";
+/// Docker registry password, keyed by registry url (Phase 36). Never logged; fed
+/// to `docker login --password-stdin` and never placed on a command line.
+const REGISTRY_SERVICE: &str = "vterm:registry";
 
 /// Read a secret, wrapped in `Zeroizing` so vterm's in-memory copy is wiped on
 /// drop (the keychain remains the authoritative store).
@@ -101,6 +104,28 @@ pub fn set_ai_key(id: &str, value: &str) -> AppResult<()> {
 }
 pub fn delete_ai_key(id: &str) -> AppResult<()> {
     delete(AI_KEY_SERVICE, id)
+}
+
+// ── Docker registry password (Phase 36) ─────────────────────────────────────────
+
+/// Keychain id for a registry password. An empty url (bare `docker login`) maps
+/// to the Docker Hub sentinel so it has a stable, non-empty key.
+fn registry_key(url: &str) -> &str {
+    if url.trim().is_empty() {
+        "docker.io"
+    } else {
+        url
+    }
+}
+
+pub fn get_registry_password(url: &str) -> Option<Zeroizing<String>> {
+    read(REGISTRY_SERVICE, registry_key(url))
+}
+pub fn set_registry_password(url: &str, value: &str) -> AppResult<()> {
+    write(REGISTRY_SERVICE, registry_key(url), value)
+}
+pub fn delete_registry_password(url: &str) -> AppResult<()> {
+    delete(REGISTRY_SERVICE, registry_key(url))
 }
 
 /// Remove all secrets for a server — its own and its proxy's (used when the

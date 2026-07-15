@@ -5,9 +5,9 @@
   // come from buildGraph (pure). Right-click a commit → actions menu (checkout,
   // branch/tag here, reset, cherry-pick, revert, compare, copy). Selected commit's
   // files show in a bottom strip (keeps rows uniform so the SVG stays aligned).
-  import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
-  import type { IconName } from "./icons";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import type { GraphRow, CommitFile, GitCommit, ResetMode, DiffLine } from "./git";
   import {
     commitFilesArgs,
@@ -59,8 +59,7 @@
   let loadingFiles = $state(false);
 
   // Context menu.
-  let menu = $state<{ x: number; y: number; commit: GitCommit } | null>(null);
-  let resetExpanded = $state(false);
+  let ctxMenu = $state<OpenMenu | null>(null);
 
   // Name prompt (create branch / tag from a commit).
   let prompt = $state<{ kind: "branch" | "tag"; hash: string } | null>(null);
@@ -115,27 +114,54 @@
     openDiff(path, parseDiff(res.stdout));
   }
 
+  // Build the right-click actions as a declarative list for the shared
+  // ContextMenu. Each item's closure captures `commit` directly (no staleness),
+  // and ContextMenu closes the menu before running the action. Prod-protection is
+  // unchanged: `run(…, { destructive })` still confirms on prod servers.
   function openMenu(e: MouseEvent, commit: GitCommit) {
     e.preventDefault();
-    resetExpanded = false;
-    // Clamp to the viewport (menu ~ 320px tall / 220 wide).
-    const mx = Math.min(e.clientX, window.innerWidth - 230);
-    const my = Math.min(e.clientY, window.innerHeight - 330);
-    menu = { x: Math.max(4, mx), y: Math.max(4, my), commit };
-  }
-  function closeMenu() {
-    menu = null;
-    resetExpanded = false;
-  }
-
-  // Capture the menu's commit into a stable local BEFORE closing the menu, then
-  // run the action. `menu.commit` (via `{@const}`) becomes stale once the menu
-  // unmounts, so an action that read it lazily after close would throw into an
-  // unhandled rejection and silently do nothing.
-  function menuAction(fn: (commit: GitCommit) => Promise<unknown> | unknown) {
-    const commit = menu?.commit;
-    closeMenu();
-    if (commit) void fn(commit);
+    const items: MenuItem[] = [
+      {
+        icon: "gitCommit",
+        label: t("git.ctxCheckout"),
+        onSelect: () => run(checkoutCommitArgs(commit.hash), { destructive: true }),
+      },
+      {
+        icon: "gitBranch",
+        label: t("git.ctxCreateBranch"),
+        onSelect: () => startPrompt("branch", commit.hash),
+      },
+      { icon: "check", label: t("git.ctxCreateTag"), onSelect: () => startPrompt("tag", commit.hash) },
+      { kind: "separator" },
+      {
+        icon: "gitMerge",
+        label: t("git.ctxCherryPick"),
+        onSelect: () => run(cherryPickArgs(commit.hash), { successKey: "git.cherryPicked" }),
+      },
+      {
+        icon: "history",
+        label: t("git.ctxRevert"),
+        onSelect: () => run(revertArgs(commit.hash), { successKey: "git.reverted" }),
+      },
+      {
+        kind: "submenu",
+        key: "reset",
+        icon: "refresh",
+        label: t("git.ctxReset"),
+        items: RESET_MODES.map((mode) => ({
+          label: mode === "hard" ? `${mode} (${t("git.destructive")})` : mode,
+          danger: mode === "hard",
+          onSelect: () => run(resetArgs(commit.hash, mode), { destructive: mode === "hard" }),
+        })),
+      },
+      { kind: "separator" },
+      { icon: "code", label: t("git.ctxCompare"), onSelect: () => compareWorking(commit) },
+      { kind: "separator" },
+      { icon: "copy", label: t("git.ctxCopySha"), onSelect: () => copySha(commit) },
+      { icon: "copy", label: t("git.ctxCopyMsg"), onSelect: () => copyMsg(commit) },
+      { icon: "cloud", label: t("git.ctxCopyLink"), onSelect: () => copyLink(commit) },
+    ];
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   async function copySha(c: GitCommit) {
@@ -162,7 +188,6 @@
   }
 
   function startPrompt(kind: "branch" | "tag", hash: string) {
-    closeMenu();
     prompt = { kind, hash };
     promptName = "";
   }
@@ -181,12 +206,6 @@
   }
 
 </script>
-
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") closeMenu();
-  }}
-/>
 
 {#if rows.length === 0}
   <p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p>
@@ -276,70 +295,7 @@
   </div>
 {/if}
 
-<!-- Context menu -->
-{#if menu}
-  <button
-    type="button"
-    aria-label={t("common.closeDialog")}
-    class="fixed inset-0 z-40 cursor-default"
-    onclick={closeMenu}
-    oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
-  ></button>
-  <div
-    class="fixed z-50 w-56 rounded-md border border-edge bg-panel py-1 text-xs shadow-lg"
-    style="left:{menu.x}px; top:{menu.y}px"
-    role="menu"
-  >
-    {@render item("gitCommit", t("git.ctxCheckout"), () => menuAction((c) => run(checkoutCommitArgs(c.hash), { destructive: true })))}
-    {@render item("gitBranch", t("git.ctxCreateBranch"), () => menuAction((c) => startPrompt("branch", c.hash)))}
-    {@render item("check", t("git.ctxCreateTag"), () => menuAction((c) => startPrompt("tag", c.hash)))}
-    <div class="my-1 border-t border-edge/60"></div>
-    {@render item("gitMerge", t("git.ctxCherryPick"), () => menuAction((c) => run(cherryPickArgs(c.hash), { successKey: "git.cherryPicked" })))}
-    {@render item("history", t("git.ctxRevert"), () => menuAction((c) => run(revertArgs(c.hash), { successKey: "git.reverted" })))}
-    <!-- Reset (expandable) -->
-    <button
-      type="button"
-      class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-white"
-      role="menuitem"
-      onclick={() => (resetExpanded = !resetExpanded)}
-    >
-      <Icon name="refresh" size={13} />
-      <span class="flex-1">{t("git.ctxReset")}</span>
-      <Icon name={resetExpanded ? "chevronDown" : "chevronRight"} size={12} />
-    </button>
-    {#if resetExpanded}
-      {#each RESET_MODES as mode (mode)}
-        <button
-          type="button"
-          class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left text-muted hover:bg-edge hover:text-white"
-          role="menuitem"
-          onclick={() => menuAction((c) => run(resetArgs(c.hash, mode), { destructive: mode === "hard" }))}
-        >
-          {mode}
-          {#if mode === "hard"}<span class="ml-1 text-[10px] text-danger">({t("git.destructive")})</span>{/if}
-        </button>
-      {/each}
-    {/if}
-    <div class="my-1 border-t border-edge/60"></div>
-    {@render item("code", t("git.ctxCompare"), () => menuAction((c) => compareWorking(c)))}
-    <div class="my-1 border-t border-edge/60"></div>
-    {@render item("copy", t("git.ctxCopySha"), () => menuAction((c) => copySha(c)))}
-    {@render item("copy", t("git.ctxCopyMsg"), () => menuAction((c) => copyMsg(c)))}
-    {@render item("cloud", t("git.ctxCopyLink"), () => menuAction((c) => copyLink(c)))}
-  </div>
-{/if}
-
-{#snippet item(icon: IconName, label: string, onclick: () => void)}
-  <button
-    type="button"
-    class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-white"
-    role="menuitem"
-    {onclick}
-  >
-    <Icon name={icon} size={13} />
-    <span class="truncate">{label}</span>
-  </button>
-{/snippet}
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
 
 <!-- Create branch / tag name prompt -->
 <Modal

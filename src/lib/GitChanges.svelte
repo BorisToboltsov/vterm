@@ -4,8 +4,9 @@
   // and the commit box. Grouping is pure (git.ts); mutations go through `run`.
   import Icon from "./Icon.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
   import { tooltip } from "./actions/tooltip";
-  import type { IconName } from "./icons";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import type { GitStatus, GitFile } from "./git";
   import {
     stagedFiles,
@@ -112,22 +113,57 @@
   }
 
   // ── File context menu (right-click) ────────────────────────────────────────
-  let menu = $state<{ x: number; y: number; file: GitFile; staged: boolean } | null>(null);
+  // Declarative items for the shared ContextMenu; closures capture file/staged
+  // directly. Prod-protection is unchanged (discard confirms via ConfirmDialog).
+  let ctxMenu = $state<OpenMenu | null>(null);
 
   function openMenu(e: MouseEvent, file: GitFile, isStaged: boolean) {
     e.preventDefault();
-    const mx = Math.min(e.clientX, window.innerWidth - 230);
-    const my = Math.min(e.clientY, window.innerHeight - 360);
-    menu = { x: Math.max(4, mx), y: Math.max(4, my), file, staged: isStaged };
-  }
-  function closeMenu() {
-    menu = null;
-  }
-  // Capture file/staged before closing (menu goes stale once unmounted).
-  function menuAct(fn: (file: GitFile, staged: boolean) => void) {
-    const m = menu;
-    closeMenu();
-    if (m) fn(m.file, m.staged);
+    const untracked = file.work === "?";
+    const ext = fileExt(file.path);
+    const items: MenuItem[] = [
+      isStaged
+        ? { icon: "minus", label: t("git.unstage"), onSelect: () => run(unstageArgs([file.path])) }
+        : { icon: "plus", label: t("git.stage"), onSelect: () => run(stageArgs([file.path])) },
+      { icon: "pencil", label: t("git.openFile"), onSelect: () => onOpenInEditor(file.path) },
+      {
+        icon: "code",
+        label: t("git.openDiff"),
+        onSelect: () => onOpenReadonlyDiff(file.path, isStaged),
+      },
+      { kind: "separator" },
+    ];
+    if (!isStaged) {
+      items.push({
+        icon: untracked ? "trash" : "history",
+        label: untracked ? t("git.deleteFile") : t("git.discard"),
+        onSelect: () => discardFiles([file]),
+      });
+    }
+    if (!untracked) {
+      items.push({
+        icon: "stash",
+        label: t("git.stashFile"),
+        onSelect: () => run(stashPushFileArgs(file.path), { successKey: "git.stashed" }),
+      });
+    }
+    items.push({ kind: "separator" });
+    items.push({ icon: "copy", label: t("git.copyPath"), onSelect: () => copyPath(file.path, false) });
+    items.push({
+      icon: "copy",
+      label: t("git.copyAbsPath"),
+      onSelect: () => copyPath(file.path, true),
+    });
+    items.push({ kind: "separator" });
+    items.push({ icon: "eye", label: t("git.ignoreFile"), onSelect: () => onIgnore(`/${file.path}`) });
+    if (ext) {
+      items.push({
+        icon: "eye",
+        label: t("git.ignoreExt", { ext }),
+        onSelect: () => onIgnore(`*.${ext}`),
+      });
+    }
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   function fileExt(path: string): string {
@@ -312,62 +348,4 @@
     : t("git.discardBody", { count: pendingDiscard?.length ?? 0 })}
 </ConfirmDialog>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") closeMenu();
-  }}
-/>
-
-<!-- File context menu -->
-{#if menu}
-  {@const f = menu.file}
-  {@const untracked = f.work === "?"}
-  {@const ext = fileExt(f.path)}
-  <button
-    type="button"
-    aria-label={t("common.closeDialog")}
-    class="fixed inset-0 z-40 cursor-default"
-    onclick={closeMenu}
-    oncontextmenu={(e) => { e.preventDefault(); closeMenu(); }}
-  ></button>
-  <div
-    class="fixed z-50 w-56 rounded-md border border-edge bg-panel py-1 text-xs shadow-lg"
-    style="left:{menu.x}px; top:{menu.y}px"
-    role="menu"
-  >
-    {#if menu.staged}
-      {@render item("minus", t("git.unstage"), () => menuAct((file) => run(unstageArgs([file.path]))))}
-    {:else}
-      {@render item("plus", t("git.stage"), () => menuAct((file) => run(stageArgs([file.path]))))}
-    {/if}
-    {@render item("pencil", t("git.openFile"), () => menuAct((file) => onOpenInEditor(file.path)))}
-    {@render item("code", t("git.openDiff"), () => menuAct((file, staged) => onOpenReadonlyDiff(file.path, staged)))}
-    <div class="my-1 border-t border-edge/60"></div>
-    {#if !menu.staged}
-      {@render item(untracked ? "trash" : "history", untracked ? t("git.deleteFile") : t("git.discard"), () => menuAct((file) => discardFiles([file])))}
-    {/if}
-    {#if !untracked}
-      {@render item("stash", t("git.stashFile"), () => menuAct((file) => run(stashPushFileArgs(file.path), { successKey: "git.stashed" })))}
-    {/if}
-    <div class="my-1 border-t border-edge/60"></div>
-    {@render item("copy", t("git.copyPath"), () => menuAct((file) => copyPath(file.path, false)))}
-    {@render item("copy", t("git.copyAbsPath"), () => menuAct((file) => copyPath(file.path, true)))}
-    <div class="my-1 border-t border-edge/60"></div>
-    {@render item("eye", t("git.ignoreFile"), () => menuAct((file) => onIgnore(`/${file.path}`)))}
-    {#if ext}
-      {@render item("eye", t("git.ignoreExt", { ext }), () => menuAct(() => onIgnore(`*.${ext}`)))}
-    {/if}
-  </div>
-{/if}
-
-{#snippet item(icon: IconName, label: string, onclick: () => void)}
-  <button
-    type="button"
-    class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-white"
-    role="menuitem"
-    {onclick}
-  >
-    <Icon name={icon} size={13} />
-    <span class="truncate">{label}</span>
-  </button>
-{/snippet}
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />

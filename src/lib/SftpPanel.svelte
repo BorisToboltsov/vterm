@@ -36,6 +36,8 @@
   import Skeleton from "./Skeleton.svelte";
   import SyncModal from "./SyncModal.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { transfersState } from "./stores/transfers.svelte";
   import { t } from "./i18n";
@@ -327,6 +329,8 @@
   let clipboard = $state<{ mode: "copy" | "cut"; items: { path: string; name: string }[] } | null>(
     null,
   );
+  // Right-click menu (built declaratively; rendered by the shared ContextMenu).
+  let ctxMenu = $state<OpenMenu | null>(null);
   const cursorOnParent = $derived(hasParent && cursor === 0);
   const cursorEntry = $derived.by(() =>
     cursor < 0 || cursorOnParent ? null : (shownEntries[hasParent ? cursor - 1 : cursor] ?? null),
@@ -454,6 +458,93 @@
     if (!paths.length) return;
     await writeClipboard(paths.join("\n"));
     notifySuccess(t("sftp.pathCopied", { count: paths.length }));
+  }
+
+  // ── Right-click menus ───────────────────────────────────────────────────────
+  // Surface the actions that already exist as toolbar buttons / shortcuts. A
+  // right-click on a row outside the current selection first selects just that
+  // row, so the menu always acts on what the user clicked.
+  function openRowMenu(e: MouseEvent, entry: FileEntry) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selection.selected.has(entry.path)) {
+      selection = { selected: new Set([entry.path]), anchor: entry.path };
+      cursor = (hasParent ? 1 : 0) + shownEntries.findIndex((x) => x.path === entry.path);
+    }
+    const sel = selectedEntries();
+    const multi = sel.length > 1;
+    const items: MenuItem[] = [];
+    if (!multi) {
+      items.push({
+        icon: entry.isDir ? "folder" : "file",
+        label: t("ctx.open"),
+        onSelect: () => (entry.isDir ? enterDir(entry) : open(entry)),
+      });
+      if (entry.isDir && onUserNavigate) {
+        items.push({
+          icon: "terminal",
+          label: t("ctx.cdHere"),
+          onSelect: () => onUserNavigate?.(entry.path),
+        });
+      }
+      if (!entry.isDir) {
+        items.push({ icon: "download", label: t("ctx.download"), onSelect: () => download(entry) });
+      }
+      items.push({ kind: "separator" });
+      items.push({ icon: "pencil", label: t("ctx.rename"), onSelect: () => startRename(entry) });
+    }
+    items.push({ icon: "arrowsUpDown", label: t("ctx.cut"), onSelect: () => cutOrCopy("cut") });
+    items.push({ icon: "copy", label: t("ctx.copy"), onSelect: () => cutOrCopy("copy") });
+    if (clipboard) {
+      items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
+    }
+    items.push({ icon: "copy", label: t("ctx.copyPath"), onSelect: () => copyPaths() });
+    if (!multi) {
+      items.push({
+        icon: "copy",
+        label: t("ctx.copyName"),
+        onSelect: () => void writeClipboard(entry.name),
+      });
+    }
+    items.push({ kind: "separator" });
+    items.push({
+      icon: "trash",
+      danger: true,
+      label: multi ? t("ctx.deleteN", { count: sel.length }) : t("ctx.delete"),
+      onSelect: () => (deleteTargets = sel),
+    });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  function openBackgroundMenu(e: MouseEvent) {
+    // Rows handle their own menu; only the empty listing area lands here.
+    if ((e.target as HTMLElement).closest('[role="treeitem"]')) return;
+    e.preventDefault();
+    const items: MenuItem[] = [
+      {
+        icon: "folderPlus",
+        label: t("ctx.newFolder"),
+        onSelect: () => {
+          mkdirName = "";
+          showMkdir = true;
+        },
+      },
+      {
+        icon: "filePlus",
+        label: t("ctx.newFile"),
+        onSelect: () => {
+          mkfileName = "";
+          showMkfile = true;
+        },
+      },
+      { icon: "upload", label: t("ctx.uploadHere"), onSelect: () => uploadFiles() },
+    ];
+    if (clipboard) {
+      items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
+    }
+    items.push({ kind: "separator" });
+    items.push({ icon: "refresh", label: t("ctx.refresh"), onSelect: () => refresh() });
+    ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   async function paste() {
@@ -963,6 +1054,7 @@
     onpointercancel={listPointerUp}
     onkeydown={onListKeydown}
     onclick={onBackgroundClick}
+    oncontextmenu={openBackgroundMenu}
     onfocus={() => {
       if (cursor < 0 && shownEntries.length) cursor = 0;
     }}
@@ -1013,6 +1105,7 @@
                 data-drop={entry.isDir ? entry.path : undefined}
                 onpointerdown={(e) => startMove(e, entry)}
                 onclick={(e) => rowClick(e, entry)}
+                oncontextmenu={(e) => openRowMenu(e, entry)}
                 ondblclick={() => open(entry)}
                 role="treeitem"
                 aria-selected={selection.selected.has(entry.path)}
@@ -1170,3 +1263,5 @@
   onclose={() => (showSync = false)}
   onapplied={refresh}
 />
+
+<ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />

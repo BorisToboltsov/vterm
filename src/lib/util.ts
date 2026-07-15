@@ -52,6 +52,16 @@ export function lineDiffStat(
   return { added, removed };
 }
 
+/**
+ * Suppress the native WebView context menu. This desktop app has no use for the
+ * browser's chrome menu (Reload/Back/Inspect); a right-click should show nothing
+ * unless a component opens its own menu (git panels do, via their own handler
+ * that runs first and also calls preventDefault). Wired globally in +layout.
+ */
+export function suppressContextMenu(e: { preventDefault(): void }): void {
+  e.preventDefault();
+}
+
 export interface Debounced<A extends unknown[]> {
   (...args: A): void;
   /** Cancel a pending trailing call. */

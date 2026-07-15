@@ -10,7 +10,12 @@
   import "@fontsource/vt323/latin-400.css";
   import "@fontsource/press-start-2p/latin-400.css";
   import "@fontsource/share-tech-mono/latin-400.css";
+  import { suppressContextMenu } from "$lib/util";
   let { children } = $props();
 </script>
+
+<!-- Desktop app: no browser chrome menu on right-click. Custom menus (git
+     panels) still open — their element handler runs first and also preventDefaults. -->
+<svelte:document oncontextmenu={suppressContextMenu} />
 
 {@render children()}

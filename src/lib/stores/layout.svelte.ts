@@ -10,8 +10,8 @@ export const LEFT_MAX = 560;
 export const SFTP_MIN = 240;
 export const SFTP_MAX = 720;
 
-/** Which tab the right dock shows (Phase 17.2: SFTP/files vs AI chat; Phase 29: git). */
-export type DockTab = "files" | "ai" | "git";
+/** Which tab the right dock shows (17.2: files/AI; 29: git; 35: docker). */
+export type DockTab = "files" | "ai" | "git" | "docker";
 
 /** Clamp `v` into the inclusive `[lo, hi]` range. */
 export const clamp = (v: number, lo: number, hi: number): number =>
@@ -52,7 +52,9 @@ function load(): Layout {
       // Not persisted — always starts collapsed.
       sftpCollapsed: true,
       dockTab:
-        raw.dockTab === "ai" || raw.dockTab === "git" ? raw.dockTab : "files",
+        raw.dockTab === "ai" || raw.dockTab === "git" || raw.dockTab === "docker"
+          ? raw.dockTab
+          : "files",
     };
   } catch {
     return { ...DEFAULTS };

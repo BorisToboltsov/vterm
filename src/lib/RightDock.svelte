@@ -9,6 +9,7 @@
   import LocalFilePanel from "./LocalFilePanel.svelte";
   import AiChat from "./AiChat.svelte";
   import GitPanel from "./GitPanel.svelte";
+  import DockerPanel from "./DockerPanel.svelte";
   import type { RawContext } from "./aicontext";
   import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
@@ -32,6 +33,7 @@
     onOpenGitDiff,
     onIgnoreGitignore,
     onSftpNavigate,
+    onOpenContainerShell,
     getAiContext,
     aiProd = false,
     aiNoAi = false,
@@ -60,6 +62,8 @@
     onIgnoreGitignore?: (gitignorePath: string, pattern: string) => void;
     /** User navigated in the SFTP panel → cd the terminal too (two-way OSC 7). */
     onSftpNavigate?: (path: string) => void;
+    /** Docker panel → open a real terminal tab running an `exec` shell command. */
+    onOpenContainerShell?: (command: string) => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
     getAiContext?: () => Promise<RawContext> | RawContext;
     /** The active server is prod-flagged — bars AI auto-execution (17.4). */
@@ -72,6 +76,7 @@
   const TABS: { id: DockTab; label: string }[] = [
     { id: "files", label: "SFTP" },
     { id: "git", label: t("git.panelTitle") },
+    { id: "docker", label: t("docker.panelTitle") },
     { id: "ai", label: t("ai.panelTitle") },
   ];
 
@@ -171,6 +176,13 @@
             onIgnore={onIgnoreGitignore}
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}
+          />
+        {:else if activeTab === "docker"}
+          <DockerPanel
+            {sessionId}
+            prod={aiProd}
+            sessionReady={kind === "ssh" ? sessionReady : true}
+            onOpenShell={onOpenContainerShell}
           />
         {:else}
           <AiChat

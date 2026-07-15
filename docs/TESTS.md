@@ -114,7 +114,8 @@ pnpm check
   вложенного `proxy` (`ProxyKind::Jump`, host/authMethod), легаси-профиль → `proxy:None`,
   `ProxyKind` сериализуется в lowercase (`jump`/`socks5`/`http`);
 - `store.rs` — декодирование профилей/папок/known_hosts, битый JSON → дефолты,
-  файловый round-trip во временном каталоге (`tempfile`);
+  файловый round-trip во временном каталоге (`tempfile`); `map_without` (Фаза 33,
+  менеджер known_hosts — удаляет только названный ключ, отсутствующий → без изменений);
 - `pty.rs` — `pty_size` (кламп размеров локального PTY к ≥ 1×1). Само порождение
   shell-вкладки (`portable-pty`) проверяется вживую/E2E, а не юнит-тестом
   (нужен реальный tty + Tauri-события).
@@ -160,8 +161,16 @@ pnpm check
   пустой каталог → `None`, игнор каталогов с именем ключа) и `pick_key_path`
   (явный путь побеждает, пустой/отсутствующий откатывается на дефолт из `~/.ssh`).
 - `error.rs` — `AppError`: наличие маркеров (`auth-rejected`/`host-key-rejected`/
-  `file-changed`) в `Display`, конверсии `From<String>/<io::Error>`, сериализация
-  в строку (контракт с фронтом не меняется).
+  `file-changed`/`dest-exists`/`key-exists`) в `Display`, конверсии
+  `From<String>/<io::Error>`, сериализация в строку (контракт с фронтом не меняется).
+- `keygen.rs` (Фаза 32, генерация SSH-ключей) — `parse_algorithm` (известные id →
+  spec, неизвестный → ошибка); `pub_path_for` (`.pub` дописывается к **всему** имени);
+  `expand_tilde` (обычные пути не трогаются, `~/…` → абсолютный); round-trip генерации
+  Ed25519 (файлы созданы, `.pub` начинается с `ssh-ed25519`, отпечаток `SHA256:`,
+  `load_secret_key` без passphrase проходит); генерация **с passphrase** (без неё
+  `load_secret_key` падает, с ней — проходит); отказ на существующем файле без
+  `overwrite` (`AppError::KeyExists`), успех с `overwrite`; **права `0600`** на приватном
+  ключе (Unix).
 - `recording.rs` (Фаза 12.3, аудит) — `annotate` пишет видимое `o`-событие
   `[vterm] …` в asciicast, **даже на паузе** (два события: до и после `set_paused(true)`).
 - `localfile.rs` (Фаза 12.4, локальные файлы) — `local_temp` (скрытый sibling, корректный
@@ -215,6 +224,15 @@ pnpm check
   остаётся одним аргументом), `git_mirror` (аудит-строка `[git] $ … / [git] exit N`,
   LF→CRLF). Локальный/SSH-исполнитель (`run_local`/`exec_captured`) и сам `git` не
   тестируются (внешний процесс/сеть).
+- `netprobe.rs` (Фаза 34, сетевые утилиты) — `probe_command` (квотинг каждого токена;
+  инъекция `x; rm -rf /` остаётся одним аргументом; сохранность токена-пайплайна
+  `sh -c '<pipeline>'`) и `probe_mirror` (Фаза 36.1 — обёртка `[util] $ … / exit N`,
+  LF→CRLF, как `git_mirror`). Сам `probe_run`/`exec_captured` не тестируются (сеть/внешний хост).
+- `container.rs` (Фаза 35, Docker-панель) — `container_command` (квотинг каждого токена;
+  инъекция `x; rm -rf /` остаётся одним аргументом), `run_local` (несуществующий бинарь →
+  `Err`, не паника), **`container_mirror`** (Фаза 36 — обёртка `[docker] $ … / exit N`
+  для аудита записи, как `git_mirror`). Сам `container_run`/`docker_login`/`exec_captured`
+  и `docker` не тестируются (внешний процесс/демон; логин несёт секрет).
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты
@@ -336,6 +354,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   Ctrl+V (вкл. number-поле), копирование/вырезание выделения, select-all по Cmd+A,
   игнор не-редактируемых целей (терминал) и обычных/Alt/Shift-нажатий (модуль
   `../clipboard` замокан, проверка без Tauri/navigator);
+  `copyDocumentSelection` — копирование выделения обычного текста **вне** input/
+  textarea (превью Markdown) через `writeClipboard`, `false` при схлопнутом
+  выделении и для выделений внутри `.cm-editor`/`.xterm` (там своё копирование),
+  и ветка Cmd/Ctrl+C с `preventDefault` для не-input цели в `handleClipboardShortcut`;
 - `actions/tooltip.ts` (Фаза 20.17) — экшен подсказки: пузырёк с `role="tooltip"`
   **портируется в `document.body`** (не внутри триггера), убирается по `mouseleave`/
   `blur`; пустой текст → ничего; `update()` переименовывает открытый пузырёк;
@@ -625,6 +647,62 @@ pnpm test:coverage   # прогон + покрытие + гейты
   IPv4 (октеты 0–255, без ведущих нулей), IPv6 (`::`-сжатие, zone-id, встроенный IPv4),
   RFC-1123 hostname (метки, дефисы, чисто-числовой TLD мультиметочного имени → отказ),
   trim + пустая строка.
+- `sshkeygen.test.ts` (Фаза 32, чистая логика генерации ключей) — реестр алгоритмов
+  (уникальные id), `isValidAlgorithm`, `defaultKeyName` (id_ed25519/id_rsa/id_ecdsa,
+  неизвестный → id_key); `validateKeyName` (пусто/разделители/`.`/`..`),
+  `validateKeyPath` (корневые пути ок, относительный → ошибка); `buildKeyPath`/
+  `resolvedPath` (один слэш, кастомный путь с trim); `buildGenerateRequest` (пустые
+  passphrase/comment → `undefined`, trim comment, проброс `overwrite`); `isFormValid`.
+- `utilities.test.ts` (Фаза 33, реестр панели «Утилиты») — уникальность id, наличие
+  иконок в реестре и title/desc-ключей в каталоге, дефолт `keys`, `isUtility`,
+  `utilitiesMatching` (пустой запрос → всё, поиск по keywords на обоих языках и по id).
+- `codec.test.ts` (Фаза 33, Base64/URL/Hex) — round-trip Base64 (ASCII/UTF-8),
+  URL-safe без паддинга, дозаполнение паддинга при декодировании; hex (0x/пробелы/
+  двоеточия, нечётная длина/мусор → ошибка); `runCodec` (пустой вход = пустой результат,
+  url encode/decode, `invalidHex`/`invalidUrl`/`invalidBase64`, base64url round-trip).
+- `cidr.test.ts` (Фаза 33, CIDR/подсеть) — `parseIpv4`/`intToIpv4` round-trip и отсев
+  мусора; `parseCidr` (/24 сеть/broadcast/маска/wildcard/диапазон/хосты, bare→/32,
+  /31 point-to-point, /0, границы 172.16/12 приватности, ошибки empty/address/prefix);
+  `ipInCidr` (членство, null на мусоре).
+- `timeconv.test.ts` (Фаза 33, Unix-время↔дата) — `detectUnit` (s/ms по величине),
+  `epochToDate`/`parseEpoch`, парсинг ISO и `parseFlexible`; `isValidTimeZone`,
+  `formatInZone` (UTC и +3 смещение), `relativeParts` (будущее/прошлое, секунды/годы).
+- `cron.test.ts` (Фаза 33, cron) — `parseCron` (every-minute, списки/диапазоны/шаги,
+  `@macros`, имена месяцев/дней, 7=Вс, ошибки count/range/шаг); `cronMatches` (каждые 15
+  мин, union DOM·DOW); `nextRuns` (квартальные, будни 9:00, редкое расписание = меньше N).
+- `pwgen.test.ts` (Фаза 33, генератор паролей) — `randInt` (диапазон/покрытие, throw на 0),
+  `buildClasses` (только выбранные, отсев неоднозначных/своих), `generatePassword`
+  (длина, `noClass`/`lengthTooSmall`/`emptyPool`, requireEach ≥1 каждого, noRepeats без
+  повторов/последовательностей), `entropyBits`, `generatePassphrase` (число слов,
+  заглавные, добавленная цифра, энтропия по размеру словаря).
+- `jwt.test.ts` (Фаза 33, JWT) — `decodeJwt` (header/payload/подпись эталонного HS256,
+  ошибки empty/structure/invalidJson/invalidBase64); `claimDate`, `expiryStatus`.
+- `knownhosts.test.ts` (Фаза 33, менеджер known_hosts) — `splitHostPort` (последнее
+  двоеточие, IPv6 в скобках, без порта); `prepareHosts` (сортировка host→числовой port,
+  фильтр по id/отпечатку, пустой запрос, разбивка полей для вида).
+- `probe.test.ts` (Фаза 34, общая логика сетевых утилит) — `shellQuote` (безопасные
+  токены без кавычек, кавычки для пустых/со спецсимволами, экранирование `'`),
+  `toShellCommand`, `isCommandMissing` (детект «command not found» и пр.), `probeError`
+  (пусто при успехе, приоритет stderr→stdout→exit).
+- `tls.test.ts` (Фаза 34, TLS-инспектор) — `tlsArgs` (пайплайн `sh -c` с SNI, порт,
+  квотинг), `parseTlsCert` (subject/issuer/serial/fingerprint/SAN, дни до истечения при
+  инъекции `now`, `null` без сертификата, unparseable `notAfter`), `expiryLevel` (пороги).
+- `http.test.ts` (Фаза 34, HTTP-клиент) — `httpArgs` (минимальный GET; метод/заголовки/
+  тело/`-L`, отсев пустых заголовков), `parseHttp` (статус/заголовки/тело+тайминги, только
+  финальный ответ в цепочке редиректов, `null` без статус-строки), `statusClass` (диапазоны).
+  (Фаза 36.1 — `dns`/`net`/`portscan`/`externalip`/`hashes` инструменты и их тесты удалены.)
+- `docker.test.ts` (Фаза 35, Docker-панель) — билдеры argv (`psArgs` с compose-лейблами и
+  US-форматом, `logsArgs` без `-f`, `composeUp/Down` с `--project-directory`, prune с `-f`,
+  `execShellCommand` bash→sh); парсеры (`parsePs` c нормализацией состояния и `workdir=null`,
+  `parseImages` с dangling `<none>`, `parseNetworks/Volumes/Stats`); `groupByCompose`
+  (группировка, бакет Standalone последним, `workdir` от первого); `parseAvailability`
+  (ok/missing/daemon/denied/unknown); `isDestructive` (rm/rmi/prune/compose down — да;
+  start/stop/restart/up/logs — нет); `stateTone`/`isRunning`. **Фаза 36**: `needsConfirm`
+  (деструктив + stop/restart/kill — да; start/up/logs/inspect — нет), `containerInfoRows`
+  (отсев пустых полей; cpu/mem/net только у работающего со снимком stats), `loginArgs`/
+  `logoutArgs` (`--password-stdin`, Docker Hub без url), `registryLabel`, `sanitizeDockerRegistries`
+  (отсев мусора, требование username, дедуп по url). UI-оболочки (`Docker*.svelte`) — в
+  exclude покрытия, вся логика в `docker.ts`. `clampDockerRefresh` — в `settings.test.ts`.
 - `idle.test.ts` (Фаза 28, чистая логика заставки простоя) — `isIdleSetting`/
   `clampIdleTimeout` (валидация настроек, клэмп к [15…3600] c) и детект простоя
   `isIdle`/`msUntilIdle` (порог по «нет активности», обратный отсчёт без отрицательных).
@@ -664,6 +742,11 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `api.test.ts` (Фаза 29) — обёртка `gitRun` передаёт `sessionId`/`cwd`/`args`/
   `timeoutSecs`/`mirror` в команду `git_run` (дефолт 30с/`mirror:false`; мутация — явный
   таймаут + `mirror:true`).
+- `ctxmenu.test.ts` (Фаза 31, чистая логика контекстного меню) — `clampMenuPosition`
+  (меню держится в вьюпорте: сдвиг влево/вверх при выходе за правый/нижний край, не заходит
+  за верх-левый `margin`, кастомный отступ) и `isAction` (гвард: строка без `kind` и явный
+  `action` — кликабельны; `separator`/`submenu` — нет). Само `ContextMenu.svelte` и
+  ПКМ-обработчики поверхностей проверены вручную в превью (таб-бар и терминал).
 - `ServerFormModal.test.ts` (Фаза 20.5) — валидация обязательных полей формы сервера
   (`api` замокан): submit при пустых `alias`/`host`/`username` подсвечивает все три
   (`aria-invalid`, «This field is required» ×3 + сводка) и **не** зовёт `addServer`;

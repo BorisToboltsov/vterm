@@ -16,6 +16,7 @@
   import IdleSettings from "./IdleSettings.svelte";
   import SnippetsSettings from "./SnippetsSettings.svelte";
   import BackupSettings from "./BackupSettings.svelte";
+  import DockerSettings from "./DockerSettings.svelte";
   import ServerToolsPanel from "./ServerToolsPanel.svelte";
   import {
     SETTINGS_GROUPS,
@@ -35,6 +36,7 @@
     connection: "settings.groupConnection",
     files: "settings.groupFiles",
     sessions: "settings.groupSessions",
+    docker: "settings.groupDocker",
     assistant: "settings.groupAssistant",
   };
 
@@ -301,6 +303,10 @@
             {t("settings.middleClickPaste")}
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input type="checkbox" bind:checked={settings.rightClickMenu} />
+            {t("settings.rightClickMenu")}<InfoHint text={t("settings.rightClickMenuHint")} />
+          </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.historySearch} />
             {t("settings.historySearch")}<InfoHint text={t("settings.historySearchHint")} />
           </label>
@@ -484,6 +490,10 @@
           </label>
         </section>
 
+        {/if}
+
+        {#if show("docker")}
+        <DockerSettings />
         {/if}
 
         {#if show("backup")}

@@ -7,3 +7,5 @@ export * from "./files";
 export * from "./recording";
 export * from "./ai";
 export * from "./git";
+export * from "./probe";
+export * from "./container";

@@ -24,11 +24,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
   { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
-  { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка локальный шелл оболочка виндовс" },
+  { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click right click context menu local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка правый клик контекстное меню локальный шелл оболочка виндовс" },
   { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
   { id: "recording", keywords: "Recording session asciicast password mask privacy idle pause auto запись сессий пароль маскирование приватность простой пауза автозапись" },
   { id: "sftp", keywords: "SFTP files file size open editor megabytes mb limit max файлы файл размер открыть редактор мегабайт лимит" },
   { id: "servertools", keywords: "server tools install linter linters yamllint shellcheck hadolint ruff sensors temperature lm-sensors monitoring package manager apt dnf серверные инструменты установка линтер линтеры датчики температура мониторинг пакетный менеджер" },
+  { id: "docker", keywords: "docker containers images registry login credentials ghcr registry refresh interval poll compose докер контейнеры образы реестр логин учётные данные интервал обновление" },
   { id: "snippets", keywords: "snippets templates editor insert dockerfile nginx compose systemd kubernetes bash шаблоны сниппеты вставка редактор докерфайл" },
   { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка" },
   { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
@@ -48,6 +49,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "connection", icon: "plug", sections: ["connection", "security"] },
   { id: "files", icon: "code", sections: ["sftp", "editor", "snippets"] },
   { id: "sessions", icon: "activity", sections: ["recording", "statusbar", "servertools"] },
+  { id: "docker", icon: "container", sections: ["docker"] },
   { id: "assistant", icon: "aiMark", sections: ["ai"] },
 ];
 

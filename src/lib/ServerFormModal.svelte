@@ -5,6 +5,7 @@
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import KeyGenModal from "./KeyGenModal.svelte";
   import ServerIconPicker from "./ServerIconPicker.svelte";
   import { tooltip } from "./actions/tooltip";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -182,6 +183,10 @@
     submitted = false;
     open = true;
   }
+
+  // SSH key generator shortcut (Phase 32): open the shared dialog and, on
+  // success, point this server at the freshly generated private key.
+  let keygenOpen = $state(false);
 
   async function browseKey() {
     const picked = await pickKeyFile();
@@ -384,6 +389,12 @@
                 type="button"
                 class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
                 onclick={browseKey}>{t("common.browse")}</button
+              >
+              <button
+                type="button"
+                data-testid="server-keygen"
+                class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+                onclick={() => (keygenOpen = true)}>{t("keygen.generateShort")}</button
               >
             </div>
           </label>
@@ -671,3 +682,10 @@
 >
   {t("page.forgetSecretBody")}
 </ConfirmDialog>
+
+<!-- SSH key generator (Phase 32): fills the key path on success. -->
+<KeyGenModal
+  bind:open={keygenOpen}
+  defaultComment={username.trim() && host.trim() ? `${username.trim()}@${host.trim()}` : ""}
+  ongenerated={(key) => (keyPath = key.path)}
+/>
