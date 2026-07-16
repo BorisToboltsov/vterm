@@ -75,6 +75,7 @@
   import { fortran } from "@codemirror/legacy-modes/mode/fortran";
   import { cobol } from "@codemirror/legacy-modes/mode/cobol";
   import { editorTheme } from "./cmtheme";
+  import { cspNonceExtension } from "./cspnonce";
   import { readClipboard, writeClipboard } from "./clipboard";
   import { activeTerminalTheme, settings } from "./settings.svelte";
   import type { EditorLangKind } from "./editorlang";
@@ -417,6 +418,8 @@
     const state = EditorState.create({
       doc: doc.content,
       extensions: [
+        // Let CodeMirror's runtime style element pass the packaged-build CSP (cspnonce.ts).
+        cspNonceExtension(),
         lineNumbers(),
         highlightActiveLine(),
         highlightActiveLineGutter(),

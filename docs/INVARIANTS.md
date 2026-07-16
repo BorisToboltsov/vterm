@@ -323,6 +323,17 @@
   `pnpm audit`/Semgrep (стадия `security` в CI). Гейты:
   [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts), `deny.toml`.
   Полная модель — [SECURITY.md](../SECURITY.md).
+  **Следствие строгого CSP для CodeMirror (Фаза 36.4):** в `tauri build` Tauri штампует
+  пер-загрузочный nonce в `style-src`, а он по спецификации отменяет `'unsafe-inline'` →
+  runtime-`<style>` CodeMirror без nonce блокируется (`.sheet === null`), и **ни одно** его
+  правило не применяется (раскладка/цвета/подсветка) — только в упакованной сборке (в `dev`
+  страницу отдаёт Vite без CSP). Поэтому **любой** новый `EditorView` обязан включать
+  `cspNonceExtension()` из [cspnonce.ts](../src/lib/cspnonce.ts) (фасет `EditorView.cspNonce` с
+  style-nonce из инлайнового `<style>` в app.html). Общий style-module CodeMirror создаётся на
+  **первом** view, поэтому nonce должны отдавать все (EditorTab, DiffModal, будущие). Чинить это
+  дублированием стилей CodeMirror в app.css **нельзя** (симптом-патч, не покрывает цвета/подсветку —
+  их классы генерируются). CSP при этом **не ослабляем** (`'unsafe-inline'` не добавляем).
+  Закреплено гейтом [cspnonce.test.ts](../src/lib/cspnonce.test.ts).
 - **Контракт типов — camelCase.** Rust-модели — `#[serde(rename_all = "camelCase")]`,
   зеркало в [src/lib/types.ts](../src/lib/types.ts). Новые поля старых структур —
   `#[serde(default)]`.

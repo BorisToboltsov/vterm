@@ -1991,6 +1991,49 @@ keygen (Фаза 32) переехал сюда из настроек.
 
 ---
 
+## ✅ Фаза 36.4 — Фикс: стили редактора (CodeMirror) не применялись в `tauri build` — CSP-nonce блокировал `<style>` (v0.36.4)
+
+- [x] **Редактор ломался только в релизной сборке.** В `pnpm tauri dev` (и Chromium) редактор
+  рендерился верно. После `pnpm tauri build` на macOS — каскад симптомов (не зависит от темы/
+  шрифта): каретка/строки «съезжали» (моноширинная геометрия против пропорционального текста),
+  номера строк вставали **над** кодом, гаттер без столбца, **нет подсветки синтаксиса**, номера
+  строк не приглушены (как текст), нативный focus-ring `contenteditable`, а при выделении текст
+  сжимался в колонку по 3–4 символа. Все это — **один** корень.
+- [x] **Корень — CSP-nonce на `style-src` блокирует runtime-`<style>` CodeMirror.** CodeMirror
+  инъектирует **все** свои стили (раскладка baseTheme, наши цвета из `cmtheme.ts`, классы
+  подсветки) одним runtime-`<style>` (`style-mod`). В `tauri build` Tauri штампует в CSP
+  `style-src` **пер-загрузочный nonce** (`__TAURI_STYLE_NONCE__` — виден в strings бинаря), а по
+  спецификации CSP присутствие nonce **отменяет `'unsafe-inline'`** → `<style>` CodeMirror (без
+  nonce) блокируется: его `.sheet === null`, и **ни одно** правило CodeMirror не применяется.
+  `tauri dev` отдаётся Vite без этого CSP — отсюда «только в build». Диагностика — self-report из
+  **реального** упакованного WebView (скриншот окна недоступен: нет Screen Recording у Claude
+  Desktop): `cmSheetInfo: "SHEET IS NULL"`, в `document.styleSheets` — только 3 живых листа
+  (анти-FOUC `<style>` + два бандл-`<link>`), при том что scope-класс `.ͼ1` **матчит** редактор
+  (правила есть, но лист мёртв).
+- [x] **Фикс — `EditorView.cspNonce` c nonce от Tauri** ([cspnonce.ts](../src/lib/cspnonce.ts)):
+  читаем style-nonce, который Tauri поставил на инлайновый `<style>` в [app.html](../src/app.html)
+  (через IDL-свойство `.nonce` — content-атрибут скрыт после парсинга), и отдаём его CodeMirror
+  фасетом `EditorView.cspNonce`, чтобы его `<style>` нёс совпадающий nonce и проходил CSP.
+  Проброшено во **все** места, создающие `EditorView` — [EditorTab.svelte](../src/lib/EditorTab.svelte)
+  и [DiffModal.svelte](../src/lib/DiffModal.svelte) (общий style-module создаётся на первом view,
+  поэтому nonce обязан быть у каждого). CSP/капы **не ослаблены** (не добавляли `'unsafe-inline'`,
+  не трогали `style-src`) — офлайн/безопасность-инвариант цел.
+- [x] **Убраны CSS-воркэраунды.** Промежуточные попытки чинить это в [app.css](../src/app.css)
+  (пин шрифта редактора + дословное дублирование структурного baseTheme) были симптом-патчами того
+  же CSP-корня и **удалены** — настоящий фикс делает их лишними (правила CodeMirror теперь живые и
+  выигрывают сами). Их гейты `editorfont.guard.test.ts`/`editorlayout.guard.test.ts` удалены.
+- [x] **Тесты/доки**: [cspnonce.test.ts](../src/lib/cspnonce.test.ts) — `firstNonce` (чистая),
+  `readStyleNonce` (jsdom: читает nonce с `<style>`), `cspNonceExtension` + **гейт-регрессия**, что
+  `EditorTab`/`DiffModal` вызывают `cspNonceExtension()` в extensions. Запись в [TESTS.md](docs/TESTS.md).
+  Версия 0.36.4 в трёх манифестах.
+- [x] **Проверено в реальной `tauri build`-сборке (системный WKWebView, UA `AppleWebKit/605.1.15`)**
+  тем же self-report после фикса, **без** CSS-воркэраундов: `cmSheetInfo: "LIVE count=198"`;
+  `.cm-scroller` `display:flex`, `font-family:monospace` (из CodeMirror, не из app.css);
+  `.cm-editor` фон `rgb(11,15,24)` (тема); номера строк **приглушены** `rgb(58,70,92)`; токен
+  подсветки — класс `ͼ1a`, цвет `rgb(103,213,224)` (циан). Диагностика удалена после проверки.
+
+---
+
 ## ⬜ Фаза 37 — Панель Kubernetes (k8s) (v0.37.0)
 
 Просмотр и управление ресурсами кластера, доступного с хоста активной сессии — **5-я

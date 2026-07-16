@@ -7,6 +7,7 @@
   import { EditorState } from "@codemirror/state";
   import { EditorView, lineNumbers } from "@codemirror/view";
   import { editorTheme } from "./cmtheme";
+  import { cspNonceExtension } from "./cspnonce";
   import { activeTerminalTheme } from "./settings.svelte";
   import Modal from "./Modal.svelte";
 
@@ -45,6 +46,8 @@
     mv = undefined;
     if (!open || !host) return;
     const ro = [
+      // Let CodeMirror's runtime style element pass the packaged-build CSP (cspnonce.ts).
+      cspNonceExtension(),
       lineNumbers(),
       EditorView.editable.of(false),
       EditorState.readOnly.of(true),

@@ -36,6 +36,18 @@ body {
   color: var(--color-text);
 }
 
+/* CodeMirror injects ALL of its styles (baseTheme layout, our theme colours from
+   cmtheme.ts, and the syntax-highlight classes) at runtime as a single <style>
+   element. Under `tauri build` Tauri stamps a per-load nonce into the CSP
+   `style-src` (`__TAURI_STYLE_NONCE__`), and per the CSP spec a nonce voids
+   `'unsafe-inline'` — so that runtime <style>, which carries no nonce, is blocked
+   (its `.sheet` is null) and NONE of CodeMirror's styles apply (numbers stacked,
+   no gutter column, no syntax colours, native focus ring, selection collapse).
+   `tauri dev` is served by Vite without that CSP, so it only broke in release
+   builds. The fix lives in EditorTab.svelte / DiffModal.svelte: hand CodeMirror the
+   nonce via `EditorView.cspNonce` so its <style> is allowed. No CSS workaround is
+   needed here once the nonce is threaded through — see cspnonce.ts. */
+
 /* Thin scrollbars to match a terminal aesthetic */
 ::-webkit-scrollbar {
   width: 8px;

@@ -924,6 +924,68 @@
   }
 
   onMount(() => {
+    // TEMP DIAG: open a REAL local file (real read path) and dump the editor's
+    // rendered structure + any coloured overlay bars, so the packaged build
+    // self-reports what actually breaks.
+    {
+      const mark = (s: string) => void writeLocalText("/tmp/vterm-editdiag-mark.txt", s + "\n", "lf", null).catch(() => {});
+      let sid = "";
+      try {
+        mark("onMount-start");
+        sid = openLocalTab();
+        mark("tab-created:" + sid);
+      } catch (e) {
+        mark("tab-err:" + String(e));
+      }
+      setTimeout(() => {
+        void readLocalText("/tmp/vterm-realtest.conf", editorMaxBytes())
+          .then((f) => mark("readLocalText-ok len=" + f.content.length))
+          .catch((e) => mark("readLocalText-err:" + String(e)));
+        void openLocalFileInEditor(sid, "/tmp/vterm-realtest.conf")
+          .then(() => mark("openFile-resolved"))
+          .catch((e) => mark("openFile-err:" + String(e)));
+      }, 800);
+      setTimeout(() => {
+       try {
+        const rect = (el: Element | null) => {
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+        };
+        const content = document.querySelector(".cm-content");
+        const lines = [...document.querySelectorAll(".cm-line")].map((l) => ({
+          t: (l.textContent ?? "").slice(0, 30),
+          ...rect(l),
+          color: getComputedStyle(l).color,
+        }));
+        // Anything that could be a coloured "bar": cursors, selection, active line,
+        // merge-view chunks, panels.
+        const bars = [
+          ...document.querySelectorAll(
+            ".cm-cursor, .cm-selectionBackground, .cm-activeLine, .cm-activeLineGutter, [class*='hunk'], [class*='Chunk'], [class*='changed'], [class*='deleted'], .cm-panels, .cm-merge-a, .cm-merge-b, .cm-layer",
+          ),
+        ].slice(0, 20).map((el) => {
+          const cs = getComputedStyle(el);
+          return { cls: el.className?.toString().slice(0, 60), ...rect(el), bg: cs.backgroundColor, bt: cs.borderTopColor, bw: cs.borderTopWidth };
+        });
+        const diag = {
+          contentText: (content?.textContent ?? "").slice(0, 120),
+          contentTextLen: (content?.textContent ?? "").length,
+          nLines: document.querySelectorAll(".cm-line").length,
+          hasMergeView: !!document.querySelector(".cm-merge-a, .cm-deletedChunk, [class*='Chunk']"),
+          contentRect: rect(content),
+          scroller: (() => { const s = document.querySelector(".cm-scroller"); return s ? { st: s.scrollTop, sh: s.scrollHeight, ch: s.clientHeight } : null; })(),
+          lines,
+          bars,
+        };
+        void writeLocalText("/tmp/vterm-editdiag.json", JSON.stringify(diag, null, 2), "lf", null).catch((e) => {
+          void writeLocalText("/tmp/vterm-editdiag-err.txt", "write-fail:" + String(e), "lf", null).catch(() => {});
+        });
+       } catch (e) {
+         void writeLocalText("/tmp/vterm-editdiag-err.txt", "diag-throw:" + String(e), "lf", null).catch(() => {});
+       }
+      }, 2500);
+    }
     refresh();
     const unlisteners: UnlistenFn[] = [];
     listen("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));

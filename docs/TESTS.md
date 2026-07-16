@@ -178,7 +178,9 @@ pnpm check
   (правильный sha → запись, устаревший → `file-changed`); отказ на **бинаре** (NUL) и
   **слишком большом** файле; `rename` (Фаза 21) — перемещение файла в подпапку и **отказ**
   `dest-exists` при занятом имени; `copy` (Фаза 21) — рекурсивное дублирование дерева
-  (оригинал цел) и отказ `dest-exists` (через `tokio::test` + `tempfile`).
+  (оригинал цел) и отказ `dest-exists`; `read_text_returns_full_content` — гейт-регрессия
+  на чтение для редактора: `read_text` возвращает **всё** содержимое файла целиком (не
+  пустую строку) и `read_only=false` для `0644` (через `tokio::test` + `tempfile`).
 - `servertools.rs` (Фаза 12.8) — `parse_status` (mgr + present-bins), `install_command`
   (команда под менеджер: системные с sudo, fallback `pip --user` для yamllint/ruff, distro-имена
   для sensors, бинарь для hadolint, **smartmontools/sysstat по своему имени**, `None` для
@@ -496,6 +498,15 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `editorTheme` (непустой набор расширений для реальной палитры темы). Сам редактор
   [EditorTab.svelte](../src/lib/EditorTab.svelte) и [DiffModal.svelte](../src/lib/DiffModal.svelte)
   исключены из покрытия (CodeMirror/MergeView-driven, как Terminal/SftpPanel — логика в `.ts`);
+- `cspnonce.test.ts` (Фаза 36.4) — фикс «стили редактора не применяются в `tauri build`». В
+  упакованной сборке Tauri штампует пер-загрузочный nonce в CSP `style-src`, что по спецификации
+  отменяет `'unsafe-inline'` и блокирует runtime-`<style>` CodeMirror (`.sheet === null`) → ни
+  раскладка baseTheme, ни цвета `cmtheme.ts`, ни подсветка не применяются. Тесты: `firstNonce`
+  (чистая — первый непустой nonce, `''` если нет); `readStyleNonce` (jsdom — читает nonce с
+  инлайнового `<style>`, пусто без nonce); `cspNonceExtension` (возвращает extension); плюс
+  **гейт-регрессия**, что [EditorTab.svelte](../src/lib/EditorTab.svelte) и
+  [DiffModal.svelte](../src/lib/DiffModal.svelte) импортируют и вызывают `cspNonceExtension()`
+  в extensions (общий style-module создаётся на первом `EditorView`, nonce обязан быть у каждого);
 - `util.ts` → `lineDiffStat` (Фаза 12.3) — 0/0 для идентичного текста; счёт added/removed;
   multiset (порядок не важен, дубликаты учитываются) — метрика для аудит-записи правок;
 - `settings.svelte.ts` → `editor` (Фаза 12.3) — дефолты `{diffBeforeSave,lint}=true`, мердж

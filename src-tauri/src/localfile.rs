@@ -457,4 +457,15 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("dest-exists"));
     }
+
+    #[tokio::test]
+    async fn read_text_returns_full_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("app.yml");
+        let body = "server:\n  host: example.com\n  port: 22\noptions:\n  keepalive: 60\n";
+        tokio::fs::write(&f, body.as_bytes()).await.unwrap();
+        let tf = read_text(f.to_str().unwrap(), 1_000_000).await.unwrap();
+        assert_eq!(tf.content, body, "content must round-trip in full");
+        assert!(!tf.read_only, "0644 temp file is writable");
+    }
 }
