@@ -591,3 +591,255 @@ export function needsConfirm(args: string[]): boolean {
   }
   return false;
 }
+
+// ═══ Phase 37.1 — Network (Services + Ingress) + Cluster (Nodes + Events) ═════
+// Same driver/contract as 37.0: bare-argv builders + JSON parsers, no new backend
+// command. Cordon/drain confirmation is already covered by needsConfirm above
+// (`drain` is destructive, `cordon` prompts); `uncordon` is safe (no prompt).
+
+// ── Argument builders ────────────────────────────────────────────────────────
+
+/** All services in scope as JSON. */
+export function servicesArgs(): string[] {
+  return ["get", "services", "-o", "json"];
+}
+
+/** All ingresses in scope as JSON. */
+export function ingressArgs(): string[] {
+  return ["get", "ingress", "-o", "json"];
+}
+
+/** All nodes as JSON (cluster-scoped — call {@link withScope} with `namespaced:false`). */
+export function nodesArgs(): string[] {
+  return ["get", "nodes", "-o", "json"];
+}
+
+/** Events in scope as JSON (parsed newest-first by {@link parseEvents}). */
+export function eventsArgs(): string[] {
+  return ["get", "events", "-o", "json"];
+}
+
+// Node actions. `cordon` marks a node unschedulable (reversible with `uncordon`);
+// `drain` evicts pods (disruptive → destructive). Node commands are cluster-scoped —
+// run them with an empty per-object namespace so no `--namespace` flag is added.
+export function cordonArgs(node: string): string[] {
+  return ["cordon", node];
+}
+export function uncordonArgs(node: string): string[] {
+  return ["uncordon", node];
+}
+export function drainArgs(node: string): string[] {
+  return ["drain", node, "--ignore-daemonsets", "--delete-emptydir-data"];
+}
+
+/**
+ * Interactive `kubectl port-forward` command written into a real terminal tab (like
+ * {@link execShellCommand}) — NOT run via `kubectl_run`: the forwarding process must
+ * live in a PTY the panel doesn't manage. `target` is `svc/<name>` or `pod/<name>`.
+ * Scope flags are inlined because the command runs in a shell.
+ */
+export function portForwardCommand(
+  prog: string[],
+  target: string,
+  namespace: string,
+  local: number,
+  remote: number,
+  scope: K8sScope,
+): string {
+  const parts = [...prog, "port-forward"];
+  if (scope.context) parts.push("--context", scope.context);
+  if (namespace) parts.push("--namespace", namespace);
+  parts.push(target, `${local}:${remote}`);
+  return parts.join(" ");
+}
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+export interface K8sService {
+  name: string;
+  namespace: string;
+  /** ClusterIP · NodePort · LoadBalancer · ExternalName. */
+  type: string;
+  clusterIp: string;
+  /** Resolved external address (LB ingress / externalIPs), "<pending>" or "-". */
+  externalIp: string;
+  /** Port mappings string, e.g. "80:30080/TCP, 443/TCP". */
+  ports: string;
+  /** First service port, for a default port-forward target (null if none). */
+  firstPort: number | null;
+  age: string;
+}
+
+export interface K8sIngress {
+  name: string;
+  namespace: string;
+  className: string;
+  /** Comma-joined rule hosts. */
+  hosts: string;
+  /** Load-balancer address (ip/hostname), or "". */
+  address: string;
+  age: string;
+}
+
+export interface K8sNode {
+  name: string;
+  /** "Ready" · "NotReady" (+ ",SchedulingDisabled" when cordoned). */
+  status: string;
+  /** Whether the node is cordoned (spec.unschedulable). */
+  schedulable: boolean;
+  /** Comma-joined roles from `node-role.kubernetes.io/*` labels, or "<none>". */
+  roles: string;
+  version: string;
+  internalIp: string;
+  age: string;
+}
+
+export interface K8sEvent {
+  /** Normal · Warning. */
+  type: string;
+  reason: string;
+  /** Involved object as "Kind/name". */
+  object: string;
+  namespace: string;
+  message: string;
+  count: number;
+  age: string;
+  /** Epoch ms of the last occurrence (for sorting), or 0. */
+  ts: number;
+}
+
+// ── Parsers ──────────────────────────────────────────────────────────────────
+
+/** Resolve a service's external address from LB ingress / externalIPs / type. */
+function serviceExternal(item: Record<string, unknown>, type: string): string {
+  const lb = dig(item, "status", "loadBalancer", "ingress");
+  if (Array.isArray(lb) && lb.length) {
+    const vals = (lb as Record<string, unknown>[]).map((x) => str(x.ip) || str(x.hostname)).filter(Boolean);
+    if (vals.length) return vals.join(",");
+  }
+  const ext = dig(item, "spec", "externalIPs");
+  if (Array.isArray(ext) && ext.length) return (ext as string[]).filter(Boolean).join(",");
+  if (type === "LoadBalancer") return "<pending>";
+  if (type === "ExternalName") return str(dig(item, "spec", "externalName"));
+  return "-";
+}
+
+export function parseServices(raw: string, nowMs: number = Date.now()): K8sService[] {
+  return items(raw).map((it) => {
+    const type = str(dig(it, "spec", "type")) || "ClusterIP";
+    const ports = dig(it, "spec", "ports");
+    const portArr = Array.isArray(ports) ? (ports as Record<string, unknown>[]) : [];
+    const portsStr = portArr
+      .map((p) => `${num(p.port)}${p.nodePort ? ":" + num(p.nodePort) : ""}/${str(p.protocol) || "TCP"}`)
+      .join(", ");
+    return {
+      name: str(dig(it, "metadata", "name")),
+      namespace: str(dig(it, "metadata", "namespace")),
+      type,
+      clusterIp: str(dig(it, "spec", "clusterIP")),
+      externalIp: serviceExternal(it, type),
+      ports: portsStr,
+      firstPort: portArr.length ? num(portArr[0].port) : null,
+      age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    };
+  });
+}
+
+export function parseIngress(raw: string, nowMs: number = Date.now()): K8sIngress[] {
+  return items(raw).map((it) => {
+    const rules = dig(it, "spec", "rules");
+    const hosts = Array.isArray(rules)
+      ? (rules as Record<string, unknown>[]).map((r) => str(r.host)).filter(Boolean).join(",")
+      : "";
+    const lb = dig(it, "status", "loadBalancer", "ingress");
+    const address = Array.isArray(lb)
+      ? (lb as Record<string, unknown>[]).map((x) => str(x.ip) || str(x.hostname)).filter(Boolean).join(",")
+      : "";
+    return {
+      name: str(dig(it, "metadata", "name")),
+      namespace: str(dig(it, "metadata", "namespace")),
+      className: str(dig(it, "spec", "ingressClassName")),
+      hosts,
+      address,
+      age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    };
+  });
+}
+
+/** Extract node roles from `node-role.kubernetes.io/<role>` (and legacy) labels. */
+export function nodeRoles(labels: unknown): string {
+  if (!labels || typeof labels !== "object") return "<none>";
+  const roles: string[] = [];
+  for (const key of Object.keys(labels as Record<string, unknown>)) {
+    const m = /^node-role\.kubernetes\.io\/(.+)$/.exec(key);
+    if (m && m[1]) roles.push(m[1]);
+    else if (key === "kubernetes.io/role") {
+      const v = str((labels as Record<string, unknown>)[key]);
+      if (v) roles.push(v);
+    }
+  }
+  return roles.length ? roles.sort().join(",") : "<none>";
+}
+
+export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
+  return items(raw).map((it) => {
+    const conds = dig(it, "status", "conditions");
+    const ready =
+      Array.isArray(conds) &&
+      (conds as Record<string, unknown>[]).some((c) => c.type === "Ready" && c.status === "True");
+    const unschedulable = dig(it, "spec", "unschedulable") === true;
+    const status = `${ready ? "Ready" : "NotReady"}${unschedulable ? ",SchedulingDisabled" : ""}`;
+    const addrs = dig(it, "status", "addresses");
+    const internalIp = Array.isArray(addrs)
+      ? str((addrs as Record<string, unknown>[]).find((a) => a.type === "InternalIP")?.address)
+      : "";
+    return {
+      name: str(dig(it, "metadata", "name")),
+      status,
+      schedulable: !unschedulable,
+      roles: nodeRoles(dig(it, "metadata", "labels")),
+      version: str(dig(it, "status", "nodeInfo", "kubeletVersion")),
+      internalIp,
+      age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    };
+  });
+}
+
+export function parseEvents(raw: string, nowMs: number = Date.now()): K8sEvent[] {
+  const out = items(raw).map((it) => {
+    const when =
+      str(dig(it, "lastTimestamp")) ||
+      str(dig(it, "eventTime")) ||
+      str(dig(it, "firstTimestamp")) ||
+      str(dig(it, "metadata", "creationTimestamp"));
+    const ts = Date.parse(when);
+    const kind = str(dig(it, "involvedObject", "kind"));
+    const objName = str(dig(it, "involvedObject", "name"));
+    return {
+      type: str(dig(it, "type")) || "Normal",
+      reason: str(dig(it, "reason")),
+      object: kind ? `${kind}/${objName}` : objName,
+      namespace: str(dig(it, "metadata", "namespace")),
+      message: str(dig(it, "message")),
+      count: Math.max(1, num(dig(it, "count"))),
+      age: k8sAge(when, nowMs),
+      ts: Number.isFinite(ts) ? ts : 0,
+    };
+  });
+  // Newest first.
+  return out.sort((a, b) => b.ts - a.ts);
+}
+
+// ── View helpers (pure) ──────────────────────────────────────────────────────
+
+/** A tone for a node status → the UI maps it to a color token. */
+export function nodeStatusTone(status: string): "ok" | "warn" | "bad" | "idle" {
+  if (status.includes("SchedulingDisabled")) return "warn";
+  if (status.startsWith("Ready")) return "ok";
+  return "bad";
+}
+
+/** A tone for an event type → Warning stands out, Normal is quiet. */
+export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
+  return type === "Warning" ? "warn" : "idle";
+}

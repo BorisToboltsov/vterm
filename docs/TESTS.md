@@ -189,6 +189,9 @@ pnpm check
   pip/brew без изменений, мульти-sudo — только первый), `build_status` (installed-флаг).
 - `sftp.rs` → `parse_id_names` (ls-владелец) — разбор `/etc/passwd`/`/etc/group`
   (`name:x:id:…`, первое имя на id, пропуск битых строк; один парсер для users и groups).
+  **Аудит SFTP** (Фаза 37.2): `sftp_mirror` — успех (`[sftp] $ … / exit 0`, без тела-ошибки) и
+  провал (тело с текстом ошибки + `exit 1`); мутирующие команды пишут его через `record_sftp`,
+  чтения — нет.
 - `sync.rs` (Фаза 12.5–12.6) — `shell_quote` (экранирование `'`), `remote_hash_command`
   (квотирование пути + fallback `sha256sum`→`shasum`), `parse_hashsum` (hash+относительный путь,
   `*`-маркер, пробелы в пути, пропуск не-hex/коротких строк), `remote_join`/`local_join`;
@@ -738,6 +741,13 @@ pnpm test:coverage   # прогон + покрытие + гейты
   покрытия, вся логика в `k8s.ts`. `clampK8sRefresh` — в `settings.test.ts`. Бэкенд `kube.rs`:
   `kube_command` (квотинг каждого токена + wrapper-программа + нейтрализация инъекции),
   `kube_mirror` (обёртка `[k8s] $ … / exit N`), `run_local` (ENOENT→`exit 127`).
+  **Фаза 37.1** (+10 тестов, 63 всего): билдеры `servicesArgs`/`ingressArgs`/`nodesArgs`/`eventsArgs`,
+  `cordonArgs`/`uncordonArgs`/`drainArgs` (cordon/drain → confirm, uncordon — нет), `portForwardCommand`
+  (инлайн scope/target, wrapper-программа, пропуск пустого scope); `parseServices` (type/clusterIP/
+  external с LB-ingress/externalIPs/`<pending>`, ports-строка, firstPort), `parseIngress` (hosts join +
+  LB-адрес), `nodeRoles` (label’ы `node-role.kubernetes.io/*` + legacy `kubernetes.io/role`), `parseNodes`
+  (Ready/`SchedulingDisabled`, version, internalIP), `parseEvents` (newest-first сортировка, object
+  `Kind/name`, count), `nodeStatusTone`/`eventTone`.
 - `idle.test.ts` (Фаза 28, чистая логика заставки простоя) — `isIdleSetting`/
   `clampIdleTimeout` (валидация настроек, клэмп к [15…3600] c) и детект простоя
   `isIdle`/`msUntilIdle` (порог по «нет активности», обратный отсчёт без отрицательных).

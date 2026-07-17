@@ -325,8 +325,23 @@
   `kubectl_run`. **Выбор kubectl** — `settings.kubectlPath` (секция настроек «Kubernetes»,
   [K8sSettings](../src/lib/K8sSettings.svelte)) для `k3s kubectl`/`microk8s kubectl`/абс. пути —
   строка в токены чистым `kubectlProg`. **Офлайн цел**: API-сервер — «за сессией пользователя»,
-  трафик из Rust/PTY, не из WebView. Network (Services/Ingress) + Cluster (Nodes/Events) +
-  port-forward — **Фаза 37.1**, тем же драйвером/контрактом.
+  трафик из Rust/PTY, не из WebView. **Network + Cluster** (Фаза 37.1, тем же драйвером/контрактом):
+  сабтабы Services/Ingress ([K8sNetwork](../src/lib/K8sNetwork.svelte)) и Nodes+Events
+  ([K8sCluster](../src/lib/K8sCluster.svelte)) — билдеры/парсеры (`servicesArgs`/`ingressArgs`/
+  `nodesArgs`/`eventsArgs` + `parse*`) в `k8s.ts`, без новой бэкенд-команды. **Node-команды
+  cluster-scoped** — идут с пустым namespace (флаг `--namespace` не добавляется), cordon/drain — под
+  `needsConfirm`. Events **внутри Cluster** (не 5-й сабтаб) с фильтром Warning/Normal.
+  **port-forward** — как shell в под: `portForwardCommand` → `write_to_terminal` в новой вкладке
+  (процесс в PTY), **не** через `kubectl_run`.
+- **Аудит SFTP в записи** (Фаза 37.2). Мутирующие SFTP-операции пишутся в активную запись сессии
+  как `[sftp] $ … / [sftp] exit N` (`sftp::sftp_mirror`, **record-only** — в живой терминал не
+  эмитятся, GUI чистый), **тем же контрактом**, что docker/git/k8s (`record_output` на
+  `SshSession`). Мирроятся: `rm`/`rm -r` (delete), `mv` (rename), `cp` (copy), `mkdir`, `touch`
+  (create file), `save` (write_text — **только размер**, содержимое файла **не** пишется), `put`
+  (upload), `get` (download). **Чтения не пишутся** (`list`/`read_text`/`grep`/`hash_tree`). Пути
+  квотятся `git::shell_quote`. Новую мутирующую SFTP-команду подключай так же: `session_arc` →
+  `session.sftp()` → `record_sftp(&session, &op, &res)` в [lib.rs](../src-tauri/src/lib.rs). SFTP —
+  только SSH (у локальных вкладок своя `localfile`-панель, не через этот путь).
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя (в т.ч. **через заданный им proxy** — jump host/SOCKS5/HTTP
   CONNECT, Фаза 21 — это часть пути к его же серверам) **и** — при включённом opt-in

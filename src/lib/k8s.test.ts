@@ -31,6 +31,21 @@ import {
   podPhaseTone,
   isDestructive,
   needsConfirm,
+  servicesArgs,
+  ingressArgs,
+  nodesArgs,
+  eventsArgs,
+  cordonArgs,
+  uncordonArgs,
+  drainArgs,
+  portForwardCommand,
+  parseServices,
+  parseIngress,
+  parseNodes,
+  parseEvents,
+  nodeRoles,
+  nodeStatusTone,
+  eventTone,
   type K8sScope,
   type K8sPod,
 } from "./k8s";
@@ -483,5 +498,178 @@ describe("isDestructive / needsConfirm", () => {
     expect(needsConfirm(podsArgs())).toBe(false);
     expect(needsConfirm(topPodsArgs())).toBe(false);
     expect(needsConfirm(describeArgs("pod", "api-1"))).toBe(false);
+  });
+});
+
+// ─── Phase 37.1: Network + Cluster ───────────────────────────────────────────
+
+describe("network/cluster builders", () => {
+  it("servicesArgs / ingressArgs / nodesArgs / eventsArgs", () => {
+    expect(servicesArgs()).toEqual(["get", "services", "-o", "json"]);
+    expect(ingressArgs()).toEqual(["get", "ingress", "-o", "json"]);
+    expect(nodesArgs()).toEqual(["get", "nodes", "-o", "json"]);
+    expect(eventsArgs()).toEqual(["get", "events", "-o", "json"]);
+  });
+  it("cordon / uncordon / drain", () => {
+    expect(cordonArgs("n1")).toEqual(["cordon", "n1"]);
+    expect(uncordonArgs("n1")).toEqual(["uncordon", "n1"]);
+    expect(drainArgs("n1")).toEqual(["drain", "n1", "--ignore-daemonsets", "--delete-emptydir-data"]);
+  });
+  it("cordon/drain confirm, uncordon does not", () => {
+    expect(needsConfirm(cordonArgs("n1"))).toBe(true);
+    expect(needsConfirm(drainArgs("n1"))).toBe(true);
+    expect(isDestructive(drainArgs("n1"))).toBe(true);
+    expect(needsConfirm(uncordonArgs("n1"))).toBe(false);
+    expect(isDestructive(uncordonArgs("n1"))).toBe(false);
+  });
+  it("portForwardCommand inlines scope and target", () => {
+    const cmd = portForwardCommand(["kubectl"], "svc/api", "web", 8080, 80, SCOPE);
+    expect(cmd).toBe("kubectl port-forward --context prod --namespace web svc/api 8080:80");
+  });
+  it("portForwardCommand carries a wrapper program and omits empty scope", () => {
+    const cmd = portForwardCommand(["k3s", "kubectl"], "pod/api-1", "", 5432, 5432, {
+      context: null,
+      namespace: null,
+      allNamespaces: false,
+    });
+    expect(cmd).toBe("k3s kubectl port-forward pod/api-1 5432:5432");
+  });
+});
+
+describe("parseServices", () => {
+  const raw = JSON.stringify({
+    items: [
+      {
+        metadata: { name: "api", namespace: "web", creationTimestamp: "2026-07-17T10:00:00Z" },
+        spec: {
+          type: "NodePort",
+          clusterIP: "10.0.0.5",
+          ports: [
+            { port: 80, nodePort: 30080, protocol: "TCP" },
+            { port: 443, protocol: "TCP" },
+          ],
+        },
+      },
+      {
+        metadata: { name: "lb", namespace: "web" },
+        spec: { type: "LoadBalancer", clusterIP: "10.0.0.6", ports: [{ port: 8080, protocol: "TCP" }] },
+        status: { loadBalancer: { ingress: [{ ip: "203.0.113.7" }] } },
+      },
+      {
+        metadata: { name: "pending", namespace: "web" },
+        spec: { type: "LoadBalancer", clusterIP: "10.0.0.7", ports: [] },
+      },
+    ],
+  });
+  it("maps type/clusterIP/external/ports/firstPort", () => {
+    const [np, lb, pend] = parseServices(raw, Date.parse("2026-07-17T12:00:00Z"));
+    expect(np).toMatchObject({
+      name: "api",
+      type: "NodePort",
+      clusterIp: "10.0.0.5",
+      externalIp: "-",
+      ports: "80:30080/TCP, 443/TCP",
+      firstPort: 80,
+    });
+    expect(lb).toMatchObject({ externalIp: "203.0.113.7", firstPort: 8080 });
+    expect(pend).toMatchObject({ externalIp: "<pending>", firstPort: null });
+  });
+});
+
+describe("parseIngress", () => {
+  it("joins hosts and resolves the LB address", () => {
+    const raw = JSON.stringify({
+      items: [
+        {
+          metadata: { name: "web", namespace: "web" },
+          spec: { ingressClassName: "nginx", rules: [{ host: "a.example.com" }, { host: "b.example.com" }] },
+          status: { loadBalancer: { ingress: [{ hostname: "lb.example.com" }] } },
+        },
+      ],
+    });
+    const [ing] = parseIngress(raw);
+    expect(ing).toMatchObject({
+      className: "nginx",
+      hosts: "a.example.com,b.example.com",
+      address: "lb.example.com",
+    });
+  });
+});
+
+describe("nodeRoles / parseNodes / nodeStatusTone", () => {
+  it("extracts roles from labels", () => {
+    expect(nodeRoles({ "node-role.kubernetes.io/control-plane": "", "node-role.kubernetes.io/master": "" })).toBe(
+      "control-plane,master",
+    );
+    expect(nodeRoles({ "kubernetes.io/role": "worker" })).toBe("worker");
+    expect(nodeRoles({ foo: "bar" })).toBe("<none>");
+    expect(nodeRoles(undefined)).toBe("<none>");
+  });
+  it("maps Ready/cordoned status and version", () => {
+    const raw = JSON.stringify({
+      items: [
+        {
+          metadata: {
+            name: "node-1",
+            creationTimestamp: "2026-07-10T12:00:00Z",
+            labels: { "node-role.kubernetes.io/control-plane": "" },
+          },
+          spec: { unschedulable: true },
+          status: {
+            conditions: [{ type: "Ready", status: "True" }],
+            nodeInfo: { kubeletVersion: "v1.28.5" },
+            addresses: [{ type: "InternalIP", address: "10.0.0.1" }],
+          },
+        },
+        {
+          metadata: { name: "node-2" },
+          status: { conditions: [{ type: "Ready", status: "False" }] },
+        },
+      ],
+    });
+    const [n1, n2] = parseNodes(raw, Date.parse("2026-07-17T12:00:00Z"));
+    expect(n1).toMatchObject({
+      status: "Ready,SchedulingDisabled",
+      schedulable: false,
+      roles: "control-plane",
+      version: "v1.28.5",
+      internalIp: "10.0.0.1",
+    });
+    expect(n2.status).toBe("NotReady");
+    expect(nodeStatusTone("Ready")).toBe("ok");
+    expect(nodeStatusTone("Ready,SchedulingDisabled")).toBe("warn");
+    expect(nodeStatusTone("NotReady")).toBe("bad");
+  });
+});
+
+describe("parseEvents / eventTone", () => {
+  it("sorts newest first and maps fields", () => {
+    const raw = JSON.stringify({
+      items: [
+        {
+          type: "Normal",
+          reason: "Scheduled",
+          involvedObject: { kind: "Pod", name: "api-1" },
+          metadata: { namespace: "web" },
+          message: "Successfully assigned",
+          count: 1,
+          lastTimestamp: "2026-07-17T11:00:00Z",
+        },
+        {
+          type: "Warning",
+          reason: "BackOff",
+          involvedObject: { kind: "Pod", name: "api-2" },
+          metadata: { namespace: "web" },
+          message: "Back-off restarting",
+          count: 5,
+          lastTimestamp: "2026-07-17T11:30:00Z",
+        },
+      ],
+    });
+    const evs = parseEvents(raw, Date.parse("2026-07-17T12:00:00Z"));
+    expect(evs[0]).toMatchObject({ type: "Warning", reason: "BackOff", object: "Pod/api-2", count: 5 });
+    expect(evs[1]).toMatchObject({ type: "Normal", object: "Pod/api-1" });
+    expect(eventTone("Warning")).toBe("warn");
+    expect(eventTone("Normal")).toBe("idle");
   });
 });

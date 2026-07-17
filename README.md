@@ -82,10 +82,12 @@
   с подтверждением на любом сервере; изменения пишутся в **запись сессии**.
 - ☸️ **Kubernetes-панель** (SSH и локально, через `kubectl` на хосте сессии): **поды**
   с группировкой по владельцу (Deployment/StatefulSet/DaemonSet/Job) + CPU/память (`top pods`),
-  **нагрузки** (Deploy/STS/DS/**CronJob**) с масштабированием ± и `rollout restart`, модалка
-  деталей (Overview/логи/describe/YAML) с выбором контейнера, **shell в под** новой вкладкой
-  (`kubectl exec`), селекторы **context/namespace** (+`-A`), kubeconfig не мутируется.
-  Удаление/`rollout restart`/`scale to 0` — с подтверждением; изменения пишутся в **запись сессии**.
+  **нагрузки** (Deploy/STS/DS/**CronJob**) с масштабированием ± и `rollout restart`, **сеть**
+  (Services + Ingress, **port-forward** сервиса в терминал), **кластер** (Nodes с cordon/drain +
+  последние Events с фильтром Warning/Normal), модалка деталей пода (Overview/логи/describe/YAML)
+  с выбором контейнера, **shell в под** новой вкладкой (`kubectl exec`), селекторы
+  **context/namespace** (+`-A`), kubeconfig не мутируется. Деструктив (`delete`/`rollout restart`/
+  `scale to 0`/`cordon`/`drain`) — с подтверждением; изменения пишутся в **запись сессии**.
 - 📝 **Редактор конфигов** (CodeMirror, 50+ языков): правка файлов на сервере и
   локально, diff перед сохранением, линт (локальный и серверный — вкл. проверку
   конфигов демонов `sshd`/`sudoers`/`haproxy`/BIND/systemd их родными командами и

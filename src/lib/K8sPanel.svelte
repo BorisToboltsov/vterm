@@ -19,6 +19,8 @@
   import ContextMenu from "./ContextMenu.svelte";
   import K8sPods from "./K8sPods.svelte";
   import K8sWorkloads from "./K8sWorkloads.svelte";
+  import K8sNetwork from "./K8sNetwork.svelte";
+  import K8sCluster from "./K8sCluster.svelte";
   import K8sDetailModal from "./K8sDetailModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
   import { tooltip } from "./actions/tooltip";
@@ -36,14 +38,23 @@
     podsArgs,
     workloadsArgs,
     topPodsArgs,
+    servicesArgs,
+    ingressArgs,
+    nodesArgs,
+    eventsArgs,
     describeArgs,
     getYamlArgs,
     execShellCommand,
+    portForwardCommand,
     parsePods,
     parseWorkloads,
     parseNamespaces,
     parseContexts,
     parseTopPods,
+    parseServices,
+    parseIngress,
+    parseNodes,
+    parseEvents,
     metricsKey,
     groupByOwner,
     parseAvailability,
@@ -54,6 +65,10 @@
     type K8sWorkload,
     type K8sPod,
     type K8sPodMetrics,
+    type K8sService,
+    type K8sIngress,
+    type K8sNode,
+    type K8sEvent,
   } from "./k8s";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { t, type MessageKey } from "./i18n";
@@ -76,7 +91,7 @@
   const refreshSec = $derived(settings.k8sRefreshSec);
   const prog = $derived(kubectlProg(settings.kubectlPath));
 
-  type Sub = "pods" | "workloads";
+  type Sub = "pods" | "workloads" | "network" | "cluster";
   let activeSub = $state<Sub>("pods");
 
   // Scope selection (baked into every argv; kubeconfig untouched).
@@ -101,6 +116,10 @@
   let podGroups = $state<PodGroup[]>([]);
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
   let workloads = $state<K8sWorkload[]>([]);
+  let services = $state<K8sService[]>([]);
+  let ingresses = $state<K8sIngress[]>([]);
+  let nodes = $state<K8sNode[]>([]);
+  let events = $state<K8sEvent[]>([]);
 
   let menu = $state<OpenMenu | null>(null);
 
@@ -249,9 +268,24 @@
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
         metricsByKey = map;
-      } else {
+      } else if (activeSub === "workloads") {
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
+      } else if (activeSub === "network") {
+        const [svc, ing] = await Promise.all([
+          kubectlRun(sessionId, viewArgs(servicesArgs()), 20, false),
+          kubectlRun(sessionId, viewArgs(ingressArgs()), 20, false),
+        ]);
+        services = parseServices(svc.stdout);
+        ingresses = parseIngress(ing.stdout);
+      } else {
+        // Cluster: nodes are cluster-scoped (no namespace flag); events respect scope.
+        const [nd, ev] = await Promise.all([
+          kubectlRun(sessionId, viewArgs(nodesArgs(), { namespaced: false }), 20, false),
+          kubectlRun(sessionId, viewArgs(eventsArgs()), 20, false),
+        ]);
+        nodes = parseNodes(nd.stdout);
+        events = parseEvents(ev.stdout);
       }
     } catch (e) {
       notifyError(String(e));
@@ -315,11 +349,17 @@
     const res = await runQuery(bare, namespace, 30);
     textBody = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
-  function describeWorkload(w: K8sWorkload) {
-    void openText(`${t("k8s.describe")} — ${w.name}`, describeArgs(w.kind.toLowerCase(), w.name), w.namespace);
+  function describeObj(kind: string, name: string, namespace: string) {
+    void openText(`${t("k8s.describe")} — ${name}`, describeArgs(kind, name), namespace);
   }
-  function yamlWorkload(w: K8sWorkload) {
-    void openText(`${t("k8s.yaml")} — ${w.name}`, getYamlArgs(w.kind.toLowerCase(), w.name), w.namespace);
+  function yamlObj(kind: string, name: string, namespace: string) {
+    void openText(`${t("k8s.yaml")} — ${name}`, getYamlArgs(kind, name), namespace);
+  }
+
+  /** Open `kubectl port-forward` in a real terminal tab (process lives in the PTY). */
+  function portForward(target: string, namespace: string, port: number) {
+    onOpenShell?.(portForwardCommand(prog, target, namespace, port, port, scope));
+    notifySuccess(t("k8s.portForwardStarted", { target }));
   }
 
   // ── Detail modal live sync ───────────────────────────────────────────────────
@@ -372,6 +412,8 @@
   const SUBS: { id: Sub; label: string }[] = [
     { id: "pods", label: t("k8s.pods") },
     { id: "workloads", label: t("k8s.workloads") },
+    { id: "network", label: t("k8s.network") },
+    { id: "cluster", label: t("k8s.cluster") },
   ];
 
   const unavailableHint = $derived.by(() => {
@@ -501,10 +543,31 @@
             {showMenu}
           />
         {/if}
-      {:else if workloads.length === 0}
-        <EmptyState icon="rocket" title={t("k8s.noWorkloads")} hint={t("k8s.noWorkloadsHint")} />
+      {:else if activeSub === "workloads"}
+        {#if workloads.length === 0}
+          <EmptyState icon="rocket" title={t("k8s.noWorkloads")} hint={t("k8s.noWorkloadsHint")} />
+        {:else}
+          <K8sWorkloads {workloads} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
+        {/if}
+      {:else if activeSub === "network"}
+        {#if services.length === 0 && ingresses.length === 0}
+          <EmptyState icon="network" title={t("k8s.noServices")} hint={t("k8s.noServicesHint")} />
+        {:else}
+          <K8sNetwork
+            {services}
+            {ingresses}
+            {busy}
+            {run}
+            onDescribe={describeObj}
+            onYaml={yamlObj}
+            onPortForward={portForward}
+            {showMenu}
+          />
+        {/if}
+      {:else if nodes.length === 0 && events.length === 0}
+        <EmptyState icon="server" title={t("k8s.noNodes")} hint={t("k8s.noNodesHint")} />
       {:else}
-        <K8sWorkloads {workloads} {busy} {run} onDescribe={describeWorkload} onYaml={yamlWorkload} {showMenu} />
+        <K8sCluster {nodes} {events} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
       {/if}
     </div>
   {/if}

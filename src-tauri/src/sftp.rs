@@ -63,6 +63,24 @@ struct Progress {
     is_folder: bool,
 }
 
+/// Render a mutating SFTP-panel op for the session recording (audit): a magenta
+/// `[sftp] $ <op>` header, the error text (only on failure), and a `[sftp] exit N`
+/// footer. Mirrors [`crate::container::container_mirror`]/[`crate::git::git_mirror`]
+/// — recorded ONLY (never emitted to the live terminal). SFTP ops have no stdout,
+/// so the body carries just the error detail; success leaves it empty. `op` is a
+/// shell-like description with paths already quoted (`git::shell_quote`), e.g.
+/// `mv '/a' '/b'`, `rm -r '/tmp/x'`, `put '/local' -> '/remote'`.
+pub fn sftp_mirror(op: &str, exit_code: i32, detail: &str) -> String {
+    let body = if detail.is_empty() {
+        String::new()
+    } else {
+        format!("{}\r\n", detail.replace('\n', "\r\n"))
+    };
+    format!(
+        "\r\n\u{1b}[35m[sftp] $ {op}\u{1b}[0m\r\n{body}\u{1b}[35m[sftp] exit {exit_code}\u{1b}[0m\r\n"
+    )
+}
+
 /// Resolve the user's home / starting directory.
 pub async fn home(sftp: &SftpSession) -> AppResult<String> {
     sftp.canonicalize(".")
@@ -686,6 +704,23 @@ pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sftp_mirror_success_has_no_body() {
+        let m = sftp_mirror("mv '/a' '/b'", 0, "");
+        assert!(m.contains("[sftp] $ mv '/a' '/b'"));
+        assert!(m.contains("[sftp] exit 0"));
+        // No error body between header and footer on success.
+        assert!(m.contains("\u{1b}[0m\r\n\u{1b}[35m[sftp] exit 0"));
+    }
+
+    #[test]
+    fn sftp_mirror_failure_carries_error_and_exit() {
+        let m = sftp_mirror("rm '/etc/passwd'", 1, "permission denied");
+        assert!(m.contains("[sftp] $ rm '/etc/passwd'"));
+        assert!(m.contains("permission denied\r\n"));
+        assert!(m.contains("[sftp] exit 1"));
+    }
 
     #[test]
     fn sha256_matches_known_vector() {

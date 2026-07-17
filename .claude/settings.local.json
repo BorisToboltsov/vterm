@@ -408,7 +408,14 @@
       "Bash(grep -n 'CSP в `tauri.conf.json`\\\\|CSP держи строгим\\\\|Безопасность\\\\.\\\\*\\\\*' docs/INVARIANTS.md)",
       "Bash(PATH=/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/docker version --format 'Client {{.Client.Version}} / Server {{.Server.Version}}')",
       "Bash(echo \"exit=$?\")",
-      "Bash(echo \"exit: $?\")"
+      "Bash(echo \"exit: $?\")",
+      "Bash(sed -i '' 's/\"version\": \"0.37.0\"/\"version\": \"0.37.1\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' 's/^version = \"0.37.0\"/version = \"0.37.1\"/' src-tauri/Cargo.toml)",
+      "Bash(awk '/async fn kubectl_run/,/^}/' src-tauri/src/lib.rs)",
+      "Bash(awk '/async fn sftp_/{f=1} f{print NR\": \"$0} /^}/{if\\(f\\)f=0}' src-tauri/src/lib.rs)",
+      "Bash(awk '/async fn get_sftp/,/^}/' src-tauri/src/lib.rs)",
+      "Bash(awk '/^## .*Фаза 37/{f=1} f&&/^## /&&!/Фаза 37/&&NR>2100{exit} f&&/\\\\[ \\\\]/{print NR\": \"$0}' docs/ROADMAP.md)",
+      "Bash(sed -n '/## Фаза 37 —/,/## Заметки по архитектурным/p' docs/ROADMAP.md)"
     ]
   }
 }

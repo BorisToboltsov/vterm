@@ -91,6 +91,8 @@ export default defineConfig({
         "src/lib/K8sPanel.svelte",
         "src/lib/K8sPods.svelte",
         "src/lib/K8sWorkloads.svelte",
+        "src/lib/K8sNetwork.svelte",
+        "src/lib/K8sCluster.svelte",
         "src/lib/K8sDetailModal.svelte",
         "src/lib/K8sTextModal.svelte",
         "src/lib/K8sSettings.svelte",

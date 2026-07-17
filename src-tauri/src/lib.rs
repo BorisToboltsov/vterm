@@ -1363,6 +1363,20 @@ async fn get_sftp(state: &State<'_, AppState>, session_id: &str) -> AppResult<Ar
     session.sftp().await
 }
 
+/// Audit a mutating SFTP op into the session recording (like `container_run`'s
+/// mirror): `op` is a shell-like description with paths quoted; a successful
+/// outcome records `[sftp] $ … / [sftp] exit 0`, a failure adds the error text and
+/// `exit 1`. Record-only — never emitted to the live terminal. Reads (list/read/
+/// grep/hash) are NOT audited. Generic over the outcome type so it covers both the
+/// `()` ops and `write_text`'s `WriteResult`.
+fn record_sftp<T>(session: &SshSession, op: &str, res: &AppResult<T>) {
+    let (code, detail) = match res {
+        Ok(_) => (0, String::new()),
+        Err(e) => (1, e.to_string()),
+    };
+    session.record_output(sftp::sftp_mirror(op, code, &detail).as_bytes());
+}
+
 #[tauri::command]
 async fn sftp_home(state: State<'_, AppState>, session_id: String) -> AppResult<String> {
     let sftp = get_sftp(&state, &session_id).await?;
@@ -1392,8 +1406,15 @@ async fn sftp_list(
 
 #[tauri::command]
 async fn sftp_mkdir(state: State<'_, AppState>, session_id: String, path: String) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::mkdir(&sftp, &path).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::mkdir(&sftp, &path).await;
+    record_sftp(
+        &session,
+        &format!("mkdir {}", git::shell_quote(&path)),
+        &res,
+    );
+    res
 }
 
 #[tauri::command]
@@ -1402,8 +1423,15 @@ async fn sftp_create_file(
     session_id: String,
     path: String,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::create_file(&sftp, &path).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::create_file(&sftp, &path).await;
+    record_sftp(
+        &session,
+        &format!("touch {}", git::shell_quote(&path)),
+        &res,
+    );
+    res
 }
 
 /// Open a remote file as text in the in-app editor (rejects large/binary files).
@@ -1461,19 +1489,26 @@ async fn sftp_write_text(
         expected_sha256: expected_sha256.as_deref(),
         backup: backup.unwrap_or(false),
     };
-    if sudo == Some(true) {
-        let session = session_arc(&state, &session_id).await?;
-        let sftp = session.sftp().await?;
-        return sync::sudo_write(
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = if sudo == Some(true) {
+        sync::sudo_write(
             &session,
             &sftp,
             &req,
             sudo_password.as_deref().unwrap_or(""),
         )
-        .await;
-    }
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::write_text(&sftp, &req).await
+        .await
+    } else {
+        sftp::write_text(&sftp, &req).await
+    };
+    // Audit the edit as a byte-sized save (the content itself is never recorded).
+    record_sftp(
+        &session,
+        &format!("save {} ({} B)", git::shell_quote(&path), content.len()),
+        &res,
+    );
+    res
 }
 
 /// Open a LOCAL file as text in the editor ("Open with vterm" flow). Same guards
@@ -1780,8 +1815,16 @@ async fn sftp_delete(
     path: String,
     is_dir: bool,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::remove(&sftp, &path, is_dir).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::remove(&sftp, &path, is_dir).await;
+    let op = if is_dir {
+        format!("rm -r {}", git::shell_quote(&path))
+    } else {
+        format!("rm {}", git::shell_quote(&path))
+    };
+    record_sftp(&session, &op, &res);
+    res
 }
 
 /// Move a remote file/folder to a new path (drag-to-move within the SFTP panel).
@@ -1793,8 +1836,15 @@ async fn sftp_rename(
     from: String,
     to: String,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::rename(&sftp, &from, &to).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::rename(&sftp, &from, &to).await;
+    record_sftp(
+        &session,
+        &format!("mv {} {}", git::shell_quote(&from), git::shell_quote(&to)),
+        &res,
+    );
+    res
 }
 
 /// Copy a remote file/folder to a new path (paste after copy in the SFTP panel).
@@ -1806,8 +1856,15 @@ async fn sftp_copy(
     from: String,
     to: String,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::copy(&sftp, &from, &to).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::copy(&sftp, &from, &to).await;
+    record_sftp(
+        &session,
+        &format!("cp {} {}", git::shell_quote(&from), git::shell_quote(&to)),
+        &res,
+    );
+    res
 }
 
 #[tauri::command]
@@ -1819,8 +1876,19 @@ async fn sftp_upload(
     local_path: String,
     remote_path: String,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::upload(&app, transfer_id, &sftp, &local_path, &remote_path).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = sftp::upload(&app, transfer_id, &sftp, &local_path, &remote_path).await;
+    record_sftp(
+        &session,
+        &format!(
+            "put {} -> {}",
+            git::shell_quote(&local_path),
+            git::shell_quote(&remote_path)
+        ),
+        &res,
+    );
+    res
 }
 
 #[tauri::command]
@@ -1833,8 +1901,9 @@ async fn sftp_download(
     local_path: String,
     is_dir: bool,
 ) -> AppResult<()> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    if is_dir {
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let res = if is_dir {
         // `local_path` is the destination *parent* directory.
         let cancel = Arc::new(AtomicBool::new(false));
         state
@@ -1855,7 +1924,17 @@ async fn sftp_download(
         result
     } else {
         sftp::download(&app, transfer_id, &sftp, &remote_path, &local_path).await
-    }
+    };
+    record_sftp(
+        &session,
+        &format!(
+            "get {} -> {}",
+            git::shell_quote(&remote_path),
+            git::shell_quote(&local_path)
+        ),
+        &res,
+    );
+    res
 }
 
 /// Request cancellation of an in-progress folder download.

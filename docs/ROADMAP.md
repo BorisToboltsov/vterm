@@ -2090,7 +2090,7 @@ keygen (Фаза 32) переехал сюда из настроек.
 
 ---
 
-## Фаза 37 — Панель Kubernetes (k8s)
+## ✅ Фаза 37 — Панель Kubernetes (k8s)
 
 Просмотр и управление ресурсами кластера, доступного с хоста активной сессии — **5-я
 вкладка правого дока** ([RightDock](../src/lib/RightDock.svelte), `DockTab` += `k8s`),
@@ -2170,26 +2170,46 @@ Events + port-forward (чисто фронтовой этап поверх го�
   ([package.json](../package.json)/[Cargo.toml](../src-tauri/Cargo.toml)/[tauri.conf.json](../src-tauri/tauri.conf.json)),
   `cargo check` для синка `Cargo.lock`.
 
-### ⬜ Фаза 37.1 — Network + Cluster + Events + port-forward (v0.37.1)
+### ✅ Фаза 37.1 — Network + Cluster + Events + port-forward (v0.37.1)
 
 Чисто фронтовой этап поверх готового контракта 37.0 (новых бэкенд-команд не заводим).
 
-- [ ] **Чистая логика** — новые билдеры/парсеры в [k8s.ts](../src/lib/k8s.ts): `servicesArgs`/
-  `ingressArgs`/`nodesArgs`/`eventsArgs` + `parseServices`/`parseIngress`/`parseNodes`/`parseEvents`;
-  действия `cordonArgs`/`drainArgs`; расширить `needsConfirm`/`isDestructive` на cordon/drain и
-  delete-namespace.
-- [ ] **UI** — [K8sNetwork.svelte](../src/lib/K8sNetwork.svelte) (Services + Ingress),
-  [K8sCluster.svelte](../src/lib/K8sCluster.svelte) (Nodes: Ready/roles/версия, cordon/drain +
-  последние **Events** внутри Cluster с фильтром **Warning/Normal**). Панель → **4 сабтаба**.
-- [ ] **port-forward** — кнопка пишет `kubectl port-forward …` в **новую терминал-вкладку** (процесс
-  живёт в PTY, панель им не управляет), а не в `kubectl_run` (как shell в под).
-- [ ] **Тесты/доки/версия 0.37.1** — по тем же правилам.
+- [x] **Чистая логика** — новые билдеры/парсеры в [k8s.ts](../src/lib/k8s.ts): `servicesArgs`/
+  `ingressArgs`/`nodesArgs`/`eventsArgs` + `parseServices`/`parseIngress`/`parseNodes`/`parseEvents`
+  (`nodeRoles` из label’ов, статус Ready/SchedulingDisabled, события newest-first);
+  действия `cordonArgs`/`uncordonArgs`/`drainArgs`, `portForwardCommand`; тоны `nodeStatusTone`/
+  `eventTone`. `needsConfirm`/`isDestructive` уже покрывали cordon/drain/delete (заложено в 37.0).
+- [x] **UI** — [K8sNetwork.svelte](../src/lib/K8sNetwork.svelte) (Services + Ingress; у сервиса —
+  port-forward), [K8sCluster.svelte](../src/lib/K8sCluster.svelte) (Nodes: Ready/roles/версия,
+  cordon/uncordon/drain + последние **Events** внутри Cluster с фильтром **All/Warning/Normal**).
+  Панель → **4 сабтаба**. describe/yaml вынесены в общий `describeObj`/`yamlObj` (kind/name/namespace),
+  node-команды идут с пустым namespace (cluster-scoped).
+- [x] **port-forward** — кнопка/меню сервиса пишет `kubectl port-forward svc/<name> <port>:<port>` в
+  **новую терминал-вкладку** (`portForwardCommand` → `onOpenShell`; процесс живёт в PTY, панель им не
+  управляет), а не в `kubectl_run` (как shell в под).
+- [x] **Тесты**: +10 в [k8s.test.ts](../src/lib/k8s.test.ts) (билдеры network/cluster, cordon/drain
+  confirm, `portForwardCommand`, `parseServices`/`parseIngress`/`parseNodes`/`parseEvents`,
+  `nodeRoles`, `nodeStatusTone`/`eventTone`) — 63 всего. UI-оболочки (`K8sNetwork`/`K8sCluster`) — в
+  exclude покрытия. **Доки**: ROADMAP (→ ✅), GUIDE, README, INVARIANTS, TESTS, CHANGELOG. Версия
+  0.37.1 в трёх манифестах, `cargo check` для синка `Cargo.lock`.
 
 **Решённые вопросы:** namespace по умолчанию — из текущего контекста (пустой `--namespace` →
 kubectl берёт дефолт контекста), `-A` по кнопке; списки грузим `-o json`, но со `--namespace`
 по умолчанию (не грузим весь кластер сходу); Events — **внутри Cluster** (не 5-й сабтаб) с
 фильтром Warning/Normal. k8s остаётся точкой расширения: следующие оркестраторы — своим
 драйвером со своим видом, не насильно в один список.
+
+### ✅ 0.37.2 — Аудит SFTP-операций в записи (хотфикс)
+
+Пробел в аудите: мутирующие SFTP-операции шли по SFTP-каналу мимо терминала и в asciicast-запись
+не попадали (в отличие от docker/git/k8s). Закрыто тем же контрактом:
+
+- [x] `sftp::sftp_mirror` (формат `[sftp] $ … / [sftp] exit N`, record-only) + `record_sftp` в
+  [lib.rs](../src-tauri/src/lib.rs); мутирующие `sftp_*` (delete/rename/copy/mkdir/create_file/
+  write_text/upload/download) пишут его через `session.record_output`, чтения — нет. Пути
+  шелл-квотятся; `save` пишет только размер (не содержимое). Download пишем тоже (вынос данных —
+  аудит-значимое событие). Тесты `sftp_mirror` в [sftp.rs](../src-tauri/src/sftp.rs); доки (GUIDE/
+  INVARIANTS/TESTS/CHANGELOG); версия 0.37.2.
 
 ---
 

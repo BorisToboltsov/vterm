@@ -28,8 +28,8 @@
     workloads: K8sWorkload[];
     busy?: boolean;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
-    onDescribe: (w: K8sWorkload) => void;
-    onYaml: (w: K8sWorkload) => void;
+    onDescribe: (kind: string, name: string, namespace: string) => void;
+    onYaml: (kind: string, name: string, namespace: string) => void;
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
   } = $props();
 
@@ -61,9 +61,10 @@
   }
 
   function menuItems(w: K8sWorkload): MenuItem[] {
+    const kind = w.kind.toLowerCase();
     const items: MenuItem[] = [
-      { icon: "note", label: t("k8s.describe"), onSelect: () => onDescribe(w) },
-      { icon: "braces", label: t("k8s.yaml"), onSelect: () => onYaml(w) },
+      { icon: "note", label: t("k8s.describe"), onSelect: () => onDescribe(kind, w.name, w.namespace) },
+      { icon: "braces", label: t("k8s.yaml"), onSelect: () => onYaml(kind, w.name, w.namespace) },
     ];
     if (canRollout(w)) {
       items.push({
