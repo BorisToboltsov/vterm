@@ -5,6 +5,7 @@ import {
   dotClass,
   findTab,
   isLive,
+  isMonitorable,
   localizedStatus,
   moveTab,
   newTabAction,
@@ -106,6 +107,18 @@ describe("pure helpers", () => {
     expect(isLive("Connecting…")).toBe(true);
     expect(isLive("Disconnected")).toBe(false);
     expect(isLive("Error: x")).toBe(false);
+  });
+
+  it("isMonitorable: connected SSH *and* local tabs (Phase 38), not connecting/closed", () => {
+    // Local tabs now expose metrics too (native sysinfo collector).
+    expect(isMonitorable({ kind: "local", status: "Connected" })).toBe(true);
+    expect(isMonitorable({ kind: "ssh", status: "Connected" })).toBe(true);
+    // Only a *live* session — connecting/closed/error don't qualify.
+    expect(isMonitorable({ kind: "local", status: "Connecting…" })).toBe(false);
+    expect(isMonitorable({ kind: "ssh", status: "Disconnected" })).toBe(false);
+    expect(isMonitorable({ kind: "local", status: "Error: x" })).toBe(false);
+    expect(isMonitorable(null)).toBe(false);
+    expect(isMonitorable(undefined)).toBe(false);
   });
 
   it("localizedStatus maps the canonical (English) status to the UI language", () => {

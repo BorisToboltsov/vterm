@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.37.2"
+version = "0.38.0"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -66,6 +66,14 @@ futures-util = "0.3"
 # shelling out to ssh-keygen; the offline invariant is untouched.
 ssh-key = { version = "=0.7.0-rc.10", features = ["ed25519", "rsa", "encryption", "p256", "std"] }
 rand = "0.10"
+
+# Native, cross-OS local system metrics for the status bar / monitoring overlay on
+# LOCAL shell tabs (Phase 38). Servers report metrics via a `/proc` shell probe over
+# SSH; local tabs have no such session and `/proc` doesn't exist on macOS/Windows, so
+# we read CPU/RAM/swap/disk/net/processes/temperatures through `sysinfo`. Pure local
+# syscalls — no network — so the offline invariant stays intact. Default features
+# (system/disk/network/component/user) are exactly what the collector needs.
+sysinfo = "0.39"
 
 # Read the OS clipboard in-process so the frontend can avoid
 # navigator.clipboard.readText() and WebKit's "Paste" permission prompt.

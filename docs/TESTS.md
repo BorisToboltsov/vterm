@@ -107,6 +107,12 @@ pnpm check
   `parse_extras_reads_hardware` (CPU-модель со схлопыванием пробелов, ядра/потоки/сокеты/
   частота, arch/virt/машина/**плата**/bios; пусто → дефолты) и `combine_machine_dedupes_vendor`
   (vendor+name, дедуп когда name уже содержит vendor);
+- `metrics/local.rs` (**Фаза 38** — нативный `sysinfo`-коллектор для локальных вкладок) —
+  чистые хелперы: `is_loopback` (lo/lo0/Windows Loopback), `is_system_drive` (Windows `C:`),
+  `root_disk` (выбор `/`/системного тома, иначе крупнейший, псевдо-mount `total=0` игнор),
+  `sum_net` (сумма rx/tx без loopback), `top_procs_label` (ранжирование по CPU + округление);
+  плюс smoke-тесты `collect_metrics`/`collect_extras` на **реальной ОС** (mem_total>0, CPU% в
+  диапазоне, непустые OS/arch) — проверяют, что sysinfo-путь честно отдаёт метрики этой машины;
 - `model.rs` — serde round-trip `ServerProfile`/`NewServerProfile`/`AuthMethod`
   (camelCase, `#[serde(default)]` для старых JSON без `group`/`tags`/**`autoRecord`**/**`noAi`** —
   легаси-профиль → `auto_record:false`/`no_ai:false`/`chat_prompt_id:None`/`exec_mode:None`; round-trip
@@ -407,6 +413,8 @@ pnpm test:coverage   # прогон + покрытие + гейты
 - `stores/tabs.svelte.ts` — `openTab` (kind `ssh`)/`openLocalTab` (kind `local`,
   пустой `serverId`, алиас «Local shell»)/`closeTab`/`moveTab`/`setTabStatus`,
   переназначение активной вкладки, чистые `statusLabel`/`dotClass`/`isLive`,
+  `isMonitorable` (**Фаза 38** — гейт status bar/мониторинга: SSH **и** local + `Connected` →
+  true; `Connecting`/`Disconnected`/`Error`/`null`/`undefined` → false),
   `serverDots` (Фаза 20.12 — статусы SSH-вкладок → `dots: {cls, pulse}[]`: цвет+тональная
   обводка, `pulse` только на `Connecting`; рендер в **tab-order** (новая вкладка — кружок
   в конец стопки), но при переполнении _выбор_ показанных severity-first чтобы ошибка не

@@ -41,6 +41,7 @@
     dotClass,
     findTab,
     isLive,
+    isMonitorable,
     moveTab,
     newTabAction,
     nextTabIndex,
@@ -470,6 +471,11 @@
   const topConnected = $derived(
     activeTab?.kind === "ssh" && (activeTab?.status.startsWith("Connected") ?? false),
   );
+  // Monitoring (status bar + overlay) works on SSH *and* local tabs (Phase 38): a
+  // live local PTY reports metrics natively via sysinfo. Gates the monitoring
+  // button and the status bar — broader than `topConnected`, which stays SSH-only
+  // for the idle overlay and the connection-detail header.
+  const monitorConnected = $derived(isMonitorable(activeTab));
   // Prod-flagged active server (by tag) → the AI assistant may not auto-execute (17.4).
   const aiProd = $derived(
     activeTab?.kind === "ssh"
@@ -483,12 +489,12 @@
       : false,
   );
 
-  /** Open the detailed monitoring overlay (needs a connected SSH session). */
+  /** Open the detailed monitoring overlay (needs a connected SSH or local session). */
   function openMonitoring() {
-    if (activeTab?.kind === "ssh" && activeTab.status.startsWith("Connected")) {
+    if (monitorConnected) {
       showMonitoring = true;
     } else {
-      notifyError(t("page.monitoringNeedsSsh"));
+      notifyError(t("page.monitoringNeedsSession"));
     }
   }
 
@@ -1719,7 +1725,7 @@
   <TopBar
     title={topTitle}
     subtitle={topSubtitle}
-    connected={topConnected}
+    connected={monitorConnected}
     canRecord={bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status))}
     recording={bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId))}
     onToggleRecording={toggleRecording}
@@ -2233,7 +2239,7 @@
     </main>
   </div>
 
-  {#if settings.showStatusBar && tabsState.activeId && activeTab?.kind === "ssh" && activeTab?.status.startsWith("Connected")}
+  {#if settings.showStatusBar && tabsState.activeId && monitorConnected}
     {#key tabsState.activeId}
       <StatusBar sessionId={tabsState.activeId} />
     {/key}

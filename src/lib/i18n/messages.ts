@@ -352,7 +352,7 @@ export const en = {
   "recordings.dateUnknown": "Undated",
 
   // ── Page-level: empty state, toasts, dialogs, forms ──
-  "page.monitoringNeedsSsh": "Open monitoring with an active SSH connection",
+  "page.monitoringNeedsSession": "Open monitoring with an active session",
   "page.emptyNoSession": "No active session",
   "page.emptyServerTitle": "Server “{alias}”",
   "page.hintConnect": "Press Connect or double-click a server. Quick access — ⌘K.",
@@ -1956,7 +1956,7 @@ const ru: Record<MessageKey, string> = {
   "recordings.dateUnknown": "Без даты",
 
   // ── Page-level ──
-  "page.monitoringNeedsSsh": "Откройте мониторинг при активном SSH-подключении",
+  "page.monitoringNeedsSession": "Откройте мониторинг при активной сессии",
   "page.emptyNoSession": "Нет активной сессии",
   "page.emptyServerTitle": "Сервер «{alias}»",
   "page.hintConnect":

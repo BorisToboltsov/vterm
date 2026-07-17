@@ -14,8 +14,23 @@ use std::time::Instant;
 use serde::Serialize;
 use tauri::State;
 
-use crate::error::AppResult;
-use crate::{session_arc, AppState};
+use crate::error::{AppError, AppResult};
+use crate::AppState;
+
+/// Native local-system metrics for local shell tabs (Phase 38). SSH sessions get
+/// metrics from the `/proc` shell probes above; local tabs have no SSH session and
+/// `/proc` doesn't exist on macOS/Windows, so this submodule reads the same
+/// [`Metrics`]/[`MetricsDetail`]/[`Extras`] fields via `sysinfo`. As a descendant
+/// module it constructs those (otherwise private) DTOs directly.
+mod local;
+
+/// Whether `session_id` names a live **local-shell PTY** rather than an SSH
+/// session — the switch that routes a metrics probe to the native `sysinfo`
+/// collector instead of `run_command`. Mirrors the transport-by-session dispatch
+/// used by `git_run`/`container_run`/`kubectl_run`.
+fn is_local_session(state: &State<'_, AppState>, session_id: &str) -> bool {
+    state.local_ptys.lock().unwrap().contains_key(session_id)
+}
 
 /// Per-session, per-device cumulative `(a, b)` counters + sample instant, used for
 /// per-interface network and per-device disk throughput deltas.
@@ -232,7 +247,11 @@ fn rate_from(
 /// Probe the active session for OS info and resource usage (status bar).
 #[tauri::command]
 pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> AppResult<Metrics> {
-    let session = session_arc(&state, &session_id).await?;
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        None if is_local_session(&state, &session_id) => return Ok(local::collect_metrics().await),
+        None => return Err(AppError::NoSession),
+    };
     let raw = session.run_command(METRICS_SCRIPT).await?;
     let mut m = parse_metrics(&raw);
 
@@ -808,7 +827,11 @@ pub async fn fetch_metrics_detail(
     state: State<'_, AppState>,
     session_id: String,
 ) -> AppResult<MetricsDetail> {
-    let session = session_arc(&state, &session_id).await?;
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        None if is_local_session(&state, &session_id) => return Ok(local::collect_detail().await),
+        None => return Err(AppError::NoSession),
+    };
     let raw = session.run_command(DETAIL_SCRIPT).await?;
     let mut d = parse_detail(&raw);
 
@@ -940,7 +963,13 @@ pub async fn fetch_pending_updates(
     state: State<'_, AppState>,
     session_id: String,
 ) -> AppResult<PendingUpdates> {
-    let session = session_arc(&state, &session_id).await?;
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        // No package-manager concept for a local dev machine (and none cross-OS):
+        // return an empty result so the overlay's "updates" section stays blank.
+        None if is_local_session(&state, &session_id) => return Ok(PendingUpdates::default()),
+        None => return Err(AppError::NoSession),
+    };
     let raw = session.run_command(PENDING_SCRIPT).await?;
     Ok(parse_pending(&raw))
 }
@@ -1150,7 +1179,13 @@ fn parse_extras(raw: &str) -> Extras {
 /// Probe optional extras (GPU/Docker/SMART/OOM) — lazy, once per overlay open.
 #[tauri::command]
 pub async fn fetch_extras(state: State<'_, AppState>, session_id: String) -> AppResult<Extras> {
-    let session = session_arc(&state, &session_id).await?;
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        // Local tabs: GPU/Docker/SMART/OOM are server-shaped and skipped, but the
+        // static hardware spec (CPU model/cores/arch) fills nicely from sysinfo.
+        None if is_local_session(&state, &session_id) => return Ok(local::collect_extras().await),
+        None => return Err(AppError::NoSession),
+    };
     let raw = session.run_command(EXTRAS_SCRIPT).await?;
     Ok(parse_extras(&raw))
 }

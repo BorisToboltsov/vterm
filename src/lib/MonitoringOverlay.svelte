@@ -512,13 +512,15 @@
           {#if detail?.topProcs && detail.topProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="top-procs">
               <div class="mb-1 text-[11px] text-muted">{t("mon.topProcs")}</div>
-              <table class="w-full text-[11px]">
+              <!-- table-fixed so the process column truncates instead of blowing
+                   out the numeric columns (long local process names, Phase 38). -->
+              <table class="w-full table-fixed text-[11px]">
                 <thead>
                   <tr class="text-left text-muted">
-                    <th class="font-medium">PID</th>
+                    <th class="w-14 font-medium">PID</th>
                     <th class="font-medium">{t("mon.process")}</th>
-                    <th class="text-right font-medium">CPU</th>
-                    <th class="text-right font-medium">MEM</th>
+                    <th class="w-16 pl-2 text-right font-medium">CPU</th>
+                    <th class="w-16 pl-2 text-right font-medium">MEM</th>
                   </tr>
                 </thead>
                 <tbody class="font-mono">
@@ -526,8 +528,8 @@
                     <tr class="border-t border-edge/40">
                       <td class="py-0.5 tabular-nums text-muted">{p.pid}</td>
                       <td class="truncate py-0.5 text-text" title="{p.user} · {p.comm}">{p.comm}</td>
-                      <td class="py-0.5 text-right tabular-nums">{p.cpu.toFixed(1)}%</td>
-                      <td class="py-0.5 text-right tabular-nums text-muted">{p.mem.toFixed(1)}%</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums">{p.cpu.toFixed(1)}%</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums text-muted">{p.mem.toFixed(1)}%</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -605,13 +607,15 @@
           {#if detail?.topMemProcs && detail.topMemProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="top-mem">
               <div class="mb-1 text-[11px] text-muted">{t("mon.topMemProcs")}</div>
-              <table class="w-full text-[11px]">
+              <!-- table-fixed so the process column truncates instead of blowing
+                   out the numeric columns (long local process names, Phase 38). -->
+              <table class="w-full table-fixed text-[11px]">
                 <thead>
                   <tr class="text-left text-muted">
-                    <th class="font-medium">PID</th>
+                    <th class="w-14 font-medium">PID</th>
                     <th class="font-medium">{t("mon.process")}</th>
-                    <th class="text-right font-medium">MEM</th>
-                    <th class="text-right font-medium">CPU</th>
+                    <th class="w-16 pl-2 text-right font-medium">MEM</th>
+                    <th class="w-16 pl-2 text-right font-medium">CPU</th>
                   </tr>
                 </thead>
                 <tbody class="font-mono">
@@ -619,8 +623,8 @@
                     <tr class="border-t border-edge/40">
                       <td class="py-0.5 tabular-nums text-muted">{p.pid}</td>
                       <td class="truncate py-0.5 text-text" title="{p.user} · {p.comm}">{p.comm}</td>
-                      <td class="py-0.5 text-right tabular-nums">{p.mem.toFixed(1)}%</td>
-                      <td class="py-0.5 text-right tabular-nums text-muted">{p.cpu.toFixed(1)}%</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums">{p.mem.toFixed(1)}%</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums text-muted">{p.cpu.toFixed(1)}%</td>
                     </tr>
                   {/each}
                 </tbody>

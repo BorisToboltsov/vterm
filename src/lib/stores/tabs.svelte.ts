@@ -65,6 +65,18 @@ export function dotClass(statusText: string): string {
 export const isLive = (status: string): boolean =>
   status.startsWith("Connected") || status.startsWith("Connecting");
 
+/**
+ * Whether a tab exposes host metrics — gates the bottom status bar and the
+ * monitoring overlay. Both SSH **and** local tabs qualify once connected (Phase
+ * 38): a local tab has no SSH probe, but the backend reports its metrics natively
+ * via `sysinfo`. Broader than the old SSH-only gate; narrower than `isLive`
+ * (metrics need a live session, not one still connecting).
+ */
+export const isMonitorable = (
+  tab: Pick<Tab, "kind" | "status"> | null | undefined,
+): boolean =>
+  !!tab && (tab.kind === "ssh" || tab.kind === "local") && tab.status.startsWith("Connected");
+
 /** What a Cmd/Ctrl+T should open (Phase 20.15). */
 export type NewTabAction = { kind: "ssh"; serverId: string } | { kind: "local" };
 

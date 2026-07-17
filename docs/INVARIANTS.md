@@ -342,6 +342,21 @@
   квотятся `git::shell_quote`. Новую мутирующую SFTP-команду подключай так же: `session_arc` →
   `session.sftp()` → `record_sftp(&session, &op, &res)` в [lib.rs](../src-tauri/src/lib.rs). SFTP —
   только SSH (у локальных вкладок своя `localfile`-панель, не через этот путь).
+- **Метрики: один контракт, два транспорта** (Фаза 38). Status bar и overlay мониторинга работают
+  на SSH **и** локальных вкладках через **один** набор команд (`fetch_metrics`/`fetch_metrics_detail`/
+  `fetch_pending_updates`/`fetch_extras`) и **одни** DTO (`Metrics`/`MetricsDetail`/`Extras`,
+  camelCase). Транспорт выбирается **по наличию сессии** (как `git_run`/`container_run`/`kubectl_run`):
+  есть SSH-сессия → `/proc`-шелл-пробы по `run_command` ([metrics/mod.rs](../src-tauri/src/metrics/mod.rs));
+  есть локальный PTY (`local_ptys`) → нативный `sysinfo`-коллектор
+  ([metrics/local.rs](../src-tauri/src/metrics/local.rs)). Новый вид метрик добавляй **в этот
+  контракт** (билдер/парсер или sysinfo-маппинг), **не** заводи per-операционных команд/DTO. Коллектор
+  — **дамповый исполнитель**: чистая логика (`root_disk`/`sum_net`/…) в свободных функциях с тестами.
+  Локально снимаются **два снимка ~200 мс** для CPU%/rate (stateless); поля без честного кросс-ОС
+  источника (PSI/conntrack/systemd/updates/GPU/SMART/who/inodes; load avg на Windows) остаются
+  `None`/пустыми — UI рисует «—». Фронт гейтит status bar/overlay пур-хелпером `isMonitorable(tab)`
+  ([stores/tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts)), **не** проверкой `kind==="ssh"`
+  вручную. **Офлайн цел**: sysinfo — только локальные syscalls, сети нет, CSP не трогаем; SFTP/git и
+  прочее остаётся SSH-only, здесь же локальная вкладка — первый класс.
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя (в т.ч. **через заданный им proxy** — jump host/SOCKS5/HTTP
   CONNECT, Фаза 21 — это часть пути к его же серверам) **и** — при включённом opt-in

@@ -2211,6 +2211,51 @@ kubectl берёт дефолт контекста), `-A` по кнопке; с�
   аудит-значимое событие). Тесты `sftp_mirror` в [sftp.rs](../src-tauri/src/sftp.rs); доки (GUIDE/
   INVARIANTS/TESTS/CHANGELOG); версия 0.37.2.
 
+## ✅ Фаза 38 — Локальный мониторинг (status bar + overlay на локальных вкладках) (v0.38.0)
+
+Раньше нижний status bar и overlay мониторинга работали только на SSH-вкладках: данные шли из
+Linux-`/proc`-скрипта по SSH (`run_command`). Локальная вкладка SSH-сессии не имеет, а `/proc` не
+существует на macOS/Windows — «тот же скрипт локально» кросс-ОС невозможен. Теперь для локальных
+вкладок метрики собираются **нативно в Rust через `sysinfo`** (кросс-ОС, офлайн — только локальные
+syscalls, сети нет), диспетчер выбирает транспорт **по наличию сессии** (тот же паттерн, что у
+`git_run`/`container_run`/`kubectl_run`).
+
+- [x] **Зависимость** — `sysinfo = "0.39"` в [Cargo.toml](../src-tauri/Cargo.toml) (default-фичи
+  system/disk/network/component/user). MIT — уже в allowlist `deny.toml`.
+- [x] **Коллектор** — новый **подмодуль** [metrics/local.rs](../src-tauri/src/metrics/local.rs)
+  (`metrics.rs` → `metrics/mod.rs`): как descendant-модуль строит существующие DTO
+  `Metrics`/`MetricsDetail`/`Extras` напрямую. Два снимка ~200 мс (CPU%/по-ядрам + мгновенные
+  rate сети/диска), **stateless** (без per-session sample-стора — чистить на disconnect нечего).
+  Чистые под-функции (`root_disk`/`sum_net`/`top_procs_label`/`is_loopback`/`is_system_drive`) —
+  с юнит-тестами.
+- [x] **Диспетчер** — `fetch_metrics`/`fetch_metrics_detail`/`fetch_pending_updates`/`fetch_extras`
+  в [metrics/mod.rs](../src-tauri/src/metrics/mod.rs): есть в `sessions` (SSH) → прежний путь; есть
+  в `local_ptys` → `local::collect_*`; иначе `NoSession`. `pending_updates` локально → пусто,
+  `extras` → только `hardware` из sysinfo.
+- [x] **Заполнение** (кросс-ОС; неприменимое — `None`/пусто → UI рисует «—»): CPU%/по-ядрам, RAM/swap,
+  корневой диск, сеть rx/tx, диск I/O, uptime, топ-процессы, температуры, hostname/OS/kernel/arch.
+  load avg — Unix (на Windows `None`); IP — best-effort. Серверо-специфичное (PSI/conntrack/systemd/
+  updates/GPU/SMART/who/inodes) на локали пустое.
+- [x] **Фронт** — сняли SSH-гейт: пур-хелпер `isMonitorable(tab)` в
+  [stores/tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts) (SSH **и** local + Connected), через него
+  `monitorConnected` в [+page.svelte](../src/routes/+page.svelte) гейтит status bar, кнопку и
+  `openMonitoring`. `StatusBar`/`MonitoringOverlay` не менялись (session-agnostic, null-терпимы).
+  Ключ тоста `page.monitoringNeedsSsh` → `page.monitoringNeedsSession` (en+ru).
+- [x] **Верстка топ-процессов** — таблицы «Top processes»/«Top by memory» в
+  [MonitoringOverlay.svelte](../src/lib/MonitoringOverlay.svelte) переведены на `table-fixed` с
+  фикс-ширинами колонок PID/CPU/MEM (+`pl-2` зазор): длинные локальные имена процессов
+  (`com.apple.Virtualization.VirtualMachine`) теперь **обрезаются** в колонке имени, а не
+  распирают таблицу — раньше при `table-auto` проценты слипались (`49.6%1.0%`) и имена налезали
+  на числа. На SSH-серверах имена короткие, поэтому баг проявлялся только локально.
+- [x] **Тесты**: 7 в `metrics/local.rs` (чистые хелперы + smoke `collect_metrics`/`collect_extras` на
+  реальной ОС), +1 `isMonitorable` в [tabs.test.ts](../src/lib/stores/tabs.test.ts). UI не тронут.
+  **Доки**: ROADMAP (→ ✅), GUIDE, README, INVARIANTS, TESTS, CHANGELOG. Версия 0.38.0 в трёх
+  манифестах, `cargo check` для синка `Cargo.lock`.
+
+**Решённые вопросы:** объём — «ядро» (без серверо-специфичной детализации), покрытие сразу 3 ОС;
+`sysinfo` вместо ручных пер-ОСных проб (у Windows нет POSIX-шелла). IdleOverlay намеренно остаётся
+SSH-only (вне объёма). Сетевые метрики читаются локальными syscalls — офлайн-инвариант цел.
+
 ---
 
 ## Заметки по архитектурным решениям
