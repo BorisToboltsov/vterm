@@ -30,6 +30,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "sftp", keywords: "SFTP files file size open editor megabytes mb limit max файлы файл размер открыть редактор мегабайт лимит" },
   { id: "servertools", keywords: "server tools install linter linters yamllint shellcheck hadolint ruff sensors temperature lm-sensors monitoring package manager apt dnf серверные инструменты установка линтер линтеры датчики температура мониторинг пакетный менеджер" },
   { id: "docker", keywords: "docker containers images registry login credentials ghcr registry refresh interval poll compose докер контейнеры образы реестр логин учётные данные интервал обновление" },
+  { id: "k8s", keywords: "kubernetes k8s kubectl kubeconfig context namespace pods deployments cluster k3s microk8s refresh interval poll кубернетес кубектл контекст namespace поды деплойменты кластер интервал обновление" },
   { id: "snippets", keywords: "snippets templates editor insert dockerfile nginx compose systemd kubernetes bash шаблоны сниппеты вставка редактор докерфайл" },
   { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка" },
   { id: "behavior", keywords: "Behavior confirm close tab auto reconnect поведение подтверждение вкладка переподключение" },
@@ -50,6 +51,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "files", icon: "code", sections: ["sftp", "editor", "snippets"] },
   { id: "sessions", icon: "activity", sections: ["recording", "statusbar", "servertools"] },
   { id: "docker", icon: "container", sections: ["docker"] },
+  { id: "k8s", icon: "kubernetes", sections: ["k8s"] },
   { id: "assistant", icon: "aiMark", sections: ["ai"] },
 ];
 

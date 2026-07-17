@@ -10,6 +10,7 @@
   import AiChat from "./AiChat.svelte";
   import GitPanel from "./GitPanel.svelte";
   import DockerPanel from "./DockerPanel.svelte";
+  import K8sPanel from "./K8sPanel.svelte";
   import type { RawContext } from "./aicontext";
   import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
@@ -77,6 +78,7 @@
     { id: "files", label: "SFTP" },
     { id: "git", label: t("git.panelTitle") },
     { id: "docker", label: t("docker.panelTitle") },
+    { id: "k8s", label: "k8s" },
     { id: "ai", label: t("ai.panelTitle") },
   ];
 
@@ -179,6 +181,13 @@
           />
         {:else if activeTab === "docker"}
           <DockerPanel
+            {sessionId}
+            prod={aiProd}
+            sessionReady={kind === "ssh" ? sessionReady : true}
+            onOpenShell={onOpenContainerShell}
+          />
+        {:else if activeTab === "k8s"}
+          <K8sPanel
             {sessionId}
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}

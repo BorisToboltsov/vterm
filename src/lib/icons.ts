@@ -133,8 +133,10 @@ export const ICONS = {
   cloud: '<path d="M6.5 19a4.5 4.5 0 0 1-.9-8.9 6 6 0 0 1 11.6-1.1A4 4 0 0 1 17 19z"/>',
   container:
     '<rect x="3" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="9.75" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="16.5" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="9.75" y="4.2" width="4.5" height="4.5" rx="0.5"/><path d="M2 15.5c2.4 1.9 6 2.9 10.5 2.9 3.6 0 5.8-1.6 6.8-3.2"/>',
+  // Classic Kubernetes helm: a regular heptagon wheel, a central hub, and 7 evenly
+  // spaced spokes from each vertex to the hub (geometry computed at r=9 about 12,12).
   kubernetes:
-    '<path d="M12 2.5l6.6 3.1 1.6 7-4.6 5.6H8.4l-4.6-5.6 1.6-7z"/><circle cx="12" cy="12" r="2"/><path d="M12 4v3.6M12 16.4V20M6 8.4l3.1 2.1M14.9 13.5l3.1 2.1M6 15.6l3.1-2.1M14.9 10.5l3.1-2.1"/>',
+    '<path d="M12 3 19 6.4 20.8 14 15.9 20.1 8.1 20.1 3.2 14 5 6.4Z"/><circle cx="12" cy="12" r="2.1"/><path d="M12 3 12 9.9M19 6.4 13.6 10.7M20.8 14 13.9 12.5M15.9 20.1 12.9 13.9M8.1 20.1 11.1 13.9M3.2 14 10.1 12.5M5 6.4 10.4 10.7"/>',
   shield:
     '<path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/>',
   gateway:
@@ -146,6 +148,9 @@ export const ICONS = {
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 7l8.5 6 8.5-6"/>',
   rocket:
     '<path d="M12 2c3 2.2 4.5 5.2 4.5 9.3L12 16l-4.5-4.7C7.5 7.2 9 4.2 12 2z"/><circle cx="12" cy="9" r="1.5"/><path d="M7.5 12.5 5 15l3.5.5M16.5 12.5 19 15l-3.5.5M10 18l2 3 2-3"/>',
+  // Ship's helm / wheel (the Kubernetes metaphor) — used for the k8s Cluster view.
+  ship:
+    '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.5"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.34 6.34l2.83 2.83M14.83 14.83l2.83 2.83M17.66 6.34l-2.83 2.83M9.17 14.83l-2.83 2.83"/>',
 
   // OS family marks for the status bar (line style, matching the icon set).
   osApple:

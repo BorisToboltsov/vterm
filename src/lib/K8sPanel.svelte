@@ -1,0 +1,541 @@
+<script lang="ts">
+  // Kubernetes panel (Phase 37) — fifth right-dock tab. A distinct orchestration
+  // driver (its own view), not folded into the Docker panel. Orchestrates the
+  // cluster view for the active session's host (SSH or local): a toolbar (server
+  // version + context/namespace selectors + all-namespaces toggle + refresh) over
+  // two sub-tabs — Pods (grouped by owner) and Workloads. Works on SSH and local
+  // tabs alike; the backend `kubectl_run` dispatches by session kind. All kubectl
+  // logic is pure (k8s.ts); this owns data + polling + actions. Mirrors DockerPanel.
+  //
+  // The live view re-polls every `refreshSec` (default 5s) — a snapshot, never a
+  // stream (`top pods` one-shot, `logs --tail`); interactive follow lives in a real
+  // terminal (the shell button). The `--context`/`--namespace`/`-A` scope is baked
+  // into every argv (withScope); kubeconfig is never mutated. Offline invariant
+  // intact: the cluster API is reached over the user's own session, not the WebView.
+  import Icon from "./Icon.svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import Skeleton from "./Skeleton.svelte";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
+  import ContextMenu from "./ContextMenu.svelte";
+  import K8sPods from "./K8sPods.svelte";
+  import K8sWorkloads from "./K8sWorkloads.svelte";
+  import K8sDetailModal from "./K8sDetailModal.svelte";
+  import K8sTextModal from "./K8sTextModal.svelte";
+  import { tooltip } from "./actions/tooltip";
+  import { kubectlRun } from "./api";
+  import { settings } from "./settings.svelte";
+  import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import {
+    kubectlProg,
+    withScope,
+    objectScope,
+    versionArgs,
+    contextsArgs,
+    currentContextArgs,
+    namespacesArgs,
+    podsArgs,
+    workloadsArgs,
+    topPodsArgs,
+    describeArgs,
+    getYamlArgs,
+    execShellCommand,
+    parsePods,
+    parseWorkloads,
+    parseNamespaces,
+    parseContexts,
+    parseTopPods,
+    metricsKey,
+    groupByOwner,
+    parseAvailability,
+    needsConfirm,
+    type K8sScope,
+    type K8sAvailability,
+    type PodGroup,
+    type K8sWorkload,
+    type K8sPod,
+    type K8sPodMetrics,
+  } from "./k8s";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
+  import { t, type MessageKey } from "./i18n";
+
+  let {
+    sessionId,
+    sessionReady = true,
+    prod = false,
+    onOpenShell,
+  }: {
+    sessionId: string;
+    /** SSH tab is connected (local tabs are always ready). */
+    sessionReady?: boolean;
+    /** Active tab is a prod-tagged server — destructive ops get an extra warning. */
+    prod?: boolean;
+    /** Open a real terminal tab running `command` (kubectl exec shell). */
+    onOpenShell?: (command: string) => void;
+  } = $props();
+
+  const refreshSec = $derived(settings.k8sRefreshSec);
+  const prog = $derived(kubectlProg(settings.kubectlPath));
+
+  type Sub = "pods" | "workloads";
+  let activeSub = $state<Sub>("pods");
+
+  // Scope selection (baked into every argv; kubeconfig untouched).
+  let scopeContext = $state<string | null>(null);
+  let scopeNamespace = $state<string | null>(null); // null = context's default namespace
+  let scopeAll = $state(false);
+  const scope = $derived<K8sScope>({
+    context: scopeContext,
+    namespace: scopeNamespace,
+    allNamespaces: scopeAll,
+  });
+
+  let contexts = $state<string[]>([]);
+  let namespaces = $state<string[]>([]);
+
+  let availability = $state<K8sAvailability | null>(null); // null = checking
+  let busy = $state(false);
+  // False until the first data load after a positive probe completes — drives the
+  // skeleton so the panel never flashes "No pods" before the first `get`.
+  let firstLoadDone = $state(false);
+
+  let podGroups = $state<PodGroup[]>([]);
+  let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
+  let workloads = $state<K8sWorkload[]>([]);
+
+  let menu = $state<OpenMenu | null>(null);
+
+  // Pod detail modal.
+  let detailOpen = $state(false);
+  let detailPod = $state<K8sPod | null>(null);
+
+  // Shared text modal (workload describe / YAML — read-only).
+  let textOpen = $state(false);
+  let textTitle = $state("");
+  let textBody = $state("");
+
+  // Confirm dialog (pending-resolver pattern, like DockerPanel).
+  let confirmOpen = $state(false);
+  let confirmText = $state("");
+  let confirmResolve: ((ok: boolean) => void) | null = null;
+
+  function askConfirm(text: string): Promise<boolean> {
+    confirmText = text;
+    confirmOpen = true;
+    return new Promise((resolve) => (confirmResolve = resolve));
+  }
+  function settleConfirm(ok: boolean) {
+    confirmOpen = false;
+    confirmResolve?.(ok);
+    confirmResolve = null;
+  }
+
+  function showMenu(e: MouseEvent, items: MenuItem[]) {
+    e.preventDefault();
+    menu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  // ── Execution helpers ────────────────────────────────────────────────────────
+
+  /** Full argv for a view-level command, scoped by the current UI selection. */
+  function viewArgs(bare: string[], opts: { namespaced?: boolean; scoped?: boolean } = {}): string[] {
+    return withScope(prog, bare, scope, opts);
+  }
+  /** Full argv for a per-object command, targeting the object's own namespace. */
+  function objArgs(bare: string[], namespace: string): string[] {
+    return withScope(prog, bare, objectScope(scope, namespace));
+  }
+
+  /** Read-only kubectl call (no confirm, no reload). Per-object namespace scope. */
+  function runQuery(bare: string[], namespace: string, timeout = 30) {
+    return kubectlRun(sessionId, objArgs(bare, namespace), timeout, false);
+  }
+
+  /**
+   * Mutating kubectl call for a single object: confirm disruptive/destructive ops
+   * (every server — with an extra warning on prod), execute (mirrored into the
+   * recording as `[k8s] $ …` audit), then reload. `bare` is the subcommand-first
+   * argv from a builder; scope is applied for the object's namespace. Never throws
+   * on a non-zero kubectl exit — surfaces stderr as a toast.
+   */
+  async function run(
+    bare: string[],
+    namespace: string,
+    opts: { successKey?: string } = {},
+  ): Promise<boolean> {
+    if (busy) return false;
+    if (needsConfirm(bare)) {
+      const ok = await askConfirm(objArgs(bare, namespace).join(" "));
+      if (!ok) return false;
+    }
+    busy = true;
+    try {
+      const res = await kubectlRun(sessionId, objArgs(bare, namespace), 120, true);
+      if (res.exitCode !== 0) {
+        notifyError(res.stderr.trim() || res.stdout.trim() || t("k8s.opFailed"));
+        await refresh();
+        return false;
+      }
+      if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey));
+      await refresh();
+      return true;
+    } catch (e) {
+      notifyError(String(e));
+      return false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  function openShell(pod: K8sPod, container: string | null) {
+    onOpenShell?.(execShellCommand(prog, pod.name, pod.namespace, container, scope));
+    notifySuccess(t("k8s.shellOpened", { name: pod.name }));
+  }
+
+  // ── Data loading ───────────────────────────────────────────────────────────
+
+  /** Enumerate kubeconfig contexts + preselect the current one (first init only). */
+  async function loadSelectors() {
+    try {
+      const [ctxs, cur] = await Promise.all([
+        kubectlRun(sessionId, withScope(prog, contextsArgs(), scope, { scoped: false }), 15, false),
+        kubectlRun(sessionId, withScope(prog, currentContextArgs(), scope, { scoped: false }), 15, false),
+      ]);
+      contexts = parseContexts(ctxs.stdout);
+      const current = cur.stdout.trim();
+      if (!scopeContext && current) scopeContext = current;
+    } catch {
+      contexts = [];
+    }
+  }
+
+  /** List namespaces for the namespace selector (best-effort — needs a reachable cluster). */
+  async function loadNamespaces() {
+    try {
+      const res = await kubectlRun(
+        sessionId,
+        withScope(prog, namespacesArgs(), scope, { namespaced: false }),
+        15,
+        false,
+      );
+      namespaces = parseNamespaces(res.stdout);
+    } catch {
+      namespaces = [];
+    }
+  }
+
+  /** Probe whether kubectl + the cluster are usable (drives the empty state). */
+  async function checkAvailability(): Promise<K8sAvailability> {
+    let result: K8sAvailability;
+    try {
+      const res = await kubectlRun(sessionId, viewArgs(versionArgs(), { namespaced: false }), 15, false);
+      result = parseAvailability(res.stdout, res.stderr, res.exitCode);
+    } catch (e) {
+      result = { ok: false, reason: "unknown", detail: String(e) };
+    }
+    availability = result;
+    return result;
+  }
+
+  /** Reload the active sub-tab's data (+ pod metrics). */
+  async function refresh() {
+    if (!sessionReady || !availability?.ok) return;
+    try {
+      if (activeSub === "pods") {
+        const [pods, top] = await Promise.all([
+          kubectlRun(sessionId, viewArgs(podsArgs()), 20, false),
+          kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
+        ]);
+        podGroups = groupByOwner(parsePods(pods.stdout));
+        const map = new Map<string, K8sPodMetrics>();
+        for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
+        metricsByKey = map;
+      } else {
+        const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
+        workloads = parseWorkloads(res.stdout);
+      }
+    } catch (e) {
+      notifyError(String(e));
+    } finally {
+      firstLoadDone = true;
+    }
+  }
+
+  /** Probe + first load against the current scope (from mount, retry, or scope change). */
+  async function reinit() {
+    availability = null;
+    firstLoadDone = false;
+    const a = await checkAvailability();
+    if (a.ok) {
+      await loadNamespaces();
+      await refresh();
+    } else {
+      firstLoadDone = true;
+    }
+  }
+
+  /** Full init: reset scope, enumerate contexts, then probe + load. */
+  async function initAll() {
+    scopeContext = null;
+    scopeNamespace = null;
+    scopeAll = false;
+    contexts = [];
+    namespaces = [];
+    await loadSelectors();
+    await reinit();
+  }
+
+  function retry() {
+    void initAll();
+  }
+
+  // ── Scope selectors ──────────────────────────────────────────────────────────
+
+  function pickContext(v: string) {
+    scopeContext = v || null;
+    scopeNamespace = null; // namespaces differ per context
+    scopeAll = false;
+    void reinit();
+  }
+  function pickNamespace(v: string) {
+    scopeNamespace = v || null;
+    scopeAll = false;
+    void refresh();
+  }
+  function toggleAll() {
+    scopeAll = !scopeAll;
+    void refresh();
+  }
+
+  // ── Workload describe / YAML (read-only text modal) ──────────────────────────
+
+  async function openText(title: string, bare: string[], namespace: string) {
+    textTitle = title;
+    textBody = "";
+    textOpen = true;
+    const res = await runQuery(bare, namespace, 30);
+    textBody = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
+  }
+  function describeWorkload(w: K8sWorkload) {
+    void openText(`${t("k8s.describe")} — ${w.name}`, describeArgs(w.kind.toLowerCase(), w.name), w.namespace);
+  }
+  function yamlWorkload(w: K8sWorkload) {
+    void openText(`${t("k8s.yaml")} — ${w.name}`, getYamlArgs(w.kind.toLowerCase(), w.name), w.namespace);
+  }
+
+  // ── Detail modal live sync ───────────────────────────────────────────────────
+
+  function openDetails(pod: K8sPod) {
+    detailPod = pod;
+    detailOpen = true;
+  }
+  const liveDetailPod = $derived.by(() => {
+    if (!detailPod) return null;
+    for (const g of podGroups) {
+      const f = g.pods.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name);
+      if (f) return f;
+    }
+    return null;
+  });
+  const detailMetrics = $derived.by(() => {
+    const p = liveDetailPod;
+    if (!p) return undefined;
+    return metricsByKey.get(metricsKey(p.namespace, p.name)) ?? metricsByKey.get(metricsKey("", p.name));
+  });
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────────
+
+  // Full init when the session becomes ready (or changes).
+  $effect(() => {
+    void sessionId;
+    if (sessionReady) void initAll();
+  });
+
+  // Reload when the sub-tab changes.
+  $effect(() => {
+    void activeSub;
+    if (availability?.ok) void refresh();
+  });
+
+  // Poll the live view while the cluster is available.
+  $effect(() => {
+    const sec = Math.max(1, refreshSec);
+    if (!sessionReady || !availability?.ok) return;
+    const id = setInterval(() => void refresh(), sec * 1000);
+    return () => clearInterval(id);
+  });
+
+  // Close the detail modal if its pod disappears (deleted elsewhere / poll).
+  $effect(() => {
+    if (detailOpen && firstLoadDone && !liveDetailPod) detailOpen = false;
+  });
+
+  const SUBS: { id: Sub; label: string }[] = [
+    { id: "pods", label: t("k8s.pods") },
+    { id: "workloads", label: t("k8s.workloads") },
+  ];
+
+  const unavailableHint = $derived.by(() => {
+    if (!availability || availability.ok) return "";
+    const key: MessageKey =
+      availability.reason === "missing"
+        ? "k8s.missing"
+        : availability.reason === "no-config"
+          ? "k8s.noConfig"
+          : availability.reason === "unreachable"
+            ? "k8s.unreachable"
+            : availability.reason === "forbidden"
+              ? "k8s.forbidden"
+              : "k8s.unknownErr";
+    return t(key);
+  });
+</script>
+
+<div class="flex h-full min-h-0 flex-col text-xs">
+  {#if !sessionReady || availability === null}
+    <EmptyState icon="kubernetes" title={t("k8s.checking")} />
+  {:else if !availability.ok}
+    <EmptyState icon="kubernetes" title={t("k8s.unavailableTitle")} hint={unavailableHint}>
+      <button
+        class="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        data-testid="k8s-retry"
+        onclick={retry}
+      >
+        {t("k8s.retry")}
+      </button>
+    </EmptyState>
+  {:else}
+    <!-- Toolbar -->
+    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
+      <Icon name="kubernetes" size={15} class="text-accent" />
+      <div class="min-w-0 flex-1">
+        <div class="font-medium text-white/90">{t("k8s.panelTitle")}</div>
+        <div class="truncate text-[10px] text-muted">{t("k8s.clusterVersion", { version: availability.serverVersion })}</div>
+      </div>
+      <button
+        class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        disabled={busy}
+        use:tooltip={t("k8s.refresh")}
+        aria-label={t("k8s.refresh")}
+        onclick={() => refresh()}
+      >
+        <Icon name="refresh" size={14} />
+      </button>
+    </div>
+
+    <!-- Scope selectors -->
+    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5 text-[11px]">
+      {#if contexts.length > 0}
+        <select
+          data-testid="k8s-context"
+          class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-white outline-none focus:border-accent"
+          value={scopeContext ?? ""}
+          use:tooltip={t("k8s.context")}
+          onchange={(e) => pickContext(e.currentTarget.value)}
+        >
+          {#each contexts as c (c)}
+            <option value={c}>{c}</option>
+          {/each}
+        </select>
+      {/if}
+      <select
+        data-testid="k8s-namespace"
+        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-white outline-none focus:border-accent disabled:opacity-40"
+        value={scopeNamespace ?? ""}
+        disabled={scopeAll}
+        use:tooltip={t("k8s.namespace")}
+        onchange={(e) => pickNamespace(e.currentTarget.value)}
+      >
+        <option value="">{t("k8s.defaultNamespace")}</option>
+        {#each namespaces as ns (ns)}
+          <option value={ns}>{ns}</option>
+        {/each}
+      </select>
+      <button
+        data-testid="k8s-all-ns"
+        class="shrink-0 rounded border px-1.5 py-0.5 {scopeAll ? 'border-accent text-accent' : 'border-edge text-muted hover:text-white'}"
+        use:tooltip={t("k8s.allNamespaces")}
+        aria-label={t("k8s.allNamespaces")}
+        aria-pressed={scopeAll}
+        onclick={toggleAll}
+      >
+        -A
+      </button>
+    </div>
+
+    <!-- Sub-tabs -->
+    <div class="flex border-b border-edge text-[11px]">
+      {#each SUBS as s (s.id)}
+        <button
+          data-testid={`k8s-subtab-${s.id}`}
+          class="flex-1 border-b-2 py-1.5 text-center {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-white'}"
+          aria-current={activeSub === s.id ? "true" : undefined}
+          onclick={() => (activeSub = s.id)}
+        >
+          {s.label}
+        </button>
+      {/each}
+    </div>
+
+    <!-- Active sub-view -->
+    <div class="min-h-0 flex-1">
+      {#if !firstLoadDone}
+        <div class="space-y-2 p-2.5" data-testid="k8s-skeleton" aria-hidden="true">
+          {#each [0, 1, 2, 3, 4] as i (i)}
+            <div class="flex items-center gap-2">
+              <Skeleton width="7px" height="7px" class="shrink-0 rounded-full" />
+              <Skeleton width="{40 + ((i * 13) % 45)}%" height="0.7rem" />
+            </div>
+          {/each}
+        </div>
+      {:else if activeSub === "pods"}
+        {#if podGroups.length === 0}
+          <EmptyState icon="container" title={t("k8s.noPods")} hint={t("k8s.noPodsHint")} />
+        {:else}
+          <K8sPods
+            groups={podGroups}
+            {metricsByKey}
+            {busy}
+            {run}
+            {openShell}
+            onViewDetails={openDetails}
+            {showMenu}
+          />
+        {/if}
+      {:else if workloads.length === 0}
+        <EmptyState icon="rocket" title={t("k8s.noWorkloads")} hint={t("k8s.noWorkloadsHint")} />
+      {:else}
+        <K8sWorkloads {workloads} {busy} {run} onDescribe={describeWorkload} onYaml={yamlWorkload} {showMenu} />
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<K8sDetailModal
+  open={detailOpen}
+  pod={liveDetailPod}
+  metrics={detailMetrics}
+  {busy}
+  {refreshSec}
+  {run}
+  {runQuery}
+  {openShell}
+  onclose={() => (detailOpen = false)}
+/>
+
+<K8sTextModal open={textOpen} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />
+
+<ContextMenu {menu} onclose={() => (menu = null)} />
+
+<ConfirmDialog
+  open={confirmOpen}
+  title={t("k8s.confirmTitle")}
+  confirmLabel={t("common.ok")}
+  onconfirm={() => settleConfirm(true)}
+  oncancel={() => settleConfirm(false)}
+>
+  {t("k8s.confirmBody")}
+  <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-white/80">{confirmText}</code>
+  {#if prod}
+    <span class="mt-1 block text-[11px] text-danger">{t("k8s.confirmProdWarn")}</span>
+  {/if}
+</ConfirmDialog>

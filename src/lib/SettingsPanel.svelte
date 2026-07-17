@@ -17,6 +17,7 @@
   import SnippetsSettings from "./SnippetsSettings.svelte";
   import BackupSettings from "./BackupSettings.svelte";
   import DockerSettings from "./DockerSettings.svelte";
+  import K8sSettings from "./K8sSettings.svelte";
   import ServerToolsPanel from "./ServerToolsPanel.svelte";
   import {
     SETTINGS_GROUPS,
@@ -37,6 +38,7 @@
     files: "settings.groupFiles",
     sessions: "settings.groupSessions",
     docker: "settings.groupDocker",
+    k8s: "settings.groupK8s",
     assistant: "settings.groupAssistant",
   };
 
@@ -494,6 +496,10 @@
 
         {#if show("docker")}
         <DockerSettings />
+        {/if}
+
+        {#if show("k8s")}
+        <K8sSettings />
         {/if}
 
         {#if show("backup")}

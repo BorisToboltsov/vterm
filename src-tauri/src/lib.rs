@@ -5,6 +5,7 @@ mod error;
 mod folders;
 mod git;
 mod keygen;
+mod kube;
 mod localenv;
 mod localfile;
 mod metrics;
@@ -1157,6 +1158,67 @@ async fn docker_login(
     Err(AppError::NoSession)
 }
 
+/// Run one `kubectl` command for the Kubernetes panel (Phase 37). Dispatches by
+/// session kind exactly like [`container_run`]: SSH tabs execute remotely on a
+/// dedicated exec channel, local shell tabs spawn `kubectl` locally. `args` is a
+/// full argv whose leading token(s) are the program (`kubectl`, or a configured
+/// wrapper like `k3s kubectl`) with the `--context`/`--namespace`/`-A` scope
+/// already baked in by the frontend (`k8s.ts`); argument building and output
+/// parsing are pure frontend logic, this only executes and captures. A timeout
+/// collapses into a non-zero exit + stderr note so the frontend sees a uniform
+/// `KubeOutput`. `mirror` (mutating ops only, set by the frontend) audits the
+/// command into the active session recording as `[k8s] $ …` output — never
+/// emitted to the live terminal, exactly like `container_run`. Reads/polls pass
+/// `mirror = false`.
+#[tauri::command]
+async fn kubectl_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    args: Vec<String>,
+    timeout_secs: u64,
+    mirror: bool,
+) -> AppResult<kube::KubeOutput> {
+    if args.is_empty() {
+        return Err(AppError::Message("kube: no arguments".into()));
+    }
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        let outcome = session
+            .exec_captured(&kube::kube_command(&args), timeout_secs.max(1))
+            .await?;
+        let (stderr, exit_code) = if outcome.timed_out {
+            (
+                format!("kubectl timed out after {}s", timeout_secs.max(1)),
+                -1,
+            )
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        if mirror {
+            let cmd = args.join(" ");
+            session.record_output(
+                kube::kube_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
+            );
+        }
+        return Ok(kube::KubeOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        let out = kube::run_local(&args, timeout_secs).await?;
+        if mirror {
+            let cmd = args.join(" ");
+            pty.record_output(
+                kube::kube_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
+            );
+        }
+        return Ok(out);
+    }
+    Err(AppError::NoSession)
+}
+
 /// List stored recordings (newest first), reading metadata from each header.
 #[tauri::command]
 fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
@@ -2085,6 +2147,7 @@ pub fn run() {
             git_run,
             probe_run,
             container_run,
+            kubectl_run,
             docker_login,
             set_registry_secret,
             delete_registry_secret,

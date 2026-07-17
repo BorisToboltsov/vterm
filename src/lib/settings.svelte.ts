@@ -195,6 +195,13 @@ export interface Settings {
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
+  // Kubernetes panel (Phase 37) — how often the live view re-polls the cluster
+  // while the panel is open, in seconds. See k8s.ts.
+  k8sRefreshSec: number;
+  // Optional kubectl program override (e.g. "k3s kubectl", "microk8s kubectl",
+  // or an absolute path); empty = the `kubectl` on PATH. Split into tokens by
+  // `kubectlProg` in k8s.ts.
+  kubectlPath: string;
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
@@ -316,11 +323,19 @@ const DEFAULTS: Settings = {
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
   dockerRefreshSec: 3,
   dockerRegistries: [],
+  k8sRefreshSec: 5,
+  kubectlPath: "",
 };
 
 /** Clamp the Docker refresh interval to 1…30 s (polling, not streaming). */
 export function clampDockerRefresh(v: unknown): number {
   const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.dockerRefreshSec;
+  return Math.max(1, Math.min(30, n));
+}
+
+/** Clamp the Kubernetes refresh interval to 1…30 s (polling, not streaming). */
+export function clampK8sRefresh(v: unknown): number {
+  const n = typeof v === "number" && Number.isFinite(v) ? Math.round(v) : DEFAULTS.k8sRefreshSec;
   return Math.max(1, Math.min(30, n));
 }
 
@@ -420,6 +435,8 @@ function load(): Settings {
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
+      k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
+      kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
     };
   } catch {
     return {
@@ -513,6 +530,8 @@ export function applyImportedSettings(raw: unknown): void {
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
+  next.k8sRefreshSec = clampK8sRefresh(next.k8sRefreshSec);
+  if (typeof next.kubectlPath !== "string") next.kubectlPath = DEFAULTS.kubectlPath;
   if (r.customTheme && typeof r.customTheme === "object") {
     next.customTheme = { ...DEFAULTS.customTheme, ...(r.customTheme as Partial<TerminalTheme>) };
   }

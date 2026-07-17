@@ -266,9 +266,8 @@
   `container_run`. **Прод-защита**: на прод-вкладке (`isProdServer`) деструктив
   (`isDestructive`: rm/rmi/prune/compose down) — через `ConfirmDialog` (предохранитель,
   не граница). **Офлайн цел**: docker-демон — «за сессией пользователя», трафик из
-  Rust/PTY, не из WebView. **k8s** — дизайн-хук на будущее (реестр драйверов оркестрации),
-  кода пока нет; добавлять его — отдельным драйвером с своим видом, не насильно в один
-  список с Docker.
+  Rust/PTY, не из WebView. **k8s** — реализован **отдельным драйвером** (Фаза 37, ниже),
+  своим видом, **не** насильно в один список с Docker; следующие оркестраторы — так же.
   - **Доработки (Фаза 36).** (1) **Контекстное меню (ПКМ)** на контейнерах и образах —
     только через общий примитив [ContextMenu](../src/lib/ContextMenu.svelte) (декларативный
     `MenuItem[]`, как у git/SFTP), **не** свой попап. Строка контейнера несёт **одну**
@@ -295,6 +294,39 @@
     хоста сессии — **офлайн-инвариант цел** (как git fetch/pull/push). Настройка — секция
     «Docker» в settings ([DockerSettings](../src/lib/DockerSettings.svelte)), не отдельная
     per-операционная команда сверх нужного. CVE-скан образов **не делаем** (нет офлайн-способа).
+- **k8s-панель** (Фаза 37). Просмотр/управление ресурсами кластера хоста активной сессии —
+  **5-я вкладка правого дока** ([K8sPanel.svelte](../src/lib/K8sPanel.svelte)), `DockTab` +=
+  `k8s`. **Отдельный драйвер оркестрации со своим видом** (реализация дизайн-хука выше), **не**
+  втиснут в Docker-список. **Единый контракт исполнения** (как у Docker/git): одна бэкенд-команда
+  `kubectl_run` (`session_id` + вектор argv, ведущие токены = программа `kubectl`/`k3s kubectl`)
+  диспетчеризует транспорт по наличию сессии — **SSH** через `exec_captured` (каждый токен
+  шелл-квотится в [kube.rs](../src-tauri/src/kube.rs) — защита от инъекции), **локально** через
+  `tokio::process` (спавн обязан идти через [localenv](../src-tauri/src/localenv.rs), как docker/git;
+  ENOENT → `exit 127`, не `Err`). Бэкенд — **дамповый исполнитель**: вся сборка argv и парсинг
+  вывода — чистая логика в [k8s.ts](../src/lib/k8s.ts) (билдеры/`parse*`/`groupByOwner`/
+  `parseAvailability`/`isDestructive`/`needsConfirm`), вид — в `K8s*.svelte`. Не дублируй
+  kubectl-логику в компонентах и **не вводи новых per-операционных бэкенд-команд** — расширяй
+  через билдеры/парсеры в `.ts`. **Осознанные отличия от Docker-драйвера:** вывод — **`-o json`**
+  (строгий JSON надёжнее US-разделителей `--format`); `context`/`namespace` — **выбор в UI,
+  вшиваемый в каждый argv** флагами `--context`/`--namespace`/`-A` (`withScope`; per-object
+  действия — через `objectScope` c namespace самого объекта, чтобы бить в верный namespace даже
+  при `-A`-виде), **kubeconfig не мутируем** (никаких `config use-context`); группировка подов —
+  по `ownerReferences` (`groupByOwner`, ReplicaSet → Deployment rollup, бакет Standalone).
+  **Namespace по умолчанию** — из текущего контекста (пустой `--namespace` → kubectl берёт дефолт
+  контекста), `-A` — по кнопке. **Живой вид — снимок раз в N сек** (`settings.k8sRefreshSec`,
+  дефолт 5, кламп 1…30, `clampK8sRefresh`), **не поток** (`top pods` one-shot, `logs --tail` без
+  `-f`); поллер жив пока вкладка смонтирована. **Аудит записи** (как docker/git): мутирующий
+  `kubectl_run(mirror=true)` → `[k8s] $ … / [k8s] exit N` (`kube::kube_mirror`, **record-only**);
+  чтения/поллинг — без миррора. **Подтверждения** (`needsConfirm`/`isDestructive`, каждый сервер):
+  delete/rollout restart/scale-to-0 → `ConfirmDialog`, на прод-вкладке — красное предупреждение
+  (предохранитель, не граница). **Shell в под** — `kubectl exec -it … -- sh -c '… bash||sh'`
+  (`execShellCommand`) в **новой** терминал-вкладке того же хоста, **поверх терминального
+  контракта** (`pendingCommand` → `write_to_terminal`, реюз `onOpenContainerShell`), **без**
+  `kubectl_run`. **Выбор kubectl** — `settings.kubectlPath` (секция настроек «Kubernetes»,
+  [K8sSettings](../src/lib/K8sSettings.svelte)) для `k3s kubectl`/`microk8s kubectl`/абс. пути —
+  строка в токены чистым `kubectlProg`. **Офлайн цел**: API-сервер — «за сессией пользователя»,
+  трафик из Rust/PTY, не из WebView. Network (Services/Ingress) + Cluster (Nodes/Events) +
+  port-forward — **Фаза 37.1**, тем же драйвером/контрактом.
 - **Офлайн-инвариант.** Никаких runtime-обращений в сеть, кроме исходящего SSH к
   серверам пользователя (в т.ч. **через заданный им proxy** — jump host/SOCKS5/HTTP
   CONNECT, Фаза 21 — это часть пути к его же серверам) **и** — при включённом opt-in

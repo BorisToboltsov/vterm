@@ -84,6 +84,16 @@ export default defineConfig({
         "src/lib/DockerImages.svelte",
         "src/lib/DockerNetworks.svelte",
         "src/lib/DockerTextModal.svelte",
+        // Kubernetes panel (Phase 37) — UI shells over pure k8s.ts (arg builders,
+        // withScope, JSON parsers, groupByOwner, availability + destructive-op
+        // classifiers, all heavily covered in k8s.test.ts). Same rationale as the
+        // Docker panel above.
+        "src/lib/K8sPanel.svelte",
+        "src/lib/K8sPods.svelte",
+        "src/lib/K8sWorkloads.svelte",
+        "src/lib/K8sDetailModal.svelte",
+        "src/lib/K8sTextModal.svelte",
+        "src/lib/K8sSettings.svelte",
         // Add/edit server form — UI shell over the server api + native key picker
         // (extracted from +page.svelte in Phase 18.4.2).
         "src/lib/ServerFormModal.svelte",

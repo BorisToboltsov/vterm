@@ -2090,7 +2090,7 @@ keygen (Фаза 32) переехал сюда из настроек.
 
 ---
 
-## ⬜ Фаза 37 — Панель Kubernetes (k8s) (v0.37.0)
+## Фаза 37 — Панель Kubernetes (k8s)
 
 Просмотр и управление ресурсами кластера, доступного с хоста активной сессии — **5-я
 вкладка правого дока** ([RightDock](../src/lib/RightDock.svelte), `DockTab` += `k8s`),
@@ -2109,61 +2109,87 @@ keygen (Фаза 32) переехал сюда из настроек.
 (или `-A`), kubeconfig **не мутируем** (никаких `config use-context`); группировка подов —
 по `ownerReferences` (Deployment/StatefulSet/DaemonSet/Job), аналог `groupByCompose`.
 
-- [ ] **Бэкенд** — `kubectl_run` ([lib.rs](../src-tauri/src/lib.rs)), диспетчер SSH/локально
+**Разбита на две подфазы** (осознанно, чтобы не топить весь драйвер в одном PR): **37.0** —
+фундамент (весь бэкенд-контракт) + Pods + Workloads; **37.1** — досбор Network + Cluster +
+Events + port-forward (чисто фронтовой этап поверх готового контракта).
+
+### ✅ Фаза 37.0 — фундамент + Pods + Workloads (v0.37.0)
+
+- [x] **Бэкенд** — `kubectl_run` ([lib.rs](../src-tauri/src/lib.rs)), диспетчер SSH/локально
   как у `container_run`; [kube.rs](../src-tauri/src/kube.rs): `kube_command` шелл-квотит
-  каждый токен (защита от инъекции), `run_local` спавнит kubectl (kill_on_drop, таймаут →
-  `exit -1`). **Аудит записи** (как docker/git): мутирующий `kubectl_run(mirror=true)` →
-  `[k8s] $ … / [k8s] exit N` (`kube::kube_mirror`, record-only, в живой терминал не эмитится);
-  чтения/поллинг — без миррора.
-- [ ] **Чистая логика** — [k8s.ts](../src/lib/k8s.ts): билдеры argv (`podsArgs`/`workloadsArgs`/
-  `servicesArgs`/`ingressArgs`/`nodesArgs`/`eventsArgs`/`topPodsArgs`/`logsArgs`/`describeArgs`/
-  `getYamlArgs`; действия `deleteArgs`/`scaleArgs`/`rolloutRestartArgs`/`cordonArgs`/`drainArgs`),
-  вставка `--context`/`--namespace`/`-A` (`withScope`), разбор `kubectlPath` в токены (`kubectlProg`);
-  парсеры JSON (`parsePods`/`parseWorkloads`/`parseServices`/`parseIngress`/`parseNodes`/
-  `parseEvents`/`parseTopPods`), `groupByOwner` (группировка по `ownerReferences`, бакет Standalone),
-  `parseAvailability` (missing/no-config/unreachable/forbidden — по `kubectl version`/`cluster-info`),
-  `podPhaseTone` (Running/Pending/CrashLoopBackOff/Completed → тон), `isDestructive`/`needsConfirm`.
-- [ ] **UI** — панель [K8sPanel.svelte](../src/lib/K8sPanel.svelte) (оркестратор: тулбар с версией +
-  селекторы **context**/**namespace** + refresh; **4 сабтаба**), под-виды
+  каждый токен (защита от инъекции), `run_local` спавнит kubectl через
+  [localenv](../src-tauri/src/localenv.rs) (kill_on_drop, таймаут → `exit -1`, ENOENT →
+  `exit 127` для честного `parseAvailability`). **Аудит записи** (как docker/git): мутирующий
+  `kubectl_run(mirror=true)` → `[k8s] $ … / [k8s] exit N` (`kube::kube_mirror`, record-only,
+  в живой терминал не эмитится); чтения/поллинг — без миррора.
+- [x] **Чистая логика** — [k8s.ts](../src/lib/k8s.ts): билдеры argv (`podsArgs`/`workloadsArgs`/
+  `topPodsArgs`/`logsArgs`/`describeArgs`/`getYamlArgs`/`versionArgs`/`contextsArgs`/
+  `currentContextArgs`/`namespacesArgs`; действия `deleteArgs`/`scaleArgs`/`rolloutRestartArgs`),
+  вставка `--context`/`--namespace`/`-A` (`withScope`, `objectScope` — per-object namespace),
+  разбор `kubectlPath` в токены (`kubectlProg`); парсеры JSON (`parsePods`/`parseWorkloads`/
+  `parseNamespaces`/`parseContexts`/`parseTopPods`), `groupByOwner` (ReplicaSet → Deployment
+  rollup, бакет Standalone), `resolveOwner`, `podDisplayStatus`, `k8sAge`, `parseAvailability`
+  (missing/no-config/unreachable/forbidden — по `kubectl version -o json`), `podPhaseTone`,
+  `isDestructive`/`needsConfirm`.
+- [x] **UI** — панель [K8sPanel.svelte](../src/lib/K8sPanel.svelte) (оркестратор: тулбар с версией +
+  селекторы **context**/**namespace** + тумблер `-A` + refresh; **2 сабтаба**), под-виды
   [K8sPods.svelte](../src/lib/K8sPods.svelte) (группировка по владельцу + `kubectl top pods`,
   деградирует без metrics-server), [K8sWorkloads.svelte](../src/lib/K8sWorkloads.svelte)
-  (Deployments/StatefulSets/DaemonSets/**CronJobs** со счётчиком реплик, scale ±/rollout restart),
-  [K8sNetwork.svelte](../src/lib/K8sNetwork.svelte) (Services + Ingress), [K8sCluster.svelte](../src/lib/K8sCluster.svelte)
-  (Nodes: Ready/roles/версия, cordon/drain + последние **Events** для диагностики). Модалка
-  [K8sDetailModal.svelte](../src/lib/K8sDetailModal.svelte) (вкладки Overview/**Logs**/**Describe**/
-  **YAML**; logs — live-поллинг `logs --tail` + выбор контейнера в многоконтейнерном поде; describe/yaml
-  — разово, read-only). ПКМ-меню — через общий [ContextMenu](../src/lib/ContextMenu.svelte). Иконки
-  из реестра [icons.ts](../src/lib/icons.ts) (`cloud`/`ship`/`rocket`/`database`), **не** эмодзи.
-- [ ] **Живой вид — снимок раз в N сек** (`settings.k8sRefreshSec`, дефолт 5, кламп 1…30,
+  (Deployments/StatefulSets/DaemonSets/**CronJobs** со счётчиком реплик, scale ±/rollout restart).
+  Модалка [K8sDetailModal.svelte](../src/lib/K8sDetailModal.svelte) (вкладки Overview/**Logs**/
+  **Describe**/**YAML**; logs — live-поллинг `logs --tail` + выбор контейнера в многоконтейнерном
+  поде; describe/yaml — разово, read-only); [K8sTextModal.svelte](../src/lib/K8sTextModal.svelte)
+  (describe/yaml нагрузок). ПКМ-меню — через общий [ContextMenu](../src/lib/ContextMenu.svelte).
+  Иконки из реестра [icons.ts](../src/lib/icons.ts) (`kubernetes`/`rocket`/`database`/`container`,
+  добавлена `ship`), **не** эмодзи.
+- [x] **Живой вид — снимок раз в N сек** (`settings.k8sRefreshSec`, дефолт 5, кламп 1…30,
   `clampK8sRefresh`), а **не** поток (без `-w`/`--watch`; `logs --tail` без `-f`); поллер живёт
   только пока вкладка смонтирована. Интерактивный follow — в реальном терминале.
-- [ ] **Подтверждения (на каждом сервере)** — `needsConfirm`/`isDestructive` → `ConfirmDialog`:
-  **delete** (pod/deployment/service/ns), **rollout restart**, **scale to 0**, **cordon/drain node**,
-  **delete namespace**. Незапускающие (get/logs/describe/top) — без запроса. На прод-контексте
-  (`isProdServer`) — красное предупреждение сверху; прод-гейт остаётся предохранителем, не границей.
-- [ ] **Shell в под** — `kubectl exec -it <pod> [-c <container>] -- sh -c 'command -v bash && exec bash
-  || exec sh'` в **новой** терминал-вкладке того же хоста (реюз кредов сессии), поверх терминального
-  контракта (`pendingCommand` → `write_to_terminal` по `connected` в [+page.svelte](../src/routes/+page.svelte));
-  без нового бэкенда/канала. **port-forward** — аналогично: кнопка пишет `kubectl port-forward …` в
-  **новую терминал-вкладку** (процесс живёт в PTY, панель им не управляет), а не в `kubectl_run`.
-- [ ] **Выбор kubectl** — автодетект `kubectl`; при отсутствии — empty-state с подсказкой. Поле
+- [x] **Подтверждения (на каждом сервере)** — `needsConfirm`/`isDestructive` → `ConfirmDialog`:
+  **delete** (pod/deployment/…), **rollout restart**, **scale to 0**. Незапускающие
+  (get/logs/describe/top) — без запроса. На прод-вкладке (`prod`) — красное предупреждение
+  сверху; прод-гейт остаётся предохранителем, не границей. (cordon/drain/delete-namespace — 37.1.)
+- [x] **Shell в под** — `kubectl exec -it <pod> [-c <container>] -- sh -c '… exec bash || exec sh'`
+  (`execShellCommand`, scope-флаги инлайнятся) в **новой** терминал-вкладке того же хоста (реюз
+  кредов сессии), поверх терминального контракта (`pendingCommand` → `write_to_terminal`, реюз
+  `onOpenContainerShell` из [+page.svelte](../src/routes/+page.svelte)); без нового бэкенда/канала.
+- [x] **Выбор kubectl** — автодетект `kubectl`; при отсутствии — empty-state с подсказкой. Поле
   **`settings.kubectlPath`** в новой секции настроек «Kubernetes» ([K8sSettings.svelte](../src/lib/K8sSettings.svelte),
   группа настроек `k8s`) для `k3s kubectl`/`microk8s kubectl` — строка разбивается на токены чистым
-  `kubectlProg`, префиксит `args`. Плюс тумблер `k8sRefreshSec`.
-- [ ] **i18n** — все видимые строки через `t()`, ключи сразу во **все** словари
-  ([messages.ts](../src/lib/i18n/messages.ts) и др.); домены (Pod/Node/Namespace/CPU…) не переводим.
-- [ ] **Тесты**: [k8s.test.ts](../src/lib/k8s.test.ts) (билдеры/`withScope`/`kubectlProg`/парсеры JSON/
-  `groupByOwner`/availability/`isDestructive`/`needsConfirm`/`podPhaseTone`), `clampK8sRefresh` в
-  settings-тесте, backend `kube_command`/`kube_mirror` в [kube.rs](../src-tauri/src/kube.rs). UI-оболочки
-  (`K8s*.svelte`) — в exclude покрытия.
-- [ ] **Доки**: ROADMAP (эта фаза → ✅), GUIDE (встроенная инструкция), README (витрина), INVARIANTS
-  (новый абзац «k8s-панель» в блоке драйверов оркестрации), TESTS (описание новых тестов). Версия
-  0.37.0 в трёх манифестах ([package.json](../package.json)/[Cargo.toml](../src-tauri/Cargo.toml)/
-  [tauri.conf.json](../src-tauri/tauri.conf.json)), `cargo check` для синка `Cargo.lock`.
+  `kubectlProg`, префиксит `args`. Плюс `k8sRefreshSec`.
+- [x] **i18n** — все видимые строки через `t()`, ключи `k8s.*`/`settings.k8s*` сразу в **оба**
+  словаря ([messages.ts](../src/lib/i18n/messages.ts)); домены (Pod/Node/Namespace/CPU/kubectl/
+  YAML/Deployment…) не переводим.
+- [x] **Тесты**: [k8s.test.ts](../src/lib/k8s.test.ts) (билдеры/`withScope`/`objectScope`/
+  `kubectlProg`/парсеры JSON/`groupByOwner`/`resolveOwner`/`podDisplayStatus`/`k8sAge`/
+  availability/`isDestructive`/`needsConfirm`/`podPhaseTone`, 53 теста), `clampK8sRefresh` в
+  settings-тесте, backend `kube_command`/`kube_mirror`/`run_local` в [kube.rs](../src-tauri/src/kube.rs).
+  UI-оболочки (`K8s*.svelte`) — в exclude покрытия ([vitest.config.ts](../vitest.config.ts)).
+- [x] **Доки**: ROADMAP (эта подфаза → ✅), GUIDE, README, INVARIANTS (новый абзац «k8s-панель»
+  в блоке драйверов оркестрации), TESTS, CHANGELOG. Версия 0.37.0 в трёх манифестах
+  ([package.json](../package.json)/[Cargo.toml](../src-tauri/Cargo.toml)/[tauri.conf.json](../src-tauri/tauri.conf.json)),
+  `cargo check` для синка `Cargo.lock`.
 
-**Открытый вопрос (решить в начале реализации):** Events — отдельным сабтабом или внутри Cluster
-(сейчас в плане — внутри Cluster). k8s остаётся точкой расширения: следующие оркестраторы —
-своим драйвером со своим видом, не насильно в один список.
+### ⬜ Фаза 37.1 — Network + Cluster + Events + port-forward (v0.37.1)
+
+Чисто фронтовой этап поверх готового контракта 37.0 (новых бэкенд-команд не заводим).
+
+- [ ] **Чистая логика** — новые билдеры/парсеры в [k8s.ts](../src/lib/k8s.ts): `servicesArgs`/
+  `ingressArgs`/`nodesArgs`/`eventsArgs` + `parseServices`/`parseIngress`/`parseNodes`/`parseEvents`;
+  действия `cordonArgs`/`drainArgs`; расширить `needsConfirm`/`isDestructive` на cordon/drain и
+  delete-namespace.
+- [ ] **UI** — [K8sNetwork.svelte](../src/lib/K8sNetwork.svelte) (Services + Ingress),
+  [K8sCluster.svelte](../src/lib/K8sCluster.svelte) (Nodes: Ready/roles/версия, cordon/drain +
+  последние **Events** внутри Cluster с фильтром **Warning/Normal**). Панель → **4 сабтаба**.
+- [ ] **port-forward** — кнопка пишет `kubectl port-forward …` в **новую терминал-вкладку** (процесс
+  живёт в PTY, панель им не управляет), а не в `kubectl_run` (как shell в под).
+- [ ] **Тесты/доки/версия 0.37.1** — по тем же правилам.
+
+**Решённые вопросы:** namespace по умолчанию — из текущего контекста (пустой `--namespace` →
+kubectl берёт дефолт контекста), `-A` по кнопке; списки грузим `-o json`, но со `--namespace`
+по умолчанию (не грузим весь кластер сходу); Events — **внутри Cluster** (не 5-й сабтаб) с
+фильтром Warning/Normal. k8s остаётся точкой расширения: следующие оркестраторы — своим
+драйвером со своим видом, не насильно в один список.
 
 ---
 

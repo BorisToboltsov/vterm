@@ -720,6 +720,24 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `logoutArgs` (`--password-stdin`, Docker Hub без url), `registryLabel`, `sanitizeDockerRegistries`
   (отсев мусора, требование username, дедуп по url). UI-оболочки (`Docker*.svelte`) — в
   exclude покрытия, вся логика в `docker.ts`. `clampDockerRefresh` — в `settings.test.ts`.
+- `k8s.test.ts` (Фаза 37, Kubernetes-панель, 53 теста) — `kubectlProg` (пусто→`kubectl`,
+  `k3s kubectl`→токены, абс. путь одним токеном); `withScope` (вставка `--context`/
+  `--namespace`/`-A`; `namespace=null`→дефолт контекста; `namespaced:false` для cluster-scoped;
+  `scoped:false` для kubeconfig-команд; multi-token программа) и `objectScope` (per-object
+  namespace даже при `-A`-виде); билдеры argv (`versionArgs` с `--request-timeout`, `workloadsArgs`
+  четыре типа, `logsArgs` с `-c`, `scaleArgs` кламп к ≥0, `rolloutRestartArgs` формы `kind/name`,
+  `describeArgs`/`getYamlArgs`); `execShellCommand` (инлайн context/namespace/container, bash→sh);
+  `k8sAge` (s/m/h/d, двухъединичный, `''` на мусор); `resolveOwner` (ReplicaSet→Deployment rollup,
+  имя с дефисами, StatefulSet/DaemonSet напрямую, контроллер-реф, standalone); `podDisplayStatus`
+  (Terminating/waiting/terminated≠Completed/phase); парсеры JSON (`parsePods` — ready/restarts/
+  node/age/owner, `parseWorkloads` — Deploy/STS/DS/CronJob shape, `parseNamespaces`/`parseContexts`
+  сортировка, `parseTopPods` 3/4 колонки + пусто без metrics-server); `groupByOwner` (бакет
+  Standalone последним); `parseAvailability` (ok по serverVersion / missing/no-config/unreachable/
+  forbidden/unknown); `podPhaseTone`; `isDestructive`/`needsConfirm` (delete/drain + cordon/rollout
+  restart/scale-to-0 — да; ненулевой scale и чтения — нет). UI-оболочки (`K8s*.svelte`) — в exclude
+  покрытия, вся логика в `k8s.ts`. `clampK8sRefresh` — в `settings.test.ts`. Бэкенд `kube.rs`:
+  `kube_command` (квотинг каждого токена + wrapper-программа + нейтрализация инъекции),
+  `kube_mirror` (обёртка `[k8s] $ … / exit N`), `run_local` (ENOENT→`exit 127`).
 - `idle.test.ts` (Фаза 28, чистая логика заставки простоя) — `isIdleSetting`/
   `clampIdleTimeout` (валидация настроек, клэмп к [15…3600] c) и детект простоя
   `isIdle`/`msUntilIdle` (порог по «нет активности», обратный отсчёт без отрицательных).
