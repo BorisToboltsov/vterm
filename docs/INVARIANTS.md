@@ -239,7 +239,15 @@
   бэкенд-команда `container_run` (`session_id` + вектор аргументов, `args[0]` = `docker`)
   диспетчеризует транспорт по наличию сессии — **SSH** через `exec_captured` (каждый токен
   шелл-квотится в [container.rs](../src-tauri/src/container.rs) — защита от инъекции),
-  **локально** через `tokio::process`. Бэкенд — **дамповый исполнитель**: вся сборка argv
+  **локально** через `tokio::process`. **Локальный спавн обязан идти через
+  [localenv.rs](../src-tauri/src/localenv.rs)** (`resolved_local`): упакованное macOS-приложение
+  наследует от launchd **минимальный `PATH`** (`/usr/bin:/bin:/usr/sbin:/sbin`), где нет
+  Docker Desktop/Homebrew-каталогов, поэтому `Command::new("docker")` не находит бинарь **только
+  в `tauri build`** (в `dev` наследуется `PATH` оболочки) — реконструируем `PATH` из login-шелла
+  (кэш) + известных каталогов и резолвим программу в абсолютный путь. **Шеллом команду не
+  оборачиваем** (аргументы verbatim, инъекции нет). То же — для локального `git` ([git.rs](../src-tauri/src/git.rs)).
+  Локальный спавн-фейл (ENOENT) возвращается как `exit 127`+stderr (не `Err`), чтобы
+  `parseAvailability` честно сказал «не установлен». Бэкенд — **дамповый исполнитель**: вся сборка argv
   и парсинг вывода — чистая логика в [docker.ts](../src/lib/docker.ts)
   (`psArgs`/`imagesArgs`/`statsArgs`/…, `parsePs`/`parseImages`/`parseStats`,
   `groupByCompose` — группировка по лейблу `com.docker.compose.project`, `parseAvailability`,

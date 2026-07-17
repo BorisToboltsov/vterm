@@ -5,6 +5,7 @@ mod error;
 mod folders;
 mod git;
 mod keygen;
+mod localenv;
 mod localfile;
 mod metrics;
 mod model;

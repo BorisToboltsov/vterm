@@ -232,9 +232,15 @@ pnpm check
   LF→CRLF, как `git_mirror`). Сам `probe_run`/`exec_captured` не тестируются (сеть/внешний хост).
 - `container.rs` (Фаза 35, Docker-панель) — `container_command` (квотинг каждого токена;
   инъекция `x; rm -rf /` остаётся одним аргументом), `run_local` (несуществующий бинарь →
-  `Err`, не паника), **`container_mirror`** (Фаза 36 — обёртка `[docker] $ … / exit N`
+  `exit 127`+stderr, не `Err`/паника — Фаза 36.6, чтобы фронт классифицировал «не установлен»),
+  **`container_mirror`** (Фаза 36 — обёртка `[docker] $ … / exit N`
   для аудита записи, как `git_mirror`). Сам `container_run`/`docker_login`/`exec_captured`
   и `docker` не тестируются (внешний процесс/демон; логин несёт секрет).
+- `localenv.rs` (Фаза 36.6, реконструкция PATH локальных спавнов) — `combine_paths`
+  (дедуп с сохранением порядка login→process→каталоги, пропуск пустых), `resolve_program`
+  (поиск бинаря по PATH → абсолютный путь; passthrough явного пути; miss → имя как есть),
+  `parse_marker_line` (выбор PATH после маркера из шумного stdout login-шелла). Сам запрос
+  login-шелла (`$SHELL -ilc`) не тестируется (внешний процесс).
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml            # все тесты

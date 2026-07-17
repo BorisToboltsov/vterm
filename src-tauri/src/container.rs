@@ -45,9 +45,14 @@ pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<Containe
     let (prog, rest) = args
         .split_first()
         .ok_or_else(|| "container: no arguments".to_string())?;
-    let mut command = tokio::process::Command::new(prog);
+    // Reconstruct the user's PATH (a packaged macOS `.app` inherits only a minimal
+    // one, so `docker` — in /usr/local/bin or /opt/homebrew/bin — isn't found). See
+    // `localenv`. The command is still spawned without a shell (args verbatim).
+    let (resolved, path) = crate::localenv::resolved_local(prog).await;
+    let mut command = tokio::process::Command::new(&resolved);
     command
         .args(rest)
+        .env("PATH", &path)
         .stdin(std::process::Stdio::null())
         // Terminate the child if we abandon it on timeout, so a stuck `docker`
         // (e.g. a daemon that stops responding) can't linger.
@@ -55,7 +60,18 @@ pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<Containe
 
     let fut = command.output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {
-        Ok(res) => res.map_err(|e| format!("{prog} failed to run: {e}"))?,
+        Ok(Ok(out)) => out,
+        // Spawn failed (e.g. ENOENT: the binary isn't on the reconstructed PATH).
+        // Surface it as a captured non-zero result so the frontend's
+        // `parseAvailability` classifies it ("Docker not installed") instead of a
+        // hard Err shown as the generic "check failed".
+        Ok(Err(e)) => {
+            return Ok(ContainerOutput {
+                stdout: String::new(),
+                stderr: format!("{prog}: {e}"),
+                exit_code: 127,
+            })
+        }
         Err(_) => {
             return Ok(ContainerOutput {
                 stdout: String::new(),
@@ -84,8 +100,12 @@ pub async fn run_local_stdin(
     let (prog, rest) = args
         .split_first()
         .ok_or_else(|| "container: no arguments".to_string())?;
-    let mut child = tokio::process::Command::new(prog)
+    // Same PATH reconstruction as `run_local` so `docker login` finds the CLI in a
+    // packaged macOS `.app` (see `localenv`); still no shell wraps the command.
+    let (resolved, path) = crate::localenv::resolved_local(prog).await;
+    let mut child = tokio::process::Command::new(&resolved)
         .args(rest)
+        .env("PATH", &path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -154,8 +174,12 @@ mod tests {
 
     #[tokio::test]
     async fn run_local_reports_missing_program() {
-        // A program that does not exist surfaces as an Err (failed to run), not a panic.
-        let res = run_local(&["definitely-not-a-real-binary-xyz".into()], 5).await;
-        assert!(res.is_err());
+        // A program that does not exist surfaces as a captured exit 127 (so the
+        // frontend classifies "not installed"), not an Err or a panic.
+        let res = run_local(&["definitely-not-a-real-binary-xyz".into()], 5)
+            .await
+            .unwrap();
+        assert_eq!(res.exit_code, 127);
+        assert!(res.stderr.contains("definitely-not-a-real-binary-xyz"));
     }
 }

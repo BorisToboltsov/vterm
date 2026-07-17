@@ -13,6 +13,7 @@
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import Skeleton from "./Skeleton.svelte";
+  import CopyButton from "./CopyButton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import DockerContainers from "./DockerContainers.svelte";
@@ -43,6 +44,7 @@
     parseVolumes,
     parseStats,
     parseAvailability,
+    DOCKER_GROUP_ADD_CMD,
     groupByCompose,
     needsConfirm,
     type DockerAvailability,
@@ -191,6 +193,18 @@
     } catch (e) {
       availability = { ok: false, reason: "unknown", detail: String(e) };
     }
+  }
+
+  /**
+   * Re-probe from the unavailable state (e.g. the user just started the daemon
+   * or joined the docker group) — mirrors the mount effect. Flips back to the
+   * checking placeholder, then re-runs the probe + first load.
+   */
+  async function retry() {
+    availability = null;
+    firstLoadDone = false;
+    await checkAvailability();
+    await refresh();
   }
 
   /** Reload the active sub-tab's data (+ stats for containers, + live modal). */
@@ -347,7 +361,24 @@
   {:else if availability === null}
     <EmptyState icon="container" title={t("docker.checking")} />
   {:else if !availability.ok}
-    <EmptyState icon="container" title={t("docker.unavailableTitle")} hint={unavailableHint} />
+    <EmptyState icon="container" title={t("docker.unavailableTitle")} hint={unavailableHint}>
+      {#if availability.reason === "denied"}
+        <div class="flex flex-col items-center gap-1.5">
+          <div class="flex items-center gap-1.5 rounded border border-edge bg-panel-alt px-2 py-1">
+            <code class="select-text font-mono text-[11px] text-text">{DOCKER_GROUP_ADD_CMD}</code>
+            <CopyButton text={DOCKER_GROUP_ADD_CMD} testid="docker-denied-copy" />
+          </div>
+          <p class="max-w-xs text-[11px] leading-relaxed text-muted">{t("docker.deniedRelogin")}</p>
+        </div>
+      {/if}
+      <button
+        class="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        data-testid="docker-retry"
+        onclick={() => retry()}
+      >
+        {t("docker.retry")}
+      </button>
+    </EmptyState>
   {:else}
     <!-- Toolbar -->
     <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">

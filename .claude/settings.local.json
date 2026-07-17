@@ -405,7 +405,9 @@
       "Bash(break)",
       "Bash(python3 -c \"import json,sys; d=json.load\\(open\\('src-tauri/tauri.conf.json'\\)\\); print\\(json.dumps\\(d.get\\('app',{}\\).get\\('security',{}\\), indent=2, ensure_ascii=False\\)\\)\")",
       "Bash(open \"src-tauri/target/release/bundle/macos/vterm.app\")",
-      "Bash(grep -n 'CSP в `tauri.conf.json`\\\\|CSP держи строгим\\\\|Безопасность\\\\.\\\\*\\\\*' docs/INVARIANTS.md)"
+      "Bash(grep -n 'CSP в `tauri.conf.json`\\\\|CSP держи строгим\\\\|Безопасность\\\\.\\\\*\\\\*' docs/INVARIANTS.md)",
+      "Bash(PATH=/usr/bin:/bin:/usr/sbin:/sbin /opt/homebrew/bin/docker version --format 'Client {{.Client.Version}} / Server {{.Server.Version}}')",
+      "Bash(echo \"exit=$?\")"
     ]
   }
 }

@@ -402,6 +402,14 @@ export function parseAvailability(stdout: string, stderr: string, exitCode: numb
   return { ok: false, reason: "unknown", detail: stderr.trim() || stdout.trim() };
 }
 
+/**
+ * Remediation command shown in the `denied` availability state (user not in the
+ * `docker` group). A one-time privileged host change the user runs themselves —
+ * we never execute it silently (needs sudo/TTY + a re-login to take effect). Not
+ * translated: it's a shell command (domain term), like the rest of docker argv.
+ */
+export const DOCKER_GROUP_ADD_CMD = "sudo usermod -aG docker $USER";
+
 // ── Destructive-op classifier (prod confirmation) ────────────────────────────
 
 /**

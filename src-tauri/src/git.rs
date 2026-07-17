@@ -58,12 +58,18 @@ pub fn ssh_command(cwd: &str, args: &[String]) -> String {
 /// Run `git -C <cwd> <args…>` locally, bounded by `timeout_secs`. No shell is
 /// involved — args are passed to `git` verbatim, so no quoting is needed.
 pub async fn run_local(cwd: &str, args: &[String], timeout_secs: u64) -> AppResult<GitOutput> {
-    let mut command = tokio::process::Command::new("git");
+    // Reconstruct the user's PATH so a Homebrew-only `git` is found in a packaged
+    // macOS `.app` (which inherits only a minimal PATH). System `git` in /usr/bin
+    // already worked; this is parity with the Docker panel (see `localenv`). Still
+    // spawned without a shell — args verbatim.
+    let (resolved, path) = crate::localenv::resolved_local("git").await;
+    let mut command = tokio::process::Command::new(&resolved);
     command
         .arg("-C")
         .arg(cwd)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("PATH", &path)
         .stdin(std::process::Stdio::null())
         // Terminate the child if we abandon it on timeout, so a stuck `git`
         // (e.g. a working-tree filter / LFS smudge waiting on the network) can't

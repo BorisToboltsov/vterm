@@ -2034,6 +2034,62 @@ keygen (Фаза 32) переехал сюда из настроек.
 
 ---
 
+## ✅ Фаза 36.5 — Мини-правки Docker: retry + ремедиация «нет прав» (v0.36.5)
+
+- [x] **Панель залипала на «Docker недоступен».** `checkAvailability()` вызывалась только в
+  `$effect` по `sessionId`/`sessionReady` ([DockerPanel.svelte](../src/lib/DockerPanel.svelte)):
+  как только проба возвращала `!ok`, повторной проверки не было, а тулбар с refresh рисуется
+  лишь в ветке `availability.ok` — поэтому запуск демона **после** открытия панели ничего не
+  менял до переоткрытия вкладки. Добавлена кнопка **«Повторить»** (`docker.retry`) в
+  `EmptyState` недоступности (слот `children`): `retry()` сбрасывает состояние в «проверка» и
+  гоняет `checkAvailability().then(refresh)` — зеркало mount-эффекта.
+- [x] **Ремедиация «нет прав» (пользователь не в группе docker).** В состоянии `denied` под
+  подсказкой показывается команда `sudo usermod -aG docker $USER` с кнопкой копирования
+  (`CopyButton`) и заметкой про перелогин (`docker.deniedRelogin`). **Ничего не исполняем
+  молча**: привилегированное изменение хоста (sudo/TTY + перелогин) пользователь запускает
+  сам — граница фронт/бэк и безопасность целы. Команда — экспортируемая константа
+  `DOCKER_GROUP_ADD_CMD` в [docker.ts](../src/lib/docker.ts) (единый источник; не переводится —
+  доменный шелл-терм). Sudo-на-каждую-команду и авто-`usermod` отвергнуты (`exec_captured`
+  без TTY → повиснет на пароле; беспарольный sudo закладывать нельзя).
+- [x] **Тесты/доки**: логика классификации `denied`/`daemon`/… уже покрыта
+  `parseAvailability` ([docker.test.ts](../src/lib/docker.test.ts)); новый код — UI поверх неё
+  в excluded-`DockerPanel.svelte`. GUIDE обновлён (retry + ремедиация). Версия 0.36.5 в трёх
+  манифестах.
+
+---
+
+## ✅ Фаза 36.6 — Фикс: Docker-панель «unavailable» только в `tauri build` — минимальный PATH GUI-приложения (v0.36.6)
+
+- [x] **Симптом только в упакованной сборке.** В `pnpm tauri dev` docker-панель на локальной
+  вкладке работала; после `pnpm tauri build` и запуска `.app` из Finder — «Docker unavailable»,
+  и **Retry не помогал**. Как и CSP-nonce (36.4), баг «только в build» — но корень другой.
+- [x] **Корень — PATH.** Локальный `container_run` спавнит `Command::new("docker")` без шелла,
+  а поиск бинаря идёт по `PATH` **процесса**. `tauri dev` наследует `PATH` оболочки (там
+  `/usr/local/bin`, `/opt/homebrew/bin`, `~/.docker/bin`, куда Docker Desktop/Homebrew кладут
+  CLI). `.app` из Finder стартует через **launchd** с **минимальным** `PATH`
+  (`/usr/bin:/bin:/usr/sbin:/sbin`) — `docker` там нет → ENOENT → `run_local` возвращал `Err` →
+  фронт показывал «check failed». Retry бессилен: `PATH` фиксирован на весь процесс.
+  **SSH-вкладки** (удалённый login-шелл), **локальный терминал** (`portable-pty` сорсит профиль)
+  и **локальный `git`** (`/usr/bin/git` — в минимальном PATH) не задеты.
+- [x] **Фикс — реконструкция PATH для локальных спавнов** ([localenv.rs](../src-tauri/src/localenv.rs)):
+  берём `PATH` из **login-шелла** (`$SHELL -ilc 'echo <marker>$PATH'`, запрос один раз и
+  кэш в `OnceCell`, таймаут 5 с — профиль не подвесит) **плюс** известные каталоги как
+  страховка (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.docker/bin`, …), дедуп с сохранением
+  порядка. Программа резолвится в **абсолютный путь**, и тот же `PATH` ставится на потомка
+  (`.env("PATH", …)`). **Шелл команду не оборачивает** — аргументы по-прежнему verbatim, новой
+  инъекции нет; на non-unix — no-op. Применено к обоим локальным спавнам: docker
+  ([container.rs](../src-tauri/src/container.rs)) и git ([git.rs](../src-tauri/src/git.rs), паритет).
+- [x] **Честное сообщение при отсутствии docker.** Локальный спавн-фейл (ENOENT) теперь
+  возвращается как `ContainerOutput{exit 127, stderr}` (а не `Err`), чтобы `parseAvailability`
+  показал **«Docker не установлен»**, а не «check failed».
+- [x] **Тесты/доки**: чистая логика покрыта в `localenv` (`combine_paths` дедуп/порядок,
+  `resolve_program` поиск/passthrough/miss, `parse_marker_line`); `container::run_local`
+  на несуществующий бинарь теперь ожидает `exit 127`. INVARIANTS/TESTS обновлены. Версия
+  0.36.6 в трёх манифестах. **Требует проверки в реальной `tauri build`-сборке** (запуск
+  `.app` из Finder на macOS с запущенным Docker Desktop).
+
+---
+
 ## ⬜ Фаза 37 — Панель Kubernetes (k8s) (v0.37.0)
 
 Просмотр и управление ресурсами кластера, доступного с хоста активной сессии — **5-я
