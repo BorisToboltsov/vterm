@@ -25,18 +25,37 @@ const TEXT_INPUT_TYPES = new Set([
   "",
 ]);
 
-/** Is the event target a writable text input/textarea we should handle? */
-export function isEditable(target: EventTarget | null): target is Editable {
+/** A text field (textarea or text-type input), even when read-only or disabled —
+ *  those still support Cmd/Ctrl+C on their own selection. Excludes xterm's helper
+ *  textarea, which owns its clipboard. Returns null for anything else. */
+function textField(target: EventTarget | null): Editable | null {
   // Leave xterm.js's internal helper textarea alone — the terminal handles its
   // own clipboard shortcuts (and pasting into it would break that).
-  if ((target as Element | null)?.closest?.(".xterm")) return false;
-  if (target instanceof HTMLTextAreaElement) {
-    return !target.readOnly && !target.disabled;
-  }
-  if (target instanceof HTMLInputElement) {
-    return !target.readOnly && !target.disabled && TEXT_INPUT_TYPES.has(target.type);
-  }
-  return false;
+  if ((target as Element | null)?.closest?.(".xterm")) return null;
+  if (target instanceof HTMLTextAreaElement) return target;
+  if (target instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(target.type)) return target;
+  return null;
+}
+
+/** Is the event target a writable text input/textarea we should handle? */
+export function isEditable(target: EventTarget | null): target is Editable {
+  const field = textField(target);
+  return !!field && !field.readOnly && !field.disabled;
+}
+
+/**
+ * Copy the current selection of a read-only text field (its selection lives in
+ * `selectionStart/End`, invisible to `window.getSelection()`), so Cmd/Ctrl+C
+ * works on read-only outputs like the codec/keygen/password results. Returns
+ * true when it handled the copy.
+ */
+export function copyFieldSelection(target: EventTarget | null): boolean {
+  const field = textField(target);
+  if (!field) return false;
+  const sel = selectedText(field);
+  if (!sel) return false;
+  void writeClipboard(sel);
+  return true;
 }
 
 /** Current [start, end] selection, or null when the field doesn't expose one
@@ -114,7 +133,11 @@ export async function handleClipboardShortcut(ev: KeyboardEvent): Promise<void> 
   if (!(ev.metaKey || ev.ctrlKey) || ev.altKey || ev.shiftKey) return;
   const node = ev.target;
   if (!isEditable(node)) {
-    if (ev.key.toLowerCase() === "c" && copyDocumentSelection()) ev.preventDefault();
+    // Cmd/Ctrl+C over a read-only text field (codec output, etc.) or a plain
+    // page-text selection — WKWebView gives neither a Copy accelerator.
+    if (ev.key.toLowerCase() === "c" && (copyFieldSelection(node) || copyDocumentSelection())) {
+      ev.preventDefault();
+    }
     return;
   }
   switch (ev.key.toLowerCase()) {

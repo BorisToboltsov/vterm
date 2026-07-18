@@ -292,7 +292,6 @@ pub async fn write_text(
     expected_sha256: Option<&str>,
 ) -> AppResult<WriteResult> {
     let existing = tokio::fs::metadata(path).await.ok();
-    let mode = existing.as_ref().and_then(file_mode);
     if let Some(expected) = expected_sha256 {
         if existing.is_some() {
             let current = tokio::fs::read(path)
@@ -310,8 +309,11 @@ pub async fn write_text(
     tokio::fs::write(&tmp, bytes)
         .await
         .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    // Permission bits are a unix-only concept: on Windows `file_mode` is always
+    // `None`, so the lookup lives inside the cfg block — a `let` above it would be
+    // an unused binding there (`unused_variables` warning in the Windows build).
     #[cfg(unix)]
-    if let Some(m) = mode {
+    if let Some(m) = existing.as_ref().and_then(file_mode) {
         use std::os::unix::fs::PermissionsExt;
         let _ = tokio::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(m)).await;
     }

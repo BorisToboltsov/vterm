@@ -415,7 +415,12 @@
       "Bash(awk '/async fn sftp_/{f=1} f{print NR\": \"$0} /^}/{if\\(f\\)f=0}' src-tauri/src/lib.rs)",
       "Bash(awk '/async fn get_sftp/,/^}/' src-tauri/src/lib.rs)",
       "Bash(awk '/^## .*Фаза 37/{f=1} f&&/^## /&&!/Фаза 37/&&NR>2100{exit} f&&/\\\\[ \\\\]/{print NR\": \"$0}' docs/ROADMAP.md)",
-      "Bash(sed -n '/## Фаза 37 —/,/## Заметки по архитектурным/p' docs/ROADMAP.md)"
+      "Bash(sed -n '/## Фаза 37 —/,/## Заметки по архитектурным/p' docs/ROADMAP.md)",
+      "Bash(sed -i '' 's/\"version\": \"0.38.0\"/\"version\": \"0.38.1\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '0,/^version = \"0.38.0\"/s//version = \"0.38.1\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.38.1\"/\"version\": \"0.38.2\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '3s/^version = \"0.38.1\"/version = \"0.38.2\"/' src-tauri/Cargo.toml)",
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('.gitlab-ci.yml'\\)\\); print\\('YAML OK'\\); print\\('jobs:', [k for k in d if not k.startswith\\('.'\\) and k not in \\('stages','variables','default'\\)]\\)\")"
     ]
   }
 }

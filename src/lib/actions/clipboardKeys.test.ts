@@ -11,6 +11,7 @@ vi.mock("../clipboard", () => ({
 
 import {
   copyDocumentSelection,
+  copyFieldSelection,
   handleClipboardShortcut,
   isEditable,
   replaceSelection,
@@ -133,7 +134,41 @@ describe("copyDocumentSelection", () => {
   });
 });
 
+describe("copyFieldSelection", () => {
+  it("copies the selection of a read-only textarea (codec output)", () => {
+    const ta = document.createElement("textarea");
+    ta.readOnly = true;
+    ta.value = "SGVsbG8=";
+    document.body.appendChild(ta);
+    ta.setSelectionRange(0, ta.value.length);
+    expect(copyFieldSelection(ta)).toBe(true);
+    expect(writeClipboard).toHaveBeenCalledWith("SGVsbG8=");
+  });
+
+  it("returns false with nothing selected or a non-field target", () => {
+    const ta = document.createElement("textarea");
+    ta.readOnly = true;
+    ta.value = "x";
+    ta.setSelectionRange(0, 0);
+    expect(copyFieldSelection(ta)).toBe(false);
+    expect(copyFieldSelection(document.createElement("div"))).toBe(false);
+    expect(writeClipboard).not.toHaveBeenCalled();
+  });
+});
+
 describe("handleClipboardShortcut", () => {
+  it("copies a read-only textarea selection on Cmd+C and preventDefaults", async () => {
+    const ta = document.createElement("textarea");
+    ta.readOnly = true;
+    ta.value = "output text";
+    document.body.appendChild(ta);
+    ta.setSelectionRange(0, ta.value.length);
+    const ev = keyEvent(ta, "c", { metaKey: true });
+    await handleClipboardShortcut(ev);
+    expect(writeClipboard).toHaveBeenCalledWith("output text");
+    expect(ev.defaultPrevented).toBe(true);
+  });
+
   it("copies a plain-text page selection on Cmd+C and preventDefaults", async () => {
     const div = document.createElement("div");
     div.textContent = "copy me";

@@ -50,6 +50,32 @@ lint:
     - cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
     - pnpm check
 
+# ── Windows-only clippy (cfg-зависимый код) ───────────────────────────────────
+# Джоба lint выше идёт на Linux, то есть под cfg(unix): код внутри #[cfg(windows)]
+# и мёртвые под Windows привязки (v0.38.2) она структурно не видит. Кросс-проверка
+# с Linux (`--target x86_64-pc-windows-msvc`) НЕ работает: aws-lc-sys (через rustls)
+# компилирует C и требует windows.h из Windows SDK — падает на этапе сборки
+# зависимостей, до клиппи. Поэтому проверка идёт нативно на windows-раннере.
+# Пока раннера с тегом windows нет — джоба ручная и не роняет пайплайн (как
+# build:windows). Локально на Windows-машине: та же команда в PowerShell.
+lint:windows:
+  stage: lint
+  tags: [windows]                   # ← замените на тег вашего Windows-раннера
+  rules:
+    - when: manual
+  allow_failure: true
+  cache:
+    key: cargo-windows-lint          # свой ключ: build:windows кэширует release+pnpm-store
+    paths:
+      - src-tauri/target/
+  before_script:
+    - if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { choco install rustup.install -y --no-progress }
+    - $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+    - rustup default stable
+    - rustup component add clippy
+  script:
+    - cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
 # ════════════════════════════════════════════════════════════════════════════
 #  Phase 6.1 — security gates (SAST / supply-chain). Accepted advisories and
 #  rationale live in src-tauri/deny.toml + .cargo/audit.toml; see SECURITY.md.
