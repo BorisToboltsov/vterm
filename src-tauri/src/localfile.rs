@@ -6,8 +6,9 @@
 
 use crate::error::{AppError, AppResult};
 use crate::sftp::{
-    apply_eol, detect_eol, is_read_only, looks_binary, sha256_hex, FileEntry, TextFile, WriteResult,
+    apply_eol, detect_eol, is_read_only, sha256_hex, FileEntry, TextFile, WriteResult,
 };
+use crate::textenc;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -18,9 +19,22 @@ pub fn home() -> AppResult<String> {
         .ok_or_else(|| AppError::Message("no home directory".into()))
 }
 
+/// The synthetic "list every drive" level above a Windows drive root (Explorer's
+/// "This PC"). Mirrors `DRIVES_ROOT` in `src/lib/fspath.ts`; `:` cannot appear in
+/// a real path except as the drive separator, so this can never collide with one.
+pub const DRIVES_ROOT: &str = "::drives";
+
 /// List a local directory (dirs first, then case-insensitive by name) — the local
 /// counterpart of `sftp::list`, same `FileEntry` shape.
+///
+/// The `DRIVES_ROOT` sentinel is answered with the drive list instead of a
+/// directory read (Phase 39.1), so the panel's normal navigation — click a row,
+/// `load(entry.path)` — carries the user from "This PC" into `D:\` with no special
+/// case anywhere above this function.
 pub async fn list(path: &str) -> AppResult<Vec<FileEntry>> {
+    if path == DRIVES_ROOT {
+        return Ok(crate::drives::list());
+    }
     let mut rd = tokio::fs::read_dir(path)
         .await
         .map_err(|e| format!("read_dir {path}: {e}"))?;
@@ -52,10 +66,12 @@ pub async fn list(path: &str) -> AppResult<Vec<FileEntry>> {
             size: meta.as_ref().map(|m| m.len()).unwrap_or(0),
             modified: meta.as_ref().and_then(mtime_secs),
             mode: meta.as_ref().and_then(file_mode),
+            attrs: meta.as_ref().and_then(file_attrs),
             uid,
             gid,
             user: None,
             group: None,
+            drive: None,
             name,
         });
     }
@@ -190,6 +206,74 @@ fn file_mode(meta: &std::fs::Metadata) -> Option<u32> {
     }
 }
 
+// ── Windows DOS attributes (Phase 39) ────────────────────────────────────────
+// Windows has no unix mode bits, so the file panel used to render every local
+// entry as `-?????????`. It does have DOS attributes, which is what `attrib` and
+// `dir` show, so we surface those instead and let the front end pick the right
+// notation. Pure bit-formatting lives here (testable on every platform); the
+// per-file lookup below is the only Windows-gated part.
+
+// Only `file_attrs` (Windows-gated) reads these outside the unit tests, so on a
+// unix build they are dead code — but the formatting stays compiled and tested
+// on every platform, which is the point of keeping it separate from the lookup.
+#[cfg_attr(not(windows), allow(dead_code))]
+const FILE_ATTRIBUTE_READONLY: u32 = 0x0000_0001;
+#[cfg_attr(not(windows), allow(dead_code))]
+const FILE_ATTRIBUTE_HIDDEN: u32 = 0x0000_0002;
+#[cfg_attr(not(windows), allow(dead_code))]
+const FILE_ATTRIBUTE_SYSTEM: u32 = 0x0000_0004;
+#[cfg_attr(not(windows), allow(dead_code))]
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
+#[cfg_attr(not(windows), allow(dead_code))]
+const FILE_ATTRIBUTE_ARCHIVE: u32 = 0x0000_0020;
+
+/// Format Windows file attributes as a fixed-width `attrib`-style flag string:
+/// five slots in the order directory / archive / read-only / hidden / system,
+/// each holding its letter or `-` (e.g. `d----`, `-a---`, `-ar-h`). Fixed width
+/// so the column stays aligned, same as the `ls -l` string it replaces.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn dos_attr_string(attrs: u32) -> String {
+    let slot = |bit: u32, ch: char| if attrs & bit != 0 { ch } else { '-' };
+    [
+        slot(FILE_ATTRIBUTE_DIRECTORY, 'd'),
+        slot(FILE_ATTRIBUTE_ARCHIVE, 'a'),
+        slot(FILE_ATTRIBUTE_READONLY, 'r'),
+        slot(FILE_ATTRIBUTE_HIDDEN, 'h'),
+        slot(FILE_ATTRIBUTE_SYSTEM, 's'),
+    ]
+    .iter()
+    .collect()
+}
+
+/// DOS attribute string for a file (None on non-Windows, where mode bits apply).
+fn file_attrs(meta: &std::fs::Metadata) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        Some(dos_attr_string(meta.file_attributes()))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = meta;
+        None
+    }
+}
+
+/// Whether a local file is read-only. On unix this is the mode bits; on Windows
+/// it is the READONLY attribute, which `file_mode` cannot see — so the shared
+/// `is_read_only(mode)` helper answered `false` for every Windows file and the
+/// editor happily opened read-only files as writable.
+fn local_read_only(meta: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        meta.permissions().readonly()
+    }
+    #[cfg(not(windows))]
+    {
+        is_read_only(file_mode(meta))
+    }
+}
+
 /// Unix owner uid/gid of a file (None on non-unix).
 fn file_owner(meta: &std::fs::Metadata) -> (Option<u32>, Option<u32>) {
     #[cfg(unix)]
@@ -231,7 +315,10 @@ fn local_temp(path: &str) -> PathBuf {
     }
 }
 
-/// Read a local file as UTF-8 text for the editor (same guards as SFTP).
+/// Read a local file as text for the editor (same guards as SFTP). The encoding
+/// is detected rather than assumed — on Windows, `.ini` and friends are commonly
+/// UTF-16 or a legacy codepage (textenc.rs) — and reported so a save re-encodes
+/// in the same one.
 pub async fn read_text(path: &str, max_bytes: u64) -> AppResult<TextFile> {
     let meta = tokio::fs::metadata(path)
         .await
@@ -248,19 +335,20 @@ pub async fn read_text(path: &str, max_bytes: u64) -> AppResult<TextFile> {
     let bytes = tokio::fs::read(path)
         .await
         .map_err(|e| format!("read {path}: {e}"))?;
-    if looks_binary(&bytes) {
-        return Err(AppError::Message("file appears to be binary".into()));
-    }
-    let content = String::from_utf8(bytes)
-        .map_err(|_| AppError::Message("file is not valid UTF-8 text".into()))?;
+    let decoded = textenc::decode(&bytes)
+        .ok_or_else(|| AppError::Message("file appears to be binary".into()))?;
+    let content = decoded.text;
     let mode = file_mode(&meta);
     Ok(TextFile {
         eol: detect_eol(&content),
         size: meta.len(),
         mode,
         mtime: mtime_secs(&meta),
-        read_only: is_read_only(mode),
-        sha256: sha256_hex(content.as_bytes()),
+        read_only: local_read_only(&meta),
+        encoding: decoded.encoding,
+        // Hash the raw on-disk bytes; `write_text` compares against what it reads
+        // back, and for a non-UTF-8 file the decoded text hashes differently.
+        sha256: sha256_hex(&bytes),
         content: content.replace("\r\n", "\n"),
     })
 }
@@ -289,6 +377,7 @@ pub async fn write_text(
     path: &str,
     content: &str,
     eol: &str,
+    encoding: &str,
     expected_sha256: Option<&str>,
 ) -> AppResult<WriteResult> {
     let existing = tokio::fs::metadata(path).await.ok();
@@ -303,8 +392,11 @@ pub async fn write_text(
         }
     }
 
+    // Re-impose the file's original line endings, then its original encoding —
+    // a UTF-16 .ini must not come back as UTF-8 (textenc.rs).
     let out = apply_eol(content, eol);
-    let bytes = out.as_bytes();
+    let encoded = textenc::encode(&out, encoding);
+    let bytes = &encoded[..];
     let tmp = local_temp(path);
     tokio::fs::write(&tmp, bytes)
         .await
@@ -335,6 +427,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dos_attrs_format_as_fixed_width_flags() {
+        // Plain file with the archive bit — what most Windows files look like.
+        assert_eq!(dos_attr_string(FILE_ATTRIBUTE_ARCHIVE), "-a---");
+        // Plain directory.
+        assert_eq!(dos_attr_string(FILE_ATTRIBUTE_DIRECTORY), "d----");
+        // Read-only + hidden file, still archived.
+        assert_eq!(
+            dos_attr_string(
+                FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN
+            ),
+            "-arh-"
+        );
+        // A hidden system directory (e.g. "System Volume Information").
+        assert_eq!(
+            dos_attr_string(
+                FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM
+            ),
+            "d--hs"
+        );
+        // No attributes set at all → every slot empty, width preserved.
+        assert_eq!(dos_attr_string(0), "-----");
+        // Unknown/extra bits (COMPRESSED, ENCRYPTED…) don't disturb the slots.
+        assert_eq!(
+            dos_attr_string(0x0000_4000 | FILE_ATTRIBUTE_ARCHIVE),
+            "-a---"
+        );
+    }
+
+    #[test]
     fn local_temp_is_hidden_sibling() {
         let t = local_temp("/etc/nginx/nginx.conf");
         assert_eq!(t.parent().unwrap().to_str().unwrap(), "/etc/nginx");
@@ -361,14 +482,14 @@ mod tests {
         assert_eq!(tf.eol, "lf");
 
         // Correct expected sha → writes; stale sha → FileChangedOnServer.
-        let res = write_text(p, "a: 1\nb: 9\n", "lf", Some(&tf.sha256))
+        let res = write_text(p, "a: 1\nb: 9\n", "lf", &tf.encoding, Some(&tf.sha256))
             .await
             .unwrap();
         assert_eq!(
             tokio::fs::read_to_string(&path).await.unwrap(),
             "a: 1\nb: 9\n"
         );
-        let err = write_text(p, "x", "lf", Some(&tf.sha256))
+        let err = write_text(p, "x", "lf", &tf.encoding, Some(&tf.sha256))
             .await
             .unwrap_err();
         assert!(err.to_string().contains("file-changed"));

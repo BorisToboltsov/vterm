@@ -43,6 +43,7 @@
     tempHealth,
     worstLevel,
   } from "./monhealth";
+  import { supportsLoadAverage, supportsSensorsInstall, supportsTemperature } from "./hostcaps";
   import { isHidden } from "./util";
   import Modal from "./Modal.svelte";
   import Icon from "./Icon.svelte";
@@ -203,6 +204,13 @@
   const tempLvl = $derived(tempHealth(detail, metrics, th));
   const extrasLvl = $derived(extrasHealth(extras));
   const tempShown = $derived(hasTempData(detail, metrics));
+  // What this host can report at all (hostcaps.ts), keyed off the OS it reported
+  // itself. Windows has no load-average concept and no unprivileged temperature
+  // source, so those blocks must say "not supported here" rather than render a
+  // row of dashes or offer to apt-install a Linux package. See hostcaps.ts.
+  const loadShown = $derived(supportsLoadAverage(metrics?.os));
+  const tempSupported = $derived(supportsTemperature(metrics?.os));
+  const sensorsInstallable = $derived(supportsSensorsInstall(metrics?.os));
   // Static hardware spec (Фаза 20.16), part of the once-on-open extras probe.
   const hw = $derived(extras?.hardware ?? null);
   const hasHw = $derived(
@@ -255,7 +263,7 @@
       { id: "mon-cpu", label: t("mon.cpu"), level: cpuLvl, show: true },
       { id: "mon-memory", label: t("mon.memory"), level: memLvl, show: true },
       { id: "mon-fs", label: t("mon.filesystems"), level: fsLvl, show: true },
-      { id: "mon-load", label: t("mon.loadHistory"), level: loadLvl, show: true },
+      { id: "mon-load", label: t("mon.loadHistory"), level: loadLvl, show: loadShown },
       { id: "mon-network", label: t("mon.network"), level: netLvl, show: true },
       { id: "mon-temp", label: t("mon.temperature"), level: tempLvl, show: tempShown },
       { id: "mon-extras", label: t("mon.extras"), level: extrasLvl, show: extrasShown },
@@ -719,7 +727,8 @@
           {/if}
         </section>
 
-        <!-- ── Load average ── -->
+        <!-- ── Load average (hidden on hosts with no such concept, e.g. Windows) ── -->
+        {#if loadShown}
         <section id="mon-load" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
           <h3 class="mb-2 flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
             <Icon name="gauge" size={14} /> {t("mon.loadHistory")}
@@ -759,6 +768,7 @@
           </dl>
           <p class="mt-1 text-[11px] text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
         </section>
+        {/if}
 
         <!-- ── Network ── -->
         <section id="mon-network" class="scroll-mt-2 rounded border border-edge bg-panel p-3">
@@ -912,8 +922,19 @@
                 {/each}
               </tbody>
             </table>
-          {:else if detail?.sensorsInstalled}
-            <!-- Installed but no readable chips (VMs/containers): inform, don't offer install. -->
+          {:else if !tempSupported}
+            <!-- Windows: no unprivileged, offline temperature source exists. Say so
+                 plainly instead of offering a Linux package (Phase 39). -->
+            <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-unsupported">
+              <Icon name="info" size={15} class="mt-0.5 shrink-0 text-muted" />
+              <div class="min-w-0 flex-1">
+                <p class="text-xs text-text">{t("mon.sensorsUnsupported")}</p>
+                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsUnsupportedHint")}</p>
+              </div>
+            </div>
+          {:else if detail?.sensorsInstalled || !sensorsInstallable}
+            <!-- Installed but no readable chips (VMs/containers), or a host where
+                 lm-sensors isn't the right package: inform, don't offer install. -->
             <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-none">
               <Icon name="info" size={15} class="mt-0.5 shrink-0 text-muted" />
               <div class="min-w-0 flex-1">

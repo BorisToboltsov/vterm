@@ -166,6 +166,7 @@
               {followTerminal}
               {onToggleFollowTerminal}
               onOpenFile={onOpenLocalFile}
+              onUserNavigate={onSftpNavigate}
             />
           {/if}
         {:else if activeTab === "git"}

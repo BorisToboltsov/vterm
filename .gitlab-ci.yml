@@ -264,11 +264,23 @@ build:windows:
   script:
     - pnpm install --frozen-lockfile
     - pnpm tauri build
+    # Portable-вариант (Фаза 39). Tauri не умеет таргет "portable", но сам
+    # `vterm.exe` из target/release уже самодостаточен: фронтенд вшит в бинарь,
+    # .msi/.exe — только установочные обёртки вокруг него. Поэтому просто кладём
+    # его рядом с инсталляторами под говорящим именем.
+    #   • Требуется системный WebView2 Runtime (есть по умолчанию в Win11 и
+    #     Win10 21H2+); на более старых системах нужен инсталлятор.
+    #   • «Portable» здесь про один файл, а не про переносимое состояние:
+    #     профили/настройки по-прежнему живут в %APPDATA%\vterm.
+    - $v = (Get-Content src-tauri/tauri.conf.json | ConvertFrom-Json).version
+    - New-Item -ItemType Directory -Force -Path artifacts/portable | Out-Null
+    - Copy-Item src-tauri/target/release/vterm.exe "artifacts/portable/vterm-portable-$v-x86_64.exe"
   artifacts:
     name: vterm-windows
     paths:
       - src-tauri/target/release/bundle/msi/*.msi
       - src-tauri/target/release/bundle/nsis/*.exe
+      - artifacts/portable/*.exe
     expire_in: 2 weeks
 
 # ── Linux: .deb + .rpm + AppImage (x86_64) ─────────────────────────────────────

@@ -16,6 +16,8 @@
   import { writeClipboard } from "./clipboard";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
   import { checkMove, uniqueCopyName } from "./filemove";
+  import { DRIVES_ROOT, joinPath, navParent, normalizeInputPath } from "./fspath";
+  import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
   import { clickSelect, emptySelection, type SelectionState } from "./multiselect";
   import { nextCursor, scrollForCursor } from "./filekeys";
   import type { FileEntry } from "./types";
@@ -41,6 +43,7 @@
     followTerminal = false,
     onToggleFollowTerminal,
     onOpenFile,
+    onUserNavigate,
   }: {
     width?: number;
     collapsed?: boolean;
@@ -53,6 +56,12 @@
     followTerminal?: boolean;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string) => void;
+    /**
+     * Two-way follow (Phase 39.4): a folder change the USER made in the panel,
+     * so the page can `cd` the terminal to match. Never called when the panel is
+     * merely following the terminal, or there would be a feedback loop.
+     */
+    onUserNavigate?: (path: string) => void;
   } = $props();
 
   let cwd = $state("");
@@ -64,7 +73,14 @@
   const ROW_H = 28;
   let listScrollTop = $state(0);
   let listViewportH = $state(600);
-  const hasParent = $derived(!!cwd && cwd !== "/");
+  // ".." leads to the *navigation* parent, which on Windows includes the synthetic
+  // "This PC" level above a drive root — otherwise D: is unreachable, because the
+  // path bar is read-only text (Phase 39.1). Null ⇒ nowhere above, so no ".." row.
+  const navUp = $derived(navParent(cwd));
+  const hasParent = $derived(navUp !== null);
+  // At the drives level the rows are synthetic; nothing there can be created,
+  // renamed, deleted or dropped into ("delete drive D:" is not an offer we make).
+  const atDrives = $derived(cwd === DRIVES_ROOT);
   // Dotfiles are hidden unless the toolbar eye toggle is on. The preference is
   // shared with the SFTP panel (settings.sftp.showHiddenFiles); raw `entries` kept.
   const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
@@ -88,6 +104,34 @@
   let mkdirName = $state("");
   let showMkfile = $state(false);
   let mkfileName = $state("");
+  // Editable path bar (Phase 39.2): click the path to type or paste one. This is
+  // the direct route the panel lacked — before it, a drive or a deep directory was
+  // only reachable by clicking down through the tree.
+  let editingPath = $state(false);
+  let pathDraft = $state("");
+  let pathInputEl = $state<HTMLInputElement | null>(null);
+  /** Home, remembered from the initial load so `~` can be expanded on input. */
+  let homePath = $state("");
+
+  function beginEditPath() {
+    // The drives level is synthetic, so there is no path to pre-fill there.
+    pathDraft = atDrives ? "" : cwd;
+    editingPath = true;
+    tick().then(() => {
+      pathInputEl?.focus();
+      pathInputEl?.select();
+    });
+  }
+
+  function commitPath() {
+    const next = normalizeInputPath(pathDraft, homePath);
+    editingPath = false;
+    // Empty input, or the path we are already in, is a no-op rather than a reload.
+    if (!next || next === cwd) return;
+    load(next);
+    syncTerminalCwd(next);
+  }
+
   let deleteTargets = $state<FileEntry[]>([]);
   let renameTarget = $state<FileEntry | null>(null);
   let renameName = $state("");
@@ -102,30 +146,18 @@
     let start = ".";
     try {
       start = await localHome();
+      homePath = start;
     } catch {
       /* fall back to "." */
     }
     await load(start);
   });
 
-  /** Native path separator for `path` (handles both `/` and `\`). */
-  function sep(path: string): string {
-    return path.includes("\\") && !path.includes("/") ? "\\" : "/";
-  }
-
-  function join(dir: string, name: string): string {
-    const s = sep(dir);
-    return dir.endsWith(s) ? `${dir}${name}` : `${dir}${s}${name}`;
-  }
-
-  /** Parent directory of `path` (stays at the root when already there). */
-  function parentOf(path: string): string {
-    const s = sep(path);
-    const trimmed = path.replace(/[\\/]+$/, "");
-    const i = trimmed.lastIndexOf(s);
-    if (i <= 0) return s; // root
-    // Keep the drive root on Windows (e.g. "C:\").
-    return /^[A-Za-z]:$/.test(trimmed.slice(0, i)) ? trimmed.slice(0, i) + s : trimmed.slice(0, i);
+  /** Mirror a user-initiated folder change into the terminal when following. */
+  function syncTerminalCwd(path: string) {
+    // The drives level is synthetic — there is no directory for a shell to enter.
+    if (!followTerminal || path === DRIVES_ROOT) return;
+    onUserNavigate?.(path);
   }
 
   async function load(path: string) {
@@ -159,13 +191,16 @@
   });
 
   function open(entry: FileEntry) {
-    if (entry.isDir) load(entry.path);
-    else onOpenFile?.(entry.path);
+    if (entry.isDir) {
+      load(entry.path);
+      syncTerminalCwd(entry.path);
+    } else onOpenFile?.(entry.path);
   }
 
   /** Enter a folder from the keyboard, keeping focus on the list for arrow keys. */
   async function enterDir(entry: FileEntry) {
     await load(entry.path);
+    syncTerminalCwd(entry.path);
     await tick();
     cursor = rowCount ? 0 : -1;
     listEl?.focus();
@@ -175,9 +210,13 @@
   /** Go up a level. After navigating, keep focus on the list and put the cursor
    *  on the folder we just came out of (so arrow keys continue from there). */
   async function goUp() {
-    if (!hasParent) return;
+    // Capture the target BEFORE loading: `navUp` derives from `cwd`, so once the
+    // load lands it already points one level higher again.
+    const target = navUp;
+    if (target === null) return;
     const fromPath = cwd;
-    await load(parentOf(cwd));
+    await load(target);
+    syncTerminalCwd(target);
     await tick();
     const idx = shownEntries.findIndex((e) => e.path === fromPath);
     cursor = idx >= 0 ? (hasParent ? idx + 1 : idx) : rowCount ? 0 : -1;
@@ -187,9 +226,9 @@
 
   async function createFolder() {
     const name = mkdirName.trim();
-    if (!name) return;
+    if (!name || atDrives) return;
     try {
-      await localMkdir(join(cwd, name));
+      await localMkdir(joinPath(cwd, name));
       mkdirName = "";
       showMkdir = false;
       await refresh();
@@ -201,9 +240,9 @@
 
   async function createFile() {
     const name = mkfileName.trim();
-    if (!name) return;
+    if (!name || atDrives) return;
     try {
-      await localCreateFile(join(cwd, name));
+      await localCreateFile(joinPath(cwd, name));
       mkfileName = "";
       showMkfile = false;
       await refresh();
@@ -233,11 +272,10 @@
 
   // ── Drag-to-move within the panel ──────────────────────────────────────────
   // Pointer-drag a row onto a folder row or ".." to move it there (native DnD is
-  // unreliable in WKWebView). Validation reuses filemove.ts; paths are normalized
-  // to POSIX for the check only, while the destination is built with the native
-  // separator so Windows '\' paths keep working. Always confirmed; the backend
-  // refuses to clobber an existing name.
-  const toPosix = (p: string) => p.replace(/\\/g, "/");
+  // unreliable in WKWebView). Validation reuses filemove.ts, which is separator-
+  // aware (fspath.ts) and so takes native Windows paths directly — the old POSIX
+  // normalization here made the "into your own subtree" check silently pass on
+  // Windows. Always confirmed; the backend refuses to clobber an existing name.
 
   // OS-style multi-select: plain click = one, Ctrl/Cmd = toggle, Shift = range.
   // Dragging any selected row moves the whole selection (multiselect.ts). Cleared
@@ -397,6 +435,14 @@
         label: t("ctx.open"),
         onSelect: () => (entry.isDir ? enterDir(entry) : open(entry)),
       });
+      // "cd here" — same affordance the SFTP panel has had since Phase 29.
+      if (entry.isDir && onUserNavigate) {
+        items.push({
+          icon: "terminal",
+          label: t("ctx.cdHere"),
+          onSelect: () => onUserNavigate?.(entry.path),
+        });
+      }
       items.push({ kind: "separator" });
       items.push({ icon: "pencil", label: t("ctx.rename"), onSelect: () => startRename(entry) });
     }
@@ -426,35 +472,40 @@
   function openBackgroundMenu(e: MouseEvent) {
     if ((e.target as HTMLElement).closest('[role="treeitem"]')) return;
     e.preventDefault();
-    const items: MenuItem[] = [
-      {
-        icon: "folderPlus",
-        label: t("ctx.newFolder"),
-        onSelect: () => {
-          mkdirName = "";
-          showMkdir = true;
-        },
-      },
-      {
-        icon: "filePlus",
-        label: t("ctx.newFile"),
-        onSelect: () => {
-          mkfileName = "";
-          showMkfile = true;
-        },
-      },
-    ];
-    if (clipboard) {
+    // The drives level holds synthetic rows, not a directory: nothing can be
+    // created there and there is nowhere to paste into (Phase 39.1).
+    const items: MenuItem[] = atDrives
+      ? []
+      : [
+          {
+            icon: "folderPlus",
+            label: t("ctx.newFolder"),
+            onSelect: () => {
+              mkdirName = "";
+              showMkdir = true;
+            },
+          },
+          {
+            icon: "filePlus",
+            label: t("ctx.newFile"),
+            onSelect: () => {
+              mkfileName = "";
+              showMkfile = true;
+            },
+          },
+        ];
+    if (clipboard && !atDrives) {
       items.push({ icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() });
     }
-    items.push({ kind: "separator" });
+    if (items.length) items.push({ kind: "separator" });
     items.push({ icon: "refresh", label: t("ctx.refresh"), onSelect: () => refresh() });
     ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
   async function paste() {
     const cb = clipboard;
-    if (!cb) return;
+    // No filesystem at the drives level, so there is nothing to paste into.
+    if (!cb || atDrives) return;
     // Copying onto an existing name duplicates it as "… copy" (Finder-style)
     // rather than skipping; moving still refuses to clobber.
     const taken = new Set(entries.map((e) => e.name));
@@ -466,7 +517,7 @@
       const name = cb.mode === "copy" && taken.has(item.name)
         ? uniqueCopyName(item.name, taken)
         : item.name;
-      const dest = join(cwd, name);
+      const dest = joinPath(cwd, name);
       try {
         if (cb.mode === "cut") await localRename(item.path, dest);
         else await localCopy(item.path, dest);
@@ -503,7 +554,7 @@
     }
     renameTarget = null;
     try {
-      await localRename(target.path, join(cwd, name));
+      await localRename(target.path, joinPath(cwd, name));
       await refresh();
       notifySuccess(t("sftp.renamed", { name }));
     } catch (e) {
@@ -523,7 +574,10 @@
   let dragY = $state(0);
   let dropDir = $state<string | null>(null);
   let moveTarget = $state<{ items: FileEntry[]; destDir: string } | null>(null);
-  const parentPath = $derived(hasParent ? parentOf(cwd) : null);
+  const parentPath = $derived(navUp);
+  // ".." is a drop target only when it leads to a real directory — never to the
+  // synthetic drives level, which has no filesystem to move anything into.
+  const dropParent = $derived(navUp !== null && navUp !== DRIVES_ROOT ? navUp : null);
 
   function startMove(e: PointerEvent, entry: FileEntry) {
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
@@ -559,7 +613,7 @@
       }
       if (dir !== null) {
         const items = entries.filter(
-          (x) => selection.selected.has(x.path) && checkMove(toPosix(x.path), toPosix(dir)).ok,
+          (x) => selection.selected.has(x.path) && checkMove(x.path, dir).ok,
         );
         if (items.length) moveTarget = { items, destDir: dir };
       }
@@ -576,7 +630,7 @@
       dragEntry !== null &&
       dir !== null &&
       dropDir === dir &&
-      checkMove(toPosix(dragEntry.path), toPosix(dir)).ok
+      checkMove(dragEntry.path, dir).ok
     );
   }
 
@@ -589,9 +643,9 @@
     let hardError = "";
     let lastName = "";
     for (const entry of m.items) {
-      if (!checkMove(toPosix(entry.path), toPosix(m.destDir)).ok) continue;
+      if (!checkMove(entry.path, m.destDir).ok) continue;
       try {
-        await localRename(entry.path, join(m.destDir, entry.name));
+        await localRename(entry.path, joinPath(m.destDir, entry.name));
         moved += 1;
         lastName = entry.name;
       } catch (e) {
@@ -699,10 +753,12 @@
         >
           <Icon name="terminal" size={14} />
         </button>
+        <!-- Creating anything is meaningless at the drives level (Phase 39.1). -->
         <button
-          class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+          class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
           use:tooltip={t("sftp.newFolder")}
           aria-label={t("sftp.newFolder")}
+          disabled={atDrives}
           onclick={() => {
             showMkdir = !showMkdir;
             if (showMkdir) showMkfile = false;
@@ -711,9 +767,10 @@
           <Icon name="folderPlus" size={14} />
         </button>
         <button
-          class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+          class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
           use:tooltip={t("sftp.newFile")}
           aria-label={t("sftp.newFile")}
+          disabled={atDrives}
           onclick={() => {
             showMkfile = !showMkfile;
             if (showMkfile) showMkdir = false;
@@ -727,10 +784,43 @@
         {/if}
       </div>
 
-      <!-- Current path -->
-      <div class="truncate border-b border-edge px-2 py-1 text-xs text-muted" title={cwd}>
-        {cwd || "/"}
-      </div>
+      <!-- Current path, click-to-edit. The drives level is synthetic, so it gets a
+           name rather than its sentinel; an empty cwd (pre-mount) shows nothing at
+           all — it used to print "/", which reads as a real path on Windows. -->
+      {#if editingPath}
+        <input
+          bind:this={pathInputEl}
+          bind:value={pathDraft}
+          data-testid="path-input"
+          class="w-full border-b border-edge bg-transparent px-2 py-1 text-xs text-text outline-none focus:border-accent"
+          placeholder={t("path.placeholder")}
+          aria-label={t("path.placeholder")}
+          spellcheck="false"
+          autocomplete="off"
+          onkeydown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commitPath();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              editingPath = false;
+            }
+            // Arrow/Home/End must reach the input, not the list's roving focus.
+            e.stopPropagation();
+          }}
+          onblur={() => (editingPath = false)}
+        />
+      {:else}
+        <button
+          class="w-full truncate border-b border-edge px-2 py-1 text-left text-xs text-muted hover:text-text"
+          title={atDrives ? t("localfiles.thisPc") : cwd}
+          aria-label={t("path.edit")}
+          data-testid="path-bar"
+          onclick={beginEditPath}
+        >
+          {atDrives ? t("localfiles.thisPc") : cwd}
+        </button>
+      {/if}
 
       {#if showMkdir}
         <form
@@ -835,9 +925,9 @@
               {#each visibleItems as item (item.key)}
                 {#if item.entry === null}
                   <button
-                    data-drop={parentPath ?? undefined}
+                    data-drop={dropParent ?? undefined}
                     onclick={() => (cursor = 0)}
-                    class="flex h-7 w-full items-center gap-2 px-2 text-left {dropOk(parentPath)
+                    class="flex h-7 w-full items-center gap-2 px-2 text-left {dropOk(dropParent)
                       ? 'bg-accent/20 ring-1 ring-inset ring-accent'
                       : 'hover:bg-edge'} {cursorOnParent
                       ? 'outline outline-1 -outline-offset-1 outline-accent/70'
@@ -854,6 +944,55 @@
                   <!-- Keyboard is handled at the focusable tree container (roving focus).
                        The row itself is not a <button> so Space toggles selection (via
                        the container handler) instead of activating a button. -->
+                  {#if entry.drive}
+                    <!-- Synthetic drive row of the "This PC" level (Phase 39.1):
+                         navigable, but not draggable, droppable or deletable. -->
+                    {@const d = entry.drive}
+                    {@const used = driveUsedFraction(d)}
+                    {@const usage = driveUsage(d)}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <div
+                      onclick={(e) => rowClick(e, entry)}
+                      ondblclick={() => open(entry)}
+                      role="treeitem"
+                      aria-selected={selection.selected.has(entry.path)}
+                      tabindex="-1"
+                      class="flex h-7 cursor-pointer items-center gap-2 px-2 {selection.selected.has(
+                        entry.path,
+                      )
+                        ? 'bg-accent/25'
+                        : 'hover:bg-edge'} {cursorPath === entry.path
+                        ? 'outline outline-1 -outline-offset-1 outline-accent/70'
+                        : ''}"
+                    >
+                      <Icon name={driveIcon(d)} size={15} class="shrink-0 text-muted" />
+                      <span class="truncate">{driveDisplayName(entry.name, d)}</span>
+                      {#if usage}
+                        <!-- Capacity bar + "X free of Y", like Explorer. -->
+                        <span
+                          class="ml-auto h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-edge"
+                          aria-hidden="true"
+                        >
+                          <span
+                            class="block h-full rounded-full {used != null && used > 0.9
+                              ? 'bg-danger'
+                              : 'bg-accent'}"
+                            style="width: {Math.round((used ?? 0) * 100)}%"
+                          ></span>
+                        </span>
+                        <span class="shrink-0 text-xs text-muted">
+                          {t("drive.freeOf", {
+                            free: fmtSize(usage.free),
+                            total: fmtSize(usage.total),
+                          })}
+                        </span>
+                      {:else}
+                        <!-- Not probed (network/optical) or unreadable: name the
+                             kind rather than render "0 B free of 0 B". -->
+                        <span class="ml-auto shrink-0 text-xs text-muted">{t(driveKindKey(d))}</span>
+                      {/if}
+                    </div>
+                  {:else}
                   <div
                     data-drop={entry.isDir ? entry.path : undefined}
                     onpointerdown={(e) => startMove(e, entry)}
@@ -905,6 +1044,7 @@
                       </button>
                     </div>
                   </div>
+                  {/if}
                 {/if}
               {/each}
             </div>

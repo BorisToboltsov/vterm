@@ -6,6 +6,7 @@ const e = (over: Partial<Parameters<typeof lsColorKey>[0]> = {}) => ({
   isDir: false,
   isSymlink: false,
   mode: 0o644 as number | null,
+  attrs: null as string | null,
   uid: 1000 as number | null,
   gid: 1000 as number | null,
   user: null as string | null,
@@ -43,6 +44,11 @@ describe("formatMode", () => {
     expect(formatMode(0o644, false, false)).toBe("-rw-r--r--");
     expect(formatMode(0o777, false, true)).toBe("lrwxrwxrwx");
     expect(formatMode(null, false, false)).toBe("-?????????");
+    // With DOS attributes present, those win over the `?` placeholders.
+    expect(formatMode(null, false, false, "-a---")).toBe("-a---");
+    expect(formatMode(null, true, false, "d--hs")).toBe("d--hs");
+    // Mode bits, when known, always take precedence over attrs.
+    expect(formatMode(0o644, false, false, "-a---")).toBe("-rw-r--r--");
   });
 
   it("renders setuid/setgid/sticky bits", () => {
@@ -63,5 +69,13 @@ describe("ownerLabel / fileTooltip", () => {
     expect(fileTooltip(e({ mode: 0o644, user: "root", group: "root" }))).toBe(
       "-rw-r--r--  root:root",
     );
+  });
+
+  // Phase 39: a Windows host has neither mode bits nor uid/gid, so the tooltip
+  // shows the DOS attributes alone instead of "-?????????  ?:?".
+  it("reports DOS attributes with no owner on Windows entries", () => {
+    const win = e({ mode: null, attrs: "-a---", uid: null, gid: null });
+    expect(ownerLabel(win)).toBe("");
+    expect(fileTooltip(win)).toBe("-a---");
   });
 });

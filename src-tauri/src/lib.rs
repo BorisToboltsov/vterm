@@ -1,6 +1,7 @@
 mod ai;
 mod backup;
 mod container;
+mod drives;
 mod error;
 mod folders;
 mod git;
@@ -11,6 +12,7 @@ mod localfile;
 mod metrics;
 mod model;
 mod netprobe;
+mod proccwd;
 mod pty;
 mod recording;
 mod secrets;
@@ -20,6 +22,7 @@ mod sftp;
 mod ssh;
 mod store;
 mod sync;
+mod textenc;
 
 use error::{AppError, AppResult};
 
@@ -1477,15 +1480,20 @@ async fn sftp_write_text(
     path: String,
     content: String,
     eol: String,
+    encoding: Option<String>,
     expected_sha256: Option<String>,
     sudo: Option<bool>,
     sudo_password: Option<String>,
     backup: Option<bool>,
 ) -> AppResult<sftp::WriteResult> {
+    // The editor echoes back the encoding `read_text` reported, so the file is
+    // rewritten in the encoding it arrived in. An older/absent value means UTF-8.
+    let encoding = encoding.unwrap_or_else(|| textenc::default_encoding().into());
     let req = sftp::TextWrite {
         path: &path,
         content: &content,
         eol: &eol,
+        encoding: &encoding,
         expected_sha256: expected_sha256.as_deref(),
         backup: backup.unwrap_or(false),
     };
@@ -1527,9 +1535,24 @@ async fn write_local_text(
     path: String,
     content: String,
     eol: String,
+    encoding: Option<String>,
     expected_sha256: Option<String>,
 ) -> AppResult<sftp::WriteResult> {
-    localfile::write_text(&path, &content, &eol, expected_sha256.as_deref()).await
+    let encoding = encoding.unwrap_or_else(|| textenc::default_encoding().into());
+    localfile::write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await
+}
+
+/// The working directory of a LOCAL shell, read from the OS (Phase 39.3).
+///
+/// This is the transport-appropriate half of "follow the terminal": a local tab
+/// has a pid we can inspect, so following works with any shell and no setup at
+/// all. SSH tabs have no local pid and still depend on the remote shell emitting
+/// OSC 7 / OSC 9;9. `None` means "couldn't tell" (unknown session, or the OS
+/// declined) — the caller leaves the panel where it is rather than guessing.
+#[tauri::command]
+fn local_cwd(state: State<AppState>, session_id: String) -> Option<String> {
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    local?.cwd()
 }
 
 /// Take and clear the queue of files vterm was asked to open (CLI args at launch
@@ -2179,6 +2202,7 @@ pub fn run() {
             sftp_write_text,
             read_local_text,
             write_local_text,
+            local_cwd,
             take_pending_opens,
             generate_ssh_key,
             key_path_exists,

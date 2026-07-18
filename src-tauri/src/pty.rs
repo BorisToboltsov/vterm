@@ -34,6 +34,10 @@ pub struct LocalPty {
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     /// Active session recorder, if recording (shared with the reader thread).
     recorder: Arc<Mutex<Option<Recorder>>>,
+    /// OS process id of the shell we spawned, used to read its working directory
+    /// straight from the kernel (Phase 39.3). `None` when the platform didn't
+    /// report one. See [`crate::proccwd`] for why we don't rely on OSC 7 here.
+    pid: Option<u32>,
 }
 
 impl LocalPty {
@@ -87,6 +91,12 @@ impl LocalPty {
                 r.output(data);
             }
         }
+    }
+
+    /// The shell's current working directory, read from the OS rather than from
+    /// any escape sequence the shell may or may not emit (Phase 39.3).
+    pub fn cwd(&self) -> Option<String> {
+        crate::proccwd::process_cwd(self.pid?)
     }
 
     /// Inform the kernel (and the child) of a new terminal size.
@@ -143,6 +153,9 @@ pub fn open_local(
     // The child owns the slave now; drop our handle so EOF propagates on exit.
     drop(pair.slave);
 
+    // Capture the pid before the reader thread takes ownership of `child`; it is
+    // how we later ask the OS for the shell's cwd (Phase 39.3).
+    let pid = child.process_id();
     let killer = child.clone_killer();
     let mut reader = pair
         .master
@@ -184,6 +197,7 @@ pub fn open_local(
         writer: Mutex::new(writer),
         killer: Mutex::new(killer),
         recorder,
+        pid,
     })
 }
 

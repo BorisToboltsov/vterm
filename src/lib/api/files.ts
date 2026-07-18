@@ -44,14 +44,25 @@ export function readLocalText(path: string, maxBytes?: number): Promise<TextFile
   return invoke<TextFile>("read_local_text", { path, maxBytes });
 }
 
-/** Save editor text back to a LOCAL file (atomic, conflict-checked). */
+/**
+ * Save editor text back to a LOCAL file (atomic, conflict-checked). `encoding` is
+ * the label the read reported; omitting it means UTF-8. Pass it back so a Windows
+ * UTF-16 or CP1251 config is rewritten in its own encoding, not converted.
+ */
 export function writeLocalText(
   path: string,
   content: string,
   eol: "lf" | "crlf",
   expectedSha256: string | null,
+  encoding?: string,
 ): Promise<WriteResult> {
-  return invoke<WriteResult>("write_local_text", { path, content, eol, expectedSha256 });
+  return invoke<WriteResult>("write_local_text", {
+    path,
+    content,
+    eol,
+    encoding,
+    expectedSha256,
+  });
 }
 
 /** Drain the queue of files vterm was asked to open (CLI args / macOS Opened). */
@@ -67,6 +78,16 @@ export function localHome(): Promise<string> {
 
 export function localList(path: string): Promise<FileEntry[]> {
   return invoke<FileEntry[]>("local_list", { path });
+}
+
+/**
+ * The working directory of a LOCAL shell, read from the OS (Phase 39.3) — the
+ * shell-independent half of "follow the terminal". Null when the session is
+ * unknown or the OS declined to say; callers leave the panel where it is rather
+ * than guessing. SSH tabs have no local pid and still rely on OSC 7 / OSC 9;9.
+ */
+export function localCwd(sessionId: string): Promise<string | null> {
+  return invoke<string | null>("local_cwd", { sessionId });
 }
 
 export function localMkdir(path: string): Promise<void> {
@@ -180,13 +201,20 @@ export function sftpWriteText(
   content: string,
   eol: "lf" | "crlf",
   expectedSha256: string | null,
-  opts: { sudo?: boolean; sudoPassword?: string; backup?: boolean } = {},
+  opts: {
+    sudo?: boolean;
+    sudoPassword?: string;
+    backup?: boolean;
+    /** Encoding the read reported; omitted means UTF-8. See textenc.rs. */
+    encoding?: string;
+  } = {},
 ): Promise<WriteResult> {
   return invoke<WriteResult>("sftp_write_text", {
     sessionId,
     path,
     content,
     eol,
+    encoding: opts.encoding,
     expectedSha256,
     sudo: opts.sudo,
     sudoPassword: opts.sudoPassword,

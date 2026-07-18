@@ -23,6 +23,7 @@
   import { writeClipboard } from "./clipboard";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
   import { checkMove, parentDir, uniqueCopyName } from "./filemove";
+  import { isRoot, joinPath, normalizeInputPath } from "./fspath";
   import { clickSelect, emptySelection, type SelectionState } from "./multiselect";
   import { nextCursor, scrollForCursor } from "./filekeys";
   import type { GrepMatch } from "./sync";
@@ -89,13 +90,40 @@
   let entries = $state<FileEntry[]>([]);
   let loading = $state(false);
 
+  // Editable path bar (Phase 39.2): click the path to type or paste one, instead of
+  // clicking down through the tree. Same behaviour as the local panel.
+  let editingPath = $state(false);
+  let pathDraft = $state("");
+  let pathInputEl = $state<HTMLInputElement | null>(null);
+  /** Remote home, remembered on connect so `~` can be expanded on input. */
+  let homePath = $state("");
+
+  function beginEditPath() {
+    pathDraft = cwd;
+    editingPath = true;
+    tick().then(() => {
+      pathInputEl?.focus();
+      pathInputEl?.select();
+    });
+  }
+
+  function commitPath() {
+    const next = normalizeInputPath(pathDraft, homePath);
+    editingPath = false;
+    if (!next || next === cwd) return;
+    load(next);
+    // A typed path is a user-initiated move, so it mirrors into the terminal
+    // exactly like clicking a folder does (the OSC 7 follow contract).
+    syncTerminalCwd(next);
+  }
+
   // Virtualized listing (Phase 18.7): only the visible window of rows is rendered,
   // so a directory with tens of thousands of entries doesn't freeze the UI. Rows
   // are a fixed `h-7` (28px); the ".." parent-nav is item 0 of the unified list.
   const ROW_H = 28;
   let listScrollTop = $state(0);
   let listViewportH = $state(600);
-  const hasParent = $derived(!!cwd && cwd !== "/");
+  const hasParent = $derived(!isRoot(cwd));
   // Dotfiles are hidden unless the toolbar eye toggle (settings.sftp.showHiddenFiles)
   // is on. Filtering the derived listing keeps the raw `entries` intact.
   const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
@@ -150,7 +178,7 @@
 
   function openMatch(m: GrepMatch) {
     const name = m.path.split("/").pop() ?? m.path;
-    onOpenFile?.(join(cwd, m.path), name, m.line);
+    onOpenFile?.(joinPath(cwd, m.path), name, m.line);
   }
 
   const unlisten: UnlistenFn[] = [];
@@ -169,6 +197,7 @@
     if (!(followTerminal && terminalCwd)) {
       try {
         start = await sftpHome(sessionId);
+        homePath = start;
       } catch {
         /* fall back to "." */
       }
@@ -271,7 +300,7 @@
     const name = mkdirName.trim();
     if (!name) return;
     try {
-      await sftpMkdir(sessionId, join(cwd, name));
+      await sftpMkdir(sessionId, joinPath(cwd, name));
       mkdirName = "";
       showMkdir = false;
       await refresh();
@@ -285,7 +314,7 @@
     const name = mkfileName.trim();
     if (!name) return;
     try {
-      await sftpCreateFile(sessionId, join(cwd, name));
+      await sftpCreateFile(sessionId, joinPath(cwd, name));
       mkfileName = "";
       showMkfile = false;
       await refresh();
@@ -561,7 +590,7 @@
       const name = cb.mode === "copy" && taken.has(item.name)
         ? uniqueCopyName(item.name, taken)
         : item.name;
-      const dest = join(cwd, name);
+      const dest = joinPath(cwd, name);
       try {
         if (cb.mode === "cut") await sftpRename(sessionId, item.path, dest);
         else await sftpCopy(sessionId, item.path, dest);
@@ -598,7 +627,7 @@
     }
     renameTarget = null;
     try {
-      await sftpRename(sessionId, target.path, join(cwd, name));
+      await sftpRename(sessionId, target.path, joinPath(cwd, name));
       await refresh();
       notifySuccess(t("sftp.renamed", { name }));
     } catch (e) {
@@ -686,7 +715,7 @@
       const chk = checkMove(entry.path, m.destDir);
       if (!chk.ok) continue;
       try {
-        await sftpRename(sessionId, entry.path, join(m.destDir, entry.name));
+        await sftpRename(sessionId, entry.path, joinPath(m.destDir, entry.name));
         moved += 1;
         lastName = entry.name;
       } catch (e) {
@@ -710,7 +739,7 @@
     for (const p of paths) {
       const name = p.split(/[\\/]/).pop() ?? p;
       try {
-        await sftpUpload(sessionId, crypto.randomUUID(), p, join(cwd, name));
+        await sftpUpload(sessionId, crypto.randomUUID(), p, joinPath(cwd, name));
       } catch (e) {
         notifyError(String(e));
       }
@@ -732,10 +761,6 @@
     } catch (e) {
       notifyError(String(e));
     }
-  }
-
-  function join(dir: string, name: string): string {
-    return dir.endsWith("/") ? `${dir}${name}` : `${dir}/${name}`;
   }
 
   /** `ls`-style colour for a file name, from the active terminal palette. */
@@ -921,10 +946,41 @@
       {/if}
     </div>
   {:else}
-  <!-- Current path -->
-  <div class="truncate border-b border-edge px-2 py-1 text-xs text-muted" title={cwd}>
-    {cwd || "/"}
-  </div>
+  <!-- Current path, click-to-edit (Phase 39.2). -->
+  {#if editingPath}
+    <input
+      bind:this={pathInputEl}
+      bind:value={pathDraft}
+      data-testid="path-input"
+      class="w-full border-b border-edge bg-transparent px-2 py-1 text-xs text-text outline-none focus:border-accent"
+      placeholder={t("path.placeholder")}
+      aria-label={t("path.placeholder")}
+      spellcheck="false"
+      autocomplete="off"
+      onkeydown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commitPath();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          editingPath = false;
+        }
+        // Arrow/Home/End must reach the input, not the list's roving focus.
+        e.stopPropagation();
+      }}
+      onblur={() => (editingPath = false)}
+    />
+  {:else}
+    <button
+      class="w-full truncate border-b border-edge px-2 py-1 text-left text-xs text-muted hover:text-text"
+      title={cwd}
+      aria-label={t("path.edit")}
+      data-testid="path-bar"
+      onclick={beginEditPath}
+    >
+      {cwd}
+    </button>
+  {/if}
 
   {#if showSearch}
     <!-- Content search (grep over SSH) under the current folder -->

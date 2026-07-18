@@ -10,7 +10,7 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "./util";
-  import { parseOsc7 } from "./osc";
+  import { parseOsc7, parseOsc9 } from "./osc";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
@@ -37,6 +37,7 @@
   import type { ConnPhase } from "./connphase";
   import { accumulatePinch } from "./termzoom";
   import { resolveLocalShell } from "./localshell";
+  import { cdShellKind, type CdShell } from "./cdterminal";
   import { hostEnv } from "./stores/hostenv.svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { readClipboard, writeClipboard } from "./clipboard";
@@ -55,6 +56,7 @@
     onactivity,
     onoutput,
     oncwd,
+    onlocalshell,
   }: {
     sessionId: string;
     serverId: string;
@@ -74,6 +76,9 @@
     onoutput?: () => void;
     /** The shell's cwd, parsed from an OSC 7 sequence (shell integration). */
     oncwd?: (path: string) => void;
+    /** Local tabs only: which `cd` dialect the spawned shell speaks, reported once
+     *  at spawn so two-way follow can build a correct command (Phase 39.4). */
+    onlocalshell?: (kind: CdShell) => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -499,6 +504,15 @@
       if (path) oncwd?.(path);
       return true;
     });
+    // OSC 9;9 is the same fact in the Windows dialect (Phase 39.3): PowerShell
+    // shell integration reports the cwd this way, since OSC 7 wants a file:// URI
+    // that is awkward to build for `C:\…`. Returning false leaves other OSC 9
+    // subtypes (9;4 progress, notifications) to whoever else handles them.
+    term.parser.registerOscHandler(9, (payload) => {
+      const path = parseOsc9(payload);
+      if (path) oncwd?.(path);
+      return path !== null;
+    });
 
     // GPU-accelerated rendering for smooth output under heavy load. Falls back
     // to the DOM renderer if WebGL is unavailable or its context is lost.
@@ -608,6 +622,9 @@
       if (local) {
         const os = await hostEnv.resolve();
         const shell = resolveLocalShell(os, settings.windowsShell, settings.localShellPath);
+        // Report the actual program we're about to spawn, not the current setting:
+        // a tab keeps its shell even if the preference changes later.
+        onlocalshell?.(cdShellKind(os, shell));
         await openLocalTerminal(sessionId, term.cols, term.rows, shell);
       } else {
         await connectSession(

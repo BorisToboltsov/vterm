@@ -205,6 +205,34 @@ describe("MonitoringOverlay", () => {
     expect(screen.queryByTestId("sensors-install")).toBeNull();
   });
 
+  // Phase 39 (Windows testing): a Windows host reported no sensors, and the card
+  // fell through to "Install lm-sensors" — an apt package, on Windows.
+  it("says temperature is unsupported on Windows instead of offering lm-sensors", async () => {
+    fetchMetrics.mockResolvedValue({ ...metrics, os: "Windows", cpuTemp: null });
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-win-temp" } });
+    expect(await screen.findByTestId("sensors-unsupported")).toBeInTheDocument();
+    expect(screen.queryByTestId("sensors-install")).toBeNull();
+  });
+
+  // Windows has no load-average concept at all, so the card is hidden rather
+  // than rendered as "— / — / —".
+  it("hides the load-average card on Windows but keeps it on Linux", async () => {
+    fetchMetrics.mockResolvedValue({
+      ...metrics,
+      os: "Windows",
+      load1: null,
+      load5: null,
+      load15: null,
+    });
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-win-load" } });
+    // Wait for the poll to land (the sections render) before asserting an absence,
+    // otherwise this would pass merely because nothing had rendered yet.
+    expect(await screen.findByTestId("detail-sections")).toBeInTheDocument();
+    expect(screen.queryByTestId("load-badge")).toBeNull();
+    expect(screen.queryByTestId("load-history")).toBeNull();
+  });
+
   it("shows skeletons for delta metrics until the second poll", async () => {
     // First real poll has no per-core/breakdown/ctx/per-device data (needs 2 samples).
     fetchMetricsDetail.mockResolvedValue({

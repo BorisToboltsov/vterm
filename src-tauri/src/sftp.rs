@@ -2,6 +2,7 @@
 //! on top of an open `SftpSession`.
 
 use crate::error::{AppError, AppResult};
+use crate::textenc;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
 use serde::Serialize;
@@ -38,6 +39,11 @@ pub struct FileEntry {
     pub modified: Option<u64>,
     /// Unix permission bits (the entry's own, like `ls -l`), if reported.
     pub mode: Option<u32>,
+    /// Windows DOS attributes as an `attrib`-style flag string (`-ar--`), filled
+    /// only by the local panel on Windows, where `mode` is meaningless. Always
+    /// `None` over SFTP, which is POSIX. See `localfile::dos_attr_string`.
+    #[serde(default)]
+    pub attrs: Option<String>,
     /// Owner user/group ids.
     pub uid: Option<u32>,
     pub gid: Option<u32>,
@@ -45,6 +51,11 @@ pub struct FileEntry {
     /// SFTP attrs rarely carry names, so the backend looks them up by uid/gid).
     pub user: Option<String>,
     pub group: Option<String>,
+    /// Set only for the synthetic drive rows of the Windows "This PC" level
+    /// (Phase 39.1, `drives.rs`). Always `None` for real filesystem entries and
+    /// over SFTP, which is POSIX and has no such level.
+    #[serde(default)]
+    pub drive: Option<crate::drives::DriveInfo>,
 }
 
 #[derive(Serialize, Clone)]
@@ -120,6 +131,8 @@ pub async fn list(sftp: &SftpSession, path: &str) -> AppResult<Vec<FileEntry>> {
             size: meta.size.unwrap_or(0),
             modified: meta.mtime.map(|m| m as u64),
             mode: meta.permissions,
+            attrs: None, // SFTP is POSIX; DOS attributes are a local-Windows concept.
+            drive: None,
             uid: meta.uid,
             gid: meta.gid,
             user: meta.user,
@@ -184,6 +197,11 @@ pub struct TextFile {
     /// Best-effort read-only hint: the file has no write bit set for anyone
     /// (e.g. mode `0444`). The authoritative check is the write itself.
     pub read_only: bool,
+    /// Encoding the file was decoded from (`utf-8`, `utf-16le-bom`,
+    /// `windows-1251`…). Passed back on save so we re-encode in the SAME
+    /// encoding instead of silently rewriting the file as UTF-8 — see textenc.rs.
+    #[serde(default)]
+    pub encoding: String,
 }
 
 /// Result of a successful text save — fresh metadata for the editor to adopt.
@@ -221,20 +239,24 @@ pub async fn read_text(sftp: &SftpSession, path: &str, max_bytes: u64) -> AppRes
     if (bytes.len() as u64) > max_bytes {
         return Err(AppError::Message("file too large to edit".into()));
     }
-    if looks_binary(&bytes) {
-        return Err(AppError::Message("file appears to be binary".into()));
-    }
-    let content = String::from_utf8(bytes)
-        .map_err(|_| AppError::Message("file is not valid UTF-8 text".into()))?;
+    // Decode by BOM/sniff/detector rather than assuming UTF-8; `decode` also
+    // subsumes the old `looks_binary` check, because UTF-16's interleaved NULs
+    // would otherwise read as binary (textenc.rs).
+    let decoded = textenc::decode(&bytes)
+        .ok_or_else(|| AppError::Message("file appears to be binary".into()))?;
+    let content = decoded.text;
 
-    let sha256 = sha256_hex(content.as_bytes());
+    // Hash the raw on-server bytes, not the decoded text: `write_text` compares
+    // against the bytes it reads back, and for a non-UTF-8 file the two differ.
+    let sha256 = sha256_hex(&bytes);
     let eol = detect_eol(&content);
     Ok(TextFile {
         eol,
-        size: meta.size.unwrap_or(content.len() as u64),
+        size: meta.size.unwrap_or(bytes.len() as u64),
         mode: meta.permissions,
         mtime: meta.mtime.map(|m| m as u64),
         read_only: is_read_only(meta.permissions),
+        encoding: decoded.encoding,
         sha256,
         // Normalize to LF for the editor; the original style is carried in `eol`.
         content: content.replace("\r\n", "\n"),
@@ -248,6 +270,9 @@ pub(crate) struct TextWrite<'a> {
     pub path: &'a str,
     pub content: &'a str,
     pub eol: &'a str,
+    /// Encoding to write back in — the one `read_text` reported. Empty means
+    /// UTF-8 (new file, or a caller with nothing recorded).
+    pub encoding: &'a str,
     pub expected_sha256: Option<&'a str>,
     pub backup: bool,
 }
@@ -261,6 +286,7 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
         path,
         content,
         eol,
+        encoding,
         expected_sha256,
         backup,
     } = *req;
@@ -286,8 +312,10 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
         }
     }
 
+    // Re-impose the file's original line endings, then its original encoding.
     let out = apply_eol(content, eol);
-    let bytes = out.as_bytes();
+    let encoded = textenc::encode(&out, encoding);
+    let bytes = &encoded[..];
 
     let tmp = temp_sibling(path);
     write_bytes(sftp, &tmp, bytes).await?;

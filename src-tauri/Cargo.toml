@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.38.2"
+version = "0.39.4"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -75,9 +75,31 @@ rand = "0.10"
 # (system/disk/network/component/user) are exactly what the collector needs.
 sysinfo = "0.39"
 
+# Text-encoding support for the config editor (Phase 39). Windows config files are
+# routinely UTF-16LE (PowerShell redirects, many .ini) or a legacy ANSI codepage
+# (CP1251 on a Russian install), and the editor used to reject both: UTF-16's NUL
+# bytes tripped the "looks binary" check, and ANSI failed strict from_utf8. We now
+# decode on open and re-encode in the SAME encoding on save, so vterm never
+# silently rewrites a file into UTF-8 behind other tools' backs.
+#   encoding_rs — the WHATWG decoders/encoders (Firefox's; no C deps).
+#   chardetng   — Firefox's legacy-encoding detector, for BOM-less non-UTF-8.
+# Both are pure Rust and offline; the offline invariant is untouched.
+encoding_rs = "0.8"
+chardetng = "1"
+
 # Read the OS clipboard in-process so the frontend can avoid
 # navigator.clipboard.readText() and WebKit's "Paste" permission prompt.
 # Already in the tree transitively via Tauri; pinned here to use it directly.
+# Windows drive enumeration for the local file panel (Фаза 39.1). `GetLogicalDrives`
+# returns the letter bitmask WITHOUT touching any volume — the only complete source
+# that cannot block on a stale network mount (see drives.rs for the alternatives
+# considered). Already in the tree transitively, so this unifies to one copy.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Storage_FileSystem",
+    "Win32_System_Diagnostics_Debug",
+] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
 

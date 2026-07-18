@@ -71,12 +71,24 @@ export interface FileEntry {
   modified: number | null;
   /** Unix permission bits (the entry's own), if reported. */
   mode: number | null;
+  /**
+   * Windows DOS attributes as an `attrib`-style flag string (`-ar--`, slots
+   * d/a/r/h/s). Filled only by the local panel on Windows, where `mode` does not
+   * exist; always null over SFTP, which is POSIX.
+   */
+  attrs?: string | null;
   /** Owner user/group ids. */
   uid: number | null;
   gid: number | null;
   /** Resolved owner names (or null → frontend shows the numeric id). */
   user: string | null;
   group: string | null;
+  /**
+   * Set only on the synthetic drive rows of the Windows "This PC" level
+   * (Phase 39.1, `drives.rs` → `drives.ts`). Null for real filesystem entries and
+   * over SFTP, which is POSIX and has no such level.
+   */
+  drive?: import("./drives").DriveInfo | null;
 }
 
 /** A remote text file opened in the editor (mirrors sftp.rs TextFile). */
@@ -93,6 +105,13 @@ export interface TextFile {
   sha256: string;
   /** Best-effort hint that the file has no write bit set. */
   readOnly: boolean;
+  /**
+   * Encoding the file was decoded from (`utf-8`, `utf-16le-bom`, `windows-1251`…),
+   * detected by the backend (textenc.rs). Passed back on save so the file is
+   * rewritten in the same encoding rather than silently converted to UTF-8 —
+   * Windows configs are commonly UTF-16 or a legacy codepage.
+   */
+  encoding: string;
 }
 
 /** Fresh metadata returned after a successful save (mirrors sftp.rs WriteResult). */

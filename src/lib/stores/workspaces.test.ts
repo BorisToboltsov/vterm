@@ -35,6 +35,7 @@ function doc(over: Partial<EditorDoc> = {}): EditorDoc {
     baseContent: "x",
     baseSha256: "sha",
     eol: "lf",
+    encoding: "utf-8",
     mode: 0o644,
     readOnly: false,
     loading: false,
@@ -49,6 +50,7 @@ function doc(over: Partial<EditorDoc> = {}): EditorDoc {
 const file = (content: string): TextFile => ({
   content,
   eol: "lf",
+  encoding: "utf-8",
   size: content.length,
   mode: 0o644,
   mtime: 1,

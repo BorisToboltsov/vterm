@@ -126,6 +126,11 @@ export const ICONS = {
   aiMark:
     '<text x="12" y="13" text-anchor="middle" dominant-baseline="central" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17" font-weight="500" fill="currentColor" stroke="none">Ai</text>',
 
+  // Drive rows of the Windows "This PC" level (Phase 39.1) — a 3.5" drive bay
+  // with an activity LED; `disc` is the optical variant.
+  hardDrive:
+    '<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M2.5 13.5h19"/><path d="M6 16.5h.01M9 16.5h.01"/>',
+  disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/>',
   // ── Server-category pictograms (picked per profile in the server form) ──
   database:
     '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',

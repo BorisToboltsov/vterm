@@ -27,6 +27,12 @@ export interface EditorDoc {
   baseSha256: string;
   /** Original line-ending style, re-applied on save. */
   eol: "lf" | "crlf";
+  /**
+   * Encoding the file was decoded from (`utf-8`, `utf-16le-bom`, `windows-1251`…),
+   * re-applied on save so a Windows UTF-16/ANSI config isn't converted to UTF-8
+   * behind the owning program's back. New scratch buffers start as UTF-8.
+   */
+  encoding: string;
   /** Unix permission bits, if known. */
   mode: number | null;
   readOnly: boolean;
@@ -146,6 +152,7 @@ export function addEditor(
     baseContent: "",
     baseSha256: "",
     eol: "lf",
+    encoding: "utf-8",
     mode: null,
     readOnly: false,
     loading: true,
@@ -184,6 +191,7 @@ export function addScratchEditor(
     baseContent: "",
     baseSha256: "",
     eol: "lf",
+    encoding: "utf-8",
     mode: null,
     readOnly: false,
     loading: false,
@@ -211,6 +219,7 @@ export function fillEditor(sessionId: string, id: string, file: TextFile): void 
     baseContent: file.content,
     baseSha256: file.sha256,
     eol: file.eol,
+    encoding: file.encoding,
     mode: file.mode,
     readOnly: file.readOnly,
     loading: false,

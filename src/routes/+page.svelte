@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { tooltip } from "$lib/actions/tooltip";
   import { fade } from "svelte/transition";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -18,6 +18,7 @@
     isPermissionError,
     readLocalText,
     writeLocalText,
+    localCwd,
     takePendingOpens,
     pickOpenFile,
     writeToTerminal,
@@ -105,7 +106,8 @@
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
-  import { OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
+  import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
+  import { cdCommand, type CdShell } from "$lib/cdterminal";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
@@ -211,6 +213,11 @@
       bufferText?: (maxLines?: number) => string;
     }
   > = {};
+  /** How often to ask the OS for a local shell's cwd while following (Phase 39.3).
+   *  One second is well under human reaction time for a `cd`, and the underlying
+   *  read is a single cheap syscall on Linux/macOS. */
+  const LOCAL_CWD_POLL_MS = 1000;
+
   // Current SSH connection phase per session, driving the connecting overlay.
   const connPhase = $state<Record<string, ConnPhase>>({});
   // Latest terminal cwd (OSC 7) per session, and whether the file panel should
@@ -236,6 +243,10 @@
   // The central column (`<main>`), used as the screensaver's fallback target when
   // no tab is open (so the ambient card stays within the central area).
   let mainArea = $state<HTMLElement>();
+  // Which `cd` dialect each local tab's shell speaks, reported by Terminal at spawn
+  // (Phase 39.4). Keyed per session because a tab keeps the shell it opened with
+  // even if the preference changes afterwards.
+  const localShellKind = $state<Record<string, CdShell>>({});
   // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
@@ -930,68 +941,6 @@
   }
 
   onMount(() => {
-    // TEMP DIAG: open a REAL local file (real read path) and dump the editor's
-    // rendered structure + any coloured overlay bars, so the packaged build
-    // self-reports what actually breaks.
-    {
-      const mark = (s: string) => void writeLocalText("/tmp/vterm-editdiag-mark.txt", s + "\n", "lf", null).catch(() => {});
-      let sid = "";
-      try {
-        mark("onMount-start");
-        sid = openLocalTab();
-        mark("tab-created:" + sid);
-      } catch (e) {
-        mark("tab-err:" + String(e));
-      }
-      setTimeout(() => {
-        void readLocalText("/tmp/vterm-realtest.conf", editorMaxBytes())
-          .then((f) => mark("readLocalText-ok len=" + f.content.length))
-          .catch((e) => mark("readLocalText-err:" + String(e)));
-        void openLocalFileInEditor(sid, "/tmp/vterm-realtest.conf")
-          .then(() => mark("openFile-resolved"))
-          .catch((e) => mark("openFile-err:" + String(e)));
-      }, 800);
-      setTimeout(() => {
-       try {
-        const rect = (el: Element | null) => {
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
-        };
-        const content = document.querySelector(".cm-content");
-        const lines = [...document.querySelectorAll(".cm-line")].map((l) => ({
-          t: (l.textContent ?? "").slice(0, 30),
-          ...rect(l),
-          color: getComputedStyle(l).color,
-        }));
-        // Anything that could be a coloured "bar": cursors, selection, active line,
-        // merge-view chunks, panels.
-        const bars = [
-          ...document.querySelectorAll(
-            ".cm-cursor, .cm-selectionBackground, .cm-activeLine, .cm-activeLineGutter, [class*='hunk'], [class*='Chunk'], [class*='changed'], [class*='deleted'], .cm-panels, .cm-merge-a, .cm-merge-b, .cm-layer",
-          ),
-        ].slice(0, 20).map((el) => {
-          const cs = getComputedStyle(el);
-          return { cls: el.className?.toString().slice(0, 60), ...rect(el), bg: cs.backgroundColor, bt: cs.borderTopColor, bw: cs.borderTopWidth };
-        });
-        const diag = {
-          contentText: (content?.textContent ?? "").slice(0, 120),
-          contentTextLen: (content?.textContent ?? "").length,
-          nLines: document.querySelectorAll(".cm-line").length,
-          hasMergeView: !!document.querySelector(".cm-merge-a, .cm-deletedChunk, [class*='Chunk']"),
-          contentRect: rect(content),
-          scroller: (() => { const s = document.querySelector(".cm-scroller"); return s ? { st: s.scrollTop, sh: s.scrollHeight, ch: s.clientHeight } : null; })(),
-          lines,
-          bars,
-        };
-        void writeLocalText("/tmp/vterm-editdiag.json", JSON.stringify(diag, null, 2), "lf", null).catch((e) => {
-          void writeLocalText("/tmp/vterm-editdiag-err.txt", "write-fail:" + String(e), "lf", null).catch(() => {});
-        });
-       } catch (e) {
-         void writeLocalText("/tmp/vterm-editdiag-err.txt", "diag-throw:" + String(e), "lf", null).catch(() => {});
-       }
-      }, 2500);
-    }
     refresh();
     const unlisteners: UnlistenFn[] = [];
     listen("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));
@@ -1441,12 +1390,41 @@
       followTerminal[id] = false;
       return;
     }
-    if (terminalCwd[id] || shellIntegrated[id]) {
+    // Whether the shell still needs the OSC 7 snippet is pure logic — a local tab
+    // never does, since its cwd comes from the OS (Phase 39.3). See needsShellSetup.
+    if (!needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
       followTerminal[id] = true;
       return;
     }
     pendingFollowSession = id;
   }
+
+  // Poll the OS for a local shell's cwd while following is on (Phase 39.3). This
+  // is what makes the feature work with a stock zsh on macOS or PowerShell on
+  // Windows, neither of which emits OSC 7: no shell setup, no injected snippet.
+  // It also catches a `cd` inside a script or subshell, which never draws a prompt
+  // and so never fires a precmd hook. OSC 7/9;9 stay wired in parallel — a shell
+  // that does announce its cwd still gets the instant, event-driven update.
+  $effect(() => {
+    const id = tabsState.activeId;
+    if (!id || !followTerminal[id]) return;
+    const tab = findTab(id);
+    if (tab?.kind !== "local") return; // SSH has no local pid to inspect
+    let stopped = false;
+    const tick = async () => {
+      const path = await localCwd(id).catch(() => null);
+      // Untracked compare: writing the same value back would re-run this effect.
+      if (!stopped && path && untrack(() => terminalCwd[id]) !== path) {
+        terminalCwd[id] = path;
+      }
+    };
+    void tick();
+    const timer = setInterval(tick, LOCAL_CWD_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  });
 
   /** User confirmed: type the OSC 7 setup into the shell and enable following. */
   function confirmFollowSetup() {
@@ -1467,8 +1445,15 @@
   function cdTerminalTo(path: string) {
     const id = tabsState.activeId;
     if (!id || terminalCwd[id] === path) return;
-    const quoted = `'${path.replace(/'/g, "'\\''")}'`;
-    void writeToTerminal(id, new TextEncoder().encode(`cd ${quoted}\n`));
+    // Phase 39.4: local tabs get this too, so the command has to match the shell
+    // that tab actually spawned — cmd.exe neither quotes with apostrophes nor
+    // changes drive without `/d`. SSH is always POSIX.
+    const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
+    const cmd = cdCommand(path, shell);
+    // Null means the path can't be expressed safely (empty, or holding a newline
+    // that would run a second command) — send nothing rather than a broken line.
+    if (!cmd) return;
+    void writeToTerminal(id, new TextEncoder().encode(`${cmd}\n`));
   }
 
   /**
@@ -1548,11 +1533,13 @@
       const before = doc.baseContent;
       const res =
         doc.source === "local"
-          ? await writeLocalText(doc.path, doc.content, doc.eol, expectedSha)
+          ? await writeLocalText(doc.path, doc.content, doc.eol, expectedSha, doc.encoding)
           : await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha, {
               sudo: doc.sudo,
               sudoPassword: doc.sudoPassword,
               backup: settings.editor.backupOnSave,
+              // Write the file back in the encoding it was opened in (textenc.rs).
+              encoding: doc.encoding,
             });
       const stat = lineDiffStat(before, doc.content);
       markSaved(sid, doc.id, res);
@@ -2082,6 +2069,7 @@
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
+                    onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);

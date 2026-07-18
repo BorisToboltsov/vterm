@@ -15,6 +15,8 @@ interface EntryLike {
   isDir: boolean;
   isSymlink: boolean;
   mode: number | null;
+  /** Windows `attrib`-style flags (`-ar--`) when the host has no mode bits. */
+  attrs?: string | null;
   uid?: number | null;
   gid?: number | null;
   user?: string | null;
@@ -57,10 +59,20 @@ function rwx(bits: number): string {
 /**
  * `ls -l`-style permission string, e.g. `drwxr-xr-x`. Includes the setuid/setgid
  * (`s`) and sticky (`t`) bits. Unknown mode → `?` placeholders.
+ *
+ * Phase 39: a Windows host reports DOS attributes instead of mode bits, so when
+ * the backend supplied `attrs` we render those verbatim (`-ar--`) rather than a
+ * row of `?` — the placeholders read as "vterm is broken", when in truth unix
+ * permissions simply do not exist there.
  */
-export function formatMode(mode: number | null, isDir: boolean, isSymlink: boolean): string {
+export function formatMode(
+  mode: number | null,
+  isDir: boolean,
+  isSymlink: boolean,
+  attrs?: string | null,
+): string {
   const type = isSymlink ? "l" : isDir ? "d" : "-";
-  if (mode == null) return type + "?????????";
+  if (mode == null) return attrs ? attrs : type + "?????????";
   let u = rwx((mode >> 6) & 7);
   let g = rwx((mode >> 3) & 7);
   let o = rwx(mode & 7);
@@ -71,8 +83,13 @@ export function formatMode(mode: number | null, isDir: boolean, isSymlink: boole
   return type + u + g + o;
 }
 
-/** `user:group`, falling back to numeric uid/gid (or `?` when unknown). */
+/**
+ * `user:group`, falling back to numeric uid/gid (or `?` when unknown). Windows
+ * has no uid/gid at all, so a DOS-attribute entry reports no owner rather than
+ * two question marks.
+ */
 export function ownerLabel(entry: EntryLike): string {
+  if (entry.mode == null && entry.attrs) return "";
   const u = entry.user ?? (entry.uid != null ? String(entry.uid) : "?");
   const g = entry.group ?? (entry.gid != null ? String(entry.gid) : "?");
   return `${u}:${g}`;
@@ -80,5 +97,7 @@ export function ownerLabel(entry: EntryLike): string {
 
 /** Hover tooltip: permissions + owner (what `ls -l` shows). */
 export function fileTooltip(entry: EntryLike): string {
-  return `${formatMode(entry.mode, entry.isDir, entry.isSymlink)}  ${ownerLabel(entry)}`;
+  const perms = formatMode(entry.mode, entry.isDir, entry.isSymlink, entry.attrs);
+  const owner = ownerLabel(entry);
+  return owner ? `${perms}  ${owner}` : perms;
 }

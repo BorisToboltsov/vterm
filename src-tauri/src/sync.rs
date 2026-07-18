@@ -6,6 +6,7 @@
 use crate::error::{AppError, AppResult};
 use crate::sftp::{self, apply_eol, detect_eol, looks_binary, sha256_hex, TextFile, WriteResult};
 use crate::ssh::SshSession;
+use crate::textenc;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
 use serde::{Deserialize, Serialize};
@@ -439,6 +440,10 @@ pub async fn sudo_read(
         mode: None,
         mtime: None,
         read_only: false,
+        // The sudo path pipes the file through `cat` over SSH, so it is already a
+        // decoded String by the time we see it — there are no raw bytes left to
+        // sniff. Remote hosts reached this way are POSIX, where UTF-8 is the norm.
+        encoding: textenc::UTF8.into(),
         sha256,
         content: content.replace("\r\n", "\n"),
     })
@@ -456,6 +461,7 @@ pub async fn sudo_write(
         path,
         content,
         eol,
+        encoding,
         expected_sha256,
         backup,
     } = *req;
@@ -473,7 +479,8 @@ pub async fn sudo_write(
     }
 
     let out = apply_eol(content, eol);
-    let bytes = out.as_bytes();
+    let encoded = textenc::encode(&out, encoding);
+    let bytes = &encoded[..];
     let home = sftp
         .canonicalize(".")
         .await
