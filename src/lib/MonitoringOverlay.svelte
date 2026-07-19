@@ -923,14 +923,12 @@
               </tbody>
             </table>
           {:else if !tempSupported}
-            <!-- Windows: no unprivileged, offline temperature source exists. Say so
-                 plainly instead of offering a Linux package (Phase 39). -->
+            <!-- Windows: no unprivileged, offline temperature source exists. One
+                 plain line — the "why" (WMI, kernel drivers) is not something the
+                 user can act on, so it was dropped in Phase 39.5. -->
             <div class="flex items-start gap-2 rounded border border-edge p-2" data-testid="sensors-unsupported">
               <Icon name="info" size={15} class="mt-0.5 shrink-0 text-muted" />
-              <div class="min-w-0 flex-1">
-                <p class="text-xs text-text">{t("mon.sensorsUnsupported")}</p>
-                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsUnsupportedHint")}</p>
-              </div>
+              <p class="min-w-0 flex-1 text-xs text-text">{t("mon.sensorsUnsupported")}</p>
             </div>
           {:else if detail?.sensorsInstalled || !sensorsInstallable}
             <!-- Installed but no readable chips (VMs/containers), or a host where

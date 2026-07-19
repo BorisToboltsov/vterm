@@ -211,7 +211,8 @@ describe("AiChat — executor (Phase 17.4)", () => {
     expect(writeToTerminal).toHaveBeenCalledOnce();
     const [id, data] = writeToTerminal.mock.calls[0];
     expect(id).toBe("sess1");
-    expect(new TextDecoder().decode(data as Uint8Array)).toBe("ls -la\n");
+    // CR, not LF — see terminput.ts (Phase 39.5).
+    expect(new TextDecoder().decode(data as Uint8Array)).toBe("ls -la\r");
     expect(annotateRecording).toHaveBeenCalledWith("sess1", "AI ran: ls -la");
     // After running, the button reports it ran and won't fire twice.
     expect(screen.getByTestId("ai-run")).toBeDisabled();

@@ -105,14 +105,18 @@ describe("isProdServer", () => {
 });
 
 describe("toTerminalInput", () => {
-  it("appends exactly one trailing newline", () => {
-    expect(toTerminalInput("ls")).toBe("ls\n");
-    expect(toTerminalInput("ls\n")).toBe("ls\n");
-    expect(toTerminalInput("ls\n\n\n")).toBe("ls\n");
+  // Phase 39.5: the terminator is CR, not LF — CR is what pressing Enter sends.
+  // With LF the block was inserted at the Windows prompt but never executed.
+  it("appends exactly one trailing Enter", () => {
+    expect(toTerminalInput("ls")).toBe("ls\r");
+    expect(toTerminalInput("ls\n")).toBe("ls\r");
+    expect(toTerminalInput("ls\n\n\n")).toBe("ls\r");
   });
 
-  it("keeps internal newlines for multi-line blocks", () => {
-    expect(toTerminalInput("a\nb")).toBe("a\nb\n");
+  // Each line has to be submitted, so internal endings become CR too; with LF a
+  // multi-line block would have run only its last line on Windows.
+  it("submits every line of a multi-line block", () => {
+    expect(toTerminalInput("a\nb")).toBe("a\rb\r");
   });
 });
 

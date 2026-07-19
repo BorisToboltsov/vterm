@@ -5,9 +5,7 @@
 //! vs the SFTP session).
 
 use crate::error::{AppError, AppResult};
-use crate::sftp::{
-    apply_eol, detect_eol, is_read_only, sha256_hex, FileEntry, TextFile, WriteResult,
-};
+use crate::sftp::{apply_eol, detect_eol, sha256_hex, FileEntry, TextFile, WriteResult};
 use crate::textenc;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -270,7 +268,10 @@ fn local_read_only(meta: &std::fs::Metadata) -> bool {
     }
     #[cfg(not(windows))]
     {
-        is_read_only(file_mode(meta))
+        // Fully qualified rather than imported at the top: the only use site is
+        // inside this cfg block, so a plain `use` is dead code on Windows and
+        // trips `unused_imports` there — a warning invisible to a unix build.
+        crate::sftp::is_read_only(file_mode(meta))
     }
 }
 

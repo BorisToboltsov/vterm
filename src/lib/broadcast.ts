@@ -67,13 +67,15 @@ export function groupHasProd(
 }
 
 /**
- * The exact bytes-as-string to send to every target: the command plus a newline
- * so it executes. Returns null for an empty command (nothing to send). We do not
- * trim — leading/trailing spaces are the user's to decide.
+ * The exact bytes-as-string to send to every target: the command plus the Enter
+ * byte so it executes. Returns null for an empty command (nothing to send). We do
+ * not trim — leading/trailing spaces are the user's to decide.
  */
+import { submitLine } from "./terminput";
+
 export function frameCommand(cmd: string): string | null {
   if (cmd.length === 0) return null;
-  return cmd + "\n";
+  return submitLine(cmd);
 }
 
 export type BroadcastLayout = "grid" | "focus";

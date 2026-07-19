@@ -14,6 +14,7 @@
   import { t } from "./i18n";
   import { probeRun, type ProbeOutput } from "./api";
   import { writeToTerminal } from "./api";
+  import { submitLine } from "./terminput";
   import { toShellCommand, type ProbeSession } from "./probe";
 
   let {
@@ -48,7 +49,7 @@
     error = "";
     // Variant B: local tab — run in the PTY, output shows in the terminal.
     if (session.kind === "local") {
-      await writeToTerminal(session.id, encoder.encode(toShellCommand(args) + "\n"));
+      await writeToTerminal(session.id, encoder.encode(submitLine(toShellCommand(args))));
       return;
     }
     // Variant A: SSH tab — run remotely and parse the captured output. The run

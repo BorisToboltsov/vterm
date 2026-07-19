@@ -72,12 +72,14 @@ describe("prodMembers / groupHasProd", () => {
 });
 
 describe("frameCommand", () => {
-  it("appends a newline so the command runs", () => {
-    expect(frameCommand("uptime")).toBe("uptime\n");
+  // Phase 39.5: CR (what Enter actually sends), not LF — with LF the command
+  // landed on the prompt of every Windows target without running.
+  it("appends Enter so the command runs", () => {
+    expect(frameCommand("uptime")).toBe("uptime\r");
   });
 
   it("does not trim user spacing", () => {
-    expect(frameCommand("  ls -l ")).toBe("  ls -l \n");
+    expect(frameCommand("  ls -l ")).toBe("  ls -l \r");
   });
 
   it("returns null for an empty command", () => {

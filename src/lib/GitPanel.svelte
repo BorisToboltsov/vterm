@@ -15,6 +15,7 @@
   import GitDiffView from "./GitDiffView.svelte";
   import { fileStatusColor } from "./gitview";
   import { gitRun, writeToTerminal } from "./api";
+  import { submitLine } from "./terminput";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import {
     repoRootArgs,
@@ -180,7 +181,7 @@
       if (opts.echo && sendToTerminal) {
         // Run it in the user's shell so it's visible in scrollback (audit), then
         // reload once the shell has had a moment to apply it.
-        await writeToTerminal(sessionId, new TextEncoder().encode(`git ${args.join(" ")}\n`));
+        await writeToTerminal(sessionId, new TextEncoder().encode(submitLine(`git ${args.join(" ")}`)));
         setTimeout(() => void loadAll(), 700);
         return true;
       }

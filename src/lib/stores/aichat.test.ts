@@ -206,7 +206,9 @@ describe("runCommand", () => {
   it("writes the command + audits it, and won't run twice", async () => {
     const c = getChat("s1");
     await runCommand("s1", c, "0:0", "ls -la", false);
-    expect(new TextDecoder().decode(writeToTerminal.mock.calls[0][1] as Uint8Array)).toBe("ls -la\n");
+    // CR, not LF: CR is what Enter sends, and LF left the command sitting unrun
+    // at a Windows prompt (Phase 39.5, terminput.ts).
+    expect(new TextDecoder().decode(writeToTerminal.mock.calls[0][1] as Uint8Array)).toBe("ls -la\r");
     expect(annotateRecording).toHaveBeenCalledWith("s1", "AI ran: ls -la");
     expect(c.executed["0:0"]).toBe(true);
     await runCommand("s1", c, "0:0", "ls -la", false); // already ran

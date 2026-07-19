@@ -108,6 +108,7 @@
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import { cdCommand, type CdShell } from "$lib/cdterminal";
+  import { submitLine } from "$lib/terminput";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
@@ -1431,7 +1432,7 @@
     const id = pendingFollowSession;
     pendingFollowSession = null;
     if (!id) return;
-    writeToTerminal(id, new TextEncoder().encode(OSC7_SETUP + "\n")).catch(() => {});
+    writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
     shellIntegrated[id] = true;
     followTerminal[id] = true;
   }
@@ -1453,7 +1454,7 @@
     // Null means the path can't be expressed safely (empty, or holding a newline
     // that would run a second command) — send nothing rather than a broken line.
     if (!cmd) return;
-    void writeToTerminal(id, new TextEncoder().encode(`${cmd}\n`));
+    void writeToTerminal(id, new TextEncoder().encode(submitLine(cmd)));
   }
 
   /**
@@ -2082,7 +2083,7 @@
                         setTimeout(() => {
                           void writeToTerminal(
                             tab.sessionId,
-                            new TextEncoder().encode(cmd + "\n"),
+                            new TextEncoder().encode(submitLine(cmd)),
                           ).catch(() => {});
                         }, 500);
                       }

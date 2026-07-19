@@ -9,6 +9,8 @@
 // the component; this module is DOM/network-free and unit-tested directly.
 
 /** One ordered piece of an assistant reply. */
+import { submitBlock } from "./terminput";
+
 export interface ChatSegment {
   kind: "text" | "code";
   /** Markdown (text) or the raw command block (code). */
@@ -86,12 +88,12 @@ export function isProdServer(tags: readonly string[] | null | undefined): boolea
 }
 
 /**
- * Normalise a command block for the PTY: strip trailing blank lines and append
- * exactly one newline so the final command actually runs. Internal newlines are
- * preserved, so a multi-line block runs its lines in sequence.
+ * Normalise a command block for the PTY. Every line ending becomes the Enter byte
+ * (CR) so each line is submitted in turn — with LF a multi-line block would run
+ * only its last line on Windows. See terminput.ts.
  */
 export function toTerminalInput(block: string): string {
-  return block.replace(/\n+$/u, "") + "\n";
+  return submitBlock(block);
 }
 
 /** A compact one-line label for the recording audit trail. */
