@@ -30,6 +30,10 @@ export const ICONS = {
     '<path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/>',
   lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>',
+  // Reveal/hide toggle for secret fields (PasswordInput, Phase 39.7) — the eye
+  // struck through, so the two states read as one control in two positions.
+  eyeOff:
+    '<path d="M10.6 6.2A9.9 9.9 0 0 1 12 5c6.5 0 10 7 10 7a18 18 0 0 1-3.1 4.1"/><path d="M6.6 6.8A18 18 0 0 0 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4.6-1.1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="m3 3 18 18"/>',
   // Attach session context to the AI chat — a paperclip.
   paperclip:
     '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',

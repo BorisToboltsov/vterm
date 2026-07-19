@@ -5,6 +5,7 @@
   // exported `prompt(server, label, error?)` (through `bind:this`). The secret lives
   // only in this component's state until it's handed to the tab store.
   import Modal from "./Modal.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import type { ServerProfile } from "./types";
   import { openTab } from "./stores/tabs.svelte";
   import { t } from "./i18n";
@@ -23,10 +24,6 @@
     value = "";
     remember = false;
     error = secretError;
-  }
-
-  function focusOnMount(node: HTMLElement) {
-    node.focus();
   }
 
   function submit(event: Event) {
@@ -51,13 +48,7 @@
       {/if}
       <label class="block text-xs text-muted">
         {label === "Passphrase" ? t("page.secretPassphrase") : t("page.secretPassword")}
-        <input
-          type="password"
-          data-testid="secret-input"
-          use:focusOnMount
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-          bind:value
-        />
+        <PasswordInput testid="secret-input" autofocus class="mt-1" bind:value />
       </label>
       <label class="mt-3 flex items-center gap-2 text-xs text-muted">
         <input type="checkbox" bind:checked={remember} />

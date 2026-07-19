@@ -5,6 +5,7 @@
   // exported `openAdd`/`openEdit` (via `bind:this`).
   import Modal from "./Modal.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import KeyGenModal from "./KeyGenModal.svelte";
   import ServerIconPicker from "./ServerIconPicker.svelte";
   import { tooltip } from "./actions/tooltip";
@@ -591,11 +592,9 @@
                   {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
                   <InfoHint text={t("page.proxySecretHint")} />
                 </span>
-                <input
-                  type="password"
-                  data-testid="proxy-secret"
-                  autocomplete="off"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                <PasswordInput
+                  testid="proxy-secret"
+                  class="mt-1"
                   bind:value={proxySecret}
                   placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
                 />
@@ -622,11 +621,9 @@
                   {t("page.proxyPassword")}
                   <InfoHint text={t("page.proxySecretHint")} />
                 </span>
-                <input
-                  type="password"
-                  data-testid="proxy-secret"
-                  autocomplete="off"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                <PasswordInput
+                  testid="proxy-secret"
+                  class="mt-1"
                   bind:value={proxySecret}
                   placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
                 />

@@ -7,6 +7,7 @@
   // from the Docker panel, on the active session's host (offline invariant intact).
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import { settings, clampDockerRefresh } from "./settings.svelte";
   import { setRegistrySecret, deleteRegistrySecret } from "./api";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
@@ -119,12 +120,7 @@
     </label>
     <label class="col-span-2 block text-xs text-muted">
       {t("settings.dockerRegistryPass")}
-      <input
-        type="password"
-        autocomplete="off"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-        bind:value={newPass}
-      />
+      <PasswordInput testid="docker-registry-pass" class="mt-1" bind:value={newPass} />
     </label>
   </div>
   <button

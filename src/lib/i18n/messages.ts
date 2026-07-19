@@ -37,6 +37,8 @@ export const en = {
   "common.reconnect": "Reconnect",
   "common.dismiss": "Dismiss",
   "common.closeDialog": "Close dialog",
+  "common.showPassword": "Show password",
+  "common.hidePassword": "Hide password",
 
   // ── Connection status (tabs / top bar / banner) ──
   "status.connecting": "Connecting…",
@@ -1658,6 +1660,8 @@ const ru: Record<MessageKey, string> = {
   "common.reconnect": "Переподключиться",
   "common.dismiss": "Закрыть",
   "common.closeDialog": "Закрыть диалог",
+  "common.showPassword": "Показать пароль",
+  "common.hidePassword": "Скрыть пароль",
 
   // ── Connection status ──
   "status.connecting": "Подключение…",

@@ -442,7 +442,10 @@
       "Bash(sed -i '' '4s/\"version\": \"0.39.5\"/\"version\": \"0.39.6\"/' src-tauri/tauri.conf.json)",
       "Bash(sed -i '' '3s/^version = \"0.39.5\"/version = \"0.39.6\"/' src-tauri/Cargo.toml)",
       "Bash(./scripts/sftp-test-server.sh down *)",
-      "Bash(docker compose *)"
+      "Bash(docker compose *)",
+      "Bash(sed -i '' 's/\"version\": \"0.39.6\"/\"version\": \"0.39.7\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '3s/^version = \"0.39.6\"/version = \"0.39.7\"/' src-tauri/Cargo.toml)",
+      "Bash(grep -n \"sudo_backup_command\\\\`, 3 фронтовых\" docs/ROADMAP.md)"
     ]
   }
 }

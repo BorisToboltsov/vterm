@@ -9,6 +9,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import { t, type MessageKey } from "./i18n";
   import { tooltip } from "./actions/tooltip";
   import {
@@ -334,20 +335,11 @@
       <div class="flex gap-2">
         <label class="block flex-1">
           {t("keygen.passphrase")}
-          <input
-            type="password"
-            data-testid="keygen-passphrase"
-            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-            bind:value={form.passphrase}
-          />
+          <PasswordInput testid="keygen-passphrase" class="mt-1" bind:value={form.passphrase} />
         </label>
         <label class="block flex-1">
           {t("keygen.passphraseConfirm")}
-          <input
-            type="password"
-            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-            bind:value={confirmPass}
-          />
+          <PasswordInput testid="keygen-passphrase-confirm" class="mt-1" bind:value={confirmPass} />
         </label>
       </div>
       {#if passMismatch}

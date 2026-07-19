@@ -10,6 +10,7 @@
   // and ends on an explicit success state; the parent auto-refreshes the catalogue.
   import Modal from "./Modal.svelte";
   import Icon from "./Icon.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import { runToolInstall, installOutputEvent } from "./api";
   import { commandNeedsSudo, type ToolStatus } from "./servertools";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
@@ -95,10 +96,9 @@
       class="mb-3 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs text-white">{command}</pre>
 
     {#if needsSudo && !installing && !done}
-      <input
-        type="password"
-        autocomplete="off"
-        class="mb-3 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      <PasswordInput
+        testid="install-sudo-password"
+        class="mb-3"
         placeholder={t("editor.sudoPassword")}
         bind:value={sudoPw}
       />

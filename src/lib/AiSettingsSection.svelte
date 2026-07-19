@@ -23,6 +23,7 @@
   import DisclosureRow from "./DisclosureRow.svelte";
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
+  import PasswordInput from "./PasswordInput.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { t } from "./i18n";
 
@@ -293,11 +294,10 @@
 
             <span class="text-[10px] text-muted">{t("settings.aiKey")}</span>
             <div class="flex gap-2">
-              <input
-                type="password"
-                class="min-w-0 flex-1 {inputCls}"
+              <PasswordInput
+                class="min-w-0 flex-1"
+                inputClass={inputCls}
                 placeholder={ep.hasKey ? "••••••••" : t("settings.aiKeyHint")}
-                autocomplete="off"
                 bind:value={keyDrafts[ep.id]}
               />
               <button

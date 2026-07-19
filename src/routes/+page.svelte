@@ -104,6 +104,7 @@
   import TopBar from "$lib/TopBar.svelte";
   import ServerTree from "$lib/ServerTree.svelte";
   import Modal from "$lib/Modal.svelte";
+  import PasswordInput from "$lib/PasswordInput.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
@@ -2407,10 +2408,9 @@
     }}
   >
     <p class="mb-2 break-all text-xs text-muted">{sudoPromptPath}</p>
-    <input
-      type="password"
-      autocomplete="off"
-      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+    <PasswordInput
+      testid="sudo-password"
+      autofocus
       placeholder={t("editor.sudoPassword")}
       bind:value={sudoPasswordInput}
     />
