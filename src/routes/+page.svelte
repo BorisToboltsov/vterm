@@ -14,6 +14,7 @@
     setServerNotes,
     sftpReadText,
     sftpWriteText,
+    isBackupFailedError,
     isFileChangedError,
     isPermissionError,
     readLocalText,
@@ -1566,8 +1567,16 @@
         }
       } else if (!doc.sudo && doc.source === "sftp" && isPermissionError(e)) {
         // Can't write into the target dir (no permission) → offer to save as root.
+        // Deliberately ahead of the backup check: when it is the `.bak` copy that
+        // was refused for want of access, saving as root is the actual remedy
+        // (the sudo path makes the copy with `cp -p`), so keep that route open.
         sudoPasswordInput = "";
         sudoPrompt = { kind: "save", sid, doc };
+      } else if (isBackupFailedError(e)) {
+        // The save was abandoned with the file untouched — say that plainly, or
+        // the user reads it as "save failed" and cannot tell what state the
+        // server is in. The cause is carried along; the way out is in the hint.
+        notifyError(t("editor.backupFailed", { name: doc.name, detail: String(e) }));
       } else {
         notifyError(String(e));
       }

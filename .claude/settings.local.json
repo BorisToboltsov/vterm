@@ -431,7 +431,18 @@
       "Bash(grep -rln cwd __CMDSUB_OUTPUT__/src/unix/apple/)",
       "Bash(grep -n cwd __CMDSUB_OUTPUT__/src/windows/process.rs)",
       "Bash(zsh -f -c '__CMDSUB_OUTPUT__; print -l HOOKS: $precmd_functions')",
-      "Bash(grep -n \"^    writeLocalText,$\" src/routes/+page.svelte)"
+      "Bash(grep -n \"^    writeLocalText,$\" src/routes/+page.svelte)",
+      "Bash(sed -n 1,140p ~/.cargo/registry/src/*/russh-sftp-2.3.0/src/protocol/file_attrs.rs)",
+      "Bash(nc -z -G 2 127.0.0.1 22)",
+      "Bash(docker info *)",
+      "Bash(docker rm *)",
+      "Bash(docker run *)",
+      "Bash(./scripts/sftp-test-server.sh up *)",
+      "Bash(sed -i '' '3s/\"version\": \"0.39.5\"/\"version\": \"0.39.6\"/' package.json)",
+      "Bash(sed -i '' '4s/\"version\": \"0.39.5\"/\"version\": \"0.39.6\"/' src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '3s/^version = \"0.39.5\"/version = \"0.39.6\"/' src-tauri/Cargo.toml)",
+      "Bash(./scripts/sftp-test-server.sh down *)",
+      "Bash(docker compose *)"
     ]
   }
 }

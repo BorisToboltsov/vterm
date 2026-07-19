@@ -8,7 +8,6 @@ use crate::sftp::{self, apply_eol, detect_eol, looks_binary, sha256_hex, TextFil
 use crate::ssh::SshSession;
 use crate::textenc;
 use russh_sftp::client::SftpSession;
-use russh_sftp::protocol::FileAttributes;
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -408,6 +407,24 @@ async fn sudo_run(session: &SshSession, inner: &str, password: &str) -> AppResul
     session.run_command_stdin(&cmd, &pw).await
 }
 
+/// Shell snippet that copies `path` to `<path>.bak` as root, preserving mode,
+/// owner and timestamps — the sudo counterpart of the `.bak` step in
+/// [`crate::sftp::write_text`]. Pure so the shape below stays under test.
+///
+/// `if … then … fi`, deliberately NOT `test -e X && cp …`. With `&&` a missing
+/// target — a brand-new file, nothing to copy — makes the whole command exit
+/// non-zero, [`OK_MARKER`] never prints, and "nothing to back up" becomes
+/// indistinguishable from "the copy failed". Since a failed backup now aborts the
+/// save, that conflation would refuse every first save of a new root-owned file.
+///
+/// `cp -p` matters just as much: without it the copy lands at the caller's umask,
+/// so a 0600 secret-bearing config would be backed up world-readable.
+pub fn sudo_backup_command(path: &str) -> String {
+    let quoted = shell_quote(path);
+    let bak = shell_quote(&format!("{path}.bak"));
+    format!("if test -e {quoted}; then cp -p -- {quoted} {bak}; fi")
+}
+
 /// Run `inner` under sudo and confirm success via [`OK_MARKER`].
 async fn sudo_ok(session: &SshSession, inner: &str, password: &str) -> AppResult<bool> {
     let out = sudo_run(session, &format!("{inner} && printf {OK_MARKER}"), password).await?;
@@ -493,16 +510,27 @@ pub async fn sudo_write(
     sftp::write_bytes(sftp, &tmp, bytes)
         .await
         .map_err(|e| format!("stage {tmp}: {e}"))?;
-    let attrs = FileAttributes {
-        permissions: Some(0o600),
-        ..Default::default()
-    };
-    let _ = sftp.set_metadata(tmp.clone(), attrs).await;
+    // Tighten the staging file to 0600 before it is copied into place as root.
+    // Goes through `sftp::chmod_attrs` — `..Default::default()` would send
+    // `ATTR_SIZE = 0` and truncate the staged content away (see its doc comment).
+    let _ = sftp
+        .set_metadata(tmp.clone(), sftp::chmod_attrs(0o600))
+        .await;
 
-    if backup {
-        let bak = shell_quote(&format!("{path}.bak"));
-        let inner = format!("test -e {0} && cp -p -- {0} {bak}", shell_quote(path));
-        let _ = sudo_ok(session, &inner, password).await; // best-effort
+    // Backup before the root overwrite. Failure aborts the save while the target
+    // is untouched — same contract as the ordinary path in `sftp::write_text`.
+    //
+    // `if … then … fi`, NOT `test -e X && cp …`: with `&&` a missing target (a
+    // brand-new file, nothing to copy) makes the whole command exit non-zero, so
+    // the OK marker is absent and "nothing to back up" is indistinguishable from
+    // "the copy failed". Now the absent-file case succeeds and a false marker
+    // means the `cp` really did fail. `cp -p` carries mode/owner/timestamps, so
+    // the copy is never more readable than what it copied.
+    if backup && !sudo_ok(session, &sudo_backup_command(path), password).await? {
+        let _ = sftp.remove_file(tmp).await;
+        return Err(AppError::BackupFailed(format!(
+            "sudo cp -p {path} {path}.bak"
+        )));
     }
 
     let cmd = format!("cp -- {} {}", shell_quote(&tmp), shell_quote(path));
@@ -523,6 +551,32 @@ pub async fn sudo_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sudo_backup_command_survives_a_missing_target() {
+        let cmd = sudo_backup_command("/etc/nginx/nginx.conf");
+        // `if … fi`, never `test -e … && cp`: with `&&` a first save of a new file
+        // exits non-zero, and — now that a failed backup aborts the save — every
+        // such save would be refused for a backup that was never needed.
+        assert!(cmd.starts_with("if test -e "), "got: {cmd}");
+        assert!(
+            !cmd.contains("&&"),
+            "`&&` conflates 'nothing to copy' with failure"
+        );
+        assert!(cmd.ends_with("; fi"), "got: {cmd}");
+        // Mode/owner/timestamps preserved, or the copy is more readable than the
+        // original it was meant to protect.
+        assert!(cmd.contains("cp -p -- "));
+        assert!(cmd.contains("'/etc/nginx/nginx.conf' '/etc/nginx/nginx.conf.bak'"));
+    }
+
+    #[test]
+    fn sudo_backup_command_quotes_hostile_paths() {
+        // A quote in the name must not break out of the snippet.
+        let cmd = sudo_backup_command("/tmp/a'b c.conf");
+        assert!(cmd.contains(r#"'/tmp/a'\''b c.conf'"#), "got: {cmd}");
+        assert!(cmd.contains(r#"'/tmp/a'\''b c.conf.bak'"#), "got: {cmd}");
+    }
 
     #[test]
     fn shell_quote_escapes_single_quotes() {

@@ -400,15 +400,18 @@
     }
     return true;
   }
+  // Paste via `replaceSelection`, never a hand-rolled change plus a cursor offset
+  // measured on the clipboard string. CodeMirror normalizes line breaks on insert,
+  // so CRLF text (every multi-line paste from a Windows app) lands SHORTER in the
+  // document than the string it came from; a cursor computed from the raw string
+  // then points past the end and `state.update` throws before applying anything —
+  // a silent, total paste failure that only reproduces off macOS. See
+  // clipboardpaste.guard.test.ts.
   function cmPaste(v: EditorView): boolean {
     if (doc.readOnly) return true;
     void readClipboard().then((text) => {
       if (!text) return;
-      const { from, to } = v.state.selection.main;
-      v.dispatch({
-        changes: { from, to, insert: text },
-        selection: { anchor: from + text.length },
-      });
+      v.dispatch(v.state.replaceSelection(text));
     });
     return true;
   }

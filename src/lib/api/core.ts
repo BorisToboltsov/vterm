@@ -11,6 +11,18 @@ export function isFileChangedError(err: unknown): boolean {
   return String(err).includes(FILE_CHANGED_MARKER);
 }
 
+/** Marker (in `AppError::BackupFailed`) that the pre-save `.bak` copy failed. */
+export const BACKUP_FAILED_MARKER = "backup-failed";
+
+/**
+ * True when a save was abandoned because the requested `.bak` copy could not be
+ * made. Crucially this means **nothing was written** — the target still holds its
+ * original content — so the message must say so rather than read as a save error.
+ */
+export function isBackupFailedError(err: unknown): boolean {
+  return String(err).includes(BACKUP_FAILED_MARKER);
+}
+
 /**
  * True when a remote read/write failed because the path isn't accessible to the
  * user — i.e. sudo could help. Covers both "Permission denied" and "No such file":

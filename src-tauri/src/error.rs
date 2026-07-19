@@ -50,6 +50,14 @@ pub enum AppError {
     #[error("key-exists: a key file already exists at that path")]
     KeyExists,
 
+    /// "Keep a .bak copy before overwriting" was on, but the copy could not be
+    /// made — so the save was **abandoned before touching the target**. Writing
+    /// anyway is precisely what the setting exists to prevent, and a green toast
+    /// over an unbacked overwrite is worse than a refusal. The frontend matches
+    /// the `backup-failed` marker to say so and offer the way out.
+    #[error("backup-failed: could not create the .bak copy, nothing was written ({0})")]
+    BackupFailed(String),
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -109,6 +117,10 @@ mod tests {
             .to_string()
             .contains("dest-exists"));
         assert!(AppError::KeyExists.to_string().contains("key-exists"));
+        let backup = AppError::BackupFailed("permission denied".into()).to_string();
+        assert!(backup.contains("backup-failed"));
+        // The cause travels with it — "couldn't back up" alone is not actionable.
+        assert!(backup.contains("permission denied"));
     }
 
     #[test]

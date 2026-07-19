@@ -411,7 +411,7 @@
           </label>
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.editor.backupOnSave} />
-            {t("settings.editorBackup")}
+            {t("settings.editorBackup")}<InfoHint text={t("settings.editorBackupHint")} />
           </label>
         </section>
 

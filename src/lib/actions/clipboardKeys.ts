@@ -78,13 +78,20 @@ export function selectedText(node: Editable): string {
 }
 
 /** Replace the current selection — or the whole value, when no selection range
- *  is available — with `text`, then fire `input` so `bind:value` updates. */
+ *  is available — with `text`, then fire `input` so `bind:value` updates.
+ *
+ *  The caret is measured from the value the DOM actually stored, not from `text`:
+ *  a textarea normalizes CRLF to LF in its value (HTML spec), so a multi-line
+ *  paste from a Windows clipboard is shorter than the string handed in and
+ *  `start + text.length` would land past the end. Same trap as CodeMirror's
+ *  insert normalization in EditorTab's `cmPaste`. */
 export function replaceSelection(node: Editable, text: string): void {
   const range = selectionRange(node);
   if (range) {
     const [start, end] = range;
-    node.value = node.value.slice(0, start) + text + node.value.slice(end);
-    const caret = start + text.length;
+    const tail = node.value.slice(end);
+    node.value = node.value.slice(0, start) + text + tail;
+    const caret = node.value.length - tail.length;
     try {
       node.setSelectionRange(caret, caret);
     } catch {

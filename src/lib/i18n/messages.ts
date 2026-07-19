@@ -190,6 +190,8 @@ export const en = {
   "editor.unsaved": "Unsaved changes",
   "editor.loading": "Loading…",
   "editor.conflict": "{name} changed on the server since you opened it — reopen it before saving",
+  "editor.backupFailed":
+    "{name} was NOT saved: the .bak copy could not be created, so nothing was overwritten and the file on the server is unchanged. Fix the .bak sibling (remove it, or free the name) or turn off \"Keep a .bak copy\" in settings, then save again. Cause: {detail}",
   "editor.discardTitle": "Discard changes?",
   "editor.discard": "Discard",
   "editor.discardBody1": "Discard unsaved changes to",
@@ -1317,6 +1319,8 @@ export const en = {
   "settings.sectionEditor": "Config editor",
   "settings.editorDiffBeforeSave": "Show a diff before saving a file to the server",
   "settings.editorBackup": "Keep a .bak copy on the server before overwriting",
+  "settings.editorBackupHint":
+    "The copy is written next to the original, in the same directory, as <name>.bak — e.g. /etc/nginx/nginx.conf becomes /etc/nginx/nginx.conf.bak. It keeps the original's permissions, and only one generation is kept: the next save overwrites it. If the copy cannot be made the save is refused and the file is left untouched. Applies to files opened over SFTP, not to local files.",
   "settings.sectionBehavior": "Behavior",
   "settings.autoReconnect": "Auto-reconnect when a connection drops",
 
@@ -1807,6 +1811,8 @@ const ru: Record<MessageKey, string> = {
   "editor.unsaved": "Несохранённые изменения",
   "editor.loading": "Загрузка…",
   "editor.conflict": "{name} изменён на сервере после открытия — переоткройте перед сохранением",
+  "editor.backupFailed":
+    "{name} НЕ сохранён: не удалось создать копию .bak, поэтому ничего не перезаписано и файл на сервере остался прежним. Разберитесь с соседним .bak (удалите его или освободите имя) либо снимите галочку «Сохранять копию .bak» в настройках и сохраните снова. Причина: {detail}",
   "editor.discardTitle": "Отменить изменения?",
   "editor.discard": "Удалить",
   "editor.discardBody1": "Отменить несохранённые изменения в",
@@ -2927,6 +2933,8 @@ const ru: Record<MessageKey, string> = {
   "settings.sectionEditor": "Редактор конфигов",
   "settings.editorDiffBeforeSave": "Показывать diff перед сохранением файла на сервер",
   "settings.editorBackup": "Сохранять копию .bak на сервере перед перезаписью",
+  "settings.editorBackupHint":
+    "Копия пишется рядом с оригиналом, в том же каталоге, как <имя>.bak — например /etc/nginx/nginx.conf становится /etc/nginx/nginx.conf.bak. Права исходного файла сохраняются, поколение одно: следующее сохранение её перезапишет. Если копию создать не удалось, сохранение отменяется и файл остаётся нетронутым. Работает для файлов, открытых по SFTP, для локальных файлов — нет.",
   "settings.sectionBehavior": "Поведение",
   "settings.autoReconnect": "Автоматически переподключаться при обрыве соединения",
 

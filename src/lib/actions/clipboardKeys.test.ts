@@ -102,6 +102,17 @@ describe("selectedText / replaceSelection", () => {
     replaceSelection(node, "8080");
     expect(node.value).toBe("8080");
   });
+  // A textarea normalizes CRLF to LF in its value, so a Windows-clipboard paste is
+  // stored shorter than the string handed in. Measuring the caret from `text.length`
+  // put it past the end (Phase 39.6); it must land right after the inserted text.
+  it("puts the caret after a CRLF paste, not past the end", () => {
+    const node = document.createElement("textarea");
+    node.value = "AB";
+    node.setSelectionRange(1, 1);
+    replaceSelection(node, "x\r\ny\r\nz");
+    expect(node.value).toBe("Ax\ny\nzB");
+    expect(node.selectionStart).toBe(node.value.length - 1);
+  });
 });
 
 describe("copyDocumentSelection", () => {

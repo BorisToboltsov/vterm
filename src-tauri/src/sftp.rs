@@ -163,6 +163,35 @@ pub async fn create_file(sftp: &SftpSession, path: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// A `SSH_FXP_SETSTAT` payload that changes **only** the permission bits.
+///
+/// **Never build `FileAttributes` with `..Default::default()`.** russh-sftp's
+/// `Default` is not a blank struct — it is a "new directory" template
+/// (`size: Some(0)`, `uid`/`gid: Some(0)`, `atime`/`mtime: Some(0)`,
+/// `permissions: Some(0o40777)`), and its `Serialize` impl raises the attribute
+/// flag for every `Some` field. So `..Default::default()` asks the server for
+/// `ATTR_SIZE = 0` — i.e. `truncate(path, 0)` — plus a chown to root and an epoch
+/// mtime, none of which the caller meant.
+///
+/// That is exactly how the editor's SFTP save destroyed files (Phase 39.6): the
+/// content reached the staging temp intact, this call truncated the temp to zero,
+/// and the empty temp was then renamed over the user's file. The write reported
+/// success because `WriteResult` hashes the bytes we *intended* to send. Fixing
+/// it means spelling every field out as `None`; the guard test below keeps it that
+/// way. Same trap applies to `sync::sudo_write`'s staging file.
+pub(crate) fn chmod_attrs(permissions: u32) -> FileAttributes {
+    FileAttributes {
+        size: None,
+        uid: None,
+        user: None,
+        gid: None,
+        group: None,
+        permissions: Some(permissions),
+        atime: None,
+        mtime: None,
+    }
+}
+
 /// Write bytes to a new (or truncated) remote file. **Always go through `create`**:
 /// russh-sftp's `SftpSession::write` opens WRITE-only without `CREATE`, so it fails
 /// with "No such file" on a fresh path (staging temps, `.bak` copies, sudo temp).
@@ -305,10 +334,37 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
         }
     }
 
-    // Optional backup of the current file before overwriting (`path.bak`).
+    // Optional backup of the current file before overwriting: a `<path>.bak`
+    // sibling in the same directory, one generation (the next save overwrites it).
+    //
+    // Failure here **aborts the save**, and does so while the target is still
+    // untouched: the user asked for a copy before the overwrite, so overwriting
+    // without one is the exact outcome the setting exists to prevent. Reporting
+    // success over an unbacked overwrite would be the same silent-failure shape
+    // that made the truncation bug so damaging.
+    //
+    // The copy MUST also carry the original's permission bits. `write_bytes`
+    // creates with the server's default (0644 under a typical umask), so a `0600`
+    // config full of credentials was being backed up into a world-readable
+    // sibling. If the bits cannot be applied the copy is removed rather than left
+    // over-permissive — a leaked backup is worse than a refused save. The sudo
+    // path gets this for free via `cp -p`; here it has to be asked for.
     if backup && existing.is_some() {
-        if let Ok(cur) = sftp.read(path).await {
-            let _ = write_bytes(sftp, &format!("{path}.bak"), &cur).await;
+        let bak = format!("{path}.bak");
+        let cur = sftp
+            .read(path)
+            .await
+            .map_err(|e| AppError::BackupFailed(format!("read {path}: {e}")))?;
+        write_bytes(sftp, &bak, &cur)
+            .await
+            .map_err(|e| AppError::BackupFailed(e.to_string()))?;
+        if let Some(perm) = mode {
+            if let Err(e) = sftp.set_metadata(bak.clone(), chmod_attrs(perm)).await {
+                let _ = sftp.remove_file(bak).await;
+                return Err(AppError::BackupFailed(format!(
+                    "could not restrict {path}.bak to the original permissions: {e}"
+                )));
+            }
         }
     }
 
@@ -319,13 +375,12 @@ pub async fn write_text(sftp: &SftpSession, req: &TextWrite<'_>) -> AppResult<Wr
 
     let tmp = temp_sibling(path);
     write_bytes(sftp, &tmp, bytes).await?;
-    // Preserve the original permission bits on the replacement.
+    // Preserve the original permission bits on the replacement. Best-effort: a
+    // non-owner may legitimately be refused the chmod, and the content matters
+    // more than the mode. NOTE the `chmod_attrs` builder — see its doc comment;
+    // `..Default::default()` here silently truncated every saved file to zero.
     if let Some(perm) = mode {
-        let attrs = FileAttributes {
-            permissions: Some(perm),
-            ..Default::default()
-        };
-        let _ = sftp.set_metadata(tmp.clone(), attrs).await;
+        let _ = sftp.set_metadata(tmp.clone(), chmod_attrs(perm)).await;
     }
     // SSH_FXP_RENAME fails if the target exists (OpenSSH), so drop it first.
     // This is the only non-atomic window; the temp already holds the full content.
@@ -814,5 +869,431 @@ mod tests {
         let t2 = temp_sibling("bare.txt");
         assert!(t2.starts_with(".bare.txt.vterm-tmp-"));
         assert!(!t2.contains('/'));
+    }
+
+    /// A chmod payload must carry the permission bits and NOTHING else. Any other
+    /// `Some` field becomes an attribute flag on the wire — `size` in particular
+    /// means `truncate`, which is how saved files were being emptied (Phase 39.6).
+    #[test]
+    fn chmod_attrs_sets_only_permissions() {
+        let a = chmod_attrs(0o100_644);
+        assert_eq!(a.permissions, Some(0o100_644));
+        assert_eq!(a.size, None, "ATTR_SIZE would truncate the file");
+        assert_eq!(a.uid, None);
+        assert_eq!(a.gid, None);
+        assert_eq!(a.user, None);
+        assert_eq!(a.group, None);
+        assert_eq!(a.atime, None);
+        assert_eq!(a.mtime, None);
+    }
+
+    /// Documents *why* `chmod_attrs` spells out every field: russh-sftp's `Default`
+    /// is a populated "new directory" template, not a blank struct. If a future
+    /// upgrade ever makes `Default` blank, this test fails and the guard below can
+    /// be relaxed deliberately rather than by accident.
+    #[test]
+    fn russh_sftp_default_attrs_are_not_blank() {
+        let d = FileAttributes::default();
+        assert_eq!(d.size, Some(0), "Default is a template, not a blank struct");
+        assert_eq!(d.uid, Some(0));
+        assert_eq!(d.gid, Some(0));
+        assert_eq!(d.atime, Some(0));
+        assert_eq!(d.mtime, Some(0));
+    }
+
+    /// Guard: no attribute literal in the tree may fill its rest from `Default`.
+    /// Every construction must go through `chmod_attrs` (or spell out all fields),
+    /// because `Default` silently requests a truncate-to-zero. Mirrors the frontend
+    /// guard tests (`terminput.guard.test.ts`, `overlay.guard.test.ts`).
+    #[test]
+    fn no_file_attributes_built_from_default() {
+        // Assembled at runtime so this file's own source does not contain the
+        // literals it scans for — otherwise the guard reports itself.
+        let open = format!("FileAttributes{}", " {");
+        let spread = format!("..{}::default()", "Default");
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut offenders = Vec::new();
+        let mut stack = vec![dir];
+        while let Some(d) = stack.pop() {
+            for entry in std::fs::read_dir(&d).expect("read src dir") {
+                let path = entry.expect("dir entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_some_and(|e| e == "rs") {
+                    let src = std::fs::read_to_string(&path).expect("read source");
+                    // Look inside each `FileAttributes { … }` literal only, so the
+                    // doc comments above (which name the anti-pattern) don't trip it.
+                    for (i, _) in src.match_indices(open.as_str()) {
+                        let tail = &src[i..];
+                        let end = tail.find('}').unwrap_or(tail.len());
+                        if tail[..end].contains(spread.as_str()) {
+                            offenders.push(path.display().to_string());
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "FileAttributes must not be built from Default (it sends ATTR_SIZE=0 \
+             and truncates the file) — use sftp::chmod_attrs. Offenders: {offenders:?}"
+        );
+    }
+}
+
+/// Live round-trip tests against a real SFTP server — the shared test container
+/// (`docker compose -f e2e/docker-compose.ssh.yml up -d`), same one the E2E suite
+/// uses. See docs/TESTS.md.
+///
+/// These are `#[ignore]`d: they need that listener, so a plain `cargo test` stays
+/// hermetic. Run them with
+/// `cargo test --manifest-path src-tauri/Cargo.toml --lib live_sftp -- --ignored`.
+///
+/// They exist because the whole pure-function suite above was green while the
+/// editor destroyed every file it saved (Phase 39.6). The defect was in what we
+/// asked the server to do, not in any value we computed — a class of bug that is
+/// invisible without a server on the other end. Anything that changes the SFTP
+/// wire conversation (attributes, rename/remove ordering, encodings) belongs here.
+#[cfg(test)]
+mod live_sftp {
+    use super::*;
+    use russh::client;
+    use std::sync::Arc;
+
+    /// Connection details, overridable exactly like the E2E suite's.
+    fn env_or(key: &str, fallback: &str) -> String {
+        std::env::var(key).unwrap_or_else(|_| fallback.into())
+    }
+    fn host() -> String {
+        env_or("VTERM_TEST_SSH_HOST", "127.0.0.1")
+    }
+    fn port() -> u16 {
+        env_or("VTERM_TEST_SSH_PORT", "2222")
+            .parse()
+            .unwrap_or(2222)
+    }
+
+    /// Writable home in the linuxserver/openssh-server image.
+    const DIR: &str = "/config";
+
+    struct AcceptAnyKey;
+
+    impl client::Handler for AcceptAnyKey {
+        type Error = russh::Error;
+        // Throwaway local container; its host key is regenerated on every `up`.
+        async fn check_server_key(
+            &mut self,
+            _key: &russh::keys::ssh_key::PublicKey,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    async fn connect() -> SftpSession {
+        let config = Arc::new(client::Config::default());
+        let (user, pass) = (
+            env_or("VTERM_TEST_SSH_USER", "tester"),
+            env_or("VTERM_TEST_SSH_PASS", "testpass"),
+        );
+        let mut handle = client::connect(config, (host(), port()), AcceptAnyKey)
+            .await
+            .expect("no test SSH server — docker compose -f e2e/docker-compose.ssh.yml up -d");
+        assert!(
+            handle
+                .authenticate_password(&user, &pass)
+                .await
+                .expect("auth call failed")
+                .success(),
+            "test server rejected the credentials"
+        );
+        let channel = handle
+            .channel_open_session()
+            .await
+            .expect("open session channel");
+        channel
+            .request_subsystem(true, "sftp")
+            .await
+            .expect("request sftp subsystem");
+        SftpSession::new(channel.into_stream())
+            .await
+            .expect("sftp handshake")
+    }
+
+    /// Unique path per test so the cases stay independent when run in parallel.
+    fn path_for(case: &str) -> String {
+        format!("{DIR}/vterm-live-{case}-{}.conf", crate::uuid_like())
+    }
+
+    async fn seed(sftp: &SftpSession, path: &str, bytes: &[u8]) {
+        write_bytes(sftp, path, bytes).await.expect("seed file");
+    }
+
+    /// THE Phase 39.6 regression: open a populated config, change one value, save.
+    /// Before the fix the staging temp was truncated by the permission-preserving
+    /// setstat and the empty temp was renamed over the user's file — while the
+    /// write reported success, because `WriteResult` hashes the intended bytes.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn save_keeps_the_content_it_reported_writing() {
+        let sftp = connect().await;
+        let path = path_for("roundtrip");
+        let original = "listen = 80\nworkers = 4\nname = old\n";
+        seed(&sftp, &path, original.as_bytes()).await;
+
+        let opened = read_text(&sftp, &path, MAX_EDIT_SIZE).await.expect("open");
+        assert_eq!(opened.content, original);
+
+        let edited = "listen = 80\nworkers = 4\nname = NEW\n";
+        let res = write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: edited,
+                eol: opened.eol,
+                encoding: &opened.encoding,
+                expected_sha256: Some(&opened.sha256),
+                backup: false,
+            },
+        )
+        .await
+        .expect("save");
+
+        // What the server holds must match both the file and the receipt we gave
+        // the editor — a green toast over an emptied file is the bug itself.
+        let on_server = sftp.read(path.clone()).await.expect("read back");
+        assert_eq!(String::from_utf8_lossy(&on_server), edited);
+        assert_eq!(res.size, edited.len() as u64);
+        assert_eq!(res.sha256, sha256_hex(&on_server));
+
+        // And reopening shows the edit, which is how the user noticed.
+        let reopened = read_text(&sftp, &path, MAX_EDIT_SIZE)
+            .await
+            .expect("reopen");
+        assert_eq!(reopened.content, edited);
+
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// The "keep a .bak on the server" setting: where the copy lands, what it
+    /// holds, and — the part that was wrong — what it is readable by.
+    ///
+    /// A backup created with wider permissions than its original is a data leak
+    /// dressed as a safety feature: `write_bytes` creates at the server's default,
+    /// so a 0600 config full of credentials produced a 0644 `.bak` sibling.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn backup_copy_is_a_sibling_that_keeps_the_original_mode() {
+        let sftp = connect().await;
+        let path = path_for("bak");
+        let bak = format!("{path}.bak");
+        seed(&sftp, &path, b"db_password = hunter2\n").await;
+        sftp.set_metadata(path.clone(), chmod_attrs(0o600))
+            .await
+            .expect("lock the seed down");
+
+        let opened = read_text(&sftp, &path, MAX_EDIT_SIZE).await.expect("open");
+        write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: "db_password = rotated\n",
+                eol: opened.eol,
+                encoding: &opened.encoding,
+                expected_sha256: Some(&opened.sha256),
+                backup: true,
+            },
+        )
+        .await
+        .expect("save with backup");
+
+        // Right next to the original, holding the pre-save content.
+        let meta = sftp.metadata(bak.clone()).await.expect("no .bak sibling");
+        assert_eq!(
+            String::from_utf8_lossy(&sftp.read(bak.clone()).await.expect("read .bak")),
+            "db_password = hunter2\n"
+        );
+        // And no more readable than what it copied.
+        assert_eq!(
+            meta.permissions.expect("mode reported") & 0o777,
+            0o600,
+            "the .bak widened access to the secrets it copied"
+        );
+
+        let _ = sftp.remove_file(bak).await;
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// When the `.bak` cannot be made, the save must be ABANDONED — not completed
+    /// without a backup. The user ticked "copy it first"; overwriting anyway is
+    /// the one outcome the setting exists to prevent, and reporting success over
+    /// it repeats the silent-failure shape that made the truncation bug so bad.
+    ///
+    /// The copy is sabotaged by parking a directory on the `.bak` name, which no
+    /// amount of permission fiddling can turn into a writable file — and needs no
+    /// root, so the test runs as the ordinary container user.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn a_failed_backup_aborts_the_save_and_leaves_the_file_intact() {
+        let sftp = connect().await;
+        let path = path_for("bakfail");
+        let bak = format!("{path}.bak");
+        let original = "keep = this\n";
+        seed(&sftp, &path, original.as_bytes()).await;
+        sftp.create_dir(bak.clone())
+            .await
+            .expect("park a directory on the .bak name");
+
+        let opened = read_text(&sftp, &path, MAX_EDIT_SIZE).await.expect("open");
+        let err = write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: "clobbered = yes\n",
+                eol: opened.eol,
+                encoding: &opened.encoding,
+                expected_sha256: Some(&opened.sha256),
+                backup: true,
+            },
+        )
+        .await
+        .expect_err("save must refuse when the backup cannot be made");
+
+        // Typed, and carrying the marker the frontend switches on.
+        assert!(
+            matches!(err, AppError::BackupFailed(_)),
+            "expected BackupFailed, got {err:?}"
+        );
+        assert!(err.to_string().contains("backup-failed"));
+
+        // The whole point: the server still holds the original, untouched.
+        assert_eq!(
+            String::from_utf8_lossy(&sftp.read(path.clone()).await.expect("read back")),
+            original,
+            "the file was overwritten despite the backup failing"
+        );
+
+        let _ = sftp.remove_dir(bak).await;
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// The `.bak` step must not fail a save for a file that does not exist yet —
+    /// there is nothing to copy, and "save a new file" is not a backup failure.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn backup_is_skipped_for_a_file_that_does_not_exist_yet() {
+        let sftp = connect().await;
+        let path = path_for("bak-new");
+
+        let res = write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: "fresh = 1\n",
+                eol: "lf",
+                encoding: textenc::UTF8,
+                expected_sha256: None,
+                backup: true,
+            },
+        )
+        .await
+        .expect("a brand-new file saves with backup enabled");
+        assert_eq!(res.size, "fresh = 1\n".len() as u64);
+        assert!(
+            sftp.metadata(format!("{path}.bak")).await.is_err(),
+            "nothing existed to back up, so no .bak should have appeared"
+        );
+
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// The truncation came from over-broad attributes, and the tempting overfix is
+    /// to stop sending attributes at all. This pins the behaviour we actually want:
+    /// content survives AND the original mode is carried onto the replacement.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn save_preserves_permission_bits() {
+        let sftp = connect().await;
+        let path = path_for("mode");
+        seed(&sftp, &path, b"secret = 1\n").await;
+        sftp.set_metadata(path.clone(), chmod_attrs(0o600))
+            .await
+            .expect("chmod the seed");
+
+        let opened = read_text(&sftp, &path, MAX_EDIT_SIZE).await.expect("open");
+        write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: "secret = 2\n",
+                eol: opened.eol,
+                encoding: &opened.encoding,
+                expected_sha256: Some(&opened.sha256),
+                backup: false,
+            },
+        )
+        .await
+        .expect("save");
+
+        let meta = sftp.metadata(path.clone()).await.expect("stat");
+        assert_eq!(
+            meta.permissions.expect("mode reported") & 0o777,
+            0o600,
+            "the replacement lost the original mode"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&sftp.read(path.clone()).await.expect("read")),
+            "secret = 2\n"
+        );
+
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// Phase 39's encoding contract, verified over the wire rather than in memory:
+    /// a UTF-16LE config must come back UTF-16LE, CRLF intact. Decoding round-trips
+    /// are unit-tested in textenc.rs; this proves the bytes survive the save path.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn save_rewrites_in_the_original_encoding() {
+        let sftp = connect().await;
+        let path = path_for("utf16");
+        let mut raw = vec![0xFF, 0xFE]; // UTF-16LE BOM
+        for unit in "[main]\r\nkey=old\r\n".encode_utf16() {
+            raw.extend_from_slice(&unit.to_le_bytes());
+        }
+        seed(&sftp, &path, &raw).await;
+
+        let opened = read_text(&sftp, &path, MAX_EDIT_SIZE).await.expect("open");
+        assert_eq!(opened.encoding, textenc::UTF16LE_BOM);
+        assert_eq!(opened.eol, "crlf");
+        // The editor buffer is always LF; the save re-imposes CRLF.
+        assert_eq!(opened.content, "[main]\nkey=old\n");
+
+        write_text(
+            &sftp,
+            &TextWrite {
+                path: &path,
+                content: "[main]\nkey=new\n",
+                eol: opened.eol,
+                encoding: &opened.encoding,
+                expected_sha256: Some(&opened.sha256),
+                backup: false,
+            },
+        )
+        .await
+        .expect("save");
+
+        let mut expected = vec![0xFF, 0xFE];
+        for unit in "[main]\r\nkey=new\r\n".encode_utf16() {
+            expected.extend_from_slice(&unit.to_le_bytes());
+        }
+        assert_eq!(
+            sftp.read(path.clone()).await.expect("read back"),
+            expected,
+            "the file was not rewritten in its original encoding"
+        );
+
+        let _ = sftp.remove_file(path).await;
     }
 }
