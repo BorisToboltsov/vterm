@@ -51,6 +51,7 @@
   import AiConsentDialog from "./AiConsentDialog.svelte";
   import { describeAiError } from "./aierror";
   import { renderMarkdown } from "./markdown";
+  import { mdLinks } from "./actions/mdlinks";
   import { writeClipboard } from "./clipboard";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import type { RecordingMeta } from "./types";
@@ -815,8 +816,8 @@
     {:else if !planText && planStreaming}
       <p class="py-6 text-center text-meta text-muted">{t("recordings.planStreaming")}</p>
     {:else}
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-      <div class="markdown-preview">{@html renderMarkdown(planText)}</div>
+      <!-- AI-generated plan — untrusted; see markdown.ts. -->
+      <div class="markdown-preview" use:mdLinks>{@html renderMarkdown(planText)}</div>
     {/if}
   </div>
 </Modal>

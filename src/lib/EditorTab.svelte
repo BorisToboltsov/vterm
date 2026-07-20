@@ -81,6 +81,7 @@
   import type { EditorLangKind } from "./editorlang";
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
   import { renderMarkdown } from "./markdown";
+  import { mdLinks } from "./actions/mdlinks";
   import { snippetsForLang } from "./snippets";
   import { lintRemote } from "./api";
   import { hasRemoteLinter, parseLint, type LintMsg } from "./remotelint";
@@ -582,7 +583,8 @@
     class="min-h-0 flex-1 overflow-hidden text-sm [&_.cm-editor]:h-full {preview ? 'hidden' : ''}"
   ></div>
   {#if isMarkdown && preview}
-    <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm">
+    <!-- Preview of a file opened over SFTP/locally — untrusted; see markdown.ts. -->
+    <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm" use:mdLinks>
       {@html previewHtml}
     </div>
   {/if}

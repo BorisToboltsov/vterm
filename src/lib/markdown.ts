@@ -1,14 +1,61 @@
-// Minimal, dependency-free Markdown → HTML renderer used to show the bundled
-// README inside the in-app manual (Help → Инструкция). Scope is intentionally
+// Minimal, dependency-free Markdown → HTML renderer. Scope is intentionally
 // limited to the constructs the project docs actually use: ATX headings, unordered
 // lists, pipe tables, fenced/inline code, blockquotes, horizontal rules, links and
-// bold/italic. All text is HTML-escaped before any tag is inserted, so the output
-// is safe for `{@html …}` — and the only input is our own trusted markdown that
-// Vite bundles at build time (`?raw`), never user content.
+// bold/italic.
+//
+// INPUT IS UNTRUSTED (Phase 44.3). This module was written for one caller — the
+// bundled manual (`docs/GUIDE.md?raw`) — and its header used to say so. It has
+// since grown four more callers that feed it content we do not control: LLM replies
+// (AiChat), AI-generated plans (RecordingsPanel), any .md opened over SFTP
+// (EditorTab) and user notes (NotesModal). Treat every caller as hostile.
+//
+// Two defences, and BOTH are required:
+//   1. Text is HTML-escaped before any tag is inserted (`escapeHtml`), and link
+//      targets go through `safeUrl` — a scheme allowlist. Escaping alone is not
+//      enough: `[x](javascript:…)` injects no markup at all, it just becomes the
+//      `href` of an anchor we built ourselves.
+//   2. Callers MUST mount the rendered HTML under `use:mdLinks`
+//      (actions/mdlinks.ts), which intercepts clicks and routes http(s) to the
+//      system browser instead of navigating the WebView. Enforced by
+//      mdlink.guard.test.ts.
+// The WebView holds `invoke()` access to every Tauri command (keychain, terminal
+// writes, file I/O), so a single executed link is a full compromise — and the
+// terminal output that reaches the model is, per the AI core prompt, explicitly
+// untrusted data that may try to induce exactly such a link.
 
 /** Escape the three characters that could otherwise inject markup. */
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// Schemes a markdown link may carry. `http(s)` is handed to the system browser by
+// the mdLinks action; `mailto` to the OS handler. Everything else — `javascript:`,
+// `data:`, `vbscript:`, `file:`, custom app schemes — is refused.
+const ALLOWED_SCHEME = /^(?:https?|mailto):/i;
+// A scheme is the run of chars before the first `:`, provided no `/`, `?` or `#`
+// comes first (otherwise the colon belongs to a path/query, e.g. `a/b:c`).
+const HAS_SCHEME = /^[^/?#]*:/;
+
+/**
+ * Validate a markdown link target. Returns the URL when it is safe to put in an
+ * `href`, or `null` when the link must not be rendered as a link at all.
+ *
+ * Allowed: absolute http(s)/mailto, and scheme-less relative targets (the repo
+ * links in the bundled manual). Refused: any other scheme, and protocol-relative
+ * `//host` — which is not a relative path but a navigation off to another origin.
+ *
+ * Leading control characters and whitespace are stripped before the check because
+ * browsers ignore them when resolving a scheme: `java\tscript:` runs as
+ * `javascript:`. Entity-encoded colons (`javascript&#58;x`) need no handling here —
+ * `escapeHtml` has already turned their `&` into `&amp;`, so the parser never
+ * decodes them back into a scheme.
+ */
+export function safeUrl(url: string): string | null {
+  const trimmed = url.replace(/[\u0000-\u0020]/g, "");
+  if (!trimmed) return null;
+  if (trimmed.startsWith("//")) return null;
+  if (HAS_SCHEME.test(trimmed)) return ALLOWED_SCHEME.test(trimmed) ? url.trim() : null;
+  return url.trim();
 }
 
 // Sentinel wrapping a protected-code-span index. Uses a private-use code point
@@ -27,9 +74,13 @@ export function inline(text: string): string {
     return `${MARK}${codes.length - 1}${MARK}`;
   });
   // Links [label](url) → anchor tagged for the opener-intercepting click handler.
+  // A target that fails the scheme allowlist is NOT rendered as an anchor at all:
+  // the label stays as plain text. Emitting a dead `href="#"` would be worse — it
+  // looks clickable, so the reader learns nothing about why it does nothing.
   out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => {
-    const safeUrl = String(url).replace(/"/g, "&quot;");
-    return `<a href="${safeUrl}" data-md-link>${label}</a>`;
+    const href = safeUrl(String(url));
+    if (href === null) return label;
+    return `<a href="${href.replace(/"/g, "&quot;")}" data-md-link>${label}</a>`;
   });
   // Bold before italic so `**x**` is not mis-parsed as two italics.
   out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");

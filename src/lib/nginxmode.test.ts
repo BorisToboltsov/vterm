@@ -13,7 +13,6 @@ function tokenizeLine(line: string, state: unknown): Tok[] {
   const toks: Tok[] = [];
   while (!stream.eol()) {
     stream.start = stream.pos;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const style = nginx.token(stream, state as any);
     if (stream.pos === stream.start) stream.pos++; // safety: never loop forever
     toks.push({ text: stream.string.slice(stream.start, stream.pos), style });
@@ -22,7 +21,6 @@ function tokenizeLine(line: string, state: unknown): Tok[] {
 }
 
 function tokenizeDoc(lines: string[]): Tok[][] {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const state = (nginx.startState as any)(2);
   return lines.map((l) => tokenizeLine(l, state));
 }

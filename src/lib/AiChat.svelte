@@ -40,6 +40,7 @@
     type SessionChat,
   } from "./stores/aichat.svelte";
   import { renderMarkdown } from "./markdown";
+  import { mdLinks } from "./actions/mdlinks";
   import AiConsentDialog from "./AiConsentDialog.svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
@@ -403,8 +404,9 @@
           {/if}
           {#each parseChatSegments(m.content) as seg, si (si)}
             {#if seg.kind === "text"}
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-              <div class="markdown-preview">{@html renderMarkdown(seg.content)}</div>
+              <!-- Model output — untrusted; links are gated by markdown.ts:safeUrl
+                   at render time and by use:mdLinks on click. -->
+              <div class="markdown-preview" use:mdLinks>{@html renderMarkdown(seg.content)}</div>
             {:else}
               <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-code">
                 <div

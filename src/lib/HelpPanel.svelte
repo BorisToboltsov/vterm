@@ -3,6 +3,7 @@
   import { getName, getVersion, getTauriVersion } from "@tauri-apps/api/app";
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "./markdown";
+  import { mdLinks } from "./actions/mdlinks";
   import guide from "../../docs/GUIDE.md?raw";
   import Icon from "./Icon.svelte";
   import AppLogo from "./AppLogo.svelte";
@@ -32,30 +33,6 @@
 
   function ext(url: string) {
     openUrl(url).catch(() => {});
-  }
-
-  // Links inside the rendered manual must never navigate the WebView: open
-  // http(s) targets in the system browser via the opener, ignore the rest
-  // (relative repo links). Mirrors the offline-autonomy invariant.
-  function onManualClick(e: Event) {
-    const a = (e.target as HTMLElement | null)?.closest?.("a[data-md-link]") as
-      | HTMLAnchorElement
-      | null;
-    if (!a) return;
-    e.preventDefault();
-    const href = a.getAttribute("href") ?? "";
-    if (/^https?:\/\//i.test(href)) ext(href);
-  }
-
-  // Delegate link clicks via addEventListener (not an `onclick` on the
-  // non-interactive container, which would trip a11y lint).
-  function manualLinks(node: HTMLElement) {
-    node.addEventListener("click", onManualClick);
-    return {
-      destroy() {
-        node.removeEventListener("click", onManualClick);
-      },
-    };
   }
 
   // [label message-key, key combo, optional combo message-key]. Key combos that
@@ -158,7 +135,7 @@
           </table>
         {:else if tab === "manual"}
           <!-- Bundled README, rendered to HTML. Links go through the opener. -->
-          <div class="manual text-xs leading-relaxed text-text" use:manualLinks>
+          <div class="manual text-xs leading-relaxed text-text" use:mdLinks>
             {@html manualHtml}
           </div>
         {:else}

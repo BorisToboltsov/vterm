@@ -10,6 +10,7 @@
   import Icon from "./Icon.svelte";
   import { tooltip } from "./actions/tooltip";
   import { renderMarkdown } from "./markdown";
+  import { mdLinks } from "./actions/mdlinks";
   import { noteStats } from "./notes";
   import { t } from "./i18n";
   import type { ServerProfile } from "./types";
@@ -120,6 +121,7 @@
       <div
         data-testid="notes-preview"
         class="markdown-preview h-[60vh] overflow-auto rounded border border-edge bg-panel px-3 py-2 text-sm leading-relaxed"
+        use:mdLinks
       >
         {@html renderMarkdown(draft)}
       </div>

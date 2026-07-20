@@ -6031,7 +6031,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "0.44.2"
+version = "0.44.3"
 dependencies = [
  "async-http-proxy",
  "chardetng",

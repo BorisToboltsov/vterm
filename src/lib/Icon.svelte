@@ -26,6 +26,7 @@
   aria-hidden={title ? undefined : "true"}
 >
   {#if title}<title>{title}</title>{/if}
-  <!-- eslint-disable-next-line svelte/no-at-html-tags — static, trusted icon markup -->
+  <!-- Static, trusted markup from the ICONS registry — never user input, so this
+       is the one {@html} sink that needs no link interception (mdlink.guard). -->
   {@html ICONS[name]}
 </svg>
