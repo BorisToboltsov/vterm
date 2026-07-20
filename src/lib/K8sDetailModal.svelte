@@ -84,50 +84,61 @@
     idle: "bg-muted",
   };
 
+  // The panel hands us a *fresh* pod object on every poll, so the prop changes
+  // identity while describing the same pod. An effect that merely reads it re-runs
+  // on every poll and yanks the user off Logs back to Overview, so identity is
+  // compared here explicitly. `shownKey` is the guard (deliberately non-reactive);
+  // `target` is what the tab effects below depend on, so they see only real changes.
+  // Mirrors DockerDetailModal.
+  let shownKey: string | null = null;
+  let target = $state<{ name: string; namespace: string } | null>(null);
+
   // Reset to Overview and pick a sensible default container whenever a different
   // pod opens (multi-container pods need `-c` for logs/exec — default to the first).
   $effect(() => {
-    void pod?.name;
-    if (open && pod) {
-      tab = "overview";
-      logsText = "";
-      describeText = "";
-      yamlText = "";
-      container = pod.containers.length > 1 ? pod.containers[0] : null;
-    }
+    const p = open ? pod : null;
+    const key = p ? `${p.namespace}/${p.name}` : null;
+    if (key === shownKey) return;
+    shownKey = key;
+    target = p ? { name: p.name, namespace: p.namespace } : null;
+    tab = "overview";
+    logsText = "";
+    describeText = "";
+    yamlText = "";
+    container = p && p.containers.length > 1 ? p.containers[0] : null;
   });
 
-  async function fetchLogs() {
-    if (!pod) return;
-    const res = await runQuery(logsArgs(pod.name, container), pod.namespace, 30);
+  async function fetchLogs(name: string, ns: string, c: string | null) {
+    const res = await runQuery(logsArgs(name, c), ns, 30);
     logsText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
-  async function fetchDescribe() {
-    if (!pod) return;
-    const res = await runQuery(describeArgs("pod", pod.name), pod.namespace, 30);
+  async function fetchDescribe(name: string, ns: string) {
+    const res = await runQuery(describeArgs("pod", name), ns, 30);
     describeText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
-  async function fetchYaml() {
-    if (!pod) return;
-    const res = await runQuery(getYamlArgs("pod", pod.name), pod.namespace, 30);
+  async function fetchYaml(name: string, ns: string) {
+    const res = await runQuery(getYamlArgs("pod", name), ns, 30);
     yamlText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
 
   // Logs tab re-polls while open (like the panel's live view); describe/yaml once.
   $effect(() => {
-    if (!open || tab !== "logs" || !pod) return;
-    void container; // refetch when the container selection changes
-    void fetchLogs();
-    const id = setInterval(() => void fetchLogs(), Math.max(1, refreshSec) * 1000);
+    const p = target;
+    const c = container; // refetch when the container selection changes
+    if (!open || tab !== "logs" || !p) return;
+    void fetchLogs(p.name, p.namespace, c);
+    const id = setInterval(() => void fetchLogs(p.name, p.namespace, c), Math.max(1, refreshSec) * 1000);
     return () => clearInterval(id);
   });
   $effect(() => {
-    if (!open || tab !== "describe" || !pod) return;
-    void fetchDescribe();
+    const p = target;
+    if (!open || tab !== "describe" || !p) return;
+    void fetchDescribe(p.name, p.namespace);
   });
   $effect(() => {
-    if (!open || tab !== "yaml" || !pod) return;
-    void fetchYaml();
+    const p = target;
+    if (!open || tab !== "yaml" || !p) return;
+    void fetchYaml(p.name, p.namespace);
   });
 
   async function remove() {

@@ -92,37 +92,49 @@
 
   const rows = $derived(container ? containerInfoRows(container, stat) : []);
 
-  // Reset to Overview whenever a different container opens.
+  // The panel hands us a *fresh* container object on every poll (a new snapshot
+  // every `refreshSec`), so the container prop changes identity constantly while
+  // describing the same container. Effects must therefore key off the id, and
+  // compare it themselves: an effect that merely reads the prop re-runs on every
+  // poll, which snapped the user back to Overview a second after they picked
+  // Logs and wiped the fetched text. `shownId` is deliberately *not* reactive —
+  // it is the guard, not state. `activeId` is what the tab effects below depend
+  // on, so they see only real container changes.
+  let shownId: string | null = null;
+  let activeId = $state<string | null>(null);
+
+  // Reset to Overview whenever a different container opens (or the modal closes).
   $effect(() => {
-    void container?.id;
-    if (open) {
-      tab = "overview";
-      logsText = "";
-      inspectText = "";
-    }
+    const id = open ? (container?.id ?? null) : null;
+    if (id === shownId) return;
+    shownId = id;
+    activeId = id;
+    tab = "overview";
+    logsText = "";
+    inspectText = "";
   });
 
-  async function fetchLogs() {
-    if (!container) return;
-    const res = await runQuery(logsArgs(container.id), 30);
+  async function fetchLogs(id: string) {
+    const res = await runQuery(logsArgs(id), 30);
     logsText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
-  async function fetchInspect() {
-    if (!container) return;
-    const res = await runQuery(inspectArgs(container.id), 30);
+  async function fetchInspect(id: string) {
+    const res = await runQuery(inspectArgs(id), 30);
     inspectText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
 
   // Logs tab re-polls while open (like the panel's live view); inspect once.
   $effect(() => {
-    if (!open || tab !== "logs" || !container) return;
-    void fetchLogs();
-    const id = setInterval(() => void fetchLogs(), Math.max(1, refreshSec) * 1000);
-    return () => clearInterval(id);
+    const cid = activeId;
+    if (!open || tab !== "logs" || !cid) return;
+    void fetchLogs(cid);
+    const timer = setInterval(() => void fetchLogs(cid), Math.max(1, refreshSec) * 1000);
+    return () => clearInterval(timer);
   });
   $effect(() => {
-    if (!open || tab !== "inspect" || !container) return;
-    void fetchInspect();
+    const cid = activeId;
+    if (!open || tab !== "inspect" || !cid) return;
+    void fetchInspect(cid);
   });
 
   async function act(args: string[], opts?: { destructive?: boolean; successKey?: string }) {

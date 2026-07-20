@@ -925,6 +925,12 @@ pnpm test:coverage   # прогон + покрытие + гейты
   `logoutArgs` (`--password-stdin`, Docker Hub без url), `registryLabel`, `sanitizeDockerRegistries`
   (отсев мусора, требование username, дедуп по url). UI-оболочки (`Docker*.svelte`) — в
   exclude покрытия, вся логика в `docker.ts`. `clampDockerRefresh` — в `settings.test.ts`.
+- `DockerDetailModal.test.ts` (v0.41.1, компонентные) — модалка «Подробнее» **не теряет
+  выбранную вкладку** на снимках поллинга: открывается на «Обзоре»; после `rerender` с
+  **новым объектом того же контейнера** (изменился `status`) остаётся на «Логах» с уже
+  загруженным текстом; на **другом** `id` сбрасывается на «Обзор»; поллер логов не
+  дублируется (один вызов `runQuery` за интервал). Все четыре падают на коде до фикса —
+  эффект зависел от объекта, а не от `id`.
 - `k8s.test.ts` (Фаза 37, Kubernetes-панель, 53 теста) — `kubectlProg` (пусто→`kubectl`,
   `k3s kubectl`→токены, абс. путь одним токеном); `withScope` (вставка `--context`/
   `--namespace`/`-A`; `namespace=null`→дефолт контекста; `namespaced:false` для cluster-scoped;
@@ -950,6 +956,10 @@ pnpm test:coverage   # прогон + покрытие + гейты
   LB-адрес), `nodeRoles` (label’ы `node-role.kubernetes.io/*` + legacy `kubernetes.io/role`), `parseNodes`
   (Ready/`SchedulingDisabled`, version, internalIP), `parseEvents` (newest-first сортировка, object
   `Kind/name`, count), `nodeStatusTone`/`eventTone`.
+- `K8sDetailModal.test.ts` (v0.41.1, компонентные) — то же для модалки пода: вкладка «Логи»
+  переживает свежий снимок того же пода (изменились `age`/`restarts`), другой `name`
+  сбрасывает на «Обзор», и **под с тем же именем в другом namespace считается другим подом**
+  (идентичность — `namespace/name`, не имя).
 - `idle.test.ts` (Фаза 28, чистая логика заставки простоя) — `isIdleSetting`/
   `clampIdleTimeout` (валидация настроек, клэмп к [15…3600] c) и детект простоя
   `isIdle`/`msUntilIdle` (порог по «нет активности», обратный отсчёт без отрицательных).

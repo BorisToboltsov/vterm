@@ -456,7 +456,10 @@
       "Bash(perl -0pi -e 's/\"version\": \"0\\\\.39\\\\.8\"/\"version\": \"0.40.0\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(perl -0pi -e 's/^version = \"0\\\\.39\\\\.8\"/version = \"0.40.0\"/m' src-tauri/Cargo.toml)",
       "Bash(grep -n -A6 \"historyCharCap:$\\\\|historyCharCap:\" src/lib/ai.ts)",
-      "Bash(grep -n 'from \"\\\\$lib/stores/aichat.svelte\"\\\\|from \"\\\\$lib/ai\"' src/routes/+page.svelte)"
+      "Bash(grep -n 'from \"\\\\$lib/stores/aichat.svelte\"\\\\|from \"\\\\$lib/ai\"' src/routes/+page.svelte)",
+      "Bash(grep -n '\\\\$effect' -A 8 src/lib/K8sDetailModal.svelte)",
+      "Bash(sed -i '' 's/\"version\": \"0.41.0\"/\"version\": \"0.41.1\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(sed -i '' '0,/^version = \"0.41.0\"/s//version = \"0.41.1\"/' src-tauri/Cargo.toml)"
     ]
   }
 }
