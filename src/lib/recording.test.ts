@@ -14,6 +14,7 @@ import {
   sessionMetaPairs,
   metadataComment,
   playbackSpeeds,
+  activityBuckets,
 } from "./recording";
 import type { RecordingMeta } from "./types";
 
@@ -365,5 +366,80 @@ describe("formatTime", () => {
     expect(formatTime(83)).toBe("1:23");
     expect(formatTime(3723)).toBe("1:02:03");
     expect(formatTime(-5)).toBe("0:00");
+  });
+});
+
+describe("activityBuckets", () => {
+  /** Output event helper. */
+  const o = (time: number, size: number) => ({ time, kind: "o" as const, data: "x".repeat(size) });
+
+  it("returns the requested number of buckets", () => {
+    expect(activityBuckets([o(0, 10), o(5, 10)], 8, 10)).toHaveLength(8);
+    expect(activityBuckets([], 12, 10)).toHaveLength(12);
+  });
+
+  it("is all-zero for a recording with no output", () => {
+    expect(activityBuckets([], 4, 10).every((b) => b.level === 0 && !b.burst)).toBe(true);
+    expect(activityBuckets([{ time: 1, kind: "i", data: "ls\r" }], 4, 10)[0].level).toBe(0);
+  });
+
+  it("is all-zero when the recording has no duration (nothing to scrub)", () => {
+    expect(activityBuckets([o(0, 100)], 4, 0).every((b) => b.level === 0)).toBe(true);
+  });
+
+  it("places output in the bucket matching its timestamp", () => {
+    const b = activityBuckets([o(0.5, 100), o(9.5, 100)], 10, 10);
+    expect(b[0].level).toBeGreaterThan(0);
+    expect(b[9].level).toBeGreaterThan(0);
+    expect(b.slice(1, 9).every((x) => x.level === 0)).toBe(true);
+  });
+
+  it("puts an event at exactly the end time in the last bucket, not out of range", () => {
+    const b = activityBuckets([o(10, 100)], 5, 10);
+    expect(b).toHaveLength(5);
+    expect(b[4].level).toBeGreaterThan(0);
+  });
+
+  it("ignores input events — a typed command must not outweigh a scrolling build", () => {
+    const b = activityBuckets(
+      [{ time: 1, kind: "i", data: "make\r" }, o(6, 5000)],
+      2,
+      10,
+    );
+    expect(b[0].level).toBe(0);
+    expect(b[1].level).toBe(1);
+  });
+
+  it("falls back to the last event's time when no duration is given", () => {
+    const b = activityBuckets([o(0, 50), o(8, 50)], 4);
+    expect(b[0].level).toBeGreaterThan(0);
+    expect(b[3].level).toBeGreaterThan(0);
+  });
+
+  it("keeps ordinary chatter visible next to one huge dump (the log-scale reason)", () => {
+    // One 5 MB `cat` against 2 KB of shell output. On a linear scale the small
+    // bucket would round to 0.0004 — an invisible column, i.e. the flat bar again.
+    const b = activityBuckets([o(1, 5_000_000), o(6, 2000)], 2, 10);
+    expect(b[0].level).toBe(1);
+    expect(b[1].level).toBeGreaterThan(0.4);
+  });
+
+  it("marks a stand-out slice as a burst and leaves steady output unmarked", () => {
+    const steady = activityBuckets([o(1, 100), o(3, 100), o(5, 100), o(7, 100)], 4, 8);
+    expect(steady.some((x) => x.burst)).toBe(false);
+    const spiky = activityBuckets([o(1, 100), o(3, 100), o(5, 100), o(7, 90_000)], 4, 8);
+    expect(spiky[3].burst).toBe(true);
+    expect(spiky.slice(0, 3).some((x) => x.burst)).toBe(false);
+  });
+
+  it("does not let long idle stretches turn every busy slice into a burst", () => {
+    const events = [o(1, 100), o(2, 120), o(3, 90)];
+    const b = activityBuckets(events, 20, 60);
+    expect(b.filter((x) => x.burst)).toHaveLength(0);
+  });
+
+  it("clamps a nonsensical bucket count instead of returning nothing", () => {
+    expect(activityBuckets([o(1, 10)], 0, 5)).toHaveLength(1);
+    expect(activityBuckets([o(1, 10)], -3, 5)).toHaveLength(1);
   });
 });

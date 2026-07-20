@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   applyUiPalette,
+  statusPalette,
+  STATUS_DARK,
+  STATUS_LIGHT,
   DEFAULT_THEME_ID,
   getTheme,
   THEMES,
@@ -106,5 +109,62 @@ describe("applyUiPalette", () => {
     expect(style.getPropertyValue("--color-accent")).toBe(ui.accent);
     expect(style.getPropertyValue("--color-text")).toBe(ui.text);
     expect(style.getPropertyValue("--color-accent-hover")).toBe(ui.accentHover);
+  });
+
+  it("writes the status trio, using dark defaults by default", () => {
+    applyUiPalette(getTheme("nord").ui);
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--color-ok")).toBe(STATUS_DARK.ok);
+    expect(style.getPropertyValue("--color-bad")).toBe(STATUS_DARK.bad);
+  });
+
+  it("writes light status defaults when the theme's panels are light", () => {
+    applyUiPalette(getTheme("solarized-light").ui, true);
+    const style = document.documentElement.style;
+    expect(style.getPropertyValue("--color-ok")).toBe(STATUS_LIGHT.ok);
+    expect(style.getPropertyValue("--color-warn")).toBe(STATUS_LIGHT.warn);
+    expect(style.getPropertyValue("--color-bad")).toBe(STATUS_LIGHT.bad);
+  });
+});
+
+describe("statusPalette", () => {
+  const bare: UiPalette = {
+    panel: "#000",
+    panelAlt: "#000",
+    edge: "#000",
+    accent: "#000",
+    accentHover: "#000",
+    danger: "#000",
+    muted: "#000",
+    text: "#fff",
+  };
+
+  it("uses the dark trio for dark themes", () => {
+    expect(statusPalette(bare, false)).toEqual({ ...STATUS_DARK });
+  });
+
+  it("uses a distinctly darker trio for light themes — the bug this replaced", () => {
+    const light = statusPalette(bare, true);
+    expect(light).toEqual({ ...STATUS_LIGHT });
+    // The whole point: a light theme must NOT inherit the near-fluorescent
+    // dark-theme values, which vanish on a cream panel.
+    expect(light.ok).not.toBe(STATUS_DARK.ok);
+    expect(light.warn).not.toBe(STATUS_DARK.warn);
+    expect(light.bad).not.toBe(STATUS_DARK.bad);
+  });
+
+  it("lets a theme override any single colour and inherit the rest", () => {
+    expect(statusPalette({ ...bare, warn: "#abcdef" }, false)).toEqual({
+      ok: STATUS_DARK.ok,
+      warn: "#abcdef",
+      bad: STATUS_DARK.bad,
+    });
+  });
+
+  it("every shipped light theme resolves to the light trio", () => {
+    for (const t of THEMES.filter((x) => x.group === "light")) {
+      const s = statusPalette(t.ui, true);
+      expect(s.ok, t.id).not.toBe(STATUS_DARK.ok);
+    }
   });
 });

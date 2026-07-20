@@ -16,6 +16,9 @@ function pod(over: Partial<K8sPod> = {}): K8sPod {
     containers: ["web"],
     ownerKind: "Deployment",
     ownerName: "web",
+    cpuLimit: null,
+    memLimit: null,
+    qos: "Burstable",
     ...over,
   };
 }

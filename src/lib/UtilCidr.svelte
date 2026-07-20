@@ -48,12 +48,12 @@
   </label>
 
   {#if !result.ok}
-    <p class="text-[11px] text-danger" data-testid="cidr-error">{t(ERR[result.error])}</p>
+    <p class="text-meta text-danger" data-testid="cidr-error">{t(ERR[result.error])}</p>
   {:else}
     <div class="flex items-center gap-2">
       <span class="font-mono text-sm text-white" data-testid="cidr-block">{result.info.cidr}</span>
       <span
-        class="rounded px-1.5 py-0.5 text-[10px] {result.info.isPrivate
+        class="rounded px-1.5 py-0.5 text-caption {result.info.isPrivate
           ? 'bg-accent/20 text-accent'
           : 'bg-edge text-muted'}"
       >
@@ -85,7 +85,7 @@
         {#if contained !== null}
           <span
             data-testid="cidr-contained"
-            class="rounded px-2 py-0.5 text-[11px] {contained
+            class="rounded px-2 py-0.5 text-meta {contained
               ? 'bg-accent/20 text-accent'
               : 'bg-danger/15 text-danger'}"
           >

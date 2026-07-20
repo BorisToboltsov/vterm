@@ -37,9 +37,9 @@
   } = $props();
 
   const TONE: Record<string, string> = {
-    ok: "bg-green-400",
-    warn: "bg-amber-400",
-    bad: "bg-red-500",
+    ok: "bg-ok",
+    warn: "bg-warn",
+    bad: "bg-bad",
     idle: "bg-muted",
   };
 
@@ -77,10 +77,10 @@
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="server" size={13} class="text-accent" />
     <span class="font-medium text-white/85">{t("k8s.nodes")}</span>
-    <span class="text-[10px] text-muted">{nodes.length}</span>
+    <span class="text-caption text-muted">{nodes.length}</span>
   </div>
   {#if nodes.length === 0}
-    <div class="px-2.5 py-2 text-[11px] text-muted">{t("k8s.noNodes")}</div>
+    <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noNodes")}</div>
   {:else}
     {#each nodes as n (n.name)}
       <div
@@ -92,11 +92,11 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-white/90">{n.name}</span>
-            <span class="shrink-0 text-[10px] text-muted">{n.roles}</span>
+            <span class="shrink-0 text-caption text-muted">{n.roles}</span>
           </div>
-          <div class="truncate text-[10px] text-muted">{n.version}{#if n.internalIp} · {n.internalIp}{/if}</div>
+          <div class="truncate text-caption text-muted">{n.version}{#if n.internalIp} · {n.internalIp}{/if}</div>
         </div>
-        <span class="shrink-0 text-[10px] text-muted tabular-nums" use:tooltip={t("k8s.age")}>{n.age}</span>
+        <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{n.age}</span>
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">
           {#if n.schedulable}
             <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.cordon")} aria-label={t("k8s.cordon")} onclick={() => run(cordonArgs(n.name), "", { successKey: "k8s.cordoned" })}>
@@ -123,7 +123,7 @@
       {#each FILTERS as f (f.id)}
         <button
           data-testid={`k8s-event-filter-${f.id}`}
-          class="rounded border px-1.5 py-0.5 text-[10px] {filter === f.id ? 'border-accent text-accent' : 'border-edge text-muted hover:text-white'}"
+          class="rounded border px-1.5 py-0.5 text-caption {filter === f.id ? 'border-accent text-accent' : 'border-edge text-muted hover:text-white'}"
           aria-pressed={filter === f.id}
           onclick={() => (filter = f.id)}
         >
@@ -133,7 +133,7 @@
     </div>
   </div>
   {#if shownEvents.length === 0}
-    <div class="px-2.5 py-2 text-[11px] text-muted">{t("k8s.noEvents")}</div>
+    <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noEvents")}</div>
   {:else}
     {#each shownEvents as e, idx (idx)}
       <div class="flex items-start gap-2 border-b border-edge/60 py-1.5 pr-2 pl-2.5">
@@ -141,11 +141,11 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="shrink-0 font-medium text-white/90">{e.reason}</span>
-            <span class="truncate text-[10px] text-muted">{e.object}</span>
+            <span class="truncate text-caption text-muted">{e.object}</span>
           </div>
-          <div class="truncate text-[10px] text-muted" use:tooltip={e.message}>{e.message}</div>
+          <div class="truncate text-caption text-muted" use:tooltip={e.message}>{e.message}</div>
         </div>
-        <div class="flex shrink-0 items-center gap-1.5 text-[10px] text-muted tabular-nums">
+        <div class="flex shrink-0 items-center gap-1.5 text-caption text-muted tabular-nums">
           {#if e.count > 1}<span use:tooltip={t("k8s.count")}>×{e.count}</span>{/if}
           <span use:tooltip={t("k8s.age")}>{e.age}</span>
         </div>

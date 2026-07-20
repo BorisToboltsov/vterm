@@ -62,7 +62,7 @@
 {#if !sessionId}
   <p class="text-xs text-muted">{t("servertools.connectFirst")}</p>
 {:else}
-  <div class="mb-2 flex items-center gap-2 text-[11px] text-muted">
+  <div class="mb-2 flex items-center gap-2 text-meta text-muted">
     {#if status?.manager}
       <span>{t("servertools.manager", { mgr: status.manager })}</span>
     {/if}
@@ -83,10 +83,10 @@
         <div class="flex items-center gap-2 px-2 py-1.5 text-xs">
           <div class="min-w-0 flex-1">
             <div class="text-white">{tool.name}</div>
-            <div class="truncate text-[11px] text-muted">{t(PURPOSE[tool.id] ?? "servertools.purposeShell")}</div>
+            <div class="truncate text-meta text-muted">{t(PURPOSE[tool.id] ?? "servertools.purposeShell")}</div>
           </div>
           {#if tool.installed}
-            <span class="flex items-center gap-1 text-green-500">
+            <span class="flex items-center gap-1 text-ok">
               <Icon name="check" size={13} />
               {t("servertools.installed")}
             </span>

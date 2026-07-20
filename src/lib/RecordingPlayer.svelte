@@ -17,6 +17,8 @@
     castDuration,
     formatTime,
     playbackSpeeds,
+    activityBuckets,
+    type ActivityBucket,
     type CastEvent,
   } from "./recording";
 
@@ -50,6 +52,11 @@
   // (non-timed) recordings use a slower scale (see playbackSpeeds in recording.ts).
   let speeds = $state<number[]>([0.5, 1, 2, 4]);
   let speed = $state(1);
+  // Output-density strip drawn behind the scrubber. Computed once after parsing —
+  // the recording is immutable, so there is nothing to recompute per frame.
+  let buckets = $state<ActivityBucket[]>([]);
+  /** Column count: dense enough to show shape, coarse enough to stay ≥2px wide. */
+  const BUCKETS = 80;
 
   function emitUpTo(target: number) {
     const t2 = Math.min(target, duration);
@@ -123,6 +130,7 @@
     const preset = playbackSpeeds(parsed.header);
     speeds = preset.speeds;
     speed = preset.initial;
+    buckets = activityBuckets(events, BUCKETS, duration);
     const th = activeTerminalTheme();
     term = new Terminal({
       cols: Math.max(1, width),
@@ -196,16 +204,33 @@
       >
         <Icon name="refresh" size={15} />
       </button>
-      <input
-        type="range"
-        min="0"
-        max={duration}
-        step="0.05"
-        value={playhead}
-        oninput={onScrub}
-        aria-label={t("player.seek")}
-        class="h-1 min-w-0 flex-1 cursor-pointer accent-accent"
-      />
+      <!-- Scrubber over an output-density strip. The strip is decorative
+           (`aria-hidden`) and sits *behind* the real range input, so click-to-seek,
+           arrow-key seeking and the accessible name all stay native — a
+           hand-rolled click-target would have quietly dropped the keyboard path. -->
+      <div class="relative min-w-0 flex-1">
+        <div class="pointer-events-none absolute inset-x-0 top-0 flex h-5 items-end gap-px" aria-hidden="true">
+          {#each buckets as b, i (i)}
+            {@const played = duration > 0 && (i + 1) / buckets.length <= playhead / duration}
+            <span
+              class="min-w-0 flex-1 rounded-[1px]"
+              style="height: {b.level > 0 ? Math.max(8, b.level * 100) : 0}%;
+                     background-color: var({b.burst ? '--color-warn' : '--color-accent'});
+                     opacity: {played ? 1 : 0.35}"
+            ></span>
+          {/each}
+        </div>
+        <input
+          type="range"
+          min="0"
+          max={duration}
+          step="0.05"
+          value={playhead}
+          oninput={onScrub}
+          aria-label={t("player.seek")}
+          class="player-scrub relative h-5 w-full cursor-pointer accent-accent"
+        />
+      </div>
       <span class="shrink-0 text-xs tabular-nums text-muted">
         {formatTime(playhead)} / {formatTime(duration)}
       </span>
@@ -215,7 +240,7 @@
             type="button"
             onclick={() => (speed = sp)}
             aria-pressed={speed === sp}
-            class="rounded px-1.5 py-0.5 text-[11px] font-medium {speed === sp
+            class="rounded px-1.5 py-0.5 text-meta font-medium {speed === sp
               ? 'bg-edge text-accent'
               : 'text-muted hover:text-accent'}">{sp}×</button
           >
@@ -226,3 +251,36 @@
     <p class="text-xs text-muted">{t("player.empty")}</p>
   {/if}
 </div>
+
+<style>
+  /* The range input carries the interaction; the density strip behind it carries
+     the picture. So the track is made transparent and the thumb becomes a thin
+     playhead line rather than a knob that would cover three columns of the strip. */
+  .player-scrub {
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+  }
+  .player-scrub::-webkit-slider-runnable-track {
+    height: 100%;
+    background: transparent;
+  }
+  .player-scrub::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 2px;
+    height: 20px;
+    border-radius: 1px;
+    background: var(--color-text);
+  }
+  .player-scrub::-moz-range-track {
+    height: 100%;
+    background: transparent;
+  }
+  .player-scrub::-moz-range-thumb {
+    width: 2px;
+    height: 20px;
+    border: 0;
+    border-radius: 1px;
+    background: var(--color-text);
+  }
+</style>

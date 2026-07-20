@@ -205,6 +205,17 @@ export interface K8sPod {
   /** Owning workload kind (ReplicaSet rolled up to Deployment), "" if standalone. */
   ownerKind: string;
   ownerName: string;
+  /**
+   * Pod CPU limit in millicores, or null when the pod is effectively unbounded
+   * (see `sumLimit`). Read from the `-o json` we already fetch — `kubectl top`
+   * reports usage but never the ceiling, so before Phase 43 the panel had a
+   * numerator with no denominator.
+   */
+  cpuLimit: number | null;
+  /** Pod memory limit in MiB, or null when unbounded. */
+  memLimit: number | null;
+  /** QoS class (`Guaranteed`/`Burstable`/`BestEffort`), "" when absent. */
+  qos: string;
 }
 
 export interface K8sWorkload {
@@ -288,6 +299,55 @@ function dig(obj: unknown, ...path: string[]): unknown {
   return cur;
 }
 
+/**
+ * kubectl CPU quantity → millicores: `"120m"` → 120, `"1"` → 1000, `"1500n"` →
+ * 0.0015. Null when unparseable (metrics-server absent prints `<unknown>`).
+ */
+export function parseCpuMillis(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([munk]?)\s*$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  switch (m[2]) {
+    case "n":
+      return n / 1e6;
+    case "u":
+      return n / 1e3;
+    case "m":
+      return n;
+    default:
+      return n * 1000;
+  }
+}
+
+/** kubectl memory quantity → MiB: `"412Mi"` → 412, `"1Gi"` → 1024. Null if unparseable. */
+export function parseMemMiB(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|K|M|G|T)?i?\s*$/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const unit = m[2] ?? "";
+  const MIB = 1024 * 1024;
+  switch (unit) {
+    case "Ki":
+    case "K":
+      return (n * 1024) / MIB;
+    case "Mi":
+    case "M":
+      return n;
+    case "Gi":
+    case "G":
+      return n * 1024;
+    case "Ti":
+    case "T":
+      return n * 1024 * 1024;
+    default:
+      return n / MIB; // bare number is bytes
+  }
+}
+
 function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
@@ -336,6 +396,47 @@ export function podDisplayStatus(item: Record<string, unknown>): string {
   return str(dig(item, "status", "phase"));
 }
 
+/**
+ * Sum one resource limit across a pod's containers.
+ *
+ * Returns null when **any** container lacks the limit, because that is what the
+ * cluster does: one unbounded container makes the whole pod unbounded, and
+ * summing only the containers that happen to declare a limit would invent a
+ * ceiling the scheduler never enforces. Showing "800m / 500m" for such a pod
+ * would be worse than showing nothing.
+ */
+export function sumLimit(
+  containers: readonly Record<string, unknown>[],
+  key: "cpu" | "memory",
+  parse: (s: string | undefined) => number | null,
+): number | null {
+  if (containers.length === 0) return null;
+  let total = 0;
+  for (const c of containers) {
+    const v = parse(str(dig(c, "resources", "limits", key)));
+    if (v == null) return null;
+    total += v;
+  }
+  return total;
+}
+
+/** Fraction of a limit in use (0…1+), or null when either side is unknown. */
+export function limitRatio(usage: number | null, limit: number | null): number | null {
+  if (usage == null || limit == null || !(limit > 0)) return null;
+  return usage / limit;
+}
+
+/**
+ * Tone for a usage/limit ratio. `null` ratio stays `null` — an unbounded pod is
+ * not "healthy", it is unmeasured, and colouring it green would say otherwise.
+ */
+export function limitTone(ratio: number | null): "ok" | "warn" | "bad" | null {
+  if (ratio == null) return null;
+  if (ratio >= 0.9) return "bad";
+  if (ratio >= 0.75) return "warn";
+  return "ok";
+}
+
 export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
   return items(raw).map((it) => {
     const cs = dig(it, "status", "containerStatuses");
@@ -343,9 +444,10 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
     const readyCount = csArr.filter((c) => c.ready === true).length;
     const restarts = csArr.reduce((sum, c) => sum + num(c.restartCount), 0);
     const specContainers = dig(it, "spec", "containers");
-    const containers = Array.isArray(specContainers)
-      ? (specContainers as Record<string, unknown>[]).map((c) => str(c.name)).filter(Boolean)
+    const specArr = Array.isArray(specContainers)
+      ? (specContainers as Record<string, unknown>[])
       : [];
+    const containers = specArr.map((c) => str(c.name)).filter(Boolean);
     const owner = resolveOwner(dig(it, "metadata", "ownerReferences"));
     return {
       name: str(dig(it, "metadata", "name")),
@@ -359,6 +461,9 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
       containers,
       ownerKind: owner.kind,
       ownerName: owner.name,
+      cpuLimit: sumLimit(specArr, "cpu", parseCpuMillis),
+      memLimit: sumLimit(specArr, "memory", parseMemMiB),
+      qos: str(dig(it, "status", "qosClass")),
     };
   });
 }

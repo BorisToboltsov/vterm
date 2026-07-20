@@ -10,6 +10,7 @@
   import { t } from "./i18n";
   import InfoHint from "./InfoHint.svelte";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   hostEnv.resolve();
 
@@ -59,7 +60,7 @@
       <option value="custom">{t("settings.localShellCustom")}</option>
     </select>
     {#if settings.windowsShell === "pwsh" && !pwshAvailable}
-      <p class="mt-1 text-xs text-danger" transition:slide>{t("settings.localShellPwshMissing")}</p>
+      <p class="mt-1 text-xs text-danger" transition:slide={motion(MOTION_BASE)}>{t("settings.localShellPwshMissing")}</p>
     {/if}
   {/if}
   {#if showCustomPath}
@@ -70,10 +71,10 @@
       class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
       data-testid="local-shell-path"
       bind:value={settings.localShellPath}
-      transition:slide
+      transition:slide={motion(MOTION_BASE)}
     />
     {#if !customValid}
-      <p class="mt-1 text-xs text-danger" transition:slide>{t("settings.localShellNotFound")}</p>
+      <p class="mt-1 text-xs text-danger" transition:slide={motion(MOTION_BASE)}>{t("settings.localShellNotFound")}</p>
     {/if}
   {/if}
 </div>

@@ -82,7 +82,7 @@
       <textarea
         data-testid="http-headers"
         rows="2"
-        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none focus:border-accent"
+        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
         placeholder="Authorization: Bearer …&#10;Accept: application/json"
         bind:value={headersText}
       ></textarea>
@@ -92,12 +92,12 @@
       <textarea
         data-testid="http-body"
         rows="2"
-        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none focus:border-accent"
+        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
         placeholder={`{"key":"value"}`}
         bind:value={body}
       ></textarea>
     </label>
-    <label class="flex items-center gap-2 text-[11px]">
+    <label class="flex items-center gap-2 text-meta">
       <input type="checkbox" data-testid="http-follow" bind:checked={followRedirects} />
       {t("util.http.follow")}
     </label>
@@ -108,24 +108,24 @@
     {#if resp}
       <div class="space-y-2" data-testid="http-response">
         <div class="flex flex-wrap items-center gap-3">
-          <span class="rounded px-2 py-0.5 text-[11px] {STATUS_CLASS[statusClass(resp.status)]}" data-testid="http-status">
+          <span class="rounded px-2 py-0.5 text-meta {STATUS_CLASS[statusClass(resp.status)]}" data-testid="http-status">
             {resp.status} {resp.statusText}
           </span>
           {#if resp.timings}
-            <span class="text-[11px] text-muted">{t("util.http.time")}: <span class="font-mono text-white">{resp.timings.totalMs} ms</span></span>
-            <span class="text-[11px] text-muted">{t("util.http.size")}: <span class="font-mono text-white">{resp.timings.sizeBytes} B</span></span>
-            <span class="text-[11px] text-muted">TTFB: <span class="font-mono text-white">{resp.timings.ttfbMs} ms</span></span>
+            <span class="text-meta text-muted">{t("util.http.time")}: <span class="font-mono text-white">{resp.timings.totalMs} ms</span></span>
+            <span class="text-meta text-muted">{t("util.http.size")}: <span class="font-mono text-white">{resp.timings.sizeBytes} B</span></span>
+            <span class="text-meta text-muted">TTFB: <span class="font-mono text-white">{resp.timings.ttfbMs} ms</span></span>
           {/if}
         </div>
         {#if resp.headers.length}
           <details class="rounded border border-edge/50 bg-panel">
-            <summary class="cursor-pointer px-2 py-1 text-[11px] text-muted">{t("util.http.headers")} ({resp.headers.length})</summary>
+            <summary class="cursor-pointer px-2 py-1 text-meta text-muted">{t("util.http.headers")} ({resp.headers.length})</summary>
             <table class="w-full px-2 pb-2">
               <tbody>
                 {#each resp.headers as h, i (i)}
                   <tr class="align-top">
-                    <td class="py-0.5 pr-3 font-mono text-[11px] text-accent">{h.name}</td>
-                    <td class="py-0.5 font-mono text-[11px] break-all text-white">{h.value}</td>
+                    <td class="py-0.5 pr-3 font-mono text-meta text-accent">{h.name}</td>
+                    <td class="py-0.5 font-mono text-meta break-all text-white">{h.value}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -133,13 +133,13 @@
           </details>
         {/if}
         <div class="flex items-center justify-between">
-          <span class="text-[11px] text-muted">{t("util.http.body")}</span>
+          <span class="text-meta text-muted">{t("util.http.body")}</span>
           <CopyButton text={resp.body} />
         </div>
-        <pre class="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-[11px] text-white" data-testid="http-body-out">{resp.body}</pre>
+        <pre class="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-meta text-white" data-testid="http-body-out">{resp.body}</pre>
       </div>
     {:else}
-      <pre class="whitespace-pre-wrap rounded border border-danger/40 bg-danger/10 p-2 font-mono text-[11px] text-danger" data-testid="http-raw">{out.stderr || out.stdout || t("util.probe.noOutput")}</pre>
+      <pre class="whitespace-pre-wrap rounded border border-danger/40 bg-danger/10 p-2 font-mono text-meta text-danger" data-testid="http-raw">{out.stderr || out.stdout || t("util.probe.noOutput")}</pre>
     {/if}
   {/snippet}
 </UtilProbeRunner>

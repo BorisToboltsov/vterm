@@ -459,7 +459,24 @@
       "Bash(grep -n 'from \"\\\\$lib/stores/aichat.svelte\"\\\\|from \"\\\\$lib/ai\"' src/routes/+page.svelte)",
       "Bash(grep -n '\\\\$effect' -A 8 src/lib/K8sDetailModal.svelte)",
       "Bash(sed -i '' 's/\"version\": \"0.41.0\"/\"version\": \"0.41.1\"/' package.json src-tauri/tauri.conf.json)",
-      "Bash(sed -i '' '0,/^version = \"0.41.0\"/s//version = \"0.41.1\"/' src-tauri/Cargo.toml)"
+      "Bash(sed -i '' '0,/^version = \"0.41.0\"/s//version = \"0.41.1\"/' src-tauri/Cargo.toml)",
+      "Bash(node -e \"console.log\\(require\\('./node_modules/svelte/package.json'\\).version\\)\")",
+      "Bash(perl -0pi -e 's/transition:slide=\\\\{\\\\{ duration: 200 \\\\}\\\\}/transition:slide={motion\\(MOTION_BASE\\)}/g' src/lib/AppearanceSettings.svelte src/lib/SmartLogsSettings.svelte src/lib/StatusBarSettings.svelte)",
+      "Bash(perl -0pi -e 's/transition:slide\\(?![:=\\\\w]\\)/transition:slide={motion\\(MOTION_BASE\\)}/g' src/lib/IdleSettings.svelte src/lib/LocalShellSettings.svelte src/lib/SnippetsSettings.svelte)",
+      "Bash(perl -0pi -e 's/in:fade=\\\\{\\\\{ duration: 120 \\\\}\\\\}/in:fade={motion\\(\\)}/g' src/lib/ServerTree.svelte src/routes/+page.svelte)",
+      "Bash(perl -0pi -e 's{import \\\\{ slide \\\\} from \"svelte/transition\";}{import { slide } from \"svelte/transition\";\\\\n  import { motion, MOTION_BASE } from \"./motion\";}' src/lib/AppearanceSettings.svelte src/lib/SmartLogsSettings.svelte src/lib/StatusBarSettings.svelte src/lib/IdleSettings.svelte src/lib/LocalShellSettings.svelte src/lib/SnippetsSettings.svelte)",
+      "Bash(perl -0pi -e 's{import \\\\{ fade \\\\} from \"svelte/transition\";}{import { fade } from \"svelte/transition\";\\\\n  import { motion } from \"./motion\";}' src/lib/ServerTree.svelte)",
+      "Bash(perl -0pi -e 's{  \\\\} from \"\\\\./docker\";\\\\n  import type \\\\{ MenuItem, OpenMenu \\\\} from \"\\\\./ctxmenu\";}{  } from \"./docker\";\\\\n  import { parsePercent, pushSamples, type LoadHistory } from \"./loadhistory\";\\\\n  import type { MenuItem, OpenMenu } from \"./ctxmenu\";}' src/lib/DockerPanel.svelte)",
+      "Bash(perl -0pi -e 's/\\\\{statsById\\\\}/{statsById}\\\\n            {cpuHistory}/' src/lib/DockerPanel.svelte)",
+      "Bash(grep -n 'let context\\\\|context = $state\\\\|activeContext\\\\|namespace = $state' src/lib/K8sPanel.svelte)",
+      "Bash(perl -0pi -e 's{\\\\} from \"\\\\./k8s\";}{} from \"./k8s\";\\\\n  import { parseCpuMillis, pushSamples, type LoadHistory } from \"./loadhistory\";}' src/lib/K8sPanel.svelte)",
+      "Bash(perl -0pi -e 's/\\\\{metricsByKey\\\\}/{metricsByKey}\\\\n            {cpuHistory}/' src/lib/K8sPanel.svelte)",
+      "Bash(grep -n \"^---$\" docs/ROADMAP.md)",
+      "Bash(grep -n \"recording.ts\\\\` \\\\|- \\\\`recording.ts\\\\`\" docs/TESTS.md)",
+      "Bash(grep -E \"\\\\.rs$|Cargo\")",
+      "Bash(perl -0pi -e 's/if \\\\\\(pct >= 75\\\\\\) return \"var\\\\\\(--color-danger\\\\\\)\";/if \\(pct >= 75\\) return \"var\\(--color-bad\\)\";/' src/lib/DockerContainers.svelte)",
+      "Bash(awk -F: '{print $1}')",
+      "Bash(perl -pi -e 's/\\\\btext-\\\\[12px\\\\]/text-xs/g' src/lib/RecordingsPanel.svelte src/lib/UtilCodec.svelte src/lib/UtilJwt.svelte)"
     ]
   }
 }

@@ -78,9 +78,9 @@
   let yamlText = $state("");
 
   const TONE: Record<string, string> = {
-    ok: "bg-green-400",
-    warn: "bg-amber-400",
-    bad: "bg-red-500",
+    ok: "bg-ok",
+    warn: "bg-warn",
+    bad: "bg-bad",
     idle: "bg-muted",
   };
 
@@ -161,7 +161,7 @@
     <!-- Header: status + namespace + actions -->
     <div class="mb-2 flex items-center gap-2">
       <span class="h-[8px] w-[8px] shrink-0 rounded-full {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
-      <div class="min-w-0 flex-1 truncate text-[11px] text-muted">{p.namespace} · {p.status}</div>
+      <div class="min-w-0 flex-1 truncate text-meta text-muted">{p.namespace} · {p.status}</div>
       <div class="flex shrink-0 items-center gap-0.5 text-muted">
         {#if onAsk}
           <!-- "Ask AI" (Phase 41): state, events and logs are already loaded here. -->
@@ -185,7 +185,7 @@
     </div>
 
     <!-- Tabs -->
-    <div class="mb-2 flex border-b border-edge text-[11px]">
+    <div class="mb-2 flex border-b border-edge text-meta">
       {#each TABS as tb (tb.id)}
         <button
           data-testid={`k8s-detail-tab-${tb.id}`}
@@ -199,7 +199,7 @@
     </div>
 
     {#if tab === "overview"}
-      <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[11px]" data-testid="k8s-detail-overview">
+      <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta" data-testid="k8s-detail-overview">
         <dt class="text-muted">{t("k8s.name")}</dt>
         <dd class="break-all text-white/85">{p.name}</dd>
         <dt class="text-muted">{t("k8s.namespace")}</dt>
@@ -226,10 +226,10 @@
     {:else if tab === "logs"}
       <div class="mb-1 flex items-center justify-between gap-2">
         {#if p.containers.length > 1}
-          <label class="flex items-center gap-1 text-[11px] text-muted">
+          <label class="flex items-center gap-1 text-meta text-muted">
             {t("k8s.container")}
             <select
-              class="rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
+              class="rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
               bind:value={container}
             >
               {#each p.containers as c (c)}
@@ -244,7 +244,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
       >{logsText || t("k8s.noLogs")}</pre>
     {:else if tab === "describe"}
       <div class="mb-1 flex justify-end">
@@ -252,7 +252,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
       >{describeText || t("k8s.noLogs")}</pre>
     {:else}
       <div class="mb-1 flex justify-end">
@@ -260,7 +260,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
       >{yamlText || t("k8s.noLogs")}</pre>
     {/if}
   {/if}

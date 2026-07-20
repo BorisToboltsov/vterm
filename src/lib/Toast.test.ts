@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Toast from "./Toast.svelte";
@@ -25,7 +25,9 @@ describe("Toast", () => {
     render(Toast);
     expect(screen.getByText("Saved")).toBeInTheDocument();
     await userEvent.click(screen.getByLabelText("Dismiss"));
-    expect(screen.queryByText("Saved")).toBeNull();
+    // The store drops it immediately; the node lingers for the out-transition
+    // (Phase 43) and is gone once that finishes.
     expect(toastsState.list).toHaveLength(0);
+    await waitFor(() => expect(screen.queryByText("Saved")).toBeNull());
   });
 });

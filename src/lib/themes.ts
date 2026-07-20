@@ -33,8 +33,21 @@ export interface UiPalette {
   accent: string;
   accentHover: string;
   danger: string;
-  /** Warning/threshold amber. Optional — defaults to a fixed amber when omitted. */
+  /**
+   * Semantic status trio (Phase 43): healthy / degraded / broken. Used by every
+   * state dot, success mark and warning badge in the app, and by the diff tints
+   * derived from them in app.css.
+   *
+   * All three are optional and fall back per theme *group* (see `statusPalette`),
+   * because the whole point of moving them off Tailwind's palette is that a fixed
+   * value cannot serve both a near-black and a cream panel: the previous
+   * hard-coded `bg-amber-400` was invisible on Solarized Light. A theme only needs
+   * to name them when its own defaults would be wrong.
+   */
+  ok?: string;
+  /** Warning/threshold amber. Optional — see `ok`. */
   warn?: string;
+  bad?: string;
   muted: string;
   text: string;
 }
@@ -813,8 +826,34 @@ export function themeSwatches(t: ThemeDef): string[] {
   return [term.background, term.foreground, term.blue, term.green, term.yellow, term.red];
 }
 
-/** Apply a UI palette to the document by overriding Tailwind's `--color-*` tokens. */
-export function applyUiPalette(ui: UiPalette): void {
+/** Status colours for dark panels — bright enough to read against a near-black surface. */
+export const STATUS_DARK = { ok: "#4ade80", warn: "#e5a50a", bad: "#ef4444" } as const;
+/**
+ * Status colours for light panels. Deliberately much darker: the dark-theme trio
+ * on a cream panel (Solarized Light's `#fdf6e3`) is what this phase set out to
+ * fix — a `#e5a50a` dot on cream is barely a smudge.
+ */
+export const STATUS_LIGHT = { ok: "#15803d", warn: "#b45309", bad: "#b91c1c" } as const;
+
+/**
+ * Resolve a theme's status trio: whatever the palette names explicitly wins,
+ * anything it leaves out comes from the group default. Pure so the "light themes
+ * must not inherit dark defaults" rule is testable without a DOM.
+ */
+export function statusPalette(
+  ui: UiPalette,
+  light: boolean,
+): { ok: string; warn: string; bad: string } {
+  const base = light ? STATUS_LIGHT : STATUS_DARK;
+  return { ok: ui.ok ?? base.ok, warn: ui.warn ?? base.warn, bad: ui.bad ?? base.bad };
+}
+
+/**
+ * Apply a UI palette to the document by overriding Tailwind's `--color-*` tokens.
+ * `light` selects the status-trio defaults (see `statusPalette`) and comes from the
+ * theme's group — a palette alone cannot tell whether its panels are light.
+ */
+export function applyUiPalette(ui: UiPalette, light = false): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement.style;
   root.setProperty("--color-panel", ui.panel);
@@ -823,8 +862,10 @@ export function applyUiPalette(ui: UiPalette): void {
   root.setProperty("--color-accent", ui.accent);
   root.setProperty("--color-accent-hover", ui.accentHover);
   root.setProperty("--color-danger", ui.danger);
-  // Warn (threshold amber) is optional per theme; fall back to a fixed amber.
-  root.setProperty("--color-warn", ui.warn ?? "#e5a50a");
+  const status = statusPalette(ui, light);
+  root.setProperty("--color-ok", status.ok);
+  root.setProperty("--color-warn", status.warn);
+  root.setProperty("--color-bad", status.bad);
   root.setProperty("--color-muted", ui.muted);
   root.setProperty("--color-text", ui.text);
 }

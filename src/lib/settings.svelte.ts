@@ -600,7 +600,8 @@ export function activeChromePanel(): string {
  */
 export function applyActiveTheme(): void {
   if (settings.theme !== "custom") {
-    applyUiPalette(getTheme(settings.theme).ui);
+    const theme = getTheme(settings.theme);
+    applyUiPalette(theme.ui, theme.group === "light");
   }
   const panel = activeChromePanel();
   if (typeof document !== "undefined") {

@@ -41,6 +41,8 @@
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { transfersState } from "./stores/transfers.svelte";
+  import { etaSeconds, fmtEta } from "./transfer";
+  import { fmtBytes, fmtRate } from "./format";
   import { t } from "./i18n";
 
   let {
@@ -808,7 +810,7 @@
         <Icon name="chevronLeft" size={16} />
       </button>
       <span
-        class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
+        class="text-caption uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
       >
         SFTP
       </span>
@@ -1001,7 +1003,7 @@
           {searching ? t("search.searching") : t("search.go")}
         </button>
       </form>
-      <div class="mt-1 flex gap-3 text-[11px] text-muted">
+      <div class="mt-1 flex gap-3 text-meta text-muted">
         <label class="flex items-center gap-1">
           <input type="checkbox" bind:checked={caseSensitive} />
           {t("search.caseSensitive")}
@@ -1015,7 +1017,7 @@
         <div class="mt-1 max-h-48 overflow-auto rounded border border-edge">
           {#each searchResults as m (m.path + ":" + m.line)}
             <button
-              class="block w-full truncate px-2 py-1 text-left text-[11px] hover:bg-edge"
+              class="block w-full truncate px-2 py-1 text-left text-meta hover:bg-edge"
               onclick={() => openMatch(m)}
               title={m.text}
             >
@@ -1023,7 +1025,7 @@
               <span class="text-muted">{m.text}</span>
             </button>
           {:else}
-            <div class="px-2 py-2 text-[11px] text-muted">{t("search.noResults")}</div>
+            <div class="px-2 py-2 text-meta text-muted">{t("search.noResults")}</div>
           {/each}
         </div>
       {/if}
@@ -1232,28 +1234,51 @@
   {#if transferList.length > 0}
     <div class="border-t border-edge px-2 py-1">
       {#each transferList as tr (tr.id)}
+        {@const rate = transfersState.rates[tr.id] ?? null}
         <div class="group py-0.5 text-xs">
-          <div class="flex items-center justify-between gap-2 text-muted">
-            <span class="truncate">
-              {tr.direction === "upload" ? "↑" : "↓"}
-              {tr.name}{#if tr.isFolder}&nbsp;({tr.transferred}/{tr.total}){/if}
-            </span>
-            <div class="flex shrink-0 items-center gap-1">
-              <span>{pct(tr)}%</span>
-              {#if tr.isFolder && !tr.done}
-                <button
-                  class="hidden items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white group-hover:inline-flex"
-                  use:tooltip={t("sftp.stopDownload")}
-                  aria-label={t("sftp.stopDownload")}
-                  onclick={() => sftpCancel(tr.id)}
-                >
-                  <Icon name="close" size={12} />
-                </button>
-              {/if}
-            </div>
+          <div class="flex items-center gap-1.5 text-muted">
+            <Icon
+              name={tr.direction === "upload" ? "arrowUp" : "arrowDown"}
+              size={12}
+              class="shrink-0 text-accent"
+            />
+            <span class="min-w-0 flex-1 truncate" title={tr.name}>{tr.name}</span>
+            <span class="shrink-0 text-accent">{pct(tr)}%</span>
+            {#if tr.isFolder && !tr.done}
+              <button
+                class="hidden shrink-0 items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white group-hover:inline-flex"
+                use:tooltip={t("sftp.stopDownload")}
+                aria-label={t("sftp.stopDownload")}
+                onclick={() => sftpCancel(tr.id)}
+              >
+                <Icon name="close" size={12} />
+              </button>
+            {/if}
           </div>
           <div class="mt-0.5 h-1 rounded bg-edge">
             <div class="h-1 rounded bg-accent" style="width: {pct(tr)}%"></div>
+          </div>
+          <!-- Size/speed and ETA. Both stay absent rather than showing a made-up
+               zero while the window is still filling (see transfer.ts). -->
+          <div class="mt-0.5 flex items-center justify-between gap-2 text-caption text-muted">
+            <span class="min-w-0 truncate">
+              {#if tr.isFolder}
+                {tr.transferred}/{tr.total}
+              {:else}
+                {fmtBytes(tr.transferred)} / {fmtBytes(tr.total)}
+              {/if}
+              {#if rate != null}
+                · {tr.isFolder ? t("sftp.filesPerSec", { n: rate.toFixed(1) }) : fmtRate(rate)}
+              {:else if !tr.done}
+                · {t("sftp.rateUnknown")}
+              {/if}
+            </span>
+            {#if !tr.done}
+              {@const eta = etaSeconds(tr.transferred, tr.total, rate)}
+              {#if eta != null}
+                <span class="shrink-0 tabular-nums">{t("sftp.eta", { time: fmtEta(eta) })}</span>
+              {/if}
+            {/if}
           </div>
         </div>
       {/each}

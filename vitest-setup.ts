@@ -58,18 +58,38 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // (the element is still inserted/removed; only the visual tween is skipped).
 if (typeof Element !== "undefined" && !Element.prototype.animate) {
   Element.prototype.animate = function animate() {
-    return {
-      cancel() {},
-      finish() {},
+    const anim = {
+      cancel() {
+        anim.oncancel?.();
+      },
+      finish() {
+        anim.onfinish?.();
+      },
       play() {},
       pause() {},
       finished: Promise.resolve(),
-      onfinish: null,
-      oncancel: null,
+      onfinish: null as null | (() => void),
+      oncancel: null as null | (() => void),
       currentTime: 0,
       startTime: 0,
       playState: "finished",
-    } as unknown as Animation;
+    };
+    // Fire completion on the next microtask. Svelte tears an element down in the
+    // animation's `onfinish`, so a stub that never fires it leaves every
+    // out-transitioned node in the DOM forever — the test then "passes" only
+    // because nothing ever left. Firing immediately matches a zero-duration
+    // animation, which is what a stub environment is.
+    queueMicrotask(() => anim.onfinish?.());
+    return anim as unknown as Animation;
+  };
+}
+// The companion to `animate`: Svelte reads back the running animations when a
+// transition plays out or a keyed list reorders (`out:`/`animate:flip`), so a
+// stub for one without the other crashes on the first dismissed toast. No
+// animation actually runs here, hence the empty list.
+if (typeof Element !== "undefined" && !Element.prototype.getAnimations) {
+  Element.prototype.getAnimations = function getAnimations() {
+    return [];
   };
 }
 

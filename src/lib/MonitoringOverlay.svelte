@@ -251,7 +251,7 @@
     return l === "crit" ? "var(--color-danger)" : l === "warn" ? "var(--color-warn)" : "var(--color-green-500)";
   }
   function pillCls(l: ThresholdLevel): string {
-    return l === "crit" ? "text-danger" : l === "warn" ? "text-warn" : "text-green-500";
+    return l === "crit" ? "text-danger" : l === "warn" ? "text-warn" : "text-ok";
   }
 
   // At-a-glance health summary (clickable chips → scroll to the section).
@@ -336,7 +336,7 @@
     <div class="mb-2 flex justify-end">
       <button
         data-testid="mon-ask-ai"
-        class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt"
+        class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-meta hover:bg-accent hover:text-panel-alt"
         onclick={() => {
           onAskAi?.(metricsSnapshot(metrics!, detail));
           open = false;
@@ -372,7 +372,7 @@
           <span class="text-xs text-muted">{metrics.prettyName || metrics.os || "—"}</span>
           {#if virtBadge}
             <span
-              class="rounded bg-edge px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent"
+              class="rounded bg-edge px-1.5 py-0.5 text-caption uppercase tracking-wider text-accent"
               data-testid="virt-badge"
               use:tooltip={t("mon.hwVirt")}>{virtBadge}</span
             >
@@ -388,7 +388,7 @@
             <button
               type="button"
               onclick={() => focusSection(h.id)}
-              class="rounded bg-edge px-2 py-0.5 text-[11px] hover:opacity-80 {pillCls(h.level)}"
+              class="rounded bg-edge px-2 py-0.5 text-meta hover:opacity-80 {pillCls(h.level)}"
             >
               {h.label}
             </button>
@@ -396,7 +396,7 @@
         </div>
         {#snippet sysGroup(title: string, body: import("svelte").Snippet)}
           <div>
-            <div class="mb-1 text-[11px] uppercase tracking-wider text-muted">{title}</div>
+            <div class="mb-1 text-caption uppercase tracking-wider text-muted">{title}</div>
             <dl class="space-y-0.5">{@render body()}</dl>
           </div>
         {/snippet}
@@ -444,7 +444,7 @@
           {/if}
           {#if hasHw}
             <div class="col-span-2" data-testid="hardware">
-              <div class="mb-1 text-[11px] uppercase tracking-wider text-muted">{t("mon.groupHardware")}</div>
+              <div class="mb-1 text-caption uppercase tracking-wider text-muted">{t("mon.groupHardware")}</div>
               <dl class="grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
                 {#if hw!.cpuModel}{@render sysField("CPU", hw!.cpuModel)}{/if}
                 {#if fmtCores(hw!.cpuCores, hw!.cpuThreads)}{@render sysField(t("mon.hwCores"), fmtCores(hw!.cpuCores, hw!.cpuThreads))}{/if}
@@ -480,7 +480,7 @@
           <!-- Per-core utilization -->
           {#if cores.length > 0}
             <div class="mb-2" data-testid="per-core">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.cores", { n: cores.length })}</div>
+              <div class="mb-1 text-meta text-muted">{t("mon.cores", { n: cores.length })}</div>
               <div class="flex h-12 items-end gap-0.5">
                 {#each cores as c, i (i)}
                   <span
@@ -540,10 +540,10 @@
           {/if}
           {#if detail?.topProcs && detail.topProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="top-procs">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.topProcs")}</div>
+              <div class="mb-1 text-meta text-muted">{t("mon.topProcs")}</div>
               <!-- table-fixed so the process column truncates instead of blowing
                    out the numeric columns (long local process names, Phase 38). -->
-              <table class="w-full table-fixed text-[11px]">
+              <table class="w-full table-fixed text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="w-14 font-medium">PID</th>
@@ -565,7 +565,7 @@
               </table>
             </div>
           {:else if topCpuProcs.length > 0}
-            <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
+            <div class="mt-2 border-t border-edge pt-2 text-meta text-muted">
               {t("mon.topCpu")} <span class="text-text">{topCpuProcs.join(", ")}</span>
             </div>
           {/if}
@@ -635,10 +635,10 @@
           </dl>
           {#if detail?.topMemProcs && detail.topMemProcs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="top-mem">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.topMemProcs")}</div>
+              <div class="mb-1 text-meta text-muted">{t("mon.topMemProcs")}</div>
               <!-- table-fixed so the process column truncates instead of blowing
                    out the numeric columns (long local process names, Phase 38). -->
-              <table class="w-full table-fixed text-[11px]">
+              <table class="w-full table-fixed text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="w-14 font-medium">PID</th>
@@ -660,7 +660,7 @@
               </table>
             </div>
           {:else if topMemProcs.length > 0}
-            <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
+            <div class="mt-2 border-t border-edge pt-2 text-meta text-muted">
               {t("mon.topMem")} <span class="text-text">{topMemProcs.join(", ")}</span>
             </div>
           {/if}
@@ -691,7 +691,7 @@
                     ></span>
                   </div>
                   {#if ip != null}
-                    <div class="mt-0.5 flex justify-between text-[11px] text-muted">
+                    <div class="mt-0.5 flex justify-between text-meta text-muted">
                       <span>{t("mon.inodes")}</span>
                       <span class="tabular-nums {thresholdClass(ip, th.inodes)}">{p.inodesUsed?.toLocaleString()} / {p.inodesTotal?.toLocaleString()} ({fmtPct(ip)})</span>
                     </div>
@@ -720,8 +720,8 @@
           </dl>
           {#if detail?.diskDevs && detail.diskDevs.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="disk-devs">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.devices")}</div>
-              <table class="w-full text-[11px]">
+              <div class="mb-1 text-meta text-muted">{t("mon.devices")}</div>
+              <table class="w-full text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="font-medium">{t("mon.device")}</th>
@@ -768,7 +768,7 @@
               ]}
             />
           </div>
-          <div class="mb-2 flex gap-3 text-[11px] text-muted">
+          <div class="mb-2 flex gap-3 text-meta text-muted">
             <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD}"></span>1m</span>
             <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD5}"></span>5m</span>
             <span class="flex items-center gap-1"><span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_LOAD15}"></span>15m</span>
@@ -787,7 +787,7 @@
               <dd class="text-right tabular-nums">{detail.procsRunning} / {detail.procsBlocked ?? 0}</dd>
             {/if}
           </dl>
-          <p class="mt-1 text-[11px] text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
+          <p class="mt-1 text-meta text-muted">{t("mon.loadScaleNote", { n: cores.length || "?" })}</p>
         </section>
         {/if}
 
@@ -809,7 +809,7 @@
           </dl>
           <div class="mt-2 border-t border-edge pt-2">
             {#if netRxHist.length < 2}
-              <p class="py-3 text-center text-[11px] text-muted">{t("mon.collecting")}</p>
+              <p class="py-3 text-center text-meta text-muted">{t("mon.collecting")}</p>
             {:else}
               <Chart
                 class="h-12 w-full"
@@ -819,7 +819,7 @@
                   { values: netTxHist, color: C_NET_TX },
                 ]}
               />
-              <div class="mt-1 flex gap-3 text-[11px] text-muted">
+              <div class="mt-1 flex gap-3 text-meta text-muted">
                 <span class="flex items-center gap-1">
                   <span class="inline-block h-2 w-2 rounded-[2px]" style="background-color: {C_NET_RX}"></span>
                   {t("mon.rx")}</span
@@ -833,8 +833,8 @@
           </div>
           {#if detail?.netIfaces && detail.netIfaces.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="net-ifaces">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.interfaces")}</div>
-              <table class="w-full text-[11px]">
+              <div class="mb-1 text-meta text-muted">{t("mon.interfaces")}</div>
+              <table class="w-full text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="font-medium">{t("mon.iface")}</th>
@@ -861,7 +861,7 @@
           {/if}
           {#if detail?.tcp && detail.tcp.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="tcp-states">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.tcpStates")}</div>
+              <div class="mb-1 text-meta text-muted">{t("mon.tcpStates")}</div>
               <StackedBar
                 segments={detail.tcp.map((s, i) => ({
                   label: `${s.state}: ${s.count}`,
@@ -873,8 +873,8 @@
           {/if}
           {#if detail?.sessions && detail.sessions.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="sessions">
-              <div class="mb-1 text-[11px] text-muted">{t("mon.sessionsLabel")}</div>
-              <table class="w-full text-[11px]">
+              <div class="mb-1 text-meta text-muted">{t("mon.sessionsLabel")}</div>
+              <table class="w-full text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="font-medium">{t("mon.user")}</th>
@@ -894,7 +894,7 @@
               </table>
             </div>
           {:else if usersList.length > 0}
-            <div class="mt-2 border-t border-edge pt-2 text-[11px] text-muted">
+            <div class="mt-2 border-t border-edge pt-2 text-meta text-muted">
               {t("mon.users", { n: usersList.length })} <span class="text-text">{usersList.join(", ")}</span>
             </div>
           {/if}
@@ -911,7 +911,7 @@
           {#if sensors.length > 0}
             {#if coreSensors.length >= 2}
               <div class="mb-2" data-testid="core-temps">
-                <div class="mb-1 text-[11px] text-muted">{t("mon.coreTemps")}</div>
+                <div class="mb-1 text-meta text-muted">{t("mon.coreTemps")}</div>
                 <div class="flex h-10 items-end gap-0.5">
                   {#each coreSensors as c, i (i)}
                     <span
@@ -958,7 +958,7 @@
               <Icon name="info" size={15} class="mt-0.5 shrink-0 text-muted" />
               <div class="min-w-0 flex-1">
                 <p class="text-xs text-text">{t("mon.sensorsNone")}</p>
-                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsNoneHint")}</p>
+                <p class="mt-0.5 text-meta text-muted">{t("mon.sensorsNoneHint")}</p>
               </div>
             </div>
           {:else}
@@ -966,7 +966,7 @@
               <Icon name="info" size={15} class="mt-0.5 shrink-0 text-warn" />
               <div class="min-w-0 flex-1">
                 <p class="text-xs text-text">{t("mon.sensorsUnavailable")}</p>
-                <p class="mt-0.5 text-[11px] text-muted">{t("mon.sensorsHint")}</p>
+                <p class="mt-0.5 text-meta text-muted">{t("mon.sensorsHint")}</p>
                 {#if onInstallTool}
                   <button
                     type="button"
@@ -994,9 +994,9 @@
             </h3>
             {#if extras.gpus.length > 0}
               <div class="mb-2" data-testid="gpu-list">
-                <div class="mb-1 text-[11px] text-muted">{t("mon.gpu")}</div>
+                <div class="mb-1 text-meta text-muted">{t("mon.gpu")}</div>
                 {#each extras.gpus as g, i (i)}
-                  <div class="flex justify-between gap-2 text-[11px]">
+                  <div class="flex justify-between gap-2 text-meta">
                     <span class="truncate text-text" title={g.name}>{g.name}</span>
                     <span class="shrink-0 tabular-nums text-muted"
                       >{Math.round(g.util)}% · {g.memUsed}/{g.memTotal} MiB · {Math.round(g.temp)}°C</span
@@ -1007,8 +1007,8 @@
             {/if}
             {#if extras.smart.length > 0}
               <div class="mb-2" data-testid="smart-list">
-                <div class="mb-1 text-[11px] text-muted">{t("mon.smart")}</div>
-                <table class="w-full text-[11px]">
+                <div class="mb-1 text-meta text-muted">{t("mon.smart")}</div>
+                <table class="w-full text-meta">
                   <thead>
                     <tr class="text-left text-muted">
                       <th class="font-medium">{t("mon.device")}</th>
@@ -1034,9 +1034,9 @@
             {/if}
             {#if extras.docker.length > 0}
               <div class="mb-2" data-testid="docker-list">
-                <div class="mb-1 text-[11px] text-muted">{t("mon.docker")}</div>
+                <div class="mb-1 text-meta text-muted">{t("mon.docker")}</div>
                 {#each extras.docker as c, i (i)}
-                  <div class="flex justify-between gap-2 text-[11px]">
+                  <div class="flex justify-between gap-2 text-meta">
                     <span class="truncate text-text" title={c.name}>{c.name}</span>
                     <span class="shrink-0 tabular-nums text-muted">{c.cpu.toFixed(1)}% · {c.mem}</span>
                   </div>
@@ -1044,7 +1044,7 @@
               </div>
             {/if}
             {#if extras.oomKills != null}
-              <div class="flex justify-between border-t border-edge pt-2 text-[11px]" data-testid="oom-kills">
+              <div class="flex justify-between border-t border-edge pt-2 text-meta" data-testid="oom-kills">
                 <span class="text-muted">{t("mon.oomKills")}</span>
                 <span class="tabular-nums {extras.oomKills > 0 ? 'text-danger' : 'text-text'}">{extras.oomKills}</span>
               </div>

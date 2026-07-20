@@ -101,7 +101,7 @@
           aria-label={t("history.placeholder")}
           class="min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-muted"
         />
-        <span class="shrink-0 text-[11px] tabular-nums text-muted">
+        <span class="shrink-0 text-meta tabular-nums text-muted">
           {#if server}<span class="text-muted">{server}</span> · {/if}{filtered.length}/{items.length}
         </span>
         <button
@@ -145,7 +145,7 @@
       </div>
 
       <!-- Key hints -->
-      <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-edge px-3 py-1.5 text-[11px] text-muted">
+      <div class="flex flex-wrap gap-x-4 gap-y-1 border-t border-edge px-3 py-1.5 text-meta text-muted">
         <span><kbd class="font-mono">↑↓</kbd> {t("history.hintMove")}</span>
         <span><kbd class="font-mono">Enter</kbd> {t("history.hintInsert")}</span>
         <span><kbd class="font-mono">Esc</kbd> {t("history.hintClose")}</span>

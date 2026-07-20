@@ -104,7 +104,7 @@
     >
   </div>
   {#if backupMsg}
-    <p class="mt-2 text-[11px] {backupErr ? 'text-danger' : 'text-muted'}" data-testid="backup-msg">
+    <p class="mt-2 text-meta {backupErr ? 'text-danger' : 'text-muted'}" data-testid="backup-msg">
       {backupMsg}
     </p>
   {/if}

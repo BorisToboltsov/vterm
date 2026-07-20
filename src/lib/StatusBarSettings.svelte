@@ -7,6 +7,7 @@
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   let metricsOpen = $state(false);
   const STATUS_ITEMS: { key: keyof StatusBarItems; labelKey: MessageKey }[] = [
@@ -74,7 +75,7 @@
       label={t("settings.shownMetrics")}
     />
     {#if metricsOpen}
-      <div transition:slide={{ duration: 200 }} class="mt-2 grid grid-cols-2 gap-1.5">
+      <div transition:slide={motion(MOTION_BASE)} class="mt-2 grid grid-cols-2 gap-1.5">
         {#each STATUS_ITEMS as it (it.key)}
           <label class="flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.statusBarItems[it.key]} />
@@ -98,8 +99,8 @@
       labelSnippet={thresholdsLabel}
     />
     {#if thresholdsOpen}
-      <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
-        <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-[10px] uppercase tracking-wider text-muted">
+      <div transition:slide={motion(MOTION_BASE)} class="mt-2 space-y-1.5">
+        <div class="grid grid-cols-[1fr_auto_auto] items-center gap-2 text-caption uppercase tracking-wider text-muted">
           <span class="flex items-center gap-1"
             >{t("settings.thresholdMetric")}<InfoHint text={t("settings.thresholdNote")} /></span
           >

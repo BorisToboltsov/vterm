@@ -90,6 +90,96 @@ export function inspectArgs(id: string): string[] {
   return ["docker", "inspect", id];
 }
 
+/**
+ * Per-container resource ceilings for several containers in one call (Phase 43).
+ *
+ * `docker stats` alone cannot answer "is this container near its limit": for an
+ * unlimited container it reports `MemUsage` against the **host's** total and
+ * `MemPerc` as a share of host RAM, which reads exactly like a limit but is not
+ * one. The ceiling only exists in `HostConfig`, so it takes an inspect — but it
+ * is fixed for the life of a container, so it is fetched once per id and cached,
+ * not polled.
+ */
+export function inspectLimitsArgs(ids: readonly string[]): string[] {
+  const fmt = ["{{.Id}}", "{{.HostConfig.NanoCpus}}", "{{.HostConfig.Memory}}"].join(US);
+  return ["docker", "inspect", "--format", fmt, ...ids];
+}
+
+/** A container's configured ceilings; null means "no limit set" (docker reports 0). */
+export interface DockerLimits {
+  /** CPU limit in whole cores (`--cpus`), or null when unlimited. */
+  cpuCores: number | null;
+  /** Memory limit in bytes (`--memory`), or null when unlimited. */
+  memBytes: number | null;
+}
+
+/** Parse {@link inspectLimitsArgs} output into a map keyed by full container id. */
+export function parseLimits(raw: string): Map<string, DockerLimits> {
+  const out = new Map<string, DockerLimits>();
+  for (const f of rows(raw)) {
+    const id = f[0]?.trim();
+    if (!id) continue;
+    const nanos = Number(f[1]);
+    const mem = Number(f[2]);
+    out.set(id, {
+      cpuCores: Number.isFinite(nanos) && nanos > 0 ? nanos / 1e9 : null,
+      memBytes: Number.isFinite(mem) && mem > 0 ? mem : null,
+    });
+  }
+  return out;
+}
+
+/** Byte multipliers docker uses in `MemUsage` (it mixes binary and decimal suffixes). */
+const MEM_UNITS: Record<string, number> = {
+  b: 1,
+  kb: 1000,
+  mb: 1000 ** 2,
+  gb: 1000 ** 3,
+  tb: 1000 ** 4,
+  kib: 1024,
+  mib: 1024 ** 2,
+  gib: 1024 ** 3,
+  tib: 1024 ** 4,
+};
+
+/**
+ * Bytes actually in use, from the left half of docker's `MemUsage`
+ * (`"412MiB / 1GiB"`). The right half is deliberately ignored: it is the limit
+ * *or* the host total depending on whether one was set, and the two are
+ * indistinguishable here — {@link parseLimits} is the honest source.
+ */
+export function parseMemUsed(s: string | undefined): number | null {
+  if (!s) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([a-zA-Z]+)/.exec(s);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const mult = MEM_UNITS[m[2].toLowerCase()];
+  return Number.isFinite(n) && mult ? n * mult : null;
+}
+
+/**
+ * Totals for a compose project: summed CPU percent and memory bytes over the
+ * containers that reported a reading. Returns null for a resource nothing
+ * reported, so an empty or fully-idle-unreported project shows "—" rather than a
+ * confident zero.
+ */
+export function groupUsage(
+  containers: readonly DockerContainer[],
+  statsById: ReadonlyMap<string, DockerStat>,
+  parsePct: (s: string | undefined) => number | null,
+): { cpu: number | null; mem: number | null } {
+  let cpu: number | null = null;
+  let mem: number | null = null;
+  for (const c of containers) {
+    const st = statsById.get(c.id) ?? statsById.get(c.id.slice(0, 12));
+    const pct = parsePct(st?.cpu);
+    if (pct != null) cpu = (cpu ?? 0) + pct;
+    const used = parseMemUsed(st?.mem);
+    if (used != null) mem = (mem ?? 0) + used;
+  }
+  return { cpu, mem };
+}
+
 // Lifecycle actions (ids may be several). start/stop/restart are reversible;
 // remove/prune are destructive (see {@link isDestructive}).
 export function startArgs(ids: string[]): string[] {

@@ -223,7 +223,7 @@
             <button
               type="button"
               data-testid="keygen-copy"
-              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-edge hover:text-white"
+              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white"
               onclick={copyPublic}
             >
               <Icon name={copied ? "check" : "copy"} size={12} />
@@ -232,7 +232,7 @@
             <button
               type="button"
               data-testid="keygen-save"
-              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:bg-edge hover:text-white"
+              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white"
               onclick={savePublic}
             >
               <Icon name={saved ? "check" : "save"} size={12} />
@@ -243,12 +243,12 @@
         <textarea
           readonly
           rows="3"
-          class="w-full resize-none break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none"
+          class="w-full resize-none break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none"
           value={result.publicKey}
         ></textarea>
       </div>
 
-      <p class="font-mono text-[11px] text-muted">{result.fingerprint}</p>
+      <p class="font-mono text-meta text-muted">{result.fingerprint}</p>
 
       <div class="flex justify-end gap-2 pt-1">
         {#if ongenerated}
@@ -312,11 +312,11 @@
 
       <!-- Resolved destination + validation / collision hint. -->
       {#if submitted && nameErr}
-        <p class="text-[11px] text-danger">{t(NAME_ERR[nameErr])}</p>
+        <p class="text-meta text-danger">{t(NAME_ERR[nameErr])}</p>
       {:else if submitted && pathErr}
-        <p class="text-[11px] text-danger">{t(PATH_ERR[pathErr])}</p>
+        <p class="text-meta text-danger">{t(PATH_ERR[pathErr])}</p>
       {:else}
-        <p class="break-all font-mono text-[11px] text-muted">
+        <p class="break-all font-mono text-meta text-muted">
           → {path}
           {#if exists}<span class="text-warn">· {t("keygen.exists")}</span>{/if}
         </p>
@@ -343,7 +343,7 @@
         </label>
       </div>
       {#if passMismatch}
-        <p class="text-[11px] text-danger">{t("keygen.passphraseMismatch")}</p>
+        <p class="text-meta text-danger">{t("keygen.passphraseMismatch")}</p>
       {/if}
 
       <label class="block">
@@ -357,7 +357,7 @@
       </label>
 
       {#if error}
-        <p class="text-[11px] text-danger" data-testid="keygen-error">{error}</p>
+        <p class="text-meta text-danger" data-testid="keygen-error">{error}</p>
       {/if}
 
       <div class="flex justify-end gap-2 pt-1">

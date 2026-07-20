@@ -180,7 +180,7 @@
     <!-- Folders as two cards with a direction-aware arrow between them -->
     <div class="flex items-stretch gap-2">
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
-        <div class="text-[11px] text-muted">{t("sync.localFolder")}</div>
+        <div class="text-meta text-muted">{t("sync.localFolder")}</div>
         <div class="mt-1 flex items-center gap-2">
           <span class="min-w-0 flex-1 truncate text-white" title={localPath}>{localPath || "—"}</span>
           <button
@@ -193,7 +193,7 @@
         <Icon name={betweenIcon} size={20} />
       </div>
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
-        <div class="text-[11px] text-muted">{t("sync.remoteFolder")}</div>
+        <div class="text-meta text-muted">{t("sync.remoteFolder")}</div>
         <div class="mt-1 truncate text-white" title={remotePath}>{remotePath}</div>
       </div>
     </div>
@@ -295,13 +295,13 @@
                 <span class="w-24 shrink-0 {opClass(a.op)}">{t(OP_LABEL[a.op])}</span>
                 <span class="min-w-0 flex-1 truncate" title={a.path}>{a.path}</span>
                 {#if status === "done"}
-                  <span class="shrink-0 text-green-500" aria-label={t("sync.rowDone")}>
+                  <span class="shrink-0 text-ok" aria-label={t("sync.rowDone")}>
                     <Icon name="check" size={13} />
                   </span>
                 {:else if status === "running"}
                   <span class="shrink-0 text-accent">{syncRowPct(prog)}%</span>
                 {:else if phase !== "idle" || status === "skipped"}
-                  <span class="shrink-0 text-[11px] text-muted">{t(ROW_STATUS_LABEL[status])}</span>
+                  <span class="shrink-0 text-meta text-muted">{t(ROW_STATUS_LABEL[status])}</span>
                 {/if}
               </div>
               {#if status === "running"}
@@ -313,7 +313,7 @@
           {/each}
         </div>
         {#if (counts?.conflict ?? 0) > 0}
-          <p class="text-[11px] text-warn">{t("sync.conflictNote")}</p>
+          <p class="text-meta text-warn">{t("sync.conflictNote")}</p>
         {/if}
       {/if}
     {/if}

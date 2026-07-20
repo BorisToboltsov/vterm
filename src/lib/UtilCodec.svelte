@@ -85,7 +85,7 @@
     <textarea
       data-testid="codec-input"
       rows="4"
-      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-[12px] text-white outline-none focus:border-accent"
+      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
       bind:value={input}
     ></textarea>
   </label>
@@ -96,7 +96,7 @@
       <CopyButton text={output} testid="codec-copy" />
     </div>
     {#if !result.ok}
-      <p class="rounded border border-danger/40 bg-danger/10 px-2 py-1 text-[11px] text-danger" data-testid="codec-error">
+      <p class="rounded border border-danger/40 bg-danger/10 px-2 py-1 text-meta text-danger" data-testid="codec-error">
         {t(ERR[result.error])}
       </p>
     {:else}
@@ -104,7 +104,7 @@
         readonly
         data-testid="codec-output"
         rows="4"
-        class="w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-[12px] text-white outline-none"
+        class="w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none"
         value={output}
       ></textarea>
     {/if}

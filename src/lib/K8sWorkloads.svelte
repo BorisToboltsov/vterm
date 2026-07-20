@@ -104,20 +104,20 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-white/90">{w.name}</span>
-            <span class="shrink-0 text-[10px] text-muted">{w.namespace}</span>
+            <span class="shrink-0 text-caption text-muted">{w.namespace}</span>
           </div>
           {#if w.kind === "CronJob"}
-            <div class="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted">
+            <div class="mt-0.5 flex items-center gap-1.5 text-caption text-muted">
               <span class="font-mono">{w.schedule}</span>
-              {#if w.suspended}<span class="text-amber-400">· {t("k8s.suspended")}</span>{/if}
+              {#if w.suspended}<span class="text-warn">· {t("k8s.suspended")}</span>{/if}
             </div>
           {/if}
         </div>
 
         {#if w.kind !== "CronJob"}
-          <span class="shrink-0 text-[11px] text-muted tabular-nums" use:tooltip={t("k8s.ready")}>{w.ready}</span>
+          <span class="shrink-0 text-meta text-muted tabular-nums" use:tooltip={t("k8s.ready")}>{w.ready}</span>
         {/if}
-        <span class="shrink-0 text-[10px] text-muted tabular-nums" use:tooltip={t("k8s.age")}>{w.age}</span>
+        <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{w.age}</span>
 
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">
           {#if w.scalable}

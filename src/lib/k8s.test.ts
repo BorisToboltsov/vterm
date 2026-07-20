@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  parseCpuMillis,
+  parseMemMiB,
+  sumLimit,
+  limitRatio,
+  limitTone,
   kubectlProg,
   withScope,
   objectScope,
@@ -404,6 +409,9 @@ describe("groupByOwner", () => {
     namespace: "web",
     phase: "Running",
     status: "Running",
+    cpuLimit: null,
+    memLimit: null,
+    qos: "Burstable",
     ready: "1/1",
     restarts: 0,
     node: "n1",
@@ -671,5 +679,129 @@ describe("parseEvents / eventTone", () => {
     expect(evs[1]).toMatchObject({ type: "Normal", object: "Pod/api-1" });
     expect(eventTone("Warning")).toBe("warn");
     expect(eventTone("Normal")).toBe("idle");
+  });
+});
+
+describe("parseCpuMillis", () => {
+  it("reads kubectl CPU quantities", () => {
+    expect(parseCpuMillis("120m")).toBe(120);
+    expect(parseCpuMillis("1")).toBe(1000);
+    expect(parseCpuMillis("2.5")).toBe(2500);
+    expect(parseCpuMillis("1500u")).toBe(1.5);
+    expect(parseCpuMillis("1500000n")).toBe(1.5);
+  });
+
+  it("is null when metrics-server has nothing to report", () => {
+    expect(parseCpuMillis("<unknown>")).toBeNull();
+    expect(parseCpuMillis("")).toBeNull();
+    expect(parseCpuMillis(undefined)).toBeNull();
+  });
+});
+
+describe("parseMemMiB", () => {
+  it("reads kubectl memory quantities", () => {
+    expect(parseMemMiB("412Mi")).toBe(412);
+    expect(parseMemMiB("1Gi")).toBe(1024);
+    expect(parseMemMiB("2048Ki")).toBe(2);
+    expect(parseMemMiB("1Ti")).toBe(1024 * 1024);
+  });
+
+  it("treats a bare number as bytes", () => {
+    expect(parseMemMiB(String(1024 * 1024))).toBe(1);
+  });
+
+  it("is null for unparseable values", () => {
+    expect(parseMemMiB("<unknown>")).toBeNull();
+    expect(parseMemMiB(undefined)).toBeNull();
+  });
+});
+
+describe("sumLimit", () => {
+  const c = (cpu?: string, mem?: string) => ({
+    name: "c",
+    resources: { limits: { ...(cpu ? { cpu } : {}), ...(mem ? { memory: mem } : {}) } },
+  });
+
+  it("sums the limit across containers", () => {
+    expect(sumLimit([c("200m"), c("300m")], "cpu", parseCpuMillis)).toBe(500);
+    expect(sumLimit([c(undefined, "512Mi"), c(undefined, "512Mi")], "memory", parseMemMiB)).toBe(1024);
+  });
+
+  it("is null when ANY container is unlimited — one unbounded container unbounds the pod", () => {
+    expect(sumLimit([c("200m"), c()], "cpu", parseCpuMillis)).toBeNull();
+  });
+
+  it("never invents a ceiling from the containers that happen to declare one", () => {
+    // The tempting bug: summing only the limited containers would report 200m,
+    // and a pod using 800m would be drawn as 400% of a limit nothing enforces.
+    expect(sumLimit([c("200m"), c(), c()], "cpu", parseCpuMillis)).toBeNull();
+  });
+
+  it("is null for a pod with no containers", () => {
+    expect(sumLimit([], "cpu", parseCpuMillis)).toBeNull();
+  });
+
+  it("is null when the quantity is unparseable rather than treating it as zero", () => {
+    expect(sumLimit([{ resources: { limits: { cpu: "wat" } } }], "cpu", parseCpuMillis)).toBeNull();
+  });
+});
+
+describe("limitRatio", () => {
+  it("divides usage by the limit", () => {
+    expect(limitRatio(250, 500)).toBe(0.5);
+    expect(limitRatio(600, 500)).toBe(1.2);
+  });
+
+  it("is null when either side is unknown", () => {
+    expect(limitRatio(null, 500)).toBeNull();
+    expect(limitRatio(250, null)).toBeNull();
+    expect(limitRatio(250, 0)).toBeNull();
+  });
+});
+
+describe("limitTone", () => {
+  it("escalates as the pod approaches its ceiling", () => {
+    expect(limitTone(0.4)).toBe("ok");
+    expect(limitTone(0.8)).toBe("warn");
+    expect(limitTone(0.95)).toBe("bad");
+    expect(limitTone(1.4)).toBe("bad");
+  });
+
+  it("stays null for an unbounded pod — unmeasured is not healthy", () => {
+    expect(limitTone(null)).toBeNull();
+  });
+});
+
+describe("parsePods limits", () => {
+  const podJson = (containers: unknown[], qos = "Guaranteed") =>
+    JSON.stringify({
+      items: [
+        {
+          metadata: { name: "p", namespace: "default", creationTimestamp: new Date().toISOString() },
+          spec: { containers, nodeName: "n1" },
+          status: { phase: "Running", qosClass: qos, containerStatuses: [] },
+        },
+      ],
+    });
+
+  it("reads cpu/memory limits and the QoS class from the json we already fetch", () => {
+    const [p] = parsePods(
+      podJson([{ name: "a", resources: { limits: { cpu: "500m", memory: "1Gi" } } }]),
+    );
+    expect(p.cpuLimit).toBe(500);
+    expect(p.memLimit).toBe(1024);
+    expect(p.qos).toBe("Guaranteed");
+  });
+
+  it("reports no limit for a BestEffort pod instead of guessing one", () => {
+    const [p] = parsePods(podJson([{ name: "a" }], "BestEffort"));
+    expect(p.cpuLimit).toBeNull();
+    expect(p.memLimit).toBeNull();
+    expect(p.qos).toBe("BestEffort");
+  });
+
+  it("keeps the container list working alongside the new fields", () => {
+    const [p] = parsePods(podJson([{ name: "a" }, { name: "b" }]));
+    expect(p.containers).toEqual(["a", "b"]);
   });
 });

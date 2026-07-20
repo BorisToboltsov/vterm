@@ -26,6 +26,6 @@
   </div>
   <pre
     data-testid="k8s-text"
-    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
   >{text || t("k8s.noLogs")}</pre>
 </Modal>

@@ -110,8 +110,8 @@
           <Icon name="refresh" size={13} class="animate-spin text-accent" />
           <span class="text-muted">{t("servertools.installing")}</span>
         {:else}
-          <Icon name="check" size={14} class="text-green-500" />
-          <span class="text-green-500">{t("servertools.installDone", { name: tool?.name ?? "" })}</span>
+          <Icon name="check" size={14} class="text-ok" />
+          <span class="text-ok">{t("servertools.installDone", { name: tool?.name ?? "" })}</span>
         {/if}
       </div>
       {#if installing}
@@ -125,7 +125,7 @@
       <pre
         bind:this={consoleEl}
         data-testid="install-console"
-        class="mb-3 max-h-48 min-h-16 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel-alt px-2 py-1.5 font-mono text-[11px] leading-relaxed text-muted"
+        class="mb-3 max-h-48 min-h-16 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel-alt px-2 py-1.5 font-mono text-meta leading-relaxed text-muted"
       >{consoleText}{#if installing}<span class="install-cursor text-accent">▋</span>{/if}</pre>
     {/if}
 

@@ -85,14 +85,14 @@
       </span>
       <div class="ml-auto flex items-center gap-1 rounded border border-edge p-0.5">
         <button
-          class="rounded px-2 py-0.5 text-[11px] {mode === 'edit'
+          class="rounded px-2 py-0.5 text-meta {mode === 'edit'
             ? 'bg-edge text-white'
             : 'text-muted hover:text-white'}"
           data-testid="notes-mode-edit"
           onclick={() => (mode = "edit")}>{t("notes.edit")}</button
         >
         <button
-          class="rounded px-2 py-0.5 text-[11px] {mode === 'preview'
+          class="rounded px-2 py-0.5 text-meta {mode === 'preview'
             ? 'bg-edge text-white'
             : 'text-muted hover:text-white'}"
           data-testid="notes-mode-preview"
@@ -126,7 +126,7 @@
     {/if}
 
     <!-- Footer: status + counts + save/close. -->
-    <div class="mt-2 flex items-center gap-3 text-[11px]">
+    <div class="mt-2 flex items-center gap-3 text-meta">
       <span class="min-w-0 truncate">
         {#if error}
           <span class="text-danger">{t("notes.saveError")}</span>
@@ -135,7 +135,7 @@
         {:else if dirty}
           <span class="text-muted">{t("notes.unsaved")}</span>
         {:else if justSaved}
-          <span class="flex items-center gap-1 text-green-500"
+          <span class="flex items-center gap-1 text-ok"
             ><Icon name="check" size={12} />{t("notes.saved")}</span
           >
         {/if}

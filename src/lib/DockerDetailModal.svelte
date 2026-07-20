@@ -76,9 +76,9 @@
   let inspectText = $state("");
 
   const TONE: Record<string, string> = {
-    ok: "bg-green-400",
-    warn: "bg-amber-400",
-    bad: "bg-red-500",
+    ok: "bg-ok",
+    warn: "bg-warn",
+    bad: "bg-bad",
     idle: "bg-muted",
   };
   const INFO_LABEL: Record<DockerInfoKey, MessageKey> = {
@@ -156,7 +156,7 @@
     <!-- Header: state + image + actions -->
     <div class="mb-2 flex items-center gap-2">
       <span class="h-[8px] w-[8px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
-      <div class="min-w-0 flex-1 truncate text-[11px] text-muted">{c.image}</div>
+      <div class="min-w-0 flex-1 truncate text-meta text-muted">{c.image}</div>
       <div class="flex shrink-0 items-center gap-0.5 text-muted">
         {#if isRunning(c)}
           <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.stop")} aria-label={t("docker.stop")} onclick={() => act(stopArgs([c.id]), { successKey: "docker.stopped" })}>
@@ -193,7 +193,7 @@
     </div>
 
     <!-- Tabs -->
-    <div class="mb-2 flex border-b border-edge text-[11px]">
+    <div class="mb-2 flex border-b border-edge text-meta">
       {#each TABS as tb (tb.id)}
         <button
           data-testid={`docker-detail-tab-${tb.id}`}
@@ -207,7 +207,7 @@
     </div>
 
     {#if tab === "overview"}
-      <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-[11px]" data-testid="docker-detail-overview">
+      <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta" data-testid="docker-detail-overview">
         <dt class="text-muted">{t("docker.name")}</dt>
         <dd class="break-all text-white/85">{c.name}</dd>
         <dt class="text-muted">{t("docker.image")}</dt>
@@ -227,7 +227,7 @@
       </div>
       <pre
         data-testid="docker-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
       >{logsText || t("docker.noLogs")}</pre>
     {:else}
       <div class="mb-1 flex justify-end">
@@ -235,7 +235,7 @@
       </div>
       <pre
         data-testid="docker-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
       >{inspectText || t("docker.noLogs")}</pre>
     {/if}
   {/if}

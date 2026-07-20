@@ -56,6 +56,7 @@
     parseNodes,
     parseEvents,
     metricsKey,
+    parseCpuMillis,
     groupByOwner,
     parseAvailability,
     needsConfirm,
@@ -70,6 +71,7 @@
     type K8sNode,
     type K8sEvent,
   } from "./k8s";
+  import { pushSamples, type LoadHistory } from "./loadhistory";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { t, type MessageKey } from "./i18n";
 
@@ -118,6 +120,8 @@
 
   let podGroups = $state<PodGroup[]>([]);
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
+  // CPU history (millicores) per pod, fed by the `top pods` poll already running.
+  let cpuHistory = $state<LoadHistory>({});
   let workloads = $state<K8sWorkload[]>([]);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
@@ -271,6 +275,15 @@
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
         metricsByKey = map;
+        // Fold this snapshot into the rolling CPU history (Phase 42). Keyed off the
+        // pod list, so a pod that was rescheduled between the two commands is dropped.
+        const live = podGroups.flatMap((g) => g.pods.map((p) => metricsKey(p.namespace, p.name)));
+        const cpu = new Map<string, number>();
+        for (const key of live) {
+          const millis = parseCpuMillis(map.get(key)?.cpu);
+          if (millis != null) cpu.set(key, millis);
+        }
+        cpuHistory = pushSamples(cpuHistory, live, cpu);
       } else if (activeSub === "workloads") {
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
@@ -331,6 +344,9 @@
     scopeContext = v || null;
     scopeNamespace = null; // namespaces differ per context
     scopeAll = false;
+    // A different cluster can hold a pod with the same namespace/name; carrying
+    // the old series over would draw one cluster's load on another's row.
+    cpuHistory = {};
     void reinit();
   }
   function pickNamespace(v: string) {
@@ -390,7 +406,11 @@
   // Full init when the session becomes ready (or changes).
   $effect(() => {
     void sessionId;
-    if (sessionReady) void initAll();
+    if (sessionReady) {
+      // Another cluster's pods are not this one's history.
+      cpuHistory = {};
+      void initAll();
+    }
   });
 
   // Reload when the sub-tab changes.
@@ -454,7 +474,7 @@
       <Icon name="kubernetes" size={15} class="text-accent" />
       <div class="min-w-0 flex-1">
         <div class="font-medium text-white/90">{t("k8s.panelTitle")}</div>
-        <div class="truncate text-[10px] text-muted">{t("k8s.clusterVersion", { version: availability.serverVersion })}</div>
+        <div class="truncate text-caption text-muted">{t("k8s.clusterVersion", { version: availability.serverVersion })}</div>
       </div>
       <button
         class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
@@ -468,7 +488,7 @@
     </div>
 
     <!-- Scope selectors -->
-    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5 text-[11px]">
+    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5 text-meta">
       {#if contexts.length > 0}
         <select
           data-testid="k8s-context"
@@ -508,7 +528,7 @@
     </div>
 
     <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-[11px]">
+    <div class="flex border-b border-edge text-meta">
       {#each SUBS as s (s.id)}
         <button
           data-testid={`k8s-subtab-${s.id}`}
@@ -539,6 +559,7 @@
           <K8sPods
             groups={podGroups}
             {metricsByKey}
+            {cpuHistory}
             {busy}
             {run}
             {openShell}
@@ -603,6 +624,6 @@
   {t("k8s.confirmBody")}
   <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-white/80">{confirmText}</code>
   {#if prod}
-    <span class="mt-1 block text-[11px] text-danger">{t("k8s.confirmProdWarn")}</span>
+    <span class="mt-1 block text-meta text-danger">{t("k8s.confirmProdWarn")}</span>
   {/if}
 </ConfirmDialog>

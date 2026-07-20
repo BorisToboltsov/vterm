@@ -68,11 +68,11 @@
       {@const level = expiryLevel(cert.daysRemaining)}
       <div class="space-y-2" data-testid="tls-cert">
         <div class="flex items-center gap-2">
-          <span class="rounded px-2 py-0.5 text-[11px] {EXPIRY_CLASS[level]}" data-testid="tls-expiry">
+          <span class="rounded px-2 py-0.5 text-meta {EXPIRY_CLASS[level]}" data-testid="tls-expiry">
             {t(EXPIRY_LABEL[level])}
           </span>
           {#if cert.daysRemaining !== null}
-            <span class="text-[11px] text-muted">
+            <span class="text-meta text-muted">
               {t("util.tls.daysLeft", { days: cert.daysRemaining })}
             </span>
           {/if}
@@ -83,7 +83,7 @@
               {#if value}
                 <tr class="border-b border-edge/50 align-top">
                   <td class="py-1 pr-3 text-muted">{t(key as MessageKey)}</td>
-                  <td class="py-1 font-mono text-[11px] break-all text-white">{value}</td>
+                  <td class="py-1 font-mono text-meta break-all text-white">{value}</td>
                   <td class="py-1 pl-2 text-right"><CopyButton text={value} /></td>
                 </tr>
               {/if}
@@ -91,7 +91,7 @@
             {#if cert.sans.length}
               <tr class="align-top">
                 <td class="py-1 pr-3 text-muted">{t("util.tls.san")}</td>
-                <td class="py-1 font-mono text-[11px] break-all text-white">{cert.sans.join(", ")}</td>
+                <td class="py-1 font-mono text-meta break-all text-white">{cert.sans.join(", ")}</td>
                 <td class="py-1 pl-2 text-right"><CopyButton text={cert.sans.join(", ")} /></td>
               </tr>
             {/if}
@@ -99,7 +99,7 @@
         </table>
       </div>
     {:else}
-      <pre class="whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-[11px] text-muted" data-testid="tls-raw">{out.stderr || out.stdout || t("util.probe.noOutput")}</pre>
+      <pre class="whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-meta text-muted" data-testid="tls-raw">{out.stderr || out.stdout || t("util.probe.noOutput")}</pre>
     {/if}
   {/snippet}
 </UtilProbeRunner>

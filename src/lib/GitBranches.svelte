@@ -253,7 +253,7 @@
 
 <div class="flex h-full min-h-0 flex-col overflow-auto text-xs">
   <!-- Local branches -->
-  <div class="flex items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-muted">
+  <div class="flex items-center justify-between px-2 py-1 text-caption uppercase tracking-wider text-muted">
     <span>{t("git.localBranches")}</span>
     <button
       class="rounded px-1 hover:bg-edge hover:text-white"
@@ -271,7 +271,7 @@
         bind:value={newName}
         autofocus
         placeholder={t("git.branchNamePlaceholder")}
-        class="w-full rounded border border-edge bg-panel px-2 py-1 text-[11px] text-white placeholder:text-muted focus:border-accent focus:outline-none"
+        class="w-full rounded border border-edge bg-panel px-2 py-1 text-meta text-white placeholder:text-muted focus:border-accent focus:outline-none"
         onkeydown={(e) => { if (e.key === "Enter") create(); if (e.key === "Escape") creating = false; }}
       />
     </div>
@@ -285,7 +285,7 @@
         <input
           bind:value={renameName}
           autofocus
-          class="min-w-0 flex-1 rounded border border-accent bg-panel px-1 text-[11px] text-white focus:outline-none"
+          class="min-w-0 flex-1 rounded border border-accent bg-panel px-1 text-meta text-white focus:outline-none"
           onkeydown={(e) => { if (e.key === "Enter") rename(b.name); if (e.key === "Escape") renaming = null; }}
         />
       {:else}
@@ -316,7 +316,7 @@
 
   <!-- Remote branches -->
   {#if remotes.length}
-    <div class="mt-1 border-t border-edge/40 px-2 py-1 text-[11px] uppercase tracking-wide text-muted">{t("git.remoteBranches")}</div>
+    <div class="mt-1 border-t border-edge/40 px-2 py-1 text-caption uppercase tracking-wider text-muted">{t("git.remoteBranches")}</div>
     {#each remotes as b (b.fullRef)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, b)}>
@@ -332,7 +332,7 @@
 
   <!-- Stashes -->
   {#if stashes.length}
-    <div class="mt-1 border-t border-edge/40 px-2 py-1 text-[11px] uppercase tracking-wide text-muted">{t("git.stashes")}</div>
+    <div class="mt-1 border-t border-edge/40 px-2 py-1 text-caption uppercase tracking-wider text-muted">{t("git.stashes")}</div>
     {#each stashes as s (s.ref)}
       <div class="border-b border-edge/20">
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {expandedStash === s.index ? 'bg-edge/30' : ''}">
@@ -353,14 +353,14 @@
         {#if expandedStash === s.index}
           <div class="bg-panel/50 px-2 py-1">
             {#if loadingStashFiles}
-              <p class="py-1 text-[10px] text-muted">{t("git.loading")}</p>
+              <p class="py-1 text-caption text-muted">{t("git.loading")}</p>
             {:else if stashFiles.length === 0}
-              <p class="py-1 text-[10px] text-muted">{t("git.noFiles")}</p>
+              <p class="py-1 text-caption text-muted">{t("git.noFiles")}</p>
             {:else}
               {#each stashFiles as f (f.path)}
                 <button class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-edge/50" onclick={() => showStashFile(s.index, f.path)}>
-                  <span class="w-3 shrink-0 text-center font-mono text-[10px] {fileStatusColor(f.status)}">{f.status}</span>
-                  <span class="truncate text-[11px] text-white/80">{f.path}</span>
+                  <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.status)}">{f.status}</span>
+                  <span class="truncate text-meta text-white/80">{f.path}</span>
                   <Icon name="code" size={11} />
                 </button>
               {/each}
@@ -372,7 +372,7 @@
   {/if}
 
   <!-- Send-to-terminal toggle -->
-  <label class="mt-auto flex items-center gap-2 border-t border-edge px-2 py-1.5 text-[10px] text-muted">
+  <label class="mt-auto flex items-center gap-2 border-t border-edge px-2 py-1.5 text-caption text-muted">
     <input type="checkbox" bind:checked={sendToTerminal} class="accent-accent" />
     {t("git.sendToTerminal")}
   </label>

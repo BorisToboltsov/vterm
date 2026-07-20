@@ -90,7 +90,7 @@
     </button>
 
     {#if session && session.live}
-      <span class="text-[11px] text-muted" data-testid="probe-target">
+      <span class="text-meta text-muted" data-testid="probe-target">
         {#if isLocal}
           {t("util.probe.targetLocal")}
         {:else}
@@ -98,24 +98,24 @@
         {/if}
       </span>
     {:else}
-      <span class="flex items-center gap-1 text-[11px] text-warn" data-testid="probe-nosession">
+      <span class="flex items-center gap-1 text-meta text-warn" data-testid="probe-nosession">
         <Icon name="alert" size={12} />{t("util.probe.needSession")}
       </span>
     {/if}
 
     {#if running}
-      <span class="text-[11px] text-muted" use:tooltip={t("util.probe.running")}>
+      <span class="text-meta text-muted" use:tooltip={t("util.probe.running")}>
         <Icon name="refresh" size={14} class="animate-spin" />
       </span>
     {/if}
   </div>
 
   {#if isLocal && session?.live}
-    <p class="text-[11px] text-muted" data-testid="probe-localnote">{t("util.probe.localNote")}</p>
+    <p class="text-meta text-muted" data-testid="probe-localnote">{t("util.probe.localNote")}</p>
   {/if}
 
   {#if error}
-    <pre class="whitespace-pre-wrap rounded border border-danger/40 bg-danger/10 p-2 font-mono text-[11px] text-danger" data-testid="probe-error">{error}</pre>
+    <pre class="whitespace-pre-wrap rounded border border-danger/40 bg-danger/10 p-2 font-mono text-meta text-danger" data-testid="probe-error">{error}</pre>
   {:else if output}
     {@render result(output)}
   {/if}

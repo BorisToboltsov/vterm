@@ -700,7 +700,7 @@
       >
         <Icon name="chevronLeft" size={16} />
       </button>
-      <span class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]">
+      <span class="text-caption uppercase tracking-wider text-muted [writing-mode:vertical-rl]">
         {t("localfiles.label")}
       </span>
     </div>

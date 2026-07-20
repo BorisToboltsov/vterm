@@ -135,7 +135,7 @@
       aria-pressed={activeLevels.includes(cat)}
       aria-label={t("jsonlog.toggleLevel", { level: cat })}
       use:tooltip={t("jsonlog.toggleLevel", { level: cat })}
-      class="rounded px-1.5 py-0.5 text-[11px] font-medium {activeLevels.includes(cat)
+      class="rounded px-1.5 py-0.5 text-meta font-medium {activeLevels.includes(cat)
         ? `bg-edge ${levelClass(cat)}`
         : 'text-muted/50 hover:text-muted'}">{cat}</button
     >
@@ -178,7 +178,7 @@
           class="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-muted hover:text-accent"
         >
           <Icon name="filter" size={13} />
-          <span class="text-[11px] tabular-nums">{activeLevels.length}</span>
+          <span class="text-meta tabular-nums">{activeLevels.length}</span>
         </button>
         {#if showLevels}
           <div
@@ -205,7 +205,7 @@
             class="absolute left-0 top-7 z-20 max-h-64 w-44 overflow-auto rounded border border-edge bg-panel-alt p-1.5 shadow-lg"
           >
             {#if fields.length === 0}
-              <p class="px-1 py-0.5 text-[11px] text-muted">{t("jsonlog.noFields")}</p>
+              <p class="px-1 py-0.5 text-meta text-muted">{t("jsonlog.noFields")}</p>
             {:else}
               {#each fields as field}
                 <label class="flex items-center gap-1.5 rounded px-1 py-0.5 text-xs text-muted hover:bg-edge">
@@ -311,7 +311,7 @@
               <tr class="bg-panel-alt">
                 <td colspan={4 + extraColumns.length} class="px-2 py-1.5">
                   <div class="mb-1 flex items-center gap-2">
-                    <span class="rounded bg-edge px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted"
+                    <span class="rounded bg-edge px-1.5 py-0.5 text-caption uppercase tracking-wider text-muted"
                       >{e.format}</span
                     >
                     <button
@@ -324,7 +324,7 @@
                       <Icon name="copy" size={13} />
                     </button>
                   </div>
-                  <pre class="overflow-x-auto whitespace-pre-wrap break-all text-[11px] text-muted">{e.format ===
+                  <pre class="overflow-x-auto whitespace-pre-wrap break-all text-meta text-muted">{e.format ===
                     "json"
                       ? JSON.stringify(e.raw, null, 2)
                       : e.source}</pre>

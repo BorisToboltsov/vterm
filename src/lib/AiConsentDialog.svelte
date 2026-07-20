@@ -38,18 +38,18 @@
         name: endpointName,
       })}
     </p>
-    <p class="break-all text-[11px] text-muted">
+    <p class="break-all text-meta text-muted">
       <span class="opacity-70">{endpointUrl}</span>
     </p>
     {#if context.redactions > 0}
-      <p class="flex items-center gap-1 text-[11px] text-accent">
+      <p class="flex items-center gap-1 text-meta text-accent">
         <Icon name="lock" size={12} />
         {t("ai.consent.redacted", { count: String(context.redactions) })}
       </p>
     {/if}
     <pre
       data-testid="ai-consent-preview"
-      class="max-h-72 overflow-auto rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-words text-white">{context.text}</pre>
+      class="max-h-72 overflow-auto rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed whitespace-pre-wrap break-words text-white">{context.text}</pre>
   </div>
 
   <div class="mt-4 flex justify-end gap-2">

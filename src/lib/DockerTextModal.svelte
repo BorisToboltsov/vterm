@@ -27,8 +27,8 @@
 <Modal {open} {title} width="w-[52rem]" showClose {onclose}>
   <div class="mb-2 flex items-center justify-between gap-2">
     {#if live}
-      <span class="flex items-center gap-1.5 text-[11px] text-muted">
-        <span class="dk-pulse inline-block h-1.5 w-1.5 rounded-full bg-green-400"></span>
+      <span class="flex items-center gap-1.5 text-meta text-muted">
+        <span class="dk-pulse inline-block h-1.5 w-1.5 rounded-full bg-ok"></span>
         {t("docker.viewLogs")}
       </span>
     {:else}
@@ -38,7 +38,7 @@
   </div>
   <pre
     data-testid="docker-text"
-    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-[11px] leading-relaxed text-white/85 select-text"
+    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
   >{text || t("docker.noLogs")}</pre>
 </Modal>
 

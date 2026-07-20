@@ -256,10 +256,10 @@
           oncontextmenu={(e) => openMenu(e, row.commit)}
         >
           {#each row.commit.refs as ref (ref)}
-            <span class="shrink-0 rounded-sm bg-accent/20 px-1 text-[10px] leading-tight text-accent">{ref}</span>
+            <span class="shrink-0 rounded-sm bg-accent/20 px-1 text-caption leading-tight text-accent">{ref}</span>
           {/each}
           <span class="truncate {row.commit.head ? 'text-white' : 'text-white/90'}">{row.commit.subject}</span>
-          <span class="ml-auto shrink-0 text-[10px] text-muted">{relTime(row.commit.timestamp)}</span>
+          <span class="ml-auto shrink-0 text-caption text-muted">{relTime(row.commit.timestamp)}</span>
         </button>
       {/each}
     </div>
@@ -269,14 +269,14 @@
       {@const sel = rows.find((r) => r.commit.hash === selected)?.commit}
       {#if sel}
         <div class="max-h-44 shrink-0 overflow-auto border-t border-edge bg-panel/60 px-2 py-1.5">
-          <div class="mb-1 flex items-center gap-1.5 text-[11px]">
+          <div class="mb-1 flex items-center gap-1.5 text-meta">
             <span class="font-mono text-muted">{sel.short}</span>
             <span class="truncate text-white/80">{sel.subject}</span>
           </div>
           {#if loadingFiles}
-            <p class="py-1 text-[10px] text-muted">{t("git.loading")}</p>
+            <p class="py-1 text-caption text-muted">{t("git.loading")}</p>
           {:else if files.length === 0}
-            <p class="py-1 text-[10px] text-muted">{t("git.noFiles")}</p>
+            <p class="py-1 text-caption text-muted">{t("git.noFiles")}</p>
           {:else}
             {#each files as f (f.path)}
               <button
@@ -284,8 +284,8 @@
                 class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-edge/50"
                 onclick={() => showFile(sel.hash, f.path)}
               >
-                <span class="w-3 shrink-0 text-center font-mono text-[10px] {fileStatusColor(f.status)}">{f.status}</span>
-                <span class="truncate text-[11px] text-white/80">{f.path}</span>
+                <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.status)}">{f.status}</span>
+                <span class="truncate text-meta text-white/80">{f.path}</span>
               </button>
             {/each}
           {/if}

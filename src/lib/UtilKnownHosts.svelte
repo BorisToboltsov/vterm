@@ -68,7 +68,7 @@
             <p class="truncate font-mono text-sm text-white">
               {h.host}{#if h.port}<span class="text-muted">:{h.port}</span>{/if}
             </p>
-            <p class="truncate font-mono text-[11px] text-muted">{h.fingerprint}</p>
+            <p class="truncate font-mono text-meta text-muted">{h.fingerprint}</p>
           </div>
           <CopyButton text={h.fingerprint} />
           <button

@@ -56,7 +56,7 @@
   </label>
 
   {#if !result.ok}
-    <p class="text-[11px] text-danger" data-testid="cron-error">{t(ERR[result.error])}</p>
+    <p class="text-meta text-danger" data-testid="cron-error">{t(ERR[result.error])}</p>
   {:else}
     <table class="w-full max-w-md">
       <tbody>
@@ -72,7 +72,7 @@
     <div>
       <p class="mb-1 font-medium text-white">{t("util.cron.nextRuns")}</p>
       {#if runs.length === 0}
-        <p class="text-[11px] text-muted" data-testid="cron-noruns">{t("util.cron.noRuns")}</p>
+        <p class="text-meta text-muted" data-testid="cron-noruns">{t("util.cron.noRuns")}</p>
       {:else}
         <ul class="space-y-0.5 font-mono text-white" data-testid="cron-runs">
           {#each runs as r (r.getTime())}

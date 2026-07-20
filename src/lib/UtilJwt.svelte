@@ -46,19 +46,19 @@
     <textarea
       data-testid="jwt-input"
       rows="4"
-      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-[12px] text-white outline-none focus:border-accent"
+      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
       placeholder="eyJhbGciOi…"
       bind:value={input}
     ></textarea>
   </label>
 
   {#if input.trim() && !result.ok}
-    <p class="text-[11px] text-danger" data-testid="jwt-error">{t(ERR[result.error])}</p>
+    <p class="text-meta text-danger" data-testid="jwt-error">{t(ERR[result.error])}</p>
   {:else if result.ok}
     {#if expiry}
       <span
         data-testid="jwt-expiry"
-        class="inline-block rounded px-2 py-0.5 text-[11px] {expiry === 'expired'
+        class="inline-block rounded px-2 py-0.5 text-meta {expiry === 'expired'
           ? 'bg-danger/15 text-danger'
           : 'bg-accent/20 text-accent'}"
       >
@@ -74,7 +74,7 @@
         </div>
         <pre
           data-testid={label === "util.jwt.header" ? "jwt-header" : "jwt-payload"}
-          class="overflow-x-auto rounded border border-edge bg-panel px-2 py-1 font-mono text-[12px] text-white">{pretty(obj)}</pre>
+          class="overflow-x-auto rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white">{pretty(obj)}</pre>
       </div>
     {/each}
 
@@ -96,8 +96,8 @@
 
     <div>
       <p class="mb-1 font-medium text-white">{t("util.jwt.signature")}</p>
-      <p class="break-all font-mono text-[11px] text-muted">{result.parts.signature}</p>
-      <p class="mt-0.5 text-[11px] text-warn">{t("util.jwt.signatureNote")}</p>
+      <p class="break-all font-mono text-meta text-muted">{result.parts.signature}</p>
+      <p class="mt-0.5 text-meta text-warn">{t("util.jwt.signatureNote")}</p>
     </div>
   {/if}
 </div>

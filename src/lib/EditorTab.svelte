@@ -484,17 +484,17 @@
   <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-xs">
     <Icon name="file" size={13} class="shrink-0 text-muted" />
     <span class="truncate text-muted" title={doc.path}>{doc.path}</span>
-    <span class="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-muted">
+    <span class="shrink-0 rounded bg-panel px-1.5 py-0.5 text-caption uppercase tracking-wider text-muted">
       {doc.lang.label}
     </span>
     {#if doc.readOnly}
-      <span class="shrink-0 text-[10px] uppercase tracking-wider text-warn">
+      <span class="shrink-0 text-caption uppercase tracking-wider text-warn">
         {t("editor.readOnly")}
       </span>
     {/if}
     <div class="ml-auto flex shrink-0 items-center gap-2">
       {#if doc.content !== doc.baseContent && !doc.readOnly}
-        <span class="text-[10px] text-muted">{t("editor.unsaved")}</span>
+        <span class="text-caption text-muted">{t("editor.unsaved")}</span>
       {/if}
       {#if isMarkdown}
         <!-- Code ⇄ Preview segmented toggle (markdown only). -->
@@ -590,7 +590,7 @@
     <!-- Server-side lint results (Phase 12.7): click to jump to the line. -->
     <div class="max-h-40 shrink-0 overflow-auto border-t border-edge text-xs">
       <div
-        class="sticky top-0 flex items-center justify-between border-b border-edge bg-panel-alt px-2 py-1 text-[11px] text-muted"
+        class="sticky top-0 flex items-center justify-between border-b border-edge bg-panel-alt px-2 py-1 text-meta text-muted"
       >
         <span>{t("editor.lintIssues", { n: lintMessages.length })}</span>
         <button

@@ -55,10 +55,10 @@
             <span class="flex items-center gap-1.5">
               <span class="truncate font-mono text-xs text-white">{row.alias}</span>
               {#if row.isProd}
-                <span class="shrink-0 rounded bg-danger/30 px-1 text-[10px] text-danger">prod</span>
+                <span class="shrink-0 rounded bg-danger/30 px-1 text-caption text-danger">prod</span>
               {/if}
             </span>
-            <span class="block truncate text-[11px] text-muted">{row.status}</span>
+            <span class="block truncate text-meta text-muted">{row.status}</span>
           </span>
         </button>
         <button

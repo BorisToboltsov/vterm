@@ -38,7 +38,7 @@
         {#snippet preview()}
           <span class="flex items-center gap-1.5" data-testid="server-icon-preview">
             <Icon name={resolveServerIcon(icon)} size={16} class={resolveServerColorClass(color)} />
-            <span class="truncate text-[11px] text-muted">{t(resolveServerIconLabelKey(icon))}</span>
+            <span class="truncate text-meta text-muted">{t(resolveServerIconLabelKey(icon))}</span>
           </span>
         {/snippet}
       </DisclosureRow>

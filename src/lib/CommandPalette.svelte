@@ -98,7 +98,7 @@
                 <span class="block truncate text-xs text-muted">{item.subtitle}</span>
               {/if}
             </span>
-            <span class="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[10px] text-muted">
+            <span class="shrink-0 rounded bg-panel px-1.5 py-0.5 text-caption text-muted">
               {item.group}
             </span>
           </button>

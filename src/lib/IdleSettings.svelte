@@ -14,6 +14,7 @@
   import { t } from "./i18n";
   import InfoHint from "./InfoHint.svelte";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   const LABELS: Record<IdleEffectId, () => string> = {
     card: () => t("settings.idleCard"),
@@ -49,7 +50,7 @@
   </label>
 
   {#if settings.idleEffect !== "off"}
-    <label class="mt-3 block text-xs text-muted" transition:slide>
+    <label class="mt-3 block text-xs text-muted" transition:slide={motion(MOTION_BASE)}>
       {t("settings.idleTimeout")}
       <span class="mt-1 flex items-center gap-2">
         <input

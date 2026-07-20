@@ -373,7 +373,7 @@
       <div class="min-w-0 flex-1 px-1">
         <div class="truncate font-medium text-white/90" use:tooltip={repoRoot ?? ""}>{repoName}</div>
         {#if branchName}
-          <div class="truncate text-[10px] text-muted">
+          <div class="truncate text-caption text-muted">
             {branchName}{#if status && (status.ahead || status.behind)}
               <span class="text-accent"> ↑{status.ahead} ↓{status.behind}</span>
             {/if}
@@ -382,11 +382,11 @@
       </div>
       <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("git.pull")} aria-label={t("git.pull")} onclick={() => syncRun("pull", pullArgs())}>
         <Icon name="download" size={15} />
-        {#if remoteError}<span use:tooltip={remoteError} class="text-amber-400"><Icon name="alert" size={11} /></span>{/if}
+        {#if remoteError}<span use:tooltip={remoteError} class="text-warn"><Icon name="alert" size={11} /></span>{/if}
       </button>
       <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("git.push")} aria-label={t("git.push")} onclick={() => syncRun("push", pushArgs())}>
         <Icon name="upload" size={15} />
-        {#if remoteError}<span use:tooltip={remoteError} class="text-amber-400"><Icon name="alert" size={11} /></span>{/if}
+        {#if remoteError}<span use:tooltip={remoteError} class="text-warn"><Icon name="alert" size={11} /></span>{/if}
       </button>
       <button class="rounded p-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.refresh")} aria-label={t("git.refresh")} onclick={() => loadAll()}>
         <Icon name="refresh" size={14} />
@@ -409,18 +409,18 @@
           <div class="git-indet h-full w-2/5 bg-accent"></div>
         </div>
       {/if}
-      <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-[11px] text-white/80">
+      <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-meta text-white/80">
         {#if syncOp.running}
           <span class="git-spin inline-block h-3 w-3 shrink-0 rounded-full border-2 border-edge" style="border-top-color: var(--color-accent)"></span>
         {:else}
-          <Icon name="check" size={13} class="shrink-0 text-green-400" />
+          <Icon name="check" size={13} class="shrink-0 text-ok" />
         {/if}
         <span class="truncate">{syncOp.message}</span>
       </div>
     {/if}
 
     <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-[11px]">
+    <div class="flex border-b border-edge text-meta">
       {#each SUBS as s (s.id)}
         <button
           data-testid={`git-subtab-${s.id}`}
@@ -430,7 +430,7 @@
         >
           {s.label}
           {#if s.id === "changes" && changeCount}
-            <span class="rounded-full bg-amber-500/20 px-1.5 text-[10px] text-amber-400">{changeCount}</span>
+            <span class="rounded-full bg-warn/20 px-1.5 text-caption text-warn">{changeCount}</span>
           {/if}
         </button>
       {/each}
@@ -484,7 +484,7 @@
   <div class="mb-3 max-h-56 overflow-auto rounded border border-edge">
     {#each dirtyFiles as f (f.path)}
       <div class="group flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-edge/40">
-        <span class="w-3 shrink-0 text-center font-mono text-[10px] {fileStatusColor(f.index === '.' ? f.work : f.index)}">{f.index === "." ? f.work : f.index}</span>
+        <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.index === '.' ? f.work : f.index)}">{f.index === "." ? f.work : f.index}</span>
         <span class="min-w-0 flex-1 truncate text-white/80" use:tooltip={f.path}>{f.path}</span>
         {#if onOpenDiff}
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => openDirtyFile(f)}>

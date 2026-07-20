@@ -6,6 +6,7 @@ import {
   clearTransfers,
   DONE_LINGER_MS,
   removeTransfer,
+  setTransferClock,
   transfersState,
 } from "./transfers.svelte";
 
@@ -75,5 +76,67 @@ describe("transfers store", () => {
     expect(transfersState.map.c).toBeUndefined();
     vi.advanceTimersByTime(DONE_LINGER_MS); // must not throw
     expect(transfersState.map.c).toBeUndefined();
+  });
+});
+
+describe("rate tracking", () => {
+  let clock = 0;
+
+  beforeEach(() => {
+    clock = 0;
+    setTransferClock(() => clock);
+    clearTransfers();
+  });
+
+  afterEach(() => setTransferClock(() => Date.now()));
+
+  it("has no rate from a single snapshot", () => {
+    applyProgress(p({ id: "a", transferred: 1000, total: 10_000 }));
+    expect(transfersState.rates.a).toBeNull();
+  });
+
+  it("derives bytes per second from consecutive snapshots", () => {
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    clock = 2000;
+    applyProgress(p({ id: "a", transferred: 4000, total: 10_000 }));
+    expect(transfersState.rates.a).toBeCloseTo(2000);
+  });
+
+  it("keeps per-transfer histories apart", () => {
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    applyProgress(p({ id: "b", transferred: 0, total: 10_000 }));
+    clock = 1000;
+    applyProgress(p({ id: "a", transferred: 5000, total: 10_000 }));
+    applyProgress(p({ id: "b", transferred: 500, total: 10_000 }));
+    expect(transfersState.rates.a).toBeCloseTo(5000);
+    expect(transfersState.rates.b).toBeCloseTo(500);
+  });
+
+  it("clears the rate when a transfer finishes (100% with a speed reads as still moving)", () => {
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    clock = 1000;
+    applyProgress(p({ id: "a", transferred: 5000, total: 10_000 }));
+    expect(transfersState.rates.a).not.toBeNull();
+    clock = 2000;
+    applyProgress(p({ id: "a", transferred: 10_000, total: 10_000, done: true }));
+    expect(transfersState.rates.a).toBeNull();
+  });
+
+  it("drops rate state with the transfer", () => {
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    clock = 1000;
+    applyProgress(p({ id: "a", transferred: 100, total: 10_000 }));
+    removeTransfer("a");
+    expect(transfersState.rates.a).toBeUndefined();
+  });
+
+  it("does not leak history between two transfers reusing an id", () => {
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    clock = 1000;
+    applyProgress(p({ id: "a", transferred: 9000, total: 10_000 }));
+    removeTransfer("a");
+    clock = 2000;
+    applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
+    expect(transfersState.rates.a).toBeNull();
   });
 });

@@ -310,6 +310,62 @@ export function outputUpTo(events: CastEvent[], t: number): string {
   return out;
 }
 
+/** One column of the player's activity strip. */
+export interface ActivityBucket {
+  /** Output volume as a fraction of the busiest bucket, 0…1. */
+  level: number;
+  /** Stands out sharply against the rest of the recording. */
+  burst: boolean;
+}
+
+/**
+ * Output density over time, as `count` equal time slices (Phase 42). The player
+ * draws this behind the scrubber so a half-hour recording stops looking like a
+ * half-hour of empty track: the dips are where nobody was there, the peaks are
+ * where something happened.
+ *
+ * Only `o` (output) events are weighed, by byte count. Input events are a
+ * keystroke each — counting them would make a slice where someone typed one
+ * command outweigh a slice where a build scrolled past.
+ *
+ * Levels are log-scaled, not linear. A single `cat` of a large file is a couple
+ * of orders of magnitude above ordinary shell chatter; on a linear scale it
+ * pins one column at full height and flattens every other one to invisible,
+ * which is precisely the flat bar this replaces.
+ */
+export function activityBuckets(
+  events: CastEvent[],
+  count: number,
+  duration?: number,
+): ActivityBucket[] {
+  const n = Math.max(1, Math.floor(count));
+  const empty = (): ActivityBucket[] => Array.from({ length: n }, () => ({ level: 0, burst: false }));
+  const span = duration ?? (events.length ? events[events.length - 1].time : 0);
+  if (!(span > 0)) return empty();
+
+  const bytes = new Array<number>(n).fill(0);
+  for (const e of events) {
+    if (e.kind !== "o" || e.time < 0) continue;
+    const i = Math.min(n - 1, Math.floor((e.time / span) * n));
+    bytes[i] += e.data.length;
+  }
+
+  const max = Math.max(...bytes);
+  if (max <= 0) return empty();
+
+  // Burst = far above the typical busy slice. Measured against the median of the
+  // non-empty slices so long idle stretches (the common case in a session
+  // recording) do not drag the reference down and mark everything a burst.
+  const busy = bytes.filter((b) => b > 0).sort((a, b) => a - b);
+  const median = busy[Math.floor(busy.length / 2)];
+  const scale = Math.log1p(max);
+
+  return bytes.map((b) => ({
+    level: b > 0 ? Math.log1p(b) / scale : 0,
+    burst: b > 0 && b >= median * 4,
+  }));
+}
+
 /**
  * Playback speed presets and the initial selection for a recording. Real-timed
  * recordings replay at their captured pace, so they use the normal scale

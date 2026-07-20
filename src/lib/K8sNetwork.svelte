@@ -70,10 +70,10 @@
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="network" size={13} class="text-accent" />
     <span class="font-medium text-white/85">{t("k8s.services")}</span>
-    <span class="text-[10px] text-muted">{services.length}</span>
+    <span class="text-caption text-muted">{services.length}</span>
   </div>
   {#if services.length === 0}
-    <div class="px-2.5 py-2 text-[11px] text-muted">{t("k8s.noServices")}</div>
+    <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noServices")}</div>
   {:else}
     {#each services as s (`${s.namespace}/${s.name}`)}
       <div
@@ -84,14 +84,14 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-white/90">{s.name}</span>
-            <span class="shrink-0 text-[10px] text-muted">{s.type}</span>
-            <span class="shrink-0 text-[10px] text-muted">{s.namespace}</span>
+            <span class="shrink-0 text-caption text-muted">{s.type}</span>
+            <span class="shrink-0 text-caption text-muted">{s.namespace}</span>
           </div>
-          <div class="truncate text-[10px] text-muted">
+          <div class="truncate text-caption text-muted">
             {s.clusterIp}{#if s.externalIp && s.externalIp !== "-"} · {s.externalIp}{/if}{#if s.ports} · {s.ports}{/if}
           </div>
         </div>
-        <span class="shrink-0 text-[10px] text-muted tabular-nums" use:tooltip={t("k8s.age")}>{s.age}</span>
+        <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{s.age}</span>
         {#if s.firstPort !== null}
           <button
             class="shrink-0 rounded p-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100"
@@ -110,10 +110,10 @@
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="gateway" size={13} class="text-accent" />
     <span class="font-medium text-white/85">{t("k8s.ingress")}</span>
-    <span class="text-[10px] text-muted">{ingresses.length}</span>
+    <span class="text-caption text-muted">{ingresses.length}</span>
   </div>
   {#if ingresses.length === 0}
-    <div class="px-2.5 py-2 text-[11px] text-muted">{t("k8s.noIngress")}</div>
+    <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noIngress")}</div>
   {:else}
     {#each ingresses as i (`${i.namespace}/${i.name}`)}
       <div
@@ -124,14 +124,14 @@
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-white/90">{i.name}</span>
-            {#if i.className}<span class="shrink-0 text-[10px] text-muted">{i.className}</span>{/if}
-            <span class="shrink-0 text-[10px] text-muted">{i.namespace}</span>
+            {#if i.className}<span class="shrink-0 text-caption text-muted">{i.className}</span>{/if}
+            <span class="shrink-0 text-caption text-muted">{i.namespace}</span>
           </div>
-          <div class="truncate text-[10px] text-muted">
+          <div class="truncate text-caption text-muted">
             {i.hosts}{#if i.address} · {i.address}{/if}
           </div>
         </div>
-        <span class="shrink-0 text-[10px] text-muted tabular-nums" use:tooltip={t("k8s.age")}>{i.age}</span>
+        <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{i.age}</span>
       </div>
     {/each}
   {/if}

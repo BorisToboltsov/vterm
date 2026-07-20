@@ -25,14 +25,14 @@
     <p class="py-6 text-center text-xs text-muted">{t("git.diffEmpty")}</p>
   {:else}
     <div
-      class="max-h-[60vh] overflow-auto rounded border border-edge bg-panel font-mono text-[11px] leading-relaxed"
+      class="max-h-[60vh] overflow-auto rounded border border-edge bg-panel font-mono text-meta leading-relaxed"
     >
       {#each lines as line, i (i)}
         <div
           class="whitespace-pre px-2 {line.type === 'add'
-            ? 'bg-green-950/40 text-green-300'
+            ? 'vt-diff-add'
             : line.type === 'del'
-              ? 'bg-red-950/40 text-red-300'
+              ? 'vt-diff-del'
               : line.type === 'hunk'
                 ? 'bg-edge/60 text-accent'
                 : line.type === 'meta'

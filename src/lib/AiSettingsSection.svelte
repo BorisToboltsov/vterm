@@ -255,7 +255,7 @@
     return r ? (r.ok ? "ok" : "error") : "none";
   }
   const statusDot = (id: string): string =>
-    ({ ok: "bg-green-500", error: "bg-danger", none: "bg-muted" })[epStatus(id)];
+    ({ ok: "bg-ok", error: "bg-danger", none: "bg-muted" })[epStatus(id)];
   // Provider short name for the summary pill — a domain term, not translated.
   const providerShort = (p: AiProvider): string => (p === "anthropic" ? "Anthropic" : "OpenAI");
 
@@ -274,9 +274,9 @@
 </label>
 
 <!-- Endpoints -->
-<div class="mb-2 text-[11px] uppercase tracking-wider text-muted">{t("settings.aiEndpoints")}</div>
+<div class="mb-2 text-caption uppercase tracking-wider text-muted">{t("settings.aiEndpoints")}</div>
 {#if ai.endpoints.length === 0}
-  <p class="mb-2 text-[11px] text-muted">{t("settings.aiNoEndpoints")}</p>
+  <p class="mb-2 text-meta text-muted">{t("settings.aiNoEndpoints")}</p>
 {/if}
 <div class="space-y-2">
   {#each ai.endpoints as ep (ep.id)}
@@ -290,13 +290,13 @@
       >
         <span class="h-2 w-2 shrink-0 rounded-full {statusDot(ep.id)}"></span>
         <span class="truncate text-sm text-white">{ep.name || t("settings.aiName")}</span>
-        <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-[10px] text-muted">
+        <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-caption text-muted">
           {providerShort(ep.provider)}
         </span>
-        <span class="truncate font-mono text-[11px] text-muted">{ep.model}</span>
+        <span class="truncate font-mono text-meta text-muted">{ep.model}</span>
         <span class="ml-auto"></span>
         {#if checkResult[ep.id]?.ok}
-          <span class="shrink-0 text-[11px] text-muted">
+          <span class="shrink-0 text-meta text-muted">
             {t("settings.aiModelsCount", { count: String(checkResult[ep.id].models.length) })}
           </span>
         {/if}
@@ -308,12 +308,12 @@
         <div class="flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
           <span class="h-2 w-2 shrink-0 rounded-full {statusDot(ep.id)}"></span>
           <span class="truncate text-sm text-white">{ep.name || t("settings.aiName")}</span>
-          <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-[10px] text-muted">
+          <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-caption text-muted">
             {providerShort(ep.provider)}
           </span>
           <span
-            class="ml-auto shrink-0 text-[11px] {epStatus(ep.id) === 'ok'
-              ? 'text-green-500'
+            class="ml-auto shrink-0 text-meta {epStatus(ep.id) === 'ok'
+              ? 'text-ok'
               : epStatus(ep.id) === 'error'
                 ? 'text-danger'
                 : 'text-muted'}"
@@ -344,7 +344,7 @@
 
         <div class="p-2">
           <div class="grid grid-cols-[76px_1fr] items-center gap-x-3 gap-y-2">
-            <span class="text-[10px] text-muted">{t("settings.aiActive")}</span>
+            <span class="text-caption text-muted">{t("settings.aiActive")}</span>
             <input
               type="radio"
               name="ai-active"
@@ -354,7 +354,7 @@
               onchange={() => (settings.ai.activeEndpointId = ep.id)}
             />
 
-            <span class="text-[10px] text-muted">{t("settings.aiName")}</span>
+            <span class="text-caption text-muted">{t("settings.aiName")}</span>
             <div class="flex gap-2">
               <input class="min-w-0 flex-1 {inputCls}" placeholder={t("settings.aiName")} bind:value={ep.name} />
               <select
@@ -366,10 +366,10 @@
               </select>
             </div>
 
-            <span class="text-[10px] text-muted">{t("settings.aiBaseUrl")}</span>
+            <span class="text-caption text-muted">{t("settings.aiBaseUrl")}</span>
             <input class={inputCls} placeholder="http://localhost:11434/v1" bind:value={ep.baseUrl} />
 
-            <span class="text-[10px] text-muted">{t("settings.aiModel")}</span>
+            <span class="text-caption text-muted">{t("settings.aiModel")}</span>
             <div class="flex gap-2">
               {#if checkResult[ep.id]?.ok && checkResult[ep.id].models.length > 0}
                 <select class="min-w-0 flex-1 {inputCls}" bind:value={ep.model}>
@@ -391,7 +391,7 @@
               </button>
             </div>
 
-            <span class="text-[10px] text-muted">{t("settings.aiKey")}</span>
+            <span class="text-caption text-muted">{t("settings.aiKey")}</span>
             <div class="flex gap-2">
               <PasswordInput
                 class="min-w-0 flex-1"
@@ -400,12 +400,12 @@
                 bind:value={keyDrafts[ep.id]}
               />
               <button
-                class="shrink-0 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt"
+                class="shrink-0 rounded bg-edge px-2 py-1 text-meta hover:bg-accent hover:text-panel-alt"
                 onclick={() => saveKey(ep.id)}>{t("settings.aiKeySave")}</button
               >
               {#if ep.hasKey}
                 <button
-                  class="shrink-0 rounded px-2 py-1 text-[11px] text-muted hover:text-danger"
+                  class="shrink-0 rounded px-2 py-1 text-meta text-muted hover:text-danger"
                   onclick={() => (clearKeyId = ep.id)}>{t("settings.aiKeyClear")}</button
                 >
               {/if}
@@ -413,7 +413,7 @@
 
             <!-- Reply cap + request timeout (Phase 40). Blank = the endpoint's
                  own default, so an untouched endpoint behaves exactly as before. -->
-            <span class="text-[10px] text-muted">{t("settings.aiMaxTokens")}</span>
+            <span class="text-caption text-muted">{t("settings.aiMaxTokens")}</span>
             <div class="flex items-center gap-2">
               <input
                 type="number"
@@ -425,10 +425,10 @@
                 value={ep.maxTokens ?? ""}
                 onchange={(e) => setNumField(ep, "maxTokens", e.currentTarget.value, MAX_TOKENS_RANGE)}
               />
-              <span class="text-[10px] text-muted">{t("settings.aiMaxTokensHint")}</span>
+              <span class="text-caption text-muted">{t("settings.aiMaxTokensHint")}</span>
             </div>
 
-            <span class="text-[10px] text-muted">{t("settings.aiTimeout")}</span>
+            <span class="text-caption text-muted">{t("settings.aiTimeout")}</span>
             <div class="flex items-center gap-2">
               <input
                 type="number"
@@ -440,7 +440,7 @@
                 value={ep.timeoutSec ?? ""}
                 onchange={(e) => setNumField(ep, "timeoutSec", e.currentTarget.value, TIMEOUT_RANGE)}
               />
-              <span class="text-[10px] text-muted">{t("settings.aiTimeoutHint")}</span>
+              <span class="text-caption text-muted">{t("settings.aiTimeoutHint")}</span>
             </div>
           </div>
 
@@ -454,7 +454,7 @@
             />
             {#if advancedOpen[ep.id]}
               <div class="mt-2 space-y-2">
-                <label class="block text-[10px] text-muted">
+                <label class="block text-caption text-muted">
                   <span class="flex items-center gap-1"
                     >{t("settings.aiBasePrompt")}<InfoHint text={t("settings.aiBasePromptHint")} /></span
                   >
@@ -465,7 +465,7 @@
                     bind:value={ep.basePrompt}
                   ></textarea>
                 </label>
-                <label class="block border-t border-edge pt-2 text-[10px] text-muted">
+                <label class="block border-t border-edge pt-2 text-caption text-muted">
                   <span class="flex items-center gap-1"
                     >{t("settings.aiParams")}<InfoHint text={t("settings.aiParamsHint")} /></span
                   >
@@ -479,7 +479,7 @@
                   ></textarea>
                 </label>
                 {#if paramsInvalid(ep)}
-                  <p class="text-[10px] text-danger" data-testid="ai-params-error">
+                  <p class="text-caption text-danger" data-testid="ai-params-error">
                     {t("settings.aiParamsInvalid")}
                   </p>
                 {/if}
@@ -490,7 +490,7 @@
           <!-- Connection check + status — last, after the key is entered. -->
           <div class="mt-3 flex items-center gap-2 border-t border-edge pt-3">
             <button
-              class="shrink-0 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt disabled:opacity-50"
+              class="shrink-0 rounded bg-edge px-2 py-1 text-meta hover:bg-accent hover:text-panel-alt disabled:opacity-50"
               data-testid="ai-check"
               disabled={checking[ep.id]}
               onclick={() => checkConn(ep)}
@@ -498,12 +498,12 @@
               {checking[ep.id] ? t("settings.aiChecking") : t("settings.aiCheck")}
             </button>
             {#if checkResult[ep.id]?.ok}
-              <span class="flex items-center gap-1 text-[11px] text-green-500">
+              <span class="flex items-center gap-1 text-meta text-ok">
                 <Icon name="check" size={12} />
                 {t("settings.aiCheckOk", { count: String(checkResult[ep.id].models.length) })}
               </span>
             {:else if checkResult[ep.id]}
-              <span class="truncate text-[11px] text-danger" title={checkResult[ep.id].error}>
+              <span class="truncate text-meta text-danger" title={checkResult[ep.id].error}>
                 {checkResult[ep.id].error}
               </span>
             {/if}
@@ -565,27 +565,27 @@
   {#if dangerOpen}
     <div class="mt-2 space-y-3 border-l border-edge pl-2">
       <div>
-        <div class="mb-1 text-[10px] uppercase tracking-wider text-muted">
+        <div class="mb-1 text-caption uppercase tracking-wider text-muted">
           {t("settings.aiDangerBuiltin")}
         </div>
         <div class="flex flex-wrap gap-1.5">
           {#each BUILTIN_DANGEROUS_LABELS as label (label)}
             <span
-              class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
+              class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-meta text-accent"
               >{label}</span
             >
           {/each}
         </div>
       </div>
       <div>
-        <div class="mb-1 text-[10px] uppercase tracking-wider text-muted">
+        <div class="mb-1 text-caption uppercase tracking-wider text-muted">
           {t("settings.aiDangerCustom")}
         </div>
         {#if settings.ai.dangerousPatterns.length > 0}
           <div class="mb-2 space-y-1">
             {#each settings.ai.dangerousPatterns as p (p)}
               <div class="flex items-center gap-2" data-testid="ai-danger-item">
-                <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-white">{p}</span>
+                <span class="min-w-0 flex-1 truncate font-mono text-meta text-white">{p}</span>
                 <button
                   class="shrink-0 rounded p-1 text-muted hover:text-danger"
                   use:tooltip={t("common.delete")}
@@ -607,7 +607,7 @@
             onkeydown={(e) => e.key === "Enter" && (e.preventDefault(), addPattern())}
           />
           <button
-            class="flex shrink-0 items-center gap-1 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt disabled:opacity-40"
+            class="flex shrink-0 items-center gap-1 rounded bg-edge px-2 py-1 text-meta hover:bg-accent hover:text-panel-alt disabled:opacity-40"
             data-testid="ai-danger-add"
             disabled={!patternDraft.trim() ||
               settings.ai.dangerousPatterns.length >= MAX_DANGEROUS_PATTERNS}
@@ -646,7 +646,7 @@
   {t("settings.aiHistory")}<InfoHint text={t("settings.aiHistoryHint")} />
 </div>
 <div class="mt-1 grid grid-cols-[96px_1fr] items-center gap-x-3 gap-y-2">
-  <span class="text-[10px] text-muted">{t("settings.aiHistoryLimit")}</span>
+  <span class="text-caption text-muted">{t("settings.aiHistoryLimit")}</span>
   <div class="flex items-center gap-2">
     <input
       type="number"
@@ -661,10 +661,10 @@
           ? sanitizeOptionalInt(e.currentTarget.value, HISTORY_LIMIT_RANGE)
           : null)}
     />
-    <span class="text-[10px] text-muted">{t("settings.aiHistoryLimitHint")}</span>
+    <span class="text-caption text-muted">{t("settings.aiHistoryLimitHint")}</span>
   </div>
 
-  <span class="text-[10px] text-muted">{t("settings.aiHistoryCap")}</span>
+  <span class="text-caption text-muted">{t("settings.aiHistoryCap")}</span>
   <div class="flex items-center gap-2">
     <input
       type="number"
@@ -679,7 +679,7 @@
           ? sanitizeOptionalInt(e.currentTarget.value, HISTORY_CHAR_CAP_RANGE)
           : null)}
     />
-    <span class="text-[10px] text-muted">{t("settings.aiHistoryCapHint")}</span>
+    <span class="text-caption text-muted">{t("settings.aiHistoryCapHint")}</span>
   </div>
 </div>
 
@@ -694,7 +694,7 @@
     <div class="mt-2 space-y-2 border-l border-edge pl-2">
       <!-- Reply language + the non-editable core, shown before the editable
            prompts so it is clear what they are added to. -->
-      <label class="block text-[11px] text-muted">
+      <label class="block text-meta text-muted">
         <span class="flex items-center gap-1">
           {t("settings.aiReplyLanguage")}<InfoHint text={t("settings.aiReplyLanguageHint")} />
         </span>
@@ -728,11 +728,11 @@
             {#each promptLayerRows() as layer (layer.key)}
               {#if layer.text}
                 <div>
-                  <div class="mb-0.5 flex items-center gap-1 text-[10px] text-muted">
+                  <div class="mb-0.5 flex items-center gap-1 text-caption text-muted">
                     <span class="h-px w-2 bg-edge"></span>{layer.label}
                   </div>
                   <pre
-                    class="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel-alt p-2 font-mono text-[10px] leading-relaxed {layer.key ===
+                    class="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel-alt p-2 font-mono text-caption leading-relaxed {layer.key ===
                     'persona'
                       ? 'text-text'
                       : 'text-muted'}">{layer.text}</pre>
@@ -765,7 +765,7 @@
                 <div class="rounded border border-edge p-2" data-testid="ai-prompt">
                   <div class="mb-1 flex items-center gap-2">
                     <label
-                      class="flex shrink-0 items-center gap-1 text-[10px] text-muted"
+                      class="flex shrink-0 items-center gap-1 text-caption text-muted"
                       use:tooltip={t("settings.aiPromptActive")}
                     >
                       <input
@@ -810,7 +810,7 @@
                 </div>
               {/each}
               <button
-                class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt"
+                class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-meta hover:bg-accent hover:text-panel-alt"
                 data-testid={`ai-prompt-add-${kind}`}
                 onclick={() => addPrompt(kind)}
               >

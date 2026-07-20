@@ -293,7 +293,7 @@
     <div class="grid gap-x-6 gap-y-0 sm:grid-cols-2">
       <!-- ── Connection ── -->
       <div>
-        <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted">{t("page.groupConnection")}</h3>
+        <h3 class="mb-2 text-caption uppercase tracking-wider text-muted">{t("page.groupConnection")}</h3>
         <label class="mb-2 block text-xs text-muted">
           {t("page.alias")}
           <input
@@ -306,7 +306,7 @@
             placeholder={t("page.aliasPlaceholder")}
           />
           {#if aliasError}
-            <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+            <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
           {/if}
         </label>
         <div class="mb-2">
@@ -324,7 +324,7 @@
             placeholder="192.168.1.10"
           />
           {#if hostError}
-            <span class="mt-1 block text-[11px] text-danger"
+            <span class="mt-1 block text-meta text-danger"
               >{hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
             >
           {/if}
@@ -354,12 +354,12 @@
               placeholder="root"
             />
             {#if usernameError}
-              <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+              <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
             {/if}
           </label>
         </div>
         {#if portError}
-          <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
+          <p class="mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
         {/if}
 
         <div class="mb-2 text-xs text-muted">
@@ -413,7 +413,7 @@
 
       <!-- ── Recording & AI ── -->
       <div>
-        <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted">{t("page.groupRecordingAi")}</h3>
+        <h3 class="mb-2 text-caption uppercase tracking-wider text-muted">{t("page.groupRecordingAi")}</h3>
         <div class="mb-3 flex items-center gap-2 text-xs text-text">
           <input type="checkbox" id="srv-auto-record" bind:checked={autoRecord} />
           <label for="srv-auto-record">{t("page.autoRecord")}</label>
@@ -514,7 +514,7 @@
                 placeholder="bastion.corp"
               />
               {#if proxyHostError}
-                <span class="mt-1 block text-[11px] text-danger"
+                <span class="mt-1 block text-meta text-danger"
                   >{proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
                 >
               {/if}
@@ -532,7 +532,7 @@
               />
             </label>
             {#if proxyPortError}
-              <p class="mb-2 text-[11px] text-danger">{t("page.portInvalid")}</p>
+              <p class="mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
             {/if}
           </div>
 
@@ -550,7 +550,7 @@
                   placeholder="jump"
                 />
                 {#if proxyUserError}
-                  <span class="mt-1 block text-[11px] text-danger">{t("page.fieldRequired")}</span>
+                  <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
                 {/if}
               </label>
 

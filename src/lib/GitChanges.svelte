@@ -257,7 +257,7 @@
 <div class="flex h-full min-h-0 flex-col text-xs">
   <div class="min-h-0 flex-1 overflow-auto">
     <!-- Staged -->
-    <div class="flex items-center justify-between px-2 py-1 text-[11px] uppercase tracking-wide text-muted">
+    <div class="flex items-center justify-between px-2 py-1 text-caption uppercase tracking-wider text-muted">
       <span>{t("git.staged")} ({staged.length})</span>
       {#if staged.length}
         <button
@@ -271,13 +271,13 @@
       {/if}
     </div>
     {#if staged.length === 0}
-      <p class="px-2 pb-1 text-[10px] text-muted">{t("git.nothingStaged")}</p>
+      <p class="px-2 pb-1 text-caption text-muted">{t("git.nothingStaged")}</p>
     {:else}
       {#each staged as f (f.path)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
-          <span class="w-3 shrink-0 text-center font-mono text-[10px] {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-[11px] text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
+          <button class="min-w-0 flex-1 truncate text-left text-meta text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
@@ -289,7 +289,7 @@
     {/if}
 
     <!-- Unstaged -->
-    <div class="mt-1 flex items-center justify-between border-t border-edge/40 px-2 py-1 text-[11px] uppercase tracking-wide text-muted">
+    <div class="mt-1 flex items-center justify-between border-t border-edge/40 px-2 py-1 text-caption uppercase tracking-wider text-muted">
       <span>{t("git.changes")} ({unstaged.length})</span>
       {#if unstaged.length}
         <div class="flex items-center">
@@ -336,7 +336,7 @@
 
     <!-- Selection action bar -->
     {#if selFiles.length}
-      <div class="flex items-center gap-1.5 border-b border-edge/40 bg-accent/10 px-2 py-1 text-[10px] text-white/80">
+      <div class="flex items-center gap-1.5 border-b border-edge/40 bg-accent/10 px-2 py-1 text-caption text-white/80">
         <span class="flex-1">{t("git.selectedN", { count: selFiles.length })}</span>
         <button class="rounded px-1 text-muted hover:bg-edge hover:text-danger" use:tooltip={t("git.discardSelected")} aria-label={t("git.discardSelected")} onclick={() => askDiscard(selFiles)}>
           <Icon name="trash" size={12} />
@@ -351,14 +351,14 @@
     {/if}
 
     {#if unstaged.length === 0}
-      <p class="px-2 pb-1 text-[10px] text-muted">{t("git.clean")}</p>
+      <p class="px-2 pb-1 text-caption text-muted">{t("git.clean")}</p>
     {:else}
       {#each unstaged as f (f.path)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
           <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
-          <span class="w-3 shrink-0 text-center font-mono text-[10px] {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-[11px] text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
+          <button class="min-w-0 flex-1 truncate text-left text-meta text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
@@ -380,7 +380,7 @@
         bind:value={message}
         rows="2"
         placeholder={t("git.commitPlaceholder")}
-        class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 pr-7 text-[11px] text-white placeholder:text-muted focus:border-accent focus:outline-none"
+        class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 pr-7 text-meta text-white placeholder:text-muted focus:border-accent focus:outline-none"
       ></textarea>
       {#if aiOn}
         <button
@@ -397,7 +397,7 @@
     </div>
     <div class="mt-1.5 flex gap-1.5">
       <button
-        class="flex flex-1 items-center justify-center gap-1 rounded bg-accent px-2 py-1 text-[11px] font-medium text-panel-alt hover:bg-accent-hover disabled:opacity-40"
+        class="flex flex-1 items-center justify-center gap-1 rounded bg-accent px-2 py-1 text-meta font-medium text-panel-alt hover:bg-accent-hover disabled:opacity-40"
         disabled={!canCommit}
         onclick={() => commit(false)}
       >
@@ -405,7 +405,7 @@
         {t("git.commit")}
       </button>
       <button
-        class="flex items-center justify-center gap-1 rounded border border-edge px-2 py-1 text-[11px] text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        class="flex items-center justify-center gap-1 rounded border border-edge px-2 py-1 text-meta text-muted hover:bg-edge hover:text-white disabled:opacity-40"
         use:tooltip={t("git.commitAndPush")}
         aria-label={t("git.commitAndPush")}
         disabled={!canCommit}

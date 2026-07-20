@@ -44,6 +44,9 @@
     parseVolumes,
     parseStats,
     parseAvailability,
+    inspectLimitsArgs,
+    parseLimits,
+    type DockerLimits,
     DOCKER_GROUP_ADD_CMD,
     groupByCompose,
     needsConfirm,
@@ -56,6 +59,7 @@
     type DockerContainer,
     type DockerRegistry,
   } from "./docker";
+  import { parsePercent, pushSamples, type LoadHistory } from "./loadhistory";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { t, type MessageKey } from "./i18n";
 
@@ -91,6 +95,12 @@
 
   let groups = $state<ComposeGroup[]>([]);
   let statsById = $state<Map<string, DockerStat>>(new Map());
+  // CPU history per container id, fed by the poll that already runs (Phase 42).
+  let cpuHistory = $state<LoadHistory>({});
+  // Configured ceilings per container id (Phase 43). Fetched once per id, never
+  // polled: `HostConfig` cannot change while a container runs, and `docker stats`
+  // cannot tell a limit from the host total.
+  let limitsById = $state<Map<string, DockerLimits>>(new Map());
   let images = $state<DockerImage[]>([]);
   let networks = $state<DockerNetwork[]>([]);
   let volumes = $state<DockerVolume[]>([]);
@@ -188,6 +198,36 @@
     }
   }
 
+  /**
+   * Fetch ceilings for containers we have not inspected yet, and forget the ones
+   * that are gone. One inspect for the whole batch; a steady-state panel makes no
+   * call at all, which is why this can sit inside the poll without adding load.
+   */
+  async function loadLimits(live: readonly string[]) {
+    const missing = live.filter((id) => !limitsById.has(id));
+    const next = new Map([...limitsById].filter(([id]) => live.includes(id)));
+    if (missing.length > 0) {
+      try {
+        const res = await runQuery(inspectLimitsArgs(missing));
+        // `docker ps` yields short ids, `docker inspect` echoes the full 64-char
+        // one, so the two are matched by prefix — keying the cache off the raw
+        // inspect id would mean it never hits and we would re-inspect every poll.
+        for (const [fullId, lim] of parseLimits(res.stdout)) {
+          const short = missing.find((id) => fullId.startsWith(id));
+          if (short) next.set(short, lim);
+        }
+        // Anything the inspect did not answer for is recorded as "no limit" so we
+        // do not re-ask on every single poll for a container docker won't describe.
+        for (const id of missing) {
+          if (!next.has(id)) next.set(id, { cpuCores: null, memBytes: null });
+        }
+      } catch {
+        /* limits are an enrichment — the panel works without them */
+      }
+    }
+    limitsById = next;
+  }
+
   /** Probe whether docker is usable on this host (drives the empty state). */
   async function checkAvailability() {
     try {
@@ -220,6 +260,16 @@
         const map = new Map<string, DockerStat>();
         for (const s of parseStats(st.stdout)) map.set(s.id, s);
         statsById = map;
+        // Fold this snapshot into the rolling history. Keyed off the `ps` list so
+        // a container that vanished between the two commands drops its history.
+        const live = groups.flatMap((g) => g.containers.map((c) => c.id));
+        const cpu = new Map<string, number>();
+        for (const id of live) {
+          const pct = parsePercent((map.get(id) ?? map.get(id.slice(0, 12)))?.cpu);
+          if (pct != null) cpu.set(id, pct);
+        }
+        cpuHistory = pushSamples(cpuHistory, live, cpu);
+        await loadLimits(live);
       } else if (activeSub === "images") {
         images = parseImages((await runQuery(imagesArgs())).stdout);
       } else {
@@ -315,6 +365,10 @@
     if (sessionReady) {
       availability = null;
       firstLoadDone = false;
+      // Another host's containers are not this host's history, and ids collide
+      // across hosts often enough (same compose file) to matter.
+      cpuHistory = {};
+      limitsById = new Map();
       void checkAvailability().then(() => refresh());
     }
   });
@@ -368,10 +422,10 @@
       {#if availability.reason === "denied"}
         <div class="flex flex-col items-center gap-1.5">
           <div class="flex items-center gap-1.5 rounded border border-edge bg-panel-alt px-2 py-1">
-            <code class="select-text font-mono text-[11px] text-text">{DOCKER_GROUP_ADD_CMD}</code>
+            <code class="select-text font-mono text-meta text-text">{DOCKER_GROUP_ADD_CMD}</code>
             <CopyButton text={DOCKER_GROUP_ADD_CMD} testid="docker-denied-copy" />
           </div>
-          <p class="max-w-xs text-[11px] leading-relaxed text-muted">{t("docker.deniedRelogin")}</p>
+          <p class="max-w-xs text-meta leading-relaxed text-muted">{t("docker.deniedRelogin")}</p>
         </div>
       {/if}
       <button
@@ -388,7 +442,7 @@
       <Icon name="container" size={15} class="text-accent" />
       <div class="min-w-0 flex-1">
         <div class="font-medium text-white/90">{t("docker.panelTitle")}</div>
-        <div class="truncate text-[10px] text-muted">{t("docker.serverVersion", { version: availability.version })}</div>
+        <div class="truncate text-caption text-muted">{t("docker.serverVersion", { version: availability.version })}</div>
       </div>
       {#if registries.length > 0}
         <button class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.registryLogin")} aria-label={t("docker.registryLogin")} onclick={openLoginMenu}>
@@ -401,7 +455,7 @@
     </div>
 
     <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-[11px]">
+    <div class="flex border-b border-edge text-meta">
       {#each SUBS as s (s.id)}
         <button
           data-testid={`docker-subtab-${s.id}`}
@@ -434,6 +488,8 @@
           <DockerContainers
             {groups}
             {statsById}
+            {cpuHistory}
+            {limitsById}
             {busy}
             {run}
             onShell={openShell}
@@ -480,6 +536,6 @@
   {t("docker.confirmBody")}
   <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-white/80">{confirmText}</code>
   {#if prod}
-    <span class="mt-1 block text-[11px] text-danger">{t("docker.confirmProdWarn")}</span>
+    <span class="mt-1 block text-meta text-danger">{t("docker.confirmProdWarn")}</span>
   {/if}
 </ConfirmDialog>

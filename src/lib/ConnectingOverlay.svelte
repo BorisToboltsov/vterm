@@ -78,7 +78,7 @@
   <li class="flex items-center gap-2.5 text-xs">
     <span class="flex w-4 shrink-0 items-center justify-center">
       {#if step.state === "done"}
-        <Icon name="check" size={14} class="text-green-500" />
+        <Icon name="check" size={14} class="text-ok" />
       {:else if step.state === "error"}
         <Icon name="close" size={14} class="text-danger" />
       {:else if step.state === "active"}
@@ -95,7 +95,7 @@
 
 {#snippet group(icon: IconName, label: string, testid: string, groupSteps: PhaseStep[])}
   <div>
-    <div class="mb-1.5 flex items-center gap-2 text-[11px] text-muted">
+    <div class="mb-1.5 flex items-center gap-2 text-meta text-muted">
       <Icon name={icon} size={13} class="text-muted" />
       <span class="font-mono" data-testid={testid}>{label}</span>
     </div>

@@ -490,7 +490,7 @@
          The indicator slot has a fixed width so toggling a column doesn't resize
          the button or reflow the row. -->
     <div class="mb-2 flex flex-nowrap items-center gap-1.5">
-      <span class="shrink-0 text-[11px] text-muted">{t("recordings.sortBy")}:</span>
+      <span class="shrink-0 text-meta text-muted">{t("recordings.sortBy")}:</span>
       {#each SORT_KEYS as key}
         {@const st = sortState(key)}
         <button
@@ -506,7 +506,7 @@
             {#if st}
               <Icon name={st.dir === "asc" ? "chevronUp" : "chevronDown"} size={12} />
               {#if criteria.length > 1}
-                <span class="text-[10px] tabular-nums opacity-70">{st.index + 1}</span>
+                <span class="text-caption tabular-nums opacity-70">{st.index + 1}</span>
               {/if}
             {/if}
           </span>
@@ -518,7 +518,7 @@
          (single-select). "None" is the flat list. Bundles stay collapsed under
          either mode; when grouping by server they land in a broadcast section. -->
     <div class="mb-2 flex flex-nowrap items-center gap-1.5">
-      <span class="shrink-0 text-[11px] text-muted">{t("recordings.groupBy")}:</span>
+      <span class="shrink-0 text-meta text-muted">{t("recordings.groupBy")}:</span>
       {#each GROUP_BY as opt}
         <button
           type="button"
@@ -554,7 +554,7 @@
               {rec.description}
             </div>
           {/if}
-          <div class="flex items-center gap-1 text-[11px] text-muted">
+          <div class="flex items-center gap-1 text-meta text-muted">
             {#if rec.server}
               <Icon name="server" size={12} class="shrink-0" />
               <span class="truncate" title={rec.server}>{rec.server}</span>
@@ -638,7 +638,7 @@
                 <div class="truncate text-sm text-text">
                   {entry.label || t("recordings.broadcastBundle", { count: entry.items.length })}
                 </div>
-                <div class="text-[11px] tabular-nums text-muted">
+                <div class="text-meta tabular-nums text-muted">
                   {t("recordings.broadcastBundle", { count: entry.items.length })} · {fmtDate(entry.timestamp)}
                 </div>
               </div>
@@ -686,12 +686,12 @@
               class="shrink-0 text-muted"
             />
             <span
-              class="truncate text-[11px] font-medium uppercase tracking-wide text-muted"
+              class="truncate text-meta font-medium uppercase tracking-wide text-muted"
               title={sectionLabel(section.bucket, section.label)}
             >
               {sectionLabel(section.bucket, section.label)}
             </span>
-            <span class="shrink-0 text-[11px] tabular-nums text-muted opacity-70">{section.count}</span>
+            <span class="shrink-0 text-meta tabular-nums text-muted opacity-70">{section.count}</span>
           </button>
           {#if !collapsed}
             <div class="space-y-1.5">
@@ -793,11 +793,11 @@
     <span class="truncate text-xs text-muted" title={planTitle}>{planTitle}</span>
     <div class="flex items-center gap-2">
       {#if planStreaming}
-        <span class="text-[11px] text-muted">{t("recordings.planStreaming")}</span>
+        <span class="text-meta text-muted">{t("recordings.planStreaming")}</span>
       {/if}
       <button
         type="button"
-        class="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted hover:text-white disabled:opacity-50"
+        class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:text-white disabled:opacity-50"
         disabled={!planText}
         onclick={() => {
           writeClipboard(planText);
@@ -811,9 +811,9 @@
   </div>
   <div class="mt-2 max-h-[60vh] overflow-auto text-sm" data-testid="rec-plan-view">
     {#if planError}
-      <p class="text-[12px] text-danger">{planError}</p>
+      <p class="text-xs text-danger">{planError}</p>
     {:else if !planText && planStreaming}
-      <p class="py-6 text-center text-[11px] text-muted">{t("recordings.planStreaming")}</p>
+      <p class="py-6 text-center text-meta text-muted">{t("recordings.planStreaming")}</p>
     {:else}
       <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       <div class="markdown-preview">{@html renderMarkdown(planText)}</div>

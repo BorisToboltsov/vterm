@@ -19,6 +19,7 @@
   import Icon from "./Icon.svelte";
   import { resolveServerIcon, resolveServerColorClass } from "./servericons";
   import { fade } from "svelte/transition";
+  import { motion } from "./motion";
   import EmptyState from "./EmptyState.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import type { OpenMenu } from "./ctxmenu";
@@ -319,7 +320,7 @@
         <Icon name="chevronRight" size={16} />
       </button>
       <span
-        class="text-[10px] uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
+        class="text-caption uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
       >
         {t("tree.servers")}
       </span>
@@ -428,7 +429,7 @@
             </button>
             <Icon name="folder" size={15} class="text-muted" />
             <span class="truncate font-medium">{row.name}</span>
-            <span class="shrink-0 text-[10px] text-muted">{row.count}</span>
+            <span class="shrink-0 text-caption text-muted">{row.count}</span>
             <div
               class="invisible ml-auto flex shrink-0 items-center gap-1 group-hover:visible"
             >
@@ -523,7 +524,7 @@
                       {/each}
                     </div>
                     {#if dots.extra > 0}
-                      <span class="pl-1.5 text-[10px] font-medium text-muted">+{dots.extra}</span>
+                      <span class="pl-1.5 text-caption font-medium text-muted">+{dots.extra}</span>
                     {/if}
                   </div>
                 {/if}
@@ -534,7 +535,7 @@
               {#if row.server.tags.length > 0}
                 <div class="mt-1 flex flex-wrap gap-1">
                   {#each row.server.tags as tag (tag)}
-                    <span class="rounded bg-edge px-1.5 py-0.5 text-[10px] text-muted">{tag}</span>
+                    <span class="rounded bg-edge px-1.5 py-0.5 text-caption text-muted">{tag}</span>
                   {/each}
                 </div>
               {/if}
@@ -606,7 +607,7 @@
 <!-- Drag ghosts (pointer-events-none so elementFromPoint still sees the target). -->
 {#if draggingServer}
   <div
-    in:fade={{ duration: 120 }}
+    in:fade={motion()}
     class="pointer-events-none fixed z-50 w-56 rounded border border-accent bg-panel-alt px-3 py-2 text-sm opacity-90 shadow-lg"
     style="left: {dragX + 12}px; top: {dragY + 8}px"
   >
@@ -618,7 +619,7 @@
 {/if}
 {#if draggingFolder}
   <div
-    in:fade={{ duration: 120 }}
+    in:fade={motion()}
     class="pointer-events-none fixed z-50 flex items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
     style="left: {dragX + 12}px; top: {dragY + 8}px"
   >

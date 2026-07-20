@@ -138,7 +138,7 @@
           <div class="mb-3 flex flex-wrap gap-1.5">
             {#each features as f (f)}
               <span
-                class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-[11px] text-accent"
+                class="rounded-full border border-accent/25 bg-accent/10 px-2.5 py-0.5 text-meta text-accent"
                 >{t(f)}</span
               >
             {/each}

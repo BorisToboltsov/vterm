@@ -15,6 +15,7 @@
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t } from "./i18n";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   let highlightRulesOpen = $state(false);
   const HIGHLIGHT_COLORS: HighlightColor[] = [
@@ -88,7 +89,7 @@
     {t("settings.smartLogsAll")}
   </label>
   {#if settings.smartLogs.enabled}
-    <div transition:slide={{ duration: 200 }} class="mt-2 space-y-1.5">
+    <div transition:slide={motion(MOTION_BASE)} class="mt-2 space-y-1.5">
       <DisclosureRow
         variant="list"
         bind:open={highlightRulesOpen}
@@ -98,7 +99,7 @@
       />
 
       {#if highlightRulesOpen}
-        <div transition:slide={{ duration: 200 }} class="mt-1 space-y-2">
+        <div transition:slide={motion(MOTION_BASE)} class="mt-1 space-y-2">
           {#each settings.highlightRules as rule, i (rule.id)}
             <div class="space-y-1.5 rounded border border-edge p-2">
               <div class="flex items-center gap-2">
@@ -149,7 +150,7 @@
                 class="w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
               />
               {#if rule.pattern && !patternValid(rule.pattern)}
-                <p class="text-[11px] text-danger">{t("highlight.invalidPattern")}</p>
+                <p class="text-meta text-danger">{t("highlight.invalidPattern")}</p>
               {/if}
               <div class="flex items-center gap-1.5">
                 {#each HIGHLIGHT_COLORS as c}
@@ -164,12 +165,12 @@
                     style="background:{swatchColor(c)}"
                   ></button>
                 {/each}
-                <label class="ml-auto flex items-center gap-1 text-[11px] text-muted">
+                <label class="ml-auto flex items-center gap-1 text-meta text-muted">
                   <input type="checkbox" bind:checked={rule.caseSensitive} />
                   {t("highlight.caseSensitive")}
                 </label>
               </div>
-              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted">
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted">
                 <label class="flex items-center gap-1">
                   <input type="checkbox" bind:checked={rule.wholeLine} />
                   {t("highlight.wholeLine")}

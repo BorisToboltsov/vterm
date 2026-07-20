@@ -32,7 +32,7 @@
     {/each}
   </div>
   {#if legend}
-    <div class="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+    <div class="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-meta text-muted">
       {#each segments as s, i (i)}
         <span class="flex items-center gap-1">
           <span

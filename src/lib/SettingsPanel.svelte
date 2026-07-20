@@ -189,7 +189,7 @@
               <Icon name={g.icon} class="h-4 w-4 shrink-0" />
               <span class="flex-1 truncate">{t(GROUP_LABEL[g.id])}</span>
               {#if searching && matchCounts[g.id] > 0}
-                <span class="rounded bg-accent/20 px-1.5 text-[10px] text-accent"
+                <span class="rounded bg-accent/20 px-1.5 text-caption text-accent"
                   >{matchCounts[g.id]}</span
                 >
               {/if}

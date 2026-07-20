@@ -104,14 +104,14 @@
       <CopyButton text={value} testid="pw-copy" />
     </div>
     {#if mode === "password" && !result.ok}
-      <p class="mt-1 text-[11px] text-danger" data-testid="pw-error">{t(ERR[result.error])}</p>
+      <p class="mt-1 text-meta text-danger" data-testid="pw-error">{t(ERR[result.error])}</p>
     {:else}
       <div class="mt-2 flex items-center gap-2">
         <div class="h-1.5 flex-1 overflow-hidden rounded bg-edge">
           <div class="h-full {strength.cls}" style="width: {strength.pct}%"></div>
         </div>
-        <span class="whitespace-nowrap text-[11px]" data-testid="pw-strength">{t(strength.key)}</span>
-        <span class="whitespace-nowrap text-[11px] text-muted">{t("util.password.entropy", { bits })}</span>
+        <span class="whitespace-nowrap text-meta" data-testid="pw-strength">{t(strength.key)}</span>
+        <span class="whitespace-nowrap text-meta text-muted">{t("util.password.entropy", { bits })}</span>
       </div>
     {/if}
   </div>

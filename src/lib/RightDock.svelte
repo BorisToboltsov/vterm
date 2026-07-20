@@ -4,6 +4,8 @@
   // expanded: horizontal tabs above the active tab's content. The content panels
   // are rendered embedded (content-only) — this component owns the chrome.
   import type { DockTab } from "./stores/layout.svelte";
+  import { fade } from "svelte/transition";
+  import { motion } from "./motion";
   import { tooltip } from "./actions/tooltip";
   import SftpPanel from "./SftpPanel.svelte";
   import LocalFilePanel from "./LocalFilePanel.svelte";
@@ -113,9 +115,13 @@
         <Icon name="chevronLeft" size={16} />
       </button>
       {#each TABS as tab (tab.id)}
+        <!-- `text-meta` (11px), not the `text-caption` every other uppercase label
+             uses (Phase 44): this is an interactive tab label, not a caption, and
+             it is set vertically — rotated glyphs at 10px are markedly harder to
+             read. Deliberate exception; don't "unify" it away. -->
         <button
           data-testid={`dock-vtab-${tab.id}`}
-          class="rounded px-1 py-1.5 text-[11px] uppercase tracking-wider [writing-mode:vertical-rl] {activeTab ===
+          class="rounded px-1 py-1.5 text-meta uppercase tracking-wider [writing-mode:vertical-rl] {activeTab ===
           tab.id
             ? 'bg-edge text-white'
             : 'text-muted hover:text-white'}"
@@ -152,8 +158,12 @@
         {/each}
       </div>
 
-      <!-- Active tab content -->
-      <div class="min-h-0 flex-1">
+      <!-- Active tab content. Keyed on the tab so switching fades the new panel in
+           (the `{#if}` chain already remounts it, so the key costs no extra teardown);
+           the transition rides the existing flex child rather than a new wrapper box,
+           which would need its own height resolution. -->
+      {#key activeTab}
+      <div class="min-h-0 flex-1" in:fade={motion()}>
         {#if activeTab === "files"}
           {#if kind === "ssh"}
             <SftpPanel
@@ -216,6 +226,7 @@
           />
         {/if}
       </div>
+      {/key}
     </div>
   {/if}
 </div>

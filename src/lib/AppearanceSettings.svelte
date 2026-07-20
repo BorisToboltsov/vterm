@@ -8,6 +8,7 @@
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   // Theme picker groups (visual swatch chips instead of a plain dropdown). The
   // group label is a message key, resolved reactively in the markup.
@@ -123,11 +124,11 @@ print(greet("world"))  # => 12345`;
       {/snippet}
     </DisclosureRow>
     {#if themeOpen}
-      <div transition:slide={{ duration: 200 }}>
+      <div transition:slide={motion(MOTION_BASE)}>
         <div role="radiogroup" aria-label={t("settings.theme")} class="mt-2 space-y-2">
           {#each themeGroups as grp (grp.labelKey)}
             <div>
-              <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
+              <span class="mb-1 block text-caption uppercase tracking-wider text-muted">
                 {t(grp.labelKey)}
               </span>
               <div class="grid grid-cols-2 gap-1.5">
@@ -172,7 +173,7 @@ print(greet("world"))  # => 12345`;
         {#if settings.theme === "custom"}
           <div class="mt-2 grid grid-cols-3 gap-2">
             {#each swatches as sw (sw.key)}
-              <label class="flex items-center gap-1 text-[11px] text-muted">
+              <label class="flex items-center gap-1 text-meta text-muted">
                 <input
                   type="color"
                   class="h-6 w-6 shrink-0 rounded border border-edge bg-panel"
@@ -194,11 +195,11 @@ print(greet("world"))  # => 12345`;
       {/snippet}
     </DisclosureRow>
     {#if fontOpen}
-      <div transition:slide={{ duration: 200 }}>
+      <div transition:slide={motion(MOTION_BASE)}>
         <div role="radiogroup" aria-label={t("settings.font")} class="mt-2 space-y-2">
           {#each FONT_GROUPS as g (g)}
             <div>
-              <span class="mb-1 block text-[10px] uppercase tracking-wider text-muted">
+              <span class="mb-1 block text-caption uppercase tracking-wider text-muted">
                 {t(FONT_GROUP_KEY[g])}
               </span>
               <div class="grid grid-cols-2 gap-1.5">

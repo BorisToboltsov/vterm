@@ -38,7 +38,7 @@
 
 <div class="shrink-0 border-t border-edge bg-panel-alt px-2 py-1.5">
   {#if prodWarn}
-    <div class="mb-1 flex items-center gap-1.5 text-[11px] text-yellow-500">
+    <div class="mb-1 flex items-center gap-1.5 text-meta text-warn">
       <Icon name="shield" size={13} />
       {t("broadcast.prodWarn")}
     </div>

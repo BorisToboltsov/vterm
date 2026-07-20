@@ -2,6 +2,7 @@
   import { onMount, untrack } from "svelte";
   import { tooltip } from "$lib/actions/tooltip";
   import { fade } from "svelte/transition";
+  import { motion } from "$lib/motion";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     connectPlan,
@@ -1896,7 +1897,7 @@
                   <Icon
                     name="pause"
                     size={12}
-                    class="text-green-500"
+                    class="text-ok"
                     title={t("recordings.paused")}
                   />
                 {:else}
@@ -1913,7 +1914,7 @@
               {#if isBroadcastMember(tab.sessionId)}
                 <span
                   data-broadcast-member
-                  class="h-2 w-2 rounded-full bg-blue-500"
+                  class="h-2 w-2 rounded-full bg-accent"
                   use:tooltip={t("broadcast.memberDot")}
                   aria-label={t("broadcast.memberDot")}
                 ></span>
@@ -2028,14 +2029,14 @@
                     : `absolute inset-0 flex flex-col ${tabsState.activeId === tab.sessionId ? "" : "invisible"}`}
               >
                 {#if bcTile}
-                  <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-[11px]">
+                  <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-meta">
                     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
                     <span class="shrink-0 truncate text-white">{tabAlias(tab)}</span>
                     <span class="min-w-0 flex-1 truncate text-muted">
                       {bcSrv ? `${bcSrv.username}@${bcSrv.host}:${bcSrv.port}` : ""}
                     </span>
                     {#if bcSrv && isProdServer(bcSrv.tags)}
-                      <span class="shrink-0 rounded bg-danger/30 px-1 text-[10px] text-danger">prod</span>
+                      <span class="shrink-0 rounded bg-danger/30 px-1 text-caption text-danger">prod</span>
                     {/if}
                   </div>
                 {/if}
@@ -2336,7 +2337,7 @@
 <!-- Drag ghost for a terminal tab being reordered. -->
 {#if draggingTab}
   <div
-    in:fade={{ duration: 120 }}
+    in:fade={motion()}
     class="pointer-events-none fixed z-50 flex max-w-48 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
     style="left: {tabDragX + 12}px; top: {tabDragY + 8}px"
   >
@@ -2419,7 +2420,7 @@
   {t("broadcast.prodConfirmBody2")}
   <span class="text-danger">{pendingProdAliases.join(", ")}</span>
   <pre
-    class="mt-2 overflow-x-auto rounded border border-edge bg-panel p-2 text-[11px] leading-relaxed text-muted"
+    class="mt-2 overflow-x-auto rounded border border-edge bg-panel p-2 text-meta leading-relaxed text-muted"
   >{pendingBroadcast ? pendingBroadcast.frame.replace(/\n$/, "") : ""}</pre>
 </ConfirmDialog>
 
@@ -2434,7 +2435,7 @@
 >
   <p class="mb-2">{t("sftp.followSetupBody")}</p>
   <pre
-    class="overflow-x-auto rounded border border-edge bg-panel p-2 text-[11px] leading-relaxed text-muted"
+    class="overflow-x-auto rounded border border-edge bg-panel p-2 text-meta leading-relaxed text-muted"
   >{osc7SetupDisplay()}</pre>
 </ConfirmDialog>
 

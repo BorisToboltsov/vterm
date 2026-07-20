@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  type DockerStat,
+  type DockerContainer,
+  groupUsage,
+  parseMemUsed,
+  parseLimits,
+  inspectLimitsArgs,
   versionArgs,
   psArgs,
   imagesArgs,
@@ -299,5 +305,89 @@ describe("view helpers", () => {
     expect(stateTone("dead")).toBe("bad");
     expect(stateTone("exited")).toBe("idle");
     expect(stateTone("created")).toBe("idle");
+  });
+});
+
+describe("inspectLimitsArgs / parseLimits", () => {
+  const US = "\x1f";
+
+  it("asks for every id in one inspect", () => {
+    const a = inspectLimitsArgs(["aaa", "bbb"]);
+    expect(a[0]).toBe("docker");
+    expect(a[1]).toBe("inspect");
+    expect(a.slice(-2)).toEqual(["aaa", "bbb"]);
+  });
+
+  it("reads cores and bytes, treating docker's 0 as 'no limit'", () => {
+    const raw = [`aaa${US}500000000${US}1073741824`, `bbb${US}0${US}0`].join("\n");
+    const m = parseLimits(raw);
+    expect(m.get("aaa")).toEqual({ cpuCores: 0.5, memBytes: 1073741824 });
+    expect(m.get("bbb")).toEqual({ cpuCores: null, memBytes: null });
+  });
+
+  it("skips junk rows instead of producing bogus entries", () => {
+    expect(parseLimits(`\n${US}${US}\n`).size).toBe(0);
+  });
+});
+
+describe("parseMemUsed", () => {
+  it("reads the used half and ignores the right half entirely", () => {
+    // The right half is the limit OR the host total — indistinguishable here.
+    expect(parseMemUsed("412MiB / 1GiB")).toBe(412 * 1024 ** 2);
+    expect(parseMemUsed("412MiB / 15.5GiB")).toBe(412 * 1024 ** 2);
+  });
+
+  it("handles docker's mixed binary and decimal suffixes", () => {
+    expect(parseMemUsed("1.5GiB / 2GiB")).toBeCloseTo(1.5 * 1024 ** 3);
+    expect(parseMemUsed("900kB / 1GB")).toBe(900 * 1000);
+    expect(parseMemUsed("512B / 1GiB")).toBe(512);
+  });
+
+  it("is null for placeholders", () => {
+    expect(parseMemUsed("--")).toBeNull();
+    expect(parseMemUsed("")).toBeNull();
+    expect(parseMemUsed(undefined)).toBeNull();
+  });
+});
+
+describe("groupUsage", () => {
+  const pct = (s: string | undefined) => (s ? Number(s.replace("%", "")) : null);
+  const c = (id: string) =>
+    ({
+      id,
+      name: id,
+      image: "i",
+      state: "running",
+      status: "Up",
+      ports: "",
+      created: "",
+      createdAt: "",
+      runningFor: "",
+      project: "p",
+      service: "",
+      workdir: null,
+    }) as DockerContainer;
+  const stat = (id: string, cpu: string, mem: string) =>
+    ({ id, name: id, cpu, mem, memPerc: "", netIo: "", blockIo: "", pids: "" }) as DockerStat;
+
+  it("sums cpu percent and memory across the project", () => {
+    const stats = new Map([
+      ["a", stat("a", "10%", "100MiB / 1GiB")],
+      ["b", stat("b", "5%", "50MiB / 1GiB")],
+    ]);
+    expect(groupUsage([c("a"), c("b")], stats, pct)).toEqual({
+      cpu: 15,
+      mem: 150 * 1024 ** 2,
+    });
+  });
+
+  it("counts only containers that reported, and stays null when none did", () => {
+    const stats = new Map([["a", stat("a", "10%", "100MiB / 1GiB")]]);
+    expect(groupUsage([c("a"), c("b")], stats, pct).cpu).toBe(10);
+    expect(groupUsage([c("b")], stats, pct)).toEqual({ cpu: null, mem: null });
+  });
+
+  it("is null-null for an empty project rather than a confident zero", () => {
+    expect(groupUsage([], new Map(), pct)).toEqual({ cpu: null, mem: null });
   });
 });

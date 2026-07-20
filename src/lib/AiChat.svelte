@@ -291,7 +291,7 @@
              mean a round trip through settings. -->
         <select
           data-testid="ai-endpoint-switch"
-          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
+          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
           use:tooltip={t("ai.endpoint")}
           value={endpoint.id}
           onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
@@ -303,7 +303,7 @@
       {/if}
       <select
         data-testid="ai-model"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
+        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
         use:tooltip={t("ai.model")}
         value={endpoint.model}
         onchange={(e) => setModel(e.currentTarget.value)}
@@ -325,7 +325,7 @@
       <span class="flex-1"></span>
     {/if}
     <button
-      class="shrink-0 rounded px-1.5 py-0.5 text-[11px] text-muted hover:text-white disabled:opacity-50"
+      class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-white disabled:opacity-50"
       onclick={clearChat}
       disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
     >
@@ -333,7 +333,7 @@
 
   {#if noAi && ready}
     <div
-      class="flex items-center gap-1 border-b border-edge bg-panel px-2 py-1 text-[11px] text-muted"
+      class="flex items-center gap-1 border-b border-edge bg-panel px-2 py-1 text-meta text-muted"
       data-testid="ai-noai-banner"
     >
       <Icon name="lock" size={12} />
@@ -343,16 +343,16 @@
 
   <div bind:this={scrollEl} class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 text-xs">
     {#if !ready}
-      <p class="py-6 text-center text-[11px] text-muted">{t("ai.disabledHint")}</p>
+      <p class="py-6 text-center text-meta text-muted">{t("ai.disabledHint")}</p>
     {:else if messages.length === 0}
-      <p class="py-6 text-center text-[11px] text-muted">{t("ai.empty")}</p>
+      <p class="py-6 text-center text-meta text-muted">{t("ai.empty")}</p>
     {/if}
     {#if droppedFromHistory > 0}
       <!-- The conversation outgrew the caps: say so, rather than silently
            dropping turns the user still sees on screen. -->
       <div class="flex items-center gap-2 py-0.5" data-testid="ai-history-trimmed">
         <span class="h-px flex-1 bg-edge"></span>
-        <span class="flex items-center gap-1 text-[10px] text-muted">
+        <span class="flex items-center gap-1 text-caption text-muted">
           <Icon name="scissors" size={11} />
           {t("ai.historyTrimmed", { count: String(droppedFromHistory) })}
         </span>
@@ -361,7 +361,7 @@
     {/if}
     {#each messages as m, i (i)}
       <div class="rounded border border-edge p-2 {m.role === 'user' ? 'bg-panel' : ''}">
-        <div class="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted">
+        <div class="mb-1 flex items-center gap-1 text-caption uppercase tracking-wider text-muted">
           <span>{m.role === "user" ? t("ai.you") : t("ai.assistant")}</span>
           {#if m.withContext}
             <span class="flex items-center gap-0.5 text-accent" use:tooltip={t("ai.context.attached")}>
@@ -383,7 +383,7 @@
               >
                 <Icon name={openReasoning[i] ? "chevronDown" : "chevronRight"} size={12} class="shrink-0 text-muted" />
                 <Icon name="bulb" size={12} class="shrink-0 text-warn" />
-                <span class="text-[10px] text-muted">
+                <span class="text-caption text-muted">
                   {streaming && i === messages.length - 1
                     ? t("ai.reasoningLive")
                     : m.elapsedMs
@@ -396,7 +396,7 @@
               </button>
               {#if openReasoning[i]}
                 <div
-                  class="whitespace-pre-wrap break-words border-t border-edge p-2 text-[11px] leading-relaxed text-muted"
+                  class="whitespace-pre-wrap break-words border-t border-edge p-2 text-meta leading-relaxed text-muted"
                 >{m.reasoning}</div>
               {/if}
             </div>
@@ -410,12 +410,12 @@
                 <div
                   class="flex items-center justify-between gap-2 border-b border-edge bg-panel px-2 py-0.5"
                 >
-                  <span class="text-[10px] uppercase tracking-wider text-muted">
+                  <span class="text-caption uppercase tracking-wider text-muted">
                     {seg.lang || "code"}
                   </span>
                   <div class="flex items-center gap-1">
                     <button
-                      class="flex items-center gap-0.5 rounded px-1 py-0.5 text-[10px] text-muted hover:text-white"
+                      class="flex items-center gap-0.5 rounded px-1 py-0.5 text-caption text-muted hover:text-white"
                       aria-label={t("ai.exec.copy")} use:tooltip={t("ai.exec.copy")}
                       onclick={() => copyBlock(seg.content)}
                     >
@@ -424,7 +424,7 @@
                     {#if seg.runnable && seg.closed && canExecute}
                       <button
                         data-testid="ai-run"
-                        class="flex items-center gap-0.5 rounded bg-edge px-1.5 py-0.5 text-[10px] hover:bg-accent hover:text-panel-alt disabled:opacity-50"
+                        class="flex items-center gap-0.5 rounded bg-edge px-1.5 py-0.5 text-caption hover:bg-accent hover:text-panel-alt disabled:opacity-50"
                         disabled={streaming || executed[`${i}:${si}`]}
                         onclick={() => runCommand(sessionId, chat, `${i}:${si}`, seg.content, noAi)}
                       >
@@ -434,7 +434,7 @@
                     {/if}
                   </div>
                 </div>
-                <pre class="overflow-x-auto p-2 text-[11px] leading-relaxed text-white"><code
+                <pre class="overflow-x-auto p-2 text-meta leading-relaxed text-white"><code
                     >{seg.content}</code
                   ></pre>
               </div>
@@ -446,7 +446,7 @@
               <!-- Only what the endpoint actually reported: a missing half is
                    omitted, never shown as a zero we didn't measure. -->
               <div
-                class="mt-1.5 flex items-center gap-2.5 whitespace-nowrap border-t border-edge pt-1 text-[10px] text-muted"
+                class="mt-1.5 flex items-center gap-2.5 whitespace-nowrap border-t border-edge pt-1 text-caption text-muted"
                 data-testid="ai-usage"
               >
                 {#if u.input}
@@ -473,27 +473,27 @@
       </div>
     {/each}
     {#if error}
-      <p class="text-[11px] text-danger" data-testid="ai-error">{error}</p>
+      <p class="text-meta text-danger" data-testid="ai-error">{error}</p>
     {/if}
   </div>
 
   {#if pending}
     <!-- Dialog step awaiting the user's go-ahead (dialogConfirm / dangerous cmd). -->
     <div class="border-t border-edge bg-panel px-2 py-2" data-testid="ai-pending">
-      <div class="mb-1 text-[10px] uppercase tracking-wider text-muted">
+      <div class="mb-1 text-caption uppercase tracking-wider text-muted">
         {t("ai.dialog.confirmTitle")}
       </div>
       <pre
-        class="mb-1.5 overflow-x-auto rounded bg-panel-alt p-2 font-mono text-[11px] text-white">{pending.command}</pre>
+        class="mb-1.5 overflow-x-auto rounded bg-panel-alt p-2 font-mono text-meta text-white">{pending.command}</pre>
       <div class="flex justify-end gap-2">
         <button
           data-testid="ai-dialog-skip"
-          class="rounded px-2 py-1 text-[11px] text-muted hover:text-white"
+          class="rounded px-2 py-1 text-meta text-muted hover:text-white"
           onclick={() => skipDialogStep(sessionId)}>{t("ai.dialog.skip")}</button
         >
         <button
           data-testid="ai-dialog-run"
-          class="flex items-center gap-1 rounded bg-accent px-2 py-1 text-[11px] text-panel-alt hover:bg-accent-hover"
+          class="flex items-center gap-1 rounded bg-accent px-2 py-1 text-meta text-panel-alt hover:bg-accent-hover"
           onclick={() => confirmDialogStep(sessionId)}
         >
           <Icon name="play" size={12} />
@@ -518,7 +518,7 @@
         <button
           data-testid="ai-attach"
           type="button"
-          class="flex items-center gap-1 rounded-l px-1.5 py-1 text-[11px] disabled:opacity-40 {attach
+          class="flex items-center gap-1 rounded-l px-1.5 py-1 text-meta disabled:opacity-40 {attach
             ? 'bg-edge text-accent'
             : 'text-muted hover:text-white'}"
           disabled={!canAttach}
@@ -532,7 +532,7 @@
         <button
           data-testid="ai-tiers"
           type="button"
-          class="rounded-r px-1 py-1 text-[11px] text-muted hover:text-white disabled:opacity-40"
+          class="rounded-r px-1 py-1 text-meta text-muted hover:text-white disabled:opacity-40"
           disabled={!canAttach}
           aria-label={t("ai.context.tiers")}
           use:tooltip={t("ai.context.tiers")}
@@ -548,10 +548,10 @@
             onclick={() => (showTiers = false)}
           ></button>
           <div
-            class="absolute bottom-full left-0 z-50 mb-1 w-60 rounded border border-edge bg-panel-alt p-2 text-[11px] shadow-lg"
+            class="absolute bottom-full left-0 z-50 mb-1 w-60 rounded border border-edge bg-panel-alt p-2 text-meta shadow-lg"
             data-testid="ai-tiers-menu"
           >
-            <p class="mb-1.5 text-[10px] text-muted">{t("ai.context.base")}</p>
+            <p class="mb-1.5 text-caption text-muted">{t("ai.context.base")}</p>
             <label class="mb-1 flex items-center gap-2 text-muted">
               <input type="checkbox" bind:checked={chat.context.includeBuffer} />
               {t("settings.aiIncludeBuffer")}

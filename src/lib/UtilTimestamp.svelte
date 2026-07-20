@@ -89,7 +89,7 @@
   </div>
 
   {#if !date}
-    <p class="text-[11px] text-danger" data-testid="ts-error">{t("util.timestamp.invalid")}</p>
+    <p class="text-meta text-danger" data-testid="ts-error">{t("util.timestamp.invalid")}</p>
   {:else}
     <div class="flex items-center gap-2">
       <span class="text-muted">{t("util.timestamp.timezone")}</span>

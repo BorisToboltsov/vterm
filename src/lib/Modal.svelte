@@ -2,7 +2,9 @@
   // Reusable modal shell: dimmed backdrop + centered card. Controlled via `open`
   // + `onclose` (backdrop click or Escape). Content is passed as children.
   import type { Snippet } from "svelte";
+  import { fade, scale } from "svelte/transition";
   import Icon from "./Icon.svelte";
+  import { motion, motionScale } from "./motion";
   import { t } from "./i18n";
 
   let {
@@ -73,16 +75,22 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
+    <!-- Entry motion only (Phase 42). An exit transition would keep a closed
+         dialog — backdrop, `aria-modal`, focus trap — mounted for the length of
+         the animation, and the common pattern here is "confirm closes, the next
+         dialog opens in the same tick": two overlapping z-40 layers, the dying
+         one still hit-testable. Appearing softly is the part worth having. -->
     <button
       class="absolute inset-0 bg-black/50"
       aria-label={t("common.closeDialog")}
       onclick={() => onclose?.()}
+      in:fade={motion()}
     ></button>
     <!-- Wrapper shrink-wraps the card so the close button (a sibling of the
          scrolling card, not a child) stays pinned to the corner and never
          scrolls away — and stays outside the focus trap so it can't steal the
          initial focus from the first form control. -->
-    <div class="relative">
+    <div class="relative" in:scale={motionScale()}>
       <div
         use:trap
         role="dialog"

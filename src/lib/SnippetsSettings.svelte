@@ -13,6 +13,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { t } from "./i18n";
   import { slide } from "svelte/transition";
+  import { motion, MOTION_BASE } from "./motion";
 
   let snippetDeleteId = $state<string | null>(null);
   let snippetResetOpen = $state(false);
@@ -54,8 +55,8 @@
     count={settings.snippets.length}
   />
   {#if snippetsOpen}
-    <div class="mt-2 space-y-2" transition:slide>
-      <label class="flex items-center gap-2 text-[11px] text-muted">
+    <div class="mt-2 space-y-2" transition:slide={motion(MOTION_BASE)}>
+      <label class="flex items-center gap-2 text-meta text-muted">
         {t("settings.snippetFilterLang")}
         <select
           data-testid="snippet-lang-filter"
@@ -100,7 +101,7 @@
             <textarea
               rows="4"
               spellcheck="false"
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-[11px] text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
               bind:value={snippet.body}
             ></textarea>
           </div>
