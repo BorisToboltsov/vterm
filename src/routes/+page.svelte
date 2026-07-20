@@ -26,9 +26,11 @@
     writeToTerminal,
     serverToolsStatus,
     nginxConfigFiles,
+    takeStoreWarnings,
     OPEN_FILE_EVENT,
   } from "$lib/api";
   import type { ServerProfile } from "$lib/types";
+  import { storeWarningMessage } from "$lib/storewarn";
   import { nameOf } from "$lib/tree";
   import {
     clamp,
@@ -40,7 +42,7 @@
   } from "$lib/stores/layout.svelte";
   import {
     closeTab as closeTabStore,
-    closeTabsForServer,
+    tabsForServer,
     dotClass,
     findTab,
     isLive,
@@ -1015,6 +1017,15 @@
 
   onMount(() => {
     refresh();
+    // A config file that failed to parse was quarantined during the backend's
+    // startup load. Reported without a TTL: "your server list is gone and here is
+    // where it went" must not scroll away after six seconds.
+    void takeStoreWarnings().then((warnings) => {
+      for (const w of warnings) {
+        const m = storeWarningMessage(w);
+        notifyError(t(m.key, m.params), 0);
+      }
+    });
     const unlisteners: UnlistenFn[] = [];
     listen("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));
     listen("menu://about", () => {
@@ -1123,7 +1134,9 @@
     if (!tab) return;
     const server = servers.find((s) => s.id === tab.serverId);
     const usedSaved = tab.secret === null;
-    closeTabStore(sessionId);
+    // Full teardown, not just the row: this session id is dead, and anything
+    // keyed by it (editors, chat, broadcast membership) has to go with it.
+    closeTabFully(sessionId);
     if (usedSaved) {
       await forgetSecrets(tab.serverId);
       servers = servers.map((s) =>
@@ -1150,7 +1163,18 @@
     else closeTabFully(sessionId);
   }
 
-  /** Drop a tab and its workspace (open editors) + AI conversation together. */
+  /**
+   * The one way a tab goes away. A session id keys state in four places besides
+   * the tab list, and closing the row alone leaks all of it — the workspace holds
+   * open editors' file contents, the chat holds the conversation plus terminal
+   * context, and a leftover broadcast member is a *dead* session in the send set,
+   * which is a correctness bug rather than just memory.
+   *
+   * Every close path routes here (close button, bulk close, server deletion,
+   * failed re-auth); `closeTabStore` is called nowhere else, enforced by
+   * [tabteardown.guard.test.ts](../lib/tabteardown.guard.test.ts). Adding
+   * per-session state anywhere means adding its cleanup here.
+   */
   function closeTabFully(sessionId: string) {
     removeWorkspace(sessionId);
     removeChat(sessionId);
@@ -1762,7 +1786,7 @@
 
   async function doDeleteServer(id: string) {
     const alias = servers.find((s) => s.id === id)?.alias ?? t("page.serverFallbackName");
-    closeTabsForServer(id);
+    for (const sid of tabsForServer(id)) closeTabFully(sid);
     try {
       await deleteServer(id);
       servers = servers.filter((s) => s.id !== id);

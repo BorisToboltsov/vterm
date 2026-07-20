@@ -1642,6 +1642,45 @@ mod tests {
 
     // ── MetricsSamples ─────────────────────────────────────────────────────────
     #[test]
+    fn clear_session_covers_every_field_of_the_struct() {
+        // The test below seeds and checks eight stores **by hand**, so adding a
+        // ninth field leaks one entry per closed session and that test stays
+        // green — which is exactly how the original net/disk leak survived. This
+        // one reads the struct instead, so the guard grows with the struct.
+        let src = include_str!("mod.rs");
+        let decl = src
+            .split_once("pub struct MetricsSamples {")
+            .expect("struct declaration")
+            .1;
+        let body = decl.split_once("\n}").expect("struct body").0;
+
+        let fields: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with("//") && !l.starts_with("///"))
+            .filter_map(|l| l.split_once(':'))
+            .map(|(name, _)| name.trim())
+            .filter(|n| !n.is_empty())
+            .collect();
+        assert!(fields.len() >= 8, "parsed too few fields: {fields:?}");
+
+        let cleared = src
+            .split_once("pub fn clear_session(&self, id: &str) {")
+            .expect("clear_session body")
+            .1;
+        let cleared = cleared.split_once("\n    }").expect("end of fn").0;
+
+        let missed: Vec<&&str> = fields
+            .iter()
+            .filter(|f| !cleared.contains(&format!("self.{f}")))
+            .collect();
+        assert!(
+            missed.is_empty(),
+            "clear_session does not clear {missed:?} — each leaks one entry per closed session"
+        );
+    }
+
+    #[test]
     fn clear_session_removes_every_sample_store() {
         let s = MetricsSamples::default();
         let now = Instant::now();

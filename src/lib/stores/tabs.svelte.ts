@@ -214,7 +214,18 @@ export function openLocalTab(): string {
   return tab.sessionId;
 }
 
-/** Remove a tab; if it was active, focus the neighbour that takes its slot. */
+/**
+ * Remove a tab from the list; if it was active, focus the neighbour that takes
+ * its slot.
+ *
+ * **This is the list operation only — not "close a session".** A tab owns state
+ * in other stores (workspace/editors, AI conversation, broadcast membership) and
+ * dropping the row without dropping those leaks the editors' contents and the
+ * chat history, and leaves a dead session id in the broadcast set. The full
+ * teardown is `closeTabFully` in `+page.svelte`, which is the only caller —
+ * enforced by `tabteardown.guard.test.ts`. A bulk variant used to live here and
+ * was exactly how server deletion bypassed the teardown.
+ */
 export function closeTab(sessionId: string): void {
   const idx = tabsState.list.findIndex((t) => t.sessionId === sessionId);
   if (idx === -1) return;
@@ -252,9 +263,15 @@ export function moveTab(sessionId: string, to: number): void {
   tabsState.list = next;
 }
 
-/** Remove every tab belonging to a server (e.g. when it is deleted). */
-export function closeTabsForServer(serverId: string): void {
-  for (const t of tabsState.list.filter((t) => t.serverId === serverId)) {
-    closeTab(t.sessionId);
-  }
+/**
+ * Session ids of every tab belonging to `serverId` (e.g. the tabs a server
+ * deletion has to close).
+ *
+ * Deliberately returns ids instead of closing them: the closing half must go
+ * through the full teardown, and a store-level `closeTabsForServer` could not do
+ * that without depending on the workspace/chat stores — so it silently dropped
+ * the rows and leaked everything else.
+ */
+export function tabsForServer(serverId: string): string[] {
+  return tabsState.list.filter((t) => t.serverId === serverId).map((t) => t.sessionId);
 }

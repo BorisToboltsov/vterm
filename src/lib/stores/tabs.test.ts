@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   closeTab,
-  closeTabsForServer,
+  tabsForServer,
   dotClass,
   findTab,
   isLive,
@@ -210,13 +210,23 @@ describe("moveTab", () => {
   });
 });
 
-describe("closeTabsForServer", () => {
-  it("removes every tab for a server", () => {
-    openTab("s1", "A", null, false);
+describe("tabsForServer", () => {
+  it("names every session belonging to a server", () => {
+    const a = openTab("s1", "A", null, false);
     openTab("s2", "B", null, false);
-    openTab("s1", "C", null, false);
-    closeTabsForServer("s1");
-    expect(tabsState.list.map((t) => t.serverId)).toEqual(["s2"]);
+    const c = openTab("s1", "C", null, false);
+    expect(tabsForServer("s1")).toEqual([a, c]);
+    expect(tabsForServer("nobody")).toEqual([]);
+  });
+
+  it("closes nothing by itself", () => {
+    // The point of returning ids rather than closing: the caller has to go
+    // through the full teardown, which also drops the workspace, the chat and
+    // the broadcast membership. A store-level bulk close could not do that
+    // without inverting the store layering, so it used to leak all three.
+    openTab("s1", "A", null, false);
+    tabsForServer("s1");
+    expect(tabsState.list).toHaveLength(1);
   });
 });
 

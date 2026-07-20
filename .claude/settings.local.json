@@ -476,7 +476,16 @@
       "Bash(grep -E \"\\\\.rs$|Cargo\")",
       "Bash(perl -0pi -e 's/if \\\\\\(pct >= 75\\\\\\) return \"var\\\\\\(--color-danger\\\\\\)\";/if \\(pct >= 75\\) return \"var\\(--color-bad\\)\";/' src/lib/DockerContainers.svelte)",
       "Bash(awk -F: '{print $1}')",
-      "Bash(perl -pi -e 's/\\\\btext-\\\\[12px\\\\]/text-xs/g' src/lib/RecordingsPanel.svelte src/lib/UtilCodec.svelte src/lib/UtilJwt.svelte)"
+      "Bash(perl -pi -e 's/\\\\btext-\\\\[12px\\\\]/text-xs/g' src/lib/RecordingsPanel.svelte src/lib/UtilCodec.svelte src/lib/UtilJwt.svelte)",
+      "Bash(grep -n \"^[a-z].*:$\\\\|stage:\" .gitlab-ci.yml)",
+      "Bash(grep -n 'notify\\\\|notifyError\\\\|from \"$lib/stores/toasts' src/routes/+page.svelte)",
+      "Bash(grep -n \"^- \\\\`ssherror\\\\|^- \\\\`format.ts\\\\|^- \\\\`util.ts\\\\|^- \\\\`fspath\" docs/TESTS.md)",
+      "Bash(sed -i '' 's/\"version\": \"0.44.0\"/\"version\": \"0.44.1\"/' package.json)",
+      "Bash(sed -i '' 's/^version = \"0.44.0\"/version = \"0.44.1\"/' src-tauri/Cargo.toml)",
+      "Bash(sed -i '' 's/\"version\": \"0.44.0\"/\"version\": \"0.44.1\"/' src-tauri/tauri.conf.json)",
+      "Bash(echo \"=== SftpPanel funcs ===\" && grep -n \"function \\\\|async function \" src/lib/SftpPanel.svelte | sed 's/.*function //' | sed 's/\\(.*//' | sort > /tmp/sftp.txt && echo \"=== LocalFilePanel funcs ===\" && grep -n \"function \\\\|async function \" src/lib/LocalFilePanel.svelte | sed 's/.*function //' | sed 's/\\(.*//' | sort > /tmp/local.txt && echo \"--- shared function names ---\" && comm -12 /tmp/sftp.txt /tmp/local.txt && echo && echo \"sftp count: $\\(wc -l < /tmp/sftp.txt\\), local count: $\\(wc -l < /tmp/local.txt\\)\")",
+      "Bash(grep -n \"^stages:\\\\|^[a-z:]*:$\\\\|stage:\" .gitlab-ci.yml)",
+      "WebSearch"
     ]
   }
 }

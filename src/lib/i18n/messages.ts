@@ -397,6 +397,12 @@ export const en = {
     "Key or passphrase rejected by the server. Enter the passphrase again.",
   "page.passwordRejected": "Wrong username or password. Enter the password again.",
 
+  // Corrupt config file found at startup (store.rs quarantine)
+  "store.corruptSaved":
+    "“{file}” was damaged and could not be read. The original is saved as {saved} — nothing was overwritten.",
+  "store.corruptStuck":
+    "“{file}” was damaged and could not be read, and it could not be moved to safety. Copy it elsewhere before changing anything.",
+
   // New / rename folder modals
   "page.newFolderTitle": "New folder",
   "page.inside": "Inside",
@@ -2086,6 +2092,12 @@ const ru: Record<MessageKey, string> = {
   "page.passphraseRejected":
     "Ключ или passphrase не приняты сервером. Введите passphrase заново.",
   "page.passwordRejected": "Неверный логин или пароль. Введите пароль заново.",
+
+  // Corrupt config file found at startup (store.rs quarantine)
+  "store.corruptSaved":
+    "Файл «{file}» повреждён и не прочитан. Оригинал сохранён как {saved} — ничего не перезаписано.",
+  "store.corruptStuck":
+    "Файл «{file}» повреждён и не прочитан, и его не удалось убрать в безопасное место. Скопируйте его куда-нибудь, прежде чем что-то менять.",
 
   "page.newFolderTitle": "Новая папка",
   "page.inside": "Внутри",

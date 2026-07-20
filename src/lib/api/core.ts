@@ -122,6 +122,28 @@ export function removeKnownHost(id: string): Promise<boolean> {
   return invoke<boolean>("remove_known_host", { id });
 }
 
+// ── Corrupt-config warnings ────────────────────────────────────────────────────
+
+/** A config file that failed to parse on load (mirrors `StoreWarning` in Rust). */
+export interface StoreWarning {
+  /** Path of the file that could not be parsed. */
+  file: string;
+  /**
+   * Where the original was moved for safekeeping, or `null` when even that
+   * failed — the user needs the difference, since only the first case means
+   * their data still exists.
+   */
+  quarantined: string | null;
+}
+
+/**
+ * Config files quarantined during the startup load. Drains the backend list, so
+ * this resolves non-empty at most once per launch.
+ */
+export function takeStoreWarnings(): Promise<StoreWarning[]> {
+  return invoke<StoreWarning[]>("take_store_warnings");
+}
+
 // ── Native menu ───────────────────────────────────────────────────────────────
 
 /** Localized labels for the native application menu (mirrors `MenuLabels` in Rust). */

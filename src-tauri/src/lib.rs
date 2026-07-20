@@ -1655,6 +1655,13 @@ fn remove_known_host(id: String) -> bool {
     store::forget_host_key(&id)
 }
 
+/// Config files that failed to parse during the startup load and were moved
+/// aside. Drains the list, so the frontend shows each warning exactly once.
+#[tauri::command]
+fn take_store_warnings() -> Vec<store::StoreWarning> {
+    store::take_warnings()
+}
+
 // ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
 
 /// Hash every file under a remote directory via `sha256sum` over the SSH exec
@@ -2234,6 +2241,7 @@ pub fn run() {
             save_public_key,
             list_known_hosts,
             remove_known_host,
+            take_store_warnings,
             local_home,
             local_list,
             local_mkdir,
