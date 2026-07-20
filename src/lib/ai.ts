@@ -1,3 +1,7 @@
+import { defaultPromptFor, isShippedDefault } from "./aiprompts";
+import { DEFAULT_LOCALE } from "./i18n/locales";
+import { AI_REPLY_LANGUAGES, type AiReplyLanguage } from "./aicore";
+
 // Pure AI-assistant configuration model (Phase 17, opt-in).
 // DOM/network-free so it is unit-tested directly. All actual LLM traffic lives in
 // the Rust backend (reqwest) — the frontend never calls an LLM endpoint, so the
@@ -28,11 +32,50 @@ export interface AiEndpoint {
   /** Extra generation params as raw JSON (temperature, top_p…), merged into the
    *  request body. Invalid/empty → ignored. */
   params?: string;
+  /** Cap on the reply length, in tokens. `null` = let the endpoint decide
+   *  (Anthropic has no default, so {@link ANTHROPIC_FALLBACK_MAX_TOKENS} is
+   *  used there). An explicit value is still overridable via `params`. */
+  maxTokens?: number | null;
+  /** Per-request timeout in seconds. `null` = {@link DEFAULT_AI_TIMEOUT_SEC}. */
+  timeoutSec?: number | null;
 }
 
-/** The four kinds of system prompt the assistant uses. */
-export type AiPromptKind = "chat" | "runbook" | "sh" | "ansible";
-export const AI_PROMPT_KINDS: AiPromptKind[] = ["chat", "runbook", "sh", "ansible"];
+/** Anthropic's `/v1/messages` requires `max_tokens`, so one is sent regardless. */
+export const ANTHROPIC_FALLBACK_MAX_TOKENS = 4096;
+
+/** Request timeout used when an endpoint doesn't set its own. */
+export const DEFAULT_AI_TIMEOUT_SEC = 120;
+
+/** Bounds for the per-endpoint numeric fields (guard against junk/0/negatives). */
+export const MAX_TOKENS_RANGE = { min: 1, max: 200_000 };
+export const TIMEOUT_RANGE = { min: 5, max: 900 };
+
+/**
+ * Normalise an optional bounded integer setting: a finite number inside
+ * `[min, max]` survives (clamped), anything else — junk, 0, a blank field —
+ * becomes `null`, i.e. "use the default". Blank must stay `null` rather than
+ * collapsing to the min, so an empty box keeps meaning "endpoint decides".
+ */
+export function sanitizeOptionalInt(
+  raw: unknown,
+  { min, max }: { min: number; max: number },
+): number | null {
+  const n = typeof raw === "number" ? raw : Number.parseInt(str(raw).trim(), 10);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(max, Math.max(min, Math.trunc(n)));
+}
+
+/** The kinds of system prompt the assistant uses. `postmortem` and `commit` are
+ *  Phase 41; the first four predate it. */
+export type AiPromptKind = "chat" | "runbook" | "sh" | "ansible" | "postmortem" | "commit";
+export const AI_PROMPT_KINDS: AiPromptKind[] = [
+  "chat",
+  "runbook",
+  "sh",
+  "ansible",
+  "postmortem",
+  "commit",
+];
 
 /** One named, editable system prompt. Per-server selection lives on the server
  *  profile (`chatPromptId`), so a prompt itself carries no server link. */
@@ -40,6 +83,15 @@ export interface AiPrompt {
   id: string;
   name: string;
   content: string;
+  /**
+   * `builtin` = still exactly as shipped, so a language change may re-seed it;
+   * `custom` = the user has edited it and it is never touched again.
+   *
+   * Without this there is no way to tell "the default nobody read" from "text the
+   * user happens to have written identically", and localisation would have to
+   * choose between clobbering edits and never updating anything.
+   */
+  origin?: "builtin" | "custom";
 }
 
 /** The list of prompts for one kind plus the chosen default (`activeId`). */
@@ -68,6 +120,15 @@ export interface AiSettings {
    *  extend the built-in destructive-command list in `aidialog.ts`, never weaken
    *  it. See {@link sanitizeDangerousPatterns} for the stored shape/limits. */
   dangerousPatterns: string[];
+  /** How many trailing conversation messages are replayed to the model each
+   *  turn (see {@link trimHistory}). `null` = no message cap. */
+  historyLimit: number | null;
+  /** Hard ceiling on the characters of history sent per request. `null` = none. */
+  historyCharCap: number | null;
+  /** Language the model answers in. Deliberately independent of the interface
+   *  language: a Russian UI with English answers is a real preference (replies get
+   *  pasted into tickets and greped next to logs). */
+  replyLanguage: AiReplyLanguage;
 }
 
 /** Caps on the user's custom confirm-patterns list (guards against junk/DoS). */
@@ -112,57 +173,93 @@ export interface AiChatRequest {
   maxTokens?: number;
   /** Extra generation params merged into the request body (temperature, top_p…). */
   params?: Record<string, unknown>;
+  /** Per-request timeout in seconds (the broker's reqwest client timeout). */
+  timeoutSec?: number;
 }
 
 const PROVIDERS: AiProvider[] = ["openai", "anthropic"];
 const CONTRACTS: AiOutputContract[] = ["markdown", "tools"];
 const EXEC_MODES: AiExecMode[] = ["suggest", "confirm", "dialog", "dialogConfirm"];
 
-/** Default system prompt for the chat assistant (user-editable in settings). */
-export const DEFAULT_CHAT_SYSTEM =
-  "You are a concise assistant for a sysadmin/DevOps engineer working in an SSH terminal. " +
-  "Be brief and practical. When you suggest shell commands, put each runnable command in its " +
-  "own fenced ```bash code block.";
+/**
+ * The shipped prompt for a kind, in the given locale (Phase 41). Prompts moved to
+ * {@link aiprompts} so they can be localised; this stays the single entry point
+ * the rest of the app uses.
+ *
+ * The locale defaults to the stored UI language rather than taking it as a
+ * required argument, because `defaultAiSettings()` runs at module init — before
+ * anything has had a chance to pass one in.
+ */
+export function defaultPrompt(kind: AiPromptKind, locale: string = storedLocale()): string {
+  return defaultPromptFor(kind, locale);
+}
 
-/** Default system prompt for the recording → runbook generator (user-editable). */
-export const DEFAULT_RUNBOOK_SYSTEM =
-  "You are a senior DevOps engineer. Given a raw terminal session transcript, write a clear, " +
-  "ordered runbook that reproduces what was done: a one-line summary, prerequisites, numbered " +
-  "steps with the exact shell commands, and verification checks at the end. Use Markdown and put " +
-  "each runnable command in its own fenced ```bash block. Ignore shell prompts, redraw noise and " +
-  "typos; keep it concise.";
-
-/** Default system prompt for the recording → shell script generator (user-editable). */
-export const DEFAULT_SCRIPT_SH_SYSTEM =
-  "You are a senior DevOps engineer. Given a raw terminal session transcript, produce a single " +
-  "POSIX/bash script that reproduces what was done. Begin with `#!/usr/bin/env bash` and " +
-  "`set -euo pipefail`, add brief comments, use variables for repeated values, and drop interactive " +
-  "prompts and redraw noise. Output ONLY the script inside one fenced ```bash block — no prose.";
-
-/** Default system prompt for the recording → Ansible playbook generator (user-editable). */
-export const DEFAULT_SCRIPT_ANSIBLE_SYSTEM =
-  "You are a senior DevOps engineer. Given a raw terminal session transcript, produce a single " +
-  "idempotent Ansible playbook that reproduces what was done, preferring standard modules " +
-  "(apt/yum, copy, template, service, user, …) over raw shell where possible. Output ONLY valid " +
-  "YAML inside one fenced ```yaml block — no prose.";
-
-/** Built-in default content per prompt kind. */
-export const DEFAULT_PROMPT: Record<AiPromptKind, string> = {
-  chat: DEFAULT_CHAT_SYSTEM,
-  runbook: DEFAULT_RUNBOOK_SYSTEM,
-  sh: DEFAULT_SCRIPT_SH_SYSTEM,
-  ansible: DEFAULT_SCRIPT_ANSIBLE_SYSTEM,
-};
+/**
+ * The UI language as persisted, read directly rather than through the settings
+ * store: this module is imported *by* that store, so reaching back into it would
+ * be a cycle. Falls back to English when storage is unavailable (tests, SSR).
+ */
+function storedLocale(): string {
+  try {
+    const raw = globalThis.localStorage?.getItem("vterm.settings");
+    const lang = raw ? (JSON.parse(raw) as { language?: unknown }).language : null;
+    return typeof lang === "string" ? lang : DEFAULT_LOCALE;
+  } catch {
+    return DEFAULT_LOCALE;
+  }
+}
 
 /** A fresh prompt for a kind (used by "add prompt" and by defaults/migration). */
 export function newAiPrompt(kind: AiPromptKind, name = "Default"): AiPrompt {
-  return { id: crypto.randomUUID(), name, content: DEFAULT_PROMPT[kind] };
+  return { id: crypto.randomUUID(), name, content: defaultPrompt(kind), origin: "builtin" };
 }
+
+/** Build a `Record<AiPromptKind, T>` from a per-kind factory — keeps every place
+ *  that maps over the kinds from having to list them (and drift when one is added). */
+function promptSets(make: (k: AiPromptKind) => AiPromptSet): Record<AiPromptKind, AiPromptSet> {
+  return Object.fromEntries(AI_PROMPT_KINDS.map((k) => [k, make(k)])) as Record<
+    AiPromptKind,
+    AiPromptSet
+  >;
+}
+
+/** Pre-Phase-18 flat prompt fields, by the kind they migrate into. */
+const LEGACY_PROMPT_KEY: Partial<Record<AiPromptKind, string>> = {
+  chat: "chatSystem",
+  runbook: "runbookSystem",
+  sh: "scriptShSystem",
+  ansible: "scriptAnsibleSystem",
+};
 
 /** A prompt set with a single default prompt, active. */
 export function defaultPromptSet(kind: AiPromptKind): AiPromptSet {
   const p = newAiPrompt(kind);
   return { prompts: [p], activeId: p.id };
+}
+
+/**
+ * Re-seed every untouched (`origin: "builtin"`) prompt with the shipped text for
+ * `locale`, leaving anything the user edited alone. Returns a new prompts record;
+ * the caller decides whether anything changed.
+ *
+ * This is why {@link AiPrompt.origin} exists: without it, switching the interface
+ * language could only ever pick between clobbering the user's edits and never
+ * localising anything.
+ */
+export function reseedBuiltinPrompts(
+  prompts: Record<AiPromptKind, AiPromptSet>,
+  locale: string,
+): Record<AiPromptKind, AiPromptSet> {
+  return promptSets((kind) => {
+    const set = prompts[kind];
+    if (!set) return defaultPromptSet(kind);
+    return {
+      ...set,
+      prompts: set.prompts.map((p) =>
+        p.origin === "builtin" ? { ...p, content: defaultPromptFor(kind, locale) } : p,
+      ),
+    };
+  });
 }
 
 /**
@@ -204,6 +301,8 @@ export function newAiEndpoint(provider: AiProvider = "openai"): AiEndpoint {
     hasKey: false,
     basePrompt: "",
     params: "",
+    maxTokens: null,
+    timeoutSec: null,
   };
 }
 
@@ -230,12 +329,70 @@ export function defaultAiSettings(): AiSettings {
     includeRecording: false,
     includeMetadata: false,
     prompts: {
-      chat: defaultPromptSet("chat"),
-      runbook: defaultPromptSet("runbook"),
-      sh: defaultPromptSet("sh"),
-      ansible: defaultPromptSet("ansible"),
+      ...promptSets((k) => defaultPromptSet(k)),
     },
     dangerousPatterns: [],
+    historyLimit: DEFAULT_HISTORY_LIMIT,
+    historyCharCap: DEFAULT_HISTORY_CHAR_CAP,
+    replyLanguage: "auto",
+  };
+}
+
+/** Default history caps. Before Phase 40 the whole conversation was replayed on
+ *  every turn, so a long dialog (or a dialog loop with terminal context attached
+ *  to each step) grew the request without bound — cost and context-limit errors. */
+export const DEFAULT_HISTORY_LIMIT = 12;
+export const DEFAULT_HISTORY_CHAR_CAP = 32_000;
+
+export const HISTORY_LIMIT_RANGE = { min: 2, max: 200 };
+export const HISTORY_CHAR_CAP_RANGE = { min: 1_000, max: 2_000_000 };
+
+/** History actually sent to the model, plus what it cost, for the chat's marker. */
+export interface TrimmedHistory {
+  messages: AiChatMessage[];
+  /** Leading messages left out of this request (0 = the full conversation). */
+  dropped: number;
+  /** Characters of history in the request (excludes the system prompt). */
+  chars: number;
+}
+
+/**
+ * Keep the newest part of a conversation within both caps, oldest dropped first.
+ *
+ * The message cap applies before the character cap. The last message always
+ * survives — it is the question being asked, and sending an empty conversation
+ * would be worse than sending an oversized one. A leading `assistant` message is
+ * then dropped as well: Anthropic's `/v1/messages` rejects a conversation that
+ * doesn't start with a user turn, so a trim that lands mid-exchange would turn a
+ * long chat into a hard 400.
+ *
+ * `null` for either cap disables it.
+ */
+export function trimHistory(
+  messages: AiChatMessage[],
+  limit: number | null,
+  charCap: number | null,
+): TrimmedHistory {
+  const total = messages.length;
+  let kept = limit && limit > 0 ? messages.slice(-limit) : messages.slice();
+
+  if (charCap && charCap > 0) {
+    let chars = kept.reduce((n, m) => n + m.content.length, 0);
+    while (kept.length > 1 && chars > charCap) {
+      chars -= kept[0].content.length;
+      kept = kept.slice(1);
+    }
+  }
+  // Never open on an assistant turn (Anthropic rejects it); the sole remaining
+  // message is left alone, since dropping it would send nothing at all.
+  while (kept.length > 1 && kept[0].role === "assistant") {
+    kept = kept.slice(1);
+  }
+
+  return {
+    messages: kept,
+    dropped: total - kept.length,
+    chars: kept.reduce((n, m) => n + m.content.length, 0),
   };
 }
 
@@ -243,13 +400,21 @@ function str(v: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-/** Validate a stored endpoint; null for junk or missing baseUrl/model. */
+/**
+ * Validate a stored endpoint; null for junk or a missing baseUrl.
+ *
+ * The model may be empty: an endpoint whose model is still to be chosen is a
+ * real state (the vLLM preset ships without one, and clearing the field in the
+ * form produces it too), and dropping the whole endpoint over it would delete
+ * the user's URL and keychain link behind their back. Usability is decided by
+ * {@link activeEndpoint} instead, which refuses a model-less endpoint.
+ */
 export function sanitizeEndpoint(raw: unknown): AiEndpoint | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const baseUrl = str(r.baseUrl).trim();
   const model = str(r.model).trim();
-  if (!baseUrl || !model) return null;
+  if (!baseUrl) return null;
   const provider = PROVIDERS.includes(r.provider as AiProvider)
     ? (r.provider as AiProvider)
     : "openai";
@@ -262,19 +427,37 @@ export function sanitizeEndpoint(raw: unknown): AiEndpoint | null {
     hasKey: r.hasKey === true,
     basePrompt: str(r.basePrompt),
     params: str(r.params),
+    maxTokens: sanitizeOptionalInt(r.maxTokens, MAX_TOKENS_RANGE),
+    timeoutSec: sanitizeOptionalInt(r.timeoutSec, TIMEOUT_RANGE),
   };
 }
 
-/** Validate one stored prompt; null when it has no content. */
-function sanitizePrompt(raw: unknown): AiPrompt | null {
+/**
+ * Validate one stored prompt; null when it has no content.
+ *
+ * `origin` is absent in settings written before Phase 41. Rather than assume, the
+ * content is compared against the shipped defaults **in every locale**: a match
+ * means nobody edited it (so a language change may re-seed it), anything else is
+ * treated as the user's own text and left alone forever. Guessing the other way
+ * would eventually overwrite something somebody wrote.
+ */
+function sanitizePrompt(raw: unknown, kind: AiPromptKind): AiPrompt | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const content = str(r.content);
   if (!content.trim()) return null;
+  const stored = r.origin;
+  const origin: "builtin" | "custom" =
+    stored === "builtin" || stored === "custom"
+      ? stored
+      : isShippedDefault(kind, content)
+        ? "builtin"
+        : "custom";
   return {
     id: str(r.id) || crypto.randomUUID(),
     name: str(r.name).trim() || "Prompt",
     content,
+    origin,
   };
 }
 
@@ -282,11 +465,16 @@ function sanitizePrompt(raw: unknown): AiPrompt | null {
 function sanitizePromptSet(raw: unknown, kind: AiPromptKind, legacy: string): AiPromptSet {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   let prompts = Array.isArray(r.prompts)
-    ? r.prompts.map(sanitizePrompt).filter((p): p is AiPrompt => p !== null)
+    ? r.prompts.map((x) => sanitizePrompt(x, kind)).filter((p): p is AiPrompt => p !== null)
     : [];
   if (prompts.length === 0) {
     const p = newAiPrompt(kind);
-    if (legacy.trim()) p.content = legacy.trim();
+    if (legacy.trim()) {
+      p.content = legacy.trim();
+      // Text migrated out of the old flat field is the user's, unless it happens
+      // to be a shipped default verbatim.
+      p.origin = isShippedDefault(kind, p.content) ? "builtin" : "custom";
+    }
     prompts = [p];
   }
   const ids = new Set(prompts.map((p) => p.id));
@@ -327,13 +515,25 @@ export function sanitizeAiSettings(raw: unknown): AiSettings {
         unknown
       >;
       return {
-        chat: sanitizePromptSet(rp.chat, "chat", str(r.chatSystem)),
-        runbook: sanitizePromptSet(rp.runbook, "runbook", str(r.runbookSystem)),
-        sh: sanitizePromptSet(rp.sh, "sh", str(r.scriptShSystem)),
-        ansible: sanitizePromptSet(rp.ansible, "ansible", str(r.scriptAnsibleSystem)),
+        // Legacy single-string prompts only ever existed for the original four
+        // kinds; the Phase 41 kinds simply seed their default.
+        ...promptSets((k) => sanitizePromptSet(rp[k], k, str(r[LEGACY_PROMPT_KEY[k] ?? ""]))),
       };
     })(),
     dangerousPatterns: sanitizeDangerousPatterns(r.dangerousPatterns),
+    // Absent (settings written before Phase 40) → the defaults, not "no cap":
+    // unbounded history is the defect this phase fixes, so an upgrade opts in.
+    historyLimit:
+      r.historyLimit === null
+        ? null
+        : (sanitizeOptionalInt(r.historyLimit, HISTORY_LIMIT_RANGE) ?? d.historyLimit),
+    historyCharCap:
+      r.historyCharCap === null
+        ? null
+        : (sanitizeOptionalInt(r.historyCharCap, HISTORY_CHAR_CAP_RANGE) ?? d.historyCharCap),
+    replyLanguage: AI_REPLY_LANGUAGES.includes(r.replyLanguage as AiReplyLanguage)
+      ? (r.replyLanguage as AiReplyLanguage)
+      : d.replyLanguage,
   };
 }
 
@@ -377,6 +577,66 @@ export function effectiveExecMode(override: string | null | undefined, global: A
   return EXEC_MODES.includes(override as AiExecMode) ? (override as AiExecMode) : global;
 }
 
+/** Token counts for one reply (mirror of ai.rs `AiUsage`). */
+export interface AiUsage {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+}
+
+/** The per-reply footer: prompt tokens, reply tokens, wall-clock time. */
+export interface UsageSummary {
+  input: string | null;
+  output: string | null;
+  elapsed: string | null;
+}
+
+/**
+ * Group a token count (`1 240`). Deterministic rather than locale-dependent, so
+ * the string asserted in tests is the string every user sees.
+ *
+ * A plain ASCII space on purpose: a no-break space keeps the number together but
+ * is invisible in source, and one mismatched against a test turns a failing
+ * assertion into a riddle. The markup carries `whitespace-nowrap` instead.
+ */
+export function formatTokens(n: number): string {
+  return Math.trunc(n)
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+}
+
+/** Wall-clock duration for the reply footer: `0.8 s`, `6.1 s`, `1:04`. */
+export function formatElapsed(ms: number): string {
+  const s = ms / 1000;
+  if (s < 60) return `${s < 10 ? s.toFixed(1) : Math.round(s)} s`;
+  const total = Math.round(s);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The reply footer, or `null` when there is nothing measured to show.
+ *
+ * Each field is independently optional: an endpoint that reports only output
+ * tokens gets one number, not a zero-filled row. A tally the endpoint never sent
+ * must not be invented — same rule as the host-capability gate, where "no data"
+ * and "not available here" are never papered over with a plausible placeholder.
+ */
+export function usageSummary(
+  usage: AiUsage | undefined,
+  elapsedMs: number | undefined,
+): UsageSummary | null {
+  const num = (v: number | null | undefined) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 ? formatTokens(v) : null;
+  const row: UsageSummary = {
+    input: num(usage?.inputTokens),
+    output: num(usage?.outputTokens),
+    elapsed:
+      typeof elapsedMs === "number" && Number.isFinite(elapsedMs) && elapsedMs > 0
+        ? formatElapsed(elapsedMs)
+        : null,
+  };
+  return row.input || row.output || row.elapsed ? row : null;
+}
+
 /** Options for the chat model picker: fetched models ∪ the current one, sorted. */
 export function mergeModelOptions(fetched: string[], current: string): string[] {
   const set = new Set(fetched.filter(Boolean));
@@ -384,10 +644,15 @@ export function mergeModelOptions(fetched: string[], current: string): string[] 
   return [...set].sort();
 }
 
-/** The active endpoint, or null when AI is off / none configured. */
+/**
+ * The active, *usable* endpoint — null when AI is off, none is selected, or the
+ * selected one has no model yet (see {@link sanitizeEndpoint}: such an endpoint
+ * is kept in settings, but nothing can be sent to it).
+ */
 export function activeEndpoint(s: AiSettings): AiEndpoint | null {
   if (!s.enabled || !s.activeEndpointId) return null;
-  return s.endpoints.find((e) => e.id === s.activeEndpointId) ?? null;
+  const ep = s.endpoints.find((e) => e.id === s.activeEndpointId) ?? null;
+  return ep && ep.model.trim() ? ep : null;
 }
 
 /** Whether the assistant can run at all (enabled + a usable active endpoint). */
@@ -408,6 +673,12 @@ export function buildChatRequest(
   // (chat/runbook/…) appends to it.
   const base = (ep.basePrompt ?? "").trim();
   const fullSystem = [base, system].filter((x) => x && x.trim()).join("\n\n") || undefined;
+  // Anthropic's /v1/messages requires max_tokens, so it falls back to a value;
+  // OpenAI-compatible endpoints are left open unless the user set one.
+  const maxTokens =
+    ep.maxTokens ??
+    (ep.provider === "anthropic" ? ANTHROPIC_FALLBACK_MAX_TOKENS : undefined) ??
+    undefined;
   return {
     streamId,
     endpointId: ep.id,
@@ -415,9 +686,9 @@ export function buildChatRequest(
     baseUrl: ep.baseUrl,
     model: ep.model,
     system: fullSystem,
-    messages,
-    // Anthropic's /v1/messages requires max_tokens; OpenAI-compatible leaves it open.
-    maxTokens: ep.provider === "anthropic" ? 4096 : undefined,
+    messages: trimHistory(messages, s.historyLimit, s.historyCharCap).messages,
+    maxTokens,
     params: parseParams(ep.params) ?? undefined,
+    timeoutSec: ep.timeoutSec ?? DEFAULT_AI_TIMEOUT_SEC,
   };
 }

@@ -115,6 +115,28 @@ export function buildContext(raw: RawContext, s: ContextTiers): BuiltContext {
 }
 
 /**
+ * Shape an arbitrary block of already-collected text as a {@link BuiltContext},
+ * so the "ask about this" entry points (terminal selection, container logs, a
+ * metrics snapshot — Phase 41) go through the same redaction and the same consent
+ * preview as a hand-attached context. The label becomes the `###` section header,
+ * which the core prompt tells the model to treat as untrusted data.
+ */
+export function buildRawContext(text: string, label: string): BuiltContext {
+  const body = clean(text);
+  if (!body) return { text: "", lines: 0, redactions: 0, sources: [] };
+  const r = redactSecrets(body);
+  const block = `### ${label}\n${r.text}`;
+  return {
+    text: block,
+    lines: block.split("\n").length,
+    redactions: r.count,
+    // Reported as buffer-derived: it is terminal-side output either way, and the
+    // consent summary lists sources, not entry points.
+    sources: ["buffer"],
+  };
+}
+
+/**
  * Merge a built context block with the user's question into the single message
  * content sent to the broker. The context is clearly fenced so the model treats
  * it as reference material, not instructions.

@@ -20,12 +20,19 @@
     stashSaveArgs,
     stashPushFileArgs,
     commitArgs,
+    stagedDiffArgs,
     pushArgs,
   } from "./git";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess } from "./stores/toasts.svelte";
   import { fileStatusColor } from "./gitview";
   import { t } from "./i18n";
+  import { notifyError } from "./stores/toasts.svelte";
+  import { settings } from "./settings.svelte";
+  import { aiReady, activeEndpoint, resolvePromptContent, defaultPrompt } from "./ai";
+  import { buildRawContext, type BuiltContext } from "./aicontext";
+  import { generateOnce } from "./stores/aichat.svelte";
+  import AiConsentDialog from "./AiConsentDialog.svelte";
 
   let {
     status,
@@ -35,6 +42,7 @@
     onOpenReadonlyDiff,
     onIgnore,
     absPath,
+    runQuery,
   }: {
     status: GitStatus;
     busy: boolean;
@@ -47,6 +55,8 @@
     onIgnore: (pattern: string) => void;
     /** Absolute path of a repo-relative file (for "copy absolute path"). */
     absPath: (path: string) => string;
+    /** Read-only git query — used to fetch the staged diff for the AI drafter. */
+    runQuery: (args: string[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
   } = $props();
 
   let message = $state("");
@@ -56,6 +66,63 @@
   // Split for the two header actions: restore tracked changes vs delete untracked.
   const trackedUnstaged = $derived(unstaged.filter((f) => f.work !== "?"));
   const untrackedUnstaged = $derived(unstaged.filter((f) => f.work === "?"));
+  // ── AI commit-message drafter (Phase 41) ────────────────────────────────────
+  // The staged diff already says *what* changed; the model drafts a subject and
+  // the *why*. Output lands in the textarea for editing — it is never committed
+  // directly.
+  const aiOn = $derived(aiReady(settings.ai));
+  const draftEndpoint = $derived(activeEndpoint(settings.ai));
+  let drafting = $state(false);
+  let draftConsent = $state<BuiltContext | null>(null);
+
+  /** Fetch the staged diff, redact it, and open the consent dialog. */
+  async function draftMessage() {
+    if (drafting || staged.length === 0) return;
+    drafting = true;
+    try {
+      const res = await runQuery(stagedDiffArgs());
+      const diff = res.stdout.trim();
+      if (!diff) {
+        notifyError(t("git.aiNoStaged"));
+        return;
+      }
+      const ctx = buildRawContext(diff, "Staged diff");
+      if (!ctx.text) return;
+      draftConsent = ctx;
+    } catch {
+      notifyError(t("git.aiFailed"));
+    } finally {
+      drafting = false;
+    }
+  }
+
+  /** Stream the drafted message into the commit box (replacing what is there). */
+  async function confirmDraft() {
+    const ctx = draftConsent;
+    if (!ctx) return;
+    draftConsent = null;
+    drafting = true;
+    message = "";
+    await generateOnce({
+      system: resolvePromptContent(
+        settings.ai.prompts.commit,
+        null,
+        defaultPrompt("commit"),
+      ),
+      content: ctx.text,
+      settings: settings.ai,
+      onToken: (text) => (message += text),
+      onDone: () => {
+        drafting = false;
+        message = message.trim();
+      },
+      onError: (msg) => {
+        drafting = false;
+        notifyError(msg);
+      },
+    });
+  }
+
   const canCommit = $derived(staged.length > 0 && message.trim().length > 0 && !busy);
 
   // Multi-select over the unstaged list (paths); stale paths drop out of
@@ -308,12 +375,26 @@
 
   <!-- Commit box -->
   <div class="border-t border-edge p-2">
-    <textarea
-      bind:value={message}
-      rows="2"
-      placeholder={t("git.commitPlaceholder")}
-      class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 text-[11px] text-white placeholder:text-muted focus:border-accent focus:outline-none"
-    ></textarea>
+    <div class="relative">
+      <textarea
+        bind:value={message}
+        rows="2"
+        placeholder={t("git.commitPlaceholder")}
+        class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 pr-7 text-[11px] text-white placeholder:text-muted focus:border-accent focus:outline-none"
+      ></textarea>
+      {#if aiOn}
+        <button
+          data-testid="git-ai-message"
+          class="absolute right-1 top-1 rounded p-0.5 text-muted hover:text-accent disabled:opacity-40"
+          use:tooltip={t("git.aiMessage")}
+          aria-label={t("git.aiMessage")}
+          disabled={busy || drafting || staged.length === 0}
+          onclick={draftMessage}
+        >
+          <Icon name="aiMark" size={13} class={drafting ? "animate-pulse" : ""} />
+        </button>
+      {/if}
+    </div>
     <div class="mt-1.5 flex gap-1.5">
       <button
         class="flex flex-1 items-center justify-center gap-1 rounded bg-accent px-2 py-1 text-[11px] font-medium text-panel-alt hover:bg-accent-hover disabled:opacity-40"
@@ -349,3 +430,16 @@
 </ConfirmDialog>
 
 <ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
+
+{#if draftConsent && draftEndpoint}
+  <!-- The staged diff is session context like any other: redacted, previewed and
+       confirmed before it leaves the machine. -->
+  <AiConsentDialog
+    open
+    context={draftConsent}
+    endpointName={draftEndpoint.name}
+    endpointUrl={draftEndpoint.baseUrl}
+    onconfirm={confirmDraft}
+    oncancel={() => (draftConsent = null)}
+  />
+{/if}

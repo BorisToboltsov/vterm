@@ -23,6 +23,8 @@ export interface SyncStats {
   uploaded: number;
   downloaded: number;
   deleted: number;
+  /** The user stopped the run: the counts above are partial. */
+  stopped: boolean;
 }
 
 /** One content-search hit (grep over SSH). */
@@ -121,6 +123,94 @@ export function diffTrees(
 /** The subset of a plan the backend will actually apply (conflicts are skipped). */
 export function applicable(actions: SyncAction[]): SyncAction[] {
   return actions.filter((a) => a.op !== "conflict");
+}
+
+// ── run progress (Phase 39.8) ─────────────────────────────────────────────────
+
+/**
+ * Transfer id for one file of a sync run. Mirrors `sync::sync_transfer_id` in
+ * [sync.rs](../../src-tauri/src/sync.rs) — the two must agree byte for byte, since
+ * this is the only link between an `sftp://progress` event and the plan row that
+ * drew it (the event's `name` is a base name and collides across folders).
+ */
+export function syncTransferId(path: string): string {
+  return `sync:${path}`;
+}
+
+/** Whether a run is under way, and if not, how it ended. */
+export type SyncRunPhase = "idle" | "running" | "stopped" | "done";
+
+/**
+ * What one plan row shows. `skipped` is a conflict (never applied), `notRun` is a
+ * row the user's stop got to first — deliberately distinct from `pending`, so a
+ * stopped run reads as "not done" rather than "still coming".
+ */
+export type SyncRowStatus = "pending" | "running" | "done" | "skipped" | "notRun";
+
+/** Minimal shape of a progress event this module folds over (see `SftpProgress`). */
+export interface SyncProgress {
+  transferred: number;
+  total: number;
+  done: boolean;
+}
+
+/** Per-file progress of a run, keyed by {@link syncTransferId}. */
+export type SyncProgressMap = Record<string, SyncProgress>;
+
+/** Row status from the run phase plus whatever progress has arrived for it. */
+export function syncRowStatus(
+  op: SyncOp,
+  progress: SyncProgress | undefined,
+  phase: SyncRunPhase,
+): SyncRowStatus {
+  if (op === "conflict") return "skipped";
+  if (progress?.done) return "done";
+  if (progress) return "running";
+  return phase === "stopped" || phase === "done" ? "notRun" : "pending";
+}
+
+/** Row completion in percent (0–100); a zero-byte total counts as complete. */
+export function syncRowPct(progress: SyncProgress | undefined): number {
+  if (!progress) return 0;
+  if (progress.done) return 100;
+  if (progress.total <= 0) return 0;
+  return Math.min(100, Math.round((progress.transferred / progress.total) * 100));
+}
+
+export interface SyncRunSummary {
+  /** Files finished, out of the applicable (non-conflict) plan. */
+  filesDone: number;
+  filesTotal: number;
+  /** Overall percent, weighted by bytes where known and by files otherwise. */
+  pct: number;
+}
+
+/**
+ * Roll the per-file progress up into the dialog's header line. Files whose size
+ * isn't known yet (nothing transferred, or a delete with no bytes at all) count as
+ * one whole file each, so the bar can't stall at 0 % on a plan full of deletes.
+ */
+export function syncRunSummary(
+  actions: SyncAction[],
+  progress: SyncProgressMap,
+): SyncRunSummary {
+  const rows = applicable(actions);
+  let done = 0;
+  let fraction = 0;
+  for (const a of rows) {
+    const p = progress[syncTransferId(a.path)];
+    if (p?.done) {
+      done++;
+      fraction += 1;
+    } else if (p && p.total > 0) {
+      fraction += Math.min(1, p.transferred / p.total);
+    }
+  }
+  return {
+    filesDone: done,
+    filesTotal: rows.length,
+    pct: rows.length === 0 ? 0 : Math.round((fraction / rows.length) * 100),
+  };
 }
 
 /** Count actions by op, for the preview summary. */

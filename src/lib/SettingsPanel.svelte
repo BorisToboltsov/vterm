@@ -26,7 +26,7 @@
     groupMatchCounts,
     groupForSection,
   } from "./settingsNav";
-  import { t, availableLocales, type MessageKey } from "./i18n";
+  import { t, availableLocales, setLocale, type Locale, type MessageKey } from "./i18n";
   import { tick } from "svelte";
 
   // Sidebar group labels (data-driven keys would not type-check against MessageKey).
@@ -220,10 +220,14 @@
           <h3 class="mb-2 text-xs uppercase tracking-wider text-muted">{t("settings.sectionLanguage")}</h3>
           <label class="block text-xs text-muted">
             {t("settings.languageLabel")}
+            <!-- Goes through `setLocale`, not `bind:value`: switching the language
+                 also re-seeds the AI prompts the user never edited (Phase 41), and
+                 a plain binding skips that. Guarded by settings.guard.test.ts. -->
             <select
               data-testid="language-select"
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
-              bind:value={settings.language}
+              value={settings.language}
+              onchange={(e) => setLocale(e.currentTarget.value as Locale)}
             >
               {#each availableLocales as loc (loc.id)}
                 <option value={loc.id}>{loc.nativeName}</option>

@@ -5,17 +5,24 @@
   import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
-  import { pickSaveDir, localHashTree, sftpHashTree, sftpSyncApply } from "./api";
+  import { pickSaveDir, localHashTree, sftpHashTree, sftpSyncApply, sftpCancel } from "./api";
   import {
     diffTrees,
     parseExcludes,
     applicable,
     summarize,
+    syncTransferId,
+    syncRowStatus,
+    syncRowPct,
+    syncRunSummary,
     type SyncAction,
     type SyncDirection,
     type SyncOp,
+    type SyncRunPhase,
+    type SyncRowStatus,
   } from "./sync";
-  import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import { syncRunState, clearSyncRun } from "./stores/syncrun.svelte";
+  import { notifyError, notifySuccess, notifyInfo } from "./stores/toasts.svelte";
   import { t, type MessageKey } from "./i18n";
 
   let {
@@ -40,13 +47,27 @@
   let applying = $state(false);
   let plan = $state<SyncAction[] | null>(null);
   let error = $state("");
+  // Run state (Phase 39.8): the plan list doubles as the progress list, so the
+  // dialog no longer looks frozen while the right dock fills up.
+  let phase = $state<SyncRunPhase>("idle");
+  let runId = $state("");
+  let stopping = $state(false);
 
   const counts = $derived(plan ? summarize(plan) : null);
   const toApply = $derived(plan ? applicable(plan) : []);
+  const runProgress = $derived(
+    plan ? syncRunSummary(plan, syncRunState.map) : { filesDone: 0, filesTotal: 0, pct: 0 },
+  );
 
   // Re-comparing is required after changing inputs (the old plan is stale).
   function invalidate() {
     plan = null;
+    phase = "idle";
+    clearSyncRun();
+  }
+
+  function rowProgress(path: string) {
+    return syncRunState.map[syncTransferId(path)];
   }
 
   async function chooseLocal() {
@@ -78,8 +99,26 @@
   async function apply() {
     if (toApply.length === 0) return;
     applying = true;
+    stopping = false;
+    phase = "running";
+    runId = `sync-run-${crypto.randomUUID()}`;
+    clearSyncRun();
     try {
-      const stats = await sftpSyncApply(sessionId, localPath, remotePath, toApply);
+      const stats = await sftpSyncApply(sessionId, runId, localPath, remotePath, toApply);
+      onapplied?.();
+      if (stats.stopped) {
+        // Stay open: the ticked rows ARE the report of what got through, and the
+        // plan is stale afterwards — closing would hide both.
+        phase = "stopped";
+        notifyInfo(
+          t("sync.stoppedToast", {
+            done: stats.uploaded + stats.downloaded + stats.deleted,
+            total: toApply.length,
+          }),
+        );
+        return;
+      }
+      phase = "done";
       notifySuccess(
         t("sync.applied", {
           up: stats.uploaded,
@@ -87,14 +126,28 @@
           del: stats.deleted,
         }),
       );
-      onapplied?.();
       onclose?.();
     } catch (e) {
+      phase = "stopped";
       notifyError(String(e));
     } finally {
       applying = false;
+      stopping = false;
     }
   }
+
+  /** Ask the backend to stop after the file currently in flight. */
+  function stop() {
+    if (!runId) return;
+    stopping = true;
+    sftpCancel(runId);
+  }
+
+  const ROW_STATUS_LABEL: Record<Exclude<SyncRowStatus, "done" | "running">, MessageKey> = {
+    pending: "sync.rowPending",
+    notRun: "sync.rowNotRun",
+    skipped: "sync.rowSkipped",
+  };
 
   const OP_LABEL: Record<SyncOp, MessageKey> = {
     upload: "sync.opUpload",
@@ -195,19 +248,67 @@
       {#if plan.length === 0}
         <p class="rounded border border-edge bg-panel px-3 py-2 text-muted">{t("sync.noChanges")}</p>
       {:else}
-        <div class="text-muted">
-          {t("sync.summary", {
-            up: counts?.upload ?? 0,
-            down: counts?.download ?? 0,
-            del: (counts?.deleteRemote ?? 0) + (counts?.deleteLocal ?? 0),
-            conflict: counts?.conflict ?? 0,
-          })}
-        </div>
+        {#if phase === "idle"}
+          <div class="text-muted">
+            {t("sync.summary", {
+              up: counts?.upload ?? 0,
+              down: counts?.download ?? 0,
+              del: (counts?.deleteRemote ?? 0) + (counts?.deleteLocal ?? 0),
+              conflict: counts?.conflict ?? 0,
+            })}
+          </div>
+        {:else if phase === "running"}
+          <!-- Run header: the same numbers the right dock shows, without leaving the dialog. -->
+          <div>
+            <div class="flex items-center justify-between gap-2 text-muted">
+              <span
+                >{t("sync.runProgress", {
+                  done: runProgress.filesDone,
+                  total: runProgress.filesTotal,
+                })}</span
+              >
+              <span class="text-accent">{runProgress.pct}%</span>
+            </div>
+            <div class="mt-1 h-1 rounded bg-edge">
+              <div class="h-1 rounded bg-accent" style="width: {runProgress.pct}%"></div>
+            </div>
+          </div>
+        {:else if phase === "stopped"}
+          <p class="rounded border border-warn bg-panel px-3 py-2 text-warn">
+            {t("sync.stoppedNote", {
+              done: runProgress.filesDone,
+              total: runProgress.filesTotal,
+            })}
+          </p>
+        {/if}
         <div class="max-h-56 overflow-auto rounded border border-edge">
           {#each plan as a (a.path)}
-            <div class="flex items-center gap-2 border-b border-edge/50 px-2 py-1 last:border-0">
-              <span class="w-24 shrink-0 {opClass(a.op)}">{t(OP_LABEL[a.op])}</span>
-              <span class="min-w-0 flex-1 truncate" title={a.path}>{a.path}</span>
+            {@const prog = rowProgress(a.path)}
+            {@const status = syncRowStatus(a.op, prog, phase)}
+            <div
+              class="border-b border-edge/50 px-2 py-1 last:border-0 {status === 'pending' ||
+              status === 'notRun'
+                ? 'opacity-50'
+                : ''}"
+            >
+              <div class="flex items-center gap-2">
+                <span class="w-24 shrink-0 {opClass(a.op)}">{t(OP_LABEL[a.op])}</span>
+                <span class="min-w-0 flex-1 truncate" title={a.path}>{a.path}</span>
+                {#if status === "done"}
+                  <span class="shrink-0 text-green-500" aria-label={t("sync.rowDone")}>
+                    <Icon name="check" size={13} />
+                  </span>
+                {:else if status === "running"}
+                  <span class="shrink-0 text-accent">{syncRowPct(prog)}%</span>
+                {:else if phase !== "idle" || status === "skipped"}
+                  <span class="shrink-0 text-[11px] text-muted">{t(ROW_STATUS_LABEL[status])}</span>
+                {/if}
+              </div>
+              {#if status === "running"}
+                <div class="mt-1 h-0.5 rounded bg-edge">
+                  <div class="h-0.5 rounded bg-accent" style="width: {syncRowPct(prog)}%"></div>
+                </div>
+              {/if}
             </div>
           {/each}
         </div>
@@ -219,20 +320,31 @@
 
     <!-- Actions -->
     <div class="flex justify-end gap-2 pt-1">
-      <button class="rounded px-3 py-1 text-muted hover:text-white" onclick={() => onclose?.()}>
-        {t("common.cancel")}
-      </button>
+      {#if applying}
+        <button
+          class="flex items-center gap-1 rounded border border-danger px-3 py-1 text-danger hover:bg-danger hover:text-white disabled:opacity-40"
+          disabled={stopping}
+          onclick={stop}
+        >
+          <Icon name="close" size={13} />
+          {stopping ? t("sync.stopping") : t("sync.stop")}
+        </button>
+      {:else}
+        <button class="rounded px-3 py-1 text-muted hover:text-white" onclick={() => onclose?.()}>
+          {t("common.cancel")}
+        </button>
+      {/if}
       <button
         class="flex items-center gap-1 rounded bg-edge px-3 py-1 hover:bg-accent hover:text-panel-alt disabled:opacity-40"
-        disabled={!localPath || comparing}
+        disabled={!localPath || comparing || applying}
         onclick={compare}
       >
         <Icon name="sync" size={13} />
-        {comparing ? t("sync.comparing") : t("sync.compare")}
+        {comparing ? t("sync.comparing") : phase === "stopped" ? t("sync.compareAgain") : t("sync.compare")}
       </button>
       <button
         class="rounded bg-green-600 px-3 py-1 font-medium text-white hover:bg-green-500 disabled:opacity-40"
-        disabled={!plan || toApply.length === 0 || applying}
+        disabled={!plan || toApply.length === 0 || applying || phase === "stopped"}
         onclick={apply}
       >
         {applying ? t("sync.applying") : t("sync.apply")}

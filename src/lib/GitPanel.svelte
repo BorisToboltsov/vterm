@@ -450,6 +450,7 @@
             onOpenReadonlyDiff={openReadonlyDiff}
             onIgnore={ignoreInRepo}
             {absPath}
+            {runQuery}
           />
         {/if}
       {:else}

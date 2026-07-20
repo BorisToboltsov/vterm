@@ -9,6 +9,8 @@ use crate::ssh::SshSession;
 use crate::textenc;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::AppHandle;
 
 /// Marker appended to a sudo command to confirm it succeeded (exit status isn't
@@ -39,6 +41,10 @@ pub struct SyncStats {
     pub uploaded: u32,
     pub downloaded: u32,
     pub deleted: u32,
+    /// The run was stopped by the user before working through the whole plan
+    /// (Phase 39.8). Counts above are then partial — the caller reports
+    /// "moved N of M", not a green "done".
+    pub stopped: bool,
 }
 
 /// One content-search hit (Phase 12.6 grep-over-SSH): relative path, line, text.
@@ -355,40 +361,108 @@ async fn ensure_remote_dirs(sftp: &SftpSession, remote_file: &str) {
     }
 }
 
+/// Transfer id for one file of a sync run (Phase 39.8). Deriving it from the plan
+/// path — instead of the random [`crate::uuid_like`] used before — is what lets the
+/// sync dialog line each `sftp://progress` event up with the plan row it drew. The
+/// event's `name` field can't do that job: it is the base name, so two files called
+/// `config.yml` in different folders are indistinguishable.
+///
+/// Mirrored by `syncTransferId` in [`sync.ts`](../../src/lib/sync.ts) — the two must
+/// agree byte for byte or every row stays stuck at "queued".
+pub fn sync_transfer_id(path: &str) -> String {
+    format!("sync:{path}")
+}
+
+/// How many plan lines the recording body lists before it summarises the rest.
+const MIRROR_BODY_LIMIT: usize = 50;
+
+/// The `[sftp] $ …` header for a whole sync run (Phase 39.8). One entry per run,
+/// not per file: a 200-file push would otherwise bury the terminal recording it is
+/// supposed to document.
+pub fn sync_mirror_op(local_root: &str, remote_root: &str, count: usize) -> String {
+    format!(
+        "sync {} <-> {} ({count} actions)",
+        crate::git::shell_quote(local_root),
+        crate::git::shell_quote(remote_root)
+    )
+}
+
+/// The body listing what the run touched, capped at [`MIRROR_BODY_LIMIT`] lines
+/// with a `… and N more` tail. Skipped actions (conflicts) are left out — the
+/// recording documents what happened, not what was considered.
+pub fn sync_mirror_body(actions: &[SyncAction]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut shown = 0usize;
+    let mut skipped = 0usize;
+    for a in actions {
+        let verb = match a.op.as_str() {
+            "upload" => "put",
+            "download" => "get",
+            "deleteRemote" => "rm remote",
+            "deleteLocal" => "rm local",
+            _ => continue,
+        };
+        if shown == MIRROR_BODY_LIMIT {
+            skipped += 1;
+            continue;
+        }
+        shown += 1;
+        lines.push(format!("{verb} {}", crate::git::shell_quote(&a.path)));
+    }
+    if skipped > 0 {
+        lines.push(format!("… and {skipped} more"));
+    }
+    lines.join("\n")
+}
+
 /// Apply a diff: upload/download changed files (creating parent dirs) and delete
 /// extraneous ones. Reuses `sftp::upload`/`download` (per-file progress events).
+///
+/// `cancel` is checked **between files**, exactly like [`sftp::download_dir`]: the
+/// file in flight is finished rather than abandoned. Cutting a copy mid-stream would
+/// leave a truncated file where the user's working one used to be — the same class of
+/// damage as the `SETSTAT` truncation fixed in 0.39.6. Stopping costs one more file;
+/// tearing costs the file.
 pub async fn apply(
     app: &AppHandle,
     sftp: &SftpSession,
     local_root: &str,
     remote_root: &str,
     actions: Vec<SyncAction>,
+    cancel: Arc<AtomicBool>,
 ) -> AppResult<SyncStats> {
     let mut stats = SyncStats::default();
     for a in actions {
+        if cancel.load(Ordering::Relaxed) {
+            stats.stopped = true;
+            break;
+        }
         let remote = remote_join(remote_root, &a.path);
         let local = local_join(local_root, &a.path);
         let local_str = local.to_string_lossy().into_owned();
+        let id = sync_transfer_id(&a.path);
         match a.op.as_str() {
             "upload" => {
                 ensure_remote_dirs(sftp, &remote).await;
-                sftp::upload(app, crate::uuid_like(), sftp, &local_str, &remote).await?;
+                sftp::upload(app, id, sftp, &local_str, &remote).await?;
                 stats.uploaded += 1;
             }
             "download" => {
                 if let Some(parent) = local.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                sftp::download(app, crate::uuid_like(), sftp, &remote, &local_str).await?;
+                sftp::download(app, id, sftp, &remote, &local_str).await?;
                 stats.downloaded += 1;
             }
             "deleteRemote" => {
                 let _ = sftp.remove_file(remote).await;
                 stats.deleted += 1;
+                sftp::emit_done(app, &id, &a.path, "upload");
             }
             "deleteLocal" => {
                 let _ = tokio::fs::remove_file(&local).await;
                 stats.deleted += 1;
+                sftp::emit_done(app, &id, &a.path, "download");
             }
             _ => {} // conflict / unknown → skip
         }
@@ -551,6 +625,57 @@ pub async fn sudo_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn act(path: &str, op: &str) -> SyncAction {
+        SyncAction {
+            path: path.into(),
+            op: op.into(),
+        }
+    }
+
+    #[test]
+    fn sync_transfer_id_is_derived_from_the_full_path() {
+        // Must match `syncTransferId` in sync.ts, and must distinguish same-named
+        // files in different folders (the progress event's `name` cannot).
+        assert_eq!(sync_transfer_id("app/config.yml"), "sync:app/config.yml");
+        assert_ne!(
+            sync_transfer_id("a/config.yml"),
+            sync_transfer_id("b/config.yml")
+        );
+    }
+
+    #[test]
+    fn sync_mirror_op_quotes_both_roots() {
+        let op = sync_mirror_op("/home/me/it's mine", "/srv/app", 5);
+        assert!(op.starts_with("sync '/home/me/it'\\''s mine' <-> '/srv/app'"));
+        assert!(op.ends_with("(5 actions)"));
+    }
+
+    #[test]
+    fn sync_mirror_body_lists_ops_and_skips_conflicts() {
+        let body = sync_mirror_body(&[
+            act("a.py", "upload"),
+            act("b.py", "download"),
+            act("c.cfg", "deleteRemote"),
+            act("d.cfg", "deleteLocal"),
+            act("e.yml", "conflict"),
+        ]);
+        assert_eq!(
+            body,
+            "put 'a.py'\nget 'b.py'\nrm remote 'c.cfg'\nrm local 'd.cfg'"
+        );
+    }
+
+    #[test]
+    fn sync_mirror_body_caps_long_plans() {
+        // A 200-file push must not bury the recording it is meant to document.
+        let actions: Vec<SyncAction> = (0..MIRROR_BODY_LIMIT + 12)
+            .map(|i| act(&format!("f{i}.txt"), "upload"))
+            .collect();
+        let body = sync_mirror_body(&actions);
+        assert_eq!(body.lines().count(), MIRROR_BODY_LIMIT + 1);
+        assert!(body.ends_with("… and 12 more"));
+    }
 
     #[test]
     fn sudo_backup_command_survives_a_missing_target() {

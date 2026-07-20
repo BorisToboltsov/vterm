@@ -42,7 +42,7 @@
     activeEndpoint,
     buildChatRequest,
     resolvePromptContent,
-    DEFAULT_PROMPT,
+    defaultPrompt,
     type AiPromptKind,
   } from "./ai";
   import { buildRunbookContext } from "./airunbook";
@@ -167,8 +167,9 @@
   }
 
   // ── AI generation: runbook plan / shell script / Ansible playbook (17.5–17.6) ─
-  /** What the AI turns the transcript into. `plan` shows in a viewer; scripts open in the editor. */
-  type GenKind = "plan" | ScriptKind;
+  /** What the AI turns the transcript into. `plan` and `postmortem` show in the
+   *  viewer; scripts open in the editor. */
+  type GenKind = "plan" | "postmortem" | ScriptKind;
 
   const aiOn = $derived(aiReady(settings.ai));
   const planEndpoint = $derived(activeEndpoint(settings.ai));
@@ -188,8 +189,11 @@
   // Recording generators use the active prompt of the matching kind (plan→runbook).
   const systemFor = (kind: GenKind): string => {
     const pk: AiPromptKind = kind === "plan" ? "runbook" : kind;
-    return resolvePromptContent(settings.ai.prompts[pk], null, DEFAULT_PROMPT[pk]);
+    return resolvePromptContent(settings.ai.prompts[pk], null, defaultPrompt(pk));
   };
+
+  /** Only the script kinds become an editor document; prose stays in the viewer. */
+  const isScriptKind = (k: GenKind): k is ScriptKind => k === "sh" || k === "ansible";
 
   function cleanupPlan() {
     for (const u of planUnlisten) u();
@@ -243,7 +247,7 @@
       planStreaming = false;
       cleanupPlan();
       // Scripts (sh/ansible) become an editor document; plans stay in the viewer.
-      if (kind !== "plan" && !planError && planText.trim()) {
+      if (isScriptKind(kind) && !planError && planText.trim()) {
         onOpenScript?.(scriptFileName(rec.title || baseName(rec.path), kind), extractScript(planText, kind));
         planOpen = false;
       }
@@ -745,6 +749,14 @@
       class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
     >
       {t("recordings.genPlan")}
+    </button>
+    <button
+      type="button"
+      data-testid="rec-gen-postmortem"
+      onclick={() => aiMenuFor && startGen(aiMenuFor, "postmortem")}
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+    >
+      {t("recordings.genPostmortem")}
     </button>
     <button
       type="button"

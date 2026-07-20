@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { settings } from "../settings.svelte";
+import { defaultAiSettings } from "../ai";
+import { defaultPromptFor } from "../aiprompts";
 import { en, messages, type MessageKey } from "./messages";
 import { LOCALE_IDS, isLocale, DEFAULT_LOCALE, pickLocale } from "./locales";
 import { interpolate, resolve } from "./translate";
@@ -132,5 +134,27 @@ describe("t (reactive)", () => {
     settings.language = "klingon";
     expect(currentLocale()).toBe("en");
     expect(t("common.ok")).toBe("OK");
+  });
+});
+
+describe("setLocale — AI prompt re-seeding (Phase 41)", () => {
+  it("re-seeds prompts the user never edited", () => {
+    settings.ai = defaultAiSettings();
+    setLocale("ru");
+    expect(settings.ai.prompts.chat.prompts[0].content).toBe(defaultPromptFor("chat", "ru"));
+    setLocale("en");
+    expect(settings.ai.prompts.chat.prompts[0].content).toBe(defaultPromptFor("chat", "en"));
+  });
+
+  it("leaves an edited prompt exactly as the user wrote it", () => {
+    settings.ai = defaultAiSettings();
+    settings.ai.prompts.chat.prompts[0].content = "Answer only in haiku.";
+    settings.ai.prompts.chat.prompts[0].origin = "custom";
+
+    setLocale("ru");
+
+    expect(settings.ai.prompts.chat.prompts[0].content).toBe("Answer only in haiku.");
+    // Untouched kinds still follow the language.
+    expect(settings.ai.prompts.runbook.prompts[0].content).toBe(defaultPromptFor("runbook", "ru"));
   });
 });

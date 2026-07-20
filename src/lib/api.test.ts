@@ -183,9 +183,10 @@ describe("invoke wrappers pass the right command + args", () => {
     await api.localHashTree("/home/me/app");
     expect(invoke).toHaveBeenCalledWith("local_hash_tree", { path: "/home/me/app" });
     const actions = [{ path: "a.txt", op: "upload" as const, reason: "new" as const }];
-    await api.sftpSyncApply("sess", "/home/me/app", "/srv/app", actions);
+    await api.sftpSyncApply("sess", "run-1", "/home/me/app", "/srv/app", actions);
     expect(invoke).toHaveBeenCalledWith("sftp_sync_apply", {
       sessionId: "sess",
+      runId: "run-1",
       localRoot: "/home/me/app",
       remoteRoot: "/srv/app",
       actions,

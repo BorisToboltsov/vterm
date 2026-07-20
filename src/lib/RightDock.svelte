@@ -12,6 +12,7 @@
   import DockerPanel from "./DockerPanel.svelte";
   import K8sPanel from "./K8sPanel.svelte";
   import type { RawContext } from "./aicontext";
+  import type { PromptVars } from "./aicore";
   import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
@@ -35,7 +36,9 @@
     onIgnoreGitignore,
     onSftpNavigate,
     onOpenContainerShell,
+    onAskAi,
     getAiContext,
+    promptVars = {},
     aiProd = false,
     aiNoAi = false,
   }: {
@@ -65,8 +68,12 @@
     onSftpNavigate?: (path: string) => void;
     /** Docker panel → open a real terminal tab running an `exec` shell command. */
     onOpenContainerShell?: (command: string) => void;
+    /** Hand a container/pod's state + logs to the AI assistant (Phase 41). */
+    onAskAi?: (context: string, kind: "container" | "pod") => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
     getAiContext?: () => Promise<RawContext> | RawContext;
+    /** Values for `{os}`/`{host}`/… placeholders in the user's AI prompt (Phase 41). */
+    promptVars?: PromptVars;
     /** The active server is prod-flagged — bars AI auto-execution (17.4). */
     aiProd?: boolean;
     /** The active server is `noAi`-flagged — blocks AI context + execution (17.7). */
@@ -186,6 +193,7 @@
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
+            onAsk={onAskAi ? (ctx) => onAskAi(ctx, "container") : undefined}
           />
         {:else if activeTab === "k8s"}
           <K8sPanel
@@ -193,6 +201,7 @@
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
+            onAsk={onAskAi ? (ctx) => onAskAi(ctx, "pod") : undefined}
           />
         {:else}
           <AiChat
@@ -202,6 +211,8 @@
             {serverExecMode}
             prod={aiProd}
             noAi={aiNoAi}
+            isLocal={kind === "local"}
+            {promptVars}
           />
         {/if}
       </div>

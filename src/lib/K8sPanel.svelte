@@ -78,6 +78,7 @@
     sessionReady = true,
     prod = false,
     onOpenShell,
+    onAsk,
   }: {
     sessionId: string;
     /** SSH tab is connected (local tabs are always ready). */
@@ -86,6 +87,8 @@
     prod?: boolean;
     /** Open a real terminal tab running `command` (kubectl exec shell). */
     onOpenShell?: (command: string) => void;
+    /** Hand a pod's state + logs to the AI assistant (Phase 41). */
+    onAsk?: (context: string) => void;
   } = $props();
 
   const refreshSec = $derived(settings.k8sRefreshSec);
@@ -582,6 +585,7 @@
   {run}
   {runQuery}
   {openShell}
+  {onAsk}
   onclose={() => (detailOpen = false)}
 />
 

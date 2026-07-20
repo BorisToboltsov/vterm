@@ -445,7 +445,18 @@
       "Bash(docker compose *)",
       "Bash(sed -i '' 's/\"version\": \"0.39.6\"/\"version\": \"0.39.7\"/' package.json src-tauri/tauri.conf.json)",
       "Bash(sed -i '' '3s/^version = \"0.39.6\"/version = \"0.39.7\"/' src-tauri/Cargo.toml)",
-      "Bash(grep -n \"sudo_backup_command\\\\`, 3 фронтовых\" docs/ROADMAP.md)"
+      "Bash(grep -n \"sudo_backup_command\\\\`, 3 фронтовых\" docs/ROADMAP.md)",
+      "WebFetch(domain:api-docs.deepseek.com)",
+      "Bash(grep -n 'function \\\\|const .* = $state\\\\|let .* = $state\\\\|// ' src/lib/AiChat.svelte)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:developers.openai.com)",
+      "Bash(perl -0pi -e 's/let b = openai_body\\\\\\(&req\\\\\\(\\\\\\)\\\\\\);/let b = openai_body\\(&req\\(\\), false\\);/; s/let b = openai_body\\\\\\(&r\\\\\\);/let b = openai_body\\(&r, false\\);/' src-tauri/src/ai.rs)",
+      "Bash(grep -E \"^\\(scissors|bulb|arrowUp|arrowDown|clock|chevronRight|chevronDown\\)$\")",
+      "Bash(perl -0pi -e 's/class=\"mt-1\\\\.5 flex items-center gap-2\\\\.5 border-t border-edge pt-1 text-\\\\[10px\\\\] text-muted\"/class=\"mt-1.5 flex items-center gap-2.5 whitespace-nowrap border-t border-edge pt-1 text-[10px] text-muted\"/' src/lib/AiChat.svelte)",
+      "Bash(perl -0pi -e 's/\"version\": \"0\\\\.39\\\\.8\"/\"version\": \"0.40.0\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(perl -0pi -e 's/^version = \"0\\\\.39\\\\.8\"/version = \"0.40.0\"/m' src-tauri/Cargo.toml)",
+      "Bash(grep -n -A6 \"historyCharCap:$\\\\|historyCharCap:\" src/lib/ai.ts)",
+      "Bash(grep -n 'from \"\\\\$lib/stores/aichat.svelte\"\\\\|from \"\\\\$lib/ai\"' src/routes/+page.svelte)"
     ]
   }
 }

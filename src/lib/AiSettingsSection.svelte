@@ -10,12 +10,22 @@
     newAiPrompt,
     parseParams,
     mergeModelOptions,
-    DEFAULT_PROMPT,
+    sanitizeOptionalInt,
+    MAX_TOKENS_RANGE,
+    TIMEOUT_RANGE,
+    HISTORY_LIMIT_RANGE,
+    HISTORY_CHAR_CAP_RANGE,
+    defaultPrompt,
+    resolvePromptContent,
     AI_PROMPT_KINDS,
     type AiProvider,
     type AiPromptKind,
     type AiEndpoint,
   } from "./ai";
+  import { AI_PRESETS, endpointFromPreset, type AiPreset } from "./aipresets";
+  import { buildPromptLayers, resolveReplyLanguage } from "./aicore";
+  import ContextMenu from "./ContextMenu.svelte";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { setAiKey, forgetAiKey, aiModels } from "./api";
   import { describeAiError } from "./aierror";
   import { BUILTIN_DANGEROUS_LABELS } from "./aidialog";
@@ -25,10 +35,39 @@
   import InfoHint from "./InfoHint.svelte";
   import PasswordInput from "./PasswordInput.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
-  import { t } from "./i18n";
+  import { t, availableLocales } from "./i18n";
+  import type { MessageKey } from "./i18n/messages";
 
   // Collapsible prompt sections (whole section + per kind).
   let promptsOpen = $state(false);
+  let coreOpen = $state(false);
+
+  /**
+   * The system prompt as it would actually be sent, in its layers.
+   *
+   * Shown as separate labelled blocks because the core is English while the
+   * persona follows the interface language — as one wall of text the switch reads
+   * as a mistake rather than as two authors. Concatenating the blocks in order
+   * reproduces exactly what is sent (asserted in aicore.test.ts).
+   *
+   * The facts are a representative session (SSH, execution on, not production);
+   * the hint says the wording adapts, and showing the production paragraph here
+   * would be misleading on an ordinary server.
+   */
+  const promptLayers = $derived(
+    buildPromptLayers(
+      resolvePromptContent(settings.ai.prompts.chat, null, defaultPrompt("chat")),
+      {
+        kind: "ssh",
+        canExecute: settings.ai.execMode !== "suggest",
+        execMode: settings.ai.execMode,
+        prod: false,
+        hasContext: true,
+        replyLanguage: resolveReplyLanguage(settings.ai.replyLanguage, settings.language),
+      },
+      {},
+    ),
+  );
 
   // Custom "always confirm" command patterns (additive to the built-in list).
   let dangerOpen = $state(false);
@@ -49,20 +88,41 @@
     settings.ai.dangerousPatterns = settings.ai.dangerousPatterns.filter((x) => x !== p);
     deletePattern = null;
   }
-  let kindOpen = $state<Record<AiPromptKind, boolean>>({
-    chat: false,
-    runbook: false,
-    sh: false,
-    ansible: false,
-  });
+  // Seeded from the registry so adding a kind doesn't need a literal here.
+  let kindOpen = $state<Record<AiPromptKind, boolean>>(
+    Object.fromEntries(AI_PROMPT_KINDS.map((k) => [k, false])) as Record<AiPromptKind, boolean>,
+  );
+  const KIND_LABEL: Record<AiPromptKind, MessageKey> = {
+    chat: "settings.aiChatPrompt",
+    runbook: "settings.aiRunbookPrompt",
+    sh: "settings.aiScriptShPrompt",
+    ansible: "settings.aiScriptAnsiblePrompt",
+    postmortem: "settings.aiPostmortemPrompt",
+    commit: "settings.aiCommitPrompt",
+  };
   function kindLabel(k: AiPromptKind): string {
-    return k === "chat"
-      ? t("settings.aiChatPrompt")
-      : k === "runbook"
-        ? t("settings.aiRunbookPrompt")
-        : k === "sh"
-          ? t("settings.aiScriptShPrompt")
-          : t("settings.aiScriptAnsiblePrompt");
+    return t(KIND_LABEL[k]);
+  }
+
+  /** The preview blocks, in the order they are concatenated when sent. */
+  function promptLayerRows() {
+    return [
+      { key: "core", label: t("settings.aiLayerCore"), text: promptLayers.core },
+      { key: "persona", label: t("settings.aiLayerPersona"), text: promptLayers.persona },
+      { key: "reply", label: t("settings.aiReplyLanguage"), text: promptLayers.reply },
+    ];
+  }
+
+  /** Restore the shipped text and mark the prompt untouched again, so a later
+   *  interface-language change re-seeds it (see `reseedBuiltinPrompts`). */
+  function resetPrompt(p: { content: string; origin?: "builtin" | "custom" }, kind: AiPromptKind) {
+    p.content = defaultPrompt(kind);
+    p.origin = "builtin";
+  }
+
+  /** Any edit makes the prompt the user's — it is never re-seeded after this. */
+  function markCustom(p: { origin?: "builtin" | "custom" }) {
+    p.origin = "custom";
   }
 
   function addPrompt(kind: AiPromptKind) {
@@ -112,11 +172,50 @@
 
   const ai = $derived(settings.ai);
 
-  function addEndpoint(provider: AiProvider) {
-    const ep = newAiEndpoint(provider);
+  function addEndpoint(ep: AiEndpoint) {
     advancedOpen[ep.id] = false; // seed before it renders (bind:open needs a boolean)
     settings.ai.endpoints = [...settings.ai.endpoints, ep];
     if (!settings.ai.activeEndpointId) settings.ai.activeEndpointId = ep.id;
+  }
+
+  // "Add endpoint" menu (Phase 40). Built on the shared ContextMenu primitive
+  // rather than a bespoke popup, per the components invariant; presets come from
+  // the pure registry, so a new vendor is a data entry, not UI work.
+  let addMenu = $state<OpenMenu | null>(null);
+
+  function presetRow(p: AiPreset): MenuItem {
+    return { label: p.label, onSelect: () => addEndpoint(endpointFromPreset(p)) };
+  }
+
+  function openAddMenu(e: MouseEvent) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const local = AI_PRESETS.filter((p) => p.kind === "local").map(presetRow);
+    const cloud = AI_PRESETS.filter((p) => p.kind === "cloud").map(presetRow);
+    addMenu = {
+      x: r.left,
+      y: r.bottom + 4,
+      items: [
+        ...local,
+        { kind: "separator" },
+        ...cloud,
+        { kind: "separator" },
+        {
+          label: t("settings.aiAddCustom"),
+          icon: "settings",
+          onSelect: () => addEndpoint(newAiEndpoint("openai")),
+        },
+      ],
+    };
+  }
+
+  /** Write a bounded numeric endpoint field, treating a blank box as "default". */
+  function setNumField(
+    ep: AiEndpoint,
+    field: "maxTokens" | "timeoutSec",
+    raw: string,
+    range: { min: number; max: number },
+  ) {
+    ep[field] = raw.trim() ? sanitizeOptionalInt(raw, range) : null;
   }
 
   async function saveKey(id: string) {
@@ -311,6 +410,38 @@
                 >
               {/if}
             </div>
+
+            <!-- Reply cap + request timeout (Phase 40). Blank = the endpoint's
+                 own default, so an untouched endpoint behaves exactly as before. -->
+            <span class="text-[10px] text-muted">{t("settings.aiMaxTokens")}</span>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                data-testid={`ai-max-tokens-${ep.id}`}
+                class="w-24 {inputCls}"
+                min={MAX_TOKENS_RANGE.min}
+                max={MAX_TOKENS_RANGE.max}
+                placeholder={t("settings.aiAuto")}
+                value={ep.maxTokens ?? ""}
+                onchange={(e) => setNumField(ep, "maxTokens", e.currentTarget.value, MAX_TOKENS_RANGE)}
+              />
+              <span class="text-[10px] text-muted">{t("settings.aiMaxTokensHint")}</span>
+            </div>
+
+            <span class="text-[10px] text-muted">{t("settings.aiTimeout")}</span>
+            <div class="flex items-center gap-2">
+              <input
+                type="number"
+                data-testid={`ai-timeout-${ep.id}`}
+                class="w-24 {inputCls}"
+                min={TIMEOUT_RANGE.min}
+                max={TIMEOUT_RANGE.max}
+                placeholder={t("settings.aiAuto")}
+                value={ep.timeoutSec ?? ""}
+                onchange={(e) => setNumField(ep, "timeoutSec", e.currentTarget.value, TIMEOUT_RANGE)}
+              />
+              <span class="text-[10px] text-muted">{t("settings.aiTimeoutHint")}</span>
+            </div>
           </div>
 
           <!-- Advanced: model-wide base prompt + extra params JSON (collapsible). -->
@@ -385,20 +516,15 @@
 <div class="mt-2 flex gap-2">
   <button
     class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt"
-    data-testid="ai-add-local"
-    onclick={() => addEndpoint("openai")}
+    data-testid="ai-add-endpoint"
+    onclick={openAddMenu}
   >
     <Icon name="plus" size={13} />
-    {t("settings.aiAddLocal")}
-  </button>
-  <button
-    class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt"
-    onclick={() => addEndpoint("anthropic")}
-  >
-    <Icon name="plus" size={13} />
-    {t("settings.aiAddCloud")}
+    {t("settings.aiAddEndpoint")}
+    <Icon name="chevronDown" size={13} />
   </button>
 </div>
+<ContextMenu menu={addMenu} onclose={() => (addMenu = null)} />
 
 <!-- Output contract -->
 <label class="mt-3 block text-xs text-muted">
@@ -513,6 +639,50 @@
   {t("settings.aiIncludeMetadata")}
 </label>
 
+<!-- History caps (Phase 40). Before this, every turn replayed the whole
+     conversation — with context attached to each step of a dialog loop the
+     request grew without bound, in tokens the user pays for. -->
+<div class="mt-3 flex items-center gap-1 text-xs text-muted">
+  {t("settings.aiHistory")}<InfoHint text={t("settings.aiHistoryHint")} />
+</div>
+<div class="mt-1 grid grid-cols-[96px_1fr] items-center gap-x-3 gap-y-2">
+  <span class="text-[10px] text-muted">{t("settings.aiHistoryLimit")}</span>
+  <div class="flex items-center gap-2">
+    <input
+      type="number"
+      data-testid="ai-history-limit"
+      class="w-24 {inputCls}"
+      min={HISTORY_LIMIT_RANGE.min}
+      max={HISTORY_LIMIT_RANGE.max}
+      placeholder={t("settings.aiUnlimited")}
+      value={settings.ai.historyLimit ?? ""}
+      onchange={(e) =>
+        (settings.ai.historyLimit = e.currentTarget.value.trim()
+          ? sanitizeOptionalInt(e.currentTarget.value, HISTORY_LIMIT_RANGE)
+          : null)}
+    />
+    <span class="text-[10px] text-muted">{t("settings.aiHistoryLimitHint")}</span>
+  </div>
+
+  <span class="text-[10px] text-muted">{t("settings.aiHistoryCap")}</span>
+  <div class="flex items-center gap-2">
+    <input
+      type="number"
+      data-testid="ai-history-cap"
+      class="w-24 {inputCls}"
+      min={HISTORY_CHAR_CAP_RANGE.min}
+      max={HISTORY_CHAR_CAP_RANGE.max}
+      placeholder={t("settings.aiUnlimited")}
+      value={settings.ai.historyCharCap ?? ""}
+      onchange={(e) =>
+        (settings.ai.historyCharCap = e.currentTarget.value.trim()
+          ? sanitizeOptionalInt(e.currentTarget.value, HISTORY_CHAR_CAP_RANGE)
+          : null)}
+    />
+    <span class="text-[10px] text-muted">{t("settings.aiHistoryCapHint")}</span>
+  </div>
+</div>
+
 <!-- System prompts — collapsible section; each kind is a collapsible list. -->
 <div class="mt-3">
   <DisclosureRow variant="list" bind:open={promptsOpen} label={t("settings.aiPrompts")} testid="ai-prompts">
@@ -522,6 +692,57 @@
   </DisclosureRow>
   {#if promptsOpen}
     <div class="mt-2 space-y-2 border-l border-edge pl-2">
+      <!-- Reply language + the non-editable core, shown before the editable
+           prompts so it is clear what they are added to. -->
+      <label class="block text-[11px] text-muted">
+        <span class="flex items-center gap-1">
+          {t("settings.aiReplyLanguage")}<InfoHint text={t("settings.aiReplyLanguageHint")} />
+        </span>
+        <select
+          data-testid="ai-reply-language"
+          class="mt-1 {inputCls}"
+          bind:value={settings.ai.replyLanguage}
+        >
+          <option value="auto">{t("settings.aiReplyLanguageAuto")}</option>
+          {#each availableLocales as l (l.id)}
+            <option value={l.id}>{l.nativeName}</option>
+          {/each}
+        </select>
+      </label>
+
+      <div>
+        <DisclosureRow
+          variant="list"
+          bind:open={coreOpen}
+          label={t("settings.aiEffectivePrompt")}
+          testid="ai-core-prompt"
+        >
+          {#snippet trailing()}<InfoHint
+              text={t("settings.aiCorePromptHint") + "\n\n" + t("settings.aiEffectivePromptHint")}
+            />{/snippet}
+        </DisclosureRow>
+        {#if coreOpen}
+          <!-- Read-only: this is exactly what is sent, so nothing reaches the
+               model that the user cannot see here. -->
+          <div class="mt-1 space-y-1.5" data-testid="ai-core-prompt-text">
+            {#each promptLayerRows() as layer (layer.key)}
+              {#if layer.text}
+                <div>
+                  <div class="mb-0.5 flex items-center gap-1 text-[10px] text-muted">
+                    <span class="h-px w-2 bg-edge"></span>{layer.label}
+                  </div>
+                  <pre
+                    class="max-h-56 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel-alt p-2 font-mono text-[10px] leading-relaxed {layer.key ===
+                    'persona'
+                      ? 'text-text'
+                      : 'text-muted'}">{layer.text}</pre>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {/if}
+      </div>
+
       {#each AI_PROMPT_KINDS as kind (kind)}
         {@const set = settings.ai.prompts[kind]}
         <div>
@@ -564,8 +785,8 @@
                       class="shrink-0 rounded p-1 text-muted hover:text-white disabled:opacity-40"
                       use:tooltip={t("settings.aiPromptReset")}
                       aria-label={t("settings.aiPromptReset")}
-                      disabled={p.content === DEFAULT_PROMPT[kind]}
-                      onclick={() => (p.content = DEFAULT_PROMPT[kind])}
+                      disabled={p.content === defaultPrompt(kind)}
+                      onclick={() => resetPrompt(p, kind)}
                     >
                       <Icon name="sync" size={13} />
                     </button>
@@ -584,6 +805,7 @@
                     rows="4"
                     class="{inputCls} resize-y font-mono leading-relaxed"
                     bind:value={p.content}
+                    oninput={() => markCustom(p)}
                   ></textarea>
                 </div>
               {/each}

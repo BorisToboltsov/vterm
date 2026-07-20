@@ -88,7 +88,8 @@
     TERMINAL_VIEW,
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
-  import { removeChat, getChat } from "$lib/stores/aichat.svelte";
+  import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
+  import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
   import ServerFormModal from "$lib/ServerFormModal.svelte";
@@ -119,6 +120,7 @@
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
   import { applyProgress } from "$lib/stores/transfers.svelte";
+  import { applySyncProgress } from "$lib/stores/syncrun.svelte";
   import {
     recordingState,
     recordingPaused,
@@ -145,6 +147,7 @@
   } from "$lib/api";
   import { extractTranscript } from "$lib/recording";
   import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
+  import type { PromptVars } from "$lib/aicore";
   import { isProdServer } from "$lib/aiexec";
   import type { ProbeSession } from "$lib/probe";
   import { getVersion } from "@tauri-apps/api/app";
@@ -543,6 +546,72 @@
     }
     if (tiers.includeMetadata) raw.metadata = await aiMetadataBlock(id);
     return raw;
+  }
+
+  /**
+   * Values for the `{os}`/`{host}`/… placeholders a user may put in their AI
+   * prompt (Phase 41). Only what is already in memory — this is read on every
+   * send, so it must not probe the host. An unknown value stays empty and the
+   * placeholder expands to nothing.
+   */
+  const aiPromptVars = $derived.by((): PromptVars => {
+    const id = tabsState.activeId;
+    const tab = id ? findTab(id) : undefined;
+    if (!tab) return {};
+    const srv = tab.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : undefined;
+    return {
+      host: srv?.host ?? "",
+      alias: srv?.alias ?? (tab.kind === "local" ? t("tab.localShell") : ""),
+      cwd: (id && terminalCwd[id]) || "",
+      shell: tab.kind === "local" ? (settings.localShellPath ?? "") : "",
+      // `os` is deliberately absent: it costs a metrics probe, and the consent-gated
+      // metadata tier is the honest place for host details.
+    };
+  });
+
+  /** Whether the assistant is usable at all — gates every "ask AI" entry point. */
+  const aiOn = $derived(aiReady(settings.ai));
+
+  /**
+   * Send a terminal selection to the assistant (Phase 41). The chat turns this
+   * into its normal consent dialog, so the text is redacted and previewed before
+   * anything leaves the machine — the entry point buys convenience, not access.
+   */
+  function explainWithAi(sessionId: string, selection: string) {
+    const text = selection.trim();
+    if (!text) return;
+    askAbout(sessionId, {
+      question: t("ai.ask.explainSelection"),
+      context: text,
+      label: "Terminal selection",
+    });
+    layout.dockTab = "ai";
+    layout.sftpCollapsed = false;
+  }
+
+  /**
+   * Ask the assistant about a container or pod (Phase 41). The panel has already
+   * fetched its state and logs, so the question carries them; consent still runs
+   * in the chat, exactly as for a hand-attached context.
+   */
+  function askAiAboutResource(context: string, kind: "container" | "pod") {
+    const id = tabsState.activeId;
+    if (!id) return;
+    askAbout(id, {
+      question: kind === "container" ? t("ai.ask.container") : t("ai.ask.pod"),
+      context,
+      label: kind === "container" ? "Docker container" : "Kubernetes pod",
+    });
+    layout.dockTab = "ai";
+  }
+
+  /** Ask the assistant to read the host's metrics snapshot (Phase 41). */
+  function askAiAboutMetrics(snapshot: string) {
+    const id = tabsState.activeId;
+    if (!id) return;
+    askAbout(id, { question: t("ai.ask.metrics"), context: snapshot, label: "Host metrics" });
+    layout.dockTab = "ai";
+    layout.sftpCollapsed = false;
   }
 
   /** Host/session metadata block for the AI metadata tier (best-effort). */
@@ -960,10 +1029,12 @@
       showHelp = true;
     }).then((u) => unlisteners.push(u));
     listen("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
-    // App-level SFTP progress feed → shared store (read by SFTP panel + status bar).
-    listen<SftpProgress>("sftp://progress", (e) => applyProgress(e.payload)).then((u) =>
-      unlisteners.push(u),
-    );
+    // App-level SFTP progress feed → shared store (read by SFTP panel + status bar),
+    // plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
+    listen<SftpProgress>("sftp://progress", (e) => {
+      applyProgress(e.payload);
+      applySyncProgress(e.payload);
+    }).then((u) => unlisteners.push(u));
     // "Open with vterm": files asked for at launch (drained now) and while running.
     takePendingOpens()
       .then((paths) => paths.forEach(handleOpenFile))
@@ -2080,6 +2151,7 @@
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
+                    onExplain={aiOn ? (sel) => explainWithAi(tab.sessionId, sel) : undefined}
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
@@ -2198,6 +2270,7 @@
                   : null}
                 sessionReady={sftpReady}
                 terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
+                promptVars={aiPromptVars}
                 followTerminal={tabsState.activeId
                   ? (followTerminal[tabsState.activeId] ?? false)
                   : false}
@@ -2214,6 +2287,7 @@
                 onIgnoreGitignore={appendGitignore}
                 onSftpNavigate={cdTerminalTo}
                 onOpenContainerShell={openContainerShell}
+                onAskAi={aiOn ? askAiAboutResource : undefined}
               />
             {/key}
           {/if}
@@ -2250,6 +2324,7 @@
     bind:open={showMonitoring}
     sessionId={tabsState.activeId}
     onInstallTool={openToolInstallByName}
+    onAskAi={aiOn ? askAiAboutMetrics : undefined}
   />
 {/if}
 

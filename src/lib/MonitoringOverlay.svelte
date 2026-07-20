@@ -45,6 +45,7 @@
   } from "./monhealth";
   import { supportsLoadAverage, supportsSensorsInstall, supportsTemperature } from "./hostcaps";
   import { isHidden } from "./util";
+  import { metricsSnapshot } from "./aimetrics";
   import Modal from "./Modal.svelte";
   import Icon from "./Icon.svelte";
   import Chart from "./Chart.svelte";
@@ -67,11 +68,14 @@
     open = $bindable(false),
     sessionId,
     onInstallTool,
+    onAskAi,
   }: {
     open?: boolean;
     sessionId: string;
     /** Offer to install a server tool (e.g. "sensors") via the Phase 12.8 flow. */
     onInstallTool?: (toolName: string) => void;
+    /** Hand the current metrics snapshot to the AI assistant (Phase 41). */
+    onAskAi?: (snapshot: string) => void;
   } = $props();
 
   let metrics = $state<Metrics | null>(null);
@@ -326,6 +330,23 @@
   showClose
   onclose={() => (open = false)}
 >
+  {#if onAskAi && metrics}
+    <!-- "Ask AI" (Phase 41): everything on this screen is already polled, so the
+         question carries a snapshot rather than asking the user to retype it. -->
+    <div class="mb-2 flex justify-end">
+      <button
+        data-testid="mon-ask-ai"
+        class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-[11px] hover:bg-accent hover:text-panel-alt"
+        onclick={() => {
+          onAskAi?.(metricsSnapshot(metrics!, detail));
+          open = false;
+        }}
+      >
+        <Icon name="aiMark" size={13} />
+        {t("ai.ask.button")}
+      </button>
+    </div>
+  {/if}
   {#if !metrics && !failed}
     <!-- First paint before the first poll resolves. -->
     <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3" data-testid="monitoring-loading">

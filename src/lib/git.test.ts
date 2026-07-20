@@ -59,6 +59,7 @@ import {
   railColor,
   RAIL_COLORS,
   type GitCommit,
+  stagedDiffArgs,
 } from "./git";
 
 describe("argument builders", () => {
@@ -417,5 +418,18 @@ describe("railColor", () => {
   it("cycles and handles wrap", () => {
     expect(railColor(0)).toBe(RAIL_COLORS[0]);
     expect(railColor(RAIL_COLORS.length)).toBe(RAIL_COLORS[0]);
+  });
+});
+
+describe("stagedDiffArgs (Phase 41)", () => {
+  it("asks git for the staged diff with trimmed context", () => {
+    // Context lines roughly double the tokens on a large diff without helping the
+    // model describe the change.
+    expect(stagedDiffArgs()).toEqual(["diff", "--no-color", "--cached", "-U1"]);
+    expect(stagedDiffArgs(0)).toEqual(["diff", "--no-color", "--cached", "-U0"]);
+  });
+
+  it("never colours output, which would confuse the parser and the model", () => {
+    expect(stagedDiffArgs()).toContain("--no-color");
   });
 });

@@ -11,7 +11,7 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from "../api";
-import { buildChatRequest, type AiSettings, type AiExecMode } from "../ai";
+import { buildChatRequest, type AiSettings, type AiExecMode, type AiUsage } from "../ai";
 import { withContext, type ContextTiers } from "../aicontext";
 import { settings } from "../settings.svelte";
 import { toTerminalInput, auditLabel } from "../aiexec";
@@ -32,6 +32,16 @@ export interface AiChatItem {
   content: string;
   sent?: string;
   withContext?: boolean;
+  /** Reasoning tokens from `ai://think/{id}` (Phase 40), kept apart from the
+   *  answer so the UI can fold them away. Empty/absent = the model didn't think
+   *  out loud (or isn't a reasoning model). */
+  reasoning?: string;
+  /** Wall-clock milliseconds spent streaming this reply — shown next to the
+   *  reasoning fold, where the wait is the thing being explained. */
+  elapsedMs?: number;
+  /** Token tally from the `ai://done` payload; absent when the endpoint never
+   *  reported one, in which case the UI shows no counter at all. */
+  usage?: AiUsage;
 }
 
 export interface SessionChat {
@@ -50,6 +60,24 @@ export interface SessionChat {
   pending: { command: string; opts: StartChatOpts } | null;
   /** Per-chat context tiers (chosen in the Context popover; default from settings). */
   context: ContextTiers;
+  /**
+   * A question raised from elsewhere in the app (Phase 41): the terminal's
+   * "Explain" menu item, the Docker/k8s detail modals, the monitoring overlay.
+   *
+   * It is a *request*, not a send: `AiChat` turns it into the ordinary consent
+   * dialog, so a caller cannot route context past the consent contract. Cleared
+   * once the chat has picked it up.
+   */
+  ask: AskRequest | null;
+}
+
+/** A prepared question + already-collected raw context, awaiting consent. */
+export interface AskRequest {
+  question: string;
+  /** Raw (unredacted) text; `AiChat` redacts and previews it like any context. */
+  context: string;
+  /** Section label for the context block, e.g. "Container logs". */
+  label: string;
 }
 
 /** Key used when there is no active session (AiChat is normally session-scoped). */
@@ -78,6 +106,7 @@ export function getChat(sessionId: string | undefined): SessionChat {
       dialogStep: 0,
       dialogRunning: false,
       pending: null,
+      ask: null,
       // New chats inherit the global tier defaults; then chosen per-chat.
       context: {
         includeBuffer: settings.ai.includeBuffer,
@@ -184,8 +213,10 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   c.streaming = true;
   c.error = null;
 
+  const startedAt = Date.now();
   const finish = () => {
     c.streaming = false;
+    c.messages[idx].elapsedMs = Date.now() - startedAt;
     stopStream(key);
   };
   const un: UnlistenFn[] = [];
@@ -194,8 +225,17 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
       c.messages[idx].content += e.payload;
     }),
   );
+  // Reasoning rides its own channel, so it accumulates into its own field and
+  // never lands in `content` — otherwise the model's scratchpad would be parsed
+  // for runnable command blocks and offered up for execution.
   un.push(
-    await listen(`ai://done/${streamId}`, () => {
+    await listen<string>(`ai://think/${streamId}`, (e) => {
+      c.messages[idx].reasoning = (c.messages[idx].reasoning ?? "") + e.payload;
+    }),
+  );
+  un.push(
+    await listen<AiUsage | null>(`ai://done/${streamId}`, (e) => {
+      if (e.payload) c.messages[idx].usage = e.payload;
       finish();
       afterReply(c, idx, opts);
     }),
@@ -216,6 +256,80 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
       finish();
     }
   }
+}
+
+/**
+ * Raise a question about something the user is looking at, from anywhere in the
+ * app. Nothing is sent here — `AiChat` picks the request up and runs it through
+ * the same redaction + consent dialog as a hand-typed question.
+ */
+export function askAbout(sessionId: string | undefined, req: AskRequest): void {
+  getChat(sessionId).ask = req;
+}
+
+/**
+ * One-shot generation outside the chat (Phase 41): no conversation, no history,
+ * no execution — just a system prompt plus one user message streamed back to the
+ * caller. Used for the commit-message drafter.
+ *
+ * Returns a cancel function. The caller is responsible for having obtained
+ * consent for whatever `content` contains; this is plumbing, not a gate.
+ */
+export async function generateOnce(opts: {
+  system: string;
+  content: string;
+  settings: AiSettings;
+  onToken: (text: string) => void;
+  onDone: () => void;
+  onError: (message: string) => void;
+}): Promise<() => void> {
+  const streamId = crypto.randomUUID();
+  const req = buildChatRequest(
+    opts.settings,
+    streamId,
+    [{ role: "user", content: opts.content }],
+    opts.system,
+  );
+  if (!req) {
+    opts.onError(t("ai.disabledHint"));
+    return () => {};
+  }
+
+  const un: UnlistenFn[] = [];
+  let live = true;
+  const cleanup = () => {
+    live = false;
+    for (const u of un) u();
+    un.length = 0;
+  };
+
+  un.push(await listen<string>(`ai://out/${streamId}`, (e) => opts.onToken(e.payload)));
+  un.push(
+    await listen(`ai://done/${streamId}`, () => {
+      cleanup();
+      opts.onDone();
+    }),
+  );
+  un.push(
+    await listen<string>(`ai://error/${streamId}`, (e) => {
+      cleanup();
+      opts.onError(describeAiError(e.payload));
+    }),
+  );
+
+  try {
+    await aiChat(req);
+  } catch (e) {
+    if (live) {
+      cleanup();
+      opts.onError(describeAiError(e));
+    }
+  }
+  return () => {
+    if (!live) return;
+    void cancelAiChat(streamId);
+    cleanup();
+  };
 }
 
 /** Dispatch after a reply finishes: drive the dialog loop (other modes are manual). */

@@ -56,6 +56,7 @@
     onactivity,
     onoutput,
     oncwd,
+    onExplain,
     onlocalshell,
   }: {
     sessionId: string;
@@ -76,6 +77,9 @@
     onoutput?: () => void;
     /** The shell's cwd, parsed from an OSC 7 sequence (shell integration). */
     oncwd?: (path: string) => void;
+    /** Hand the current selection to the AI assistant (Phase 41). Omitted when the
+     *  assistant is unavailable, which also hides the menu item. */
+    onExplain?: (selection: string) => void;
     /** Local tabs only: which `cd` dialect the spawned shell speaks, reported once
      *  at spawn so two-way follow can build a correct command (Phase 39.4). */
     onlocalshell?: (kind: CdShell) => void;
@@ -409,6 +413,20 @@
       items.push({ icon: "search", label: t("ctx.find"), onSelect: () => openSearch() });
     }
     items.push({ icon: "trash", label: t("ctx.clear"), onSelect: () => term?.clear() });
+    // "Explain" (Phase 41): hands the selection to the assistant instead of making
+    // the user copy it into the chat. Only offered when there is something to
+    // explain and the assistant can actually take it.
+    if (onExplain) {
+      items.push(
+        { kind: "separator" },
+        {
+          icon: "aiMark",
+          label: t("ctx.explain"),
+          disabled: !hasSelection,
+          onSelect: () => onExplain?.(term?.getSelection() ?? ""),
+        },
+      );
+    }
     ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 

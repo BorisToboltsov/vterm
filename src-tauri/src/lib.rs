@@ -1798,17 +1798,42 @@ async fn run_tool_install(
 }
 
 /// Apply a computed sync plan: upload/download changed files, delete extraneous.
+///
+/// `run_id` registers the run in the shared cancel map, so `sftp_cancel` stops it
+/// the same way it stops a folder download — no second cancellation mechanism.
+/// The run lands in the session recording as ONE `[sftp] $ sync …` entry (audit
+/// contract, Phase 37.2), not one per file; `exit 130` marks a user stop.
 #[tauri::command]
 async fn sftp_sync_apply(
     app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
+    run_id: String,
     local_root: String,
     remote_root: String,
     actions: Vec<sync::SyncAction>,
 ) -> AppResult<sync::SyncStats> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sync::apply(&app, &sftp, &local_root, &remote_root, actions).await
+    let session = session_arc(&state, &session_id).await?;
+    let sftp = session.sftp().await?;
+    let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
+    let body = sync::sync_mirror_body(&actions);
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .cancels
+        .lock()
+        .unwrap()
+        .insert(run_id.clone(), cancel.clone());
+    let res = sync::apply(&app, &sftp, &local_root, &remote_root, actions, cancel).await;
+    state.cancels.lock().unwrap().remove(&run_id);
+
+    let (code, detail) = match &res {
+        Ok(stats) if stats.stopped => (130, format!("{body}\nstopped by user")),
+        Ok(_) => (0, body),
+        Err(e) => (1, format!("{body}\n{e}")),
+    };
+    session.record_output(sftp::sftp_mirror(&op, code, &detail).as_bytes());
+    res
 }
 
 /// Content search under a remote directory via `grep -rn` over SSH (Phase 12.6).

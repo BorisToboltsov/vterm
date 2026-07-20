@@ -287,7 +287,9 @@ describe("SettingsPanel — appearance & search", () => {
     const toggle = screen.getByTestId("ai-enabled") as HTMLInputElement;
     expect(toggle.checked).toBe(false); // opt-in
     expect(screen.queryByTestId("ai-endpoint")).toBeNull();
-    await userEvent.click(screen.getByTestId("ai-add-local"));
+    // The add button opens the preset menu (Phase 40); picking one adds the endpoint.
+    await userEvent.click(screen.getByTestId("ai-add-endpoint"));
+    await userEvent.click(screen.getByText("Ollama"));
     expect(screen.getAllByTestId("ai-endpoint").length).toBeGreaterThanOrEqual(1);
   });
 

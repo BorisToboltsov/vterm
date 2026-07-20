@@ -5,6 +5,7 @@
 // Components import from here: `import { t } from "$lib/i18n";` (or "./i18n").
 
 import { settings } from "../settings.svelte";
+import { reseedBuiltinPrompts } from "../ai";
 import { resolve } from "./translate";
 import type { MessageKey, MessageParams } from "./messages";
 import {
@@ -27,9 +28,17 @@ export function currentLocale(): Locale {
   return isLocale(settings.language) ? settings.language : DEFAULT_LOCALE;
 }
 
-/** Switch the UI language (persisted via the settings store). */
+/**
+ * Switch the UI language (persisted via the settings store).
+ *
+ * Also re-seeds the AI prompts the user has never edited, so a Russian interface
+ * shows Russian prompts. Prompts marked `custom` are left alone — the whole point
+ * of `AiPrompt.origin` is that changing the interface language must not silently
+ * rewrite text somebody wrote.
+ */
 export function setLocale(locale: Locale): void {
   settings.language = locale;
+  settings.ai.prompts = reseedBuiltinPrompts(settings.ai.prompts, locale);
 }
 
 /** Locales for building a picker: `[{ id, nativeName }, …]` in declaration order. */

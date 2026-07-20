@@ -15,12 +15,15 @@
     mergeModelOptions,
     resolvePromptContent,
     effectiveExecMode,
-    DEFAULT_CHAT_SYSTEM,
+    trimHistory,
+    usageSummary,
+    formatElapsed,
+    defaultPrompt,
     type AiExecMode,
   } from "./ai";
-  import { buildContext, type RawContext, type BuiltContext } from "./aicontext";
+  import { buildContext, buildRawContext, type RawContext, type BuiltContext } from "./aicontext";
+  import { buildSystemPrompt, resolveReplyLanguage, type PromptVars } from "./aicore";
   import { parseChatSegments } from "./aiexec";
-  import { DIALOG_SYSTEM_SUFFIX } from "./aidialog";
   import { aiModels } from "./api";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess } from "./stores/toasts.svelte";
@@ -48,6 +51,8 @@
     serverExecMode = null,
     prod = false,
     noAi = false,
+    isLocal = false,
+    promptVars = {},
   }: {
     /** Reads the live session context (impure); omitted when no session is active. */
     getContext?: () => Promise<RawContext> | RawContext;
@@ -61,6 +66,10 @@
     prod?: boolean;
     /** The active server is `noAi`-flagged — block context attach + execution (17.7). */
     noAi?: boolean;
+    /** The session is a local shell rather than SSH — shapes the core prompt. */
+    isLocal?: boolean;
+    /** Values for `{os}`/`{host}`/… placeholders in the user's prompt (Phase 41). */
+    promptVars?: PromptVars;
   } = $props();
 
   // The conversation + streaming live in a per-session store (stores/aichat), so
@@ -76,6 +85,7 @@
     dialogStep: 0,
     dialogRunning: false,
     pending: null,
+    ask: null,
     context: { includeBuffer: false, includeRecording: false, includeMetadata: false },
   };
   const sessionKey = $derived(sessionId ?? KEY_NONE);
@@ -95,6 +105,9 @@
   let scrollEl = $state<HTMLElement>();
   // Pending consent: a built context awaiting the user's explicit go-ahead.
   let consent = $state<{ question: string; built: BuiltContext } | null>(null);
+  // Which reasoning folds the user opened, by message index. Folded by default:
+  // the scratchpad is context for the wait, not the answer.
+  let openReasoning = $state<Record<number, boolean>>({});
 
   const ready = $derived(aiReady(settings.ai));
   const endpoint = $derived(activeEndpoint(settings.ai));
@@ -110,6 +123,20 @@
   const execMode = $derived(effectiveExecMode(serverExecMode, settings.ai.execMode));
   /** Commands can be executed at all (not "suggest only", live session, AI allowed). */
   const canExecute = $derived(ready && !!sessionId && execMode !== "suggest" && !noAi);
+
+  // How much of the conversation the next request will leave behind (Phase 40).
+  // Computed from the live list rather than recorded per-request, so the marker
+  // reflects what would be sent *now*, not what was sent last time.
+  const droppedFromHistory = $derived(
+    trimHistory(
+      messages.map((m) => ({ role: m.role, content: m.sent ?? m.content })),
+      settings.ai.historyLimit,
+      settings.ai.historyCharCap,
+    ).dropped,
+  );
+
+  /** Endpoints the switcher offers — configured *and* usable (a model chosen). */
+  const switchableEndpoints = $derived(settings.ai.endpoints.filter((e) => e.model.trim()));
 
   // Model picker: fetched model list per endpoint, chosen right here in the chat.
   let models = $state<string[]>([]);
@@ -146,6 +173,22 @@
   function setModel(m: string) {
     if (endpoint) endpoint.model = m;
   }
+
+  /**
+   * Pick up a question raised elsewhere (terminal "Explain", a container's logs,
+   * a metrics snapshot) and route it through the *existing* consent dialog rather
+   * than sending it. Callers hand over raw text; redaction and the preview happen
+   * here, so no entry point can bypass the consent contract.
+   */
+  $effect(() => {
+    const req = chat.ask;
+    if (!req || !ready) return;
+    chat.ask = null;
+    if (noAi) return; // the server bars the assistant entirely (17.7)
+    const built = buildRawContext(req.context, req.label);
+    if (built.text) consent = { question: req.question, built };
+    else doSend(req.question, "");
+  });
 
   async function scrollToBottom() {
     await tick();
@@ -192,19 +235,35 @@
   /** Hand off to the per-session streaming service (survives tab switches). */
   function doSend(question: string, context: string) {
     input = "";
-    // In dialog modes, tell the model to run one step at a time and wait for output.
-    const base = resolvePromptContent(settings.ai.prompts.chat, chatPromptId, DEFAULT_CHAT_SYSTEM);
-    const dialog = execMode === "dialog" || execMode === "dialogConfirm";
     void startChat({
       sessionId,
       question,
       context,
-      system: dialog ? base + DIALOG_SYSTEM_SUFFIX : base,
+      // The non-editable core (output contract, trust boundary, no-TTY rules,
+      // production warning) is prepended here rather than living in the editable
+      // prompt, so trimming the prompt can no longer switch execution off.
+      system: buildSystemPrompt(personaPrompt, sessionFacts(context !== ""), promptVars),
       settings: settings.ai,
       execMode,
       prod,
       noAi,
     });
+  }
+
+  const personaPrompt = $derived(
+    resolvePromptContent(settings.ai.prompts.chat, chatPromptId, defaultPrompt("chat")),
+  );
+
+  /** What the core prompt is built from for this session. */
+  function sessionFacts(hasContext: boolean) {
+    return {
+      kind: isLocal ? ("local" as const) : ("ssh" as const),
+      canExecute,
+      execMode,
+      prod,
+      hasContext,
+      replyLanguage: resolveReplyLanguage(settings.ai.replyLanguage, settings.language),
+    };
   }
 
   function copyBlock(block: string) {
@@ -227,6 +286,21 @@
 <div class="flex h-full min-h-0 flex-col" data-testid="ai-chat">
   <div class="flex items-center gap-2 border-b border-edge px-2 py-1">
     {#if ready && endpoint}
+      {#if switchableEndpoints.length > 1}
+        <!-- Endpoint switcher (Phase 40): swapping models mid-question used to
+             mean a round trip through settings. -->
+        <select
+          data-testid="ai-endpoint-switch"
+          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
+          use:tooltip={t("ai.endpoint")}
+          value={endpoint.id}
+          onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
+        >
+          {#each switchableEndpoints as ep (ep.id)}
+            <option value={ep.id}>{ep.name}</option>
+          {/each}
+        </select>
+      {/if}
       <select
         data-testid="ai-model"
         class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-[11px] text-white outline-none focus:border-accent"
@@ -273,6 +347,18 @@
     {:else if messages.length === 0}
       <p class="py-6 text-center text-[11px] text-muted">{t("ai.empty")}</p>
     {/if}
+    {#if droppedFromHistory > 0}
+      <!-- The conversation outgrew the caps: say so, rather than silently
+           dropping turns the user still sees on screen. -->
+      <div class="flex items-center gap-2 py-0.5" data-testid="ai-history-trimmed">
+        <span class="h-px flex-1 bg-edge"></span>
+        <span class="flex items-center gap-1 text-[10px] text-muted">
+          <Icon name="scissors" size={11} />
+          {t("ai.historyTrimmed", { count: String(droppedFromHistory) })}
+        </span>
+        <span class="h-px flex-1 bg-edge"></span>
+      </div>
+    {/if}
     {#each messages as m, i (i)}
       <div class="rounded border border-edge p-2 {m.role === 'user' ? 'bg-panel' : ''}">
         <div class="mb-1 flex items-center gap-1 text-[10px] uppercase tracking-wider text-muted">
@@ -284,6 +370,37 @@
           {/if}
         </div>
         {#if m.role === "assistant"}
+          {#if m.reasoning}
+            <!-- Reasoning fold (Phase 40): a reasoning model can stay silent on
+                 the answer channel for a long time, and an empty bubble reads as
+                 a hang. Folded by default, and never parsed for command blocks. -->
+            <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-reasoning">
+              <button
+                type="button"
+                class="flex w-full items-center gap-1.5 bg-panel px-2 py-1 text-left hover:bg-edge"
+                aria-expanded={openReasoning[i] === true}
+                onclick={() => (openReasoning[i] = !openReasoning[i])}
+              >
+                <Icon name={openReasoning[i] ? "chevronDown" : "chevronRight"} size={12} class="shrink-0 text-muted" />
+                <Icon name="bulb" size={12} class="shrink-0 text-warn" />
+                <span class="text-[10px] text-muted">
+                  {streaming && i === messages.length - 1
+                    ? t("ai.reasoningLive")
+                    : m.elapsedMs
+                      ? t("ai.reasoningDone", { time: formatElapsed(m.elapsedMs) })
+                      : t("ai.reasoning")}
+                </span>
+                {#if streaming && i === messages.length - 1}
+                  <span class="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-warn"></span>
+                {/if}
+              </button>
+              {#if openReasoning[i]}
+                <div
+                  class="whitespace-pre-wrap break-words border-t border-edge p-2 text-[11px] leading-relaxed text-muted"
+                >{m.reasoning}</div>
+              {/if}
+            </div>
+          {/if}
           {#each parseChatSegments(m.content) as seg, si (si)}
             {#if seg.kind === "text"}
               <!-- eslint-disable-next-line svelte/no-at-html-tags -->
@@ -323,6 +440,33 @@
               </div>
             {/if}
           {/each}
+          {#if !streaming || i !== messages.length - 1}
+            {@const u = usageSummary(m.usage, m.elapsedMs)}
+            {#if u}
+              <!-- Only what the endpoint actually reported: a missing half is
+                   omitted, never shown as a zero we didn't measure. -->
+              <div
+                class="mt-1.5 flex items-center gap-2.5 whitespace-nowrap border-t border-edge pt-1 text-[10px] text-muted"
+                data-testid="ai-usage"
+              >
+                {#if u.input}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageIn")}>
+                    <Icon name="arrowUp" size={11} />{u.input}
+                  </span>
+                {/if}
+                {#if u.output}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageOut")}>
+                    <Icon name="arrowDown" size={11} />{u.output}
+                  </span>
+                {/if}
+                {#if u.elapsed}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageTime")}>
+                    <Icon name="clock" size={11} />{u.elapsed}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+          {/if}
         {:else}
           <div class="whitespace-pre-wrap break-words">{m.content}</div>
         {/if}

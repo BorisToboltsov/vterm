@@ -5,7 +5,13 @@ import {
   diffTrees,
   applicable,
   summarize,
+  syncTransferId,
+  syncRowStatus,
+  syncRowPct,
+  syncRunSummary,
   type HashEntry,
+  type SyncAction,
+  type SyncProgressMap,
 } from "./sync";
 
 const h = (path: string, sha256: string): HashEntry => ({ path, sha256 });
@@ -110,5 +116,81 @@ describe("applicable / summarize", () => {
     expect(s.upload).toBe(2);
     expect(s.conflict).toBe(1);
     expect(s.download).toBe(0);
+  });
+});
+
+// ── run progress (Phase 39.8) ─────────────────────────────────────────────────
+
+const up = (path: string): SyncAction => ({ path, op: "upload", reason: "changed" });
+
+describe("syncTransferId", () => {
+  it("mirrors the Rust side and separates same-named files", () => {
+    // Must equal `sync::sync_transfer_id`; the event's base name cannot tell
+    // these two apart, which is the whole reason the id carries the path.
+    expect(syncTransferId("app/config.yml")).toBe("sync:app/config.yml");
+    expect(syncTransferId("a/config.yml")).not.toBe(syncTransferId("b/config.yml"));
+  });
+});
+
+describe("syncRowStatus", () => {
+  it("reads the phase when no progress has arrived", () => {
+    expect(syncRowStatus("upload", undefined, "running")).toBe("pending");
+    // A stopped run must not leave rows saying "queued" — nothing is coming.
+    expect(syncRowStatus("upload", undefined, "stopped")).toBe("notRun");
+    expect(syncRowStatus("upload", undefined, "done")).toBe("notRun");
+  });
+
+  it("tracks a file through the run", () => {
+    expect(syncRowStatus("upload", { transferred: 5, total: 10, done: false }, "running")).toBe(
+      "running",
+    );
+    expect(syncRowStatus("upload", { transferred: 10, total: 10, done: true }, "running")).toBe(
+      "done",
+    );
+  });
+
+  it("always marks conflicts skipped, whatever the phase", () => {
+    expect(syncRowStatus("conflict", undefined, "idle")).toBe("skipped");
+    expect(syncRowStatus("conflict", undefined, "stopped")).toBe("skipped");
+  });
+});
+
+describe("syncRowPct", () => {
+  it("clamps, rounds, and treats done as complete", () => {
+    expect(syncRowPct(undefined)).toBe(0);
+    expect(syncRowPct({ transferred: 1, total: 3, done: false })).toBe(33);
+    // A delete carries no bytes at all — done still means 100.
+    expect(syncRowPct({ transferred: 0, total: 0, done: true })).toBe(100);
+    expect(syncRowPct({ transferred: 99, total: 10, done: false })).toBe(100);
+  });
+});
+
+describe("syncRunSummary", () => {
+  const plan: SyncAction[] = [up("a"), up("b"), { path: "c", op: "conflict", reason: "conflict" }];
+
+  it("counts against the applicable plan, not the whole list", () => {
+    const s = syncRunSummary(plan, {});
+    expect(s.filesTotal).toBe(2); // the conflict is never applied
+    expect(s).toMatchObject({ filesDone: 0, pct: 0 });
+  });
+
+  it("weights a finished file whole and an in-flight one by bytes", () => {
+    const map: SyncProgressMap = {
+      "sync:a": { transferred: 10, total: 10, done: true },
+      "sync:b": { transferred: 5, total: 10, done: false },
+    };
+    expect(syncRunSummary(plan, map)).toEqual({ filesDone: 1, filesTotal: 2, pct: 75 });
+  });
+
+  it("reaches 100% on a plan of byte-less deletes", () => {
+    const deletes: SyncAction[] = [
+      { path: "x", op: "deleteRemote", reason: "removed" },
+      { path: "y", op: "deleteLocal", reason: "removed" },
+    ];
+    const map: SyncProgressMap = {
+      "sync:x": { transferred: 0, total: 0, done: true },
+      "sync:y": { transferred: 0, total: 0, done: true },
+    };
+    expect(syncRunSummary(deletes, map).pct).toBe(100);
   });
 });

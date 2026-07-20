@@ -221,6 +221,16 @@ export function diffFileArgs(path: string, staged: boolean): string[] {
   return [...args, "--", path];
 }
 
+/**
+ * The whole staged diff (`git diff --cached`), for drafting a commit message.
+ *
+ * `-U…` trims the context lines: a model needs the changed hunks, and the default
+ * three lines either side roughly doubles the tokens on a large diff for nothing.
+ */
+export function stagedDiffArgs(contextLines = 1): string[] {
+  return ["diff", "--no-color", "--cached", `-U${contextLines}`];
+}
+
 /** Unified diff of one path at a commit (against its first parent). */
 export function showFileArgs(hash: string, path: string): string[] {
   return ["show", "--no-color", "--format=", hash, "--", path];

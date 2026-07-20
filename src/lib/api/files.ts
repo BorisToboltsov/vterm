@@ -178,14 +178,25 @@ export function sftpGrep(
   return invoke<GrepMatch[]>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed });
 }
 
-/** Apply a computed sync plan (uploads/downloads/deletes); returns counts. */
+/**
+ * Apply a computed sync plan (uploads/downloads/deletes); returns counts.
+ * `runId` is the handle `sftpCancel` stops the run with — the same cancel map
+ * folder downloads use.
+ */
 export function sftpSyncApply(
   sessionId: string,
+  runId: string,
   localRoot: string,
   remoteRoot: string,
   actions: SyncAction[],
 ): Promise<SyncStats> {
-  return invoke<SyncStats>("sftp_sync_apply", { sessionId, localRoot, remoteRoot, actions });
+  return invoke<SyncStats>("sftp_sync_apply", {
+    sessionId,
+    runId,
+    localRoot,
+    remoteRoot,
+    actions,
+  });
 }
 
 /** Event name emitted when the OS asks vterm to open a file ("Open with vterm"). */

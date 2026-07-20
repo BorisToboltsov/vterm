@@ -35,6 +35,7 @@
     run,
     runQuery,
     onShell,
+    onAsk,
     onclose,
   }: {
     open?: boolean;
@@ -45,8 +46,28 @@
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     runQuery: (args: string[], timeout?: number) => Promise<ContainerOutput>;
     onShell: (c: DockerContainer) => void;
+    /** Hand this container's state + logs to the assistant (Phase 41). */
+    onAsk?: (context: string) => void;
     onclose: () => void;
   } = $props();
+
+  /**
+   * What the assistant is told about this container: the facts already on screen
+   * plus whatever logs have been fetched. Deliberately not `inspect` — it is large
+   * and mostly noise, and the logs are what explain a crash loop.
+   */
+  function askContext(c: DockerContainer): string {
+    const facts = [
+      `Container: ${c.name}`,
+      `Image: ${c.image}`,
+      `State: ${c.state}`,
+      `Status: ${c.status}`,
+      c.ports ? `Ports: ${c.ports}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return logsText.trim() ? `${facts}\n\n--- docker logs ---\n${logsText}` : facts;
+  }
 
   type Tab = "overview" | "logs" | "inspect";
   let tab = $state<Tab>("overview");
@@ -140,6 +161,19 @@
         <button class="rounded p-1 hover:bg-edge hover:text-white" use:tooltip={t("docker.openShell")} aria-label={t("docker.openShell")} onclick={() => onShell(c)}>
           <Icon name="terminal" size={14} />
         </button>
+        {#if onAsk}
+          <!-- "Ask AI" (Phase 41): the state and logs are already fetched here, so
+               the question carries them instead of asking the user to copy-paste. -->
+          <button
+            data-testid="docker-ask-ai"
+            class="rounded p-1 hover:bg-edge hover:text-white"
+            use:tooltip={t("ai.ask.button")}
+            aria-label={t("ai.ask.button")}
+            onclick={() => onAsk?.(askContext(c))}
+          >
+            <Icon name="aiMark" size={14} />
+          </button>
+        {/if}
         <button class="rounded p-1 text-danger hover:bg-edge disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => act(removeArgs([c.id], isRunning(c)), { destructive: true, successKey: "docker.removed" })}>
           <Icon name="trash" size={14} />
         </button>

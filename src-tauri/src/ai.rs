@@ -4,19 +4,31 @@
 //! frontend never makes a network call — the offline autonomy invariant holds for
 //! everything except this user-enabled, user-configured outbound (like SSH).
 //!
-//! Tokens stream to the frontend over `ai://out/{id}`, then `ai://done/{id}` on
-//! success or `ai://error/{id}` on failure. API keys come from the OS keychain
-//! (`vterm:ai-key`, keyed by endpoint id) and are never logged.
+//! Answer tokens stream to the frontend over `ai://out/{id}` and reasoning
+//! ("thinking") tokens over `ai://think/{id}` (Phase 40) — two channels because
+//! they are two kinds of data, not two stages of one. The stream then ends with
+//! `ai://done/{id}`, whose payload is the token tally ([`AiUsage`]) or `null`
+//! when the endpoint never reported one, or `ai://error/{id}` on failure. API
+//! keys come from the OS keychain (`vterm:ai-key`, keyed by endpoint id) and are
+//! never logged.
 
 use crate::error::{AppError, AppResult};
 use crate::secrets;
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Notify;
+
+/// Connect-phase timeout. Separate from the per-read timeout below: a wrong host
+/// should fail fast even when the user allows a long generation.
+const CONNECT_TIMEOUT_SECS: u64 = 15;
+
+/// Total timeout for a model listing — short, since it is a small GET.
+const MODELS_TIMEOUT_SECS: u64 = 30;
 
 /// Registry of in-flight streams → a cancel signal, so the frontend's Stop button
 /// can abort a running request (dropping the reqwest stream, not just muting it).
@@ -50,6 +62,38 @@ pub struct AiChatRequest {
     /// Extra generation params (temperature, top_p…) merged into the request body.
     #[serde(default)]
     pub params: Option<Value>,
+    /// Per-request timeout in seconds (see [`chat_client`] for what it bounds).
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+/// Token counts for one reply, reported to the frontend on `ai://done/{id}`.
+/// Both halves are optional: an endpoint that never sends `usage` leaves them
+/// `None`, and the UI then shows no counter rather than a fabricated zero.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiUsage {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+}
+
+impl AiUsage {
+    fn is_empty(&self) -> bool {
+        self.input_tokens.is_none() && self.output_tokens.is_none()
+    }
+}
+
+/// HTTP client for a streaming chat.
+///
+/// Deliberately **not** `Client::timeout`: that is a total deadline covering the
+/// response body, so a long-but-healthy generation would be cut off mid-reply.
+/// `read_timeout` resets after every successful read, which is what "the model
+/// went silent" actually means for a token stream.
+fn chat_client(timeout_secs: u64) -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .read_timeout(Duration::from_secs(timeout_secs))
+        .build()
 }
 
 /// Request to list an endpoint's available models (also doubles as a reachability
@@ -71,6 +115,15 @@ fn done_event(id: &str) -> String {
 fn error_event(id: &str) -> String {
     format!("ai://error/{id}")
 }
+/// Reasoning ("thinking") tokens, on their own channel (Phase 40).
+///
+/// A separate channel rather than a tagged payload on `ai://out`: this is a
+/// different *kind* of data, not another stage of the same one — the same call
+/// `term://phase` makes next to `term://out`. Listeners that only care about the
+/// answer keep working unchanged, and nothing has to re-parse every token.
+fn think_event(id: &str) -> String {
+    format!("ai://think/{id}")
+}
 
 // ── Pure helpers (unit-tested without network) ──────────────────────────────────
 
@@ -84,12 +137,66 @@ pub fn openai_delta(v: &Value) -> Option<String> {
         .map(String::from)
 }
 
+/// OpenAI-compatible SSE chunk → incremental *reasoning* text.
+///
+/// There is no single spec field: DeepSeek emits `reasoning_content`, while
+/// OpenRouter and several local servers emit `reasoning`. Both are accepted so a
+/// reasoning model doesn't sit silent for half a minute with nothing on screen.
+pub fn openai_reasoning_delta(v: &Value) -> Option<String> {
+    let delta = v.get("choices")?.get(0)?.get("delta")?;
+    delta
+        .get("reasoning_content")
+        .or_else(|| delta.get("reasoning"))?
+        .as_str()
+        .map(String::from)
+}
+
 /// Anthropic SSE event → incremental text (`content_block_delta` → `delta.text`).
 pub fn anthropic_delta(v: &Value) -> Option<String> {
     if v.get("type")?.as_str()? != "content_block_delta" {
         return None;
     }
     v.get("delta")?.get("text")?.as_str().map(String::from)
+}
+
+/// Anthropic SSE event → incremental reasoning text (`thinking_delta`). Distinct
+/// from [`anthropic_delta`], which only matches a block carrying `text`.
+pub fn anthropic_reasoning_delta(v: &Value) -> Option<String> {
+    if v.get("type")?.as_str()? != "content_block_delta" {
+        return None;
+    }
+    let delta = v.get("delta")?;
+    if delta.get("type")?.as_str()? != "thinking_delta" {
+        return None;
+    }
+    delta.get("thinking")?.as_str().map(String::from)
+}
+
+/// Fold any usage numbers carried by an SSE event into the running total.
+///
+/// Covers both dialects in one pass: OpenAI-compatible sends a final chunk with
+/// `usage.{prompt,completion}_tokens`, Anthropic splits it — `message_start`
+/// carries `message.usage.input_tokens`, `message_delta` the output count. Later
+/// values win, since Anthropic's output count is cumulative.
+pub fn absorb_usage(acc: &mut AiUsage, v: &Value) {
+    let direct = v.get("usage");
+    let nested = v.get("message").and_then(|m| m.get("usage"));
+    for u in [direct, nested].into_iter().flatten() {
+        if let Some(n) = u
+            .get("prompt_tokens")
+            .or_else(|| u.get("input_tokens"))
+            .and_then(|x| x.as_u64())
+        {
+            acc.input_tokens = Some(n);
+        }
+        if let Some(n) = u
+            .get("completion_tokens")
+            .or_else(|| u.get("output_tokens"))
+            .and_then(|x| x.as_u64())
+        {
+            acc.output_tokens = Some(n);
+        }
+    }
 }
 
 /// Whether an Anthropic SSE event ends the stream.
@@ -146,7 +253,10 @@ fn truncate(s: &str, n: usize) -> String {
     }
 }
 
-fn openai_body(req: &AiChatRequest) -> Value {
+/// OpenAI-compatible request body. `with_usage` adds `stream_options`, which is
+/// how a streaming call is asked to report token counts; see [`run_chat`] for why
+/// it can be turned back off.
+fn openai_body(req: &AiChatRequest, with_usage: bool) -> Value {
     let mut messages: Vec<Value> = Vec::new();
     if let Some(sys) = req.system.as_deref().filter(|s| !s.is_empty()) {
         messages.push(json!({ "role": "system", "content": sys }));
@@ -157,6 +267,9 @@ fn openai_body(req: &AiChatRequest) -> Value {
     let mut body = json!({ "model": req.model, "messages": messages, "stream": true });
     if let Some(mt) = req.max_tokens {
         body["max_tokens"] = json!(mt);
+    }
+    if with_usage {
+        body["stream_options"] = json!({ "include_usage": true });
     }
     merge_params(&mut body, &req.params);
     body
@@ -214,13 +327,16 @@ pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     // aborts the underlying HTTP request, and is reported as a graceful stop.
     let outcome = tokio::select! {
         r = run_chat(&app, &req) => r,
-        _ = notify.notified() => Ok(()),
+        _ = notify.notified() => Ok(None),
     };
     cancels().lock().unwrap().remove(&id);
 
     match outcome {
-        Ok(()) => {
-            let _ = app.emit(&done_event(&id), ());
+        Ok(usage) => {
+            // The done event carries the tally (or null): usage is terminal data,
+            // not a stream, so it rides the event that already means "finished"
+            // rather than earning a channel of its own.
+            let _ = app.emit(&done_event(&id), usage);
             Ok(())
         }
         Err(e) => {
@@ -267,7 +383,14 @@ pub fn parse_models(v: &Value) -> Vec<String> {
 #[tauri::command]
 pub async fn ai_models(req: AiModelsRequest) -> AppResult<Vec<String>> {
     let key = secrets::get_ai_key(&req.endpoint_id);
-    let client = reqwest::Client::new();
+    // A model listing is a short, non-streaming request, so a *total* timeout is
+    // the right bound here (unlike the chat stream) — an unreachable host must not
+    // leave "Check connection" spinning forever.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(MODELS_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| format!("ai client error: {e}"))?;
     let is_anthropic = req.provider == "anthropic";
     let base = req.base_url.trim_end_matches('/');
 
@@ -302,13 +425,17 @@ pub async fn ai_models(req: AiModelsRequest) -> AppResult<Vec<String>> {
     Ok(parse_models(&v))
 }
 
-async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<()> {
+/// Fire one chat request. Split out of [`run_chat`] so the same call can be
+/// retried with a different body without duplicating the auth/URL wiring.
+async fn send_chat(
+    client: &reqwest::Client,
+    req: &AiChatRequest,
+    body: &Value,
+) -> AppResult<reqwest::Response> {
     let key = secrets::get_ai_key(&req.endpoint_id);
-    let client = reqwest::Client::new();
-    let is_anthropic = req.provider == "anthropic";
     let base = req.base_url.trim_end_matches('/');
 
-    let mut rb = if is_anthropic {
+    let mut rb = if req.provider == "anthropic" {
         let mut b = client
             .post(format!("{base}/v1/messages"))
             .header("content-type", "application/json")
@@ -326,22 +453,37 @@ async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<()> {
         }
         b
     };
+    rb = rb.json(body);
 
-    let body = if is_anthropic {
-        anthropic_body(req)
-    } else {
-        openai_body(req)
-    };
-    rb = rb.json(&body);
-
-    let resp = rb
-        .send()
+    rb.send()
         .await
-        .map_err(|e| AppError::from(format!("ai-unreachable: {e}")))?;
+        .map_err(|e| AppError::from(format!("ai-unreachable: {e}")))
+}
+
+async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<Option<AiUsage>> {
+    let is_anthropic = req.provider == "anthropic";
+    let timeout = req.timeout_secs.unwrap_or(120);
+    let client = chat_client(timeout).map_err(|e| format!("ai client error: {e}"))?;
+
+    let resp = if is_anthropic {
+        send_chat(&client, req, &anthropic_body(req)).await?
+    } else {
+        // `stream_options` is how an OpenAI-compatible endpoint is asked for token
+        // counts, but older/partial implementations reject the unknown field. The
+        // status is checked before any body is read, so retrying without it costs
+        // one round-trip and can't duplicate streamed tokens.
+        let first = send_chat(&client, req, &openai_body(req, true)).await?;
+        if first.status() == reqwest::StatusCode::BAD_REQUEST {
+            send_chat(&client, req, &openai_body(req, false)).await?
+        } else {
+            first
+        }
+    };
     if !resp.status().is_success() {
         return Err(status_error(resp).await);
     }
 
+    let mut usage = AiUsage::default();
     let mut stream = resp.bytes_stream();
     let mut buf = String::new();
     while let Some(chunk) = stream.next().await {
@@ -355,25 +497,36 @@ async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<()> {
                 None => continue, // skip blank/`event:` lines
             };
             if !is_anthropic && data == "[DONE]" {
-                return Ok(());
+                return Ok(finish_usage(usage));
             }
             let v: Value = match serde_json::from_str(data) {
                 Ok(v) => v,
                 Err(_) => continue,
             };
+            absorb_usage(&mut usage, &v);
             if is_anthropic {
                 if anthropic_done(&v) {
-                    return Ok(());
+                    return Ok(finish_usage(usage));
                 }
-                if let Some(t) = anthropic_delta(&v) {
+                if let Some(t) = anthropic_reasoning_delta(&v) {
+                    let _ = app.emit(&think_event(&req.stream_id), t);
+                } else if let Some(t) = anthropic_delta(&v) {
                     let _ = app.emit(&out_event(&req.stream_id), t);
                 }
+            } else if let Some(t) = openai_reasoning_delta(&v) {
+                let _ = app.emit(&think_event(&req.stream_id), t);
             } else if let Some(t) = openai_delta(&v) {
                 let _ = app.emit(&out_event(&req.stream_id), t);
             }
         }
     }
-    Ok(())
+    Ok(finish_usage(usage))
+}
+
+/// An all-empty tally means the endpoint never reported usage — report `None` so
+/// the UI omits the counter instead of showing zeroes it didn't measure.
+fn finish_usage(u: AiUsage) -> Option<AiUsage> {
+    (!u.is_empty()).then_some(u)
 }
 
 #[cfg(test)]
@@ -394,6 +547,7 @@ mod tests {
             }],
             max_tokens: None,
             params: None,
+            timeout_secs: None,
         }
     }
 
@@ -418,7 +572,7 @@ mod tests {
 
     #[test]
     fn openai_body_prepends_system_and_streams() {
-        let b = openai_body(&req());
+        let b = openai_body(&req(), false);
         assert_eq!(b["stream"], json!(true));
         assert_eq!(b["messages"][0]["role"], "system");
         assert_eq!(b["messages"][1]["content"], "hi");
@@ -478,7 +632,7 @@ mod tests {
         let mut r = req();
         r.params =
             Some(json!({ "temperature": 0.2, "top_p": 0.9, "model": "HACKED", "messages": [] }));
-        let b = openai_body(&r);
+        let b = openai_body(&r, false);
         assert_eq!(b["temperature"], json!(0.2));
         assert_eq!(b["top_p"], json!(0.9));
         assert_eq!(b["model"], "qwen"); // protected — not overridden
@@ -504,6 +658,95 @@ mod tests {
         // Timeout footer when it timed out.
         let t = agent_mirror("sleep 99", "", "", -1, true, 30);
         assert!(t.contains("[AI] timed out after 30s"));
+    }
+
+    #[test]
+    fn openai_reasoning_delta_accepts_both_field_names() {
+        // DeepSeek's spelling…
+        let ds = json!({ "choices": [{ "delta": { "reasoning_content": "hmm" } }] });
+        assert_eq!(openai_reasoning_delta(&ds).as_deref(), Some("hmm"));
+        // …and the one OpenRouter/local servers use.
+        let or = json!({ "choices": [{ "delta": { "reasoning": "so" } }] });
+        assert_eq!(openai_reasoning_delta(&or).as_deref(), Some("so"));
+        // A plain answer chunk is not reasoning (and vice versa), so the two
+        // channels never receive the same token.
+        let plain = json!({ "choices": [{ "delta": { "content": "answer" } }] });
+        assert_eq!(openai_reasoning_delta(&plain), None);
+        assert_eq!(openai_delta(&ds), None);
+    }
+
+    #[test]
+    fn anthropic_reasoning_delta_matches_only_thinking_blocks() {
+        let think = json!({
+            "type": "content_block_delta",
+            "delta": { "type": "thinking_delta", "thinking": "step" }
+        });
+        assert_eq!(anthropic_reasoning_delta(&think).as_deref(), Some("step"));
+        // A text delta stays on the answer channel only.
+        let text = json!({
+            "type": "content_block_delta",
+            "delta": { "type": "text_delta", "text": "x" }
+        });
+        assert_eq!(anthropic_reasoning_delta(&text), None);
+        assert_eq!(anthropic_delta(&think), None);
+    }
+
+    #[test]
+    fn absorb_usage_reads_both_dialects_and_prefers_later_values() {
+        // OpenAI-compatible: one final chunk carries both halves.
+        let mut u = AiUsage::default();
+        absorb_usage(
+            &mut u,
+            &json!({ "usage": { "prompt_tokens": 10, "completion_tokens": 4 } }),
+        );
+        assert_eq!(u.input_tokens, Some(10));
+        assert_eq!(u.output_tokens, Some(4));
+
+        // Anthropic: input arrives nested in message_start, output in message_delta,
+        // and the output count is cumulative — the last value must win.
+        let mut a = AiUsage::default();
+        absorb_usage(
+            &mut a,
+            &json!({ "type": "message_start", "message": { "usage": { "input_tokens": 7 } } }),
+        );
+        absorb_usage(
+            &mut a,
+            &json!({ "type": "message_delta", "usage": { "output_tokens": 2 } }),
+        );
+        absorb_usage(
+            &mut a,
+            &json!({ "type": "message_delta", "usage": { "output_tokens": 9 } }),
+        );
+        assert_eq!(a.input_tokens, Some(7));
+        assert_eq!(a.output_tokens, Some(9));
+
+        // Ordinary token chunks carry no usage and must not disturb the tally.
+        let before = a;
+        absorb_usage(
+            &mut a,
+            &json!({ "choices": [{ "delta": { "content": "x" } }] }),
+        );
+        assert_eq!(a, before);
+    }
+
+    #[test]
+    fn finish_usage_reports_nothing_when_the_endpoint_stayed_silent() {
+        // No counter beats a made-up zero.
+        assert_eq!(finish_usage(AiUsage::default()), None);
+        let partial = AiUsage {
+            input_tokens: Some(3),
+            output_tokens: None,
+        };
+        assert_eq!(finish_usage(partial), Some(partial));
+    }
+
+    #[test]
+    fn openai_body_requests_usage_only_when_asked() {
+        let with = openai_body(&req(), true);
+        assert_eq!(with["stream_options"], json!({ "include_usage": true }));
+        // The retry body (after a 400) must not carry the field at all.
+        let without = openai_body(&req(), false);
+        assert!(without.get("stream_options").is_none());
     }
 
     #[test]

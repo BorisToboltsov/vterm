@@ -74,6 +74,26 @@ struct Progress {
     is_folder: bool,
 }
 
+/// Emit a single already-finished `sftp://progress` event (Phase 39.8). Deletes
+/// inside a sync run transfer no bytes, so they never reach [`copy_with_progress`]
+/// — without this the plan row would sit at "queued" forever while the file is
+/// long gone. Same channel and same DTO as a real transfer, so the shared store,
+/// the SFTP panel and the status bar need no special case.
+pub fn emit_done(app: &AppHandle, id: &str, name: &str, direction: &'static str) {
+    let _ = app.emit(
+        "sftp://progress",
+        Progress {
+            id: id.to_string(),
+            name: name.to_string(),
+            direction,
+            transferred: 0,
+            total: 0,
+            done: true,
+            is_folder: false,
+        },
+    );
+}
+
 /// Render a mutating SFTP-panel op for the session recording (audit): a magenta
 /// `[sftp] $ <op>` header, the error text (only on failure), and a `[sftp] exit N`
 /// footer. Mirrors [`crate::container::container_mirror`]/[`crate::git::git_mirror`]

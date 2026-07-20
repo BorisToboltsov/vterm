@@ -49,6 +49,8 @@ export const ICONS = {
   chevronRight: '<path d="M9 18l6-6-6-6"/>',
   arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   arrowLeft: '<path d="M19 12H5M11 18l-6-6 6-6"/>',
+  arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
+  arrowDown: '<path d="M12 5v14M6 13l6 6 6-6"/>',
   arrowsLeftRight: '<path d="M8 7l-4 5 4 5M16 7l4 5-4 5M4 12h16"/>',
   arrowsUpDown: '<path d="M7 8l5-4 5 4M7 16l5 4 5-4M12 4v16"/>',
   chevronDown: '<path d="M6 9l6 6 6-6"/>',
@@ -139,6 +141,11 @@ export const ICONS = {
   database:
     '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
   bolt: '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>',
+  // Lightbulb — marks the model's reasoning fold (Phase 40).
+  bulb: '<path d="M9.5 18h5M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5.9 1.2 1 1.9v.2h5v-.2c.1-.7.4-1.4 1-1.9A6 6 0 0 0 12 3z"/>',
+  // Scissors — the trimmed-history divider (Phase 40).
+  scissors:
+    '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8 7.5 20 18M20 6 8 16.5"/>',
   cloud: '<path d="M6.5 19a4.5 4.5 0 0 1-.9-8.9 6 6 0 0 1 11.6-1.1A4 4 0 0 1 17 19z"/>',
   container:
     '<rect x="3" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="9.75" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="16.5" y="9" width="4.5" height="4.5" rx="0.5"/><rect x="9.75" y="4.2" width="4.5" height="4.5" rx="0.5"/><path d="M2 15.5c2.4 1.9 6 2.9 10.5 2.9 3.6 0 5.8-1.6 6.8-3.2"/>',

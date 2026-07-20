@@ -29,7 +29,7 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
-function emit(kind: "out" | "done" | "error", payload?: unknown) {
+function emit(kind: "out" | "think" | "done" | "error", payload?: unknown) {
   const ch = Object.keys(handlers).find((c) => c.startsWith(`ai://${kind}/`));
   if (ch) handlers[ch]({ payload });
 }
@@ -37,7 +37,7 @@ function emit(kind: "out" | "done" | "error", payload?: unknown) {
 import AiChat from "./AiChat.svelte";
 import { settings } from "./settings.svelte";
 import { defaultAiSettings, type AiExecMode } from "./ai";
-import { aiChatState } from "./stores/aichat.svelte";
+import { aiChatState, askAbout, getChat } from "./stores/aichat.svelte";
 
 function enableAi(execMode: AiExecMode = "confirm") {
   settings.ai = {
@@ -62,6 +62,20 @@ async function ask(text: string) {
   const user = userEvent.setup();
   await user.type(screen.getByTestId("ai-input"), text);
   await user.click(screen.getByTestId("ai-send"));
+}
+
+/**
+ * Ask, then reply — waiting for the stream's listeners to actually be registered
+ * first. `startChat` registers them with `await listen(...)`, so emitting straight
+ * after the click can land before anyone is listening; the reply is then dropped,
+ * `streaming` never clears, and the *next* question silently does nothing.
+ */
+async function askAndReply(text: string, out: string, done: unknown = null) {
+  await ask(text);
+  await waitFor(() => expect(Object.keys(handlers).some((c) => c.startsWith("ai://done/"))).toBe(true));
+  emit("out", out);
+  emit("done", done);
+  await waitFor(() => expect(Object.keys(handlers).some((c) => c.startsWith("ai://done/"))).toBe(false));
 }
 
 beforeEach(() => {
@@ -159,7 +173,9 @@ describe("AiChat — context + consent (Phase 17.3)", () => {
 
     await ask("hi");
 
-    expect(aiChat.mock.calls[0][0].system).toBe("Answer in one word.");
+    // Since Phase 41 the system prompt is the non-editable core plus the user's
+    // persona prompt, so the persona is contained rather than equal.
+    expect(aiChat.mock.calls[0][0].system).toContain("Answer in one word.");
   });
 
   it("uses the server's chosen chat prompt (by id) over the active one", async () => {
@@ -170,7 +186,7 @@ describe("AiChat — context + consent (Phase 17.3)", () => {
 
     await ask("hi");
 
-    expect(aiChat.mock.calls[0][0].system).toBe("You are web1's helper.");
+    expect(aiChat.mock.calls[0][0].system).toContain("You are web1's helper.");
   });
 
   it("the context popover widens what is sent (per-chat tier)", async () => {
@@ -338,11 +354,57 @@ describe("AiChat — dialog mode (17.8)", () => {
     expect(aiExec.mock.calls[0][1]).toBe("apt install nginx");
   });
 
-  it("appends the dialog suffix to the system prompt", async () => {
+  it("tells the model to run one step at a time via the core prompt", async () => {
     enableAi("dialogConfirm");
     render(AiChat, { props: { sessionId: "sess1" } });
     await ask("hi");
-    expect(aiChat.mock.calls[0][0].system).toMatch(/one shell command at a time/i);
+    // Phase 41 folded the dialog instruction into the core, where it is built
+    // from the live exec mode rather than appended by the component.
+    const system = aiChat.mock.calls[0][0].system ?? "";
+    expect(system).toMatch(/ONE command/);
+    expect(system).toMatch(/exit code as the next message/i);
+  });
+
+  it("states the execution rules the no-TTY executor imposes", async () => {
+    // The single most common way a correct-looking suggestion failed: `apt install`
+    // or `sudo` waiting for input that ai_exec can never deliver.
+    enableAi("confirm");
+    render(AiChat, { props: { sessionId: "sess1" } });
+    await ask("install nginx");
+    const system = aiChat.mock.calls[0][0].system ?? "";
+    expect(system).toMatch(/no TTY/i);
+    expect(system).toMatch(/sudo -n/);
+  });
+
+  it("warns the model when the server is production", async () => {
+    enableAi("confirm");
+    render(AiChat, { props: { sessionId: "sess1", prod: true } });
+    await ask("restart it");
+    expect(aiChat.mock.calls[0][0].system).toMatch(/PRODUCTION/);
+  });
+
+  it("says nothing about production on an ordinary server", async () => {
+    enableAi("confirm");
+    render(AiChat, { props: { sessionId: "sess1" } });
+    await ask("restart it");
+    expect(aiChat.mock.calls[0][0].system).not.toMatch(/PRODUCTION/);
+  });
+
+  it("tells the model that attached output is data, not instructions", async () => {
+    // A hostile host only has to print something that reads like an order; the
+    // dialog modes would otherwise execute it.
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1", getContext: () => ({ selection: "boom" }) } });
+    await user.click(screen.getByTestId("ai-attach"));
+    await user.type(screen.getByTestId("ai-input"), "what is this?");
+    await user.click(screen.getByTestId("ai-send"));
+    await user.click(await screen.findByTestId("ai-consent-confirm"));
+
+    await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
+    const system = aiChat.mock.calls[0][0].system ?? "";
+    expect(system).toMatch(/not trusted/i);
+    expect(system).toMatch(/‹redacted›/);
   });
 });
 
@@ -418,5 +480,137 @@ describe("AiChat — per-session conversation persistence", () => {
 
     await rerender({ sessionId: "sA" });
     expect(screen.getByText("keep me")).toBeTruthy();
+  });
+});
+
+// ── Phase 40 ────────────────────────────────────────────────────────────────────
+
+describe("AiChat — reasoning, usage and history (Phase 40)", () => {
+  it("streams reasoning into its own fold, apart from the answer", async () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    await ask("why?");
+
+    emit("think", "checking the port…");
+    emit("out", "Port 80 is taken.");
+    emit("done", null);
+
+    const fold = await screen.findByTestId("ai-reasoning");
+    // Folded by default — the scratchpad explains the wait, it isn't the answer.
+    expect(within(fold).queryByText(/checking the port/)).toBeNull();
+    await userEvent.setup().click(within(fold).getByRole("button"));
+    expect(within(fold).getByText(/checking the port/)).toBeInTheDocument();
+    // Crucially, reasoning never lands in the answer body.
+    expect(screen.getByText("Port 80 is taken.")).toBeInTheDocument();
+  });
+
+  it("keeps reasoning out of the command blocks offered for execution", async () => {
+    // A model that reasons "I could run rm -rf /" must not have that parsed into
+    // a runnable block — only the answer channel is scanned for commands.
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    await ask("clean up");
+
+    emit("think", "```bash\nrm -rf /\n```");
+    emit("out", "Nothing to clean.");
+    emit("done", null);
+
+    await screen.findByTestId("ai-reasoning");
+    expect(screen.queryByTestId("ai-run")).toBeNull();
+    expect(screen.queryByTestId("ai-code")).toBeNull();
+  });
+
+  it("shows the token counter only when the endpoint reported one", async () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    await askAndReply("hi", "hello"); // endpoint stayed silent about usage
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    // A time-only row is still shown (we measured that ourselves), but no counts.
+    const usage = screen.queryByTestId("ai-usage");
+    if (usage) expect(usage.textContent).not.toMatch(/\d{2,}/);
+
+    await askAndReply("again", "sure", { inputTokens: 1240, outputTokens: 386 });
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("ai-usage");
+      expect(rows[rows.length - 1].textContent).toContain("386");
+    });
+  });
+
+  it("warns when the conversation outgrew the history cap", async () => {
+    enableAi();
+    settings.ai.historyLimit = 2;
+    render(AiChat, { props: { sessionId: "s1" } });
+
+    await askAndReply("one", "a");
+    expect(screen.queryByTestId("ai-history-trimmed")).toBeNull();
+
+    await askAndReply("two", "b");
+    // Four messages on screen, two of them no longer sent — say so rather than
+    // silently dropping turns the user can still see.
+    await waitFor(() => expect(screen.getByTestId("ai-history-trimmed")).toBeInTheDocument());
+  });
+
+  it("sends only the trimmed history to the broker", async () => {
+    enableAi();
+    settings.ai.historyLimit = 2;
+    render(AiChat, { props: { sessionId: "s1" } });
+    for (const q of ["one", "two", "three"]) {
+      await askAndReply(q, "ok");
+    }
+    const last = aiChat.mock.calls.at(-1)![0];
+    expect(last.messages.length).toBeLessThanOrEqual(2);
+    expect(last.messages[0].role).toBe("user"); // never opens mid-exchange
+  });
+});
+
+describe("askAbout — questions raised from elsewhere (Phase 41)", () => {
+  it("routes through the consent dialog instead of sending", async () => {
+    // The whole point of the primitive: an entry point buys convenience, never
+    // a way around the consent contract.
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+
+    askAbout("s1", { question: "explain this", context: "TOKEN=secret123", label: "Terminal selection" });
+
+    const preview = await screen.findByTestId("ai-consent-preview");
+    expect(aiChat).not.toHaveBeenCalled();
+    // Redacted like any other context, and labelled so the core prompt's trust
+    // boundary applies to it.
+    expect(preview.textContent).toContain("‹redacted›");
+    expect(preview.textContent).not.toContain("secret123");
+    expect(preview.textContent).toContain("Terminal selection");
+  });
+
+  it("sends the prepared question once consent is given", async () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { question: "why is it broken?", context: "some logs", label: "Container logs" });
+
+    await userEvent.setup().click(await screen.findByTestId("ai-consent-confirm"));
+
+    await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
+    const sent = aiChat.mock.calls[0][0].messages.at(-1)?.content ?? "";
+    expect(sent).toContain("why is it broken?");
+    expect(sent).toContain("### Container logs");
+  });
+
+  it("is ignored on a server that bars the assistant", async () => {
+    // `noAi` blocks context and execution outright (17.7) — an entry point must
+    // not become a side door into it.
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1", noAi: true } });
+    askAbout("s1", { question: "explain", context: "logs", label: "Container logs" });
+
+    await waitFor(() => expect(getChat("s1").ask).toBeNull());
+    expect(screen.queryByTestId("ai-consent")).toBeNull();
+    expect(aiChat).not.toHaveBeenCalled();
+  });
+
+  it("clears the request so it does not re-fire on re-render", async () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { question: "explain", context: "logs", label: "Terminal selection" });
+    await screen.findByTestId("ai-consent-preview");
+    expect(getChat("s1").ask).toBeNull();
   });
 });

@@ -64,6 +64,7 @@
     sessionReady = true,
     prod = false,
     onOpenShell,
+    onAsk,
   }: {
     sessionId: string;
     /** SSH tab is connected (local tabs are always ready). */
@@ -72,6 +73,8 @@
     prod?: boolean;
     /** Open a real terminal tab running `command` (docker exec shell). */
     onOpenShell?: (command: string) => void;
+    /** Hand a container's state + logs to the AI assistant (Phase 41). */
+    onAsk?: (context: string) => void;
   } = $props();
 
   // Live-view poll interval (seconds), from settings (default 3s).
@@ -461,6 +464,7 @@
   {run}
   runQuery={(args, timeout) => runQuery(args, timeout)}
   onShell={openShell}
+  {onAsk}
   onclose={() => (detailOpen = false)}
 />
 

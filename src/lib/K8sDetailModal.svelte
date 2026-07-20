@@ -30,6 +30,7 @@
     run,
     runQuery,
     openShell,
+    onAsk,
     onclose,
   }: {
     open?: boolean;
@@ -44,8 +45,29 @@
     ) => Promise<boolean>;
     runQuery: (bareArgs: string[], namespace: string, timeout?: number) => Promise<KubeOutput>;
     openShell: (pod: K8sPod, container: string | null) => void;
+    /** Hand this pod's state + logs to the assistant (Phase 41). */
+    onAsk?: (context: string) => void;
     onclose: () => void;
   } = $props();
+
+  /**
+   * What the assistant is told about this pod: the facts on screen plus whatever
+   * logs are loaded. `describe` is skipped — it is long, and the interesting part
+   * of it (recent events) is usually echoed by the status and the logs.
+   */
+  function askContext(p: K8sPod): string {
+    const facts = [
+      `Pod: ${p.name}`,
+      `Namespace: ${p.namespace}`,
+      `Status: ${p.status}`,
+      `Ready: ${p.ready}`,
+      `Restarts: ${p.restarts}`,
+      p.node ? `Node: ${p.node}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return logsText.trim() ? `${facts}\n\n--- kubectl logs ---\n${logsText}` : facts;
+  }
 
   type Tab = "overview" | "logs" | "describe" | "yaml";
   let tab = $state<Tab>("overview");
@@ -130,6 +152,18 @@
       <span class="h-[8px] w-[8px] shrink-0 rounded-full {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
       <div class="min-w-0 flex-1 truncate text-[11px] text-muted">{p.namespace} · {p.status}</div>
       <div class="flex shrink-0 items-center gap-0.5 text-muted">
+        {#if onAsk}
+          <!-- "Ask AI" (Phase 41): state, events and logs are already loaded here. -->
+          <button
+            data-testid="k8s-ask-ai"
+            class="rounded p-1 hover:bg-edge hover:text-white"
+            use:tooltip={t("ai.ask.button")}
+            aria-label={t("ai.ask.button")}
+            onclick={() => onAsk?.(askContext(p))}
+          >
+            <Icon name="aiMark" size={14} />
+          </button>
+        {/if}
         <button class="rounded p-1 hover:bg-edge hover:text-white" use:tooltip={t("k8s.openShell")} aria-label={t("k8s.openShell")} onclick={() => openShell(p, container)}>
           <Icon name="terminal" size={14} />
         </button>
