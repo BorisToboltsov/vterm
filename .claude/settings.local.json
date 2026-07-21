@@ -514,7 +514,9 @@
       "Bash(chmod +x scripts/clean-launchservices.sh)",
       "Bash(bash -n scripts/clean-launchservices.sh)",
       "Bash(./scripts/clean-launchservices.sh)",
-      "Bash(pgrep -q clippy-driver)"
+      "Bash(pgrep -q clippy-driver)",
+      "Bash(grep -n \"самодостаточные модалки — в \\\\`ServerFormModal\\\\`\" docs/INVARIANTS.md)",
+      "Bash(awk '/#\\\\[tauri::command\\\\]/{cmd=1; next} cmd && /fn /{print NR\": \"$0; cmd=0}' src-tauri/src/lib.rs)"
     ]
   }
 }
