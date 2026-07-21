@@ -7,6 +7,8 @@
 use crate::error::{AppError, AppResult};
 use crate::sftp::{apply_eol, detect_eol, sha256_hex, FileEntry, TextFile, WriteResult};
 use crate::textenc;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -354,6 +356,31 @@ pub async fn read_text(path: &str, max_bytes: u64) -> AppResult<TextFile> {
     })
 }
 
+/// Read a local file as raw bytes, base64-encoded — the local half of the markdown
+/// preview's inline images (Phase 44.4). Same contract as [`crate::sftp::read_bytes`],
+/// on the machine running vterm.
+pub async fn read_bytes(path: &str, max_bytes: u64) -> AppResult<String> {
+    let meta = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| format!("stat {path}: {e}"))?;
+    if meta.is_dir() {
+        return Err(AppError::Message(format!("{path} is a directory")));
+    }
+    if meta.len() > max_bytes {
+        return Err(AppError::Message(format!(
+            "image too large to inline ({} bytes, limit {max_bytes})",
+            meta.len()
+        )));
+    }
+    let bytes = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("read {path}: {e}"))?;
+    if (bytes.len() as u64) > max_bytes {
+        return Err(AppError::Message("image too large to inline".into()));
+    }
+    Ok(BASE64.encode(&bytes))
+}
+
 /// Read the local user's shell history (zsh preferred, then bash), returning the
 /// most recent `max_lines` lines as raw text — the local-shell-tab source for the
 /// Ctrl+R command-history overlay (Phase 23). Non-UTF-8 bytes (zsh can metafy
@@ -426,6 +453,26 @@ pub async fn write_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Phase 44.4: the markdown preview's inline images. The size guard is the
+    // point of the test — this path exists to show a screenshot beside a README,
+    // and a `data:` URL is held in memory whole, twice.
+    #[tokio::test]
+    async fn read_bytes_encodes_and_enforces_the_ceiling() {
+        let dir = std::env::temp_dir().join(format!("vterm-img-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let path = dir.join("a.png");
+        tokio::fs::write(&path, b"hello").await.unwrap();
+        let p = path.to_str().unwrap();
+
+        assert_eq!(read_bytes(p, 1024).await.unwrap(), "aGVsbG8=");
+        // Refused, not truncated: half an image is not a smaller image.
+        assert!(read_bytes(p, 3).await.is_err());
+        // A directory must not read as an image.
+        assert!(read_bytes(dir.to_str().unwrap(), 1024).await.is_err());
+
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
 
     #[test]
     fn dos_attrs_format_as_fixed_width_flags() {

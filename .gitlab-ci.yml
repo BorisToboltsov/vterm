@@ -232,10 +232,14 @@ build:macos:
   script:
     - pnpm install --frozen-lockfile
     - pnpm tauri build --target universal-apple-darwin
+    # Кладём хелпер запуска неподписанной сборки рядом с .dmg (снимает карантин
+    # Gatekeeper на чужом Mac) — попадает в тот же артефакт, что и бандл.
+    - bash scripts/place-opener.sh
   artifacts:
     name: vterm-macos
     paths:
       - src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+      - src-tauri/target/universal-apple-darwin/release/bundle/dmg/open-on-mac.sh
       - src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
     expire_in: 2 weeks
 

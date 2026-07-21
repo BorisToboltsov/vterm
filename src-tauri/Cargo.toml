@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "0.44.3"
+version = "0.44.6"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -45,6 +45,11 @@ zeroize = "1"
 # SHA-256 for the config editor: conflict detection (compare on-server hash vs the
 # hash the editor opened) and directory sync (Phase 12.5). RustCrypto, no C deps.
 sha2 = "0.11"
+# Base64 for the markdown preview's inline images (Phase 44.4): image bytes cross
+# to the WebView as a `data:` URL. Encoding here rather than shipping a `Vec<u8>`
+# is not a micro-optimisation — Tauri serialises a byte vector as a JSON array of
+# numbers, which is roughly 4x the payload for a screenshot-sized PNG.
+base64 = "0.22"
 portable-pty = "0.9.0"
 # Backups are shipped as a portable .zip archive (manifest + data); deflate-only
 # keeps the dependency tree small (flate2/crc32fast are already in the tree).

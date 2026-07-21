@@ -485,7 +485,25 @@
       "Bash(sed -i '' 's/\"version\": \"0.44.0\"/\"version\": \"0.44.1\"/' src-tauri/tauri.conf.json)",
       "Bash(echo \"=== SftpPanel funcs ===\" && grep -n \"function \\\\|async function \" src/lib/SftpPanel.svelte | sed 's/.*function //' | sed 's/\\(.*//' | sort > /tmp/sftp.txt && echo \"=== LocalFilePanel funcs ===\" && grep -n \"function \\\\|async function \" src/lib/LocalFilePanel.svelte | sed 's/.*function //' | sed 's/\\(.*//' | sort > /tmp/local.txt && echo \"--- shared function names ---\" && comm -12 /tmp/sftp.txt /tmp/local.txt && echo && echo \"sftp count: $\\(wc -l < /tmp/sftp.txt\\), local count: $\\(wc -l < /tmp/local.txt\\)\")",
       "Bash(grep -n \"^stages:\\\\|^[a-z:]*:$\\\\|stage:\" .gitlab-ci.yml)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(echo \"=== git log: touched the open-file path? ===\" && git log --oneline -8 -- src-tauri/src/lib.rs src/routes/+page.svelte src/lib/api/files.ts && echo && echo \"=== does a built .app exist anywhere? ===\" && ls -la /Applications/ 2>/dev/null | grep -i vterm || echo \"NOT in /Applications\"; ls -la src-tauri/target/release/bundle 2>/dev/null || echo \"bundle dir: ABSENT \\(removed per CLAUDE.md cleanup\\)\")",
+      "Bash(plutil -p /Applications/vterm.app/Contents/Info.plist)",
+      "Bash(git log *)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump)",
+      "Bash(LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister *)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/vterm.app)",
+      "Bash(node --experimental-strip-types /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/48a405a0-91f7-49a0-b195-405960e5b714/scratchpad/t.mjs)",
+      "Bash(python3 -m http.server 8899)",
+      "Bash(grep -n \"resolveRelative\\\\`\\), не копией в\" docs/INVARIANTS.md)",
+      "Bash(pkill -f \"http.server 8899\")",
+      "Bash(node -e 'const M=\"\"; let s=M+\"1\"+M; const codes=[\"<img>\", \"<a>\"+M+\"0\"+M+\"</a>\"]; console.log\\(JSON.stringify\\(s.replace\\(new RegExp\\(M+\"\\(\\\\\\\\d+\\)\"+M,\"g\"\\),\\(_,i\\)=>codes[+i]\\)\\)\\)')",
+      "Bash(node /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/48a405a0-91f7-49a0-b195-405960e5b714/scratchpad/p.mjs)",
+      "Bash(printf 'const M = \"\\\\\\\\uE000\";\\\\nconst s = M + \"1\" + M;\\\\nconst codes = [\"<img>\", \"<a>\" + M + \"0\" + M + \"</a>\"];\\\\nconst out = s.replace\\(new RegExp\\(M + \"\\(\\\\\\\\\\\\\\\\d+\\)\" + M, \"g\"\\), \\(_, i\\) => codes[+i]\\);\\\\nconsole.log\\(JSON.stringify\\(out\\).replaceAll\\(\"\\\\\\\\uE000\", \"@\"\\)\\);\\\\n')",
+      "Bash(awk '/^build:macos:/,/^[a-zA-Z].*:$/{print NR\": \"$0}' .gitlab-ci.yml)",
+      "Bash(chmod +x scripts/place-opener.sh)",
+      "Bash(bash -n scripts/place-opener.sh)",
+      "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('package.json JSON OK'\\)\")",
+      "Bash(bash scripts/place-opener.sh)"
     ]
   }
 }

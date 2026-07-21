@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-0.22.13-blue)
+![version](https://img.shields.io/badge/version-0.44.6-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -24,19 +24,16 @@
 > 🖼️ _Скриншоты будут добавлены._ Файлы кладутся в [docs/screenshots/](docs/screenshots/);
 > разметка уже заготовлена ниже — раскомментируйте по мере появления изображений.
 
-<!--
-![Список серверов и терминал](docs/screenshots/servers-terminal.png)
+![Альтернативный текст](docs/screenshots/servers-terminal.png)
+![Список серверов, терминал и sftp](docs/screenshots/servers-terminal.png)
 *Двухпанельное окно: дерево серверов и живой терминал.*
-
-![SFTP и редактор конфигов](docs/screenshots/sftp-editor.png)
-*SFTP-менеджер и встроенный редактор (CodeMirror) с подсветкой и diff.*
 
 ![Мониторинг](docs/screenshots/monitoring.png)
 *KPI-дашборд мониторинга: блок «Система», графики, температуры, health-сводка.*
 
 ![Запись сессий](docs/screenshots/recording.png)
 *Библиотека записей asciicast и встроенный плеер.*
--->
+
 
 ---
 
@@ -95,7 +92,11 @@
   локально, diff перед сохранением, линт (локальный и серверный — вкл. проверку
   конфигов демонов `sshd`/`sudoers`/`haproxy`/BIND/systemd их родными командами и
   YAML-семейство `docker-compose`/Ansible/Kubernetes/GitHub Actions/Prometheus),
-  markdown-превью, sudo-правка root-конфигов, синхронизация папок по SHA-256, grep по содержимому.
+  markdown-превью (с картинками, лежащими рядом с документом — на сервере или локально;
+  бейджи shields.io рисуются локально, прочие картинки из интернета не подгружаются —
+  приложение не ходит в сеть само; безопасное подмножество HTML-разметки — `<div align>`,
+  таблицы, `<sub>`/`<kbd>` — отображается, а не выводится текстом), sudo-правка
+  root-конфигов, синхронизация папок по SHA-256, grep по содержимому.
 - 📈 **Мониторинг**: KPI-дашборд (блок «Система», графики ЦП/ОЗУ/сети, температуры,
   SMART/Docker/GPU, health-сводка) + нижний статус-бар с порогами. Работает на SSH-серверах
   **и на локальной вкладке** (macOS/Windows/Linux) — метрики своей машины собираются нативно, офлайн.

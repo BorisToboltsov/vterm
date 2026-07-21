@@ -44,6 +44,9 @@
     "help.featEditor",
     "help.featStructuredLogs",
     "help.featMonitoring",
+    "help.featGit",
+    "help.featDocker",
+    "help.featK8s",
     "help.featRecording",
     "help.featAi",
   ];

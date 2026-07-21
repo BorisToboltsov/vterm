@@ -45,6 +45,24 @@ export function readLocalText(path: string, maxBytes?: number): Promise<TextFile
 }
 
 /**
+ * Read a remote file as base64 bytes — the markdown preview's inline images
+ * (Phase 44.4). The backend clamps `maxBytes` to a small ceiling of its own, so
+ * this can never become a back door around the SFTP panel's download.
+ */
+export function sftpReadBytes(
+  sessionId: string,
+  path: string,
+  maxBytes?: number,
+): Promise<string> {
+  return invoke<string>("sftp_read_bytes", { sessionId, path, maxBytes });
+}
+
+/** Read a LOCAL file as base64 bytes (local half of `sftpReadBytes`). */
+export function readLocalBytes(path: string, maxBytes?: number): Promise<string> {
+  return invoke<string>("read_local_bytes", { path, maxBytes });
+}
+
+/**
  * Save editor text back to a LOCAL file (atomic, conflict-checked). `encoding` is
  * the label the read reported; omitting it means UTF-8. Pass it back so a Windows
  * UTF-16 or CP1251 config is rewritten in its own encoding, not converted.

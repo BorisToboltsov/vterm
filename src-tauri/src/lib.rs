@@ -1466,6 +1466,33 @@ async fn sftp_read_text(
     sftp::read_text(&sftp, &path, limit).await
 }
 
+/// Read a remote file as base64 bytes for the markdown preview's inline images
+/// (Phase 44.4). `max_bytes` is clamped to a hard ceiling that is deliberately far
+/// below the editor's: this path exists to show a screenshot next to a README, not
+/// to move files — that is what the SFTP panel's download is for.
+#[tauri::command]
+async fn sftp_read_bytes(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+    max_bytes: Option<u64>,
+) -> AppResult<String> {
+    let limit = max_bytes
+        .unwrap_or(sftp::MAX_INLINE_IMAGE)
+        .clamp(1, sftp::MAX_INLINE_IMAGE);
+    let sftp = get_sftp(&state, &session_id).await?;
+    sftp::read_bytes(&sftp, &path, limit).await
+}
+
+/// Read a LOCAL file as base64 bytes. Local half of `sftp_read_bytes`.
+#[tauri::command]
+async fn read_local_bytes(path: String, max_bytes: Option<u64>) -> AppResult<String> {
+    let limit = max_bytes
+        .unwrap_or(sftp::MAX_INLINE_IMAGE)
+        .clamp(1, sftp::MAX_INLINE_IMAGE);
+    localfile::read_bytes(&path, limit).await
+}
+
 /// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
 /// `sudo` writes root-owned files via `sudo cp`; `backup` keeps a `.bak` copy.
 #[tauri::command]
@@ -2231,6 +2258,8 @@ pub fn run() {
             sftp_mkdir,
             sftp_create_file,
             sftp_read_text,
+            sftp_read_bytes,
+            read_local_bytes,
             sftp_write_text,
             read_local_text,
             write_local_text,

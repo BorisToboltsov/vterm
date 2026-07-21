@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  resolveRelative,
   baseName,
   DRIVES_ROOT,
   isDriveRoot,
@@ -281,5 +282,46 @@ describe("normalizeInputPath", () => {
     expect(normalizeInputPath("")).toBeNull();
     expect(normalizeInputPath("   ")).toBeNull();
     expect(normalizeInputPath('""')).toBeNull();
+  });
+});
+
+// Phase 44.4: the arithmetic behind the markdown preview's inline images —
+// `![x](./docs/a.png)` inside `/srv/app/README.md` names `/srv/app/docs/a.png`.
+describe("resolveRelative", () => {
+  it("resolves a relative reference against the directory", () => {
+    expect(resolveRelative("/srv/app", "docs/a.png")).toBe("/srv/app/docs/a.png");
+    expect(resolveRelative("/srv/app", "./docs/a.png")).toBe("/srv/app/docs/a.png");
+    expect(resolveRelative("/srv/app/x", "../a.png")).toBe("/srv/app/a.png");
+    expect(resolveRelative("/srv/app", "a/./b/../c.png")).toBe("/srv/app/a/c.png");
+  });
+
+  it("ignores the directory when the reference is itself absolute", () => {
+    expect(resolveRelative("/srv/app", "/var/a.png")).toBe("/var/a.png");
+    expect(resolveRelative("/srv/app", "/var/../etc/a.png")).toBe("/etc/a.png");
+  });
+
+  it("keeps Windows spellings native, drive root intact", () => {
+    expect(resolveRelative("C:\\proj", "docs\\a.png")).toBe("C:\\proj\\docs\\a.png");
+    expect(resolveRelative("C:\\proj\\x", "..\\a.png")).toBe("C:\\proj\\a.png");
+    expect(resolveRelative("C:\\proj", "..\\a.png")).toBe("C:\\a.png");
+    expect(resolveRelative("C:/proj", "docs/a.png")).toBe("C:/proj/docs/a.png");
+  });
+
+  it("never eats a UNC share root", () => {
+    expect(resolveRelative("\\\\srv\\share\\a", "..\\b.png")).toBe("\\\\srv\\share\\b.png");
+  });
+
+  it("returns null rather than clamping a climb past the root", () => {
+    // Clamping (the tempting no-op) would resolve to a different, existing file —
+    // worse than refusing, because it looks like success.
+    expect(resolveRelative("/a", "../../x.png")).toBeNull();
+    expect(resolveRelative("C:\\", "..\\x.png")).toBeNull();
+  });
+
+  it("returns null when there is nothing usable to resolve against", () => {
+    expect(resolveRelative("/srv", "")).toBeNull();
+    expect(resolveRelative("/srv", "   ")).toBeNull();
+    expect(resolveRelative("relative/dir", "a.png")).toBeNull();
+    expect(resolveRelative("", "a.png")).toBeNull();
   });
 });

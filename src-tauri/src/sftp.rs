@@ -3,6 +3,8 @@
 
 use crate::error::{AppError, AppResult};
 use crate::textenc;
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
 use serde::Serialize;
@@ -24,6 +26,11 @@ pub const MAX_EDIT_SIZE: u64 = 2 * 1024 * 1024;
 /// setting can't try to slurp a gigantic file into memory. Matches the frontend
 /// `MAX_OPEN_MB_LIMIT` (64 MB).
 pub const HARD_MAX_EDIT_SIZE: u64 = 64 * 1024 * 1024;
+/// Hard ceiling (bytes) for one image inlined into the markdown preview
+/// (Phase 44.4). Far below the editor limit on purpose: a preview may pull a dozen
+/// at once, and each is held twice — raw here, base64 (a third larger) over there.
+/// Mirrors the frontend's `MAX_IMAGE_BYTES`.
+pub const MAX_INLINE_IMAGE: u64 = 2 * 1024 * 1024;
 
 /// A remote directory entry sent to the frontend.
 #[derive(Serialize)]
@@ -310,6 +317,38 @@ pub async fn read_text(sftp: &SftpSession, path: &str, max_bytes: u64) -> AppRes
         // Normalize to LF for the editor; the original style is carried in `eol`.
         content: content.replace("\r\n", "\n"),
     })
+}
+
+/// Read a remote file as raw bytes, base64-encoded — the markdown preview's
+/// inline images (Phase 44.4). Deliberately NOT a variant of `read_text`: there is
+/// no decoding, no EOL normalisation and no conflict hash, because nothing here
+/// ever writes back. Reads are not mirrored into the session recording, same as
+/// every other SFTP read.
+pub async fn read_bytes(sftp: &SftpSession, path: &str, max_bytes: u64) -> AppResult<String> {
+    let meta = sftp
+        .metadata(path)
+        .await
+        .map_err(|e| format!("stat {path}: {e}"))?;
+    if meta.is_dir() {
+        return Err(AppError::Message(format!("{path} is a directory")));
+    }
+    if let Some(size) = meta.size {
+        if size > max_bytes {
+            return Err(AppError::Message(format!(
+                "image too large to inline ({size} bytes, limit {max_bytes})"
+            )));
+        }
+    }
+    let bytes = sftp
+        .read(path)
+        .await
+        .map_err(|e| format!("read {path}: {e}"))?;
+    // Re-check after reading: the pre-read `size` is advisory — a server may omit
+    // it, and the file can grow between the stat and the read.
+    if (bytes.len() as u64) > max_bytes {
+        return Err(AppError::Message("image too large to inline".into()));
+    }
+    Ok(BASE64.encode(&bytes))
 }
 
 /// A text-write request: the target path, the content plus its line-ending style,

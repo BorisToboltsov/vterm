@@ -157,6 +157,63 @@ export function isUnder(child: string, dir: string): boolean {
 }
 
 /**
+ * Resolve a document-relative reference against the directory the document lives
+ * in, collapsing `.` and `..` — the arithmetic behind the markdown preview's
+ * inline images (`![x](./docs/a.png)` inside `/srv/app/README.md` names
+ * `/srv/app/docs/a.png`). Lives here rather than in the preview because it is
+ * exactly the separator-aware path work this module exists to keep in one place.
+ *
+ * `rel` may itself be absolute (POSIX, drive-absolute or UNC), in which case `dir`
+ * is ignored — the same rule a shell applies. Otherwise `dir` must be absolute:
+ * resolving against a bare relative directory would invent a root.
+ *
+ * Returns null rather than a best guess when the reference cannot name a file:
+ * empty input, a non-absolute `dir`, or a `..` chain climbing past the root.
+ * Clamping `..` at the root (the tempting no-op) would silently resolve to a
+ * *different, existing* file — the worst of the three outcomes, because it looks
+ * like success.
+ */
+export function resolveRelative(dir: string, rel: string): string | null {
+  const target = rel.trim();
+  if (!target) return null;
+  const absolute = target.startsWith("/") || isWindowsPath(target);
+  if (!absolute && !(dir.startsWith("/") || isWindowsPath(dir))) return null;
+  const base = absolute ? target : joinPath(trimTrailing(dir), target);
+
+  // Split off the part that `..` must never eat. Each root shape keeps its own
+  // spelling: `\\srv\share`, `C:` + separator, or POSIX `/`.
+  const s = sep(base);
+  const unc = /^(\\\\[^\\/]+[\\/][^\\/]+)(?:[\\/](.*))?$/.exec(base);
+  const drive = /^([A-Za-z]:)[\\/]?(.*)$/.exec(base);
+  let prefix: string;
+  let rest: string;
+  if (unc) {
+    prefix = unc[1] + s;
+    rest = unc[2] ?? "";
+  } else if (drive) {
+    prefix = drive[1] + s;
+    rest = drive[2] ?? "";
+  } else if (base.startsWith("/")) {
+    prefix = "/";
+    rest = base.slice(1);
+  } else {
+    return null;
+  }
+
+  const out: string[] = [];
+  for (const seg of rest.split(/[\\/]+/)) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") {
+      if (out.length === 0) return null; // climbed above the root
+      out.pop();
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.length > 0 ? prefix + out.join(s) : prefix;
+}
+
+/**
  * Clean up a path the user typed or pasted into the panel's path bar (Phase 39.2),
  * returning null when there is nothing usable. Deliberately forgiving, because the
  * realistic inputs are pastes rather than careful typing:

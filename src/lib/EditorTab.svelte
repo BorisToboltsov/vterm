@@ -80,10 +80,12 @@
   import { activeTerminalTheme, settings } from "./settings.svelte";
   import type { EditorLangKind } from "./editorlang";
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
-  import { renderMarkdown } from "./markdown";
+  import { collectImages, renderMarkdown } from "./markdown";
   import { mdLinks } from "./actions/mdlinks";
+  import { classifyImage, dataUrl, MAX_IMAGES, MAX_IMAGE_BYTES } from "./mdimage";
+  import { parseStaticBadge } from "./badge";
   import { snippetsForLang } from "./snippets";
-  import { lintRemote } from "./api";
+  import { lintRemote, readLocalBytes, sftpReadBytes } from "./api";
   import { hasRemoteLinter, parseLint, type LintMsg } from "./remotelint";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import Icon from "./Icon.svelte";
@@ -159,8 +161,76 @@
   // (set once in onMount). `lang.kind` never changes for a mounted editor.
   const isMarkdown = $derived(doc.lang.kind === "markdown");
   let preview = $state(false);
+
+  // Inline images for the preview (Phase 44.4), keyed by their raw markdown
+  // target. Filled asynchronously by `loadPreviewImages`; a target that is absent
+  // renders as a placeholder, so the preview is correct before, during and after
+  // the reads — nothing waits on them.
+  let mdImages = $state<ReadonlyMap<string, string>>(new Map());
+  // Targets already dealt with, resolved or refused. The effect below re-runs on
+  // every edit, and without this a file that failed to read would be re-requested
+  // on each keystroke.
+  let mdSeen = new Set<string>();
+  // True when the document points at images that cannot load here at all (remote
+  // http(s), other than the static badges we draw ourselves). Drives the one-line
+  // note under the preview — without it, a remote screenshot silently turns into a
+  // little grey box and the reader is left to guess whether the app is broken.
+  let mdHasRemote = $state(false);
+
   // Live-rendered HTML (CodeMirror stays mounted, so doc.content tracks edits).
-  const previewHtml = $derived(isMarkdown && preview ? renderMarkdown(doc.content) : "");
+  // `html: true` admits the sanitised HTML subset (htmlsan.ts) so a README's
+  // `<div align="center">`, `<sub>`, tables… render instead of showing as text.
+  // Only this preview opts in — LLM/notes markdown stays fully escaped.
+  const previewHtml = $derived(
+    isMarkdown && preview ? renderMarkdown(doc.content, { images: mdImages, html: true }) : "",
+  );
+
+  /**
+   * Resolve the document's image targets to `data:` URLs, one read per target.
+   *
+   * Reads go over the same channel the document itself came from, so a README
+   * opened over SFTP shows the screenshots sitting next to it on that server. The
+   * budget is per document, not per read: `MAX_IMAGES` caps the fan-out, and the
+   * backend caps each file's size.
+   */
+  async function loadPreviewImages(md: string) {
+    const targets = collectImages(md).filter((s) => !mdSeen.has(s));
+    if (targets.length === 0) return;
+    let budget = MAX_IMAGES - mdSeen.size;
+    for (const target of targets) {
+      if (budget <= 0) break;
+      mdSeen.add(target);
+      const ref = classifyImage(doc.path, target);
+      if (ref.kind === "remote") {
+        // A static shields badge is drawn from its own URL, so it is not one of
+        // the images the note below has to apologise for.
+        if (!parseStaticBadge(target)) mdHasRemote = true;
+        continue;
+      }
+      if (ref.kind === "unsupported") continue;
+      budget--;
+      if (ref.kind === "data") {
+        mdImages = new Map(mdImages).set(target, ref.url);
+        continue;
+      }
+      try {
+        const b64 =
+          doc.source === "sftp"
+            ? await sftpReadBytes(sessionId, ref.path, MAX_IMAGE_BYTES)
+            : await readLocalBytes(ref.path, MAX_IMAGE_BYTES);
+        mdImages = new Map(mdImages).set(target, dataUrl(ref.mime, b64));
+      } catch {
+        // A missing or oversized image is not an error worth a toast — the
+        // placeholder already says this one did not render, and a .md commonly
+        // outlives the files it references.
+      }
+    }
+  }
+
+  $effect(() => {
+    if (!isMarkdown || !preview) return;
+    void loadPreviewImages(doc.content);
+  });
 
   // Config snippets/templates relevant to this file's language (from settings).
   const snippets = $derived(snippetsForLang(doc.lang.kind, settings.snippets));
@@ -586,6 +656,12 @@
     <!-- Preview of a file opened over SFTP/locally — untrusted; see markdown.ts. -->
     <div class="markdown-preview min-h-0 flex-1 overflow-auto px-4 py-3 text-sm" use:mdLinks>
       {@html previewHtml}
+      {#if mdHasRemote}
+        <!-- Say why the badges are grey boxes; see mdimage.ts for the reasoning. -->
+        <p class="mt-4 border-t border-edge pt-2 text-meta text-muted">
+          {t("editor.mdRemoteImages")}
+        </p>
+      {/if}
     </div>
   {/if}
   {#if lintMessages && lintMessages.length > 0}
@@ -680,6 +756,35 @@
   .markdown-preview :global(strong) {
     color: var(--color-text);
     font-weight: 600;
+  }
+  /* Inline images (Phase 44.4). Capped so a full-window screenshot doesn't push
+     the rest of the document off-screen; the aspect ratio is kept by `height`. */
+  .markdown-preview :global(img) {
+    display: inline-block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 6px;
+    vertical-align: middle;
+  }
+  /* An image that could not be inlined. Reads as a labelled slot rather than a
+     broken picture: for a badge row that is the truth — nothing is damaged, the
+     target is simply unreachable from an app that makes no network requests. */
+  /* Locally-drawn shields.io badges (Phase 44.5): they sit in a row, so they need
+     the same baseline as the surrounding text and a little breathing room. */
+  .markdown-preview :global(svg.md-badge) {
+    display: inline-block;
+    vertical-align: middle;
+    margin: 0.1em 0.15em;
+  }
+  .markdown-preview :global(.md-img) {
+    display: inline-block;
+    border: 1px dashed var(--color-edge);
+    border-radius: 4px;
+    padding: 0 0.4em;
+    color: var(--color-muted);
+    font-size: 0.85em;
+    line-height: 1.6;
+    vertical-align: middle;
   }
   .markdown-preview :global(code) {
     font-family: ui-monospace, monospace;

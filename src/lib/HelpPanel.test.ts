@@ -39,6 +39,10 @@ describe("HelpPanel", () => {
     expect(screen.getByText("Structured logs")).toBeInTheDocument();
     expect(screen.getByText("Session recording, playback and export")).toBeInTheDocument();
     expect(screen.getByText("AI assistant")).toBeInTheDocument();
+    // The right-dock panels are advertised too (Phases 29/35/37).
+    expect(screen.getByText("Git")).toBeInTheDocument();
+    expect(screen.getByText("Docker")).toBeInTheDocument();
+    expect(screen.getByText("Kubernetes")).toBeInTheDocument();
   });
 
   it("shows the app version from Tauri on the About tab", async () => {
