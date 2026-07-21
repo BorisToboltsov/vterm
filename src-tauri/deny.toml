@@ -31,15 +31,10 @@ ignore = [
   "RUSTSEC-2024-0419",
   "RUSTSEC-2024-0420",
 
-  # ── quick-xml DoS via malicious XML (fixed in >=0.41.0; not reachable by us) ──
-  # Transitive: tauri → plist → quick-xml 0.39.4. `plist` (latest 1.9.0) pins
-  # quick-xml to 0.39.x, so there's no upgrade path until Tauri bumps `plist` to a
-  # 0.41-based line. Both advisories are denial-of-service via *untrusted* XML input;
-  # in vterm `plist` only parses the app's own bundle/config property lists (trusted,
-  # developer-controlled), never user-supplied XML at runtime — so not reachable.
-  # Revisit when Tauri/plist ships quick-xml >=0.41.0.
-  "RUSTSEC-2026-0194", # quadratic run time on duplicate start-tag attributes
-  "RUSTSEC-2026-0195", # unbounded namespace-declaration allocation (NsReader)
+  # NOTE: the two quick-xml DoS advisories (RUSTSEC-2026-0194/0195) were removed
+  # here once `plist 1.10.0` pulled `quick-xml 0.41.0` (the fixed line) — the
+  # dependency refresh RESOLVED them rather than suppressing them. Don't re-add a
+  # suppression; if they resurface, a dep regressed to quick-xml <0.41.
 
   # ── Unmaintained transitive build/helper crates ─────────────────────────────
   # proc-macro-error (via transitive macro crates).
