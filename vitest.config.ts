@@ -32,6 +32,9 @@ export default defineConfig({
         // (tree.ts, drag.ts); behaviour is exercised by the E2E suite (e2e/) and
         // a smoke component test — not jsdom branch coverage. See docs/TESTS.md.
         "src/lib/Terminal.svelte",
+        // File browsers: <FileBrowser> is the shared body of the two thin wrappers
+        // (SftpPanel/LocalFilePanel); its pure logic lives in filebrowser.ts (covered).
+        "src/lib/FileBrowser.svelte",
         "src/lib/SftpPanel.svelte",
         "src/lib/LocalFilePanel.svelte",
         "src/lib/SettingsPanel.svelte",
