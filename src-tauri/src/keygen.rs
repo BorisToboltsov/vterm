@@ -108,7 +108,9 @@ pub fn path_exists(path: &str) -> bool {
 /// (Re)write the public key next to the private key (`<path>.pub`). Backs the
 /// explicit "Save .pub" button on the result screen; the OpenSSH `.pub` is
 /// already written during generation, so this is idempotent. Returns the path.
-pub fn save_public_key(path: &str, public_key: &str) -> AppResult<String> {
+/// (Named `write_public_key` so it doesn't collide with the `save_public_key`
+/// command that wraps it — both now live in this module, Phase 44.9.)
+pub fn write_public_key(path: &str, public_key: &str) -> AppResult<String> {
     let pub_path = pub_path_for(&expand_tilde(path));
     std::fs::write(&pub_path, format!("{}\n", public_key.trim_end()))?;
     Ok(pub_path.to_string_lossy().into_owned())
@@ -190,6 +192,33 @@ pub fn generate(req: GenerateRequest) -> AppResult<GeneratedKey> {
         public_key,
         fingerprint,
     })
+}
+
+// ── Tauri commands ─────────────────────────────────────────────────────────────
+// The keygen commands (no shared `AppState`) live next to the generator logic
+// (Phase 44.9). Registered as `keygen::…`; frontend command names are unchanged.
+
+/// Generate an OpenSSH key pair (local, offline) and write it under the chosen
+/// path. RSA generation is CPU-heavy, so it runs on a blocking thread to keep the
+/// UI responsive.
+#[tauri::command]
+pub async fn generate_ssh_key(req: GenerateRequest) -> AppResult<GeneratedKey> {
+    tokio::task::spawn_blocking(move || generate(req))
+        .await
+        .map_err(|e| AppError::Message(e.to_string()))?
+}
+
+/// Whether a key file already exists at `path` (`~` expanded). Backs the live
+/// collision hint in the generate dialog.
+#[tauri::command]
+pub fn key_path_exists(path: String) -> bool {
+    path_exists(&path)
+}
+
+/// (Re)write the public key to `<path>.pub` — the explicit "Save .pub" button.
+#[tauri::command]
+pub fn save_public_key(path: String, public_key: String) -> AppResult<String> {
+    write_public_key(&path, &public_key)
 }
 
 #[cfg(test)]
@@ -302,7 +331,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let priv_path = dir.path().join("id_ed25519");
         let out =
-            save_public_key(&priv_path.to_string_lossy(), "ssh-ed25519 AAAAC3Nz me@host").unwrap();
+            write_public_key(&priv_path.to_string_lossy(), "ssh-ed25519 AAAAC3Nz me@host").unwrap();
         assert_eq!(out, format!("{}.pub", priv_path.to_string_lossy()));
         let body = std::fs::read_to_string(&out).unwrap();
         assert_eq!(body, "ssh-ed25519 AAAAC3Nz me@host\n");

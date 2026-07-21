@@ -268,6 +268,42 @@ pub fn forget_host_key(id: &str) -> bool {
     removed
 }
 
+// ── Tauri commands ─────────────────────────────────────────────────────────────
+// Self-contained commands (no shared `AppState`) that read/mutate the on-disk
+// store, moved next to that logic (Phase 44.9). Registered as `store::…`.
+
+/// One entry of the vterm-managed known_hosts store, for the manager utility.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KnownHostEntry {
+    /// `host:port` identifier.
+    id: String,
+    /// Recorded SHA256 host-key fingerprint.
+    fingerprint: String,
+}
+
+/// List every recorded host key (`host:port` → fingerprint). Local file read only.
+#[tauri::command]
+pub fn list_known_hosts() -> Vec<KnownHostEntry> {
+    list_host_keys()
+        .into_iter()
+        .map(|(id, fingerprint)| KnownHostEntry { id, fingerprint })
+        .collect()
+}
+
+/// Forget the recorded host key for `id`. Returns whether an entry was removed.
+#[tauri::command]
+pub fn remove_known_host(id: String) -> bool {
+    forget_host_key(&id)
+}
+
+/// Config files that failed to parse during the startup load and were moved
+/// aside. Drains the list, so the frontend shows each warning exactly once.
+#[tauri::command]
+pub fn take_store_warnings() -> Vec<StoreWarning> {
+    take_warnings()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

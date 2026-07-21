@@ -5,7 +5,10 @@
 //! vs the SFTP session).
 
 use crate::error::{AppError, AppResult};
-use crate::sftp::{apply_eol, detect_eol, sha256_hex, FileEntry, TextFile, WriteResult};
+use crate::sftp::{
+    apply_eol, detect_eol, sha256_hex, FileEntry, TextFile, WriteResult, HARD_MAX_EDIT_SIZE,
+    MAX_EDIT_SIZE, MAX_INLINE_IMAGE,
+};
 use crate::textenc;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
@@ -448,6 +451,84 @@ pub async fn write_text(
         size: bytes.len() as u64,
         mtime: after.as_ref().and_then(mtime_secs),
     })
+}
+
+// ── Tauri commands ─────────────────────────────────────────────────────────────
+// The frontend-facing wrappers for the local file panel (Phase 44.9). They carry
+// no shared `AppState` and delegate straight to the functions above, so they live
+// next to that logic rather than in lib.rs (the god-file held the whole command
+// layer). Registered in lib.rs's `generate_handler!` as `localfile::…`; the command
+// name the frontend invokes is the fn name, unchanged by the move.
+
+/// Read a LOCAL file as base64 bytes. Local half of `sftp_read_bytes`.
+#[tauri::command]
+pub async fn read_local_bytes(path: String, max_bytes: Option<u64>) -> AppResult<String> {
+    let limit = max_bytes
+        .unwrap_or(MAX_INLINE_IMAGE)
+        .clamp(1, MAX_INLINE_IMAGE);
+    read_bytes(&path, limit).await
+}
+
+/// Open a LOCAL file as text in the editor ("Open with vterm" flow). Same guards
+/// and contract as `sftp_read_text`, but on the machine running vterm.
+#[tauri::command]
+pub async fn read_local_text(path: String, max_bytes: Option<u64>) -> AppResult<TextFile> {
+    let limit = max_bytes
+        .unwrap_or(MAX_EDIT_SIZE)
+        .clamp(1, HARD_MAX_EDIT_SIZE);
+    read_text(&path, limit).await
+}
+
+/// Save editor text back to a LOCAL file (atomic temp+rename, conflict-checked).
+#[tauri::command]
+pub async fn write_local_text(
+    path: String,
+    content: String,
+    eol: String,
+    encoding: Option<String>,
+    expected_sha256: Option<String>,
+) -> AppResult<WriteResult> {
+    let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
+    write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await
+}
+
+#[tauri::command]
+pub fn local_home() -> AppResult<String> {
+    home()
+}
+
+#[tauri::command]
+pub async fn local_list(path: String) -> AppResult<Vec<FileEntry>> {
+    list(&path).await
+}
+
+#[tauri::command]
+pub async fn local_mkdir(path: String) -> AppResult<()> {
+    mkdir(&path).await
+}
+
+#[tauri::command]
+pub async fn local_create_file(path: String) -> AppResult<()> {
+    create_file(&path).await
+}
+
+#[tauri::command]
+pub async fn local_delete(path: String, is_dir: bool) -> AppResult<()> {
+    remove(&path, is_dir).await
+}
+
+/// Move a local file/folder to a new path (drag-to-move within the local panel).
+/// Refuses if `to` already exists.
+#[tauri::command]
+pub async fn local_rename(from: String, to: String) -> AppResult<()> {
+    rename(&from, &to).await
+}
+
+/// Copy a local file/folder to a new path (paste after copy in the local panel).
+/// Refuses if `to` already exists.
+#[tauri::command]
+pub async fn local_copy(from: String, to: String) -> AppResult<()> {
+    copy(&from, &to).await
 }
 
 #[cfg(test)]

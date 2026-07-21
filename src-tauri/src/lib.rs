@@ -1484,15 +1484,6 @@ async fn sftp_read_bytes(
     sftp::read_bytes(&sftp, &path, limit).await
 }
 
-/// Read a LOCAL file as base64 bytes. Local half of `sftp_read_bytes`.
-#[tauri::command]
-async fn read_local_bytes(path: String, max_bytes: Option<u64>) -> AppResult<String> {
-    let limit = max_bytes
-        .unwrap_or(sftp::MAX_INLINE_IMAGE)
-        .clamp(1, sftp::MAX_INLINE_IMAGE);
-    localfile::read_bytes(&path, limit).await
-}
-
 /// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
 /// `sudo` writes root-owned files via `sudo cp`; `backup` keeps a `.bak` copy.
 #[tauri::command]
@@ -1546,29 +1537,6 @@ async fn sftp_write_text(
     res
 }
 
-/// Open a LOCAL file as text in the editor ("Open with vterm" flow). Same guards
-/// and contract as `sftp_read_text`, but on the machine running vterm.
-#[tauri::command]
-async fn read_local_text(path: String, max_bytes: Option<u64>) -> AppResult<sftp::TextFile> {
-    let limit = max_bytes
-        .unwrap_or(sftp::MAX_EDIT_SIZE)
-        .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
-    localfile::read_text(&path, limit).await
-}
-
-/// Save editor text back to a LOCAL file (atomic temp+rename, conflict-checked).
-#[tauri::command]
-async fn write_local_text(
-    path: String,
-    content: String,
-    eol: String,
-    encoding: Option<String>,
-    expected_sha256: Option<String>,
-) -> AppResult<sftp::WriteResult> {
-    let encoding = encoding.unwrap_or_else(|| textenc::default_encoding().into());
-    localfile::write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await
-}
-
 /// The working directory of a LOCAL shell, read from the OS (Phase 39.3).
 ///
 /// This is the transport-appropriate half of "follow the terminal": a local tab
@@ -1587,106 +1555,6 @@ fn local_cwd(state: State<AppState>, session_id: String) -> Option<String> {
 #[tauri::command]
 fn take_pending_opens(state: State<AppState>) -> Vec<String> {
     std::mem::take(&mut state.pending_opens.lock().unwrap())
-}
-
-// ── Local filesystem browser (the right panel for local-terminal tabs) ─────────
-
-#[tauri::command]
-fn local_home() -> AppResult<String> {
-    localfile::home()
-}
-
-#[tauri::command]
-async fn local_list(path: String) -> AppResult<Vec<sftp::FileEntry>> {
-    localfile::list(&path).await
-}
-
-#[tauri::command]
-async fn local_mkdir(path: String) -> AppResult<()> {
-    localfile::mkdir(&path).await
-}
-
-#[tauri::command]
-async fn local_create_file(path: String) -> AppResult<()> {
-    localfile::create_file(&path).await
-}
-
-#[tauri::command]
-async fn local_delete(path: String, is_dir: bool) -> AppResult<()> {
-    localfile::remove(&path, is_dir).await
-}
-
-/// Move a local file/folder to a new path (drag-to-move within the local panel).
-/// Refuses if `to` already exists.
-#[tauri::command]
-async fn local_rename(from: String, to: String) -> AppResult<()> {
-    localfile::rename(&from, &to).await
-}
-
-/// Copy a local file/folder to a new path (paste after copy in the local panel).
-/// Refuses if `to` already exists.
-#[tauri::command]
-async fn local_copy(from: String, to: String) -> AppResult<()> {
-    localfile::copy(&from, &to).await
-}
-
-// ── SSH key generation utility (Phase 32) ──────────────────────────────────────
-
-/// Generate an OpenSSH key pair (local, offline) and write it under the chosen
-/// path. RSA generation is CPU-heavy, so it runs on a blocking thread to keep the
-/// UI responsive.
-#[tauri::command]
-async fn generate_ssh_key(req: keygen::GenerateRequest) -> AppResult<keygen::GeneratedKey> {
-    tokio::task::spawn_blocking(move || keygen::generate(req))
-        .await
-        .map_err(|e| AppError::Message(e.to_string()))?
-}
-
-/// Whether a key file already exists at `path` (`~` expanded). Backs the live
-/// collision hint in the generate dialog.
-#[tauri::command]
-fn key_path_exists(path: String) -> bool {
-    keygen::path_exists(&path)
-}
-
-/// (Re)write the public key to `<path>.pub` — the explicit "Save .pub" button.
-#[tauri::command]
-fn save_public_key(path: String, public_key: String) -> AppResult<String> {
-    keygen::save_public_key(&path, &public_key)
-}
-
-// ── known_hosts manager utility (Phase 33) ─────────────────────────────────────
-
-/// One entry of the vterm-managed known_hosts store, for the manager utility.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct KnownHostEntry {
-    /// `host:port` identifier.
-    id: String,
-    /// Recorded SHA256 host-key fingerprint.
-    fingerprint: String,
-}
-
-/// List every recorded host key (`host:port` → fingerprint). Local file read only.
-#[tauri::command]
-fn list_known_hosts() -> Vec<KnownHostEntry> {
-    store::list_host_keys()
-        .into_iter()
-        .map(|(id, fingerprint)| KnownHostEntry { id, fingerprint })
-        .collect()
-}
-
-/// Forget the recorded host key for `id`. Returns whether an entry was removed.
-#[tauri::command]
-fn remove_known_host(id: String) -> bool {
-    store::forget_host_key(&id)
-}
-
-/// Config files that failed to parse during the startup load and were moved
-/// aside. Drains the list, so the frontend shows each warning exactly once.
-#[tauri::command]
-fn take_store_warnings() -> Vec<store::StoreWarning> {
-    store::take_warnings()
 }
 
 // ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
@@ -2259,25 +2127,25 @@ pub fn run() {
             sftp_create_file,
             sftp_read_text,
             sftp_read_bytes,
-            read_local_bytes,
+            localfile::read_local_bytes,
             sftp_write_text,
-            read_local_text,
-            write_local_text,
+            localfile::read_local_text,
+            localfile::write_local_text,
             local_cwd,
             take_pending_opens,
-            generate_ssh_key,
-            key_path_exists,
-            save_public_key,
-            list_known_hosts,
-            remove_known_host,
-            take_store_warnings,
-            local_home,
-            local_list,
-            local_mkdir,
-            local_create_file,
-            local_delete,
-            local_rename,
-            local_copy,
+            keygen::generate_ssh_key,
+            keygen::key_path_exists,
+            keygen::save_public_key,
+            store::list_known_hosts,
+            store::remove_known_host,
+            store::take_store_warnings,
+            localfile::local_home,
+            localfile::local_list,
+            localfile::local_mkdir,
+            localfile::local_create_file,
+            localfile::local_delete,
+            localfile::local_rename,
+            localfile::local_copy,
             sftp_hash_tree,
             local_hash_tree,
             sftp_sync_apply,
