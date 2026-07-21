@@ -503,7 +503,18 @@
       "Bash(chmod +x scripts/place-opener.sh)",
       "Bash(bash -n scripts/place-opener.sh)",
       "Bash(node -e \"JSON.parse\\(require\\('fs'\\).readFileSync\\('package.json','utf8'\\)\\); console.log\\('package.json JSON OK'\\)\")",
-      "Bash(bash scripts/place-opener.sh)"
+      "Bash(bash scripts/place-opener.sh)",
+      "Bash(grep -A1 -E '^name = \"\\(russh|tokio|serde|serde_json|thiserror|keyring|rand|futures-util|tauri-plugin-single-instance|tauri-plugin-dialog|ssh-key\\)\"$' src-tauri/Cargo.lock)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -kill -r -domain local -domain system -domain user)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u /Volumes/dmg.hYcCRn/vterm.app)",
+      "Bash(plutil -p /Users/boristoboltsov/project/project/vterm/src-tauri/target/release/bundle/macos/vterm.app/Contents/Info.plist)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u /Users/boristoboltsov/project/project/vterm/src-tauri/target/release/bundle/macos/vterm.app)",
+      "Bash(open -b su.vcore.vterm /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/cb86074e-a322-4cea-81c6-55a63c5d55cf/scratchpad/probe.md)",
+      "Bash(echo \"open exit=$?\")",
+      "Bash(chmod +x scripts/clean-launchservices.sh)",
+      "Bash(bash -n scripts/clean-launchservices.sh)",
+      "Bash(./scripts/clean-launchservices.sh)",
+      "Bash(pgrep -q clippy-driver)"
     ]
   }
 }
