@@ -111,7 +111,7 @@
                 <input
                   bind:value={rule.name}
                   placeholder={t("highlight.namePlaceholder")}
-                  class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+                  class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
                 />
                 <button
                   type="button"
@@ -147,7 +147,7 @@
                 bind:value={rule.pattern}
                 placeholder={t("highlight.patternPlaceholder")}
                 spellcheck="false"
-                class="w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
+                class="w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-text outline-none focus:border-accent"
               />
               {#if rule.pattern && !patternValid(rule.pattern)}
                 <p class="text-meta text-danger">{t("highlight.invalidPattern")}</p>

@@ -25,7 +25,7 @@
     disabled = false,
     autofocus = false,
     class: cls = "",
-    inputClass = "w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent",
+    inputClass = "w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent",
   }: {
     /** The typed secret. Bindable. */
     value?: string;
@@ -65,7 +65,7 @@
   <button
     type="button"
     data-testid={testid ? `${testid}-reveal` : undefined}
-    class="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted hover:text-white disabled:opacity-40"
+    class="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted hover:text-text disabled:opacity-40"
     aria-label={shown ? t("common.hidePassword") : t("common.showPassword")}
     aria-pressed={shown}
     use:tooltip={shown ? t("common.hidePassword") : t("common.showPassword")}

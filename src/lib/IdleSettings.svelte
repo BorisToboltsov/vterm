@@ -38,7 +38,7 @@
   <label class="block text-xs text-muted">
     {t("settings.idleEffect")}
     <select
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       data-testid="idle-effect-select"
       bind:value={settings.idleEffect}
     >
@@ -58,7 +58,7 @@
           min={IDLE_TIMEOUT_MIN}
           max={IDLE_TIMEOUT_MAX}
           step="1"
-          class="w-28 rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          class="w-28 rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
           data-testid="idle-timeout-input"
           bind:value={settings.idleTimeoutSec}
           onchange={commitTimeout}

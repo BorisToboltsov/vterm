@@ -598,7 +598,7 @@
       {/if}
       {#if canRemoteLint && !preview}
         <button
-          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
           use:tooltip={t("editor.lintServer")}
           aria-label={t("editor.lintServer")}
           disabled={linting}
@@ -611,7 +611,7 @@
       {#if snippets.length > 0 && !doc.readOnly && !preview}
         <div class="relative">
           <button
-            class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white"
+            class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text"
             use:tooltip={t("editor.snippets")}
             aria-label={t("editor.snippets")}
             onclick={() => (showSnippets = !showSnippets)}
@@ -625,7 +625,7 @@
             >
               {#each snippets as s (s.id)}
                 <button
-                  class="block w-full truncate px-3 py-1.5 text-left text-xs text-muted hover:bg-edge hover:text-white"
+                  class="block w-full truncate px-3 py-1.5 text-left text-xs text-muted hover:bg-edge hover:text-text"
                   onclick={() => insertSnippet(s.body)}
                 >
                   {s.name}
@@ -636,7 +636,7 @@
         </div>
       {/if}
       <button
-        class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
         use:tooltip={t("editor.save")}
         aria-label={t("editor.save")}
         disabled={doc.readOnly || saving || doc.content === doc.baseContent}
@@ -672,7 +672,7 @@
       >
         <span>{t("editor.lintIssues", { n: lintMessages.length })}</span>
         <button
-          class="hover:text-white"
+          class="hover:text-text"
           aria-label={t("common.dismiss")}
           onclick={() => (lintMessages = null)}
         >

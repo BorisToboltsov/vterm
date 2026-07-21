@@ -158,7 +158,7 @@
       {@const usage = groupUsage(g.containers, statsById, parsePercent)}
       <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
         <Icon name="container" size={13} class="text-accent" />
-        <span class="min-w-0 flex-1 truncate font-medium text-white/85" use:tooltip={g.workdir ?? g.project}>{g.project}</span>
+        <span class="min-w-0 flex-1 truncate font-medium text-text/85" use:tooltip={g.workdir ?? g.project}>{g.project}</span>
         <!-- Project rollup: what the whole stack costs, summed from the snapshot the
              panel already holds. The analogue of the k8s owner rollup. -->
         {#if usage.cpu != null || usage.mem != null}
@@ -170,16 +170,16 @@
           </span>
         {/if}
         <div class="flex items-center gap-0.5 text-muted">
-          <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.project, g.workdir), { successKey: "docker.started" })}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.project, g.workdir), { successKey: "docker.started" })}>
             <Icon name="play" size={13} />
           </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.project, g.workdir), { destructive: true, successKey: "docker.stopped" })}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.project, g.workdir), { destructive: true, successKey: "docker.stopped" })}>
             <Icon name="stop" size={13} />
           </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeRestart")} aria-label={t("docker.composeRestart")} onclick={() => run(composeRestartArgs(g.project), { successKey: "docker.restarted" })}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeRestart")} aria-label={t("docker.composeRestart")} onclick={() => run(composeRestartArgs(g.project), { successKey: "docker.restarted" })}>
             <Icon name="refresh" size={12} />
           </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-white" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.project)}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.project)}>
             <Icon name="note" size={12} />
           </button>
         </div>
@@ -200,7 +200,7 @@
         <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
         <div class="min-w-0 flex-1" use:tooltip={infoTip(c)}>
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{c.name}</span>
+            <span class="truncate font-medium text-text/90">{c.name}</span>
             <span class="truncate text-caption text-muted">{c.image}</span>
           </div>
         </div>
@@ -240,7 +240,7 @@
           >
           {#if isRunning(c)}
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy}
               use:tooltip={t("docker.stop")}
               aria-label={t("docker.stop")}
@@ -249,7 +249,7 @@
               <Icon name="stop" size={14} />
             </button>
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy}
               use:tooltip={t("docker.restart")}
               aria-label={t("docker.restart")}
@@ -259,7 +259,7 @@
             </button>
           {:else}
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy}
               use:tooltip={t("docker.start")}
               aria-label={t("docker.start")}
@@ -269,7 +269,7 @@
             </button>
           {/if}
           <button
-            class="rounded p-1 hover:bg-edge hover:text-white"
+            class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("docker.viewDetails")}
             aria-label={t("docker.viewDetails")}
             onclick={() => onViewDetails(c)}

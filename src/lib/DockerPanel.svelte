@@ -429,7 +429,7 @@
         </div>
       {/if}
       <button
-        class="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        class="rounded border border-edge px-2.5 py-1 text-xs text-muted hover:bg-edge hover:text-text disabled:opacity-40"
         data-testid="docker-retry"
         onclick={() => retry()}
       >
@@ -441,15 +441,15 @@
     <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
       <Icon name="container" size={15} class="text-accent" />
       <div class="min-w-0 flex-1">
-        <div class="font-medium text-white/90">{t("docker.panelTitle")}</div>
+        <div class="font-medium text-text/90">{t("docker.panelTitle")}</div>
         <div class="truncate text-caption text-muted">{t("docker.serverVersion", { version: availability.version })}</div>
       </div>
       {#if registries.length > 0}
-        <button class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.registryLogin")} aria-label={t("docker.registryLogin")} onclick={openLoginMenu}>
+        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.registryLogin")} aria-label={t("docker.registryLogin")} onclick={openLoginMenu}>
           <Icon name="key" size={14} />
         </button>
       {/if}
-      <button class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => refresh()}>
+      <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => refresh()}>
         <Icon name="refresh" size={14} />
       </button>
     </div>
@@ -459,7 +459,7 @@
       {#each SUBS as s (s.id)}
         <button
           data-testid={`docker-subtab-${s.id}`}
-          class="flex-1 border-b-2 py-1.5 text-center {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-white'}"
+          class="flex-1 border-b-2 py-1.5 text-center {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
           aria-current={activeSub === s.id ? "true" : undefined}
           onclick={() => (activeSub = s.id)}
         >
@@ -534,7 +534,7 @@
   oncancel={() => settleConfirm(false)}
 >
   {t("docker.confirmBody")}
-  <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-white/80">{confirmText}</code>
+  <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-text/80">{confirmText}</code>
   {#if prod}
     <span class="mt-1 block text-meta text-danger">{t("docker.confirmProdWarn")}</span>
   {/if}

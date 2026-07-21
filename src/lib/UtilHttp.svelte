@@ -59,7 +59,7 @@
         {t("util.http.method")}
         <select
           data-testid="http-method"
-          class="mt-1 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+          class="mt-1 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
           bind:value={method}
         >
           {#each HTTP_METHODS as m (m)}
@@ -71,7 +71,7 @@
         {t("util.http.url")}
         <input
           data-testid="http-url"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
           placeholder="https://api.example.com/health"
           bind:value={url}
         />
@@ -82,7 +82,7 @@
       <textarea
         data-testid="http-headers"
         rows="2"
-        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
+        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-text outline-none focus:border-accent"
         placeholder="Authorization: Bearer …&#10;Accept: application/json"
         bind:value={headersText}
       ></textarea>
@@ -92,7 +92,7 @@
       <textarea
         data-testid="http-body"
         rows="2"
-        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
+        class="mt-1 w-full resize-y rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-text outline-none focus:border-accent"
         placeholder={`{"key":"value"}`}
         bind:value={body}
       ></textarea>
@@ -112,9 +112,9 @@
             {resp.status} {resp.statusText}
           </span>
           {#if resp.timings}
-            <span class="text-meta text-muted">{t("util.http.time")}: <span class="font-mono text-white">{resp.timings.totalMs} ms</span></span>
-            <span class="text-meta text-muted">{t("util.http.size")}: <span class="font-mono text-white">{resp.timings.sizeBytes} B</span></span>
-            <span class="text-meta text-muted">TTFB: <span class="font-mono text-white">{resp.timings.ttfbMs} ms</span></span>
+            <span class="text-meta text-muted">{t("util.http.time")}: <span class="font-mono text-text">{resp.timings.totalMs} ms</span></span>
+            <span class="text-meta text-muted">{t("util.http.size")}: <span class="font-mono text-text">{resp.timings.sizeBytes} B</span></span>
+            <span class="text-meta text-muted">TTFB: <span class="font-mono text-text">{resp.timings.ttfbMs} ms</span></span>
           {/if}
         </div>
         {#if resp.headers.length}
@@ -125,7 +125,7 @@
                 {#each resp.headers as h, i (i)}
                   <tr class="align-top">
                     <td class="py-0.5 pr-3 font-mono text-meta text-accent">{h.name}</td>
-                    <td class="py-0.5 font-mono text-meta break-all text-white">{h.value}</td>
+                    <td class="py-0.5 font-mono text-meta break-all text-text">{h.value}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -136,7 +136,7 @@
           <span class="text-meta text-muted">{t("util.http.body")}</span>
           <CopyButton text={resp.body} />
         </div>
-        <pre class="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-meta text-white" data-testid="http-body-out">{resp.body}</pre>
+        <pre class="max-h-72 overflow-auto whitespace-pre-wrap rounded border border-edge bg-panel p-2 font-mono text-meta text-text" data-testid="http-body-out">{resp.body}</pre>
       </div>
     {:else}
       <pre class="whitespace-pre-wrap rounded border border-danger/40 bg-danger/10 p-2 font-mono text-meta text-danger" data-testid="http-raw">{out.stderr || out.stdout || t("util.probe.noOutput")}</pre>

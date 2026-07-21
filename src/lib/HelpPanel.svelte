@@ -81,19 +81,19 @@
         <button
           class="text-sm font-semibold {tab === 'help'
             ? 'text-accent'
-            : 'text-muted hover:text-white'}"
+            : 'text-muted hover:text-text'}"
           onclick={() => (tab = "help")}>{t("help.tabHelp")}</button
         >
         <button
           class="text-sm font-semibold {tab === 'manual'
             ? 'text-accent'
-            : 'text-muted hover:text-white'}"
+            : 'text-muted hover:text-text'}"
           onclick={() => (tab = "manual")}>{t("help.tabManual")}</button
         >
         <button
           class="text-sm font-semibold {tab === 'about'
             ? 'text-accent'
-            : 'text-muted hover:text-white'}"
+            : 'text-muted hover:text-text'}"
           onclick={() => (tab = "about")}>{t("help.tabAbout")}</button
         >
         <button
@@ -129,7 +129,7 @@
               {#each hotkeys as [labelKey, keys, keysLabel] (labelKey)}
                 <tr class="border-b border-edge/50">
                   <td class="py-1 text-muted">{t(labelKey)}</td>
-                  <td class="py-1 text-right font-mono text-white"
+                  <td class="py-1 text-right font-mono text-text"
                     >{keysLabel ? t(keysLabel) : keys}</td
                   >
                 </tr>
@@ -145,16 +145,16 @@
           <div class="space-y-2 text-xs">
             <div class="text-lg font-semibold text-accent">{appName}</div>
             <div class="text-muted">
-              {t("help.version")} <span class="text-white">{version || "—"}</span>
+              {t("help.version")} <span class="text-text">{version || "—"}</span>
               {#if tauriVersion}
-                · Tauri <span class="text-white">{tauriVersion}</span>
+                · Tauri <span class="text-text">{tauriVersion}</span>
               {/if}
             </div>
             <p class="text-muted">
-              {t("help.author")}: <span class="text-white">Тобольцов Борис Олегович</span>
+              {t("help.author")}: <span class="text-text">Тобольцов Борис Олегович</span>
             </p>
             <p class="text-muted">
-              {t("help.email")}: <span class="select-text text-white">bt@vcore.su</span>
+              {t("help.email")}: <span class="select-text text-text">bt@vcore.su</span>
             </p>
             <p class="text-muted">
               Telegram: <button

@@ -49,7 +49,7 @@
     {t("util.cron.input")}
     <input
       data-testid="cron-input"
-      class="mt-1 w-full max-w-sm rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full max-w-sm rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
       placeholder="*/15 * * * *"
       bind:value={input}
     />
@@ -63,18 +63,18 @@
         {#each rows as [key, value] (key)}
           <tr class="border-b border-edge/50">
             <td class="w-32 py-1 pr-3 text-muted">{t(key)}</td>
-            <td class="py-1 text-white">{value}</td>
+            <td class="py-1 text-text">{value}</td>
           </tr>
         {/each}
       </tbody>
     </table>
 
     <div>
-      <p class="mb-1 font-medium text-white">{t("util.cron.nextRuns")}</p>
+      <p class="mb-1 font-medium text-text">{t("util.cron.nextRuns")}</p>
       {#if runs.length === 0}
         <p class="text-meta text-muted" data-testid="cron-noruns">{t("util.cron.noRuns")}</p>
       {:else}
-        <ul class="space-y-0.5 font-mono text-white" data-testid="cron-runs">
+        <ul class="space-y-0.5 font-mono text-text" data-testid="cron-runs">
           {#each runs as r (r.getTime())}
             <li>{fmt(r)}</li>
           {/each}

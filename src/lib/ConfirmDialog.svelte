@@ -32,7 +32,7 @@
   <div class="flex justify-end gap-2">
     <button
       type="button"
-      class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+      class="rounded px-3 py-1 text-sm text-muted hover:text-text"
       onclick={() => oncancel?.()}
     >
       {t("common.cancel")}

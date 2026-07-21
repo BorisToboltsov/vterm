@@ -95,7 +95,7 @@
     <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
       {#if g.name}
         <Icon name={KIND_ICON[g.kind] ?? "cloud"} size={13} class="text-accent" />
-        <span class="min-w-0 flex-1 truncate font-medium text-white/85">{g.name}</span>
+        <span class="min-w-0 flex-1 truncate font-medium text-text/85">{g.name}</span>
         <span class="shrink-0 text-caption uppercase tracking-wider text-muted">{g.kind}</span>
       {:else}
         <span class="text-caption uppercase tracking-wider text-muted">{t("k8s.standalone")}</span>
@@ -113,7 +113,7 @@
         <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{p.name}</span>
+            <span class="truncate font-medium text-text/90">{p.name}</span>
             <span class="shrink-0 text-caption text-muted">{p.status}</span>
           </div>
         </div>
@@ -174,7 +174,7 @@
         </div>
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">
           <button
-            class="rounded p-1 hover:bg-edge hover:text-white"
+            class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("k8s.openShell")}
             aria-label={t("k8s.openShell")}
             onclick={() => openShell(p, p.containers.length > 1 ? p.containers[0] : null)}
@@ -182,7 +182,7 @@
             <Icon name="terminal" size={14} />
           </button>
           <button
-            class="rounded p-1 hover:bg-edge hover:text-white"
+            class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("k8s.viewDetails")}
             aria-label={t("k8s.viewDetails")}
             onclick={() => onViewDetails(p)}

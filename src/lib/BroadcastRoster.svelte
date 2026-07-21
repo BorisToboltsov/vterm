@@ -53,7 +53,7 @@
           <span class="h-2 w-2 shrink-0 rounded-full {row.dot}"></span>
           <span class="min-w-0 flex-1">
             <span class="flex items-center gap-1.5">
-              <span class="truncate font-mono text-xs text-white">{row.alias}</span>
+              <span class="truncate font-mono text-xs text-text">{row.alias}</span>
               {#if row.isProd}
                 <span class="shrink-0 rounded bg-danger/30 px-1 text-caption text-danger">prod</span>
               {/if}

@@ -43,7 +43,7 @@
       <Icon name={ICON[toast.kind]} size={15} class="mt-0.5 shrink-0" />
       <span class="min-w-0 flex-1 break-words text-text">{toast.message}</span>
       <button
-        class="flex shrink-0 items-center text-muted hover:text-white"
+        class="flex shrink-0 items-center text-muted hover:text-text"
         aria-label={t("common.dismiss")}
         onclick={() => dismissToast(toast.id)}
       >

@@ -53,7 +53,7 @@
       autocomplete="off"
       aria-label={t("broadcast.placeholder")}
       placeholder={t("broadcast.placeholder")}
-      class="min-w-0 flex-1 rounded border border-edge bg-panel px-2.5 py-1.5 font-mono text-sm text-white placeholder:text-muted focus:border-accent focus:outline-none"
+      class="min-w-0 flex-1 rounded border border-edge bg-panel px-2.5 py-1.5 font-mono text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none"
       onkeydown={onKey}
     />
     <button

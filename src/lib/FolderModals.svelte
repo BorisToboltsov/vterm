@@ -91,19 +91,19 @@
   <form onsubmit={submitCreate}>
     {#if createParent}
       <p class="mb-3 text-xs text-muted">
-        {t("page.inside")} <span class="text-white">{createParent}</span>
+        {t("page.inside")} <span class="text-text">{createParent}</span>
       </p>
     {/if}
     <input
       use:focusOnMount
-      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       placeholder={t("sftp.folderNamePlaceholder")}
       bind:value={createName}
     />
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+        class="rounded px-3 py-1 text-sm text-muted hover:text-text"
         onclick={() => (showCreate = false)}>{t("common.cancel")}</button
       >
       <button
@@ -120,14 +120,14 @@
   <form onsubmit={submitRename}>
     <input
       use:focusOnMount
-      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       placeholder={t("sftp.folderNamePlaceholder")}
       bind:value={renameName}
     />
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+        class="rounded px-3 py-1 text-sm text-muted hover:text-text"
         onclick={() => (toRename = null)}>{t("common.cancel")}</button
       >
       <button
@@ -147,5 +147,5 @@
   onconfirm={confirmDelete}
   oncancel={() => (toDelete = null)}
 >
-  {t("page.deleteFolderBody1")} <span class="text-white">{toDelete}</span> {t("page.deleteFolderBody2")}
+  {t("page.deleteFolderBody1")} <span class="text-text">{toDelete}</span> {t("page.deleteFolderBody2")}
 </ConfirmDialog>

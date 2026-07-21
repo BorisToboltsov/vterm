@@ -107,7 +107,7 @@
     <!-- Vertical tabs (a thin strip): click expands to that tab -->
     <div class="flex w-9 flex-col items-center gap-2 py-2">
       <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+        class="rounded p-1 text-muted hover:bg-edge hover:text-text"
         use:tooltip={t("sftp.expandPanel")}
         aria-label={t("sftp.expandPanel")}
         onclick={() => (collapsed = false)}
@@ -123,8 +123,8 @@
           data-testid={`dock-vtab-${tab.id}`}
           class="rounded px-1 py-1.5 text-meta uppercase tracking-wider [writing-mode:vertical-rl] {activeTab ===
           tab.id
-            ? 'bg-edge text-white'
-            : 'text-muted hover:text-white'}"
+            ? 'bg-edge text-text'
+            : 'text-muted hover:text-text'}"
           aria-current={activeTab === tab.id ? "true" : undefined}
           onclick={() => pick(tab.id)}
         >
@@ -137,7 +137,7 @@
       <!-- Horizontal tabs + collapse -->
       <div class="flex items-center border-b border-edge text-xs">
         <button
-          class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+          class="rounded p-1 text-muted hover:bg-edge hover:text-text"
           use:tooltip={t("sftp.collapsePanel")}
           aria-label={t("sftp.collapsePanel")}
           onclick={() => (collapsed = true)}
@@ -149,7 +149,7 @@
             data-testid={`dock-tab-${tab.id}`}
             class="flex-1 border-b-2 py-1.5 text-center {activeTab === tab.id
               ? 'border-accent text-accent'
-              : 'border-transparent text-muted hover:text-white'}"
+              : 'border-transparent text-muted hover:text-text'}"
             aria-current={activeTab === tab.id ? "true" : undefined}
             onclick={() => (activeTab = tab.id)}
           >

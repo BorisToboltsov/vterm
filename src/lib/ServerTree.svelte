@@ -312,7 +312,7 @@
   {#if layout.leftCollapsed}
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+        class="rounded p-1 text-muted hover:bg-edge hover:text-text"
         use:tooltip={t("tree.expandList")}
         aria-label={t("tree.expandList")}
         onclick={() => (layout.leftCollapsed = false)}
@@ -331,7 +331,7 @@
     >
       <span>{t("tree.savedServers")}</span>
       <button
-        class="rounded p-0.5 hover:bg-edge hover:text-white"
+        class="rounded p-0.5 hover:bg-edge hover:text-text"
         use:tooltip={t("tree.collapseList")}
         aria-label={t("tree.collapseList")}
         onclick={() => (layout.leftCollapsed = true)}
@@ -342,12 +342,12 @@
     <div class="flex items-center gap-1 px-2 pb-2">
       <input
         data-testid="server-search"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+        class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
         placeholder={t("tree.searchPlaceholder")}
         bind:value={serverSearch}
       />
       <button
-        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
         use:tooltip={t("tree.newFolder")}
         aria-label={t("tree.newFolder")}
         onclick={() => onNewFolder("")}
@@ -356,7 +356,7 @@
       </button>
       <button
         data-testid="add-server"
-        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
         use:tooltip={t("tree.addServer")}
         aria-label={t("tree.addServer")}
         onclick={onAddServer}
@@ -417,7 +417,7 @@
           >
             {@render guides(row.depth)}
             <button
-              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-white"
+              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-text"
               use:tooltip={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
               aria-label={t("tree.toggleFolder")}
               onclick={(e) => {

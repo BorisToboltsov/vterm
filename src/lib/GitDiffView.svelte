@@ -37,7 +37,7 @@
                 ? 'bg-edge/60 text-accent'
                 : line.type === 'meta'
                   ? 'text-muted'
-                  : 'text-white/80'}"
+                  : 'text-text/80'}"
         >{line.text || " "}</div>
       {/each}
     </div>

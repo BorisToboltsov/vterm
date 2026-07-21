@@ -516,7 +516,11 @@
       "Bash(./scripts/clean-launchservices.sh)",
       "Bash(pgrep -q clippy-driver)",
       "Bash(grep -n \"самодостаточные модалки — в \\\\`ServerFormModal\\\\`\" docs/INVARIANTS.md)",
-      "Bash(awk '/#\\\\[tauri::command\\\\]/{cmd=1; next} cmd && /fn /{print NR\": \"$0; cmd=0}' src-tauri/src/lib.rs)"
+      "Bash(awk '/#\\\\[tauri::command\\\\]/{cmd=1; next} cmd && /fn /{print NR\": \"$0; cmd=0}' src-tauri/src/lib.rs)",
+      "Bash(xargs -0 perl -i -pe ' *)",
+      "Bash(perl -i -pe 's/ring-white\\\\/70/ring-accent/g' src/lib/ServerIconPicker.svelte)",
+      "Bash(perl -i -pe 's/\"version\": \"0\\\\.44\\\\.9\"/\"version\": \"0.44.10\"/' package.json src-tauri/tauri.conf.json)",
+      "Bash(perl -i -pe 's/^version = \"0\\\\.44\\\\.9\"/version = \"0.44.10\"/' src-tauri/Cargo.toml)"
     ]
   }
 }

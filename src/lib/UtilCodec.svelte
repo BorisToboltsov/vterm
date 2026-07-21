@@ -41,7 +41,7 @@
       {t("util.codec.format")}
       <select
         data-testid="codec-format"
-        class="mt-1 block rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 block rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={kind}
       >
         {#each FORMATS as f (f.id)}
@@ -71,7 +71,7 @@
     <button
       type="button"
       data-testid="codec-swap"
-      class="flex items-center gap-1 rounded px-2 py-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+      class="flex items-center gap-1 rounded px-2 py-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
       onclick={swap}
       disabled={!result.ok || output === ""}
       aria-label={t("util.codec.swap")}
@@ -85,7 +85,7 @@
     <textarea
       data-testid="codec-input"
       rows="4"
-      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
+      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-text outline-none focus:border-accent"
       bind:value={input}
     ></textarea>
   </label>
@@ -104,7 +104,7 @@
         readonly
         data-testid="codec-output"
         rows="4"
-        class="w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none"
+        class="w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-text outline-none"
         value={output}
       ></textarea>
     {/if}

@@ -308,7 +308,7 @@
         {#if groups.length > 0}{@render divider()}{/if}
         <button
           data-testid="transfer-indicator"
-          class="flex items-center gap-1.5 rounded px-1 text-muted hover:text-white"
+          class="flex items-center gap-1.5 rounded px-1 text-muted hover:text-text"
           use:tooltip={t("bar.transfers")}
           onclick={() => (layout.sftpCollapsed = false)}
         >
@@ -338,7 +338,7 @@
   {#if metrics}
     <button
       data-testid="statusbar-toggle"
-      class="flex w-9 shrink-0 items-center justify-center self-stretch border-l border-edge text-muted hover:text-white"
+      class="flex w-9 shrink-0 items-center justify-center self-stretch border-l border-edge text-muted hover:text-text"
       use:tooltip={expanded ? t("bar.compactView") : t("bar.expandedView")}
       aria-label={expanded ? t("bar.compactAria") : t("bar.expandedAria")}
       aria-pressed={expanded}

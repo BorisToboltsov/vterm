@@ -44,7 +44,7 @@
 {:else}
   <div class="h-full overflow-auto text-xs">
     <div class="flex justify-end border-b border-edge px-2 py-1">
-      <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} onclick={() => run(pruneImagesArgs(), { destructive: true, successKey: "docker.pruned" })}>
+      <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneImagesArgs(), { destructive: true, successKey: "docker.pruned" })}>
         <Icon name="trash" size={12} />
         {t("docker.pruneImages")}
       </button>
@@ -53,9 +53,9 @@
       <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" oncontextmenu={(e) => showMenu(e, menuItems(img))} role="listitem">
         <Icon name="container" size={14} class="shrink-0 text-accent" />
         <div class="min-w-0 flex-1 truncate">
-          <span class="text-white/90">{img.repository}</span><span class="text-muted">:{img.tag}</span>
+          <span class="text-text/90">{img.repository}</span><span class="text-muted">:{img.tag}</span>
         </div>
-        <span class="shrink-0 text-caption text-white/50">{img.size}</span>
+        <span class="shrink-0 text-caption text-text/50">{img.size}</span>
         <span class="w-20 shrink-0 truncate text-right text-caption text-muted" use:tooltip={img.created}>{img.created}</span>
         <button class="shrink-0 rounded p-1 text-danger opacity-0 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeImageArgs([img.id], true), { destructive: true, successKey: "docker.removed" })}>
           <Icon name="trash" size={13} />

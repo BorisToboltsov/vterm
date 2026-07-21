@@ -41,12 +41,12 @@
       data-testid="knownhosts-search"
       type="search"
       placeholder={t("util.knownHosts.search")}
-      class="flex-1 rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="flex-1 rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       bind:value={search}
     />
     <button
       type="button"
-      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
       use:tooltip={t("util.knownHosts.refresh")}
       aria-label={t("util.knownHosts.refresh")}
       onclick={load}
@@ -65,7 +65,7 @@
       {#each hosts as h (h.id)}
         <li class="flex items-center gap-2 py-1.5">
           <div class="min-w-0 flex-1">
-            <p class="truncate font-mono text-sm text-white">
+            <p class="truncate font-mono text-sm text-text">
               {h.host}{#if h.port}<span class="text-muted">:{h.port}</span>{/if}
             </p>
             <p class="truncate font-mono text-meta text-muted">{h.fingerprint}</p>

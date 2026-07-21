@@ -182,7 +182,7 @@
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
         <div class="text-meta text-muted">{t("sync.localFolder")}</div>
         <div class="mt-1 flex items-center gap-2">
-          <span class="min-w-0 flex-1 truncate text-white" title={localPath}>{localPath || "—"}</span>
+          <span class="min-w-0 flex-1 truncate text-text" title={localPath}>{localPath || "—"}</span>
           <button
             class="shrink-0 rounded bg-edge px-2 py-0.5 hover:bg-accent hover:text-panel-alt"
             onclick={chooseLocal}>{t("sync.choose")}</button
@@ -194,7 +194,7 @@
       </div>
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
         <div class="text-meta text-muted">{t("sync.remoteFolder")}</div>
-        <div class="mt-1 truncate text-white" title={remotePath}>{remotePath}</div>
+        <div class="mt-1 truncate text-text" title={remotePath}>{remotePath}</div>
       </div>
     </div>
 
@@ -207,7 +207,7 @@
             class="flex items-center gap-1 border-r border-edge px-3 py-1 last:border-r-0 {direction ===
             d.val
               ? 'bg-edge text-accent'
-              : 'text-muted hover:text-white'}"
+              : 'text-muted hover:text-text'}"
             aria-pressed={direction === d.val}
             aria-label={t(d.full)} use:tooltip={t(d.full)}
             onclick={() => {
@@ -227,7 +227,7 @@
       {t("sync.exclude")}
       <textarea
         rows="4"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-text outline-none focus:border-accent"
         placeholder={t("sync.excludePlaceholder")}
         bind:value={excludeText}
         oninput={invalidate}
@@ -330,7 +330,7 @@
           {stopping ? t("sync.stopping") : t("sync.stop")}
         </button>
       {:else}
-        <button class="rounded px-3 py-1 text-muted hover:text-white" onclick={() => onclose?.()}>
+        <button class="rounded px-3 py-1 text-muted hover:text-text" onclick={() => onclose?.()}>
           {t("common.cancel")}
         </button>
       {/if}

@@ -38,7 +38,7 @@
   </div>
   <pre
     data-testid="docker-text"
-    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+    class="max-h-[64vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
   >{text || t("docker.noLogs")}</pre>
 </Modal>
 

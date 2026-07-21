@@ -93,7 +93,7 @@
   {#if command}
     <p class="mb-2 text-xs text-muted">{t("servertools.commandLabel")}</p>
     <pre
-      class="mb-3 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs text-white">{command}</pre>
+      class="mb-3 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs text-text">{command}</pre>
 
     {#if needsSudo && !installing && !done}
       <PasswordInput
@@ -130,7 +130,7 @@
     {/if}
 
     <div class="flex flex-wrap justify-end gap-2">
-      <button class="rounded px-3 py-1 text-sm text-muted hover:text-white" onclick={() => onclose?.()}>
+      <button class="rounded px-3 py-1 text-sm text-muted hover:text-text" onclick={() => onclose?.()}>
         {done ? t("common.done") : t("common.cancel")}
       </button>
       {#if !installing && !done}

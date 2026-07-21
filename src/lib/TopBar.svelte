@@ -72,7 +72,7 @@
         ? 'cursor-not-allowed text-muted opacity-40'
         : broadcastActive
           ? 'text-accent hover:bg-edge'
-          : 'text-muted hover:bg-edge hover:text-white'}"
+          : 'text-muted hover:bg-edge hover:text-text'}"
       use:tooltip={broadcastActive ? t("broadcast.removeFromGroup") : t("broadcast.addToGroup")}
       aria-label={broadcastActive ? t("broadcast.removeFromGroup") : t("broadcast.addToGroup")}
       aria-pressed={broadcastActive}
@@ -84,7 +84,7 @@
     </button>
     {#if showNotes}
       <button
-        class="relative flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+        class="relative flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
         use:tooltip={t("topbar.notes")}
         aria-label={t("topbar.notes")}
         data-testid="topbar-notes"
@@ -103,7 +103,7 @@
          cluster never reflows; they're dimmed + disabled until a session exists. -->
     <button
       class="flex items-center rounded p-1.5 {connected
-        ? 'text-muted hover:bg-edge hover:text-white'
+        ? 'text-muted hover:bg-edge hover:text-text'
         : 'cursor-not-allowed text-muted opacity-40'}"
       use:tooltip={t("topbar.monitoring")}
       aria-label={t("topbar.monitoring")}
@@ -119,7 +119,7 @@
         ? 'cursor-not-allowed text-muted opacity-40'
         : recording
           ? 'text-danger'
-          : 'text-muted hover:bg-edge hover:text-white'}"
+          : 'text-muted hover:bg-edge hover:text-text'}"
       use:tooltip={recording ? t("recordings.stop") : t("recordings.start")}
       aria-label={recording ? t("recordings.stop") : t("recordings.start")}
       aria-pressed={recording}
@@ -135,7 +135,7 @@
     </button>
     <button
       data-testid="open-recordings"
-      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
       use:tooltip={t("recordings.title")}
       aria-label={t("recordings.title")}
       onclick={onOpenRecordings}
@@ -143,7 +143,7 @@
       <Icon name="activity" size={15} />
     </button>
     <button
-      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
       use:tooltip={t("util.open")}
       aria-label={t("util.open")}
       data-testid="topbar-utilities"
@@ -152,7 +152,7 @@
       <Icon name="wrench" size={15} />
     </button>
     <button
-      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+      class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
       use:tooltip={t("topbar.settings")}
       aria-label={t("topbar.settings")}
       data-testid="topbar-settings"

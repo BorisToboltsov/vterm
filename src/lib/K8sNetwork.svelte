@@ -69,7 +69,7 @@
   <!-- Services -->
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="network" size={13} class="text-accent" />
-    <span class="font-medium text-white/85">{t("k8s.services")}</span>
+    <span class="font-medium text-text/85">{t("k8s.services")}</span>
     <span class="text-caption text-muted">{services.length}</span>
   </div>
   {#if services.length === 0}
@@ -83,7 +83,7 @@
       >
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{s.name}</span>
+            <span class="truncate font-medium text-text/90">{s.name}</span>
             <span class="shrink-0 text-caption text-muted">{s.type}</span>
             <span class="shrink-0 text-caption text-muted">{s.namespace}</span>
           </div>
@@ -94,7 +94,7 @@
         <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{s.age}</span>
         {#if s.firstPort !== null}
           <button
-            class="shrink-0 rounded p-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100"
+            class="shrink-0 rounded p-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100"
             use:tooltip={t("k8s.portForward")}
             aria-label={t("k8s.portForward")}
             onclick={() => onPortForward(`svc/${s.name}`, s.namespace, s.firstPort!)}
@@ -109,7 +109,7 @@
   <!-- Ingress -->
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="gateway" size={13} class="text-accent" />
-    <span class="font-medium text-white/85">{t("k8s.ingress")}</span>
+    <span class="font-medium text-text/85">{t("k8s.ingress")}</span>
     <span class="text-caption text-muted">{ingresses.length}</span>
   </div>
   {#if ingresses.length === 0}
@@ -123,7 +123,7 @@
       >
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{i.name}</span>
+            <span class="truncate font-medium text-text/90">{i.name}</span>
             {#if i.className}<span class="shrink-0 text-caption text-muted">{i.className}</span>{/if}
             <span class="shrink-0 text-caption text-muted">{i.namespace}</span>
           </div>

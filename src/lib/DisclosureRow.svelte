@@ -41,7 +41,7 @@
       data-testid={testid}
       aria-expanded={open}
       onclick={() => (open = !open)}
-      class="group flex min-w-0 flex-1 items-center gap-2 py-2 text-left hover:text-white"
+      class="group flex min-w-0 flex-1 items-center gap-2 py-2 text-left hover:text-text"
     >
       <span class="truncate">{#if labelSnippet}{@render labelSnippet()}{:else}{label}{/if}</span>
       <span class="ml-auto flex min-w-0 items-center gap-2 font-normal">
@@ -49,13 +49,13 @@
           <span class="shrink-0 text-muted">{count}</span>
         {/if}
         {#if preview}
-          <span class="flex min-w-0 items-center gap-2 text-white">{@render preview()}</span>
+          <span class="flex min-w-0 items-center gap-2 text-text">{@render preview()}</span>
         {/if}
       </span>
       <Icon
         name={open ? "chevronDown" : "chevronRight"}
         size={14}
-        class="shrink-0 text-muted group-hover:text-white"
+        class="shrink-0 text-muted group-hover:text-text"
       />
     </button>
     {#if trailing}{@render trailing()}{/if}
@@ -66,7 +66,7 @@
     data-testid={testid}
     aria-expanded={open}
     onclick={() => (open = !open)}
-    class="flex w-full items-center gap-2 rounded text-xs text-muted hover:text-white"
+    class="flex w-full items-center gap-2 rounded text-xs text-muted hover:text-text"
   >
     <Icon name={open ? "chevronDown" : "chevronRight"} size={14} class="shrink-0" />
     <span class="text-left">{#if labelSnippet}{@render labelSnippet()}{:else}{label}{/if}</span>
@@ -74,7 +74,7 @@
       <span class="shrink-0 text-muted">{count}</span>
     {/if}
     {#if preview}
-      <span class="ml-auto flex min-w-0 items-center gap-2 text-white">{@render preview()}</span>
+      <span class="ml-auto flex min-w-0 items-center gap-2 text-text">{@render preview()}</span>
     {/if}
   </button>
 {/if}

@@ -167,7 +167,7 @@
           <!-- "Ask AI" (Phase 41): state, events and logs are already loaded here. -->
           <button
             data-testid="k8s-ask-ai"
-            class="rounded p-1 hover:bg-edge hover:text-white"
+            class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("ai.ask.button")}
             aria-label={t("ai.ask.button")}
             onclick={() => onAsk?.(askContext(p))}
@@ -175,7 +175,7 @@
             <Icon name="aiMark" size={14} />
           </button>
         {/if}
-        <button class="rounded p-1 hover:bg-edge hover:text-white" use:tooltip={t("k8s.openShell")} aria-label={t("k8s.openShell")} onclick={() => openShell(p, container)}>
+        <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("k8s.openShell")} aria-label={t("k8s.openShell")} onclick={() => openShell(p, container)}>
           <Icon name="terminal" size={14} />
         </button>
         <button class="rounded p-1 text-danger hover:bg-edge disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.delete")} aria-label={t("k8s.delete")} onclick={remove}>
@@ -189,7 +189,7 @@
       {#each TABS as tb (tb.id)}
         <button
           data-testid={`k8s-detail-tab-${tb.id}`}
-          class="border-b-2 px-3 py-1.5 {tab === tb.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-white'}"
+          class="border-b-2 px-3 py-1.5 {tab === tb.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
           aria-current={tab === tb.id ? "true" : undefined}
           onclick={() => (tab = tb.id)}
         >
@@ -201,26 +201,26 @@
     {#if tab === "overview"}
       <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta" data-testid="k8s-detail-overview">
         <dt class="text-muted">{t("k8s.name")}</dt>
-        <dd class="break-all text-white/85">{p.name}</dd>
+        <dd class="break-all text-text/85">{p.name}</dd>
         <dt class="text-muted">{t("k8s.namespace")}</dt>
-        <dd class="break-all text-white/85">{p.namespace}</dd>
+        <dd class="break-all text-text/85">{p.namespace}</dd>
         <dt class="text-muted">{t("k8s.status")}</dt>
-        <dd class="break-all text-white/85">{p.status}</dd>
+        <dd class="break-all text-text/85">{p.status}</dd>
         <dt class="text-muted">{t("k8s.ready")}</dt>
-        <dd class="text-white/85">{p.ready}</dd>
+        <dd class="text-text/85">{p.ready}</dd>
         <dt class="text-muted">{t("k8s.restarts")}</dt>
-        <dd class="text-white/85">{p.restarts}</dd>
+        <dd class="text-text/85">{p.restarts}</dd>
         {#if p.node}
           <dt class="text-muted">{t("k8s.node")}</dt>
-          <dd class="break-all text-white/85">{p.node}</dd>
+          <dd class="break-all text-text/85">{p.node}</dd>
         {/if}
         <dt class="text-muted">{t("k8s.age")}</dt>
-        <dd class="text-white/85">{p.age}</dd>
+        <dd class="text-text/85">{p.age}</dd>
         {#if metrics}
           <dt class="text-muted">{t("k8s.cpu")}</dt>
-          <dd class="text-white/85">{metrics.cpu}</dd>
+          <dd class="text-text/85">{metrics.cpu}</dd>
           <dt class="text-muted">{t("k8s.mem")}</dt>
-          <dd class="text-white/85">{metrics.mem}</dd>
+          <dd class="text-text/85">{metrics.mem}</dd>
         {/if}
       </dl>
     {:else if tab === "logs"}
@@ -229,7 +229,7 @@
           <label class="flex items-center gap-1 text-meta text-muted">
             {t("k8s.container")}
             <select
-              class="rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
+              class="rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
               bind:value={container}
             >
               {#each p.containers as c (c)}
@@ -244,7 +244,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
       >{logsText || t("k8s.noLogs")}</pre>
     {:else if tab === "describe"}
       <div class="mb-1 flex justify-end">
@@ -252,7 +252,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
       >{describeText || t("k8s.noLogs")}</pre>
     {:else}
       <div class="mb-1 flex justify-end">
@@ -260,7 +260,7 @@
       </div>
       <pre
         data-testid="k8s-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
       >{yamlText || t("k8s.noLogs")}</pre>
     {/if}
   {/if}

@@ -37,7 +37,7 @@
   });
 
   const inputClass =
-    "w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent";
+    "w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent";
 </script>
 
 <Modal {open} title={heading} {onclose}>
@@ -78,7 +78,7 @@
           <button
             type="button"
             onclick={() => onclose?.()}
-            class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+            class="rounded px-3 py-1 text-sm text-muted hover:text-text"
           >
             {t("common.cancel")}
           </button>

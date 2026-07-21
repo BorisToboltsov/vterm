@@ -43,7 +43,7 @@
         {t("util.tls.host")}
         <input
           data-testid="tls-host"
-          class="mt-1 w-56 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-56 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
           placeholder="example.com"
           bind:value={host}
         />
@@ -55,7 +55,7 @@
           type="number"
           min="1"
           max="65535"
-          class="mt-1 w-24 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-24 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
           bind:value={port}
         />
       </label>
@@ -83,7 +83,7 @@
               {#if value}
                 <tr class="border-b border-edge/50 align-top">
                   <td class="py-1 pr-3 text-muted">{t(key as MessageKey)}</td>
-                  <td class="py-1 font-mono text-meta break-all text-white">{value}</td>
+                  <td class="py-1 font-mono text-meta break-all text-text">{value}</td>
                   <td class="py-1 pl-2 text-right"><CopyButton text={value} /></td>
                 </tr>
               {/if}
@@ -91,7 +91,7 @@
             {#if cert.sans.length}
               <tr class="align-top">
                 <td class="py-1 pr-3 text-muted">{t("util.tls.san")}</td>
-                <td class="py-1 font-mono text-meta break-all text-white">{cert.sans.join(", ")}</td>
+                <td class="py-1 font-mono text-meta break-all text-text">{cert.sans.join(", ")}</td>
                 <td class="py-1 pl-2 text-right"><CopyButton text={cert.sans.join(", ")} /></td>
               </tr>
             {/if}

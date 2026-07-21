@@ -261,7 +261,7 @@
       <span>{t("git.staged")} ({staged.length})</span>
       {#if staged.length}
         <button
-          class="rounded px-1 hover:bg-edge hover:text-white"
+          class="rounded px-1 hover:bg-edge hover:text-text"
           use:tooltip={t("git.unstageAll")}
           aria-label={t("git.unstageAll")}
           onclick={() => run(unstageAllArgs())}
@@ -277,11 +277,11 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
+          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.unstage")} aria-label={t("git.unstage")} onclick={() => run(unstageArgs([f.path]))}>
+          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.unstage")} aria-label={t("git.unstage")} onclick={() => run(unstageArgs([f.path]))}>
             <Icon name="minus" size={13} />
           </button>
         </div>
@@ -314,7 +314,7 @@
             </button>
           {/if}
           <button
-            class="rounded px-1 hover:bg-edge hover:text-white"
+            class="rounded px-1 hover:bg-edge hover:text-text"
             use:tooltip={t("git.stageAll")}
             aria-label={t("git.stageAll")}
             onclick={() => run(stageAllArgs())}
@@ -322,7 +322,7 @@
             <Icon name="plus" size={13} />
           </button>
           <button
-            class="rounded px-1 hover:bg-edge hover:text-white disabled:opacity-40"
+            class="rounded px-1 hover:bg-edge hover:text-text disabled:opacity-40"
             use:tooltip={t("git.stashSave")}
             aria-label={t("git.stashSave")}
             disabled={busy}
@@ -336,15 +336,15 @@
 
     <!-- Selection action bar -->
     {#if selFiles.length}
-      <div class="flex items-center gap-1.5 border-b border-edge/40 bg-accent/10 px-2 py-1 text-caption text-white/80">
+      <div class="flex items-center gap-1.5 border-b border-edge/40 bg-accent/10 px-2 py-1 text-caption text-text/80">
         <span class="flex-1">{t("git.selectedN", { count: selFiles.length })}</span>
         <button class="rounded px-1 text-muted hover:bg-edge hover:text-danger" use:tooltip={t("git.discardSelected")} aria-label={t("git.discardSelected")} onclick={() => askDiscard(selFiles)}>
           <Icon name="trash" size={12} />
         </button>
-        <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.stageSelected")} aria-label={t("git.stageSelected")} onclick={stageSelected}>
+        <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.stageSelected")} aria-label={t("git.stageSelected")} onclick={stageSelected}>
           <Icon name="plus" size={13} />
         </button>
-        <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.clearSelection")} aria-label={t("git.clearSelection")} onclick={() => (selected = new Set())}>
+        <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.clearSelection")} aria-label={t("git.clearSelection")} onclick={() => (selected = new Set())}>
           <Icon name="close" size={12} />
         </button>
       </div>
@@ -358,14 +358,14 @@
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
           <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-white/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
+          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-danger group-hover:opacity-100" use:tooltip={f.work === "?" ? t("git.deleteFile") : t("git.discard")} aria-label={f.work === "?" ? t("git.deleteFile") : t("git.discard")} onclick={() => discardFiles([f])}>
             <Icon name={f.work === "?" ? "trash" : "history"} size={f.work === "?" ? 12 : 13} />
           </button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.stage")} aria-label={t("git.stage")} onclick={() => run(stageArgs([f.path]))}>
+          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.stage")} aria-label={t("git.stage")} onclick={() => run(stageArgs([f.path]))}>
             <Icon name="plus" size={13} />
           </button>
         </div>
@@ -380,7 +380,7 @@
         bind:value={message}
         rows="2"
         placeholder={t("git.commitPlaceholder")}
-        class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 pr-7 text-meta text-white placeholder:text-muted focus:border-accent focus:outline-none"
+        class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 pr-7 text-meta text-text placeholder:text-muted focus:border-accent focus:outline-none"
       ></textarea>
       {#if aiOn}
         <button
@@ -405,7 +405,7 @@
         {t("git.commit")}
       </button>
       <button
-        class="flex items-center justify-center gap-1 rounded border border-edge px-2 py-1 text-meta text-muted hover:bg-edge hover:text-white disabled:opacity-40"
+        class="flex items-center justify-center gap-1 rounded border border-edge px-2 py-1 text-meta text-muted hover:bg-edge hover:text-text disabled:opacity-40"
         use:tooltip={t("git.commitAndPush")}
         aria-label={t("git.commitAndPush")}
         disabled={!canCommit}

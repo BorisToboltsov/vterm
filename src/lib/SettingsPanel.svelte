@@ -161,7 +161,7 @@
           type="search"
           placeholder={t("settings.searchPlaceholder")}
           aria-label={t("settings.searchAria")}
-          class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
           bind:value={search}
         />
       </div>
@@ -180,8 +180,8 @@
               tabindex={activeGroup === g.id ? 0 : -1}
               class="mb-1 flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm {!searching &&
               activeGroup === g.id
-                ? 'bg-edge text-white'
-                : 'text-muted hover:bg-edge/50 hover:text-white'}"
+                ? 'bg-edge text-text'
+                : 'text-muted hover:bg-edge/50 hover:text-text'}"
               aria-current={!searching && activeGroup === g.id ? "page" : undefined}
               onclick={() => selectGroup(g.id)}
               onkeydown={(e) => onNavKey(e, gi)}
@@ -205,7 +205,7 @@
                header is shown — it would just duplicate the tab (v0.21.8). -->
           {#if searching}
             <div
-              class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-white"
+              class="sticky -top-4 z-10 -mx-4 -mt-4 mb-0 border-b border-edge bg-panel-alt px-4 py-2 text-xs font-semibold text-text"
               data-testid="settings-active-header"
             >
               {t("settings.searchResults")}
@@ -225,7 +225,7 @@
                  a plain binding skips that. Guarded by settings.guard.test.ts. -->
             <select
               data-testid="language-select"
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               value={settings.language}
               onchange={(e) => setLocale(e.currentTarget.value as Locale)}
             >
@@ -249,7 +249,7 @@
             <label class="block flex-1 text-xs text-muted">
               {t("settings.cursorStyle")}
               <select
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 bind:value={settings.cursorStyle}
               >
                 <option value="block">{t("settings.cursorBlock")}</option>
@@ -282,7 +282,7 @@
                 min="0"
                 max="100000"
                 step="500"
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 bind:value={settings.scrollback}
               />
             </label>
@@ -291,7 +291,7 @@
                 >{t("settings.bell")}<InfoHint text={t("settings.bellHint")} /></span
               >
               <select
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 bind:value={settings.bell}
               >
                 <option value="none">{t("settings.bellNone")}</option>
@@ -334,7 +334,7 @@
               >{t("settings.recordMode")}<InfoHint text={t("settings.recordModeHint")} /></span
             >
             <select
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.recordMode}
             >
               <option value="full">{t("settings.recordModeFull")}</option>
@@ -357,7 +357,7 @@
               type="number"
               min="0"
               step="5"
-              class="mt-1 w-24 rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-24 rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.recordIdlePauseSecs}
             />
           </label>
@@ -396,7 +396,7 @@
               type="number"
               min="1"
               max={MAX_OPEN_MB_LIMIT}
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               value={settings.sftp.maxOpenMb}
               onchange={(e) => (settings.sftp.maxOpenMb = clampMaxOpenMb(e.currentTarget.valueAsNumber))}
             />
@@ -446,7 +446,7 @@
                 type="number"
                 min="1"
                 max="120"
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 bind:value={settings.connectTimeout}
               />
             </label>
@@ -456,7 +456,7 @@
                 type="number"
                 min="0"
                 max="600"
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 bind:value={settings.keepaliveInterval}
               />
             </label>
@@ -467,7 +467,7 @@
               type="number"
               min="1"
               max="65535"
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.defaultPort}
             />
           </label>
@@ -486,7 +486,7 @@
           <label class="block text-xs text-muted">
             {t("settings.hostKeyPolicy")}
             <select
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={settings.hostKeyPolicy}
             >
               <option value="strict">{t("settings.hostKeyStrict")}</option>

@@ -92,7 +92,7 @@
   {#each grouped as group (group.kind)}
     <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
       <Icon name={KIND_ICON[group.kind] ?? "cloud"} size={13} class="text-accent" />
-      <span class="min-w-0 flex-1 truncate font-medium text-white/85">{group.kind}</span>
+      <span class="min-w-0 flex-1 truncate font-medium text-text/85">{group.kind}</span>
     </div>
 
     {#each group.items as w (`${w.namespace}/${w.name}`)}
@@ -103,7 +103,7 @@
       >
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{w.name}</span>
+            <span class="truncate font-medium text-text/90">{w.name}</span>
             <span class="shrink-0 text-caption text-muted">{w.namespace}</span>
           </div>
           {#if w.kind === "CronJob"}
@@ -122,7 +122,7 @@
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">
           {#if w.scalable}
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy || w.replicas === 0}
               use:tooltip={t("k8s.scaleDown")}
               aria-label={t("k8s.scaleDown")}
@@ -131,7 +131,7 @@
               <Icon name="minus" size={14} />
             </button>
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy}
               use:tooltip={t("k8s.scaleUp")}
               aria-label={t("k8s.scaleUp")}
@@ -142,7 +142,7 @@
           {/if}
           {#if canRollout(w)}
             <button
-              class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40"
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
               disabled={busy}
               use:tooltip={t("k8s.rolloutRestart")}
               aria-label={t("k8s.rolloutRestart")}

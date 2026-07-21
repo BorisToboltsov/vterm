@@ -92,12 +92,12 @@
     <div class="flex items-center gap-2">
       <code
         data-testid="pw-output"
-        class="min-h-[1.5rem] flex-1 break-all font-mono text-sm text-white">{value}</code
+        class="min-h-[1.5rem] flex-1 break-all font-mono text-sm text-text">{value}</code
       >
       <button
         type="button"
         data-testid="pw-regenerate"
-        class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white"
+        class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
         aria-label={t("util.password.regenerate")}
         onclick={() => (seed += 1)}><Icon name="refresh" size={14} /></button
       >
@@ -118,7 +118,7 @@
 
   {#if mode === "password"}
     <label class="block">
-      {t("util.password.length")}: <span class="text-white">{opts.length}</span>
+      {t("util.password.length")}: <span class="text-text">{opts.length}</span>
       <input type="range" min="4" max="128" class="mt-1 w-full accent-accent" bind:value={opts.length} data-testid="pw-length" />
     </label>
     <div class="grid grid-cols-2 gap-x-4 gap-y-1">
@@ -135,20 +135,20 @@
     <label class="block">
       {t("util.password.exclude")}
       <input
-        class="mt-1 w-full max-w-xs rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full max-w-xs rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
         placeholder={"`'\";"}
         bind:value={opts.exclude}
       />
     </label>
   {:else}
     <label class="block">
-      {t("util.password.words")}: <span class="text-white">{phraseOpts.words}</span>
+      {t("util.password.words")}: <span class="text-text">{phraseOpts.words}</span>
       <input type="range" min="3" max="10" class="mt-1 w-full accent-accent" bind:value={phraseOpts.words} data-testid="pw-words" />
     </label>
     <label class="block">
       {t("util.password.separator")}
       <input
-        class="mt-1 w-20 rounded border border-edge bg-panel px-2 py-1 text-center font-mono text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-20 rounded border border-edge bg-panel px-2 py-1 text-center font-mono text-sm text-text outline-none focus:border-accent"
         maxlength="3"
         bind:value={phraseOpts.separator}
       />

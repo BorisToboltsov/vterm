@@ -41,7 +41,7 @@
     {t("util.cidr.input")}
     <input
       data-testid="cidr-input"
-      class="mt-1 w-full max-w-xs rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full max-w-xs rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
       placeholder="192.168.1.0/24"
       bind:value={input}
     />
@@ -51,7 +51,7 @@
     <p class="text-meta text-danger" data-testid="cidr-error">{t(ERR[result.error])}</p>
   {:else}
     <div class="flex items-center gap-2">
-      <span class="font-mono text-sm text-white" data-testid="cidr-block">{result.info.cidr}</span>
+      <span class="font-mono text-sm text-text" data-testid="cidr-block">{result.info.cidr}</span>
       <span
         class="rounded px-1.5 py-0.5 text-caption {result.info.isPrivate
           ? 'bg-accent/20 text-accent'
@@ -66,7 +66,7 @@
         {#each rows as [key, value] (key)}
           <tr class="border-b border-edge/50">
             <td class="py-1 pr-3 text-muted">{t(key)}</td>
-            <td class="py-1 font-mono text-white">{value}</td>
+            <td class="py-1 font-mono text-text">{value}</td>
             <td class="py-1 pl-2 text-right"><CopyButton text={value} /></td>
           </tr>
         {/each}
@@ -78,7 +78,7 @@
       <div class="mt-1 flex items-center gap-2">
         <input
           data-testid="cidr-testip"
-          class="w-40 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+          class="w-40 rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
           placeholder="192.168.1.42"
           bind:value={testIp}
         />

@@ -500,7 +500,7 @@
           aria-pressed={!!st}
           class="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs {st
             ? 'border-accent text-accent'
-            : 'border-edge text-muted hover:text-white'}"
+            : 'border-edge text-muted hover:text-text'}"
         >
           {sortLabel[key]}
           <span class="inline-flex w-6 items-center justify-center gap-0.5">
@@ -529,7 +529,7 @@
           class="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs {groupBy ===
           opt.mode
             ? 'border-accent text-accent'
-            : 'border-edge text-muted hover:text-white'}"
+            : 'border-edge text-muted hover:text-text'}"
         >
           {opt.label()}
         </button>
@@ -747,7 +747,7 @@
       type="button"
       data-testid="rec-gen-plan"
       onclick={() => aiMenuFor && startGen(aiMenuFor, "plan")}
-      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-text"
     >
       {t("recordings.genPlan")}
     </button>
@@ -755,7 +755,7 @@
       type="button"
       data-testid="rec-gen-postmortem"
       onclick={() => aiMenuFor && startGen(aiMenuFor, "postmortem")}
-      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-text"
     >
       {t("recordings.genPostmortem")}
     </button>
@@ -763,7 +763,7 @@
       type="button"
       data-testid="rec-gen-sh"
       onclick={() => aiMenuFor && startGen(aiMenuFor, "sh")}
-      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-text"
     >
       {t("recordings.genSh")}
     </button>
@@ -771,7 +771,7 @@
       type="button"
       data-testid="rec-gen-ansible"
       onclick={() => aiMenuFor && startGen(aiMenuFor, "ansible")}
-      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+      class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-text"
     >
       {t("recordings.genAnsible")}
     </button>
@@ -798,7 +798,7 @@
       {/if}
       <button
         type="button"
-        class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:text-white disabled:opacity-50"
+        class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
         disabled={!planText}
         onclick={() => {
           writeClipboard(planText);
@@ -844,7 +844,7 @@
       <button
         type="button"
         onclick={() => exportFor && doExport(exportFor, opt.kind)}
-        class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-white"
+        class="block w-full rounded px-2 py-1.5 text-left text-sm text-muted hover:bg-edge hover:text-text"
       >
         {opt.label()}
       </button>

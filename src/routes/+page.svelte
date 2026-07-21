@@ -1909,7 +1909,7 @@
             onkeydown={(e) => onTabKey(e, tab.sessionId)}
             class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
             tab.sessionId
-              ? 'bg-panel text-white'
+              ? 'bg-panel text-text'
               : 'text-muted hover:bg-edge'}"
             title={localizedStatus(tab.status)}
           >
@@ -1961,7 +1961,7 @@
         <!-- Open a local-shell terminal tab (same "+" as the top bar). -->
         <button
           data-testid="new-local-terminal"
-          class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-white"
+          class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-text"
           use:tooltip={t("tab.openLocalTerminal")}
           aria-label={t("tab.openLocalTerminal")}
           onclick={() => openLocalTab()}
@@ -1977,11 +1977,11 @@
               <!-- Broadcast toolbar: group size, layout, quick actions, exit. -->
               <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 text-xs">
                 <Icon name="broadcast" size={14} class="text-accent" />
-                <span class="font-medium text-white">{t("broadcast.title")}</span>
+                <span class="font-medium text-text">{t("broadcast.title")}</span>
                 <span class="text-muted">{t("broadcast.targetCount", { count: bcTargets.length })}</span>
                 <div class="mx-1 flex items-center gap-0.5 rounded bg-panel p-0.5">
                   <button
-                    class="rounded p-1 {bcLayout === 'grid' ? 'bg-edge text-white' : 'text-muted hover:text-white'}"
+                    class="rounded p-1 {bcLayout === 'grid' ? 'bg-edge text-text' : 'text-muted hover:text-text'}"
                     onclick={() => (broadcastState.layoutMode = "grid")}
                     use:tooltip={t("broadcast.layoutGrid")}
                     aria-label={t("broadcast.layoutGrid")}
@@ -1989,7 +1989,7 @@
                     <Icon name="layoutGrid" size={14} />
                   </button>
                   <button
-                    class="rounded p-1 {bcLayout === 'focus' ? 'bg-edge text-white' : 'text-muted hover:text-white'}"
+                    class="rounded p-1 {bcLayout === 'focus' ? 'bg-edge text-text' : 'text-muted hover:text-text'}"
                     onclick={() => (broadcastState.layoutMode = "focus")}
                     use:tooltip={t("broadcast.layoutFocus")}
                     aria-label={t("broadcast.layoutFocus")}
@@ -1998,7 +1998,7 @@
                   </button>
                 </div>
                 <button
-                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white"
+                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
                   onclick={addAllConnected}
                   use:tooltip={t("broadcast.addAllConnected")}
                   aria-label={t("broadcast.addAllConnected")}
@@ -2015,7 +2015,7 @@
                 </button>
                 <div class="flex-1"></div>
                 <button
-                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white"
+                  class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
                   onclick={() => {
                     if (tabsState.activeId) removeBroadcastMember(tabsState.activeId);
                     void syncBatchRecording();
@@ -2055,7 +2055,7 @@
                 {#if bcTile}
                   <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-meta">
                     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
-                    <span class="shrink-0 truncate text-white">{tabAlias(tab)}</span>
+                    <span class="shrink-0 truncate text-text">{tabAlias(tab)}</span>
                     <span class="min-w-0 flex-1 truncate text-muted">
                       {bcSrv ? `${bcSrv.username}@${bcSrv.host}:${bcSrv.port}` : ""}
                     </span>
@@ -2070,8 +2070,8 @@
                     <button
                       class="flex shrink-0 items-center gap-1.5 border-r border-edge px-3 py-1 {ws.active ===
                       TERMINAL_VIEW
-                        ? 'bg-panel text-white'
-                        : 'text-muted hover:bg-edge hover:text-white'}"
+                        ? 'bg-panel text-text'
+                        : 'text-muted hover:bg-edge hover:text-text'}"
                       onclick={() => setActiveView(tab.sessionId, TERMINAL_VIEW)}
                     >
                       <Icon name="terminal" size={13} />
@@ -2080,7 +2080,7 @@
                     {#each ws.editors as ed (ed.id)}
                       <div
                         class="group flex shrink-0 items-center border-r border-edge {ws.active === ed.id
-                          ? 'bg-panel text-white'
+                          ? 'bg-panel text-text'
                           : 'text-muted hover:bg-edge'}"
                       >
                         <button
@@ -2420,7 +2420,7 @@
   }}
   oncancel={() => (serverToDelete = null)}
 >
-  {t("page.deleteServerBody1")} <span class="text-white">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
+  {t("page.deleteServerBody1")} <span class="text-text">{serverToDelete?.alias}</span> {t("page.deleteServerBody2")}
 </ConfirmDialog>
 
 <!-- Broadcast: confirm before sending to a group that includes a prod server -->
@@ -2440,7 +2440,7 @@
   oncancel={() => (pendingBroadcast = null)}
 >
   {t("broadcast.prodConfirmBody1")}
-  <span class="text-white">{pendingBroadcast?.targets.length ?? 0}</span>
+  <span class="text-text">{pendingBroadcast?.targets.length ?? 0}</span>
   {t("broadcast.prodConfirmBody2")}
   <span class="text-danger">{pendingProdAliases.join(", ")}</span>
   <pre
@@ -2475,7 +2475,7 @@
   }}
   oncancel={() => (closeConfirmId = null)}
 >
-  {t("page.closeTabBody1")} <span class="text-white">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
+  {t("page.closeTabBody1")} <span class="text-text">{closeConfirmTab ? tabAlias(closeConfirmTab) : ""}</span>
   {t("page.closeTabBody2")}
 </ConfirmDialog>
 
@@ -2495,7 +2495,7 @@
   oncancel={() => (closeEditorConfirm = null)}
 >
   {t("editor.discardBody1")}
-  <span class="text-white">{closeEditorConfirm?.doc.name}</span>
+  <span class="text-text">{closeEditorConfirm?.doc.name}</span>
   {t("editor.discardBody2")}
 </ConfirmDialog>
 
@@ -2517,7 +2517,7 @@
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
-        class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+        class="rounded px-3 py-1 text-sm text-muted hover:text-text"
         onclick={() => (sudoPrompt = null)}>{t("common.cancel")}</button
       >
       <button
@@ -2540,7 +2540,7 @@
   onclose={() => (diffSave = null)}
 >
   <button
-    class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+    class="rounded px-3 py-1 text-sm text-muted hover:text-text"
     onclick={() => (diffSave = null)}>{t("common.cancel")}</button
   >
   <button
@@ -2560,7 +2560,7 @@
   onclose={() => (conflict = null)}
 >
   <button
-    class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+    class="rounded px-3 py-1 text-sm text-muted hover:text-text"
     onclick={() => (conflict = null)}>{t("common.cancel")}</button
   >
   <button

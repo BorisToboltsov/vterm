@@ -20,7 +20,7 @@
       autocomplete="off"
       spellcheck="false"
       placeholder="kubectl"
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       bind:value={settings.kubectlPath}
     />
   </label>
@@ -31,7 +31,7 @@
       type="number"
       min="1"
       max="30"
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       value={settings.k8sRefreshSec}
       onchange={(e) => (settings.k8sRefreshSec = clampK8sRefresh(e.currentTarget.valueAsNumber))}
     />

@@ -12,6 +12,17 @@
 // The one sanctioned exception is the primary "Connect" button (`bg-green-600` /
 // `hover:bg-green-500`), which DESIGN.md pins deliberately: it is a filled button
 // with white text, legible on any panel because it supplies its own background.
+//
+// Phase 44.10 extends the same rule to the *numberless* `text-white` / `text-black`:
+// the original guard only matched palette classes carrying a shade number
+// (`text-amber-400`), so a bare `text-white` — which is just as fixed and just as
+// invisible on a cream panel — slipped straight through, and 385 of them piled up
+// across ~70 components (white-on-cream everywhere the moment a light theme is
+// picked; the reporter first hit it in Settings). Primary text must ride the theme
+// token `text-text`, which flips dark on light themes. White stays sanctioned only
+// where it sits on a *solid saturated* button that carries its own background
+// (`bg-green-500/600`, `bg-danger`, `bg-accent`) — never on a translucent tint
+// (`bg-accent/10`) or a neutral panel/edge surface.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -25,6 +36,15 @@ const RAW_PALETTE = new RegExp(`\\b(?:bg|text|border|ring|fill|stroke)-(?:${HUES
 
 /** The pinned primary-action button (DESIGN.md) — a filled green CTA. */
 const SANCTIONED = /^(?:bg-green-600|bg-green-500)$/;
+
+/** Numberless `text-white` / `text-black`, with or without an opacity modifier. */
+const RAW_WHITE_BLACK = /\btext-(?:white|black)(?:\/\d+)?\b/g;
+/**
+ * A line where white/black text is legitimate: it sits on a *solid* saturated
+ * button background that supplies its own contrast on every theme. The lookahead
+ * excludes translucent tints (`bg-accent/10`), which are as pale as the panel.
+ */
+const SANCTIONED_WHITE_LINE = /\bbg-green-[56]00\b|\bbg-danger\b(?!\/)|\bbg-accent\b(?!\/)/;
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -48,6 +68,18 @@ function offenders(): string[] {
   return out;
 }
 
+function whiteOffenders(): string[] {
+  const out: string[] = [];
+  for (const file of sourceFiles(SRC)) {
+    const lines = readFileSync(file, "utf8").split("\n");
+    lines.forEach((line, i) => {
+      if (SANCTIONED_WHITE_LINE.test(line)) return;
+      for (const m of line.matchAll(RAW_WHITE_BLACK)) out.push(`${file}:${i + 1}: ${m[0]}`);
+    });
+  }
+  return out;
+}
+
 describe("status colour guard", () => {
   it("has no raw Tailwind palette colour outside the sanctioned primary button", () => {
     expect(
@@ -63,5 +95,23 @@ describe("status colour guard", () => {
       .flatMap((src) => [...src.matchAll(RAW_PALETTE)].map((m) => m[0]))
       .filter((c) => SANCTIONED.test(c));
     expect(seen.length).toBeGreaterThan(0);
+  });
+
+  it("has no bare text-white / text-black outside a solid saturated button", () => {
+    expect(
+      whiteOffenders(),
+      "primary text must use the theme token `text-text` (it flips dark on light " +
+        "themes) — a fixed `text-white` is invisible on a cream panel; white is only " +
+        "allowed on a solid saturated button that supplies its own background",
+    ).toEqual([]);
+  });
+
+  it("still sees the sanctioned white-on-button lines, so the exemption is not dead", () => {
+    const sanctioned = sourceFiles(SRC)
+      .flatMap((f) => readFileSync(f, "utf8").split("\n"))
+      .filter(
+        (line) => SANCTIONED_WHITE_LINE.test(line) && [...line.matchAll(RAW_WHITE_BLACK)].length > 0,
+      );
+    expect(sanctioned.length).toBeGreaterThan(0);
   });
 });

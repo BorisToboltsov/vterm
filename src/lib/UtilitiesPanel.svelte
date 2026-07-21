@@ -95,7 +95,7 @@
               data-testid="utilities-search"
               type="search"
               placeholder={t("util.searchPlaceholder")}
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={search}
             />
           </div>
@@ -108,8 +108,8 @@
                 type="button"
                 data-testid={`utility-nav-${u.id}`}
                 class="mb-1 flex w-full items-start gap-2 rounded px-2 py-1.5 text-left {selected === u.id
-                  ? 'bg-edge text-white'
-                  : 'text-muted hover:bg-edge/50 hover:text-white'}"
+                  ? 'bg-edge text-text'
+                  : 'text-muted hover:bg-edge/50 hover:text-text'}"
                 aria-current={selected === u.id ? "page" : undefined}
                 onclick={() => (selected = u.id)}
               >
@@ -125,7 +125,7 @@
         <!-- Active tool -->
         <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" data-testid="utility-pane">
           <div class="mb-4">
-            <h3 class="flex items-center gap-2 text-sm font-semibold text-white">
+            <h3 class="flex items-center gap-2 text-sm font-semibold text-text">
               <Icon name={active.icon} size={16} class="text-accent" />{t(active.titleKey)}
             </h3>
             <p class="mt-1 text-xs text-muted">{t(active.descKey)}</p>

@@ -67,7 +67,7 @@
       <span>{t("servertools.manager", { mgr: status.manager })}</span>
     {/if}
     <button
-      class="ml-auto flex items-center gap-1 rounded p-1 hover:bg-edge hover:text-white"
+      class="ml-auto flex items-center gap-1 rounded p-1 hover:bg-edge hover:text-text"
       use:tooltip={t("sftp.refresh")}
       aria-label={t("sftp.refresh")}
       onclick={load}
@@ -82,7 +82,7 @@
       {#each status.tools as tool (tool.id)}
         <div class="flex items-center gap-2 px-2 py-1.5 text-xs">
           <div class="min-w-0 flex-1">
-            <div class="text-white">{tool.name}</div>
+            <div class="text-text">{tool.name}</div>
             <div class="truncate text-meta text-muted">{t(PURPOSE[tool.id] ?? "servertools.purposeShell")}</div>
           </div>
           {#if tool.installed}

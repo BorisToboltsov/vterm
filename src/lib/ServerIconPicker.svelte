@@ -54,7 +54,7 @@
           type="button"
           class="flex aspect-square items-center justify-center rounded {icon === def.key
             ? 'border border-accent bg-accent/10 text-accent'
-            : 'text-muted hover:bg-edge hover:text-white'}"
+            : 'text-muted hover:bg-edge hover:text-text'}"
           data-testid={`server-icon-${def.key}`}
           use:tooltip={t(def.labelKey)}
           aria-label={t(def.labelKey)}
@@ -71,7 +71,7 @@
       <button
         type="button"
         class="h-5 w-5 rounded-full bg-muted {color === ''
-          ? 'ring-2 ring-white/70 ring-offset-2 ring-offset-panel-alt'
+          ? 'ring-2 ring-accent ring-offset-2 ring-offset-panel-alt'
           : ''}"
         data-testid="server-color-none"
         use:tooltip={t("serverColor.none")}
@@ -83,7 +83,7 @@
         <button
           type="button"
           class="h-5 w-5 rounded-full {c.swatch} {color === c.key
-            ? 'ring-2 ring-white/70 ring-offset-2 ring-offset-panel-alt'
+            ? 'ring-2 ring-accent ring-offset-2 ring-offset-panel-alt'
             : ''}"
           data-testid={`server-color-${c.key}`}
           use:tooltip={t(c.labelKey)}

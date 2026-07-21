@@ -64,7 +64,7 @@
       {t("util.timestamp.input")}
       <input
         data-testid="ts-input"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
         bind:value={input}
       />
     </label>
@@ -72,7 +72,7 @@
       {t("util.timestamp.unit")}
       <select
         data-testid="ts-unit"
-        class="mt-1 block rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 block rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={unit}
       >
         <option value="auto">{t("util.timestamp.unitAuto")}</option>
@@ -95,7 +95,7 @@
       <span class="text-muted">{t("util.timestamp.timezone")}</span>
       <select
         data-testid="ts-zone"
-        class="rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={zone}
       >
         {#each ZONES as z (z)}
@@ -109,7 +109,7 @@
         {#each rows as [key, value] (key)}
           <tr class="border-b border-edge/50">
             <td class="py-1 pr-3 text-muted">{t(key)}</td>
-            <td class="py-1 font-mono text-white">{value}</td>
+            <td class="py-1 font-mono text-text">{value}</td>
             <td class="py-1 pl-2 text-right"><CopyButton text={value} /></td>
           </tr>
         {/each}

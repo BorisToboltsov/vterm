@@ -258,7 +258,7 @@
           {#each row.commit.refs as ref (ref)}
             <span class="shrink-0 rounded-sm bg-accent/20 px-1 text-caption leading-tight text-accent">{ref}</span>
           {/each}
-          <span class="truncate {row.commit.head ? 'text-white' : 'text-white/90'}">{row.commit.subject}</span>
+          <span class="truncate {row.commit.head ? 'text-text' : 'text-text/90'}">{row.commit.subject}</span>
           <span class="ml-auto shrink-0 text-caption text-muted">{relTime(row.commit.timestamp)}</span>
         </button>
       {/each}
@@ -271,7 +271,7 @@
         <div class="max-h-44 shrink-0 overflow-auto border-t border-edge bg-panel/60 px-2 py-1.5">
           <div class="mb-1 flex items-center gap-1.5 text-meta">
             <span class="font-mono text-muted">{sel.short}</span>
-            <span class="truncate text-white/80">{sel.subject}</span>
+            <span class="truncate text-text/80">{sel.subject}</span>
           </div>
           {#if loadingFiles}
             <p class="py-1 text-caption text-muted">{t("git.loading")}</p>
@@ -285,7 +285,7 @@
                 onclick={() => showFile(sel.hash, f.path)}
               >
                 <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.status)}">{f.status}</span>
-                <span class="truncate text-meta text-white/80">{f.path}</span>
+                <span class="truncate text-meta text-text/80">{f.path}</span>
               </button>
             {/each}
           {/if}
@@ -308,14 +308,14 @@
     bind:value={promptName}
     autofocus
     placeholder={prompt?.kind === "tag" ? t("git.tagNamePlaceholder") : t("git.branchNamePlaceholder")}
-    class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white placeholder:text-muted focus:border-accent focus:outline-none"
+    class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none"
     onkeydown={(e) => {
       if (e.key === "Enter") confirmPrompt();
       if (e.key === "Escape") prompt = null;
     }}
   />
   <div class="mt-3 flex justify-end gap-2">
-    <button class="rounded px-3 py-1 text-sm text-muted hover:text-white" onclick={() => (prompt = null)}>{t("common.cancel")}</button>
+    <button class="rounded px-3 py-1 text-sm text-muted hover:text-text" onclick={() => (prompt = null)}>{t("common.cancel")}</button>
     <button class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover disabled:opacity-40" disabled={!promptName.trim()} onclick={confirmPrompt}>{t("common.create")}</button>
   </div>
 </Modal>

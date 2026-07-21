@@ -46,7 +46,7 @@
   </span>
   {#if hostEnv.isWindows}
     <select
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       data-testid="windows-shell-select"
       bind:value={settings.windowsShell}
     >
@@ -68,7 +68,7 @@
       type="text"
       spellcheck="false"
       placeholder={hostEnv.isWindows ? "C:\\path\\to\\shell.exe" : "$SHELL"}
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       data-testid="local-shell-path"
       bind:value={settings.localShellPath}
       transition:slide={motion(MOTION_BASE)}

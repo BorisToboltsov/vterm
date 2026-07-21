@@ -779,7 +779,7 @@
   {#if !embedded && collapsed}
     <div class="flex w-9 flex-col items-center gap-3 py-2">
       <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+        class="rounded p-1 text-muted hover:bg-edge hover:text-text"
         use:tooltip={expandLabel}
         aria-label={expandLabel}
         onclick={() => (collapsed = false)}
@@ -805,7 +805,7 @@
         <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
           {#if !embedded}
             <button
-              class="rounded p-1 text-muted hover:bg-edge hover:text-white"
+              class="rounded p-1 text-muted hover:bg-edge hover:text-text"
               use:tooltip={collapseLabel}
               aria-label={collapseLabel}
               onclick={() => (collapsed = true)}
@@ -815,7 +815,7 @@
           {/if}
           {#if isConnected}
             <button
-              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
               use:tooltip={t("sftp.refresh")}
               aria-label={t("sftp.refresh")}
               onclick={refresh}
@@ -826,7 +826,7 @@
               data-testid="{testPrefix}-toggle-hidden"
               class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
                 ? 'bg-edge text-accent'
-                : 'text-muted hover:bg-edge hover:text-white'}"
+                : 'text-muted hover:bg-edge hover:text-text'}"
               use:tooltip={t("sftp.hiddenFiles")}
               aria-label={t("sftp.hiddenFiles")}
               aria-pressed={settings.sftp.showHiddenFiles}
@@ -838,7 +838,7 @@
               data-testid="{testPrefix}-follow-terminal"
               class="flex items-center rounded p-1.5 {followTerminal
                 ? 'bg-edge text-accent'
-                : 'text-muted hover:bg-edge hover:text-white'}"
+                : 'text-muted hover:bg-edge hover:text-text'}"
               use:tooltip={t("sftp.followTerminal")}
               aria-label={t("sftp.followTerminal")}
               aria-pressed={followTerminal}
@@ -847,7 +847,7 @@
               <Icon name="terminal" size={14} />
             </button>
             <button
-              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
               use:tooltip={t("sftp.newFolder")}
               aria-label={t("sftp.newFolder")}
               disabled={!mutable}
@@ -860,7 +860,7 @@
             </button>
             <button
               data-testid="{testPrefix}-new-file"
-              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
               use:tooltip={t("sftp.newFile")}
               aria-label={t("sftp.newFile")}
               disabled={!mutable}
@@ -873,7 +873,7 @@
             </button>
             {#if adapter.search}
               <button
-                class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-white"
+                class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
                 use:tooltip={t("search.contentSearch")}
                 aria-label={t("search.contentSearch")}
                 onclick={() => (showSearch = !showSearch)}
@@ -977,7 +977,7 @@
               }}
             >
               <input
-                class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+                class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
                 placeholder={t("search.contentPlaceholder")}
                 bind:value={searchQuery}
               />
@@ -1026,7 +1026,7 @@
             }}
           >
             <input
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
               placeholder={t("sftp.folderNamePlaceholder")}
               bind:value={mkdirName}
             />
@@ -1043,7 +1043,7 @@
             }}
           >
             <input
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
               placeholder={t("sftp.fileNamePlaceholder")}
               bind:value={mkfileName}
             />
@@ -1062,7 +1062,7 @@
           >
             <input
               autofocus
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
               placeholder={t("sftp.renamePlaceholder")}
               bind:value={renameName}
               onkeydown={(e) => e.key === "Escape" && (renameTarget = null)}
@@ -1078,7 +1078,7 @@
           >
             <span class="min-w-0 flex-1 break-words">{error}</span>
             <button
-              class="flex shrink-0 items-center hover:text-white"
+              class="flex shrink-0 items-center hover:text-text"
               aria-label={t("common.dismiss")}
               onclick={() => (error = "")}
             >
@@ -1281,7 +1281,7 @@
   oncancel={() => (deleteTargets = [])}
 >
   {#if deleteTargets.length === 1}
-    {deleteTargets[0].isDir ? t("sftp.folder") : t("sftp.file")}: <span class="break-all text-white"
+    {deleteTargets[0].isDir ? t("sftp.folder") : t("sftp.file")}: <span class="break-all text-text"
       >{deleteTargets[0].path}</span
     >
   {:else if deleteTargets.length > 1}
@@ -1311,7 +1311,7 @@
     style="left: {dragX + 12}px; top: {dragY + 8}px;"
   >
     <Icon name={fileIconName(dragEntry)} size={13} class="text-muted" />
-    <span class="font-medium text-white">
+    <span class="font-medium text-text">
       {selection.selected.size > 1
         ? t("sftp.dragCount", { count: selection.selected.size })
         : dragEntry.name}

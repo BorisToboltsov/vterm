@@ -46,7 +46,7 @@
     <textarea
       data-testid="jwt-input"
       rows="4"
-      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white outline-none focus:border-accent"
+      class="mt-1 w-full resize-y break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-text outline-none focus:border-accent"
       placeholder="eyJhbGciOi…"
       bind:value={input}
     ></textarea>
@@ -69,24 +69,24 @@
     {#each [["util.jwt.header", result.parts.header], ["util.jwt.payload", result.parts.payload]] as [label, obj] (label)}
       <div>
         <div class="mb-1 flex items-center justify-between">
-          <span class="font-medium text-white">{t(label as MessageKey)}</span>
+          <span class="font-medium text-text">{t(label as MessageKey)}</span>
           <CopyButton text={pretty(obj)} />
         </div>
         <pre
           data-testid={label === "util.jwt.header" ? "jwt-header" : "jwt-payload"}
-          class="overflow-x-auto rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-white">{pretty(obj)}</pre>
+          class="overflow-x-auto rounded border border-edge bg-panel px-2 py-1 font-mono text-xs text-text">{pretty(obj)}</pre>
       </div>
     {/each}
 
     {#if claims.length}
       <div>
-        <p class="mb-1 font-medium text-white">{t("util.jwt.claims")}</p>
+        <p class="mb-1 font-medium text-text">{t("util.jwt.claims")}</p>
         <table class="w-full max-w-md">
           <tbody>
             {#each claims as [key, value] (key)}
               <tr class="border-b border-edge/50">
                 <td class="py-1 pr-3 text-muted">{t(key)}</td>
-                <td class="py-1 font-mono text-white">{value}</td>
+                <td class="py-1 font-mono text-text">{value}</td>
               </tr>
             {/each}
           </tbody>
@@ -95,7 +95,7 @@
     {/if}
 
     <div>
-      <p class="mb-1 font-medium text-white">{t("util.jwt.signature")}</p>
+      <p class="mb-1 font-medium text-text">{t("util.jwt.signature")}</p>
       <p class="break-all font-mono text-meta text-muted">{result.parts.signature}</p>
       <p class="mt-0.5 text-meta text-warn">{t("util.jwt.signatureNote")}</p>
     </div>

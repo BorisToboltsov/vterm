@@ -49,13 +49,13 @@
     {/if}
     <pre
       data-testid="ai-consent-preview"
-      class="max-h-72 overflow-auto rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed whitespace-pre-wrap break-words text-white">{context.text}</pre>
+      class="max-h-72 overflow-auto rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed whitespace-pre-wrap break-words text-text">{context.text}</pre>
   </div>
 
   <div class="mt-4 flex justify-end gap-2">
     <button
       type="button"
-      class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+      class="rounded px-3 py-1 text-sm text-muted hover:text-text"
       onclick={() => oncancel?.()}
     >
       {t("common.cancel")}

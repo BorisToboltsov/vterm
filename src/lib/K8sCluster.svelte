@@ -76,7 +76,7 @@
   <!-- Nodes -->
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="server" size={13} class="text-accent" />
-    <span class="font-medium text-white/85">{t("k8s.nodes")}</span>
+    <span class="font-medium text-text/85">{t("k8s.nodes")}</span>
     <span class="text-caption text-muted">{nodes.length}</span>
   </div>
   {#if nodes.length === 0}
@@ -91,7 +91,7 @@
         <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[nodeStatusTone(n.status)]}" use:tooltip={n.status}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-white/90">{n.name}</span>
+            <span class="truncate font-medium text-text/90">{n.name}</span>
             <span class="shrink-0 text-caption text-muted">{n.roles}</span>
           </div>
           <div class="truncate text-caption text-muted">{n.version}{#if n.internalIp} · {n.internalIp}{/if}</div>
@@ -99,11 +99,11 @@
         <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{n.age}</span>
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">
           {#if n.schedulable}
-            <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.cordon")} aria-label={t("k8s.cordon")} onclick={() => run(cordonArgs(n.name), "", { successKey: "k8s.cordoned" })}>
+            <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.cordon")} aria-label={t("k8s.cordon")} onclick={() => run(cordonArgs(n.name), "", { successKey: "k8s.cordoned" })}>
               <Icon name="pause" size={14} />
             </button>
           {:else}
-            <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.uncordon")} aria-label={t("k8s.uncordon")} onclick={() => run(uncordonArgs(n.name), "", { successKey: "k8s.uncordoned" })}>
+            <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("k8s.uncordon")} aria-label={t("k8s.uncordon")} onclick={() => run(uncordonArgs(n.name), "", { successKey: "k8s.uncordoned" })}>
               <Icon name="play" size={14} />
             </button>
           {/if}
@@ -118,12 +118,12 @@
   <!-- Events -->
   <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
     <Icon name="activity" size={13} class="text-accent" />
-    <span class="flex-1 font-medium text-white/85">{t("k8s.events")}</span>
+    <span class="flex-1 font-medium text-text/85">{t("k8s.events")}</span>
     <div class="flex items-center gap-0.5">
       {#each FILTERS as f (f.id)}
         <button
           data-testid={`k8s-event-filter-${f.id}`}
-          class="rounded border px-1.5 py-0.5 text-caption {filter === f.id ? 'border-accent text-accent' : 'border-edge text-muted hover:text-white'}"
+          class="rounded border px-1.5 py-0.5 text-caption {filter === f.id ? 'border-accent text-accent' : 'border-edge text-muted hover:text-text'}"
           aria-pressed={filter === f.id}
           onclick={() => (filter = f.id)}
         >
@@ -140,7 +140,7 @@
         <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[eventTone(e.type)]}" use:tooltip={e.type}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
-            <span class="shrink-0 font-medium text-white/90">{e.reason}</span>
+            <span class="shrink-0 font-medium text-text/90">{e.reason}</span>
             <span class="truncate text-caption text-muted">{e.object}</span>
           </div>
           <div class="truncate text-caption text-muted" use:tooltip={e.message}>{e.message}</div>

@@ -35,7 +35,7 @@
 <button
   type="button"
   data-testid={testid}
-  class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white disabled:opacity-40 {cls}"
+  class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text disabled:opacity-40 {cls}"
   onclick={copy}
   disabled={!text}
   aria-label={label ?? t("util.copy")}

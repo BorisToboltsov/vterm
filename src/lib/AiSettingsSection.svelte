@@ -260,7 +260,7 @@
   const providerShort = (p: AiProvider): string => (p === "anthropic" ? "Anthropic" : "OpenAI");
 
   const inputCls =
-    "w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent";
+    "w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent";
 </script>
 
 <section>
@@ -289,7 +289,7 @@
         onclick={() => toggleExpanded(ep.id)}
       >
         <span class="h-2 w-2 shrink-0 rounded-full {statusDot(ep.id)}"></span>
-        <span class="truncate text-sm text-white">{ep.name || t("settings.aiName")}</span>
+        <span class="truncate text-sm text-text">{ep.name || t("settings.aiName")}</span>
         <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-caption text-muted">
           {providerShort(ep.provider)}
         </span>
@@ -307,7 +307,7 @@
       <div class="overflow-hidden rounded border border-accent" data-testid="ai-endpoint">
         <div class="flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
           <span class="h-2 w-2 shrink-0 rounded-full {statusDot(ep.id)}"></span>
-          <span class="truncate text-sm text-white">{ep.name || t("settings.aiName")}</span>
+          <span class="truncate text-sm text-text">{ep.name || t("settings.aiName")}</span>
           <span class="shrink-0 rounded-full bg-edge px-2 py-0.5 text-caption text-muted">
             {providerShort(ep.provider)}
           </span>
@@ -325,7 +325,7 @@
                 : t("settings.aiNotChecked")}
           </span>
           <button
-            class="shrink-0 rounded p-1 text-muted hover:text-white"
+            class="shrink-0 rounded p-1 text-muted hover:text-text"
             use:tooltip={t("settings.aiCollapse")}
             aria-label={t("settings.aiCollapse")}
             onclick={() => toggleExpanded(ep.id)}
@@ -358,7 +358,7 @@
             <div class="flex gap-2">
               <input class="min-w-0 flex-1 {inputCls}" placeholder={t("settings.aiName")} bind:value={ep.name} />
               <select
-                class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
+                class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-text outline-none focus:border-accent"
                 bind:value={ep.provider}
               >
                 <option value="openai">{t("settings.aiProviderOpenai")}</option>
@@ -585,7 +585,7 @@
           <div class="mb-2 space-y-1">
             {#each settings.ai.dangerousPatterns as p (p)}
               <div class="flex items-center gap-2" data-testid="ai-danger-item">
-                <span class="min-w-0 flex-1 truncate font-mono text-meta text-white">{p}</span>
+                <span class="min-w-0 flex-1 truncate font-mono text-meta text-text">{p}</span>
                 <button
                   class="shrink-0 rounded p-1 text-muted hover:text-danger"
                   use:tooltip={t("common.delete")}
@@ -782,7 +782,7 @@
                       bind:value={p.name}
                     />
                     <button
-                      class="shrink-0 rounded p-1 text-muted hover:text-white disabled:opacity-40"
+                      class="shrink-0 rounded p-1 text-muted hover:text-text disabled:opacity-40"
                       use:tooltip={t("settings.aiPromptReset")}
                       aria-label={t("settings.aiPromptReset")}
                       disabled={p.content === defaultPrompt(kind)}

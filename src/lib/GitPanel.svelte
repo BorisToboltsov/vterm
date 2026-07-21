@@ -371,7 +371,7 @@
     <div class="flex items-center gap-0.5 border-b border-edge px-2 py-1.5">
       <Icon name="gitBranch" size={15} />
       <div class="min-w-0 flex-1 px-1">
-        <div class="truncate font-medium text-white/90" use:tooltip={repoRoot ?? ""}>{repoName}</div>
+        <div class="truncate font-medium text-text/90" use:tooltip={repoRoot ?? ""}>{repoName}</div>
         {#if branchName}
           <div class="truncate text-caption text-muted">
             {branchName}{#if status && (status.ahead || status.behind)}
@@ -380,22 +380,22 @@
           </div>
         {/if}
       </div>
-      <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("git.pull")} aria-label={t("git.pull")} onclick={() => syncRun("pull", pullArgs())}>
+      <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("git.pull")} aria-label={t("git.pull")} onclick={() => syncRun("pull", pullArgs())}>
         <Icon name="download" size={15} />
         {#if remoteError}<span use:tooltip={remoteError} class="text-warn"><Icon name="alert" size={11} /></span>{/if}
       </button>
-      <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("git.push")} aria-label={t("git.push")} onclick={() => syncRun("push", pushArgs())}>
+      <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("git.push")} aria-label={t("git.push")} onclick={() => syncRun("push", pushArgs())}>
         <Icon name="upload" size={15} />
         {#if remoteError}<span use:tooltip={remoteError} class="text-warn"><Icon name="alert" size={11} /></span>{/if}
       </button>
-      <button class="rounded p-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.refresh")} aria-label={t("git.refresh")} onclick={() => loadAll()}>
+      <button class="rounded p-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.refresh")} aria-label={t("git.refresh")} onclick={() => loadAll()}>
         <Icon name="refresh" size={14} />
       </button>
-      <button class="rounded p-1 text-muted hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("git.fetch")} aria-label={t("git.fetch")} onclick={() => syncRun("fetch", fetchArgs())}>
+      <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("git.fetch")} aria-label={t("git.fetch")} onclick={() => syncRun("fetch", fetchArgs())}>
         <Icon name="cloud" size={13} />
       </button>
       {#if onToggleFollowTerminal}
-        <button class="rounded p-1 hover:bg-edge hover:text-white {followTerminal ? 'text-accent' : 'text-muted'}" use:tooltip={t("sftp.followTerminal")} aria-label={t("sftp.followTerminal")} onclick={onToggleFollowTerminal}>
+        <button class="rounded p-1 hover:bg-edge hover:text-text {followTerminal ? 'text-accent' : 'text-muted'}" use:tooltip={t("sftp.followTerminal")} aria-label={t("sftp.followTerminal")} onclick={onToggleFollowTerminal}>
           <Icon name="terminal" size={13} />
         </button>
       {/if}
@@ -409,7 +409,7 @@
           <div class="git-indet h-full w-2/5 bg-accent"></div>
         </div>
       {/if}
-      <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-meta text-white/80">
+      <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-meta text-text/80">
         {#if syncOp.running}
           <span class="git-spin inline-block h-3 w-3 shrink-0 rounded-full border-2 border-edge" style="border-top-color: var(--color-accent)"></span>
         {:else}
@@ -424,7 +424,7 @@
       {#each SUBS as s (s.id)}
         <button
           data-testid={`git-subtab-${s.id}`}
-          class="flex flex-1 items-center justify-center gap-1 border-b-2 py-1.5 {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-white'}"
+          class="flex flex-1 items-center justify-center gap-1 border-b-2 py-1.5 {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
           aria-current={activeSub === s.id ? "true" : undefined}
           onclick={() => (activeSub = s.id)}
         >
@@ -470,7 +470,7 @@
   oncancel={() => settleConfirm(false)}
 >
   {t("git.confirmProdBody")}
-  <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-white/80">{confirmText}</code>
+  <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-text/80">{confirmText}</code>
 </ConfirmDialog>
 
 <Modal
@@ -485,20 +485,20 @@
     {#each dirtyFiles as f (f.path)}
       <div class="group flex items-center gap-1.5 px-2 py-1 text-xs hover:bg-edge/40">
         <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.index === '.' ? f.work : f.index)}">{f.index === "." ? f.work : f.index}</span>
-        <span class="min-w-0 flex-1 truncate text-white/80" use:tooltip={f.path}>{f.path}</span>
+        <span class="min-w-0 flex-1 truncate text-text/80" use:tooltip={f.path}>{f.path}</span>
         {#if onOpenDiff}
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => openDirtyFile(f)}>
+          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => openDirtyFile(f)}>
             <Icon name="pencil" size={12} />
           </button>
         {/if}
-        <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-white group-hover:opacity-100" use:tooltip={t("git.discardFile")} aria-label={t("git.discardFile")} onclick={() => discardOne(f)}>
+        <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.discardFile")} aria-label={t("git.discardFile")} onclick={() => discardOne(f)}>
           <Icon name="trash" size={12} />
         </button>
       </div>
     {/each}
   </div>
   <div class="flex flex-wrap justify-end gap-2">
-    <button class="rounded px-3 py-1 text-sm text-muted hover:text-white" onclick={closeDirty}>{t("common.cancel")}</button>
+    <button class="rounded px-3 py-1 text-sm text-muted hover:text-text" onclick={closeDirty}>{t("common.cancel")}</button>
     <button class="rounded border border-danger px-3 py-1 text-sm text-danger hover:bg-danger hover:text-panel-alt" onclick={discardAllAndRetry}>{t("git.discardAllAndSwitch")}</button>
     <button class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover" onclick={stashAndRetry}>{t("git.stashAndSwitch")}</button>
   </div>

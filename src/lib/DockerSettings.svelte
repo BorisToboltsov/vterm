@@ -66,13 +66,13 @@
       type="number"
       min="1"
       max="30"
-      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       value={settings.dockerRefreshSec}
       onchange={(e) => (settings.dockerRefreshSec = clampDockerRefresh(e.currentTarget.valueAsNumber))}
     />
   </label>
 
-  <h4 class="mt-4 mb-1 flex items-center gap-1 text-xs text-white/80">
+  <h4 class="mt-4 mb-1 flex items-center gap-1 text-xs text-text/80">
     {t("settings.dockerRegistries")}<InfoHint text={t("settings.dockerRegistriesHint")} />
   </h4>
 
@@ -82,7 +82,7 @@
         <li class="flex items-center gap-2 px-2 py-1.5 text-xs">
           <Icon name="container" size={13} class="shrink-0 text-accent" />
           <div class="min-w-0 flex-1 truncate">
-            <span class="text-white/90">{registryLabel(reg.url)}</span>
+            <span class="text-text/90">{registryLabel(reg.url)}</span>
             <span class="text-muted"> · {reg.username}</span>
           </div>
           <button
@@ -105,7 +105,7 @@
         type="text"
         autocomplete="off"
         placeholder="ghcr.io"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={newUrl}
       />
     </label>
@@ -114,7 +114,7 @@
       <input
         type="text"
         autocomplete="off"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={newUser}
       />
     </label>

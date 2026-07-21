@@ -256,7 +256,7 @@
   <div class="flex items-center justify-between px-2 py-1 text-caption uppercase tracking-wider text-muted">
     <span>{t("git.localBranches")}</span>
     <button
-      class="rounded px-1 hover:bg-edge hover:text-white"
+      class="rounded px-1 hover:bg-edge hover:text-text"
       use:tooltip={t("git.newBranch")}
       aria-label={t("git.newBranch")}
       onclick={() => { creating = !creating; newName = ""; }}
@@ -271,7 +271,7 @@
         bind:value={newName}
         autofocus
         placeholder={t("git.branchNamePlaceholder")}
-        class="w-full rounded border border-edge bg-panel px-2 py-1 text-meta text-white placeholder:text-muted focus:border-accent focus:outline-none"
+        class="w-full rounded border border-edge bg-panel px-2 py-1 text-meta text-text placeholder:text-muted focus:border-accent focus:outline-none"
         onkeydown={(e) => { if (e.key === "Enter") create(); if (e.key === "Escape") creating = false; }}
       />
     </div>
@@ -285,27 +285,27 @@
         <input
           bind:value={renameName}
           autofocus
-          class="min-w-0 flex-1 rounded border border-accent bg-panel px-1 text-meta text-white focus:outline-none"
+          class="min-w-0 flex-1 rounded border border-accent bg-panel px-1 text-meta text-text focus:outline-none"
           onkeydown={(e) => { if (e.key === "Enter") rename(b.name); if (e.key === "Escape") renaming = null; }}
         />
       {:else}
         <button
-          class="min-w-0 flex-1 truncate text-left {b.current ? 'text-accent' : 'text-white/80'}"
+          class="min-w-0 flex-1 truncate text-left {b.current ? 'text-accent' : 'text-text/80'}"
           disabled={b.current}
           use:tooltip={b.current ? t("git.currentBranch") : t("git.checkout")}
           onclick={() => run(checkoutArgs(b.name), { echo: sendToTerminal })}
         >{b.name}</button>
         <div class="flex shrink-0 opacity-0 group-hover:opacity-100">
           {#if !b.current}
-            <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.mergeInto", { current: current ?? "" })} aria-label={t("git.merge")} onclick={() => run(mergeArgs(b.name), { destructive: true, successKey: "git.merged" })}>
+            <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.mergeInto", { current: current ?? "" })} aria-label={t("git.merge")} onclick={() => run(mergeArgs(b.name), { destructive: true, successKey: "git.merged" })}>
               <Icon name="gitMerge" size={13} />
             </button>
           {/if}
-          <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.rename")} aria-label={t("git.rename")} onclick={() => startRename(b.name)}>
+          <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.rename")} aria-label={t("git.rename")} onclick={() => startRename(b.name)}>
             <Icon name="pencil" size={12} />
           </button>
           {#if !b.current}
-            <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.deleteBranch")} aria-label={t("git.deleteBranch")} onclick={() => run(deleteBranchArgs(b.name), { destructive: true })}>
+            <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.deleteBranch")} aria-label={t("git.deleteBranch")} onclick={() => run(deleteBranchArgs(b.name), { destructive: true })}>
               <Icon name="trash" size={12} />
             </button>
           {/if}
@@ -322,7 +322,7 @@
       <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, b)}>
         <Icon name="cloud" size={13} />
         <button
-          class="min-w-0 flex-1 truncate text-left text-white/70"
+          class="min-w-0 flex-1 truncate text-left text-text/70"
           use:tooltip={t("git.checkoutTracking")}
           onclick={() => run(checkoutArgs(localName(b.name)), { echo: sendToTerminal })}
         >{b.name}</button>
@@ -337,15 +337,15 @@
       <div class="border-b border-edge/20">
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {expandedStash === s.index ? 'bg-edge/30' : ''}">
           <Icon name={expandedStash === s.index ? "chevronDown" : "stash"} size={13} />
-          <button class="min-w-0 flex-1 truncate text-left text-white/80" use:tooltip={t("git.stashPreview")} onclick={() => toggleStash(s.index)}>{s.subject}</button>
+          <button class="min-w-0 flex-1 truncate text-left text-text/80" use:tooltip={t("git.stashPreview")} onclick={() => toggleStash(s.index)}>{s.subject}</button>
           <div class="flex shrink-0 opacity-0 group-hover:opacity-100">
-            <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.stashApply")} aria-label={t("git.stashApply")} onclick={() => run(stashApplyArgs(s.index), { successKey: "git.stashApplied" })}>
+            <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.stashApply")} aria-label={t("git.stashApply")} onclick={() => run(stashApplyArgs(s.index), { successKey: "git.stashApplied" })}>
               <Icon name="download" size={13} />
             </button>
-            <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.stashPop")} aria-label={t("git.stashPop")} onclick={() => run(stashPopArgs(s.index), { destructive: true, successKey: "git.stashApplied" })}>
+            <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.stashPop")} aria-label={t("git.stashPop")} onclick={() => run(stashPopArgs(s.index), { destructive: true, successKey: "git.stashApplied" })}>
               <Icon name="arrowsUpDown" size={13} />
             </button>
-            <button class="rounded px-1 text-muted hover:bg-edge hover:text-white" use:tooltip={t("git.stashDrop")} aria-label={t("git.stashDrop")} onclick={() => run(stashDropArgs(s.index), { destructive: true })}>
+            <button class="rounded px-1 text-muted hover:bg-edge hover:text-text" use:tooltip={t("git.stashDrop")} aria-label={t("git.stashDrop")} onclick={() => run(stashDropArgs(s.index), { destructive: true })}>
               <Icon name="trash" size={12} />
             </button>
           </div>
@@ -360,7 +360,7 @@
               {#each stashFiles as f (f.path)}
                 <button class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-edge/50" onclick={() => showStashFile(s.index, f.path)}>
                   <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.status)}">{f.status}</span>
-                  <span class="truncate text-meta text-white/80">{f.path}</span>
+                  <span class="truncate text-meta text-text/80">{f.path}</span>
                   <Icon name="code" size={11} />
                 </button>
               {/each}
@@ -391,14 +391,14 @@
     bind:value={ctxName}
     autofocus
     placeholder={ctxPrompt?.kind === "tag" ? t("git.tagNamePlaceholder") : t("git.branchNamePlaceholder")}
-    class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white placeholder:text-muted focus:border-accent focus:outline-none"
+    class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text placeholder:text-muted focus:border-accent focus:outline-none"
     onkeydown={(e) => {
       if (e.key === "Enter") confirmCtxPrompt();
       if (e.key === "Escape") ctxPrompt = null;
     }}
   />
   <div class="mt-3 flex justify-end gap-2">
-    <button class="rounded px-3 py-1 text-sm text-muted hover:text-white" onclick={() => (ctxPrompt = null)}>{t("common.cancel")}</button>
+    <button class="rounded px-3 py-1 text-sm text-muted hover:text-text" onclick={() => (ctxPrompt = null)}>{t("common.cancel")}</button>
     <button class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover disabled:opacity-40" disabled={!ctxName.trim()} onclick={confirmCtxPrompt}>{t("common.create")}</button>
   </div>
 </Modal>

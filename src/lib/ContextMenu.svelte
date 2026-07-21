@@ -62,7 +62,7 @@
       {:else if item.kind === "submenu"}
         <button
           type="button"
-          class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-white"
+          class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-text"
           role="menuitem"
           onclick={() => (expanded = expanded === item.key ? null : item.key)}
         >
@@ -74,7 +74,7 @@
           {#each item.items as sub, j (j)}
             <button
               type="button"
-              class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left hover:bg-edge hover:text-white {sub.danger
+              class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left hover:bg-edge hover:text-text {sub.danger
                 ? 'text-danger'
                 : 'text-muted'}"
               role="menuitem"
@@ -87,7 +87,7 @@
       {:else if isAction(item)}
         <button
           type="button"
-          class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge hover:text-white disabled:pointer-events-none disabled:opacity-40 {item.danger
+          class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {item.danger
             ? 'text-danger'
             : 'text-muted'}"
           role="menuitem"

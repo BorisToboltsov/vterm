@@ -159,18 +159,18 @@
       <div class="min-w-0 flex-1 truncate text-meta text-muted">{c.image}</div>
       <div class="flex shrink-0 items-center gap-0.5 text-muted">
         {#if isRunning(c)}
-          <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.stop")} aria-label={t("docker.stop")} onclick={() => act(stopArgs([c.id]), { successKey: "docker.stopped" })}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.stop")} aria-label={t("docker.stop")} onclick={() => act(stopArgs([c.id]), { successKey: "docker.stopped" })}>
             <Icon name="stop" size={14} />
           </button>
         {:else}
-          <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.start")} aria-label={t("docker.start")} onclick={() => act(startArgs([c.id]), { successKey: "docker.started" })}>
+          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.start")} aria-label={t("docker.start")} onclick={() => act(startArgs([c.id]), { successKey: "docker.started" })}>
             <Icon name="play" size={14} />
           </button>
         {/if}
-        <button class="rounded p-1 hover:bg-edge hover:text-white disabled:opacity-40" disabled={busy} use:tooltip={t("docker.restart")} aria-label={t("docker.restart")} onclick={() => act(restartArgs([c.id]), { successKey: "docker.restarted" })}>
+        <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.restart")} aria-label={t("docker.restart")} onclick={() => act(restartArgs([c.id]), { successKey: "docker.restarted" })}>
           <Icon name="refresh" size={13} />
         </button>
-        <button class="rounded p-1 hover:bg-edge hover:text-white" use:tooltip={t("docker.openShell")} aria-label={t("docker.openShell")} onclick={() => onShell(c)}>
+        <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.openShell")} aria-label={t("docker.openShell")} onclick={() => onShell(c)}>
           <Icon name="terminal" size={14} />
         </button>
         {#if onAsk}
@@ -178,7 +178,7 @@
                the question carries them instead of asking the user to copy-paste. -->
           <button
             data-testid="docker-ask-ai"
-            class="rounded p-1 hover:bg-edge hover:text-white"
+            class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("ai.ask.button")}
             aria-label={t("ai.ask.button")}
             onclick={() => onAsk?.(askContext(c))}
@@ -197,7 +197,7 @@
       {#each TABS as tb (tb.id)}
         <button
           data-testid={`docker-detail-tab-${tb.id}`}
-          class="border-b-2 px-3 py-1.5 {tab === tb.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-white'}"
+          class="border-b-2 px-3 py-1.5 {tab === tb.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
           aria-current={tab === tb.id ? "true" : undefined}
           onclick={() => (tab = tb.id)}
         >
@@ -209,16 +209,16 @@
     {#if tab === "overview"}
       <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta" data-testid="docker-detail-overview">
         <dt class="text-muted">{t("docker.name")}</dt>
-        <dd class="break-all text-white/85">{c.name}</dd>
+        <dd class="break-all text-text/85">{c.name}</dd>
         <dt class="text-muted">{t("docker.image")}</dt>
-        <dd class="break-all text-white/85">{c.image}</dd>
+        <dd class="break-all text-text/85">{c.image}</dd>
         {#if c.project}
           <dt class="text-muted">{t("docker.project")}</dt>
-          <dd class="break-all text-white/85">{c.project}{#if c.service}<span class="text-muted"> · {c.service}</span>{/if}</dd>
+          <dd class="break-all text-text/85">{c.project}{#if c.service}<span class="text-muted"> · {c.service}</span>{/if}</dd>
         {/if}
         {#each rows as row (row.key)}
           <dt class="text-muted">{t(INFO_LABEL[row.key])}</dt>
-          <dd class="break-all text-white/85">{row.value}</dd>
+          <dd class="break-all text-text/85">{row.value}</dd>
         {/each}
       </dl>
     {:else if tab === "logs"}
@@ -227,7 +227,7 @@
       </div>
       <pre
         data-testid="docker-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
       >{logsText || t("docker.noLogs")}</pre>
     {:else}
       <div class="mb-1 flex justify-end">
@@ -235,7 +235,7 @@
       </div>
       <pre
         data-testid="docker-text"
-        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-white/85 select-text"
+        class="max-h-[60vh] overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
       >{inspectText || t("docker.noLogs")}</pre>
     {/if}
   {/if}

@@ -142,7 +142,7 @@ print(greet("world"))  # => 12345`;
                     onclick={() => selectTheme(themeDef.id)}
                     class="flex items-center gap-2 rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.theme ===
                     themeDef.id
-                      ? 'border-accent bg-edge text-white'
+                      ? 'border-accent bg-edge text-text'
                       : 'border-edge text-muted hover:bg-edge'}"
                   >
                     <span class="flex shrink-0 overflow-hidden rounded border border-edge">
@@ -163,7 +163,7 @@ print(greet("world"))  # => 12345`;
             onclick={() => selectTheme("custom")}
             class="w-full rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.theme ===
             'custom'
-              ? 'border-accent bg-edge text-white'
+              ? 'border-accent bg-edge text-text'
               : 'border-edge text-muted hover:bg-edge'}"
           >
             {t("settings.themeCustom")}
@@ -214,7 +214,7 @@ print(greet("world"))  # => 12345`;
                     style="font-family: {f.value}"
                     class="truncate rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.fontFamily ===
                     f.value
-                      ? 'border-accent bg-edge text-white'
+                      ? 'border-accent bg-edge text-text'
                       : 'border-edge text-muted hover:bg-edge'}"
                   >
                     {f.label}
@@ -227,7 +227,7 @@ print(greet("world"))  # => 12345`;
         <!-- Live preview of the chosen font (a tiny Python snippet). -->
         <pre
           data-testid="font-preview"
-          class="mt-2 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs leading-snug text-white"
+          class="mt-2 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs leading-snug text-text"
           style="font-family: {settings.fontFamily}">{FONT_SAMPLE}</pre>
       </div>
     {/if}
@@ -239,7 +239,7 @@ print(greet("world"))  # => 12345`;
         type="number"
         min="8"
         max="32"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={settings.fontSize}
       />
     </label>
@@ -250,7 +250,7 @@ print(greet("world"))  # => 12345`;
         min="1"
         max="2"
         step="0.05"
-        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={settings.lineHeight}
       />
     </label>

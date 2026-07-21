@@ -62,7 +62,7 @@
       type="number"
       min="1"
       max="120"
-      class="mt-1 w-32 rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+      class="mt-1 w-32 rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
       bind:value={settings.statusPollInterval}
     />
   </label>
@@ -114,14 +114,14 @@
               type="number"
               min="0"
               aria-label={t("settings.thresholdAverageAria", { label: t(it.labelKey) })}
-              class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-white outline-none focus:border-accent"
+              class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-text outline-none focus:border-accent"
               bind:value={settings.statusBarThresholds[it.key].warn}
             />
             <input
               type="number"
               min="0"
               aria-label={t("settings.thresholdLimitAria", { label: t(it.labelKey) })}
-              class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-white outline-none focus:border-accent"
+              class="w-20 rounded border border-edge bg-panel px-2 py-1 text-right text-sm text-text outline-none focus:border-accent"
               bind:value={settings.statusBarThresholds[it.key].crit}
             />
           </div>

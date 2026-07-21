@@ -298,7 +298,7 @@
           {t("page.alias")}
           <input
             data-testid="field-alias"
-            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {aliasError
+            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {aliasError
               ? 'border-danger'
               : 'border-edge'}"
             aria-invalid={aliasError}
@@ -316,7 +316,7 @@
           {t("page.hostIp")}
           <input
             data-testid="field-host"
-            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {hostError
+            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {hostError
               ? 'border-danger'
               : 'border-edge'}"
             aria-invalid={hostError}
@@ -335,7 +335,7 @@
             <input
               type="number"
               data-testid="field-port"
-              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {portError
+              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {portError
                 ? 'border-danger'
                 : 'border-edge'}"
               aria-invalid={portError}
@@ -346,7 +346,7 @@
             {t("page.username")}
             <input
               data-testid="field-username"
-              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {usernameError
+              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {usernameError
                 ? 'border-danger'
                 : 'border-edge'}"
               aria-invalid={usernameError}
@@ -364,7 +364,7 @@
 
         <div class="mb-2 text-xs text-muted">
           {t("page.authentication")}
-          <div class="mt-1 flex gap-3 text-sm text-white">
+          <div class="mt-1 flex gap-3 text-sm text-text">
             <label class="flex items-center gap-1">
               <input type="radio" value="password" bind:group={authMethod} />
               {t("page.authPassword")}
@@ -382,7 +382,7 @@
             <div class="mt-1 flex gap-2">
               <input
                 readonly
-                class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
+                class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
                 value={keyPath ?? ""}
                 placeholder="~/.ssh/id_ed25519"
               />
@@ -404,7 +404,7 @@
         <label class="mb-2 block text-xs text-muted">
           {t("page.tags")}
           <input
-            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
             bind:value={tagsInput}
             placeholder="web, eu"
           />
@@ -441,7 +441,7 @@
           </div>
           <select
             id="srv-ai-prompt"
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
             data-testid="server-ai-prompt"
             bind:value={aiPromptId}
           >
@@ -459,7 +459,7 @@
           </div>
           <select
             id="srv-ai-exec"
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
             data-testid="server-ai-exec"
             bind:value={aiExecMode}
           >
@@ -492,7 +492,7 @@
             <label class="mb-2 block text-xs text-muted">
               {t("page.proxyType")}
               <select
-                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                 data-testid="proxy-kind"
                 bind:value={proxyKind}
               >
@@ -506,7 +506,7 @@
               {t("page.proxyHost")}
               <input
                 data-testid="proxy-host"
-                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyHostError
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyHostError
                   ? 'border-danger'
                   : 'border-edge'}"
                 aria-invalid={proxyHostError}
@@ -524,7 +524,7 @@
               <input
                 type="number"
                 data-testid="proxy-port"
-                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyPortError
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyPortError
                   ? 'border-danger'
                   : 'border-edge'}"
                 aria-invalid={proxyPortError}
@@ -542,7 +542,7 @@
                 {t("page.proxyUsername")}
                 <input
                   data-testid="proxy-username"
-                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent {proxyUserError
+                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyUserError
                     ? 'border-danger'
                     : 'border-edge'}"
                   aria-invalid={proxyUserError}
@@ -556,7 +556,7 @@
 
               <div class="mb-2 text-xs text-muted">
                 {t("page.authentication")}
-                <div class="mt-1 flex gap-3 text-sm text-white">
+                <div class="mt-1 flex gap-3 text-sm text-text">
                   <label class="flex items-center gap-1">
                     <input type="radio" value="password" bind:group={proxyAuthMethod} />
                     {t("page.authPassword")}
@@ -574,7 +574,7 @@
                   <div class="mt-1 flex gap-2">
                     <input
                       readonly
-                      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none"
+                      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
                       value={proxyKeyPath ?? ""}
                       placeholder="~/.ssh/id_ed25519"
                     />
@@ -611,7 +611,7 @@
                 {t("page.proxyUsername")}
                 <input
                   data-testid="proxy-username"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                   bind:value={proxyUsername}
                   placeholder="user"
                 />
@@ -652,7 +652,7 @@
       <div class="ml-auto flex gap-2">
         <button
           type="button"
-          class="rounded px-3 py-1 text-sm text-muted hover:text-white"
+          class="rounded px-3 py-1 text-sm text-muted hover:text-text"
           onclick={() => (open = false)}>{t("common.cancel")}</button
         >
         <button

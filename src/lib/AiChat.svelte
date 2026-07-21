@@ -292,7 +292,7 @@
              mean a round trip through settings. -->
         <select
           data-testid="ai-endpoint-switch"
-          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
+          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
           use:tooltip={t("ai.endpoint")}
           value={endpoint.id}
           onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
@@ -304,7 +304,7 @@
       {/if}
       <select
         data-testid="ai-model"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-white outline-none focus:border-accent"
+        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
         use:tooltip={t("ai.model")}
         value={endpoint.model}
         onchange={(e) => setModel(e.currentTarget.value)}
@@ -314,7 +314,7 @@
         {/each}
       </select>
       <button
-        class="shrink-0 rounded p-1 text-muted hover:text-white disabled:opacity-50"
+        class="shrink-0 rounded p-1 text-muted hover:text-text disabled:opacity-50"
         use:tooltip={t("ai.modelRefresh")}
         aria-label={t("ai.modelRefresh")}
         disabled={loadingModels}
@@ -326,7 +326,7 @@
       <span class="flex-1"></span>
     {/if}
     <button
-      class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-white disabled:opacity-50"
+      class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
       onclick={clearChat}
       disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
     >
@@ -417,7 +417,7 @@
                   </span>
                   <div class="flex items-center gap-1">
                     <button
-                      class="flex items-center gap-0.5 rounded px-1 py-0.5 text-caption text-muted hover:text-white"
+                      class="flex items-center gap-0.5 rounded px-1 py-0.5 text-caption text-muted hover:text-text"
                       aria-label={t("ai.exec.copy")} use:tooltip={t("ai.exec.copy")}
                       onclick={() => copyBlock(seg.content)}
                     >
@@ -436,7 +436,7 @@
                     {/if}
                   </div>
                 </div>
-                <pre class="overflow-x-auto p-2 text-meta leading-relaxed text-white"><code
+                <pre class="overflow-x-auto p-2 text-meta leading-relaxed text-text"><code
                     >{seg.content}</code
                   ></pre>
               </div>
@@ -486,11 +486,11 @@
         {t("ai.dialog.confirmTitle")}
       </div>
       <pre
-        class="mb-1.5 overflow-x-auto rounded bg-panel-alt p-2 font-mono text-meta text-white">{pending.command}</pre>
+        class="mb-1.5 overflow-x-auto rounded bg-panel-alt p-2 font-mono text-meta text-text">{pending.command}</pre>
       <div class="flex justify-end gap-2">
         <button
           data-testid="ai-dialog-skip"
-          class="rounded px-2 py-1 text-meta text-muted hover:text-white"
+          class="rounded px-2 py-1 text-meta text-muted hover:text-text"
           onclick={() => skipDialogStep(sessionId)}>{t("ai.dialog.skip")}</button
         >
         <button
@@ -511,7 +511,7 @@
       rows="2"
       placeholder={ready ? t("ai.placeholder") : t("ai.disabledHint")}
       disabled={!ready || streaming || !!pending}
-      class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent disabled:opacity-50"
+      class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent disabled:opacity-50"
       bind:value={input}
       onkeydown={onKey}
     ></textarea>
@@ -522,7 +522,7 @@
           type="button"
           class="flex items-center gap-1 rounded-l px-1.5 py-1 text-meta disabled:opacity-40 {attach
             ? 'bg-edge text-accent'
-            : 'text-muted hover:text-white'}"
+            : 'text-muted hover:text-text'}"
           disabled={!canAttach}
           aria-pressed={attach}
           use:tooltip={t("ai.context.toggleHint")}
@@ -534,7 +534,7 @@
         <button
           data-testid="ai-tiers"
           type="button"
-          class="rounded-r px-1 py-1 text-meta text-muted hover:text-white disabled:opacity-40"
+          class="rounded-r px-1 py-1 text-meta text-muted hover:text-text disabled:opacity-40"
           disabled={!canAttach}
           aria-label={t("ai.context.tiers")}
           use:tooltip={t("ai.context.tiers")}

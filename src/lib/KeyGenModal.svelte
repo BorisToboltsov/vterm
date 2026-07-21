@@ -223,7 +223,7 @@
             <button
               type="button"
               data-testid="keygen-copy"
-              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white"
+              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text"
               onclick={copyPublic}
             >
               <Icon name={copied ? "check" : "copy"} size={12} />
@@ -232,7 +232,7 @@
             <button
               type="button"
               data-testid="keygen-save"
-              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-white"
+              class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text"
               onclick={savePublic}
             >
               <Icon name={saved ? "check" : "save"} size={12} />
@@ -243,7 +243,7 @@
         <textarea
           readonly
           rows="3"
-          class="w-full resize-none break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none"
+          class="w-full resize-none break-all rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-text outline-none"
           value={result.publicKey}
         ></textarea>
       </div>
@@ -277,7 +277,7 @@
         {t("keygen.algorithm")}
         <select
           data-testid="keygen-algorithm"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
           value={form.algorithm}
           onchange={(e) => onAlgorithmChange(e.currentTarget.value)}
         >
@@ -292,7 +292,7 @@
           {t("keygen.fileName")}
           <input
             data-testid="keygen-name"
-            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
             bind:value={form.name}
             oninput={checkExists}
           />
@@ -302,7 +302,7 @@
           {t("keygen.fullPath")}
           <input
             data-testid="keygen-path"
-            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-white outline-none focus:border-accent"
+            class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-sm text-text outline-none focus:border-accent"
             bind:value={form.customPath}
             placeholder="~/.ssh/id_ed25519"
             oninput={checkExists}
@@ -350,7 +350,7 @@
         {t("keygen.comment")}
         <input
           data-testid="keygen-comment"
-          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-white outline-none focus:border-accent"
+          class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
           bind:value={form.comment}
           placeholder="user@host"
         />

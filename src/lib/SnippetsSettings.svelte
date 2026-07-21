@@ -60,7 +60,7 @@
         {t("settings.snippetFilterLang")}
         <select
           data-testid="snippet-lang-filter"
-          class="rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
+          class="rounded border border-edge bg-panel px-1 py-1 text-xs text-text outline-none focus:border-accent"
           bind:value={snippetLangFilter}
         >
           <option value="">{t("settings.snippetAllLangs")}</option>
@@ -76,12 +76,12 @@
           <div class="rounded border border-edge p-2">
             <div class="flex items-center gap-2">
               <input
-                class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-white outline-none focus:border-accent"
+                class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
                 placeholder={t("settings.snippetName")}
                 bind:value={snippet.name}
               />
               <select
-                class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-white outline-none focus:border-accent"
+                class="shrink-0 rounded border border-edge bg-panel px-1 py-1 text-xs text-text outline-none focus:border-accent"
                 value={snippet.lang ?? ""}
                 onchange={(e) => setSnippetLang(snippet, e.currentTarget.value)}
               >
@@ -101,7 +101,7 @@
             <textarea
               rows="4"
               spellcheck="false"
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-white outline-none focus:border-accent"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 font-mono text-meta text-text outline-none focus:border-accent"
               bind:value={snippet.body}
             ></textarea>
           </div>
@@ -116,7 +116,7 @@
           {t("settings.addSnippet")}
         </button>
         <button
-          class="rounded px-2 py-1 text-xs text-muted hover:text-white"
+          class="rounded px-2 py-1 text-xs text-muted hover:text-text"
           onclick={() => (snippetResetOpen = true)}
         >
           {t("settings.resetSnippets")}

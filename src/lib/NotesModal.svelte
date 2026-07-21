@@ -87,15 +87,15 @@
       <div class="ml-auto flex items-center gap-1 rounded border border-edge p-0.5">
         <button
           class="rounded px-2 py-0.5 text-meta {mode === 'edit'
-            ? 'bg-edge text-white'
-            : 'text-muted hover:text-white'}"
+            ? 'bg-edge text-text'
+            : 'text-muted hover:text-text'}"
           data-testid="notes-mode-edit"
           onclick={() => (mode = "edit")}>{t("notes.edit")}</button
         >
         <button
           class="rounded px-2 py-0.5 text-meta {mode === 'preview'
-            ? 'bg-edge text-white'
-            : 'text-muted hover:text-white'}"
+            ? 'bg-edge text-text'
+            : 'text-muted hover:text-text'}"
           data-testid="notes-mode-preview"
           onclick={() => (mode = "preview")}>{t("notes.preview")}</button
         >
@@ -106,7 +106,7 @@
     {#if mode === "edit"}
       <textarea
         data-testid="notes-textarea"
-        class="h-[60vh] w-full resize-none rounded border border-edge bg-panel px-3 py-2 font-mono text-sm leading-relaxed text-white outline-none focus:border-accent"
+        class="h-[60vh] w-full resize-none rounded border border-edge bg-panel px-3 py-2 font-mono text-sm leading-relaxed text-text outline-none focus:border-accent"
         placeholder={t("notes.placeholder")}
         bind:value={draft}
         oninput={onInput}
