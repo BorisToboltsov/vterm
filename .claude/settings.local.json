@@ -549,7 +549,27 @@
       "Bash(awk '!/^```/ { n=gsub\\(/`/,\"`\"\\); if \\(n%2==1\\) print NR\": \"$0 }' docs/GUIDE.md)",
       "Bash(awk '{ line=$0; gsub\\(/`[^`]*`/,\"\",line\\); gsub\\(/\\\\*\\\\*/,\"\",line\\); n=gsub\\(/\\\\*/,\"*\",line\\); if \\(n%2==1\\) print NR\": \"$0 }' docs/GUIDE.md)",
       "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --hide-scrollbars --force-device-scale-factor=2 --screenshot=/private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide-top.png --window-size=820,1400 file:///private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide.html)",
-      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --hide-scrollbars --force-device-scale-factor=2 --screenshot=/private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide-toc.png --window-size=820,1000 file:///private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide.html)"
+      "Bash('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' --headless=new --hide-scrollbars --force-device-scale-factor=2 --screenshot=/private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide-toc.png --window-size=820,1000 file:///private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/9e35b604-f6f6-4ce3-955a-11511d5070ad/scratchpad/guide.html)",
+      "Bash(python3 -c \"import yaml,sys; d=yaml.safe_load\\(open\\('.github/workflows/release.yml'\\)\\); print\\('OK'\\); [print\\('-',s.get\\('name'\\)\\) for s in d['jobs']['release']['steps']]\")",
+      "Bash(which actionlint *)",
+      "Bash(ruby -ryaml -e 'd=YAML.load_file\\(\".github/workflows/release.yml\"\\); puts \"YAML OK\"; d[\"jobs\"][\"release\"][\"steps\"].each{|s| puts \" - #{s[\"name\"]||s[\"uses\"]}#{s[\"if\"] ? \" [if #{s[\"if\"]}]\" : \"\"}\"}')",
+      "Bash(git ls-remote *)",
+      "Bash(perl -0pi -e 's/^## 🧩 Требования$/## Требования/m; s/^## 🛠️ Разработка$/## Разработка/m; s/^## 📦 Сборка дистрибутивов$/## Сборка дистрибутивов/m; s/^## 🚀 Релизы через CI$/## Релизы через CI/m; s/^## ⌨️ Команды проекта$/## Команды проекта/m;' docs/INSTALL.md)",
+      "Bash(grep -n \"^build:\\\\|^lint\\\\|^test\\\\|^release\\\\|^security\\\\|^\\\\w*:$\" .gitlab-ci.yml)",
+      "Bash(grep -n \"^#\\\\{1,3\\\\} \\\\|^- \\\\*\\\\*\" docs/INVARIANTS.md)",
+      "Bash(grep -o '`[^`]\\\\+`' /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/c3e4c0e5-7b1b-4bfe-b8b5-6664f1da7e1c/scratchpad/inv_old.md)",
+      "Bash(grep -o '`[^`]\\\\+`' docs/INVARIANTS.md)",
+      "Bash(read p *)",
+      "Bash([ -e \"docs/$p\" ])",
+      "Bash(grep -n \"^#\\\\{1,3\\\\} \" docs/ARCHITECTURE.md)",
+      "Bash(awk '/^## /{if\\(h\\)print n\" lines: \"h; h=$0; n=0} {n++} END{print n\" lines: \"h}' docs/ROADMAP.md)",
+      "Bash(grep -n \"^#\\\\{1,3\\\\} \" docs/DESIGN.md)",
+      "Bash(grep -v \"^$\")",
+      "Bash(awk 'NR>=1812 && NR<=3092' CHANGELOG.md)",
+      "Bash(awk 'NR>=2582 && NR<=3092' CHANGELOG.md)",
+      "Bash(grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/c3e4c0e5-7b1b-4bfe-b8b5-6664f1da7e1c/scratchpad/inv_old.md >/dev/null 2>&1; git show HEAD:CHANGELOG.md | grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" | sort -u > /tmp/o.txt; grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" CHANGELOG.md | sort -u > /tmp/n.txt; echo \"=== реально отсутствуют в новом ===\"; comm -23 /tmp/o.txt /tmp/n.txt | sort -V | tr '\\\\n' ' ')",
+      "Bash(awk -F: '{s+=$2} END {print s}')",
+      "Bash(grep -n \"^#\\\\{1,3\\\\} \" SECURITY.md)"
     ]
   }
 }

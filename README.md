@@ -66,7 +66,8 @@ KPI-дашборд (ЦП / ОЗУ / сеть / температуры / health) 
 
 ## Установка
 
-Готовые сборки для **macOS** (`.dmg`), **Windows** (`.msi` / portable `.exe`)
+Готовые сборки для **macOS** (`.dmg` + хелпер `open-on-mac.sh`), **Windows**
+(`.msi` / установщик `.exe` / **portable** `.exe` — без установки)
 и **Linux** (`.deb` / `.rpm` / AppImage) — на странице релизов:
 
 ### [⬇️ Скачать последнюю версию](https://github.com/BorisToboltsov/vterm/releases/latest)
@@ -88,14 +89,25 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 
 ## Документация
 
-| Документ | О чём |
-|----------|-------|
-| [docs/GUIDE.md](docs/GUIDE.md) | Руководство пользователя: возможности, горячие клавиши |
-| [docs/INSTALL.md](docs/INSTALL.md) | Требования, установка, сборка, запуск, CI |
-| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Решение частых проблем |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура, инварианты, стек |
-| [docs/ROADMAP.md](docs/ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) | План по фазам · история |
-| [CONTRIBUTING.md](CONTRIBUTING.md) · [SECURITY.md](SECURITY.md) | Как контрибьютить · безопасность |
+Каждый документ отвечает на один вопрос — открывайте тот, чей вопрос ваш:
+
+| Вопрос | Документ |
+|--------|----------|
+| Что программа умеет и какие горячие клавиши? | [docs/GUIDE.md](docs/GUIDE.md) — то же руководство открывается **внутри приложения** |
+| Как поставить, собрать, выпустить релиз? | [docs/INSTALL.md](docs/INSTALL.md) |
+| Не запускается, не собирается, ошибка при старте | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
+| Из чего это собрано и как связано? | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — стек, граница фронт/бэк, каналы, подсистемы |
+| Что здесь нельзя делать и почему? | [docs/INVARIANTS.md](docs/INVARIANTS.md) — контракты кодовой базы |
+| Почему решено именно так? | [docs/adr/](docs/adr/) — записи о ключевых решениях |
+| Как это выглядит: токены, кнопки, отступы? | [docs/DESIGN.md](docs/DESIGN.md) |
+| Что уже сделано и что дальше? | [docs/ROADMAP.md](docs/ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) |
+| Как гоняются тесты? | [docs/TESTS.md](docs/TESTS.md) |
+| Как это защищено? | [SECURITY.md](SECURITY.md) |
+| Хочу поучаствовать | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+> **Собираетесь писать код или документацию?** Правила процесса и карта «что в какой файл
+> писать» — в [CLAUDE.md](CLAUDE.md). Жанр у каждого документа один, и дублировать мысль
+> между ними нельзя: вместо копии ставится ссылка.
 
 ---
 

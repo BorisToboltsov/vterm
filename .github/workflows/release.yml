@@ -82,7 +82,42 @@ jobs:
           releaseBody: |
             Готовые сборки vterm ${{ github.ref_name }}. Скачайте файл под свою ОС из списка **Assets** ниже.
 
+            - **macOS** — `.dmg`; рядом лежит `open-on-mac.sh` — хелпер запуска неподписанной сборки (снимает карантин Gatekeeper): `chmod +x open-on-mac.sh && ./open-on-mac.sh`.
+            - **Windows** — `-setup.exe` (NSIS) / `.msi` (установщики) и `vterm-portable-*-x86_64.exe` — **portable**, один файл без установки (нужен системный WebView2 Runtime).
+            - **Linux** — `.deb` / `.rpm` / AppImage (x86_64).
+
             Сборки не подписаны — при первом запуске ОС может показать предупреждение; как снять, см. [docs/INSTALL.md](https://github.com/BorisToboltsov/vterm/blob/main/docs/INSTALL.md).
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      # tauri-action заливает только то, что произвёл бандлер Tauri. Два файла из
+      # GitLab CI (build:macos / build:windows) он не знает — добавляем их в тот же
+      # релиз через gh CLI (предустановлен на раннерах; `gh release upload` находит
+      # черновик по тегу). `--clobber` — чтобы перезапуск workflow не падал.
+
+      # Хелпер запуска неподписанной сборки должен лежать на странице релиза рядом
+      # с .dmg: без него получатель упирается в Gatekeeper («программа повреждена»)
+      # и не знает, чем это снять. Локально то же делает scripts/place-opener.sh.
+      - name: Хелпер open-on-mac.sh в ассеты релиза (macOS)
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" scripts/open-on-mac.sh --clobber
+
+      # Portable-вариант (Фаза 39). Bundle-таргета «portable» у Tauri нет, но сам
+      # src-tauri/target/release/vterm.exe уже самодостаточен: фронтенд вшит в
+      # бинарь, .msi/.exe — только установочные обёртки вокруг него. Кладём его в
+      # релиз под говорящим именем (та же схема, что в GitLab build:windows).
+      - name: Portable .exe в ассеты релиза (Windows)
+        if: matrix.platform == 'windows-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $v = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $exe = "src-tauri/target/release/vterm.exe"
+          if (-not (Test-Path $exe)) { throw "Не найден $exe — portable-файл собрать не из чего" }
+          New-Item -ItemType Directory -Force -Path artifacts/portable | Out-Null
+          $portable = "artifacts/portable/vterm-portable-$v-x86_64.exe"
+          Copy-Item $exe $portable
+          gh release upload "${{ github.ref_name }}" $portable --clobber

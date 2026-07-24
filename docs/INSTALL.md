@@ -1,290 +1,157 @@
-# Установка, сборка и запуск vterm
+# Установка и сборка vterm
 
-Требования, установка для разработки, сборка дистрибутивов и запуск готового
-приложения. Возможности и использование — в [GUIDE.md](GUIDE.md); решение проблем —
-в [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+Готовые сборки, требования, разработка, упаковка дистрибутивов и релизы.
+Возможности — в [GUIDE.md](GUIDE.md); решение проблем — в [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+**Содержание:**
+[⬇️ Готовая сборка](#готовая-сборка) ·
+[🧩 Требования](#требования) ·
+[🛠️ Разработка](#разработка) ·
+[📦 Сборка дистрибутивов](#сборка-дистрибутивов) ·
+[🚀 Релизы через CI](#релизы-через-ci) ·
+[⌨️ Команды проекта](#команды-проекта)
 
 ---
 
-## Требования к окружению
+## Готовая сборка
 
-Нужны на обеих ОС:
+Файлы под все три ОС — на странице [релизов](https://github.com/BorisToboltsov/vterm/releases/latest).
 
-- **Node.js** 20+ и **pnpm** (через `corepack` или standalone-инсталлятор).
-- **Rust** stable через [rustup](https://rustup.rs/) (используется 1.96+).
+| ОС | Файл | Установка и первый запуск |
+|----|------|---------------------------|
+| **macOS** | `.dmg` | Открыть, перетащить **vterm.app** в `/Applications`. Сборка не подписана — см. врезку ниже |
+| **Windows** | `-setup.exe` (NSIS) · `.msi` | Обычная установка. SmartScreen → *«Подробнее» → «Выполнить в любом случае»* |
+| **Windows** | `vterm-portable-…-x86_64.exe` | Один файл, без установки — скопировал и запустил |
+| **Linux** | `.deb` · `.rpm` · AppImage | Пакетный менеджер; AppImage — `chmod +x` и запуск |
 
-Дополнительно по платформам:
+> **macOS: «не удаётся проверить разработчика» / «программа повреждена».** Сборка не
+> подписана Developer ID и не нотаризована, поэтому при переносе (интернет / AirDrop /
+> флешка) macOS ставит ей карантин Gatekeeper. Рядом с `.dmg` в релизе лежит хелпер: он
+> ставит `.app` в `/Applications`, снимает карантин, при необходимости подписывает
+> ad-hoc и открывает приложение.
+>
+> ```bash
+> chmod +x open-on-mac.sh && ./open-on-mac.sh
+> ```
+>
+> Вручную то же самое для уже установленного бандла:
+> `xattr -dr com.apple.quarantine /Applications/vterm.app`. Это обход на стороне
+> получателя — прогнать нужно каждому, кому отдаёте сборку; предупреждения совсем
+> убирает только подпись Developer ID + нотаризация (Фаза 15, [ROADMAP.md](ROADMAP.md)).
 
-### macOS
-- **Xcode Command Line Tools**: `xcode-select --install`.
-- WebView предоставляется системой (WKWebView), отдельная установка не нужна.
+**Portable — это про один файл, а не про переносимое состояние.** Нужен системный
+**WebView2 Runtime** (предустановлен в Windows 11 и Windows 10 21H2+), а профили
+серверов и `known_hosts` по-прежнему пишутся в `%APPDATA%\vterm`, секреты — в Windows
+Credential Manager. Запуск с флешки не оставит систему нетронутой и не перенесёт
+настройки на другую машину.
 
-### Windows
-- **Microsoft C++ Build Tools** (компонент «Сборка C++» из Visual Studio Build
-  Tools) — нужен линковщик MSVC.
-- **WebView2 Runtime** (на Windows 11 предустановлен; на Windows 10 ставится
-  [отсюда](https://developer.microsoft.com/microsoft-edge/webview2/)).
+---
 
-Подробности — в официальной инструкции
-[Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/).
+## Требования
 
-## Установка и запуск (разработка)
+Нужны только для сборки из исходников. На всех ОС: **Node.js 20+**, **pnpm**
+и **Rust stable** ([rustup](https://rustup.rs/)).
+
+| ОС | Дополнительно |
+|----|---------------|
+| **macOS** | Xcode Command Line Tools (`xcode-select --install`); WebView даёт система |
+| **Windows** | [Microsoft C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — нагрузка «Разработка классических приложений на C++» (линковщик MSVC) · [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) |
+| **Linux** | `libwebkit2gtk-4.1-dev`, `build-essential`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, `patchelf` (+ `rpm` для `.rpm`) |
+
+Полный список — [Tauri Prerequisites](https://v2.tauri.app/start/prerequisites/).
+
+### Windows с нуля
+
+На чистой машине всё ставится через **winget** (есть в Windows 10 1709+ и Windows 11):
+
+```powershell
+winget install --id Rustlang.Rustup -e
+winget install --id OpenJS.NodeJS.LTS -e
+winget install --id Microsoft.EdgeWebView2Runtime -e
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+  --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+**Закройте и откройте PowerShell заново**, чтобы обновился `PATH`, затем включите pnpm
+и проверьте, что всё на месте:
+
+```powershell
+corepack enable
+corepack prepare pnpm@latest --activate
+rustc --version; node --version; pnpm --version
+```
+
+---
+
+## Разработка
 
 ```bash
-# 1. Установить JS-зависимости
-pnpm install
-
-# 2. Запустить приложение в режиме разработки
-pnpm tauri dev
+pnpm install      # JS-зависимости
+pnpm tauri dev    # dev-режим
 ```
 
 `pnpm tauri dev` поднимает Vite на `http://localhost:1420`, компилирует Rust-бэкенд
 (первая сборка — 1–2 минуты, дальше быстрее за счёт кэша) и открывает нативное окно
 с горячей перезагрузкой фронтенда.
 
-> **Если `pnpm` или `cargo` не находятся** (`command not found`) — инструменты стоят
-> в нестандартных путях. Откройте новую вкладку терминала (профиль перечитается) или
-> выполните в текущей сессии:
->
-> ```bash
-> export PATH="$HOME/Library/pnpm/bin:$PATH"   # pnpm
-> source "$HOME/.cargo/env"                     # cargo
-> ```
+> `pnpm` или `cargo` не находятся, сборка падает на Windows, приложение не открывается
+> на другом Mac — [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
-## Установка на Windows (с нуля)
-
-Пошагово для **чистой Windows-машины** после того, как репозиторий уже скопирован
-(`git clone` или распакованный архив). Все команды выполняются в **PowerShell**.
-
-> **Если исходники скопированы с macOS — сначала вычисти файлы `._*`.**
-> При переносе с Mac через флешку (FAT/exFAT), сетевую шару или zip, собранный
-> в macOS, рядом с каждым файлом появляется служебный **AppleDouble**-двойник
-> `._имя` (бинарные метаданные, не UTF-8). Сборочный скрипт Tauri читает **все**
-> файлы из `src-tauri\capabilities\` как JSON и падает на таком двойнике:
->
-> ```
-> failed to read file 'capabilities\._default.json': stream did not contain valid UTF-8
-> ```
->
-> Такие файлы обычно имеют атрибут **hidden**, поэтому `dir` и Проводник их не
-> показывают, а обычный `del` отказывается удалять — кажется, что файла нет, а он на
-> месте. Найти (ключ `-Force` / `/a` показывает скрытые) и удалить из корня репозитория:
->
-> ```powershell
-> # посмотреть, что есть
-> Get-ChildItem -Path . -Recurse -Force -Filter '._*'
->
-> # удалить все
-> Get-ChildItem -Path . -Recurse -Force -Filter '._*' | Remove-Item -Force
-> ```
->
-> Проверить конкретно каталог капабилити (в нём должен остаться только `default.json`):
->
-> ```powershell
-> dir /a /b /s src-tauri\capabilities
-> ```
->
-> Если переносил zip'ом — удали заодно папки `__MACOSX`. Надёжнее всего забирать код
-> через `git clone` — тогда двойников не будет в принципе, git их не отслеживает.
-
-### 1. Системные компоненты
-
-Проще всего поставить зависимости через **winget** (встроен в Windows 10 1709+ /
-Windows 11). Открой PowerShell и выполни:
-
-```powershell
-# Rust (компилятор + cargo) через rustup
-winget install --id Rustlang.Rustup -e
-
-# Node.js LTS (даёт node + npm; pnpm включим ниже через corepack)
-winget install --id OpenJS.NodeJS.LTS -e
-
-# Microsoft C++ Build Tools — нужен линковщик MSVC для сборки Rust
-winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
-  --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
-
-# WebView2 Runtime — движок окна Tauri (на Windows 11 обычно уже стоит)
-winget install --id Microsoft.EdgeWebView2Runtime -e
-```
-
-> Если `winget` недоступен — поставь те же компоненты вручную:
-> [rustup](https://rustup.rs/) · [Node.js LTS](https://nodejs.org/) ·
-> [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-> (отметь рабочую нагрузку **«Разработка классических приложений на C++»**) ·
-> [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
-
-**Закрой и открой PowerShell заново** (или перелогинься), чтобы обновился `PATH`
-и стали видны `cargo`, `node`, `corepack`.
-
-### 2. Активировать pnpm
-
-```powershell
-corepack enable
-corepack prepare pnpm@latest --activate
-```
-
-Проверка, что всё на месте:
-
-```powershell
-rustc --version    # напр. rustc 1.9x.x
-node  --version    # напр. v20.x
-pnpm  --version    # напр. 9.x
-```
-
-### 3. Установить зависимости и запустить
-
-Из корня репозитория:
-
-```powershell
-# JS-зависимости
-pnpm install
-
-# Запуск в режиме разработки (первая Rust-сборка — 1–2 минуты)
-pnpm tauri dev
-```
-
-### 4. Собрать дистрибутив (опционально)
-
-```powershell
-pnpm tauri build
-```
-
-Готовые файлы появятся в `src-tauri\target\release\bundle\` — установщики `.msi`
-(в `msi\`) и/или NSIS `.exe` (в `nsis\`); портативный `vterm.exe` —
-в `src-tauri\target\release\`.
-
-> **Возможные проблемы (Windows).**
-> - *`link.exe` not found* / ошибка линковки — не доустановлены **C++ Build Tools**
->   (шаг 1) или не перезапущен терминал.
-> - *Окно не открывается / белый экран* — не установлен **WebView2 Runtime**.
-> - *`pnpm` не распознан* — не выполнен `corepack enable` (шаг 2) или не перезапущен
->   терминал.
-> - *`failed to read file 'capabilities\._default.json': stream did not contain valid
->   UTF-8`* — в исходниках остались скрытые AppleDouble-файлы `._*` после копирования
->   с macOS; чистка — во врезке в начале раздела «Установка на Windows (с нуля)».
+---
 
 ## Сборка дистрибутивов
 
 ```bash
-pnpm tauri build
+pnpm tauri build        # дистрибутив под текущую ОС
+pnpm tauri:build:mac    # то же + open-on-mac.sh рядом с .dmg
 ```
 
-Команда собирает фронтенд, компилирует Rust в release и упаковывает нативный
-дистрибутив **только для текущей ОС**.
+Результат — в `src-tauri/target/release/bundle/`:
 
-⚠️ **Важно: один файл, работающий и на Windows, и на macOS, невозможен** — у систем
-разные форматы исполняемых файлов (PE/`.exe` vs Mach-O). Поэтому на каждом этапе
-собираются **два отдельных артефакта**, по одному на ОС. Кросс-компиляция между
-macOS и Windows на одной машине для Tauri-приложения нерабочая (нужны системный
-WebView и линковщик целевой ОС), поэтому **оба файла собираются в CI** — см. ниже.
+| ОС | Артефакты |
+|----|-----------|
+| **macOS** | `macos/vterm.app` (портативный бандл) · `dmg/*.dmg` |
+| **Windows** | `msi/*.msi` · `nsis/*-setup.exe` · portable `src-tauri/target/release/vterm.exe` |
+| **Linux** | `deb/*.deb` · `rpm/*.rpm` · `appimage/*.AppImage` |
 
-Результат локальной сборки появляется в `src-tauri/target/release/bundle/`:
+⚠️ **Собирается только под текущую ОС.** Один файл для Windows и macOS невозможен —
+у систем разные форматы исполняемых (PE/`.exe` vs Mach-O), а кросс-компиляция Tauri
+между ОС нерабочая (нужны системный WebView и линковщик целевой ОС). Все три артефакта
+на каждой фазе даёт CI (ниже).
 
-- **macOS** — `.app` (портативный бандл, можно перетащить куда угодно) и `.dmg`
-  в подкаталогах `macos/` и `dmg/`. Команда **`pnpm tauri:build:mac`** дополнительно
-  кладёт рядом с `.dmg` хелпер `open-on-mac.sh` (запуск неподписанной сборки на
-  другом Mac — см. «Запуск готового приложения → macOS»).
-- **Windows** — `.msi` (WiX) и/или установщик NSIS (`.exe`) в `msi/` и `nsis/`,
-  **плюс portable-вариант** (Фаза 39).
-
-### Portable-сборка под Windows
-
-У Tauri **нет** bundle-таргета «portable», но он и не нужен: фронтенд вшит в
-бинарь, а `.msi`/`.exe` — лишь установочные обёртки вокруг него. Поэтому
-`src-tauri/target/release/vterm.exe` уже самодостаточен — скопировал и запустил,
-установка не требуется. CI (`build:windows`) кладёт его в артефакты под именем
+Отдельного bundle-таргета «portable» у Tauri нет, и он не нужен: фронтенд вшит в бинарь,
+а `.msi`/`.exe` — лишь установочные обёртки вокруг него, поэтому `vterm.exe` из
+`release/` уже самодостаточен. CI кладёт его в релиз как
 `vterm-portable-<версия>-x86_64.exe`.
 
-Две оговорки, о которых стоит знать:
+> Сборки не подписаны. Для распространения без предупреждений ОС нужны Apple Developer
+> ID + нотаризация (macOS) и code-signing сертификат (Windows) — Фаза 15, см.
+> [ROADMAP.md](ROADMAP.md).
 
-- **Нужен системный WebView2 Runtime.** Он предустановлен в Windows 11 и Windows 10
-  21H2+; на более старых системах portable-файл не запустится — там нужен обычный
-  установщик (или ручная установка WebView2, см. раздел выше).
-- **Portable — про один файл, а не про переносимое состояние.** Профили серверов,
-  папки и `known_hosts` по-прежнему пишутся в `%APPDATA%\vterm`, а секреты — в
-  Windows Credential Manager. Запуск с флешки не оставит систему нетронутой и не
-  перенесёт настройки на другую машину.
+---
 
-> Для распространения без предупреждений ОС потребуется подпись кода: Apple
-> Developer ID + нотаризация на macOS и code-signing сертификат на Windows. Это
-> вынесено в Фазу 15 (см. [ROADMAP.md](ROADMAP.md)).
+## Релизы через CI
 
-## Непрерывная сборка (CI): два файла на каждом этапе
-
-Чтобы на каждом этапе гарантированно получать **оба** дистрибутива, настроен
-**GitLab CI** [.gitlab-ci.yml](../.gitlab-ci.yml) с двумя задачами сборки — на
-macOS- и Windows-раннерах:
-
-| Событие | Что происходит |
-|---------|----------------|
-| push в дефолтную ветку, Merge Request, ручной запуск | Сборка обеих ОС, файлы — в **артефактах пайплайна** (`vterm-macos`, `vterm-windows`) |
-| push тега вида `v1.2.3` | Дополнительно создаётся **GitLab Release** для обеих ОС |
-
-macOS собирается как **universal** (Intel + Apple Silicon). Конфиг рассчитан на
-**self-hosted раннеры**: в [.gitlab-ci.yml](../.gitlab-ci.yml) указаны теги-плейсхолдеры
-`macos` / `windows` / `linux` — замените их на теги своих раннеров
-(*GitLab → Settings → CI/CD → Runners*). Раннер macOS должен иметь Xcode CLT, раннер
-Windows — VS C++ Build Tools и WebView2 Runtime; Rust и pnpm CI ставит сам
-(идемпотентно). Сборка активируется после публикации репозитория в GitLab; локально
-по-прежнему доступна сборка только под текущую ОС через `pnpm tauri build`.
-
-### GitHub Actions: релиз по тегу (без своих раннеров)
-
-Помимо GitLab, в репозитории есть workflow [.github/workflows/release.yml](../.github/workflows/release.yml)
-на **раннерах GitHub** (для публичного репозитория бесплатны — свои поднимать не нужно).
-По пушу тега `v*` он через [`tauri-apps/tauri-action`](https://github.com/tauri-apps/tauri-action)
-собирает **macOS (universal), Windows и Linux** и создаёт **черновик GitHub Release**
-с прикреплёнными `.dmg` / `.msi` / `.exe` / `.deb` / `.rpm` / AppImage:
+**GitHub Actions** — [release.yml](../.github/workflows/release.yml), на раннерах GitHub
+(для публичного репозитория бесплатны, свои поднимать не нужно). По пушу тега `v*`
+собирает **macOS (universal), Windows и Linux** и создаёт **черновик** GitHub Release:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v1.0.0 && git push origin v1.0.0
 ```
 
-Прогон виден во вкладке **Actions**; по завершении откройте черновик в **Releases**,
-проверьте ассеты и нажмите **Publish** (либо поставьте `releaseDraft: false` в workflow —
-тогда релиз публикуется автоматически). Сборки неподписанные — см. «Запуск готового
-приложения» ниже.
+Два файла бандлер Tauri не производит, поэтому их доливает в тот же релиз
+`gh release upload`: **`open-on-mac.sh`** рядом с `.dmg` (скачанный из релиза теряет
+флаг исполняемости — нужен `chmod +x`) и **`vterm-portable-<версия>-x86_64.exe`**.
+Прогон виден во вкладке **Actions**; готовый черновик — в **Releases**: проверить
+ассеты и нажать **Publish** (либо `releaseDraft: false` в workflow — публиковать сразу).
 
-## Запуск готового приложения
+**GitLab CI** — [.gitlab-ci.yml](../.gitlab-ci.yml) (`lint → security → test → build → release`) для
+**self-hosted** раннеров: теги `macos` / `windows` / `linux` в конфиге замените на теги
+своих раннеров (*Settings → CI/CD → Runners*). Пуш и MR дают артефакты пайплайна, тег
+`v1.2.3` — GitLab Release. Rust и pnpm CI ставит сам.
 
-### macOS
-1. Открыть `.dmg`, перетащить **vterm.app** в `/Applications`.
-2. Запустить. Если сборка не подписана, при первом запуске:
-   правый клик по приложению → **«Открыть»** → подтвердить
-   (либо разрешить в *Системные настройки → Конфиденциальность и безопасность*).
-
-> **Сборка не открывается на другом Mac** («не удаётся проверить разработчика» /
-> «программа повреждена»). Причина — сборка не подписана Developer ID и не
-> нотаризована, поэтому при переносе (интернет/AirDrop/флешка) macOS ставит файлу
-> атрибут карантина `com.apple.quarantine`. На свежих macOS правый клик → «Открыть»
-> для такого бандла часто уже не помогает. Два пути:
->
-> - **Хелпер рядом с бандлом.** CI и локальная сборка `pnpm tauri:build:mac` кладут
->   рядом с `.dmg` скрипт **`open-on-mac.sh`**. Получатель запускает его — скрипт
->   ставит `.app` в `/Applications`, снимает карантин, при необходимости ad-hoc
->   подписывает (Apple Silicon) и открывает приложение:
->
->   ```bash
->   chmod +x open-on-mac.sh        # один раз, если потерялся флаг исполняемости
->   ./open-on-mac.sh               # автопоиск vterm*.dmg рядом / в ~/Downloads
->   # или явно: ./open-on-mac.sh путь/к/vterm.dmg
->   ```
->
-> - **Вручную одной командой** — снять карантин с уже установленного бандла:
->
->   ```bash
->   xattr -dr com.apple.quarantine /Applications/vterm.app
->   ```
->
-> Это обход Gatekeeper на стороне получателя, а не подпись — прогнать нужно каждому,
-> кому отдаёте сборку. Полностью убирает предупреждения только подпись Developer ID +
-> нотаризация (Фаза 15, см. [ROADMAP.md](ROADMAP.md)).
-
-### Windows
-1. Запустить `.msi` или NSIS-`.exe` и пройти установку.
-2. Запустить **vterm** из меню «Пуск». Если установщик не подписан, SmartScreen
-   может показать предупреждение — *«Подробнее» → «Выполнить в любом случае»*.
+---
 
 ## Команды проекта
 
@@ -292,26 +159,17 @@ git push origin v1.0.0
 |---------|----------|
 | `pnpm install` | Установить JS-зависимости |
 | `pnpm tauri dev` | Запуск приложения в режиме разработки |
-| `pnpm tauri build` | Сборка нативного дистрибутива для текущей ОС |
-| `pnpm tauri:build:mac` | Сборка под macOS + `open-on-mac.sh` рядом с `.dmg` (запуск неподписанной сборки на другом Mac) |
-| `pnpm dev` | Только фронтенд (Vite) без окна Tauri |
-| `pnpm build` | Сборка фронтенда (SPA через adapter-static) |
-| `pnpm check` | Проверка типов и a11y (`svelte-check`) |
-| `pnpm test` | Фронтенд-тесты (Vitest: юнит + компонентные) |
-| `pnpm test:watch` | Тесты Vitest в watch-режиме |
-| `pnpm test:coverage` | Тесты Vitest с покрытием и гейтами |
+| `pnpm tauri build` | Дистрибутив под текущую ОС |
+| `pnpm tauri:build:mac` | То же + `open-on-mac.sh` рядом с `.dmg` |
+| `pnpm dev` · `pnpm build` | Только фронтенд: Vite dev-сервер · production-сборка |
+| `pnpm check` | Типы и a11y (`svelte-check`) |
+| `pnpm test` · `pnpm test:coverage` | Vitest: юнит и компонентные · с покрытием и гейтами |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust-юнит-тесты |
-| `pnpm tauri --version` | Версия Tauri CLI |
-| `rm -rf src-tauri/target/release/bundle` | Очистка готовых бандлов (.app/.dmg/.msi/.exe) — лёгкая, кэш сборки цел |
-| `cargo clean --manifest-path src-tauri/Cargo.toml` | Полная очистка `src-tauri/target` (десятки ГБ) — следующая сборка будет с нуля |
 
-> **Очистка места.** `src-tauri/target` растёт до десятков ГБ (в основном
-> `target/debug` — инкрементальный кэш компилятора). После зелёного прогона гейтов
-> удаляй **готовые бандлы** — `rm -rf src-tauri/target/release/bundle` (весят больше
-> всего, не нужны после проверки); инкрементальный кэш при этом сохраняется и держит
-> следующую сборку быстрой. Если места критически не хватает — полная очистка
-> `cargo clean` (или `rm -rf src-tauri/target`) сносит **весь** кэш: место
-> освобождается максимально, но ближайшая `pnpm tauri dev`/`build` пересоберёт Rust
-> с нуля (~1–2 мин и дольше).
+> **Место на диске.** `src-tauri/target` растёт до десятков ГБ. После зелёного прогона
+> удаляйте **готовые бандлы** — `rm -rf src-tauri/target/release/bundle`: весят больше
+> всего, а инкрементальный кэш остаётся и держит следующую сборку быстрой. Полная
+> очистка (`cargo clean --manifest-path src-tauri/Cargo.toml`) освобождает максимум, но
+> ближайшая сборка пойдёт с нуля.
 
-> Подробно о тестах (E2E, покрытие, CI) — [TESTS.md](TESTS.md).
+Подробно о тестах (E2E, покрытие, CI) — [TESTS.md](TESTS.md).
