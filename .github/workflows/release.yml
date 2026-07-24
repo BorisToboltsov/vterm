@@ -45,10 +45,13 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
 
+      # Тот же мажор, что породил pnpm-lock.yaml и понимает pnpm-workspace.yaml
+      # (allowBuilds / minimumReleaseAge). На чужом мажоре `--frozen-lockfile`
+      # падает по несовпадению лок-файла — и только в CI.
       - name: pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 11
 
       - name: Node
         uses: actions/setup-node@v4
