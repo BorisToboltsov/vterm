@@ -729,7 +729,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |
 | [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts) · `deny.toml` | Строгий CSP, минимальные capabilities, политика зависимостей |
-| [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) | Шаги `gh release upload` в релизном workflow (хелпер macOS + portable `.exe`) |
+| [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) | Шаги `gh release upload` в релизном workflow (хелпер macOS + portable `.exe`); пол Node под запиненный мажор pnpm — бамп одного без другого зелен локально и роняет все три ОС |
 | `no_file_attributes_built_from_default` (Rust) | `FileAttributes` не строится из `..Default::default()` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
 

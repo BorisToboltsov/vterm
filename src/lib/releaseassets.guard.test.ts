@@ -51,6 +51,32 @@ describe("release workflow builds the bundles", () => {
   });
 });
 
+// pnpm 11 needs Node >= 22.13 (it requires `node:sqlite`) and dies on the very
+// first invocation — which is the setup-node step itself, since `cache: pnpm`
+// runs `pnpm store path`. The pin is a floor, not a preference: bumping pnpm
+// without bumping Node passes review, passes locally, and takes out all three
+// platforms at once. Whoever raises either pin must look at the other.
+describe("toolchain pins are mutually consistent", () => {
+  const majorOf = (re: RegExp): number => {
+    const m = code.match(re);
+    expect(m, `pin not found: ${re}`).not.toBeNull();
+    return Number(m![1]);
+  };
+
+  const pnpmMajor = majorOf(/pnpm\/action-setup@v\d+\s+with:\s+version:\s*(\d+)/);
+  const nodeMajor = majorOf(/node-version:\s*(\d+)/);
+
+  it("Node clears the floor of the pinned pnpm major", () => {
+    // pnpm >= 11 → Node >= 22; pnpm 10 was fine on Node 20.
+    const floor = pnpmMajor >= 11 ? 22 : 20;
+    expect(nodeMajor).toBeGreaterThanOrEqual(floor);
+  });
+
+  it("does not sit on a Node major GitHub has deprecated", () => {
+    expect(nodeMajor).toBeGreaterThanOrEqual(22);
+  });
+});
+
 describe("macOS: open-on-mac.sh ships next to the .dmg", () => {
   const step = uploadStepWith("scripts/open-on-mac.sh");
 

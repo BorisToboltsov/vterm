@@ -53,10 +53,14 @@ jobs:
         with:
           version: 11
 
+      # Node 22+ обязателен: pnpm 11 требует ≥ 22.13 (тянет `node:sqlite`) и на
+      # Node 20 падает первым же вызовом — а первым его зовёт шаг ниже, `cache:
+      # pnpm` (он запускает `pnpm store path`). Пол pnpm держится гейтом
+      # releaseassets.guard.test.ts. Node 20 на раннерах вдобавок deprecated.
       - name: Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - name: Rust stable
