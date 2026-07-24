@@ -47,6 +47,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
 
       # Rust — компилируемый язык: CodeQL строит базу, собирая проект, поэтому
       # ему нужны те же системные зависимости Tauri, что и обычной сборке.
@@ -61,13 +65,13 @@ jobs:
 
       - name: Кэш Rust
         if: matrix.language == 'rust'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
         with:
           workspaces: src-tauri -> target
           key: codeql
 
       - name: Инициализация CodeQL
-        uses: github/codeql-action/init@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/init@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
         with:
           languages: ${{ matrix.language }}
           # security-and-quality шире дефолтного набора; шум фильтруется в
@@ -75,9 +79,9 @@ jobs:
           queries: security-and-quality
 
       - name: Сборка базы
-        uses: github/codeql-action/autobuild@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/autobuild@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
 
       - name: Анализ
-        uses: github/codeql-action/analyze@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/analyze@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
         with:
           category: "/language:${{ matrix.language }}"
