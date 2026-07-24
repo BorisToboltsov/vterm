@@ -14,9 +14,12 @@ on:
     tags:
       - "v*"
 
-# tauri-action создаёт релиз и заливает в него ассеты — нужен доступ на запись.
+# Права выдаём ПОДЖОБНО, а не на весь workflow: верхний `contents: write` давал
+# бы токену на запись даже джобе гейтов, которой хватает чтения (zizmor
+# excessive-permissions). По умолчанию — только чтение; write просят те джобы,
+# что реально пишут в релиз.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # Тег не должен уметь опубликовать релиз из красного дерева. Гоняем ровно тот
@@ -33,6 +36,9 @@ jobs:
 
   release:
     needs: verify
+    # tauri-action создаёт релиз и заливает ассеты — этой джобе нужна запись.
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +61,10 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
 
       # Системные зависимости Tauri 2 под Linux (WebKitGTK 4.1, tray, rsvg,
       # patchelf для AppImage, rpm для .rpm) — те же, что в GitLab build:linux.
@@ -75,14 +85,18 @@ jobs:
           version: 11
 
       # Node 22+ обязателен: pnpm 11 требует ≥ 22.13 (тянет `node:sqlite`) и на
-      # Node 20 падает первым же вызовом — а первым его зовёт шаг ниже, `cache:
-      # pnpm` (он запускает `pnpm store path`). Пол pnpm держится гейтом
-      # releaseassets.guard.test.ts. Node 20 на раннерах вдобавок deprecated.
+      # Node 20 падает. Пол pnpm держится гейтом releaseassets.guard.test.ts.
+      # Node 20 на раннерах вдобавок deprecated.
+      #
+      # БЕЗ `cache: pnpm` — намеренно: это публикующий workflow, а кэш в нём —
+      # вектор отравления (cache poisoning): недоверенный PR может записать в
+      # кэш-ключ, который потом восстановит релизная сборка (zizmor). Релиз редок
+      # и должен собираться из чистого состояния — те байты мы подписываем
+      # provenance. Кэш остаётся в ci.yml/nightly.yml, где публикации нет.
       - name: Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
-          cache: pnpm
 
       # `toolchain` передаётся явно: при пине по SHA имя ссылки больше не
       # выбирает тулчейн (форма @stable работала именно как «ветка stable»),
@@ -94,11 +108,7 @@ jobs:
           # Для universal-сборки macOS нужны обе цели; на других ОС — по умолчанию.
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
-      - name: Кэш Rust (ускоряет повторные сборки)
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
-        with:
-          workspaces: src-tauri -> target
-
+      # Кэша Rust здесь тоже нет — по той же причине, что и у Node выше.
       - name: Установка JS-зависимостей
         run: pnpm install --frozen-lockfile
 
@@ -185,6 +195,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
 
       # Черновик релиза уже содержит всё, что положили три матричные джобы.
       - name: Забрать ассеты релиза

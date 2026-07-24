@@ -18,6 +18,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
+    # Выдержка перед адаптацией свежего релиза: скомпрометированную версию апстрим
+    # обычно отзывает в первые дни (zizmor dependabot-cooldown). Неделя — компромисс
+    # между «не тянем яд в первый час» и «не отстаём от секьюрити-патчей».
+    cooldown:
+      default-days: 7
     groups:
       # Один PR на minor/patch: такие бампы почти всегда безобидны, а пять
       # отдельных PR в неделю читать никто не будет.
@@ -40,6 +45,8 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "deps"
+    cooldown:
+      default-days: 7
     groups:
       # Дробить на отдельные PR имеет смысл только там, где бамп реально может
       # что-то сломать. Экосистемы, которые ходят версиями синхронно, — группой.
@@ -67,6 +74,8 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "deps"
+    cooldown:
+      default-days: 7
     groups:
       tauri:
         patterns: ["tauri", "tauri-*"]
