@@ -49,7 +49,7 @@ sha2 = "0.11"
 # to the WebView as a `data:` URL. Encoding here rather than shipping a `Vec<u8>`
 # is not a micro-optimisation — Tauri serialises a byte vector as a JSON array of
 # numbers, which is roughly 4x the payload for a screenshot-sized PNG.
-base64 = "0.22"
+base64 = "0.23"
 portable-pty = "0.9.0"
 # Backups are shipped as a portable .zip archive (manifest + data); deflate-only
 # keeps the dependency tree small (flate2/crc32fast are already in the tree).
