@@ -65,13 +65,13 @@ jobs:
 
       - name: Кэш Rust
         if: matrix.language == 'rust'
-        uses: Swatinem/rust-cache@23869a5bd66c73db3c0ac40331f3206eb23791dc # v2.9.1
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: src-tauri -> target
           key: codeql
 
       - name: Инициализация CodeQL
-        uses: github/codeql-action/init@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           languages: ${{ matrix.language }}
           # security-and-quality шире дефолтного набора; шум фильтруется в
@@ -79,9 +79,9 @@ jobs:
           queries: security-and-quality
 
       - name: Сборка базы
-        uses: github/codeql-action/autobuild@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
+        uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
 
       - name: Анализ
-        uses: github/codeql-action/analyze@c54b30b7df092240050e69945842bc67aee0f0f4 # v4.37.3
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
           category: "/language:${{ matrix.language }}"
