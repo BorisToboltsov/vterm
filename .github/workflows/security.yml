@@ -101,17 +101,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Отдельного шага выгрузки здесь НЕТ, и это не пропуск: при
+      # `advanced-security: true` (дефолт) экшен заливает SARIF в Security tab
+      # сам. Вторая загрузка той же пары tool/category в одной джобе отвергается
+      # с «only one run of the codeql/analyze or codeql/upload-sarif actions is
+      # allowed per job per tool/category» — на чём эта джоба и падала.
       - name: Аудит
-        id: zizmor
         continue-on-error: true
         uses: zizmorcore/zizmor-action@6fc4b006235f201fdab3722e17240ab420d580e5 # v0.6.1
         with:
           # Разбираем и workflow, и композитные экшены, если появятся.
           collect: all
-
-      - name: Результаты в Security tab
-        if: always() && steps.zizmor.outputs.output-file != ''
-        uses: github/codeql-action/upload-sarif@adfda868f108ac4222129de456ea554034a27db7 # v4
-        with:
-          sarif_file: ${{ steps.zizmor.outputs.output-file }}
-          category: zizmor
+          advanced-security: true
