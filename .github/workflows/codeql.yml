@@ -67,7 +67,7 @@ jobs:
           key: codeql
 
       - name: Инициализация CodeQL
-        uses: github/codeql-action/init@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/init@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           languages: ${{ matrix.language }}
           # security-and-quality шире дефолтного набора; шум фильтруется в
@@ -75,9 +75,9 @@ jobs:
           queries: security-and-quality
 
       - name: Сборка базы
-        uses: github/codeql-action/autobuild@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/autobuild@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
 
       - name: Анализ
-        uses: github/codeql-action/analyze@adfda868f108ac4222129de456ea554034a27db7 # v4
+        uses: github/codeql-action/analyze@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4
         with:
           category: "/language:${{ matrix.language }}"
