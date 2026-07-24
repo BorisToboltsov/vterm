@@ -109,5 +109,6 @@ windows-sys = { version = "0.61", features = [
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
 
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3"
 

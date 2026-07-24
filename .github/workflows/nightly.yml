@@ -1,0 +1,209 @@
+name: Nightly
+
+# Слои, которым не место на PR: они либо долгие, либо требуют живого окружения.
+# Держать их здесь честнее, чем `allow_failure` на каждом мердже, — в GitLab
+# ровно эти три джобы стоят ручными или разрешают падение, то есть не идут
+# никогда и ничего не проверяют.
+#
+#   fuzz      — те же property-тесты, что на PR, но на два порядка глубже;
+#   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция;
+#   e2e       — реальное нативное окно через tauri-driver.
+#
+# Ночью, а не на PR: полтора-два часа раннера в сутки против задержки каждого
+# мерджа. Ручной запуск — workflow_dispatch.
+
+on:
+  schedule:
+    - cron: "23 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # ── Фаззинг парсеров недоверенного входа ────────────────────────────────────
+  # Аналог DAST для приложения без единого HTTP-порта: сканировать нечего, но
+  # поверхность есть — markdown из ответа LLM, `.md` с чужого сервера, вывод
+  # скомпрометированного хоста, строки логов, чужие байты в редакторе.
+  fuzz:
+    name: Фаззинг недоверенного входа
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11
+
+      - name: Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Установка зависимостей
+        run: pnpm install --frozen-lockfile
+
+      # Те же свойства, что гоняются на PR (там ~300 прогонов), здесь — 150 000.
+      # Таймаут теста в самом файле выведен из этого числа.
+      - name: Свойства фронтенда (fast-check)
+        env:
+          FUZZ_RUNS: 150000
+        run: pnpm vitest run src/lib/untrusted.fuzz.test.ts
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Системные зависимости Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      - name: Кэш Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: src-tauri -> target
+          key: nightly
+
+      # Кодировки — вход, форму которого мы не выбираем: это байты чужого файла.
+      - name: Свойства бэкенда (proptest)
+        env:
+          PROPTEST_CASES: 20000
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib props
+
+  # ── Живые SFTP-тесты против настоящего sshd ─────────────────────────────────
+  # Слой существует потому, что весь набор чистых тестов sftp.rs был зелёным,
+  # пока редактор уничтожал каждый сохранённый файл: дефект был не в вычисленном
+  # значении, а в том, ЧТО МЫ ПОПРОСИЛИ СДЕЛАТЬ СЕРВЕР. Такое ловится только
+  # разговором с сервером.
+  #
+  # Поднимаем тем же docker compose, что описан в docs/TESTS.md, а не service-
+  # контейнером: пусть CI исполняет ровно ту команду, которую читает человек.
+  live-sftp:
+    name: Живые SFTP-тесты
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      - name: Системные зависимости Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      - name: Кэш Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: src-tauri -> target
+          key: nightly
+
+      - name: Тестовый sshd
+        run: |
+          docker compose -f e2e/docker-compose.ssh.yml up -d
+          # Порт открывается позже контейнера — ждём именно готовности сервиса.
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/2222) 2>/dev/null; then
+              echo "sshd готов через ${i}с"; exit 0
+            fi
+            sleep 1
+          done
+          echo "sshd не поднялся за 30с"; docker compose -f e2e/docker-compose.ssh.yml logs; exit 1
+
+      # Параметры по умолчанию (127.0.0.1:2222, tester/testpass) совпадают с
+      # compose-файлом, поэтому VTERM_TEST_SSH_* задавать не нужно.
+      - name: Прогон
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_sftp -- --ignored
+
+      - name: Погасить sshd
+        if: always()
+        run: docker compose -f e2e/docker-compose.ssh.yml down
+
+  # ── E2E: реальное окно ──────────────────────────────────────────────────────
+  # tauri-driver не поддерживает macOS, поэтому локально на этой машине E2E не
+  # гоняется вовсе — единственное место, где он вообще исполняется, это CI.
+  e2e:
+    name: E2E (tauri-driver)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11
+
+      - name: Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      # webkit2gtk-driver — WebDriver для WebKitGTK, без него tauri-driver
+      # не к чему подключаться; xvfb — окно на безголовом раннере.
+      - name: Системные зависимости + WebDriver
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm \
+            webkit2gtk-driver xvfb
+
+      - name: Кэш Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: src-tauri -> target
+          key: nightly-e2e
+
+      - name: tauri-driver
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+        with:
+          tool: tauri-driver
+
+      - name: Зависимости
+        run: |
+          pnpm install --frozen-lockfile
+          cd e2e && pnpm install --no-frozen-lockfile
+
+      # Фронт собирается ДО cargo build: tauri-build вшивает в бинарь
+      # frontendDist (../build), и без него собирать нечего.
+      - name: Сборка фронта
+        run: pnpm build
+
+      - name: Тестовый sshd
+        run: |
+          docker compose -f e2e/docker-compose.ssh.yml up -d
+          for i in $(seq 1 30); do
+            if (echo > /dev/tcp/127.0.0.1/2222) 2>/dev/null; then
+              echo "sshd готов через ${i}с"; exit 0
+            fi
+            sleep 1
+          done
+          echo "sshd не поднялся за 30с"; exit 1
+
+      - name: Прогон
+        working-directory: e2e
+        run: xvfb-run --auto-servernum pnpm test:e2e
+
+      - name: Погасить sshd
+        if: always()
+        run: docker compose -f e2e/docker-compose.ssh.yml down

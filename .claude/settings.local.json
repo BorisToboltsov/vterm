@@ -572,7 +572,29 @@
       "Bash(grep -n \"^#\\\\{1,3\\\\} \" SECURITY.md)",
       "Bash(git ls-tree *)",
       "Bash(gh auth *)",
-      "Bash(gh repo *)"
+      "Bash(gh repo *)",
+      "Bash(curl -sS --max-time 25 \"https://api.github.com/repos/actions/runner-images/contents/images/ubuntu\")",
+      "Bash(curl -sS --max-time 25 \"https://raw.githubusercontent.com/actions/runner-images/main/README.md\")",
+      "Bash(curl -sS --max-time 25 \"https://api.github.com/repos/actions/checkout/releases/tags/v7.0.0\")",
+      "Bash(python3 -c \"import sys,json; print\\(json.load\\(sys.stdin\\).get\\('body',''\\)[:700]\\)\")",
+      "Bash(curl -sS --max-time 25 \"https://raw.githubusercontent.com/actions/setup-node/v7/action.yml\")",
+      "Bash(curl -sS --max-time 25 \"https://raw.githubusercontent.com/actions/setup-node/v5/action.yml\")",
+      "Bash(curl -sS --max-time 25 \"https://raw.githubusercontent.com/pnpm/action-setup/v6/action.yml\")",
+      "Bash(node scripts/set-version.mjs 1.2.3)",
+      "Bash(grep -n -A1 '^name = \"vterm\"$' src-tauri/Cargo.lock)",
+      "Bash(node scripts/set-version.mjs 1.0.0)",
+      "Bash(python3 -m pip --version)",
+      "Bash(python3 -m pip install --quiet pyyaml)",
+      "Bash(curl -s -m 20 -o /dev/null -w \"api.github.com → HTTP %{http_code}\\\\n\" https://api.github.com/repos/actions/checkout)",
+      "Bash(curl -s -m 20 \"https://api.github.com/repos/actions/upload-artifact/releases/latest\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('upload-artifact latest:', d.get\\('tag_name'\\)\\)\")",
+      "Bash(curl -s -m 20 -D- -o /tmp/claude-501/-Users-boristoboltsov-project-project-vterm/0286fa69-d6ef-4e5c-986c-a5f61dd1e8c9/scratchpad/body.json \"https://api.github.com/repos/actions/checkout/releases/latest\")",
+      "Bash(curl -s -m 25 \"https://raw.githubusercontent.com/github/codeql-action/adfda868f108ac4222129de456ea554034a27db7/src/languages.ts\")",
+      "Bash(curl -s -m 25 \"https://raw.githubusercontent.com/zizmorcore/zizmor-action/6fc4b006235f201fdab3722e17240ab420d580e5/action.yml\")",
+      "Bash(curl -s -m 25 https://api.github.com/repos/github/codeql-action/git/trees/adfda868f108ac4222129de456ea554034a27db7?recursive=1)",
+      "Bash(curl -s -m 25 \"https://raw.githubusercontent.com/github/codeql-action/adfda868f108ac4222129de456ea554034a27db7/src/languages/builtin.json\")",
+      "Bash(curl -s -m 25 -H \"User-Agent: vterm\" \"https://api.github.com/repos/github/codeql-action/contents/src/languages/builtin.json?ref=adfda868f108ac4222129de456ea554034a27db7\")",
+      "Bash(sed -n '/Failed Tests/,$p' /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/0286fa69-d6ef-4e5c-986c-a5f61dd1e8c9/tasks/bevk276b0.output | grep -vE \"^ *❯|node_modules\" | head -60)"
     ]
   }
 }

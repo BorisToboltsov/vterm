@@ -101,11 +101,24 @@ rm -rf src-tauri/target/release/bundle    # .app/.dmg/.msi/.exe
 
 ## Версионирование
 
-Схема `0.<фаза>.<фикс>`: вторая цифра — номер фазы (растёт на новой фазе, третья сбрасывается
-в 0), третья — фикс внутри фазы. Поднимай согласованно в [package.json](package.json),
-[src-tauri/Cargo.toml](src-tauri/Cargo.toml),
-[src-tauri/tauri.conf.json](src-tauri/tauri.conf.json), затем `cargo check` (синк
-`Cargo.lock`). Приложение читает версию из `tauri.conf.json` (окно «О программе»).
+Схема `<major>.<фаза>.<фикс>`: вторая цифра — номер фазы (растёт на новой фазе, третья
+сбрасывается в 0), третья — фикс внутри фазы. `major` поднимается только на публичном
+рубеже — `1.0.0` был первым таким (до него вся разработка шла на `0.<фаза>.<фикс>`).
+Пререлизных суффиксов нет: Tauri их не бандлит.
+
+**Версия лежит в одном месте — [package.json](package.json)**, и правится одной командой:
+
+```sh
+pnpm version:set 1.1.0
+```
+
+[scripts/set-version.mjs](scripts/set-version.mjs) разносит её в `Cargo.toml` и `Cargo.lock`
+(cargo не умеет ссылок, нужен литерал). `tauri.conf.json` ничего не хранит — там стоит
+ссылка `"version": "../package.json"`, которую Tauri резолвит сам; приложение читает версию
+через `getVersion()`, то есть из того же источника. CI берёт её тоже из `package.json` —
+достать `.version` из `tauri.conf.json` теперь значит получить строку `"../package.json"`
+и собрать файл с таким именем. Расхождение и откат к литералу ловит гейт
+`version.guard.test.ts`. Руками эти файлы не правь.
 
 ## Сборка: три артефакта
 
@@ -115,6 +128,13 @@ rm -rf src-tauri/target/release/bundle    # .app/.dmg/.msi/.exe
 и [.gitlab-ci.yml](.gitlab-ci.yml) на self-hosted раннерах
 (`lint → security → test → build → release`). Локально доступна сборка только под текущую ОС.
 Подробности — [docs/INSTALL.md](docs/INSTALL.md).
+
+**Тег не собирает релиз из красного дерева:** `release.yml` первой джобой вызывает
+[ci.yml](.github/workflows/ci.yml) целиком, матрица стоит под `needs`. Раскладка всех
+workflow — [docs/TESTS.md](docs/TESTS.md#ci-на-github); свойства цепочки поставки —
+[SECURITY.md](SECURITY.md). Правя workflow, помни: экшены пинятся **по коммит-SHA** с
+комментарием версии, а `${{ … }}` в `run:` не подставляется (только через `env`) — оба
+правила держит гейт.
 
 ## Toolchain (нестандартный на этой машине)
 

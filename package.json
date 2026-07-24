@@ -13,7 +13,9 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
-    "tauri:build:mac": "tauri build && bash scripts/place-opener.sh"
+    "tauri:build:mac": "tauri build && bash scripts/place-opener.sh",
+    "version:set": "node scripts/set-version.mjs",
+    "version:sync": "node scripts/set-version.mjs"
   },
   "license": "MIT",
   "dependencies": {
@@ -68,6 +70,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^25.9.5",
     "@vitest/coverage-v8": "^4.1.10",
+    "fast-check": "^4.9.0",
     "jsdom": "^29.1.1",
     "svelte": "^5.56.6",
     "svelte-check": "^4.7.3",

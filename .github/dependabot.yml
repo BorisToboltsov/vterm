@@ -1,0 +1,62 @@
+version: 2
+
+# Обновления приезжают проверяемыми PR, а не разовым «обновить всё» раз в год.
+#
+# Отдельно про github-actions: экшены запинены по коммит-SHA (изменяемый тег —
+# обещание, которое апстрим может переписать, а tauri-action работает с токеном
+# на запись в релизы). Ручной SHA-пин без Dependabot консервирует уязвимость;
+# вместе они дают и неизменяемость, и обновляемость — Dependabot двигает SHA
+# и правит комментарий с версией.
+
+updates:
+  # ── Сами workflow ──────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+    groups:
+      # Один PR на все экшены: их бампы почти всегда независимы и безобидны,
+      # а пять отдельных PR в неделю читать никто не будет.
+      actions:
+        patterns: ["*"]
+
+  # ── npm-зависимости фронтенда ──────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+    groups:
+      # Дробить на отдельные PR имеет смысл только там, где бамп реально может
+      # что-то сломать. Экосистемы, которые ходят версиями синхронно, — группой.
+      codemirror:
+        patterns: ["@codemirror/*", "@lezer/*"]
+      xterm:
+        patterns: ["@xterm/*"]
+      fontsource:
+        patterns: ["@fontsource/*"]
+      testing:
+        patterns: ["vitest", "@vitest/*", "@testing-library/*", "jsdom"]
+      # Tauri и Svelte остаются поштучно: у них бампы ломающие, и такой PR
+      # обязан быть отдельным.
+
+  # ── Rust-зависимости ───────────────────────────────────────────────────────
+  - package-ecosystem: cargo
+    directory: "/src-tauri"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "deps"
+    groups:
+      tauri:
+        patterns: ["tauri", "tauri-*"]
+      # russh — SSH-стек, ядро приложения: бампы смотрим поштучно.

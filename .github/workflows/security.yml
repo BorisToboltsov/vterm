@@ -1,0 +1,117 @@
+name: Security scan
+
+# Сканеры второго эшелона. Разделение с ci.yml намеренное:
+#
+#   ci.yml (deps)  — ЖЁСТКИЕ гейты: cargo audit / cargo deny / pnpm audit.
+#                    Политика с расписанными исключениями (deny.toml) — она
+#                    обязана ронять прогон, иначе это не политика.
+#   здесь          — СОВЕТУЮЩИЕ: Semgrep, Trivy, zizmor. Их находки едут в
+#                    Security tab SARIF-ом и разбираются там, а не роняют
+#                    чужой PR на правиле из внешнего реестра.
+#
+# Почему вообще SARIF: в GitLab-пайплайне те же сканеры стоят с
+# `allow_failure: true` и печатают в лог, то есть их не читает никто. Витрина
+# с дедупом и историей — единственное, что делает сканер полезным.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Semgrep: анти-паттерны и секреты во фронтенде ───────────────────────────
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Установка semgrep
+        run: pipx install semgrep
+
+      # Правила тянутся из реестра — это сетевой вызов, и он иногда флейкает.
+      # Флейк не должен ронять чужой PR, поэтому шаг продолжается при ошибке;
+      # результат при этом всё равно уезжает в витрину шагом ниже.
+      - name: Скан
+        continue-on-error: true
+        run: |
+          semgrep scan \
+            --config p/typescript --config p/javascript --config p/secrets \
+            --sarif --output semgrep.sarif \
+            src/
+
+      - name: Результаты в Security tab
+        if: always() && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@adfda868f108ac4222129de456ea554034a27db7 # v4
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+  # ── Trivy: уязвимости, секреты и misconfig по дереву репозитория ────────────
+  trivy:
+    name: Trivy (fs)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Скан
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+
+      - name: Результаты в Security tab
+        if: always() && hashFiles('trivy.sarif') != ''
+        uses: github/codeql-action/upload-sarif@adfda868f108ac4222129de456ea554034a27db7 # v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+  # ── zizmor: линтер самих workflow ──────────────────────────────────────────
+  # Ловит то, чего не видит ни один из сканеров кода: подстановку `${{ … }}`
+  # прямо в `run:` (значение становится кодом до запуска шелла), незапиненные
+  # экшены, лишние права токена. Первую находку этого класса — интерполяцию
+  # github.ref_name в `gh release upload` — мы уже вычистили руками; джоба
+  # держит, чтобы она не вернулась.
+  zizmor:
+    name: zizmor (workflows)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Аудит
+        id: zizmor
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@6fc4b006235f201fdab3722e17240ab420d580e5 # v0.6.1
+        with:
+          # Разбираем и workflow, и композитные экшены, если появятся.
+          collect: all
+
+      - name: Результаты в Security tab
+        if: always() && steps.zizmor.outputs.output-file != ''
+        uses: github/codeql-action/upload-sarif@adfda868f108ac4222129de456ea554034a27db7 # v4
+        with:
+          sarif_file: ${{ steps.zizmor.outputs.output-file }}
+          category: zizmor

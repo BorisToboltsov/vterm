@@ -1,0 +1,83 @@
+name: CodeQL
+
+# Основной SAST. Родной для GitHub и потому лучше сторонних в трёх вещах:
+# правила едут вместе с движком (не тянутся из чужого реестра на каждый прогон),
+# находки попадают в Security tab с дедупом и историей, а на PR они видны
+# аннотациями прямо в диффе — то есть их читают, а не «есть в логе».
+#
+# Три языка, и каждый закрывает свою поверхность:
+#   javascript-typescript — фронтенд: недоверенный markdown, санитайзер, парсеры
+#                           логов, всё, что жуёт вывод чужого хоста;
+#   rust                  — бэкенд: SSH/SFTP, работа с файлами, секреты;
+#   actions               — сами workflow: инъекции в `run:`, утечки токена.
+#
+# Набор языков сверен со списком встроенных в запиненную версию экшена
+# (src/languages/builtin.json), а не взят по памяти.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Раз в неделю: база правил CodeQL обновляется независимо от кода, и находка
+    # может появиться на неизменившемся файле.
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    name: Анализ (${{ matrix.language }})
+    runs-on: ubuntu-22.04
+    permissions:
+      # Заливка результатов в Security tab.
+      security-events: write
+      contents: read
+      actions: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, rust, actions]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Rust — компилируемый язык: CodeQL строит базу, собирая проект, поэтому
+      # ему нужны те же системные зависимости Tauri, что и обычной сборке.
+      # Для JS и actions сборка не нужна вовсе.
+      - name: Системные зависимости Tauri
+        if: matrix.language == 'rust'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      - name: Кэш Rust
+        if: matrix.language == 'rust'
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: src-tauri -> target
+          key: codeql
+
+      - name: Инициализация CodeQL
+        uses: github/codeql-action/init@adfda868f108ac4222129de456ea554034a27db7 # v4
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality шире дефолтного набора; шум фильтруется в
+          # Security tab, а не тем, что мы не стали смотреть.
+          queries: security-and-quality
+
+      - name: Сборка базы
+        uses: github/codeql-action/autobuild@adfda868f108ac4222129de456ea554034a27db7 # v4
+
+      - name: Анализ
+        uses: github/codeql-action/analyze@adfda868f108ac4222129de456ea554034a27db7 # v4
+        with:
+          category: "/language:${{ matrix.language }}"

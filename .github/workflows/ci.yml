@@ -1,0 +1,188 @@
+name: CI
+
+# Гейты качества на каждом изменении: линтеры, тесты, покрытие, production-сборка
+# и supply-chain. Тот же набор, что в Definition of Done (CLAUDE.md), но на
+# раннерах GitHub — то есть там, где реально собираются публикуемые артефакты.
+#
+# Этот workflow вызывается ТРИЖДЫ:
+#   • push в main и любой pull request — обычный прогон;
+#   • release.yml через `workflow_call` — перед сборкой бандлов, чтобы тег
+#     физически не мог опубликовать релиз из красного дерева.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+# Читать исходники — всё, что нужно; на запись прав не выдаём.
+permissions:
+  contents: read
+
+concurrency:
+  # Отменяем устаревшие прогоны только на PR: на main и на теге (release.yml
+  # вызывает нас как reusable workflow) обрывать прогон нельзя — за ним идёт
+  # публикация.
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # ── Фронтенд: типы, тесты с гейтом покрытия, production-сборка ───────────────
+  # Одна ОС осознанно: набор чистых `.ts` кроссплатформенных регрессий не ловит —
+  # обе раскладки путей проверяются явными кейсами внутри тестов (docs/TESTS.md),
+  # а гейты читают исходники, и на CRLF-раннере ловились бы ложные падения.
+  web:
+    name: Фронтенд (типы, тесты, сборка)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11
+
+      # Пол Node под запиненный мажор pnpm — тот же, что в release.yml, и по той
+      # же причине (pnpm 11 требует node:sqlite). Держится гейтом
+      # releaseassets.guard.test.ts, который проверяет ОБА workflow.
+      - name: Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Установка зависимостей
+        run: pnpm install --frozen-lockfile
+
+      - name: Типы (svelte-check)
+        run: pnpm check
+
+      # Пороги покрытия (≥ 90 % чистая логика, ≥ 80 % в целом) живут в
+      # vitest.config.ts и роняют прогон сами.
+      - name: Тесты и покрытие
+        run: pnpm test:coverage
+
+      # Отдельный шаг от `check`: тот проверяет только типы, а production-сборку
+      # ломает то, что типы пропускают. Без него поломка всплывала впервые
+      # внутри `tauri build`, то есть уже во время релиза.
+      - name: Production-сборка фронта
+        run: pnpm build
+
+      - name: Отчёт о покрытии
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
+  # ── Rust: формат, клиппи, юнит-тесты на трёх ОС ─────────────────────────────
+  rust:
+    name: Rust (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Тот же образ, на котором собирается Linux-релиз: заодно ловим
+          # «собирается на 24.04, но не на 22.04».
+          - { os: ubuntu-22.04, name: Linux }
+          # Ради этой строки всё и затевалось: код под `#[cfg(windows)]`
+          # (drives.rs, proccwd.rs) на Linux-раннере структурно невидим, а
+          # GitLab-джоба lint:windows стоит manual и не запускалась ни разу —
+          # под неё нет раннера. У GitHub раннер бесплатный.
+          - { os: windows-latest, name: Windows }
+          - { os: macos-latest, name: macOS }
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Системные зависимости Tauri 2 под Linux — те же, что в release.yml:
+      # без них не собирается сам крейт, а значит и clippy не доходит до кода.
+      - name: Системные зависимости Tauri (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      # `toolchain` передаётся явно: при пине по SHA имя ссылки больше не
+      # выбирает тулчейн (форма @stable работала именно как «ветка stable»),
+      # а вход у экшена обязательный.
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+
+      - name: Кэш Rust
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2.9.1
+        with:
+          workspaces: src-tauri -> target
+          key: ${{ matrix.os }}
+
+      # Формат от ОС не зависит — гоняем один раз, чтобы не платить трижды.
+      - name: Формат
+        if: runner.os == 'Linux'
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      # Живые SFTP-тесты помечены #[ignore] и здесь не идут — им нужен sshd,
+      # они гоняются в nightly.yml.
+      - name: Тесты
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+  # ── Supply chain: уязвимости и политика зависимостей ────────────────────────
+  # Отдельная быстрая джоба: cargo-audit и cargo-deny читают Cargo.lock и не
+  # собирают проект, поэтому системные зависимости Tauri тут не нужны.
+  deps:
+    name: Зависимости (audit / deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+
+      # Готовые бинарники вместо `cargo install` — секунды против минут.
+      - name: cargo-audit + cargo-deny
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+        with:
+          tool: cargo-audit,cargo-deny
+
+      # Принятые advisory расписаны с причинами в src-tauri/deny.toml и
+      # зеркалятся в .cargo/audit.toml. Гейт жёсткий: политика, которую можно
+      # «просто посмотреть в логе», не политика.
+      - name: cargo audit (RUSTSEC)
+        working-directory: src-tauri
+        run: cargo audit
+
+      - name: cargo deny (advisories, licenses, bans, sources)
+        working-directory: src-tauri
+        run: cargo deny check
+
+      - name: pnpm
+        uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+        with:
+          version: 11
+
+      - name: Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Установка зависимостей
+        run: pnpm install --frozen-lockfile
+
+      # База чистая на момент заведения джобы, поэтому гейт сразу жёсткий.
+      # Появится advisory без апстрим-фикса — исключение заводится через
+      # `auditConfig.ignoreCves` в pnpm-workspace.yaml, с причиной рядом,
+      # как это сделано для Rust в deny.toml. Молча снимать блокировку нельзя.
+      - name: pnpm audit
+        run: pnpm audit --audit-level moderate

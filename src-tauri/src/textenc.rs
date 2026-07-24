@@ -319,3 +319,80 @@ mod tests {
         assert_eq!(encode(&d.text, &d.encoding), raw.into_owned());
     }
 }
+
+/// Property-тесты: свойства, которые обязаны держаться на ЛЮБОМ входе.
+///
+/// Обычные тесты выше закрепляют разобранные случаи. Здесь — то, ради чего этот
+/// модуль вообще существует: ему подают байты чужого файла, то есть вход, форму
+/// которого мы не выбираем. Такой код проверяют потоком произвольных байтов, а
+/// не списком примеров.
+///
+/// Глубина — через `PROPTEST_CASES` (ночной прогон поднимает её на порядок).
+#[cfg(test)]
+mod props {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn cases() -> u32 {
+        std::env::var("PROPTEST_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(256)
+    }
+
+    fn config() -> ProptestConfig {
+        ProptestConfig {
+            cases: cases(),
+            ..ProptestConfig::default()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(config())]
+
+        /// Никакие байты не должны ронять декодер: это чужой файл, и «не текст»
+        /// — штатный ответ `None`, а не паника.
+        #[test]
+        fn decode_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..4096)) {
+            let _ = decode(&bytes);
+        }
+
+        /// То же для обратной стороны, включая незнакомую метку кодировки.
+        #[test]
+        fn encode_never_panics(text in ".{0,512}", label in "[a-zA-Z0-9-]{0,24}") {
+            let _ = encode(&text, &label);
+        }
+
+        /// С BOM определение точное, поэтому round-trip обязан быть побайтовым
+        /// и сохранять метку: молча переписать чужой UTF-16 в UTF-8 нельзя.
+        #[test]
+        fn bom_round_trips_exactly(text in ".{0,256}", which in 0usize..3) {
+            let label = [UTF8_BOM, UTF16LE_BOM, UTF16BE_BOM][which];
+            let d = decode(&encode(&text, label)).expect("текст с BOM — не бинарь");
+            prop_assert_eq!(&d.text, &text);
+            prop_assert_eq!(&d.encoding, label);
+        }
+
+        /// Регрессия, из-за которой `.ini` «не открывался»: UTF-16 БЕЗ BOM
+        /// обязан читаться как текст. Перемежающиеся NUL'ы — это и есть UTF-16,
+        /// а не признак бинаря, поэтому проверка бинарности идёт ПОСЛЕ sniff'а.
+        #[test]
+        fn bomless_utf16_ascii_is_text_not_binary(
+            text in "[ -~]{1,256}",
+            little_endian in any::<bool>(),
+        ) {
+            let label = if little_endian { UTF16LE } else { UTF16BE };
+            let d = decode(&encode(&text, label))
+                .expect("UTF-16 без BOM не должен считаться бинарём");
+            prop_assert_eq!(&d.text, &text);
+            prop_assert_eq!(&d.encoding, label);
+        }
+
+        /// Обычный UTF-8 без BOM: печатный текст читается как есть.
+        #[test]
+        fn plain_utf8_round_trips(text in "[ -~\\n\\t]{0,512}") {
+            let d = decode(&encode(&text, UTF8)).expect("печатный ASCII — текст");
+            prop_assert_eq!(&d.text, &text);
+        }
+    }
+}
