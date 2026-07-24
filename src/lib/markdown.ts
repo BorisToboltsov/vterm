@@ -46,6 +46,24 @@ export function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * Heading slug for in-page anchors — the bundled manual's table of contents links
+ * to these, and `mdLinks` scrolls to the matching heading `id`. Keeps Unicode
+ * letters/digits (so Cyrillic headings get readable, GitHub-ish ids), drops emoji
+ * and punctuation, spaces → hyphens. The charset is deliberately narrow: the result
+ * goes straight into an `id`/`href` attribute, and letters+digits+hyphen contain
+ * nothing that could break out of it.
+ */
+export function slugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]+/gu, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 // Schemes a markdown link may carry. `http(s)` is handed to the system browser by
 // the mdLinks action; `mailto` to the OS handler. Everything else — `javascript:`,
 // `data:`, `vbscript:`, `file:`, custom app schemes — is refused.
@@ -239,6 +257,9 @@ export function renderMarkdown(md: string, opts?: MarkdownOptions): string {
   const html: string[] = [];
   let i = 0;
   let inList = false;
+  // Track emitted heading ids so repeated headings get unique anchors (`git`,
+  // `git-2`) — a duplicate id is invalid HTML and would jump to the wrong section.
+  const usedIds = new Set<string>();
   const closeList = () => {
     if (inList) {
       html.push("</ul>");
@@ -285,7 +306,15 @@ export function renderMarkdown(md: string, opts?: MarkdownOptions): string {
     if (heading) {
       closeList();
       const level = heading[1].length;
-      html.push(`<h${level}>${inline(heading[2], opts)}</h${level}>`);
+      const base = slugify(heading[2]);
+      let attr = "";
+      if (base) {
+        let id = base;
+        for (let n = 2; usedIds.has(id); n++) id = `${base}-${n}`;
+        usedIds.add(id);
+        attr = ` id="${id}"`;
+      }
+      html.push(`<h${level}${attr}>${inline(heading[2], opts)}</h${level}>`);
       i++;
       continue;
     }

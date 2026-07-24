@@ -1,0 +1,88 @@
+name: Release
+
+# Собирает vterm под macOS, Windows и Linux на раннерах GitHub и публикует
+# готовые файлы в GitHub Release. Запуск — по пушу тега вида v* :
+#
+#   git tag v0.44.10
+#   git push origin v0.44.10
+#
+# Для публичного репозитория раннеры бесплатны. Сборки НЕ подписаны — при первом
+# запуске ОС покажет предупреждение (обход — в docs/INSTALL.md).
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# tauri-action создаёт релиз и заливает в него ассеты — нужен доступ на запись.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest # universal .dmg + .app (Intel + Apple Silicon)
+            args: "--target universal-apple-darwin"
+          - platform: windows-latest # .msi (WiX) + .exe (NSIS)
+            args: ""
+          - platform: ubuntu-22.04 # .deb / .rpm / .AppImage (x86_64) — удалите строку, если Linux не нужен
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Системные зависимости Tauri 2 под Linux (WebKitGTK 4.1, tray, rsvg,
+      # patchelf для AppImage, rpm для .rpm) — те же, что в GitLab build:linux.
+      - name: Системные зависимости Tauri (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
+
+      - name: pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # Для universal-сборки macOS нужны обе цели; на других ОС — по умолчанию.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Кэш Rust (ускоряет повторные сборки)
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Установка JS-зависимостей
+        run: pnpm install --frozen-lockfile
+
+      # Собирает фронт (beforeBuildCommand: pnpm build), компилирует Rust в release,
+      # упаковывает нативные дистрибутивы и прикрепляет их к релизу тега.
+      - name: Сборка и публикация релиза
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "vterm ${{ github.ref_name }}"
+          releaseBody: |
+            Готовые сборки vterm ${{ github.ref_name }}. Скачайте файл под свою ОС из списка **Assets** ниже.
+
+            Сборки не подписаны — при первом запуске ОС может показать предупреждение; как снять, см. [docs/INSTALL.md](https://github.com/BorisToboltsov/vterm/blob/main/docs/INSTALL.md).
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

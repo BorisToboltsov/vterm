@@ -228,6 +228,24 @@ Windows — VS C++ Build Tools и WebView2 Runtime; Rust и pnpm CI ставит
 (идемпотентно). Сборка активируется после публикации репозитория в GitLab; локально
 по-прежнему доступна сборка только под текущую ОС через `pnpm tauri build`.
 
+### GitHub Actions: релиз по тегу (без своих раннеров)
+
+Помимо GitLab, в репозитории есть workflow [.github/workflows/release.yml](../.github/workflows/release.yml)
+на **раннерах GitHub** (для публичного репозитория бесплатны — свои поднимать не нужно).
+По пушу тега `v*` он через [`tauri-apps/tauri-action`](https://github.com/tauri-apps/tauri-action)
+собирает **macOS (universal), Windows и Linux** и создаёт **черновик GitHub Release**
+с прикреплёнными `.dmg` / `.msi` / `.exe` / `.deb` / `.rpm` / AppImage:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+Прогон виден во вкладке **Actions**; по завершении откройте черновик в **Releases**,
+проверьте ассеты и нажмите **Publish** (либо поставьте `releaseDraft: false` в workflow —
+тогда релиз публикуется автоматически). Сборки неподписанные — см. «Запуск готового
+приложения» ниже.
+
 ## Запуск готового приложения
 
 ### macOS

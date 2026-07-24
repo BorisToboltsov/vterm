@@ -32,6 +32,25 @@ function handle(e: MouseEvent) {
   // Unconditional: even a target we end up refusing must not navigate.
   e.preventDefault();
   const href = a.getAttribute("href") ?? "";
+  // In-page anchor (`#slug`) — the bundled manual's table of contents. Scroll the
+  // matching heading into view WITHIN this container (never the document), so it is
+  // a scroll, not a navigation, and separate rendered blocks can't collide. Wrapped
+  // in try/catch: a hostile `.md` could carry a `#`-target that is not a valid
+  // selector or a malformed %-escape — it must be inert, not throw.
+  if (href.startsWith("#")) {
+    const container = e.currentTarget as HTMLElement | null;
+    try {
+      const id = decodeURIComponent(href.slice(1));
+      const target = id ? container?.querySelector(`[id="${id}"]`) : null;
+      if (target instanceof HTMLElement) {
+        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        target.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+      }
+    } catch {
+      /* not a resolvable anchor — stay inert */
+    }
+    return;
+  }
   if (HTTP.test(href) || MAILTO.test(href)) openUrl(href).catch(() => {});
   // Anything else (relative repo links in the bundled manual, or a scheme that
   // slipped past render-time validation) is deliberately inert.

@@ -219,7 +219,7 @@ describe("renderMarkdown block-level HTML", () => {
   it("emits a block HTML line raw instead of wrapping it in <p>", () => {
     const out = renderMarkdown('<div align="center">\n\n# Title\n\n</div>', { html: true });
     expect(out).toContain('<div align="center">');
-    expect(out).toContain("<h1>Title</h1>");
+    expect(out).toContain('<h1 id="title">Title</h1>');
     expect(out).toContain("</div>");
     expect(out).not.toContain("<p><div");
   });
