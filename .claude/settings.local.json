@@ -569,7 +569,10 @@
       "Bash(awk 'NR>=2582 && NR<=3092' CHANGELOG.md)",
       "Bash(grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" /private/tmp/claude-501/-Users-boristoboltsov-project-project-vterm/c3e4c0e5-7b1b-4bfe-b8b5-6664f1da7e1c/scratchpad/inv_old.md >/dev/null 2>&1; git show HEAD:CHANGELOG.md | grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" | sort -u > /tmp/o.txt; grep -oE \"v0\\\\.[0-9]+\\\\.[0-9]+\" CHANGELOG.md | sort -u > /tmp/n.txt; echo \"=== реально отсутствуют в новом ===\"; comm -23 /tmp/o.txt /tmp/n.txt | sort -V | tr '\\\\n' ' ')",
       "Bash(awk -F: '{s+=$2} END {print s}')",
-      "Bash(grep -n \"^#\\\\{1,3\\\\} \" SECURITY.md)"
+      "Bash(grep -n \"^#\\\\{1,3\\\\} \" SECURITY.md)",
+      "Bash(git ls-tree *)",
+      "Bash(gh auth *)",
+      "Bash(gh repo *)"
     ]
   }
 }

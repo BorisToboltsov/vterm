@@ -162,6 +162,13 @@
                 onclick={() => ext("https://t.me/BorisToboltsov")}>@BorisToboltsov</button
               >
             </p>
+            <p class="text-muted">
+              GitHub: <button
+                class="text-accent hover:underline"
+                onclick={() => ext("https://github.com/BorisToboltsov/vterm")}
+                >BorisToboltsov/vterm</button
+              >
+            </p>
             <p class="text-muted">{t("help.license")}: MIT</p>
             <h3 class="pt-2 text-xs uppercase tracking-wider text-muted">
               {t("help.technologies")}

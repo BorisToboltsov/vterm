@@ -53,6 +53,17 @@ describe("HelpPanel", () => {
     expect(screen.getByText(/MIT/)).toBeInTheDocument();
   });
 
+  it("opens the contact links in the system browser, not the WebView", async () => {
+    const user = userEvent.setup();
+    render(HelpPanel, { props: { open: true, tab: "about" } });
+
+    await user.click(await screen.findByRole("button", { name: "BorisToboltsov/vterm" }));
+    expect(openUrl).toHaveBeenCalledWith("https://github.com/BorisToboltsov/vterm");
+
+    await user.click(screen.getByRole("button", { name: "@BorisToboltsov" }));
+    expect(openUrl).toHaveBeenCalledWith("https://t.me/BorisToboltsov");
+  });
+
   it("switches tabs on click", async () => {
     const user = userEvent.setup();
     render(HelpPanel, { props: { open: true, tab: "help" } });
