@@ -19,10 +19,17 @@ updates:
     commit-message:
       prefix: "ci"
     groups:
-      # Один PR на все экшены: их бампы почти всегда независимы и безобидны,
-      # а пять отдельных PR в неделю читать никто не будет.
+      # Один PR на minor/patch: такие бампы почти всегда безобидны, а пять
+      # отдельных PR в неделю читать никто не будет.
+      #
+      # МАЖОРЫ НАМЕРЕННО ВНЕ ГРУППЫ и приезжают поштучно. Первый же собранный
+      # групповой PR подмешал `tauri-action` v0.6.2 → v1.0.0 к рутинному
+      # обновлению SHA у codeql-action: смена мажора у экшена, который публикует
+      # релизы, пряталась среди косметики. Проверить её CI не может — `release.yml`
+      # запускается только по тегу, то есть уже на публикации.
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # ── npm-зависимости фронтенда ──────────────────────────────────────────────
   - package-ecosystem: npm
@@ -38,12 +45,16 @@ updates:
       # что-то сломать. Экосистемы, которые ходят версиями синхронно, — группой.
       codemirror:
         patterns: ["@codemirror/*", "@lezer/*"]
+        update-types: ["minor", "patch"]
       xterm:
         patterns: ["@xterm/*"]
+        update-types: ["minor", "patch"]
       fontsource:
         patterns: ["@fontsource/*"]
+        update-types: ["minor", "patch"]
       testing:
         patterns: ["vitest", "@vitest/*", "@testing-library/*", "jsdom"]
+        update-types: ["minor", "patch"]
       # Tauri и Svelte остаются поштучно: у них бампы ломающие, и такой PR
       # обязан быть отдельным.
 
@@ -59,4 +70,5 @@ updates:
     groups:
       tauri:
         patterns: ["tauri", "tauri-*"]
+        update-types: ["minor", "patch"]
       # russh — SSH-стек, ядро приложения: бампы смотрим поштучно.

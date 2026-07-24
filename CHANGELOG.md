@@ -13,6 +13,10 @@
   Появились `ci.yml` (типы, тесты с покрытием, production-сборка; `fmt`/`clippy`/`test`
   на Linux + **Windows** + macOS; `cargo audit`/`cargo deny`/`pnpm audit` жёстко),
   `codeql.yml`, `security.yml` и `nightly.yml`.
+- **Первая находка windows-раннера:** тесты `localenv::combine_paths_*` держали PATH-строки
+  с зашитым `:`, тогда как сам `combine_paths` разбирает их платформенным
+  `std::env::split_paths` (`;` на Windows). Код был прав, тесты — нет; фикстуры теперь
+  строятся через `join_paths`. До появления раннера это не мог поймать никто.
 - **Релиз стоит под гейтом CI.** `release.yml` вызывает `ci.yml` целиком через
   `workflow_call`, матрица сборки — под `needs: verify`. Копии шагов нет: она разошлась бы
   с оригиналом на первой правке.

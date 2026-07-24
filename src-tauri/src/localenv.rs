@@ -170,10 +170,22 @@ pub async fn resolved_local(prog: &str) -> (OsString, OsString) {
 mod tests {
     use super::*;
 
+    /// Build a PATH-style list with the separator of the platform running the test.
+    ///
+    /// A literal `"a:b"` is not a PATH list — it is a POSIX PATH list. `combine_paths`
+    /// splits with `std::env::split_paths`, which is platform-aware on purpose (`:` on
+    /// unix, `;` on Windows), because on Windows the string it receives is the real
+    /// Windows `PATH`. Hard-coding `:` therefore handed the Windows run one unsplittable
+    /// entry, and the test failed on correct code — caught by the Windows runner the
+    /// first time one existed.
+    fn path_list(parts: &[&str]) -> OsString {
+        std::env::join_paths(parts.iter().map(Path::new)).expect("test path list is valid")
+    }
+
     #[test]
     fn combine_paths_dedups_preserving_first() {
-        let a = OsString::from("/opt/homebrew/bin:/usr/bin");
-        let b = OsString::from("/usr/bin:/custom"); // /usr/bin is a dup
+        let a = path_list(&["/opt/homebrew/bin", "/usr/bin"]);
+        let b = path_list(&["/usr/bin", "/custom"]); // /usr/bin is a dup
         let wk = vec![PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/bin")];
         let got = combine_paths(&[a, b], &wk);
         let dirs: Vec<PathBuf> = std::env::split_paths(&got).collect();
@@ -190,7 +202,7 @@ mod tests {
 
     #[test]
     fn combine_paths_skips_empty_entries() {
-        let got = combine_paths(&[OsString::from("/a::/b")], &[]);
+        let got = combine_paths(&[path_list(&["/a", "", "/b"])], &[]);
         let dirs: Vec<PathBuf> = std::env::split_paths(&got).collect();
         assert_eq!(dirs, vec![PathBuf::from("/a"), PathBuf::from("/b")]);
     }
