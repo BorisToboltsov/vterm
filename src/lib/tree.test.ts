@@ -6,6 +6,7 @@ import {
   groupOf,
   nameOf,
   parentOf,
+  serversInSubtree,
   type TreeRow,
 } from "./tree";
 import type { ServerProfile } from "./types";
@@ -49,6 +50,40 @@ describe("groupOf", () => {
     expect(groupOf(srv({ id: "a", group: "  Prod " }))).toBe("Prod");
     expect(groupOf(srv({ id: "b", group: "   " }))).toBe("");
     expect(groupOf(srv({ id: "c", group: null }))).toBe("");
+  });
+});
+
+describe("serversInSubtree", () => {
+  const servers = [
+    srv({ id: "root" }),
+    srv({ id: "prod", group: "Prod" }),
+    srv({ id: "eu", group: "Prod/EU" }),
+    srv({ id: "web", group: "Prod/EU/web" }),
+    srv({ id: "prodlike", group: "Production" }),
+    srv({ id: "other", group: "Staging" }),
+  ];
+
+  it("collects the folder itself and every nested descendant", () => {
+    expect(serversInSubtree(servers, "Prod").map((s) => s.id)).toEqual([
+      "prod",
+      "eu",
+      "web",
+    ]);
+  });
+
+  it("excludes prefix lookalikes and root servers", () => {
+    // "Production" is not inside "Prod"; a groupless server is inside nothing.
+    const ids = serversInSubtree(servers, "Prod").map((s) => s.id);
+    expect(ids).not.toContain("prodlike");
+    expect(ids).not.toContain("root");
+    expect(serversInSubtree(servers, "Prod/EU").map((s) => s.id)).toEqual([
+      "eu",
+      "web",
+    ]);
+  });
+
+  it("returns empty for a folder with no servers", () => {
+    expect(serversInSubtree(servers, "Nowhere")).toEqual([]);
   });
 });
 

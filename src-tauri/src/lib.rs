@@ -2103,6 +2103,7 @@ pub fn run() {
             folders::list_folders,
             folders::add_folder,
             folders::delete_folder,
+            folders::delete_folder_with_servers,
             folders::move_folder,
             folders::rename_folder,
             folders::set_server_group,

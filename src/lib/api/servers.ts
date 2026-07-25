@@ -58,6 +58,12 @@ export function deleteFolder(path: string): Promise<void> {
   return invoke<void>("delete_folder", { path });
 }
 
+/** Delete a folder and its descendants **together with every server inside**
+ *  (their saved secrets and live sessions are dropped too). */
+export function deleteFolderWithServers(path: string): Promise<void> {
+  return invoke<void>("delete_folder_with_servers", { path });
+}
+
 /** Move a folder (with its subtree) under newParent (null/empty = root). */
 export function moveFolder(
   path: string,

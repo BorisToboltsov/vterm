@@ -8,7 +8,7 @@ use tauri::State;
 
 use crate::error::{AppError, AppResult};
 use crate::model::ServerProfile;
-use crate::{store, AppState};
+use crate::{secrets, store, AppState};
 
 /// Normalize a folder path: trim, collapse repeated/edge slashes, drop blanks.
 fn normalize_path(path: &str) -> String {
@@ -54,6 +54,17 @@ pub fn add_folder(path: String, state: State<AppState>) -> AppResult<Vec<String>
     Ok(sorted)
 }
 
+/// Whether a server whose folder is `group` lives inside `path` or its subtree.
+/// Pure (no state) so the "which servers does this folder own" set — shared by
+/// `delete_folder` (detach) and `delete_folder_with_servers` (delete) — is unit-
+/// testable. The trailing-slash guard keeps `Prod` from matching `Production`.
+fn group_in_subtree(group: Option<&str>, path: &str) -> bool {
+    match group {
+        Some(g) => g == path || g.starts_with(&format!("{path}/")),
+        None => false,
+    }
+}
+
 /// Delete a folder and its descendants; servers inside are moved to the root.
 #[tauri::command]
 pub fn delete_folder(path: String, state: State<AppState>) -> AppResult<()> {
@@ -73,15 +84,58 @@ pub fn delete_folder(path: String, state: State<AppState>) -> AppResult<()> {
     let servers_snapshot = {
         let mut servers = state.servers.lock().unwrap();
         for s in servers.iter_mut() {
-            if let Some(g) = &s.group {
-                if g == &path || g.starts_with(&prefix) {
-                    s.group = None;
-                }
+            if group_in_subtree(s.group.as_deref(), &path) {
+                s.group = None;
             }
         }
         servers.clone()
     };
     store::save_servers(&servers_snapshot)
+}
+
+/// Delete a folder and its descendants **together with every server inside** —
+/// the destructive sibling of `delete_folder` (which moves those servers to the
+/// root). Each removed server's saved secrets and any live session are dropped
+/// too, exactly as `delete_server` does. Guarded on the frontend behind a second
+/// explicit confirmation.
+#[tauri::command]
+pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>) -> AppResult<()> {
+    let path = normalize_path(&path);
+    if path.is_empty() {
+        return Ok(());
+    }
+    let prefix = format!("{path}/");
+
+    // Remove the folder subtree.
+    let folders_snapshot = {
+        let mut folders = state.folders.lock().unwrap();
+        folders.retain(|f| f != &path && !f.starts_with(&prefix));
+        folders.clone()
+    };
+    store::save_folders(&folders_snapshot)?;
+
+    // Drop every server that lived in the removed subtree, remembering their ids
+    // for secret + session cleanup below. One lock scope: no window where the
+    // list on disk and the removed set disagree.
+    let (removed_ids, servers_snapshot) = {
+        let mut servers = state.servers.lock().unwrap();
+        let removed_ids: Vec<String> = servers
+            .iter()
+            .filter(|s| group_in_subtree(s.group.as_deref(), &path))
+            .map(|s| s.id.clone())
+            .collect();
+        servers.retain(|s| !group_in_subtree(s.group.as_deref(), &path));
+        (removed_ids, servers.clone())
+    };
+    store::save_servers(&servers_snapshot)?;
+
+    // Best-effort keychain wipe + live-session teardown for each removed server.
+    let mut sessions = state.sessions.lock().await;
+    for id in &removed_ids {
+        let _ = secrets::delete_all(id);
+        sessions.remove(id);
+    }
+    Ok(())
 }
 
 /// Rewrite a single folder path / server group `value` when `old_path` (or its
@@ -244,5 +298,22 @@ mod tests {
         assert_eq!(reprefixed("Other", "Prod", "Production"), "Other");
         // "Production" must not be treated as a child of "Prod" (prefix guard).
         assert_eq!(reprefixed("Production", "Prod", "X"), "Production");
+    }
+
+    // ── group_in_subtree (folder delete ownership) ────────────────────────────
+    #[test]
+    fn group_in_subtree_matches_self_and_descendants() {
+        assert!(group_in_subtree(Some("Prod"), "Prod"));
+        assert!(group_in_subtree(Some("Prod/EU"), "Prod"));
+        assert!(group_in_subtree(Some("Prod/EU/web"), "Prod"));
+    }
+
+    #[test]
+    fn group_in_subtree_excludes_prefix_lookalikes_and_root() {
+        // "Production" is not inside "Prod" (trailing-slash guard).
+        assert!(!group_in_subtree(Some("Production"), "Prod"));
+        assert!(!group_in_subtree(Some("Other"), "Prod"));
+        // A root server (no group) is never inside any folder.
+        assert!(!group_in_subtree(None, "Prod"));
     }
 }

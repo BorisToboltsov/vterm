@@ -38,6 +38,22 @@ export function filterServers(
   );
 }
 
+/**
+ * Servers whose effective folder is `path` or nested anywhere below it. Pure so
+ * "what would deleting this folder take with it" is one tested definition, shared
+ * by the tree's subtree counter and the delete-folder confirm dialog. The
+ * trailing-slash guard stops `Prod` from swallowing `Production`.
+ */
+export function serversInSubtree(
+  servers: ServerProfile[],
+  path: string,
+): ServerProfile[] {
+  return servers.filter((s) => {
+    const g = groupOf(s);
+    return g === path || g.startsWith(path + "/");
+  });
+}
+
 export type TreeRow =
   | { kind: "folder"; path: string; name: string; depth: number; count: number }
   | { kind: "server"; server: ServerProfile; depth: number };
@@ -87,11 +103,7 @@ export function buildTreeRows(input: TreeInput): TreeRow[] {
       .sort((a, b) => a.localeCompare(b));
   const serversIn = (path: string) =>
     servers.filter((s) => groupOf(s) === path);
-  const subtreeCount = (path: string) =>
-    servers.filter((s) => {
-      const g = groupOf(s);
-      return g === path || g.startsWith(path + "/");
-    }).length;
+  const subtreeCount = (path: string) => serversInSubtree(servers, path).length;
 
   const walk = (parent: string, depth: number) => {
     for (const f of childFolders(parent)) {

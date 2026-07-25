@@ -232,6 +232,21 @@
     void loadPreviewImages(doc.content);
   });
 
+  /**
+   * Re-read the preview's inline images from source. The document text itself is
+   * always live (CodeMirror tracks edits), but images are cached by markdown
+   * target in `mdImages`/`mdSeen`, so a *file* that changed on disk keeps its
+   * stale `data:` URL until the cache is dropped. This gives the reader the
+   * close-and-reopen effect without losing their buffer. Markdown preview only.
+   */
+  function reloadPreview() {
+    mdImages = new Map();
+    mdSeen = new Set();
+    mdHasRemote = false;
+    void loadPreviewImages(doc.content);
+    notifySuccess(t("editor.previewReloaded"));
+  }
+
   // Config snippets/templates relevant to this file's language (from settings).
   const snippets = $derived(snippetsForLang(doc.lang.kind, settings.snippets));
   let showSnippets = $state(false);
@@ -595,6 +610,18 @@
             {t("editor.viewPreview")}
           </button>
         </div>
+      {/if}
+      {#if isMarkdown && preview}
+        <!-- Re-read inline images from source (close/reopen without losing edits). -->
+        <button
+          type="button"
+          class="flex items-center gap-1 rounded px-2 py-0.5 text-muted hover:bg-edge hover:text-text"
+          use:tooltip={t("editor.reloadPreview")}
+          aria-label={t("editor.reloadPreview")}
+          onclick={reloadPreview}
+        >
+          <Icon name="refresh" size={13} />
+        </button>
       {/if}
       {#if canRemoteLint && !preview}
         <button

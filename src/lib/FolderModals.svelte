@@ -10,7 +10,16 @@
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
   import { t } from "./i18n";
 
-  let { onchanged }: { onchanged: () => void } = $props();
+  let {
+    onchanged,
+    onDeleteWithServers,
+  }: {
+    onchanged: () => void;
+    /** Delete the folder together with its servers. Owned by the page because it
+     *  must also tear down those servers' open tabs (workspaces, AI chat,
+     *  broadcast) and fix the selection — layer the store/modal can't reach. */
+    onDeleteWithServers: (path: string) => void;
+  } = $props();
 
   let showCreate = $state(false);
   let createParent = $state("");
@@ -18,6 +27,13 @@
   let toRename = $state<string | null>(null);
   let renameName = $state("");
   let toDelete = $state<string | null>(null);
+  // How many servers live in `toDelete`'s subtree — decides between the plain
+  // confirm (empty folder) and the "what happens to the servers" chooser.
+  let deleteCount = $state(0);
+  // The chooser's selection: keep the servers (move to root) or delete them too.
+  let deleteMode = $state<"root" | "servers">("root");
+  // Second, explicit consent gate shown only for the destructive "servers" mode.
+  let confirmServers = $state(false);
 
   /** Open the "new folder" form, optionally nested under `parent`. */
   export function openCreate(parent: string) {
@@ -32,9 +48,13 @@
     renameName = nameOf(path);
   }
 
-  /** Open the delete confirmation for folder `path`. */
-  export function openDelete(path: string) {
+  /** Open the delete confirmation for folder `path`. `serverCount` is how many
+   *  servers live in its subtree — when > 0 the dialog offers a choice. */
+  export function openDelete(path: string, serverCount = 0) {
     toDelete = path;
+    deleteCount = serverCount;
+    deleteMode = "root";
+    confirmServers = false;
   }
 
   function focusOnMount(node: HTMLElement) {
@@ -72,10 +92,26 @@
     toRename = null;
   }
 
-  async function confirmDelete() {
+  function closeDelete() {
+    toDelete = null;
+    confirmServers = false;
+  }
+
+  /** From the chooser's "Delete": the servers-mode routes through a second
+   *  confirmation; keep-mode deletes the folder straight away. */
+  function submitDelete() {
+    if (deleteMode === "servers") {
+      confirmServers = true;
+    } else {
+      void deleteFolderOnly();
+    }
+  }
+
+  /** Delete the folder, leaving its servers (they move to the root). */
+  async function deleteFolderOnly() {
     if (!toDelete) return;
     const path = toDelete;
-    toDelete = null;
+    closeDelete();
     try {
       await deleteFolder(path);
       notifySuccess(t("page.folderDeleted", { name: nameOf(path) }));
@@ -83,6 +119,14 @@
     } catch (e) {
       notifyError(String(e));
     }
+  }
+
+  /** Hand the destructive folder+servers delete to the page (see prop doc). */
+  function deleteFolderAndServers() {
+    if (!toDelete) return;
+    const path = toDelete;
+    closeDelete();
+    onDeleteWithServers(path);
   }
 </script>
 
@@ -139,13 +183,67 @@
   </form>
 </Modal>
 
-<!-- Delete folder confirmation -->
+<!-- Delete folder — empty: a plain confirm (servers-to-root wording still holds
+     for an empty subtree; nothing actually moves). -->
 <ConfirmDialog
-  open={!!toDelete}
+  open={!!toDelete && deleteCount === 0}
   title={t("page.deleteFolderTitle")}
   confirmLabel={t("common.delete")}
-  onconfirm={confirmDelete}
-  oncancel={() => (toDelete = null)}
+  onconfirm={deleteFolderOnly}
+  oncancel={closeDelete}
 >
   {t("page.deleteFolderBody1")} <span class="text-text">{toDelete}</span> {t("page.deleteFolderBody2")}
+</ConfirmDialog>
+
+<!-- Delete folder that still holds servers — choose their fate. -->
+<Modal
+  open={!!toDelete && deleteCount > 0 && !confirmServers}
+  title={t("page.deleteFolderTitle")}
+  titleClass="text-danger"
+  onclose={closeDelete}
+>
+  <p class="text-xs text-muted">
+    {t("page.deleteFolderIntro", { name: toDelete ?? "" })}
+    {t("page.deleteFolderServersCount", { n: deleteCount })}
+  </p>
+  <div class="mt-3 flex flex-col gap-2 text-sm text-text">
+    <label class="flex items-start gap-2">
+      <input type="radio" class="mt-0.5" value="root" bind:group={deleteMode} />
+      <span>{t("page.deleteFolderKeepServers")}</span>
+    </label>
+    <label class="flex items-start gap-2">
+      <input type="radio" class="mt-0.5" value="servers" bind:group={deleteMode} />
+      <span>
+        {t("page.deleteFolderDropServers")}
+        <span class="text-danger">— {t("page.deleteFolderDropHint")}</span>
+      </span>
+    </label>
+  </div>
+  <div class="mt-4 flex justify-end gap-2">
+    <button
+      type="button"
+      class="rounded px-3 py-1 text-sm text-muted hover:text-text"
+      onclick={closeDelete}>{t("common.cancel")}</button
+    >
+    <button
+      type="button"
+      data-testid="confirm"
+      class="rounded px-3 py-1 text-sm text-panel-alt hover:opacity-90 {deleteMode ===
+      'servers'
+        ? 'bg-danger'
+        : 'bg-accent hover:bg-accent-hover'}"
+      onclick={submitDelete}>{t("common.delete")}</button
+    >
+  </div>
+</Modal>
+
+<!-- Second, explicit consent for deleting the servers too. -->
+<ConfirmDialog
+  open={confirmServers}
+  title={t("page.deleteServersTitle")}
+  confirmLabel={t("page.deleteServersConfirm")}
+  onconfirm={deleteFolderAndServers}
+  oncancel={() => (confirmServers = false)}
+>
+  {t("page.deleteServersBody", { n: deleteCount })}
 </ConfirmDialog>
