@@ -221,6 +221,8 @@ export const en = {
   "editor.syntaxError": "Syntax error",
   "editor.viewCode": "Code",
   "editor.viewPreview": "Preview",
+  "editor.reloadPreview": "Reload preview",
+  "editor.previewReloaded": "Preview reloaded",
   "editor.snippets": "Snippets",
   "editor.lintServer": "Lint",
   "editor.linting": "Linting…",
@@ -415,6 +417,19 @@ export const en = {
   "page.deleteFolderBody1": "Folder",
   "page.deleteFolderBody2":
     "and all nested folders will be deleted. Servers inside move to the root.",
+  // Delete folder that still contains servers — pick what happens to them
+  "page.deleteFolderIntro":
+    "Folder “{name}” and all nested folders will be deleted.",
+  "page.deleteFolderServersCount": "Servers inside: {n}.",
+  "page.deleteFolderKeepServers": "Move servers to the root",
+  "page.deleteFolderDropServers": "Delete servers with the folder",
+  "page.deleteFolderDropHint": "permanently",
+  "page.folderServersDeleted": "Folder “{name}” deleted with its servers",
+  // Second, explicit confirmation for the destructive "delete servers" choice
+  "page.deleteServersTitle": "Delete servers?",
+  "page.deleteServersBody":
+    "The servers inside the folder ({n}) and their saved secrets will be permanently deleted. Any open tabs for them will close.",
+  "page.deleteServersConfirm": "Delete servers",
 
   // Delete server confirm
   "page.deleteServerTitle": "Delete server?",
@@ -1921,6 +1936,8 @@ const ru: Record<MessageKey, string> = {
   "editor.syntaxError": "Синтаксическая ошибка",
   "editor.viewCode": "Код",
   "editor.viewPreview": "Превью",
+  "editor.reloadPreview": "Обновить предпросмотр",
+  "editor.previewReloaded": "Предпросмотр обновлён",
   "editor.snippets": "Шаблоны",
   "editor.lintServer": "Линт",
   "editor.linting": "Проверка…",
@@ -2114,6 +2131,17 @@ const ru: Record<MessageKey, string> = {
   "page.deleteFolderBody1": "Папка",
   "page.deleteFolderBody2":
     "и все вложенные папки будут удалены. Серверы внутри переместятся в корень.",
+  "page.deleteFolderIntro":
+    "Папка «{name}» и все вложенные папки будут удалены.",
+  "page.deleteFolderServersCount": "Серверов внутри: {n}.",
+  "page.deleteFolderKeepServers": "Переместить серверы в корень",
+  "page.deleteFolderDropServers": "Удалить серверы вместе с папкой",
+  "page.deleteFolderDropHint": "безвозвратно",
+  "page.folderServersDeleted": "Папка «{name}» удалена вместе с серверами",
+  "page.deleteServersTitle": "Удалить серверы?",
+  "page.deleteServersBody":
+    "Серверы внутри папки ({n}) и их сохранённые секреты будут удалены безвозвратно. Открытые вкладки этих серверов закроются.",
+  "page.deleteServersConfirm": "Удалить серверы",
 
   "page.deleteServerTitle": "Удалить сервер?",
   "page.deleteServerBody1": "Сервер",

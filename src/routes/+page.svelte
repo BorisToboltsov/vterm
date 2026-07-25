@@ -7,6 +7,7 @@
   import {
     connectPlan,
     deleteServer,
+    deleteFolderWithServers,
     forgetSecrets,
     listFolders,
     listServers,
@@ -31,7 +32,7 @@
   } from "$lib/api";
   import type { ServerProfile } from "$lib/types";
   import { storeWarningMessage } from "$lib/storewarn";
-  import { nameOf } from "$lib/tree";
+  import { nameOf, serversInSubtree } from "$lib/tree";
   import {
     clamp,
     layout,
@@ -1796,6 +1797,24 @@
       notifyError(String(e));
     }
   }
+
+  // Delete a folder together with the servers inside it. Mirrors doDeleteServer's
+  // teardown for each victim (close its tabs, drop the selection) before the
+  // backend wipes the servers, their secrets and their live sessions in one call.
+  async function doDeleteFolderWithServers(path: string) {
+    const victims = serversInSubtree(servers, path);
+    const removed = new Set(victims.map((s) => s.id));
+    for (const s of victims) for (const sid of tabsForServer(s.id)) closeTabFully(sid);
+    try {
+      await deleteFolderWithServers(path);
+      servers = servers.filter((s) => !removed.has(s.id));
+      folders = await listFolders();
+      if (selectedId && removed.has(selectedId)) selectedId = servers[0]?.id ?? null;
+      notifySuccess(t("page.folderServersDeleted", { name: nameOf(path) }));
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
 </script>
 
 <svelte:window onkeydown={onGlobalKey} />
@@ -1863,7 +1882,7 @@
       onDeleteServer={(s) => (serverToDelete = s)}
       onNewFolder={(p) => folderModals?.openCreate(p)}
       onRenameFolder={(p) => folderModals?.openRename(p)}
-      onDeleteFolder={(p) => folderModals?.openDelete(p)}
+      onDeleteFolder={(p) => folderModals?.openDelete(p, serversInSubtree(servers, p).length)}
       onMoveServer={moveServerToGroup}
       onMoveFolder={moveFolderAndRefresh}
       animateWidth={resizing !== "left"}
@@ -2404,6 +2423,7 @@
 <!-- Folder create / rename / delete modals (own their own state; Phase 18.4.3) -->
 <FolderModals
   bind:this={folderModals}
+  onDeleteWithServers={doDeleteFolderWithServers}
   onchanged={async () => {
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
   }}
