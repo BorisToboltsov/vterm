@@ -1,0 +1,15 @@
+# e2e — отдельный от корня пакет (WebdriverIO + tauri-driver). У него СВОЙ
+# workspace-файл, и это существенно: запуск `pnpm install` из каталога e2e
+# берёт ближайший вверх pnpm-workspace.yaml — этот файл затеняет корневой,
+# поэтому pnpm ставит зависимости e2e, а не «видит» только корень и молчит
+# (без него было `Already up to date` → `wdio: not found` на прогоне).
+#
+# pnpm 11 гейтит нативные build-скрипты — перечисляем их явно, иначе install
+# падает на ERR_PNPM_IGNORED_BUILDS:
+#   • esbuild — нужен @wdio для загрузки конфигурации → разрешаем;
+#   • edge/gecko-драйверы E2E не использует (идёт через tauri-driver +
+#     WebKitWebDriver) → отклоняем, чтобы не тянуть их зря.
+allowBuilds:
+  esbuild: true
+  edgedriver: false
+  geckodriver: false
