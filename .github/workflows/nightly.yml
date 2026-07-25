@@ -53,20 +53,21 @@ jobs:
       - name: Установка зависимостей
         run: pnpm install --frozen-lockfile
 
-      # Те же свойства, что гоняются на PR (там ~300 прогонов), здесь — 150 000.
-      # Таймаут теста в самом файле выведен из этого числа (FUZZ_RUNS читает
-      # только untrusted.fuzz.test.ts; остальные тесты его игнорируют).
+      # Те же свойства, что гоняются на PR (~300 прогонов), здесь — 150 000
+      # (глубину читает только untrusted.fuzz.test.ts; таймаут теста выведен из
+      # этого числа, остальные тесты FUZZ_RUNS игнорируют).
       #
-      # Через отдельный конфиг vitest.fuzz.config.ts (в нём выключен dep-
-      # optimizer): изолированный `vitest run <файл>` иначе валится ещё на старте
-      # о баг rolldown 1.1.5 при dep-optimize — `Could not resolve 'node:module'
-      # in \0rolldown/runtime.js` (полный `pnpm test` падает так же; проходит
-      # лишь `pnpm test:coverage`, но coverage поверх 150k упрётся в таймаут).
-      # Обоснование — в шапке самого конфига.
+      # Гоняем через `pnpm test:coverage`, а НЕ `vitest run <файл>`: любой
+      # не-coverage вызов (одиночный файл ИЛИ полный `pnpm test`) валит vitest на
+      # старте о баг rolldown 1.1.5 при dep-optimize — `Could not resolve
+      # 'node:module' in \0rolldown/runtime.js` (`deps.optimizer.enabled=false`
+      # в Vitest 4 игнорируется). Провайдер @vitest/coverage-v8 трансформирует
+      # иначе и обходит оптимизатор — это ровно зелёный путь ci.yml, где тот же
+      # fuzz-файл проходит; здесь отличается лишь глубина через FUZZ_RUNS.
       - name: Свойства фронтенда (fast-check)
         env:
           FUZZ_RUNS: 150000
-        run: pnpm exec vitest run -c vitest.fuzz.config.ts src/lib/untrusted.fuzz.test.ts
+        run: pnpm test:coverage
 
       - name: Rust stable
         uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
