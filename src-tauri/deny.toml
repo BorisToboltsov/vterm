@@ -4,6 +4,15 @@
 #
 # Every ignored advisory is documented with rationale and must be revisited
 # periodically (especially RUSTSEC-2023-0071 once `rsa` ships a fix).
+#
+# Triage note: of the ignores below, exactly ONE (RUSTSEC-2023-0071, rsa) is an
+# actual vulnerability; the rest are `unmaintained`/`unsound` STATUS advisories,
+# and every one of them is transitive from Tauri (its Linux WebKitGTK backend and
+# `tauri-utils`), not a crate we depend on directly. We cannot swap or drop them
+# without dropping Linux or the GUI framework — the realistic fix is an upstream
+# Tauri stack move (exactly how the quick-xml DoS advisories cleared, via a plist
+# bump — see the note in the block). So the standing action for this block is
+# "keep Tauri current and re-triage", not "find a replacement crate".
 
 [advisories]
 version = 2
@@ -11,15 +20,33 @@ yanked = "deny"
 ignore = [
   # ── Accepted vulnerability (no upstream fix available) ──────────────────────
   # rsa — "Marvin Attack" timing side-channel (potential key recovery).
-  # Reaches us only through russh's RSA key support; there is no fixed release.
-  # Mitigation: prefer ed25519/ecdsa keys (vterm supports them). Revisit when a
-  # patched `rsa` is published.
+  # Aliases for the same issue an external SCA scan reports separately:
+  # CVE-2023-49092 and GHSA-4grx-2x9w-596c (both == RUSTSEC-2023-0071).
+  #
+  # Reaches us ONLY through RSA SSH-key support: `russh` (feature `rsa`, part of
+  # its default set) and `ssh-key` (feature `rsa`, enabled in Cargo.toml) are the
+  # only consumers — `cargo tree -i rsa` shows no others. There is no fixed
+  # release (still rsa 0.10.0-rc.18 after the russh 0.62.5 bump).
+  #
+  # Why accepted rather than removed: dropping the `rsa` features would delete the
+  # crate entirely but also drop support for RSA host keys and RSA user keys —
+  # still common on the legacy servers this tool targets, so a real regression.
+  # And the client-side exposure is low: the Marvin oracle needs the attacker to
+  # submit ciphertexts and time a PRIVATE-key operation. vterm only VERIFIES host
+  # keys (public-key op, no private op) and SIGNS for auth (no attacker-chosen
+  # ciphertext oracle) — the practical attack surface a server would need does not
+  # exist for a client. Mitigation still stands: prefer ed25519/ecdsa (supported).
+  # Revisit when a patched `rsa` ships.
   "RUSTSEC-2023-0071",
 
-  # ── Unmaintained/unsound, all transitive from Tauri's Linux WebKitGTK stack ──
-  # gtk-rs GTK3 bindings (atk/gdk/gtk/...) — unmaintained. Linux-only deps of the
-  # Tauri webview backend; not present in the macOS/Windows code paths and not
-  # upgradable by us.
+  # ── Unmaintained, all transitive from Tauri's Linux WebKitGTK stack ──────────
+  # gtk-rs GTK3 bindings (atk/gdk/gtk/gtk3-macros/...) — `unmaintained` (the
+  # gtk-rs ecosystem moved to GTK4; the GTK3 line is in maintenance only, not a
+  # known-exploitable hole). Root, per `cargo tree -i gtk --target
+  # x86_64-unknown-linux-gnu`: tauri → muda / tao / wry / webkit2gtk → gtk 0.18.2.
+  # Linux-only (absent from macOS/Windows trees) and pulled by tauri CORE, so no
+  # plugin removal shrinks it and no crate swap is available to us — bound to
+  # gtk-rs 0.18 until Tauri's Linux backend moves off WebKitGTK/GTK3.
   "RUSTSEC-2024-0411",
   "RUSTSEC-2024-0412",
   "RUSTSEC-2024-0413",
@@ -30,16 +57,30 @@ ignore = [
   "RUSTSEC-2024-0418",
   "RUSTSEC-2024-0419",
   "RUSTSEC-2024-0420",
+  # NOTE: glib < 0.20.0 `VariantStrIter` unsoundness (RUSTSEC-2024-0429 /
+  # GHSA-wrw7-89jp-8q8g) is the same cluster (atk → glib 0.18.5), but it is filed
+  # `informational = "unsound"` and cargo-deny keeps it below the deny threshold —
+  # an active ignore only yields a perpetual "advisory-not-detected" warning, so
+  # it is documented, not suppressed. An external GHSA-based SCA scan does flag it;
+  # accepted for the same reason. Our code never calls `VariantStrIter` (we don't
+  # touch glib directly — it is purely under the webview), so the unsound path is
+  # never exercised. Resolves when Tauri's Linux stack moves to gtk-rs 0.20+.
 
   # NOTE: the two quick-xml DoS advisories (RUSTSEC-2026-0194/0195) were removed
   # here once `plist 1.10.0` pulled `quick-xml 0.41.0` (the fixed line) — the
   # dependency refresh RESOLVED them rather than suppressing them. Don't re-add a
   # suppression; if they resurface, a dep regressed to quick-xml <0.41.
 
-  # ── Unmaintained transitive build/helper crates ─────────────────────────────
-  # proc-macro-error (via transitive macro crates).
+  # ── Unmaintained transitive build/helper crates (still Tauri-rooted) ─────────
+  # proc-macro-error — NOT a separate concern: it is pulled by `glib-macros 0.18.5`
+  # (`cargo tree -i proc-macro-error`), i.e. part of the same gtk-rs 0.18 cluster
+  # above. Clears together with the GTK stack.
   "RUSTSEC-2024-0370",
-  # unic-* unicode helpers (via transitive deps).
+  # unic-* unicode helpers — the dormant `unic` project, pulled solely by
+  # `urlpattern 0.3.0` → `tauri-utils` (`cargo tree -i unic-ucd-ident`); partly a
+  # build-dependency (tauri-build/tauri-codegen). Not our choice of urlpattern
+  # version; may clear on a future Tauri bump if tauri-utils moves to a urlpattern
+  # that dropped unic-* (the quick-xml pattern above), not via a swap by us.
   "RUSTSEC-2025-0075",
   "RUSTSEC-2025-0080",
   "RUSTSEC-2025-0081",
