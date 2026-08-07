@@ -534,16 +534,25 @@
 
     // GPU-accelerated rendering for smooth output under heavy load. Falls back
     // to the DOM renderer if WebGL is unavailable or its context is lost.
-    try {
-      const addon = new WebglAddon();
-      addon.onContextLoss(() => {
-        addon.dispose();
-        webgl = undefined;
-      });
-      term.loadAddon(addon);
-      webgl = addon;
-    } catch {
-      /* no WebGL — xterm keeps its default renderer */
+    //
+    // Under WebDriver (E2E) we skip WebGL and keep xterm's DOM renderer: the
+    // canvas renderer draws glyphs to <canvas>, leaving no .xterm-rows text for
+    // the suite to read. This is xterm's own supported fallback — the output is
+    // identical, only the draw backend differs. The guard fires only when
+    // `navigator.webdriver` is explicitly true, so real users (false/undefined)
+    // always get WebGL.
+    if (!navigator.webdriver) {
+      try {
+        const addon = new WebglAddon();
+        addon.onContextLoss(() => {
+          addon.dispose();
+          webgl = undefined;
+        });
+        term.loadAddon(addon);
+        webgl = addon;
+      } catch {
+        /* no WebGL — xterm keeps its default renderer */
+      }
     }
 
     // Forward keystrokes to the remote shell.

@@ -53,17 +53,21 @@ jobs:
       - name: Установка зависимостей
         run: pnpm install --frozen-lockfile
 
+      # `svelte-kit sync` до тестов ОБЯЗАТЕЛЕН: он генерирует
+      # `.svelte-kit/tsconfig.json`, который наследует корневой tsconfig.json
+      # (`extends`). Без него dep-оптимизатор rolldown 1.1.5 падает на старте
+      # `pnpm test:coverage` — «Tsconfig not found» → `Could not resolve
+      # 'node:module' in \0rolldown/runtime.js`. В ci.yml этот файл молча создаёт
+      # предшествующий `pnpm check`; здесь `check` не гоняется, поэтому sync нужен
+      # явным шагом (`.svelte-kit` в .gitignore, postinstall-хука нет).
+      - name: Синхронизация SvelteKit
+        run: pnpm exec svelte-kit sync
+
       # Те же свойства, что гоняются на PR (~300 прогонов), здесь — 150 000
       # (глубину читает только untrusted.fuzz.test.ts; таймаут теста выведен из
-      # этого числа, остальные тесты FUZZ_RUNS игнорируют).
-      #
-      # Гоняем через `pnpm test:coverage`, а НЕ `vitest run <файл>`: любой
-      # не-coverage вызов (одиночный файл ИЛИ полный `pnpm test`) валит vitest на
-      # старте о баг rolldown 1.1.5 при dep-optimize — `Could not resolve
-      # 'node:module' in \0rolldown/runtime.js` (`deps.optimizer.enabled=false`
-      # в Vitest 4 игнорируется). Провайдер @vitest/coverage-v8 трансформирует
-      # иначе и обходит оптимизатор — это ровно зелёный путь ci.yml, где тот же
-      # fuzz-файл проходит; здесь отличается лишь глубина через FUZZ_RUNS.
+      # этого числа, остальные тесты FUZZ_RUNS игнорируют). Гоняем через
+      # `pnpm test:coverage` — тот же зелёный путь, что в ci.yml; отличается лишь
+      # глубина через FUZZ_RUNS.
       - name: Свойства фронтенда (fast-check)
         env:
           FUZZ_RUNS: 150000

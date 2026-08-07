@@ -171,6 +171,20 @@ docker compose -f docker-compose.ssh.yml down
 `save-server`, `server-row`, `connect`, `secret-input`, `secret-connect`). Параметры сервера
 переопределяются `VTERM_TEST_SSH_HOST`/`_PORT`/`_USER`/`_PASS`; в CI он подаётся как service.
 
+Две неочевидности, каждая из которых в одиночку роняет прогон намертво:
+
+- **Бинарь собирается с `--features tauri/custom-protocol`** (`onPrepare` в
+  [wdio.conf.js](../e2e/wdio.conf.js)). Tauri решает dev-vs-prod через
+  `is_dev() == !cfg!(feature = "custom-protocol")`: голый `cargo build` даёт **dev**-бинарь,
+  который грузит `devUrl` (`http://localhost:1420`) вместо встроенного `frontendDist` — в CI
+  Vite нет, окно показывает «Could not connect to localhost», ни один `data-testid` не
+  появляется. `tauri build` включает фичу сам; собирая через cargo — передаём вручную.
+- **Под WebDriver терминал рендерится DOM-рендерером, а не WebGL** ([Terminal.svelte](../src/lib/Terminal.svelte)
+  гейтит `WebglAddon` по `navigator.webdriver`). Канвас-рендерер рисует глифы в `<canvas>` и
+  не оставляет текста в `.xterm-rows` — читать вывод было бы нечем. Это штатный fallback
+  xterm: вывод тот же, отличается лишь backend отрисовки. Спек ждёт промпт (`$`) **до** ввода —
+  нажатия, посланные до готовности PTY, глотаются (`echo` → `o`).
+
 ## CI на GitHub
 
 Основной пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и

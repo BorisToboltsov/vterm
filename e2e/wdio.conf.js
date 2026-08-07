@@ -43,8 +43,15 @@ export const config = {
   mochaOpts: { ui: "bdd", timeout: 120000 },
 
   // Build the app once before the run.
+  //
+  // `--features tauri/custom-protocol` is MANDATORY: Tauri gates dev-vs-prod on
+  // `is_dev() == !cfg!(feature = "custom-protocol")`, so a plain `cargo build`
+  // yields a DEV binary that loads `devUrl` (http://localhost:1420) instead of
+  // the embedded `frontendDist`. In CI there is no Vite server, so the window
+  // renders WebKit's "Could not connect to localhost" error and no testid ever
+  // appears. `tauri build` sets this feature; building via cargo we pass it.
   onPrepare: () => {
-    spawnSync("cargo", ["build", "--release"], {
+    spawnSync("cargo", ["build", "--release", "--features", "tauri/custom-protocol"], {
       cwd: path.resolve(projectRoot, "src-tauri"),
       stdio: "inherit",
     });
