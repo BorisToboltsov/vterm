@@ -10,6 +10,8 @@
 //   • CI — читает package.json (имя portable-.exe).
 //   • Cargo.toml / Cargo.lock — литералом: cargo не умеет ссылок, поэтому
 //     версию туда переписывает этот скрипт.
+//   • README.md — плашка shields.io (version-X.Y.Z): статичный литерал, ничем
+//     не резолвится, поэтому её тоже синкает этот скрипт (иначе тихо отстаёт).
 //
 // Расхождение ловит гейт src/lib/version.guard.test.ts.
 
@@ -22,6 +24,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const PKG = "package.json";
 const CARGO_TOML = "src-tauri/Cargo.toml";
 const CARGO_LOCK = "src-tauri/Cargo.lock";
+const README = "README.md";
 
 /** Схема vterm: major.minor.patch, без пререлизных суффиксов (их не бандлит Tauri). */
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -82,10 +85,18 @@ const lockEntry = /(\[\[package\]\]\nname = "vterm"\nversion = )"[^"]*"/;
 if (!lockEntry.test(lockRaw)) fail(`не нашёл запись пакета vterm в ${CARGO_LOCK}`);
 write(CARGO_LOCK, lockRaw.replace(lockEntry, `$1"${target}"`));
 
+// ── README.md: плашка версии shields.io ───────────────────────────────────────
+// Матчим только числовую часть semver — цвет (`-blue`) и остальные бейджи
+// (license/platform/…) не трогаем.
+const readmeRaw = read(README);
+const badge = /(shields\.io\/badge\/version-)\d+\.\d+\.\d+/;
+if (!badge.test(readmeRaw)) fail(`не нашёл плашку версии в ${README}`);
+write(README, readmeRaw.replace(badge, `$1${target}`));
+
 // ── Итог ──────────────────────────────────────────────────────────────────────
 console.log(
   current === target
-    ? `✔ версия ${target} разнесена (package.json → Cargo.toml, Cargo.lock)`
-    : `✔ ${current} → ${target} (package.json, Cargo.toml, Cargo.lock)`,
+    ? `✔ версия ${target} разнесена (package.json → Cargo.toml, Cargo.lock, README.md)`
+    : `✔ ${current} → ${target} (package.json, Cargo.toml, Cargo.lock, README.md)`,
 );
 console.log("  tauri.conf.json берёт версию из package.json ссылкой — не трогаем");
