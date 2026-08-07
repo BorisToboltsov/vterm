@@ -233,6 +233,18 @@ jobs:
         working-directory: e2e
         run: xvfb-run --auto-servernum pnpm test:e2e
 
+      # При падении окно молчит: выгружаем скриншот + DOM упавшего экрана, чтобы
+      # отличить пустую страницу (приложение не смонтировалось) от неверного
+      # первого экрана. Проба печатается в лог самим wdio-хуком.
+      - name: Диагностика E2E
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-diagnostics
+          path: e2e/e2e-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Погасить sshd
         if: always()
         run: docker compose -f e2e/docker-compose.ssh.yml down
