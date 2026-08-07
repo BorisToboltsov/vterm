@@ -39,13 +39,27 @@ describe("vterm — connect & run a command", () => {
     await secret.setValue(PASS);
     await (await testid("secret-connect")).click();
 
-    // Wait for the shell, type a command, assert its output is echoed.
+    // Wait for the shell, type a command, assert its output is echoed. The DOM
+    // renderer (forced under WebDriver, see Terminal.svelte) exposes buffer text
+    // via .xterm-rows; the WebGL canvas renderer would leave it empty.
     const term = await $(".xterm");
     await term.waitForExist({ timeout: 30000 });
+    const rows = () => $(".xterm-rows");
+
+    // Wait for the prompt before typing: keystrokes sent while the remote PTY is
+    // still starting get dropped (echo → "o"), so the command never runs.
+    await browser.waitUntil(async () => (await rows().getText()).includes("$"), {
+      timeout: 30000,
+      timeoutMsg: "shell prompt not ready",
+    });
+
     await browser.keys(["e", "c", "h", "o", " ", "v", "t", "e", "r", "m", "Enter"]);
 
+    // The shell echoes the typed line AND prints the output, so "vterm" appears
+    // twice; require both to prove the command actually ran, not just that we
+    // typed it.
     await browser.waitUntil(
-      async () => (await $(".xterm-rows").getText()).includes("vterm"),
+      async () => ((await rows().getText()).match(/vterm/g) || []).length >= 2,
       { timeout: 15000, timeoutMsg: "command output not seen in terminal" },
     );
   });
