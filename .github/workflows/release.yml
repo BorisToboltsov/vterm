@@ -112,6 +112,49 @@ jobs:
       - name: Установка JS-зависимостей
         run: pnpm install --frozen-lockfile
 
+      # Краткое «Что нового» для описания релиза: жирные заголовки буллетов из
+      # секции CHANGELOG по текущему тегу — без подробностей. Единственный источник
+      # изменений — CHANGELOG.md (ведётся по DoD), тег пуша совпадает с заголовком
+      # секции `## vX.Y.Z — …`. Инструкция запуска остаётся ниже неизменной.
+      #
+      # shell: bash — иначе на Windows-раннере матрицы шаг ушёл бы в PowerShell.
+      # Тег едет через env, а не подстановкой в строку: `${{…}}` в `run:`
+      # раскрывается ДО шелла, то есть содержимое стало бы кодом (инвариант, тот же,
+      # что у gh-шагов ниже). Заголовок секции матчим сравнением подстрок, а не
+      # регуляркой — точки версии не должны толковаться как метасимволы. Секции по
+      # тегу нет (тег без записи в CHANGELOG) → ссылка на CHANGELOG, релиз не рушим.
+      - name: Заметки релиза из CHANGELOG
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          notes="$(awk -v tag="$TAG" '
+            BEGIN { pfx = "## " tag }
+            {
+              if (!insec && substr($0, 1, length(pfx)) == pfx) {
+                rest = substr($0, length(pfx) + 1)
+                if (rest == "" || substr(rest, 1, 1) == " ") { insec = 1; next }
+              }
+            }
+            insec && substr($0, 1, 3) == "## " { exit }
+            insec && $0 ~ /^---[[:space:]]*$/ { exit }
+            insec && substr($0, 1, 4) == "- **" {
+              line = substr($0, 5)
+              p = index(line, "**")
+              if (p > 0) line = substr(line, 1, p - 1)
+              print "- " line
+            }
+          ' CHANGELOG.md)"
+          {
+            echo "RELEASE_NOTES<<RELEASE_NOTES_EOF"
+            if [ -n "$notes" ]; then
+              printf '## Что нового в %s\n\n%s\n' "$TAG" "$notes"
+            else
+              echo "Список изменений — в [CHANGELOG.md](https://github.com/BorisToboltsov/vterm/blob/main/CHANGELOG.md)."
+            fi
+            echo "RELEASE_NOTES_EOF"
+          } >> "$GITHUB_ENV"
+
       # Собирает фронт (beforeBuildCommand: pnpm build), компилирует Rust в release,
       # упаковывает нативные дистрибутивы и прикрепляет их к релизу тега.
       - name: Сборка и публикация релиза
@@ -122,6 +165,8 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "vterm ${{ github.ref_name }}"
           releaseBody: |
+            ${{ env.RELEASE_NOTES }}
+
             Готовые сборки vterm ${{ github.ref_name }}. Скачайте файл под свою ОС из списка **Assets** ниже.
 
             - **macOS** — `.dmg`; рядом лежит `open-on-mac.sh` — хелпер запуска неподписанной сборки (снимает карантин Gatekeeper): `chmod +x open-on-mac.sh && ./open-on-mac.sh`.

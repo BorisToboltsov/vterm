@@ -55,6 +55,37 @@ describe("release workflow builds the bundles", () => {
   });
 });
 
+// The release body must do two things at once and both can regress silently: it
+// keeps the launch / anti-Gatekeeper instructions (without them the page is a bare
+// asset list), and it prepends a short "what's new" drawn from CHANGELOG.md — the
+// curated, per-version source. Dropping the extraction step, or the env reference,
+// or the instructions, all pass a build with no failure, so all three are pinned.
+describe("release body carries a changelog summary and the instructions", () => {
+  it("derives release notes from CHANGELOG.md into an env var", () => {
+    const step = stepWith("CHANGELOG.md");
+    expect(step, "no step reads CHANGELOG.md").toBeDefined();
+    expect(step).toContain("RELEASE_NOTES");
+    expect(step).toContain("GITHUB_ENV");
+    expect(step).toContain("shell: bash"); // Windows runner would use PowerShell otherwise
+    // The tag reaches the script through env, never string-substituted into the
+    // shell line — the same injection class the gh steps below avoid.
+    expect(step).toMatch(/TAG:\s*\$\{\{\s*github\.ref_name\s*\}\}/);
+  });
+
+  it("puts the changelog summary into the release body", () => {
+    const build = stepWith("tauri-apps/tauri-action");
+    expect(build).toMatch(/releaseBody:/);
+    expect(build).toContain("${{ env.RELEASE_NOTES }}");
+  });
+
+  it("keeps the launch + anti-Gatekeeper instructions in the body", () => {
+    const build = stepWith("tauri-apps/tauri-action") ?? "";
+    expect(build).toContain("Assets");
+    expect(build).toContain("docs/INSTALL.md");
+    expect(build).toContain("open-on-mac.sh");
+  });
+});
+
 // A tag must not be able to publish a release built from a red tree. Before this
 // gate, release.yml ran zero tests: `git push origin v1.0.1` produced three
 // signed-off bundles even with clippy red, coverage under threshold and

@@ -112,8 +112,9 @@ rm -rf src-tauri/target/release/bundle    # .app/.dmg/.msi/.exe
 pnpm version:set 1.1.0
 ```
 
-[scripts/set-version.mjs](scripts/set-version.mjs) разносит её в `Cargo.toml` и `Cargo.lock`
-(cargo не умеет ссылок, нужен литерал). `tauri.conf.json` ничего не хранит — там стоит
+[scripts/set-version.mjs](scripts/set-version.mjs) разносит её в `Cargo.toml`, `Cargo.lock`
+(cargo не умеет ссылок, нужен литерал) и в плашку версии `README.md` (статичный бейдж
+shields.io, ничем не резолвится). `tauri.conf.json` ничего не хранит — там стоит
 ссылка `"version": "../package.json"`, которую Tauri резолвит сам; приложение читает версию
 через `getVersion()`, то есть из того же источника. CI берёт её тоже из `package.json` —
 достать `.version` из `tauri.conf.json` теперь значит получить строку `"../package.json"`
