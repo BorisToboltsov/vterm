@@ -34,5 +34,3 @@ e2e/node_modules
 *.deb
 *.rpm
 
-# E2E failure diagnostics (screenshots/DOM), uploaded as CI artifact
-e2e/e2e-artifacts/
