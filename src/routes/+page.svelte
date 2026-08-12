@@ -107,6 +107,8 @@
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
   import TopBar from "$lib/TopBar.svelte";
+  import TitleBar from "$lib/TitleBar.svelte";
+  import { hostEnv } from "$lib/stores/hostenv.svelte";
   import ServerTree from "$lib/ServerTree.svelte";
   import Modal from "$lib/Modal.svelte";
   import PasswordInput from "$lib/PasswordInput.svelte";
@@ -116,6 +118,7 @@
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import { cdCommand, type CdShell } from "$lib/cdterminal";
   import { submitLine } from "$lib/terminput";
+  import { isNewTabChord, isPaletteChord } from "$lib/appshortcuts";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
@@ -203,6 +206,10 @@
   }
   let showHelp = $state(false);
   let helpTab = $state<"help" | "about" | "manual">("help");
+  // Custom window chrome replaces the OS title bar + menu on Windows/Linux; macOS
+  // keeps its native decorations, so the TitleBar is never mounted there. Empty
+  // `os` (pre-resolve) also renders nothing, so macOS never flashes a custom bar.
+  const showWindowChrome = $derived(hostEnv.os !== "" && hostEnv.os !== "macos");
   let showPalette = $state(false);
   let showMonitoring = $state(false);
   let showRecordings = $state(false);
@@ -980,8 +987,11 @@
 
   // Keep the native application menu in the same language as the rest of the UI.
   // Re-runs whenever `settings.language` changes (read via `t()`); errors are
-  // ignored so a non-Tauri context (e.g. plain `pnpm dev`) doesn't throw.
+  // ignored so a non-Tauri context (e.g. plain `pnpm dev`) doesn't throw. Only
+  // macOS has a native menu now — Windows/Linux draw the HTML menu in TitleBar —
+  // so skip the IPC there (reading `hostEnv.os` also makes this reactive to it).
   $effect(() => {
+    if (hostEnv.os !== "macos") return;
     setMenuLanguage({
       fileMenu: t("menu.fileMenu"),
       helpMenu: t("menu.helpMenu"),
@@ -994,15 +1004,18 @@
   });
 
   function onGlobalKey(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+    // ⌘K (macOS) / Ctrl+Shift+K (Windows/Linux). Plain Ctrl+K belongs to the shell
+    // (readline kill-line), so the terminal only releases the Shift form — see
+    // appshortcuts.ts for why the two must agree.
+    if (isPaletteChord(e)) {
       e.preventDefault();
       showPalette = !showPalette;
       return;
     }
-    // Cmd/Ctrl+T — new tab of the active server, or a local shell when the active
-    // tab isn't SSH (including when nothing is open). Modifier-exact so it doesn't
-    // steal Cmd+Shift+T etc. (Phase 20.15).
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === "t" || e.key === "T")) {
+    // ⌘T (macOS) / Ctrl+Shift+T (Windows/Linux) — new tab of the active server, or a
+    // local shell when the active tab isn't SSH (including when nothing is open).
+    // Plain Ctrl+T stays with the shell (transpose-chars / fzf).
+    if (isNewTabChord(e)) {
       e.preventDefault();
       const action = newTabAction(activeTab);
       if (action.kind === "ssh") {
@@ -1018,6 +1031,9 @@
 
   onMount(() => {
     refresh();
+    // Resolve the host OS once so the custom window chrome (TitleBar) and the
+    // macOS-only native-menu sync below become reactively available.
+    void hostEnv.resolve();
     // A config file that failed to parse was quarantined during the backend's
     // startup load. Reported without a TTL: "your server list is gone and here is
     // where it went" must not scroll away after six seconds.
@@ -1835,6 +1851,24 @@
     targetEl={terminalArea ?? mainArea ?? null}
     onnosignaldismiss={() => (noSignalSession = null)}
   />
+  {#if showWindowChrome}
+    <TitleBar
+      onSettings={() => openSettings()}
+      onMonitoring={openMonitoring}
+      onAbout={() => {
+        helpTab = "about";
+        showHelp = true;
+      }}
+      onHelp={() => {
+        helpTab = "help";
+        showHelp = true;
+      }}
+      onManual={() => {
+        helpTab = "manual";
+        showHelp = true;
+      }}
+    />
+  {/if}
   <TopBar
     title={topTitle}
     subtitle={topSubtitle}

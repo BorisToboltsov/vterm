@@ -137,6 +137,11 @@ export default defineConfig({
         "src/lib/UtilTls.svelte",
         "src/lib/UtilHttp.svelte",
         "src/lib/CopyButton.svelte",
+        // Custom frameless window title bar (Windows/Linux) — UI shell over the
+        // Tauri window API (minimize/maximize/close/drag/resize) + the shared
+        // <ContextMenu>. Its pure logic (resize-edge geometry, menu anchoring)
+        // lives in windowchrome.ts (covered in windowchrome.test.ts).
+        "src/lib/TitleBar.svelte",
       ],
       thresholds: {
         // Gate the pure logic hard (the safety net for the upcoming refactor).

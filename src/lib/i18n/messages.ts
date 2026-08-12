@@ -115,6 +115,13 @@ export const en = {
   "menu.help": "Help",
   "menu.manual": "Manual",
   "menu.monitoring": "Monitoring",
+  // Custom window chrome (frameless title bar on Windows/Linux).
+  "window.menuBar": "Main menu",
+  "window.minimize": "Minimize",
+  "window.maximize": "Maximize",
+  "window.restore": "Restore down",
+  "window.close": "Close",
+  "window.exit": "Exit",
 
   // ── Server tree (left panel) ──
   "tree.expandList": "Expand server list",
@@ -389,7 +396,7 @@ export const en = {
   "page.emptyServerTitle": "Server “{alias}”",
   "page.hintConnect": "Press Connect or double-click a server. Quick access — ⌘K.",
   "page.hintSelect":
-    "Select a server on the left or add a new one. Command palette — ⌘K / Ctrl+K.",
+    "Select a server on the left or add a new one. Command palette — ⌘K / Ctrl+Shift+K.",
   "page.serverFallbackName": "server",
   "page.folderCreated": "Folder “{name}” created",
   "page.folderDeleted": "Folder “{name}” deleted",
@@ -1830,6 +1837,13 @@ const ru: Record<MessageKey, string> = {
   "menu.help": "Справка",
   "menu.manual": "Инструкция",
   "menu.monitoring": "Мониторинг",
+  // Своё оконное обрамление (безрамочный заголовок на Windows/Linux).
+  "window.menuBar": "Главное меню",
+  "window.minimize": "Свернуть",
+  "window.maximize": "Развернуть",
+  "window.restore": "Восстановить",
+  "window.close": "Закрыть",
+  "window.exit": "Выход",
 
   // ── Server tree ──
   "tree.expandList": "Развернуть список серверов",
@@ -2105,7 +2119,7 @@ const ru: Record<MessageKey, string> = {
   "page.hintConnect":
     "Нажмите «Подключиться» или дважды кликните по серверу. Быстрый доступ — ⌘K.",
   "page.hintSelect":
-    "Выберите сервер слева или добавьте новый. Палитра команд — ⌘K / Ctrl+K.",
+    "Выберите сервер слева или добавьте новый. Палитра команд — ⌘K / Ctrl+Shift+K.",
   "page.serverFallbackName": "сервер",
   "page.folderCreated": "Папка «{name}» создана",
   "page.folderDeleted": "Папка «{name}» удалена",

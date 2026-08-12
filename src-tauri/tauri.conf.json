@@ -15,7 +15,9 @@
         "title": "vterm",
         "width": 1100,
         "height": 720,
-        "backgroundColor": "#282c34"
+        "backgroundColor": "#282c34",
+        "visible": false,
+        "shadow": true
       }
     ],
     "security": {

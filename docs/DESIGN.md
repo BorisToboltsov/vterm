@@ -141,6 +141,24 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   интервал. Выбор темы и шрифта в настройках — сворачиваемые разделы с визуальным пикером
   (`role="radio"`, образцы `themeSwatches`, превью шрифта своим начертанием).
 
+## Оконное обрамление (Windows/Linux)
+
+Кастомный заголовок безрамочного окна ([TitleBar.svelte](../src/lib/TitleBar.svelte)); на macOS
+не рендерится (там нативная рамка). Контракт — в INVARIANTS («UI и оформление»); здесь только вид.
+
+- **Полоса:** `h-8`, `bg-panel-alt`, `border-b border-edge`, `select-none`; сам бар — drag-регион
+  (`data-tauri-drag-region`). Слева `AppLogo size={18}` + «vterm» (`text-xs text-muted`,
+  `pointer-events-none`), затем HTML-меню, растяжка-филлер, справа кнопки окна.
+- **Меню Файл/Справка:** кнопки `px-2 py-1 text-xs`; открытая подсвечена `bg-edge text-text`,
+  прочие — `text-muted hover:bg-edge hover:text-text`. Выпадашка — общий `ContextMenu` под кнопкой;
+  при открытом меню наведение на соседнюю переключает (как в нативном меню-баре).
+- **Кнопки окна:** три квадрата `w-11 h-full`, иконки из реестра (`minus`, `windowMaximize`/
+  `windowRestore` по состоянию, `close`). Свернуть/развернуть — `hover:bg-edge hover:text-text`;
+  закрыть — `hover:bg-danger hover:text-text` (красный ховер, как в Windows; цвет — токен `danger`,
+  не палитра). Иконка развернуть/восстановить следует реальному `isMaximized()`.
+- **Ресайз:** восемь невидимых грип-полос по краям/углам (`z-20`, скрыты в maximized), геометрия и
+  курсоры — из [windowchrome.ts](../src/lib/windowchrome.ts).
+
 ## Статус-бар
 
 Ряд **групп** показаний ([StatusBar.svelte](../src/lib/StatusBar.svelte)); новый показатель =
