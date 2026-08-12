@@ -25,9 +25,10 @@ describe("HelpPanel", () => {
     expect(screen.getByText("Hotkeys")).toBeInTheDocument();
     expect(screen.getByText("Copy selection")).toBeInTheDocument();
     expect(screen.getByText("Interrupt (SIGINT)")).toBeInTheDocument();
-    // The Cmd/Ctrl+T new-tab shortcut is documented (Phase 20.15).
+    // The new-tab shortcut is documented — ⌘T on macOS, Ctrl+Shift+T on Win/Linux
+    // (plain Ctrl+T belongs to the shell; see appshortcuts.ts).
     expect(screen.getByText("New tab (same server, or local shell)")).toBeInTheDocument();
-    expect(screen.getByText(/⌘T\s*\/\s*Ctrl\+T/)).toBeInTheDocument();
+    expect(screen.getByText(/⌘T\s*\/\s*Ctrl\+Shift\+T/)).toBeInTheDocument();
     // The terminal-search shortcut (Phase 21).
     expect(screen.getByText("Search terminal buffer")).toBeInTheDocument();
     expect(screen.getByText(/⌘F\s*\/\s*Ctrl\+Shift\+F/)).toBeInTheDocument();

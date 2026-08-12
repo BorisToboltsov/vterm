@@ -1940,8 +1940,14 @@ fn read_clipboard_text() -> AppResult<String> {
 /// first build, before the WebView pushes the user's language.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
+// Windows/Linux no longer host a native menu bar (custom in-window chrome —
+// TitleBar.svelte — replaces it), so none of these labels are read there; macOS
+// still builds its app/Help menu from them. Kept as a field so the frontend
+// contract stays stable across platforms.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 struct MenuLabels {
-    // Used only in the Windows/Linux in-window menu bar (macOS has no File menu).
+    // The File-menu label is only meaningful for an in-window menu bar; macOS uses
+    // the standard "vterm" app menu instead, so it goes unread there.
     #[cfg_attr(target_os = "macos", allow(dead_code))]
     file_menu: String,
     help_menu: String,
@@ -1967,28 +1973,40 @@ impl Default for MenuLabels {
 }
 
 /// Build the native application menu from localized `labels`. On macOS the items
-/// live in the standard "vterm" app menu (Settings with ⌘,) and a Help menu; on
-/// Windows/Linux they appear in an in-window menu bar (File → Settings…, Help).
+/// live in the standard "vterm" app menu (Settings with ⌘,) and a Help menu, in
+/// the system menu bar. Windows/Linux draw their own in-window chrome
+/// (TitleBar.svelte) with an HTML File/Help menu, so there the native menu is
+/// empty — no OS-drawn menu bar to keep light against a dark theme.
 /// Item ids are stable across languages, so the `on_menu_event` routing keeps
 /// working after a rebuild (see `set_menu_language`).
 fn build_app_menu<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     labels: &MenuLabels,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
-    use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+    use tauri::menu::MenuBuilder;
 
-    let settings = MenuItemBuilder::with_id("settings", &labels.settings)
-        .accelerator("CmdOrCtrl+,")
-        .build(app)?;
-    let about = MenuItemBuilder::with_id("about", &labels.about).build(app)?;
-    let help = MenuItemBuilder::with_id("help", &labels.help).build(app)?;
-    let manual = MenuItemBuilder::with_id("manual", &labels.manual).build(app)?;
-    let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
-        .accelerator("CmdOrCtrl+Shift+M")
-        .build(app)?;
+    // Windows/Linux: the in-window TitleBar owns the menu, so attach an empty
+    // native menu (removing the OS menu bar entirely). `labels` is unused here.
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = labels;
+        return MenuBuilder::new(app).build();
+    }
 
     #[cfg(target_os = "macos")]
     {
+        use tauri::menu::{MenuItemBuilder, SubmenuBuilder};
+
+        let settings = MenuItemBuilder::with_id("settings", &labels.settings)
+            .accelerator("CmdOrCtrl+,")
+            .build(app)?;
+        let about = MenuItemBuilder::with_id("about", &labels.about).build(app)?;
+        let help = MenuItemBuilder::with_id("help", &labels.help).build(app)?;
+        let manual = MenuItemBuilder::with_id("manual", &labels.manual).build(app)?;
+        let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
+            .accelerator("CmdOrCtrl+Shift+M")
+            .build(app)?;
+
         // No Edit menu on purpose: the terminal handles ⌘C/⌘V itself, and a
         // native Edit menu would steal those accelerators before xterm sees them.
         let app_menu = SubmenuBuilder::new(app, "vterm")
@@ -2009,24 +2027,6 @@ fn build_app_menu<R: tauri::Runtime>(
             .build()?;
         MenuBuilder::new(app)
             .item(&app_menu)
-            .item(&help_menu)
-            .build()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let file_menu = SubmenuBuilder::new(app, &labels.file_menu)
-            .item(&settings)
-            .item(&monitoring)
-            .separator()
-            .quit()
-            .build()?;
-        let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
-            .item(&about)
-            .item(&help)
-            .item(&manual)
-            .build()?;
-        MenuBuilder::new(app)
-            .item(&file_menu)
             .item(&help_menu)
             .build()
     }
@@ -2080,6 +2080,20 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // The window is created hidden (`visible: false`). On Windows/Linux we drop
+        // the native decorations here — while still hidden, so no titled frame ever
+        // flashes — and the in-window TitleBar takes over the caption + menu. macOS
+        // keeps its native title bar and system menu bar untouched. Then show on all
+        // platforms.
+        .setup(|app| {
+            let win = app
+                .get_webview_window("main")
+                .expect("main window is defined in tauri.conf.json");
+            #[cfg(not(target_os = "macos"))]
+            win.set_decorations(false)?;
+            win.show()?;
+            Ok(())
+        })
         .menu(|app| build_app_menu(app, &MenuLabels::default()))
         .on_menu_event(|app, event| {
             let _ = match event.id().as_ref() {

@@ -15,6 +15,7 @@
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
+  import { isAppShortcut } from "./appshortcuts";
   import { applyHighlight, compileRules } from "./highlight";
   import { toLogEntry, type JsonLogEntry } from "./jsonlog";
   import JsonLogView from "./JsonLogView.svelte";
@@ -579,6 +580,13 @@
     // Plain Ctrl+C is left untouched so it still sends SIGINT.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
+      // Window-level app shortcuts — new tab (⌘T / Ctrl+Shift+T) and command palette
+      // (⌘K / Ctrl+Shift+K). Release them so xterm doesn't consume Ctrl+Shift+<key>
+      // as a control code (byte to the PTY + stopPropagation); the event then bubbles
+      // to the window handler (+page.svelte onGlobalKey). Plain Ctrl+T / Ctrl+K are
+      // deliberately NOT here — they stay with the shell. Single source of truth in
+      // appshortcuts.ts, shared with the window handler.
+      if (isAppShortcut(e)) return false;
       // Cmd+F (macOS) or Ctrl+Shift+F (Win/Linux) opens full-buffer search.
       // Plain Ctrl+F is left for the remote shell (readline forward-char).
       const findCombo =

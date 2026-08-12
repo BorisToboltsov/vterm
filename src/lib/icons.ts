@@ -45,6 +45,11 @@ export const ICONS = {
     '<path d="M3 21h18"/><rect x="5" y="11" width="3" height="7" rx="0.5"/><rect x="10.5" y="7" width="3" height="11" rx="0.5"/><rect x="16" y="3" width="3" height="15" rx="0.5"/>',
   minus: '<path d="M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  // Custom window controls (frameless title bar on Windows/Linux): a single square
+  // for "maximize", two offset squares for "restore" (the maximized state).
+  windowMaximize: '<rect x="5" y="5" width="14" height="14" rx="1.5"/>',
+  windowRestore:
+    '<rect x="8" y="8" width="11" height="11" rx="1.5"/><path d="M8 5h9a2 2 0 0 1 2 2v9"/>',
   chevronLeft: '<path d="M15 18l-6-6 6-6"/>',
   chevronRight: '<path d="M9 18l6-6-6-6"/>',
   arrowRight: '<path d="M5 12h14M13 6l6 6-6 6"/>',

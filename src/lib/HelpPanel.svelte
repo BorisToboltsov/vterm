@@ -52,8 +52,8 @@
   ];
 
   const hotkeys: [MessageKey, string, MessageKey?][] = [
-    ["help.hkCommandPalette", "⌘K  /  Ctrl+K"],
-    ["help.hkNewTab", "⌘T  /  Ctrl+T"],
+    ["help.hkCommandPalette", "⌘K  /  Ctrl+Shift+K"],
+    ["help.hkNewTab", "⌘T  /  Ctrl+Shift+T"],
     ["help.hkSearch", "⌘F  /  Ctrl+Shift+F"],
     ["help.hkHistory", "Ctrl+R"],
     ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],

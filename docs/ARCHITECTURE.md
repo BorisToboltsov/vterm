@@ -22,7 +22,7 @@
 
 | Слой | Технология | Роль |
 |------|-----------|------|
-| Оболочка | **Tauri 2** | Нативное окно + WebView, Rust-бэкенд, нативное меню |
+| Оболочка | **Tauri 2** | WebView + Rust-бэкенд; окно нативное на macOS, безрамочное со своим обрамлением на Windows/Linux (ADR 0011) |
 | Бэкенд | **Rust** stable | Команды, состояние, SSH/SFTP/секреты, метрики, ИИ-брокер |
 | Фронтенд | **SvelteKit** (Svelte 5, runes), SPA через `adapter-static` | UI |
 | Стили | **Tailwind CSS v4** | Плагин Vite, без `tailwind.config.js`/PostCSS; токены — через `@theme` в [app.css](../src/app.css) |
@@ -150,6 +150,7 @@
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact` |
 | **Утилиты** | `keygen.rs`, `store.rs` (known_hosts) | `generate_ssh_key`, `list_known_hosts`, `remove_known_host` | `UtilitiesPanel` + `Util*.svelte` | `utilities`, `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
 | **Оформление** | — | `set_menu_language` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav` |
+| **Оконное обрамление** | `lib.rs` `setup` (снятие декораций non-macOS) | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
 
 ---
 
@@ -162,8 +163,8 @@ vterm/
 │   ├── app.css                 # токены @theme, глобальные правила
 │   ├── app.html                # первый кадр темы, style-nonce для CodeMirror
 │   └── lib/
-│       ├── *.svelte            # компоненты и панели (91)
-│       ├── *.ts                # чистая логика (89) + тесты рядом
+│       ├── *.svelte            # компоненты и панели (92)
+│       ├── *.ts                # чистая логика (90) + тесты рядом
 │       ├── api/                # типизированные обёртки invoke()
 │       ├── stores/             # состояние в рунах
 │       ├── actions/            # drag · tooltip · mdlinks · clipboardKeys
