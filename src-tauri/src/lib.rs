@@ -1987,10 +1987,13 @@ fn build_app_menu<R: tauri::Runtime>(
 
     // Windows/Linux: the in-window TitleBar owns the menu, so attach an empty
     // native menu (removing the OS menu bar entirely). `labels` is unused here.
+    // The two cfg blocks are mutually exclusive, so exactly one survives per
+    // platform and is the function's tail expression — no `return` (needless on
+    // the platform where this block is the tail; clippy -D warnings catches it).
     #[cfg(not(target_os = "macos"))]
     {
         let _ = labels;
-        return MenuBuilder::new(app).build();
+        MenuBuilder::new(app).build()
     }
 
     #[cfg(target_os = "macos")]
