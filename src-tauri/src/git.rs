@@ -75,6 +75,8 @@ pub async fn run_local(cwd: &str, args: &[String], timeout_secs: u64) -> AppResu
         // (e.g. a working-tree filter / LFS smudge waiting on the network) can't
         // linger and hold `.git/index.lock` for the next command.
         .kill_on_drop(true);
+    // No flashing console window on Windows (the panel polls every few seconds).
+    crate::localenv::no_console_window(&mut command);
 
     let fut = command.output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {

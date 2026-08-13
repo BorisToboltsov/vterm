@@ -166,6 +166,27 @@ pub async fn resolved_local(prog: &str) -> (OsString, OsString) {
     (resolved, path)
 }
 
+/// Suppress the console window a child CLI (git/docker/kubectl) would otherwise
+/// flash on Windows. The app is a GUI-subsystem binary (`windows_subsystem =
+/// "windows"`), so spawning a console program pops a visible `conhost` window for
+/// its lifetime — and the driver panels poll every few seconds, so the windows
+/// blink on and off. `CREATE_NO_WINDOW` runs the child with no console. Apply this
+/// to every local `tokio::process` spawn that runs a console tool in the
+/// background (the interactive PTY shell is unaffected — it has its own pty).
+/// No-op off Windows, where there is no such concept.
+pub fn no_console_window(cmd: &mut tokio::process::Command) {
+    #[cfg(windows)]
+    {
+        // CREATE_NO_WINDOW; tokio ORs it with CREATE_UNICODE_ENVIRONMENT.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,5 +271,37 @@ mod tests {
     #[test]
     fn parse_marker_line_none_when_empty_value() {
         assert_eq!(parse_marker_line("__VTERM_PATH__=\n"), None);
+    }
+
+    #[test]
+    fn no_console_window_is_callable_on_a_command() {
+        // Smoke test: applying the helper never panics. On Windows it sets
+        // CREATE_NO_WINDOW; off Windows it's a no-op. (The visible effect —
+        // no flashing console — only exists on Windows and needs real hardware.)
+        let mut cmd = tokio::process::Command::new("true");
+        no_console_window(&mut cmd);
+    }
+
+    #[test]
+    fn every_local_cli_spawn_hides_the_console_window() {
+        // Guard (bug fixed v1.0.10): each module that spawns a console CLI locally
+        // (git/docker/kubectl) must route EVERY spawn through `no_console_window`,
+        // or a console window flashes on Windows each time the driver panel polls.
+        // Counted by source so a newly-added spawn can't silently reintroduce the
+        // flash. localenv's own login-shell probe is excluded — it's `#[cfg(unix)]`
+        // only, so it never runs (and never opens a window) on Windows.
+        for (name, src) in [
+            ("git.rs", include_str!("git.rs")),
+            ("container.rs", include_str!("container.rs")),
+            ("kube.rs", include_str!("kube.rs")),
+        ] {
+            let spawns = src.matches("tokio::process::Command::new").count();
+            let guarded = src.matches("no_console_window(&mut").count();
+            assert!(
+                guarded >= spawns,
+                "{name}: {spawns} local spawn(s) but only {guarded} no_console_window call(s) — \
+                 a console window will flash on Windows"
+            );
+        }
     }
 }

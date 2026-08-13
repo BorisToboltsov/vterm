@@ -153,7 +153,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   не находит бинарь **только в `tauri build`**. Реконструируем `PATH` из login-шелла (кэш) +
   известных каталогов и резолвим программу в абсолютный путь. Шеллом команду **не** оборачиваем
   (аргументы verbatim). ENOENT возвращаем как `exit 127` + stderr, **не** `Err`, чтобы
-  `parseAvailability` честно сказал «не установлен».
+  `parseAvailability` честно сказал «не установлен». **Каждый** такой фоновый спавн
+  консольного CLI проходит через `localenv::no_console_window` (на Windows `CREATE_NO_WINDOW`,
+  иначе no-op): приложение — GUI-бинарь, и без флага дочерний `conhost` мигает окном на каждый
+  поллинг панели (гейт `every_local_cli_spawn_hides_the_console_window`). Интерактивный
+  PTY-шелл не в счёт — у него свой pty.
 - **Аудит в записи — record-only.** Мутирующий вызов с флагом `mirror` пишется в активную запись
   сессии как `[тег] $ … / [тег] exit N` через `record_output` (функция `*_mirror` в модуле
   драйвера: `git::git_mirror`, `container::container_mirror`, `kube::kube_mirror`,
@@ -760,5 +764,6 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [version.guard.test.ts](../src/lib/version.guard.test.ts) | Версия — только в `package.json`; `tauri.conf.json` держит ссылку, а не литерал; `Cargo.toml`/`Cargo.lock` синхронны. CI читает версию оттуда же: `.version` из `tauri.conf.json` теперь вернёт `"../package.json"` — не ошибка, а имя файла в релизе |
 | `no_file_attributes_built_from_default` (Rust) | `FileAttributes` не строится из `..Default::default()` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
+| `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl) идёт через `no_console_window` — на Windows без окна |
 
 Описание тестов и как их гонять — [TESTS.md](TESTS.md).

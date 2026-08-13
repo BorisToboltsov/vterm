@@ -57,6 +57,8 @@ pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<Containe
         // Terminate the child if we abandon it on timeout, so a stuck `docker`
         // (e.g. a daemon that stops responding) can't linger.
         .kill_on_drop(true);
+    // No flashing console window on Windows (the panel polls every few seconds).
+    crate::localenv::no_console_window(&mut command);
 
     let fut = command.output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {
@@ -103,13 +105,17 @@ pub async fn run_local_stdin(
     // Same PATH reconstruction as `run_local` so `docker login` finds the CLI in a
     // packaged macOS `.app` (see `localenv`); still no shell wraps the command.
     let (resolved, path) = crate::localenv::resolved_local(prog).await;
-    let mut child = tokio::process::Command::new(&resolved)
+    let mut command = tokio::process::Command::new(&resolved);
+    command
         .args(rest)
         .env("PATH", &path)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    // No flashing console window on Windows (docker login runs in the background).
+    crate::localenv::no_console_window(&mut command);
+    let mut child = command
         .spawn()
         .map_err(|e| format!("{prog} failed to run: {e}"))?;
 
