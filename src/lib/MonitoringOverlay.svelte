@@ -834,23 +834,27 @@
           {#if detail?.netIfaces && detail.netIfaces.length > 0}
             <div class="mt-2 border-t border-edge pt-2" data-testid="net-ifaces">
               <div class="mb-1 text-meta text-muted">{t("mon.interfaces")}</div>
-              <table class="w-full text-meta">
+              <!-- table-fixed so a long interface name (e.g. Windows NDIS filter
+                   adapters like "Ethernet-Kaspersky Lab NDIS 6 Filter-0000")
+                   truncates instead of blowing out the numeric columns and
+                   overflowing the card. Mirrors the process tables above. -->
+              <table class="w-full table-fixed text-meta">
                 <thead>
                   <tr class="text-left text-muted">
                     <th class="font-medium">{t("mon.iface")}</th>
-                    <th class="text-right font-medium"><Icon name="download" size={11} class="ml-auto" /></th>
-                    <th class="text-right font-medium"><Icon name="upload" size={11} class="ml-auto" /></th>
-                    <th class="text-right font-medium">{t("mon.errDrop")}</th>
+                    <th class="w-20 pl-2 text-right font-medium"><Icon name="download" size={11} class="ml-auto" /></th>
+                    <th class="w-20 pl-2 text-right font-medium"><Icon name="upload" size={11} class="ml-auto" /></th>
+                    <th class="w-16 pl-2 text-right font-medium">{t("mon.errDrop")}</th>
                   </tr>
                 </thead>
                 <tbody class="font-mono">
                   {#each detail.netIfaces as nf (nf.name)}
                     {@const errs = nf.rxErrs + nf.rxDrop + nf.txErrs + nf.txDrop}
                     <tr class="border-t border-edge/40">
-                      <td class="truncate py-0.5 text-text">{nf.name}</td>
-                      <td class="py-0.5 text-right tabular-nums">{fmtRate(nf.rxRate)}</td>
-                      <td class="py-0.5 text-right tabular-nums">{fmtRate(nf.txRate)}</td>
-                      <td class="py-0.5 text-right tabular-nums {errs > 0 ? 'text-warn' : 'text-muted'}"
+                      <td class="truncate py-0.5 text-text" title={nf.name}>{nf.name}</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums">{fmtRate(nf.rxRate)}</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums">{fmtRate(nf.txRate)}</td>
+                      <td class="py-0.5 pl-2 text-right tabular-nums {errs > 0 ? 'text-warn' : 'text-muted'}"
                         >{errs.toLocaleString()}</td
                       >
                     </tr>

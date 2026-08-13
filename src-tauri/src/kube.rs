@@ -65,6 +65,8 @@ pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<KubeOutp
         // Terminate the child if we abandon it on timeout, so a stuck `kubectl`
         // (e.g. an unreachable API server) can't linger.
         .kill_on_drop(true);
+    // No flashing console window on Windows (the panel polls every few seconds).
+    crate::localenv::no_console_window(&mut command);
 
     let fut = command.output();
     let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {

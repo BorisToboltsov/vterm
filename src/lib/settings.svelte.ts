@@ -144,8 +144,6 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
-  /** Show a right-click menu over the terminal (off = right-click does nothing). */
-  rightClickMenu: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
   /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
@@ -263,9 +261,8 @@ const DEFAULTS: Settings = {
   cursorBlink: true,
   scrollback: 5000,
   bell: "none",
-  copyOnSelect: false,
+  copyOnSelect: true,
   middleClickPaste: false,
-  rightClickMenu: true,
   historySearch: true,
   windowsShell: "cmd",
   localShellPath: "",
@@ -274,25 +271,29 @@ const DEFAULTS: Settings = {
   termType: "xterm-256color",
   defaultPort: 22,
   showStatusBar: true,
-  statusBarExpanded: false,
+  statusBarExpanded: true,
+  // Fresh-install default: only the core five groups (OS, CPU, RAM, disk, net).
+  // The rest ship off so a new user isn't drowned in metrics; each is one toggle
+  // away in Settings. Existing users keep their saved selection (localStorage
+  // merge in `load()`), so this only affects a clean install.
   statusBarItems: {
     os: true,
-    host: true,
+    host: false,
     cpu: true,
-    load: true,
+    load: false,
     ram: true,
-    swap: true,
+    swap: false,
     disk: true,
-    diskio: true,
+    diskio: false,
     net: true,
-    netConns: true,
-    uptime: true,
-    users: true,
-    ip: true,
-    topProc: true,
-    cpuTemp: true,
-    kernel: true,
-    serverTime: true,
+    netConns: false,
+    uptime: false,
+    users: false,
+    ip: false,
+    topProc: false,
+    cpuTemp: false,
+    kernel: false,
+    serverTime: false,
   },
   statusBarThresholds: {
     cpu: { warn: 80, crit: 95 },
@@ -312,7 +313,7 @@ const DEFAULTS: Settings = {
   highlightRules: defaultHighlightRules(),
   searchOptions: { caseSensitive: false, wholeWord: false, regex: false },
   recordMaskPasswords: true,
-  recordMode: "full",
+  recordMode: "commands",
   recordIdlePauseSecs: 20,
   editor: { diffBeforeSave: true, backupOnSave: false },
   snippets: defaultSnippets(),

@@ -352,9 +352,27 @@ describe("searchOptions (Phase 10)", () => {
 });
 
 describe("recording settings (Phase 11)", () => {
-  it("defaults to full recording with password masking", () => {
-    expect(settings.recordMode).toBe("full");
+  it("defaults to commands+output (no timing) with password masking", () => {
+    expect(settings.recordMode).toBe("commands");
     expect(settings.recordMaskPasswords).toBe(true);
+  });
+});
+
+describe("fresh-install defaults (v1.0.8)", () => {
+  // These are the out-of-the-box defaults a brand-new install starts with. Existing
+  // users keep their saved settings (the localStorage merge in load()), so changing
+  // them here only affects a clean install.
+  it("copies on selection and shows the expanded status bar by default", () => {
+    expect(settings.copyOnSelect).toBe(true);
+    expect(settings.statusBarExpanded).toBe(true);
+  });
+
+  it("enables only the core five status-bar groups (OS, CPU, RAM, disk, net)", () => {
+    const on = Object.entries(settings.statusBarItems)
+      .filter(([, v]) => v)
+      .map(([k]) => k)
+      .sort();
+    expect(on).toEqual(["cpu", "disk", "net", "os", "ram"]);
   });
 });
 

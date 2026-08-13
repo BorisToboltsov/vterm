@@ -153,7 +153,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   не находит бинарь **только в `tauri build`**. Реконструируем `PATH` из login-шелла (кэш) +
   известных каталогов и резолвим программу в абсолютный путь. Шеллом команду **не** оборачиваем
   (аргументы verbatim). ENOENT возвращаем как `exit 127` + stderr, **не** `Err`, чтобы
-  `parseAvailability` честно сказал «не установлен».
+  `parseAvailability` честно сказал «не установлен». **Каждый** такой фоновый спавн
+  консольного CLI проходит через `localenv::no_console_window` (на Windows `CREATE_NO_WINDOW`,
+  иначе no-op): приложение — GUI-бинарь, и без флага дочерний `conhost` мигает окном на каждый
+  поллинг панели (гейт `every_local_cli_spawn_hides_the_console_window`). Интерактивный
+  PTY-шелл не в счёт — у него свой pty.
 - **Аудит в записи — record-only.** Мутирующий вызов с флагом `mirror` пишется в активную запись
   сессии как `[тег] $ … / [тег] exit N` через `record_output` (функция `*_mirror` в модуле
   драйвера: `git::git_mirror`, `container::container_mirror`, `kube::kube_mirror`,
@@ -286,6 +290,14 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   **asciicast v2**, файлы — `data_dir/recordings/*.cast`; команды чтения/удаления/меты
   **ограничены каталогом записей** (`is_recording_path`) — это граница, а не удобство.
   Ввод после `password:` маскируется.
+  - **Файловый I/O записи — на отдельном потоке, не на пути слива PTY.** У `LocalPty` `Recorder`
+    крутится в своём потоке-акторе ([pty.rs](../src-tauri/src/pty.rs) `run_recorder`), а ридер и
+    `write_input` только **шлют** байты в неблокирующий канал (`RecMsg`). Синхронный
+    `Recorder::output` (flush в файл на каждое событие) под общим мьютексом **прямо на ридере**
+    тормозил слив ConPTY на Windows → пайп включал back-pressure → shell вставал, терминал
+    замирал, и тот же мьютекс держал пути ввода и остановки. Локальный ридер **не делает
+    файловый I/O**; `end_recording` шлёт `Stop` и ждёт только ограниченный флаш (не мьютекс
+    поверх I/O). Новый вход записи на локальной вкладке — через канал, не инлайн под мьютексом.
 - **Пауза — экономия диска, а не пропуск данных.** Пока `paused`, `output` отбрасывается, и
   для timed-режима паузная длительность **вычитается** из таймстемпов (`paused_total`), иначе в
   воспроизведении будут дыры. **Любой `input` авто-возобновляет** запись первым делом — иначе
@@ -659,7 +671,8 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
     декларативный `MenuItem[]` из [ctxmenu.ts](../src/lib/ctxmenu.ts)
     (`action`/`separator`/`submenu`, `disabled`/`danger`), кламп к вьюпорту (`clampMenuPosition`) и
     гвард `isAction` — чистые, с тестами. Native-меню WebView подавлено глобально
-    (`suppressContextMenu`), меню терминала — под настройкой `settings.rightClickMenu`.
+    (`suppressContextMenu`), меню терминала (копировать/вставить/очистить/…) по ПКМ доступно
+    всегда — отдельной настройки-выключателя нет.
   - [PasswordInput](../src/lib/PasswordInput.svelte) — **любое** поле секрета; сырой
     `<input type="password">` запрещён. Несёт глазик, `autocomplete="off"` и `type="button"` у
     toggle (иначе он отправит объемлющую форму). Состояние «показан» локальное, стартует `false`
@@ -759,5 +772,6 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [version.guard.test.ts](../src/lib/version.guard.test.ts) | Версия — только в `package.json`; `tauri.conf.json` держит ссылку, а не литерал; `Cargo.toml`/`Cargo.lock` синхронны. CI читает версию оттуда же: `.version` из `tauri.conf.json` теперь вернёт `"../package.json"` — не ошибка, а имя файла в релизе |
 | `no_file_attributes_built_from_default` (Rust) | `FileAttributes` не строится из `..Default::default()` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
+| `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl) идёт через `no_console_window` — на Windows без окна |
 
 Описание тестов и как их гонять — [TESTS.md](TESTS.md).

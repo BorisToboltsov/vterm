@@ -42,6 +42,15 @@ const linux: Metrics = {
 
 beforeEach(() => {
   resetSettings();
+  // These tests exercise StatusBar *rendering* against a known configuration,
+  // independent of the shipping fresh-install default (now expanded + only the
+  // core five groups, v1.0.8). Pin the historical baseline — compact view with
+  // every metric group enabled — so each test controls its own inputs; the
+  // "expanded" describe below flips `statusBarExpanded` on for its own cases.
+  settings.statusBarExpanded = false;
+  for (const k of Object.keys(settings.statusBarItems) as (keyof typeof settings.statusBarItems)[]) {
+    settings.statusBarItems[k] = true;
+  }
   resetLayout();
   clearTransfers();
   fetchMetrics.mockReset();
