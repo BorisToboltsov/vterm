@@ -396,12 +396,11 @@
   }
 
   // ── Right-click menu (Phase 30) ─────────────────────────────────────────────
-  // Opt-out via settings.rightClickMenu — with it off, right-click does nothing
-  // (the native menu is suppressed globally regardless). Middle-click paste stays
-  // a separate setting for terminal-users who prefer that muscle memory.
+  // Right-click always opens the terminal menu (copy/paste/clear/…); the native
+  // WebView menu is suppressed globally regardless. Middle-click paste stays a
+  // separate setting for terminal-users who prefer that muscle memory.
   let ctxMenu = $state<OpenMenu | null>(null);
   function onContextMenu(e: MouseEvent) {
-    if (!settings.rightClickMenu) return;
     e.preventDefault();
     const hasSelection = !!term?.getSelection();
     const items: MenuItem[] = [

@@ -1270,9 +1270,6 @@ export const en = {
   "settings.bellVisual": "Visual",
   "settings.copyOnSelect": "Copy on selection",
   "settings.middleClickPaste": "Paste on middle click",
-  "settings.rightClickMenu": "Right-click shows a menu",
-  "settings.rightClickMenuHint":
-    "Right-clicking the terminal opens copy/paste/clear actions. Off = right-click does nothing (the browser menu stays hidden either way).",
   "settings.historySearch": "Ctrl+R searches command history",
   "settings.historySearchHint":
     "Opens an overlay to search this session's shell history and put a command on the prompt. Off = the shell's own Ctrl+R reverse-search.",
@@ -2983,9 +2980,6 @@ const ru: Record<MessageKey, string> = {
   "settings.bellVisual": "Визуальный",
   "settings.copyOnSelect": "Копировать при выделении",
   "settings.middleClickPaste": "Вставка по средней кнопке",
-  "settings.rightClickMenu": "Правый клик открывает меню",
-  "settings.rightClickMenuHint":
-    "Правый клик по терминалу открывает действия копировать/вставить/очистить. Выкл — правый клик ничего не делает (меню браузера в любом случае скрыто).",
   "settings.historySearch": "Ctrl+R ищет по истории команд",
   "settings.historySearchHint":
     "Открывает окно для поиска по истории шелла этой сессии и вставки команды в строку. Выкл — родной reverse-search шелла по Ctrl+R.",

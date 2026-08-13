@@ -144,8 +144,6 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
-  /** Show a right-click menu over the terminal (off = right-click does nothing). */
-  rightClickMenu: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
   /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
@@ -265,7 +263,6 @@ const DEFAULTS: Settings = {
   bell: "none",
   copyOnSelect: false,
   middleClickPaste: false,
-  rightClickMenu: true,
   historySearch: true,
   windowsShell: "cmd",
   localShellPath: "",

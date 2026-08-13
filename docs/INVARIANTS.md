@@ -659,7 +659,8 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
     декларативный `MenuItem[]` из [ctxmenu.ts](../src/lib/ctxmenu.ts)
     (`action`/`separator`/`submenu`, `disabled`/`danger`), кламп к вьюпорту (`clampMenuPosition`) и
     гвард `isAction` — чистые, с тестами. Native-меню WebView подавлено глобально
-    (`suppressContextMenu`), меню терминала — под настройкой `settings.rightClickMenu`.
+    (`suppressContextMenu`), меню терминала (копировать/вставить/очистить/…) по ПКМ доступно
+    всегда — отдельной настройки-выключателя нет.
   - [PasswordInput](../src/lib/PasswordInput.svelte) — **любое** поле секрета; сырой
     `<input type="password">` запрещён. Несёт глазик, `autocomplete="off"` и `type="button"` у
     toggle (иначе он отправит объемлющую форму). Состояние «показан» локальное, стартует `false`
