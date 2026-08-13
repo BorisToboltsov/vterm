@@ -168,6 +168,27 @@ describe("MonitoringOverlay", () => {
     expect(screen.getByText("42%")).toBeInTheDocument();
   });
 
+  it("truncates a long interface name instead of overflowing the card (Windows NDIS filters)", async () => {
+    // Regression (v1.0.9): Windows exposes NDIS filter adapters with very long
+    // names; without a fixed table layout the name column blew out the numeric
+    // columns and the whole table overflowed the card.
+    const longName = "Ethernet-Kaspersky Lab NDIS 6 Filter-0000";
+    fetchMetricsDetail.mockResolvedValue({
+      ...detail,
+      netIfaces: [
+        { name: longName, rxRate: 2764, txRate: 515, rxErrs: 0, rxDrop: 0, txErrs: 0, txDrop: 0 },
+      ],
+    });
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s-iface" } });
+    const wrap = await screen.findByTestId("net-ifaces");
+    // Fixed layout: columns keep their widths, they can't be pushed out.
+    expect(wrap.querySelector("table")).toHaveClass("table-fixed");
+    // The name cell truncates and carries the full value in a title for hover.
+    const cell = screen.getByText(longName);
+    expect(cell).toHaveClass("truncate");
+    expect(cell).toHaveAttribute("title", longName);
+  });
+
   it("surfaces system-health scalars grouped in the system block", async () => {
     render(MonitoringOverlay, { props: { open: true, sessionId: "s-health" } });
     const sys = await screen.findByTestId("system");
