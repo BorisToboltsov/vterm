@@ -13,6 +13,7 @@ use crate::ssh::{closed_event, output_event};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
@@ -27,13 +28,59 @@ fn pty_size(cols: u32, rows: u32) -> PtySize {
     }
 }
 
+/// A message to the per-session recorder thread. Recording file I/O runs on its
+/// own thread, fed by an **unbounded** channel, so the sending side never blocks:
+/// the PTY reader must keep draining ConPTY (on Windows a slow reader back-pressures
+/// the pipe and the shell child stalls — the terminal freezes) and the input write
+/// path must never wait on a disk flush. Previously the reader called
+/// `Recorder::output` (a synchronous per-event file flush) inline under a shared
+/// mutex, which is exactly what wedged local recording on Windows.
+enum RecMsg {
+    /// PTY output (from the reader thread) or a driver-panel audit mirror.
+    Output(Vec<u8>),
+    /// User keystrokes (from `write_input`).
+    Input(Vec<u8>),
+    /// A visible audit annotation (e.g. an in-app config edit).
+    Annotate(String),
+    /// Pause/resume (tab switched away / idle).
+    SetPaused(bool),
+    /// Finalize: flush to disk and reply with the recording's path.
+    Stop(mpsc::Sender<PathBuf>),
+}
+
+/// Own the [`Recorder`] on a dedicated thread and apply messages in FIFO order —
+/// the same order the reader/input paths produced them, so command reconstruction
+/// (history recall, prompt tracking) is unaffected by the move off-thread. Exits
+/// on an explicit `Stop` (flushing first, then replying with the path) or when all
+/// senders drop (the `LocalPty` went away) — the `Recorder`/`BufWriter` flushes as
+/// it drops at end of scope either way.
+fn run_recorder(mut rec: Recorder, rx: mpsc::Receiver<RecMsg>) {
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            RecMsg::Output(d) => rec.output(&d),
+            RecMsg::Input(d) => rec.input(&d),
+            RecMsg::Annotate(t) => rec.annotate(&t),
+            RecMsg::SetPaused(p) => rec.set_paused(p),
+            RecMsg::Stop(reply) => {
+                let path = rec.path().to_path_buf();
+                drop(rec); // flush the BufWriter to disk before the caller reads the file
+                let _ = reply.send(path);
+                return;
+            }
+        }
+    }
+}
+
 /// A live local shell running in an OS pseudo-terminal.
 pub struct LocalPty {
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
-    /// Active session recorder, if recording (shared with the reader thread).
-    recorder: Arc<Mutex<Option<Recorder>>>,
+    /// Sender to the active recorder thread, if recording (shared with the reader
+    /// thread). Sending is non-blocking (unbounded channel) and the lock is held
+    /// only for the send — never during file I/O — so neither the reader nor the
+    /// input path can stall on recording. `None` when not recording.
+    rec_tx: Arc<Mutex<Option<mpsc::Sender<RecMsg>>>>,
     /// OS process id of the shell we spawned, used to read its working directory
     /// straight from the kernel (Phase 39.3). `None` when the platform didn't
     /// report one. See [`crate::proccwd`] for why we don't rely on OSC 7 here.
@@ -41,13 +88,21 @@ pub struct LocalPty {
 }
 
 impl LocalPty {
-    /// Send user keystrokes to the local shell (recording input first if active).
-    pub fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
-        if let Ok(mut g) = self.recorder.lock() {
-            if let Some(r) = g.as_mut() {
-                r.input(&data);
+    /// Fire-and-forget a message to the recorder thread (no-op if not recording).
+    /// The lock is held only for the (non-blocking) channel send.
+    fn record(&self, msg: RecMsg) {
+        if let Ok(g) = self.rec_tx.lock() {
+            if let Some(tx) = g.as_ref() {
+                let _ = tx.send(msg);
             }
         }
+    }
+
+    /// Send user keystrokes to the local shell (recording input first if active).
+    pub fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
+        // Queue the input to the recorder (cheap clone of a keystroke buffer) before
+        // the echo it triggers can come back on the reader — keeps FIFO order.
+        self.record(RecMsg::Input(data.clone()));
         let mut w = self.writer.lock().unwrap();
         w.write_all(&data)
             .map_err(|e| format!("local write failed: {e}"))?;
@@ -55,42 +110,41 @@ impl LocalPty {
         Ok(())
     }
 
-    /// Begin recording on this session.
+    /// Begin recording on this session: spawn the recorder thread and route future
+    /// output/input/annotations to it. Replacing an active recorder drops its
+    /// sender, so that thread finalizes and exits (the frontend guards against
+    /// double-start regardless).
     pub fn begin_recording(&self, rec: Recorder) {
-        *self.recorder.lock().unwrap() = Some(rec);
+        let (tx, rx) = mpsc::channel::<RecMsg>();
+        std::thread::spawn(move || run_recorder(rec, rx));
+        *self.rec_tx.lock().unwrap() = Some(tx);
     }
 
-    /// Stop recording; returns the file path if a recording was active.
+    /// Stop recording; returns the file path once the recorder thread has flushed
+    /// it to disk. Blocks only for that bounded flush (no shared-mutex-held-across-
+    /// I/O to wedge on), and returns `None` if nothing was recording or the thread
+    /// had already gone.
     pub fn end_recording(&self) -> Option<PathBuf> {
-        self.recorder
-            .lock()
-            .unwrap()
-            .take()
-            .map(|r| r.path().to_path_buf())
+        let tx = self.rec_tx.lock().unwrap().take()?;
+        let (reply_tx, reply_rx) = mpsc::channel();
+        tx.send(RecMsg::Stop(reply_tx)).ok()?;
+        reply_rx.recv().ok()
     }
 
     /// Pause or resume the active recording (no-op if not recording).
     pub fn set_recording_paused(&self, paused: bool) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
-            rec.set_paused(paused);
-        }
+        self.record(RecMsg::SetPaused(paused));
     }
 
     /// Write an audit annotation into the active recording (no-op if not recording).
     pub fn annotate_recording(&self, text: &str) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
-            rec.annotate(text);
-        }
+        self.record(RecMsg::Annotate(text.to_string()));
     }
 
     /// Inject output bytes into the active recording (no-op if not recording).
     /// Used to audit git-panel mutations without writing to the live terminal.
     pub fn record_output(&self, data: &[u8]) {
-        if let Ok(mut g) = self.recorder.lock() {
-            if let Some(r) = g.as_mut() {
-                r.output(data);
-            }
-        }
+        self.record(RecMsg::Output(data.to_vec()));
     }
 
     /// The shell's current working directory, read from the OS rather than from
@@ -168,17 +222,20 @@ pub fn open_local(
 
     let out = output_event(&session_id);
     let closed = closed_event(&session_id);
-    let recorder: Arc<Mutex<Option<Recorder>>> = Arc::new(Mutex::new(None));
-    let rec_for_reader = recorder.clone();
+    let rec_tx: Arc<Mutex<Option<mpsc::Sender<RecMsg>>>> = Arc::new(Mutex::new(None));
+    let rec_tx_reader = rec_tx.clone();
     std::thread::spawn(move || {
         let mut buf = [0u8; 8192];
         loop {
             match reader.read(&mut buf) {
                 Ok(0) | Err(_) => break,
                 Ok(n) => {
-                    if let Ok(mut g) = rec_for_reader.lock() {
-                        if let Some(r) = g.as_mut() {
-                            r.output(&buf[..n]);
+                    // Hand the chunk to the recorder thread (if recording) — a
+                    // non-blocking channel send, never a file write here — so the
+                    // drain keeps up with ConPTY and the shell never back-pressures.
+                    if let Ok(g) = rec_tx_reader.lock() {
+                        if let Some(tx) = g.as_ref() {
+                            let _ = tx.send(RecMsg::Output(buf[..n].to_vec()));
                         }
                     }
                     if app.emit(&out, buf[..n].to_vec()).is_err() {
@@ -196,7 +253,7 @@ pub fn open_local(
         master: Mutex::new(pair.master),
         writer: Mutex::new(writer),
         killer: Mutex::new(killer),
-        recorder,
+        rec_tx,
         pid,
     })
 }
@@ -204,6 +261,7 @@ pub fn open_local(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::recording::{RecordMode, RecorderConfig};
 
     #[test]
     fn pty_size_clamps_to_at_least_one() {
@@ -211,5 +269,72 @@ mod tests {
         assert_eq!((z.cols, z.rows), (1, 1));
         let s = pty_size(120, 40);
         assert_eq!((s.cols, s.rows), (120, 40));
+    }
+
+    /// A plain full-mode Recorder writing to `path` for the actor tests.
+    fn recorder_at(path: &std::path::Path) -> Recorder {
+        Recorder::start(RecorderConfig {
+            path: path.to_path_buf(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: "{}",
+            mask_enabled: false,
+            mode: RecordMode::parse("full"),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn recorder_actor_records_then_flushes_and_returns_path_on_stop() {
+        // The fix: recording runs on its own thread fed by a channel, so the reader
+        // and input paths only *send* (never touch the file). This drives that
+        // thread directly: queued output + input are recorded, and Stop flushes to
+        // disk and hands back the path.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cast");
+        let (tx, rx) = mpsc::channel::<RecMsg>();
+        let rec = recorder_at(&path);
+        let handle = std::thread::spawn(move || run_recorder(rec, rx));
+
+        tx.send(RecMsg::Input(b"whoami\r".to_vec())).unwrap();
+        tx.send(RecMsg::Output(b"root\r\n".to_vec())).unwrap();
+        let (reply_tx, reply_rx) = mpsc::channel();
+        tx.send(RecMsg::Stop(reply_tx)).unwrap();
+
+        // Stop replies with the path only after the queue is drained and flushed.
+        assert_eq!(reply_rx.recv().unwrap(), path);
+        handle.join().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("root"),
+            "output should be on disk: {content}"
+        );
+        assert!(
+            content.contains("\"i\""),
+            "input event should be on disk: {content}"
+        );
+    }
+
+    #[test]
+    fn recorder_actor_flushes_on_sender_drop() {
+        // When the LocalPty is dropped without an explicit Stop (tab closed abruptly),
+        // all senders drop and the actor still finalizes the file (BufWriter flushes
+        // as the Recorder drops at end of scope).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cast");
+        let (tx, rx) = mpsc::channel::<RecMsg>();
+        let rec = recorder_at(&path);
+        let handle = std::thread::spawn(move || run_recorder(rec, rx));
+
+        tx.send(RecMsg::Output(b"orphaned\r\n".to_vec())).unwrap();
+        drop(tx); // no Stop — mirrors LocalPty being dropped
+        handle.join().unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("orphaned"),
+            "output should survive an abrupt drop: {content}"
+        );
     }
 }
