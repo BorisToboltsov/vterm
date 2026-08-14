@@ -454,7 +454,16 @@ impl Recorder {
         if self.mask_enabled {
             self.tail.push_str(&s);
             if self.tail.len() > 256 {
-                let cut = self.tail.len() - 256;
+                // Trim to the last ~256 bytes, but only ever cut on a UTF-8 char
+                // boundary: `len - 256` is a raw byte index that can land inside a
+                // multibyte char (common in ConPTY output on Windows — box-drawing,
+                // spinners, non-ASCII locales), and `String::drain` panics on a
+                // non-boundary index. That panic killed the recorder thread, so the
+                // stop returned no path and the post-stop save dialog never appeared.
+                let mut cut = self.tail.len() - 256;
+                while !self.tail.is_char_boundary(cut) {
+                    cut += 1;
+                }
                 self.tail.drain(..cut);
             }
             if !self.mask_input && is_password_prompt(&self.tail) {
@@ -1304,5 +1313,42 @@ mod tests {
         assert!(is_password_prompt("Enter passphrase:"));
         assert!(!is_password_prompt("just some output"));
         assert!(!is_password_prompt("the password is hunter2 and it works"));
+    }
+
+    #[test]
+    fn masking_tail_trim_survives_multibyte_output() {
+        // Regression: the password-masking `tail` was trimmed at a raw byte index
+        // (`len - 256`) that could land inside a multibyte UTF-8 char, panicking
+        // `String::drain` ("byte index N is not a char boundary"). That killed the
+        // recorder thread, so stop returned no path and the post-stop save dialog
+        // never appeared — reproduced on Windows, whose ConPTY output is full of
+        // multibyte chars. The recorder must survive and keep recording.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.cast");
+        let mut rec = Recorder::start(RecorderConfig {
+            path: path.clone(),
+            cols: 80,
+            rows: 24,
+            title: "t",
+            prompt: "",
+            env_json: "{}",
+            mask_enabled: true, // the trim path only runs with masking on (the default)
+            mode: RecordMode::parse("full"),
+        })
+        .unwrap();
+        // 86 × "…" (U+2026, 3 bytes) = 258 bytes → the very first trim uses
+        // cut = 258 - 256 = 2, a continuation byte of the first char: the old code
+        // panicked right here. Then keep feeding multibyte output so the trim runs
+        // repeatedly on non-ASCII data.
+        rec.output("…".repeat(86).as_bytes());
+        for _ in 0..50 {
+            rec.output("привет мир …\r\n".as_bytes());
+        }
+        drop(rec);
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("привет мир"),
+            "recording should survive multibyte output"
+        );
     }
 }

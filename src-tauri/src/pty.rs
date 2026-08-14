@@ -81,6 +81,11 @@ pub struct LocalPty {
     /// only for the send — never during file I/O — so neither the reader nor the
     /// input path can stall on recording. `None` when not recording.
     rec_tx: Arc<Mutex<Option<mpsc::Sender<RecMsg>>>>,
+    /// Path of the active recording's file (`Some` while recording). Held here so
+    /// `end_recording` can report the path even if the recorder thread has already
+    /// gone — the file is created at start, so the post-stop dialog is never
+    /// silently dropped (and we never falsely report "saved" with no path).
+    rec_path: Mutex<Option<PathBuf>>,
     /// OS process id of the shell we spawned, used to read its working directory
     /// straight from the kernel (Phase 39.3). `None` when the platform didn't
     /// report one. See [`crate::proccwd`] for why we don't rely on OSC 7 here.
@@ -115,20 +120,30 @@ impl LocalPty {
     /// sender, so that thread finalizes and exits (the frontend guards against
     /// double-start regardless).
     pub fn begin_recording(&self, rec: Recorder) {
+        *self.rec_path.lock().unwrap() = Some(rec.path().to_path_buf());
         let (tx, rx) = mpsc::channel::<RecMsg>();
         std::thread::spawn(move || run_recorder(rec, rx));
         *self.rec_tx.lock().unwrap() = Some(tx);
     }
 
-    /// Stop recording; returns the file path once the recorder thread has flushed
-    /// it to disk. Blocks only for that bounded flush (no shared-mutex-held-across-
-    /// I/O to wedge on), and returns `None` if nothing was recording or the thread
-    /// had already gone.
+    /// Stop recording and return the recording's file path. Asks the recorder
+    /// thread to flush and prefers the path it confirms; but the file was created
+    /// at start, so we fall back to the path we stored even if that thread has
+    /// already gone (e.g. it panicked) — the stop must never silently swallow the
+    /// post-stop dialog or report "saved" with no path. `None` only when nothing
+    /// was recording.
     pub fn end_recording(&self) -> Option<PathBuf> {
-        let tx = self.rec_tx.lock().unwrap().take()?;
-        let (reply_tx, reply_rx) = mpsc::channel();
-        tx.send(RecMsg::Stop(reply_tx)).ok()?;
-        reply_rx.recv().ok()
+        let tx = self.rec_tx.lock().unwrap().take();
+        let known = self.rec_path.lock().unwrap().take();
+        if let Some(tx) = tx {
+            let (reply_tx, reply_rx) = mpsc::channel();
+            if tx.send(RecMsg::Stop(reply_tx)).is_ok() {
+                if let Ok(p) = reply_rx.recv() {
+                    return Some(p);
+                }
+            }
+        }
+        known
     }
 
     /// Pause or resume the active recording (no-op if not recording).
@@ -254,6 +269,7 @@ pub fn open_local(
         writer: Mutex::new(writer),
         killer: Mutex::new(killer),
         rec_tx,
+        rec_path: Mutex::new(None),
         pid,
     })
 }
