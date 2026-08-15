@@ -103,7 +103,7 @@
 |------|-----|---------|
 | Оркестратор | [+page.svelte](../src/routes/+page.svelte) | Вкладки, доки, модалки, маршрутизация событий. Единственный, кто знает про всё сразу |
 | Компоненты | `src/lib/*.svelte` (91) | Панели, модалки, примитивы (`Modal`, `ConfirmDialog`, `ContextMenu`, `PasswordInput`, `Icon`, `CopyButton`) |
-| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout`, `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `recordings`, `toasts`, `hostenv`; настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
+| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout`, `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `recordings`, `toasts`, `hostenv`, `dockstate` (что панели правого дока помнят по `sessionId`); настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
 | Чистая логика | `src/lib/*.ts` (89) | Сборка argv, парсеры, валидация, раскладки. Без DOM и сети → тесты дешёвые |
 | API | [src/lib/api/](../src/lib/api/) | `core`/`servers`/`session`/`files`/`git`/`container`/`kube`/`probe`/`recording`/`ai` + barrel |
 | Действия | `src/lib/actions/` | `drag`, `tooltip`, `mdlinks`, `clipboardKeys` |

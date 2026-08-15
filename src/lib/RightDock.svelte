@@ -4,8 +4,6 @@
   // expanded: horizontal tabs above the active tab's content. The content panels
   // are rendered embedded (content-only) — this component owns the chrome.
   import type { DockTab } from "./stores/layout.svelte";
-  import { fade } from "svelte/transition";
-  import { motion } from "./motion";
   import { tooltip } from "./actions/tooltip";
   import SftpPanel from "./SftpPanel.svelte";
   import LocalFilePanel from "./LocalFilePanel.svelte";
@@ -95,6 +93,20 @@
     activeTab = tab;
     collapsed = false;
   }
+
+  // Which panels exist in the DOM. A tab is mounted on its first visit and then
+  // kept — switching tabs only hides it (v1.0.14). Destroying the panel threw
+  // away everything it held: the SFTP panel came back asking to connect again
+  // (the channel was never closed), the file panel jumped to home, the k8s panel
+  // forgot the picked context/namespace, and Docker re-probed the daemon from
+  // scratch on every flip. Lazy so a tab the user never opens costs nothing.
+  //
+  // Hidden panels must not keep polling — that is what the `visible` prop below
+  // is for, and `dockpanels.guard.test.ts` keeps the two halves together.
+  let mounted = $state<DockTab[]>([activeTab]);
+  $effect(() => {
+    if (!mounted.includes(activeTab)) mounted.push(activeTab);
+  });
 </script>
 
 <div
@@ -158,13 +170,12 @@
         {/each}
       </div>
 
-      <!-- Active tab content. Keyed on the tab so switching fades the new panel in
-           (the `{#if}` chain already remounts it, so the key costs no extra teardown);
-           the transition rides the existing flex child rather than a new wrapper box,
-           which would need its own height resolution. -->
-      {#key activeTab}
-      <div class="min-h-0 flex-1" in:fade={motion()}>
-        {#if activeTab === "files"}
+      <!-- Tab content. Every visited panel stays in the DOM; the inactive ones are
+           hidden, not destroyed (see `mounted` above). The fade that used to ride
+           the `{#key}` remount is now the `vt-dock-pane` CSS animation, which the
+           reduced-motion guard in app.css covers. -->
+      {#if mounted.includes("files")}
+        <div class="min-h-0 flex-1 {activeTab === 'files' ? 'vt-dock-pane' : 'hidden'}">
           {#if kind === "ssh"}
             <SftpPanel
               embedded
@@ -172,6 +183,7 @@
               {sessionReady}
               {terminalCwd}
               {followTerminal}
+              visible={activeTab === "files"}
               {onToggleFollowTerminal}
               {onOpenFile}
               onUserNavigate={onSftpNavigate}
@@ -179,41 +191,58 @@
           {:else}
             <LocalFilePanel
               embedded
+              {sessionId}
               {terminalCwd}
               {followTerminal}
+              visible={activeTab === "files"}
               {onToggleFollowTerminal}
               onOpenFile={onOpenLocalFile}
               onUserNavigate={onSftpNavigate}
             />
           {/if}
-        {:else if activeTab === "git"}
+        </div>
+      {/if}
+      {#if mounted.includes("git")}
+        <div class="min-h-0 flex-1 {activeTab === 'git' ? 'vt-dock-pane' : 'hidden'}">
           <GitPanel
             {sessionId}
             {terminalCwd}
             {followTerminal}
+            visible={activeTab === "git"}
             {onToggleFollowTerminal}
             onOpenDiff={onOpenGitDiff}
             onIgnore={onIgnoreGitignore}
             prod={aiProd}
             sessionReady={kind === "ssh" ? sessionReady : true}
           />
-        {:else if activeTab === "docker"}
+        </div>
+      {/if}
+      {#if mounted.includes("docker")}
+        <div class="min-h-0 flex-1 {activeTab === 'docker' ? 'vt-dock-pane' : 'hidden'}">
           <DockerPanel
             {sessionId}
             prod={aiProd}
+            visible={activeTab === "docker"}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "container") : undefined}
           />
-        {:else if activeTab === "k8s"}
+        </div>
+      {/if}
+      {#if mounted.includes("k8s")}
+        <div class="min-h-0 flex-1 {activeTab === 'k8s' ? 'vt-dock-pane' : 'hidden'}">
           <K8sPanel
             {sessionId}
             prod={aiProd}
+            visible={activeTab === "k8s"}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "pod") : undefined}
           />
-        {:else}
+        </div>
+      {/if}
+      {#if mounted.includes("ai")}
+        <div class="min-h-0 flex-1 {activeTab === 'ai' ? 'vt-dock-pane' : 'hidden'}">
           <AiChat
             getContext={getAiContext}
             {sessionId}
@@ -224,9 +253,8 @@
             isLocal={kind === "local"}
             {promptVars}
           />
-        {/if}
-      </div>
-      {/key}
+        </div>
+      {/if}
     </div>
   {/if}
 </div>

@@ -19,22 +19,28 @@
   import { t } from "./i18n";
 
   let {
+    sessionId = null,
     width = 384,
     collapsed = $bindable(false),
     animateWidth = true,
     embedded = false,
     terminalCwd = null,
     followTerminal = false,
+    visible = true,
     onToggleFollowTerminal,
     onOpenFile,
     onUserNavigate,
   }: {
+    /** Owning terminal tab — the key its directory is remembered under (v1.0.14). */
+    sessionId?: string | null;
     width?: number;
     collapsed?: boolean;
     animateWidth?: boolean;
     embedded?: boolean;
     terminalCwd?: string | null;
     followTerminal?: boolean;
+    /** The dock is showing this tab (false = mounted but hidden behind another). */
+    visible?: boolean;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string) => void;
     onUserNavigate?: (path: string) => void;
@@ -67,6 +73,8 @@
   {embedded}
   {terminalCwd}
   {followTerminal}
+  {visible}
+  sessionKey={sessionId}
   {onToggleFollowTerminal}
   {onOpenFile}
   {onUserNavigate}

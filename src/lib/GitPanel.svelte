@@ -48,6 +48,8 @@
     type GitStashEntry,
     type DiffLine,
   } from "./git";
+  import { rememberSub, storedSub } from "./stores/dockstate.svelte";
+  import { untrack } from "svelte";
   import { t } from "./i18n";
 
   let {
@@ -59,10 +61,17 @@
     onIgnore,
     prod = false,
     sessionReady = true,
+    visible = true,
   }: {
     sessionId: string;
     terminalCwd?: string | null;
     followTerminal?: boolean;
+    /**
+     * The dock is showing this tab. The panel stays mounted behind another tab
+     * (v1.0.14), and a hidden one must not re-run `git status` on every `cd` the
+     * terminal reports — it reloads once when it comes back into view.
+     */
+    visible?: boolean;
     onToggleFollowTerminal?: () => void;
     /**
      * Open a changed file in the editor as an editable inline diff against HEAD.
@@ -78,7 +87,7 @@
   } = $props();
 
   type Sub = "graph" | "changes" | "branches";
-  let activeSub = $state<Sub>("changes");
+  let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "git", "changes")));
   let sendToTerminal = $state(false);
 
   let cwd = $derived(terminalCwd);
@@ -335,12 +344,22 @@
     }
   }
 
-  // Reload when the terminal cwd changes (local/cheap status refresh). Network
+  // Reload when the terminal cwd changes, and once when the tab comes back into
+  // view — a `cd` that happened while the panel was hidden still has to land, and
+  // the reload also covers a commit made in the terminal without moving. Network
   // ops (fetch/pull/push) stay manual.
   $effect(() => {
     void cwd;
     void sessionReady;
-    if (cwd && sessionReady) void loadAll();
+    void visible;
+    if (cwd && sessionReady && visible) void loadAll();
+  });
+
+  // Remember the sub-tab for the next mount of this session's panel. Untracked
+  // write: creating this session's entry touches the state the call reads.
+  $effect(() => {
+    const sub = activeSub;
+    untrack(() => rememberSub(sessionId, "git", sub));
   });
 
   const changeCount = $derived(status ? status.files.length : 0);

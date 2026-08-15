@@ -93,6 +93,7 @@
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
   import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
+  import { removeDockState } from "$lib/stores/dockstate.svelte";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
@@ -1196,6 +1197,7 @@
     removeWorkspace(sessionId);
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
+    removeDockState(sessionId);
     nginxConfigCache.delete(sessionId);
     closeTabStore(sessionId);
   }

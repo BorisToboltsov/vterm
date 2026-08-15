@@ -198,11 +198,13 @@
         role="listitem"
       >
         <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
+             two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
+             left the image as "ghcr.io/vc…" — the half that says *what is actually
+             running*. Two lines cost 10px of row height and show both. -->
         <div class="min-w-0 flex-1" use:tooltip={infoTip(c)}>
-          <div class="flex items-baseline gap-1.5">
-            <span class="truncate font-medium text-text/90">{c.name}</span>
-            <span class="truncate text-caption text-muted">{c.image}</span>
-          </div>
+          <div class="truncate font-medium text-text/90">{c.name}</div>
+          <div class="truncate text-caption text-muted">{c.image}</div>
         </div>
         <!-- CPU shape and the hover actions share one reserved box, stacked and
              cross-faded. Swapping them with `hidden`/`flex` would resize the row
