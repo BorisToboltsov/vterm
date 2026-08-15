@@ -192,20 +192,24 @@ pub async fn create_file(sftp: &SftpSession, path: &str) -> AppResult<()> {
 
 /// A `SSH_FXP_SETSTAT` payload that changes **only** the permission bits.
 ///
-/// **Never build `FileAttributes` with `..Default::default()`.** russh-sftp's
-/// `Default` is not a blank struct — it is a "new directory" template
-/// (`size: Some(0)`, `uid`/`gid: Some(0)`, `atime`/`mtime: Some(0)`,
-/// `permissions: Some(0o40777)`), and its `Serialize` impl raises the attribute
-/// flag for every `Some` field. So `..Default::default()` asks the server for
-/// `ATTR_SIZE = 0` — i.e. `truncate(path, 0)` — plus a chown to root and an epoch
-/// mtime, none of which the caller meant.
+/// **Never build `FileAttributes` from a template.** Its `Serialize` impl raises
+/// the attribute flag for every `Some` field, so a field nobody meant to set still
+/// travels — and `size: Some(0)` asks the server for `ATTR_SIZE = 0`, i.e.
+/// `truncate(path, 0)`.
 ///
-/// That is exactly how the editor's SFTP save destroyed files (Phase 39.6): the
-/// content reached the staging temp intact, this call truncated the temp to zero,
-/// and the empty temp was then renamed over the user's file. The write reported
-/// success because `WriteResult` hashes the bytes we *intended* to send. Fixing
-/// it means spelling every field out as `None`; the guard test below keeps it that
-/// way. Same trap applies to `sync::sudo_write`'s staging file.
+/// The template in question is russh-sftp's "new directory" payload: `size: Some(0)`,
+/// `uid`/`gid: Some(0)`, `atime`/`mtime: Some(0)`. That is exactly how the editor's
+/// SFTP save destroyed files (Phase 39.6): the content reached the staging temp
+/// intact, this call truncated the temp to zero, and the empty temp was then renamed
+/// over the user's file. The write reported success because `WriteResult` hashes the
+/// bytes we *intended* to send.
+///
+/// Up to russh-sftp 2.3.0 that template *was* `Default`, so `..Default::default()`
+/// armed the trap. 2.4.0 derives a blank `Default` and moves the template to an
+/// explicit constructor — the payload is unchanged, only its name is, so the rule
+/// stands: spell every field out. The guard test below rejects both spellings, the
+/// old one included, because a downgrade would arm it again. Same trap applies to
+/// `sync::sudo_write`'s staging file.
 pub(crate) fn chmod_attrs(permissions: u32) -> FileAttributes {
     FileAttributes {
         size: None,
@@ -946,30 +950,51 @@ mod tests {
         assert_eq!(a.mtime, None);
     }
 
-    /// Documents *why* `chmod_attrs` spells out every field: russh-sftp's `Default`
-    /// is a populated "new directory" template, not a blank struct. If a future
-    /// upgrade ever makes `Default` blank, this test fails and the guard below can
-    /// be relaxed deliberately rather than by accident.
+    /// Documents *why* `chmod_attrs` spells out every field, and where the trap
+    /// lives now. Up to russh-sftp 2.3.0 the "new directory" template was `Default`
+    /// itself; 2.4.0 derives a blank `Default` and exposes the template under an
+    /// explicit name. The dangerous payload never went away, so the guard below
+    /// watches both spellings — this test is what tells us which is which, and
+    /// fails loudly if a future upgrade shuffles them again.
     #[test]
-    fn russh_sftp_default_attrs_are_not_blank() {
-        let d = FileAttributes::default();
-        assert_eq!(d.size, Some(0), "Default is a template, not a blank struct");
-        assert_eq!(d.uid, Some(0));
-        assert_eq!(d.gid, Some(0));
-        assert_eq!(d.atime, Some(0));
-        assert_eq!(d.mtime, Some(0));
+    fn russh_sftp_default_is_blank_but_the_template_is_not() {
+        let blank = FileAttributes::default();
+        assert_eq!(blank.size, None, "Default must not request ATTR_SIZE");
+        assert_eq!(blank.uid, None);
+        assert_eq!(blank.gid, None);
+        assert_eq!(blank.atime, None);
+        assert_eq!(blank.mtime, None);
+
+        // The same payload that used to be `Default` — still one call away.
+        let template = FileAttributes::dummy(); // guard-allow: names the trap on purpose
+        assert_eq!(
+            template.size,
+            Some(0),
+            "the template still asks for a truncate; the guard must keep rejecting it"
+        );
+        assert_eq!(template.uid, Some(0));
+        assert_eq!(template.gid, Some(0));
+        assert_eq!(template.atime, Some(0));
+        assert_eq!(template.mtime, Some(0));
     }
 
-    /// Guard: no attribute literal in the tree may fill its rest from `Default`.
-    /// Every construction must go through `chmod_attrs` (or spell out all fields),
-    /// because `Default` silently requests a truncate-to-zero. Mirrors the frontend
-    /// guard tests (`terminput.guard.test.ts`, `overlay.guard.test.ts`).
+    /// Guard: nothing in the tree may build attributes from a template. Two
+    /// spellings request the same truncate-to-zero, so both are rejected: an
+    /// attribute literal filling its rest from `Default` (how russh-sftp ≤ 2.3.0
+    /// armed it) and a call to the explicit template constructor 2.4.0 moved it to.
+    /// Every construction goes through `chmod_attrs` or spells out all fields.
+    ///
+    /// Comments are stripped before scanning, so the doc comments above may name
+    /// the anti-pattern; a line may opt out with a `guard-allow` marker, which only
+    /// the test that documents the trap uses. Mirrors the frontend guard tests
+    /// (`terminput.guard.test.ts`, `overlay.guard.test.ts`).
     #[test]
-    fn no_file_attributes_built_from_default() {
+    fn no_file_attributes_built_from_a_template() {
         // Assembled at runtime so this file's own source does not contain the
         // literals it scans for — otherwise the guard reports itself.
         let open = format!("FileAttributes{}", " {");
         let spread = format!("..{}::default()", "Default");
+        let template = format!("::dummy{}", "(");
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut offenders = Vec::new();
         let mut stack = vec![dir];
@@ -981,22 +1006,32 @@ mod tests {
                     continue;
                 }
                 if path.extension().is_some_and(|e| e == "rs") {
-                    let src = std::fs::read_to_string(&path).expect("read source");
-                    // Look inside each `FileAttributes { … }` literal only, so the
-                    // doc comments above (which name the anti-pattern) don't trip it.
+                    let raw = std::fs::read_to_string(&path).expect("read source");
+                    // Drop opted-out lines, then trailing comments — joined back so
+                    // multi-line literals stay intact for the spread scan below.
+                    let src = raw
+                        .lines()
+                        .filter(|l| !l.contains("guard-allow"))
+                        .map(|l| l.split_once("//").map_or(l, |(code, _)| code))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    // Look inside each attribute literal only.
                     for (i, _) in src.match_indices(open.as_str()) {
                         let tail = &src[i..];
                         let end = tail.find('}').unwrap_or(tail.len());
                         if tail[..end].contains(spread.as_str()) {
-                            offenders.push(path.display().to_string());
+                            offenders.push(format!("{}: spread from Default", path.display()));
                         }
+                    }
+                    if src.contains(template.as_str()) {
+                        offenders.push(format!("{}: template constructor", path.display()));
                     }
                 }
             }
         }
         assert!(
             offenders.is_empty(),
-            "FileAttributes must not be built from Default (it sends ATTR_SIZE=0 \
+            "FileAttributes must not be built from a template (it sends ATTR_SIZE=0 \
              and truncates the file) — use sftp::chmod_attrs. Offenders: {offenders:?}"
         );
     }
