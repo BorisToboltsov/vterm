@@ -81,6 +81,7 @@ describe("tab teardown guard", () => {
       "removeWorkspace",
       "removeChat",
       "removeBroadcastMember",
+      "removeDockState",
       "nginxConfigCache.delete",
     ]) {
       expect(fn).toContain(cleanup);

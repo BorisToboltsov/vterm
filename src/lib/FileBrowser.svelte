@@ -38,6 +38,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import { dockState, type FilesDockState } from "./stores/dockstate.svelte";
   import { t } from "./i18n";
 
   let {
@@ -66,6 +67,19 @@
     syntheticLabel = "",
     /** Prefix for `data-testid`s so E2E can target each kind ("sftp"/"localfiles"). */
     testPrefix,
+    /**
+     * The panel's dock tab is the one on screen. False means the panel is still
+     * mounted but hidden behind another dock tab (v1.0.14): it must not react
+     * to window-level file drops, and it re-lists when it comes back into view.
+     */
+    visible = true,
+    /**
+     * Session id under which this panel's place is remembered across a remount
+     * (`stores/dockstate`), or null to keep nothing. Restoring means an SFTP panel
+     * comes back connected and in the same directory instead of offering Connect
+     * again — the channel behind it was never closed.
+     */
+    sessionKey = null,
     /** Open the directory-sync dialog (SFTP only; the wrapper owns the modal). */
     onSync,
     /** Extra footer content, e.g. the SFTP transfers list. */
@@ -93,6 +107,8 @@
     collapseLabel: string;
     syntheticLabel?: string;
     testPrefix: string;
+    visible?: boolean;
+    sessionKey?: string | null;
     onSync?: () => void;
     footer?: Snippet;
   } = $props();
@@ -207,6 +223,36 @@
     await loadStart();
     connecting = false;
     connected = error === "";
+    persist();
+  }
+
+  /**
+   * Remember where this panel sits, so a remount (switching terminal tabs) resumes
+   * here instead of asking for a connect it never lost. Only a connected panel is
+   * worth remembering — see `restore`.
+   */
+  function persist() {
+    if (!sessionKey) return;
+    dockState(sessionKey).files = isConnected
+      ? { connected: true, cwd, home: homePath }
+      : null;
+  }
+
+  /**
+   * Resume from `saved`. A failure here means the remembered directory is gone (or
+   * the session is), so the panel falls back to its normal empty start rather than
+   * sitting in a directory it could not read: the local kind re-lists home, the
+   * SFTP kind returns to the Connect button with the error shown.
+   */
+  async function restore(saved: FilesDockState) {
+    homePath = saved.home;
+    connecting = requiresConnect;
+    await load(saved.cwd);
+    connecting = false;
+    connected = error === "";
+    if (connected) persist();
+    else if (sessionKey) dockState(sessionKey).files = null;
+    if (!connected && !requiresConnect) await loadStart();
   }
 
   /** Initial listing: the terminal's cwd when following, else home, else ".". */
@@ -227,7 +273,10 @@
     if (adapter.uploadPaths) {
       unlisten.push(
         await getCurrentWebview().onDragDropEvent((ev) => {
-          if (!isConnected) return;
+          // The listener is window-wide, so a panel that is merely hidden behind
+          // another dock tab would otherwise swallow drops meant for nobody and
+          // upload them into a directory the user cannot see.
+          if (!isConnected || !visible) return;
           if (ev.payload.type === "enter" || ev.payload.type === "over") dragOver = true;
           else if (ev.payload.type === "leave") dragOver = false;
           else if (ev.payload.type === "drop") {
@@ -237,11 +286,27 @@
         }),
       );
     }
-    // A kind without a connect step lists immediately on mount.
-    if (!requiresConnect) await loadStart();
+    // Resume where this session's panel was left off; otherwise a kind without a
+    // connect step lists immediately on mount.
+    const saved = sessionKey ? dockState(sessionKey).files : null;
+    if (saved?.connected && saved.cwd) await restore(saved);
+    else if (!requiresConnect) await loadStart();
   });
 
   onDestroy(() => unlisten.forEach((u) => u()));
+
+  // Re-list when the pane comes back into view. It stayed mounted while hidden, so
+  // nothing refreshed it — and a listing that silently ages is the one thing the
+  // old destroy-on-switch behaviour got right.
+  let wasVisible = untrack(() => visible);
+  $effect(() => {
+    const back = visible && !wasVisible;
+    wasVisible = visible;
+    if (!back) return;
+    untrack(() => {
+      if (isConnected && cwd) refresh();
+    });
+  });
 
   /**
    * List `path` and, only if it succeeds, make it the current directory. On failure
@@ -257,6 +322,7 @@
       error = "";
       selection = emptySelection();
       cursor = -1;
+      persist();
     } catch (e) {
       error = String(e);
     } finally {

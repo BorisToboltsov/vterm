@@ -60,19 +60,28 @@
     type DockerRegistry,
   } from "./docker";
   import { parsePercent, pushSamples, type LoadHistory } from "./loadhistory";
+  import { rememberSub, storedSub } from "./stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
+  import { untrack } from "svelte";
   import { t, type MessageKey } from "./i18n";
 
   let {
     sessionId,
     sessionReady = true,
     prod = false,
+    visible = true,
     onOpenShell,
     onAsk,
   }: {
     sessionId: string;
     /** SSH tab is connected (local tabs are always ready). */
     sessionReady?: boolean;
+    /**
+     * The dock is showing this tab. The panel stays mounted behind another tab
+     * (v1.0.14) so its data survives the switch, but polling a daemon nobody is
+     * looking at is exactly what the "poll only while watched" rule forbids.
+     */
+    visible?: boolean;
     /** Active tab is a prod-tagged server — destructive ops need confirmation. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (docker exec shell). */
@@ -85,7 +94,9 @@
   const refreshSec = $derived(settings.dockerRefreshSec);
 
   type Sub = "containers" | "images" | "networks";
-  let activeSub = $state<Sub>("containers");
+  // Restored per session, so switching terminal tabs (which does remount the dock)
+  // does not drop the user back on Containers.
+  let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "docker", "containers")));
 
   let availability = $state<DockerAvailability | null>(null); // null = checking
   let busy = $state(false);
@@ -373,18 +384,32 @@
     }
   });
 
-  // Reload when the sub-tab changes.
+  // Reload when the sub-tab changes (and remember it for the next mount). The
+  // store write is untracked: creating this session's entry writes the same state
+  // the call reads, which would otherwise make the effect its own trigger.
   $effect(() => {
-    void activeSub;
+    const sub = activeSub;
+    untrack(() => rememberSub(sessionId, "docker", sub));
     if (availability?.ok) void refresh();
   });
 
-  // Poll the live view while docker is available.
+  // Poll the live view while docker is available AND the tab is on screen. A
+  // hidden panel keeps its data (that is the point of staying mounted) but stops
+  // asking for new data — one snapshot on return replaces it.
   $effect(() => {
     const sec = Math.max(1, refreshSec);
-    if (!sessionReady || !availability?.ok) return;
+    if (!visible || !sessionReady || !availability?.ok) return;
     const id = setInterval(() => void refresh(), sec * 1000);
     return () => clearInterval(id);
+  });
+
+  // Coming back into view: refresh once immediately rather than showing whatever
+  // the snapshot was when the user left.
+  let wasVisible = untrack(() => visible);
+  $effect(() => {
+    const back = visible && !wasVisible;
+    wasVisible = visible;
+    if (back) untrack(() => void refresh());
   });
 
   // Close the detail modal if its container disappears (removed elsewhere / poll).

@@ -72,19 +72,28 @@
     type K8sEvent,
   } from "./k8s";
   import { pushSamples, type LoadHistory } from "./loadhistory";
+  import { dockState, rememberSub, storedSub } from "./stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
+  import { untrack } from "svelte";
   import { t, type MessageKey } from "./i18n";
 
   let {
     sessionId,
     sessionReady = true,
     prod = false,
+    visible = true,
     onOpenShell,
     onAsk,
   }: {
     sessionId: string;
     /** SSH tab is connected (local tabs are always ready). */
     sessionReady?: boolean;
+    /**
+     * The dock is showing this tab. The panel stays mounted behind another tab
+     * (v1.0.14) — scope and pods survive the switch — but a cluster nobody is looking
+     * at is not polled.
+     */
+    visible?: boolean;
     /** Active tab is a prod-tagged server — destructive ops get an extra warning. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (kubectl exec shell). */
@@ -97,9 +106,11 @@
   const prog = $derived(kubectlProg(settings.kubectlPath));
 
   type Sub = "pods" | "workloads" | "network" | "cluster";
-  let activeSub = $state<Sub>("pods");
+  let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "k8s", "pods")));
 
-  // Scope selection (baked into every argv; kubeconfig untouched).
+  // Scope selection (baked into every argv; kubeconfig untouched). Remembered per
+  // session (v1.0.14): re-picking context and namespace by hand after every tab
+  // switch was the most expensive thing the old remount threw away.
   let scopeContext = $state<string | null>(null);
   let scopeNamespace = $state<string | null>(null); // null = context's default namespace
   let scopeAll = $state(false);
@@ -219,8 +230,12 @@
 
   // ── Data loading ───────────────────────────────────────────────────────────
 
-  /** Enumerate kubeconfig contexts + preselect the current one (first init only). */
-  async function loadSelectors() {
+  /**
+   * Enumerate kubeconfig contexts + preselect the current one (first init only).
+   * Returns the cluster's current context so the caller can fall back to it when a
+   * remembered one has since disappeared.
+   */
+  async function loadSelectors(): Promise<string> {
     try {
       const [ctxs, cur] = await Promise.all([
         kubectlRun(sessionId, withScope(prog, contextsArgs(), scope, { scoped: false }), 15, false),
@@ -229,8 +244,10 @@
       contexts = parseContexts(ctxs.stdout);
       const current = cur.stdout.trim();
       if (!scopeContext && current) scopeContext = current;
+      return current;
     } catch {
       contexts = [];
+      return "";
     }
   }
 
@@ -323,14 +340,23 @@
     }
   }
 
-  /** Full init: reset scope, enumerate contexts, then probe + load. */
+  /** Full init: restore (or reset) scope, enumerate contexts, then probe + load. */
   async function initAll() {
-    scopeContext = null;
-    scopeNamespace = null;
-    scopeAll = false;
+    const saved = dockState(sessionId).k8sScope;
+    scopeContext = saved?.context ?? null;
+    scopeNamespace = saved?.namespace ?? null;
+    scopeAll = saved?.allNamespaces ?? false;
     contexts = [];
     namespaces = [];
-    await loadSelectors();
+    const current = await loadSelectors();
+    // A remembered context the kubeconfig no longer has would bake a broken
+    // `--context` into every argv, and every command would fail with it — fall
+    // back to the cluster's current one instead of failing quietly under a scope
+    // the selector still shows as chosen.
+    if (scopeContext && contexts.length > 0 && !contexts.includes(scopeContext)) {
+      scopeContext = current || null;
+      scopeNamespace = null;
+    }
     await reinit();
   }
 
@@ -413,18 +439,41 @@
     }
   });
 
-  // Reload when the sub-tab changes.
+  // Reload when the sub-tab changes (and remember it for the next mount). Store
+  // writes are untracked here and below: creating this session's entry writes the
+  // same state the call reads, which would make the effect its own trigger.
   $effect(() => {
-    void activeSub;
+    const sub = activeSub;
+    untrack(() => rememberSub(sessionId, "k8s", sub));
     if (availability?.ok) void refresh();
   });
 
-  // Poll the live view while the cluster is available.
+  // Remember the scope selection for the next mount of this session's panel.
+  $effect(() => {
+    const picked = {
+      context: scopeContext,
+      namespace: scopeNamespace,
+      allNamespaces: scopeAll,
+    };
+    untrack(() => (dockState(sessionId).k8sScope = picked));
+  });
+
+  // Poll the live view while the cluster is available AND the tab is on screen.
+  // A hidden panel keeps what it has and stops asking for more.
   $effect(() => {
     const sec = Math.max(1, refreshSec);
-    if (!sessionReady || !availability?.ok) return;
+    if (!visible || !sessionReady || !availability?.ok) return;
     const id = setInterval(() => void refresh(), sec * 1000);
     return () => clearInterval(id);
+  });
+
+  // Coming back into view: one immediate snapshot, so the list is not as old as
+  // the moment the user left it.
+  let wasVisible = untrack(() => visible);
+  $effect(() => {
+    const back = visible && !wasVisible;
+    wasVisible = visible;
+    if (back) untrack(() => void refresh());
   });
 
   // Close the detail modal if its pod disappears (deleted elsewhere / poll).

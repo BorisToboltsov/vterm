@@ -134,6 +134,23 @@ summary:focus-visible,
   color: var(--color-bad);
 }
 
+/* Right-dock pane (v1.0.14). A dock panel is hidden, never destroyed, when its
+   tab goes inactive, so the fade-in cannot be a Svelte transition any more — there
+   is no mount to hang it on. A CSS animation restarts every time the class comes
+   back, and unlike a WAAPI transition it *is* covered by the reduce-motion guard
+   below (which is why the duration may live here as a token). */
+@keyframes vt-dock-pane-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.vt-dock-pane {
+  animation: vt-dock-pane-in var(--motion-fast) ease-out;
+}
+
 /* Tooltip bubble (Phase 20.17). Mounted on <body> by the `tooltip` action, so it
    lives outside any scroll container and needs global (unscoped) styling. Fade-in
    is a plain opacity transition — the reduce-motion guard below collapses it. */
