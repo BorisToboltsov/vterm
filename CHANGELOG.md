@@ -19,6 +19,9 @@
 - **Остальные обновления зависимостей.** `keyring` 4.1.5 → 4.1.6, `vite` 8.1.5 → 8.2.0 и группа из
   семи GitHub Actions (`pnpm/action-setup`, `taiki-e/install-action`, три `github/codeql-action`,
   `zizmorcore/zizmor-action`) — пины по коммит-SHA обновлены вместе с комментариями версий.
+- **Снято протухшее исключение supply-chain-политики.** `minimumReleaseAgeExclude: vite@8.1.3` в
+  [pnpm-workspace.yaml](pnpm-workspace.yaml) держал проход мимо выдержки для версии, которой в
+  проекте давно нет; `vite` теперь проходит политику на общих основаниях.
 
 ---
 

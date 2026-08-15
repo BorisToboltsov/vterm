@@ -1,11 +1,6 @@
 allowBuilds:
   esbuild: true
 
-# vite 8 (Phase 19.4) is newer than the minimumReleaseAge supply-chain gate, so
-# it's explicitly allowed through here — a deliberate, reviewed major upgrade.
-minimumReleaseAgeExclude:
-  - vite@8.1.3
-
 # Security: force a patched `cookie` on the 0.7.x line. It comes in transitively
 # via @sveltejs/kit (which declares `^0.6.0`); vterm is an SPA (no SSR cookie
 # handling) so this is safe. Clears advisory GHSA-pxg6-pf52-xh8x (cookie <0.7.0).
