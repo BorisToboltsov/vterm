@@ -10,11 +10,13 @@ import type { ServerProfile } from "./types";
 const addServer = vi.fn();
 const updateServer = vi.fn();
 const saveProxySecret = vi.fn();
+const saveServerSecret = vi.fn();
 vi.mock("./api", () => ({
   addServer: (...args: unknown[]) => addServer(...args),
   updateServer: (...args: unknown[]) => updateServer(...args),
   forgetSecrets: vi.fn(),
   pickKeyFile: vi.fn(),
+  saveServerSecret: (...args: unknown[]) => saveServerSecret(...args),
   saveProxySecret: (...args: unknown[]) => saveProxySecret(...args),
 }));
 
@@ -58,8 +60,10 @@ describe("ServerFormModal validation", () => {
     addServer.mockReset();
     updateServer.mockReset();
     saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
     addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
     saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
   });
 
   it("highlights empty required fields on submit instead of silently doing nothing", async () => {
@@ -290,8 +294,10 @@ describe("ServerFormModal proxy", () => {
     addServer.mockReset();
     updateServer.mockReset();
     saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
     addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
     saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
   });
 
   async function fillRequired() {
@@ -422,5 +428,97 @@ describe("ServerFormModal duplicate", () => {
     });
     expect(payload).not.toHaveProperty("hasSavedPassword");
     expect(onsaved).toHaveBeenCalledWith(expect.anything(), "add");
+  });
+});
+
+describe("ServerFormModal server secret", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: false });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: false });
+    saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
+  });
+
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+  }
+
+  it("stores a typed password in the keychain, never on the profile", async () => {
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    // The secret is not part of the profile payload — it only ever goes to the keychain.
+    expect(JSON.stringify(addServer.mock.calls[0][0])).not.toContain("hunter2");
+    expect(saveServerSecret).toHaveBeenCalledWith("s1", "hunter2");
+    // The parent gets the profile the backend returned, so the list shows the hint.
+    expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ hasSavedPassword: true }),
+      "add",
+    );
+  });
+
+  it("leaves the keychain alone when the field is untouched", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(saveServerSecret).not.toHaveBeenCalled();
+  });
+
+  it("labels the field by auth method and never pre-fills a stored secret", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await tick();
+
+    const field = screen.getByTestId("server-secret") as HTMLInputElement;
+    // Saved secrets show as a placeholder; the value stays empty (PasswordInput invariant).
+    expect(field.value).toBe("");
+    expect(field.placeholder).toBe("Leave blank to keep the saved secret");
+    // "Password" also names the auth-method radio, so read the field's own label.
+    expect(field.closest("label")?.textContent).toContain("Password");
+
+    // Switching to key auth relabels the same field as the passphrase.
+    await userEvent.click(screen.getByRole("radio", { name: "SSH key" }));
+    expect(
+      (screen.getByTestId("server-secret") as HTMLInputElement).closest("label")?.textContent,
+    ).toContain("Passphrase");
+  });
+
+  it("does not carry the saved-secret hint into a duplicate (new id, new keychain entry)", async () => {
+    const { comp } = renderForm();
+    comp.openDuplicate(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await tick();
+    expect((screen.getByTestId("server-secret") as HTMLInputElement).placeholder).toBe("");
+  });
+
+  it("reports a keychain failure but still saves the server", async () => {
+    saveServerSecret.mockRejectedValue("keychain write failed");
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    // The profile exists backend-side, so the parent must still learn about it.
+    await waitFor(() => expect(onsaved).toHaveBeenCalledOnce());
+    expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1", hasSavedPassword: false }),
+      "add",
+    );
   });
 });

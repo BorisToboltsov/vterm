@@ -35,6 +35,13 @@ export function forgetSecrets(id: string): Promise<void> {
   return invoke<void>("forget_secrets", { id });
 }
 
+/** Store a server's own secret (password or key passphrase) in the OS keychain;
+ *  the kind follows the server's auth method. Returns the updated profile — the
+ *  saved-secret hint it carries is the one the backend just wrote. */
+export function saveServerSecret(serverId: string, secret: string): Promise<ServerProfile> {
+  return invoke<ServerProfile>("save_server_secret", { serverId, secret });
+}
+
 /** Store a server's proxy/jump host secret (password or passphrase) in the OS
  *  keychain. The secret kind follows the proxy's own auth method. */
 export function saveProxySecret(serverId: string, secret: string): Promise<void> {

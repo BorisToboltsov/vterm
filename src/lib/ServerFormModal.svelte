@@ -17,6 +17,7 @@
     updateServer,
     forgetSecrets,
     pickKeyFile,
+    saveServerSecret,
     saveProxySecret,
   } from "./api";
   import { settings } from "./settings.svelte";
@@ -47,6 +48,12 @@
   let username = $state("");
   let authMethod = $state<AuthMethod>("password");
   let keyPath = $state<string | null>(null);
+  // The just-typed password / key passphrase. Never part of the profile payload —
+  // it goes straight to the keychain via `saveServerSecret` once the profile has
+  // an id. `hasSavedPassword` mirrors the stored hint so the field can say "leave
+  // blank to keep" instead of pre-filling a secret (PasswordInput invariant).
+  let secret = $state("");
+  let hasSavedPassword = $state(false);
   let group = $state("");
   let tagsInput = $state("");
   // Pictogram (icons.ts key via servericons.ts) + colour key, shown before the
@@ -120,6 +127,8 @@
     port = settings.defaultPort;
     authMethod = "password";
     keyPath = null;
+    secret = "";
+    hasSavedPassword = false;
     group = prefillGroup;
     tagsInput = "";
     icon = "";
@@ -143,6 +152,8 @@
     username = server.username;
     authMethod = server.authMethod;
     keyPath = server.keyPath;
+    secret = "";
+    hasSavedPassword = server.hasSavedPassword;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -171,6 +182,8 @@
     username = server.username;
     authMethod = server.authMethod;
     keyPath = server.keyPath;
+    secret = "";
+    hasSavedPassword = false;
     group = server.group ?? "";
     tagsInput = server.tags.join(", ");
     icon = server.icon;
@@ -179,7 +192,7 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
-    // A duplicate is a new id, so the proxy secret is intentionally not carried.
+    // A duplicate is a new id, so neither secret is carried over.
     loadProxy(server.proxy, false);
     submitted = false;
     open = true;
@@ -256,10 +269,21 @@
       iconColor,
     };
     try {
-      const saved =
+      let saved =
         mode === "edit" && editId
           ? await updateServer(editId, payload)
           : await addServer(payload);
+      // Secrets are stored only once the profile has an id, and a failure to
+      // reach the keychain must not swallow the profile that was just written:
+      // report it and still hand the parent the saved server, or the list would
+      // not show a server the backend already has.
+      if (secret.trim()) {
+        try {
+          saved = await saveServerSecret(saved.id, secret);
+        } catch (e) {
+          notifyError(t("page.secretNotSaved", { error: String(e) }));
+        }
+      }
       // Store a just-typed proxy secret in the keychain — the jump host's
       // password/passphrase, or the SOCKS5/HTTP basic-auth password (the secret
       // kind follows the proxy's auth method, handled backend-side).
@@ -375,6 +399,19 @@
             </label>
           </div>
         </div>
+
+        <label class="mb-2 block text-xs text-muted">
+          <span class="flex items-center gap-1">
+            {authMethod === "key" ? t("page.secretPassphrase") : t("page.secretPassword")}
+            <InfoHint text={t("page.secretHint")} />
+          </span>
+          <PasswordInput
+            testid="server-secret"
+            class="mt-1"
+            bind:value={secret}
+            placeholder={hasSavedPassword ? t("page.secretKeep") : ""}
+          />
+        </label>
 
         {#if authMethod === "key"}
           <label class="mb-2 block text-xs text-muted">
@@ -590,13 +627,13 @@
               <label class="mb-1 block text-xs text-muted">
                 <span class="flex items-center gap-1">
                   {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
-                  <InfoHint text={t("page.proxySecretHint")} />
+                  <InfoHint text={t("page.secretHint")} />
                 </span>
                 <PasswordInput
                   testid="proxy-secret"
                   class="mt-1"
                   bind:value={proxySecret}
-                  placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
+                  placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
                 />
               </label>
             </div>
@@ -619,13 +656,13 @@
               <label class="mb-1 block text-xs text-muted">
                 <span class="flex items-center gap-1">
                   {t("page.proxyPassword")}
-                  <InfoHint text={t("page.proxySecretHint")} />
+                  <InfoHint text={t("page.secretHint")} />
                 </span>
                 <PasswordInput
                   testid="proxy-secret"
                   class="mt-1"
                   bind:value={proxySecret}
-                  placeholder={proxyHasSavedPassword ? t("page.proxySecretKeep") : ""}
+                  placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
                 />
               </label>
             </div>

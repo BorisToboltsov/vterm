@@ -138,6 +138,46 @@ pub fn forget_secrets(id: String, state: State<AppState>) -> AppResult<()> {
     store::save_servers(&snapshot)
 }
 
+/// Store the server's own secret (password or key passphrase) in the keychain and
+/// mark the profile as having one. The kind follows the server's auth method, so
+/// the same field serves both — exactly as the connect-time prompt does.
+///
+/// Returns the updated profile rather than `()`: the saved-secret hint lives on
+/// the profile, and the form has just written it, so handing the caller the row
+/// the backend actually stored keeps the list from showing a stale "no secret".
+#[tauri::command]
+pub fn save_server_secret(
+    server_id: String,
+    secret: String,
+    state: State<AppState>,
+) -> AppResult<ServerProfile> {
+    // Wrap so vterm's own in-memory copy is wiped on drop (keychain stays canonical).
+    let secret = Zeroizing::new(secret);
+    if secret.trim().is_empty() {
+        return Err(AppError::Message(
+            "refusing to store an empty secret".into(),
+        ));
+    }
+    let snapshot = {
+        let mut servers = state.servers.lock().unwrap();
+        let server = servers
+            .iter_mut()
+            .find(|s| s.id == server_id)
+            .ok_or(AppError::UnknownServer)?;
+        match server.auth_method {
+            AuthMethod::Password => secrets::set_password(&server_id, &secret)?,
+            AuthMethod::Key => secrets::set_passphrase(&server_id, &secret)?,
+        }
+        server.has_saved_password = true;
+        servers.clone()
+    };
+    store::save_servers(&snapshot)?;
+    snapshot
+        .into_iter()
+        .find(|s| s.id == server_id)
+        .ok_or(AppError::UnknownServer)
+}
+
 /// Store a proxy/jump host secret (password or key passphrase) in the keychain
 /// and mark the proxy as having a saved secret. The kind of secret follows the
 /// proxy's own auth method. Called by the server form after add/update when the
