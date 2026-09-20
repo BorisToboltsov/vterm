@@ -79,18 +79,22 @@ impl MetricsSamples {
 /// One lightweight, portable shell snippet that prints `key=value` lines. Every
 /// field is guarded so a missing tool/file just yields an empty value (which the
 /// UI renders as a dash) rather than failing the whole probe.
+///
+/// It reports **raw** readings only; anything derived from them (`mem`/`swap`
+/// "used" = total − free) is computed in [`used_and_total`], never here. See that
+/// function for why a subtraction must not happen on the host.
 const METRICS_SCRIPT: &str = "\
 printf 'os=%s\\n' \"$(uname -s 2>/dev/null)\"; \
 printf 'host=%s\\n' \"$(hostname 2>/dev/null)\"; \
 printf 'user=%s\\n' \"$(id -un 2>/dev/null || whoami 2>/dev/null)\"; \
 printf 'pretty=%s\\n' \"$( ( . /etc/os-release 2>/dev/null && printf %s \"$PRETTY_NAME\" ) || ( sw_vers -productName 2>/dev/null | tr -d '\\n' ) )\"; \
 printf 'load=%s\\n' \"$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)\"; \
-printf 'mem=%s\\n' \"$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%d %d\",(t-a)*1024,t*1024}' /proc/meminfo 2>/dev/null)\"; \
+printf 'mem=%s\\n' \"$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%d %d\",t*1024,a*1024}' /proc/meminfo 2>/dev/null)\"; \
 printf 'disk=%s\\n' \"$(df -kP / 2>/dev/null | awk 'NR==2{printf \"%d %d\",$3*1024,$2*1024}')\"; \
 printf 'cpustat=%s\\n' \"$(grep '^cpu ' /proc/stat 2>/dev/null | head -1 | sed 's/^cpu *//')\"; \
 printf 'net=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\",$1); if($1!=\"lo\"){rx+=$2; tx+=$10}} END{printf \"%d %d\",rx,tx}' /proc/net/dev 2>/dev/null)\"; \
 printf 'uptime=%s\\n' \"$(cut -d. -f1 /proc/uptime 2>/dev/null)\"; \
-printf 'swap=%s\\n' \"$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf \"%d %d\",(t-f)*1024,t*1024}' /proc/meminfo 2>/dev/null)\"; \
+printf 'swap=%s\\n' \"$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf \"%d %d\",t*1024,f*1024}' /proc/meminfo 2>/dev/null)\"; \
 printf 'diskio=%s\\n' \"$(awk '$3 ~ /^(sd|nvme|vd|xvd|hd)[a-z0-9]*$/ {r+=$6; w+=$10} END{printf \"%d %d\",r*512,w*512}' /proc/diskstats 2>/dev/null)\"; \
 printf 'users=%s\\n' \"$(who 2>/dev/null | awk '{print $1}' | sort -u | tr '\\n' ' ')\"; \
 printf 'ip=%s\\n' \"$(hostname -I 2>/dev/null | awk '{print $1}')\"; \
@@ -137,6 +141,28 @@ pub struct Metrics {
     server_time: String,
 }
 
+/// Split a `"<total> <unused>"` probe value into `(used, total)`.
+///
+/// The subtraction lives here rather than in [`METRICS_SCRIPT`] because a host
+/// can report `MemAvailable > MemTotal` — `/proc/meminfo` is synthesised under
+/// lxcfs, and `totalram` moves under virtio-balloon/memory hotplug, while
+/// `si_mem_available()` is only floored at zero, never capped at total. When awk
+/// did the subtraction, such a host emitted a negative first field, `u64` parsing
+/// dropped it, and "used" silently became `None`: the UI rendered a dash next to
+/// a perfectly good "total". Clamping with `saturating_sub` also makes the SSH
+/// transport agree with the local collector, which has always clamped
+/// (`local::collect_metrics`). Zero is the honest answer here — a host reporting
+/// more available than total is one with essentially nothing in use.
+///
+/// A missing second field (kernels < 3.14 have no `MemAvailable`) keeps the old
+/// behaviour: everything counts as used.
+fn used_and_total(value: &str) -> (Option<u64>, Option<u64>) {
+    let mut it = value.split_whitespace();
+    let total = it.next().and_then(|v| v.parse::<u64>().ok());
+    let unused = it.next().and_then(|v| v.parse::<u64>().ok());
+    (total.map(|t| t.saturating_sub(unused.unwrap_or(0))), total)
+}
+
 fn parse_metrics(raw: &str) -> Metrics {
     let mut m = Metrics::default();
     for line in raw.lines() {
@@ -155,22 +181,14 @@ fn parse_metrics(raw: &str) -> Metrics {
                 m.load5 = it.next().and_then(|v| v.parse().ok());
                 m.load15 = it.next().and_then(|v| v.parse().ok());
             }
-            "mem" => {
-                let mut it = value.split_whitespace();
-                m.mem_used = it.next().and_then(|v| v.parse().ok());
-                m.mem_total = it.next().and_then(|v| v.parse().ok());
-            }
+            "mem" => (m.mem_used, m.mem_total) = used_and_total(value),
             "disk" => {
                 let mut it = value.split_whitespace();
                 m.disk_used = it.next().and_then(|v| v.parse().ok());
                 m.disk_total = it.next().and_then(|v| v.parse().ok());
             }
             "uptime" => m.uptime_secs = value.parse().ok(),
-            "swap" => {
-                let mut it = value.split_whitespace();
-                m.swap_used = it.next().and_then(|v| v.parse().ok());
-                m.swap_total = it.next().and_then(|v| v.parse().ok());
-            }
+            "swap" => (m.swap_used, m.swap_total) = used_and_total(value),
             "users" => m.users = value.to_string(),
             "ip" => m.ip = value.to_string(),
             "topproc" => m.top_proc = value.to_string(),
@@ -1202,7 +1220,7 @@ mod tests {
                    user=root\n\
                    pretty=Ubuntu 24.04 LTS\n\
                    load=0.15 0.20 0.30\n\
-                   mem=1048576 4194304\n\
+                   mem=4194304 3145728\n\
                    disk=2097152 10485760\n\
                    cpustat=100 0 50 850 0 0 0";
         let m = parse_metrics(raw);
@@ -1224,6 +1242,122 @@ mod tests {
         // macOS without /etc/os-release: pretty is empty, should mirror os.
         let m = parse_metrics("os=Darwin\nhost=mac\npretty=\n");
         assert_eq!(m.pretty_name, "Darwin");
+    }
+
+    #[test]
+    fn parse_metrics_clamps_used_when_host_reports_more_free_than_total() {
+        // Hosts under lxcfs / virtio-balloon report MemAvailable > MemTotal. The
+        // old probe subtracted on the host and shipped "-1024 16503050240", which
+        // `u64` refused: "used" became None and the UI showed a dash next to a
+        // live "total". Now the subtraction is ours and floors at zero.
+        let m = parse_metrics("mem=16503050240 16503051264\nswap=1073741824 1073742848");
+        assert_eq!(m.mem_used, Some(0));
+        assert_eq!(m.mem_total, Some(16503050240));
+        assert_eq!(m.swap_used, Some(0));
+        assert_eq!(m.swap_total, Some(1073741824));
+    }
+
+    #[test]
+    fn parse_metrics_counts_everything_used_without_an_available_field() {
+        // Kernels < 3.14 have no MemAvailable: awk leaves the variable unset and
+        // prints a zero for it. A truncated line (no second field at all) has to
+        // land the same way.
+        let m = parse_metrics("mem=4194304 0\nswap=4096 0");
+        assert_eq!(m.mem_used, Some(4194304));
+        assert_eq!(m.mem_total, Some(4194304));
+        assert_eq!(m.swap_used, Some(4096));
+        assert_eq!(m.swap_total, Some(4096));
+
+        let m = parse_metrics("mem=4194304\nswap=4096");
+        assert_eq!(m.mem_used, Some(4194304));
+        assert_eq!(m.mem_total, Some(4194304));
+        assert_eq!(m.swap_used, Some(4096));
+        assert_eq!(m.swap_total, Some(4096));
+    }
+
+    /// Every `awk '<program>'` in a probe script.
+    fn awk_programs(script: &str) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut rest = script;
+        while let Some(i) = rest.find("awk '") {
+            let tail = &rest[i + "awk '".len()..];
+            let end = tail.find('\'').unwrap_or(tail.len());
+            out.push(&tail[..end]);
+            rest = &tail[end..];
+        }
+        out
+    }
+
+    /// Whether an awk program subtracts one operand from another: `(t-a)`, `$4-$2`.
+    /// Operands are awk fields (`$N`) or single-letter variables, which is all a
+    /// probe ever uses. Hyphens inside regexes and device names (`[a-z0-9]`,
+    /// `dm-`, `overall-health`) have multi-character neighbours, so they are not
+    /// mistaken for arithmetic.
+    fn subtracts_operands(program: &str) -> bool {
+        let b = program.as_bytes();
+        let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        program.match_indices('-').any(|(i, _)| {
+            let mut l = i;
+            while l > 0 && b[l - 1] == b' ' {
+                l -= 1;
+            }
+            let left = l > 0 && {
+                let c = b[l - 1];
+                c == b')'
+                    || (c.is_ascii_digit() && {
+                        let mut k = l - 1;
+                        while k > 0 && b[k - 1].is_ascii_digit() {
+                            k -= 1;
+                        }
+                        k > 0 && b[k - 1] == b'$'
+                    })
+                    || (c.is_ascii_alphabetic() && (l < 2 || !word(b[l - 2])))
+            };
+            let mut r = i + 1;
+            while r < b.len() && b[r] == b' ' {
+                r += 1;
+            }
+            let right = r < b.len() && {
+                let c = b[r];
+                c == b'('
+                    || c == b'$'
+                    || (c.is_ascii_alphabetic() && (r + 1 >= b.len() || !word(b[r + 1])))
+            };
+            left && right
+        })
+    }
+
+    /// Guard: probe scripts report raw readings; anything derived from them is
+    /// computed in Rust, where it can be clamped and tested.
+    ///
+    /// `mem`/`swap` used to ship `(MemTotal-MemAvailable)` straight from awk. A
+    /// host that reports more available than total (lxcfs, virtio-balloon) then
+    /// sent a negative field, `u64` parsing dropped it, and "used" became `None` —
+    /// a dash beside a live "total", indistinguishable from a probe that never
+    /// ran. The arithmetic belongs in `used_and_total`, which floors at zero.
+    #[test]
+    fn probe_scripts_report_raw_readings_not_differences() {
+        // Live violation: the exact expression this guard was written to reject.
+        assert!(subtracts_operands(
+            "/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%d %d\",(t-a)*1024,t*1024}"
+        ));
+        assert!(subtracts_operands("{printf \"%d\",$4 - $2}"));
+        // Hyphens that are not arithmetic stay quiet.
+        assert!(!subtracts_operands("$3 ~ /^(sd|nvme)[a-z0-9]*$/ {r+=$6}"));
+        assert!(!subtracts_operands("$3!~/^(loop|ram|dm-|sr)/{print $3}"));
+        assert!(!subtracts_operands("/overall-health/{print $NF}"));
+
+        let offenders: Vec<&str> = [METRICS_SCRIPT, DETAIL_SCRIPT, PENDING_SCRIPT, EXTRAS_SCRIPT]
+            .iter()
+            .flat_map(|s| awk_programs(s))
+            .filter(|p| subtracts_operands(p))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "probe scripts must report raw readings — a difference computed on the \
+             host can go negative and is then indistinguishable from missing data. \
+             Compute it in Rust (see used_and_total). Offenders: {offenders:?}"
+        );
     }
 
     #[test]
@@ -1274,7 +1408,7 @@ mod tests {
     #[test]
     fn parse_metrics_reads_extended_fields() {
         let m = parse_metrics(
-            "uptime=90061\nswap=1024 4096\nusers=alice bob \nip=10.0.0.5\n\
+            "uptime=90061\nswap=4096 3072\nusers=alice bob \nip=10.0.0.5\n\
              topproc=node 87%\ncputemp=56\nnetconns=42\nkernel=6.1.0\nstime=14:05 UTC",
         );
         assert_eq!(m.uptime_secs, Some(90061));
