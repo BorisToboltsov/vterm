@@ -1,6 +1,6 @@
 {
   "name": "vterm",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "description": "Кроссплатформенный инструмент для работы системных администраторов, devops, sre",
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "tauri": "tauri",
+    "icons": "node scripts/make-icons.mjs",
     "tauri:build:mac": "tauri build && bash scripts/place-opener.sh",
     "version:set": "node scripts/set-version.mjs",
     "version:sync": "node scripts/set-version.mjs"

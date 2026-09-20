@@ -1,6 +1,10 @@
 <!-- Master source for the app icon. Regenerate the full icon set with:
-       pnpm tauri icon src-tauri/icons/icon-source.svg
-     then delete the extra android/ios/64x64 outputs (this app ships macOS + Windows + Linux).
+       pnpm icons
+     NOT with a bare `tauri icon`: that applies this file's macOS framing to every
+     platform, and Windows has no safe-area convention — the icon then renders ~19 %
+     smaller than its neighbours in the taskbar and Explorer. scripts/make-icons.mjs
+     re-frames the same mark for the Windows assets and drops the unused android/ios
+     outputs (this app ships macOS + Windows + Linux). Guard: appicon.guard.test.ts.
      Mark: two cascading terminal windows with a ›_ prompt on the front one (white),
      on the "Deep Well" signature backdrop — a radial gradient with a dark centre and
      lighter rim that reads as depth. The squircle sits inside a ~100px transparent

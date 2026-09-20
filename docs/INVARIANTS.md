@@ -735,6 +735,16 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   `custom`), `DEFAULT_THEME_ID = "deep-well"`. Бандл-иконка ОС **статична**; под тему меняется
   только [AppLogo](../src/lib/AppLogo.svelte). Первый кадр — из `vterm.chromePanel` в
   [app.html](../src/app.html), синхронно с `@theme` в app.css.
+  - **Кадрируется бандл-иконка по платформам, а знак — один.** Мастер —
+    [icon-source.svg](../src-tauri/icons/icon-source.svg), где тело squircle лежит в прозрачном
+    поле (824 из 1024 ≈ 81 %): этого требует macOS HIG, без поля иконка в Dock крупнее соседних.
+    На Windows такого соглашения нет — отступы рисует сама система, и то же поле даёт иконку
+    примерно на 19 % мельче соседних в панели задач. Поэтому Windows-артефакты (`icon.ico`,
+    `Square*Logo.png`, `StoreLogo.png`) генерируются из **того же** SVG со сдвинутым `viewBox`
+    (safe area обрезана, тело ~97 %). Второго исходника заводить нельзя — геометрия знака
+    разъедется; расходится только рамка кадрирования. Генерация — **только** `pnpm icons`
+    ([make-icons.mjs](../scripts/make-icons.mjs)): голый `tauri icon` применит macOS-кадр ко всем
+    платформам и тихо вернёт дефект. Гейт `appicon.guard.test.ts` меряет сами пиксели.
 - **Заставки простоя** — тем же слоевым контрактом, что ThemeOverlay:
   [IdleOverlay](../src/lib/IdleOverlay.svelte), `z-index:35` ниже модалок, под
   `prefers-reduced-motion`-guard (статичный кадр). Простой = **нет ввода И нет вывода PTY** (проп
@@ -792,6 +802,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [diagpath.guard.test.ts](../src/lib/diagpath.guard.test.ts) | Во фронте нет литералов `/tmp/…` |
 | [settings.guard.test.ts](../src/lib/settings.guard.test.ts) | Язык интерфейса идёт через `setLocale()`, не `bind:value` |
 | [mdlink.guard.test.ts](../src/lib/mdlink.guard.test.ts) | Каждый markdown-`{@html}` висит на `use:mdLinks`. Проверка **поэлементная и по исходнику без комментариев**: файловая версия прошла на файле с удалённым экшеном, потому что рядом лежал комментарий со словами «use:mdLinks» |
+| [appicon.guard.test.ts](../src/lib/appicon.guard.test.ts) | Кадрирование бандл-иконки: Windows-артефакты заполняют квадрат, macOS сохраняет safe area. Проверка идёт **по пикселям** (декодирует PNG внутри `.ico`), а не по наличию скрипта: дефект возвращает не правка кода, а один безобидный прогон `tauri icon` |
 | [cspnonce.test.ts](../src/lib/cspnonce.test.ts) | Каждый `EditorView` отдаёт style-nonce |
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |

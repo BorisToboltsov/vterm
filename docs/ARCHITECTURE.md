@@ -177,7 +177,7 @@ vterm/
 ├── e2e/                        # WebdriverIO + tauri-driver (гоняет CI)
 ├── docs/                       # GUIDE · INSTALL · TROUBLESHOOTING · INVARIANTS ·
 │                               # ARCHITECTURE · DESIGN · ROADMAP · TESTS · adr/
-├── scripts/                    # open-on-mac · place-opener · clean-launchservices
+├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons
 ├── .github/workflows/          # release.yml — сборка трёх ОС по тегу
 └── .gitlab-ci.yml              # lint → security → test → build → release
 ```
