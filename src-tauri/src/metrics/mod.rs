@@ -80,16 +80,18 @@ impl MetricsSamples {
 /// field is guarded so a missing tool/file just yields an empty value (which the
 /// UI renders as a dash) rather than failing the whole probe.
 ///
-/// It reports **raw** readings only; anything derived from them (`mem`/`swap`
-/// "used" = total − free) is computed in [`used_and_total`], never here. See that
-/// function for why a subtraction must not happen on the host.
+/// It reports **raw** readings only; anything derived from them ("used" memory
+/// and swap) is computed in [`mem_used`] / [`swap_used_and_total`], never here —
+/// see those for why a subtraction must not happen on the host. `mem` ships the
+/// `/proc/meminfo` fields labelled (`MemTotal:<kB> …`) so a field the kernel lacks
+/// is simply absent rather than a zero that would read as a measurement.
 const METRICS_SCRIPT: &str = "\
 printf 'os=%s\\n' \"$(uname -s 2>/dev/null)\"; \
 printf 'host=%s\\n' \"$(hostname 2>/dev/null)\"; \
 printf 'user=%s\\n' \"$(id -un 2>/dev/null || whoami 2>/dev/null)\"; \
 printf 'pretty=%s\\n' \"$( ( . /etc/os-release 2>/dev/null && printf %s \"$PRETTY_NAME\" ) || ( sw_vers -productName 2>/dev/null | tr -d '\\n' ) )\"; \
 printf 'load=%s\\n' \"$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)\"; \
-printf 'mem=%s\\n' \"$(awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{if(t>0)printf \"%d %d\",t*1024,a*1024}' /proc/meminfo 2>/dev/null)\"; \
+printf 'mem=%s\\n' \"$(awk '/^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SReclaimable):/{printf \"%s%s \",$1,$2}' /proc/meminfo 2>/dev/null)\"; \
 printf 'disk=%s\\n' \"$(df -kP / 2>/dev/null | awk 'NR==2{printf \"%d %d\",$3*1024,$2*1024}')\"; \
 printf 'cpustat=%s\\n' \"$(grep '^cpu ' /proc/stat 2>/dev/null | head -1 | sed 's/^cpu *//')\"; \
 printf 'net=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\",$1); if($1!=\"lo\"){rx+=$2; tx+=$10}} END{printf \"%d %d\",rx,tx}' /proc/net/dev 2>/dev/null)\"; \
@@ -141,26 +143,92 @@ pub struct Metrics {
     server_time: String,
 }
 
-/// Split a `"<total> <unused>"` probe value into `(used, total)`.
+/// The `/proc/meminfo` fields the status bar needs, in bytes. Each is optional:
+/// a field the kernel does not report (`MemAvailable` only exists since 3.14)
+/// stays `None` instead of becoming a zero that would read as a measurement.
+#[derive(Debug, Default, PartialEq)]
+struct MemInfo {
+    total: Option<u64>,
+    available: Option<u64>,
+    free: Option<u64>,
+    buffers: Option<u64>,
+    cached: Option<u64>,
+    sreclaimable: Option<u64>,
+}
+
+/// Parse the `mem=` probe value: `MemTotal:<kB> MemAvailable:<kB> …`.
+fn parse_meminfo(value: &str) -> MemInfo {
+    let mut m = MemInfo::default();
+    for pair in value.split_whitespace() {
+        let Some((key, kb)) = pair.split_once(':') else {
+            continue;
+        };
+        let Some(bytes) = kb.parse::<u64>().ok().and_then(|v| v.checked_mul(1024)) else {
+            continue;
+        };
+        let slot = match key {
+            "MemTotal" => &mut m.total,
+            "MemAvailable" => &mut m.available,
+            "MemFree" => &mut m.free,
+            "Buffers" => &mut m.buffers,
+            "Cached" => &mut m.cached,
+            "SReclaimable" => &mut m.sreclaimable,
+            _ => continue,
+        };
+        *slot = Some(bytes);
+    }
+    m
+}
+
+/// Used memory, derived the way procps-ng `free` derives it.
 ///
-/// The subtraction lives here rather than in [`METRICS_SCRIPT`] because a host
-/// can report `MemAvailable > MemTotal` — `/proc/meminfo` is synthesised under
-/// lxcfs, and `totalram` moves under virtio-balloon/memory hotplug, while
-/// `si_mem_available()` is only floored at zero, never capped at total. When awk
-/// did the subtraction, such a host emitted a negative first field, `u64` parsing
-/// dropped it, and "used" silently became `None`: the UI rendered a dash next to
-/// a perfectly good "total". Clamping with `saturating_sub` also makes the SSH
-/// transport agree with the local collector, which has always clamped
-/// (`local::collect_metrics`). Zero is the honest answer here — a host reporting
-/// more available than total is one with essentially nothing in use.
+/// Normally that is `MemTotal − MemAvailable`. But `MemAvailable` is an estimate
+/// (`si_mem_available()`, floored at zero and never capped at total), and some
+/// hosts report it wildly off: a real Oracle Linux 9.8 VM gave **61.2 GiB
+/// available on a 7.3 GiB machine** while it was swapping. lxcfs-synthesised
+/// `/proc/meminfo` and memory ballooning do the same. procps-ng treats
+/// `available > total` as a distorted value and stops trusting it; so do we.
 ///
-/// A missing second field (kernels < 3.14 have no `MemAvailable`) keeps the old
-/// behaviour: everything counts as used.
-fn used_and_total(value: &str) -> (Option<u64>, Option<u64>) {
+/// The fallback is the formula `free` used before `MemAvailable` existed —
+/// total minus free, buffers and reclaimable cache (`Cached` + `SReclaimable`) —
+/// which is also what OL 9's procps-ng 3.3.17 prints, so the numbers match the
+/// tool an admin will compare against. If that underflows too, the last resort
+/// is `MemTotal − MemFree`, again as procps does. A missing `MemAvailable`
+/// (kernels < 3.14) takes the same fallback.
+///
+/// v1.0.15–v1.0.19 clamped the distorted case to zero instead, reasoning that
+/// "more available than total means nothing is in use". The VM above showed
+/// "0 MiB used" next to 212 MiB of swap in use: a plausible-looking stand-in for
+/// an unknown, exactly what principle 5 forbids.
+fn mem_used(m: &MemInfo) -> Option<u64> {
+    let total = m.total?;
+    if let Some(available) = m.available.filter(|&a| a <= total) {
+        return Some(total - available);
+    }
+    let free = m.free?;
+    let cache = [m.buffers, m.cached, m.sreclaimable]
+        .into_iter()
+        .flatten()
+        .fold(0u64, u64::saturating_add);
+    Some(
+        total
+            .checked_sub(free.saturating_add(cache))
+            .unwrap_or_else(|| total.saturating_sub(free)),
+    )
+}
+
+/// Split the `swap=` probe value (`"<total> <free>"`, bytes) into `(used, total)`.
+///
+/// The subtraction is ours, not awk's: a difference computed on the host goes
+/// negative on distorted input and `u64` parsing then drops it silently. Swap
+/// has no second opinion to fall back on (unlike memory, see [`mem_used`]), so
+/// free exceeding total — or missing — yields `None` ("unknown") rather than a
+/// clamped zero or "all of it".
+fn swap_used_and_total(value: &str) -> (Option<u64>, Option<u64>) {
     let mut it = value.split_whitespace();
     let total = it.next().and_then(|v| v.parse::<u64>().ok());
-    let unused = it.next().and_then(|v| v.parse::<u64>().ok());
-    (total.map(|t| t.saturating_sub(unused.unwrap_or(0))), total)
+    let free = it.next().and_then(|v| v.parse::<u64>().ok());
+    (total.zip(free).and_then(|(t, f)| t.checked_sub(f)), total)
 }
 
 fn parse_metrics(raw: &str) -> Metrics {
@@ -181,14 +249,18 @@ fn parse_metrics(raw: &str) -> Metrics {
                 m.load5 = it.next().and_then(|v| v.parse().ok());
                 m.load15 = it.next().and_then(|v| v.parse().ok());
             }
-            "mem" => (m.mem_used, m.mem_total) = used_and_total(value),
+            "mem" => {
+                let info = parse_meminfo(value);
+                m.mem_used = mem_used(&info);
+                m.mem_total = info.total;
+            }
             "disk" => {
                 let mut it = value.split_whitespace();
                 m.disk_used = it.next().and_then(|v| v.parse().ok());
                 m.disk_total = it.next().and_then(|v| v.parse().ok());
             }
             "uptime" => m.uptime_secs = value.parse().ok(),
-            "swap" => (m.swap_used, m.swap_total) = used_and_total(value),
+            "swap" => (m.swap_used, m.swap_total) = swap_used_and_total(value),
             "users" => m.users = value.to_string(),
             "ip" => m.ip = value.to_string(),
             "topproc" => m.top_proc = value.to_string(),
@@ -780,7 +852,10 @@ fn parse_detail(raw: &str) -> MetricsDetail {
         if n.len() == 5 {
             d.mem_total = Some(n[0]);
             d.mem_free = Some(n[1]);
-            d.mem_available = Some(n[2]);
+            // A distorted MemAvailable (> MemTotal, see `mem_used`) is not shown
+            // as-is: procps-ng falls back to MemFree there, and so does "Available"
+            // here — otherwise the overlay reads "61 GiB available of 7.3 GiB".
+            d.mem_available = Some(if n[2] > n[0] { n[1] } else { n[2] });
             d.mem_buffers = Some(n[3]);
             d.mem_cached = Some(n[4]);
         }
@@ -1220,7 +1295,7 @@ mod tests {
                    user=root\n\
                    pretty=Ubuntu 24.04 LTS\n\
                    load=0.15 0.20 0.30\n\
-                   mem=4194304 3145728\n\
+                   mem=MemTotal:4096 MemFree:512 MemAvailable:3072 Buffers:64 Cached:1024\n\
                    disk=2097152 10485760\n\
                    cpustat=100 0 50 850 0 0 0";
         let m = parse_metrics(raw);
@@ -1245,34 +1320,89 @@ mod tests {
     }
 
     #[test]
-    fn parse_metrics_clamps_used_when_host_reports_more_free_than_total() {
-        // Hosts under lxcfs / virtio-balloon report MemAvailable > MemTotal. The
-        // old probe subtracted on the host and shipped "-1024 16503050240", which
-        // `u64` refused: "used" became None and the UI showed a dash next to a
-        // live "total". Now the subtraction is ours and floors at zero.
-        let m = parse_metrics("mem=16503050240 16503051264\nswap=1073741824 1073742848");
-        assert_eq!(m.mem_used, Some(0));
-        assert_eq!(m.mem_total, Some(16503050240));
-        assert_eq!(m.swap_used, Some(0));
-        assert_eq!(m.swap_total, Some(1073741824));
+    fn mem_used_is_total_minus_available_on_a_sane_host() {
+        let m = parse_metrics(
+            "mem=MemTotal:16116260 MemFree:1234567 MemAvailable:12345678 \
+             Buffers:123456 Cached:2345678 SReclaimable:200000",
+        );
+        assert_eq!(m.mem_total, Some(16116260 * 1024));
+        assert_eq!(m.mem_used, Some((16116260 - 12345678) * 1024));
     }
 
     #[test]
-    fn parse_metrics_counts_everything_used_without_an_available_field() {
-        // Kernels < 3.14 have no MemAvailable: awk leaves the variable unset and
-        // prints a zero for it. A truncated line (no second field at all) has to
-        // land the same way.
-        let m = parse_metrics("mem=4194304 0\nswap=4096 0");
-        assert_eq!(m.mem_used, Some(4194304));
-        assert_eq!(m.mem_total, Some(4194304));
-        assert_eq!(m.swap_used, Some(4096));
-        assert_eq!(m.swap_total, Some(4096));
+    fn mem_used_falls_back_to_procps_when_mem_available_is_distorted() {
+        // Real Oracle Linux 9.8 VM: MemAvailable 61.2 GiB on a 7.3 GiB machine,
+        // swapping at the time. v1.0.15-v1.0.19 clamped this to "0 MiB used";
+        // v1.0.14 showed a dash. The right answer is procps-ng's: stop trusting
+        // MemAvailable and subtract free, buffers and reclaimable cache.
+        let m = parse_metrics(
+            "mem=MemTotal:7666684 MemFree:212480 MemAvailable:64207808 \
+             Buffers:4096 Cached:1843200 SReclaimable:204800",
+        );
+        let expected = (7666684 - 212480 - 4096 - 1843200 - 204800) * 1024;
+        assert_eq!(m.mem_used, Some(expected));
+        assert_ne!(
+            m.mem_used,
+            Some(0),
+            "a distorted MemAvailable must not read as idle"
+        );
+        assert_eq!(m.mem_total, Some(7666684 * 1024));
+    }
 
-        let m = parse_metrics("mem=4194304\nswap=4096");
-        assert_eq!(m.mem_used, Some(4194304));
-        assert_eq!(m.mem_total, Some(4194304));
-        assert_eq!(m.swap_used, Some(4096));
+    #[test]
+    fn mem_used_last_resort_is_total_minus_free() {
+        // If buffers + cache exceed what is not free, they are distorted too;
+        // procps then settles for total - free, and so do we.
+        let m = parse_metrics(
+            "mem=MemTotal:8000 MemFree:1000 MemAvailable:90000 Buffers:500 Cached:9000",
+        );
+        assert_eq!(m.mem_used, Some(7000 * 1024));
+    }
+
+    #[test]
+    fn mem_used_takes_the_fallback_on_kernels_without_mem_available() {
+        // MemAvailable only exists since Linux 3.14.
+        let m = parse_metrics("mem=MemTotal:8000 MemFree:1000 Buffers:500 Cached:2000");
+        assert_eq!(m.mem_used, Some(4500 * 1024));
+    }
+
+    #[test]
+    fn mem_used_is_unknown_rather_than_invented_when_fields_are_missing() {
+        // Only the total survived (truncated output): "used" is unknown, not
+        // "everything" and not "nothing" — the UI shows a dash beside the total.
+        let m = parse_metrics("mem=MemTotal:8000");
+        assert_eq!(m.mem_used, None);
+        assert_eq!(m.mem_total, Some(8000 * 1024));
+        // Distorted MemAvailable with nothing to fall back on: still unknown.
+        let m = parse_metrics("mem=MemTotal:8000 MemAvailable:90000");
+        assert_eq!(m.mem_used, None);
+    }
+
+    #[test]
+    fn parse_meminfo_ignores_foreign_keys_and_garbage() {
+        let m = parse_meminfo("SwapCached:999 MemTotal:10 MemFree:x Cached: bogus MemAvailable:4");
+        assert_eq!(
+            m,
+            MemInfo {
+                total: Some(10 * 1024),
+                available: Some(4 * 1024),
+                ..MemInfo::default()
+            }
+        );
+    }
+
+    #[test]
+    fn swap_used_is_unknown_when_free_is_distorted_or_missing() {
+        // Swap has no second estimate to fall back on, so unknown beats a
+        // plausible zero or a plausible "all of it".
+        let m = parse_metrics("swap=1073741824 1073742848");
+        assert_eq!(m.swap_used, None);
+        assert_eq!(m.swap_total, Some(1073741824));
+        let m = parse_metrics("swap=4096");
+        assert_eq!(m.swap_used, None);
         assert_eq!(m.swap_total, Some(4096));
+        let m = parse_metrics("swap=4096 1024");
+        assert_eq!(m.swap_used, Some(3072));
     }
 
     /// Every `awk '<program>'` in a probe script.
@@ -1328,13 +1458,13 @@ mod tests {
     }
 
     /// Guard: probe scripts report raw readings; anything derived from them is
-    /// computed in Rust, where it can be clamped and tested.
+    /// computed in Rust, where distorted input can be recognised and tested.
     ///
     /// `mem`/`swap` used to ship `(MemTotal-MemAvailable)` straight from awk. A
-    /// host that reports more available than total (lxcfs, virtio-balloon) then
-    /// sent a negative field, `u64` parsing dropped it, and "used" became `None` —
-    /// a dash beside a live "total", indistinguishable from a probe that never
-    /// ran. The arithmetic belongs in `used_and_total`, which floors at zero.
+    /// host that reports more available than total (lxcfs, ballooning) then sent
+    /// a negative field, `u64` parsing dropped it, and "used" became `None` — a
+    /// dash beside a live "total", indistinguishable from a probe that never ran.
+    /// The arithmetic belongs in `mem_used` / `swap_used_and_total`.
     #[test]
     fn probe_scripts_report_raw_readings_not_differences() {
         // Live violation: the exact expression this guard was written to reject.
@@ -1356,7 +1486,7 @@ mod tests {
             offenders.is_empty(),
             "probe scripts must report raw readings — a difference computed on the \
              host can go negative and is then indistinguishable from missing data. \
-             Compute it in Rust (see used_and_total). Offenders: {offenders:?}"
+             Compute it in Rust (see mem_used). Offenders: {offenders:?}"
         );
     }
 
@@ -1583,6 +1713,15 @@ mod tests {
         assert_eq!(s[2].temp, 35.85);
         // No sensors line → empty.
         assert!(parse_sensors("os=Linux").is_empty());
+    }
+
+    #[test]
+    fn parse_detail_does_not_show_a_distorted_mem_available() {
+        // total free available buffers cached: 61 GiB "available" of 7.3 GiB.
+        // procps-ng shows MemFree in that case, and so does the overlay.
+        let d = parse_detail("memdetail=7850684416 217579520 65748795392 4194304 1887436800\n");
+        assert_eq!(d.mem_available, Some(217579520));
+        assert_eq!(d.mem_total, Some(7850684416));
     }
 
     #[test]
