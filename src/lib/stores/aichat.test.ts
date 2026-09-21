@@ -196,6 +196,35 @@ describe("startChat streaming", () => {
     expect(c.messages[1].content).toBe("partial answer");
   });
 
+  it("refuses a second user turn while a reply streams (one turn at a time)", async () => {
+    await startChat(opts({ question: "one" }));
+    await startChat(opts({ question: "two" }));
+    expect(aiChat).toHaveBeenCalledOnce();
+    expect(getChat("s1").messages.map((m) => m.content)).toEqual(["one", ""]);
+  });
+
+  it("refuses a user turn while a dialog command awaits confirmation", async () => {
+    const c = getChat("s1");
+    c.pending = { command: "ls", opts: opts() };
+    await startChat(opts({ question: "sneak in" }));
+    expect(aiChat).not.toHaveBeenCalled();
+    expect(c.pending).not.toBeNull();
+  });
+
+  it("a failed reply ends the dialog loop instead of leaving the chat busy", async () => {
+    await startChat(opts({ execMode: "dialog" }));
+    expect(getChat("s1").dialogRunning).toBe(true);
+    emit("error", "boom");
+    expect(getChat("s1").dialogRunning).toBe(false);
+    expect(getChat("s1").streaming).toBe(false);
+  });
+
+  it("a rejected request ends the dialog loop too", async () => {
+    aiChat.mockRejectedValueOnce("network down");
+    await startChat(opts({ execMode: "dialog" }));
+    expect(getChat("s1").dialogRunning).toBe(false);
+  });
+
   it("stopChat is a no-op when nothing is streaming", () => {
     stopChat("nope");
     expect(cancelAiChat).not.toHaveBeenCalled();

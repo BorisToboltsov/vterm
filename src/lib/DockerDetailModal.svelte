@@ -175,13 +175,17 @@
         </button>
         {#if onAsk}
           <!-- "Ask AI" (Phase 41): the state and logs are already fetched here, so
-               the question carries them instead of asking the user to copy-paste. -->
+               the question carries them instead of asking the user to copy-paste.
+               Closes: the question is typed in the chat, which this modal covers. -->
           <button
             data-testid="docker-ask-ai"
             class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("ai.ask.button")}
             aria-label={t("ai.ask.button")}
-            onclick={() => onAsk?.(askContext(c))}
+            onclick={() => {
+              onAsk?.(askContext(c));
+              onclose();
+            }}
           >
             <Icon name="aiMark" size={14} />
           </button>

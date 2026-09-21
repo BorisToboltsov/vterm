@@ -49,6 +49,7 @@
   import { hostEnv } from "./stores/hostenv.svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { readClipboard, writeClipboard } from "./clipboard";
+  import { textLines } from "./aicontext";
 
   type Status = "connecting" | "connected" | "closed" | "error";
 
@@ -90,8 +91,9 @@
     /** Hand the current selection to the AI assistant (Phase 41). Omitted when the
      *  assistant is unavailable, which also hides the menu item. */
     onExplain?: (selection: string) => void;
-    /** Whether the terminal has a selection — drives the session bar's "Ask AI". */
-    onselection?: (has: boolean) => void;
+    /** Lines in the current selection (0 = none) — drives the session bar's "Ask
+     *  AI" and the AI chat's "what will be sent" caption. */
+    onselection?: (lines: number) => void;
     /** Local tabs only: which `cd` dialect the spawned shell speaks, reported once
      *  at spawn so two-way follow can build a correct command (Phase 39.4). */
     onlocalshell?: (kind: CdShell) => void;
@@ -617,7 +619,7 @@
     // Copy-on-select (optional) and bell handling.
     term.onSelectionChange(() => {
       if (settings.copyOnSelect) copySelection();
-      onselection?.(term.hasSelection());
+      onselection?.(textLines(term.getSelection()));
     });
     term.onBell(() => {
       if (settings.bell === "visual") {

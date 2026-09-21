@@ -38,6 +38,8 @@
     onOpenContainerShell,
     onAskAi,
     getAiContext,
+    aiSelectionLines = 0,
+    aiRecording = false,
     promptVars = {},
     aiProd = false,
     aiNoAi = false,
@@ -72,6 +74,10 @@
     onAskAi?: (context: string, kind: "container" | "pod") => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
     getAiContext?: () => Promise<RawContext> | RawContext;
+    /** Lines selected in this session's terminal (0 = none) — for the AI caption. */
+    aiSelectionLines?: number;
+    /** This session is being recorded — the AI recording tier has something to add. */
+    aiRecording?: boolean;
     /** Values for `{os}`/`{host}`/… placeholders in the user's AI prompt (Phase 41). */
     promptVars?: PromptVars;
     /** The active server is prod-flagged — bars AI auto-execution (17.4). */
@@ -251,6 +257,8 @@
             noAi={aiNoAi}
             isLocal={kind === "local"}
             {promptVars}
+            selectionLines={aiSelectionLines}
+            hasRecording={aiRecording}
           />
         </div>
       {/if}

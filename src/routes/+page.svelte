@@ -243,7 +243,7 @@
   const termStructured = $state<Record<string, boolean>>({});
   // Whether the terminal has a selection — enables the session bar's "Ask AI".
   // Cleared in closeTabFully.
-  const termSelection = $state<Record<string, boolean>>({});
+  const termSelection = $state<Record<string, number>>({}); // selected lines, 0 = none
   /** How often to ask the OS for a local shell's cwd while following (Phase 39.3).
    *  One second is well under human reaction time for a `cd`, and the underlying
    *  read is a single cheap syscall on Linux/macOS. */
@@ -598,18 +598,15 @@
   const aiOn = $derived(aiReady(settings.ai));
 
   /**
-   * Send a terminal selection to the assistant (Phase 41). The chat turns this
-   * into its normal consent dialog, so the text is redacted and previewed before
-   * anything leaves the machine — the entry point buys convenience, not access.
+   * Attach a terminal selection to the assistant's composer (Phase 41). The user
+   * asks about it (or sends the preset question), and the send runs the normal
+   * consent dialog, so the text is redacted and previewed before anything leaves
+   * the machine — the entry point buys convenience, not access.
    */
   function explainWithAi(sessionId: string, selection: string) {
     const text = selection.trim();
     if (!text) return;
-    askAbout(sessionId, {
-      question: t("ai.ask.explainSelection"),
-      context: text,
-      label: "Terminal selection",
-    });
+    askAbout(sessionId, { source: "selection", context: text });
     layout.dockTab = "ai";
     layout.sftpCollapsed = false;
   }
@@ -622,11 +619,7 @@
   function askAiAboutResource(context: string, kind: "container" | "pod") {
     const id = tabsState.activeId;
     if (!id) return;
-    askAbout(id, {
-      question: kind === "container" ? t("ai.ask.container") : t("ai.ask.pod"),
-      context,
-      label: kind === "container" ? "Docker container" : "Kubernetes pod",
-    });
+    askAbout(id, { source: kind, context });
     layout.dockTab = "ai";
   }
 
@@ -634,7 +627,7 @@
   function askAiAboutMetrics(snapshot: string) {
     const id = tabsState.activeId;
     if (!id) return;
-    askAbout(id, { question: t("ai.ask.metrics"), context: snapshot, label: "Host metrics" });
+    askAbout(id, { source: "metrics", context: snapshot });
     layout.dockTab = "ai";
     layout.sftpCollapsed = false;
   }
@@ -2228,7 +2221,7 @@
                   {#if bar.search || bar.viewToggle || bar.clear || bar.askAi}
                     <div class="flex shrink-0 items-center gap-1 px-1.5 py-0.5">
                       {#if bar.askAi}
-                        {@const hasSel = !!termSelection[tab.sessionId]}
+                        {@const hasSel = (termSelection[tab.sessionId] ?? 0) > 0}
                         <button
                           class="flex items-center rounded p-1 text-muted enabled:hover:bg-edge enabled:hover:text-text disabled:opacity-40"
                           data-testid="session-bar-ask-ai"
@@ -2347,7 +2340,7 @@
                     onExplain={aiOn && servers.find((s) => s.id === tab.serverId)?.noAi !== true
                       ? (sel) => explainWithAi(tab.sessionId, sel)
                       : undefined}
-                    onselection={(has) => (termSelection[tab.sessionId] = has)}
+                    onselection={(lines) => (termSelection[tab.sessionId] = lines)}
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onviewmode={(on) => (termStructured[tab.sessionId] = on)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
@@ -2473,6 +2466,8 @@
                   : false}
                 onToggleFollowTerminal={toggleFollowTerminal}
                 getAiContext={gatherAiContext}
+                aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
+                aiRecording={!!(tabsState.activeId && recordingState[tabsState.activeId])}
                 {aiProd}
                 {aiNoAi}
                 onOpenFile={(path, name, gotoLine) =>

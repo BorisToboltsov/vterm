@@ -164,13 +164,17 @@
       <div class="min-w-0 flex-1 truncate text-meta text-muted">{p.namespace} · {p.status}</div>
       <div class="flex shrink-0 items-center gap-0.5 text-muted">
         {#if onAsk}
-          <!-- "Ask AI" (Phase 41): state, events and logs are already loaded here. -->
+          <!-- "Ask AI" (Phase 41): state, events and logs are already loaded here.
+               Closes: the question is typed in the chat, which this modal covers. -->
           <button
             data-testid="k8s-ask-ai"
             class="rounded p-1 hover:bg-edge hover:text-text"
             use:tooltip={t("ai.ask.button")}
             aria-label={t("ai.ask.button")}
-            onclick={() => onAsk?.(askContext(p))}
+            onclick={() => {
+              onAsk?.(askContext(p));
+              onclose();
+            }}
           >
             <Icon name="aiMark" size={14} />
           </button>

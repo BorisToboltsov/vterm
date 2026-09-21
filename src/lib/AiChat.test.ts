@@ -38,6 +38,7 @@ import AiChat from "./AiChat.svelte";
 import { settings } from "./settings.svelte";
 import { defaultAiSettings, type AiExecMode } from "./ai";
 import { aiChatState, askAbout, getChat } from "./stores/aichat.svelte";
+import { toastsState } from "./stores/toasts.svelte";
 
 function enableAi(execMode: AiExecMode = "confirm") {
   settings.ai = {
@@ -83,6 +84,7 @@ beforeEach(() => {
   settings.language = "en";
   settings.ai = defaultAiSettings();
   aiChatState.map = {}; // reset per-session conversations
+  toastsState.list = [];
   for (const k of Object.keys(handlers)) delete handlers[k];
   aiChat.mockReset().mockResolvedValue(undefined);
   cancelAiChat.mockReset().mockResolvedValue(undefined);
@@ -193,7 +195,7 @@ describe("AiChat — context + consent (Phase 17.3)", () => {
     enableAi();
     const user = userEvent.setup();
     render(AiChat, {
-      props: { getContext: () => ({ selection: "SEL", buffer: "WHOLE-BUFFER" }) },
+      props: { getContext: () => ({ buffer: "WHOLE-BUFFER", tail: "TAIL" }) },
     });
 
     await user.click(screen.getByTestId("ai-attach")); // attach on
@@ -206,6 +208,66 @@ describe("AiChat — context + consent (Phase 17.3)", () => {
 
     const preview = await screen.findByTestId("ai-consent-preview");
     expect(preview.textContent).toContain("WHOLE-BUFFER");
+    expect(preview.textContent).not.toContain("TAIL");
+  });
+
+  it("a selection wins over the whole-buffer tier — it is the narrower intent", async () => {
+    enableAi();
+    getChat(undefined).context = { includeBuffer: true, includeRecording: false, includeMetadata: false };
+    const user = userEvent.setup();
+    render(AiChat, {
+      props: { getContext: () => ({ selection: "SEL", buffer: "WHOLE-BUFFER" }) },
+    });
+
+    await user.click(screen.getByTestId("ai-attach"));
+    await user.type(screen.getByTestId("ai-input"), "what is this?");
+    await user.click(screen.getByTestId("ai-send"));
+
+    const preview = await screen.findByTestId("ai-consent-preview");
+    expect(preview.textContent).toContain("SEL");
+    expect(preview.textContent).not.toContain("WHOLE-BUFFER");
+  });
+});
+
+describe("AiChat — what will be sent (caption by the paperclip)", () => {
+  const caption = () => screen.queryByTestId("ai-context-summary")?.textContent ?? null;
+
+  it("is shown only with the paperclip on", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1", getContext: () => ({}) } });
+    expect(caption()).toBeNull();
+    await user.click(screen.getByTestId("ai-attach"));
+    expect(caption()).toBe("Sends: last lines (up to 200)");
+  });
+
+  it("names a live selection with its size — a stale one scrolled off screen shows up here", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    const r = render(AiChat, { props: { sessionId: "s1", getContext: () => ({}), selectionLines: 12 } });
+    await user.click(screen.getByTestId("ai-attach"));
+    expect(caption()).toBe("Sends: selection · 12 lines");
+
+    await r.rerender({ sessionId: "s1", getContext: () => ({}), selectionLines: 0 });
+    expect(caption()).toBe("Sends: last lines (up to 200)");
+  });
+
+  it("follows the tiers and the chip", async () => {
+    enableAi();
+    getChat("s1").context = { includeBuffer: true, includeRecording: true, includeMetadata: true };
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1", getContext: () => ({}), hasRecording: true } });
+    await user.click(screen.getByTestId("ai-attach"));
+    expect(caption()).toBe("Sends: whole buffer + recording + host metadata");
+
+    askAbout("s1", { source: "pod", context: "x" });
+    await waitFor(() => expect(caption()).toBe("Sends: the attachment + recording + host metadata"));
+  });
+
+  it("is absent on a server that bars the assistant", () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1", getContext: () => ({}), noAi: true } });
+    expect(caption()).toBeNull();
   });
 });
 
@@ -564,53 +626,197 @@ describe("AiChat — reasoning, usage and history (Phase 40)", () => {
 });
 
 describe("askAbout — questions raised from elsewhere (Phase 41)", () => {
-  it("routes through the consent dialog instead of sending", async () => {
-    // The whole point of the primitive: an entry point buys convenience, never
-    // a way around the consent contract.
+  const EXPLAIN = "Explain this terminal output. What is it telling me, and is anything wrong?";
+  const lastSent = () => aiChat.mock.calls.at(-1)![0].messages.at(-1)?.content ?? "";
+
+  it("attaches a chip to the composer and sends nothing", async () => {
     enableAi();
     render(AiChat, { props: { sessionId: "s1" } });
 
-    askAbout("s1", { question: "explain this", context: "TOKEN=secret123", label: "Terminal selection" });
+    askAbout("s1", { source: "selection", context: "line one\nline two\n" });
 
+    const chip = await screen.findByTestId("ai-attachment");
+    expect(chip.textContent).toContain("Terminal selection");
+    expect(chip.textContent).toContain("2 lines");
+    expect(screen.queryByTestId("ai-consent")).toBeNull();
+    expect(aiChat).not.toHaveBeenCalled();
+    expect(getChat("s1").ask).toBeNull();
+    // Ready for the user's own question.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByTestId("ai-input")));
+  });
+
+  it("an empty send asks the preset question, through the consent dialog", async () => {
+    // The whole point of the primitive: an entry point buys convenience, never
+    // a way around the consent contract.
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "selection", context: "TOKEN=secret123" });
+    await screen.findByTestId("ai-attachment");
+
+    await user.click(screen.getByTestId("ai-send"));
     const preview = await screen.findByTestId("ai-consent-preview");
     expect(aiChat).not.toHaveBeenCalled();
     // Redacted like any other context, and labelled so the core prompt's trust
     // boundary applies to it.
     expect(preview.textContent).toContain("‹redacted›");
     expect(preview.textContent).not.toContain("secret123");
-    expect(preview.textContent).toContain("Terminal selection");
+    expect(preview.textContent).toContain("### Terminal selection");
+
+    await user.click(screen.getByTestId("ai-consent-confirm"));
+    await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
+    expect(lastSent()).toContain(EXPLAIN);
+    expect(lastSent()).toContain("### Terminal selection");
+    // Sent: the chip is spent.
+    expect(screen.queryByTestId("ai-attachment")).toBeNull();
   });
 
-  it("sends the prepared question once consent is given", async () => {
+  it("sends the user's own question about the attachment", async () => {
     enableAi();
+    const user = userEvent.setup();
     render(AiChat, { props: { sessionId: "s1" } });
-    askAbout("s1", { question: "why is it broken?", context: "some logs", label: "Container logs" });
+    askAbout("s1", { source: "container", context: "OOMKilled" });
+    await screen.findByTestId("ai-attachment");
 
-    await userEvent.setup().click(await screen.findByTestId("ai-consent-confirm"));
+    await user.type(screen.getByTestId("ai-input"), "why was it killed?");
+    await user.click(screen.getByTestId("ai-send"));
+    await user.click(await screen.findByTestId("ai-consent-confirm"));
 
     await waitFor(() => expect(aiChat).toHaveBeenCalledOnce());
-    const sent = aiChat.mock.calls[0][0].messages.at(-1)?.content ?? "";
-    expect(sent).toContain("why is it broken?");
-    expect(sent).toContain("### Container logs");
+    expect(lastSent()).toContain("why was it killed?");
+    expect(lastSent()).toContain("### Docker container\nOOMKilled");
+    expect(lastSent()).not.toContain("Why is this container behaving like this?");
   });
 
-  it("is ignored on a server that bars the assistant", async () => {
+  it("the chip takes the terminal slot: no live selection or buffer rides along", async () => {
+    enableAi();
+    getChat("s1").context = { includeBuffer: true, includeRecording: false, includeMetadata: true };
+    const user = userEvent.setup();
+    render(AiChat, {
+      props: {
+        sessionId: "s1",
+        getContext: () => ({ selection: "LIVE-SEL", buffer: "WHOLE-BUFFER", tail: "TAIL", metadata: "OS: Linux" }),
+      },
+    });
+    askAbout("s1", { source: "selection", context: "CHIP-TEXT" });
+    await screen.findByTestId("ai-attachment");
+
+    await user.click(screen.getByTestId("ai-attach"));
+    await user.click(screen.getByTestId("ai-send"));
+    const preview = await screen.findByTestId("ai-consent-preview");
+    expect(preview.textContent).toContain("CHIP-TEXT");
+    expect(preview.textContent).not.toContain("LIVE-SEL");
+    expect(preview.textContent).not.toContain("WHOLE-BUFFER");
+    // The explicit tiers still add.
+    expect(preview.textContent).toContain("OS: Linux");
+  });
+
+  it("cancelling consent keeps the chip and the typed question", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "pod", context: "CrashLoopBackOff" });
+    await screen.findByTestId("ai-attachment");
+    await user.type(screen.getByTestId("ai-input"), "why?");
+    await user.click(screen.getByTestId("ai-send"));
+    await user.click(await screen.findByText("Cancel"));
+
+    expect(screen.getByTestId("ai-attachment")).toBeTruthy();
+    expect((screen.getByTestId("ai-input") as HTMLTextAreaElement).value).toBe("why?");
+    expect(aiChat).not.toHaveBeenCalled();
+  });
+
+  it("✕ drops the chip, and an empty send is then off again", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "metrics", context: "load 9.0" });
+    await screen.findByTestId("ai-attachment");
+    expect((screen.getByTestId("ai-send") as HTMLButtonElement).disabled).toBe(false);
+
+    await user.click(screen.getByTestId("ai-attachment-remove"));
+    expect(screen.queryByTestId("ai-attachment")).toBeNull();
+    expect(getChat("s1").attachment).toBeNull();
+    expect((screen.getByTestId("ai-send") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("a newer request replaces the chip", async () => {
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "selection", context: "first" });
+    await screen.findByTestId("ai-attachment");
+    askAbout("s1", { source: "pod", context: "second" });
+    await waitFor(() => expect(screen.getByTestId("ai-attachment").textContent).toContain("Pod"));
+    expect(getChat("s1").attachment?.context).toBe("second");
+  });
+
+  it("the chip survives the chat remounting (tab switch)", async () => {
+    enableAi();
+    const first = render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "selection", context: "keep me" });
+    await screen.findByTestId("ai-attachment");
+    first.unmount();
+
+    render(AiChat, { props: { sessionId: "s1" } });
+    expect(await screen.findByTestId("ai-attachment")).toBeTruthy();
+  });
+
+  it("attaches while a reply streams, but the send waits for the turn to end", async () => {
+    // A second stream over a live one used to take the listener slot of the
+    // first (Stop no longer reached it) and interleave the two replies.
+    enableAi();
+    render(AiChat, { props: { sessionId: "s1" } });
+    await ask("first");
+    await waitFor(() => expect(Object.keys(handlers).some((c) => c.startsWith("ai://done/"))).toBe(true));
+
+    askAbout("s1", { source: "selection", context: "logs" });
+
+    await screen.findByTestId("ai-attachment");
+    expect(toastsState.list).toHaveLength(0);
+    // Mid-turn the composer offers Stop, not Send.
+    expect(screen.queryByTestId("ai-send")).toBeNull();
+    expect((screen.getByTestId("ai-input") as HTMLTextAreaElement).disabled).toBe(true);
+    expect(screen.queryByTestId("ai-consent")).toBeNull();
+    expect(aiChat).toHaveBeenCalledOnce();
+
+    emit("done", null);
+    await waitFor(() => expect((screen.getByTestId("ai-send") as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.getByTestId("ai-attachment")).toBeTruthy();
+  });
+
+  it("is dropped, not parked, when the assistant is not configured", async () => {
+    // A parked request popped up later, out of the blue, once AI got switched on.
+    render(AiChat, { props: { sessionId: "s1" } });
+    askAbout("s1", { source: "selection", context: "logs" });
+    await waitFor(() => expect(getChat("s1").ask).toBeNull());
+    expect(toastsState.list).toHaveLength(1);
+
+    enableAi();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByTestId("ai-attachment")).toBeNull();
+    expect(getChat("s1").attachment).toBeNull();
+  });
+
+  it("is turned away with a reason on a server that bars the assistant", async () => {
     // `noAi` blocks context and execution outright (17.7) — an entry point must
     // not become a side door into it.
     enableAi();
     render(AiChat, { props: { sessionId: "s1", noAi: true } });
-    askAbout("s1", { question: "explain", context: "logs", label: "Container logs" });
+    askAbout("s1", { source: "container", context: "logs" });
 
     await waitFor(() => expect(getChat("s1").ask).toBeNull());
-    expect(screen.queryByTestId("ai-consent")).toBeNull();
+    expect(screen.queryByTestId("ai-attachment")).toBeNull();
+    expect(toastsState.list.map((x) => x.message)).toContain(
+      "This server is off-limits to AI — context and command execution are disabled.",
+    );
     expect(aiChat).not.toHaveBeenCalled();
   });
 
-  it("clears the request so it does not re-fire on re-render", async () => {
-    enableAi();
+  it("keeps Stop reachable while a dialog step runs between replies", async () => {
+    enableAi("dialog");
+    getChat("s1").dialogRunning = true;
     render(AiChat, { props: { sessionId: "s1" } });
-    askAbout("s1", { question: "explain", context: "logs", label: "Terminal selection" });
-    await screen.findByTestId("ai-consent-preview");
-    expect(getChat("s1").ask).toBeNull();
+    expect(await screen.findByTestId("ai-stop")).toBeTruthy();
+    expect((screen.getByTestId("ai-input") as HTMLTextAreaElement).disabled).toBe(true);
   });
 });

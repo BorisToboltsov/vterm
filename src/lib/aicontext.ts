@@ -3,10 +3,12 @@
 // The model is manual-first and tiered: by default the assistant only sees the
 // current selection (or the recent output tail); attaching the whole buffer, a
 // recording transcript, or host metadata are explicit opt-in toggles in AI
-// settings. Whatever is collected is redacted here and shown to the user in the
-// consent dialog before a single byte is sent — the actual fetching of buffer /
-// selection / recording / metadata text is impure and lives in the components;
-// this module only takes the already-read strings and shapes the payload.
+// settings. A selection is the narrower intent and wins over the buffer: the user
+// who marked ten lines did not mean "and the whole scrollback too". Whatever is
+// collected is redacted here and shown to the user in the consent dialog before a
+// single byte is sent — the actual fetching of buffer / selection / recording /
+// metadata text is impure and lives in the components; this module only takes the
+// already-read strings and shapes the payload.
 //
 // DOM/network-free → unit-tested directly.
 
@@ -65,27 +67,98 @@ function clean(s: string | undefined): string {
   return (s ?? "").replace(/\s+$/u, "");
 }
 
+/** Line count of a block as it would be sent (a trailing newline is not a line). */
+export function textLines(text: string): number {
+  const body = clean(text);
+  return body ? body.split("\n").length : 0;
+}
+
+/** What fills the terminal slot of the payload. */
+export type TerminalSlot = "attachment" | "selection" | "buffer" | "tail";
+
+/**
+ * The one rule for the terminal slot, narrowest first: an explicitly attached
+ * block, else the live selection, else the whole scrollback when `includeBuffer`
+ * is on, else the recent tail. Shared by {@link buildContext} and the caption
+ * next to the paperclip, so what the caption promises is what gets built.
+ */
+export function terminalSlot(i: { attached: boolean; selection: boolean; includeBuffer: boolean }): TerminalSlot {
+  if (i.attached) return "attachment";
+  if (i.selection) return "selection";
+  return i.includeBuffer ? "buffer" : "tail";
+}
+
+/** One piece of the "what will be sent" caption: an i18n key plus its params. */
+export interface SummaryPart {
+  key:
+    | "ai.context.slot.attachment"
+    | "ai.context.slot.selection"
+    | "ai.context.slot.buffer"
+    | "ai.context.slot.tail"
+    | "ai.context.plusRecording"
+    | "ai.context.plusMetadata";
+  params?: Record<string, string>;
+}
+
+/**
+ * What a send with the paperclip on would carry, for the caption beside it.
+ * Mirrors {@link buildContext}: the recording is promised only when one is
+ * running (the tier adds nothing otherwise), and an invisible stale selection
+ * shows up here as "selection · N lines" instead of surfacing only in consent.
+ */
+export function contextSummary(i: {
+  attached: boolean;
+  selectionLines: number;
+  tiers: ContextTiers;
+  hasRecording: boolean;
+}): SummaryPart[] {
+  const slot = terminalSlot({
+    attached: i.attached,
+    selection: i.selectionLines > 0,
+    includeBuffer: i.tiers.includeBuffer,
+  });
+  const parts: SummaryPart[] = [
+    slot === "selection"
+      ? { key: "ai.context.slot.selection", params: { count: String(i.selectionLines) } }
+      : slot === "tail"
+        ? { key: "ai.context.slot.tail", params: { count: String(DEFAULT_TAIL_LINES) } }
+        : { key: `ai.context.slot.${slot}` },
+  ];
+  if (i.tiers.includeRecording && i.hasRecording) parts.push({ key: "ai.context.plusRecording" });
+  if (i.tiers.includeMetadata) parts.push({ key: "ai.context.plusMetadata" });
+  return parts;
+}
+
+/** A block the user attached explicitly (the composer chip): its own header. */
+export interface AttachedBlock {
+  /** Canonical English section header, e.g. "Terminal selection". */
+  header: string;
+  /** Raw (pre-redaction) text. */
+  text: string;
+}
+
 /**
  * Decide which sources to include from the raw strings + chosen tiers, then
- * redact and assemble them into one labelled block. The default tier is the
- * selection when present, otherwise the recent tail; `includeBuffer` widens the
- * terminal section to the whole scrollback (and supersedes the tail).
+ * redact and assemble them into one labelled block. The terminal slot holds one
+ * thing, narrowest first: an explicitly attached block, else the live selection,
+ * else the whole scrollback when `includeBuffer` is on, else the recent tail.
+ * Recording and metadata are separate tiers and add to whichever it was.
  */
-export function buildContext(raw: RawContext, s: ContextTiers): BuiltContext {
-  const pieces: { source: ContextSource; text: string }[] = [];
+export function buildContext(raw: RawContext, s: ContextTiers, attached?: AttachedBlock): BuiltContext {
+  const pieces: { source: ContextSource; text: string; header?: string }[] = [];
 
+  const block = clean(attached?.text);
   const selection = clean(raw.selection);
-  if (selection) {
+  const slot = terminalSlot({ attached: !!block, selection: !!selection, includeBuffer: s.includeBuffer });
+  if (slot === "attachment") {
+    // Reported as buffer-derived: the consent summary lists sources, not entry points.
+    pieces.push({ source: "buffer", text: block, header: `### ${attached?.header}` });
+  } else if (slot === "selection") {
     pieces.push({ source: "selection", text: selection });
-  }
-
-  if (s.includeBuffer) {
-    const buffer = clean(raw.buffer);
-    if (buffer) pieces.push({ source: "buffer", text: buffer });
-  } else if (!selection) {
-    // Default tier with no selection: the recent output tail (labelled buffer).
-    const tail = clean(raw.tail);
-    if (tail) pieces.push({ source: "buffer", text: tail });
+  } else {
+    // The whole scrollback when the tier is on, else the recent tail (both labelled buffer).
+    const text = clean(slot === "buffer" ? raw.buffer : raw.tail);
+    if (text) pieces.push({ source: "buffer", text });
   }
 
   if (s.includeRecording) {
@@ -102,7 +175,7 @@ export function buildContext(raw: RawContext, s: ContextTiers): BuiltContext {
   const sections = pieces.map((p) => {
     const r = redactSecrets(p.text);
     redactions += r.count;
-    return `${HEADERS[p.source]}\n${r.text}`;
+    return `${p.header ?? HEADERS[p.source]}\n${r.text}`;
   });
 
   const text = sections.join("\n\n");
@@ -115,26 +188,16 @@ export function buildContext(raw: RawContext, s: ContextTiers): BuiltContext {
 }
 
 /**
- * Shape an arbitrary block of already-collected text as a {@link BuiltContext},
- * so the "ask about this" entry points (terminal selection, container logs, a
- * metrics snapshot — Phase 41) go through the same redaction and the same consent
- * preview as a hand-attached context. The label becomes the `###` section header,
- * which the core prompt tells the model to treat as untrusted data.
+ * Shape a single block of already-collected text (a staged diff for the commit
+ * drafter) as a {@link BuiltContext}, through the same redaction and the same
+ * consent preview. The label becomes the `###` section header, which the core
+ * prompt tells the model to treat as untrusted data.
  */
 export function buildRawContext(text: string, label: string): BuiltContext {
-  const body = clean(text);
-  if (!body) return { text: "", lines: 0, redactions: 0, sources: [] };
-  const r = redactSecrets(body);
-  const block = `### ${label}\n${r.text}`;
-  return {
-    text: block,
-    lines: block.split("\n").length,
-    redactions: r.count,
-    // Reported as buffer-derived: it is terminal-side output either way, and the
-    // consent summary lists sources, not entry points.
-    sources: ["buffer"],
-  };
+  return buildContext({}, NO_TIERS, { header: label, text });
 }
+
+const NO_TIERS: ContextTiers = { includeBuffer: false, includeRecording: false, includeMetadata: false };
 
 /**
  * Merge a built context block with the user's question into the single message
