@@ -10,6 +10,7 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import AiSettingsSection from "./AiSettingsSection.svelte";
   import LocalShellSettings from "./LocalShellSettings.svelte";
+  import { hostEnv } from "./stores/hostenv.svelte";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
   import StatusBarSettings from "./StatusBarSettings.svelte";
@@ -308,6 +309,24 @@
             <input type="checkbox" bind:checked={settings.middleClickPaste} />
             {t("settings.middleClickPaste")}
           </label>
+          <label class="mt-2 block text-xs text-muted">
+            <span class="flex items-center gap-1"
+              >{t("settings.rightClick")}<InfoHint text={t("settings.rightClickHint")} /></span
+            >
+            <select
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              bind:value={settings.rightClick}
+            >
+              <option value="paste">{t("settings.rightClickPaste")}</option>
+              <option value="menu">{t("settings.rightClickContextMenu")}</option>
+            </select>
+          </label>
+          {#if hostEnv.os !== "macos"}
+            <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+              <input type="checkbox" bind:checked={settings.ctrlVPaste} />
+              {t("settings.ctrlVPaste")}<InfoHint text={t("settings.ctrlVPasteHint")} />
+            </label>
+          {/if}
           <label class="mt-2 flex items-center gap-2 text-xs text-muted">
             <input type="checkbox" bind:checked={settings.historySearch} />
             {t("settings.historySearch")}<InfoHint text={t("settings.historySearchHint")} />

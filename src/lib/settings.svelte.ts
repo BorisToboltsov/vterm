@@ -13,6 +13,7 @@ import {
 import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locales";
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
+import { isRightClickAction, type RightClickAction } from "./termmouse";
 import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 import {
@@ -144,6 +145,10 @@ export interface Settings {
   bell: BellStyle;
   copyOnSelect: boolean;
   middleClickPaste: boolean;
+  /** Right-click in the terminal: paste or the context menu (Shift gives the other). */
+  rightClick: RightClickAction;
+  /** Plain Ctrl+V pastes on Windows/Linux (off = it goes to the shell). */
+  ctrlVPaste: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
   /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
@@ -263,6 +268,8 @@ const DEFAULTS: Settings = {
   bell: "none",
   copyOnSelect: true,
   middleClickPaste: false,
+  rightClick: "paste",
+  ctrlVPaste: true,
   historySearch: true,
   windowsShell: "cmd",
   localShellPath: "",
@@ -408,6 +415,8 @@ function load(): Settings {
       windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
         ? raw.windowsShell
         : DEFAULTS.windowsShell,
+      rightClick: isRightClickAction(raw.rightClick) ? raw.rightClick : DEFAULTS.rightClick,
+      ctrlVPaste: typeof raw.ctrlVPaste === "boolean" ? raw.ctrlVPaste : DEFAULTS.ctrlVPaste,
       localShellPath:
         typeof raw.localShellPath === "string" ? raw.localShellPath : DEFAULTS.localShellPath,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
@@ -527,6 +536,8 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
+  if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
+  if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);

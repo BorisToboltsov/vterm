@@ -83,6 +83,7 @@ describe("tab teardown guard", () => {
       "removeBroadcastMember",
       "removeDockState",
       "nginxConfigCache.delete",
+      "delete termSelection",
     ]) {
       expect(fn).toContain(cleanup);
     }

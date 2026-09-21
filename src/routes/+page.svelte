@@ -235,11 +235,15 @@
       bufferText?: (maxLines?: number) => string;
       find?: () => void;
       setViewMode?: (structured: boolean) => void;
+      clear?: () => void;
     }
   > = {};
   // Raw (false) ↔ structured table (true) per session, reported by the terminal —
   // drives the session bar's switch. Cleared in closeTabFully.
   const termStructured = $state<Record<string, boolean>>({});
+  // Whether the terminal has a selection — enables the session bar's "Ask AI".
+  // Cleared in closeTabFully.
+  const termSelection = $state<Record<string, boolean>>({});
   /** How often to ask the OS for a local shell's cwd while following (Phase 39.3).
    *  One second is well under human reaction time for a `cd`, and the underlying
    *  read is a single cheap syscall on Linux/macOS. */
@@ -1233,6 +1237,7 @@
     delete followSeen[sessionId];
     nginxConfigCache.delete(sessionId);
     delete termStructured[sessionId];
+    delete termSelection[sessionId];
     closeTabStore(sessionId);
   }
 
@@ -2148,6 +2153,7 @@
                 smartLogs: settings.smartLogs.enabled,
                 structured: !!termStructured[tab.sessionId],
                 broadcast: bcOn,
+                ai: aiOn && bcSrv?.noAi !== true,
               })}
               <div
                 class={bcOn && !bcTile
@@ -2219,8 +2225,33 @@
                     {/each}
                   {/if}
                   </div>
-                  {#if bar.search || bar.viewToggle}
+                  {#if bar.search || bar.viewToggle || bar.clear || bar.askAi}
                     <div class="flex shrink-0 items-center gap-1 px-1.5 py-0.5">
+                      {#if bar.askAi}
+                        {@const hasSel = !!termSelection[tab.sessionId]}
+                        <button
+                          class="flex items-center rounded p-1 text-muted enabled:hover:bg-edge enabled:hover:text-text disabled:opacity-40"
+                          data-testid="session-bar-ask-ai"
+                          disabled={!hasSel}
+                          use:tooltip={hasSel ? t("sessionBar.askAi") : t("sessionBar.askAiNoSelection")}
+                          aria-label={t("sessionBar.askAi")}
+                          onclick={() =>
+                            explainWithAi(tab.sessionId, termRefs[tab.sessionId]?.selectionText?.() ?? "")}
+                        >
+                          <Icon name="aiMark" size={14} />
+                        </button>
+                      {/if}
+                      {#if bar.clear}
+                        <button
+                          class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
+                          data-testid="session-bar-clear"
+                          use:tooltip={t("sessionBar.clear")}
+                          aria-label={t("sessionBar.clear")}
+                          onclick={() => termRefs[tab.sessionId]?.clear?.()}
+                        >
+                          <Icon name="trash" size={14} />
+                        </button>
+                      {/if}
                       {#if bar.search}
                         <button
                           class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
@@ -2313,7 +2344,10 @@
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
-                    onExplain={aiOn ? (sel) => explainWithAi(tab.sessionId, sel) : undefined}
+                    onExplain={aiOn && servers.find((s) => s.id === tab.serverId)?.noAi !== true
+                      ? (sel) => explainWithAi(tab.sessionId, sel)
+                      : undefined}
+                    onselection={(has) => (termSelection[tab.sessionId] = has)}
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onviewmode={(on) => (termStructured[tab.sessionId] = on)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}

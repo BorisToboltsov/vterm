@@ -167,9 +167,10 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 Полоса под вкладками серверов (`data-testid="session-bar"`): `bg-panel-alt border-b border-edge
 text-xs`. Слева — подвкладки рабочего пространства («Терминал» + открытые файлы; активная
 `bg-panel text-text`, прочие `text-muted hover:bg-edge`, разделитель `border-r border-edge`),
-горизонтальный скролл только у этой части. Справа — инструменты терминала: icon-кнопка поиска
-(`p-1 text-muted hover:bg-edge hover:text-text`, иконка 14) и сегментный `ViewModeToggle`. Когда
-показывать нечего, полоса не рендерится вовсе.
+горизонтальный скролл только у этой части. Справа — инструменты терминала: icon-кнопки «Спросить
+ИИ» (`aiMark`; без выделения — `disabled:opacity-40`, причина в подсказке), «Очистить» (`trash`) и
+поиска (`p-1 text-muted hover:bg-edge hover:text-text`, иконка 14), затем сегментный
+`ViewModeToggle`. Когда показывать нечего, полоса не рендерится вовсе.
 
 ## Статус-бар
 
