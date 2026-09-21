@@ -62,8 +62,22 @@ updates:
       testing:
         patterns: ["vitest", "@vitest/*", "@testing-library/*", "jsdom"]
         update-types: ["minor", "patch"]
-      # Tauri и Svelte остаются поштучно: у них бампы ломающие, и такой PR
-      # обязан быть отдельным.
+      # Сборочный инструментарий ходит связкой: vite и его плагины, тайпчекер, типы.
+      build-tooling:
+        patterns: ["vite", "@sveltejs/vite-plugin-svelte", "@tailwindcss/*", "tailwindcss", "svelte-check", "typescript", "@types/*"]
+        update-types: ["minor", "patch"]
+      # JS-половина плагинов Tauri — зеркало группы `tauri` в cargo ниже: плагин
+      # обновляется парой (Rust + JS), и поштучные PR разводили версии сторон.
+      tauri:
+        patterns: ["@tauri-apps/*"]
+        update-types: ["minor", "patch"]
+      # Патчи всего остального — одним PR. Группа ПОСЛЕДНЯЯ: Dependabot кладёт
+      # пакет в первую подходящую группу, и те, что выше, забирают своё.
+      # Svelte и SvelteKit попадают сюда только патчами: их minor бывает ломающим
+      # и приезжает отдельным PR.
+      patches:
+        patterns: ["*"]
+        update-types: ["patch"]
 
   # ── Rust-зависимости ───────────────────────────────────────────────────────
   - package-ecosystem: cargo
@@ -80,4 +94,10 @@ updates:
       tauri:
         patterns: ["tauri", "tauri-*"]
         update-types: ["minor", "patch"]
-      # russh — SSH-стек, ядро приложения: бампы смотрим поштучно.
+      # Патчи остального — одним PR. Только patch: у крейтов 0.x минор ломающий
+      # (base64 0.22 → 0.23), а Dependabot не отличает 0.x от 1.x.
+      # russh — SSH-стек, ядро приложения: исключён, бампы смотрим поштучно.
+      patches:
+        patterns: ["*"]
+        exclude-patterns: ["russh", "russh-*"]
+        update-types: ["patch"]
