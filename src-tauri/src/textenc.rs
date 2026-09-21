@@ -61,7 +61,7 @@ fn looks_utf16(bytes: &[u8], little_endian: bool) -> bool {
     }
     let mut nul_in_expected = 0usize;
     let mut nul_in_other = 0usize;
-    for pair in bytes[..scan].chunks_exact(2) {
+    for pair in bytes[..scan].as_chunks::<2>().0 {
         let (expected, other) = if little_endian {
             (pair[1], pair[0])
         } else {
