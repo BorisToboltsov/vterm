@@ -15,9 +15,25 @@ import { describe, expect, it } from "vitest";
 
 const TERMINAL = join(process.cwd(), "src/lib/Terminal.svelte");
 
+/** Drop `<!-- … -->` blocks by scanning, not by regex replace (an unclosed
+ *  comment drops the rest — nothing after it is markup the guard should read). */
+export function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("<!--", i);
+    if (open < 0) return out + src.slice(i);
+    out += src.slice(i, open);
+    const close = src.indexOf("-->", open + 4);
+    if (close < 0) return out;
+    i = close + 3;
+  }
+  return out;
+}
+
 /** The opening tag of the element bound to `container`, or null. */
 export function containerTag(src: string): string | null {
-  const noComments = src.replace(/<!--[\s\S]*?-->/g, "");
+  const noComments = stripHtmlComments(src);
   const m = /<div\b[^>]*bind:this=\{container\}[^>]*>/.exec(noComments);
   return m ? m[0] : null;
 }
@@ -29,6 +45,12 @@ export function paddingClasses(tag: string): string[] {
 }
 
 describe("terminal fit guard", () => {
+  it("strips HTML comments, including an unclosed one", () => {
+    expect(stripHtmlComments("a<!-- x -->b<!-- y -->c")).toBe("abc");
+    expect(stripHtmlComments("a<!--<!-- x -->-->b")).toBe("a-->b");
+    expect(stripHtmlComments("a<!-- open")).toBe("a");
+  });
+
   it("detects padding on the measured element", () => {
     expect(paddingClasses(`<div bind:this={container} class="h-full w-full px-2 pt-1">`)).toEqual([
       "px-2",
