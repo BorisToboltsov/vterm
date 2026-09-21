@@ -1563,21 +1563,72 @@ fn take_pending_opens(state: State<AppState>) -> Vec<String> {
 /// channel (no download). Returns `/`-relative path → sha256.
 #[tauri::command]
 async fn sftp_hash_tree(
+    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     path: String,
+    excludes: Vec<String>,
+    cancel_id: String,
 ) -> AppResult<sync::HashTree> {
     let session = session_arc(&state, &session_id).await?;
-    let out = session
-        .run_command(&sync::remote_hash_command(&path))
-        .await?;
-    sync::parse_hash_output(&path, &out)
+    let cancel = register_cancel(&state, &cancel_id);
+    let cmd = sync::remote_hash_command(&path, &sync::ExcludeSet::new(&excludes));
+    // Count output lines as they stream in: one per file hashed (or unreadable).
+    let mut out: Vec<u8> = Vec::new();
+    let mut lines = 0u64;
+    let mut last = std::time::Instant::now();
+    let run = session.run_command_streaming(&cmd, |chunk| {
+        out.extend_from_slice(chunk);
+        lines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
+        if last.elapsed() >= std::time::Duration::from_millis(150) {
+            last = std::time::Instant::now();
+            sync::emit_scan(&app, &cancel_id, lines);
+        }
+    });
+    let res = sync::until_cancelled(run, &cancel).await;
+    state.cancels.lock().unwrap().remove(&cancel_id);
+    res?;
+    sync::parse_hash_output(&path, &String::from_utf8_lossy(&out))
+}
+
+/// Put a fresh stop flag for `id` into the shared cancel map (`sftp_cancel` sets it).
+/// The caller removes it when the operation ends.
+fn register_cancel(state: &AppState, id: &str) -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    state
+        .cancels
+        .lock()
+        .unwrap()
+        .insert(id.to_string(), flag.clone());
+    flag
 }
 
 /// Hash every file under a local directory (the local side of sync).
 #[tauri::command]
-async fn local_hash_tree(path: String) -> AppResult<sync::HashTree> {
-    localfile::hash_tree(&path).await
+async fn local_hash_tree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    excludes: Vec<String>,
+    cancel_id: String,
+) -> AppResult<sync::HashTree> {
+    use std::sync::atomic::AtomicU64;
+    let cancel = register_cancel(&state, &cancel_id);
+    let progress = Arc::new(AtomicU64::new(0));
+    // Report the count every 200 ms until the walk ends.
+    let ticker = {
+        let (app, id, progress) = (app.clone(), cancel_id.clone(), progress.clone());
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                sync::emit_scan(&app, &id, progress.load(Ordering::Relaxed));
+            }
+        })
+    };
+    let res = localfile::hash_tree(&path, sync::ExcludeSet::new(&excludes), cancel, progress).await;
+    ticker.abort();
+    state.cancels.lock().unwrap().remove(&cancel_id);
+    res
 }
 
 /// List every config file nginx actually loads on the server, via `nginx -T` (it

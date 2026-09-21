@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  progressWeight,
+  planFolders,
+  filterPlan,
+  matchesFilter,
   planFacts,
   emptyPlanReason,
   wipesTarget,
@@ -262,6 +266,7 @@ describe("syncBlockReasons", () => {
       "sync.onlyConflicts",
     );
     expect(syncBlockReasons({ ...base, applicableCount: 0 }).apply).toBe("sync.nothingToApply");
+    expect(syncBlockReasons({ ...base, otherRunning: true }).apply).toBe("sync.otherRunning");
   });
 });
 
@@ -286,5 +291,48 @@ describe("pickerDirs", () => {
       { name: "..", isDir: true },
     ];
     expect(pickerDirs(list).map((d) => d.name)).toEqual(["alpha", "zeta"]);
+  });
+});
+
+describe("big plans", () => {
+  const plan = [
+    { path: "README", op: "upload" as const, reason: "new" as const },
+    { path: "src/a.ts", op: "upload" as const, reason: "new" as const },
+    { path: "src/b.ts", op: "deleteRemote" as const, reason: "removed" as const },
+    { path: "srcx/c.ts", op: "conflict" as const, reason: "conflict" as const },
+    { path: "src/d/e.ts", op: "deleteLocal" as const, reason: "removed" as const },
+  ];
+
+  it("weighs progress per file", () => {
+    expect(progressWeight({ transferred: 5, total: 10, done: false })).toBe(0.5);
+    expect(progressWeight({ transferred: 0, total: 0, done: false })).toBe(0);
+    expect(progressWeight({ transferred: 20, total: 10, done: false })).toBe(1);
+    expect(progressWeight({ transferred: 0, total: 0, done: true })).toBe(1);
+  });
+
+  it("groups by top-level folder, biggest first", () => {
+    const f = planFolders(plan);
+    expect(f.map((x) => [x.folder, x.total])).toEqual([
+      ["src", 3],
+      ["", 1],
+      ["srcx", 1],
+    ]);
+    expect(f[0].counts.upload).toBe(1);
+    expect(f[0].counts.deleteRemote + f[0].counts.deleteLocal).toBe(2);
+  });
+
+  it("filters by op kind and folder without prefix collisions", () => {
+    expect(matchesFilter("deleteLocal", "delete")).toBe(true);
+    expect(filterPlan(plan, "delete", null).map((a) => a.path)).toEqual(["src/b.ts", "src/d/e.ts"]);
+    // `src` must not catch `srcx/…`.
+    expect(filterPlan(plan, "all", "src")).toHaveLength(3);
+    expect(filterPlan(plan, "all", "").map((a) => a.path)).toEqual(["README"]);
+    expect(filterPlan(plan, "all", null)).toBe(plan);
+  });
+
+  it("adds backend-pruned items to the excluded count", () => {
+    const f = planFacts([], [], "push", [".git"], 3);
+    expect(f.excluded).toBe(3);
+    expect(emptyPlanReason(f)).toBe("allExcluded");
   });
 });

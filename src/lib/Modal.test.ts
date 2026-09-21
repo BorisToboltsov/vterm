@@ -41,6 +41,21 @@ describe("Modal", () => {
     expect(screen.getByText("body")).toBeInTheDocument();
   });
 
+  it("closes only the topmost of stacked dialogs on Escape", async () => {
+    // Sync dialog → folder picker: Escape backs out of the picker, not both.
+    const lower = vi.fn();
+    const upper = vi.fn();
+    render(Modal, { props: { open: true, onclose: lower, children: text("lower") } });
+    const top = render(Modal, { props: { open: true, onclose: upper, children: text("upper") } });
+    await userEvent.keyboard("{Escape}");
+    expect(upper).toHaveBeenCalledOnce();
+    expect(lower).not.toHaveBeenCalled();
+    // With the top one gone, the next Escape reaches the one below.
+    top.unmount();
+    await userEvent.keyboard("{Escape}");
+    expect(lower).toHaveBeenCalledOnce();
+  });
+
   it("ignores non-Escape keys", async () => {
     const onclose = vi.fn();
     render(Modal, { props: { open: true, onclose, children: text("body") } });

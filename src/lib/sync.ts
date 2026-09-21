@@ -15,6 +15,8 @@ export interface HashEntry {
 export interface HashTree {
   entries: HashEntry[];
   skipped: number;
+  /** Files/folders the backend walk pruned by an exclude pattern (a folder counts once). */
+  excluded: number;
 }
 
 export type SyncDirection = "push" | "pull" | "bi";
@@ -256,6 +258,8 @@ export function planFacts(
   remote: HashEntry[],
   direction: SyncDirection,
   excludes: string[],
+  /** Items the backend already pruned during the walk (`HashTree.excluded`, both sides). */
+  pruned = 0,
 ): PlanFacts {
   const excluded = compileExclude(excludes);
   const drop = new Set<string>();
@@ -273,7 +277,7 @@ export function planFacts(
   const r = keep(remote);
   const onlyIn = (a: Set<string>, b: Set<string>) => [...a].filter((p) => !b.has(p)).length;
   const extraneous = direction === "push" ? onlyIn(r, l) : direction === "pull" ? onlyIn(l, r) : 0;
-  return { localFiles: l.size, remoteFiles: r.size, excluded: drop.size, extraneous };
+  return { localFiles: l.size, remoteFiles: r.size, excluded: drop.size + pruned, extraneous };
 }
 
 /**
@@ -316,6 +320,8 @@ export interface SyncButtonState {
   conflictCount: number;
   phase: SyncRunPhase;
   busy: boolean;
+  /** Another session's run holds the (single, app-wide) progress feed. */
+  otherRunning?: boolean;
 }
 
 /**
@@ -332,6 +338,7 @@ export function syncBlockReasons(s: SyncButtonState): {
     | "sync.compareAfterStop"
     | "sync.onlyConflicts"
     | "sync.nothingToApply"
+    | "sync.otherRunning"
     | null;
 } {
   const compare = !s.localPath ? "sync.needLocal" : !s.remotePath ? "sync.needRemote" : null;
@@ -341,7 +348,13 @@ export function syncBlockReasons(s: SyncButtonState): {
   else if (s.phase === "stopped") apply = "sync.compareAfterStop";
   else if (s.applicableCount === 0)
     apply = s.conflictCount > 0 ? "sync.onlyConflicts" : "sync.nothingToApply";
+  else if (s.otherRunning) apply = "sync.otherRunning";
   return { compare, apply };
+}
+
+/** The backend stopped because the user asked it to — not an error to show. */
+export function isCancelled(err: string): boolean {
+  return err.startsWith("cancelled:");
 }
 
 /**
@@ -367,4 +380,66 @@ export function pickerDirs<T extends { name: string; isDir: boolean }>(entries: 
   return entries
     .filter((e) => e.isDir && e.name !== "." && e.name !== "..")
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ── big plans (v1.0.25) ──────────────────────────────────────────────────────────
+
+/**
+ * How much of one file a progress event says is done, 0…1 — the unit the run
+ * summary adds up. Kept per id so the store can update the total in O(1) per
+ * event: re-summing the whole plan on every event was quadratic and froze the
+ * dialog on runs with thousands of files.
+ */
+export function progressWeight(p: { transferred: number; total: number; done: boolean }): number {
+  if (p.done) return 1;
+  return p.total > 0 ? Math.min(1, p.transferred / p.total) : 0;
+}
+
+/** Per-op counts of one top-level folder of a plan. */
+export interface PlanFolder {
+  /** First path segment; "" for files at the synced root itself. */
+  folder: string;
+  total: number;
+  counts: Record<SyncOp, number>;
+}
+
+/** The plan grouped by top-level folder, biggest first — the overview of a big plan. */
+export function planFolders(actions: SyncAction[]): PlanFolder[] {
+  const map = new Map<string, PlanFolder>();
+  for (const a of actions) {
+    const slash = a.path.indexOf("/");
+    const folder = slash < 0 ? "" : a.path.slice(0, slash);
+    let f = map.get(folder);
+    if (!f) {
+      f = { folder, total: 0, counts: summarize([]) };
+      map.set(folder, f);
+    }
+    f.total++;
+    f.counts[a.op]++;
+  }
+  return [...map.values()].sort((a, b) => b.total - a.total || a.folder.localeCompare(b.folder));
+}
+
+/** Filter by op kind: deletes are one kind for the user, whichever side they hit. */
+export type PlanFilter = "all" | "upload" | "download" | "delete" | "conflict";
+
+export function matchesFilter(op: SyncOp, f: PlanFilter): boolean {
+  if (f === "all") return true;
+  if (f === "delete") return op === "deleteRemote" || op === "deleteLocal";
+  return op === f;
+}
+
+/** The rows to list for a filter and an optional top-level folder ("" = the root's files). */
+export function filterPlan(
+  actions: SyncAction[],
+  f: PlanFilter,
+  folder: string | null,
+): SyncAction[] {
+  if (f === "all" && folder === null) return actions;
+  return actions.filter((a) => {
+    if (!matchesFilter(a.op, f)) return false;
+    if (folder === null) return true;
+    const slash = a.path.indexOf("/");
+    return folder === "" ? slash < 0 : a.path.startsWith(folder + "/");
+  });
 }

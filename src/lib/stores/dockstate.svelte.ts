@@ -65,7 +65,10 @@ function empty(): DockSessionState {
  * user works — no explicit save step.
  */
 export function dockState(sessionId: string): DockSessionState {
-  return (sessions[sessionId] ??= empty());
+  // Read back through the store: `??=` evaluates to the raw object, and writes to
+  // it bypass the reactive proxy (Svelte warns about exactly this).
+  if (!sessions[sessionId]) sessions[sessionId] = empty();
+  return sessions[sessionId];
 }
 
 /**

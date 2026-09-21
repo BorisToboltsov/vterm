@@ -77,6 +77,11 @@ pub enum AppError {
     #[error("hash-incomplete: the server's file listing ended early")]
     HashIncomplete,
 
+    /// The user stopped a long operation (e.g. hashing a sync tree). Not a failure:
+    /// the frontend matches `cancelled` and shows nothing.
+    #[error("cancelled: stopped by the user")]
+    Cancelled,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -141,6 +146,7 @@ mod tests {
         assert!(AppError::HashToolMissing
             .to_string()
             .contains("hash-tool-missing"));
+        assert!(AppError::Cancelled.to_string().contains("cancelled"));
         assert!(AppError::HashIncomplete
             .to_string()
             .contains("hash-incomplete"));

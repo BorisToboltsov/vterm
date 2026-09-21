@@ -132,14 +132,26 @@ export function localCopy(from: string, to: string): Promise<void> {
 
 // ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
 
-/** Hash a remote directory tree via sha256sum over SSH (no download). */
-export function sftpHashTree(sessionId: string, path: string): Promise<HashTree> {
-  return invoke<HashTree>("sftp_hash_tree", { sessionId, path });
+/**
+ * Hash a remote directory tree via sha256sum over SSH (no download). `cancelId`
+ * registers the run in the shared cancel map: `sftpCancel(cancelId)` stops it.
+ */
+export function sftpHashTree(
+  sessionId: string,
+  path: string,
+  excludes: string[],
+  cancelId: string,
+): Promise<HashTree> {
+  return invoke<HashTree>("sftp_hash_tree", { sessionId, path, excludes, cancelId });
 }
 
-/** Hash a local directory tree. */
-export function localHashTree(path: string): Promise<HashTree> {
-  return invoke<HashTree>("local_hash_tree", { path });
+/**
+ * Hash a local directory tree; `sftpCancel(cancelId)` stops the walk. `excludes`
+ * lets the backend prune what it safely can (see `sync::ExcludeSet`) — the result
+ * is still filtered by `diffTrees`. Both sides report counts on `sync://scan`.
+ */
+export function localHashTree(path: string, excludes: string[], cancelId: string): Promise<HashTree> {
+  return invoke<HashTree>("local_hash_tree", { path, excludes, cancelId });
 }
 
 /** Detect the server's package manager + which optional tools are installed. */

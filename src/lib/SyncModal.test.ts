@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The dialog talks to the backend only through these; each test drives them.
@@ -12,13 +13,18 @@ const hoisted = vi.hoisted(() => ({
   sftpHome: vi.fn(),
 }));
 
-const tree = (entries: { path: string; sha256: string }[], skipped = 0) => ({ entries, skipped });
+const tree = (entries: { path: string; sha256: string }[], skipped = 0, excluded = 0) => ({
+  entries,
+  skipped,
+  excluded,
+});
 
 vi.mock("./api", () => hoisted);
 
 import SyncModal from "./SyncModal.svelte";
 import { applySyncProgress, clearSyncRun } from "./stores/syncrun.svelte";
-import { clearToasts } from "./stores/toasts.svelte";
+import { clearToasts, toastsState } from "./stores/toasts.svelte";
+import { resetSyncJobs, applyScanProgress } from "./stores/syncjob.svelte";
 import type { SftpProgress } from "./api";
 
 const progress = (path: string, transferred: number, total: number, done = false): SftpProgress => ({
@@ -53,6 +59,7 @@ describe("SyncModal", () => {
     vi.clearAllMocks();
     clearSyncRun();
     clearToasts();
+    resetSyncJobs();
   });
 
   it("shows per-row progress while a run is in flight", async () => {
@@ -197,26 +204,122 @@ describe("SyncModal", () => {
     expect(screen.getByTestId("sync-block-reason").textContent).toMatch(/Choose a local folder/);
   });
 
-  it("picks another remote folder in place and compares against it", async () => {
+  it("picks another remote folder in its own window, from a tree", async () => {
     hoisted.sftpHome.mockResolvedValue("/home/me");
-    hoisted.sftpList.mockImplementation(async (_s: string, p: string) =>
-      p === "/srv/app"
-        ? [
-            { name: "web", path: "/srv/app/web", isDir: true },
-            { name: "readme", path: "/srv/app/readme", isDir: false },
-          ]
-        : [],
-    );
+    const listing: Record<string, { name: string; path: string; isDir: boolean }[]> = {
+      "/": [{ name: "srv", path: "/srv", isDir: true }],
+      "/srv": [{ name: "app", path: "/srv/app", isDir: true }],
+      "/srv/app": [
+        { name: "web", path: "/srv/app/web", isDir: true },
+        { name: "readme", path: "/srv/app/readme", isDir: false },
+      ],
+    };
+    hoisted.sftpList.mockImplementation(async (_s: string, p: string) => listing[p] ?? []);
     await compareWith(tree([]), tree([]), async () => {
       await fireEvent.click(screen.getByRole("button", { name: "Choose remote folder" }));
-      await fireEvent.click(await screen.findByRole("button", { name: "web" }));
-      await waitFor(() => expect(screen.getByText("No subfolders here")).toBeTruthy());
+      // Opens at the dialog's folder with every ancestor expanded.
+      const picker = await screen.findByTestId("sync-remote-picker");
+      await waitFor(() => expect(within(picker).getByText("web")).toBeTruthy());
+      expect(within(picker).getByRole("treeitem", { selected: true }).textContent).toMatch(/app/);
       // Files are not offered — only folders are something to sync into.
-      expect(screen.queryByText("readme")).toBeNull();
-      await fireEvent.click(screen.getByRole("button", { name: "Use this folder" }));
+      expect(within(picker).queryByText("readme")).toBeNull();
+      await fireEvent.click(within(picker).getByText("web"));
+      await fireEvent.click(within(picker).getByRole("button", { name: "Use this folder" }));
+      expect(screen.queryByTestId("sync-remote-picker")).toBeNull();
     });
     await screen.findByTestId("sync-empty");
-    expect(hoisted.sftpHashTree).toHaveBeenCalledWith("sess", "/srv/app/web");
+    expect(hoisted.sftpHashTree).toHaveBeenCalledWith(
+      "sess",
+      "/srv/app/web",
+      expect.any(Array),
+      expect.any(String),
+    );
+  });
+
+  it("Escape backs out of the folder picker, not the sync dialog", async () => {
+    hoisted.sftpHome.mockResolvedValue("/home/me");
+    hoisted.sftpList.mockResolvedValue([]);
+    const onclose = vi.fn();
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/srv", onclose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose remote folder" }));
+    await screen.findByTestId("sync-remote-picker");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByTestId("sync-remote-picker")).toBeNull());
+    expect(onclose).not.toHaveBeenCalled();
+  });
+
+  it("asks before abandoning a compare, then really stops it", async () => {
+    hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
+    hoisted.localHashTree.mockReturnValue(new Promise(() => {}));
+    hoisted.sftpHashTree.mockReturnValue(new Promise(() => {}));
+    const onclose = vi.fn();
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/srv", onclose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose local folder" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByText("Stop comparing?")).toBeTruthy();
+    expect(onclose).not.toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByTestId("confirm"));
+    expect(onclose).toHaveBeenCalledOnce();
+    // Both sides' backend walks get their own stop flag.
+    const localId = hoisted.localHashTree.mock.calls[0][2];
+    const remoteId = hoisted.sftpHashTree.mock.calls[0][3];
+    expect(localId).not.toBe(remoteId);
+    expect(hoisted.sftpCancel).toHaveBeenCalledWith(localId);
+    expect(hoisted.sftpCancel).toHaveBeenCalledWith(remoteId);
+  });
+
+  it("keeps working when the stop is declined", async () => {
+    hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
+    hoisted.localHashTree.mockReturnValue(new Promise(() => {}));
+    hoisted.sftpHashTree.mockReturnValue(new Promise(() => {}));
+    const onclose = vi.fn();
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/srv", onclose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose local folder" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await fireEvent.click(screen.getByLabelText("Close"));
+    await screen.findByText("Stop comparing?");
+    await userEvent.keyboard("{Escape}"); // backs out of the confirm only
+    await waitFor(() => expect(screen.queryByText("Stop comparing?")).toBeNull());
+    expect(onclose).not.toHaveBeenCalled();
+    expect(hoisted.sftpCancel).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Comparing…" })).toBeTruthy();
+  });
+
+  it("asks before abandoning a run and stops it by its run id", async () => {
+    hoisted.sftpSyncApply.mockReturnValue(new Promise(() => {}));
+    const onclose = vi.fn();
+    hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
+    hoisted.localHashTree.mockResolvedValue(tree([{ path: "a.txt", sha256: "1" }]));
+    hoisted.sftpHashTree.mockResolvedValue(tree([]));
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/srv", onclose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose local folder" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await screen.findByTitle("a.txt");
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await fireEvent.click(screen.getByLabelText("Close"));
+    expect(await screen.findByText("Stop the sync?")).toBeTruthy();
+    await fireEvent.click(screen.getByTestId("confirm"));
+    expect(hoisted.sftpCancel).toHaveBeenCalledWith(hoisted.sftpSyncApply.mock.calls[0][1]);
+    expect(onclose).toHaveBeenCalledOnce();
+  });
+
+  it("drops the plan after a clean run, so re-opening doesn't redraw it", async () => {
+    hoisted.sftpSyncApply.mockResolvedValue({ uploaded: 1, downloaded: 0, deleted: 0, stopped: false });
+    hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
+    hoisted.localHashTree.mockResolvedValue(tree([{ path: "a.txt", sha256: "1" }]));
+    hoisted.sftpHashTree.mockResolvedValue(tree([]));
+    const onclose = vi.fn();
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/srv", onclose } });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose local folder" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    await screen.findByTitle("a.txt");
+    await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(onclose).toHaveBeenCalled());
+    expect(screen.queryByTitle("a.txt")).toBeNull();
   });
 
   it("does not retarget a compared plan when the panel moves while open", async () => {
@@ -235,5 +338,88 @@ describe("SyncModal", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
     await waitFor(() => expect(hoisted.sftpSyncApply).toHaveBeenCalled());
     expect(hoisted.sftpSyncApply.mock.calls[0][3]).toBe("/srv/app");
+  });
+
+  it("runs a compare in the background and reports when it's ready", async () => {
+    let finish: (v: unknown) => void = () => {};
+    hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
+    hoisted.localHashTree.mockReturnValue(new Promise((r) => (finish = r)));
+    hoisted.sftpHashTree.mockResolvedValue(tree([]));
+    const onclose = vi.fn();
+    const view = render(SyncModal, {
+      props: { open: true, sessionId: "sess", remotePath: "/srv", onclose },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Choose local folder" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+
+    // Counters while hashing, fed by `sync://scan`.
+    const id = hoisted.localHashTree.mock.calls[0][2] as string;
+    applyScanProgress({ id, files: 42 });
+    await waitFor(() => expect(screen.getByTestId("sync-scan").textContent).toMatch(/local: 42/));
+
+    await fireEvent.click(screen.getByRole("button", { name: /Run in background/ }));
+    expect(onclose).toHaveBeenCalledOnce();
+    expect(hoisted.sftpCancel).not.toHaveBeenCalled(); // background ≠ stop
+    await view.rerender({ open: false, sessionId: "sess", remotePath: "/srv", onclose });
+
+    finish(tree([{ path: "a.txt", sha256: "1" }]));
+    await waitFor(() =>
+      expect(toastsState.list.some((x) => /comparison finished: 1 changes/.test(x.message))).toBe(true),
+    );
+    // Re-opening shows the plan the background compare produced.
+    await view.rerender({ open: true, sessionId: "sess", remotePath: "/srv", onclose });
+    expect(await screen.findByTitle("a.txt")).toBeTruthy();
+  });
+
+  it("keeps the job across a remount of the panel (terminal-tab switch)", async () => {
+    await compareWith(tree([{ path: "a.txt", sha256: "1" }]), tree([]));
+    await screen.findByTitle("a.txt");
+    cleanup();
+    render(SyncModal, { props: { open: true, sessionId: "sess", remotePath: "/elsewhere" } });
+    expect(screen.getByTitle("a.txt")).toBeTruthy();
+    // The compared plan keeps its folder; the panel having moved doesn't retarget it.
+    expect(screen.getByTitle("/srv/app")).toBeTruthy();
+  });
+
+  it("renders only a window of a huge plan", async () => {
+    const many = Array.from({ length: 5000 }, (_, i) => ({ path: `f${i}`, sha256: "1" }));
+    await compareWith(tree(many), tree([]));
+    await screen.findByTitle("f0");
+    const rows = screen.getByTestId("sync-plan").querySelectorAll("[title]");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.length).toBeLessThan(100);
+  });
+
+  it("filters the plan by op and by top-level folder", async () => {
+    await compareWith(
+      tree([
+        { path: "src/a", sha256: "1" },
+        { path: "docs/b", sha256: "1" },
+      ]),
+      tree([{ path: "old/c", sha256: "1" }]),
+      async () => {
+        await fireEvent.click(screen.getByLabelText(/Delete files missing/));
+      },
+    );
+    await screen.findByTitle("src/a");
+    await fireEvent.click(screen.getByRole("button", { name: /^Delete 1/ }));
+    expect(screen.queryByTitle("src/a")).toBeNull();
+    expect(screen.getByTitle("old/c")).toBeTruthy();
+
+    await fireEvent.click(screen.getByRole("button", { name: /^All/ }));
+    await fireEvent.click(screen.getByRole("button", { name: "Folders (3)" }));
+    await fireEvent.click(within(screen.getByTestId("sync-folders")).getByText("docs"));
+    expect(screen.getByTitle("docs/b")).toBeTruthy();
+    expect(screen.queryByTitle("src/a")).toBeNull();
+  });
+
+  it("won't start a second run while another tab's sync holds the progress feed", async () => {
+    const { syncRunOwner, syncJob } = await import("./stores/syncjob.svelte");
+    syncJob("other").applying = true;
+    syncRunOwner.sessionId = "other";
+    await compareWith(tree([{ path: "a.txt", sha256: "1" }]), tree([]));
+    await screen.findByTitle("a.txt");
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByTestId("sync-block-reason").textContent).toMatch(/Another tab is syncing/);
   });
 });
