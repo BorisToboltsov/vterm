@@ -105,6 +105,17 @@ describe("StatusBar — compact (default)", () => {
     vi.useRealTimers();
   });
 
+  it("sizes the uptime slot for its longest form so it never spills into the divider", async () => {
+    fetchMetrics.mockResolvedValue({ ...linux, uptimeSecs: 999 * 86400 + 23 * 3600 });
+    render(StatusBar, { props: { sessionId: "up" } });
+    await screen.findByTestId("bar-os");
+    const el = screen.getByText("999d 23h");
+    // A px-width box (the old w-[40px]) let "12d 3h" overflow; `ch` scales with the font.
+    expect(el.className).toMatch(/\bw-\[8ch\]/);
+    expect(el.className).not.toMatch(/w-\[\d+px\]/);
+    expect(el.className).toContain("whitespace-nowrap");
+  });
+
   it("shows real RAM used/total in the hover tooltip, not a static label", async () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "ram" } });

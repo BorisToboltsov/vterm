@@ -38,6 +38,8 @@
     parseStashes,
     buildGraph,
     isDestructive,
+    needsConfirm,
+    formatGitCommand,
     isUncommittedChangesError,
     isRemoteConnectionError,
     parseSyncResult,
@@ -47,6 +49,7 @@
     type GitBranch,
     type GitStashEntry,
     type DiffLine,
+    type GitRunOpts,
   } from "./git";
   import { rememberSub, storedSub } from "./stores/dockstate.svelte";
   import { untrack } from "svelte";
@@ -80,7 +83,7 @@
     onOpenDiff?: (absPath: string, gitBase: string) => void;
     /** Append a pattern to the repo's `.gitignore` (absolute path + pattern). */
     onIgnore?: (gitignorePath: string, pattern: string) => void;
-    /** Active tab is a prod-tagged server — destructive git ops need confirmation. */
+    /** Active tab is a prod-tagged server — the confirm dialog adds a red warning. */
     prod?: boolean;
     /** SSH tab is connected (local tabs are always ready). */
     sessionReady?: boolean;
@@ -112,13 +115,17 @@
   let diffTitle = $state("");
   let diffLines = $state<DiffLine[]>([]);
 
-  // Confirm dialog (prod destructive gate) — a pending resolver pattern.
+  // Confirm dialog — a pending resolver pattern. Asked on every server for ops
+  // `needsConfirm` flags; a prod tab adds the red warning. `confirmDanger`
+  // paints the button red for ops that lose work (`isDestructive`).
   let confirmOpen = $state(false);
   let confirmText = $state("");
+  let confirmDanger = $state(false);
   let confirmResolve: ((ok: boolean) => void) | null = null;
 
-  function askConfirm(text: string): Promise<boolean> {
+  function askConfirm(text: string, danger: boolean): Promise<boolean> {
     confirmText = text;
+    confirmDanger = danger;
     confirmOpen = true;
     return new Promise((resolve) => (confirmResolve = resolve));
   }
@@ -142,7 +149,9 @@
   async function retryPending(successKey: string) {
     const args = dirtyArgs;
     dirtyArgs = null;
-    if (args && (await run(args))) notifySuccess(t(successKey as Parameters<typeof t>[0]));
+    // The user confirmed this op before it bounced off the dirty tree, and chose
+    // how to clear it in the dialog — don't ask a second time.
+    if (args && (await run(args, { confirmed: true }))) notifySuccess(t(successKey as Parameters<typeof t>[0]));
   }
 
   async function stashAndRetry() {
@@ -175,16 +184,16 @@
     return gitRun(sessionId, cwd, args);
   }
 
-  /** Mutating git call: prod-confirm, optional terminal echo, then reload. */
-  async function run(
-    args: string[],
-    opts: { destructive?: boolean; echo?: boolean; successKey?: string } = {},
-  ): Promise<boolean> {
+  /** Ask before an op `needsConfirm` flags (any server). False = declined. */
+  async function confirmOp(args: string[], opts: GitRunOpts): Promise<boolean> {
+    if (opts.confirmed || !(opts.destructive || needsConfirm(args))) return true;
+    return askConfirm(opts.confirmText ?? formatGitCommand(args), !!opts.destructive || isDestructive(args));
+  }
+
+  /** Mutating git call: confirm, optional terminal echo, then reload. */
+  async function run(args: string[], opts: GitRunOpts = {}): Promise<boolean> {
     if (!cwd || busy) return false;
-    if (prod && (opts.destructive || isDestructive(args))) {
-      const ok = await askConfirm(`git ${args.join(" ")}`);
-      if (!ok) return false;
-    }
+    if (!(await confirmOp(args, opts))) return false;
     busy = true;
     try {
       if (opts.echo && sendToTerminal) {
@@ -240,6 +249,7 @@
    */
   async function syncRun(kind: SyncKind, args: string[]) {
     if (!cwd || busy) return;
+    if (!(await confirmOp(args, {}))) return;
     clearTimeout(syncClearTimer);
     remoteError = null;
     syncOp = { kind, running: true, message: runningLabel(kind) };
@@ -483,13 +493,17 @@
 
 <ConfirmDialog
   open={confirmOpen}
-  title={t("git.confirmProdTitle")}
+  title={t("git.confirmTitle")}
   confirmLabel={t("common.ok")}
+  danger={confirmDanger || prod}
   onconfirm={() => settleConfirm(true)}
   oncancel={() => settleConfirm(false)}
 >
-  {t("git.confirmProdBody")}
+  {t("git.confirmBody")}
   <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-text/80">{confirmText}</code>
+  {#if prod}
+    <span class="mt-1 block text-meta text-danger">{t("git.confirmProdWarn")}</span>
+  {/if}
 </ConfirmDialog>
 
 <Modal

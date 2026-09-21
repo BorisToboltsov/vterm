@@ -478,7 +478,7 @@
             role="button"
             tabindex="-1"
             style="padding-left: {row.depth * 16}px"
-            class="group relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
+            class="group @container relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
             row.server.id
               ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'
               : 'border-transparent'} {dragKind === 'server' && dragId === row.server.id
@@ -500,7 +500,10 @@
                    right edge) so the hover action buttons never overlap them. One
                    dot per open SSH tab, overlapping, coloured by status with a thin
                    tonal ring; a connecting tab's dot gently pulses. -->
-              <div class="flex min-w-0 items-center gap-1.5">
+              <!-- On a wide row the alias line also reserves room for the three
+                   hover actions (pr-10 on top of the row's pr-7), so they never
+                   land on the name; a narrow row shows one «⋯» that fits pr-7. -->
+              <div class="flex min-w-0 items-center gap-1.5 @min-[12rem]:pr-10">
                 <Icon
                   name={resolveServerIcon(row.server.icon)}
                   size={15}
@@ -540,8 +543,27 @@
                 </div>
               {/if}
             </div>
+            <!-- Narrow row (sidebar squeezed): one overflow button opening the
+                 same menu as right-click, so the actions never cover the alias. -->
             <div
-              class="invisible absolute right-1.5 top-1.5 flex items-center gap-1 group-hover:visible"
+              class="invisible absolute right-1.5 top-1.5 flex items-center group-hover:visible @min-[12rem]:hidden"
+              data-testid="server-actions-compact"
+            >
+              <button
+                class="rounded p-0.5 text-muted hover:text-accent"
+                use:tooltip={t("tree.serverActions")}
+                aria-label={t("tree.serverActions")}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  openServerMenu(e, row.server);
+                }}
+              >
+                <Icon name="dots" size={13} />
+              </button>
+            </div>
+            <div
+              class="invisible absolute right-1.5 top-1.5 hidden items-center gap-1 group-hover:visible @min-[12rem]:flex"
+              data-testid="server-actions-full"
             >
               <button
                 class="rounded p-0.5 text-muted hover:text-accent"

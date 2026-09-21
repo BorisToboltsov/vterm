@@ -53,6 +53,40 @@ beforeEach(() => {
   layout.leftCollapsed = false;
 });
 
+describe("ServerTree — row actions on a narrow sidebar", () => {
+  const props = () => ({ ...baseProps(), servers: [srv({ id: "a", alias: "prod-oel-db-master-01" })] });
+
+  it("collapses to one «⋯» button below the container breakpoint and shows the three icons above it", () => {
+    render(ServerTree, { props: props() });
+    const compact = screen.getByTestId("server-actions-compact");
+    const full = screen.getByTestId("server-actions-full");
+    // The row is the query container; exactly one of the two blocks is laid out.
+    expect(compact.closest('[data-testid="server-row"]')?.className).toContain("@container");
+    expect(compact.className).toMatch(/(^|\s)flex(\s|$)/);
+    expect(compact.className).toContain("@min-[12rem]:hidden");
+    expect(full.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(full.className).toContain("@min-[12rem]:flex");
+    // Both stay `invisible` until hover, so the row never jumps (reserved, not removed).
+    for (const el of [compact, full]) expect(el.className).toContain("group-hover:visible");
+  });
+
+  it("reserves room for the three icons on the alias line when the row is wide", () => {
+    render(ServerTree, { props: props() });
+    const alias = screen.getByText("prod-oel-db-master-01");
+    expect(alias.parentElement?.className).toContain("@min-[12rem]:pr-10");
+  });
+
+  it("the «⋯» button opens the server menu (edit / duplicate / delete) without selecting-and-connecting", async () => {
+    const onEditServer = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, { props: { ...props(), onEditServer, onConnect } });
+    await fireEvent.click(screen.getByRole("button", { name: "Server actions" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: /Edit server/ }));
+    expect(onEditServer).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+});
+
 describe("ServerTree", () => {
   it("renders an onboarding empty state with an add-server CTA", async () => {
     const onAddServer = vi.fn();
