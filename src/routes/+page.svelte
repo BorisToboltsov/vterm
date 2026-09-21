@@ -132,6 +132,7 @@
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
   import { applyProgress } from "$lib/stores/transfers.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
+  import { applyScanProgress, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
     recordingState,
     recordingPaused,
@@ -1073,6 +1074,10 @@
       applyProgress(e.payload);
       applySyncProgress(e.payload);
     }).then((u) => unlisteners.push(u));
+    // Sync compare counters (files hashed per side) → the session's sync job.
+    listen<{ id: string; files: number }>("sync://scan", (e) =>
+      applyScanProgress(e.payload),
+    ).then((u) => unlisteners.push(u));
     // "Open with vterm": files asked for at launch (drained now) and while running.
     takePendingOpens()
       .then((paths) => paths.forEach(handleOpenFile))
@@ -1224,6 +1229,7 @@
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
+    removeSyncJob(sessionId); // also stops a compare/run still going on
     delete followSeen[sessionId];
     nginxConfigCache.delete(sessionId);
     delete termStructured[sessionId];

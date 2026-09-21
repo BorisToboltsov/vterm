@@ -208,6 +208,20 @@ impl SshSession {
     /// Run a one-shot command on a dedicated exec channel and return its stdout.
     /// Used for lightweight metric polling without disturbing the interactive shell.
     pub async fn run_command(&self, command: &str) -> AppResult<String> {
+        let mut out: Vec<u8> = Vec::new();
+        self.run_command_streaming(command, |chunk| out.extend_from_slice(chunk))
+            .await?;
+        Ok(String::from_utf8_lossy(&out).into_owned())
+    }
+
+    /// [`run_command`](Self::run_command), handing each stdout chunk to `on_data`
+    /// as it arrives — for a long command whose progress the UI shows (hashing a
+    /// sync tree counts output lines). Chunks split lines arbitrarily.
+    pub async fn run_command_streaming(
+        &self,
+        command: &str,
+        mut on_data: impl FnMut(&[u8]),
+    ) -> AppResult<()> {
         let mut channel = self
             .handle
             .channel_open_session()
@@ -217,15 +231,14 @@ impl SshSession {
             .exec(true, command.as_bytes())
             .await
             .map_err(|e| format!("exec failed: {e}"))?;
-        let mut out: Vec<u8> = Vec::new();
         loop {
             match channel.wait().await {
-                Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                Some(ChannelMsg::Data { data }) => on_data(&data),
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
                 _ => {}
             }
         }
-        Ok(String::from_utf8_lossy(&out).into_owned())
+        Ok(())
     }
 
     /// Like [`run_command`](Self::run_command) but writes `stdin` to the command

@@ -31,6 +31,7 @@
   import { tooltip } from "./actions/tooltip";
   import FileBrowser from "./FileBrowser.svelte";
   import SyncModal from "./SyncModal.svelte";
+  import { isBusy, peekSyncJob } from "./stores/syncjob.svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -149,6 +150,7 @@
   collapseLabel={t("sftp.collapsePanel")}
   testPrefix="sftp"
   onSync={() => (showSync = true)}
+  syncActive={isBusy(peekSyncJob(sessionId))}
   {footer}
 />
 

@@ -1,3 +1,10 @@
+<script module lang="ts">
+  // Open modals, oldest first. A dialog can open another (sync → folder picker,
+  // any dialog → ConfirmDialog), and every one listens to Escape on the window:
+  // without a stack one key press closed the whole pile, not just the top one.
+  const openStack: object[] = [];
+</script>
+
 <script lang="ts">
   // Reusable modal shell: dimmed backdrop + centered card. Controlled via `open`
   // + `onclose` (backdrop click or Escape). Content is passed as children.
@@ -27,8 +34,19 @@
     children?: Snippet;
   } = $props();
 
+  const token = {};
+  $effect(() => {
+    if (!open) return;
+    openStack.push(token);
+    return () => {
+      const i = openStack.indexOf(token);
+      if (i >= 0) openStack.splice(i, 1);
+    };
+  });
+
   function onKey(e: KeyboardEvent) {
-    if (e.key === "Escape") onclose?.();
+    // Only the topmost open dialog answers Escape.
+    if (e.key === "Escape" && openStack[openStack.length - 1] === token) onclose?.();
   }
 
   // Accessibility: trap Tab within the dialog, focus the first control on open,

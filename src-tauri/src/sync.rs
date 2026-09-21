@@ -295,6 +295,120 @@ pub fn shell_quote(s: &str) -> String {
 pub struct HashTree {
     pub entries: Vec<HashEntry>,
     pub skipped: u32,
+    /// Files and folders the walk left out by an exclude pattern (a pruned folder
+    /// counts once — its contents were never visited, which is the point).
+    pub excluded: u32,
+}
+
+/// The exclude patterns a walk can apply **without** changing what the frontend
+/// keeps. `compileExclude` in sync.ts still filters the result; pruning here only
+/// saves the time spent hashing `node_modules` and `.git` just to throw them away.
+/// So only patterns whose meaning is identical on both sides are taken:
+///
+/// * no slash — a glob matched against one path segment (`*`/`?`, the rest
+///   literal): a folder whose name matches is pruned (every path below it has
+///   that segment), a file whose name matches is skipped;
+/// * with a slash — only a literal path (no wildcards), pruned when it matches
+///   exactly. A globbed path is left to the frontend: `find -path` lets `*` cross
+///   `/`, and pruning more than the frontend excludes would make those files look
+///   "missing on this side" — an upload, or a delete with delete-extraneous on.
+#[derive(Debug, Default, Clone)]
+pub struct ExcludeSet {
+    names: Vec<String>,
+    paths: Vec<String>,
+}
+
+impl ExcludeSet {
+    pub fn new(patterns: &[String]) -> Self {
+        let mut set = ExcludeSet::default();
+        for p in patterns.iter().map(|p| p.trim()).filter(|p| !p.is_empty()) {
+            if !p.contains('/') {
+                set.names.push(p.to_string());
+            } else {
+                let lit = p.trim_start_matches('/').trim_end_matches('/');
+                if !lit.is_empty() && !lit.contains(['*', '?']) {
+                    set.paths.push(lit.to_string());
+                }
+            }
+        }
+        set
+    }
+
+    /// Whether the walk may leave out `rel` (a `/`-separated path under the root).
+    pub fn skips(&self, rel: &str) -> bool {
+        let name = rel.rsplit('/').next().unwrap_or(rel);
+        self.names.iter().any(|g| glob_match(g, name)) || self.paths.iter().any(|p| p == rel)
+    }
+
+    /// The `find` prefix that prunes the same set and prints each pruned path
+    /// (counted as `excluded`), or "" when there is nothing to prune.
+    pub fn find_prune(&self) -> String {
+        let mut tests: Vec<String> = self
+            .names
+            .iter()
+            .map(|g| format!("-name {}", shell_quote(&find_literal(g))))
+            .collect();
+        tests.extend(
+            self.paths
+                .iter()
+                .map(|p| format!("-path {}", shell_quote(&find_literal(&format!("./{p}"))))),
+        );
+        if tests.is_empty() {
+            return String::new();
+        }
+        format!("\\( {} \\) -prune -print -o", tests.join(" -o "))
+    }
+}
+
+/// `*` and `?` stay wildcards for `find`; `[`, `]` and `\\` are literal on our side
+/// (sync.ts escapes them), so escape them for `find` too.
+fn find_literal(glob: &str) -> String {
+    let mut out = String::with_capacity(glob.len());
+    for c in glob.chars() {
+        if matches!(c, '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Match one path segment against a glob: `*` any run, `?` one char, all else literal.
+fn glob_match(pat: &str, s: &str) -> bool {
+    let (p, t): (Vec<char>, Vec<char>) = (pat.chars().collect(), s.chars().collect());
+    let (mut pi, mut ti, mut star, mut mark) = (0usize, 0usize, None::<usize>, 0usize);
+    while ti < t.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == t[ti]) {
+            pi += 1;
+            ti += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if let Some(sp) = star {
+            pi = sp + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|&c| c == '*')
+}
+
+/// How many files a sync-tree hash has got through, for the dialog's counter.
+/// Its own channel (`sync://scan`): a file count with no total is not a transfer,
+/// and on `sftp://progress` it would show up in the transfers list.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgress<'a> {
+    pub id: &'a str,
+    pub files: u64,
+}
+
+pub fn emit_scan(app: &AppHandle, id: &str, files: u64) {
+    use tauri::Emitter;
+    let _ = app.emit("sync://scan", ScanProgress { id, files });
 }
 
 /// Printed by the remote hash script when `cd` into the folder (or reading it) fails.
@@ -317,23 +431,46 @@ const HASH_DONE: &str = "__VTERM_HASH_OK__";
 /// completion marker closes the listing so a cut-short run is distinguishable
 /// from a short tree. Runs under `sh -c` so a fish/csh login shell can't change
 /// the syntax.
-pub fn remote_hash_command(dir: &str) -> String {
+pub fn remote_hash_command(dir: &str, excludes: &ExcludeSet) -> String {
     let d = shell_quote(dir);
+    let prune = excludes.find_prune();
     let script = format!(
         "cd -- {d} 2>/dev/null && test -r . || {{ echo {HASH_NO_DIR}; exit 0; }}; \
          if command -v sha256sum >/dev/null 2>&1; then h='sha256sum'; \
          elif command -v shasum >/dev/null 2>&1; then h='shasum -a 256'; \
          else echo {HASH_NO_TOOL}; exit 0; fi; \
-         {{ find . -type f -exec $h {{}} + 2>&1 1>&3 | sed 's/^/{HASH_ERR} /'; }} 3>&1; \
+         {{ find . {prune} -type f -exec $h {{}} + 2>&1 1>&3 | sed 's/^/{HASH_ERR} /'; }} 3>&1; \
          echo {HASH_DONE}"
     );
     format!("sh -c {}", shell_quote(&script))
+}
+
+/// Await `fut`, giving up with [`AppError::Cancelled`] as soon as `cancel` is set
+/// (checked every 100 ms). Dropping the future closes the exec channel, so a
+/// remote `find | sha256sum` over a huge tree stops instead of running on after
+/// the user closed the dialog.
+pub async fn until_cancelled<T>(
+    fut: impl std::future::Future<Output = AppResult<T>>,
+    cancel: &AtomicBool,
+) -> AppResult<T> {
+    tokio::pin!(fut);
+    loop {
+        tokio::select! {
+            r = &mut fut => return r,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                if cancel.load(Ordering::Relaxed) {
+                    return Err(AppError::Cancelled);
+                }
+            }
+        }
+    }
 }
 
 /// Read the output of [`remote_hash_command`] for `dir`: the hashes, the count of
 /// unreadable items, or the typed reason the tree could not be listed at all.
 pub fn parse_hash_output(dir: &str, out: &str) -> AppResult<HashTree> {
     let mut skipped = 0u32;
+    let mut excluded = 0u32;
     let mut done = false;
     for line in out.lines().map(|l| l.trim_end_matches('\r')) {
         if line == HASH_NO_DIR {
@@ -344,6 +481,9 @@ pub fn parse_hash_output(dir: &str, out: &str) -> AppResult<HashTree> {
         }
         if line.starts_with(HASH_ERR) {
             skipped += 1;
+        } else if line.starts_with("./") {
+            // A path `-prune -print` wrote: an excluded file or folder.
+            excluded += 1;
         }
         done = line == HASH_DONE;
     }
@@ -353,6 +493,7 @@ pub fn parse_hash_output(dir: &str, out: &str) -> AppResult<HashTree> {
     Ok(HashTree {
         entries: parse_hashsum(out),
         skipped,
+        excluded,
     })
 }
 
@@ -769,7 +910,7 @@ mod tests {
 
     #[test]
     fn remote_hash_command_quotes_and_falls_back() {
-        let cmd = remote_hash_command("/etc/nginx");
+        let cmd = remote_hash_command("/etc/nginx", &ExcludeSet::default());
         assert!(cmd.starts_with("sh -c "));
         // The script is itself one quoted `sh -c` token, so the path's own quotes
         // come out escaped; the live `hash_script_*` tests prove it still resolves.
@@ -798,6 +939,24 @@ mod tests {
     fn parse_hashsum_skips_non_hex_and_empty() {
         let bad = format!("{}  ./x\n", "z".repeat(64));
         assert!(parse_hashsum(&bad).is_empty());
+    }
+
+    #[tokio::test]
+    async fn until_cancelled_stops_a_pending_future() {
+        let flag = Arc::new(AtomicBool::new(false));
+        let f2 = flag.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            f2.store(true, Ordering::Relaxed);
+        });
+        let never = std::future::pending::<AppResult<()>>();
+        assert!(matches!(
+            until_cancelled(never, &flag).await.unwrap_err(),
+            AppError::Cancelled
+        ));
+        // A finished future wins over an unset flag.
+        let ok = until_cancelled(async { Ok(7) }, &AtomicBool::new(false)).await;
+        assert_eq!(ok.unwrap(), 7);
     }
 
     #[test]
@@ -837,10 +996,10 @@ mod tests {
     /// Run the real script through a real `sh` — the stream swap, the `test -r`
     /// precedence and the quoting are exactly the parts a string assertion can't see.
     #[cfg(unix)]
-    fn run_hash_script(dir: &str) -> AppResult<HashTree> {
+    fn run_hash_script(dir: &str, excl: &[String]) -> AppResult<HashTree> {
         let out = std::process::Command::new("sh")
             .arg("-c")
-            .arg(remote_hash_command(dir))
+            .arg(remote_hash_command(dir, &ExcludeSet::new(excl)))
             .output()
             .expect("sh runs");
         parse_hash_output(dir, &String::from_utf8_lossy(&out.stdout))
@@ -854,7 +1013,7 @@ mod tests {
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("a.txt"), b"hello").unwrap();
         std::fs::write(root.join("sub/with space.txt"), b"x").unwrap();
-        let tree = run_hash_script(root.to_str().unwrap()).unwrap();
+        let tree = run_hash_script(root.to_str().unwrap(), &[]).unwrap();
         let mut paths: Vec<_> = tree.entries.iter().map(|e| e.path.as_str()).collect();
         paths.sort();
         assert_eq!(paths, ["a.txt", "sub/with space.txt"]);
@@ -871,15 +1030,89 @@ mod tests {
         let empty = tmp.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
         assert_eq!(
-            run_hash_script(empty.to_str().unwrap()).unwrap(),
+            run_hash_script(empty.to_str().unwrap(), &[]).unwrap(),
             HashTree::default()
         );
 
         let missing = tmp.path().join("nope");
         assert!(matches!(
-            run_hash_script(missing.to_str().unwrap()).unwrap_err(),
+            run_hash_script(missing.to_str().unwrap(), &[]).unwrap_err(),
             AppError::SyncDirUnreadable(_)
         ));
+    }
+
+    fn pats(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn exclude_set_takes_only_patterns_that_mean_the_same_on_both_sides() {
+        let x = ExcludeSet::new(&pats(&[
+            ".git",
+            "*.tfstate",
+            "/build/out/",
+            "a/*",
+            " ",
+            "a?c",
+        ]));
+        assert!(x.skips(".git"));
+        assert!(x.skips("sub/.git")); // any segment
+        assert!(x.skips("env/prod.tfstate"));
+        assert!(x.skips("build/out"));
+        assert!(!x.skips("build/out2"));
+        assert!(x.skips("abc") && !x.skips("abbc"));
+        // A globbed path is the frontend's job — find's `*` would cross `/`.
+        assert!(!x.skips("a/b"));
+        // Brackets are literal, as in sync.ts.
+        assert!(ExcludeSet::new(&pats(&["[x]"])).skips("[x]"));
+        assert!(!ExcludeSet::new(&pats(&["[x]"])).skips("x"));
+        assert_eq!(ExcludeSet::new(&[]).find_prune(), "");
+    }
+
+    #[test]
+    fn glob_match_handles_stars_and_marks() {
+        assert!(glob_match("*", ""));
+        assert!(glob_match("*.log", "a.log"));
+        assert!(!glob_match("*.log", "a.logx"));
+        assert!(glob_match("a*b*c", "axxbyyc"));
+        assert!(!glob_match("a*b*c", "axxbyy"));
+        assert!(glob_match("?.txt", "a.txt") && !glob_match("?.txt", "ab.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_script_prunes_excluded_folders_and_counts_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let r = tmp.path();
+        for d in [
+            "node_modules/pkg",
+            ".git/objects",
+            "src",
+            "build/out",
+            "a/b",
+            "[x]",
+        ] {
+            std::fs::create_dir_all(r.join(d)).unwrap();
+        }
+        for f in [
+            "node_modules/pkg/i.js",
+            ".git/objects/o",
+            "src/main.rs",
+            "src/debug.log",
+            "build/out/app",
+            "a/b/c",
+            "[x]/y",
+        ] {
+            std::fs::write(r.join(f), b"x").unwrap();
+        }
+        let excl = pats(&["node_modules", ".git", "*.log", "build/out", "a/*", "[x]"]);
+        let tree = run_hash_script(r.to_str().unwrap(), &excl).unwrap();
+        let mut paths: Vec<_> = tree.entries.iter().map(|e| e.path.as_str()).collect();
+        paths.sort();
+        // `a/*` is globbed with a slash: not pruned here, filtered by the frontend.
+        assert_eq!(paths, ["a/b/c", "src/main.rs"]);
+        // node_modules, .git, debug.log, build/out, [x] — one each.
+        assert_eq!(tree.excluded, 5);
     }
 
     #[cfg(unix)]
@@ -892,7 +1125,7 @@ mod tests {
         std::fs::write(locked.join("f"), b"x").unwrap();
         std::fs::write(tmp.path().join("ok"), b"y").unwrap();
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let tree = run_hash_script(tmp.path().to_str().unwrap());
+        let tree = run_hash_script(tmp.path().to_str().unwrap(), &[]);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         let tree = tree.unwrap();
         // Root can read everything anyway; only assert when the lock actually held.

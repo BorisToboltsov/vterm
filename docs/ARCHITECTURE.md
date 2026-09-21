@@ -91,6 +91,7 @@
 |-------|-----------|-----------|
 | `term://out\|closed\|phase/{id}` | [ssh.rs](../src-tauri/src/ssh.rs), [pty.rs](../src-tauri/src/pty.rs) | Поток PTY, закрытие сессии, **реальные** фазы подключения (`connecting`→`authenticating`→`session` + подстадии прокси) |
 | `sftp://progress` | [sftp.rs](../src-tauri/src/sftp.rs), [sync.rs](../src-tauri/src/sync.rs) | Прогресс передачи по id переноса (у синхронизации id детерминированный — `sync:<путь>`) |
+| `sync://scan` | [sync.rs](../src-tauri/src/sync.rs) | Сколько файлов уже прохэшировано при сравнении синхронизации (`{id, files}`, id = `<сравнение>:local`/`:remote`); счётчик без итога, поэтому не на `sftp://progress` |
 | `ai://out\|think\|done\|error/{id}` | [ai.rs](../src-tauri/src/ai.rs) | Токены ответа · рассуждение модели (отдельно, в `content` не попадает) · счёт токенов · ошибка |
 | `menu://…` | нативное меню (Rust) | `about`/`help`/`manual`/`monitoring`/`settings` |
 | `install://out` | [servertools.rs](../src-tauri/src/servertools.rs) | Вывод установки серверного инструмента (линтеры) |
@@ -103,7 +104,7 @@
 |------|-----|---------|
 | Оркестратор | [+page.svelte](../src/routes/+page.svelte) | Вкладки, доки, модалки, маршрутизация событий. Единственный, кто знает про всё сразу |
 | Компоненты | `src/lib/*.svelte` (91) | Панели, модалки, примитивы (`Modal`, `ConfirmDialog`, `ContextMenu`, `PasswordInput`, `Icon`, `CopyButton`) |
-| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout`, `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `recordings`, `toasts`, `hostenv`, `dockstate` (что панели правого дока помнят по `sessionId`, в т.ч. общий рабочий каталог дока, который читает git); настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
+| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout`, `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `syncjob` (синхронизация сессии: форма, план, сравнение/прогон — переживает закрытие окна), `recordings`, `toasts`, `hostenv`, `dockstate` (что панели правого дока помнят по `sessionId`, в т.ч. общий рабочий каталог дока, который читает git); настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
 | Чистая логика | `src/lib/*.ts` (89) | Сборка argv, парсеры, валидация, раскладки. Без DOM и сети → тесты дешёвые |
 | API | [src/lib/api/](../src/lib/api/) | `core`/`servers`/`session`/`files`/`git`/`container`/`kube`/`probe`/`recording`/`ai` + barrel |
 | Действия | `src/lib/actions/` | `drag`, `tooltip`, `mdlinks`, `clipboardKeys` |
@@ -141,7 +142,7 @@
 |-----------|--------|------------------|----|---------------|
 | **Терминал** | `ssh.rs`, `pty.rs` | `connect_plan`/`connect_session`/`open_local_terminal`/`write_to_terminal`/`resize_pty`/`disconnect` · `term://` | `Terminal.svelte`, `ConnectingOverlay` | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `broadcast`, `termzoom`, `osc` |
 | **Серверы и папки** | `servers.rs`, `folders.rs`, `store.rs`, `secrets.rs`, `backup.rs` | `list_servers`/`add_server`/…/`export_backup`/`import_backup` | `ServerTree`, `ServerFormModal`, `FolderModals`, `SecretPrompt` | `tree`, `serverform`, `servericons`, `notes`, `storewarn` |
-| **SFTP и файлы** | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs` | `sftp_*`, `local_*`, `sftp_sync_apply`, `sftp_grep` · `sftp://progress` | `FileBrowser` + тонкие `SftpPanel`/`LocalFilePanel`, `SyncModal` (+ `SyncRemotePicker`) | `filebrowser`, `fspath`, `sync`, `filekeys`, `filemove`, `multiselect`, `fileicon`, `lscolors`, `transfer`, `virtuallist` |
+| **SFTP и файлы** | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs` | `sftp_*`, `local_*`, `sftp_sync_apply`, `sftp_grep` · `sftp://progress`, `sync://scan` | `FileBrowser` + тонкие `SftpPanel`/`LocalFilePanel`, `SyncModal` (+ `SyncRemotePicker`) | `filebrowser`, `fspath`, `sync`, `remotetree`, `filekeys`, `filemove`, `multiselect`, `fileicon`, `lscolors`, `transfer`, `virtuallist` |
 | **Редактор конфигов** | `sftp.rs`/`localfile.rs` (чтение-запись), `textenc.rs`, `servertools.rs` | `sftp_read_text`/`write_text`, `lint_remote`, `nginx_config_files`, `server_tools_status`, `run_tool_install` · `install://out` | `EditorTab`, `DiffModal` | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cmtheme`, `cspnonce`, `snippets` |
 | **Мониторинг** | `metrics/mod.rs`, `metrics/local.rs` | `fetch_metrics`/`fetch_metrics_detail`/`fetch_pending_updates`/`fetch_extras` | `StatusBar`, `MonitoringOverlay`, `Chart`, `Sparkline`, `StackedBar` | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` |
 | **Запись сессий** | `recording.rs` | `start_recording`/`stop_recording`/`export_recording`/… | `RecordingsPanel`, плеер | `recording`, `recgroup`, `airunbook`, `aiscript` |

@@ -83,6 +83,8 @@
     sessionKey = null,
     /** Open the directory-sync dialog (SFTP only; the wrapper owns the modal). */
     onSync,
+    /** A sync compare/run for this session is going on (possibly in the background). */
+    syncActive = false,
     /** Extra footer content, e.g. the SFTP transfers list. */
     footer,
   }: {
@@ -111,6 +113,7 @@
     visible?: boolean;
     sessionKey?: string | null;
     onSync?: () => void;
+    syncActive?: boolean;
     footer?: Snippet;
   } = $props();
 
@@ -957,13 +960,18 @@
               </button>
             {/if}
             {#if onSync}
+              <!-- A compare or run going on in the background shows here: the
+                   button reopens its dialog. -->
               <button
-                class="flex items-center rounded p-1.5 text-muted hover:text-accent"
-                use:tooltip={t("sync.button")}
-                aria-label={t("sync.button")}
+                data-testid="{testPrefix}-sync"
+                class="flex items-center rounded p-1.5 hover:text-accent {syncActive
+                  ? 'text-accent'
+                  : 'text-muted'}"
+                use:tooltip={syncActive ? t("sync.runningButton") : t("sync.button")}
+                aria-label={syncActive ? t("sync.runningButton") : t("sync.button")}
                 onclick={() => onSync?.()}
               >
-                <Icon name="sync" size={14} />
+                <Icon name="sync" size={14} class={syncActive ? "animate-spin" : ""} />
               </button>
             {/if}
             {#if adapter.upload}

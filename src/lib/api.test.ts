@@ -178,10 +178,19 @@ describe("invoke wrappers pass the right command + args", () => {
 
   it("directory sync commands", async () => {
     invoke.mockResolvedValue([]);
-    await api.sftpHashTree("sess", "/srv/app");
-    expect(invoke).toHaveBeenCalledWith("sftp_hash_tree", { sessionId: "sess", path: "/srv/app" });
-    await api.localHashTree("/home/me/app");
-    expect(invoke).toHaveBeenCalledWith("local_hash_tree", { path: "/home/me/app" });
+    await api.sftpHashTree("sess", "/srv/app", [".git"], "c1:remote");
+    expect(invoke).toHaveBeenCalledWith("sftp_hash_tree", {
+      sessionId: "sess",
+      path: "/srv/app",
+      excludes: [".git"],
+      cancelId: "c1:remote",
+    });
+    await api.localHashTree("/home/me/app", [".git"], "c1:local");
+    expect(invoke).toHaveBeenCalledWith("local_hash_tree", {
+      path: "/home/me/app",
+      excludes: [".git"],
+      cancelId: "c1:local",
+    });
     const actions = [{ path: "a.txt", op: "upload" as const, reason: "new" as const }];
     await api.sftpSyncApply("sess", "run-1", "/home/me/app", "/srv/app", actions);
     expect(invoke).toHaveBeenCalledWith("sftp_sync_apply", {

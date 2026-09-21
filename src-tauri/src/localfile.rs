@@ -160,13 +160,41 @@ async fn copy_recursive(from: &Path, to: &Path) -> AppResult<()> {
 /// A root that can't be listed is an error, not an empty tree: empty plans "upload
 /// everything" / "delete everything on the other side". Unreadable items below the
 /// root are skipped but **counted**, so the dialog can say the plan is partial.
-pub async fn hash_tree(root: &str) -> AppResult<crate::sync::HashTree> {
+///
+/// `excludes` prunes during the walk (see [`crate::sync::ExcludeSet`] for why only
+/// some patterns qualify). Files are read in chunks — never whole into memory — by
+/// a few worker threads; `progress` counts files done for the dialog's counter, and
+/// `cancel` is checked between files and between chunks of a large one.
+pub async fn hash_tree(
+    root: &str,
+    excludes: crate::sync::ExcludeSet,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    progress: std::sync::Arc<std::sync::atomic::AtomicU64>,
+) -> AppResult<crate::sync::HashTree> {
+    let root = root.to_string();
+    tokio::task::spawn_blocking(move || hash_tree_blocking(&root, &excludes, &cancel, &progress))
+        .await
+        .map_err(|e| AppError::Message(e.to_string()))?
+}
+
+fn hash_tree_blocking(
+    root: &str,
+    excludes: &crate::sync::ExcludeSet,
+    cancel: &std::sync::atomic::AtomicBool,
+    progress: &std::sync::atomic::AtomicU64,
+) -> AppResult<crate::sync::HashTree> {
+    use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+    let stopped = || cancel.load(Ordering::Relaxed);
     let root_path = Path::new(root);
-    let mut out = Vec::new();
+    let mut files: Vec<(PathBuf, String)> = Vec::new();
     let mut skipped = 0u32;
+    let mut excluded = 0u32;
     let mut stack = vec![root_path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let mut rd = match tokio::fs::read_dir(&dir).await {
+        if stopped() {
+            return Err(AppError::Cancelled);
+        }
+        let rd = match std::fs::read_dir(&dir) {
             Ok(r) => r,
             Err(_) if dir == root_path => {
                 return Err(AppError::SyncDirUnreadable(root.to_string()));
@@ -176,16 +204,12 @@ pub async fn hash_tree(root: &str) -> AppResult<crate::sync::HashTree> {
                 continue;
             }
         };
-        loop {
-            let entry = match rd.next_entry().await {
-                Ok(Some(e)) => e,
-                Ok(None) => break,
-                Err(_) => {
-                    skipped += 1;
-                    break;
-                }
+        for entry in rd {
+            let Ok(entry) = entry else {
+                skipped += 1;
+                continue;
             };
-            let Ok(ft) = entry.file_type().await else {
+            let Ok(ft) = entry.file_type() else {
                 skipped += 1;
                 continue;
             };
@@ -193,30 +217,98 @@ pub async fn hash_tree(root: &str) -> AppResult<crate::sync::HashTree> {
                 continue; // don't follow symlinks (cycles / surprising targets)
             }
             let p = entry.path();
+            let rel = p
+                .strip_prefix(root_path)
+                .unwrap_or(&p)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if excludes.skips(&rel) {
+                excluded += 1;
+                continue;
+            }
             if ft.is_dir() {
                 stack.push(p);
             } else if ft.is_file() {
-                let Ok(bytes) = tokio::fs::read(&p).await else {
-                    skipped += 1;
-                    continue;
-                };
-                let rel = p
-                    .strip_prefix(root_path)
-                    .unwrap_or(&p)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push(crate::sync::HashEntry {
-                    path: rel,
-                    sha256: sha256_hex(&bytes),
-                });
+                files.push((p, rel));
             }
         }
     }
+
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+    let next = AtomicUsize::new(0);
+    let unreadable = AtomicU32::new(0);
+    let mut hashed: Vec<(usize, String)> = Vec::with_capacity(files.len());
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut out = Vec::new();
+                    while !stopped() {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some((path, _)) = files.get(i) else {
+                            break;
+                        };
+                        match hash_file(path, cancel) {
+                            Ok(Some(h)) => out.push((i, h)),
+                            Ok(None) => break, // cancelled mid-file
+                            Err(_) => {
+                                unreadable.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                        progress.fetch_add(1, Ordering::Relaxed);
+                    }
+                    out
+                })
+            })
+            .collect();
+        for h in handles {
+            hashed.extend(h.join().unwrap_or_default());
+        }
+    });
+    if stopped() {
+        return Err(AppError::Cancelled);
+    }
+    let mut out: Vec<crate::sync::HashEntry> = hashed
+        .into_iter()
+        .map(|(i, sha256)| crate::sync::HashEntry {
+            path: files[i].1.clone(),
+            sha256,
+        })
+        .collect();
     out.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(crate::sync::HashTree {
         entries: out,
-        skipped,
+        skipped: skipped + unreadable.load(Ordering::Relaxed),
+        excluded,
     })
+}
+
+/// SHA-256 of one file, streamed in 256 KiB chunks. `Ok(None)` = cancelled.
+fn hash_file(
+    path: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> std::io::Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(None);
+        }
+        let n = f.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(Some(
+        h.finalize().iter().map(|b| format!("{b:02x}")).collect(),
+    ))
 }
 
 /// Unix permission bits of a file (None on non-unix or when unavailable).
@@ -558,29 +650,82 @@ pub async fn local_copy(from: String, to: String) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    /// Hash with no excludes and no stop — the plain walk.
+    async fn ht(root: &str) -> AppResult<crate::sync::HashTree> {
+        hash_tree(
+            root,
+            Default::default(),
+            Default::default(),
+            Default::default(),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn hash_tree_prunes_excludes_counts_progress_and_hashes_like_sha256() {
+        let tmp = tempfile::tempdir().unwrap();
+        for d in ["node_modules/p", "src"] {
+            std::fs::create_dir_all(tmp.path().join(d)).unwrap();
+        }
+        std::fs::write(tmp.path().join("node_modules/p/i.js"), b"x").unwrap();
+        std::fs::write(tmp.path().join("src/a.rs"), b"hello").unwrap();
+        // Larger than one read chunk, so the streamed digest is really checked.
+        let big = vec![7u8; 600 * 1024];
+        std::fs::write(tmp.path().join("big.bin"), &big).unwrap();
+        let progress = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let tree = hash_tree(
+            tmp.path().to_str().unwrap(),
+            crate::sync::ExcludeSet::new(&["node_modules".to_string()]),
+            Default::default(),
+            progress.clone(),
+        )
+        .await
+        .unwrap();
+        let paths: Vec<_> = tree.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["big.bin", "src/a.rs"]);
+        assert_eq!(tree.excluded, 1);
+        assert_eq!(tree.entries[0].sha256, sha256_hex(&big));
+        assert_eq!(tree.entries[1].sha256, sha256_hex(b"hello"));
+        assert_eq!(progress.load(std::sync::atomic::Ordering::Relaxed), 2);
+    }
 
     // A root we can't list is an error — never an empty tree, which plans a full
     // upload (or a full delete with delete-extraneous on).
+    #[tokio::test]
+    async fn hash_tree_stops_when_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a"), b"x").unwrap();
+        let yes = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let tree = hash_tree(
+            tmp.path().to_str().unwrap(),
+            Default::default(),
+            yes,
+            Default::default(),
+        )
+        .await;
+        assert!(matches!(tree.unwrap_err(), AppError::Cancelled));
+    }
+
     #[tokio::test]
     async fn hash_tree_refuses_an_unreadable_root_and_counts_skips() {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("nope");
         assert!(matches!(
-            hash_tree(missing.to_str().unwrap()).await.unwrap_err(),
+            ht(missing.to_str().unwrap()).await.unwrap_err(),
             AppError::SyncDirUnreadable(_)
         ));
 
         let empty = tmp.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
-        let tree = hash_tree(empty.to_str().unwrap()).await.unwrap();
+        let tree = ht(empty.to_str().unwrap()).await.unwrap();
         assert!(tree.entries.is_empty());
         assert_eq!(tree.skipped, 0);
 
         std::fs::create_dir_all(tmp.path().join("full/sub")).unwrap();
         std::fs::write(tmp.path().join("full/sub/a.txt"), b"hi").unwrap();
-        let tree = hash_tree(tmp.path().join("full").to_str().unwrap())
-            .await
-            .unwrap();
+        let tree = ht(tmp.path().join("full").to_str().unwrap()).await.unwrap();
         assert_eq!(tree.entries.len(), 1);
         assert_eq!(tree.entries[0].path, "sub/a.txt");
 
@@ -590,7 +735,7 @@ mod tests {
             let locked = tmp.path().join("full/locked");
             std::fs::create_dir(&locked).unwrap();
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-            let tree = hash_tree(tmp.path().join("full").to_str().unwrap()).await;
+            let tree = ht(tmp.path().join("full").to_str().unwrap()).await;
             std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
             let tree = tree.unwrap();
             // Root reads everything regardless; the count is only meaningful otherwise.
