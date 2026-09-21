@@ -13,7 +13,10 @@
   let target = $state<ServerProfile | null>(null);
   let label = $state("Password");
   let value = $state("");
-  let remember = $state(false);
+  // Checked by default: the secret would otherwise be re-typed on every connect,
+  // and the keychain is the only place vterm ever puts one anyway. It is written
+  // only after authentication succeeds, so a mistyped secret is never stored.
+  let remember = $state(true);
   let error = $state("");
 
   /** Open the prompt for `server`. `label` is "Password" | "Passphrase" (from the
@@ -22,7 +25,7 @@
     target = server;
     label = secretLabel;
     value = "";
-    remember = false;
+    remember = true;
     error = secretError;
   }
 
@@ -32,7 +35,7 @@
     openTab(target.id, target.alias, value, remember);
     target = null;
     value = "";
-    remember = false;
+    remember = true;
   }
 </script>
 

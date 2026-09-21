@@ -2116,6 +2116,7 @@ pub fn run() {
             servers::set_server_notes,
             servers::delete_server,
             servers::forget_secrets,
+            servers::save_server_secret,
             servers::save_proxy_secret,
             folders::list_folders,
             folders::add_folder,

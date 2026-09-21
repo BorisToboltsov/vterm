@@ -217,6 +217,14 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   (per-core CPU%, ctxt/intr, per-device rate через общий `dev_rate_map`) держат пер-сессионные
   сэмплы в `MetricsSamples` и **чистятся в `disconnect`** — заводя новую, добавь очистку туда же
   (гейт читает саму структуру и требует каждое поле).
+- **Зонд читает, производные считает Rust.** В `*_SCRIPT` попадают только сырые показания; любая
+  величина, полученная вычитанием (`использовано` = всего − свободно), считается в парсере
+  через `saturating_sub` — так же, как в локальном сборщике. Разность, посчитанная на хосте,
+  уходит отрицательной там, где `/proc/meminfo` синтезируется (lxcfs) или `totalram` плавает
+  (virtio-balloon): `MemAvailable` бывает больше `MemTotal`, awk печатает минус, `u64` его не
+  берёт — и «использовано» **молча** становится `None`, неотличимо от неопрошенного поля
+  (прочерк рядом с живым «всего»). Ноль тут честен: доступно больше, чем всего, значит не занято
+  практически ничего. Гейт `probe_scripts_report_raw_readings_not_differences`.
 - **Опрос идёт только пока на него смотрят.** Оверлей мониторинга запускает петлю на открытии и
   **гасит на закрытии**; `settings.showStatusBar=false` **размонтирует** `StatusBar` (а не
   прячет) → опрос прекращается. Поэтому точки входа на страницу обязаны переживать отключение
@@ -727,6 +735,16 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   `custom`), `DEFAULT_THEME_ID = "deep-well"`. Бандл-иконка ОС **статична**; под тему меняется
   только [AppLogo](../src/lib/AppLogo.svelte). Первый кадр — из `vterm.chromePanel` в
   [app.html](../src/app.html), синхронно с `@theme` в app.css.
+  - **Кадрируется бандл-иконка по платформам, а знак — один.** Мастер —
+    [icon-source.svg](../src-tauri/icons/icon-source.svg), где тело squircle лежит в прозрачном
+    поле (824 из 1024 ≈ 81 %): этого требует macOS HIG, без поля иконка в Dock крупнее соседних.
+    На Windows такого соглашения нет — отступы рисует сама система, и то же поле даёт иконку
+    примерно на 19 % мельче соседних в панели задач. Поэтому Windows-артефакты (`icon.ico`,
+    `Square*Logo.png`, `StoreLogo.png`) генерируются из **того же** SVG со сдвинутым `viewBox`
+    (safe area обрезана, тело ~97 %). Второго исходника заводить нельзя — геометрия знака
+    разъедется; расходится только рамка кадрирования. Генерация — **только** `pnpm icons`
+    ([make-icons.mjs](../scripts/make-icons.mjs)): голый `tauri icon` применит macOS-кадр ко всем
+    платформам и тихо вернёт дефект. Гейт `appicon.guard.test.ts` меряет сами пиксели.
 - **Заставки простоя** — тем же слоевым контрактом, что ThemeOverlay:
   [IdleOverlay](../src/lib/IdleOverlay.svelte), `z-index:35` ниже модалок, под
   `prefers-reduced-motion`-guard (статичный кадр). Простой = **нет ввода И нет вывода PTY** (проп
@@ -784,6 +802,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [diagpath.guard.test.ts](../src/lib/diagpath.guard.test.ts) | Во фронте нет литералов `/tmp/…` |
 | [settings.guard.test.ts](../src/lib/settings.guard.test.ts) | Язык интерфейса идёт через `setLocale()`, не `bind:value` |
 | [mdlink.guard.test.ts](../src/lib/mdlink.guard.test.ts) | Каждый markdown-`{@html}` висит на `use:mdLinks`. Проверка **поэлементная и по исходнику без комментариев**: файловая версия прошла на файле с удалённым экшеном, потому что рядом лежал комментарий со словами «use:mdLinks» |
+| [appicon.guard.test.ts](../src/lib/appicon.guard.test.ts) | Кадрирование бандл-иконки: Windows-артефакты заполняют квадрат, macOS сохраняет safe area. Проверка идёт **по пикселям** (декодирует PNG внутри `.ico`), а не по наличию скрипта: дефект возвращает не правка кода, а один безобидный прогон `tauri icon` |
 | [cspnonce.test.ts](../src/lib/cspnonce.test.ts) | Каждый `EditorView` отдаёт style-nonce |
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |
@@ -794,5 +813,6 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона — ни `..Default::default()`, ни конструктором-шаблоном russh-sftp. Сканирует исходник **без комментариев**, чтобы доки могли называть анти-паттерн; строка отказывается от проверки маркером `guard-allow` — его несёт только тест, документирующий ловушку |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
 | `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl) идёт через `no_console_window` — на Windows без окна |
+| `probe_scripts_report_raw_readings_not_differences` (Rust) | Зонды метрик не вычитают на хосте: ни одна awk-программа в `*_SCRIPT` не содержит вычитания операндов. Дефис внутри регулярок и имён устройств (`[a-z0-9]`, `dm-`, `overall-health`) арифметикой не считается — операнды распознаются как `$N` или одиночная буква |
 
 Описание тестов и как их гонять — [TESTS.md](TESTS.md).
