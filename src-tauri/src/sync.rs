@@ -287,15 +287,73 @@ pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// Hashes of one side of a sync, plus how many items under it could not be read.
+/// `skipped` is surfaced to the user: those files are simply absent from the plan,
+/// and a plan that silently omits files reads as "nothing to do" for them.
+#[derive(Serialize, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HashTree {
+    pub entries: Vec<HashEntry>,
+    pub skipped: u32,
+}
+
+/// Printed by the remote hash script when `cd` into the folder (or reading it) fails.
+const HASH_NO_DIR: &str = "__VTERM_NODIR__";
+/// Printed when the server has neither `sha256sum` nor `shasum`.
+const HASH_NO_TOOL: &str = "__VTERM_NOHASH__";
+/// Prefix of every stderr line of `find`/the hasher (an unreadable file or folder).
+const HASH_ERR: &str = "__VTERM_ERR__";
+/// Last line of a listing that ran to completion.
+const HASH_DONE: &str = "__VTERM_HASH_OK__";
+
 /// Shell command that prints `<sha256>  ./relative/path` for every file under
 /// `dir`, preferring `sha256sum` (coreutils) and falling back to `shasum -a 256`.
+///
+/// Every way this can fail is **said out loud** with a marker, because the exec
+/// channel collects stdout only and an empty stdout otherwise reads as an empty
+/// folder — which plans "upload everything" and, with delete-extraneous, "delete
+/// everything on the other side". Unreadable items come back as prefixed stderr
+/// lines (`2>&1 1>&3` swaps the streams so only stderr goes through `sed`), and a
+/// completion marker closes the listing so a cut-short run is distinguishable
+/// from a short tree. Runs under `sh -c` so a fish/csh login shell can't change
+/// the syntax.
 pub fn remote_hash_command(dir: &str) -> String {
     let d = shell_quote(dir);
-    format!(
-        "cd -- {d} 2>/dev/null && {{ command -v sha256sum >/dev/null 2>&1 \
-         && find . -type f -exec sha256sum {{}} + \
-         || find . -type f -exec shasum -a 256 {{}} + ; }} 2>/dev/null"
-    )
+    let script = format!(
+        "cd -- {d} 2>/dev/null && test -r . || {{ echo {HASH_NO_DIR}; exit 0; }}; \
+         if command -v sha256sum >/dev/null 2>&1; then h='sha256sum'; \
+         elif command -v shasum >/dev/null 2>&1; then h='shasum -a 256'; \
+         else echo {HASH_NO_TOOL}; exit 0; fi; \
+         {{ find . -type f -exec $h {{}} + 2>&1 1>&3 | sed 's/^/{HASH_ERR} /'; }} 3>&1; \
+         echo {HASH_DONE}"
+    );
+    format!("sh -c {}", shell_quote(&script))
+}
+
+/// Read the output of [`remote_hash_command`] for `dir`: the hashes, the count of
+/// unreadable items, or the typed reason the tree could not be listed at all.
+pub fn parse_hash_output(dir: &str, out: &str) -> AppResult<HashTree> {
+    let mut skipped = 0u32;
+    let mut done = false;
+    for line in out.lines().map(|l| l.trim_end_matches('\r')) {
+        if line == HASH_NO_DIR {
+            return Err(AppError::SyncDirUnreadable(dir.to_string()));
+        }
+        if line == HASH_NO_TOOL {
+            return Err(AppError::HashToolMissing);
+        }
+        if line.starts_with(HASH_ERR) {
+            skipped += 1;
+        }
+        done = line == HASH_DONE;
+    }
+    if !done {
+        return Err(AppError::HashIncomplete);
+    }
+    Ok(HashTree {
+        entries: parse_hashsum(out),
+        skipped,
+    })
 }
 
 /// Parse `sha256sum`/`shasum` output into hash entries. Each line is a 64-char hex
@@ -712,7 +770,10 @@ mod tests {
     #[test]
     fn remote_hash_command_quotes_and_falls_back() {
         let cmd = remote_hash_command("/etc/nginx");
-        assert!(cmd.contains("cd -- '/etc/nginx'"));
+        assert!(cmd.starts_with("sh -c "));
+        // The script is itself one quoted `sh -c` token, so the path's own quotes
+        // come out escaped; the live `hash_script_*` tests prove it still resolves.
+        assert!(cmd.contains(r"cd -- '\''/etc/nginx'\''"));
         assert!(cmd.contains("sha256sum"));
         assert!(cmd.contains("shasum -a 256"));
     }
@@ -737,6 +798,108 @@ mod tests {
     fn parse_hashsum_skips_non_hex_and_empty() {
         let bad = format!("{}  ./x\n", "z".repeat(64));
         assert!(parse_hashsum(&bad).is_empty());
+    }
+
+    #[test]
+    fn parse_hash_output_reports_failures_instead_of_an_empty_tree() {
+        // Each of these used to come back as `[]` — an "empty folder" that plans a
+        // full upload, or a full delete with delete-extraneous on.
+        let dir = parse_hash_output("/srv/x", &format!("{HASH_NO_DIR}\n")).unwrap_err();
+        assert!(matches!(dir, AppError::SyncDirUnreadable(ref d) if d == "/srv/x"));
+        let tool = parse_hash_output("/srv/x", &format!("{HASH_NO_TOOL}\n")).unwrap_err();
+        assert!(matches!(tool, AppError::HashToolMissing));
+        // No completion marker: the run was cut short, not the tree.
+        let h = "a".repeat(64);
+        let cut = parse_hash_output("/srv/x", &format!("{h}  ./a\n")).unwrap_err();
+        assert!(matches!(cut, AppError::HashIncomplete));
+        assert!(matches!(
+            parse_hash_output("/srv/x", "").unwrap_err(),
+            AppError::HashIncomplete
+        ));
+    }
+
+    #[test]
+    fn parse_hash_output_counts_unreadable_items() {
+        let h = "a".repeat(64);
+        let out = format!(
+            "{h}  ./a.txt\n{HASH_ERR} find: './secret': Permission denied\n\
+             {HASH_ERR} sha256sum: ./b: Permission denied\n{HASH_DONE}\n"
+        );
+        let tree = parse_hash_output("/srv/x", &out).unwrap();
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].path, "a.txt");
+        assert_eq!(tree.skipped, 2);
+        // A genuinely empty folder is a success with nothing in it.
+        let empty = parse_hash_output("/srv/x", &format!("{HASH_DONE}\r\n")).unwrap();
+        assert_eq!(empty, HashTree::default());
+    }
+
+    /// Run the real script through a real `sh` — the stream swap, the `test -r`
+    /// precedence and the quoting are exactly the parts a string assertion can't see.
+    #[cfg(unix)]
+    fn run_hash_script(dir: &str) -> AppResult<HashTree> {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(remote_hash_command(dir))
+            .output()
+            .expect("sh runs");
+        parse_hash_output(dir, &String::from_utf8_lossy(&out.stdout))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_script_lists_files_and_tells_empty_from_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.txt"), b"hello").unwrap();
+        std::fs::write(root.join("sub/with space.txt"), b"x").unwrap();
+        let tree = run_hash_script(root.to_str().unwrap()).unwrap();
+        let mut paths: Vec<_> = tree.entries.iter().map(|e| e.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["a.txt", "sub/with space.txt"]);
+        assert_eq!(
+            tree.entries
+                .iter()
+                .find(|e| e.path == "a.txt")
+                .unwrap()
+                .sha256,
+            sha256_hex(b"hello")
+        );
+        assert_eq!(tree.skipped, 0);
+
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        assert_eq!(
+            run_hash_script(empty.to_str().unwrap()).unwrap(),
+            HashTree::default()
+        );
+
+        let missing = tmp.path().join("nope");
+        assert!(matches!(
+            run_hash_script(missing.to_str().unwrap()).unwrap_err(),
+            AppError::SyncDirUnreadable(_)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_script_counts_an_unreadable_subfolder() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("f"), b"x").unwrap();
+        std::fs::write(tmp.path().join("ok"), b"y").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let tree = run_hash_script(tmp.path().to_str().unwrap());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let tree = tree.unwrap();
+        // Root can read everything anyway; only assert when the lock actually held.
+        if tree.entries.iter().all(|e| e.path != "locked/f") {
+            assert_eq!(tree.skipped, 1);
+        }
+        assert!(tree.entries.iter().any(|e| e.path == "ok"));
     }
 
     #[test]

@@ -5,6 +5,8 @@ import {
   removeDockState,
   resetDockState,
   storedSub,
+  dockCwd,
+  setDockCwd,
 } from "./dockstate.svelte";
 
 describe("dock state store", () => {
@@ -12,7 +14,7 @@ describe("dock state store", () => {
 
   it("starts a session empty rather than undefined", () => {
     // Panels read this on mount and must not have to null-check the session itself.
-    expect(dockState("s1")).toEqual({ files: null, k8sScope: null, sub: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {} });
   });
 
   it("returns the same object for a session, so writes are seen by the next reader", () => {
@@ -53,8 +55,17 @@ describe("dock state store", () => {
     // tab has to clear it or the next tab reusing the id inherits stale state.
     dockState("s1").files = { connected: true, cwd: "/a", home: "/a" };
     rememberSub("s1", "docker", "images");
+    setDockCwd("s1", "/repo");
     removeDockState("s1");
-    expect(dockState("s1")).toEqual({ files: null, k8sScope: null, sub: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {} });
+  });
+
+  it("reads the shared directory without creating the session", () => {
+    // dockCwd runs inside $derived — creating the entry there is a state write.
+    expect(dockCwd("fresh")).toBeNull();
+    setDockCwd("fresh", "/srv");
+    expect(dockCwd("fresh")).toBe("/srv");
+    removeDockState("fresh");
   });
 
   it("removing an unknown session is a no-op", () => {

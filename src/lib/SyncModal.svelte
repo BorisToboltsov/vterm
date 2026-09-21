@@ -1,7 +1,10 @@
 <script lang="ts">
-  // Directory sync dialog (Phase 12.5): compare a local folder against the SFTP
-  // panel's current remote folder (dry-run), then apply only the changed files.
+  // Directory sync dialog (Phase 12.5): compare a local folder against a remote
+  // folder (dry-run), then apply only the changed files. The remote folder starts
+  // as the SFTP panel's current one and is then the dialog's own (v1.0.24): it can
+  // be re-picked here, and it does not jump when the panel follows the terminal.
   import Modal from "./Modal.svelte";
+  import SyncRemotePicker from "./SyncRemotePicker.svelte";
   import { tooltip } from "./actions/tooltip";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
@@ -15,6 +18,13 @@
     syncRowStatus,
     syncRowPct,
     syncRunSummary,
+    planFacts,
+    emptyPlanReason,
+    wipesTarget,
+    syncBlockReasons,
+    syncErrorView,
+    type PlanFacts,
+    type EmptyPlanReason,
     type SyncAction,
     type SyncDirection,
     type SyncOp,
@@ -40,6 +50,11 @@
   } = $props();
 
   let localPath = $state("");
+  // The dialog's own remote folder, seeded from the panel on every open.
+  let remote = $state("");
+  let picking = $state(false);
+  let facts = $state<PlanFacts | null>(null);
+  let skipped = $state({ local: 0, remote: 0 });
   let direction = $state<SyncDirection>("push");
   let excludeText = $state(".git\nnode_modules\n*.tfstate");
   let deleteExtraneous = $state(false);
@@ -53,6 +68,22 @@
   let runId = $state("");
   let stopping = $state(false);
 
+  // Seed from the panel when the dialog opens; a changed folder makes the old plan
+  // stale. While open, the panel moving (follow-terminal) must NOT retarget a
+  // compared plan — Apply would run it against a folder it was never compared to.
+  let wasOpen = false;
+  $effect(() => {
+    const isOpen = open;
+    if (isOpen && !wasOpen) {
+      picking = false;
+      if (remotePath !== remote) {
+        remote = remotePath;
+        invalidate();
+      }
+    }
+    wasOpen = isOpen;
+  });
+
   const counts = $derived(plan ? summarize(plan) : null);
   const toApply = $derived(plan ? applicable(plan) : []);
   const runProgress = $derived(
@@ -62,6 +93,8 @@
   // Re-comparing is required after changing inputs (the old plan is stale).
   function invalidate() {
     plan = null;
+    facts = null;
+    error = "";
     phase = "idle";
     clearSyncRun();
   }
@@ -78,19 +111,32 @@
     }
   }
 
+  function pickRemote(path: string) {
+    picking = false;
+    if (path !== remote) {
+      remote = path;
+      invalidate();
+    }
+  }
+
   async function compare() {
-    if (!localPath) return;
+    if (!localPath || !remote) return;
     comparing = true;
     error = "";
     try {
-      const [local, remote] = await Promise.all([
+      const [local, rem] = await Promise.all([
         localHashTree(localPath),
-        sftpHashTree(sessionId, remotePath),
+        sftpHashTree(sessionId, remote),
       ]);
-      plan = diffTrees(local, remote, direction, parseExcludes(excludeText), deleteExtraneous);
+      const excludes = parseExcludes(excludeText);
+      plan = diffTrees(local.entries, rem.entries, direction, excludes, deleteExtraneous);
+      facts = planFacts(local.entries, rem.entries, direction, excludes);
+      skipped = { local: local.skipped, remote: rem.skipped };
+      phase = "idle";
     } catch (e) {
-      error = String(e);
+      error = errorText(String(e));
       plan = null;
+      facts = null;
     } finally {
       comparing = false;
     }
@@ -104,7 +150,7 @@
     runId = `sync-run-${crypto.randomUUID()}`;
     clearSyncRun();
     try {
-      const stats = await sftpSyncApply(sessionId, runId, localPath, remotePath, toApply);
+      const stats = await sftpSyncApply(sessionId, runId, localPath, remote, toApply);
       onapplied?.();
       if (stats.stopped) {
         // Stay open: the ticked rows ARE the report of what got through, and the
@@ -142,6 +188,48 @@
     stopping = true;
     sftpCancel(runId);
   }
+
+  /** A hashing failure in words — never shown as an empty folder (see sync.rs). */
+  function errorText(err: string): string {
+    const v = syncErrorView(err);
+    if (v.key === "sync.errDirUnreadable") return t(v.key, { path: v.path });
+    if (v.key) return t(v.key);
+    return v.raw;
+  }
+
+  const EMPTY_PLAN_TEXT: Record<Exclude<EmptyPlanReason, "onlyExtraneous">, MessageKey> = {
+    bothEmpty: "sync.emptyBoth",
+    allExcluded: "sync.allExcluded",
+    identical: "sync.identical",
+  };
+
+  /** The line under an empty plan: why it is empty, with the numbers. */
+  function emptyPlanText(f: PlanFacts): string {
+    const reason = emptyPlanReason(f);
+    if (reason === "onlyExtraneous")
+      return t(direction === "push" ? "sync.onlyRemote" : "sync.onlyLocal", { n: f.extraneous });
+    return t(EMPTY_PLAN_TEXT[reason], { n: reason === "allExcluded" ? f.excluded : f.localFiles });
+  }
+
+  const wipe = $derived(facts ? wipesTarget(facts, direction, deleteExtraneous) : null);
+  const blocked = $derived(
+    syncBlockReasons({
+      localPath,
+      remotePath: remote,
+      hasPlan: !!plan,
+      applicableCount: toApply.length,
+      conflictCount: counts?.conflict ?? 0,
+      phase,
+      busy: comparing || applying,
+    }),
+  );
+  // One reason line beside the buttons: Compare's if it is blocked, else Apply's.
+  // An empty plan already explains itself in the box above, so no second line.
+  const blockReason = $derived(
+    comparing || applying
+      ? null
+      : (blocked.compare ?? (plan && plan.length === 0 ? null : blocked.apply)),
+  );
 
   const ROW_STATUS_LABEL: Record<Exclude<SyncRowStatus, "done" | "running">, MessageKey> = {
     pending: "sync.rowPending",
@@ -184,7 +272,9 @@
         <div class="mt-1 flex items-center gap-2">
           <span class="min-w-0 flex-1 truncate text-text" title={localPath}>{localPath || "—"}</span>
           <button
-            class="shrink-0 rounded bg-edge px-2 py-0.5 hover:bg-accent hover:text-panel-alt"
+            class="shrink-0 rounded bg-edge px-2 py-0.5 hover:bg-accent hover:text-panel-alt disabled:opacity-40"
+            aria-label={t("sync.chooseLocal")}
+            disabled={applying}
             onclick={chooseLocal}>{t("sync.choose")}</button
           >
         </div>
@@ -194,9 +284,26 @@
       </div>
       <div class="min-w-0 flex-1 rounded border border-edge bg-panel p-2">
         <div class="text-meta text-muted">{t("sync.remoteFolder")}</div>
-        <div class="mt-1 truncate text-text" title={remotePath}>{remotePath}</div>
+        <div class="mt-1 flex items-center gap-2">
+          <span class="min-w-0 flex-1 truncate text-text" title={remote}>{remote || "—"}</span>
+          <button
+            class="shrink-0 rounded bg-edge px-2 py-0.5 hover:bg-accent hover:text-panel-alt disabled:opacity-40"
+            aria-label={t("sync.chooseRemote")}
+            disabled={applying}
+            onclick={() => (picking = !picking)}>{t("sync.choose")}</button
+          >
+        </div>
       </div>
     </div>
+
+    {#if picking}
+      <SyncRemotePicker
+        {sessionId}
+        start={remote}
+        onpick={pickRemote}
+        oncancel={() => (picking = false)}
+      />
+    {/if}
 
     <!-- Direction as a segmented control -->
     <div class="flex justify-center">
@@ -243,11 +350,28 @@
       <p class="break-words text-danger">{error}</p>
     {/if}
 
+    <!-- Unreadable items are missing from the plan — say so, whatever the plan is. -->
+    {#if plan && (skipped.local > 0 || skipped.remote > 0)}
+      <p class="rounded border border-warn bg-panel px-3 py-2 text-warn" data-testid="sync-skipped">
+        {#if skipped.local > 0}{t("sync.skippedLocal", { n: skipped.local })}{/if}
+        {#if skipped.remote > 0}{t("sync.skippedRemote", { n: skipped.remote })}{/if}
+      </p>
+    {/if}
+
     <!-- Dry-run preview -->
     {#if plan}
       {#if plan.length === 0}
-        <p class="rounded border border-edge bg-panel px-3 py-2 text-muted">{t("sync.noChanges")}</p>
+        <p class="rounded border border-edge bg-panel px-3 py-2 text-muted" data-testid="sync-empty">
+          {facts ? emptyPlanText(facts) : t("sync.identical", { n: 0 })}
+        </p>
       {:else}
+        {#if wipe && phase === "idle"}
+          <p class="rounded border border-danger bg-panel px-3 py-2 text-danger" data-testid="sync-wipe">
+            {t(wipe === "local" ? "sync.wipeLocalEmpty" : "sync.wipeRemoteEmpty", {
+              n: wipe === "local" ? (facts?.remoteFiles ?? 0) : (facts?.localFiles ?? 0),
+            })}
+          </p>
+        {/if}
         {#if phase === "idle"}
           <div class="text-muted">
             {t("sync.summary", {
@@ -318,8 +442,11 @@
       {/if}
     {/if}
 
-    <!-- Actions -->
-    <div class="flex justify-end gap-2 pt-1">
+    <!-- Actions, with the reason a disabled one can't run yet -->
+    <div class="flex items-center justify-end gap-2 pt-1">
+      {#if blockReason}
+        <span class="mr-auto text-meta text-muted" data-testid="sync-block-reason">{t(blockReason)}</span>
+      {/if}
       {#if applying}
         <button
           class="flex items-center gap-1 rounded border border-danger px-3 py-1 text-danger hover:bg-danger hover:text-white disabled:opacity-40"
@@ -336,7 +463,7 @@
       {/if}
       <button
         class="flex items-center gap-1 rounded bg-edge px-3 py-1 hover:bg-accent hover:text-panel-alt disabled:opacity-40"
-        disabled={!localPath || comparing || applying}
+        disabled={!!blocked.compare || comparing || applying}
         onclick={compare}
       >
         <Icon name="sync" size={13} />
@@ -344,7 +471,7 @@
       </button>
       <button
         class="rounded bg-green-600 px-3 py-1 font-medium text-white hover:bg-green-500 disabled:opacity-40"
-        disabled={!plan || toApply.length === 0 || applying || phase === "stopped"}
+        disabled={!!blocked.apply || applying}
         onclick={apply}
       >
         {applying ? t("sync.applying") : t("sync.apply")}

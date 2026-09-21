@@ -95,7 +95,8 @@
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
   import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
-  import { removeDockState } from "$lib/stores/dockstate.svelte";
+  import { removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
+  import { followUpdates } from "$lib/followcwd";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
@@ -1223,6 +1224,7 @@
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
+    delete followSeen[sessionId];
     nginxConfigCache.delete(sessionId);
     delete termStructured[sessionId];
     closeTabStore(sessionId);
@@ -1568,6 +1570,15 @@
       stopped = true;
       clearInterval(timer);
     };
+  });
+
+  // "Follow terminal" is one switch for the whole dock (v1.0.24): the terminal's
+  // cwd moves the dock's shared directory, which the file panel follows and git
+  // reads. When a cwd is written is pure logic — see followcwd.ts.
+  const followSeen: Record<string, string | undefined> = {};
+  $effect(() => {
+    const writes = followUpdates(followTerminal, terminalCwd, followSeen);
+    untrack(() => writes.forEach(([id, cwd]) => setDockCwd(id, cwd)));
   });
 
   /** User confirmed: type the OSC 7 setup into the shell and enable following. */

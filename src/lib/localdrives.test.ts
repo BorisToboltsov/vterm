@@ -277,3 +277,29 @@ describe("LocalFilePanel — two-way follow", () => {
     expect(onUserNavigate).not.toHaveBeenCalled(); // …without cd-ing the shell
   });
 });
+
+// v1.0.24: the file panel publishes its folder as the dock's shared directory,
+// which git reads. "This PC" is no directory git could run in.
+describe("LocalFilePanel — shared dock directory", () => {
+  it("publishes real folders and never the drives level", async () => {
+    const { dockCwd, removeDockState } = await import("./stores/dockstate.svelte");
+    removeDockState("s9");
+    route({
+      "C:\\Users\\me": [dirEntry("repo", "C:\\Users\\me\\repo")],
+      [DRIVES_ROOT]: [driveEntry("C")],
+    });
+    render(LocalFilePanel, { props: { embedded: true, sessionId: "s9" } });
+    await settle();
+    expect(dockCwd("s9")).toBe("C:\\Users\\me");
+
+    await fireEvent.dblClick(screen.getByText("repo"));
+    await settle();
+    expect(dockCwd("s9")).toBe("C:\\Users\\me\\repo");
+
+    localHome.mockResolvedValue(DRIVES_ROOT);
+    route({ [DRIVES_ROOT]: [driveEntry("C")] });
+    render(LocalFilePanel, { props: { embedded: true, sessionId: "s10" } });
+    await settle();
+    expect(dockCwd("s10")).toBeNull();
+  });
+});

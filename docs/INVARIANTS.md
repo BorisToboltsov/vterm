@@ -190,7 +190,7 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
 
 | Драйвер | Команда · тег аудита | Чистая логика | Специфика |
 |---------|----------------------|---------------|-----------|
-| **Git** ([GitPanel](../src/lib/GitPanel.svelte)) | `git_run` · `[git]` | [git.ts](../src/lib/git.ts) (`statusArgs`/`logArgs`/`parseStatus`/`parseLog`/`parseBranches`/`parseDiff`/`buildGraph`/`isDestructive`/`needsConfirm`), вид — [gitview.ts](../src/lib/gitview.ts) | Работает по `terminalCwd` (OSC 7). Подтверждение — `needsConfirm` на **любом** сервере, в том числе в `syncRun` (pull/push); stage/unstage/fetch/создание ветки намеренно без диалога — диалог на каждый клик приучает прокликивать и тот, что важен. `confirmed` пропускает повторный вопрос только для уже подтверждённого действия (push после коммита, повтор после stash). `GIT_TERMINAL_PROMPT=0` **обязателен** (иначе промпт кредов без TTY = зависание). Диффы — унифицированные (`parseDiff` + [GitDiffView](../src/lib/GitDiffView.svelte)) **только для файлов исторических коммитов**; изменённый файл рабочего дерева открывается в существующем [EditorTab](../src/lib/EditorTab.svelte) как редактируемый инлайн-diff против HEAD (`showFileAtArgs("HEAD", path)` → `EditorDoc.gitBase`) — нового редактора не плодим. Тумблер «checkout в терминале» пишет команду в PTY (аудит), а не подменяет `git_run` |
+| **Git** ([GitPanel](../src/lib/GitPanel.svelte)) | `git_run` · `[git]` | [git.ts](../src/lib/git.ts) (`statusArgs`/`logArgs`/`parseStatus`/`parseLog`/`parseBranches`/`parseDiff`/`buildGraph`/`isDestructive`/`needsConfirm`), вид — [gitview.ts](../src/lib/gitview.ts) | Работает по **общему каталогу дока** (`dockCwd`, см. «Следовать за терминалом»), а не по `terminalCwd` напрямую. Подтверждение — `needsConfirm` на **любом** сервере, в том числе в `syncRun` (pull/push); stage/unstage/fetch/создание ветки намеренно без диалога — диалог на каждый клик приучает прокликивать и тот, что важен. `confirmed` пропускает повторный вопрос только для уже подтверждённого действия (push после коммита, повтор после stash). `GIT_TERMINAL_PROMPT=0` **обязателен** (иначе промпт кредов без TTY = зависание). Диффы — унифицированные (`parseDiff` + [GitDiffView](../src/lib/GitDiffView.svelte)) **только для файлов исторических коммитов**; изменённый файл рабочего дерева открывается в существующем [EditorTab](../src/lib/EditorTab.svelte) как редактируемый инлайн-diff против HEAD (`showFileAtArgs("HEAD", path)` → `EditorDoc.gitBase`) — нового редактора не плодим. Тумблер «checkout в терминале» пишет команду в PTY (аудит), а не подменяет `git_run` |
 | **Docker** ([DockerPanel](../src/lib/DockerPanel.svelte)) | `container_run` (`args[0]="docker"`) · `[docker]` | [docker.ts](../src/lib/docker.ts) (`psArgs`/`imagesArgs`/`statsArgs`/`parsePs`/`parseImages`/`parseStats`/`groupByCompose`/`parseAvailability`/`stateTone`/`needsConfirm`) | Машиночитаемый вывод через `--format` с US-разделителем. `dockerRefreshSec` = 3 (кламп 1…30). Группировка по лейблу `com.docker.compose.project`. Логи/inspect — [DockerTextModal](../src/lib/DockerTextModal.svelte), детали — [DockerDetailModal](../src/lib/DockerDetailModal.svelte) (Overview/Logs/Inspect + действия); строка несёт одну кнопку «Подробнее», факты — в hover-карточку (`containerInfoRows`). Скелет до первого `ps` (`firstLoadDone`). `needsConfirm` шире `isDestructive`: + stop/restart/kill. CVE-скан образов не делаем (нет офлайн-способа) |
 | **k8s** ([K8sPanel](../src/lib/K8sPanel.svelte)) | `kubectl_run` (ведущие токены = программа) · `[k8s]` | [k8s.ts](../src/lib/k8s.ts) (билдеры, `parse*`, `groupByOwner`, `parseAvailability`, `isDestructive`, `needsConfirm`, `kubectlProg`) | **Отдельный драйвер со своим видом**, не втиснут в список Docker. Вывод — **`-o json`** (строгий JSON надёжнее разделителей). `context`/`namespace` — выбор в UI, вшиваемый в argv (`withScope`; per-object — `objectScope` с namespace самого объекта, чтобы бить верно даже при `-A`); **kubeconfig не мутируем** (никаких `config use-context`). Пустой `--namespace` = дефолт контекста; node-команды cluster-scoped идут вовсе без флага. Группировка подов — по `ownerReferences` (ReplicaSet → Deployment rollup, бакет Standalone). `k8sRefreshSec` = 5 (`clampK8sRefresh` 1…30). Путь к бинарю — `settings.kubectlPath` (`k3s kubectl`/`microk8s kubectl`/абс. путь) |
 | **Сетевые пробы** ([UtilProbeRunner](../src/lib/UtilProbeRunner.svelte)) | `probe_run` · `[util]` | [probe.ts](../src/lib/probe.ts), [tls.ts](../src/lib/tls.ts), [http.ts](../src/lib/http.ts) | Структурный режим — **только SSH** (иначе `NoSession`): трафик из сети сервера пользователя. На локальной вкладке команда пишется в PTY и исполняется шеллом пользователя. Приложение само в сеть не ходит |
@@ -443,9 +443,23 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   был в листинге).
 - **Синхронизация: хэши считает бэкенд, diff — чистый TS.** Удалённое дерево — `sftp_hash_tree`
   через **SSH exec** `sha256sum`/`shasum` (без скачивания), локальное — обходом ФС; обе стороны
-  дают `HashEntry{path, sha256}` с `/`-относительными путями, дальше — `diffTrees` в
-  [sync.ts](../src/lib/sync.ts). Новое направление или источник хэшей добавляй в
-  `diffTrees`/`apply`, не дублируй обход.
+  дают `HashTree{entries: HashEntry{path, sha256}[], skipped}` с `/`-относительными путями,
+  дальше — `diffTrees` в [sync.ts](../src/lib/sync.ts). Новое направление или источник хэшей
+  добавляй в `diffTrees`/`apply`, не дублируй обход.
+  - **Нечитаемое дерево — ошибка, а не пустое.** Пустой список планирует «залить всё», а с
+    «удалять лишнее» — «стереть всё на другой стороне». Поэтому удалённый скрипт
+    (`remote_hash_command`, под `sh -c`) проговаривает каждый отказ маркером — нет папки/доступа,
+    нет `sha256sum`/`shasum`, строка stderr на непрочитанный объект, маркер завершения в конце —
+    а `parse_hash_output` превращает их в `SyncDirUnreadable`/`HashToolMissing`/`HashIncomplete`;
+    `localfile::hash_tree` так же не прощает нечитаемый корень. Непрочитанное **ниже** корня
+    считается в `skipped` и показывается в окне. Exec-канал собирает только stdout: всё, что
+    должно дойти, идёт через него.
+  - **Удалённая папка — своя у окна.** Засевается из панели при открытии, дальше меняется только
+    выбором в окне (`SyncRemotePicker`); смена сбрасывает план. Иначе следование за терминалом
+    переносило бы сравнённый план на папку, с которой его не сравнивали.
+  - **Пустой план — с причиной** (`emptyPlanReason`: обе пусты / всё исключено / только на
+    стороне-цели / идентичны), пустой источник при «удалять лишнее» — красное предупреждение
+    (`wipesTarget`), у неактивных кнопок — причина (`syncBlockReasons`).
 - **Линт: у legacy-режимов его нет, и это осознанно.** Синтаксический линт строится на
   error-нодах `syntaxTree`, поэтому работает только для Lezer-языков; StreamLanguage-режимы
   (shell/toml/ini/…) их не дают — линта нет, **ложных срабатываний тоже**. Чтобы включить его
@@ -512,6 +526,14 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
     без `/d` смена диска не переводит туда — и в PowerShell — нужен `-LiteralPath`); диалект
     фиксируется на сессию **в момент спавна**, а не берётся из текущей настройки. Путь, который
     нельзя выразить безопасно (пустой, с переводом строки), даёт `null` → **не шлём ничего**.
+  - **Переключатель один на весь док, и каталог у дока один.** `followTerminal[sessionId]`
+    включается из SFTP и из Git одинаково; общий каталог — `dockstate.cwd`. Пишут в него
+    файловая панель (каждый успешный листинг, кроме синтетического `DRIVES_ROOT` и `"."`) и
+    терминал — **только** при включённом тумблере и **только при смене** cwd (чистый
+    [followcwd.ts](../src/lib/followcwd.ts)): иначе повторный прогон затёр бы папку, открытую в
+    панели, если зеркальный `cd` не дошёл до занятого терминала. Git **только читает**
+    (`dockCwd`, без создания записи внутри `$derived`). Git, слушающий терминал в обход
+    тумблера, — это второй смысл той же кнопки; не возвращай.
 
 ---
 
