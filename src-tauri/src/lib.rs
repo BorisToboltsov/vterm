@@ -358,6 +358,20 @@ fn connect_plan(id: String, state: State<AppState>) -> AppResult<ConnectPlan> {
     Ok(plan)
 }
 
+/// What happened besides the connection itself. The session is up either way.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct ConnectOutcome {
+    /// Why "remember" did not persist the secret, if it did not.
+    remember_failed: Option<String>,
+}
+
+/// A secret save after login is advisory: its failure becomes a reason to show,
+/// not an error that would tear down the live session.
+fn remember_failure(saved: AppResult<()>) -> Option<String> {
+    saved.err().map(|e| e.to_string())
+}
+
 /// Open an SSH session for `server_id`, registered under the per-tab `session_id`.
 /// `secret` is the password or key passphrase if the user just typed it; when
 /// absent it is read from the keychain. `remember` stores `secret` in the keychain.
@@ -380,7 +394,7 @@ async fn connect_session(
     connect_timeout: Option<u64>,
     keepalive_interval: Option<u64>,
     host_key_policy: Option<String>,
-) -> AppResult<()> {
+) -> AppResult<ConnectOutcome> {
     let profile = {
         let servers = state.servers.lock().unwrap();
         servers.iter().find(|s| s.id == server_id).cloned()
@@ -492,12 +506,15 @@ async fn connect_session(
     .await?;
 
     // Persist the secret only after authentication succeeded (so a wrong typed
-    // secret is never written to the keychain).
+    // secret is never written to the keychain). By now the session is live, so a
+    // failed save is reported, never returned as an error: `?` here dropped an
+    // authenticated connection whenever the keychain was unavailable (Linux
+    // without a Secret Service), and the user could not connect at all.
+    let mut outcome = ConnectOutcome::default();
     if remember {
         if let Some(s) = &secret {
-            match profile.auth_method {
-                AuthMethod::Password => {
-                    secrets::set_password(&server_id, s)?;
+            let saved = match profile.auth_method {
+                AuthMethod::Password => secrets::set_password(&server_id, s).and_then(|()| {
                     let snapshot = {
                         let mut servers = state.servers.lock().unwrap();
                         if let Some(p) = servers.iter_mut().find(|p| p.id == server_id) {
@@ -505,10 +522,11 @@ async fn connect_session(
                         }
                         servers.clone()
                     };
-                    store::save_servers(&snapshot)?;
-                }
-                AuthMethod::Key => secrets::set_passphrase(&server_id, s)?,
-            }
+                    store::save_servers(&snapshot)
+                }),
+                AuthMethod::Key => secrets::set_passphrase(&server_id, s),
+            };
+            outcome.remember_failed = remember_failure(saved);
         }
     }
 
@@ -517,7 +535,7 @@ async fn connect_session(
         .lock()
         .await
         .insert(session_id, Arc::new(session));
-    Ok(())
+    Ok(outcome)
 }
 
 /// Open a local-shell terminal (PTY on the machine running vterm) under the
@@ -2295,6 +2313,43 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── connect_session: remembering a secret ─────────────────────────────────
+    #[test]
+    fn remember_failure_reports_the_reason_and_nothing_on_success() {
+        assert_eq!(remember_failure(Ok(())), None);
+        let err: AppError = "keychain write failed: No default store".to_string().into();
+        assert_eq!(
+            remember_failure(Err(err)).as_deref(),
+            Some("keychain write failed: No default store")
+        );
+    }
+
+    #[test]
+    fn nothing_after_login_can_fail_the_connection() {
+        // Guard (nightly E2E, v1.0.31): once `ssh::connect` succeeded the session is
+        // live, and an early return drops it. A keychain `set_password(..)?` did
+        // exactly that on Linux without a Secret Service — the user authenticated
+        // and got an error instead of a shell. Scans the code (comments stripped)
+        // between the login and the end of the command for any `?`.
+        // A Windows checkout carries CRLF (core.autocrlf); the markers below are LF.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        let body = &src[src
+            .find("async fn connect_session(")
+            .expect("connect_session")..];
+        let body = &body[..body.find("\n}\n").expect("end of connect_session")];
+        let after_login = &body[body.find("ssh::connect(").expect("ssh::connect")..];
+        let after_login = &after_login[after_login.find(".await?;").expect("login await") + 8..];
+        let code: String = after_login
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains('?'),
+            "connect_session propagates an error after login — the live session would be dropped:\n{code}"
+        );
+    }
 
     // ── uuid_like ─────────────────────────────────────────────────────────────
     #[test]

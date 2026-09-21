@@ -102,6 +102,12 @@
   команда молча повиснет в промпте. Многострочный блок шлём **построчно** (иначе на Windows
   выполнится только последняя строка). Единственный источник истины — `submitLine`/`submitBlock`
   в [terminput.ts](../src/lib/terminput.ts).
+- **Ввод в сессию идёт строго по порядку.** Асинхронные команды Tauri — независимые задачи на
+  многопоточном runtime, поэтому два `invoke("write_to_terminal")` в полёте доходят до PTY в любом
+  порядке (E2E набрал `echo vterm`, шелл выполнил `echo vtemr`; так же ломаются автонабор паролей
+  и сканеры). `writeToTerminal` отправляет следующую запись только после ответа на предыдущую, а
+  накопленное за это время склеивает в одну ([termwrite.ts](../src/lib/termwrite.ts)). Команду
+  `write_to_terminal` зовёт **только** эта обёртка — второй прямой вызов снова гоняется с ней.
 - **Окно подключения — честный чек-лист.** Пока SSH-вкладка в `Connecting…`, поверх терминала
   висит [ConnectingOverlay.svelte](../src/lib/ConnectingOverlay.svelte). Фазы **реальные**, из
   канала `term://phase/{id}` (`phase_event` в `ssh.rs`: `connecting`→`authenticating`→`session`);
@@ -572,6 +578,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   не конфликтовать с секретом самой цели; чистится в `delete_all`/`forget_secrets`.
 - **Копии секретов — в `zeroize::Zeroizing`, никогда не логируются.** Host-key дефолт — не
   «accept».
+- **После входа подключение уже не проваливается.** Когда `ssh::connect` вернул сессию, всё
+  последующее в `connect_session` (сохранение секрета в keychain, флаг `hasSavedPassword`) —
+  **совет, а не условие**: сбой уходит в `ConnectOutcome.rememberFailed` и тост, сессия остаётся.
+  `?` там выбрасывал аутентифицированное подключение — на Linux без Secret Service подключиться с
+  «запомнить» было нельзя вовсе, а пользователь видел ошибку вместо шелла.
 - **Сертификат хоста отклоняется при любой политике** (`ssh::host_key_fingerprint` → `None`):
   доверенных CA у нас нет, а пин вложенного ключа молча пропустил бы подпись, срок и principals
   сертификата. Алгоритмы `*-cert-v01` не рекламируем (`host_key_certificates` пуст). Поддержка
@@ -905,6 +916,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [termctxfocus.guard.test.ts](../src/lib/termctxfocus.guard.test.ts) | Закрытие меню ПКМ терминала возвращает фокус в xterm — иначе после «Копировать/Вставить» ввод уходит в никуда. Проверка по исходнику без комментариев |
 | [termpaste.guard.test.ts](../src/lib/termpaste.guard.test.ts) | Текст из буфера обмена попадает в терминал только через `term.paste()` (bracketed paste), не прямым `writeToTerminal`. Проверка по исходнику без комментариев |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |
+| [termwrite.guard.test.ts](../src/lib/termwrite.guard.test.ts) | `write_to_terminal` вызывается только из `api/session.ts` и только внутри `createOrderedWriter` — иначе нажатия снова переставляются. Проверка по исходнику без комментариев |
 | [hotkeylayout.guard.test.ts](../src/lib/hotkeylayout.guard.test.ts) | Буквенные хоткеи не сравнивают сырой `e.key` с латиницей (русская раскладка) — только `chordLetter`/`is*Chord` из `appshortcuts.ts`. Проверка по исходнику без комментариев |
 | [termfit.guard.test.ts](../src/lib/termfit.guard.test.ts) | У элемента, который `FitAddon` меряет как `parentElement`, нет паддинга — иначе сетка терминала выше своего места |
 | [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts) · `deny.toml` | Строгий CSP, минимальные capabilities, политика зависимостей |
@@ -913,6 +925,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [untrusted.fuzz.test.ts](../src/lib/untrusted.fuzz.test.ts) · `textenc::props` | Свойства недоверенного входа на **произвольных** данных: из рендера markdown не выходит исполняемого (узлы и имена атрибутов проверяются парсером браузера, не регулярками), декодер не паникует на любых байтах, UTF-16 без BOM — текст, а не бинарь |
 | [version.guard.test.ts](../src/lib/version.guard.test.ts) | Версия — только в `package.json`; `tauri.conf.json` держит ссылку, а не литерал; `Cargo.toml`/`Cargo.lock` синхронны. CI читает версию оттуда же: `.version` из `tauri.conf.json` теперь вернёт `"../package.json"` — не ошибка, а имя файла в релизе |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона — ни `..Default::default()`, ни конструктором-шаблоном russh-sftp. Сканирует исходник **без комментариев**, чтобы доки могли называть анти-паттерн; строка отказывается от проверки маркером `guard-allow` — его несёт только тест, документирующий ловушку |
+| `nothing_after_login_can_fail_the_connection` (Rust) | В `connect_session` после успешного `ssh::connect` нет ни одного `?`: сбой сохранения секрета не рвёт живую сессию. Сканирует код без комментариев |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
 | `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl) идёт через `no_console_window` — на Windows без окна |
 | `probe_scripts_report_raw_readings_not_differences` (Rust) | Зонды метрик не вычитают на хосте: ни одна awk-программа в `*_SCRIPT` не содержит вычитания операндов. Дефис внутри регулярок и имён устройств (`[a-z0-9]`, `dm-`, `overall-health`) арифметикой не считается — операнды распознаются как `$N` или одиночная буква |

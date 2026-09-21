@@ -516,6 +516,7 @@ export const en = {
   "page.secretPassword": "Password",
   "page.secretPassphrase": "Passphrase",
   "page.rememberKeychain": "Save to keychain",
+  "page.rememberFailed": "Connected, but the secret was not saved to the keychain: {reason}",
 
   // Add / edit server modal
   "page.editServerTitle": "Edit server",
@@ -2317,6 +2318,7 @@ const ru: Record<MessageKey, string> = {
   "page.secretPassword": "Пароль",
   "page.secretPassphrase": "Passphrase",
   "page.rememberKeychain": "Сохранить в связке ключей (keychain)",
+  "page.rememberFailed": "Подключено, но секрет не сохранён в связке ключей: {reason}",
 
   "page.editServerTitle": "Редактировать сервер",
   "page.newServerTitle": "Новый сервер",

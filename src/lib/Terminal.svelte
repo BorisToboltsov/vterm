@@ -13,7 +13,7 @@
   import { parseOsc7, parseOsc9 } from "./osc";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
-  import { notifySuccess } from "./stores/toasts.svelte";
+  import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import {
     isAppShortcut,
@@ -528,7 +528,7 @@
   }
 
   onMount(async () => {
-    const t = activeTerminalTheme();
+    const theme = activeTerminalTheme();
     term = new Terminal({
       // Right-click is ours (paste or menu, termmouse.ts). xterm's macOS default
       // selects the word under the pointer first — with copy-on-select that word
@@ -543,7 +543,7 @@
       // Search highlight decorations (addon-search) use xterm's decoration API,
       // which is still "proposed" in xterm 6 and throws unless opted in.
       allowProposedApi: true,
-      theme: t,
+      theme,
     });
     fit = new FitAddon();
     term.loadAddon(fit);
@@ -711,7 +711,7 @@
         onlocalshell?.(cdShellKind(os, shell));
         await openLocalTerminal(sessionId, term.cols, term.rows, shell);
       } else {
-        await connectSession(
+        const outcome = await connectSession(
           sessionId,
           serverId,
           secret,
@@ -725,6 +725,10 @@
             hostKeyPolicy: settings.hostKeyPolicy,
           },
         );
+        // The session is up; only the keychain save failed — say so, keep the shell.
+        if (outcome?.rememberFailed) {
+          notifyError(t("page.rememberFailed", { reason: outcome.rememberFailed }));
+        }
       }
       onstatus?.("connected");
       term.focus();
