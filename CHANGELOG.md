@@ -6,6 +6,13 @@
 
 ---
 
+## v1.0.30 — 2026-09-21
+
+- **Обновлены зависимости:** reqwest 0.13.5 (транспорт ИИ), encoding_rs 0.8.41, fast-check 4.10.0;
+  пины GitHub Actions (codeql-action 4.38.0, install-action, zizmor-action).
+
+---
+
 ## v1.0.29 — 2026-09-21
 
 - **SSH: russh 0.63.3.** Закрывает уязвимости на стороне клиента (GHSA-47hw-gvq5-r2gm —
