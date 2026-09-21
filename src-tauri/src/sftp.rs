@@ -1079,7 +1079,7 @@ mod live_sftp {
         // Throwaway local container; its host key is regenerated on every `up`.
         async fn check_server_key(
             &mut self,
-            _key: &russh::keys::ssh_key::PublicKey,
+            _key: &russh::keys::PublicKeyOrCertificate,
         ) -> Result<bool, Self::Error> {
             Ok(true)
         }
