@@ -1,0 +1,13 @@
+# TEMPORARY probe: proves `uses: $/…` resolves a reusable workflow before release.yml
+# (tag-only) depends on it. Removed before merge.
+name: Self-repository probe
+on:
+  push:
+    branches: [fix/code-scanning-alerts]
+permissions: {}
+jobs:
+  verify:
+    name: Вызов ci.yml через $/
+    uses: $/.github/workflows/ci.yml
+    permissions:
+      contents: read
