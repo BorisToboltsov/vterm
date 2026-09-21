@@ -15,11 +15,16 @@
   import { t } from "./i18n";
   import { notifySuccess } from "./stores/toasts.svelte";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
-  import { isAppShortcut } from "./appshortcuts";
+  import {
+    isAppShortcut,
+    isFindChord,
+    isHistoryChord,
+    isTermCopyChord,
+    isTermPasteChord,
+  } from "./appshortcuts";
   import { applyHighlight, compileRules } from "./highlight";
   import { toLogEntry, type JsonLogEntry } from "./jsonlog";
   import JsonLogView from "./JsonLogView.svelte";
-  import ViewModeToggle from "./ViewModeToggle.svelte";
   import CommandHistory from "./CommandHistory.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
@@ -59,6 +64,7 @@
     oncwd,
     onExplain,
     onlocalshell,
+    onviewmode,
   }: {
     sessionId: string;
     serverId: string;
@@ -84,6 +90,9 @@
     /** Local tabs only: which `cd` dialect the spawned shell speaks, reported once
      *  at spawn so two-way follow can build a correct command (Phase 39.4). */
     onlocalshell?: (kind: CdShell) => void;
+    /** Raw (false) ↔ structured table (true) — the session bar in +page.svelte
+     *  shows the switch, the terminal owns the state and the parsed entries. */
+    onviewmode?: (structured: boolean) => void;
   } = $props();
 
   let container: HTMLDivElement;
@@ -196,10 +205,6 @@
   // seeds from the existing scrollback so recent logs show immediately.
   const MAX_JSON_ENTRIES = 2000;
   const jsonViewEnabled = $derived(settings.smartLogs.enabled);
-  // Latched once the session first connects. The raw↔table toggle is hidden until
-  // then so it doesn't float over the connecting overlay while a tab is still
-  // establishing its SSH session (local shells connect near-instantly).
-  let connected = $state(false);
   let structured = $state(false);
   let jsonEntries = $state<JsonLogEntry[]>([]);
   let jsonBuffer = "";
@@ -262,6 +267,17 @@
     if (on === structured) return;
     if (on) seedJsonFromBuffer();
     structured = on;
+    onviewmode?.(on);
+  }
+
+  /** Switch Raw ↔ Table from outside (the session bar). */
+  export function setViewMode(on: boolean) {
+    setStructured(on && jsonViewEnabled);
+  }
+
+  /** Open full-buffer search from outside (the session bar's search button). */
+  export function find() {
+    if (searchEnabled && !structured) openSearch();
   }
 
   /**
@@ -588,31 +604,26 @@
       if (isAppShortcut(e)) return false;
       // Cmd+F (macOS) or Ctrl+Shift+F (Win/Linux) opens full-buffer search.
       // Plain Ctrl+F is left for the remote shell (readline forward-char).
-      const findCombo =
-        (e.metaKey && e.key === "f") || (e.ctrlKey && e.shiftKey && e.key === "F");
-      if (findCombo && searchEnabled) {
+      if (isFindChord(e) && searchEnabled) {
         e.preventDefault();
         openSearch();
         return false;
       }
       // Ctrl+R opens our command-history overlay instead of the shell's
       // reverse-search (opt-out via settings.historySearch).
-      if (historyEnabled && e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && e.key === "r") {
+      // Matched by letter, not raw `e.key`, so the Russian layout (key "к") works too.
+      if (historyEnabled && isHistoryChord(e)) {
         e.preventDefault();
         openHistory();
         return false;
       }
-      const copyCombo =
-        (e.metaKey && e.key === "c") || (e.ctrlKey && e.shiftKey && e.key === "C");
-      const pasteCombo =
-        (e.metaKey && e.key === "v") || (e.ctrlKey && e.shiftKey && e.key === "V");
-      if (copyCombo && term.hasSelection()) {
+      if (isTermCopyChord(e) && term.hasSelection()) {
         // preventDefault stops the browser's native copy from also firing.
         e.preventDefault();
         copySelection();
         return false;
       }
-      if (pasteCombo) {
+      if (isTermPasteChord(e)) {
         // Without preventDefault the browser also fires a native `paste`,
         // which xterm handles too — pasting the text twice.
         e.preventDefault();
@@ -650,7 +661,6 @@
       );
     }
 
-    connected = false;
     onstatus?.("connecting");
     try {
       if (local) {
@@ -676,7 +686,6 @@
           },
         );
       }
-      connected = true;
       onstatus?.("connected");
       term.focus();
     } catch (err) {
@@ -798,7 +807,7 @@
   // Leaving the structured view (and dropping its data) the moment the feature
   // is switched off keeps the terminal in its plain state.
   $effect(() => {
-    if (!jsonViewEnabled && structured) structured = false;
+    if (!jsonViewEnabled && structured) setStructured(false);
   });
 
   onDestroy(() => {
@@ -816,16 +825,21 @@
 
 <div class="relative h-full w-full @container">
   <!-- px-2 pt-1: lift the console text off the left edge and the tab-bar border.
-       FitAddon reads the container's content width (padding excluded), so columns
-       still fit exactly; the padding strip is tinted with the terminal bg to blend. -->
+       The padding lives on this OUTER wrapper, never on `container`: FitAddon sizes
+       the grid from its parent's getComputedStyle height/width, which under
+       border-box INCLUDES padding — padded, the grid came out up to 4px too tall and
+       its (positioned) canvas painted over the status bar's top border. The strip is
+       tinted with the terminal bg to blend; overflow-hidden clips any sub-pixel rest
+       (fractional Windows scaling). -->
   <div
-    bind:this={container}
     onmousedown={onMouseDown}
     oncontextmenu={onContextMenu}
     role="presentation"
-    class="h-full w-full px-2 pt-1"
+    class="h-full w-full overflow-hidden px-2 pt-1"
     style="background-color: {termBg}"
-  ></div>
+  >
+    <div bind:this={container} class="h-full w-full"></div>
+  </div>
   <!-- Closing the menu hands focus back to the terminal: otherwise copy/paste
        from the menu leaves keystrokes going nowhere. Actions that move focus on
        purpose (find, explain) run after `onclose` and take it from here. -->
@@ -836,15 +850,11 @@
       term?.focus();
     }}
   />
-  <!-- Structured JSON log view + raw↔table toggle (Phase 10). In structured mode
-       the toggle lives inside the table toolbar; in raw mode it floats top-right. -->
+  <!-- Structured JSON log view (Phase 10). The Raw ↔ Table switch lives in the
+       session bar above the terminal (+page.svelte), not floating over it. -->
   {#if structured}
     <div class="absolute inset-0 z-10">
-      <JsonLogView entries={jsonEntries} onClear={clearJson} onShowRaw={() => setStructured(false)} />
-    </div>
-  {:else if jsonViewEnabled && connected}
-    <div class="absolute right-2 top-2 z-30">
-      <ViewModeToggle {structured} compact onSelect={setStructured} />
+      <JsonLogView entries={jsonEntries} onClear={clearJson} />
     </div>
   {/if}
   <!-- Ctrl+R command-history overlay (Phase 23). -->
@@ -861,13 +871,8 @@
   />
   <!-- Full-buffer search overlay (Phase 10). -->
   {#if search.open}
-    <!-- Stacks below the floating raw↔table toggle (top-right) when it's shown. -->
     <div
-      class="absolute right-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg {jsonViewEnabled &&
-      connected &&
-      !structured
-        ? 'top-11'
-        : 'top-2'}"
+      class="absolute right-2 top-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
       data-testid="terminal-search"
     >
       <Icon name="search" size={14} class="text-muted" />

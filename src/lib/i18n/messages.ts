@@ -447,6 +447,14 @@ export const en = {
     "and its saved secrets will be deleted. Open tabs for this server will close.",
 
   // Close tab confirm
+  "page.moveTitle": "Move?",
+  "page.moveServerSubject": "Server",
+  "page.moveFolderSubject": "Folder",
+  "page.moveServerToFolder": "will be moved to folder",
+  "page.moveServerToRoot": "will be moved to the root of the list.",
+  "page.moveFolderToFolder": "will be moved to folder",
+  "page.moveFolderToRoot": "will be moved to the root of the list.",
+  "page.moveConfirm": "Move",
   "page.closeTabTitle": "Close tab?",
   "page.closeTabBody1": "Session",
   "page.closeTabBody2": "will be disconnected.",
@@ -1341,6 +1349,7 @@ export const en = {
   "jsonlog.noFields": "No fields detected yet",
   "jsonlog.toggleLevel": "Toggle {level} level",
 
+  "search.open": "Search terminal buffer",
   "search.placeholder": "Search buffer…",
   "search.prev": "Previous match",
   "search.next": "Next match",
@@ -2164,6 +2173,14 @@ const ru: Record<MessageKey, string> = {
   "page.deleteServerBody2":
     "и его сохранённые секреты будут удалены. Открытые вкладки этого сервера закроются.",
 
+  "page.moveTitle": "Перенести?",
+  "page.moveServerSubject": "Сервер",
+  "page.moveFolderSubject": "Папка",
+  "page.moveServerToFolder": "будет перенесён в папку",
+  "page.moveServerToRoot": "будет перенесён в корень списка.",
+  "page.moveFolderToFolder": "будет перенесена в папку",
+  "page.moveFolderToRoot": "будет перенесена в корень списка.",
+  "page.moveConfirm": "Перенести",
   "page.closeTabTitle": "Закрыть вкладку?",
   "page.closeTabBody1": "Сессия",
   "page.closeTabBody2": "будет разорвана.",
@@ -3054,6 +3071,7 @@ const ru: Record<MessageKey, string> = {
   "jsonlog.noFields": "Поля пока не обнаружены",
   "jsonlog.toggleLevel": "Уровень {level}",
 
+  "search.open": "Поиск по буферу терминала",
   "search.placeholder": "Поиск по буферу…",
   "search.prev": "Предыдущее совпадение",
   "search.next": "Следующее совпадение",

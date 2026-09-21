@@ -1,16 +1,14 @@
 <script lang="ts">
   // Segmented Raw ↔ Table switch for the terminal pane's structured-log view.
-  // Reused in two spots that are never visible at once: floating top-right over
-  // the raw terminal (Terminal.svelte) and as the rightmost item of the table
-  // toolbar (JsonLogView.svelte). Presentational — the parent owns the state.
+  // Lives in the session bar under the server tabs (+page.svelte) — it used to
+  // float over the terminal and covered the first row of full-screen programs.
+  // Presentational — Terminal.svelte owns the state.
   import Icon from "./Icon.svelte";
   import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
 
   // `compact` collapses the labels to icons-only once the surrounding
-  // `@container` is too narrow (< 460px). Both usages set it: the JsonLogView
-  // table toolbar and the floating raw-mode toggle in Terminal.svelte (whose
-  // `.relative.@container` terminal pane is the query container).
+  // `@container` is too narrow (< 460px).
   let {
     structured,
     onSelect,

@@ -13,27 +13,57 @@
 // terminal checks to RELEASE these chords (return false → let them bubble) without
 // sending them to the shell — plain Ctrl+T / Ctrl+K stay with the shell.
 //
-// Note on case: with Shift held a letter key reports uppercase (`"T"`), without it
-// lowercase (`"t"`). So the ⌘ branch matching lowercase inherently means no Shift,
-// and the Ctrl+Shift branch matching uppercase inherently means Shift — same idiom
-// the search combo already relies on.
+// Layout independence: letters are compared through `chordLetter`, never through
+// a raw `e.key === "t"`. On a non-Latin layout (Russian, Greek, Hebrew…) the same
+// physical key reports `"е"` instead of `"t"`, and every chord silently stopped
+// working the moment the user switched language (Ctrl+R fell through to the shell's
+// reverse-search). `chordLetter` keeps `e.key` when it is a Latin letter — so
+// Dvorak/AZERTY users still get the letter printed on the key — and only falls
+// back to the physical `e.code` (`"KeyT"`) when the layout produced something else.
+// The Shift state is read from `shiftKey`, not from the letter's case: with a
+// non-Latin layout the case is carried by the Cyrillic letter, not the code.
 
 /** The minimal shape read from a keydown event (DOM KeyboardEvent satisfies it). */
 export interface KeyChord {
   key: string;
+  /** Physical key (`"KeyR"`); optional so hand-built chords in tests stay terse. */
+  code?: string;
   metaKey: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;
+  altKey?: boolean;
+}
+
+/**
+ * The Latin letter a chord was pressed on, lowercased, or `null` for non-letter
+ * keys. Prefers the layout's own Latin letter (`e.key`), falls back to the
+ * physical key (`e.code`) when the layout isn't Latin — so Ctrl+R works the same
+ * with the Russian layout active.
+ */
+export function chordLetter(e: Pick<KeyChord, "key" | "code">): string | null {
+  if (/^[a-z]$/i.test(e.key)) return e.key.toLowerCase();
+  const m = /^Key([A-Z])$/.exec(e.code ?? "");
+  return m ? m[1].toLowerCase() : null;
+}
+
+/** ⌘<letter> without Shift (macOS form). */
+function metaChord(e: KeyChord, letter: string): boolean {
+  return e.metaKey && !e.shiftKey && chordLetter(e) === letter;
+}
+
+/** Ctrl+Shift+<letter> (Windows/Linux form). */
+function ctrlShiftChord(e: KeyChord, letter: string): boolean {
+  return e.ctrlKey && e.shiftKey && chordLetter(e) === letter;
 }
 
 /** ⌘K (macOS) or Ctrl+Shift+K (Windows/Linux) — toggle the command palette. */
 export function isPaletteChord(e: KeyChord): boolean {
-  return (e.metaKey && e.key === "k") || (e.ctrlKey && e.shiftKey && e.key === "K");
+  return metaChord(e, "k") || ctrlShiftChord(e, "k");
 }
 
 /** ⌘T (macOS) or Ctrl+Shift+T (Windows/Linux) — open a new tab. */
 export function isNewTabChord(e: KeyChord): boolean {
-  return (e.metaKey && e.key === "t") || (e.ctrlKey && e.shiftKey && e.key === "T");
+  return metaChord(e, "t") || ctrlShiftChord(e, "t");
 }
 
 /**
@@ -43,4 +73,25 @@ export function isNewTabChord(e: KeyChord): boolean {
  */
 export function isAppShortcut(e: KeyChord): boolean {
   return isPaletteChord(e) || isNewTabChord(e);
+}
+
+/** ⌘F (macOS) or Ctrl+Shift+F (Windows/Linux) — full-buffer terminal search.
+ *  Plain Ctrl+F stays with the shell (readline forward-char). */
+export function isFindChord(e: KeyChord): boolean {
+  return metaChord(e, "f") || ctrlShiftChord(e, "f");
+}
+
+/** ⌘C (macOS) or Ctrl+Shift+C (Windows/Linux) — terminal copy. Plain Ctrl+C is SIGINT. */
+export function isTermCopyChord(e: KeyChord): boolean {
+  return metaChord(e, "c") || ctrlShiftChord(e, "c");
+}
+
+/** ⌘V (macOS) or Ctrl+Shift+V (Windows/Linux) — terminal paste. */
+export function isTermPasteChord(e: KeyChord): boolean {
+  return metaChord(e, "v") || ctrlShiftChord(e, "v");
+}
+
+/** Plain Ctrl+R (no other modifier) — the command-history overlay. */
+export function isHistoryChord(e: KeyChord): boolean {
+  return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && chordLetter(e) === "r";
 }
