@@ -40,6 +40,14 @@ export type SubTabPanel = "git" | "docker" | "k8s";
 
 export interface DockSessionState {
   files: FilesDockState | null;
+  /**
+   * The dock's shared working directory (v1.0.24) — the one folder the file panel
+   * and git agree on. Written by the file panel on every successful listing and,
+   * while "follow terminal" is on, by the terminal's cwd; git only reads it. Kept
+   * separate from `files` because it outlives an SFTP disconnect and is set by the
+   * terminal before the file panel was ever opened. null = nothing known yet.
+   */
+  cwd: string | null;
   k8sScope: K8sScopeState | null;
   /** Active sub-tab per driver panel (`"changes"`, `"images"`, `"pods"`, …). */
   sub: Partial<Record<SubTabPanel, string>>;
@@ -48,7 +56,7 @@ export interface DockSessionState {
 const sessions = $state<Record<string, DockSessionState>>({});
 
 function empty(): DockSessionState {
-  return { files: null, k8sScope: null, sub: {} };
+  return { files: null, cwd: null, k8sScope: null, sub: {} };
 }
 
 /**
@@ -58,6 +66,20 @@ function empty(): DockSessionState {
  */
 export function dockState(sessionId: string): DockSessionState {
   return (sessions[sessionId] ??= empty());
+}
+
+/**
+ * The shared dock directory, read-only: safe inside `$derived`, where `dockState`
+ * (which creates the entry) would be a state write during a read.
+ */
+export function dockCwd(sessionId: string): string | null {
+  return sessions[sessionId]?.cwd ?? null;
+}
+
+/** Move the shared dock directory — the file panel's listing or the followed terminal. */
+export function setDockCwd(sessionId: string, path: string): void {
+  const s = dockState(sessionId);
+  if (s.cwd !== path) s.cwd = path;
 }
 
 /** Drop everything this session's dock remembered (part of the tab teardown). */

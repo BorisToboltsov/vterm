@@ -7,6 +7,16 @@ export interface HashEntry {
   sha256: string;
 }
 
+/**
+ * One side of a sync as the backend hashed it (`sync::HashTree`). `skipped` counts
+ * files and folders that could not be read — they are absent from the plan, and the
+ * dialog has to say so rather than let "nothing to do" stand for them.
+ */
+export interface HashTree {
+  entries: HashEntry[];
+  skipped: number;
+}
+
 export type SyncDirection = "push" | "pull" | "bi";
 
 /** Actionable ops are applied by the backend; `conflict` is shown but skipped. */
@@ -224,4 +234,137 @@ export function summarize(actions: SyncAction[]): Record<SyncOp, number> {
   };
   for (const a of actions) out[a.op]++;
   return out;
+}
+
+// ── what an empty or one-sided plan means (v1.0.24) ─────────────────────────────
+
+/** Counts behind a plan, after excludes — what the verdict and warnings read. */
+export interface PlanFacts {
+  localFiles: number;
+  remoteFiles: number;
+  /** Distinct paths (either side) dropped by an exclude pattern. */
+  excluded: number;
+  /**
+   * Files that exist only on the target side of a one-way sync — what
+   * delete-extraneous would remove. Always 0 for `bi`, which has no target side.
+   */
+  extraneous: number;
+}
+
+export function planFacts(
+  local: HashEntry[],
+  remote: HashEntry[],
+  direction: SyncDirection,
+  excludes: string[],
+): PlanFacts {
+  const excluded = compileExclude(excludes);
+  const drop = new Set<string>();
+  const keep = (list: HashEntry[]) =>
+    new Set(
+      list
+        .filter((e) => {
+          if (!excluded(e.path)) return true;
+          drop.add(e.path);
+          return false;
+        })
+        .map((e) => e.path),
+    );
+  const l = keep(local);
+  const r = keep(remote);
+  const onlyIn = (a: Set<string>, b: Set<string>) => [...a].filter((p) => !b.has(p)).length;
+  const extraneous = direction === "push" ? onlyIn(r, l) : direction === "pull" ? onlyIn(l, r) : 0;
+  return { localFiles: l.size, remoteFiles: r.size, excluded: drop.size, extraneous };
+}
+
+/**
+ * Why a compared plan came out empty. "Already in sync" is only one of four
+ * answers, and saying it for the other three is the plausible stub principle 5
+ * forbids: two empty folders are not "in sync", a filter that ate everything
+ * compared nothing, and target-only files the user chose to keep still differ.
+ */
+export type EmptyPlanReason = "bothEmpty" | "allExcluded" | "onlyExtraneous" | "identical";
+
+export function emptyPlanReason(f: PlanFacts): EmptyPlanReason {
+  if (f.localFiles + f.remoteFiles === 0) return f.excluded > 0 ? "allExcluded" : "bothEmpty";
+  // Reached only with delete-extraneous off: with it on, these would be actions.
+  if (f.extraneous > 0) return "onlyExtraneous";
+  return "identical";
+}
+
+/**
+ * The plan would empty the target side: the source is empty and delete-extraneous
+ * is on, so every target file is queued for deletion. A legitimate plan, but one
+ * that a wrong folder pick produces just as readily — so it gets a red line.
+ * Returns the source side, or null when the plan is not a wipe.
+ */
+export function wipesTarget(
+  f: PlanFacts,
+  direction: SyncDirection,
+  deleteExtraneous: boolean,
+): "local" | "remote" | null {
+  if (!deleteExtraneous || direction === "bi") return null;
+  if (direction === "push") return f.localFiles === 0 && f.remoteFiles > 0 ? "local" : null;
+  return f.remoteFiles === 0 && f.localFiles > 0 ? "remote" : null;
+}
+
+/** Everything that decides whether Compare / Apply can run right now. */
+export interface SyncButtonState {
+  localPath: string;
+  remotePath: string;
+  hasPlan: boolean;
+  applicableCount: number;
+  conflictCount: number;
+  phase: SyncRunPhase;
+  busy: boolean;
+}
+
+/**
+ * Why Compare and Apply are disabled, as i18n keys (null = enabled). A greyed-out
+ * button with no reason is the "everything is blurred and nothing explains it"
+ * report this exists to answer; `busy` needs no text, the button says it itself.
+ */
+export function syncBlockReasons(s: SyncButtonState): {
+  compare: "sync.needLocal" | "sync.needRemote" | null;
+  apply:
+    | "sync.needLocal"
+    | "sync.needRemote"
+    | "sync.needCompare"
+    | "sync.compareAfterStop"
+    | "sync.onlyConflicts"
+    | "sync.nothingToApply"
+    | null;
+} {
+  const compare = !s.localPath ? "sync.needLocal" : !s.remotePath ? "sync.needRemote" : null;
+  let apply: ReturnType<typeof syncBlockReasons>["apply"] = null;
+  if (compare) apply = compare;
+  else if (!s.hasPlan) apply = "sync.needCompare";
+  else if (s.phase === "stopped") apply = "sync.compareAfterStop";
+  else if (s.applicableCount === 0)
+    apply = s.conflictCount > 0 ? "sync.onlyConflicts" : "sync.nothingToApply";
+  return { compare, apply };
+}
+
+/**
+ * Map a hashing error from the backend to a localizable message. The markers come
+ * from `AppError`'s `Display` (`sync-dir-unreadable: cannot read folder <path>`,
+ * `hash-tool-missing`, `hash-incomplete`); anything else is shown as is.
+ */
+export function syncErrorView(
+  err: string,
+):
+  | { key: "sync.errDirUnreadable"; path: string }
+  | { key: "sync.errHashTool" | "sync.errIncomplete" }
+  | { key: null; raw: string } {
+  const dir = /sync-dir-unreadable: cannot read folder (.*)$/s.exec(err);
+  if (dir) return { key: "sync.errDirUnreadable", path: dir[1] };
+  if (err.includes("hash-tool-missing")) return { key: "sync.errHashTool" };
+  if (err.includes("hash-incomplete")) return { key: "sync.errIncomplete" };
+  return { key: null, raw: err };
+}
+
+/** The folders a remote-folder picker lists: directories only, by name. */
+export function pickerDirs<T extends { name: string; isDir: boolean }>(entries: T[]): T[] {
+  return entries
+    .filter((e) => e.isDir && e.name !== "." && e.name !== "..")
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

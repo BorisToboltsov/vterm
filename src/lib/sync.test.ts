@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  planFacts,
+  emptyPlanReason,
+  wipesTarget,
+  syncBlockReasons,
+  syncErrorView,
+  pickerDirs,
   compileExclude,
   parseExcludes,
   diffTrees,
@@ -192,5 +198,93 @@ describe("syncRunSummary", () => {
       "sync:y": { transferred: 0, total: 0, done: true },
     };
     expect(syncRunSummary(deletes, map).pct).toBe(100);
+  });
+});
+
+const e = (path: string, sha256 = "h") => ({ path, sha256 });
+
+describe("planFacts / emptyPlanReason", () => {
+  it("tells two empty folders from identical ones", () => {
+    expect(emptyPlanReason(planFacts([], [], "push", []))).toBe("bothEmpty");
+    expect(emptyPlanReason(planFacts([e("a")], [e("a")], "push", []))).toBe("identical");
+  });
+
+  it("says everything was filtered out rather than 'in sync'", () => {
+    const f = planFacts([e(".git/HEAD")], [e(".git/HEAD"), e(".git/x")], "push", [".git"]);
+    expect(f.excluded).toBe(2);
+    expect(emptyPlanReason(f)).toBe("allExcluded");
+  });
+
+  it("counts target-only files as extraneous per direction", () => {
+    expect(planFacts([], [e("a"), e("b")], "push", []).extraneous).toBe(2);
+    expect(planFacts([e("a")], [], "pull", []).extraneous).toBe(1);
+    // Both ways has no target side — nothing is extraneous there.
+    expect(planFacts([e("a")], [e("b")], "bi", []).extraneous).toBe(0);
+    expect(emptyPlanReason(planFacts([], [e("a")], "push", []))).toBe("onlyExtraneous");
+  });
+});
+
+describe("wipesTarget", () => {
+  it("flags an empty source with delete-extraneous on", () => {
+    expect(wipesTarget(planFacts([], [e("a")], "push", []), "push", true)).toBe("local");
+    expect(wipesTarget(planFacts([e("a")], [], "pull", []), "pull", true)).toBe("remote");
+  });
+
+  it("stays quiet when nothing would be deleted", () => {
+    expect(wipesTarget(planFacts([], [e("a")], "push", []), "push", false)).toBeNull();
+    expect(wipesTarget(planFacts([e("b")], [e("a")], "push", []), "push", true)).toBeNull();
+    expect(wipesTarget(planFacts([], [e("a")], "bi", []), "bi", true)).toBeNull();
+    expect(wipesTarget(planFacts([], [], "push", []), "push", true)).toBeNull();
+  });
+});
+
+describe("syncBlockReasons", () => {
+  const base = {
+    localPath: "/l",
+    remotePath: "/r",
+    hasPlan: true,
+    applicableCount: 1,
+    conflictCount: 0,
+    phase: "idle" as const,
+    busy: false,
+  };
+
+  it("enables both when ready", () => {
+    expect(syncBlockReasons(base)).toEqual({ compare: null, apply: null });
+  });
+
+  it("names the missing step", () => {
+    expect(syncBlockReasons({ ...base, localPath: "" }).compare).toBe("sync.needLocal");
+    expect(syncBlockReasons({ ...base, remotePath: "" }).apply).toBe("sync.needRemote");
+    expect(syncBlockReasons({ ...base, hasPlan: false }).apply).toBe("sync.needCompare");
+    expect(syncBlockReasons({ ...base, phase: "stopped" }).apply).toBe("sync.compareAfterStop");
+    expect(syncBlockReasons({ ...base, applicableCount: 0, conflictCount: 2 }).apply).toBe(
+      "sync.onlyConflicts",
+    );
+    expect(syncBlockReasons({ ...base, applicableCount: 0 }).apply).toBe("sync.nothingToApply");
+  });
+});
+
+describe("syncErrorView", () => {
+  it("maps the backend markers", () => {
+    expect(syncErrorView("sync-dir-unreadable: cannot read folder /srv/my app")).toEqual({
+      key: "sync.errDirUnreadable",
+      path: "/srv/my app",
+    });
+    expect(syncErrorView("hash-tool-missing: neither …").key).toBe("sync.errHashTool");
+    expect(syncErrorView("hash-incomplete: …").key).toBe("sync.errIncomplete");
+    expect(syncErrorView("no active session")).toEqual({ key: null, raw: "no active session" });
+  });
+});
+
+describe("pickerDirs", () => {
+  it("keeps folders only, sorted by name", () => {
+    const list = [
+      { name: "zeta", isDir: true },
+      { name: "file", isDir: false },
+      { name: "alpha", isDir: true },
+      { name: "..", isDir: true },
+    ];
+    expect(pickerDirs(list).map((d) => d.name)).toEqual(["alpha", "zeta"]);
   });
 });

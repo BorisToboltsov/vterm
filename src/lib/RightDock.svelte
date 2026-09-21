@@ -206,7 +206,6 @@
         <div class="min-h-0 flex-1 {activeTab === 'git' ? 'vt-dock-pane' : 'hidden'}">
           <GitPanel
             {sessionId}
-            {terminalCwd}
             {followTerminal}
             visible={activeTab === "git"}
             {onToggleFollowTerminal}

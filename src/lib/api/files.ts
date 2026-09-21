@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry, TextFile, WriteResult } from "../types";
-import type { HashEntry, SyncAction, SyncStats, GrepMatch } from "../sync";
+import type { HashTree, SyncAction, SyncStats, GrepMatch } from "../sync";
 import type { ToolsStatus } from "../servertools";
 import type { RemoteLintResult } from "../remotelint";
 
@@ -133,13 +133,13 @@ export function localCopy(from: string, to: string): Promise<void> {
 // ── Directory sync (Phase 12.5) ─────────────────────────────────────────────────
 
 /** Hash a remote directory tree via sha256sum over SSH (no download). */
-export function sftpHashTree(sessionId: string, path: string): Promise<HashEntry[]> {
-  return invoke<HashEntry[]>("sftp_hash_tree", { sessionId, path });
+export function sftpHashTree(sessionId: string, path: string): Promise<HashTree> {
+  return invoke<HashTree>("sftp_hash_tree", { sessionId, path });
 }
 
 /** Hash a local directory tree. */
-export function localHashTree(path: string): Promise<HashEntry[]> {
-  return invoke<HashEntry[]>("local_hash_tree", { path });
+export function localHashTree(path: string): Promise<HashTree> {
+  return invoke<HashTree>("local_hash_tree", { path });
 }
 
 /** Detect the server's package manager + which optional tools are installed. */

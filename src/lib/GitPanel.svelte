@@ -51,13 +51,12 @@
     type DiffLine,
     type GitRunOpts,
   } from "./git";
-  import { rememberSub, storedSub } from "./stores/dockstate.svelte";
+  import { dockCwd, rememberSub, storedSub } from "./stores/dockstate.svelte";
   import { untrack } from "svelte";
   import { t } from "./i18n";
 
   let {
     sessionId,
-    terminalCwd = null,
     followTerminal = false,
     onToggleFollowTerminal,
     onOpenDiff,
@@ -67,7 +66,6 @@
     visible = true,
   }: {
     sessionId: string;
-    terminalCwd?: string | null;
     followTerminal?: boolean;
     /**
      * The dock is showing this tab. The panel stays mounted behind another tab
@@ -93,7 +91,12 @@
   let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "git", "changes")));
   let sendToTerminal = $state(false);
 
-  let cwd = $derived(terminalCwd);
+  // The dock's shared directory (v1.0.24), not the terminal's: the file panel
+  // writes it on every listing, and the followed terminal writes it only while
+  // "follow terminal" is on. So opening a repo in the file panel lands here even
+  // when the `cd` it mirrored never reached the shell, and with following off a
+  // `cd` in the terminal leaves git where the panels are — one switch, one meaning.
+  let cwd = $derived(dockCwd(sessionId));
   let repoRoot = $state<string | null>(null);
   let isRepo = $state<boolean | null>(null); // null = unknown/not loaded yet
   let loading = $state(false);
@@ -383,7 +386,8 @@
 <div class="flex h-full min-h-0 flex-col text-xs">
   {#if !cwd}
     <EmptyState icon="gitBranch" title={t("git.noPath")} hint={t("git.noPathHint")}>
-      {#if onToggleFollowTerminal}
+      <!-- Only offered while off: pressed when already on, it would switch following off. -->
+      {#if onToggleFollowTerminal && !followTerminal}
         <button
           class="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-xs font-medium text-panel-alt hover:bg-accent-hover"
           onclick={onToggleFollowTerminal}
@@ -424,7 +428,16 @@
         <Icon name="cloud" size={13} />
       </button>
       {#if onToggleFollowTerminal}
-        <button class="rounded p-1 hover:bg-edge hover:text-text {followTerminal ? 'text-accent' : 'text-muted'}" use:tooltip={t("sftp.followTerminal")} aria-label={t("sftp.followTerminal")} onclick={onToggleFollowTerminal}>
+        <button
+          class="rounded p-1 {followTerminal
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:bg-edge hover:text-text'}"
+          data-testid="git-follow-terminal"
+          use:tooltip={t("sftp.followTerminal")}
+          aria-label={t("sftp.followTerminal")}
+          aria-pressed={followTerminal}
+          onclick={onToggleFollowTerminal}
+        >
           <Icon name="terminal" size={13} />
         </button>
       {/if}

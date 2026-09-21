@@ -58,6 +58,25 @@ pub enum AppError {
     #[error("backup-failed: could not create the .bak copy, nothing was written ({0})")]
     BackupFailed(String),
 
+    /// A sync side (local or remote folder) could not be listed at all — missing,
+    /// not a directory, or not readable. Distinct from "the folder is empty": an
+    /// empty tree plans "upload everything" on push and, with delete-extraneous,
+    /// "delete everything" on the other side. The frontend matches
+    /// `sync-dir-unreadable`.
+    #[error("sync-dir-unreadable: cannot read folder {0}")]
+    SyncDirUnreadable(String),
+
+    /// The server has neither `sha256sum` nor `shasum`, so its tree can't be
+    /// hashed. Reported, never mistaken for an empty folder (`hash-tool-missing`).
+    #[error("hash-tool-missing: neither sha256sum nor shasum is available on the server")]
+    HashToolMissing,
+
+    /// The remote hash listing ended without its completion marker (connection
+    /// dropped, command killed). A partial tree is not a smaller tree
+    /// (`hash-incomplete`).
+    #[error("hash-incomplete: the server's file listing ended early")]
+    HashIncomplete,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -117,6 +136,14 @@ mod tests {
             .to_string()
             .contains("dest-exists"));
         assert!(AppError::KeyExists.to_string().contains("key-exists"));
+        let dir = AppError::SyncDirUnreadable("/srv/app".into()).to_string();
+        assert!(dir.contains("sync-dir-unreadable") && dir.contains("/srv/app"));
+        assert!(AppError::HashToolMissing
+            .to_string()
+            .contains("hash-tool-missing"));
+        assert!(AppError::HashIncomplete
+            .to_string()
+            .contains("hash-incomplete"));
         let backup = AppError::BackupFailed("permission denied".into()).to_string();
         assert!(backup.contains("backup-failed"));
         // The cause travels with it — "couldn't back up" alone is not actionable.

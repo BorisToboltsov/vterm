@@ -1566,17 +1566,17 @@ async fn sftp_hash_tree(
     state: State<'_, AppState>,
     session_id: String,
     path: String,
-) -> AppResult<Vec<sync::HashEntry>> {
+) -> AppResult<sync::HashTree> {
     let session = session_arc(&state, &session_id).await?;
     let out = session
         .run_command(&sync::remote_hash_command(&path))
         .await?;
-    Ok(sync::parse_hashsum(&out))
+    sync::parse_hash_output(&path, &out)
 }
 
 /// Hash every file under a local directory (the local side of sync).
 #[tauri::command]
-async fn local_hash_tree(path: String) -> AppResult<Vec<sync::HashEntry>> {
+async fn local_hash_tree(path: String) -> AppResult<sync::HashTree> {
     localfile::hash_tree(&path).await
 }
 

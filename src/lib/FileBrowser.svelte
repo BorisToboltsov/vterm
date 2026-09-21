@@ -39,7 +39,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
-  import { dockState, type FilesDockState } from "./stores/dockstate.svelte";
+  import { dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
   import { t } from "./i18n";
 
   let {
@@ -324,6 +324,13 @@
       selection = emptySelection();
       cursor = -1;
       persist();
+      // Publish the folder to the rest of the dock (git reads it). Any successful
+      // listing counts — a click, a typed path, or following the terminal — but not
+      // a synthetic level like "This PC", which is no directory git could run in,
+      // nor the "." placeholder listed before home resolved.
+      if (sessionKey && path !== "." && adapter.mirrorsToTerminal(path)) {
+        setDockCwd(sessionKey, path);
+      }
     } catch (e) {
       error = String(e);
     } finally {

@@ -156,17 +156,37 @@ async fn copy_recursive(from: &Path, to: &Path) -> AppResult<()> {
 
 /// SHA-256 every file under `root` (skipping symlinks), returning `/`-separated
 /// relative paths sorted by path — the local side of directory sync (Phase 12.5).
-pub async fn hash_tree(root: &str) -> AppResult<Vec<crate::sync::HashEntry>> {
+///
+/// A root that can't be listed is an error, not an empty tree: empty plans "upload
+/// everything" / "delete everything on the other side". Unreadable items below the
+/// root are skipped but **counted**, so the dialog can say the plan is partial.
+pub async fn hash_tree(root: &str) -> AppResult<crate::sync::HashTree> {
     let root_path = Path::new(root);
     let mut out = Vec::new();
+    let mut skipped = 0u32;
     let mut stack = vec![root_path.to_path_buf()];
     while let Some(dir) = stack.pop() {
         let mut rd = match tokio::fs::read_dir(&dir).await {
             Ok(r) => r,
-            Err(_) => continue, // unreadable sub-dir: skip, don't fail the whole sync
+            Err(_) if dir == root_path => {
+                return Err(AppError::SyncDirUnreadable(root.to_string()));
+            }
+            Err(_) => {
+                skipped += 1; // unreadable sub-dir: skip, don't fail the whole sync
+                continue;
+            }
         };
-        while let Some(entry) = rd.next_entry().await.map_err(|e| e.to_string())? {
+        loop {
+            let entry = match rd.next_entry().await {
+                Ok(Some(e)) => e,
+                Ok(None) => break,
+                Err(_) => {
+                    skipped += 1;
+                    break;
+                }
+            };
             let Ok(ft) = entry.file_type().await else {
+                skipped += 1;
                 continue;
             };
             if ft.is_symlink() {
@@ -177,6 +197,7 @@ pub async fn hash_tree(root: &str) -> AppResult<Vec<crate::sync::HashEntry>> {
                 stack.push(p);
             } else if ft.is_file() {
                 let Ok(bytes) = tokio::fs::read(&p).await else {
+                    skipped += 1;
                     continue;
                 };
                 let rel = p
@@ -192,7 +213,10 @@ pub async fn hash_tree(root: &str) -> AppResult<Vec<crate::sync::HashEntry>> {
         }
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(out)
+    Ok(crate::sync::HashTree {
+        entries: out,
+        skipped,
+    })
 }
 
 /// Unix permission bits of a file (None on non-unix or when unavailable).
@@ -534,6 +558,48 @@ pub async fn local_copy(from: String, to: String) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A root we can't list is an error — never an empty tree, which plans a full
+    // upload (or a full delete with delete-extraneous on).
+    #[tokio::test]
+    async fn hash_tree_refuses_an_unreadable_root_and_counts_skips() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert!(matches!(
+            hash_tree(missing.to_str().unwrap()).await.unwrap_err(),
+            AppError::SyncDirUnreadable(_)
+        ));
+
+        let empty = tmp.path().join("empty");
+        std::fs::create_dir(&empty).unwrap();
+        let tree = hash_tree(empty.to_str().unwrap()).await.unwrap();
+        assert!(tree.entries.is_empty());
+        assert_eq!(tree.skipped, 0);
+
+        std::fs::create_dir_all(tmp.path().join("full/sub")).unwrap();
+        std::fs::write(tmp.path().join("full/sub/a.txt"), b"hi").unwrap();
+        let tree = hash_tree(tmp.path().join("full").to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(tree.entries.len(), 1);
+        assert_eq!(tree.entries[0].path, "sub/a.txt");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = tmp.path().join("full/locked");
+            std::fs::create_dir(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let tree = hash_tree(tmp.path().join("full").to_str().unwrap()).await;
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let tree = tree.unwrap();
+            // Root reads everything regardless; the count is only meaningful otherwise.
+            if std::fs::read_dir(&locked).is_ok() {
+                return;
+            }
+            assert_eq!(tree.skipped, 1);
+        }
+    }
 
     // Phase 44.4: the markdown preview's inline images. The size guard is the
     // point of the test — this path exists to show a screenshot beside a README,
