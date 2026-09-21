@@ -18,6 +18,7 @@ import { toTerminalInput, auditLabel } from "../aiexec";
 import { nextCommand, buildFeedback, isDangerousCommand } from "../aidialog";
 import { notifySuccess } from "./toasts.svelte";
 import { describeAiError } from "../aierror";
+import { chatBusy, type AskSource } from "../aiask";
 import { t } from "../i18n";
 
 /** Dialog-loop guards (17.8). Configurable defaults land in 17.8.5. */
@@ -62,22 +63,29 @@ export interface SessionChat {
   context: ContextTiers;
   /**
    * A question raised from elsewhere in the app (Phase 41): the terminal's
-   * "Explain" menu item, the Docker/k8s detail modals, the monitoring overlay.
+   * "Explain" menu item and session-bar button, the Docker/k8s detail modals, the
+   * monitoring overlay.
    *
-   * It is a *request*, not a send: `AiChat` turns it into the ordinary consent
-   * dialog, so a caller cannot route context past the consent contract. Cleared
-   * once the chat has picked it up.
+   * It is a *request*, not a send: `AiChat` weighs it (is the assistant usable
+   * here at all?) and moves it into {@link attachment}, so a caller cannot route
+   * context past the consent contract. Cleared once the chat has picked it up.
    */
   ask: AskRequest | null;
+  /**
+   * The composer chip: context attached for the next question. Sent — through
+   * the consent dialog — with whatever the user types, or with the preset
+   * question on an empty send; dropped by its ✕ or once sent. Kept per session so
+   * it survives the dock remounting on a tab switch.
+   */
+  attachment: AskRequest | null;
 }
 
-/** A prepared question + already-collected raw context, awaiting consent. */
+/** Already-collected raw context about something on screen. */
 export interface AskRequest {
-  question: string;
+  /** What it is about — picks the chip label, the `###` header and the preset question. */
+  source: AskSource;
   /** Raw (unredacted) text; `AiChat` redacts and previews it like any context. */
   context: string;
-  /** Section label for the context block, e.g. "Container logs". */
-  label: string;
 }
 
 /** Key used when there is no active session (AiChat is normally session-scoped). */
@@ -107,6 +115,7 @@ export function getChat(sessionId: string | undefined): SessionChat {
       dialogRunning: false,
       pending: null,
       ask: null,
+      attachment: null,
       // New chats inherit the global tier defaults; then chosen per-chat.
       context: {
         includeBuffer: settings.ai.includeBuffer,
@@ -188,6 +197,11 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   const key = sessionId ?? KEY_NONE;
   const c = getChat(sessionId);
 
+  // One turn at a time (aiask.ts). Callers check first and tell the user; this is
+  // the backstop, so no entry point can start a second stream over a live one.
+  // A feedback turn is the dialog loop's own continuation and is expected here.
+  if (!opts.feedback && chatBusy(c)) return;
+
   // A fresh user turn resets the dialog loop; a feedback turn continues it.
   if (!opts.feedback) {
     c.dialogStep = 0;
@@ -208,6 +222,7 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   const req = buildChatRequest(settings, streamId, history, system);
   if (!req) {
     c.error = t("ai.disabledHint");
+    c.dialogRunning = false;
     return;
   }
   c.streaming = true;
@@ -243,6 +258,8 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   un.push(
     await listen<string>(`ai://error/${streamId}`, (e) => {
       c.error = describeAiError(e.payload);
+      // A failed reply ends the loop — left running, it would hold the chat busy.
+      c.dialogRunning = false;
       finish();
     }),
   );
@@ -253,6 +270,7 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
   } catch (e) {
     if (c.streaming) {
       c.error = describeAiError(e);
+      c.dialogRunning = false;
       finish();
     }
   }

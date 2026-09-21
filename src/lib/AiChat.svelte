@@ -21,12 +21,20 @@
     defaultPrompt,
     type AiExecMode,
   } from "./ai";
-  import { buildContext, buildRawContext, type RawContext, type BuiltContext } from "./aicontext";
+  import {
+    buildContext,
+    contextSummary,
+    textLines,
+    type RawContext,
+    type BuiltContext,
+    type ContextTiers,
+  } from "./aicontext";
   import { buildSystemPrompt, resolveReplyLanguage, type PromptVars } from "./aicore";
   import { parseChatSegments } from "./aiexec";
   import { aiModels } from "./api";
   import { writeClipboard } from "./clipboard";
-  import { notifySuccess } from "./stores/toasts.svelte";
+  import { notifySuccess, notifyInfo } from "./stores/toasts.svelte";
+  import { askBlocker, chatBusy, ASK_BLOCK_MESSAGE, ASK_PRESETS } from "./aiask";
   import {
     aiChatState,
     getChat,
@@ -54,6 +62,8 @@
     noAi = false,
     isLocal = false,
     promptVars = {},
+    selectionLines = 0,
+    hasRecording = false,
   }: {
     /** Reads the live session context (impure); omitted when no session is active. */
     getContext?: () => Promise<RawContext> | RawContext;
@@ -71,6 +81,10 @@
     isLocal?: boolean;
     /** Values for `{os}`/`{host}`/… placeholders in the user's prompt (Phase 41). */
     promptVars?: PromptVars;
+    /** Lines selected in the terminal right now (0 = none) — for the caption. */
+    selectionLines?: number;
+    /** The session is being recorded, so the recording tier would add something. */
+    hasRecording?: boolean;
   } = $props();
 
   // The conversation + streaming live in a per-session store (stores/aichat), so
@@ -87,6 +101,7 @@
     dialogRunning: false,
     pending: null,
     ask: null,
+    attachment: null,
     context: { includeBuffer: false, includeRecording: false, includeMetadata: false },
   };
   const sessionKey = $derived(sessionId ?? KEY_NONE);
@@ -99,13 +114,19 @@
   const streaming = $derived(chat.streaming);
   const error = $derived(chat.error);
   const pending = $derived(chat.pending); // a dialog command awaiting confirm/skip
+  // Mid-turn: streaming, awaiting a dialog confirmation, or running a dialog step.
+  // A new question waits until it is over (aiask.ts).
+  const busy = $derived(chatBusy(chat));
 
   let input = $state("");
   let attach = $state(false);
   let showTiers = $state(false); // context-tier popover open
   let scrollEl = $state<HTMLElement>();
+  let inputEl = $state<HTMLTextAreaElement>();
   // Pending consent: a built context awaiting the user's explicit go-ahead.
-  let consent = $state<{ question: string; built: BuiltContext } | null>(null);
+  // `attached` = it carries the composer chip, which goes once the send starts.
+  let consent = $state<{ question: string; built: BuiltContext; attached: boolean } | null>(null);
+  const attachment = $derived(chat.attachment);
   // Which reasoning folds the user opened, by message index. Folded by default:
   // the scratchpad is context for the wait, not the answer.
   let openReasoning = $state<Record<number, boolean>>({});
@@ -177,18 +198,23 @@
 
   /**
    * Pick up a question raised elsewhere (terminal "Explain", a container's logs,
-   * a metrics snapshot) and route it through the *existing* consent dialog rather
-   * than sending it. Callers hand over raw text; redaction and the preview happen
-   * here, so no entry point can bypass the consent contract.
+   * a metrics snapshot) as a chip in the composer: the user asks their own question
+   * about it, or sends the preset one. Nothing leaves here — the send runs the
+   * *existing* consent dialog, so no entry point can bypass the consent contract.
    */
   $effect(() => {
     const req = chat.ask;
-    if (!req || !ready) return;
+    if (!req) return;
     chat.ask = null;
-    if (noAi) return; // the server bars the assistant entirely (17.7)
-    const built = buildRawContext(req.context, req.label);
-    if (built.text) consent = { question: req.question, built };
-    else doSend(req.question, "");
+    // Attached or turned away with a reason — never parked: a request left in the
+    // store would pop up later, out of the blue, once the blocker cleared.
+    const block = askBlocker({ ready, noAi });
+    if (block) {
+      notifyInfo(t(ASK_BLOCK_MESSAGE[block]));
+      return;
+    }
+    chat.attachment = req;
+    void tick().then(() => inputEl?.focus());
   });
 
   async function scrollToBottom() {
@@ -203,19 +229,46 @@
     scrollToBottom();
   });
 
+  // "Sends: …" beside the paperclip — the same slot rule buildContext applies, so a
+  // stale selection scrolled off screen is visible before the consent dialog.
+  const summary = $derived(
+    attach && canAttach
+      ? t("ai.context.will", {
+          what: contextSummary({
+            attached: !!attachment,
+            selectionLines,
+            tiers: chat.context,
+            hasRecording,
+          })
+            .map((p) => t(p.key, p.params))
+            .join(" + "),
+        })
+      : "",
+  );
+
+  const NO_TIERS: ContextTiers = { includeBuffer: false, includeRecording: false, includeMetadata: false };
+
   async function send() {
-    const text = input.trim();
-    if (!text || streaming || !ready || consent || pending) return;
-    if (attach && getContext && !noAi) {
+    // An attached chip makes an empty send meaningful: its preset question.
+    const att = noAi ? null : attachment;
+    const text = input.trim() || (att ? t(ASK_PRESETS[att.source].question) : "");
+    if (!text || busy || !ready || consent) return;
+    const tiers = attach && !!getContext && !noAi;
+    if (att || tiers) {
       let raw: RawContext = {};
-      try {
-        raw = await getContext();
-      } catch {
-        raw = {};
+      if (tiers && getContext) {
+        try {
+          raw = await getContext();
+        } catch {
+          raw = {};
+        }
       }
-      const built = buildContext(raw, chat.context);
+      // The chip takes the terminal slot (it is what the user pointed at);
+      // recording/metadata tiers still add when the paperclip is on.
+      const attached = att ? { header: ASK_PRESETS[att.source].header, text: att.context } : undefined;
+      const built = buildContext(raw, tiers ? chat.context : NO_TIERS, attached);
       if (built.text) {
-        consent = { question: text, built };
+        consent = { question: text, built, attached: !!att };
         return; // hold until the user confirms in the consent dialog
       }
     }
@@ -224,9 +277,9 @@
 
   function confirmConsent() {
     if (!consent) return;
-    const { question, built } = consent;
+    const { question, built, attached } = consent;
     consent = null;
-    doSend(question, built.text);
+    if (doSend(question, built.text) && attached) chat.attachment = null;
   }
 
   function cancelConsent() {
@@ -234,7 +287,12 @@
   }
 
   /** Hand off to the per-session streaming service (survives tab switches). */
-  function doSend(question: string, context: string) {
+  function doSend(question: string, context: string): boolean {
+    // A dialog step can start between opening the consent dialog and confirming it.
+    if (chatBusy(chat)) {
+      notifyInfo(t("ai.ask.busy"));
+      return false;
+    }
     input = "";
     void startChat({
       sessionId,
@@ -249,6 +307,7 @@
       prod,
       noAi,
     });
+    return true;
   }
 
   const personaPrompt = $derived(
@@ -506,16 +565,39 @@
   {/if}
 
   <div class="border-t border-edge p-2">
+    {#if attachment}
+      <!-- The composer chip: what the next question is about. Sent (after consent)
+           with the typed question, or with the preset one on an empty send. -->
+      <div
+        class="mb-1 flex items-center gap-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-muted"
+        data-testid="ai-attachment"
+      >
+        <Icon name="paperclip" size={11} class="shrink-0 text-accent" />
+        <span class="truncate text-text">{t(ASK_PRESETS[attachment.source].label)}</span>
+        <span class="shrink-0">· {t("ai.attach.lines", { count: String(textLines(attachment.context)) })}</span>
+        <button
+          type="button"
+          class="ml-auto shrink-0 rounded p-0.5 hover:text-text"
+          data-testid="ai-attachment-remove"
+          aria-label={t("ai.attach.remove")}
+          use:tooltip={t("ai.attach.remove")}
+          onclick={() => (chat.attachment = null)}
+        >
+          <Icon name="close" size={11} />
+        </button>
+      </div>
+    {/if}
     <textarea
       data-testid="ai-input"
+      bind:this={inputEl}
       rows="2"
-      placeholder={ready ? t("ai.placeholder") : t("ai.disabledHint")}
-      disabled={!ready || streaming || !!pending}
+      placeholder={!ready ? t("ai.disabledHint") : attachment ? t("ai.attach.placeholder") : t("ai.placeholder")}
+      disabled={!ready || busy}
       class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent disabled:opacity-50"
       bind:value={input}
       onkeydown={onKey}
     ></textarea>
-    <div class="mt-1 flex items-center justify-between">
+    <div class="mt-1 flex items-center justify-between gap-2">
       <div class="relative flex items-center">
         <button
           data-testid="ai-attach"
@@ -569,7 +651,14 @@
           </div>
         {/if}
       </div>
-      {#if streaming}
+      {#if summary}
+        <span
+          class="min-w-0 flex-1 truncate text-caption text-muted"
+          data-testid="ai-context-summary"
+          use:tooltip={summary}>{summary}</span
+        >
+      {/if}
+      {#if streaming || (chat.dialogRunning && !pending)}
         <button
           data-testid="ai-stop"
           type="button"
@@ -584,7 +673,7 @@
         <button
           data-testid="ai-send"
           class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt disabled:opacity-50"
-          disabled={!ready || input.trim() === "" || !!pending}
+          disabled={!ready || busy || (input.trim() === "" && !attachment)}
           onclick={send}
         >
           <Icon name="arrowRight" size={13} />
