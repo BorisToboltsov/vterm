@@ -1,6 +1,7 @@
 // Live SSH/local session: connect, terminal I/O, disconnect, term event names,
 // and the status-bar/monitoring metric probes (mirror of metrics.rs types).
 import { invoke } from "@tauri-apps/api/core";
+import { createOrderedWriter } from "../termwrite";
 
 // ── SSH session ───────────────────────────────────────────────────────────────
 
@@ -28,6 +29,12 @@ export interface ConnectOptions {
   hostKeyPolicy: string;
 }
 
+/** What happened besides the connection itself — the session is up either way. */
+export interface ConnectOutcome {
+  /** Why "remember" did not persist the secret (e.g. no keychain), if it did not. */
+  rememberFailed: string | null;
+}
+
 export function connectSession(
   sessionId: string,
   serverId: string,
@@ -36,8 +43,8 @@ export function connectSession(
   cols: number,
   rows: number,
   opts: ConnectOptions,
-): Promise<void> {
-  return invoke<void>("connect_session", {
+): Promise<ConnectOutcome> {
+  return invoke<ConnectOutcome>("connect_session", {
     sessionId,
     serverId,
     secret,
@@ -70,11 +77,16 @@ export function writeToTerminal(
   sessionId: string,
   data: Uint8Array,
 ): Promise<void> {
-  return invoke<void>("write_to_terminal", {
+  return orderedWrite(sessionId, data);
+}
+
+/** Per-session sequential delivery — concurrent invokes may land out of order (termwrite.ts). */
+const orderedWrite = createOrderedWriter((sessionId, data) =>
+  invoke<void>("write_to_terminal", {
     sessionId,
     data: Array.from(data),
-  });
-}
+  }),
+);
 
 /**
  * Read the current session's shell history file (raw text) for the Ctrl+R
