@@ -9,14 +9,15 @@ import { describe, expect, it } from "vitest";
 // multi-line snippet ran line by line the moment it landed instead of sitting in
 // the prompt for review — and LF went through where Enter sends CR. With
 // right-click bound to paste, one stray click could run a pasted block on a prod
-// shell. Checked on the source with comments stripped, so a comment naming the
-// old call can't trip it and a comment naming the new one can't satisfy it.
+// shell. Checked on the source with JS comments stripped, so a comment naming the
+// old call can't trip it and a comment naming the new one can't satisfy it. Markup
+// comments are left alone: both calls live in script, and a stray mention in
+// markup can only over-flag (the second check), never hide a violation.
 
 const SRC = join(process.cwd(), "src");
 
 function strip(src: string): string {
   return src
-    .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
