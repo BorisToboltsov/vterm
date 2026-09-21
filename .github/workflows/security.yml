@@ -58,7 +58,7 @@ jobs:
 
       - name: Результаты в Security tab
         if: always() && hashFiles('semgrep.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -88,7 +88,7 @@ jobs:
 
       - name: Результаты в Security tab
         if: always() && hashFiles('trivy.sarif') != ''
-        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           sarif_file: trivy.sarif
           category: trivy
@@ -120,7 +120,7 @@ jobs:
       # allowed per job per tool/category» — на чём эта джоба и падала.
       - name: Аудит
         continue-on-error: true
-        uses: zizmorcore/zizmor-action@70fb788f84895a7701f5643d103d587e460b5c99 # v0.6.3
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
           # Разбираем и workflow, и композитные экшены, если появятся.
           collect: all
