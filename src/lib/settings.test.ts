@@ -442,6 +442,24 @@ describe("local shell picker", () => {
   });
 });
 
+describe("terminal paste", () => {
+  it("defaults to paste on right click and Ctrl+V pasting", () => {
+    expect(settings.rightClick).toBe("paste");
+    expect(settings.ctrlVPaste).toBe(true);
+  });
+
+  it("imports valid values and rejects junk", () => {
+    applyImportedSettings({ rightClick: "menu", ctrlVPaste: false });
+    flushSync();
+    expect(settings.rightClick).toBe("menu");
+    expect(settings.ctrlVPaste).toBe(false);
+    applyImportedSettings({ rightClick: "copy", ctrlVPaste: "yes" });
+    flushSync();
+    expect(settings.rightClick).toBe("paste");
+    expect(settings.ctrlVPaste).toBe(true);
+  });
+});
+
 describe("language", () => {
   it("defaults to English", () => {
     expect(settings.language).toBe("en");

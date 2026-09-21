@@ -19,6 +19,7 @@
     isAppShortcut,
     isFindChord,
     isHistoryChord,
+    isPlainCtrlVChord,
     isTermCopyChord,
     isTermPasteChord,
   } from "./appshortcuts";
@@ -28,6 +29,7 @@
   import CommandHistory from "./CommandHistory.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
+  import { ctrlVPastes, rightClickEffect } from "./termmouse";
   import { recentUniqueCommands, mergeCommands, createCommandCapture } from "./history";
   import {
     closedEvent,
@@ -63,6 +65,7 @@
     onoutput,
     oncwd,
     onExplain,
+    onselection,
     onlocalshell,
     onviewmode,
   }: {
@@ -87,6 +90,8 @@
     /** Hand the current selection to the AI assistant (Phase 41). Omitted when the
      *  assistant is unavailable, which also hides the menu item. */
     onExplain?: (selection: string) => void;
+    /** Whether the terminal has a selection — drives the session bar's "Ask AI". */
+    onselection?: (has: boolean) => void;
     /** Local tabs only: which `cd` dialect the spawned shell speaks, reported once
      *  at spawn so two-way follow can build a correct command (Phase 39.4). */
     onlocalshell?: (kind: CdShell) => void;
@@ -406,19 +411,46 @@
     if (sel) writeClipboard(sel);
   }
 
+  // Through xterm's own paste, never straight to the PTY: it wraps the text in
+  // bracketed-paste markers when the shell asked for them, so a multi-line paste
+  // lands in the prompt for review instead of running line by line, and it turns
+  // LF into CR (what Enter sends). The bytes then reach the PTY via onData.
   async function paste() {
     const text = await readClipboard();
-    if (text) writeToTerminal(sessionId, encoder.encode(text)).catch(() => {});
+    if (text) term?.paste(text);
+  }
+
+  /** Wipe the scrollback from outside (the session bar). */
+  export function clear() {
+    term?.clear();
+    term?.focus();
   }
 
   // ── Right-click menu (Phase 30) ─────────────────────────────────────────────
-  // Right-click always opens the terminal menu (copy/paste/clear/…); the native
-  // WebView menu is suppressed globally regardless. Middle-click paste stays a
-  // separate setting for terminal-users who prefer that muscle memory.
+  // Right-click pastes or opens the terminal menu per settings.rightClick, and
+  // Shift+right-click gives the other one (termmouse.ts); the native WebView menu
+  // is suppressed globally regardless. Middle-click paste stays a separate setting
+  // for terminal-users who prefer that muscle memory.
   let ctxMenu = $state<OpenMenu | null>(null);
   function onContextMenu(e: MouseEvent) {
     e.preventDefault();
     const hasSelection = !!term?.getSelection();
+    const effect = rightClickEffect({
+      setting: settings.rightClick,
+      shift: e.shiftKey,
+      hasSelection,
+      copyOnSelect: settings.copyOnSelect,
+    });
+    if (effect !== "menu") {
+      if (effect === "copy") {
+        copySelection();
+        term?.clearSelection();
+      } else {
+        void paste();
+      }
+      term?.focus();
+      return;
+    }
     const items: MenuItem[] = [
       { icon: "copy", label: t("ctx.copy"), disabled: !hasSelection, onSelect: () => copySelection() },
       { icon: "paperclip", label: t("ctx.paste"), onSelect: () => paste() },
@@ -496,6 +528,10 @@
   onMount(async () => {
     const t = activeTerminalTheme();
     term = new Terminal({
+      // Right-click is ours (paste or menu, termmouse.ts). xterm's macOS default
+      // selects the word under the pointer first — with copy-on-select that word
+      // replaced the clipboard right before the paste read it.
+      rightClickSelectsWord: false,
       fontFamily: settings.fontFamily,
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
@@ -581,6 +617,7 @@
     // Copy-on-select (optional) and bell handling.
     term.onSelectionChange(() => {
       if (settings.copyOnSelect) copySelection();
+      onselection?.(term.hasSelection());
     });
     term.onBell(() => {
       if (settings.bell === "visual") {
@@ -591,7 +628,8 @@
       }
     });
 
-    // Clipboard shortcuts: Cmd+C/V (macOS) or Ctrl+Shift+C/V (Win/Linux).
+    // Clipboard shortcuts: Cmd+C/V (macOS) or Ctrl+Shift+C/V (Win/Linux), plus
+    // plain Ctrl+V on Win/Linux unless settings.ctrlVPaste is off.
     // Plain Ctrl+C is left untouched so it still sends SIGINT.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== "keydown") return true;
@@ -623,7 +661,7 @@
         copySelection();
         return false;
       }
-      if (isTermPasteChord(e)) {
+      if (isTermPasteChord(e) || (isPlainCtrlVChord(e) && ctrlVPastes(settings.ctrlVPaste, hostEnv.os))) {
         // Without preventDefault the browser also fires a native `paste`,
         // which xterm handles too — pasting the text twice.
         e.preventDefault();

@@ -331,8 +331,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   повторный вход читает буфер только после него — очищенный вывод не возвращается; маркер
   авто-инвалидируется, когда строка уходит из scrollback. Парсинг и состояние — в
   [jsonlog.ts](../src/lib/jsonlog.ts) + `Terminal.svelte`, таблица презентационна.
-- **Поверх первой строки терминала ничего не висит.** Переключатель Raw/Table и кнопка поиска
-  живут в панели сессии под вкладками (`+page.svelte`, видимость — чистый
+- **Вставка в терминал — только через `term.paste()`.** Прямой `writeToTerminal` текста из буфера
+  обмена теряет bracketed paste: многострочный блок исполняется построчно, не дойдя до промпта, —
+  а вставка висит на одном клике ПКМ. Гейт `termpaste.guard`.
+- **Поверх первой строки терминала ничего не висит.** Переключатель Raw/Table, поиск, «Очистить» и
+  «Спросить ИИ» живут в панели сессии под вкладками (`+page.svelte`, видимость — чистый
   [sessionbar.ts](../src/lib/sessionbar.ts)), а не плавают над xterm: плавающий тумблер закрывал
   заголовок nano/htop. Состояние вида держит `Terminal.svelte` (`setViewMode`/`onviewmode`),
   панель только рисует его. Пустая панель не рендерится — терминал сохраняет высоту.
@@ -771,8 +774,9 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
     декларативный `MenuItem[]` из [ctxmenu.ts](../src/lib/ctxmenu.ts)
     (`action`/`separator`/`submenu`, `disabled`/`danger`), кламп к вьюпорту (`clampMenuPosition`) и
     гвард `isAction` — чистые, с тестами. Native-меню WebView подавлено глобально
-    (`suppressContextMenu`), меню терминала (копировать/вставить/очистить/…) по ПКМ доступно
-    всегда — отдельной настройки-выключателя нет.
+    (`suppressContextMenu`). В терминале ПКМ — настройка `rightClick` (вставка/меню), а
+    `Shift`+ПКМ **всегда** даёт второе действие: меню терминала достижимо при любой настройке
+    (решение — чистый [termmouse.ts](../src/lib/termmouse.ts)).
   - [PasswordInput](../src/lib/PasswordInput.svelte) — **любое** поле секрета; сырой
     `<input type="password">` запрещён. Несёт глазик, `autocomplete="off"` и `type="button"` у
     toggle (иначе он отправит объемлющую форму). Состояние «показан» локальное, стартует `false`
@@ -878,6 +882,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [cspnonce.test.ts](../src/lib/cspnonce.test.ts) | Каждый `EditorView` отдаёт style-nonce |
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [termctxfocus.guard.test.ts](../src/lib/termctxfocus.guard.test.ts) | Закрытие меню ПКМ терминала возвращает фокус в xterm — иначе после «Копировать/Вставить» ввод уходит в никуда. Проверка по исходнику без комментариев |
+| [termpaste.guard.test.ts](../src/lib/termpaste.guard.test.ts) | Текст из буфера обмена попадает в терминал только через `term.paste()` (bracketed paste), не прямым `writeToTerminal`. Проверка по исходнику без комментариев |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |
 | [hotkeylayout.guard.test.ts](../src/lib/hotkeylayout.guard.test.ts) | Буквенные хоткеи не сравнивают сырой `e.key` с латиницей (русская раскладка) — только `chordLetter`/`is*Chord` из `appshortcuts.ts`. Проверка по исходнику без комментариев |
 | [termfit.guard.test.ts](../src/lib/termfit.guard.test.ts) | У элемента, который `FitAddon` меряет как `parentElement`, нет паддинга — иначе сетка терминала выше своего места |

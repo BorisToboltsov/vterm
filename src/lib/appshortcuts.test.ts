@@ -6,6 +6,7 @@ import {
   isHistoryChord,
   isNewTabChord,
   isPaletteChord,
+  isPlainCtrlVChord,
   isTermCopyChord,
   isTermPasteChord,
 } from "./appshortcuts";
@@ -141,5 +142,17 @@ describe("terminal chords", () => {
     expect(isFindChord(chord("F", { meta: true, shift: true }))).toBe(false);
     expect(isTermCopyChord(chord("c", { meta: true }))).toBe(true);
     expect(isTermPasteChord(chord("v", { meta: true }))).toBe(true);
+  });
+});
+
+describe("plain Ctrl+V", () => {
+  it("matches Ctrl+V alone, on any layout", () => {
+    expect(isPlainCtrlVChord(chord("v", { ctrl: true }))).toBe(true);
+    expect(isPlainCtrlVChord(chord("м", { ctrl: true, code: "KeyV" }))).toBe(true);
+  });
+  it("does not match the Shift / ⌘ / Alt forms", () => {
+    expect(isPlainCtrlVChord(chord("V", { ctrl: true, shift: true }))).toBe(false);
+    expect(isPlainCtrlVChord(chord("v", { meta: true }))).toBe(false);
+    expect(isPlainCtrlVChord(chord("v", { ctrl: true, alt: true }))).toBe(false);
   });
 });

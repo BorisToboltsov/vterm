@@ -24,7 +24,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
   { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
-  { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click right click context menu local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка правый клик контекстное меню локальный шелл оболочка виндовс" },
+  { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click right click context menu ctrl+v shift local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка правый клик контекстное меню локальный шелл оболочка виндовс" },
   { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
   { id: "recording", keywords: "Recording session asciicast password mask privacy idle pause auto запись сессий пароль маскирование приватность простой пауза автозапись" },
   { id: "sftp", keywords: "SFTP files file size open editor megabytes mb limit max файлы файл размер открыть редактор мегабайт лимит" },

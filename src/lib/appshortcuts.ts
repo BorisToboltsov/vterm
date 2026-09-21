@@ -91,6 +91,11 @@ export function isTermPasteChord(e: KeyChord): boolean {
   return metaChord(e, "v") || ctrlShiftChord(e, "v");
 }
 
+/** Plain Ctrl+V (no other modifier) — optional paste on Windows/Linux (`ctrlVPastes`). */
+export function isPlainCtrlVChord(e: KeyChord): boolean {
+  return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && chordLetter(e) === "v";
+}
+
 /** Plain Ctrl+R (no other modifier) — the command-history overlay. */
 export function isHistoryChord(e: KeyChord): boolean {
   return e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && chordLetter(e) === "r";
