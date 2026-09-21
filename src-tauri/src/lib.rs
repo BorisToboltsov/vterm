@@ -2332,7 +2332,8 @@ mod tests {
         // exactly that on Linux without a Secret Service — the user authenticated
         // and got an error instead of a shell. Scans the code (comments stripped)
         // between the login and the end of the command for any `?`.
-        let src = include_str!("lib.rs");
+        // A Windows checkout carries CRLF (core.autocrlf); the markers below are LF.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
         let body = &src[src
             .find("async fn connect_session(")
             .expect("connect_session")..];

@@ -17,7 +17,11 @@ const SRC = join(process.cwd(), "src");
 const API = join(SRC, "lib", "api", "session.ts");
 
 function strip(src: string): string {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  // CRLF on a Windows checkout would hide the "\n" markers below.
+  return src
+    .replace(/\r\n/g, "\n")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 }
 
 function sourceFiles(dir: string, acc: string[] = []): string[] {
