@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use crate::store;
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
 use russh::client::{self, Handle, Msg};
-use russh::keys::{load_secret_key, ssh_key, PrivateKeyWithHashAlg};
+use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
 use russh::{ChannelMsg, ChannelWriteHalf};
 use russh_sftp::client::SftpSession;
 use std::sync::Arc;
@@ -87,16 +87,32 @@ struct ClientHandler {
     policy: HostKeyPolicy,
 }
 
+/// Fingerprint to pin for a presented host key, or `None` to reject it.
+///
+/// A host *certificate* is rejected: trusting one means trusting its CA, and
+/// vterm has no notion of trusted authorities. Pinning the key inside it would
+/// silently skip the signature, validity and principal checks a certificate is
+/// for. We never advertise certificate algorithms (`host_key_certificates` is
+/// empty by default), so a conforming server does not send one.
+fn host_key_fingerprint(presented: &PublicKeyOrCertificate) -> Option<String> {
+    match presented {
+        PublicKeyOrCertificate::PublicKey { key, .. } => {
+            Some(key.fingerprint(Default::default()).to_string())
+        }
+        PublicKeyOrCertificate::Certificate(_) => None,
+    }
+}
+
 impl client::Handler for ClientHandler {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &ssh_key::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let fingerprint = server_public_key
-            .fingerprint(Default::default())
-            .to_string();
+        let Some(fingerprint) = host_key_fingerprint(server_public_key) else {
+            return Ok(false);
+        };
         let id = format!("{}:{}", self.host, self.port);
         let known = store::known_host_key(&id);
         let trusted = match self.policy {
@@ -883,6 +899,37 @@ pub async fn connect(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::keys::ssh_key::{certificate, Algorithm, PrivateKey};
+
+    #[test]
+    fn host_key_fingerprint_pins_a_bare_key() {
+        let key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519).unwrap();
+        let public = key.public_key().clone();
+        let expected = public.fingerprint(Default::default()).to_string();
+        assert_eq!(
+            host_key_fingerprint(&PublicKeyOrCertificate::from(public)),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn host_key_fingerprint_rejects_a_certificate() {
+        // A validly signed host certificate is still refused: vterm trusts no CA,
+        // and pinning the embedded key would skip the checks a certificate exists for.
+        let mut rng = rand::rng();
+        let ca = PrivateKey::random(&mut rng, Algorithm::Ed25519).unwrap();
+        let host = PrivateKey::random(&mut rng, Algorithm::Ed25519).unwrap();
+        let mut builder =
+            certificate::Builder::new_with_random_nonce(&mut rng, host.public_key(), 0, u64::MAX)
+                .unwrap();
+        builder.cert_type(certificate::CertType::Host).unwrap();
+        builder.valid_principal("example.com").unwrap();
+        let cert = builder.sign(&ca).unwrap();
+        assert_eq!(
+            host_key_fingerprint(&PublicKeyOrCertificate::from(cert)),
+            None
+        );
+    }
 
     #[test]
     fn host_key_policy_from_str() {
