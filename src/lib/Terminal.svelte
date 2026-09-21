@@ -826,7 +826,16 @@
     class="h-full w-full px-2 pt-1"
     style="background-color: {termBg}"
   ></div>
-  <ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
+  <!-- Closing the menu hands focus back to the terminal: otherwise copy/paste
+       from the menu leaves keystrokes going nowhere. Actions that move focus on
+       purpose (find, explain) run after `onclose` and take it from here. -->
+  <ContextMenu
+    menu={ctxMenu}
+    onclose={() => {
+      ctxMenu = null;
+      term?.focus();
+    }}
+  />
   <!-- Structured JSON log view + raw↔table toggle (Phase 10). In structured mode
        the toggle lives inside the table toolbar; in raw mode it floats top-right. -->
   {#if structured}

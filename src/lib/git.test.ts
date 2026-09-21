@@ -52,6 +52,7 @@ import {
   stagedFiles,
   unstagedFiles,
   isDestructive,
+  needsConfirm,
   isUncommittedChangesError,
   isRemoteConnectionError,
   parseSyncResult,
@@ -61,6 +62,7 @@ import {
   type GitCommit,
   stagedDiffArgs,
 } from "./git";
+import * as git from "./git";
 
 describe("argument builders", () => {
   it("build the expected vectors", () => {
@@ -367,6 +369,9 @@ describe("isDestructive", () => {
     expect(isDestructive(["reset", "--hard"])).toBe(true);
     expect(isDestructive(["reset", "-q"])).toBe(false);
     expect(isDestructive(["restore", "--", "f"])).toBe(true);
+    // Unstage keeps the edits in the working tree.
+    expect(isDestructive(["restore", "--staged", "--", "f"])).toBe(false);
+    expect(isDestructive(["restore", "--staged", "--worktree", "--", "f"])).toBe(true);
     expect(isDestructive(["merge", "dev"])).toBe(true);
     expect(isDestructive(["rebase", "dev"])).toBe(true);
     expect(isDestructive(["stash", "drop", "stash@{0}"])).toBe(true);
@@ -374,6 +379,72 @@ describe("isDestructive", () => {
     expect(isDestructive(["checkout", "-f", "main"])).toBe(true);
     expect(isDestructive(["checkout", "main"])).toBe(false);
     expect(isDestructive(["status"])).toBe(false);
+  });
+});
+
+describe("formatGitCommand", () => {
+  it("quotes arguments that would split, leaves the rest bare", () => {
+    expect(git.formatGitCommand(["checkout", "main"])).toBe("git checkout main");
+    expect(git.formatGitCommand(git.commitArgs('fix "x" now'))).toBe('git commit -m "fix \\"x\\" now"');
+    expect(git.formatGitCommand(["commit", "-m", ""])).toBe('git commit -m ""');
+  });
+});
+
+describe("needsConfirm", () => {
+  it("confirms everything that moves HEAD, rewrites history, hits the remote or drops work", () => {
+    for (const args of [
+      git.checkoutArgs("main"),
+      git.checkoutCommitArgs("abc123"),
+      ["switch", "main"],
+      git.commitArgs("msg"),
+      git.pushArgs(),
+      git.pullArgs(),
+      git.mergeArgs("dev"),
+      git.rebaseArgs("dev"),
+      git.resetArgs("abc123", "soft"),
+      git.resetArgs("abc123", "mixed"),
+      git.resetArgs("abc123", "hard"),
+      git.revertArgs("abc123"),
+      git.cherryPickArgs("abc123"),
+      git.renameBranchArgs("a", "b"),
+      git.deleteBranchArgs("a"),
+      git.stashApplyArgs(0),
+      git.stashPopArgs(0),
+      git.stashDropArgs(0),
+      git.discardArgs(["f"]),
+      git.cleanArgs(["f"]),
+      git.discardAllArgs(),
+      ["tag", "-d", "v1"],
+    ]) {
+      expect(needsConfirm(args), args.join(" ")).toBe(true);
+    }
+  });
+
+  it("leaves cheap, trivially undone ops alone", () => {
+    for (const args of [
+      git.stageArgs(["f"]),
+      git.unstageArgs(["f"]),
+      git.stageAllArgs(),
+      git.unstageAllArgs(),
+      git.fetchArgs(),
+      git.createBranchArgs("feat"),
+      git.createBranchArgs("feat", "abc123"),
+      ["switch", "-c", "feat"],
+      git.tagArgs("v1", "abc123"),
+      git.stashSaveArgs(),
+      git.stashPushFileArgs("f"),
+      git.setUpstreamArgs("main", "origin/main"),
+      ["status"],
+    ]) {
+      expect(needsConfirm(args), args.join(" ")).toBe(false);
+    }
+  });
+
+  it("is a superset of isDestructive", () => {
+    for (const args of [["push", "--force"], ["branch", "-D", "x"], ["clean", "-f"]]) {
+      expect(isDestructive(args)).toBe(true);
+      expect(needsConfirm(args)).toBe(true);
+    }
   });
 });
 

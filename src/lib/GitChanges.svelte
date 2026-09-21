@@ -7,7 +7,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import { tooltip } from "./actions/tooltip";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
-  import type { GitStatus, GitFile } from "./git";
+  import type { GitStatus, GitFile, GitRunOpts } from "./git";
   import {
     stagedFiles,
     unstagedFiles,
@@ -22,6 +22,7 @@
     commitArgs,
     stagedDiffArgs,
     pushArgs,
+    formatGitCommand,
   } from "./git";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess } from "./stores/toasts.svelte";
@@ -46,7 +47,7 @@
   }: {
     status: GitStatus;
     busy: boolean;
-    run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
+    run: (args: string[], opts?: GitRunOpts) => Promise<boolean>;
     /** Open a changed file (repo-relative path) as an editable inline diff. */
     onOpenInEditor: (path: string) => void;
     /** Open a read-only unified diff of a file (staged or working-tree). */
@@ -246,10 +247,16 @@
 
   async function commit(push: boolean) {
     if (!canCommit) return;
-    const ok = await run(commitArgs(message.trim()), { successKey: "git.committed" });
+    // Commit + push is one decision: one dialog listing both commands, and the
+    // push rides on it (`confirmed`) instead of asking a second time.
+    const commitCmd = commitArgs(message.trim());
+    const confirmText = push
+      ? `${formatGitCommand(commitCmd)} && ${formatGitCommand(pushArgs())}`
+      : undefined;
+    const ok = await run(commitCmd, { successKey: "git.committed", confirmText });
     if (ok) {
       message = "";
-      if (push) await run(pushArgs(), { successKey: "git.pushed" });
+      if (push) await run(pushArgs(), { successKey: "git.pushed", confirmed: true });
     }
   }
 </script>

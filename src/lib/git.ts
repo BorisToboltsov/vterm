@@ -590,8 +590,9 @@ export function isDestructive(args: string[]): boolean {
     case "checkout":
       return rest.includes("-f") || rest.includes("--force");
     case "restore":
-      // Discarding working-tree or staged changes.
-      return true;
+      // Discarding working-tree changes. `--staged` alone only moves the index
+      // back (unstage) — the edits stay in the working tree, nothing is lost.
+      return !rest.includes("--staged") || rest.includes("--worktree") || rest.includes("-W");
     case "clean":
       return true;
     case "merge":
@@ -602,6 +603,67 @@ export function isDestructive(args: string[]): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Whether an op asks for confirmation on ANY server (prod adds a red warning on
+ * top). Wider than `isDestructive`: everything that moves HEAD, rewrites
+ * history, touches the remote or drops work. Left out on purpose — cheap and
+ * trivially undone: stage/unstage, fetch, creating a branch or tag, stash save,
+ * setting an upstream. A confirm on every stage click would train the user to
+ * click through the one that matters.
+ */
+export function needsConfirm(args: string[]): boolean {
+  if (isDestructive(args)) return true;
+  const [cmd, ...rest] = args;
+  switch (cmd) {
+    case "checkout":
+      // `checkout -b` creates a branch from the current HEAD — nothing to lose.
+      return !rest.includes("-b");
+    case "switch":
+      return !rest.includes("-c") && !rest.includes("--create");
+    case "reset":
+      // A bare `reset -q` only unstages (index back to HEAD); a mode or a target
+      // commit moves the branch.
+      return rest.some((a) => !a.startsWith("-") || /^--(soft|mixed|hard|merge|keep)$/.test(a));
+    case "commit":
+    case "push":
+    case "pull":
+    case "revert":
+    case "cherry-pick":
+      return true;
+    case "branch":
+      return rest.includes("-m") || rest.includes("-M") || rest.includes("--move");
+    case "stash":
+      return rest[0] === "apply";
+    case "tag":
+      return rest.includes("-d") || rest.includes("--delete");
+    default:
+      return false;
+  }
+}
+
+/** Options of the panel's mutating `run()` — shared by the Git sub-views. */
+export interface GitRunOpts {
+  /** Force a (red) confirmation even if `needsConfirm` wouldn't ask. */
+  destructive?: boolean;
+  /** Type the command into the terminal instead of running it captured. */
+  echo?: boolean;
+  successKey?: string;
+  /** The user already confirmed this op (e.g. the second half of commit+push). */
+  confirmed?: boolean;
+  /** What the confirm dialog shows instead of the op's own command line. */
+  confirmText?: string;
+}
+
+/**
+ * A git argv as the user would type it — for showing in a confirm dialog, not
+ * for executing (execution passes argv verbatim). Arguments with whitespace or
+ * quotes get double quotes so a commit message reads as one argument.
+ */
+export function formatGitCommand(args: string[]): string {
+  const q = (a: string) => (a === "" || /[\s"'\\]/.test(a) ? JSON.stringify(a) : a);
+  return ["git", ...args.map(q)].join(" ");
 }
 
 // ── Graph layout ─────────────────────────────────────────────────────────────

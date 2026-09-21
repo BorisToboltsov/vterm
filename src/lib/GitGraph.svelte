@@ -8,7 +8,7 @@
   import Modal from "./Modal.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
-  import type { GraphRow, CommitFile, GitCommit, ResetMode, DiffLine } from "./git";
+  import type { GraphRow, CommitFile, GitCommit, ResetMode, DiffLine, GitRunOpts } from "./git";
   import {
     commitFilesArgs,
     parseCommitFiles,
@@ -38,7 +38,7 @@
     openDiff,
   }: {
     rows: GraphRow[];
-    run: (args: string[], opts?: { destructive?: boolean; echo?: boolean; successKey?: string }) => Promise<boolean>;
+    run: (args: string[], opts?: GitRunOpts) => Promise<boolean>;
     runQuery: (args: string[]) => Promise<GitOutput>;
     openDiff: (title: string, lines: DiffLine[]) => void;
   } = $props();

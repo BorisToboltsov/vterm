@@ -235,7 +235,9 @@
         {:else if g === "uptime"}
           <span class="flex items-center gap-2" use:tooltip={t("bar.titleUptime")}>
             <Icon name="power" size={14} class="text-muted" />
-            <span class="inline-block text-center tabular-nums {w('w-[40px]', 'w-[42px]')}"
+            <!-- Sized in `ch` for the longest `fmtUptime` form ("999d 23h"): a fixed
+                 px box let "12d 3h" spill into the separator. -->
+            <span class="inline-block whitespace-nowrap text-center tabular-nums w-[8ch]"
               >{fmtUptime(metrics.uptimeSecs)}</span
             >
           </span>

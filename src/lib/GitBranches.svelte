@@ -8,7 +8,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import { tooltip } from "./actions/tooltip";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
-  import type { GitBranch, GitStashEntry, CommitFile, DiffLine } from "./git";
+  import type { GitBranch, GitStashEntry, CommitFile, DiffLine, GitRunOpts } from "./git";
   import {
     checkoutArgs,
     createBranchArgs,
@@ -46,7 +46,7 @@
     branches: GitBranch[];
     stashes: GitStashEntry[];
     sendToTerminal?: boolean;
-    run: (args: string[], opts?: { destructive?: boolean; echo?: boolean; successKey?: string }) => Promise<boolean>;
+    run: (args: string[], opts?: GitRunOpts) => Promise<boolean>;
     runQuery: (args: string[]) => Promise<GitOutput>;
     openDiff: (title: string, lines: DiffLine[]) => void;
   } = $props();
