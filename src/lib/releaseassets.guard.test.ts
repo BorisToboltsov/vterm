@@ -107,7 +107,7 @@ describe("release runs behind the quality gates", () => {
   it("has a verify job that reuses ci.yml rather than copying its steps", () => {
     const verify = jobs.get("verify");
     expect(verify, "job `verify` not found in release.yml").toBeDefined();
-    expect(verify).toMatch(/uses:\s*\.\/\.github\/workflows\/ci\.yml/);
+    expect(verify).toMatch(/uses:\s*\$\/\.github\/workflows\/ci\.yml/);
   });
 
   it("blocks the build matrix on that job", () => {
@@ -257,8 +257,8 @@ describe("third-party actions are pinned by commit SHA", () => {
   it.each(files)("%s pins every action it uses", (file) => {
     const uses = [...codeOf(join(dir, file)).matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)]
       .map((m) => m[1])
-      // Local reusable workflows are versioned by this repo's own history.
-      .filter((ref) => !ref.startsWith("./"));
+      // In-repo references (`$/…`) are versioned by this repo's own history.
+      .filter((ref) => !ref.startsWith("$/"));
 
     for (const ref of uses) {
       expect(
@@ -266,6 +266,17 @@ describe("third-party actions are pinned by commit SHA", () => {
         `${file}: \`${ref}\` is not pinned to a 40-char commit SHA`,
       ).toMatch(/@[0-9a-f]{40}$/);
     }
+  });
+
+  it.each(files)("%s references in-repo actions as $/…, not ./…", (file) => {
+    // `./…` resolves against the runner's workspace at run time, so a step that
+    // cloned something there could swap the action; `$/…` is fixed to this
+    // commit and counts as pinned for GitHub's own "fully pinned" policy
+    // (zizmor self-repository, code scanning #60).
+    const relative = [...codeOf(join(dir, file)).matchAll(/^\s*(?:- )?uses:\s*(\.\/\S*)/gm)].map(
+      (m) => m[1],
+    );
+    expect(relative, `${file}: workspace-relative uses:`).toEqual([]);
   });
 
   it.each(files)("%s says which version each SHA is", (file) => {
