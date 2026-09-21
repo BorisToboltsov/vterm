@@ -13,6 +13,7 @@
   import { pickUploadFiles } from "./api";
   import { writeClipboard } from "./clipboard";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { chordLetter } from "./appshortcuts";
   import { checkMove } from "./filemove";
   import { joinPath, normalizeInputPath } from "./fspath";
   import { clickSelect, emptySelection, type SelectionState } from "./multiselect";
@@ -500,6 +501,7 @@
       return;
     }
     const mod = e.metaKey || e.ctrlKey;
+    // Letters via chordLetter: raw e.key is "ф"/"с"/"м" on the Russian layout.
     if (e.key === "Enter" || e.key === "ArrowRight") {
       if (cursorOnParent) {
         e.preventDefault();
@@ -522,7 +524,7 @@
     } else if (e.key === "Escape") {
       if (showSearch) showSearch = false;
       else if (selection.selected.size) selection = emptySelection();
-    } else if (mod && (e.key === "a" || e.key === "A")) {
+    } else if (mod && chordLetter(e) === "a") {
       e.preventDefault();
       selection = { selected: new Set(order), anchor: selection.anchor };
     } else if (e.key === "Delete" || e.key === "Backspace") {
@@ -536,14 +538,14 @@
         e.preventDefault();
         startRename(cursorEntry);
       }
-    } else if (mod && (e.key === "x" || e.key === "X")) {
+    } else if (mod && chordLetter(e) === "x") {
       e.preventDefault();
       cutOrCopy("cut");
-    } else if (mod && (e.key === "c" || e.key === "C")) {
+    } else if (mod && chordLetter(e) === "c") {
       e.preventDefault();
       if (e.shiftKey) copyPaths();
       else cutOrCopy("copy");
-    } else if (mod && (e.key === "v" || e.key === "V")) {
+    } else if (mod && chordLetter(e) === "v") {
       e.preventDefault();
       paste();
     }

@@ -8,6 +8,7 @@
 // installed once on the document — covers them all. Reads go through the native
 // backend clipboard, so no WebKit "Paste" permission prompt appears (clipboard.ts).
 
+import { chordLetter } from "../appshortcuts";
 import { readClipboard, writeClipboard } from "../clipboard";
 
 type Editable = HTMLInputElement | HTMLTextAreaElement;
@@ -142,12 +143,13 @@ export async function handleClipboardShortcut(ev: KeyboardEvent): Promise<void> 
   if (!isEditable(node)) {
     // Cmd/Ctrl+C over a read-only text field (codec output, etc.) or a plain
     // page-text selection — WKWebView gives neither a Copy accelerator.
-    if (ev.key.toLowerCase() === "c" && (copyFieldSelection(node) || copyDocumentSelection())) {
+    if (chordLetter(ev) === "c" && (copyFieldSelection(node) || copyDocumentSelection())) {
       ev.preventDefault();
     }
     return;
   }
-  switch (ev.key.toLowerCase()) {
+  // By letter, not `ev.key`: on the Russian layout ⌘V reports "м".
+  switch (chordLetter(ev)) {
     case "v": {
       ev.preventDefault();
       const text = await readClipboard();

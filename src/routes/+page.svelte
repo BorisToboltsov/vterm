@@ -32,7 +32,9 @@
   } from "$lib/api";
   import type { ServerProfile } from "$lib/types";
   import { storeWarningMessage } from "$lib/storewarn";
-  import { nameOf, serversInSubtree } from "$lib/tree";
+  import { sessionBarParts, showSessionBar } from "$lib/sessionbar";
+  import ViewModeToggle from "$lib/ViewModeToggle.svelte";
+  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/tree";
   import {
     clamp,
     layout,
@@ -229,8 +231,13 @@
       currentPromptLine?: () => string;
       selectionText?: () => string;
       bufferText?: (maxLines?: number) => string;
+      find?: () => void;
+      setViewMode?: (structured: boolean) => void;
     }
   > = {};
+  // Raw (false) ↔ structured table (true) per session, reported by the terminal —
+  // drives the session bar's switch. Cleared in closeTabFully.
+  const termStructured = $state<Record<string, boolean>>({});
   /** How often to ask the OS for a local shell's cwd while following (Phase 39.3).
    *  One second is well under human reaction time for a `cd`, and the underlying
    *  read is a single cheap syscall on Linux/macOS. */
@@ -1105,6 +1112,24 @@
   }
 
   // ── Folder drag (move a server into a group / a folder under a new parent) ──
+  // A drop only *requests* the move; it runs after the confirmation dialog — a
+  // slipped drag would otherwise silently re-file a server into the wrong folder.
+  let pendingMove = $state<MoveRequest | null>(null);
+  const pendingMoveKeys = $derived(pendingMove ? moveConfirmKeys(pendingMove) : null);
+  function requestMoveServer(id: string, groupPath: string | null) {
+    const server = servers.find((s) => s.id === id);
+    if (server) pendingMove = { kind: "server", id, label: server.alias, target: groupPath };
+  }
+  function requestMoveFolder(path: string, parent: string | null) {
+    pendingMove = { kind: "folder", id: path, label: path, target: parent };
+  }
+  async function confirmMove() {
+    const req = pendingMove;
+    pendingMove = null;
+    if (!req) return;
+    if (req.kind === "server") await moveServerToGroup(req.id, req.target);
+    else await moveFolderAndRefresh(req.id, req.target);
+  }
   async function moveServerToGroup(id: string, groupPath: string | null) {
     try {
       const updated = await setServerGroup(id, groupPath);
@@ -1199,6 +1224,7 @@
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
     nginxConfigCache.delete(sessionId);
+    delete termStructured[sessionId];
     closeTabStore(sessionId);
   }
 
@@ -1919,8 +1945,8 @@
       onNewFolder={(p) => folderModals?.openCreate(p)}
       onRenameFolder={(p) => folderModals?.openRename(p)}
       onDeleteFolder={(p) => folderModals?.openDelete(p, serversInSubtree(servers, p).length)}
-      onMoveServer={moveServerToGroup}
-      onMoveFolder={moveFolderAndRefresh}
+      onMoveServer={requestMoveServer}
+      onMoveFolder={requestMoveFolder}
       animateWidth={resizing !== "left"}
     />
     {#if !layout.leftCollapsed}
@@ -2098,6 +2124,14 @@
               {@const ws = getWorkspace(tab.sessionId)}
               {@const bcTile = bcOn && (bcLayout === "grid" ? isBroadcastMember(tab.sessionId) : tab.sessionId === bcFocusId)}
               {@const bcSrv = servers.find((s) => s.id === tab.serverId)}
+              {@const bar = sessionBarParts({
+                editors: ws.editors.length,
+                onTerminal: ws.active === TERMINAL_VIEW,
+                connected: tab.status.startsWith("Connected"),
+                smartLogs: settings.smartLogs.enabled,
+                structured: !!termStructured[tab.sessionId],
+                broadcast: bcOn,
+              })}
               <div
                 class={bcOn && !bcTile
                   ? "hidden"
@@ -2119,9 +2153,17 @@
                     {/if}
                   </div>
                 {/if}
-                {#if ws.editors.length > 0 && !bcOn}
-                  <!-- Workspace sub-tabs: terminal + open editors (Phase 12). -->
-                  <div class="flex shrink-0 items-stretch overflow-x-auto border-b border-edge bg-panel-alt text-xs">
+                {#if showSessionBar(bar)}
+                  <!-- Session bar: workspace sub-tabs (terminal + open editors, Phase 12)
+                       on the left, terminal tools on the right. The tools used to
+                       float over the terminal and covered full-screen programs'
+                       first row (nano's title line). Visibility — sessionbar.ts. -->
+                  <div
+                    class="flex shrink-0 items-stretch border-b border-edge bg-panel-alt text-xs"
+                    data-testid="session-bar"
+                  >
+                  <div class="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+                  {#if bar.subtabs}
                     <button
                       class="flex shrink-0 items-center gap-1.5 border-r border-edge px-3 py-1 {ws.active ===
                       TERMINAL_VIEW
@@ -2158,6 +2200,29 @@
                         </button>
                       </div>
                     {/each}
+                  {/if}
+                  </div>
+                  {#if bar.search || bar.viewToggle}
+                    <div class="flex shrink-0 items-center gap-1 px-1.5 py-0.5">
+                      {#if bar.search}
+                        <button
+                          class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
+                          data-testid="session-bar-search"
+                          use:tooltip={t("search.open")}
+                          aria-label={t("search.open")}
+                          onclick={() => termRefs[tab.sessionId]?.find?.()}
+                        >
+                          <Icon name="search" size={14} />
+                        </button>
+                      {/if}
+                      {#if bar.viewToggle}
+                        <ViewModeToggle
+                          structured={!!termStructured[tab.sessionId]}
+                          onSelect={(on) => termRefs[tab.sessionId]?.setViewMode?.(on)}
+                        />
+                      {/if}
+                    </div>
+                  {/if}
                   </div>
                 {/if}
                 <div class="relative min-h-0 flex-1 p-1">
@@ -2233,6 +2298,7 @@
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
                     onExplain={aiOn ? (sel) => explainWithAi(tab.sessionId, sel) : undefined}
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
+                    onviewmode={(on) => (termStructured[tab.sessionId] = on)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
@@ -2464,6 +2530,22 @@
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
   }}
 />
+
+<!-- Drag-and-drop move confirmation (server or folder → folder / root) -->
+<ConfirmDialog
+  open={!!pendingMove}
+  title={t("page.moveTitle")}
+  confirmLabel={t("page.moveConfirm")}
+  danger={false}
+  onconfirm={confirmMove}
+  oncancel={() => (pendingMove = null)}
+>
+  {#if pendingMove && pendingMoveKeys}
+    {t(pendingMoveKeys.subject)} <span class="text-text">{pendingMove.label}</span>
+    {t(pendingMoveKeys.dest)}
+    {#if pendingMove.target}<span class="text-text">{pendingMove.target}</span>.{/if}
+  {/if}
+</ConfirmDialog>
 
 <!-- Delete server confirmation -->
 <ConfirmDialog

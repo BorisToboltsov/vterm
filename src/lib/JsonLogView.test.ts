@@ -111,14 +111,9 @@ describe("JsonLogView", () => {
     expect(screen.getByText("disk full")).toBeInTheDocument();
   });
 
-  it("invokes onShowRaw when the toolbar's Raw segment is clicked", async () => {
-    let raw = 0;
-    render(JsonLogView, { props: { entries, onShowRaw: () => (raw += 1) } });
-    // Table is the active mode here; clicking Raw switches back to the terminal.
-    await fireEvent.click(screen.getByRole("button", { name: "Raw" }));
-    expect(raw).toBe(1);
-    await fireEvent.click(screen.getByRole("button", { name: "Table" }));
-    expect(raw).toBe(1); // already in table mode — no extra call
+  it("carries no Raw/Table switch — it lives in the session bar above the terminal", () => {
+    render(JsonLogView, { props: { entries } });
+    expect(screen.queryByTestId("view-mode-toggle")).not.toBeInTheDocument();
   });
 
   it("widens a column when its resize grip is dragged", async () => {

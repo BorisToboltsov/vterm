@@ -21,7 +21,6 @@
   import { tooltip } from "./actions/tooltip";
   import { resizableHandle } from "./actions/drag";
   import Icon from "./Icon.svelte";
-  import ViewModeToggle from "./ViewModeToggle.svelte";
   import EmptyState from "./EmptyState.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { writeClipboard } from "./clipboard";
@@ -31,8 +30,7 @@
   let {
     entries,
     onClear,
-    onShowRaw,
-  }: { entries: JsonLogEntry[]; onClear?: () => void; onShowRaw?: () => void } = $props();
+  }: { entries: JsonLogEntry[]; onClear?: () => void } = $props();
 
   let query = $state("");
   let activeLevels = $state<LevelCat[]>([...LEVEL_CATS]);
@@ -222,10 +220,6 @@
         {/if}
       </div>
       <span class="shrink-0 text-xs tabular-nums text-muted">{filtered.length}</span>
-    </div>
-    <!-- Raw ↔ Table switch — always anchored at the toolbar's top-right corner. -->
-    <div class="shrink-0">
-      <ViewModeToggle compact structured={true} onSelect={(on) => !on && onShowRaw?.()} />
     </div>
   </div>
 

@@ -162,6 +162,15 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Ресайз:** восемь невидимых грип-полос по краям/углам (`z-20`, скрыты в maximized), геометрия и
   курсоры — из [windowchrome.ts](../src/lib/windowchrome.ts).
 
+## Панель сессии
+
+Полоса под вкладками серверов (`data-testid="session-bar"`): `bg-panel-alt border-b border-edge
+text-xs`. Слева — подвкладки рабочего пространства («Терминал» + открытые файлы; активная
+`bg-panel text-text`, прочие `text-muted hover:bg-edge`, разделитель `border-r border-edge`),
+горизонтальный скролл только у этой части. Справа — инструменты терминала: icon-кнопка поиска
+(`p-1 text-muted hover:bg-edge hover:text-text`, иконка 14) и сегментный `ViewModeToggle`. Когда
+показывать нечего, полоса не рендерится вовсе.
+
 ## Статус-бар
 
 Ряд **групп** показаний ([StatusBar.svelte](../src/lib/StatusBar.svelte)); новый показатель =

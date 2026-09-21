@@ -147,3 +147,38 @@ export function dropAllowed(
   }
   return false;
 }
+
+/** A drag-and-drop move awaiting confirmation. `target` is a folder path, or
+ *  `null` for the root of the list. `label` is what the user sees: a server's
+ *  alias or a folder's path. */
+export interface MoveRequest {
+  kind: "server" | "folder";
+  id: string;
+  label: string;
+  target: string | null;
+}
+
+/**
+ * i18n keys for the move-confirmation body: what is moved (server/folder) and
+ * where to (a folder, or the root — which has no name to show).
+ */
+export function moveConfirmKeys(req: Pick<MoveRequest, "kind" | "target">): {
+  subject: "page.moveServerSubject" | "page.moveFolderSubject";
+  dest:
+    | "page.moveServerToFolder"
+    | "page.moveServerToRoot"
+    | "page.moveFolderToFolder"
+    | "page.moveFolderToRoot";
+} {
+  const server = req.kind === "server";
+  return {
+    subject: server ? "page.moveServerSubject" : "page.moveFolderSubject",
+    dest: req.target
+      ? server
+        ? "page.moveServerToFolder"
+        : "page.moveFolderToFolder"
+      : server
+        ? "page.moveServerToRoot"
+        : "page.moveFolderToRoot",
+  };
+}

@@ -8,6 +8,7 @@ import {
   parentOf,
   serversInSubtree,
   type TreeRow,
+  moveConfirmKeys,
 } from "./tree";
 import type { ServerProfile } from "./types";
 
@@ -189,5 +190,20 @@ describe("dropAllowed", () => {
   });
   it("allows a folder onto an unrelated folder", () => {
     expect(dropAllowed("Staging", "folder", "Prod/EU")).toBe(true);
+  });
+});
+
+describe("moveConfirmKeys", () => {
+  it("names the subject by kind", () => {
+    expect(moveConfirmKeys({ kind: "server", target: "Prod" }).subject).toBe("page.moveServerSubject");
+    expect(moveConfirmKeys({ kind: "folder", target: "Prod" }).subject).toBe("page.moveFolderSubject");
+  });
+  it("uses the root wording for a null target (the root has no name to show)", () => {
+    expect(moveConfirmKeys({ kind: "server", target: null }).dest).toBe("page.moveServerToRoot");
+    expect(moveConfirmKeys({ kind: "folder", target: null }).dest).toBe("page.moveFolderToRoot");
+  });
+  it("uses the folder wording for a folder target, per kind (grammatical gender differs in ru)", () => {
+    expect(moveConfirmKeys({ kind: "server", target: "Prod/DB" }).dest).toBe("page.moveServerToFolder");
+    expect(moveConfirmKeys({ kind: "folder", target: "Prod/DB" }).dest).toBe("page.moveFolderToFolder");
   });
 });
