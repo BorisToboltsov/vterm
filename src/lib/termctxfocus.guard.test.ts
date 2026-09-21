@@ -6,8 +6,27 @@ import { resolve } from "node:path";
 // menu button took it, and a copy/paste from the menu otherwise left the next
 // keystrokes going nowhere. Checked on the source with comments stripped, so a
 // comment mentioning `term?.focus()` can't satisfy it.
-const src = readFileSync(resolve(__dirname, "Terminal.svelte"), "utf8")
-  .replace(/<!--[\s\S]*?-->/g, "")
+/**
+ * Drop `<!-- … -->` blocks by scanning, not with one non-greedy `.replace`: a
+ * single pass leaves the opener of a nested comment behind (`<!--<!-- -->` →
+ * `<!--`) — CodeQL's `js/incomplete-multi-character-sanitization`. Same as
+ * dockpanels.guard.test.ts.
+ */
+function stripHtmlComments(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith("<!--", i)) {
+      const end = text.indexOf("-->", i + 4);
+      i = end < 0 ? text.length : end + 3;
+      continue;
+    }
+    out += text[i++];
+  }
+  return out;
+}
+
+const src = stripHtmlComments(readFileSync(resolve(__dirname, "Terminal.svelte"), "utf8"))
   .replace(/\/\*[\s\S]*?\*\//g, "")
   .replace(/^\s*\/\/.*$/gm, "");
 
