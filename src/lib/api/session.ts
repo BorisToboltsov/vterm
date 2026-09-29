@@ -143,6 +143,8 @@ export interface Metrics {
   kernel: string;
   /** Remote clock + timezone, e.g. "14:05 UTC". */
   serverTime: string;
+  /** Logical CPUs — the ceiling a load average is read against; null = unknown. */
+  cpuCount: number | null;
 }
 
 /** Probe the active session for OS info and resource usage. */

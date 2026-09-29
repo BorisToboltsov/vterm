@@ -8,6 +8,11 @@
   import PasswordInput from "./PasswordInput.svelte";
   import KeyGenModal from "./KeyGenModal.svelte";
   import ServerIconPicker from "./ServerIconPicker.svelte";
+  import DisclosureRow from "./DisclosureRow.svelte";
+  import SegmentedControl from "./SegmentedControl.svelte";
+  import Icon from "./Icon.svelte";
+  import { resolveServerIcon, resolveServerColorClass } from "./servericons";
+  import { isProdServer } from "./aiexec";
   import { tooltip } from "./actions/tooltip";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import type { AuthMethod, ProxyKind, ServerProfile } from "./types";
@@ -22,7 +27,16 @@
   } from "./api";
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
-  import { DEFAULT_USERNAME, isValidHost, isValidPort, usernameOrDefault } from "./serverform";
+  import {
+    DEFAULT_USERNAME,
+    isValidHost,
+    isValidPort,
+    parseTags,
+    previewTags,
+    proxyEndpoint,
+    recordingSummaryKeys,
+    usernameOrDefault,
+  } from "./serverform";
   import { t } from "./i18n";
 
   let {
@@ -77,6 +91,34 @@
   let proxySecret = $state("");
   let proxyHasSavedPassword = $state(false);
   let confirmForget = $state(false);
+  const authOptions = $derived<{ value: AuthMethod; label: string }[]>([
+    { value: "password", label: t("page.authPassword") },
+    { value: "key", label: t("page.authKey") },
+  ]);
+  // Optional sections start folded on every open; their headers preview the values.
+  let appearanceOpen = $state(false);
+  let proxyOpen = $state(false);
+  let recordingOpen = $state(false);
+  // The glyph grid folds inside its section too — open it would dwarf the tags field.
+  let iconPickerOpen = $state(false);
+  const shownTags = $derived(previewTags(tagsInput));
+  const PROXY_KIND_LABEL = {
+    jump: "page.proxyKindJump",
+    socks5: "page.proxyKindSocks5",
+    http: "page.proxyKindHttp",
+  } as const;
+  const proxySummary = $derived(
+    `${t(PROXY_KIND_LABEL[proxyKind])} · ${proxyEndpoint(proxyHost, proxyPort)}`,
+  );
+  const recordingSummary = $derived(
+    recordingSummaryKeys({ autoRecord, noAi, aiPromptId, aiExecMode })
+      .map((k) => t(k))
+      .join(" · "),
+  );
+
+  function foldSections() {
+    appearanceOpen = proxyOpen = recordingOpen = iconPickerOpen = false;
+  }
   // Set on a failed submit so empty required fields light up; cleared per field
   // as the user types (derived below) and reset when the form (re)opens.
   let submitted = $state(false);
@@ -132,6 +174,7 @@
     aiPromptId = "";
     aiExecMode = "";
     loadProxy(null, false);
+    foldSections();
     submitted = false;
     open = true;
   }
@@ -157,6 +200,7 @@
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
     loadProxy(server.proxy, true);
+    foldSections();
     submitted = false;
     open = true;
   }
@@ -188,6 +232,7 @@
     aiExecMode = server.execMode ?? "";
     // A duplicate is a new id, so neither secret is carried over.
     loadProxy(server.proxy, false);
+    foldSections();
     submitted = false;
     open = true;
   }
@@ -220,12 +265,11 @@
   async function submit(event: Event) {
     event.preventDefault();
     submitted = true;
-    if (!alias.trim() || !isValidHost(host) || !isValidPort(port)) return;
-    if (useProxy && (!isValidHost(proxyHost) || !isValidPort(proxyPort))) return;
-    const tags = tagsInput
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const proxyBad = useProxy && (!isValidHost(proxyHost) || !isValidPort(proxyPort));
+    // The error sits in a section — unfold it rather than point at a closed one.
+    if (proxyBad) proxyOpen = true;
+    if (!alias.trim() || !isValidHost(host) || !isValidPort(port) || proxyBad) return;
+    const tags = parseTags(tagsInput);
     // Secrets never live on the profile — the saved-secret hint is true when one
     // is already stored or the user just typed one (persisted via saveProxySecret).
     const proxy = useProxy
@@ -295,221 +339,197 @@
 
 <Modal
   {open}
-  width="w-[42rem]"
+  width="w-[30rem]"
   title={mode === "edit" ? t("page.editServerTitle") : t("page.newServerTitle")}
   showClose
   onclose={() => (open = false)}
 >
   <form onsubmit={submit}>
-    <!-- Long hint paragraphs are folded into ⓘ tooltips (InfoHint) so the form stays
-         compact; ⓘ is outside the checkbox <label> so clicking it can't toggle. -->
-    <!-- Two columns: connection on the left, recording + AI on the right (Phase 20.17). -->
-    <div class="grid gap-x-6 gap-y-0 sm:grid-cols-2">
-      <!-- ── Connection ── -->
-      <div>
-        <h3 class="mb-2 text-caption uppercase tracking-wider text-muted">{t("page.groupConnection")}</h3>
-        <label class="mb-2 block text-xs text-muted">
-          {t("page.alias")}
+    <!-- One column: what a connection needs is always visible; everything optional
+         lives in collapsible sections whose header previews the current values, so
+         a folded section never hides that something is set. Long hint paragraphs are
+         ⓘ tooltips (InfoHint), kept outside checkbox <label>s so a click can't toggle. -->
+    <h3 class="mb-2 text-caption uppercase tracking-wider text-muted">{t("page.groupConnection")}</h3>
+    <label class="mb-2 block text-xs text-muted">
+      {t("page.alias")}
+      <input
+        data-testid="field-alias"
+        class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {aliasError
+          ? 'border-danger'
+          : 'border-edge'}"
+        aria-invalid={aliasError}
+        bind:value={alias}
+        placeholder={t("page.aliasPlaceholder")}
+      />
+      {#if aliasError}
+        <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
+      {/if}
+    </label>
+    <div class="mb-2 flex gap-2">
+      <label class="block min-w-0 flex-1 text-xs text-muted">
+        {t("page.hostIp")}
+        <input
+          data-testid="field-host"
+          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {hostError
+            ? 'border-danger'
+            : 'border-edge'}"
+          aria-invalid={hostError}
+          bind:value={host}
+          placeholder="192.168.1.10"
+        />
+      </label>
+      <label class="block w-20 text-xs text-muted">
+        {t("page.port")}
+        <input
+          type="number"
+          data-testid="field-port"
+          class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {portError
+            ? 'border-danger'
+            : 'border-edge'}"
+          aria-invalid={portError}
+          bind:value={port}
+        />
+      </label>
+    </div>
+    {#if hostError}
+      <p class="-mt-1 mb-2 text-meta text-danger">
+        {hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}
+      </p>
+    {/if}
+    {#if portError}
+      <p class="-mt-1 mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
+    {/if}
+    <label class="mb-2 block text-xs text-muted">
+      {t("page.username")}
+      <input
+        data-testid="field-username"
+        class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+        bind:value={username}
+        placeholder={DEFAULT_USERNAME}
+      />
+    </label>
+
+    <div class="mb-2 text-xs text-muted">
+      {t("page.authentication")}
+      <div class="mt-1">
+        <SegmentedControl
+          bind:value={authMethod}
+          options={authOptions}
+          label={t("page.authentication")}
+          testid="server-auth"
+        />
+      </div>
+    </div>
+
+    {#if authMethod === "key"}
+      <label class="mb-2 block text-xs text-muted">
+        {t("page.privateKeyFile")}
+        <div class="mt-1 flex gap-2">
           <input
-            data-testid="field-alias"
-            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {aliasError
-              ? 'border-danger'
-              : 'border-edge'}"
-            aria-invalid={aliasError}
-            bind:value={alias}
-            placeholder={t("page.aliasPlaceholder")}
+            readonly
+            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
+            value={keyPath ?? ""}
+            placeholder="~/.ssh/id_ed25519"
           />
-          {#if aliasError}
-            <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
-          {/if}
-        </label>
+          <button
+            type="button"
+            class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+            onclick={browseKey}>{t("common.browse")}</button
+          >
+          <button
+            type="button"
+            data-testid="server-keygen"
+            class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+            onclick={() => (keygenOpen = true)}>{t("keygen.generateShort")}</button
+          >
+        </div>
+      </label>
+    {/if}
+
+    <label class="mb-3 block text-xs text-muted">
+      <span class="flex items-center gap-1">
+        {authMethod === "key" ? t("page.secretPassphrase") : t("page.secretPassword")}
+        <InfoHint text={t("page.secretHint")} />
+      </span>
+      <PasswordInput
+        testid="server-secret"
+        class="mt-1"
+        bind:value={secret}
+        placeholder={hasSavedPassword ? t("page.secretKeep") : ""}
+      />
+    </label>
+
+    <!-- ── Appearance & tags ── -->
+    <DisclosureRow
+      variant="list"
+      bind:open={appearanceOpen}
+      label={t("page.groupAppearance")}
+      testid="server-section-appearance"
+    >
+      {#snippet preview()}
+        <Icon name={resolveServerIcon(icon)} size={14} class={resolveServerColorClass(iconColor)} />
+        {#each shownTags as tag (tag)}
+          <span
+            class="truncate rounded px-1.5 text-caption {isProdServer([tag])
+              ? 'bg-bad/15 text-bad'
+              : 'bg-edge text-muted'}">{tag}</span
+          >
+        {/each}
+      {/snippet}
+    </DisclosureRow>
+    {#if appearanceOpen}
+      <div class="pb-1 pt-2">
         <div class="mb-2">
-          <ServerIconPicker bind:icon bind:color={iconColor} label={t("page.icon")} />
-        </div>
-        <label class="mb-2 block text-xs text-muted">
-          {t("page.hostIp")}
-          <input
-            data-testid="field-host"
-            class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {hostError
-              ? 'border-danger'
-              : 'border-edge'}"
-            aria-invalid={hostError}
-            bind:value={host}
-            placeholder="192.168.1.10"
+          <ServerIconPicker
+            bind:icon
+            bind:color={iconColor}
+            bind:open={iconPickerOpen}
+            label={t("page.icon")}
           />
-          {#if hostError}
-            <span class="mt-1 block text-meta text-danger"
-              >{hostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
-            >
-          {/if}
-        </label>
-        <div class="mb-2 flex gap-2">
-          <label class="block w-20 text-xs text-muted">
-            {t("page.port")}
-            <input
-              type="number"
-              data-testid="field-port"
-              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {portError
-                ? 'border-danger'
-                : 'border-edge'}"
-              aria-invalid={portError}
-              bind:value={port}
-            />
-          </label>
-          <label class="block flex-1 text-xs text-muted">
-            {t("page.username")}
-            <input
-              data-testid="field-username"
-              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-              bind:value={username}
-              placeholder={DEFAULT_USERNAME}
-            />
-          </label>
         </div>
-        {#if portError}
-          <p class="mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
-        {/if}
-
-        <div class="mb-2 text-xs text-muted">
-          {t("page.authentication")}
-          <div class="mt-1 flex gap-3 text-sm text-text">
-            <label class="flex items-center gap-1">
-              <input type="radio" value="password" bind:group={authMethod} />
-              {t("page.authPassword")}
-            </label>
-            <label class="flex items-center gap-1">
-              <input type="radio" value="key" bind:group={authMethod} />
-              {t("page.authKey")}
-            </label>
-          </div>
-        </div>
-
         <label class="mb-2 block text-xs text-muted">
           <span class="flex items-center gap-1">
-            {authMethod === "key" ? t("page.secretPassphrase") : t("page.secretPassword")}
-            <InfoHint text={t("page.secretHint")} />
+            {t("page.tags")}
+            <InfoHint text={t("page.tagsHint")} />
           </span>
-          <PasswordInput
-            testid="server-secret"
-            class="mt-1"
-            bind:value={secret}
-            placeholder={hasSavedPassword ? t("page.secretKeep") : ""}
-          />
-        </label>
-
-        {#if authMethod === "key"}
-          <label class="mb-2 block text-xs text-muted">
-            {t("page.privateKeyFile")}
-            <div class="mt-1 flex gap-2">
-              <input
-                readonly
-                class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
-                value={keyPath ?? ""}
-                placeholder="~/.ssh/id_ed25519"
-              />
-              <button
-                type="button"
-                class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-                onclick={browseKey}>{t("common.browse")}</button
-              >
-              <button
-                type="button"
-                data-testid="server-keygen"
-                class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-                onclick={() => (keygenOpen = true)}>{t("keygen.generateShort")}</button
-              >
-            </div>
-          </label>
-        {/if}
-
-        <label class="mb-2 block text-xs text-muted">
-          {t("page.tags")}
           <input
+            data-testid="field-tags"
             class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
             bind:value={tagsInput}
             placeholder="web, eu"
           />
         </label>
       </div>
-
-      <!-- ── Recording & AI ── -->
-      <div>
-        <h3 class="mb-2 text-caption uppercase tracking-wider text-muted">{t("page.groupRecordingAi")}</h3>
-        <div class="mb-3 flex items-center gap-2 text-xs text-text">
-          <input type="checkbox" id="srv-auto-record" bind:checked={autoRecord} />
-          <label for="srv-auto-record">{t("page.autoRecord")}</label>
-          <InfoHint text={t("page.autoRecordHint")} />
-        </div>
-
-        <div class="mb-3 flex items-center gap-2 text-xs text-text">
-          <input type="checkbox" id="srv-no-ai" data-testid="server-no-ai" bind:checked={noAi} />
-          <label for="srv-no-ai">{t("page.noAi")}</label>
-          <InfoHint text={t("page.noAiHint")} />
-        </div>
-
-        <div class="mb-3 text-xs text-text">
-          <div class="mb-1 flex items-center gap-1">
-            <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
-            <InfoHint
-              text={t("page.aiPromptHint")}
-              onclick={onOpenAiPrompts
-                ? () => {
-                    open = false;
-                    onOpenAiPrompts();
-                  }
-                : undefined}
-            />
-          </div>
-          <select
-            id="srv-ai-prompt"
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-            data-testid="server-ai-prompt"
-            bind:value={aiPromptId}
-          >
-            <option value="">{t("page.aiPromptDefault")}</option>
-            {#each settings.ai.prompts.chat.prompts as p (p.id)}
-              <option value={p.id}>{p.name}</option>
-            {/each}
-          </select>
-        </div>
-
-        <div class="mb-3 text-xs text-text">
-          <div class="mb-1 flex items-center gap-1">
-            <label for="srv-ai-exec">{t("page.aiExec")}</label>
-            <InfoHint text={t("page.aiExecHint")} />
-          </div>
-          <select
-            id="srv-ai-exec"
-            class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-            data-testid="server-ai-exec"
-            bind:value={aiExecMode}
-          >
-            <option value="">{t("page.aiExecDefault")}</option>
-            <option value="suggest">{t("settings.aiExecSuggest")}</option>
-            <option value="confirm">{t("settings.aiExecConfirm")}</option>
-            <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
-            <option value="dialog">{t("settings.aiExecDialog")}</option>
-          </select>
-        </div>
-      </div>
-    </div>
+    {/if}
 
     <!-- ── Proxy / jump host (Phase 21) ── -->
-    <div class="mt-3 border-t border-edge pt-3">
-      <div class="flex items-center gap-2 text-xs text-text">
-        <input
-          type="checkbox"
-          id="srv-use-proxy"
-          data-testid="server-use-proxy"
-          bind:checked={useProxy}
-        />
-        <label for="srv-use-proxy">{t("page.useProxy")}</label>
-        <InfoHint text={t("page.useProxyHint")} />
-      </div>
+    <DisclosureRow
+      variant="list"
+      bind:open={proxyOpen}
+      label={t("page.groupProxy")}
+      testid="server-section-proxy"
+    >
+      {#snippet preview()}
+        <span class="truncate text-muted">
+          {useProxy ? proxySummary : t("page.proxyNone")}
+        </span>
+      {/snippet}
+    </DisclosureRow>
+    {#if proxyOpen}
+      <div class="pb-1 pt-2">
+        <div class="flex items-center gap-2 text-xs text-text">
+          <input
+            type="checkbox"
+            id="srv-use-proxy"
+            data-testid="server-use-proxy"
+            bind:checked={useProxy}
+          />
+          <label for="srv-use-proxy">{t("page.useProxy")}</label>
+          <InfoHint text={t("page.useProxyHint")} />
+        </div>
 
-      {#if useProxy}
-        <div class="mt-3 grid gap-x-6 gap-y-0 sm:grid-cols-2">
-          <div>
+        {#if useProxy}
+          <div class="mt-3">
             <label class="mb-2 block text-xs text-muted">
               {t("page.proxyType")}
               <select
@@ -523,42 +543,42 @@
               </select>
             </label>
 
-            <label class="mb-2 block text-xs text-muted">
-              {t("page.proxyHost")}
-              <input
-                data-testid="proxy-host"
-                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyHostError
-                  ? 'border-danger'
-                  : 'border-edge'}"
-                aria-invalid={proxyHostError}
-                bind:value={proxyHost}
-                placeholder="bastion.corp"
-              />
-              {#if proxyHostError}
-                <span class="mt-1 block text-meta text-danger"
-                  >{proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}</span
-                >
-              {/if}
-            </label>
-            <label class="mb-2 block w-20 text-xs text-muted">
-              {t("page.port")}
-              <input
-                type="number"
-                data-testid="proxy-port"
-                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyPortError
-                  ? 'border-danger'
-                  : 'border-edge'}"
-                aria-invalid={proxyPortError}
-                bind:value={proxyPort}
-              />
-            </label>
-            {#if proxyPortError}
-              <p class="mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
+            <div class="mb-2 flex gap-2">
+              <label class="block min-w-0 flex-1 text-xs text-muted">
+                {t("page.proxyHost")}
+                <input
+                  data-testid="proxy-host"
+                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyHostError
+                    ? 'border-danger'
+                    : 'border-edge'}"
+                  aria-invalid={proxyHostError}
+                  bind:value={proxyHost}
+                  placeholder="bastion.corp"
+                />
+              </label>
+              <label class="block w-20 text-xs text-muted">
+                {t("page.port")}
+                <input
+                  type="number"
+                  data-testid="proxy-port"
+                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyPortError
+                    ? 'border-danger'
+                    : 'border-edge'}"
+                  aria-invalid={proxyPortError}
+                  bind:value={proxyPort}
+                />
+              </label>
+            </div>
+            {#if proxyHostError}
+              <p class="-mt-1 mb-2 text-meta text-danger">
+                {proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}
+              </p>
             {/if}
-          </div>
+            {#if proxyPortError}
+              <p class="-mt-1 mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
+            {/if}
 
-          {#if proxyKind === "jump"}
-            <div>
+            {#if proxyKind === "jump"}
               <label class="mb-2 block text-xs text-muted">
                 {t("page.proxyUsername")}
                 <input
@@ -571,15 +591,13 @@
 
               <div class="mb-2 text-xs text-muted">
                 {t("page.authentication")}
-                <div class="mt-1 flex gap-3 text-sm text-text">
-                  <label class="flex items-center gap-1">
-                    <input type="radio" value="password" bind:group={proxyAuthMethod} />
-                    {t("page.authPassword")}
-                  </label>
-                  <label class="flex items-center gap-1">
-                    <input type="radio" value="key" bind:group={proxyAuthMethod} />
-                    {t("page.authKey")}
-                  </label>
+                <div class="mt-1">
+                  <SegmentedControl
+                    bind:value={proxyAuthMethod}
+                    options={authOptions}
+                    label={t("page.authentication")}
+                    testid="proxy-auth"
+                  />
                 </div>
               </div>
 
@@ -614,10 +632,8 @@
                   placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
                 />
               </label>
-            </div>
-          {:else}
-            <!-- SOCKS5 / HTTP CONNECT: optional basic auth (username + password). -->
-            <div>
+            {:else}
+              <!-- SOCKS5 / HTTP CONNECT: optional basic auth (username + password). -->
               <div class="mb-1 flex items-center gap-1 text-xs text-muted">
                 {t("page.authentication")}
                 <InfoHint text={t("page.proxyOptionalAuth")} />
@@ -643,11 +659,85 @@
                   placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
                 />
               </label>
-            </div>
-          {/if}
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- ── Recording & AI ── -->
+    <DisclosureRow
+      variant="list"
+      bind:open={recordingOpen}
+      label={t("page.groupRecordingAi")}
+      testid="server-section-recording"
+    >
+      {#snippet preview()}
+        <span class="truncate text-muted">{recordingSummary}</span>
+      {/snippet}
+    </DisclosureRow>
+    {#if recordingOpen}
+      <div class="pb-1 pt-2">
+        <div class="mb-3 flex items-center gap-2 text-xs text-text">
+          <input type="checkbox" id="srv-auto-record" bind:checked={autoRecord} />
+          <label for="srv-auto-record">{t("page.autoRecord")}</label>
+          <InfoHint text={t("page.autoRecordHint")} />
         </div>
-      {/if}
-    </div>
+
+        <div class="mb-3 flex items-center gap-2 text-xs text-text">
+          <input type="checkbox" id="srv-no-ai" data-testid="server-no-ai" bind:checked={noAi} />
+          <label for="srv-no-ai">{t("page.noAi")}</label>
+          <InfoHint text={t("page.noAiHint")} />
+        </div>
+
+        <div class="grid gap-2 sm:grid-cols-2">
+          <div class="text-xs text-text">
+            <div class="mb-1 flex items-center gap-1">
+              <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>
+              <InfoHint
+                text={t("page.aiPromptHint")}
+                onclick={onOpenAiPrompts
+                  ? () => {
+                      open = false;
+                      onOpenAiPrompts();
+                    }
+                  : undefined}
+              />
+            </div>
+            <select
+              id="srv-ai-prompt"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              data-testid="server-ai-prompt"
+              bind:value={aiPromptId}
+            >
+              <option value="">{t("page.aiPromptDefault")}</option>
+              {#each settings.ai.prompts.chat.prompts as p (p.id)}
+                <option value={p.id}>{p.name}</option>
+              {/each}
+            </select>
+          </div>
+
+          <div class="text-xs text-text">
+            <div class="mb-1 flex items-center gap-1">
+              <label for="srv-ai-exec">{t("page.aiExec")}</label>
+              <InfoHint text={t("page.aiExecHint")} />
+            </div>
+            <select
+              id="srv-ai-exec"
+              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              data-testid="server-ai-exec"
+              bind:value={aiExecMode}
+            >
+              <option value="">{t("page.aiExecDefault")}</option>
+              <option value="suggest">{t("settings.aiExecSuggest")}</option>
+              <option value="confirm">{t("settings.aiExecConfirm")}</option>
+              <option value="dialogConfirm">{t("settings.aiExecDialogConfirm")}</option>
+              <option value="dialog">{t("settings.aiExecDialog")}</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     {#if hasErrors}
       <p class="mb-2 mt-1 text-xs text-danger" role="alert">{t("page.fixRequiredFields")}</p>

@@ -35,7 +35,7 @@
     logsArgs,
     composeLogsArgs,
     inspectArgs,
-    execShellCommand,
+    execShellArgv,
     loginArgs,
     registryLabel,
     parsePs,
@@ -85,7 +85,7 @@
     /** Active tab is a prod-tagged server — destructive ops need confirmation. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (docker exec shell). */
-    onOpenShell?: (command: string) => void;
+    onOpenShell?: (argv: string[]) => void;
     /** Hand a container's state + logs to the AI assistant (Phase 41). */
     onAsk?: (context: string) => void;
   } = $props();
@@ -302,7 +302,7 @@
   // ── Actions ────────────────────────────────────────────────────────────────
 
   function openShell(c: DockerContainer) {
-    onOpenShell?.(execShellCommand(c.id));
+    onOpenShell?.(execShellArgv(c.id));
     notifySuccess(t("docker.shellOpened", { name: c.name }));
   }
 

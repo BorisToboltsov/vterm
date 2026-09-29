@@ -11,6 +11,8 @@
 // than mutating kubeconfig; pods are grouped by `ownerReferences`
 // ({@link groupByOwner}) as the analogue of docker's compose grouping.
 
+import { SHELL_SCRIPT } from "./termcmd";
+
 // ── Program resolution ───────────────────────────────────────────────────────
 
 /**
@@ -162,26 +164,27 @@ export function rolloutRestartArgs(kind: string, name: string): string[] {
 }
 
 /**
- * Interactive shell command written into a real terminal tab (like docker's
- * `execShellCommand`). NOT run via `kubectl_run` — it's a PTY command string, so
- * the user gets a live TTY inside the pod. Prefers bash, falls back to sh.
- * `prog` is the resolved kubectl program tokens; scope flags are inlined here
- * because the command runs in a shell, not through {@link withScope}.
+ * Interactive shell command typed into a real terminal tab (like docker's
+ * `execShellArgv`). NOT run via `kubectl_run` — it runs in a PTY, so the user
+ * gets a live TTY inside the pod. Prefers bash, falls back to sh. `prog` is the
+ * resolved kubectl program tokens; scope flags are inlined here because the
+ * command runs in a shell, not through {@link withScope}. Returned as argv — the
+ * tab renders it for its own shell (`renderArgv`).
  */
-export function execShellCommand(
+export function execShellArgv(
   prog: string[],
   pod: string,
   namespace: string,
   container: string | null,
   scope: K8sScope,
-): string {
+): string[] {
   const parts = [...prog, "exec", "-it"];
   if (scope.context) parts.push("--context", scope.context);
   if (namespace) parts.push("--namespace", namespace);
   parts.push(pod);
   if (container) parts.push("-c", container);
-  parts.push("--", "sh", "-c", "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'");
-  return parts.join(" ");
+  parts.push("--", "sh", "-c", SHELL_SCRIPT);
+  return parts;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -738,24 +741,24 @@ export function drainArgs(node: string): string[] {
 }
 
 /**
- * Interactive `kubectl port-forward` command written into a real terminal tab (like
- * {@link execShellCommand}) — NOT run via `kubectl_run`: the forwarding process must
+ * Interactive `kubectl port-forward` command typed into a real terminal tab (like
+ * {@link execShellArgv}) — NOT run via `kubectl_run`: the forwarding process must
  * live in a PTY the panel doesn't manage. `target` is `svc/<name>` or `pod/<name>`.
- * Scope flags are inlined because the command runs in a shell.
+ * Scope flags are inlined because the command runs in a shell. Returned as argv.
  */
-export function portForwardCommand(
+export function portForwardArgv(
   prog: string[],
   target: string,
   namespace: string,
   local: number,
   remote: number,
   scope: K8sScope,
-): string {
+): string[] {
   const parts = [...prog, "port-forward"];
   if (scope.context) parts.push("--context", scope.context);
   if (namespace) parts.push("--namespace", namespace);
   parts.push(target, `${local}:${remote}`);
-  return parts.join(" ");
+  return parts;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────

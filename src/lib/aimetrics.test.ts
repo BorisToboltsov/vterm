@@ -32,6 +32,7 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
     netConns: 120,
     kernel: "6.1.0",
     serverTime: "14:05 UTC",
+    cpuCount: 4,
     ...over,
   };
 }

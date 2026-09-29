@@ -81,6 +81,7 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 | Иконочное действие строки | `rounded p-0.5 text-muted hover:text-accent`, иконка 13 |
 | Удаление | те же классы + `hover:text-danger`, иконка `trash` |
 | Крестик закрытия (окно и вкладка) | `text-muted hover:text-danger` — подсветка иконки, **не** заливка `hover:bg-danger` |
+| Сегментный переключатель ([SegmentedControl](../src/lib/SegmentedControl.svelte)) | группа `inline-flex overflow-hidden rounded border border-edge text-sm`; сегмент `px-3 py-1`, между сегментами `border-l border-edge`; выбранный `bg-accent/15 text-accent`, прочие `text-muted hover:bg-edge hover:text-text` |
 
 - **Создание сущности — иконка с «+»:** папка — `folderPlus`, файл и «добавить сервер» —
   `filePlus`. «Добавить сервер» живёт в тулбаре списка серверов, «Новый файл» — в тулбаре SFTP.
@@ -93,6 +94,9 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   открывающая то же меню, что ПКМ. Оба блока `invisible` → `group-hover:visible`.
 - Подсветка строки — `hover:bg-edge`, выбранная — `border-accent`: меняются фон и рамка, не
   геометрия.
+- **Выбор одного из 2–4 коротких вариантов** в форме (пароль / SSH-ключ) — сегментный
+  переключатель, а не ряд радиокнопок. Семантически это радиогруппа: одна точка табуляции,
+  стрелки переключают (`segmented.ts`). Длинные или многочисленные варианты — `<select>`.
 
 ## Диалоги и обратная связь
 

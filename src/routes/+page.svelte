@@ -123,6 +123,7 @@
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import { cdCommand, type CdShell } from "$lib/cdterminal";
+  import { renderArgv } from "$lib/termcmd";
   import { submitLine } from "$lib/terminput";
   import { isNewTabChord, isPaletteChord } from "$lib/appshortcuts";
   import Icon from "$lib/Icon.svelte";
@@ -270,9 +271,10 @@
   // follow it — both **per tab** (each session keeps its own toggle).
   const terminalCwd = $state<Record<string, string>>({});
   const followTerminal = $state<Record<string, boolean>>({});
-  // Command to type into a freshly-opened terminal tab once it connects (Docker
-  // panel "open shell": `docker exec -it … `on a sibling tab of the same host).
-  const pendingCommand: Record<string, string> = {};
+  // Command (argv) to type into a freshly-opened terminal tab once it connects
+  // (Docker/k8s "open shell": `docker exec -it …` on a sibling tab of the same
+  // host). Kept as argv and rendered on flush, for the shell the tab really runs.
+  const pendingCommand: Record<string, string[]> = {};
   // ── Idle screensaver (Phase 0.28) ──
   // Bumped on any terminal output so the screensaver never covers a printing
   // terminal ("no output" rule). `idleWasConnected` tracks which sessions actually
@@ -1645,14 +1647,14 @@
    * `docker exec -it … `command once it connects. Reuses the terminal contract —
    * no new backend; `pendingCommand` is flushed in the tab's `onstatus` handler.
    */
-  function openContainerShell(command: string) {
+  function openContainerShell(argv: string[]) {
     const tab = activeTab;
     if (!tab) return;
     const sid =
       tab.kind === "local"
         ? openLocalTab()
         : openTabStore(tab.serverId, tab.alias, tab.secret, tab.remember);
-    pendingCommand[sid] = command;
+    pendingCommand[sid] = argv;
   }
 
   /** Type an install command into the active terminal (user reviews + runs it). */
@@ -2373,15 +2375,24 @@
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "connected") idleWasConnected.add(tab.sessionId);
                       if (st === "connected" && pendingCommand[tab.sessionId]) {
-                        const cmd = pendingCommand[tab.sessionId];
+                        const argv = pendingCommand[tab.sessionId];
                         delete pendingCommand[tab.sessionId];
-                        // Small delay so the login shell prompt is ready first.
-                        setTimeout(() => {
-                          void writeToTerminal(
-                            tab.sessionId,
-                            new TextEncoder().encode(submitLine(cmd)),
-                          ).catch(() => {});
-                        }, 500);
+                        // SSH is always POSIX; a local tab reported its shell before
+                        // it spawned (cmd.exe needs double quotes, not `'…'`).
+                        const shell =
+                          tab.kind === "local" ? (localShellKind[tab.sessionId] ?? "posix") : "posix";
+                        const cmd = renderArgv(argv, shell);
+                        if (!cmd) {
+                          notifyError(t("page.commandUnquotable"));
+                        } else {
+                          // Small delay so the login shell prompt is ready first.
+                          setTimeout(() => {
+                            void writeToTerminal(
+                              tab.sessionId,
+                              new TextEncoder().encode(submitLine(cmd)),
+                            ).catch(() => {});
+                          }, 500);
+                        }
                       }
                       if (st === "connecting" && noSignalSession === tab.sessionId)
                         noSignalSession = null;

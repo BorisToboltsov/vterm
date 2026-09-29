@@ -9,6 +9,8 @@
 // (ports, image names), the same trick `git.ts` uses. `{{json .}}` is avoided
 // because its `Labels`/`Ports` fields are themselves comma-joined and ambiguous.
 
+import { SHELL_SCRIPT } from "./termcmd";
+
 const US = "\x1f";
 
 /** Compose label keys used to group containers into projects. */
@@ -241,13 +243,13 @@ export function composeRestartArgs(project: string): string[] {
 }
 
 /**
- * Interactive shell command written into a real terminal tab (Phase 35, point 5).
- * NOT run via `container_run` — it's a PTY command string, so the user gets a
- * live TTY inside the container. Prefers bash, falls back to sh on minimal
- * images (the user picked `exec bash || exec sh`).
+ * Interactive shell command typed into a real terminal tab (Phase 35, point 5).
+ * NOT run via `container_run` — it runs in a PTY, so the user gets a live TTY
+ * inside the container. Returned as argv: the tab renders it for the shell it
+ * actually runs (`renderArgv`) — the POSIX string misfires in cmd.exe.
  */
-export function execShellCommand(id: string): string {
-  return `docker exec -it ${id} sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh'`;
+export function execShellArgv(id: string): string[] {
+  return ["docker", "exec", "-it", id, "sh", "-c", SHELL_SCRIPT];
 }
 
 // ── Registry auth (Phase 36) ─────────────────────────────────────────────────

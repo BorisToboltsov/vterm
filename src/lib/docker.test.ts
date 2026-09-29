@@ -30,7 +30,7 @@ import {
   composeUpArgs,
   composeDownArgs,
   composeRestartArgs,
-  execShellCommand,
+  execShellArgv,
   parsePs,
   parseImages,
   parseNetworks,
@@ -118,11 +118,11 @@ describe("argument builders", () => {
     expect(composeRestartArgs("web")).toEqual(["docker", "compose", "-p", "web", "restart"]);
   });
 
-  it("execShellCommand prefers bash, falls back to sh", () => {
-    const c = execShellCommand("cid");
-    expect(c).toContain("docker exec -it cid");
-    expect(c).toContain("exec bash");
-    expect(c).toContain("exec sh");
+  it("execShellArgv prefers bash, falls back to sh", () => {
+    const c = execShellArgv("cid");
+    expect(c.slice(0, 6)).toEqual(["docker", "exec", "-it", "cid", "sh", "-c"]);
+    expect(c[6]).toContain("exec bash");
+    expect(c[6]).toContain("exec sh");
   });
 });
 

@@ -44,8 +44,8 @@
     eventsArgs,
     describeArgs,
     getYamlArgs,
-    execShellCommand,
-    portForwardCommand,
+    execShellArgv,
+    portForwardArgv,
     parsePods,
     parseWorkloads,
     parseNamespaces,
@@ -97,7 +97,7 @@
     /** Active tab is a prod-tagged server — destructive ops get an extra warning. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (kubectl exec shell). */
-    onOpenShell?: (command: string) => void;
+    onOpenShell?: (argv: string[]) => void;
     /** Hand a pod's state + logs to the AI assistant (Phase 41). */
     onAsk?: (context: string) => void;
   } = $props();
@@ -224,7 +224,7 @@
   }
 
   function openShell(pod: K8sPod, container: string | null) {
-    onOpenShell?.(execShellCommand(prog, pod.name, pod.namespace, container, scope));
+    onOpenShell?.(execShellArgv(prog, pod.name, pod.namespace, container, scope));
     notifySuccess(t("k8s.shellOpened", { name: pod.name }));
   }
 
@@ -403,7 +403,7 @@
 
   /** Open `kubectl port-forward` in a real terminal tab (process lives in the PTY). */
   function portForward(target: string, namespace: string, port: number) {
-    onOpenShell?.(portForwardCommand(prog, target, namespace, port, port, scope));
+    onOpenShell?.(portForwardArgv(prog, target, namespace, port, port, scope));
     notifySuccess(t("k8s.portForwardStarted", { target }));
   }
 

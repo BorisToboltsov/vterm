@@ -73,7 +73,7 @@
     /** User navigated in the SFTP panel → cd the terminal too (two-way OSC 7). */
     onSftpNavigate?: (path: string) => void;
     /** Docker panel → open a real terminal tab running an `exec` shell command. */
-    onOpenContainerShell?: (command: string) => void;
+    onOpenContainerShell?: (argv: string[]) => void;
     /** Hand a container/pod's state + logs to the AI assistant (Phase 41). */
     onAskAi?: (context: string, kind: "container" | "pod") => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */

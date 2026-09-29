@@ -94,3 +94,49 @@ export function isValidHost(value: string): boolean {
   if (s.length === 0) return false;
   return isIpv4(s) || isIpv6(s) || isHostname(s);
 }
+
+// ── Collapsed-section previews ───────────────────────────────────────────────
+// The form folds everything optional into sections; their headers preview the
+// current values so a folded section never hides that something is set.
+
+/** Split the comma-separated tags field the way `submit` stores it. */
+export function parseTags(input: string): string[] {
+  return input
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** Tags shown in the "Appearance & tags" header: the first `max`, with a
+ *  `+N` counter for the rest. */
+export function previewTags(input: string, max = 3): string[] {
+  const tags = parseTags(input);
+  return tags.length > max ? [...tags.slice(0, max), `+${tags.length - max}`] : tags;
+}
+
+/** What the "Recording & AI" header says: what departs from the defaults, or
+ *  "defaults" when nothing does. Keys, not strings — the component translates. */
+export function recordingSummaryKeys(f: {
+  autoRecord: boolean;
+  noAi: boolean;
+  aiPromptId: string;
+  aiExecMode: string;
+}): (
+  | "page.sumAutoRecord"
+  | "page.sumNoAi"
+  | "page.sumAiCustom"
+  | "page.sumDefaults"
+)[] {
+  const keys: ("page.sumAutoRecord" | "page.sumNoAi" | "page.sumAiCustom")[] = [];
+  if (f.autoRecord) keys.push("page.sumAutoRecord");
+  // `noAi` blocks the assistant outright, so its per-server prompt/mode are moot.
+  if (f.noAi) keys.push("page.sumNoAi");
+  else if (f.aiPromptId || f.aiExecMode) keys.push("page.sumAiCustom");
+  return keys.length ? keys : ["page.sumDefaults"];
+}
+
+/** `host:port` for the proxy header; an unfilled host reads as `…`. */
+export function proxyEndpoint(host: string, port: number | null): string {
+  const h = host.trim() || "…";
+  return isValidPort(port) ? `${h}:${port}` : h;
+}

@@ -42,6 +42,7 @@ const linux: Metrics = {
   netConns: 42,
   kernel: "6.1.0",
   serverTime: "14:05 UTC",
+  cpuCount: 4,
 };
 
 beforeEach(() => {
@@ -337,6 +338,7 @@ describe("StatusBar — transfers & states", () => {
       netConns: null,
       kernel: "",
       serverTime: "",
+      cpuCount: null,
     };
     fetchMetrics.mockResolvedValue(sparse);
     render(StatusBar, { props: { sessionId: "s5" } });
