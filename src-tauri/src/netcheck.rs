@@ -22,7 +22,7 @@ use serde::Deserialize;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
 
 /// Parallel connects at a time (matches `BATCH` in netcheck.ts).
 const BATCH: usize = 32;
@@ -122,10 +122,63 @@ async fn resolve(host: &str) -> Result<IpAddr, ()> {
         .ok_or(())
 }
 
+/// Windows answers a refused SYN by *retrying* it for ~2 s before reporting
+/// `ConnectionRefused`, so under a short timeout a port nobody listens on would
+/// read as "timeout — a firewall drops it": the wrong diagnosis (principle 5).
+/// `SIO_TCP_INITIAL_RTO` turns SYN retransmissions off for this socket only, and
+/// stretches the one SYN's wait to the whole timeout, so a slow link still gets
+/// its full budget. Best-effort: on a stack that rejects the ioctl the connect
+/// just keeps Windows' default behaviour.
+#[cfg(windows)]
+fn no_syn_retries(sock: &TcpSocket, timeout: Duration) {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{
+        WSAIoctl, SIO_TCP_INITIAL_RTO, SOCKET, TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS,
+        TCP_INITIAL_RTO_PARAMETERS,
+    };
+    let params = TCP_INITIAL_RTO_PARAMETERS {
+        // 0xFFFF means "unspecified"; stay below it.
+        Rtt: timeout.as_millis().clamp(1, 65_000) as u16,
+        // Declared `(UCHAR)-2` in mstcpip.h; windows-sys widens it to u16.
+        MaxSynRetransmissions: TCP_INITIAL_RTO_NO_SYN_RETRANSMISSIONS as u8,
+    };
+    let mut returned = 0u32;
+    // SAFETY: `params` outlives the synchronous call, the in-buffer length is
+    // its exact size, there is no out-buffer, and no overlapped I/O is used.
+    unsafe {
+        WSAIoctl(
+            sock.as_raw_socket() as SOCKET,
+            SIO_TCP_INITIAL_RTO,
+            &params as *const TCP_INITIAL_RTO_PARAMETERS as *const core::ffi::c_void,
+            std::mem::size_of::<TCP_INITIAL_RTO_PARAMETERS>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+            None,
+        );
+    }
+}
+
+/// Open the socket ourselves (rather than `TcpStream::connect`) so the Windows
+/// SYN-retry tweak can be applied before connecting.
+async fn tcp_connect(addr: SocketAddr, timeout: Duration) -> std::io::Result<TcpStream> {
+    let sock = if addr.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    #[cfg(windows)]
+    no_syn_retries(&sock, timeout);
+    #[cfg(not(windows))]
+    let _ = timeout;
+    sock.connect(addr).await
+}
+
 /// One handshake: `(status, elapsed ms, detail)`. The stream is dropped at once.
 async fn connect_once(ip: IpAddr, port: u16, timeout: Duration) -> (&'static str, u128, String) {
     let start = Instant::now();
-    let res = tokio::time::timeout(timeout, TcpStream::connect(SocketAddr::new(ip, port))).await;
+    let res = tokio::time::timeout(timeout, tcp_connect(SocketAddr::new(ip, port), timeout)).await;
     let ms = start.elapsed().as_millis();
     match res {
         Ok(Ok(stream)) => {
@@ -270,6 +323,15 @@ mod tests {
             out.contains(&format!("N\t127.0.0.1\t{closed_port}\trefused\t")),
             "{out}"
         );
+        // A refusal is reported at once, not after Windows' ~2 s of SYN retries
+        // (which, under a short timeout, would have read as "timeout").
+        let refused_ms: u128 = out
+            .lines()
+            .find(|l| l.starts_with(&format!("N\t127.0.0.1\t{closed_port}\t")))
+            .and_then(|l| l.split('\t').nth(4))
+            .and_then(|ms| ms.parse().ok())
+            .expect("refused row carries a time");
+        assert!(refused_ms < 1000, "refusal took {refused_ms} ms:\n{out}");
         assert!(out.contains("S\t127.0.0.1\t127.0.0.1\n"), "{out}");
         // A literal IP is not "resolved" — no D line, same as the remote script.
         assert!(!out.contains("D\t"));
