@@ -96,7 +96,7 @@
   } from "$lib/stores/workspaces.svelte";
   import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
   import { removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
-  import { followUpdates } from "$lib/followcwd";
+  import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
   import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
@@ -299,6 +299,9 @@
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
   let pendingFollowSession = $state<string | null>(null);
+  // What the confirmed snippet is for: the follow toggle (two-way sync) or git's
+  // "enable path sync" (the shell reports its cwd, git follows; nothing else moves).
+  let pendingFollowTwoWay = $state(true);
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -1572,6 +1575,21 @@
       followTerminal[id] = true;
       return;
     }
+    pendingFollowTwoWay = true;
+    pendingFollowSession = id;
+  }
+
+  /**
+   * Git's "enable path sync" with following off: git follows the terminal, so the
+   * shell only has to start reporting its cwd. Same consent dialog and snippet as
+   * the toggle, but two-way following stays off — the file panel doesn't move.
+   */
+  function enableGitPathSync() {
+    const id = tabsState.activeId;
+    if (!id || !needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
+      return;
+    }
+    pendingFollowTwoWay = false;
     pendingFollowSession = id;
   }
 
@@ -1581,11 +1599,13 @@
   // It also catches a `cd` inside a script or subshell, which never draws a prompt
   // and so never fires a precmd hook. OSC 7/9;9 stay wired in parallel — a shell
   // that does announce its cwd still gets the instant, event-driven update.
+  // Git on screen polls too: with following off it tracks the terminal (v1.0.35).
   $effect(() => {
     const id = tabsState.activeId;
-    if (!id || !followTerminal[id]) return;
-    const tab = findTab(id);
-    if (tab?.kind !== "local") return; // SSH has no local pid to inspect
+    if (!id) return;
+    const gitShown = layout.dockTab === "git" && !layout.sftpCollapsed;
+    // SSH has no local pid to inspect.
+    if (!pollsLocalCwd(findTab(id)?.kind, !!followTerminal[id], gitShown)) return;
     let stopped = false;
     const tick = async () => {
       const path = await localCwd(id).catch(() => null);
@@ -1618,7 +1638,7 @@
     if (!id) return;
     writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
     shellIntegrated[id] = true;
-    followTerminal[id] = true;
+    if (pendingFollowTwoWay) followTerminal[id] = true;
   }
 
   /**
@@ -2500,6 +2520,14 @@
                   ? (followTerminal[tabsState.activeId] ?? false)
                   : false}
                 onToggleFollowTerminal={toggleFollowTerminal}
+                onEnablePathSync={tabsState.activeId &&
+                needsShellSetup(
+                  activeTab?.kind,
+                  !!terminalCwd[tabsState.activeId],
+                  !!shellIntegrated[tabsState.activeId],
+                )
+                  ? enableGitPathSync
+                  : undefined}
                 getAiContext={gatherAiContext}
                 aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
                 aiRecording={!!(tabsState.activeId && recordingState[tabsState.activeId])}

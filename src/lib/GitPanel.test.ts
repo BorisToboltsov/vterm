@@ -17,8 +17,7 @@ const calls = (cmd: string) =>
   gitRun.mock.calls.map((c) => c[2] as string[]).filter((a) => a[0] === cmd);
 
 async function mount(prod = false) {
-  setDockCwd("s1", "/repo");
-  render(GitPanel, { props: { sessionId: "s1", prod } });
+  render(GitPanel, { props: { sessionId: "s1", terminalCwd: "/repo", prod } });
   await screen.findByRole("button", { name: "Pull" });
 }
 
@@ -65,27 +64,52 @@ describe("GitPanel confirmations", () => {
   });
 });
 
-describe("GitPanel directory (v1.0.24)", () => {
-  it("runs in the dock's shared directory and moves with it", async () => {
-    setDockCwd("s1", "/repo");
-    render(GitPanel, { props: { sessionId: "s1" } });
+describe("GitPanel directory (v1.0.35)", () => {
+  it("follows the terminal while following is off, not the file panel", async () => {
+    setDockCwd("s1", "/home/u"); // the file panel opened home on connect
+    const view = render(GitPanel, { props: { sessionId: "s1", terminalCwd: "/repo" } });
     await screen.findByRole("button", { name: "Pull" });
     expect(gitRun.mock.calls.every((c) => c[1] === "/repo")).toBe(true);
 
-    // The file panel opened another repo: git follows it, not the terminal.
+    // A `cd` in the terminal moves git; a move in the file panel does not.
+    gitRun.mockClear();
+    setDockCwd("s1", "/elsewhere");
+    await view.rerender({ sessionId: "s1", terminalCwd: "/other" });
+    await waitFor(() => expect(gitRun.mock.calls.some((c) => c[1] === "/other")).toBe(true));
+    expect(gitRun.mock.calls.some((c) => c[1] === "/elsewhere")).toBe(false);
+  });
+
+  it("runs in the dock's shared directory while following", async () => {
+    setDockCwd("s1", "/repo");
+    render(GitPanel, {
+      props: { sessionId: "s1", terminalCwd: "/term", followTerminal: true },
+    });
+    await screen.findByRole("button", { name: "Pull" });
+    expect(gitRun.mock.calls.every((c) => c[1] === "/repo")).toBe(true);
+
     gitRun.mockClear();
     setDockCwd("s1", "/other");
     await waitFor(() => expect(gitRun.mock.calls.some((c) => c[1] === "/other")).toBe(true));
   });
 
-  it("offers to follow the terminal only while following is off", async () => {
-    const view = render(GitPanel, {
-      props: { sessionId: "s1", followTerminal: false, onToggleFollowTerminal: vi.fn() },
-    });
-    expect(screen.getByRole("button", { name: "Follow terminal path" })).toBeTruthy();
-    // Already on: the same button would switch following OFF.
-    await view.rerender({ sessionId: "s1", followTerminal: true, onToggleFollowTerminal: vi.fn() });
-    expect(screen.queryByRole("button", { name: "Follow terminal path" })).toBeNull();
+  it("shows no path, not the panel's folder, while the terminal cwd is unknown", () => {
+    setDockCwd("s1", "/home/u");
+    render(GitPanel, { props: { sessionId: "s1" } });
+    expect(screen.getByText("No path")).toBeTruthy();
+    expect(gitRun).not.toHaveBeenCalled();
+  });
+
+  it("offers path sync only while following is off and the shell needs it", async () => {
+    const onEnablePathSync = vi.fn();
+    const view = render(GitPanel, { props: { sessionId: "s1", onEnablePathSync } });
+    await fireEvent.click(screen.getByRole("button", { name: "Enable path sync" }));
+    expect(onEnablePathSync).toHaveBeenCalledOnce();
+    // Following on: the toolbar toggle owns it; no second button with another meaning.
+    await view.rerender({ sessionId: "s1", followTerminal: true, onEnablePathSync });
+    expect(screen.queryByRole("button", { name: "Enable path sync" })).toBeNull();
+    // No setup needed (a local tab, or the shell already reports): nothing to offer.
+    await view.rerender({ sessionId: "s1", followTerminal: false, onEnablePathSync: undefined });
+    expect(screen.queryByRole("button", { name: "Enable path sync" })).toBeNull();
   });
 
   it("marks the follow toggle pressed like the file panel does", async () => {

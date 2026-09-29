@@ -32,6 +32,7 @@
     terminalCwd = null,
     followTerminal = false,
     onToggleFollowTerminal,
+    onEnablePathSync,
     onOpenFile,
     onOpenLocalFile,
     onOpenGitDiff,
@@ -59,11 +60,13 @@
     /** State of the tab's session (`dockConnection`): the panels only run while
      *  it is connected, and an offline session replaces them with one notice. */
     connection?: DockConnection;
-    /** Terminal cwd (OSC 7) for this session — the file panel follows it when on. */
+    /** Terminal cwd (OSC 7 / OS poll) — the file panel follows it when on, git when off. */
     terminalCwd?: string | null;
     /** Whether the file panel should follow the terminal's cwd (per-tab toggle). */
     followTerminal?: boolean;
     onToggleFollowTerminal?: () => void;
+    /** Git's "enable path sync": shell cwd reporting without two-way following. */
+    onEnablePathSync?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onOpenLocalFile?: (path: string) => void;
     /** Open a git-changed file as an editable inline diff (absolute path + HEAD base). */
@@ -235,9 +238,11 @@
         <div class="min-h-0 flex-1 {shown('git') ? 'vt-dock-pane' : 'hidden'}">
           <GitPanel
             {sessionId}
+            {terminalCwd}
             {followTerminal}
             visible={shown("git")}
             {onToggleFollowTerminal}
+            {onEnablePathSync}
             onOpenDiff={onOpenGitDiff}
             onIgnore={onIgnoreGitignore}
             prod={aiProd}

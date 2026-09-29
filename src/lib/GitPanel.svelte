@@ -1,6 +1,6 @@
 <script lang="ts">
   // Git panel (Phase 29) — third right-dock tab. Orchestrates the repo view for
-  // the terminal's current path (`terminalCwd`, OSC 7): a toolbar (repo, branch,
+  // the directory `gitCwd` picks (the terminal's, or the dock's while following): a toolbar (repo, branch,
   // ahead/behind, fetch/pull/push, stash) over three sub-tabs — Graph, Changes,
   // Branches. Works on SSH and local tabs alike; the backend `git_run` dispatches
   // by session kind. All git logic is pure (`git.ts`); this owns data + actions.
@@ -52,13 +52,16 @@
     type GitRunOpts,
   } from "./git";
   import { dockCwd, rememberSub, storedSub } from "./stores/dockstate.svelte";
+  import { gitCwd } from "./followcwd";
   import { untrack } from "svelte";
   import { t } from "./i18n";
 
   let {
     sessionId,
+    terminalCwd = null,
     followTerminal = false,
     onToggleFollowTerminal,
+    onEnablePathSync,
     onOpenDiff,
     onIgnore,
     prod = false,
@@ -66,6 +69,8 @@
     visible = true,
   }: {
     sessionId: string;
+    /** The terminal's cwd (OSC 7 / OS poll) — what git follows while following is off. */
+    terminalCwd?: string | null;
     followTerminal?: boolean;
     /**
      * The dock is showing this tab. The panel stays mounted behind another tab
@@ -74,6 +79,12 @@
      */
     visible?: boolean;
     onToggleFollowTerminal?: () => void;
+    /**
+     * Set the shell up to report its cwd (the OSC 7 snippet, behind a consent
+     * dialog) without switching two-way following on. Passed only while the
+     * session's shell still needs it — see `needsShellSetup`.
+     */
+    onEnablePathSync?: () => void;
     /**
      * Open a changed file in the editor as an editable inline diff against HEAD.
      * `absPath` is the file's absolute path; `gitBase` is its HEAD content.
@@ -91,12 +102,10 @@
   let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "git", "changes")));
   let sendToTerminal = $state(false);
 
-  // The dock's shared directory (v1.0.24), not the terminal's: the file panel
-  // writes it on every listing, and the followed terminal writes it only while
-  // "follow terminal" is on. So opening a repo in the file panel lands here even
-  // when the `cd` it mirrored never reached the shell, and with following off a
-  // `cd` in the terminal leaves git where the panels are — one switch, one meaning.
-  let cwd = $derived(dockCwd(sessionId));
+  // Following on: the dock's shared directory, which the terminal and the file
+  // panel move together. Following off: the terminal's own cwd — git is where the
+  // user works, not where the file panel happened to open (v1.0.35, `gitCwd`).
+  let cwd = $derived(gitCwd(followTerminal, dockCwd(sessionId), terminalCwd));
   let repoRoot = $state<string | null>(null);
   let isRepo = $state<boolean | null>(null); // null = unknown/not loaded yet
   let loading = $state(false);
@@ -385,12 +394,18 @@
 
 <div class="flex h-full min-h-0 flex-col text-xs">
   {#if !cwd}
-    <EmptyState icon="gitBranch" title={t("git.noPath")} hint={t("git.noPathHint")}>
-      <!-- Only offered while off: pressed when already on, it would switch following off. -->
-      {#if onToggleFollowTerminal && !followTerminal}
+    <EmptyState
+      icon="gitBranch"
+      title={t("git.noPath")}
+      hint={t(followTerminal ? "git.noPathFollowHint" : "git.noPathHint")}
+    >
+      <!-- Following off and the shell doesn't report its cwd: set that up, which is
+           all git needs to follow the terminal. Two-way sync stays the toolbar toggle. -->
+      {#if onEnablePathSync && !followTerminal}
         <button
           class="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-xs font-medium text-panel-alt hover:bg-accent-hover"
-          onclick={onToggleFollowTerminal}
+          data-testid="git-enable-path-sync"
+          onclick={onEnablePathSync}
         >
           <Icon name="terminal" size={14} />
           {t("git.enablePathSync")}

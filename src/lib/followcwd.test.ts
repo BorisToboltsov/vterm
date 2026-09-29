@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { followUpdates } from "./followcwd";
+import { followUpdates, gitCwd, pollsLocalCwd } from "./followcwd";
 
 describe("followUpdates", () => {
   it("writes the terminal cwd once per change, only while following", () => {
@@ -28,5 +28,34 @@ describe("followUpdates", () => {
 
   it("waits for a cwd it doesn't know yet", () => {
     expect(followUpdates({ a: true }, {}, {})).toEqual([]);
+  });
+});
+
+describe("gitCwd", () => {
+  it("reads the dock's shared directory while following", () => {
+    expect(gitCwd(true, "/panel", "/term")).toBe("/panel");
+    expect(gitCwd(true, null, "/term")).toBeNull();
+  });
+
+  it("follows the terminal alone while following is off", () => {
+    expect(gitCwd(false, "/home/u", "/srv/repo")).toBe("/srv/repo");
+  });
+
+  it("never falls back to the panel's folder for an unknown terminal cwd", () => {
+    expect(gitCwd(false, "/home/u", null)).toBeNull();
+    expect(gitCwd(false, "/home/u", "")).toBeNull();
+  });
+});
+
+describe("pollsLocalCwd", () => {
+  it("polls a local tab while following or while git is on screen", () => {
+    expect(pollsLocalCwd("local", true, false)).toBe(true);
+    expect(pollsLocalCwd("local", false, true)).toBe(true);
+    expect(pollsLocalCwd("local", false, false)).toBe(false);
+  });
+
+  it("never polls SSH or an unknown tab", () => {
+    expect(pollsLocalCwd("ssh", true, true)).toBe(false);
+    expect(pollsLocalCwd(undefined, true, true)).toBe(false);
   });
 });
