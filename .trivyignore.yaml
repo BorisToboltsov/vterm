@@ -1,0 +1,11 @@
+# Accepted Trivy findings, each scoped to the one file it's about and explained.
+# Passed to the scan explicitly (security.yml `trivyignores`); an ID without
+# `paths` would silence it for every future Dockerfile too.
+misconfigurations:
+  - id: DS-0002
+    paths:
+      - e2e/kbdint/Dockerfile
+    statement: >-
+      Test-only sshd for the live keyboard-interactive tests. sshd has to run as
+      root to switch to the user logging in; the container is local and
+      short-lived (docker compose up … down around the test run).

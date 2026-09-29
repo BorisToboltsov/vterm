@@ -150,6 +150,24 @@ docker compose -f e2e/docker-compose.ssh.yml down
 Всё, что меняет **разговор с сервером** (атрибуты, порядок `remove`/`rename`, кодировки),
 закрепляй здесь, а не только юнит-тестом на чистой функции.
 
+### Живой вход через keyboard-interactive
+
+Модуль `live_kbdint` в [ssh.rs](../src-tauri/src/ssh.rs) логинится в PAM-sshd, где метод
+`password` выключен (как у консолей UniFi), а у второго пользователя после пароля идёт
+вопрос «Verification code» (Google Authenticator, scratch-коды). Образ —
+[e2e/kbdint](../e2e/kbdint/Dockerfile):
+
+```sh
+docker compose -f e2e/docker-compose.kbdint.yml up -d --build
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
+docker compose -f e2e/docker-compose.kbdint.yml down
+```
+
+Scratch-коды одноразовые: перед повторным прогоном — `down` и снова `up`. Закрепляет: сервер
+действительно не берёт `password`; пароль отвечает на вопрос PAM сам, ничего не спрашивая;
+неверный пароль — отказ без переспроса; код спрашивается, и пароль туда не уходит; отмена
+вопроса завершает вход; неверный код — отказ. Гоняется в `nightly.yml` в джобе `live-sftp`.
+
 > **Прежде чем считать баг «только на Windows», проверь, воспроизводится ли он локально.**
 > Два дефекта из 39.6 пришли как windows-only и оба воспроизвелись на macOS, стоило завести
 > нужную оснастку: вставка CRLF (любой insert, отмеряющий каретку от длины сырого буфера) и

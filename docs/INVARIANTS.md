@@ -643,6 +643,18 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   **совет, а не условие**: сбой уходит в `ConnectOutcome.rememberFailed` и тост, сессия остаётся.
   `?` там выбрасывал аутентифицированное подключение — на Linux без Secret Service подключиться с
   «запомнить» было нельзя вовсе, а пользователь видел ошибку вместо шелла.
+- **Вход по паролю — и через `keyboard-interactive`, но пароль уходит только в вопрос о
+  пароле** ([kbdauth.rs](../src-tauri/src/kbdauth.rs)). Если сервер не берёт метод `password`
+  (UniFi, PAM), тот же пароль даётся ответом на его **скрытый** вопрос, похожий на запрос
+  пароля (`plan`), и **один раз**: тот же вопрос снова значит «неверный», вход отклоняется, а не
+  переспрашивает. Одноразовые коды («Verification code», Duo «Passcode», pam_oath «One-time
+  password») паролем не заполняются никогда; после частичного успеха (ключ/пароль + код)
+  пароль не отправляется повторно. Остальное спрашивает окно (`term://auth/{id}` →
+  `answer_auth_prompt`); ответы — только в памяти, не в keychain, записи и логах; текст
+  вопросов — от сервера, показывается как текст. Ожидание ответа без таймаута, поэтому
+  `disconnect` и новый `connect_session` той же сессии **снимают** ожидающий вопрос. Сервер,
+  не предлагающий ничего пригодного, — `AuthMethodsUnsupported` со списком его методов, не
+  «неверный пароль». Гейт `login_answers_come_only_from_the_plan`, живые тесты `live_kbdint`.
 - **Сертификат хоста отклоняется при любой политике** (`ssh::host_key_fingerprint` → `None`):
   доверенных CA у нас нет, а пин вложенного ключа молча пропустил бы подпись, срок и principals
   сертификата. Алгоритмы `*-cert-v01` не рекламируем (`host_key_certificates` пуст). Поддержка
@@ -1003,6 +1015,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [quitguard.guard.test.ts](../src/lib/quitguard.guard.test.ts) | Защита закрытия взводится ровно в одном месте — в `.then` подписки на `menu://quit`, иначе окно нельзя закрыть. Проверка по исходнику без комментариев |
 | [version.guard.test.ts](../src/lib/version.guard.test.ts) | Версия — только в `package.json`; `tauri.conf.json` держит ссылку, а не литерал; `Cargo.toml`/`Cargo.lock` синхронны. CI читает версию оттуда же: `.version` из `tauri.conf.json` теперь вернёт `"../package.json"` — не ошибка, а имя файла в релизе |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона — ни `..Default::default()`, ни конструктором-шаблоном russh-sftp. Сканирует исходник **без комментариев**, чтобы доки могли называть анти-паттерн; строка отказывается от проверки маркером `guard-allow` — его несёт только тест, документирующий ловушку |
+| `login_answers_come_only_from_the_plan` (Rust) | Ответы на вопросы сервера (`keyboard-interactive`) уходят одним вызовом и только из `kbdauth::merge` (пароль — лишь в вопрос, выбранный `plan`); вопросы в UI — только через `kbdauth::ask`; `disconnect` и повторный `connect_session` снимают ожидающий вопрос. Сканирует код без комментариев |
 | `nothing_after_login_can_fail_the_connection` (Rust) | В `connect_session` после успешного `ssh::connect` нет ни одного `?`: сбой сохранения секрета не рвёт живую сессию. Сканирует код без комментариев |
 | `quitting_always_goes_through_the_confirmation` (Rust) | В меню macOS нет системного `quit()`, пункт «quit» и закрытие окна идут через `request_quit`, закрытие откладывается `prevent_close` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |

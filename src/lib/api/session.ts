@@ -110,6 +110,12 @@ export function disconnect(sessionId: string): Promise<void> {
   return invoke<void>("disconnect", { sessionId });
 }
 
+/** Answer the server's login questions for `sessionId` (in the order shown), or
+ *  `null` to cancel the login. The answers are never stored (kbdauth.rs). */
+export function answerAuthPrompt(sessionId: string, answers: string[] | null): Promise<void> {
+  return invoke<void>("answer_auth_prompt", { sessionId, answers });
+}
+
 /** Remote host metrics for the bottom status bar. */
 export interface Metrics {
   os: string;
@@ -354,5 +360,8 @@ export const outputEvent = (sessionId: string) => `term://out/${sessionId}`;
 export const closedEvent = (sessionId: string) => `term://closed/${sessionId}`;
 /** Event name carrying SSH connection-phase progress (mirrors ssh.rs). */
 export const phaseEvent = (sessionId: string) => `term://phase/${sessionId}`;
+/** Event name carrying the server's keyboard-interactive login questions
+ *  (mirrors kbdauth.rs `auth_event`). */
+export const authEvent = (sessionId: string) => `term://auth/${sessionId}`;
 /** Event name carrying live server-tool install output chunks (mirrors ssh.rs). */
 export const installOutputEvent = (sessionId: string) => `install://out/${sessionId}`;

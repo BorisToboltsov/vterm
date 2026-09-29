@@ -92,6 +92,7 @@
 | Канал | Кто эмитит | Что несёт |
 |-------|-----------|-----------|
 | `term://out\|closed\|phase/{id}` | [ssh.rs](../src-tauri/src/ssh.rs), [pty.rs](../src-tauri/src/pty.rs) | Поток PTY, закрытие сессии, **реальные** фазы подключения (`connecting`→`authenticating`→`session` + подстадии прокси) |
+| `term://auth/{id}` | [kbdauth.rs](../src-tauri/src/kbdauth.rs) | Вопросы сервера при входе `keyboard-interactive`, на которые vterm не ответил сам (код, выбор Duo); ответ — команда `answer_auth_prompt` |
 | `sftp://progress` | [sftp.rs](../src-tauri/src/sftp.rs), [sync.rs](../src-tauri/src/sync.rs) | Прогресс передачи по id переноса (у синхронизации id детерминированный — `sync:<путь>`) |
 | `sync://scan` | [sync.rs](../src-tauri/src/sync.rs) | Сколько файлов уже прохэшировано при сравнении синхронизации (`{id, files}`, id = `<сравнение>:local`/`:remote`); счётчик без итога, поэтому не на `sftp://progress` |
 | `ai://out\|think\|done\|error/{id}` | [ai.rs](../src-tauri/src/ai.rs) | Токены ответа · рассуждение модели (отдельно, в `content` не попадает) · счёт токенов · ошибка |
@@ -121,6 +122,7 @@
 |--------|---------------------|
 | [lib.rs](../src-tauri/src/lib.rs) | Регистрация команд, `AppState`, bridge к сессиям, команды поверх общего состояния |
 | [ssh.rs](../src-tauri/src/ssh.rs) · [pty.rs](../src-tauri/src/pty.rs) | SSH-сессии (russh, proxy, keepalive, `exec_captured`) · локальный PTY |
+| [kbdauth.rs](../src-tauri/src/kbdauth.rs) | Вход `keyboard-interactive`: кто отвечает на вопрос (`plan`/`after_first`), ожидание ответа пользователя (`PendingPrompts`, `answer_auth_prompt`) |
 | [sftp.rs](../src-tauri/src/sftp.rs) · [sync.rs](../src-tauri/src/sync.rs) | Файловые операции по SSH · синхронизация каталогов (SHA-256, dry-run, отмена) |
 | [localfile.rs](../src-tauri/src/localfile.rs) · [drives.rs](../src-tauri/src/drives.rs) · [proccwd.rs](../src-tauri/src/proccwd.rs) | Локальная ФС · перечисление дисков Windows · чтение cwd процесса |
 | [store.rs](../src-tauri/src/store.rs) · [secrets.rs](../src-tauri/src/secrets.rs) · [backup.rs](../src-tauri/src/backup.rs) | JSON-хранилище (атомарная запись, карантин) · keychain · экспорт/импорт настроек |
@@ -143,7 +145,7 @@
 
 | Подсистема | Бэкенд | Команды · каналы | UI | Чистая логика |
 |-----------|--------|------------------|----|---------------|
-| **Терминал** | `ssh.rs`, `pty.rs` | `connect_plan`/`connect_session`/`open_local_terminal`/`write_to_terminal`/`resize_pty`/`disconnect` · `term://` | `Terminal.svelte`, `ConnectingOverlay` | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termcmd`, `broadcast`, `termzoom`, `osc` |
+| **Терминал** | `ssh.rs`, `kbdauth.rs`, `pty.rs` | `connect_plan`/`connect_session`/`answer_auth_prompt`/`open_local_terminal`/`write_to_terminal`/`resize_pty`/`disconnect` · `term://` | `Terminal.svelte`, `ConnectingOverlay`, `AuthPromptDialog` (+ стор `stores/authprompt`) | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termcmd`, `broadcast`, `termzoom`, `osc` |
 | **Серверы и папки** | `servers.rs`, `folders.rs`, `store.rs`, `secrets.rs`, `backup.rs` | `list_servers`/`add_server`/…/`export_backup`/`import_backup` | `ServerTree`, `ServerFormModal`, `FolderModals`, `SecretPrompt` | `tree`, `serverform`, `servericons`, `notes`, `storewarn` |
 | **SFTP и файлы** | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs` | `sftp_*`, `local_*`, `sftp_sync_apply`, `sftp_grep` · `sftp://progress`, `sync://scan` | `FileBrowser` + тонкие `SftpPanel`/`LocalFilePanel`, `SyncModal` (+ `SyncRemotePicker`) | `filebrowser`, `fspath`, `sync`, `remotetree`, `filekeys`, `filemove`, `multiselect`, `fileicon`, `lscolors`, `transfer`, `virtuallist` |
 | **Редактор конфигов** | `sftp.rs`/`localfile.rs` (чтение-запись), `textenc.rs`, `servertools.rs` | `sftp_read_text`/`write_text`, `lint_remote`, `nginx_config_files`, `server_tools_status`, `run_tool_install` · `install://out` | `EditorTab`, `DiffModal` | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cmtheme`, `cspnonce`, `snippets` |

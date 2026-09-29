@@ -5,6 +5,7 @@ mod drives;
 mod error;
 mod folders;
 mod git;
+mod kbdauth;
 mod keygen;
 mod kube;
 mod localenv;
@@ -485,7 +486,9 @@ async fn connect_session(
         }),
     };
 
-    // Replace any existing session with the same session id.
+    // Replace any existing session with the same session id — and release a
+    // previous attempt still waiting on login questions for it.
+    app.state::<kbdauth::PendingPrompts>().cancel(&session_id);
     state.sessions.lock().await.remove(&session_id);
 
     let opts = ConnectOptions {
@@ -678,7 +681,14 @@ async fn resize_pty(
 }
 
 #[tauri::command]
-async fn disconnect(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
+async fn disconnect(
+    state: State<'_, AppState>,
+    prompts: State<'_, kbdauth::PendingPrompts>,
+    session_id: String,
+) -> AppResult<()> {
+    // A login still waiting on the user's answers (keyboard-interactive) ends here
+    // too — otherwise closing the tab would leave it parked forever.
+    prompts.cancel(&session_id);
     state.sessions.lock().await.remove(&session_id);
     // Removing the LocalPty drops it, which kills the child shell.
     state.local_ptys.lock().unwrap().remove(&session_id);
@@ -2331,7 +2341,9 @@ pub fn run() {
             }
         })
         .manage(state)
+        .manage(kbdauth::PendingPrompts::default())
         .invoke_handler(tauri::generate_handler![
+            kbdauth::answer_auth_prompt,
             servers::list_servers,
             servers::add_server,
             servers::update_server,

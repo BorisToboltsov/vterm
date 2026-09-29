@@ -58,4 +58,34 @@ describe("sshErrorView", () => {
     expect(v.action).toBe("reconnect");
   });
 
+  // v1.0.38: the server offering no method this profile can use is not "wrong
+  // password" — the password may be right (UniFi before keyboard-interactive).
+  it("maps auth-unsupported to its own view with the methods the server offers", () => {
+    const v = sshErrorView(
+      "Error: auth-unsupported: the server does not accept this login method (it offers: publickey)",
+      "connecting",
+    );
+    expect(v.titleKey).toBe("connecting.authUnsupported");
+    expect(v.detailKey).toBe("connecting.authUnsupportedDetail");
+    expect(v.detailVars).toEqual({ methods: "publickey" });
+    expect(v.phase).toBe("authenticating");
+    // Retyping the password can't help — reconnect after fixing the profile.
+    expect(v.action).toBe("reconnect");
+  });
+
+  it("maps the jump host's unsupported method to the proxy variant", () => {
+    const v = sshErrorView(
+      "Error: proxy-auth-unsupported: the jump host does not accept this login method (it offers: publickey, gssapi-with-mic)",
+      "connecting",
+    );
+    expect(v.titleKey).toBe("connecting.proxyAuthUnsupported");
+    expect(v.detailVars).toEqual({ methods: "publickey, gssapi-with-mic" });
+    expect(v.phase).toBe("proxyAuthenticating");
+  });
+
+  it("maps a cancelled login to a plain reconnect, not a failure to retype", () => {
+    const v = sshErrorView("Error: auth-cancelled: login cancelled", "authenticating");
+    expect(v.titleKey).toBe("connecting.authCancelled");
+    expect(v.action).toBe("reconnect");
+  });
 });

@@ -38,11 +38,13 @@
     openLocalTerminal,
     outputEvent,
     phaseEvent,
+    authEvent,
     readShellHistory,
     resizePty,
     writeToTerminal,
   } from "./api";
   import type { ConnPhase } from "./connphase";
+  import type { AuthPromptRequest } from "./types";
   import { accumulatePinch } from "./termzoom";
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "./cdterminal";
@@ -61,6 +63,7 @@
     local = false,
     onstatus,
     onphase,
+    onauthprompt,
     onresize,
     onactivity,
     onoutput,
@@ -79,6 +82,8 @@
     onstatus?: (status: Status, detail?: string) => void;
     /** Reports SSH connection-phase progress for the connecting overlay. */
     onphase?: (phase: ConnPhase) => void;
+    /** The server asked login questions vterm can't answer itself (SSH only). */
+    onauthprompt?: (req: AuthPromptRequest) => void;
     /** Reports the live terminal grid size (used for the recording header). */
     onresize?: (cols: number, rows: number) => void;
     /** Fired on user keystrokes (used to re-arm the recording idle timer). */
@@ -698,6 +703,9 @@
     if (!local) {
       unlisten.push(
         await listen<ConnPhase>(phaseEvent(sessionId), (e) => onphase?.(e.payload)),
+      );
+      unlisten.push(
+        await listen<AuthPromptRequest>(authEvent(sessionId), (e) => onauthprompt?.(e.payload)),
       );
     }
 

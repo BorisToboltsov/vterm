@@ -9,7 +9,8 @@ name: Nightly
 # никогда и ничего не проверяют.
 #
 #   fuzz      — те же property-тесты, что на PR, но на два порядка глубже;
-#   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция;
+#   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция (и
+#               вход через keyboard-interactive — live_kbdint);
 #   e2e       — реальное нативное окно через tauri-driver.
 #
 # Не на PR: полтора-два часа раннера против задержки каждого мерджа. Раз в месяц
@@ -157,9 +158,28 @@ jobs:
       - name: Прогон
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_sftp -- --ignored
 
+      # Вход через keyboard-interactive (v1.0.38): PAM-sshd с выключенным методом
+      # `password`, как у консолей UniFi, плюс второй вопрос (код). Логику
+      # покрывают юнит-тесты; что сервер реально спрашивает и принимает — только здесь.
+      - name: Тестовый sshd (keyboard-interactive)
+        run: |
+          docker compose -f e2e/docker-compose.kbdint.yml up -d --build
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/2223) 2>/dev/null; then
+              echo "sshd готов через ${i}с"; exit 0
+            fi
+            sleep 1
+          done
+          echo "sshd не поднялся за 60с"; docker compose -f e2e/docker-compose.kbdint.yml logs; exit 1
+
+      - name: Прогон (keyboard-interactive)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
+
       - name: Погасить sshd
         if: always()
-        run: docker compose -f e2e/docker-compose.ssh.yml down
+        run: |
+          docker compose -f e2e/docker-compose.ssh.yml down
+          docker compose -f e2e/docker-compose.kbdint.yml down
 
   # ── E2E: реальное окно ──────────────────────────────────────────────────────
   # tauri-driver не поддерживает macOS, поэтому локально на этой машине E2E не
