@@ -97,7 +97,7 @@ printf 'load=%s\\n' \"$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)\"; \
 printf 'mem=%s\\n' \"$(awk '/^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SReclaimable):/{printf \"%s%s \",$1,$2}' /proc/meminfo 2>/dev/null)\"; \
 printf 'free=%s\\n' \"$(LC_ALL=C free -b 2>/dev/null | awk 'NR==1||/^Mem:/' | tr '\\n' '|')\"; \
 printf 'disk=%s\\n' \"$(df -kP / 2>/dev/null | awk 'NR==2{printf \"%d %d\",$3*1024,$2*1024}')\"; \
-printf 'cpustat=%s\\n' \"$(grep '^cpu ' /proc/stat 2>/dev/null | head -1 | sed 's/^cpu *//')\"; \
+awk '/^cpu /{sub(/^cpu +/,\"\"); printf \"cpustat=%s\\n\",$0} /^cpu[0-9]/{n++} END{if(n)printf \"ncpu=%d\\n\",n}' /proc/stat 2>/dev/null; \
 printf 'net=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\",$1); if($1!=\"lo\"){rx+=$2; tx+=$10}} END{printf \"%d %d\",rx,tx}' /proc/net/dev 2>/dev/null)\"; \
 printf 'uptime=%s\\n' \"$(cut -d. -f1 /proc/uptime 2>/dev/null)\"; \
 printf 'swap=%s\\n' \"$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf \"%d %d\",t*1024,f*1024}' /proc/meminfo 2>/dev/null)\"; \
@@ -145,6 +145,9 @@ pub struct Metrics {
     kernel: String,
     /// Remote clock + timezone, e.g. "14:05 UTC".
     server_time: String,
+    /// Logical CPUs (the `cpuN` lines of `/proc/stat`) — the ceiling a load
+    /// average is read against. `None` when the host has no `/proc/stat`.
+    cpu_count: Option<u32>,
 }
 
 /// The `/proc/meminfo` fields the status bar needs, in bytes. Each is optional:
@@ -317,6 +320,7 @@ fn parse_metrics(raw: &str) -> Metrics {
             "netconns" => m.net_conns = value.parse().ok(),
             "kernel" => m.kernel = value.to_string(),
             "stime" => m.server_time = value.to_string(),
+            "ncpu" => m.cpu_count = value.parse().ok().filter(|&n: &u32| n > 0),
             _ => {}
         }
     }
@@ -1353,8 +1357,10 @@ mod tests {
                    load=0.15 0.20 0.30\n\
                    mem=MemTotal:4096 MemFree:512 MemAvailable:3072 Buffers:64 Cached:1024\n\
                    disk=2097152 10485760\n\
-                   cpustat=100 0 50 850 0 0 0";
+                   cpustat=100 0 50 850 0 0 0\n\
+                   ncpu=8";
         let m = parse_metrics(raw);
+        assert_eq!(m.cpu_count, Some(8));
         assert_eq!(m.os, "Linux");
         assert_eq!(m.hostname, "web01");
         assert_eq!(m.user, "root");
@@ -1618,6 +1624,23 @@ mod tests {
         assert_eq!(m.load1, None);
         assert_eq!(m.mem_used, None);
         assert!(m.os.is_empty());
+    }
+
+    #[test]
+    fn parse_metrics_cpu_count_absent_or_zero_is_none() {
+        // A host without /proc/stat prints no `ncpu` line at all.
+        assert_eq!(parse_metrics("os=Darwin").cpu_count, None);
+        assert_eq!(parse_metrics("ncpu=0").cpu_count, None);
+        assert_eq!(parse_metrics("ncpu=x").cpu_count, None);
+    }
+
+    #[test]
+    fn metrics_script_counts_cpus_in_the_same_pass_as_cpustat() {
+        // One awk over /proc/stat yields both lines — the logical-CPU count costs
+        // no extra process on the per-tick probe.
+        assert!(METRICS_SCRIPT.contains("/^cpu[0-9]/{n++}"));
+        assert!(METRICS_SCRIPT.contains("ncpu=%d"));
+        assert!(!METRICS_SCRIPT.contains("grep '^cpu '"));
     }
 
     // ── parse_cpustat ─────────────────────────────────────────────────────────

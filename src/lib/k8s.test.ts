@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { SHELL_SCRIPT } from "./termcmd";
 import {
   parseCpuMillis,
   parseMemMiB,
@@ -21,7 +22,7 @@ import {
   deleteArgs,
   scaleArgs,
   rolloutRestartArgs,
-  execShellCommand,
+  execShellArgv,
   k8sAge,
   resolveOwner,
   podDisplayStatus,
@@ -43,7 +44,7 @@ import {
   cordonArgs,
   uncordonArgs,
   drainArgs,
-  portForwardCommand,
+  portForwardArgv,
   parseServices,
   parseIngress,
   parseNodes,
@@ -195,24 +196,24 @@ describe("argument builders", () => {
   });
 });
 
-describe("execShellCommand", () => {
+describe("execShellArgv", () => {
   it("inlines context/namespace/container and prefers bash", () => {
-    const cmd = execShellCommand(["kubectl"], "api-1", "web", "nginx", SCOPE);
-    expect(cmd).toBe(
-      "kubectl exec -it --context prod --namespace web api-1 -c nginx -- sh -c " +
-        "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'",
-    );
+    const cmd = execShellArgv(["kubectl"], "api-1", "web", "nginx", SCOPE);
+    expect(cmd).toEqual([
+      ...["kubectl", "exec", "-it", "--context", "prod", "--namespace", "web", "api-1"],
+      ...["-c", "nginx", "--", "sh", "-c", SHELL_SCRIPT],
+    ]);
   });
   it("omits the container flag when none", () => {
-    const cmd = execShellCommand(["k3s", "kubectl"], "api-1", "web", null, {
+    const cmd = execShellArgv(["k3s", "kubectl"], "api-1", "web", null, {
       context: null,
       namespace: null,
       allNamespaces: false,
     });
-    expect(cmd).toBe(
-      "k3s kubectl exec -it --namespace web api-1 -- sh -c " +
-        "'command -v bash >/dev/null 2>&1 && exec bash || exec sh'",
-    );
+    expect(cmd).toEqual([
+      ...["k3s", "kubectl", "exec", "-it", "--namespace", "web", "api-1"],
+      ...["--", "sh", "-c", SHELL_SCRIPT],
+    ]);
   });
 });
 
@@ -530,17 +531,17 @@ describe("network/cluster builders", () => {
     expect(needsConfirm(uncordonArgs("n1"))).toBe(false);
     expect(isDestructive(uncordonArgs("n1"))).toBe(false);
   });
-  it("portForwardCommand inlines scope and target", () => {
-    const cmd = portForwardCommand(["kubectl"], "svc/api", "web", 8080, 80, SCOPE);
-    expect(cmd).toBe("kubectl port-forward --context prod --namespace web svc/api 8080:80");
+  it("portForwardArgv inlines scope and target", () => {
+    const cmd = portForwardArgv(["kubectl"], "svc/api", "web", 8080, 80, SCOPE);
+    expect(cmd.join(" ")).toBe("kubectl port-forward --context prod --namespace web svc/api 8080:80");
   });
-  it("portForwardCommand carries a wrapper program and omits empty scope", () => {
-    const cmd = portForwardCommand(["k3s", "kubectl"], "pod/api-1", "", 5432, 5432, {
+  it("portForwardArgv carries a wrapper program and omits empty scope", () => {
+    const cmd = portForwardArgv(["k3s", "kubectl"], "pod/api-1", "", 5432, 5432, {
       context: null,
       namespace: null,
       allNamespaces: false,
     });
-    expect(cmd).toBe("k3s kubectl port-forward pod/api-1 5432:5432");
+    expect(cmd.join(" ")).toBe("k3s kubectl port-forward pod/api-1 5432:5432");
   });
 });
 

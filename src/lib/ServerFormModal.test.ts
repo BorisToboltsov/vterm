@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { tick } from "svelte";
@@ -135,7 +135,8 @@ describe("ServerFormModal validation", () => {
     await userEvent.type(screen.getByTestId("field-alias"), "db");
     await userEvent.type(screen.getByTestId("field-host"), "example.com");
     await userEvent.type(screen.getByTestId("field-username"), "root");
-    // The icon section is collapsed by default — expand it before picking.
+    // Appearance is a folded section, and the glyph grid folds inside it.
+    await userEvent.click(screen.getByTestId("server-section-appearance"));
     await userEvent.click(screen.getByTestId("server-icon-section"));
     await userEvent.click(screen.getByTestId("server-icon-database"));
     await userEvent.click(screen.getByTestId("server-color-green"));
@@ -255,14 +256,18 @@ describe("ServerFormModal validation", () => {
     expect(screen.queryByText("This field is required")).toBeNull();
   });
 
-  it("lays out two columns and folds hints into info tooltips (Phase 20.17)", async () => {
+  it("folds optional settings into sections and hints into info tooltips", async () => {
     const { comp } = renderForm();
     comp.openAdd();
     await tick();
 
-    // Both group headings are present (Connection | Recording & AI).
+    // Connection is always shown; the optional groups are folded section headers.
     expect(screen.getByText("Connection")).toBeInTheDocument();
     expect(screen.getByText("Recording & AI")).toBeInTheDocument();
+    expect(screen.queryByTestId("server-ai-prompt")).toBeNull();
+    expect(screen.queryByTestId("server-use-proxy")).toBeNull();
+    expect(screen.queryByTestId("field-tags")).toBeNull();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
 
     // The auto-record hint is no longer a paragraph — it's a focusable info button
     // whose accessible name carries the text, with a live tooltip on hover/focus.
@@ -282,6 +287,7 @@ describe("ServerFormModal validation", () => {
     const { comp } = renderForm();
     comp.openAdd();
     await tick();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
     expect(screen.getByTestId("server-ai-prompt")).toBeInTheDocument();
   });
 
@@ -292,6 +298,7 @@ describe("ServerFormModal validation", () => {
     const result = render(ServerFormModal, { props: { onsaved, onforgotten, onOpenAiPrompts } });
     (result.component as unknown as { openAdd: () => void }).openAdd();
     await tick();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
 
     const hint =
       "Use a specific chat prompt when the assistant works on this server. Click to open Settings → AI assistant → System prompts.";
@@ -319,12 +326,17 @@ describe("ServerFormModal proxy", () => {
     await userEvent.type(screen.getByTestId("field-username"), "root");
   }
 
+  async function enableProxy() {
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+  }
+
   it("gives an empty jump-host login the same `root` default", async () => {
     const { comp } = renderForm();
     comp.openAdd();
     await tick();
     await fillRequired();
-    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await enableProxy();
     await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
     await userEvent.click(screen.getByTestId("save-server"));
 
@@ -341,7 +353,7 @@ describe("ServerFormModal proxy", () => {
     comp.openAdd();
     await tick();
     await fillRequired();
-    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await enableProxy();
     await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
     await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
     await userEvent.click(screen.getByTestId("save-server"));
@@ -370,7 +382,7 @@ describe("ServerFormModal proxy", () => {
     comp.openAdd();
     await tick();
     await fillRequired();
-    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await enableProxy();
     await userEvent.type(screen.getByTestId("proxy-host"), "bastion.corp");
     await userEvent.type(screen.getByTestId("proxy-username"), "jump");
     await userEvent.type(screen.getByTestId("proxy-secret"), "s3cret");
@@ -397,7 +409,7 @@ describe("ServerFormModal proxy", () => {
     comp.openAdd();
     await tick();
     await fillRequired();
-    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await enableProxy();
     await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
     // SOCKS5 shows optional basic auth (hint), not the SSH auth-method radios.
     expect(
@@ -432,11 +444,71 @@ describe("ServerFormModal proxy", () => {
     comp.openAdd();
     await tick();
     await fillRequired();
-    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await enableProxy();
     // Leave proxy host empty and username empty → validation blocks the save.
     await userEvent.click(screen.getByTestId("save-server"));
     expect(screen.getByTestId("proxy-host")).toHaveAttribute("aria-invalid", "true");
     expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("unfolds the proxy section when its error would otherwise be hidden", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    // Fold it back: the invalid (empty) host is now out of sight.
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    expect(screen.queryByTestId("proxy-host")).toBeNull();
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getByTestId("proxy-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerFormModal folded-section previews", () => {
+  it("previews tags (prod marked), proxy and recording while folded", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(
+      server({
+        id: "s1",
+        alias: "Web",
+        tags: ["prod", "web"],
+        autoRecord: true,
+        noAi: true,
+        proxy: {
+          kind: "jump",
+          host: "bastion.corp",
+          port: 22,
+          username: "root",
+          authMethod: "password",
+          keyPath: null,
+          hasSavedPassword: false,
+        },
+      }),
+    );
+    await tick();
+
+    const appearance = screen.getByTestId("server-section-appearance");
+    expect(appearance).toHaveAttribute("aria-expanded", "false");
+    expect(within(appearance).getByText("prod").className).toContain("text-bad");
+    expect(within(appearance).getByText("web").className).not.toContain("text-bad");
+    expect(screen.getByTestId("server-section-proxy")).toHaveTextContent(
+      "SSH jump host · bastion.corp:22",
+    );
+    expect(screen.getByTestId("server-section-recording")).toHaveTextContent(
+      "auto-record · no AI",
+    );
+  });
+
+  it("explains what tags are for with an info hint", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-appearance"));
+    expect(screen.getByRole("button", { name: /production safeguards/ })).toBeInTheDocument();
+    expect(screen.getByTestId("server-section-proxy")).toHaveTextContent("none");
+    expect(screen.getByTestId("server-section-recording")).toHaveTextContent("defaults");
   });
 });
 

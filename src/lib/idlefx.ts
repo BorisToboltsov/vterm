@@ -62,3 +62,68 @@ export function tokenizeBuffer(text: string): WordToken[] {
   }
   return out;
 }
+
+// ── Away card chart ──────────────────────────────────────────────────────────
+// Three series on one chart, each a fraction of its own ceiling so they share a
+// 0…1 axis whose top line is "100 %": CPU and memory of the whole machine, and
+// the 1-minute load average against the logical-CPU count (load = cores means
+// every core has work). A value vterm cannot know is `null`, never a guessed 0.
+
+/** One chart sample: each series as a fraction 0…1, or null when unknown. */
+export interface IdleSample {
+  cpu: number | null;
+  mem: number | null;
+  load: number | null;
+}
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+
+/** Load average as a share of the machine: `load1 / cpuCount`, capped at 1.
+ *  Null without a load average (Windows) or without a known core count. */
+export function loadFraction(load1: number | null, cpuCount: number | null): number | null {
+  if (load1 == null || !Number.isFinite(load1) || cpuCount == null || cpuCount <= 0) return null;
+  return clamp01(load1 / cpuCount);
+}
+
+/** Build a sample from percentages (0–100) and the load pair. */
+export function idleSample(
+  cpuPct: number | null,
+  memPct: number | null,
+  load1: number | null,
+  cpuCount: number | null,
+): IdleSample {
+  const pct = (v: number | null) => (v == null || !Number.isFinite(v) ? null : clamp01(v / 100));
+  return { cpu: pct(cpuPct), mem: pct(memPct), load: loadFraction(load1, cpuCount) };
+}
+
+/** Append a sample, keeping the newest `cap`. Returns a new array. */
+export function pushSample(hist: IdleSample[], s: IdleSample, cap = 70): IdleSample[] {
+  return [...hist, s].slice(-Math.max(1, cap));
+}
+
+/**
+ * Canvas points for one series across a `w × h` box at (`x0`, `y0`), fraction 1
+ * at the top edge. Split into runs at unknown samples, so a gap is drawn as a
+ * gap instead of a dive to zero. Samples are spread over the full width by index.
+ */
+export function seriesRuns(
+  values: (number | null)[],
+  x0: number,
+  y0: number,
+  w: number,
+  h: number,
+): { x: number; y: number }[][] {
+  const step = w / Math.max(1, values.length - 1);
+  const runs: { x: number; y: number }[][] = [];
+  let run: { x: number; y: number }[] = [];
+  values.forEach((v, i) => {
+    if (v == null) {
+      if (run.length) runs.push(run);
+      run = [];
+      return;
+    }
+    run.push({ x: x0 + i * step, y: y0 + h - clamp01(v) * h });
+  });
+  if (run.length) runs.push(run);
+  return runs;
+}

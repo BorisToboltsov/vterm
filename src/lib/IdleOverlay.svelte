@@ -12,7 +12,15 @@
   import { untrack } from "svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
   import { isIdle, swallowDismiss } from "./idle";
-  import { bufferGrid, tokenizeBuffer, type WordToken } from "./idlefx";
+  import {
+    bufferGrid,
+    idleSample,
+    pushSample,
+    seriesRuns,
+    tokenizeBuffer,
+    type IdleSample,
+    type WordToken,
+  } from "./idlefx";
   import { fetchMetrics } from "./api";
   import { fmtUptime, memPct } from "./format";
   import { t } from "./i18n";
@@ -60,10 +68,12 @@
   // ── live metrics for the card ──────────────────────────────────────────────
   let cpu = 0;
   let mem = 0;
-  let load1 = 0;
+  // Null = this host has no load average (Windows) — shown as "—", not 0.00.
+  let load1: number | null = null;
+  let cpuCount: number | null = null;
   let uptimeSecs: number | null = null;
   let host = "";
-  let cpuHist: number[] = [];
+  let hist: IdleSample[] = [];
   let metricsTimer: ReturnType<typeof setInterval> | undefined;
 
   async function pollMetrics() {
@@ -72,10 +82,11 @@
       const m = await fetchMetrics(sessionId);
       cpu = m.cpuPct ?? cpu;
       mem = memPct(m.memUsed, m.memTotal) ?? mem;
-      load1 = m.load1 ?? load1;
+      load1 = m.load1;
+      cpuCount = m.cpuCount ?? cpuCount;
       uptimeSecs = m.uptimeSecs ?? uptimeSecs;
       host = m.hostname || alias || host;
-      cpuHist = [...cpuHist, cpu / 100].slice(-70);
+      hist = pushSample(hist, idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount));
     } catch {
       /* transient — keep last values */
     }
@@ -94,7 +105,8 @@
     tokens = tokenizeBuffer(snapText);
     if (shownEffect === "card" && sessionId) {
       host = alias;
-      cpuHist = [];
+      hist = [];
+      load1 = cpuCount = null;
       void pollMetrics();
       const every = Math.max(2, settings.statusPollInterval) * 1000;
       metricsTimer = setInterval(pollMetrics, every);
@@ -419,7 +431,7 @@
     scanlines(ctx, W, H);
   }
 
-  // Server card with a CPU graph along the bottom (the chosen Away layout).
+  // Server card with a CPU / memory / load chart along the bottom (the Away layout).
   function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, now: number, p: Pal) {
     ctx.fillStyle = p.background;
     ctx.fillRect(0, 0, W, H);
@@ -457,46 +469,79 @@
         x + 44,
         y + 48,
       );
-      // metrics row
-      const metrics: [string, number, string][] = [
-        ["CPU", cpu / 100, p.green],
-        ["MEM", mem / 100, p.blue],
-        ["LOAD", Math.min(1, load1 / 4), p.yellow],
+      // metrics row — the dot before each label is the legend of its chart line
+      const metrics: [string, string, string][] = [
+        ["CPU", `${Math.round(cpu)}%`, p.green],
+        ["MEM", `${Math.round(mem)}%`, p.blue],
+        ["LOAD", load1 != null ? load1.toFixed(2) : "—", p.yellow],
       ];
       const cw = (cardW - 60) / 3;
-      metrics.forEach((m, i) => {
+      metrics.forEach(([label, val, color], i) => {
         const mx0 = x + 30 + i * cw;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(mx0 + 3, y + 89.5, 3, 0, 7);
+        ctx.fill();
         ctx.fillStyle = hexAlpha(p.foreground, 0.55);
         ctx.font = "500 11px ui-monospace,monospace";
-        ctx.fillText(m[0], mx0, y + 84);
+        ctx.fillText(label, mx0 + 11, y + 84);
         ctx.fillStyle = p.foreground;
         ctx.font = "200 34px ui-monospace,monospace";
-        const val = m[0] === "LOAD" ? load1.toFixed(2) : `${Math.round(m[1] * 100)}%`;
         ctx.fillText(val, mx0, y + 96);
       });
-      // CPU area graph along the bottom of the card
+      // Chart: three series on one 0…1 axis. The dashed top line is 100 % (load
+      // = every core busy); axes are drawn even before data, so the chart area
+      // is always visible — a near-idle CPU line otherwise hugs the floor unseen.
+      // Below the numbers (≈ y+140) down to a 24 px margin; shrinks on a short card.
+      const gh = Math.max(24, Math.min(100, cardH - 164));
       const gx = x + 24;
-      const gy = y + cardH - 84;
+      const gy = y + cardH - 24 - gh;
       const gw = cardW - 48;
-      const gh = 64;
-      const arr = cpuHist.length ? cpuHist : [0];
-      const st = gw / Math.max(1, arr.length - 1);
+      ctx.strokeStyle = hexAlpha(p.foreground, 0.22);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
       ctx.beginPath();
-      ctx.moveTo(gx, gy + gh);
-      arr.forEach((v, i) => ctx.lineTo(gx + i * st, gy + gh - v * gh));
-      ctx.lineTo(gx + (arr.length - 1) * st, gy + gh);
-      ctx.closePath();
-      ctx.fillStyle = hexAlpha(p.green, 0.1);
-      ctx.fill();
-      ctx.beginPath();
-      arr.forEach((v, i) => {
-        const pxx = gx + i * st;
-        const pyy = gy + gh - v * gh;
-        i ? ctx.lineTo(pxx, pyy) : ctx.moveTo(pxx, pyy);
-      });
-      ctx.strokeStyle = p.green;
-      ctx.lineWidth = 1.5;
+      ctx.moveTo(gx, gy + 0.5);
+      ctx.lineTo(gx + gw, gy + 0.5);
       ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(gx + 0.5, gy);
+      ctx.lineTo(gx + 0.5, gy + gh + 0.5);
+      ctx.lineTo(gx + gw, gy + gh + 0.5);
+      ctx.stroke();
+      const series: [keyof IdleSample, string][] = [
+        ["mem", p.blue],
+        ["load", p.yellow],
+        ["cpu", p.green],
+      ];
+      for (const [key, color] of series) {
+        const runs = seriesRuns(
+          hist.map((sample) => sample[key]),
+          gx,
+          gy,
+          gw,
+          gh,
+        );
+        for (const run of runs) {
+          // Only CPU gets the soft fill — three filled areas would muddy each other.
+          if (key === "cpu" && run.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(run[0].x, gy + gh);
+            run.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+            ctx.lineTo(run[run.length - 1].x, gy + gh);
+            ctx.closePath();
+            ctx.fillStyle = hexAlpha(color, 0.1);
+            ctx.fill();
+          }
+          ctx.beginPath();
+          run.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
+          if (run.length === 1) ctx.lineTo(run[0].x + 1, run[0].y);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+        }
+      }
     }
     hint(ctx, W, H, p);
   }

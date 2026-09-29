@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_USERNAME, isValidHost, isValidPort, usernameOrDefault } from "./serverform";
+import {
+  DEFAULT_USERNAME,
+  isValidHost,
+  isValidPort,
+  parseTags,
+  previewTags,
+  proxyEndpoint,
+  recordingSummaryKeys,
+  usernameOrDefault,
+} from "./serverform";
 
 describe("isValidPort", () => {
   it("accepts integers in 1…65535", () => {
@@ -112,5 +121,35 @@ describe("usernameOrDefault", () => {
   it("keeps a typed login, trimmed", () => {
     expect(usernameOrDefault("deploy")).toBe("deploy");
     expect(usernameOrDefault("  deploy ")).toBe("deploy");
+  });
+});
+
+describe("folded-section previews", () => {
+  it("parseTags trims and drops empties", () => {
+    expect(parseTags(" web, ,eu ,")).toEqual(["web", "eu"]);
+    expect(parseTags("")).toEqual([]);
+  });
+
+  it("previewTags caps the list with a +N counter", () => {
+    expect(previewTags("a, b")).toEqual(["a", "b"]);
+    expect(previewTags("a, b, c")).toEqual(["a", "b", "c"]);
+    expect(previewTags("a, b, c, d, e")).toEqual(["a", "b", "c", "+2"]);
+  });
+
+  it("recordingSummaryKeys names only what departs from the defaults", () => {
+    const base = { autoRecord: false, noAi: false, aiPromptId: "", aiExecMode: "" };
+    expect(recordingSummaryKeys(base)).toEqual(["page.sumDefaults"]);
+    expect(recordingSummaryKeys({ ...base, autoRecord: true })).toEqual(["page.sumAutoRecord"]);
+    expect(recordingSummaryKeys({ ...base, aiExecMode: "confirm" })).toEqual(["page.sumAiCustom"]);
+    // noAi makes the per-server prompt/mode moot — it wins.
+    expect(recordingSummaryKeys({ ...base, noAi: true, aiPromptId: "p1" })).toEqual([
+      "page.sumNoAi",
+    ]);
+  });
+
+  it("proxyEndpoint shows host:port, placeholder for an empty host", () => {
+    expect(proxyEndpoint(" bastion ", 22)).toBe("bastion:22");
+    expect(proxyEndpoint("", 22)).toBe("…:22");
+    expect(proxyEndpoint("bastion", null)).toBe("bastion");
   });
 });

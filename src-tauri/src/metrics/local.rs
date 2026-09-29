@@ -309,6 +309,7 @@ pub(super) async fn collect_metrics() -> Metrics {
         top_proc: top_procs_label(&procs, 3),
         cpu_temp: cpu_temp(&Components::new_with_refreshed_list()),
         ip: local_ipv4(&nets).unwrap_or_default(),
+        cpu_count: u32::try_from(sys.cpus().len()).ok().filter(|&n| n > 0),
         ..Default::default()
     }
 }

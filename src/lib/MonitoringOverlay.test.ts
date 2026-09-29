@@ -43,6 +43,7 @@ const metrics: Metrics = {
   netConns: 5,
   kernel: "6.1.0",
   serverTime: "14:05 UTC",
+  cpuCount: 4,
 };
 
 const detail: MetricsDetail = {

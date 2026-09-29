@@ -94,9 +94,12 @@
     дефолт ОС (`CommandBuilder::new_default_prog()`), иначе явная программа (поиск по PATH).
     Детект ОС — команда `host_os` (`std::env::consts::OS`), **не** runtime-плагин.
   - **Shell в контейнер/под** — `pendingCommand` → `write_to_terminal` по статусу `connected`,
-    новая вкладка того же хоста (`onOpenContainerShell`, строка команды — чистые
-    `execShellCommand`/`portForwardCommand`); **не** через `container_run`/`kubectl_run`. Так же
-    `port-forward` — процесс живёт в PTY.
+    новая вкладка того же хоста (`onOpenContainerShell`); **не** через `container_run`/`kubectl_run`.
+    Так же `port-forward` — процесс живёт в PTY. Панели отдают **argv** (`execShellArgv`/
+    `portForwardArgv`), а строку собирает `renderArgv` ([termcmd.ts](../src/lib/termcmd.ts)) под
+    **реально запущенную** оболочку вкладки, как `cdCommand`: POSIX-строка `sh -c '… && …'` в
+    `cmd.exe` разваливается (`'` там не кавычки — `>/dev/null` и `&&` разбирает сам cmd).
+    Неэкранируемый токен → `null` → не шлём ничего.
 - **Команда в PTY завершается CR, а не LF.** Enter — это `\r`; `\n` проходит только там, где
   readline/ZLE вешают `Ctrl+J` на `accept-line` — PSReadLine и `cmd.exe` этого не делают, и
   команда молча повиснет в промпте. Многострочный блок шлём **построчно** (иначе на Windows
@@ -879,7 +882,10 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   контролу. Чистое — в `.ts`: детект [idle.ts](../src/lib/idle.ts), сетка глифов
   [idlefx.ts](../src/lib/idlefx.ts), классификация обрыва [connlost.ts](../src/lib/connlost.ts)
   (**NO SIGNAL — только реальный неожиданный обрыв подключённой сессии**, не ручное закрытие и не
-  провал коннекта). Новый эффект — сюда же, не отдельным слоем.
+  провал коннекта). Новый эффект — сюда же, не отдельным слоем. График карточки — доли одной оси
+  0…1 (`idleSample`): load — от числа логических CPU (`Metrics.cpuCount`, считается тем же `awk`,
+  что `cpustat`, без лишнего процесса на тике); без load average или без числа ядер — `null`,
+  прочерк и разрыв линии, а не ноль (принцип 5).
 - **Оконное обрамление: macOS нативное, Windows/Linux — своё** (ADR 0011). На macOS окно
   оставляем с нативными декорациями и системным меню-баром; `build_app_menu` строит там app-меню
   «vterm» + Help. На Windows/Linux окно **безрамочное**: декорации снимаются в Rust `setup`
