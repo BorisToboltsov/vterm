@@ -6,11 +6,12 @@
 //! the session registry so commands can send keystrokes and window resizes.
 
 use crate::error::{AppError, AppResult};
+use crate::kbdauth;
 use crate::store;
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
-use russh::client::{self, Handle, Msg};
+use russh::client::{self, AuthResult, Handle, KeyboardInteractiveAuthResponse, Msg};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKeyOrCertificate};
-use russh::{ChannelMsg, ChannelWriteHalf};
+use russh::{ChannelMsg, ChannelWriteHalf, MethodKind, MethodSet};
 use russh_sftp::client::SftpSession;
 use std::sync::Arc;
 use std::time::Duration;
@@ -678,23 +679,63 @@ fn map_handshake_err(e: russh::Error) -> AppError {
     }
 }
 
-/// Authenticate an open SSH transport with a password or public key. Returns
-/// whether the server accepted the credential. Shared by the target connection
-/// and the proxy/jump host so both honour the same timeout and key handling.
-async fn authenticate(
-    handle: &mut Handle<ClientHandler>,
+/// Who is logging in, for the keyboard-interactive questions shown to the user.
+struct AuthCtx<'a, A: kbdauth::Asker> {
+    /// "server" (the target) or "proxy" (the jump host).
+    stage: &'static str,
+    host: &'a str,
+    asker: &'a A,
+}
+
+/// How a login ended short of success.
+#[derive(Debug, PartialEq, Eq)]
+enum AuthOutcome {
+    Success,
+    /// The credential (or an answer) was refused.
+    Rejected,
+    /// Nothing vterm can log in with is offered; the server's methods, listed.
+    Unsupported(String),
+}
+
+fn method_names(methods: &MethodSet) -> String {
+    let names: Vec<&str> = methods.iter().map(<&str>::from).collect();
+    if names.is_empty() {
+        "none".into()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// Authenticate an open SSH transport with a password or public key, falling
+/// back to `keyboard-interactive` where the server asks for it (v1.0.38):
+///
+/// * a password the server won't take as `password` (the method is off — UniFi,
+///   many PAM setups) is given as the answer to its password question instead;
+/// * a login the server accepts only partially (`partial_success`: key or
+///   password, then a one-time code) continues with its questions, answered by
+///   the user — the password is never sent a second time;
+/// * a server that offers nothing usable is `Unsupported`, not "wrong password".
+///
+/// Shared by the target connection and the proxy/jump host so both honour the
+/// same timeout, key handling and questions.
+async fn authenticate<H: client::Handler, A: kbdauth::Asker>(
+    handle: &mut Handle<H>,
     username: &str,
     cred: Credential,
     timeout_dur: Duration,
-) -> AppResult<bool> {
-    let auth = match cred {
-        Credential::Password(password) => timeout(
-            timeout_dur,
-            handle.authenticate_password(username, password.to_string()),
-        )
-        .await
-        .map_err(|_| "authentication timed out".to_string())?
-        .map_err(|e| format!("authentication error: {e}"))?,
+    ctx: &AuthCtx<'_, A>,
+) -> AppResult<AuthOutcome> {
+    let (first, password) = match cred {
+        Credential::Password(password) => {
+            let res = timeout(
+                timeout_dur,
+                handle.authenticate_password(username, password.to_string()),
+            )
+            .await
+            .map_err(|_| "authentication timed out".to_string())?
+            .map_err(|e| format!("authentication error: {e}"))?;
+            (res, Some(password))
+        }
 
         Credential::Key { path, passphrase } => {
             let key = load_secret_key(&path, passphrase.as_ref().map(|p| p.as_str()))
@@ -711,13 +752,128 @@ async fn authenticate(
                 None
             };
             let key = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-            timeout(timeout_dur, handle.authenticate_publickey(username, key))
+            let res = timeout(timeout_dur, handle.authenticate_publickey(username, key))
                 .await
                 .map_err(|_| "authentication timed out".to_string())?
-                .map_err(|e| format!("authentication error: {e}"))?
+                .map_err(|e| format!("authentication error: {e}"))?;
+            (res, None)
         }
     };
-    Ok(auth.success())
+    let (remaining, partial) = match first {
+        AuthResult::Success => return Ok(AuthOutcome::Success),
+        AuthResult::Failure {
+            remaining_methods,
+            partial_success,
+        } => (remaining_methods, partial_success),
+    };
+    match kbdauth::after_first(&remaining, partial, password.is_some()) {
+        kbdauth::AfterFirst::Questions => {
+            keyboard_interactive(handle, username, None, timeout_dur, ctx).await
+        }
+        kbdauth::AfterFirst::QuestionsWithPassword => {
+            keyboard_interactive(handle, username, password, timeout_dur, ctx).await
+        }
+        kbdauth::AfterFirst::Rejected => Ok(AuthOutcome::Rejected),
+        kbdauth::AfterFirst::Unsupported => Ok(AuthOutcome::Unsupported(method_names(&remaining))),
+    }
+}
+
+/// The `keyboard-interactive` exchange: rounds of questions until the server
+/// says yes or no. Who answers what is [`kbdauth::plan`]; what the user is asked
+/// goes through [`kbdauth::ask`] (no timeout on that wait — see kbdauth.rs).
+async fn keyboard_interactive<H: client::Handler, A: kbdauth::Asker>(
+    handle: &mut Handle<H>,
+    username: &str,
+    password: Option<Zeroizing<String>>,
+    timeout_dur: Duration,
+    ctx: &AuthCtx<'_, A>,
+) -> AppResult<AuthOutcome> {
+    let server_err = |e: russh::Error| AppError::Message(format!("authentication error: {e}"));
+    let slow = |_| AppError::Message("authentication timed out".into());
+    let mut resp = timeout(
+        timeout_dur,
+        handle.authenticate_keyboard_interactive_start(username, None::<String>),
+    )
+    .await
+    .map_err(slow)?
+    .map_err(server_err)?;
+    let mut password_used = false;
+    for _ in 0..kbdauth::MAX_ROUNDS {
+        let (name, instructions, prompts) = match resp {
+            KeyboardInteractiveAuthResponse::Success => return Ok(AuthOutcome::Success),
+            KeyboardInteractiveAuthResponse::Failure {
+                remaining_methods,
+                partial_success,
+            } => {
+                if partial_success && remaining_methods.contains(&MethodKind::KeyboardInteractive) {
+                    // Accepted so far, another stage follows (e.g. PAM, then OTP).
+                    resp = timeout(
+                        timeout_dur,
+                        handle.authenticate_keyboard_interactive_start(username, None::<String>),
+                    )
+                    .await
+                    .map_err(slow)?
+                    .map_err(server_err)?;
+                    continue;
+                }
+                return Ok(AuthOutcome::Rejected);
+            }
+            KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => (name, instructions, prompts),
+        };
+        let views: Vec<kbdauth::PromptView> = prompts
+            .into_iter()
+            .map(|p| kbdauth::PromptView {
+                prompt: p.prompt,
+                echo: p.echo,
+            })
+            .collect();
+        let slots = match kbdauth::plan(&views, password.is_some(), password_used) {
+            Ok(slots) => slots,
+            Err(kbdauth::PlanStop::PasswordRejected) => return Ok(AuthOutcome::Rejected),
+        };
+        let asked: Vec<kbdauth::PromptView> = views
+            .iter()
+            .zip(&slots)
+            .filter(|(_, s)| **s == kbdauth::Slot::Ask)
+            .map(|(v, _)| v.clone())
+            .collect();
+        // Servers send empty rounds too (informational, or a nudge); answer those
+        // without bothering the user.
+        let user = if asked.is_empty() {
+            Vec::new()
+        } else {
+            let req = kbdauth::AuthRequest {
+                stage: ctx.stage,
+                host: ctx.host.to_string(),
+                username: username.to_string(),
+                name,
+                instructions,
+                prompts: asked,
+            };
+            ctx.asker.ask(req).await.ok_or(AppError::AuthCancelled)?
+        };
+        let pw = password.as_ref().map(|p| p.as_str()).unwrap_or("");
+        let answers = kbdauth::merge(&slots, pw, &user).ok_or_else(|| {
+            AppError::Message("answers don't match the server's questions".into())
+        })?;
+        if slots.contains(&kbdauth::Slot::Password) {
+            password_used = true;
+        }
+        resp = timeout(
+            timeout_dur,
+            handle.authenticate_keyboard_interactive_respond(answers),
+        )
+        .await
+        .map_err(slow)?
+        .map_err(server_err)?;
+    }
+    Err(AppError::Message(
+        "the server kept asking login questions — giving up".into(),
+    ))
 }
 
 /// Open a connection, authenticate, and start an interactive shell.
@@ -777,8 +933,21 @@ pub async fn connect(
             .map_err(|_| conn_timeout(connect_timeout))?
             .map_err(map_handshake_err)?;
             let _ = app.emit(&phase_event(&session_id), "proxyAuthenticating");
-            if !authenticate(&mut jump, &p.username, p.cred, connect_timeout).await? {
-                return Err(AppError::ProxyAuthRejected);
+            let asker = kbdauth::UiAsker {
+                app: &app,
+                session_id: &session_id,
+            };
+            let ctx = AuthCtx {
+                stage: "proxy",
+                host: &p.host,
+                asker: &asker,
+            };
+            match authenticate(&mut jump, &p.username, p.cred, connect_timeout, &ctx).await? {
+                AuthOutcome::Success => {}
+                AuthOutcome::Rejected => return Err(AppError::ProxyAuthRejected),
+                AuthOutcome::Unsupported(m) => {
+                    return Err(AppError::ProxyAuthMethodsUnsupported(m))
+                }
             }
             let _ = app.emit(&phase_event(&session_id), "proxyTunnel");
             let channel = jump
@@ -837,10 +1006,21 @@ pub async fn connect(
 
     // Phase 2: authentication (password or public key).
     let _ = app.emit(&phase_event(&session_id), "authenticating");
-    if !authenticate(&mut handle, username, cred, connect_timeout).await? {
+    let asker = kbdauth::UiAsker {
+        app: &app,
+        session_id: &session_id,
+    };
+    let ctx = AuthCtx {
+        stage: "server",
+        host,
+        asker: &asker,
+    };
+    match authenticate(&mut handle, username, cred, connect_timeout, &ctx).await? {
+        AuthOutcome::Success => {}
         // Recognizable marker so the UI can offer to re-enter the secret
         // (distinct from network/timeout errors above).
-        return Err(AppError::AuthRejected);
+        AuthOutcome::Rejected => return Err(AppError::AuthRejected),
+        AuthOutcome::Unsupported(m) => return Err(AppError::AuthMethodsUnsupported(m)),
     }
 
     // Phase 3: open the session channel, request a PTY and start the shell.
@@ -1054,5 +1234,183 @@ mod tests {
         );
         // No explicit path and no default key → None.
         assert_eq!(pick_key_path(None, || None), None);
+    }
+}
+
+/// Live keyboard-interactive logins against a real PAM sshd with the `password`
+/// method off (e2e/kbdint — the UniFi shape). Ignored so `cargo test` stays
+/// hermetic; run with the container up:
+///
+/// ```sh
+/// docker compose -f e2e/docker-compose.kbdint.yml up -d --build
+/// cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
+/// docker compose -f e2e/docker-compose.kbdint.yml down
+/// ```
+#[cfg(test)]
+mod live_kbdint {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct AnyKey;
+
+    impl client::Handler for AnyKey {
+        type Error = russh::Error;
+        // Throwaway local container; its host key is new on every build.
+        async fn check_server_key(
+            &mut self,
+            _key: &PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    /// Answers rounds from a script (None = the user cancels) and records what
+    /// it was asked.
+    struct Script {
+        answers: Vec<Option<Vec<&'static str>>>,
+        next: AtomicUsize,
+        asked: std::sync::Mutex<Vec<kbdauth::AuthRequest>>,
+    }
+
+    impl Script {
+        fn new(answers: Vec<Option<Vec<&'static str>>>) -> Self {
+            Script {
+                answers,
+                next: AtomicUsize::new(0),
+                asked: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn asked(&self) -> Vec<kbdauth::AuthRequest> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    impl kbdauth::Asker for Script {
+        async fn ask(&self, req: kbdauth::AuthRequest) -> kbdauth::Answer {
+            self.asked.lock().unwrap().push(req);
+            let i = self.next.fetch_add(1, Ordering::SeqCst);
+            self.answers.get(i).cloned().flatten().map(|v| {
+                v.into_iter()
+                    .map(|a| Zeroizing::new(a.to_string()))
+                    .collect()
+            })
+        }
+    }
+
+    fn port() -> u16 {
+        std::env::var("VTERM_TEST_KBDINT_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(2223)
+    }
+
+    async fn open() -> Handle<AnyKey> {
+        client::connect(
+            Arc::new(client::Config::default()),
+            ("127.0.0.1", port()),
+            AnyKey,
+        )
+        .await
+        .expect("no kbdint sshd — docker compose -f e2e/docker-compose.kbdint.yml up -d --build")
+    }
+
+    async fn login(user: &str, pass: &str, script: &Script) -> AppResult<AuthOutcome> {
+        let mut handle = open().await;
+        let ctx = AuthCtx {
+            stage: "server",
+            host: "127.0.0.1",
+            asker: script,
+        };
+        authenticate(
+            &mut handle,
+            user,
+            Credential::Password(Zeroizing::new(pass.into())),
+            Duration::from_secs(10),
+            &ctx,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn the_server_really_refuses_the_password_method() {
+        // Sanity: this is the case being fixed — a bare password login fails
+        // even with the right password, and `password` isn't offered.
+        let mut handle = open().await;
+        let res = handle
+            .authenticate_password("kbd", "kbdpass")
+            .await
+            .unwrap();
+        match res {
+            AuthResult::Failure {
+                remaining_methods, ..
+            } => {
+                assert!(!remaining_methods.contains(&MethodKind::Password));
+                assert!(remaining_methods.contains(&MethodKind::KeyboardInteractive));
+            }
+            AuthResult::Success => panic!("the test server accepts `password` — it must not"),
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn a_password_given_as_the_answer_logs_in_without_asking() {
+        let script = Script::new(vec![]);
+        assert_eq!(
+            login("kbd", "kbdpass", &script).await.unwrap(),
+            AuthOutcome::Success
+        );
+        assert!(
+            script.asked().is_empty(),
+            "the stored password answered PAM itself"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn a_wrong_password_is_rejected_not_asked_again() {
+        let script = Script::new(vec![]);
+        assert_eq!(
+            login("kbd", "nope", &script).await.unwrap(),
+            AuthOutcome::Rejected
+        );
+        assert!(
+            script.asked().is_empty(),
+            "never ask the user to retype it here"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn a_second_factor_is_asked_and_the_password_never_goes_there() {
+        let script = Script::new(vec![Some(vec!["11111111"])]);
+        assert_eq!(
+            login("otp", "otppass", &script).await.unwrap(),
+            AuthOutcome::Success
+        );
+        let asked = script.asked();
+        assert_eq!(asked.len(), 1);
+        assert_eq!(asked[0].prompts.len(), 1);
+        assert!(asked[0].prompts[0].prompt.contains("Verification code"));
+        assert!(!asked[0].prompts[0].echo);
+        assert_eq!(asked[0].stage, "server");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn cancelling_the_question_ends_the_login() {
+        let script = Script::new(vec![None]);
+        let err = login("otp", "otppass", &script).await.unwrap_err();
+        assert!(err.to_string().contains("auth-cancelled"), "{err}");
+    }
+
+    #[tokio::test]
+    #[ignore = "needs the kbdint sshd container"]
+    async fn a_wrong_code_is_rejected() {
+        let script = Script::new(vec![Some(vec!["00000000"])]);
+        assert_eq!(
+            login("otp", "otppass", &script).await.unwrap(),
+            AuthOutcome::Rejected
+        );
     }
 }

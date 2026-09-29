@@ -11,6 +11,8 @@ export type SshErrorAction = "reconnect" | "reauth";
 export type SshErrorView = {
   titleKey: MessageKey;
   detailKey?: MessageKey;
+  /** Interpolation values for `detailKey`. */
+  detailVars?: Record<string, string>;
   detailText?: string;
   phase: ConnPhase;
   showSteps: boolean;
@@ -35,6 +37,38 @@ export function sshErrorView(status: string, currentPhase: ConnPhase): SshErrorV
     };
   }
   const raw = status.replace(/^Error:\s*/, "");
+  // The server offers no login method this profile can use (e.g. keys only for a
+  // password) — the password may well be right, so this is not "wrong password".
+  // Proxy first: its marker contains the target's.
+  const offered = /offers: ([^)]*)\)/.exec(raw)?.[1] ?? "";
+  if (raw.includes("proxy-auth-unsupported")) {
+    return {
+      titleKey: "connecting.proxyAuthUnsupported",
+      detailKey: "connecting.authUnsupportedDetail",
+      detailVars: { methods: offered },
+      phase: "proxyAuthenticating",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
+  if (raw.includes("auth-unsupported")) {
+    return {
+      titleKey: "connecting.authUnsupported",
+      detailKey: "connecting.authUnsupportedDetail",
+      detailVars: { methods: offered },
+      phase: "authenticating",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
+  if (raw.includes("auth-cancelled")) {
+    return {
+      titleKey: "connecting.authCancelled",
+      phase: "authenticating",
+      showSteps: true,
+      action: "reconnect",
+    };
+  }
   // Proxy markers are checked before the generic `auth-rejected` since the proxy
   // marker (`proxy-auth-rejected`) also contains that substring.
   if (raw.includes("proxy-auth-rejected")) {

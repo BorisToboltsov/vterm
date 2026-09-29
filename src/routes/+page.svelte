@@ -106,6 +106,8 @@
   import { hasNotes, notesTarget } from "$lib/notes";
   import FolderModals from "$lib/FolderModals.svelte";
   import SecretPrompt from "$lib/SecretPrompt.svelte";
+  import AuthPromptDialog from "$lib/AuthPromptDialog.svelte";
+  import { authPrompts, clearAuthPrompt, setAuthPrompt } from "$lib/stores/authprompt.svelte";
   import HelpPanel from "$lib/HelpPanel.svelte";
   import ThemeOverlay from "$lib/ThemeOverlay.svelte";
   import IdleOverlay from "$lib/IdleOverlay.svelte";
@@ -1260,6 +1262,7 @@
     nginxConfigCache.delete(sessionId);
     delete termStructured[sessionId];
     delete termSelection[sessionId];
+    clearAuthPrompt(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -2339,7 +2342,7 @@
                     host={srv ? `${srv.username}@${srv.host}:${srv.port}` : tab.alias}
                     phase={ev.phase}
                     title={t(ev.titleKey)}
-                    detail={ev.detailKey ? t(ev.detailKey) : ev.detailText}
+                    detail={ev.detailKey ? t(ev.detailKey, ev.detailVars) : ev.detailText}
                     showSteps={ev.showSteps}
                     proxy={srv?.proxy ? (srv.proxy.kind === "jump" ? "jump" : "tcp") : null}
                     via={srv?.proxy ? `${srv.proxy.host}:${srv.proxy.port}` : undefined}
@@ -2394,8 +2397,11 @@
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onviewmode={(on) => (termStructured[tab.sessionId] = on)}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
+                    onauthprompt={(req) => setAuthPrompt(tab.sessionId, req)}
                     onstatus={(st, d) => {
                       setTabStatus(tab.sessionId, st, d);
+                      // The login finished either way — no question can still be open.
+                      if (st !== "connecting") clearAuthPrompt(tab.sessionId);
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "connected") idleWasConnected.add(tab.sessionId);
                       if (st === "connected" && pendingCommand[tab.sessionId]) {
@@ -2869,6 +2875,17 @@
 
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->
 <SecretPrompt bind:this={secretPrompt} />
+
+<!-- The server's own login questions (keyboard-interactive) for the tab on screen;
+     a background tab's wait until the user switches to it. -->
+{#if tabsState.activeId && authPrompts[tabsState.activeId]}
+  {@const sid = tabsState.activeId}
+  <AuthPromptDialog
+    sessionId={sid}
+    request={authPrompts[sid]}
+    ondone={() => clearAuthPrompt(sid)}
+  />
+{/if}
 
 <!-- Add / Edit server modal (owns its own form state; Phase 18.4.2) -->
 <ServerFormModal

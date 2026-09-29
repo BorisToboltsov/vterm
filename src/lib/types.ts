@@ -165,3 +165,17 @@ export interface RecordingMeta {
   /** User-given name of the broadcast bundle (set when naming the group on stop). */
   batchLabel?: string;
 }
+
+/** One round of the server's keyboard-interactive login questions that vterm
+ *  couldn't answer itself (mirrors kbdauth.rs `AuthRequest`). All text comes from
+ *  the server — show it as plain text. */
+export interface AuthPromptRequest {
+  /** "server" — the target; "proxy" — the jump host. */
+  stage: "server" | "proxy";
+  host: string;
+  username: string;
+  name: string;
+  instructions: string;
+  /** `echo` false → a secret field. */
+  prompts: { prompt: string; echo: boolean }[];
+}

@@ -25,6 +25,23 @@ pub enum AppError {
     #[error("proxy-auth-rejected: jump host rejected the credentials")]
     ProxyAuthRejected,
 
+    /// The server offers no login method vterm can use with the profile's
+    /// credential (e.g. keys only, while the profile has a password). Distinct
+    /// from `AuthRejected`: the password may be right — "wrong password" would
+    /// be a lie. Carries the methods the server offered.
+    #[error("auth-unsupported: the server does not accept this login method (it offers: {0})")]
+    AuthMethodsUnsupported(String),
+
+    /// Same, for the jump host.
+    #[error(
+        "proxy-auth-unsupported: the jump host does not accept this login method (it offers: {0})"
+    )]
+    ProxyAuthMethodsUnsupported(String),
+
+    /// The user cancelled the server's login questions (keyboard-interactive).
+    #[error("auth-cancelled: login cancelled")]
+    AuthCancelled,
+
     /// No live SSH session is registered for the given id.
     #[error("no active session")]
     NoSession,
@@ -131,6 +148,15 @@ mod tests {
         assert!(AppError::HostKeyRejected
             .to_string()
             .contains("host-key-rejected"));
+        assert!(AppError::AuthMethodsUnsupported("publickey".into())
+            .to_string()
+            .starts_with("auth-unsupported:"));
+        assert!(AppError::ProxyAuthMethodsUnsupported("publickey".into())
+            .to_string()
+            .starts_with("proxy-auth-unsupported:"));
+        assert!(AppError::AuthCancelled
+            .to_string()
+            .contains("auth-cancelled"));
         assert!(AppError::ProxyAuthRejected
             .to_string()
             .contains("proxy-auth-rejected"));
