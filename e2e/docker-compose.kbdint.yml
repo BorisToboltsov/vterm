@@ -11,4 +11,4 @@ services:
     build: ./kbdint
     container_name: vterm-test-kbdint
     ports:
-      - "2223:22"
+      - "2223:2222"

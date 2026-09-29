@@ -275,6 +275,11 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
   нами.
 - **proc-macro-error, unic-\* (RUSTSEC-2024-0370, 2025-0075/0080/0081/0098/0100).**
   Транзитивные unmaintained build/utility-крейты.
+- **Trivy DS-0002 (`root` в образе) — только `e2e/kbdint/Dockerfile`.** Тестовый sshd для
+  живых тестов входа `keyboard-interactive`: sshd обязан работать от root, чтобы переключиться
+  на входящего пользователя; контейнер локальный и живёт на время прогона. Исключение — в
+  [.trivyignore.yaml](.trivyignore.yaml) с `paths` на этот файл, чтобы не глушить правило для
+  будущих Dockerfile; порт внутри непривилегированный, HEALTHCHECK есть.
 
 ## Не покрыто этой фазой
 

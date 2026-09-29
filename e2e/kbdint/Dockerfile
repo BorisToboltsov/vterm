@@ -19,5 +19,8 @@ RUN chown otp:otp /home/otp/.google_authenticator && chmod 400 /home/otp/.google
 # without ~/.google_authenticator (kbd).
 RUN echo 'auth required pam_google_authenticator.so nullok' >> /etc/pam.d/sshd
 COPY kbdint.conf /etc/ssh/sshd_config.d/kbdint.conf
-EXPOSE 22
+# sshd itself stays root: it must switch to the logging-in user (accepted in
+# .trivyignore.yaml for this file only). An unprivileged port, though.
+EXPOSE 2222
+HEALTHCHECK --interval=5s --timeout=3s --retries=6 CMD bash -c 'echo > /dev/tcp/127.0.0.1/2222' || exit 1
 CMD ["/usr/sbin/sshd", "-D", "-e"]

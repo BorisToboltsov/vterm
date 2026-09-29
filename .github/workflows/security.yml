@@ -85,6 +85,8 @@ jobs:
           scanners: vuln,secret,misconfig
           format: sarif
           output: trivy.sarif
+          # Accepted findings, each scoped to one path with its reason.
+          trivyignores: .trivyignore.yaml
 
       - name: Результаты в Security tab
         if: always() && hashFiles('trivy.sarif') != ''

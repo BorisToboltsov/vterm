@@ -856,7 +856,7 @@ async fn keyboard_interactive<H: client::Handler, A: kbdauth::Asker>(
             };
             ctx.asker.ask(req).await.ok_or(AppError::AuthCancelled)?
         };
-        let pw = password.as_ref().map(|p| p.as_str()).unwrap_or("");
+        let pw = password.as_ref().map(|p| p.as_str());
         let answers = kbdauth::merge(&slots, pw, &user).ok_or_else(|| {
             AppError::Message("answers don't match the server's questions".into())
         })?;
