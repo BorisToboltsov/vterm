@@ -26,3 +26,32 @@ export function probeRun(
 ): Promise<ProbeOutput> {
   return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, mirror });
 }
+
+/** One host with its ports for `netcheckRun` (mirror of `netcheck::NetTarget`). */
+export interface NetCheckTarget {
+  host: string;
+  ports: number[];
+}
+
+/**
+ * Network access check (v1.0.36). Transport by session: an SSH tab runs `args`
+ * (the script from `netcheckArgs`) on the server; a local tab connects to
+ * `targets` natively from this machine. Both answer in the netcheck line
+ * protocol — parse `stdout` with `parseNetReport`. Empty `targets` = identity
+ * probe (hostname/addresses/method only).
+ */
+export function netcheckRun(
+  sessionId: string,
+  args: string[],
+  targets: NetCheckTarget[],
+  connectTimeoutSecs: number,
+  timeoutSecs: number,
+): Promise<ProbeOutput> {
+  return invoke<ProbeOutput>("netcheck_run", {
+    sessionId,
+    args,
+    targets,
+    connectTimeoutSecs,
+    timeoutSecs,
+  });
+}

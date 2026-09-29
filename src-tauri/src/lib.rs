@@ -11,6 +11,7 @@ mod localenv;
 mod localfile;
 mod metrics;
 mod model;
+mod netcheck;
 mod netprobe;
 mod proccwd;
 mod pty;
@@ -1018,6 +1019,68 @@ async fn git_run(
             );
         }
         return Ok(out);
+    }
+    Err(AppError::NoSession)
+}
+
+/// Network access check for the Utilities panel (v1.0.36): "can this host reach
+/// those ports?". Transport by session presence (principle 3): an SSH tab runs
+/// the frontend-built script (`args`, see netcheck.ts) on the server; a local
+/// tab answers natively (`netcheck::run_native`) — the one narrow, click-only
+/// exception to the offline invariant. Both reply in the same line protocol, so
+/// the frontend parses one format. `targets` is what the local side connects to
+/// and what the audit line names; on SSH the script already embeds them.
+/// Audited as `[util] $ netcheck …` in the session recording, never emitted to
+/// the live terminal.
+#[tauri::command]
+async fn netcheck_run(
+    state: State<'_, AppState>,
+    session_id: String,
+    args: Vec<String>,
+    targets: Vec<netcheck::NetTarget>,
+    connect_timeout_secs: u64,
+    timeout_secs: u64,
+) -> AppResult<netprobe::ProbeOutput> {
+    netcheck::validate(&targets).map_err(AppError::Message)?;
+    let label = netcheck::audit_label(&targets);
+    let audit = !targets.is_empty();
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        if args.is_empty() {
+            return Err(AppError::Message("netcheck: no arguments".into()));
+        }
+        let cmd = netprobe::probe_command(&args);
+        let outcome = session.exec_captured(&cmd, timeout_secs.max(1)).await?;
+        let (stderr, exit_code) = if outcome.timed_out {
+            (
+                format!("netcheck timed out after {}s", timeout_secs.max(1)),
+                -1,
+            )
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        if audit {
+            session.record_output(
+                netprobe::probe_mirror(&label, &outcome.stdout, &stderr, exit_code).as_bytes(),
+            );
+        }
+        return Ok(netprobe::ProbeOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
+    }
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        let timeout = std::time::Duration::from_secs(connect_timeout_secs.clamp(1, 30));
+        let stdout = netcheck::run_native(&targets, timeout).await;
+        if audit {
+            pty.record_output(netprobe::probe_mirror(&label, &stdout, "", 0).as_bytes());
+        }
+        return Ok(netprobe::ProbeOutput {
+            stdout,
+            stderr: String::new(),
+            exit_code: 0,
+        });
     }
     Err(AppError::NoSession)
 }
@@ -2357,6 +2420,7 @@ pub fn run() {
             ai_exec,
             git_run,
             probe_run,
+            netcheck_run,
             container_run,
             kubectl_run,
             docker_login,

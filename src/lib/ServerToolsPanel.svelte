@@ -33,6 +33,9 @@
     actionlint: "servertools.purposeActions",
     kubeconform: "servertools.purposeK8s",
     sensors: "servertools.purposeTemp",
+    smartmontools: "servertools.purposeSmart",
+    sysstat: "servertools.purposeIo",
+    telnet: "servertools.purposeTelnet",
   };
 
   export async function load() {

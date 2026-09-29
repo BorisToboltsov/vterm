@@ -21,8 +21,16 @@ export interface UtilityDef {
   keywords: string;
 }
 
-// Registry order = nav order. keygen ("keys") stays first as the original utility.
+// Registry order = nav order. The access check leads — it is the most used tool;
+// the original utility (keygen, "keys") follows.
 export const UTILITIES: readonly UtilityDef[] = [
+  {
+    id: "netcheck",
+    icon: "plug",
+    titleKey: "util.netcheck.title",
+    descKey: "util.netcheck.desc",
+    keywords: "access port check telnet nc netcat firewall reachability connect tcp udp open closed доступ порт проверка телнет файрвол межсетевой экран доступность соединение открыт закрыт",
+  },
   {
     id: "keys",
     icon: "key",

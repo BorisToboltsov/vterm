@@ -22,8 +22,9 @@ describe("utilities registry", () => {
     }
   });
 
-  it("defaults to the first (keys) utility", () => {
-    expect(DEFAULT_UTILITY).toBe("keys");
+  it("leads with the access check, then the original keygen", () => {
+    expect(DEFAULT_UTILITY).toBe("netcheck");
+    expect(UTILITIES[1].id).toBe("keys");
     expect(isUtility(DEFAULT_UTILITY)).toBe(true);
   });
 
