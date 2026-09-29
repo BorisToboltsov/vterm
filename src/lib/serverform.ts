@@ -2,6 +2,18 @@
 // `.svelte` component (ADR 0003 invariant: pure logic lives in `.ts` so it is
 // testable without a DOM). Used by `ServerFormModal.svelte`.
 
+/**
+ * SSH login used when the field is left empty — the same default most hosting
+ * panels hand out. Applied on save, so the stored profile always carries a real
+ * login and nothing downstream has to know an empty one was possible.
+ */
+export const DEFAULT_USERNAME = "root";
+
+/** The login to store: the trimmed input, or `DEFAULT_USERNAME` when blank. */
+export function usernameOrDefault(value: string): string {
+  return value.trim() || DEFAULT_USERNAME;
+}
+
 /** A valid SSH port is an integer in 1…65535 (backend stores it as a u16). */
 export function isValidPort(p: number | null): p is number {
   return p != null && Number.isInteger(p) && p >= 1 && p <= 65535;

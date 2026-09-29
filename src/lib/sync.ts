@@ -149,6 +149,11 @@ export function syncTransferId(path: string): string {
   return `sync:${path}`;
 }
 
+/** Whether a transfer id belongs to a sync run (see {@link syncTransferId}). */
+export function isSyncTransferId(id: string): boolean {
+  return id.startsWith("sync:");
+}
+
 /** Whether a run is under way, and if not, how it ended. */
 export type SyncRunPhase = "idle" | "running" | "stopped" | "done";
 

@@ -34,8 +34,20 @@ jobs:
     permissions:
       contents: read
 
+  # Глубокие слои поверх гейтов: фаззинг на глубине, живые SFTP-тесты против
+  # настоящего sshd и E2E в реальном окне. На PR их нет (долго, нужен живой
+  # стенд), а расписание у них месячное — без этой джобы поломка основного
+  # сценария, влитая в main, доехала бы до релиза непроверенной.
+  #
+  # Связь `needs: [verify, deep]` держится гейтом releaseassets.guard.test.ts.
+  deep:
+    name: Глубокие проверки
+    uses: $/.github/workflows/nightly.yml
+    permissions:
+      contents: read
+
   release:
-    needs: verify
+    needs: [verify, deep]
     # tauri-action создаёт релиз и заливает ассеты — этой джобе нужна запись.
     permissions:
       contents: write

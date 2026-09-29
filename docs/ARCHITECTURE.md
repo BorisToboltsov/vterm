@@ -93,7 +93,7 @@
 | `sftp://progress` | [sftp.rs](../src-tauri/src/sftp.rs), [sync.rs](../src-tauri/src/sync.rs) | Прогресс передачи по id переноса (у синхронизации id детерминированный — `sync:<путь>`) |
 | `sync://scan` | [sync.rs](../src-tauri/src/sync.rs) | Сколько файлов уже прохэшировано при сравнении синхронизации (`{id, files}`, id = `<сравнение>:local`/`:remote`); счётчик без итога, поэтому не на `sftp://progress` |
 | `ai://out\|think\|done\|error/{id}` | [ai.rs](../src-tauri/src/ai.rs) | Токены ответа · рассуждение модели (отдельно, в `content` не попадает) · счёт токенов · ошибка |
-| `menu://…` | нативное меню (Rust) | `about`/`help`/`manual`/`monitoring`/`settings` |
+| `menu://…` | нативное меню (Rust) | `about`/`help`/`manual`/`monitoring`/`settings`; `quit` — запрос выхода (меню, закрытие окна, выход от ОС), отвечает `QuitDialog` |
 | `install://out` | [servertools.rs](../src-tauri/src/servertools.rs) | Вывод установки серверного инструмента (линтеры) |
 
 ---
@@ -150,7 +150,7 @@
 | **Git · Docker · k8s · пробы** | `git.rs`, `container.rs`, `kube.rs`, `netprobe.rs` | `git_run`, `container_run`, `kubectl_run`, `probe_run`, `docker_login` | `GitPanel`, `DockerPanel`, `K8sPanel`, `UtilProbeRunner` | `followcwd`, `git`, `gitview`, `docker`, `k8s`, `probe`, `tls`, `http` |
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact` |
 | **Утилиты** | `keygen.rs`, `store.rs` (known_hosts) | `generate_ssh_key`, `list_known_hosts`, `remove_known_host` | `UtilitiesPanel` + `Util*.svelte` | `utilities`, `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
-| **Оформление** | — | `set_menu_language` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav` |
+| **Оформление** | — | `set_menu_language` · `arm_close_guard` · `quit_app` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel`, `QuitDialog` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav`, `quitsummary` |
 | **Оконное обрамление** | `lib.rs` `setup` (снятие декораций non-macOS) | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
 
 ---

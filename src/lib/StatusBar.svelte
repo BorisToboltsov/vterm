@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { tooltip } from "./actions/tooltip";
-  import { fetchMetrics, type Metrics } from "./api";
+  import { fetchMetrics, sftpCancel, type Metrics } from "./api";
   import {
     diskFree as diskFreeOf,
     fmtBytes,
@@ -17,6 +17,7 @@
   import Sparkline from "./Sparkline.svelte";
   import { layout } from "./stores/layout.svelte";
   import { aggregateTransfers, transfersState } from "./stores/transfers.svelte";
+  import { isCancellableTransfer } from "./transfer";
   import { t } from "./i18n";
 
   let { sessionId }: { sessionId: string } = $props();
@@ -138,6 +139,9 @@
 
   // SFTP transfers (shared store) → compact aggregate for the bar indicator.
   const summary = $derived(aggregateTransfers(Object.values(transfersState.map)));
+  // What "cancel all" stops: in-flight transfers the user started. Sync-run files
+  // are stopped by the sync window's own Stop, not per file.
+  const cancellable = $derived(Object.values(transfersState.map).filter(isCancellableTransfer));
 </script>
 
 <!--
@@ -323,6 +327,17 @@
           {/if}
           <span class="tabular-nums">{summary.pct}%</span>
         </button>
+        {#if cancellable.length > 0}
+          <button
+            data-testid="transfer-cancel-all"
+            class="flex items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white"
+            use:tooltip={t("bar.cancelTransfers")}
+            aria-label={t("bar.cancelTransfers")}
+            onclick={() => cancellable.forEach((tr) => void sftpCancel(tr.id))}
+          >
+            <Icon name="close" size={12} />
+          </button>
+        {/if}
       {/if}
 
     {:else if failed}

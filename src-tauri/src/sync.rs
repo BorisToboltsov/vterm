@@ -643,14 +643,14 @@ pub async fn apply(
         match a.op.as_str() {
             "upload" => {
                 ensure_remote_dirs(sftp, &remote).await;
-                sftp::upload(app, id, sftp, &local_str, &remote).await?;
+                sftp::upload(app, id, sftp, &local_str, &remote, None).await?;
                 stats.uploaded += 1;
             }
             "download" => {
                 if let Some(parent) = local.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                sftp::download(app, id, sftp, &remote, &local_str).await?;
+                sftp::download(app, id, sftp, &remote, &local_str, None).await?;
                 stats.downloaded += 1;
             }
             "deleteRemote" => {
