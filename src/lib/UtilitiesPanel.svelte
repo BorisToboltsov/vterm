@@ -30,7 +30,7 @@
     open = $bindable(false),
     initialUtility = null,
     session = null,
-    onInstallTelnet,
+    onInstallTool,
     toolsReloadToken = 0,
   }: {
     open?: boolean;
@@ -38,8 +38,8 @@
     initialUtility?: string | null;
     /** Active-tab context for the network tools (SSH remote / local PTY). */
     session?: ProbeSession | null;
-    /** Offer the telnet install dialog (access check on a host with no probe tool). */
-    onInstallTelnet?: () => void;
+    /** Offer a probe tool's install dialog (access check on an SSH host). */
+    onInstallTool?: (tool: string) => void;
     /** Bumped after a server-tool install finishes. */
     toolsReloadToken?: number;
   } = $props();
@@ -139,7 +139,7 @@
           </div>
 
           {#if selected === "netcheck"}
-            <UtilNetCheck {session} {onInstallTelnet} reloadToken={toolsReloadToken} />
+            <UtilNetCheck {session} {onInstallTool} reloadToken={toolsReloadToken} />
           {:else if selected === "keys"}
             <UtilKeys />
           {:else if selected === "codec"}

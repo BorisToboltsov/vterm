@@ -81,10 +81,28 @@ export function parseChatSegments(md: string): ChatSegment[] {
   return segments;
 }
 
-/** A server is "prod" when tagged prod/production — auto-execution is barred there. */
-export function isProdServer(tags: readonly string[] | null | undefined): boolean {
-  if (!tags) return false;
-  return tags.some((tag) => /^prod(uction)?$/i.test(tag.trim()));
+/** The pre-flag convention: a tag exactly `prod`/`production` (case/space-insensitive).
+ *  Only consulted for a legacy profile whose `prod` flag was never saved. */
+export function isLegacyProdTag(tag: string): boolean {
+  return /^prod(uction)?$/i.test(tag.trim());
+}
+
+/** The server fields the production check reads. */
+export interface ProdMarked {
+  prod?: boolean | null;
+  tags?: readonly string[] | null;
+}
+
+/**
+ * A server is "prod" when its explicit `prod` flag says so — auto-execution is
+ * barred there and destructive actions ask first. `prod: null` is a profile saved
+ * before the flag existed: it keeps its old meaning via the exact-tag convention
+ * until the form writes an explicit flag.
+ */
+export function isProdServer(server: ProdMarked | null | undefined): boolean {
+  if (!server) return false;
+  if (server.prod != null) return server.prod;
+  return (server.tags ?? []).some(isLegacyProdTag);
 }
 
 /**

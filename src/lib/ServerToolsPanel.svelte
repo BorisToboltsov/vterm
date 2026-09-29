@@ -35,7 +35,9 @@
     sensors: "servertools.purposeTemp",
     smartmontools: "servertools.purposeSmart",
     sysstat: "servertools.purposeIo",
+    nc: "servertools.purposeNc",
     telnet: "servertools.purposeTelnet",
+    curl: "servertools.purposeCurl",
   };
 
   export async function load() {

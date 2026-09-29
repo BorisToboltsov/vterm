@@ -28,26 +28,44 @@
     serviceName,
     tally,
     formatReport,
+    reportStamp,
     historyLabel,
     visibleAddrs,
     isIpv4,
+    effectiveMethod,
+    PROBE_TOOLS,
+    type MethodChoice,
+    type ProbeTool,
     DEFAULT_TIMEOUT_SECS,
     type NetRule,
+    type ReportWords,
     type NetReport,
     type NetTarget,
     type PortStatus,
     type Method,
   } from "./netcheck";
-  import { netcheckState, rememberRules } from "./stores/netcheck.svelte";
+  import {
+    appendRuleLine,
+    builderError,
+    builderFilled,
+    buildRuleLine,
+    isDeletableLine,
+    lineAtY,
+    lineRange,
+    removeLine,
+    splitHostPort,
+  } from "./netcheckform";
+  import { methodFor, netcheckState, rememberRules, setMethod } from "./stores/netcheck.svelte";
+  import { segmentStep } from "./segmented";
 
   let {
     session,
-    onInstallTelnet,
+    onInstallTool,
     reloadToken = 0,
   }: {
     session: ProbeSession | null;
-    /** Open the server-tools install dialog for telnet (SSH tabs only). */
-    onInstallTelnet?: () => void;
+    /** Open the server-tools install dialog for a probe tool (SSH tabs only). */
+    onInstallTool?: (tool: string) => void;
     /** Bumped after a tool install finishes → re-read the host's probe method. */
     reloadToken?: number;
   } = $props();
@@ -56,6 +74,10 @@
   let identity = $state<NetReport | null>(null);
   let report = $state<NetReport | null>(null);
   let ranRules = $state<NetRule[]>([]);
+  // When the report on screen was taken and with which timeout — the input can
+  // change after the run, the report must describe the run.
+  let ranAt = $state("");
+  let ranTimeout = $state(DEFAULT_TIMEOUT_SECS);
   let running = $state(false);
   let error = $state("");
   let historyMenu = $state<OpenMenu | null>(null);
@@ -68,8 +90,41 @@
   const history = $derived(netcheckState.history[historyKey] ?? []);
   const facts = $derived(report ?? identity);
   const shownAddrs = $derived(facts ? visibleAddrs(facts.addrs) : []);
-  const noMethod = $derived(facts?.method === "none");
-  const canRun = $derived(live && parsed.rules.length > 0 && !running && !noMethod);
+  // The probe method (v1.0.37): picked per checking host, "auto" by default. Only
+  // an SSH host runs tools — a local tab connects natively, nothing to pick.
+  const choice = $derived<MethodChoice>(isLocal ? "auto" : methodFor(historyKey));
+  const tools = $derived(identity?.tools ?? {});
+  const effective = $derived(isLocal ? null : effectiveMethod(choice, tools));
+  // "auto" with nothing usable → the no-method banner; a picked tool that isn't
+  // usable → the note under the picker (and no run: it would silently do nothing).
+  const noMethod = $derived(choice === "auto" && facts?.method === "none");
+  const pickedUnusable = $derived(choice !== "auto" && effective === "none");
+  const canRun = $derived(
+    live && parsed.rules.length > 0 && !running && !noMethod && !pickedUnusable,
+  );
+  const shownMethod = $derived<Method | null>(
+    isLocal ? (facts?.method ?? null) : (effective ?? facts?.method ?? null),
+  );
+  const METHOD_TILES: MethodChoice[] = ["auto", ...PROBE_TOOLS];
+
+  function pickMethod(m: MethodChoice) {
+    setMethod(historyKey, m);
+  }
+
+  function onTileKey(e: KeyboardEvent, i: number) {
+    const next = segmentStep(e.key, i, METHOD_TILES.length);
+    if (next == null) return;
+    e.preventDefault();
+    pickMethod(METHOD_TILES[next]);
+    tileEls[next]?.focus();
+  }
+  let tileEls: HTMLButtonElement[] = $state([]);
+
+  const toolDot = (tool: ProbeTool): string => {
+    const st = tools[tool];
+    return st === "ok" ? "bg-ok" : st ? "bg-bad" : "bg-edge";
+  };
+  const toolUnusable = (tool: ProbeTool): boolean => !!tools[tool] && tools[tool] !== "ok";
   const retryKeys = $derived(report ? failedKeys(ranRules, report) : new Set<string>());
 
   const STATUS_KEY: Record<PortStatus, MessageKey> = {
@@ -124,6 +179,7 @@
   const ERR_KEY: Record<string, MessageKey> = {
     syntax: "util.netcheck.err.syntax",
     host: "util.netcheck.err.host",
+    unspecified: "util.netcheck.err.unspecified",
     port: "util.netcheck.err.port",
     range: "util.netcheck.err.range",
     empty: "util.netcheck.err.empty",
@@ -160,7 +216,7 @@
     const count = targets.reduce((n, x) => n + x.ports.length, 0);
     const out = await netcheckRun(
       session.id,
-      netcheckArgs(targets, timeoutSecs),
+      netcheckArgs(targets, timeoutSecs, choice),
       targets,
       timeoutSecs,
       runBudgetSecs(count, timeoutSecs),
@@ -184,6 +240,8 @@
       if (rep) {
         report = rep;
         ranRules = rules;
+        ranAt = reportStamp(new Date());
+        ranTimeout = timeoutSecs;
       }
     } catch (e) {
       error = String(e);
@@ -198,7 +256,10 @@
     error = "";
     try {
       const rep = await probe(checkTargets(ranRules, retryKeys));
-      if (rep && report) report = mergeReports(report, rep);
+      if (rep && report) {
+        report = mergeReports(report, rep);
+        ranAt = reportStamp(new Date());
+      }
     } catch (e) {
       error = String(e);
     } finally {
@@ -214,6 +275,88 @@
     }
   }
 
+  // ── Rule builder (v1.0.37) ────────────────────────────────────────────────
+  // Source defaults to the host's first address; `null` = not picked by hand, so
+  // it follows the addresses once they load. "" = the explicit "no source".
+  let sourcePick = $state<string | null>(null);
+  let bTarget = $state("");
+  let bPorts = $state("");
+  let bProto = $state<"tcp" | "udp">("tcp");
+  let targetEl = $state<HTMLInputElement | null>(null);
+  const bSource = $derived(
+    sourcePick !== null && (sourcePick === "" || shownAddrs.includes(sourcePick))
+      ? sourcePick
+      : (shownAddrs[0] ?? ""),
+  );
+  const bFields = $derived({ source: bSource, target: bTarget, ports: bPorts, proto: bProto });
+  const bError = $derived(builderError(bFields));
+  const canAdd = $derived(builderFilled(bFields) && !bError);
+
+  function onTargetInput() {
+    // `10.70.39.10:22` typed or pasted whole → spread over the two fields.
+    const split = splitHostPort(bTarget);
+    if (!split) return;
+    bTarget = split.target;
+    bPorts = split.ports;
+  }
+
+  function addRule() {
+    if (!canAdd) return;
+    netcheckState.draft = appendRuleLine(netcheckState.draft, buildRuleLine(bFields));
+    bTarget = "";
+    bPorts = "";
+    targetEl?.focus();
+  }
+
+  function onBuilderKey(e: KeyboardEvent) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addRule();
+    }
+  }
+
+  // ── Per-line delete ───────────────────────────────────────────────────────
+  // The box doesn't wrap, so a line's row is its index × line height; the trash
+  // sits in a right-hand gutter over the textarea, beside the hovered line.
+  let rulesEl = $state<HTMLTextAreaElement | null>(null);
+  let hoverLine = $state(-1);
+  let trashTop = $state(0);
+
+  function metrics(el: HTMLTextAreaElement) {
+    const cs = getComputedStyle(el);
+    const lh = parseFloat(cs.lineHeight) || 0;
+    const top = (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.paddingTop) || 0);
+    return { lh, top };
+  }
+
+  function trackLine(e: MouseEvent) {
+    const el = rulesEl;
+    if (!el) return;
+    const { lh, top } = metrics(el);
+    const y = e.clientY - el.getBoundingClientRect().top - top;
+    const i = lineAtY(y, el.scrollTop, lh);
+    hoverLine = isDeletableLine(netcheckState.draft, i) ? i : -1;
+    trashTop = top + i * lh - el.scrollTop;
+  }
+
+  /**
+   * Delete a whole line. Goes through the editor's own "delete selection" so the
+   * textarea records it and ⌘/Ctrl+Z brings the line back — a draft line isn't
+   * stored data, so no confirm dialog, but it must be undoable. Without that
+   * command (tests, a future engine) the text is rewritten directly.
+   */
+  function deleteLine(index: number) {
+    const el = rulesEl;
+    const r = lineRange(netcheckState.draft, index);
+    if (!el || !r) return;
+    el.focus();
+    el.setSelectionRange(r.start, r.end);
+    const recorded =
+      typeof document.execCommand === "function" && document.execCommand("delete");
+    if (!recorded) netcheckState.draft = removeLine(netcheckState.draft, index);
+    hoverLine = -1;
+  }
+
   function openHistory(e: MouseEvent) {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     historyMenu = {
@@ -227,15 +370,37 @@
     };
   }
 
-  const reportText = $derived(
+  const reportWords = $derived<ReportWords | null>(
     report
-      ? formatReport(ranRules, report, {
-          from: t("util.netcheck.from"),
+      ? {
+          title: t("util.netcheck.title"),
+          tally: (open: number, total: number) => t("util.netcheck.reportTally", { open, total }),
+          method: t("util.netcheck.reportMethod", {
+            method: report.method ? methodLabel(report.method) : "—",
+            n: ranTimeout,
+          }),
           ms: (n: number) => t("util.netcheck.ms", { n }),
+          ruleSource: (source: string) => t("util.netcheck.reportRuleSource", { source }),
           status: Object.fromEntries(
             (Object.keys(STATUS_KEY) as PortStatus[]).map((s) => [s, t(STATUS_KEY[s])]),
           ) as Record<PortStatus, string>,
-        })
+          cols: {
+            source: t("util.netcheck.col.source"),
+            target: t("util.netcheck.col.target"),
+            port: t("util.netcheck.col.port"),
+            status: t("util.netcheck.col.status"),
+            time: t("util.netcheck.col.time"),
+            service: t("util.netcheck.col.service"),
+          },
+        }
+      : null,
+  );
+  const reportText = $derived(
+    report && reportWords ? formatReport(ranRules, report, reportWords, { at: ranAt }) : "",
+  );
+  const reportMarkdown = $derived(
+    report && reportWords
+      ? formatReport(ranRules, report, reportWords, { at: ranAt, format: "markdown" })
       : "",
   );
 </script>
@@ -255,9 +420,9 @@
             {shownAddrs.join(", ")}
           </span>
         </div>
-        {#if facts?.method}
-          <div class="text-meta text-muted">
-            {t("util.netcheck.method", { method: methodLabel(facts.method) })}
+        {#if shownMethod && shownMethod !== "none"}
+          <div class="text-meta text-muted" data-testid="netcheck-method">
+            {t("util.netcheck.method", { method: methodLabel(shownMethod) })}
           </div>
         {/if}
       {:else}
@@ -275,15 +440,80 @@
     <div class="flex items-center gap-2 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-warn" data-testid="netcheck-nomethod">
       <Icon name="wrench" size={14} class="shrink-0" />
       <span class="flex-1">{t("util.netcheck.noMethod")}</span>
-      {#if !isLocal && onInstallTelnet}
+      {#if !isLocal && onInstallTool}
         <button
           type="button"
           class="rounded bg-edge px-2 py-1 text-text hover:bg-accent hover:text-panel-alt"
           data-testid="netcheck-install-telnet"
-          onclick={onInstallTelnet}
+          onclick={() => onInstallTool("telnet")}
         >
           {t("util.netcheck.installTelnet")}
         </button>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Probe method (SSH only): tiles that wrap 5 → 3+2 → 2+2+1 as the panel
+       narrows (container queries). A tool that isn't usable is struck through but
+       still pickable — picking it says why and offers the install. -->
+  {#if live && !isLocal}
+    <div class="@container" data-testid="netcheck-methods">
+      <div class="mb-1 flex items-center gap-1.5">
+        <span>{t("util.netcheck.methodTitle")}</span>
+        <InfoHint text={t("util.netcheck.methodsHint")} />
+      </div>
+      <div
+        role="radiogroup"
+        aria-label={t("util.netcheck.methodTitle")}
+        class="grid grid-cols-2 gap-1 @min-[16rem]:grid-cols-3 @min-[26rem]:grid-cols-5"
+      >
+        {#each METHOD_TILES as m, i (m)}
+          {@const sel = choice === m}
+          {@const bad = m !== "auto" && toolUnusable(m)}
+          <button
+            bind:this={tileEls[i]}
+            type="button"
+            role="radio"
+            aria-checked={sel}
+            tabindex={sel ? 0 : -1}
+            data-testid={`netcheck-method-${m}`}
+            class="flex min-w-0 items-center justify-center gap-1.5 rounded border px-2 py-1 font-mono {sel
+              ? 'border-accent bg-accent/15 text-accent'
+              : 'border-edge text-text hover:bg-edge'}"
+            use:tooltip={m === "auto" && effective && effective !== "none"
+              ? t("util.netcheck.methodAutoNow", { method: methodLabel(effective) })
+              : ""}
+            onclick={() => pickMethod(m)}
+            onkeydown={(e) => onTileKey(e, i)}
+          >
+            {#if m !== "auto"}
+              <span class="h-1.5 w-1.5 shrink-0 rounded-full {toolDot(m)}"></span>
+            {/if}
+            <span class="truncate {bad ? 'line-through' : ''} {bad && !sel ? 'text-muted' : ''}">
+              {m === "auto" ? t("util.netcheck.methodAuto") : m}
+            </span>
+          </button>
+        {/each}
+      </div>
+      {#if pickedUnusable && choice !== "auto"}
+        <div class="mt-1.5 flex flex-wrap items-center gap-2 text-meta text-warn" data-testid="netcheck-method-missing">
+          <Icon name="alert" size={12} class="shrink-0" />
+          <span class="min-w-0 flex-1">
+            {tools[choice] === "notimeout"
+              ? t("util.netcheck.toolNoTimeout", { tool: choice })
+              : t("util.netcheck.toolMissing", { tool: choice })}
+          </span>
+          {#if tools[choice] === "missing" && choice !== "bash" && onInstallTool}
+            <button
+              type="button"
+              class="rounded bg-edge px-2 py-0.5 text-text hover:bg-accent hover:text-panel-alt"
+              data-testid="netcheck-method-install"
+              onclick={() => onInstallTool(choice)}
+            >
+              {t("util.netcheck.installTool", { tool: choice })}
+            </button>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}
@@ -305,15 +535,102 @@
         </button>
       {/if}
     </div>
-    <textarea
-      data-testid="netcheck-rules"
-      rows="4"
-      spellcheck="false"
-      class="w-full resize-y rounded border border-edge bg-panel px-2 py-1.5 font-mono text-sm text-text outline-none focus:border-accent"
-      placeholder="10.64.48.180 -> 10.70.39.10:[22, 80, 443]/tcp"
-      bind:value={netcheckState.draft}
-      onkeydown={onKeydown}
-    ></textarea>
+    <!-- Builder: one rule from fields with grey hints; Add/Enter appends it as a
+         line below. The box stays plain text for pasting whole requests. -->
+    <div class="mb-2 flex flex-wrap items-center gap-1.5" data-testid="netcheck-builder">
+      <select
+        class="rounded border border-edge bg-panel px-1.5 py-1 font-mono text-text outline-none focus:border-accent"
+        data-testid="netcheck-b-source"
+        aria-label={t("util.netcheck.builderSource")}
+        value={bSource}
+        onchange={(e) => (sourcePick = (e.currentTarget as HTMLSelectElement).value)}
+      >
+        {#each shownAddrs as a (a)}
+          <option value={a}>{a}</option>
+        {/each}
+        <option value="">{t("util.netcheck.builderNoSource")}</option>
+      </select>
+      <span class="text-text">→</span>
+      <input
+        bind:this={targetEl}
+        class="w-36 min-w-0 rounded border border-edge bg-panel px-1.5 py-1 font-mono text-text outline-none placeholder:text-muted focus:border-accent"
+        data-testid="netcheck-b-target"
+        aria-label={t("util.netcheck.builderTarget")}
+        placeholder="0.0.0.0"
+        spellcheck="false"
+        bind:value={bTarget}
+        oninput={onTargetInput}
+        onkeydown={onBuilderKey}
+      />
+      <span class="text-text">:</span>
+      <input
+        class="w-24 min-w-0 rounded border border-edge bg-panel px-1.5 py-1 font-mono text-text outline-none placeholder:text-muted focus:border-accent"
+        data-testid="netcheck-b-ports"
+        aria-label={t("util.netcheck.builderPorts")}
+        placeholder="22, 443"
+        spellcheck="false"
+        bind:value={bPorts}
+        onkeydown={onBuilderKey}
+      />
+      <select
+        class="rounded border border-edge bg-panel px-1.5 py-1 font-mono text-text outline-none focus:border-accent"
+        data-testid="netcheck-b-proto"
+        aria-label={t("util.netcheck.builderProto")}
+        bind:value={bProto}
+      >
+        <option value="tcp">tcp</option>
+        <option value="udp">udp</option>
+      </select>
+      <button
+        type="button"
+        class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-text hover:bg-accent hover:text-panel-alt disabled:opacity-40"
+        data-testid="netcheck-b-add"
+        disabled={!canAdd}
+        onclick={addRule}
+      >
+        <Icon name="plus" size={12} />{t("util.netcheck.builderAdd")}
+      </button>
+    </div>
+    {#if bError}
+      <p class="-mt-1 mb-2 flex items-center gap-1 text-meta text-bad" data-testid="netcheck-b-error">
+        <Icon name="alert" size={12} />
+        {t(ERR_KEY[bError.code], { token: bError.token })}
+      </p>
+    {/if}
+    <div
+      class="relative"
+      role="presentation"
+      onmousemove={trackLine}
+      onmouseleave={() => (hoverLine = -1)}
+    >
+      <!-- wrap="off": one text line = one row of fixed height, so the trash in the
+           gutter lines up with its line (lineAtY). pr-8 keeps text off the gutter. -->
+      <textarea
+        bind:this={rulesEl}
+        data-testid="netcheck-rules"
+        rows="4"
+        wrap="off"
+        spellcheck="false"
+        class="w-full resize-y rounded border border-edge bg-panel py-1.5 pl-2 pr-8 font-mono text-sm leading-6 text-text outline-none focus:border-accent"
+        placeholder="10.64.48.180 -> 10.70.39.10:[22, 80, 443]/tcp"
+        bind:value={netcheckState.draft}
+        onkeydown={onKeydown}
+        onscroll={() => (hoverLine = -1)}
+      ></textarea>
+      {#if hoverLine >= 0}
+        <button
+          type="button"
+          class="absolute right-1.5 flex h-6 items-center rounded px-1 text-muted hover:text-danger"
+          style="top: {trashTop}px"
+          data-testid="netcheck-delete-line"
+          use:tooltip={t("util.netcheck.deleteLine")}
+          aria-label={t("util.netcheck.deleteLine")}
+          onclick={() => deleteLine(hoverLine)}
+        >
+          <Icon name="trash" size={13} />
+        </button>
+      {/if}
+    </div>
     {#each parsed.errors as err (err.line)}
       <p class="mt-0.5 flex items-center gap-1 text-meta text-bad" data-testid="netcheck-parse-error">
         <Icon name="alert" size={12} />
@@ -467,6 +784,11 @@
 
     <div class="flex flex-wrap items-center gap-2">
       <CopyButton text={reportText} label={t("util.netcheck.copyReport")} testid="netcheck-copy" />
+      <CopyButton
+        text={reportMarkdown}
+        label={t("util.netcheck.copyMarkdown")}
+        testid="netcheck-copy-md"
+      />
       {#if retryKeys.size > 0}
         <button
           type="button"

@@ -43,6 +43,7 @@ function server(p: Partial<ServerProfile> & { id: string; alias: string }): Serv
     hasSavedPassword: true,
     group: "Prod",
     tags: ["web", "eu"],
+    prod: null,
     autoRecord: true,
     noAi: true,
     chatPromptId: null,
@@ -135,9 +136,8 @@ describe("ServerFormModal validation", () => {
     await userEvent.type(screen.getByTestId("field-alias"), "db");
     await userEvent.type(screen.getByTestId("field-host"), "example.com");
     await userEvent.type(screen.getByTestId("field-username"), "root");
-    // Appearance is a folded section, and the glyph grid folds inside it.
+    // Appearance is a folded section; the glyph grid shows as soon as it opens.
     await userEvent.click(screen.getByTestId("server-section-appearance"));
-    await userEvent.click(screen.getByTestId("server-icon-section"));
     await userEvent.click(screen.getByTestId("server-icon-database"));
     await userEvent.click(screen.getByTestId("server-color-green"));
     await userEvent.click(screen.getByTestId("save-server"));
@@ -439,6 +439,33 @@ describe("ServerFormModal proxy", () => {
     expect(saveProxySecret).toHaveBeenCalledWith("s1", "p");
   });
 
+  it("shows the proxy fields up front, disabled until the checkbox turns it on", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    // Visible without ticking anything, but dimmed and not editable.
+    const fields = screen.getByTestId("proxy-fields");
+    expect(fields).toBeDisabled();
+    expect(fields.className).toContain("opacity-50");
+    expect(screen.getByTestId("proxy-host")).toBeDisabled();
+    // Off → nothing is saved, and the (empty) proxy host does not block the save.
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ proxy: null }));
+  });
+
+  it("enables the proxy fields when the checkbox is ticked", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await enableProxy();
+    expect(screen.getByTestId("proxy-fields")).not.toBeDisabled();
+    expect(screen.getByTestId("proxy-fields").className).not.toContain("opacity-50");
+    expect(screen.getByTestId("proxy-host")).not.toBeDisabled();
+  });
+
   it("blocks save when the proxy is enabled but its host is invalid", async () => {
     const { comp } = renderForm();
     comp.openAdd();
@@ -467,7 +494,7 @@ describe("ServerFormModal proxy", () => {
 });
 
 describe("ServerFormModal folded-section previews", () => {
-  it("previews tags (prod marked), proxy and recording while folded", async () => {
+  it("previews tags, proxy and recording while folded", async () => {
     const { comp } = renderForm();
     comp.openEdit(
       server({
@@ -491,8 +518,9 @@ describe("ServerFormModal folded-section previews", () => {
 
     const appearance = screen.getByTestId("server-section-appearance");
     expect(appearance).toHaveAttribute("aria-expanded", "false");
-    expect(within(appearance).getByText("prod").className).toContain("text-bad");
-    expect(within(appearance).getByText("web").className).not.toContain("text-bad");
+    // Tags are plain labels now — none is painted as production.
+    expect(within(appearance).getByText("prod").className).not.toContain("text-bad");
+    expect(within(appearance).getByText("web")).toBeInTheDocument();
     expect(screen.getByTestId("server-section-proxy")).toHaveTextContent(
       "SSH jump host · bastion.corp:22",
     );
@@ -506,9 +534,63 @@ describe("ServerFormModal folded-section previews", () => {
     comp.openAdd();
     await tick();
     await userEvent.click(screen.getByTestId("server-section-appearance"));
-    expect(screen.getByRole("button", { name: /production safeguards/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Labels for search and filtering in the server list." }),
+    ).toBeInTheDocument();
     expect(screen.getByTestId("server-section-proxy")).toHaveTextContent("none");
     expect(screen.getByTestId("server-section-recording")).toHaveTextContent("defaults");
+  });
+});
+
+describe("ServerFormModal production flag", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "db" });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Web" });
+  });
+
+  it("is a checkbox in the always-visible section, off by default, with an info hint", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    const box = screen.getByTestId("server-prod");
+    expect(box).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /production safeguards/ })).toBeInTheDocument();
+  });
+
+  it("sends an explicit prod flag, independent of tags", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.type(screen.getByTestId("field-alias"), "db");
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    await userEvent.click(screen.getByTestId("server-prod"));
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({ prod: true, tags: [], autoRecord: false, noAi: false }),
+    );
+  });
+
+  it("opens a legacy prod-tagged profile checked, so saving keeps its safeguards", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", tags: ["Production"], prod: null }));
+    await tick();
+    expect(screen.getByTestId("server-prod")).toBeChecked();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    expect(updateServer).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ prod: true, tags: ["Production"] }),
+    );
+  });
+
+  it("an explicit flag wins over a leftover prod tag", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", tags: ["prod"], prod: false }));
+    await tick();
+    expect(screen.getByTestId("server-prod")).not.toBeChecked();
   });
 });
 

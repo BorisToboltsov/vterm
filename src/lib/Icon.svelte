@@ -8,7 +8,16 @@
     size = 16,
     class: cls = "",
     title,
-  }: { name: IconName; size?: number; class?: string; title?: string } = $props();
+    strokeWidth = 1.8,
+  }: {
+    name: IconName;
+    size?: number;
+    class?: string;
+    title?: string;
+    /** Line weight; the registry is drawn for the default. Raise it only where a
+     *  glyph made of dots (the «⋯» overflow) would otherwise read as specks. */
+    strokeWidth?: number;
+  } = $props();
 </script>
 
 <svg
@@ -17,7 +26,7 @@
   viewBox="0 0 24 24"
   fill="none"
   stroke="currentColor"
-  stroke-width="1.8"
+  stroke-width={strokeWidth}
   stroke-linecap="round"
   stroke-linejoin="round"
   class="inline-block shrink-0 {cls}"

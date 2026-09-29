@@ -92,6 +92,16 @@ export const isMonitorable = (
 ): boolean =>
   !!tab && (tab.kind === "ssh" || tab.kind === "local") && tab.status.startsWith("Connected");
 
+/**
+ * The session whose metrics the idle screensaver's card polls: the active tab's,
+ * whenever the status bar could show them (`isMonitorable`), else null (the card
+ * then says "no active sessions"). One gate for both, so a local tab no longer
+ * gets a live status bar but an empty screensaver.
+ */
+export const monitoredSessionId = (
+  tab: Pick<Tab, "kind" | "status" | "sessionId"> | null | undefined,
+): string | null => (tab && isMonitorable(tab) ? tab.sessionId : null);
+
 /** What a Cmd/Ctrl+T should open (Phase 20.15). */
 export type NewTabAction = { kind: "ssh"; serverId: string } | { kind: "local" };
 

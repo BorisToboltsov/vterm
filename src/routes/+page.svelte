@@ -50,6 +50,7 @@
     findTab,
     isLive,
     isMonitorable,
+    monitoredSessionId,
     moveTab,
     newTabAction,
     nextTabIndex,
@@ -299,9 +300,6 @@
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
   let pendingFollowSession = $state<string | null>(null);
-  // What the confirmed snippet is for: the follow toggle (two-way sync) or git's
-  // "enable path sync" (the shell reports its cwd, git follows; nothing else moves).
-  let pendingFollowTwoWay = $state(true);
 
   // ── Panel resize (widths/collapse live in the layout store) ────────────────
   let resizing = $state<null | "left" | "sftp">(null);
@@ -356,7 +354,7 @@
       kind: tab.kind,
       live: isLive(tab.status),
       host: tab.kind === "ssh" ? (srv?.host ?? tab.alias) : "local",
-      isProd: tab.kind === "ssh" ? isProdServer(srv?.tags) : false,
+      isProd: tab.kind === "ssh" ? isProdServer(srv) : false,
     };
   });
   // Notes belong to the active SSH tab's server when one is focused; on a local
@@ -382,6 +380,12 @@
   // The focused member (focus layout) is simply the active tab.
   const bcFocusId = $derived(tabsState.activeId);
   const bcHasProd = $derived(groupHasProd(bcTargets, tabsState.list, servers));
+  // Every open SSH tab whose server is production — its tab gets a red top strip
+  // + `prod` chip and its terminal a red frame (grid tiles: a red border), so
+  // "am I typing into prod" is answered wherever the eye is.
+  const prodTabIds = $derived(
+    new Set(prodMembers(tabsState.list.map((tab) => tab.sessionId), tabsState.list, servers)),
+  );
   const bcCols = $derived(gridColumns(bcAreaWidth || 1200, bcMemberTabs.length));
   // Roster rows (focus layout): the full group, including the focused member
   // (marked `active`), so the whole list stays visible in the sidebar.
@@ -394,7 +398,7 @@
         host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
         status: localizedStatus(tab.status),
         dot: dotClass(tab.status),
-        isProd: !!srv && isProdServer(srv.tags),
+        isProd: !!srv && isProdServer(srv),
         active: tab.sessionId === bcFocusId,
       };
     }),
@@ -530,18 +534,14 @@
   const topSubtitle = $derived(
     activeServer ? `${activeServer.username}@${activeServer.host}:${activeServer.port}` : "",
   );
-  const topConnected = $derived(
-    activeTab?.kind === "ssh" && (activeTab?.status.startsWith("Connected") ?? false),
-  );
   // Monitoring (status bar + overlay) works on SSH *and* local tabs (Phase 38): a
   // live local PTY reports metrics natively via sysinfo. Gates the monitoring
-  // button and the status bar — broader than `topConnected`, which stays SSH-only
-  // for the idle overlay and the connection-detail header.
+  // button, the status bar and the idle card (`monitoredSessionId`).
   const monitorConnected = $derived(isMonitorable(activeTab));
-  // Prod-flagged active server (by tag) → the AI assistant may not auto-execute (17.4).
+  // Prod-flagged active server → the AI assistant may not auto-execute (17.4).
   const aiProd = $derived(
     activeTab?.kind === "ssh"
-      ? isProdServer(servers.find((s) => s.id === activeTab.serverId)?.tags)
+      ? isProdServer(servers.find((s) => s.id === activeTab.serverId))
       : false,
   );
   // `noAi`-flagged active server → AI context + execution are fully blocked (17.7).
@@ -1569,27 +1569,24 @@
       followTerminal[id] = false;
       return;
     }
-    // Whether the shell still needs the OSC 7 snippet is pure logic — a local tab
-    // never does, since its cwd comes from the OS (Phase 39.3). See needsShellSetup.
+    enablePathSync();
+  }
+
+  /**
+   * Turn path sync on for the active session — the one dock-wide switch, whether
+   * it was flipped in SFTP, in Git's toolbar or by Git's "Enable path sync" button
+   * (one label, one action: a file panel connected afterwards opens in the
+   * terminal's folder, already following). Whether the shell still needs the OSC 7
+   * snippet is pure logic — a local tab never does, since its cwd comes from the OS
+   * (Phase 39.3). See needsShellSetup.
+   */
+  function enablePathSync() {
+    const id = tabsState.activeId;
+    if (!id || followTerminal[id]) return;
     if (!needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
       followTerminal[id] = true;
       return;
     }
-    pendingFollowTwoWay = true;
-    pendingFollowSession = id;
-  }
-
-  /**
-   * Git's "enable path sync" with following off: git follows the terminal, so the
-   * shell only has to start reporting its cwd. Same consent dialog and snippet as
-   * the toggle, but two-way following stays off — the file panel doesn't move.
-   */
-  function enableGitPathSync() {
-    const id = tabsState.activeId;
-    if (!id || !needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
-      return;
-    }
-    pendingFollowTwoWay = false;
     pendingFollowSession = id;
   }
 
@@ -1638,7 +1635,7 @@
     if (!id) return;
     writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
     shellIntegrated[id] = true;
-    if (pendingFollowTwoWay) followTerminal[id] = true;
+    followTerminal[id] = true;
   }
 
   /**
@@ -1935,7 +1932,7 @@
        inactivity, and the NO SIGNAL takeover on an unexpected drop. Copies the
        buffer; never writes to the PTY. -->
   <IdleOverlay
-    sessionId={topConnected && activeTab?.kind === "ssh" ? activeTab.sessionId : null}
+    sessionId={monitoredSessionId(activeTab)}
     alias={activeTab?.alias ?? ""}
     bufferText={() => termRefs[tabsState.activeId ?? ""]?.bufferText?.() ?? ""}
     outputTick={idleOutputTick}
@@ -2052,10 +2049,13 @@
             onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
             oncontextmenu={(e) => openTabMenu(e, tab)}
             onkeydown={(e) => onTabKey(e, tab.sessionId)}
+            data-prod={prodTabIds.has(tab.sessionId) || undefined}
             class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
             tab.sessionId
               ? 'bg-panel text-text'
-              : 'text-muted hover:bg-edge'}"
+              : 'text-muted hover:bg-edge'} {prodTabIds.has(tab.sessionId)
+              ? 'shadow-[inset_0_2px_0_0_var(--color-bad)]'
+              : ''}"
             title={localizedStatus(tab.status)}
           >
             <!-- Status / recording / broadcast dots grouped tightly together. -->
@@ -2090,6 +2090,9 @@
               {/if}
             </span>
             <span class="truncate">{tabAlias(tab)}</span>
+            {#if prodTabIds.has(tab.sessionId)}
+              <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
+            {/if}
             <button
               data-close
               class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
@@ -2201,9 +2204,7 @@
                 class={bcOn && !bcTile
                   ? "hidden"
                   : bcTile
-                    ? bcLayout === "grid"
-                      ? "relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded border border-edge"
-                      : "relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded border border-edge"
+                    ? `relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded border ${bcLayout === "grid" ? "" : "flex-1"} ${prodTabIds.has(tab.sessionId) ? "border-bad/60" : "border-edge"}`
                     : `absolute inset-0 flex flex-col ${tabsState.activeId === tab.sessionId ? "" : "invisible"}`}
               >
                 {#if bcTile}
@@ -2213,8 +2214,8 @@
                     <span class="min-w-0 flex-1 truncate text-muted">
                       {bcSrv ? `${bcSrv.username}@${bcSrv.host}:${bcSrv.port}` : ""}
                     </span>
-                    {#if bcSrv && isProdServer(bcSrv.tags)}
-                      <span class="shrink-0 rounded bg-danger/30 px-1 text-caption text-danger">prod</span>
+                    {#if prodTabIds.has(tab.sessionId)}
+                      <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
                     {/if}
                   </div>
                 {/if}
@@ -2466,6 +2467,17 @@
                 {/each}
                 {/if}
                 </div>
+                {#if !bcTile && prodTabIds.has(tab.sessionId)}
+                  <!-- Prod frame: an inert overlay ring, never a border/padding on the
+                       terminal itself — FitAddon measures that element (termfit.guard),
+                       and a real border would shrink the grid. z-20 keeps it above
+                       the connecting overlay and the structured log view. -->
+                  <div
+                    class="pointer-events-none absolute inset-0 z-20 ring-1 ring-inset ring-bad/60"
+                    data-testid="prod-frame"
+                    aria-hidden="true"
+                  ></div>
+                {/if}
               </div>
             {/each}
               {#if bcOn && bcLayout === "focus" && bcMemberTabs.length > 0}
@@ -2529,7 +2541,7 @@
                   !!terminalCwd[tabsState.activeId],
                   !!shellIntegrated[tabsState.activeId],
                 )
-                  ? enableGitPathSync
+                  ? enablePathSync
                   : undefined}
                 getAiContext={gatherAiContext}
                 aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
@@ -2616,7 +2628,7 @@
   bind:open={showUtilities}
   initialUtility={utilitiesInitial}
   session={utilSession}
-  onInstallTelnet={() => openToolInstallByName("telnet")}
+  onInstallTool={(tool) => openToolInstallByName(tool)}
   {toolsReloadToken}
 />
 

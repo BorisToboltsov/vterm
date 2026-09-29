@@ -51,12 +51,23 @@ pub const TOOLS: &[Tool] = &[
         name: "sysstat",
         bin: "iostat",
     },
-    // Fallback probe for the Utilities access check when the server has neither
-    // `bash`+`timeout` nor `nc` (minimal/busybox images).
+    // Probe tools the Utilities access check can be told to use (v1.0.37: the
+    // method is a choice, so each missing one is offered for install). `bash`
+    // itself is never missing from a server we can SSH into.
+    Tool {
+        id: "nc",
+        name: "nc",
+        bin: "nc",
+    },
     Tool {
         id: "telnet",
         name: "telnet",
         bin: "telnet",
+    },
+    Tool {
+        id: "curl",
+        name: "curl",
+        bin: "curl",
     },
     // YAML-family linters (Phase B). docker-compose (`docker`) and promtool ship with
     // their platform, so they're validated but not offered for one-click install here.
@@ -189,6 +200,15 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
             "pacman" => sys("inetutils"),
             _ => sys("telnet"),
         },
+        // nc: the OpenBSD netcat (supports `-z`) under each family's name; the RHEL
+        // family ships nmap's ncat as `nc`.
+        "nc" => match mgr {
+            "dnf" | "yum" => sys("nmap-ncat"),
+            "pacman" => sys("openbsd-netcat"),
+            "brew" => sys("netcat"),
+            _ => sys("netcat-openbsd"),
+        },
+        "curl" => sys("curl"),
         // ansible-lint is a Python package everywhere except brew.
         "ansible-lint" => {
             if mgr == "brew" {
@@ -337,6 +357,38 @@ mod tests {
             Some("sudo pacman -S --noconfirm inetutils")
         );
         assert!(install_command("telnet", "").is_none());
+        assert!(status_command().contains("command -v telnet"));
+    }
+
+    #[test]
+    fn install_commands_for_nc_and_curl_per_distro() {
+        assert_eq!(
+            install_command("nc", "apt").as_deref(),
+            Some("sudo apt-get install -y netcat-openbsd")
+        );
+        assert_eq!(
+            install_command("nc", "dnf").as_deref(),
+            Some("sudo dnf install -y nmap-ncat")
+        );
+        assert_eq!(
+            install_command("nc", "yum").as_deref(),
+            Some("sudo yum install -y nmap-ncat")
+        );
+        assert_eq!(
+            install_command("nc", "apk").as_deref(),
+            Some("sudo apk add netcat-openbsd")
+        );
+        assert_eq!(
+            install_command("nc", "pacman").as_deref(),
+            Some("sudo pacman -S --noconfirm openbsd-netcat")
+        );
+        assert_eq!(
+            install_command("curl", "zypper").as_deref(),
+            Some("sudo zypper install -y curl")
+        );
+        assert!(install_command("curl", "").is_none());
+        assert!(status_command().contains("command -v nc"));
+        assert!(status_command().contains("command -v curl"));
         // Detected by its binary like every other tool.
         assert!(status_command().contains("command -v telnet"));
     }

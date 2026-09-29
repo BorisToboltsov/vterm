@@ -4,6 +4,9 @@ import {
   checkTargets,
   checkKey,
   netcheckArgs,
+  effectiveMethod,
+  curlConnectSecs,
+  sanitizeMethods,
   runBudgetSecs,
   classifyAttempt,
   elapsedMs,
@@ -17,6 +20,7 @@ import {
   serviceName,
   tally,
   formatReport,
+  reportStamp,
   pushHistory,
   sanitizeHistory,
   historyLabel,
@@ -28,6 +32,7 @@ import {
   HISTORY_HOSTS_MAX,
   type NetReport,
   type PortStatus,
+  type ReportWords,
 } from "./netcheck";
 
 const report = (over: Partial<NetReport> = {}): NetReport => ({
@@ -38,10 +43,17 @@ const report = (over: Partial<NetReport> = {}): NetReport => ({
   routeSrc: {},
   results: [],
   complete: true,
+  tools: {},
   ...over,
 });
 
 describe("parseRules", () => {
+  it("rejects 0.0.0.0 as a target: it would check the host itself", () => {
+    const { rules, errors } = parseRules("10.64.48.180 -> [10.70.39.10, 0.0.0.0]:22");
+    expect(rules).toEqual([]);
+    expect(errors).toEqual([{ line: 1, code: "unspecified", token: "0.0.0.0" }]);
+  });
+
   it("parses the canonical firewall-request line", () => {
     const { rules, errors } = parseRules(
       "10.64.48.180 -> 10.70.39.10:[22, 80, 443, 8888, 3000, 9000, 9090, 3100]/tcp",
@@ -275,7 +287,75 @@ describe("parseNetReport", () => {
   });
 
   it("ignores an unknown method", () => {
-    expect(parseNetReport("M\tcurl\n").method).toBeNull();
+    expect(parseNetReport("M\tsocat\n").method).toBeNull();
+  });
+});
+
+describe("probe method choice", () => {
+  it("reports every tool and picks in the auto order bash → nc → telnet → curl", () => {
+    const s = netcheckArgs([])[2];
+    expect(s).toContain("C\\tbash\\t%s\\nC\\tnc\\t%s\\nC\\ttelnet\\t%s\\nC\\tcurl\\t%s");
+    const order = ["M=bash", "M=nc", "M=telnet", "M=curl"].map((m) => s.indexOf(m));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(order.every((i) => i > 0)).toBe(true);
+  });
+
+  it("uses a picked tool only if usable — never a silent substitute", () => {
+    const s = netcheckArgs([], 3, "nc")[2];
+    expect(s).toContain(`[ "$Cn" = ok ] && M=nc`);
+    expect(s).not.toMatch(/M=(bash|telnet|curl)/);
+    // Anything that isn't a known choice falls back to auto.
+    expect(netcheckArgs([], 3, "rm -rf" as never)[2]).toContain("M=curl");
+  });
+
+  it("knows which method a run will use", () => {
+    expect(effectiveMethod("auto", {})).toBeNull();
+    expect(effectiveMethod("auto", { bash: "notimeout", nc: "ok", curl: "ok" })).toBe("nc");
+    expect(effectiveMethod("auto", { bash: "missing", nc: "missing", telnet: "missing", curl: "missing" })).toBe("none");
+    expect(effectiveMethod("curl", { curl: "ok" })).toBe("curl");
+    expect(effectiveMethod("telnet", { telnet: "notimeout", curl: "ok" })).toBe("none");
+  });
+
+  it("parses the tool states and ignores junk", () => {
+    const rep = parseNetReport("C\tbash\tnotimeout\nC\tnc\tok\nC\tcurl\tmissing\nC\tsocat\tok\nC\tnc2\tyes\n");
+    expect(rep.tools).toEqual({ bash: "notimeout", nc: "ok", curl: "missing" });
+  });
+
+  // Real curl 8 output from a macOS run (see the shell script above): the connect
+  // time is the reading, and "Couldn't connect" no longer says "refused".
+  it("reads curl by its connect time and exit code", () => {
+    const out = [
+      "M\tcurl",
+      "R\t127.0.0.1\t45678\t0\t1790718842822016000\t1790718842841420000\tTC=0.000322 ",
+      "R\t127.0.0.1\t1\t7\t1790718842822200000\t1790718842841430000\tcurl: (7) Failed to connect to 127.0.0.1 port 1 after 0 ms: Couldn't connect to server TC=0.000000 ",
+      "R\tno-such-host.invalid\t80\t6\t1790718842822763000\t1790718842844964000\tcurl: (6) Could not resolve host: no-such-host.invalid TC=0.000000 ",
+      "R\t10.255.255.1\t81\t28\t1790718842822922000\t1790718844852439000\tcurl: (28) Connection timed out after 2006 milliseconds TC=0.000000 ",
+      "R\th\t2\t7\t1\t1\tcurl: (7) Failed to connect to h port 2: No route to host TC=0.000000",
+      // A silent service held until -m: still open, and timed by the handshake.
+      "R\th\t3\t28\t1790718842822922000\t1790718844852439000\tcurl: (28) Operation timed out after 3001 ms TC=0.012500",
+      "E",
+    ].join("\n");
+    const res = parseNetReport(out, 2).results.map((r) => [r.port, r.status, r.ms, r.detail]);
+    expect(res).toEqual([
+      [45678, "open", 0, ""],
+      [1, "refused", 19, "(7) Failed to connect to 127.0.0.1 port 1 after 0 ms: Couldn't connect to server"],
+      [80, "dns", 22, "(6) Could not resolve host: no-such-host.invalid"],
+      [81, "timeout", 2029, "(28) Connection timed out after 2006 milliseconds"],
+      [2, "unreachable", null, "(7) Failed to connect to h port 2: No route to host"],
+      [3, "open", 13, ""],
+    ]);
+  });
+
+  it("reads the connect-time stamp", () => {
+    expect(curlConnectSecs("x TC=0.0123 ")).toBe(0.0123);
+    expect(curlConnectSecs("TC=0,5")).toBe(0.5);
+    expect(curlConnectSecs("nothing")).toBeNull();
+  });
+
+  it("keeps only known, non-auto choices from storage", () => {
+    expect(sanitizeMethods({ a: "nc", b: "auto", c: "socat", "": "curl", d: 1 })).toEqual({ a: "nc" });
+    expect(sanitizeMethods(null)).toEqual({});
+    expect(sanitizeMethods(["nc"])).toEqual({});
   });
 });
 
@@ -343,33 +423,85 @@ describe("presentation", () => {
     expect(serviceName(12345)).toBe("");
   });
 
-  it("formats a ticket-ready report", () => {
-    const { rules } = parseRules("10.64.48.180 -> db:[5432,6379]\ndb:53/udp");
-    const status = Object.fromEntries(
-      (["open", "refused", "timeout", "unreachable", "dns", "error", "udp", "missing"] as PortStatus[]).map(
-        (s) => [s, s.toUpperCase()],
-      ),
-    ) as Record<PortStatus, string>;
-    const text = formatReport(
-      rules,
-      report({
-        resolved: { db: "10.70.39.20" },
-        results: [{ host: "db", port: 5432, status: "open", ms: 4, detail: "" }],
-      }),
-      { from: "From", ms: (n) => `${n} ms`, status },
-    );
-    expect(text).toBe(
+  const status = Object.fromEntries(
+    (["open", "refused", "timeout", "unreachable", "dns", "error", "udp", "missing"] as PortStatus[]).map(
+      (s) => [s, s],
+    ),
+  ) as Record<PortStatus, string>;
+  const words: ReportWords = {
+    title: "Access check",
+    tally: (o, n) => `${o} of ${n} open`,
+    method: "Method: bash · timeout 3 s",
+    ms: (n) => `${n} ms`,
+    ruleSource: (src) => `rule says ${src}`,
+    status,
+    cols: { source: "Source", target: "Target", port: "Port", status: "Status", time: "Time", service: "Service" },
+  };
+  const at = "2026-09-30 14:12 +03:00";
+  // Loopback/link-local are dropped from the header, like the UI does.
+  const rep = () =>
+    report({
+      addrs: ["127.0.0.1", "::1", "10.64.48.180", "fe80::1", "172.17.0.1"],
+      resolved: { db: "10.70.39.20" },
+      routeSrc: { db: "10.64.48.180" },
+      results: [
+        { host: "db", port: 5432, status: "open", ms: 4, detail: "" },
+        { host: "db", port: 6379, status: "refused", ms: 12, detail: "" },
+      ],
+    });
+
+  it("formats one aligned line per port, in the request's own shape", () => {
+    const { rules } = parseRules("10.64.48.180 -> db:[5432,6379,8000]\ndb:53/udp");
+    expect(formatReport(rules, rep(), words, { at })).toBe(
       [
-        "From: app-01 · 10.64.48.180, 172.17.0.1",
+        "Access check · app-01 (10.64.48.180, 172.17.0.1) · 2026-09-30 14:12 +03:00 · 1 of 2 open",
+        "Method: bash · timeout 3 s",
         "",
-        "10.64.48.180 -> db (10.70.39.20) /tcp",
-        "  5432  OPEN 4 ms  (postgres)",
-        "  6379  MISSING  (redis)",
-        "",
-        "db (10.70.39.20) /udp",
-        "  53    UDP  (dns)",
+        "✓ 10.64.48.180 → db:5432/tcp  open      4 ms  postgres  (10.70.39.20)",
+        "✗ 10.64.48.180 → db:6379/tcp  refused  12 ms  redis  (10.70.39.20)",
+        "· 10.64.48.180 → db:8000/tcp  missing         (10.70.39.20)",
+        "· 10.64.48.180 → db:53/udp    udp             dns  (10.70.39.20)",
       ].join("\n"),
     );
+  });
+
+  it("each line can be pasted back as a rule", () => {
+    const { rules } = parseRules("10.64.48.180 -> db:5432");
+    const line = formatReport(rules, rep(), words, { at }).split("\n")[3];
+    const rule = line.slice(2, line.indexOf("  "));
+    expect(parseRules(rule).rules[0]).toMatchObject({ source: "10.64.48.180", targets: ["db"], ports: [5432] });
+  });
+
+  it("names the real egress as source and flags a rule that says otherwise", () => {
+    const { rules } = parseRules("10.64.48.181 -> db:5432");
+    const text = formatReport(rules, rep(), words, { at });
+    expect(text.split("\n")[3]).toBe(
+      "✓ 10.64.48.180 → db:5432/tcp  open  4 ms  postgres  (10.70.39.20)  (rule says 10.64.48.181)",
+    );
+  });
+
+  it("renders the same rows as a Markdown table", () => {
+    const { rules } = parseRules("10.64.48.181 -> db:[5432,6379]\nweb:80");
+    expect(formatReport(rules, rep(), words, { at, format: "markdown" })).toBe(
+      [
+        "**Access check** · `app-01` (10.64.48.180, 172.17.0.1) · 2026-09-30 14:12 +03:00 · 1 of 2 open",
+        "Method: bash · timeout 3 s",
+        "",
+        "| | Source | Target | Port | Status | Time | Service |",
+        "|---|---|---|---|---|---|---|",
+        "| ✓ | 10.64.48.180 (rule says 10.64.48.181) | db (10.70.39.20) | 5432/tcp | open | 4 ms | postgres |",
+        "| ✗ | 10.64.48.180 (rule says 10.64.48.181) | db (10.70.39.20) | 6379/tcp | refused | 12 ms | redis |",
+        "| · | — | web | 80/tcp | missing | — | http |",
+      ].join("\n"),
+    );
+  });
+
+  it("stamps the time unambiguously, with the zone offset", () => {
+    const d = new Date(2026, 8, 30, 4, 7);
+    const off = -d.getTimezoneOffset();
+    const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, "0");
+    const mm = String(Math.abs(off) % 60).padStart(2, "0");
+    expect(reportStamp(d)).toBe(`2026-09-30 04:07 ${off >= 0 ? "+" : "-"}${hh}:${mm}`);
   });
 });
 

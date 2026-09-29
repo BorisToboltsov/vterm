@@ -14,7 +14,8 @@
 // Line protocol (tab-separated, one fact per line; `E` marks a complete run):
 //   H  <hostname>                       the checking host
 //   A  <ip>[/<prefix>]                  one of its addresses
-//   M  <bash|nc|telnet|native|none>     how ports are probed
+//   C  <bash|nc|telnet|curl> <ok|missing|notimeout>   whether each probe tool is usable
+//   M  <bash|nc|telnet|curl|native|none>  how ports are probed
 //   D  <target> <ip or empty>           resolution (empty = failed)
 //   S  <target> <src ip>                source address the route to target uses
 //   R  <target> <port> <rc> <t0ns> <t1ns> <message>   raw remote attempt
@@ -39,7 +40,7 @@ export interface NetRule {
 export interface ParseError {
   line: number;
   /** Stable error code — the UI localizes it (`util.netcheck.err.<code>`). */
-  code: "syntax" | "host" | "port" | "range" | "empty" | "tooMany";
+  code: "syntax" | "host" | "unspecified" | "port" | "range" | "empty" | "tooMany";
   /** The offending token, for the message. */
   token: string;
 }
@@ -115,6 +116,11 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
     if (targets.length === 0) return void errors.push({ line, code: "empty", token: m[1] });
     const badHost = targets.find((h) => !validHost(h));
     if (badHost) return void errors.push({ line, code: "host", token: badHost });
+    // `0.0.0.0` means "any address": a connect to it lands on the checking host
+    // itself (Linux routes it to loopback), so an "open" would be about the wrong
+    // machine. It's also the builder's placeholder — never let it through unfilled.
+    const unspecified = targets.find((h) => h === "0.0.0.0");
+    if (unspecified) return void errors.push({ line, code: "unspecified", token: unspecified });
     const portToks = splitList(m[2]);
     if (portToks.length === 0) return void errors.push({ line, code: "empty", token: m[2] });
     const ports: number[] = [];
@@ -167,28 +173,77 @@ export function checkKey(host: string, port: number): string {
   return `${host}:${port}`;
 }
 
+/** The probe tools a server can be told to use, in "auto" preference order. */
+export const PROBE_TOOLS = ["bash", "nc", "telnet", "curl"] as const;
+export type ProbeTool = (typeof PROBE_TOOLS)[number];
+/** What the user picked: a tool, or the first usable one. */
+export type MethodChoice = "auto" | ProbeTool;
+/** ok — usable. missing — not installed. notimeout — installed, but needs
+ *  `timeout` to be bounded (bash, telnet) and there is none. */
+export type ToolState = "ok" | "missing" | "notimeout";
+
+export function isMethodChoice(v: unknown): v is MethodChoice {
+  return v === "auto" || (PROBE_TOOLS as readonly unknown[]).includes(v);
+}
+
+/**
+ * The method a run will use: the picked tool if it's usable, else "none" (never a
+ * silent substitute); "auto" → the first usable in `PROBE_TOOLS` order, the same
+ * rule the script applies. Null while the host hasn't reported its tools yet.
+ */
+export function effectiveMethod(
+  choice: MethodChoice,
+  tools: Partial<Record<ProbeTool, ToolState>>,
+): ProbeTool | "none" | null {
+  if (Object.keys(tools).length === 0) return null;
+  if (choice === "auto") return PROBE_TOOLS.find((tool) => tools[tool] === "ok") ?? "none";
+  return tools[choice] === "ok" ? choice : "none";
+}
+
+// Shell variable holding each tool's state in the script.
+const TOOL_VAR: Record<ProbeTool, string> = { bash: "Cb", nc: "Cn", telnet: "Ct", curl: "Cc" };
+
 /**
  * Build the argv for the SSH transport: one `sh -c` script that reports identity
- * (H/A), picks the probe method (M), resolves each target and its route source
- * (D/S), then probes ports in batches of `BATCH` in parallel (R) and ends with E.
- * Method order: `bash /dev/tcp` under `timeout` (on nearly every server, nothing
- * to install) → `nc -z` → `telnet` under `timeout` → `none`. The script only
- * prints raw readings — rc, timestamps and the tool's own message; the verdict
- * (open / refused / timeout …) is `classifyAttempt`'s job here, where it's tested.
- * With no targets it is an identity probe (the header before the first run).
+ * (H/A), whether each probe tool is usable (C), the method it will use (M),
+ * resolves each target and its route source (D/S), then probes ports in batches
+ * of `BATCH` in parallel (R) and ends with E. `choice` "auto" takes the first
+ * usable of `bash /dev/tcp` under `timeout` (on nearly every server, nothing to
+ * install) → `nc -z` → `telnet` under `timeout` → `curl`; a named tool is used
+ * only if usable — otherwise M is `none`, never a silent substitute. The script
+ * only prints raw readings — rc, timestamps and the tool's own message; the
+ * verdict (open / refused / timeout …) is `classifyAttempt`'s job here, where it's
+ * tested. With no targets it is an identity probe (the header before the first run).
  */
-export function netcheckArgs(targets: NetTarget[], timeoutSecs = DEFAULT_TIMEOUT_SECS): string[] {
+export function netcheckArgs(
+  targets: NetTarget[],
+  timeoutSecs = DEFAULT_TIMEOUT_SECS,
+  choice: MethodChoice = "auto",
+): string[] {
   const T = Math.max(1, Math.min(30, Math.round(timeoutSecs)));
+  const pick = isMethodChoice(choice) ? choice : "auto";
+  const select =
+    pick === "auto"
+      ? PROBE_TOOLS.map(
+          (tool, i) => `${i === 0 ? "if" : "elif"} [ "$${TOOL_VAR[tool]}" = ok ]; then M=${tool};`,
+        ).join(" ") + " fi"
+      : `[ "$${TOOL_VAR[pick]}" = ok ] && M=${pick}`;
   const lines: string[] = [
     `T=${T}`,
     `h=$(hostname 2>/dev/null || uname -n 2>/dev/null); printf 'H\\t%s\\n' "$h"`,
     `if command -v ip >/dev/null 2>&1; then ip -o addr show 2>/dev/null | awk '$3=="inet"||$3=="inet6"{print "A\\t" $4}';`,
     `else for a in $(hostname -I 2>/dev/null); do printf 'A\\t%s\\n' "$a"; done; fi`,
+    // bash and telnet are only bounded under `timeout`; nc and curl bound themselves.
+    `TO=; command -v timeout >/dev/null 2>&1 && TO=1`,
+    `av() { if ! command -v "$1" >/dev/null 2>&1; then echo missing; elif [ -n "$2" ] && [ -z "$TO" ]; then echo notimeout; else echo ok; fi; }`,
+    `Cb=$(av bash t); Cn=$(av nc); Ct=$(av telnet t); Cc=$(av curl)`,
+    `printf 'C\\tbash\\t%s\\nC\\tnc\\t%s\\nC\\ttelnet\\t%s\\nC\\tcurl\\t%s\\n' "$Cb" "$Cn" "$Ct" "$Cc"`,
     `M=none`,
-    `if command -v timeout >/dev/null 2>&1 && command -v bash >/dev/null 2>&1; then M=bash;`,
-    `elif command -v nc >/dev/null 2>&1; then M=nc;`,
-    `elif command -v timeout >/dev/null 2>&1 && command -v telnet >/dev/null 2>&1; then M=telnet; fi`,
+    select,
     `printf 'M\\t%s\\n' "$M"`,
+    // A minimal curl build (curl-minimal, RHEL 9) has no telnet://; http:// connects
+    // just the same, and the connect time is what's read either way.
+    `CU=telnet; [ "$M" = curl ] && ! curl -V 2>/dev/null | grep -qw telnet && CU=http`,
     // BSD/macOS nc: -w does not bound the connect itself, -G does.
     `G=; [ "$M" = nc ] && nc -h 2>&1 | grep -q -- '-G' && G="-G $T"`,
   ];
@@ -201,6 +256,9 @@ export function netcheckArgs(targets: NetTarget[], timeoutSecs = DEFAULT_TIMEOUT
       `    bash) o=$(timeout $T bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       `    nc) o=$(nc -z -v -w $T $G "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       `    telnet) o=$(timeout $T telnet "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
+      // time_connect > 0 ⇔ the TCP handshake completed (the transfer after it may
+      // then time out on a silent service — that's still "open").
+      `    curl) o=$(curl -sS -o /dev/null -w 'TC=%{time_connect} ' --connect-timeout $T -m $T "$CU://$1:$2" 2>&1 </dev/null); r=$? ;;`,
       `    *) o=; r=127 ;;`,
       `  esac`,
       `  e=$(now)`,
@@ -237,7 +295,7 @@ export function runBudgetSecs(checks: number, timeoutSecs = DEFAULT_TIMEOUT_SECS
   return Math.ceil(checks / BATCH) * (timeoutSecs + 1) + 10;
 }
 
-export type Method = "bash" | "nc" | "telnet" | "native" | "none";
+export type Method = "bash" | "nc" | "telnet" | "curl" | "native" | "none";
 
 /**
  * open — handshake completed. refused — the host answered with RST (reachable,
@@ -278,6 +336,8 @@ export interface NetReport {
   results: PortResult[];
   /** False when the `E` marker never arrived — the output was cut short. */
   complete: boolean;
+  /** Which probe tools the host can use (SSH only; the native transport has none). */
+  tools: Partial<Record<ProbeTool, ToolState>>;
 }
 
 const DNS_RE = /Name or service not known|Unknown host|could not resolve|nodename nor servname|Temporary failure in name resolution|No address associated|getaddrinfo|bad address/i;
@@ -297,6 +357,15 @@ export function classifyAttempt(
 ): PortStatus {
   if (method === "telnet") {
     if (/Connected to|Escape character/i.test(msg)) return "open";
+  } else if (method === "curl") {
+    // The handshake is the answer; whatever the service did after it (silence
+    // until -m, a non-HTTP reply) doesn't make the port less open.
+    if ((curlConnectSecs(msg) ?? 0) > 0) return "open";
+    if (rc === 6) return "dns";
+    if (rc === 28) return "timeout";
+    // 7 = couldn't connect: newer curl no longer says "refused" — a route error
+    // says so, anything else was an answer from the host (RST).
+    if (rc === 7) return UNREACH_RE.test(msg) ? "unreachable" : "refused";
   } else if (rc === 0) {
     return "open";
   }
@@ -333,7 +402,15 @@ export function coarseElapsedMs(t0: string, t1: string): number | null {
 }
 
 const STATUSES: readonly PortStatus[] = ["open", "refused", "timeout", "unreachable", "dns", "error"];
-const METHODS: readonly Method[] = ["bash", "nc", "telnet", "native", "none"];
+const METHODS: readonly Method[] = ["bash", "nc", "telnet", "curl", "native", "none"];
+const TOOL_STATES: readonly ToolState[] = ["ok", "missing", "notimeout"];
+
+/** curl's `-w 'TC=%{time_connect} '` stamp: seconds to the completed handshake
+ *  (0 when it never connected). Null when absent. */
+export function curlConnectSecs(msg: string): number | null {
+  const m = /TC=(\d+(?:[.,]\d+)?)/.exec(msg);
+  return m ? Number(m[1].replace(",", ".")) : null;
+}
 
 /** Parse the line protocol (both transports) into a report. */
 export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SECS): NetReport {
@@ -345,6 +422,7 @@ export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SEC
     routeSrc: {},
     results: [],
     complete: false,
+    tools: {},
   };
   for (const raw of stdout.split(/\r?\n/)) {
     const f = raw.split("\t");
@@ -360,6 +438,12 @@ export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SEC
       case "M":
         rep.method = METHODS.includes(f[1] as Method) ? (f[1] as Method) : null;
         break;
+      case "C": {
+        const tool = f[1] as ProbeTool;
+        const st = (f[2] ?? "").trim() as ToolState;
+        if (PROBE_TOOLS.includes(tool) && TOOL_STATES.includes(st)) rep.tools[tool] = st;
+        break;
+      }
       case "D":
         if (f[1]) rep.resolved[f[1]] = (f[2] ?? "").trim();
         break;
@@ -369,11 +453,19 @@ export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SEC
       case "R": {
         const port = Number(f[2]);
         if (!f[1] || !Number.isInteger(port)) break;
-        const msg = (f.slice(6).join(" ") ?? "").trim();
-        const ms = elapsedMs(f[4] ?? "", f[5] ?? "");
+        const raw = (f.slice(6).join(" ") ?? "").trim();
+        let ms = elapsedMs(f[4] ?? "", f[5] ?? "");
         const took = ms ?? coarseElapsedMs(f[4] ?? "", f[5] ?? "");
         const rc = Number(f[3]);
-        const status = classifyAttempt(rep.method, Number.isFinite(rc) ? rc : -1, msg, took, timeoutSecs);
+        const status = classifyAttempt(rep.method, Number.isFinite(rc) ? rc : -1, raw, took, timeoutSecs);
+        let msg = raw;
+        if (rep.method === "curl") {
+          // curl holds an open port until -m, so wall time says nothing: the
+          // connect time it measured itself is the reading.
+          const tc = curlConnectSecs(raw);
+          ms = status === "open" && tc !== null ? Math.round(tc * 1000) : status === "open" ? null : ms;
+          msg = raw.replace(/TC=\S+\s*/, "").replace(/^curl: /, "").trim();
+        }
         rep.results.push({ host: f[1], port, status, ms, detail: status === "open" ? "" : msg });
         break;
       }
@@ -490,30 +582,137 @@ export function tally(rows: PortResult[]): { open: number; checked: number } {
   return { open: rows.filter((r) => r.status === "open").length, checked };
 }
 
+/** Localized words for the report — passed in, so formatting stays pure and
+ *  the output follows the UI language. */
+export interface ReportWords {
+  title: string;
+  /** "3 of 4 open" — the checked ports, UDP and missing ones left out. */
+  tally: (open: number, total: number) => string;
+  /** "Method: bash /dev/tcp · timeout 3 s". */
+  method: string;
+  ms: (n: number) => string;
+  /** "rule says 10.64.48.181" — the rule's source differs from the real one. */
+  ruleSource: (source: string) => string;
+  status: Record<PortStatus, string>;
+  /** Markdown table headers. */
+  cols: { source: string; target: string; port: string; status: string; time: string; service: string };
+}
+
+export type ReportFormat = "text" | "markdown";
+
+/** `2026-09-30 14:12 +03:00` — unambiguous across locales and time zones. */
+export function reportStamp(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  const tz = `${sign}${p(Math.floor(Math.abs(off) / 60))}:${p(Math.abs(off) % 60)}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())} ${tz}`;
+}
+
+/** ✓ open, ✗ a real negative answer, · nothing was checked (UDP, no answer). */
+function mark(st: PortStatus): string {
+  if (st === "open") return "✓";
+  return st === "udp" || st === "missing" ? "·" : "✗";
+}
+
+interface ReportRow {
+  mark: string;
+  /** The address the traffic actually leaves from (the route's source), else the rule's. */
+  source: string;
+  /** The rule's source when it differs from `source` — a firewall rule for it won't match. */
+  ruleSource: string | null;
+  host: string;
+  resolved: string | null;
+  port: number;
+  proto: Proto;
+  status: PortStatus;
+  ms: number | null;
+  service: string;
+}
+
+function reportRows(rules: NetRule[], rep: NetReport): ReportRow[] {
+  const rows: ReportRow[] = [];
+  for (const rule of rules) {
+    for (const host of rule.targets) {
+      const route = rep.routeSrc[host] ?? "";
+      const source = route || rule.source || "";
+      const resolved = rep.resolved[host] && rep.resolved[host] !== host ? rep.resolved[host] : null;
+      for (const r of rowsFor(rule, host, rep)) {
+        rows.push({
+          mark: mark(r.status),
+          source,
+          ruleSource: rule.source && route && rule.source !== route ? rule.source : null,
+          host,
+          resolved,
+          port: r.port,
+          proto: rule.proto,
+          status: r.status,
+          ms: r.ms,
+          service: serviceName(r.port),
+        });
+      }
+    }
+  }
+  return rows;
+}
+
 /**
- * Plain-text report for a ticket. Words are passed in (localized by the caller),
- * so this stays pure and the output matches the UI language.
+ * The report for a ticket or a chat, one line per checked port in the same
+ * `source -> host:port/proto` shape the request was written in, so any line can be
+ * forwarded on its own. Header: who checked (loopback/link-local hidden, like the
+ * UI), when, the tally, then how (method + timeout — without them "timeout"
+ * can't be read). `markdown` renders the same rows as a table for issue trackers.
  */
 export function formatReport(
   rules: NetRule[],
   rep: NetReport,
-  words: { from: string; ms: (n: number) => string; status: Record<PortStatus, string> },
+  words: ReportWords,
+  opts: { at: string; format?: ReportFormat },
 ): string {
-  const out: string[] = [];
-  const who = [rep.hostname, rep.addrs.join(", ")].filter(Boolean).join(" · ");
-  out.push(`${words.from}: ${who || "—"}`);
-  for (const rule of rules) {
-    for (const host of rule.targets) {
-      out.push("");
-      const src = rule.source ? `${rule.source} -> ` : "";
-      const via = rep.resolved[host] && rep.resolved[host] !== host ? ` (${rep.resolved[host]})` : "";
-      out.push(`${src}${host}${via} /${rule.proto}`);
-      for (const r of rowsFor(rule, host, rep)) {
-        const ms = r.ms === null ? "" : ` ${words.ms(r.ms)}`;
-        const svc = serviceName(r.port);
-        out.push(`  ${String(r.port).padEnd(5)} ${words.status[r.status]}${ms}${svc ? `  (${svc})` : ""}`);
-      }
+  const rows = reportRows(rules, rep);
+  const checked = rows.filter((r) => r.status !== "udp" && r.status !== "missing");
+  const tallyText = words.tally(checked.filter((r) => r.status === "open").length, checked.length);
+  const addrs = visibleAddrs(rep.addrs).join(", ");
+  const time = (r: ReportRow) => (r.ms === null ? "" : words.ms(r.ms));
+
+  if (opts.format === "markdown") {
+    const who = [rep.hostname && `\`${rep.hostname}\``, addrs && `(${addrs})`].filter(Boolean).join(" ");
+    const out = [
+      [`**${words.title}**`, who, opts.at, tallyText].filter(Boolean).join(" · "),
+      words.method,
+      "",
+      `| | ${words.cols.source} | ${words.cols.target} | ${words.cols.port} | ${words.cols.status} | ${words.cols.time} | ${words.cols.service} |`,
+      "|---|---|---|---|---|---|---|",
+    ];
+    for (const r of rows) {
+      const src = r.ruleSource ? `${r.source} (${words.ruleSource(r.ruleSource)})` : r.source;
+      const target = r.resolved ? `${r.host} (${r.resolved})` : r.host;
+      out.push(
+        `| ${r.mark} | ${src || "—"} | ${target} | ${r.port}/${r.proto} | ${words.status[r.status]} | ${time(r) || "—"} | ${r.service || "—"} |`,
+      );
     }
+    return out.join("\n");
+  }
+
+  const who = [rep.hostname, addrs && `(${addrs})`].filter(Boolean).join(" ");
+  const out = [[words.title, who, opts.at, tallyText].filter(Boolean).join(" · "), words.method, ""];
+  const rule = (r: ReportRow) => `${r.source ? `${r.source} → ` : ""}${r.host}:${r.port}/${r.proto}`;
+  const ruleW = Math.max(0, ...rows.map((r) => rule(r).length));
+  const statusW = Math.max(0, ...rows.map((r) => words.status[r.status].length));
+  const timeW = Math.max(0, ...rows.map((r) => time(r).length));
+  for (const r of rows) {
+    const tail = [
+      r.service,
+      r.resolved ? `(${r.resolved})` : "",
+      r.ruleSource ? `(${words.ruleSource(r.ruleSource)})` : "",
+    ].filter(Boolean);
+    const line = `${r.mark} ` + [
+      rule(r).padEnd(ruleW),
+      words.status[r.status].padEnd(statusW),
+      time(r).padStart(timeW),
+      ...tail,
+    ].join("  ");
+    out.push(line.trimEnd());
   }
   return out.join("\n");
 }
@@ -545,6 +744,17 @@ export function sanitizeHistory(raw: unknown): NetHistory {
     if (!Array.isArray(list)) continue;
     const items = list.filter((e): e is string => typeof e === "string" && e.trim() !== "");
     if (items.length) out[host] = items.slice(0, HISTORY_MAX);
+  }
+  return out;
+}
+
+/** Per-host method choice as persisted: anything unknown is dropped (= "auto",
+ *  which isn't stored at all). */
+export function sanitizeMethods(raw: unknown): Record<string, MethodChoice> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, MethodChoice> = {};
+  for (const [host, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (host && isMethodChoice(v) && v !== "auto") out[host] = v;
   }
   return out;
 }

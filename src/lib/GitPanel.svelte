@@ -399,8 +399,8 @@
       title={t("git.noPath")}
       hint={t(followTerminal ? "git.noPathFollowHint" : "git.noPathHint")}
     >
-      <!-- Following off and the shell doesn't report its cwd: set that up, which is
-           all git needs to follow the terminal. Two-way sync stays the toolbar toggle. -->
+      <!-- Following off and the shell doesn't report its cwd: the same dock-wide path
+           sync as the toolbar toggle and SFTP's (shell setup + following on). -->
       {#if onEnablePathSync && !followTerminal}
         <button
           class="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-xs font-medium text-panel-alt hover:bg-accent-hover"

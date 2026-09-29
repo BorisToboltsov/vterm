@@ -34,7 +34,7 @@ describe("GitPanel confirmations", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Pull" }));
     expect(await screen.findByText("Confirm git action")).toBeInTheDocument();
     expect(screen.getByText("git pull", { exact: false })).toBeInTheDocument();
-    expect(screen.queryByText("This server is tagged production.")).toBeNull();
+    expect(screen.queryByText("This server is marked as production.")).toBeNull();
     expect(calls("pull")).toHaveLength(0);
 
     await fireEvent.click(screen.getByTestId("confirm"));
@@ -60,7 +60,7 @@ describe("GitPanel confirmations", () => {
   it("adds the production warning on a prod tab", async () => {
     await mount(true);
     await fireEvent.click(screen.getByRole("button", { name: "Pull" }));
-    expect(await screen.findByText("This server is tagged production.")).toBeInTheDocument();
+    expect(await screen.findByText("This server is marked as production.")).toBeInTheDocument();
   });
 });
 

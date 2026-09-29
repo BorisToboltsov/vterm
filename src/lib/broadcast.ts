@@ -4,7 +4,7 @@
 // from the page; here we only decide WHO receives, WHAT gets sent, and HOW the
 // member terminals are laid out. (ADR 0003: pure logic in `.ts`.)
 
-import { isProdServer } from "./aiexec";
+import { isProdServer, type ProdMarked } from "./aiexec";
 
 /** The slice of a terminal tab this module needs (structural — matches `Tab`). */
 export interface BroadcastTab {
@@ -34,10 +34,9 @@ export function eligibleMembers(
     .map((tab) => tab.sessionId);
 }
 
-/** Minimal server shape for the prod check (id + tags). */
-export interface ProdTaggable {
+/** Minimal server shape for the prod check (id + prod flag / legacy tags). */
+export interface ProdTaggable extends ProdMarked {
   id: string;
-  tags?: string[];
 }
 
 /**
@@ -53,7 +52,7 @@ export function prodMembers(
   return targets.filter((id) => {
     const tab = byId.get(id);
     if (!tab || tab.kind !== "ssh") return false;
-    return isProdServer(servers.find((s) => s.id === tab.serverId)?.tags);
+    return isProdServer(servers.find((s) => s.id === tab.serverId));
   });
 }
 

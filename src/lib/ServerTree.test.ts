@@ -15,6 +15,7 @@ function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerP
     hasSavedPassword: false,
     group: null,
     tags: [],
+    prod: null,
     autoRecord: false,
     noAi: false,
     chatPromptId: null,
@@ -68,6 +69,13 @@ describe("ServerTree — row actions on a narrow sidebar", () => {
     expect(full.className).toContain("@min-[12rem]:flex");
     // Both stay `invisible` until hover, so the row never jumps (reserved, not removed).
     for (const el of [compact, full]) expect(el.className).toContain("group-hover:visible");
+  });
+
+  it("draws the «⋯» heavier than the default line icons, so it reads at a glance", () => {
+    render(ServerTree, { props: props() });
+    const svg = screen.getByTestId("server-actions-compact").querySelector("svg");
+    expect(svg?.getAttribute("stroke-width")).toBe("3");
+    expect(svg?.getAttribute("width")).toBe("16");
   });
 
   it("reserves room for the three icons on the alias line when the row is wide", () => {
@@ -422,5 +430,25 @@ describe("ServerTree", () => {
       props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], selectedId: "1" },
     });
     expect(screen.getByTestId("server-row").className).toContain("outline-accent/70");
+  });
+});
+
+describe("ServerTree — production badge", () => {
+  it("shows a red prod badge for a flagged server, none for others", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [
+          srv({ id: "p", alias: "db", prod: true, tags: ["eu"] }),
+          srv({ id: "n", alias: "web", prod: false, tags: ["prod"] }),
+        ],
+      },
+    });
+    const badges = screen.getAllByTestId("server-prod-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].className).toContain("text-bad");
+    // An explicitly non-prod server keeps "prod" as a plain, muted tag.
+    const plain = screen.getAllByText("prod").find((el) => el !== badges[0]);
+    expect(plain?.className).toContain("text-muted");
   });
 });

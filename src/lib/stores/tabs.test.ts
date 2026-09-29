@@ -8,6 +8,7 @@ import {
   isLive,
   isMonitorable,
   localizedStatus,
+  monitoredSessionId,
   moveTab,
   newTabAction,
   nextTabIndex,
@@ -119,6 +120,17 @@ describe("pure helpers", () => {
     expect(isLive("Connecting…")).toBe(true);
     expect(isLive("Disconnected")).toBe(false);
     expect(isLive("Error: x")).toBe(false);
+  });
+
+  it("monitoredSessionId: the screensaver polls local tabs too, only while live", () => {
+    // Regression: the card was SSH-only and said "no active sessions" on a local tab
+    // whose status bar showed live metrics.
+    expect(monitoredSessionId({ kind: "local", status: "Connected", sessionId: "l1" })).toBe("l1");
+    expect(monitoredSessionId({ kind: "ssh", status: "Connected", sessionId: "s1" })).toBe("s1");
+    expect(monitoredSessionId({ kind: "local", status: "Connecting…", sessionId: "l1" })).toBeNull();
+    expect(monitoredSessionId({ kind: "ssh", status: "Disconnected", sessionId: "s1" })).toBeNull();
+    expect(monitoredSessionId(null)).toBeNull();
+    expect(monitoredSessionId(undefined)).toBeNull();
   });
 
   it("isMonitorable: connected SSH *and* local tabs (Phase 38), not connecting/closed", () => {

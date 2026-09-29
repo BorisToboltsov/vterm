@@ -23,6 +23,7 @@ const server: ServerProfile = {
   hasSavedPassword: false,
   group: null,
   tags: [],
+  prod: null,
   autoRecord: false,
   noAi: false,
   chatPromptId: null,

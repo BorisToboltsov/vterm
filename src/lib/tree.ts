@@ -2,6 +2,7 @@
 // +page.svelte so it can be unit-tested without a DOM. No Svelte/runtime deps.
 
 import type { ServerProfile } from "./types";
+import { isLegacyProdTag, isProdServer } from "./aiexec";
 
 /** Parent folder path of `p` ("" for a top-level path). */
 export const parentOf = (p: string): string => {
@@ -19,7 +20,19 @@ export const nameOf = (p: string): string => {
 export const groupOf = (s: ServerProfile): string => s.group?.trim() || "";
 
 /**
- * Filter servers by a free-text query against alias/host/username/group/tags.
+ * What a server row shows under its address: a red `prod` badge for a production
+ * server, then its tags. On a prod server a leftover legacy `prod`/`production`
+ * tag is dropped — it would only repeat the badge. On a non-prod one it stays: it
+ * is just a label now.
+ */
+export function rowBadges(s: ServerProfile): { prod: boolean; tags: string[] } {
+  const prod = isProdServer(s);
+  return { prod, tags: prod ? s.tags.filter((t) => !isLegacyProdTag(t)) : s.tags };
+}
+
+/**
+ * Filter servers by a free-text query against alias/host/username/group/tags —
+ * and the `prod` badge, so searching "prod" finds what the list marks as prod.
  * An empty/whitespace query returns the list unchanged (same reference).
  */
 export function filterServers(
@@ -34,7 +47,8 @@ export function filterServers(
       s.host.toLowerCase().includes(q) ||
       s.username.toLowerCase().includes(q) ||
       groupOf(s).toLowerCase().includes(q) ||
-      s.tags.some((t) => t.toLowerCase().includes(q)),
+      s.tags.some((t) => t.toLowerCase().includes(q)) ||
+      (isProdServer(s) && "prod".includes(q)),
   );
 }
 

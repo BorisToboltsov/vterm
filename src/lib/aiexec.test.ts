@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseChatSegments,
   isRunnableLang,
+  isLegacyProdTag,
   isProdServer,
   toTerminalInput,
   auditLabel,
@@ -60,32 +61,46 @@ describe("parseChatSegments", () => {
 });
 
 describe("isProdServer", () => {
-  it("detects prod/production tags case-insensitively", () => {
-    expect(isProdServer(["prod"])).toBe(true);
-    expect(isProdServer(["Production"])).toBe(true);
-    expect(isProdServer([" PROD "])).toBe(true);
+  const tagged = (...tags: string[]) => ({ tags, prod: null });
+
+  it("follows the explicit prod flag", () => {
+    expect(isProdServer({ prod: true, tags: [] })).toBe(true);
+    expect(isProdServer({ prod: false, tags: [] })).toBe(false);
   });
 
-  it("is false for other tags or missing tags", () => {
-    expect(isProdServer(["staging", "web"])).toBe(false);
-    expect(isProdServer([])).toBe(false);
+  it("an explicit flag wins over the legacy tag in both directions", () => {
+    expect(isProdServer({ prod: false, tags: ["prod"] })).toBe(false);
+    expect(isProdServer({ prod: true, tags: ["web"] })).toBe(true);
+  });
+
+  it("is false for a missing server", () => {
     expect(isProdServer(null)).toBe(false);
     expect(isProdServer(undefined)).toBe(false);
+  });
+
+  // A profile saved before the flag existed (prod: null / absent) keeps its old
+  // meaning — otherwise upgrading would silently drop production safeguards.
+  it("falls back to the prod/production tag for a legacy profile", () => {
+    expect(isProdServer(tagged("prod"))).toBe(true);
+    expect(isProdServer(tagged("Production"))).toBe(true);
+    expect(isProdServer({ tags: ["prod"] })).toBe(true);
+    expect(isProdServer(tagged("staging", "web"))).toBe(false);
+    expect(isProdServer(tagged())).toBe(false);
+    expect(isProdServer({ prod: null, tags: null })).toBe(false);
   });
 
   // Phase 20.3 — lock the case/whitespace robustness against regressions.
   it("matches prod/production across case and surrounding whitespace", () => {
     for (const tag of ["prod", "PROD", "Prod", "production", "PRODUCTION", " prod ", "\tprod\n", "Production "]) {
-      expect(isProdServer([tag]), tag).toBe(true);
+      expect(isLegacyProdTag(tag), tag).toBe(true);
     }
     // Any exact prod tag among others still counts.
-    expect(isProdServer(["web", "prod", "eu"])).toBe(true);
+    expect(isProdServer(tagged("web", "prod", "eu"))).toBe(true);
   });
 
   // Phase 20.3 — the exact-tag contract is deliberate: DO NOT loosen to substring/
   // token matching, or "non-prod"/"pre-prod" (staging) would be wrongly flagged as
-  // production and lose their intended non-prod auto-exec. Users tag exactly
-  // `prod`/`production` (or set per-server noAi/execMode) for affixed environments.
+  // production on a legacy profile.
   it("uses exact-tag matching: affixed and negated variants are intentionally not prod", () => {
     for (const tag of [
       "prod-eu",
@@ -99,7 +114,7 @@ describe("isProdServer", () => {
       "product",
       "reproduce",
     ]) {
-      expect(isProdServer([tag]), tag).toBe(false);
+      expect(isLegacyProdTag(tag), tag).toBe(false);
     }
   });
 });

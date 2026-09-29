@@ -10,6 +10,7 @@
     dropAllowed as treeDropAllowed,
     groupOf,
     nameOf,
+    rowBadges,
     type TreeRow,
   } from "./tree";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
@@ -470,6 +471,7 @@
           </div>
         {:else}
           {@const dots = serverDots(connections[row.server.id] ?? [])}
+          {@const badges = rowBadges(row.server)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- Keyboard is handled at the focusable list container (roving focus). -->
           <div
@@ -535,9 +537,15 @@
               <div class="text-xs text-muted">
                 {row.server.username}@{row.server.host}:{row.server.port}
               </div>
-              {#if row.server.tags.length > 0}
+              {#if badges.prod || badges.tags.length > 0}
                 <div class="mt-1 flex flex-wrap gap-1">
-                  {#each row.server.tags as tag (tag)}
+                  {#if badges.prod}
+                    <span
+                      class="rounded bg-bad/15 px-1.5 py-0.5 text-caption text-bad"
+                      data-testid="server-prod-badge">prod</span
+                    >
+                  {/if}
+                  {#each badges.tags as tag (tag)}
                     <span class="rounded bg-edge px-1.5 py-0.5 text-caption text-muted">{tag}</span>
                   {/each}
                 </div>
@@ -558,7 +566,9 @@
                   openServerMenu(e, row.server);
                 }}
               >
-                <Icon name="dots" size={13} />
+                <!-- Heavier and larger than the other row actions: at 1.8 the three
+                     dots were barely visible specks. -->
+                <Icon name="dots" size={16} strokeWidth={3} />
               </button>
             </div>
             <div
