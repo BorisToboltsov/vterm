@@ -1683,6 +1683,9 @@
     if (!sid) return;
     setActiveView(sid, TERMINAL_VIEW);
     showSettings = false;
+    // The access check offers telnet from the Utilities overlay, which would
+    // otherwise keep covering the terminal the command was just typed into.
+    showUtilities = false;
     void writeToTerminal(sid, new TextEncoder().encode(command));
     notifyInfo(t("servertools.typed"));
   }
@@ -2609,7 +2612,13 @@
   initialSection={settingsSection}
 />
 
-<UtilitiesPanel bind:open={showUtilities} initialUtility={utilitiesInitial} session={utilSession} />
+<UtilitiesPanel
+  bind:open={showUtilities}
+  initialUtility={utilitiesInitial}
+  session={utilSession}
+  onInstallTelnet={() => openToolInstallByName("telnet")}
+  {toolsReloadToken}
+/>
 
 <!-- Server tool install dialog (Phase 12.8) -->
 <ToolInstallDialog

@@ -51,6 +51,13 @@ pub const TOOLS: &[Tool] = &[
         name: "sysstat",
         bin: "iostat",
     },
+    // Fallback probe for the Utilities access check when the server has neither
+    // `bash`+`timeout` nor `nc` (minimal/busybox images).
+    Tool {
+        id: "telnet",
+        name: "telnet",
+        bin: "telnet",
+    },
     // YAML-family linters (Phase B). docker-compose (`docker`) and promtool ship with
     // their platform, so they're validated but not offered for one-click install here.
     Tool {
@@ -175,6 +182,13 @@ pub fn install_command(tool: &str, mgr: &str) -> Option<String> {
         // own name on every supported manager.
         "smartmontools" => sys("smartmontools"),
         "sysstat" => sys("sysstat"),
+        // telnet: its own package on apt/rpm/zypper/brew; Alpine ships the applet
+        // in busybox-extras, Arch in inetutils.
+        "telnet" => match mgr {
+            "apk" => sys("busybox-extras"),
+            "pacman" => sys("inetutils"),
+            _ => sys("telnet"),
+        },
         // ansible-lint is a Python package everywhere except brew.
         "ansible-lint" => {
             if mgr == "brew" {
@@ -298,6 +312,33 @@ mod tests {
             Some("sudo dnf install -y sysstat")
         );
         assert!(install_command("nope", "apt").is_none());
+    }
+
+    #[test]
+    fn install_commands_for_telnet_per_distro() {
+        assert_eq!(
+            install_command("telnet", "apt").as_deref(),
+            Some("sudo apt-get install -y telnet")
+        );
+        assert_eq!(
+            install_command("telnet", "dnf").as_deref(),
+            Some("sudo dnf install -y telnet")
+        );
+        assert_eq!(
+            install_command("telnet", "yum").as_deref(),
+            Some("sudo yum install -y telnet")
+        );
+        assert_eq!(
+            install_command("telnet", "apk").as_deref(),
+            Some("sudo apk add busybox-extras")
+        );
+        assert_eq!(
+            install_command("telnet", "pacman").as_deref(),
+            Some("sudo pacman -S --noconfirm inetutils")
+        );
+        assert!(install_command("telnet", "").is_none());
+        // Detected by its binary like every other tool.
+        assert!(status_command().contains("command -v telnet"));
     }
 
     #[test]

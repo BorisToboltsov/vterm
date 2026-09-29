@@ -23,18 +23,25 @@
   import UtilKnownHosts from "./UtilKnownHosts.svelte";
   import UtilTls from "./UtilTls.svelte";
   import UtilHttp from "./UtilHttp.svelte";
+  import UtilNetCheck from "./UtilNetCheck.svelte";
   import type { ProbeSession } from "./probe";
 
   let {
     open = $bindable(false),
     initialUtility = null,
     session = null,
+    onInstallTelnet,
+    toolsReloadToken = 0,
   }: {
     open?: boolean;
     /** Deep-link: focus this tool when the panel opens (e.g. from a shortcut). */
     initialUtility?: string | null;
     /** Active-tab context for the network tools (SSH remote / local PTY). */
     session?: ProbeSession | null;
+    /** Offer the telnet install dialog (access check on a host with no probe tool). */
+    onInstallTelnet?: () => void;
+    /** Bumped after a server-tool install finishes. */
+    toolsReloadToken?: number;
   } = $props();
 
   let search = $state("");
@@ -131,7 +138,9 @@
             <p class="mt-1 text-xs text-muted">{t(active.descKey)}</p>
           </div>
 
-          {#if selected === "keys"}
+          {#if selected === "netcheck"}
+            <UtilNetCheck {session} {onInstallTelnet} reloadToken={toolsReloadToken} />
+          {:else if selected === "keys"}
             <UtilKeys />
           {:else if selected === "codec"}
             <UtilCodec />

@@ -60,13 +60,15 @@
 ┌──────────▼──────────────────────────────────────┴───────────────────┐
 │  lib.rs — generate_handler!, AppState, bridge к сессиям             │
 │      ├── доменные модули: servers · folders · sftp · localfile ·    │
-│      │   recording · ai · git · container · kube · netprobe · …     │
+│      │   recording · ai · git · container · kube · netprobe ·       │
+│      │   netcheck · …                                               │
 │      └── AppState: sessions · local_ptys · cancels ·                │
 │                    metrics_samples · pending_opens · id_names       │
 └──────────┬──────────────────────────────────────────────────────────┘
            │
    SSH/SFTP к серверам пользователя (russh, в т.ч. через его proxy) ·
-   локальный PTY · файловая система · OS keychain · LLM-эндпоинт пользователя
+   локальный PTY · файловая система · OS keychain · LLM-эндпоинт пользователя ·
+   TCP-рукопожатие «Проверки доступа» с локальной вкладки (ADR 0012)
 ```
 
 - **Команды** инкапсулированы в [src/lib/api/](../src/lib/api/) — UI не работает со
@@ -127,6 +129,7 @@
 | [recording.rs](../src-tauri/src/recording.rs) | Запись сессий (asciicast v2), маскирование ввода, экспорт |
 | [ai.rs](../src-tauri/src/ai.rs) | Брокер LLM: стрим, два протокола, `ai_models` |
 | [git.rs](../src-tauri/src/git.rs) · [container.rs](../src-tauri/src/container.rs) · [kube.rs](../src-tauri/src/kube.rs) · [netprobe.rs](../src-tauri/src/netprobe.rs) | Драйверы панелей — дамповые исполнители argv |
+| [netcheck.rs](../src-tauri/src/netcheck.rs) | «Проверка доступа» на локальной вкладке: нативное TCP-рукопожатие, тот же протокол ответа, что у SSH-скрипта (ADR 0012) |
 | [localenv.rs](../src-tauri/src/localenv.rs) | Реконструкция `PATH` для локального спавна (упакованное приложение наследует минимальный) |
 | [keygen.rs](../src-tauri/src/keygen.rs) · [servertools.rs](../src-tauri/src/servertools.rs) · [textenc.rs](../src-tauri/src/textenc.rs) | Генерация SSH-ключей · серверные линтеры · определение и round-trip кодировок |
 | [error.rs](../src-tauri/src/error.rs) | `AppResult`/`AppError` |
@@ -149,7 +152,7 @@
 | **Логи и текст** | — (всё на фронте, поверх буфера xterm) | — | Переключатель Raw/Table, поиск по буферу, история | `jsonlog`, `highlight`, `search`, `history`, `command` |
 | **Git · Docker · k8s · пробы** | `git.rs`, `container.rs`, `kube.rs`, `netprobe.rs` | `git_run`, `container_run`, `kubectl_run`, `probe_run`, `docker_login` | `GitPanel`, `DockerPanel`, `K8sPanel`, `UtilProbeRunner` | `followcwd`, `git`, `gitview`, `docker`, `k8s`, `probe`, `tls`, `http` |
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact` |
-| **Утилиты** | `keygen.rs`, `store.rs` (known_hosts) | `generate_ssh_key`, `list_known_hosts`, `remove_known_host` | `UtilitiesPanel` + `Util*.svelte` | `utilities`, `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
+| **Утилиты** | `keygen.rs`, `store.rs` (known_hosts), `netcheck.rs` | `generate_ssh_key`, `list_known_hosts`, `remove_known_host`, `netcheck_run` | `UtilitiesPanel` + `Util*.svelte` (`UtilNetCheck`) | `utilities`, `netcheck` (+ стор `stores/netcheck`), `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
 | **Оформление** | — | `set_menu_language` · `arm_close_guard` · `quit_app` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel`, `QuitDialog` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav`, `quitsummary` |
 | **Оконное обрамление** | `lib.rs` `setup` (снятие декораций non-macOS) | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
 

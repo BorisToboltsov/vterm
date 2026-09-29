@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.0.35-blue)
+![version](https://img.shields.io/badge/version-1.0.36-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -48,9 +48,11 @@ KPI-дашборд (ЦП / ОЗУ / сеть / температуры / health) 
 Локальный (Ollama, LM Studio, vLLM) или облачный (DeepSeek, OpenAI, Claude) эндпоинт на выбор.
 Чат с выполнением команд, разбор логов и метрик — через маскирование секретов и окно согласия.
 
-#### 🧰 Утилиты · офлайн
-Генерация SSH-ключей, менеджер known_hosts, Base64 / CIDR / cron / JWT, генератор паролей.
-Сетевые пробы (TLS-инспектор, HTTP-клиент) — на хосте активной сессии, не из приложения.
+#### 🧰 Утилиты
+Проверка доступа до портов списком правил «откуда → куда:[порты]» — с сервера или с этой
+машины, с подсветкой чужого источника и исходящего адреса. Генерация SSH-ключей, менеджер
+known_hosts, Base64 / CIDR / cron / JWT, генератор паролей — офлайн. TLS-инспектор и
+HTTP-клиент — на хосте активной сессии.
 
 #### ⚡ Продуктивность
 Синхронный ввод на несколько серверов, командная палитра ⌘K, история по Ctrl+R,
