@@ -28,6 +28,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         has_saved_password: false,
         group: profile.group,
         tags: profile.tags,
+        prod: profile.prod,
         auto_record: profile.auto_record,
         no_ai: profile.no_ai,
         chat_prompt_id: profile.chat_prompt_id,
@@ -64,6 +65,7 @@ pub fn update_server(
                 server.key_path = profile.key_path;
                 server.group = profile.group;
                 server.tags = profile.tags;
+                server.prod = profile.prod;
                 server.auto_record = profile.auto_record;
                 server.no_ai = profile.no_ai;
                 server.chat_prompt_id = profile.chat_prompt_id;

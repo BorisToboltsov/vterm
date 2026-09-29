@@ -9,7 +9,8 @@ import { describe, expect, it } from "vitest";
 // `cd` into a repo in the terminal left git on "not a git repository" for the
 // folder the session started in. The rule lives in `gitCwd`; this keeps the panel
 // on it, the dock feeding it the terminal's cwd, and a local tab's cwd polled
-// while git is on screen (not only while following). Checked on the source with
+// while git is on screen (not only while following), and Git's "Enable path sync"
+// button wired to the one dock-wide switch. Checked on the source with
 // JS comments stripped, so a comment naming a call can't satisfy it.
 
 const LIB = join(process.cwd(), "src", "lib");
@@ -42,12 +43,21 @@ describe("git follows the terminal guard", () => {
     expect(src).toMatch(/pollsLocalCwd\([^;]*?gitShown\)/);
   });
 
-  it("git's path sync sets the shell up without switching two-way following on", () => {
+  // v1.0.37: Git's "Enable path sync" button is the same switch as the SFTP/Git
+  // toggle. It used to set the shell up but leave following off, so an SFTP panel
+  // connected afterwards neither followed nor showed the toggle on — the label
+  // promised what the button didn't do. Checked on the wiring, not a name.
+  it("git's path sync button turns on the same dock-wide following as the toggle", () => {
     const src = read(PAGE);
-    const start = src.indexOf("function enableGitPathSync()");
-    expect(start, "enableGitPathSync() not found in +page.svelte").toBeGreaterThan(-1);
+    expect(src).not.toMatch(/enableGitPathSync|pendingFollowTwoWay/);
+    expect(src).toMatch(/\?\s*enablePathSync\s*\n\s*:\s*undefined\}/);
+    const start = src.indexOf("function enablePathSync()");
+    expect(start, "enablePathSync() not found in +page.svelte").toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n  }", start));
-    expect(body).toMatch(/pendingFollowTwoWay\s*=\s*false/);
-    expect(body).not.toMatch(/followTerminal\[[^\]]+\]\s*=\s*true/);
+    expect(body).toMatch(/followTerminal\[id\]\s*=\s*true/);
+    // Confirming the shell-setup dialog always ends with following on.
+    const confirm = src.indexOf("function confirmFollowSetup()");
+    const cbody = src.slice(confirm, src.indexOf("\n  }", confirm));
+    expect(cbody).toMatch(/^\s*followTerminal\[id\]\s*=\s*true;/m);
   });
 });

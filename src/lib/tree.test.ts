@@ -9,6 +9,7 @@ import {
   serversInSubtree,
   type TreeRow,
   moveConfirmKeys,
+  rowBadges,
 } from "./tree";
 import type { ServerProfile } from "./types";
 
@@ -23,6 +24,7 @@ function srv(p: Partial<ServerProfile> & { id: string }): ServerProfile {
     hasSavedPassword: false,
     group: null,
     tags: [],
+    prod: null,
     autoRecord: false,
     noAi: false,
     chatPromptId: null,
@@ -104,6 +106,32 @@ describe("filterServers", () => {
   });
   it("returns nothing when no field matches", () => {
     expect(filterServers(servers, "zzz")).toEqual([]);
+  });
+  it("finds a flag-only prod server by the word its badge shows", () => {
+    const list = [srv({ id: "p", prod: true }), srv({ id: "n", prod: false, tags: ["web"] })];
+    expect(filterServers(list, "prod").map((s) => s.id)).toEqual(["p"]);
+    expect(filterServers(list, "PRO").map((s) => s.id)).toEqual(["p"]);
+  });
+});
+
+describe("rowBadges", () => {
+  it("marks a flagged server prod and keeps its tags", () => {
+    expect(rowBadges(srv({ id: "a", prod: true, tags: ["web"] }))).toEqual({
+      prod: true,
+      tags: ["web"],
+    });
+  });
+  it("drops a legacy prod tag that would only repeat the badge", () => {
+    expect(rowBadges(srv({ id: "a", prod: null, tags: ["web", "Production"] }))).toEqual({
+      prod: true,
+      tags: ["web"],
+    });
+  });
+  it("keeps a prod tag as a plain label when the flag is explicitly off", () => {
+    expect(rowBadges(srv({ id: "a", prod: false, tags: ["prod"] }))).toEqual({
+      prod: false,
+      tags: ["prod"],
+    });
   });
 });
 

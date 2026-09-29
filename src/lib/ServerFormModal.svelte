@@ -74,6 +74,10 @@
   // alias in the list. "" = generic glyph / muted colour.
   let icon = $state("");
   let iconColor = $state("");
+  // Production flag — its own checkbox in the main section, not a tag (tags are
+  // search labels only). Prefilled via isProdServer so a legacy prod-tagged
+  // profile opens checked and saving it keeps its safeguards.
+  let prod = $state(false);
   let autoRecord = $state(false);
   let noAi = $state(false);
   let aiPromptId = $state("");
@@ -99,8 +103,6 @@
   let appearanceOpen = $state(false);
   let proxyOpen = $state(false);
   let recordingOpen = $state(false);
-  // The glyph grid folds inside its section too — open it would dwarf the tags field.
-  let iconPickerOpen = $state(false);
   const shownTags = $derived(previewTags(tagsInput));
   const PROXY_KIND_LABEL = {
     jump: "page.proxyKindJump",
@@ -117,7 +119,7 @@
   );
 
   function foldSections() {
-    appearanceOpen = proxyOpen = recordingOpen = iconPickerOpen = false;
+    appearanceOpen = proxyOpen = recordingOpen = false;
   }
   // Set on a failed submit so empty required fields light up; cleared per field
   // as the user types (derived below) and reset when the form (re)opens.
@@ -169,6 +171,7 @@
     tagsInput = "";
     icon = "";
     iconColor = "";
+    prod = false;
     autoRecord = false;
     noAi = false;
     aiPromptId = "";
@@ -195,6 +198,7 @@
     tagsInput = server.tags.join(", ");
     icon = server.icon;
     iconColor = server.iconColor;
+    prod = isProdServer(server);
     autoRecord = server.autoRecord;
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
@@ -226,6 +230,7 @@
     tagsInput = server.tags.join(", ");
     icon = server.icon;
     iconColor = server.iconColor;
+    prod = isProdServer(server);
     autoRecord = server.autoRecord;
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
@@ -294,6 +299,7 @@
       keyPath,
       group: group.trim() || null,
       tags,
+      prod,
       autoRecord,
       noAi,
       chatPromptId: aiPromptId || null,
@@ -459,6 +465,12 @@
       />
     </label>
 
+    <div class="mb-3 flex items-center gap-2 text-xs text-text">
+      <input type="checkbox" id="srv-prod" data-testid="server-prod" bind:checked={prod} />
+      <label for="srv-prod">{t("page.prodServer")}</label>
+      <InfoHint text={t("page.prodServerHint")} />
+    </div>
+
     <!-- ── Appearance & tags ── -->
     <DisclosureRow
       variant="list"
@@ -469,11 +481,7 @@
       {#snippet preview()}
         <Icon name={resolveServerIcon(icon)} size={14} class={resolveServerColorClass(iconColor)} />
         {#each shownTags as tag (tag)}
-          <span
-            class="truncate rounded px-1.5 text-caption {isProdServer([tag])
-              ? 'bg-bad/15 text-bad'
-              : 'bg-edge text-muted'}">{tag}</span
-          >
+          <span class="truncate rounded bg-edge px-1.5 text-caption text-muted">{tag}</span>
         {/each}
       {/snippet}
     </DisclosureRow>
@@ -483,7 +491,6 @@
           <ServerIconPicker
             bind:icon
             bind:color={iconColor}
-            bind:open={iconPickerOpen}
             label={t("page.icon")}
           />
         </div>
@@ -528,140 +535,144 @@
           <InfoHint text={t("page.useProxyHint")} />
         </div>
 
-        {#if useProxy}
-          <div class="mt-3">
+        <!-- The fields are always on view; the checkbox only switches the proxy on.
+             Off → a disabled fieldset (dimmed, not editable, not saved). -->
+        <fieldset
+          class="mt-3 min-w-0 {useProxy ? '' : 'opacity-50'}"
+          disabled={!useProxy}
+          data-testid="proxy-fields"
+        >
+          <label class="mb-2 block text-xs text-muted">
+            {t("page.proxyType")}
+            <select
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              data-testid="proxy-kind"
+              bind:value={proxyKind}
+            >
+              <option value="jump">{t("page.proxyKindJump")}</option>
+              <option value="socks5">{t("page.proxyKindSocks5")}</option>
+              <option value="http">{t("page.proxyKindHttp")}</option>
+            </select>
+          </label>
+
+          <div class="mb-2 flex gap-2">
+            <label class="block min-w-0 flex-1 text-xs text-muted">
+              {t("page.proxyHost")}
+              <input
+                data-testid="proxy-host"
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyHostError
+                  ? 'border-danger'
+                  : 'border-edge'}"
+                aria-invalid={proxyHostError}
+                bind:value={proxyHost}
+                placeholder="bastion.corp"
+              />
+            </label>
+            <label class="block w-20 text-xs text-muted">
+              {t("page.port")}
+              <input
+                type="number"
+                data-testid="proxy-port"
+                class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyPortError
+                  ? 'border-danger'
+                  : 'border-edge'}"
+                aria-invalid={proxyPortError}
+                bind:value={proxyPort}
+              />
+            </label>
+          </div>
+          {#if proxyHostError}
+            <p class="-mt-1 mb-2 text-meta text-danger">
+              {proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}
+            </p>
+          {/if}
+          {#if proxyPortError}
+            <p class="-mt-1 mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
+          {/if}
+
+          {#if proxyKind === "jump"}
             <label class="mb-2 block text-xs text-muted">
-              {t("page.proxyType")}
-              <select
+              {t("page.proxyUsername")}
+              <input
+                data-testid="proxy-username"
                 class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-                data-testid="proxy-kind"
-                bind:value={proxyKind}
-              >
-                <option value="jump">{t("page.proxyKindJump")}</option>
-                <option value="socks5">{t("page.proxyKindSocks5")}</option>
-                <option value="http">{t("page.proxyKindHttp")}</option>
-              </select>
+                bind:value={proxyUsername}
+                placeholder={DEFAULT_USERNAME}
+              />
             </label>
 
-            <div class="mb-2 flex gap-2">
-              <label class="block min-w-0 flex-1 text-xs text-muted">
-                {t("page.proxyHost")}
-                <input
-                  data-testid="proxy-host"
-                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyHostError
-                    ? 'border-danger'
-                    : 'border-edge'}"
-                  aria-invalid={proxyHostError}
-                  bind:value={proxyHost}
-                  placeholder="bastion.corp"
+            <div class="mb-2 text-xs text-muted">
+              {t("page.authentication")}
+              <div class="mt-1">
+                <SegmentedControl
+                  bind:value={proxyAuthMethod}
+                  options={authOptions}
+                  label={t("page.authentication")}
+                  testid="proxy-auth"
                 />
-              </label>
-              <label class="block w-20 text-xs text-muted">
-                {t("page.port")}
-                <input
-                  type="number"
-                  data-testid="proxy-port"
-                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyPortError
-                    ? 'border-danger'
-                    : 'border-edge'}"
-                  aria-invalid={proxyPortError}
-                  bind:value={proxyPort}
-                />
-              </label>
+              </div>
             </div>
-            {#if proxyHostError}
-              <p class="-mt-1 mb-2 text-meta text-danger">
-                {proxyHostEmpty ? t("page.fieldRequired") : t("page.hostInvalid")}
-              </p>
-            {/if}
-            {#if proxyPortError}
-              <p class="-mt-1 mb-2 text-meta text-danger">{t("page.portInvalid")}</p>
-            {/if}
 
-            {#if proxyKind === "jump"}
+            {#if proxyAuthMethod === "key"}
               <label class="mb-2 block text-xs text-muted">
-                {t("page.proxyUsername")}
-                <input
-                  data-testid="proxy-username"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-                  bind:value={proxyUsername}
-                  placeholder={DEFAULT_USERNAME}
-                />
-              </label>
-
-              <div class="mb-2 text-xs text-muted">
-                {t("page.authentication")}
-                <div class="mt-1">
-                  <SegmentedControl
-                    bind:value={proxyAuthMethod}
-                    options={authOptions}
-                    label={t("page.authentication")}
-                    testid="proxy-auth"
+                {t("page.privateKeyFile")}
+                <div class="mt-1 flex gap-2">
+                  <input
+                    readonly
+                    class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
+                    value={proxyKeyPath ?? ""}
+                    placeholder="~/.ssh/id_ed25519"
                   />
+                  <button
+                    type="button"
+                    class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
+                    onclick={browseProxyKey}>{t("common.browse")}</button
+                  >
                 </div>
-              </div>
-
-              {#if proxyAuthMethod === "key"}
-                <label class="mb-2 block text-xs text-muted">
-                  {t("page.privateKeyFile")}
-                  <div class="mt-1 flex gap-2">
-                    <input
-                      readonly
-                      class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none"
-                      value={proxyKeyPath ?? ""}
-                      placeholder="~/.ssh/id_ed25519"
-                    />
-                    <button
-                      type="button"
-                      class="shrink-0 rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-                      onclick={browseProxyKey}>{t("common.browse")}</button
-                    >
-                  </div>
-                </label>
-              {/if}
-
-              <label class="mb-1 block text-xs text-muted">
-                <span class="flex items-center gap-1">
-                  {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
-                  <InfoHint text={t("page.secretHint")} />
-                </span>
-                <PasswordInput
-                  testid="proxy-secret"
-                  class="mt-1"
-                  bind:value={proxySecret}
-                  placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
-                />
-              </label>
-            {:else}
-              <!-- SOCKS5 / HTTP CONNECT: optional basic auth (username + password). -->
-              <div class="mb-1 flex items-center gap-1 text-xs text-muted">
-                {t("page.authentication")}
-                <InfoHint text={t("page.proxyOptionalAuth")} />
-              </div>
-              <label class="mb-2 block text-xs text-muted">
-                {t("page.proxyUsername")}
-                <input
-                  data-testid="proxy-username"
-                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
-                  bind:value={proxyUsername}
-                  placeholder="user"
-                />
-              </label>
-              <label class="mb-1 block text-xs text-muted">
-                <span class="flex items-center gap-1">
-                  {t("page.proxyPassword")}
-                  <InfoHint text={t("page.secretHint")} />
-                </span>
-                <PasswordInput
-                  testid="proxy-secret"
-                  class="mt-1"
-                  bind:value={proxySecret}
-                  placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
-                />
               </label>
             {/if}
-          </div>
-        {/if}
+
+            <label class="mb-1 block text-xs text-muted">
+              <span class="flex items-center gap-1">
+                {proxyAuthMethod === "key" ? t("page.proxyPassphrase") : t("page.proxyPassword")}
+                <InfoHint text={t("page.secretHint")} />
+              </span>
+              <PasswordInput
+                testid="proxy-secret"
+                class="mt-1"
+                bind:value={proxySecret}
+                placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
+              />
+            </label>
+          {:else}
+            <!-- SOCKS5 / HTTP CONNECT: optional basic auth (username + password). -->
+            <div class="mb-1 flex items-center gap-1 text-xs text-muted">
+              {t("page.authentication")}
+              <InfoHint text={t("page.proxyOptionalAuth")} />
+            </div>
+            <label class="mb-2 block text-xs text-muted">
+              {t("page.proxyUsername")}
+              <input
+                data-testid="proxy-username"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                bind:value={proxyUsername}
+                placeholder="user"
+              />
+            </label>
+            <label class="mb-1 block text-xs text-muted">
+              <span class="flex items-center gap-1">
+                {t("page.proxyPassword")}
+                <InfoHint text={t("page.secretHint")} />
+              </span>
+              <PasswordInput
+                testid="proxy-secret"
+                class="mt-1"
+                bind:value={proxySecret}
+                placeholder={proxyHasSavedPassword ? t("page.secretKeep") : ""}
+              />
+            </label>
+          {/if}
+        </fieldset>
       </div>
     {/if}
 
@@ -690,7 +701,7 @@
           <InfoHint text={t("page.noAiHint")} />
         </div>
 
-        <div class="grid gap-2 sm:grid-cols-2">
+        <div class="grid gap-3">
           <div class="text-xs text-text">
             <div class="mb-1 flex items-center gap-1">
               <label for="srv-ai-prompt">{t("page.aiPrompt")}</label>

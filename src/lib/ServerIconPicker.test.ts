@@ -5,18 +5,10 @@ import ServerIconPicker from "./ServerIconPicker.svelte";
 const base = { label: "Icon" };
 
 describe("ServerIconPicker", () => {
-  it("is collapsed by default: shows the selection preview, hides the grid", () => {
-    render(ServerIconPicker, { props: { ...base, icon: "database", color: "green" } });
-    // The chosen glyph stays visible in the disclosure header even when folded.
-    expect(screen.getByTestId("server-icon-preview")).toBeInTheDocument();
-    // The grid/swatches are not rendered until expanded.
-    expect(screen.queryByTestId("server-icon-generic")).toBeNull();
-    expect(screen.queryByTestId("server-color-none")).toBeNull();
-  });
-
-  it("expands to reveal the full glyph grid and colour swatches", async () => {
+  it("shows the full glyph grid and colour swatches without a fold", () => {
     render(ServerIconPicker, { props: { ...base, icon: "", color: "" } });
-    await fireEvent.click(screen.getByTestId("server-icon-section"));
+    // No inner disclosure: the picker already lives in a collapsible form section.
+    expect(screen.queryByTestId("server-icon-section")).toBeNull();
     expect(screen.getByTestId("server-icon-generic")).toBeInTheDocument();
     expect(screen.getByTestId("server-icon-kubernetes")).toBeInTheDocument();
     expect(screen.getByTestId("server-color-none")).toBeInTheDocument();
@@ -24,7 +16,7 @@ describe("ServerIconPicker", () => {
   });
 
   it("marks the selected glyph and colour via aria-pressed", () => {
-    render(ServerIconPicker, { props: { ...base, icon: "database", color: "green", open: true } });
+    render(ServerIconPicker, { props: { ...base, icon: "database", color: "green" } });
     expect(screen.getByTestId("server-icon-database")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("server-icon-web")).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByTestId("server-color-green")).toHaveAttribute("aria-pressed", "true");
@@ -32,7 +24,7 @@ describe("ServerIconPicker", () => {
   });
 
   it("updates the pressed glyph when a different one is clicked", async () => {
-    render(ServerIconPicker, { props: { ...base, icon: "", color: "", open: true } });
+    render(ServerIconPicker, { props: { ...base, icon: "", color: "" } });
     const web = screen.getByTestId("server-icon-web");
     expect(web).toHaveAttribute("aria-pressed", "false");
     await fireEvent.click(web);
@@ -41,7 +33,7 @@ describe("ServerIconPicker", () => {
   });
 
   it("updates the pressed colour when a swatch is clicked", async () => {
-    render(ServerIconPicker, { props: { ...base, icon: "", color: "", open: true } });
+    render(ServerIconPicker, { props: { ...base, icon: "", color: "" } });
     const red = screen.getByTestId("server-color-red");
     await fireEvent.click(red);
     expect(red).toHaveAttribute("aria-pressed", "true");

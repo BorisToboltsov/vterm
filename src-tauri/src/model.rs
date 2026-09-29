@@ -74,6 +74,11 @@ pub struct ServerProfile {
     /// Free-form tags for filtering/search.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Production flag: confirmations and no autonomous AI (enforced by the
+    /// frontend). `None` = saved before the flag existed — the frontend then falls
+    /// back to the old exact `prod`/`production` tag convention.
+    #[serde(default)]
+    pub prod: Option<bool>,
     /// Automatically start recording when a session to this server connects
     /// (e.g. for production servers — an audit trail of every session).
     #[serde(default)]
@@ -125,6 +130,8 @@ pub struct NewServerProfile {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
+    pub prod: Option<bool>,
+    #[serde(default)]
     pub auto_record: bool,
     #[serde(default)]
     pub no_ai: bool,
@@ -167,6 +174,7 @@ mod tests {
             has_saved_password: true,
             group: Some("Prod/EU".into()),
             tags: vec!["web".into(), "eu".into()],
+            prod: Some(true),
             auto_record: true,
             no_ai: true,
             chat_prompt_id: Some("p-1".into()),
@@ -198,6 +206,8 @@ mod tests {
         assert_eq!(back.port, 2222);
         assert_eq!(back.auth_method, AuthMethod::Key);
         assert_eq!(back.tags, vec!["web", "eu"]);
+        assert_eq!(back.prod, Some(true));
+        assert!(json.contains("\"prod\":true"));
         assert!(back.auto_record);
         assert!(back.no_ai);
         assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
@@ -244,6 +254,10 @@ mod tests {
         assert_eq!(p.chat_prompt_id, None);
         assert_eq!(p.exec_mode, None);
         assert!(p.proxy.is_none()); // legacy profiles default to a direct connection
+
+        // No flag saved yet — `None`, so the frontend can fall back to the old
+        // prod-tag convention instead of silently dropping production safeguards.
+        assert_eq!(p.prod, None);
     }
 
     #[test]
@@ -253,5 +267,6 @@ mod tests {
         assert_eq!(np.auth_method, AuthMethod::Password);
         assert!(np.tags.is_empty());
         assert_eq!(np.group, None);
+        assert_eq!(np.prod, None);
     }
 }

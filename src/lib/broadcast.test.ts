@@ -51,11 +51,11 @@ describe("prodMembers / groupHasProd", () => {
     tab({ sessionId: "l", kind: "local", serverId: "" }),
   ];
   const servers = [
-    { id: "web", tags: ["staging"] },
-    { id: "db", tags: ["Prod"] },
+    { id: "web", tags: ["staging"], prod: false },
+    { id: "db", tags: [], prod: true },
   ];
 
-  it("flags only SSH members whose server carries a prod tag", () => {
+  it("flags only SSH members whose server is marked prod", () => {
     expect(prodMembers(["a", "b", "l"], tabs, servers)).toEqual(["b"]);
     expect(groupHasProd(["a", "b", "l"], tabs, servers)).toBe(true);
   });
@@ -63,6 +63,10 @@ describe("prodMembers / groupHasProd", () => {
   it("is false when no target is prod", () => {
     expect(prodMembers(["a", "l"], tabs, servers)).toEqual([]);
     expect(groupHasProd(["a", "l"], tabs, servers)).toBe(false);
+  });
+
+  it("reads a legacy (flagless) profile's prod tag", () => {
+    expect(prodMembers(["a", "b"], tabs, [{ id: "db", tags: ["Prod"] }])).toEqual(["b"]);
   });
 
   it("treats local tabs and unknown servers as non-prod", () => {

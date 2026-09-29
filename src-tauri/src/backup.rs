@@ -207,6 +207,7 @@ mod tests {
             has_saved_password: false,
             group: Some("Prod".into()),
             tags: vec!["web".into()],
+            prod: None,
             auto_record: true,
             no_ai: false,
             chat_prompt_id: None,

@@ -41,6 +41,9 @@ export interface ServerProfile {
   group: string | null;
   /** Free-form tags for filtering/search. */
   tags: string[];
+  /** Production server (confirmations, no autonomous AI). `null` = saved before
+   *  the flag existed — `isProdServer` then falls back to the old prod tag. */
+  prod: boolean | null;
   /** Auto-start recording whenever a session to this server connects. */
   autoRecord: boolean;
   /** Mark off-limits to the AI assistant (blocks context/execution/auto). */
@@ -131,6 +134,8 @@ export interface NewServerProfile {
   keyPath: string | null;
   group: string | null;
   tags: string[];
+  /** Always explicit from the form — saving retires the legacy tag fallback. */
+  prod: boolean;
   autoRecord: boolean;
   noAi: boolean;
   chatPromptId: string | null;
