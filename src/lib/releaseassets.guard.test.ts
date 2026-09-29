@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = process.cwd();
 const WORKFLOW = ".github/workflows/release.yml";
 const CI_WORKFLOW = ".github/workflows/ci.yml";
+const NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml";
 
 /** Файл workflow без строк-комментариев (см. преамбулу — комментарий лгал бы). */
 const codeOf = (rel: string): string =>
@@ -110,16 +111,34 @@ describe("release runs behind the quality gates", () => {
     expect(verify).toMatch(/uses:\s*\$\/\.github\/workflows\/ci\.yml/);
   });
 
-  it("blocks the build matrix on that job", () => {
+  // The deep layers (E2E in a real window, live SFTP against a real sshd, deep
+  // fuzzing) never run on a PR and are scheduled only monthly — so without this
+  // job a broken happy path merged into main would ship on the next tag.
+  it("has a deep job that reuses nightly.yml", () => {
+    const deep = jobs.get("deep");
+    expect(deep, "job `deep` not found in release.yml").toBeDefined();
+    expect(deep).toMatch(/uses:\s*\$\/\.github\/workflows\/nightly\.yml/);
+  });
+
+  it("blocks the build matrix on both jobs", () => {
     const release = jobs.get("release");
     expect(release, "job `release` not found in release.yml").toBeDefined();
     expect(release).toMatch(/needs:\s*(verify\b|\[[^\]]*\bverify\b)/);
+    expect(release).toMatch(/needs:\s*\[[^\]]*\bdeep\b/);
   });
 
-  it("the reused workflow is actually callable", () => {
-    // `workflow_call` is what makes it reusable; without it the `uses:` above
+  it("the reused workflows are actually callable", () => {
+    // `workflow_call` is what makes them reusable; without it the `uses:` above
     // fails at dispatch time, i.e. only ever on a real tag push.
     expect(codeOf(CI_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
+    expect(codeOf(NIGHTLY_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
+  });
+
+  it("the reused nightly runs the deep layers", () => {
+    const nightly = codeOf(NIGHTLY_WORKFLOW);
+    for (const job of ["fuzz:", "live-sftp:", "e2e:"]) {
+      expect(nightly, `nightly.yml lost job \`${job}\``).toMatch(new RegExp(`^ {2}${job}`, "m"));
+    }
   });
 
   it("the reused workflow runs the gates the DoD names", () => {

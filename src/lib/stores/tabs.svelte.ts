@@ -66,6 +66,21 @@ export const isLive = (status: string): boolean =>
   status.startsWith("Connected") || status.startsWith("Connecting");
 
 /**
+ * What the right dock can say about a tab's session. `offline` covers both a
+ * dropped connection (keepalive timeout, network gone, server went away) and a
+ * connect that never succeeded: in either case there is no session for the
+ * panels to run commands on, so they must say so rather than keep showing a
+ * listing that silently ages or a "checking…" that never resolves.
+ */
+export type DockConnection = "connecting" | "connected" | "offline";
+
+export function dockConnection(status: string): DockConnection {
+  if (status.startsWith("Connected")) return "connected";
+  if (status.startsWith("Connecting") || status === "connecting") return "connecting";
+  return "offline";
+}
+
+/**
  * Whether a tab exposes host metrics — gates the bottom status bar and the
  * monitoring overlay. Both SSH **and** local tabs qualify once connected (Phase
  * 38): a local tab has no SSH probe, but the backend reports its metrics natively

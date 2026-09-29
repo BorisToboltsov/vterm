@@ -8,6 +8,8 @@
 // speed of the first ten seconds long after the link has degraded, and the ETA
 // built on it is confidently wrong.
 
+import { isSyncTransferId } from "./sync";
+
 /** One observation of a transfer's progress counter. */
 export interface RateSample {
   /** Timestamp in ms (monotonic source preferred — `performance.now()`). */
@@ -94,4 +96,14 @@ export function fmtEta(seconds: number | null): string {
 export function transferPct(transferred: number, total: number): number {
   if (!(total > 0)) return 0;
   return Math.max(0, Math.min(100, Math.round((transferred / total) * 100)));
+}
+
+/**
+ * Whether the user can stop this transfer from its row (or the status bar's
+ * "cancel all"). Only a transfer still in flight, and not one file of a sync run:
+ * those are cancelled per run by the sync window's Stop, under the run's id — the
+ * per-file `sync:<path>` id is not in the backend's cancel map at all.
+ */
+export function isCancellableTransfer(t: { id: string; done: boolean }): boolean {
+  return !t.done && !isSyncTransferId(t.id);
 }

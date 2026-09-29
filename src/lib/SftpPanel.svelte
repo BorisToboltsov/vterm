@@ -25,8 +25,9 @@
   import type { FileBrowserAdapter } from "./filebrowser";
   import type { FileEntry } from "./types";
   import { notifyError } from "./stores/toasts.svelte";
-  import { transfersState } from "./stores/transfers.svelte";
-  import { etaSeconds, fmtEta } from "./transfer";
+  import { removeTransfer, transfersState } from "./stores/transfers.svelte";
+  import { isCancelled } from "./sync";
+  import { etaSeconds, fmtEta, isCancellableTransfer } from "./transfer";
   import { fmtBytes, fmtRate } from "./format";
   import { tooltip } from "./actions/tooltip";
   import FileBrowser from "./FileBrowser.svelte";
@@ -68,31 +69,42 @@
   // adapter's list (which FileBrowser calls). SyncModal needs the remote path.
   let cwd = $state(".");
 
+  /**
+   * Run one transfer under a fresh id. A user's cancel is not an error: the row
+   * goes away (a cancelled file never emits its final event, so nothing else would
+   * clear it) and no toast is shown.
+   */
+  async function runTransfer(start: (id: string) => Promise<void>) {
+    const id = crypto.randomUUID();
+    try {
+      await start(id);
+    } catch (e) {
+      if (isCancelled(String(e))) removeTransfer(id);
+      else notifyError(String(e));
+    }
+  }
+
   async function uploadPaths(destDir: string, paths: string[]) {
     for (const p of paths) {
       const name = p.split(/[\\/]/).pop() ?? p;
-      try {
-        await sftpUpload(sessionId, crypto.randomUUID(), p, `${destDir}/${name}`.replace(/\/+/g, "/"));
-      } catch (e) {
-        notifyError(String(e));
-      }
+      await runTransfer((id) =>
+        sftpUpload(sessionId, id, p, `${destDir}/${name}`.replace(/\/+/g, "/")),
+      );
     }
   }
 
   async function download(entry: FileEntry) {
+    let dest: string | null;
     try {
-      if (entry.isDir) {
-        const parent = await pickSaveDir();
-        if (!parent) return;
-        await sftpDownload(sessionId, crypto.randomUUID(), entry.path, parent, true);
-      } else {
-        const dest = await pickSavePath(entry.name);
-        if (!dest) return;
-        await sftpDownload(sessionId, crypto.randomUUID(), entry.path, dest, false);
-      }
+      dest = entry.isDir ? await pickSaveDir() : await pickSavePath(entry.name);
     } catch (e) {
       notifyError(String(e));
+      return;
     }
+    if (!dest) return;
+    // For a folder `dest` is the parent directory the tree is created under.
+    const target = dest;
+    await runTransfer((id) => sftpDownload(sessionId, id, entry.path, target, entry.isDir));
   }
 
   // Transport + POSIX navigation, plus the SFTP-only capabilities. The `list`
@@ -168,11 +180,14 @@
             />
             <span class="min-w-0 flex-1 truncate" title={tr.name}>{tr.name}</span>
             <span class="shrink-0 text-accent">{pct(tr)}%</span>
-            {#if tr.isFolder && !tr.done}
+            {#if isCancellableTransfer(tr)}
+              <!-- Always visible, like the sync window's Stop: a hover-only
+                   control on a long download is one the user never finds. -->
               <button
-                class="hidden shrink-0 items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white group-hover:inline-flex"
-                use:tooltip={t("sftp.stopDownload")}
-                aria-label={t("sftp.stopDownload")}
+                data-testid="transfer-cancel"
+                class="inline-flex shrink-0 items-center rounded p-0.5 text-danger hover:bg-danger hover:text-white"
+                use:tooltip={t("sftp.cancelTransfer")}
+                aria-label={t("sftp.cancelTransfer")}
                 onclick={() => sftpCancel(tr.id)}
               >
                 <Icon name="close" size={12} />

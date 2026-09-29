@@ -76,12 +76,13 @@ describe("ServerFormModal validation", () => {
 
     await userEvent.click(screen.getByTestId("save-server"));
 
-    // All three required fields (alias/host/username) light up, plus a summary.
-    expect(screen.getAllByText("This field is required")).toHaveLength(3);
+    // Both required fields (alias/host) light up, plus a summary. The login is
+    // optional — empty means `root` — so it is never flagged.
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
     expect(screen.getByText("Fill in the required fields")).toBeInTheDocument();
     expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByTestId("field-username")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByTestId("field-username")).not.toHaveAttribute("aria-invalid");
     // No save was attempted.
     expect(addServer).not.toHaveBeenCalled();
   });
@@ -92,11 +93,11 @@ describe("ServerFormModal validation", () => {
     await tick();
 
     await userEvent.click(screen.getByTestId("save-server"));
-    expect(screen.getAllByText("This field is required")).toHaveLength(3);
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
 
     await userEvent.type(screen.getByTestId("field-alias"), "Prod");
-    // Alias error clears; host + username still flagged.
-    expect(screen.getAllByText("This field is required")).toHaveLength(2);
+    // Alias error clears; host still flagged.
+    expect(screen.getAllByText("This field is required")).toHaveLength(1);
     expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "false");
   });
 
@@ -112,6 +113,18 @@ describe("ServerFormModal validation", () => {
 
     expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "true");
     expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("saves `root` when the login is left empty", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ username: "root" }));
   });
 
   it("carries the chosen pictogram and colour into the payload", async () => {
@@ -235,7 +248,7 @@ describe("ServerFormModal validation", () => {
     comp.openAdd();
     await tick();
     await userEvent.click(screen.getByTestId("save-server"));
-    expect(screen.getAllByText("This field is required")).toHaveLength(3);
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
 
     comp.openAdd();
     await tick();
@@ -305,6 +318,41 @@ describe("ServerFormModal proxy", () => {
     await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
     await userEvent.type(screen.getByTestId("field-username"), "root");
   }
+
+  it("gives an empty jump-host login the same `root` default", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({ kind: "jump", username: "root" }),
+      }),
+    );
+  });
+
+  it("leaves an empty SOCKS login empty — its auth is optional", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+    await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
+    await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({ kind: "socks5", username: "" }),
+      }),
+    );
+  });
 
   it("is a direct connection by default — no proxy fields, no proxy in payload", async () => {
     const { comp } = renderForm();

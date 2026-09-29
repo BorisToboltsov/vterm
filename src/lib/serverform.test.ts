@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidHost, isValidPort } from "./serverform";
+import { DEFAULT_USERNAME, isValidHost, isValidPort, usernameOrDefault } from "./serverform";
 
 describe("isValidPort", () => {
   it("accepts integers in 1…65535", () => {
@@ -99,5 +99,18 @@ describe("isValidHost — general", () => {
     expect(isValidHost("")).toBe(false);
     expect(isValidHost("   ")).toBe(false);
     expect(isValidHost("  10.0.0.1  ")).toBe(true);
+  });
+});
+
+describe("usernameOrDefault", () => {
+  it("falls back to root for an empty or blank login", () => {
+    expect(DEFAULT_USERNAME).toBe("root");
+    expect(usernameOrDefault("")).toBe("root");
+    expect(usernameOrDefault("   ")).toBe("root");
+  });
+
+  it("keeps a typed login, trimmed", () => {
+    expect(usernameOrDefault("deploy")).toBe("deploy");
+    expect(usernameOrDefault("  deploy ")).toBe("deploy");
   });
 });

@@ -4,6 +4,7 @@ import {
   RATE_WINDOW_MS,
   etaSeconds,
   fmtEta,
+  isCancellableTransfer,
   pushSample,
   sampleRate,
   transferPct,
@@ -127,5 +128,16 @@ describe("transferPct", () => {
     expect(transferPct(37, 100)).toBe(37);
     expect(transferPct(150, 100)).toBe(100);
     expect(transferPct(5, 0)).toBe(0);
+  });
+});
+
+describe("isCancellableTransfer", () => {
+  it("offers a stop only for an in-flight transfer the user started", () => {
+    expect(isCancellableTransfer({ id: "a1", done: false })).toBe(true);
+    expect(isCancellableTransfer({ id: "a1", done: true })).toBe(false);
+  });
+
+  it("leaves sync-run files to the sync window's Stop", () => {
+    expect(isCancellableTransfer({ id: "sync:dir/a.txt", done: false })).toBe(false);
   });
 });

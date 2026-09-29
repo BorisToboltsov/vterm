@@ -23,9 +23,9 @@
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
 | **Гейты-контракты** | Vitest (обычные тесты) | 18 файлов | Инварианты, которые нельзя проверить типами: см. [таблицу](INVARIANTS.md#гейты) | Везде |
-| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly |
-| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly (нужен контейнер) |
-| **E2E** | WebdriverIO + `tauri-driver` | happy-path | Реальное окно против живого SSH | **Linux/Windows**, не macOS → только nightly |
+| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly и релиз |
+| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly и релиз (нужен контейнер) |
+| **E2E** | WebdriverIO + `tauri-driver` | happy-path | Реальное окно против живого SSH | **Linux/Windows**, не macOS → только nightly и релиз |
 
 ## Быстрый старт
 
@@ -199,16 +199,18 @@ macOS**, и это главное отличие от GitLab-схемы ниже
 | Workflow | Когда | Что делает |
 |----------|-------|------------|
 | [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo audit`, `cargo deny`, `pnpm audit` — жёстко |
-| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, еженедельно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
-| [security.yml](../.github/workflows/security.yml) | push, PR, еженедельно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
-| [nightly.yml](../.github/workflows/nightly.yml) | ночью, `workflow_dispatch` | Фаззинг на глубине, живые SFTP-тесты, E2E |
-| [release.yml](../.github/workflows/release.yml) | тег `v*` | `verify` (вызов `ci.yml` целиком) → сборка трёх бандлов → `integrity` |
+| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
+| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
+| [nightly.yml](../.github/workflows/nightly.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Фаззинг на глубине, живые SFTP-тесты, E2E |
+| [release.yml](../.github/workflows/release.yml) | тег `v*` | `verify` (вызов `ci.yml`) + `deep` (вызов `nightly.yml`) → сборка трёх бандлов → `integrity` |
 
 Два свойства, которые легко потерять и которые поэтому закреплены гейтами:
 
 - **Тег не может опубликовать релиз из красного дерева.** `release.yml` не копирует шаги
-  CI, а вызывает `ci.yml` через `workflow_call`, и матрица сборки стоит под `needs: verify`.
-  Держит `releaseassets.guard.test.ts`.
+  CI, а вызывает `ci.yml` и `nightly.yml` через `workflow_call`, и матрица сборки стоит под
+  `needs: [verify, deep]`. Глубокие слои (E2E, live-sftp, фаззинг) по расписанию идут лишь раз
+  в месяц, поэтому без `deep` поломка основного сценария доезжала бы до релиза. Держит
+  `releaseassets.guard.test.ts`.
 - **Экшены запинены по коммит-SHA** с комментарием версии: изменяемый тег — обещание,
   которое апстрим может переписать, а `tauri-action` работает с токеном на запись в релизы.
   Обновляет их Dependabot ([dependabot.yml](../.github/dependabot.yml)), так что пин не

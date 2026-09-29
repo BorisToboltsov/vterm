@@ -4,6 +4,7 @@ import {
   tabsForServer,
   dotClass,
   findTab,
+  dockConnection,
   isLive,
   isMonitorable,
   localizedStatus,
@@ -100,6 +101,17 @@ describe("pure helpers", () => {
 
   it("serverDots handles an empty list", () => {
     expect(serverDots([])).toEqual({ dots: [], extra: 0 });
+  });
+
+  it("dockConnection tells connecting from a lost or failed session", () => {
+    expect(dockConnection(statusLabel("connected"))).toBe("connected");
+    expect(dockConnection(statusLabel("connecting"))).toBe("connecting");
+    expect(dockConnection("connecting")).toBe("connecting");
+    // A dropped session and a connect that never succeeded both leave the
+    // panels without a session to run on.
+    expect(dockConnection(statusLabel("closed"))).toBe("offline");
+    expect(dockConnection(statusLabel("error", "timeout"))).toBe("offline");
+    expect(dockConnection("")).toBe("offline");
   });
 
   it("isLive is true only while connected/connecting", () => {

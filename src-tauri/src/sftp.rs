@@ -533,43 +533,90 @@ async fn copy_recursive(sftp: &SftpSession, from: &str, to: &str) -> AppResult<(
     }
 }
 
+/// Upload `local` to `remote`, staged through a hidden sibling temp and renamed
+/// onto the target only once every byte is on the server. A cancelled or failed
+/// upload therefore never truncates or half-writes the file that was there — the
+/// same shape as the editor's save ([`write_text`]). `cancel` (the transfer's flag
+/// in the shared cancel map) is checked between chunks.
 pub async fn upload(
     app: &AppHandle,
     id: String,
     sftp: &SftpSession,
     local: &str,
     remote: &str,
+    cancel: Option<&AtomicBool>,
+) -> AppResult<()> {
+    upload_staged(Some(app), &id, sftp, local, remote, cancel).await
+}
+
+async fn upload_staged(
+    app: Option<&AppHandle>,
+    id: &str,
+    sftp: &SftpSession,
+    local: &str,
+    remote: &str,
+    cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
     let name = base_name(remote);
     let mut src = tokio::fs::File::open(local)
         .await
         .map_err(|e| format!("open {local}: {e}"))?;
     let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let existing = sftp.metadata(remote).await.ok();
+    let tmp = temp_sibling(remote);
     let mut dst = sftp
-        .create(remote)
+        .create(&tmp)
         .await
         .map_err(|e| format!("create {remote}: {e}"))?;
     let t = Transfer {
         app,
-        id: &id,
+        id,
         name: &name,
         direction: "upload",
         total,
     };
-    copy_with_progress(&t, &mut src, &mut dst, true).await?;
-    dst.shutdown().await.map_err(|e| e.to_string())?;
+    let copied = async {
+        copy_with_progress(&t, &mut src, &mut dst, true, cancel).await?;
+        dst.shutdown()
+            .await
+            .map_err(|e| AppError::from(e.to_string()))
+    }
+    .await;
+    drop(dst);
+    if let Err(e) = copied {
+        let _ = sftp.remove_file(tmp).await;
+        return Err(e);
+    }
+    // Keep the replaced file's mode (an uploaded script stays executable), as a
+    // plain overwrite did. Best-effort, like the editor's save: a non-owner may
+    // be refused the chmod, and the content is what the user asked for. NOTE the
+    // `chmod_attrs` builder — a template here would truncate the file.
+    if let Some(perm) = existing.as_ref().and_then(|m| m.permissions) {
+        let _ = sftp.set_metadata(tmp.clone(), chmod_attrs(perm)).await;
+    }
+    // SSH_FXP_RENAME fails onto an existing target (OpenSSH): drop it first. The
+    // only non-atomic window — the temp already holds the full content.
+    if existing.is_some() {
+        let _ = sftp.remove_file(remote).await;
+    }
+    if let Err(e) = sftp.rename(tmp.clone(), remote).await {
+        let _ = sftp.remove_file(tmp).await;
+        return Err(format!("rename onto {remote}: {e}").into());
+    }
     Ok(())
 }
 
-/// Download a single remote file to `local`.
+/// Download a single remote file to `local` (staged like [`upload`]; `cancel` is
+/// checked between chunks).
 pub async fn download(
     app: &AppHandle,
     id: String,
     sftp: &SftpSession,
     remote: &str,
     local: &str,
+    cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
-    download_file(app, &id, sftp, remote, local, true).await
+    download_file(Some(app), &id, sftp, remote, local, true, cancel).await
 }
 
 /// Download a remote directory tree into `local_parent`/<dir name>.
@@ -634,18 +681,23 @@ pub async fn download_dir(
             break;
         }
         Transfer {
-            app,
+            app: Some(app),
             id: &id,
             name: &base_name(remote),
             direction: "download",
             total,
         }
         .emit(done, false, true);
-        download_file(app, &id, sftp, remote, local, false).await?;
+        // The flag also reaches inside the file: staging means a large file cut
+        // mid-stream leaves nothing behind, so there is no reason to finish it.
+        match download_file(Some(app), &id, sftp, remote, local, false, Some(&cancel)).await {
+            Err(AppError::Cancelled) => break,
+            other => other?,
+        }
         done += 1;
     }
     Transfer {
-        app,
+        app: Some(app),
         id: &id,
         name: &folder,
         direction: "download",
@@ -656,12 +708,13 @@ pub async fn download_dir(
 }
 
 async fn download_file(
-    app: &AppHandle,
+    app: Option<&AppHandle>,
     id: &str,
     sftp: &SftpSession,
     remote: &str,
     local: &str,
     report: bool,
+    cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
     let name = base_name(remote);
     let total = sftp
@@ -673,7 +726,10 @@ async fn download_file(
         .open(remote)
         .await
         .map_err(|e| format!("open {remote}: {e}"))?;
-    let mut dst = tokio::fs::File::create(local)
+    // Staged next to the target, renamed over it only when complete: a cancelled
+    // or broken download never leaves a truncated file where the user's was.
+    let tmp = crate::localfile::local_temp(local);
+    let mut dst = tokio::fs::File::create(&tmp)
         .await
         .map_err(|e| format!("create {local}: {e}"))?;
     let t = Transfer {
@@ -683,15 +739,33 @@ async fn download_file(
         direction: "download",
         total,
     };
-    copy_with_progress(&t, &mut src, &mut dst, report).await?;
-    dst.flush().await.map_err(|e| e.to_string())?;
+    let copied = async {
+        copy_with_progress(&t, &mut src, &mut dst, report, cancel).await?;
+        dst.flush().await.map_err(|e| AppError::from(e.to_string()))
+    }
+    .await;
+    // Close the handle before renaming: Windows refuses to move an open file.
+    drop(dst);
+    if let Err(e) = copied {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    // Keep the replaced file's permissions, as the old in-place overwrite did.
+    if let Ok(meta) = tokio::fs::metadata(local).await {
+        let _ = tokio::fs::set_permissions(&tmp, meta.permissions()).await;
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, local).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("rename onto {local}: {e}").into());
+    }
     Ok(())
 }
 
 /// The invariant descriptor of one transfer, shared by the copy loop and its
 /// progress events: `app`/`id`/`name`/`direction`/`total` don't change mid-copy.
 struct Transfer<'a> {
-    app: &'a AppHandle,
+    /// `None` only in the live tests, which have no Tauri runtime to emit into.
+    app: Option<&'a AppHandle>,
     id: &'a str,
     name: &'a str,
     direction: &'static str,
@@ -701,7 +775,8 @@ struct Transfer<'a> {
 impl Transfer<'_> {
     /// Emit one `sftp://progress` event for this transfer.
     fn emit(&self, transferred: u64, done: bool, is_folder: bool) {
-        let _ = self.app.emit(
+        let Some(app) = self.app else { return };
+        let _ = app.emit(
             "sftp://progress",
             Progress {
                 id: self.id.to_string(),
@@ -718,12 +793,15 @@ impl Transfer<'_> {
 
 /// Copy with optional progress reporting. When `report` is false (used for the
 /// individual files inside a folder download) no per-file events are emitted —
-/// the caller emits an aggregate file-count progress instead.
+/// the caller emits an aggregate file-count progress instead. A raised `cancel`
+/// flag stops the copy between chunks with [`AppError::Cancelled`]; callers only
+/// pass one when the destination is a staging temp they discard on error.
 async fn copy_with_progress<R, W>(
     t: &Transfer<'_>,
     src: &mut R,
     dst: &mut W,
     report: bool,
+    cancel: Option<&AtomicBool>,
 ) -> AppResult<()>
 where
     R: AsyncRead + Unpin,
@@ -733,6 +811,9 @@ where
     let mut transferred: u64 = 0;
     let mut last_emit: u64 = 0;
     loop {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            return Err(AppError::Cancelled);
+        }
         let n = src
             .read(&mut buf)
             .await
@@ -1389,5 +1470,125 @@ mod live_sftp {
         );
 
         let _ = sftp.remove_file(path).await;
+    }
+
+    /// Names in `DIR` that are staging temps of `path` — any left behind is the
+    /// litter a cancelled transfer must not leave.
+    async fn leftover_temps(sftp: &SftpSession, path: &str) -> Vec<String> {
+        let stem = format!(".{}.vterm-tmp-", base_name(path));
+        list(sftp, DIR)
+            .await
+            .expect("list dir")
+            .into_iter()
+            .filter(|e| e.name.starts_with(&stem))
+            .map(|e| e.name)
+            .collect()
+    }
+
+    /// A cancelled upload over an existing file: before staging, the upload wrote
+    /// straight into `create(remote)`, which truncates — stopping it left the user's
+    /// file cut in half. Now the original must be byte-for-byte what it was.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn cancelled_upload_leaves_the_target_untouched() {
+        let sftp = connect().await;
+        let path = path_for("upload-cancel");
+        seed(&sftp, &path, b"original\n").await;
+        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        std::fs::write(&local, vec![b'x'; 4 * CHUNK]).unwrap();
+
+        let stop = AtomicBool::new(true);
+        let res = upload_staged(
+            None,
+            "t",
+            &sftp,
+            local.to_str().unwrap(),
+            &path,
+            Some(&stop),
+        )
+        .await;
+        assert!(matches!(res, Err(AppError::Cancelled)), "{res:?}");
+
+        let on_server = sftp.read(path.clone()).await.expect("read back");
+        assert_eq!(on_server, b"original\n");
+        assert!(leftover_temps(&sftp, &path).await.is_empty());
+
+        let _ = sftp.remove_file(path).await;
+        let _ = std::fs::remove_file(local);
+    }
+
+    /// A completed upload replaces the content but keeps the target's mode — the
+    /// rename swaps in a fresh inode, so an executable script would otherwise come
+    /// back 0644.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn staged_upload_replaces_content_and_keeps_the_mode() {
+        let sftp = connect().await;
+        let path = path_for("upload-mode");
+        seed(&sftp, &path, b"old\n").await;
+        sftp.set_metadata(path.clone(), chmod_attrs(0o100_755))
+            .await
+            .expect("chmod");
+        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        std::fs::write(&local, b"new content\n").unwrap();
+
+        upload_staged(None, "t", &sftp, local.to_str().unwrap(), &path, None)
+            .await
+            .expect("upload");
+
+        assert_eq!(
+            sftp.read(path.clone()).await.expect("read"),
+            b"new content\n"
+        );
+        let mode = sftp.metadata(path.clone()).await.expect("stat").permissions;
+        assert_eq!(mode.map(|m| m & 0o777), Some(0o755));
+        assert!(leftover_temps(&sftp, &path).await.is_empty());
+
+        let _ = sftp.remove_file(path).await;
+        let _ = std::fs::remove_file(local);
+    }
+
+    /// The download side of the same contract: a stopped download keeps the local
+    /// file the user already had, and leaves no staging temp next to it.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn cancelled_download_leaves_the_local_file_untouched() {
+        let sftp = connect().await;
+        let path = path_for("download-cancel");
+        seed(&sftp, &path, &vec![b'y'; 4 * CHUNK]).await;
+        let dir = std::env::temp_dir().join(format!("vterm-down-{}", crate::uuid_like()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let local = dir.join("target.conf");
+        std::fs::write(&local, b"mine\n").unwrap();
+
+        let stop = AtomicBool::new(true);
+        let res = download_file(
+            None,
+            "t",
+            &sftp,
+            &path,
+            local.to_str().unwrap(),
+            true,
+            Some(&stop),
+        )
+        .await;
+        assert!(matches!(res, Err(AppError::Cancelled)), "{res:?}");
+
+        assert_eq!(std::fs::read(&local).unwrap(), b"mine\n");
+        assert_eq!(
+            std::fs::read_dir(&dir).unwrap().count(),
+            1,
+            "staging temp left behind"
+        );
+
+        // And uncancelled, the same call replaces it with the server's bytes.
+        download_file(None, "t", &sftp, &path, local.to_str().unwrap(), true, None)
+            .await
+            .expect("download");
+        assert_eq!(std::fs::read(&local).unwrap().len(), 4 * CHUNK);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+
+        let _ = sftp.remove_file(path).await;
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

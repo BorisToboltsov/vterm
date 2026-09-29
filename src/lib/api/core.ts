@@ -155,9 +155,26 @@ export interface MenuLabels {
   help: string;
   manual: string;
   monitoring: string;
+  quit: string;
 }
 
 /** Rebuild the native menu in the given language (called on startup + on change). */
 export function setMenuLanguage(labels: MenuLabels): Promise<void> {
   return invoke<void>("set_menu_language", { labels });
+}
+
+// ── Quit confirmation ─────────────────────────────────────────────────────────
+
+/**
+ * Make closing the window / quitting ask first. Call only once the `menu://quit`
+ * listener is registered: an armed guard with nobody listening would leave the
+ * window impossible to close.
+ */
+export function armCloseGuard(): Promise<void> {
+  return invoke<void>("arm_close_guard");
+}
+
+/** The user confirmed the quit dialog: exit the app. */
+export function quitApp(): Promise<void> {
+  return invoke<void>("quit_app");
 }

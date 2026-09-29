@@ -13,8 +13,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
@@ -25,7 +24,7 @@ updates:
       default-days: 7
     groups:
       # Один PR на minor/patch: такие бампы почти всегда безобидны, а пять
-      # отдельных PR в неделю читать никто не будет.
+      # отдельных PR в месяц читать никто не будет.
       #
       # МАЖОРЫ НАМЕРЕННО ВНЕ ГРУППЫ и приезжают поштучно. Первый же собранный
       # групповой PR подмешал `tauri-action` v0.6.2 → v1.0.0 к рутинному
@@ -40,8 +39,7 @@ updates:
   - package-ecosystem: npm
     directory: "/"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     open-pull-requests-limit: 10
     commit-message:
       prefix: "deps"
@@ -83,8 +81,7 @@ updates:
   - package-ecosystem: cargo
     directory: "/src-tauri"
     schedule:
-      interval: weekly
-      day: monday
+      interval: monthly
     open-pull-requests-limit: 10
     commit-message:
       prefix: "deps"

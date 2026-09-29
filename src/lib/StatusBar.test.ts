@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Metrics } from "./api";
 
 const fetchMetrics = vi.fn();
-vi.mock("./api", () => ({ fetchMetrics: (...a: unknown[]) => fetchMetrics(...a) }));
+const sftpCancel = vi.fn(async () => {});
+vi.mock("./api", () => ({
+  fetchMetrics: (...a: unknown[]) => fetchMetrics(...a),
+  sftpCancel: (...a: unknown[]) => sftpCancel(...(a as [])),
+}));
 
 import StatusBar from "./StatusBar.svelte";
 import { resetSettings, settings } from "./settings.svelte";
@@ -266,6 +270,37 @@ describe("StatusBar — transfers & states", () => {
     });
     await userEvent.click(await screen.findByTestId("transfer-indicator"));
     expect(layout.sftpCollapsed).toBe(false);
+  });
+
+  it("cancels every in-flight transfer, but not a sync run's files", async () => {
+    sftpCancel.mockClear();
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "t3" } });
+    await screen.findByTestId("bar-os");
+    const base = { name: "f", direction: "download" as const, total: 4, isFolder: false };
+    applyProgress({ ...base, id: "dl-1", transferred: 1, done: false });
+    applyProgress({ ...base, id: "sync:a/b.txt", transferred: 1, done: false });
+    applyProgress({ ...base, id: "dl-2", transferred: 4, done: true });
+
+    await userEvent.click(await screen.findByTestId("transfer-cancel-all"));
+    expect(sftpCancel.mock.calls).toEqual([["dl-1"]]);
+  });
+
+  it("offers no cancel-all when only a sync run is transferring", async () => {
+    fetchMetrics.mockResolvedValue(linux);
+    render(StatusBar, { props: { sessionId: "t4" } });
+    await screen.findByTestId("bar-os");
+    applyProgress({
+      id: "sync:c.txt",
+      name: "c.txt",
+      direction: "upload",
+      transferred: 1,
+      total: 2,
+      done: false,
+      isFolder: false,
+    });
+    expect(await screen.findByTestId("transfer-indicator")).toBeInTheDocument();
+    expect(screen.queryByTestId("transfer-cancel-all")).toBeNull();
   });
 
   it("shows an error state when the probe fails", async () => {

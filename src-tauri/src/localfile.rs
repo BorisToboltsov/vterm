@@ -420,7 +420,7 @@ fn mtime_secs(meta: &std::fs::Metadata) -> Option<u64> {
 
 /// A hidden, time-stamped sibling path used as the atomic-write staging file —
 /// path-aware (handles both `/` and `\` separators), unlike the SFTP variant.
-fn local_temp(path: &str) -> PathBuf {
+pub(crate) fn local_temp(path: &str) -> PathBuf {
     let p = Path::new(path);
     let name = p
         .file_name()

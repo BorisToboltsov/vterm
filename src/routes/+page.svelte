@@ -117,6 +117,8 @@
   import Modal from "$lib/Modal.svelte";
   import PasswordInput from "$lib/PasswordInput.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import QuitDialog from "$lib/QuitDialog.svelte";
+  import { quitRows } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
@@ -130,9 +132,9 @@
   import RecordingsPanel from "$lib/RecordingsPanel.svelte";
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
-  import { applyProgress } from "$lib/stores/transfers.svelte";
+  import { applyProgress, transfersState } from "$lib/stores/transfers.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
-  import { applyScanProgress, removeSyncJob } from "$lib/stores/syncjob.svelte";
+  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
     recordingState,
     recordingPaused,
@@ -147,6 +149,8 @@
   import { t } from "$lib/i18n";
   import {
     setMenuLanguage,
+    armCloseGuard,
+    quitApp,
     startRecording,
     stopRecording,
     setRecordingPaused,
@@ -164,7 +168,7 @@
   import type { ProbeSession } from "$lib/probe";
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
-  import { localizedStatus } from "$lib/stores/tabs.svelte";
+  import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
   import BroadcastBar from "$lib/BroadcastBar.svelte";
   import BroadcastRoster from "$lib/BroadcastRoster.svelte";
   import {
@@ -210,6 +214,17 @@
     showUtilities = true;
   }
   let showHelp = $state(false);
+  // Quit confirmation (window close / ⌘Q / File → Exit, via `menu://quit`).
+  let showQuit = $state(false);
+  /** What quitting would cut off right now — read when the dialog opens. */
+  function quitRowsNow() {
+    return quitRows({
+      tabs: tabsState.list,
+      transfers: Object.values(transfersState.map),
+      syncBusy: tabsState.list.filter((tab) => isBusy(peekSyncJob(tab.sessionId))).length,
+      recordings: Object.values(recordingState).filter(Boolean).length,
+    });
+  }
   let helpTab = $state<"help" | "about" | "manual">("help");
   // Custom window chrome replaces the OS title bar + menu on Windows/Linux; macOS
   // keeps its native decorations, so the TitleBar is never mounted there. Empty
@@ -319,7 +334,7 @@
     }
     return map;
   });
-  const sftpReady = $derived(activeTab ? activeTab.status.startsWith("Connected") : false);
+  const dockConn = $derived(activeTab ? dockConnection(activeTab.status) : "offline");
   // Top-bar breadcrumb of the active connection. Alias comes from the tab (SSH
   // alias or "Local shell"); the `user@host:port` line needs the SSH profile.
   const activeServer = $derived(
@@ -1007,6 +1022,7 @@
       help: t("menu.help"),
       manual: t("menu.manual"),
       monitoring: t("menu.monitoring"),
+      quit: t("menu.quit"),
     }).catch(() => {});
   });
 
@@ -1065,6 +1081,14 @@
       showHelp = true;
     }).then((u) => unlisteners.push(u));
     listen("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
+    // Quit confirmation. The guard is armed only once the listener is in place —
+    // an armed guard nobody answers would make the window impossible to close.
+    listen("menu://quit", () => (showQuit = true))
+      .then((u) => {
+        unlisteners.push(u);
+        return armCloseGuard();
+      })
+      .catch(() => {});
     // App-level SFTP progress feed → shared store (read by SFTP panel + status bar),
     // plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
     listen<SftpProgress>("sftp://progress", (e) => {
@@ -2458,7 +2482,7 @@
                 serverExecMode={activeTab?.kind === "ssh"
                   ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
                   : null}
-                sessionReady={sftpReady}
+                connection={dockConn}
                 terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
                 promptVars={aiPromptVars}
                 followTerminal={tabsState.activeId
@@ -2575,6 +2599,13 @@
   onchanged={async () => {
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
   }}
+/>
+
+<QuitDialog
+  open={showQuit}
+  rows={showQuit ? quitRowsNow() : []}
+  onconfirm={() => void quitApp()}
+  oncancel={() => (showQuit = false)}
 />
 
 <!-- Drag-and-drop move confirmation (server or folder → folder / root) -->

@@ -22,7 +22,7 @@
   } from "./api";
   import { settings } from "./settings.svelte";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
-  import { isValidHost, isValidPort } from "./serverform";
+  import { DEFAULT_USERNAME, isValidHost, isValidPort, usernameOrDefault } from "./serverform";
   import { t } from "./i18n";
 
   let {
@@ -85,23 +85,17 @@
   // Empty → "required"; non-empty but malformed → "invalid host/IP".
   const hostEmpty = $derived(submitted && !host.trim());
   const hostError = $derived(submitted && !isValidHost(host));
-  const usernameError = $derived(submitted && !username.trim());
   const portError = $derived(submitted && !isValidPort(port));
   // Proxy validation only applies when the proxy is enabled.
   const proxyHostError = $derived(submitted && useProxy && !isValidHost(proxyHost));
   const proxyHostEmpty = $derived(submitted && useProxy && !proxyHost.trim());
   const proxyPortError = $derived(submitted && useProxy && !isValidPort(proxyPort));
-  const proxyUserError = $derived(
-    submitted && useProxy && proxyKind === "jump" && !proxyUsername.trim(),
-  );
   const hasErrors = $derived(
     aliasError ||
       hostError ||
-      usernameError ||
       portError ||
       proxyHostError ||
-      proxyPortError ||
-      proxyUserError,
+      proxyPortError,
   );
 
   /** Reset the proxy fields from a profile's proxy (or to defaults when none).
@@ -226,14 +220,8 @@
   async function submit(event: Event) {
     event.preventDefault();
     submitted = true;
-    if (!alias.trim() || !isValidHost(host) || !username.trim() || !isValidPort(port)) return;
-    if (
-      useProxy &&
-      (!isValidHost(proxyHost) ||
-        !isValidPort(proxyPort) ||
-        (proxyKind === "jump" && !proxyUsername.trim()))
-    )
-      return;
+    if (!alias.trim() || !isValidHost(host) || !isValidPort(port)) return;
+    if (useProxy && (!isValidHost(proxyHost) || !isValidPort(proxyPort))) return;
     const tags = tagsInput
       .split(",")
       .map((s) => s.trim())
@@ -245,7 +233,9 @@
           kind: proxyKind,
           host: proxyHost,
           port: proxyPort as number,
-          username: proxyUsername,
+          // A jump host is a full SSH login, so an empty field means `root` like
+          // the target's; SOCKS/HTTP auth is optional and stays empty.
+          username: proxyKind === "jump" ? usernameOrDefault(proxyUsername) : proxyUsername,
           authMethod: proxyAuthMethod,
           keyPath: proxyKeyPath,
           hasSavedPassword: proxySecret.trim() ? true : proxyHasSavedPassword,
@@ -255,7 +245,7 @@
       alias,
       host,
       port,
-      username,
+      username: usernameOrDefault(username),
       authMethod,
       keyPath,
       group: group.trim() || null,
@@ -370,16 +360,10 @@
             {t("page.username")}
             <input
               data-testid="field-username"
-              class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {usernameError
-                ? 'border-danger'
-                : 'border-edge'}"
-              aria-invalid={usernameError}
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
               bind:value={username}
-              placeholder="root"
+              placeholder={DEFAULT_USERNAME}
             />
-            {#if usernameError}
-              <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
-            {/if}
           </label>
         </div>
         {#if portError}
@@ -579,16 +563,10 @@
                 {t("page.proxyUsername")}
                 <input
                   data-testid="proxy-username"
-                  class="mt-1 w-full rounded border bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent {proxyUserError
-                    ? 'border-danger'
-                    : 'border-edge'}"
-                  aria-invalid={proxyUserError}
+                  class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
                   bind:value={proxyUsername}
-                  placeholder="jump"
+                  placeholder={DEFAULT_USERNAME}
                 />
-                {#if proxyUserError}
-                  <span class="mt-1 block text-meta text-danger">{t("page.fieldRequired")}</span>
-                {/if}
               </label>
 
               <div class="mb-2 text-xs text-muted">
@@ -720,6 +698,6 @@
 <!-- SSH key generator (Phase 32): fills the key path on success. -->
 <KeyGenModal
   bind:open={keygenOpen}
-  defaultComment={username.trim() && host.trim() ? `${username.trim()}@${host.trim()}` : ""}
+  defaultComment={host.trim() ? `${usernameOrDefault(username)}@${host.trim()}` : ""}
   ongenerated={(key) => (keyPath = key.path)}
 />

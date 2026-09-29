@@ -15,6 +15,8 @@
   import type { PromptVars } from "./aicore";
   import type { AiExecMode } from "./ai";
   import Icon from "./Icon.svelte";
+  import EmptyState from "./EmptyState.svelte";
+  import type { DockConnection } from "./stores/tabs.svelte";
   import { t } from "./i18n";
 
   let {
@@ -26,7 +28,7 @@
     sessionId,
     chatPromptId = null,
     serverExecMode = null,
-    sessionReady = false,
+    connection = "offline",
     terminalCwd = null,
     followTerminal = false,
     onToggleFollowTerminal,
@@ -54,7 +56,9 @@
     chatPromptId?: string | null;
     /** Per-server execution-mode override, or null to use the global setting. */
     serverExecMode?: AiExecMode | null;
-    sessionReady?: boolean;
+    /** State of the tab's session (`dockConnection`): the panels only run while
+     *  it is connected, and an offline session replaces them with one notice. */
+    connection?: DockConnection;
     /** Terminal cwd (OSC 7) for this session — the file panel follows it when on. */
     terminalCwd?: string | null;
     /** Whether the file panel should follow the terminal's cwd (per-tab toggle). */
@@ -110,6 +114,14 @@
   // Hidden panels must not keep polling — that is what the `visible` prop below
   // is for, and `dockpanels.guard.test.ts` keeps the two halves together.
   let mounted = $state<DockTab[]>([activeTab]);
+
+  const sessionReady = $derived(connection === "connected");
+  // No session to run on: every tab shows the same notice instead of its panel.
+  // The panels stay mounted underneath (their state survives the reconnect) but
+  // count as hidden — pollers stop, and on the way back each takes one fresh
+  // snapshot, exactly as when the user returns from another dock tab.
+  const offline = $derived(connection === "offline");
+  const shown = (tab: DockTab): boolean => activeTab === tab && !offline;
   $effect(() => {
     if (!mounted.includes(activeTab)) mounted.push(activeTab);
   });
@@ -180,8 +192,19 @@
            hidden, not destroyed (see `mounted` above). The fade that used to ride
            the `{#key}` remount is now the `vt-dock-pane` CSS animation, which the
            reduced-motion guard in app.css covers. -->
+      {#if offline}
+        <!-- Reconnecting lives in the terminal area (one button, not one per
+             panel); the dock only says why it has nothing to show. -->
+        <div class="vt-dock-pane min-h-0 flex-1" data-testid="dock-offline">
+          <EmptyState
+            icon="plug"
+            title={t(kind === "ssh" ? "dock.offlineTitle" : "dock.localEndedTitle")}
+            hint={t(kind === "ssh" ? "dock.offlineHint" : "dock.localEndedHint")}
+          />
+        </div>
+      {/if}
       {#if mounted.includes("files")}
-        <div class="min-h-0 flex-1 {activeTab === 'files' ? 'vt-dock-pane' : 'hidden'}">
+        <div class="min-h-0 flex-1 {shown('files') ? 'vt-dock-pane' : 'hidden'}">
           {#if kind === "ssh"}
             <SftpPanel
               embedded
@@ -189,7 +212,7 @@
               {sessionReady}
               {terminalCwd}
               {followTerminal}
-              visible={activeTab === "files"}
+              visible={shown("files")}
               {onToggleFollowTerminal}
               {onOpenFile}
               onUserNavigate={onSftpNavigate}
@@ -200,7 +223,7 @@
               {sessionId}
               {terminalCwd}
               {followTerminal}
-              visible={activeTab === "files"}
+              visible={shown("files")}
               {onToggleFollowTerminal}
               onOpenFile={onOpenLocalFile}
               onUserNavigate={onSftpNavigate}
@@ -209,11 +232,11 @@
         </div>
       {/if}
       {#if mounted.includes("git")}
-        <div class="min-h-0 flex-1 {activeTab === 'git' ? 'vt-dock-pane' : 'hidden'}">
+        <div class="min-h-0 flex-1 {shown('git') ? 'vt-dock-pane' : 'hidden'}">
           <GitPanel
             {sessionId}
             {followTerminal}
-            visible={activeTab === "git"}
+            visible={shown("git")}
             {onToggleFollowTerminal}
             onOpenDiff={onOpenGitDiff}
             onIgnore={onIgnoreGitignore}
@@ -223,11 +246,11 @@
         </div>
       {/if}
       {#if mounted.includes("docker")}
-        <div class="min-h-0 flex-1 {activeTab === 'docker' ? 'vt-dock-pane' : 'hidden'}">
+        <div class="min-h-0 flex-1 {shown('docker') ? 'vt-dock-pane' : 'hidden'}">
           <DockerPanel
             {sessionId}
             prod={aiProd}
-            visible={activeTab === "docker"}
+            visible={shown("docker")}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "container") : undefined}
@@ -235,11 +258,11 @@
         </div>
       {/if}
       {#if mounted.includes("k8s")}
-        <div class="min-h-0 flex-1 {activeTab === 'k8s' ? 'vt-dock-pane' : 'hidden'}">
+        <div class="min-h-0 flex-1 {shown('k8s') ? 'vt-dock-pane' : 'hidden'}">
           <K8sPanel
             {sessionId}
             prod={aiProd}
-            visible={activeTab === "k8s"}
+            visible={shown("k8s")}
             sessionReady={kind === "ssh" ? sessionReady : true}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "pod") : undefined}
@@ -247,7 +270,7 @@
         </div>
       {/if}
       {#if mounted.includes("ai")}
-        <div class="min-h-0 flex-1 {activeTab === 'ai' ? 'vt-dock-pane' : 'hidden'}">
+        <div class="min-h-0 flex-1 {shown('ai') ? 'vt-dock-pane' : 'hidden'}">
           <AiChat
             getContext={getAiContext}
             {sessionId}

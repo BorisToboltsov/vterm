@@ -47,8 +47,14 @@ pub(crate) struct AppState {
     pub(crate) sessions: tokio::sync::Mutex<HashMap<String, Arc<SshSession>>>,
     /// Live local-shell PTYs (the "+" terminal tabs), keyed by session id.
     local_ptys: Mutex<HashMap<String, Arc<pty::LocalPty>>>,
-    /// Cancellation flags for in-progress folder downloads, keyed by transfer id.
+    /// Cancellation flags for in-progress transfers, sync runs and tree hashes,
+    /// keyed by transfer / run id.
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Armed by the frontend once it listens for `menu://quit`: while set, closing
+    /// the window or quitting asks first instead of exiting. Unarmed (a frontend
+    /// that never loaded, or already confirmed) the app closes normally — a guard
+    /// nobody answers must not make the window impossible to close.
+    close_guard: AtomicBool,
     /// Per-session sample stores for the metrics probes (CPU%, throughput, etc.);
     /// see [`metrics::MetricsSamples`]. Cleared on disconnect.
     pub(crate) metrics_samples: metrics::MetricsSamples,
@@ -1393,6 +1399,8 @@ async fn get_sftp(state: &State<'_, AppState>, session_id: &str) -> AppResult<Ar
 fn record_sftp<T>(session: &SshSession, op: &str, res: &AppResult<T>) {
     let (code, detail) = match res {
         Ok(_) => (0, String::new()),
+        // A user stop, not a failure — the same `exit 130` a stopped sync records.
+        Err(e @ AppError::Cancelled) => (130, e.to_string()),
         Err(e) => (1, e.to_string()),
     };
     session.record_output(sftp::sftp_mirror(op, code, &detail).as_bytes());
@@ -1886,6 +1894,19 @@ async fn sftp_copy(
     res
 }
 
+/// Register `transfer_id` in the shared cancel map for the lifetime of one
+/// transfer, so `sftp_cancel` can stop it (the same map sync runs and hashing
+/// use — a second cancel mechanism is not to be added).
+fn cancel_flag(state: &AppState, transfer_id: &str) -> Arc<AtomicBool> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    state
+        .cancels
+        .lock()
+        .unwrap()
+        .insert(transfer_id.to_string(), cancel.clone());
+    cancel
+}
+
 #[tauri::command]
 async fn sftp_upload(
     app: AppHandle,
@@ -1897,7 +1918,17 @@ async fn sftp_upload(
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
-    let res = sftp::upload(&app, transfer_id, &sftp, &local_path, &remote_path).await;
+    let cancel = cancel_flag(&state, &transfer_id);
+    let res = sftp::upload(
+        &app,
+        transfer_id.clone(),
+        &sftp,
+        &local_path,
+        &remote_path,
+        Some(&cancel),
+    )
+    .await;
+    state.cancels.lock().unwrap().remove(&transfer_id);
     record_sftp(
         &session,
         &format!(
@@ -1922,15 +1953,10 @@ async fn sftp_download(
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
+    let cancel = cancel_flag(&state, &transfer_id);
     let res = if is_dir {
         // `local_path` is the destination *parent* directory.
-        let cancel = Arc::new(AtomicBool::new(false));
-        state
-            .cancels
-            .lock()
-            .unwrap()
-            .insert(transfer_id.clone(), cancel.clone());
-        let result = sftp::download_dir(
+        sftp::download_dir(
             &app,
             transfer_id.clone(),
             &sftp,
@@ -1938,12 +1964,19 @@ async fn sftp_download(
             &local_path,
             cancel,
         )
-        .await;
-        state.cancels.lock().unwrap().remove(&transfer_id);
-        result
+        .await
     } else {
-        sftp::download(&app, transfer_id, &sftp, &remote_path, &local_path).await
+        sftp::download(
+            &app,
+            transfer_id.clone(),
+            &sftp,
+            &remote_path,
+            &local_path,
+            Some(&cancel),
+        )
+        .await
     };
+    state.cancels.lock().unwrap().remove(&transfer_id);
     record_sftp(
         &session,
         &format!(
@@ -1956,7 +1989,8 @@ async fn sftp_download(
     res
 }
 
-/// Request cancellation of an in-progress folder download.
+/// Request cancellation of an in-progress transfer (file or folder, upload or
+/// download), sync run or tree hash — whatever registered `transfer_id`.
 #[tauri::command]
 fn sftp_cancel(state: State<AppState>, transfer_id: String) {
     if let Some(flag) = state.cancels.lock().unwrap().get(&transfer_id) {
@@ -2025,6 +2059,12 @@ struct MenuLabels {
     help: String,
     manual: String,
     monitoring: String,
+    #[serde(default = "default_quit_label")]
+    quit: String,
+}
+
+fn default_quit_label() -> String {
+    "Quit vterm".into()
 }
 
 impl Default for MenuLabels {
@@ -2037,6 +2077,7 @@ impl Default for MenuLabels {
             help: "Help".into(),
             manual: "Manual".into(),
             monitoring: "Monitoring".into(),
+            quit: default_quit_label(),
         }
     }
 }
@@ -2078,6 +2119,11 @@ fn build_app_menu<R: tauri::Runtime>(
         let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
             .accelerator("CmdOrCtrl+Shift+M")
             .build(app)?;
+        // Our own item, not the predefined `quit()`: that one terminates the app
+        // natively, past the confirmation `request_quit` routes through.
+        let quit = MenuItemBuilder::with_id("quit", &labels.quit)
+            .accelerator("CmdOrCtrl+Q")
+            .build(app)?;
 
         // No Edit menu on purpose: the terminal handles ⌘C/⌘V itself, and a
         // native Edit menu would steal those accelerators before xterm sees them.
@@ -2091,7 +2137,7 @@ fn build_app_menu<R: tauri::Runtime>(
             .hide_others()
             .show_all()
             .separator()
-            .quit()
+            .item(&quit)
             .build()?;
         let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
             .item(&help)
@@ -2102,6 +2148,35 @@ fn build_app_menu<R: tauri::Runtime>(
             .item(&help_menu)
             .build()
     }
+}
+
+/// Whether closing must ask first (the frontend armed the guard).
+fn close_guarded<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    app.try_state::<AppState>()
+        .is_some_and(|s| s.close_guard.load(Ordering::SeqCst))
+}
+
+/// Ask the frontend to confirm quitting — it lists what would be cut off.
+fn request_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    if close_guarded(app) {
+        let _ = app.emit("menu://quit", ());
+    } else {
+        app.exit(0);
+    }
+}
+
+/// Arm the close confirmation. Called by the frontend once its `menu://quit`
+/// listener is in place, so there is always someone to answer the question.
+#[tauri::command]
+fn arm_close_guard(state: State<AppState>) {
+    state.close_guard.store(true, Ordering::SeqCst);
+}
+
+/// The user confirmed: disarm the guard and exit.
+#[tauri::command]
+fn quit_app(app: AppHandle, state: State<AppState>) {
+    state.close_guard.store(false, Ordering::SeqCst);
+    app.exit(0);
 }
 
 /// Rebuild the native menu in the language chosen on the frontend. Called by the
@@ -2134,6 +2209,7 @@ pub fn run() {
         sessions: tokio::sync::Mutex::new(HashMap::new()),
         local_ptys: Mutex::new(HashMap::new()),
         cancels: Mutex::new(HashMap::new()),
+        close_guard: AtomicBool::new(false),
         metrics_samples: metrics::MetricsSamples::default(),
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
@@ -2174,8 +2250,22 @@ pub fn run() {
                 "help" => app.emit("menu://help", ()),
                 "manual" => app.emit("menu://manual", ()),
                 "monitoring" => app.emit("menu://monitoring", ()),
+                "quit" => {
+                    request_quit(app);
+                    Ok(())
+                }
                 _ => Ok(()),
             };
+        })
+        .on_window_event(|window, event| {
+            // The window's close button, Alt+F4, the TitleBar's close and its
+            // File → Exit all arrive here.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if close_guarded(window.app_handle()) {
+                    api.prevent_close();
+                    request_quit(window.app_handle());
+                }
+            }
         })
         .manage(state)
         .invoke_handler(tauri::generate_handler![
@@ -2273,12 +2363,26 @@ pub fn run() {
             set_registry_secret,
             delete_registry_secret,
             set_ai_key,
-            forget_ai_key
+            forget_ai_key,
+            arm_close_guard,
+            quit_app
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
     app.run(move |app_handle, event| {
+        // Any other way out the OS offers (the Dock's Quit, logout): a user
+        // request carries no exit code — `quit_app`'s own `exit(0)` does, and
+        // disarms the guard first anyway.
+        if let tauri::RunEvent::ExitRequested {
+            code: None, api, ..
+        } = &event
+        {
+            if close_guarded(app_handle) {
+                api.prevent_exit();
+                request_quit(app_handle);
+            }
+        }
         // macOS delivers "Open with" / dropped files as an Opened run event (the
         // variant only exists on macOS/iOS — Windows/Linux get the path via argv,
         // handled by single-instance / initial `pending_opens`). Queue + emit so the
@@ -2349,6 +2453,29 @@ mod tests {
             !code.contains('?'),
             "connect_session propagates an error after login — the live session would be dropped:\n{code}"
         );
+    }
+
+    #[test]
+    fn quitting_always_goes_through_the_confirmation() {
+        // Guard (v1.0.33): the predefined `quit()` menu item terminates the app
+        // natively, past `request_quit` — ⌘Q would silently drop every session the
+        // quit dialog exists to list. And a close request must be the one the
+        // guard can veto (`prevent_close`), not left to close the window.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        let code: String = src[..src.find("#[cfg(test)]").expect("tests")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !code.contains(".quit()"),
+            "native Quit bypasses the confirmation"
+        );
+        assert!(code.contains("\"quit\" => {\n                    request_quit(app);"));
+        let close = &code[code
+            .find("WindowEvent::CloseRequested")
+            .expect("close handler")..];
+        assert!(close[..close.find("request_quit").expect("asks")].contains("api.prevent_close()"));
     }
 
     // ── uuid_like ─────────────────────────────────────────────────────────────
