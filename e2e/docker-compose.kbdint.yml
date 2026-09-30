@@ -1,6 +1,6 @@
 # Disposable keyboard-interactive-only sshd (see e2e/kbdint/Dockerfile).
 #
-#   docker compose -f e2e/docker-compose.kbdint.yml up -d --build
+#   docker compose -f e2e/docker-compose.kbdint.yml up -d --build --wait
 #   cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
 #   docker compose -f e2e/docker-compose.kbdint.yml down
 #
