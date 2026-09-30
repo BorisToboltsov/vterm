@@ -153,17 +153,21 @@ docker compose -f e2e/docker-compose.ssh.yml down
 ### Живой вход через keyboard-interactive
 
 Модуль `live_kbdint` в [ssh.rs](../src-tauri/src/ssh.rs) логинится в PAM-sshd, где метод
-`password` выключен (как у консолей UniFi), а у второго пользователя после пароля идёт
+`password` выключен (как у консолей UniFi), а у пользователей `otp*` после пароля идёт
 вопрос «Verification code» (Google Authenticator, scratch-коды). Образ —
 [e2e/kbdint](../e2e/kbdint/Dockerfile):
 
 ```sh
-docker compose -f e2e/docker-compose.kbdint.yml up -d --build
+docker compose -f e2e/docker-compose.kbdint.yml up -d --build --wait
 cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
 docker compose -f e2e/docker-compose.kbdint.yml down
 ```
 
-Scratch-коды одноразовые: перед повторным прогоном — `down` и снова `up`. Закрепляет: сервер
+Scratch-коды одноразовые: перед повторным прогоном — `down` и снова `up`. **Один пользователь
+на тест со вторым фактором**: модуль переписывает файл кодов пользователя на каждой попытке и
+отказывает во входе, если не смог его записать, — параллельные тесты одним аккаунтом гонялись
+за файл, и успешный вход падал (так уронило релиз v1.0.38). Новый такой тест — со своим
+пользователем в Dockerfile. Закрепляет: сервер
 действительно не берёт `password`; пароль отвечает на вопрос PAM сам, ничего не спрашивая;
 неверный пароль — отказ без переспроса; код спрашивается, и пароль туда не уходит; отмена
 вопроса завершает вход; неверный код — отказ. Гоняется в `nightly.yml` в джобе `live-sftp`.

@@ -1399,8 +1399,11 @@ mod live_kbdint {
     #[tokio::test]
     #[ignore = "needs the kbdint sshd container"]
     async fn cancelling_the_question_ends_the_login() {
+        // Each second-factor test logs in as its own user: the PAM module rewrites
+        // the user's code file on every attempt and refuses a login it can't
+        // record, so two tests on one account raced into a rejection (CI, v1.0.38).
         let script = Script::new(vec![None]);
-        let err = login("otp", "otppass", &script).await.unwrap_err();
+        let err = login("otpcancel", "otppass", &script).await.unwrap_err();
         assert!(err.to_string().contains("auth-cancelled"), "{err}");
     }
 
@@ -1409,7 +1412,7 @@ mod live_kbdint {
     async fn a_wrong_code_is_rejected() {
         let script = Script::new(vec![Some(vec!["00000000"])]);
         assert_eq!(
-            login("otp", "otppass", &script).await.unwrap(),
+            login("otpbad", "otppass", &script).await.unwrap(),
             AuthOutcome::Rejected
         );
     }
