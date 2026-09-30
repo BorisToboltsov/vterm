@@ -59,3 +59,23 @@ export function renderArgv(argv: string[], shell: CdShell): string | null {
   if (shell === "powershell" && parts[0] !== argv[0]) parts[0] = `& ${parts[0]}`;
   return parts.join(" ");
 }
+
+/**
+ * Like {@link renderArgv}, but the tab's shell ENDS with the command: a
+ * container/pod tab lives exactly as long as the session inside it (tabattach.ts).
+ * POSIX replaces the shell (`exec`); cmd.exe and PowerShell have no `exec`, so
+ * they `exit` once the command returns — whatever its status, so a failed
+ * `docker exec` (container gone) also ends the tab, its error left on screen.
+ */
+export function renderSessionCommand(argv: string[], shell: CdShell): string | null {
+  const cmd = renderArgv(argv, shell);
+  if (cmd === null) return null;
+  switch (shell) {
+    case "posix":
+      return `exec ${cmd}`;
+    case "powershell":
+      return `${cmd}; exit`;
+    case "cmd":
+      return `${cmd} & exit`;
+  }
+}

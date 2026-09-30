@@ -75,6 +75,14 @@ export const en = {
 
   // ── Tabs ──
   "tab.localShell": "Local shell",
+  "tab.attachContainerTitle": "Container {name}",
+  "tab.attachPod": "Pod {name}",
+  "tab.attachImage": "Image",
+  "tab.attachContainer": "Container",
+  "tab.attachHost": "Host",
+  "tab.attachEnded": "Container {name} session ended",
+  "tab.attachPodEnded": "Pod {name} session ended",
+  "tab.attachReenter": "Enter again",
   "tab.close": "Close tab",
   "tab.openLocalTerminal": "Open local terminal",
 
@@ -1995,6 +2003,14 @@ const ru: Record<MessageKey, string> = {
 
   // ── Tabs ──
   "tab.localShell": "Локальная оболочка",
+  "tab.attachContainerTitle": "Контейнер {name}",
+  "tab.attachPod": "Под {name}",
+  "tab.attachImage": "Образ",
+  "tab.attachContainer": "Контейнер",
+  "tab.attachHost": "Хост",
+  "tab.attachEnded": "Сессия контейнера {name} завершена",
+  "tab.attachPodEnded": "Сессия пода {name} завершена",
+  "tab.attachReenter": "Войти снова",
   "tab.close": "Закрыть вкладку",
   "tab.openLocalTerminal": "Открыть локальный терминал",
 

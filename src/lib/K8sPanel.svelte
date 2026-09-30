@@ -13,6 +13,7 @@
   // into every argv (withScope); kubeconfig is never mutated. Offline invariant
   // intact: the cluster API is reached over the user's own session, not the WebView.
   import Icon from "./Icon.svelte";
+  import type { AttachTarget } from "./tabattach";
   import EmptyState from "./EmptyState.svelte";
   import Skeleton from "./Skeleton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -97,7 +98,7 @@
     /** Active tab is a prod-tagged server — destructive ops get an extra warning. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (kubectl exec shell). */
-    onOpenShell?: (argv: string[]) => void;
+    onOpenShell?: (argv: string[], target?: AttachTarget) => void;
     /** Hand a pod's state + logs to the AI assistant (Phase 41). */
     onAsk?: (context: string) => void;
   } = $props();
@@ -224,7 +225,11 @@
   }
 
   function openShell(pod: K8sPod, container: string | null) {
-    onOpenShell?.(execShellArgv(prog, pod.name, pod.namespace, container, scope));
+    onOpenShell?.(execShellArgv(prog, pod.name, pod.namespace, container, scope), {
+      kind: "pod",
+      name: pod.name,
+      container: container ?? undefined,
+    });
     notifySuccess(t("k8s.shellOpened", { name: pod.name }));
   }
 

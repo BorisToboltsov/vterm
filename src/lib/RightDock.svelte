@@ -17,6 +17,7 @@
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import type { DockConnection } from "./stores/tabs.svelte";
+  import type { AttachTarget } from "./tabattach";
   import { t } from "./i18n";
 
   let {
@@ -76,7 +77,7 @@
     /** User navigated in the SFTP panel → cd the terminal too (two-way OSC 7). */
     onSftpNavigate?: (path: string) => void;
     /** Docker panel → open a real terminal tab running an `exec` shell command. */
-    onOpenContainerShell?: (argv: string[]) => void;
+    onOpenContainerShell?: (argv: string[], target?: AttachTarget) => void;
     /** Hand a container/pod's state + logs to the AI assistant (Phase 41). */
     onAskAi?: (context: string, kind: "container" | "pod") => void;
     /** Reads live session context for the AI tab (selection/buffer/recording/metadata). */
@@ -246,7 +247,7 @@
             onOpenDiff={onOpenGitDiff}
             onIgnore={onIgnoreGitignore}
             prod={aiProd}
-            sessionReady={kind === "ssh" ? sessionReady : true}
+            {sessionReady}
           />
         </div>
       {/if}
@@ -256,7 +257,7 @@
             {sessionId}
             prod={aiProd}
             visible={shown("docker")}
-            sessionReady={kind === "ssh" ? sessionReady : true}
+            {sessionReady}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "container") : undefined}
           />
@@ -268,7 +269,7 @@
             {sessionId}
             prod={aiProd}
             visible={shown("k8s")}
-            sessionReady={kind === "ssh" ? sessionReady : true}
+            {sessionReady}
             onOpenShell={onOpenContainerShell}
             onAsk={onAskAi ? (ctx) => onAskAi(ctx, "pod") : undefined}
           />

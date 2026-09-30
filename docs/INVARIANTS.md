@@ -94,9 +94,15 @@
     спавнить решает [localshell.ts](../src/lib/localshell.ts) (`resolveLocalShell`): `null` =
     дефолт ОС (`CommandBuilder::new_default_prog()`), иначе явная программа (поиск по PATH).
     Детект ОС — команда `host_os` (`std::env::consts::OS`), **не** runtime-плагин.
-  - **Shell в контейнер/под** — `pendingCommand` → `write_to_terminal` по статусу `connected`,
-    новая вкладка того же хоста (`onOpenContainerShell`); **не** через `container_run`/`kubectl_run`.
-    Так же `port-forward` — процесс живёт в PTY. Панели отдают **argv** (`execShellArgv`/
+  - **Shell в контейнер/под** — новая вкладка того же хоста (`onOpenContainerShell`), команда
+    уходит `write_to_terminal` по статусу `connected`; **не** через `container_run`/`kubectl_run`.
+    Такая вкладка несёт `Tab.attach` ([tabattach.ts](../src/lib/tabattach.ts)) и подписана
+    «nginx · хост», поэтому её shell **обязан закончиться вместе с контейнером**: команду
+    печатает `renderSessionCommand` (`exec …` / `…; exit` / `… & exit`), иначе после `exit`
+    под именем контейнера остался бы shell хоста (принцип 5). Конец сессии такой вкладки —
+    не обрыв: ни автопереподключения (вернуло бы в контейнер сразу после `exit`), ни NO SIGNAL;
+    «Войти снова» — обычный реконнект, argv исполняется на **каждом** `connected`. Гейт
+    `attachtab.guard`. `port-forward` — разовый `pendingCommand`, процесс живёт в PTY. Панели отдают **argv** (`execShellArgv`/
     `portForwardArgv`), а строку собирает `renderArgv` ([termcmd.ts](../src/lib/termcmd.ts)) под
     **реально запущенную** оболочку вкладки, как `cdCommand`: POSIX-строка `sh -c '… && …'` в
     `cmd.exe` разваливается (`'` там не кавычки — `>/dev/null` и `&&` разбирает сам cmd).
@@ -195,6 +201,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   вместе гейтом `dockpanels.guard.test.ts`: **смонтирована** — значит поллинг гейтится `visible`,
   а window-wide обработчики (drop файлов в [FileBrowser](../src/lib/FileBrowser.svelte)) скрытую
   панель игнорируют. Голого `void visible;` мало — гейт требует условие.
+- **Док ждёт сессию у любого вида вкладки.** `sessionReady` панелям Git/Docker/k8s — из
+  `dockConnection` и для локальной вкладки тоже, не `true`: у неё есть честный
+  `connecting`→`connected`, а до регистрации PTY бэкенду не на чем исполнять команду. Форс в
+  `true` давал «Docker недоступен» на вкладке, открытой «Открыть shell» (на Windows ConPTY
+  стартует медленно). Гейт `dockpanels.guard`.
 - **Мёртвая сессия — одна заглушка на весь док.** Состояние сессии для дока — `dockConnection`
   ([tabs.svelte.ts](../src/lib/stores/tabs.svelte.ts)): `connecting`/`connected`/`offline`, и
   `offline` — это и разорванная, и так и не установленная сессия. Для `offline` каждая вкладка
@@ -929,7 +940,11 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
     платформам и тихо вернёт дефект. Гейт `appicon.guard.test.ts` меряет сами пиксели.
 - **Заставки простоя** — тем же слоевым контрактом, что ThemeOverlay:
   [IdleOverlay](../src/lib/IdleOverlay.svelte), `z-index:35` ниже модалок, под
-  `prefers-reduced-motion`-guard (статичный кадр). Простой = **нет ввода И нет вывода PTY** (проп
+  `prefers-reduced-motion`-guard (статичный кадр). Статичный кадр — **не один**: цикла rAF нет,
+  canvas монтируется только после `active`, поэтому первый кадр рисует `$effect` над
+  `active`+canvas, а карточка перерисовывается после **каждого** замера — иначе график пуст
+  навсегда (Windows включает reduced motion выключателем «Эффекты анимации»). Цифры прошлой
+  активации сбрасываются в «—» до первого замера. Гейт `idlecard.guard`. Простой = **нет ввода И нет вывода PTY** (проп
   `onoutput` у `Terminal.svelte` сбрасывает таймер на каждый чанк). Canvas накрывает **только**
   область панелей терминала (проп `targetEl`, измеряется каждый кадр), без вкладок — всё окно.
   Заставка рисует **копию** буфера (`bufferText()`) — **никогда не пишет в PTY** и не делает
@@ -986,7 +1001,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | Гейт | Что держит |
 |------|------------|
 | [tabteardown.guard.test.ts](../src/lib/tabteardown.guard.test.ts) | `closeTabFully` — единственный путь сноса вкладки; список очищаемого состояния |
-| [dockpanels.guard.test.ts](../src/lib/dockpanels.guard.test.ts) | Панели дока не размонтируются при смене вкладки — и скрытая панель не опрашивает хост (`visible` у Docker/k8s/git, drop-обработчик файловой панели). Голое `void visible;` не считается гейтом: первая версия проверки на нём и прошла |
+| [dockpanels.guard.test.ts](../src/lib/dockpanels.guard.test.ts) | Панели дока не размонтируются при смене вкладки — и скрытая панель не опрашивает хост (`visible` у Docker/k8s/git, drop-обработчик файловой панели); Git/Docker/k8s получают `sessionReady` дока на вкладке любого вида. Голое `void visible;` не считается гейтом: первая версия проверки на нём и прошла |
 | [overlay.guard.test.ts](../src/lib/overlay.guard.test.ts) | У каждого оверлея явный `z-index` |
 | [passwordinput.guard.test.ts](../src/lib/passwordinput.guard.test.ts) | Нет сырых `<input type="password">` |
 | [motion.guard.test.ts](../src/lib/motion.guard.test.ts) | Длительности переходов — из `motion.ts`, не литералы |
@@ -1007,6 +1022,8 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [hotkeylayout.guard.test.ts](../src/lib/hotkeylayout.guard.test.ts) | Буквенные хоткеи не сравнивают сырой `e.key` с латиницей (русская раскладка) — только `chordLetter`/`is*Chord` из `appshortcuts.ts`. Проверка по исходнику без комментариев |
 | [gitcwd.guard.test.ts](../src/lib/gitcwd.guard.test.ts) | Git читает каталог через `gitCwd` (терминал при выключенной синхронизации пути), док передаёт ему `terminalCwd`, локальный cwd опрашивается и пока Git на экране, кнопка Git «Включить синхронизацию пути» включает то же общее следование, что переключатель. Проверка по исходнику без комментариев |
 | [prodmark.guard.test.ts](../src/lib/prodmark.guard.test.ts) | Прод-вкладка помечена на полосе вкладок (полоса + чип `prod`) **и** вокруг терминала (рамка-оверлей `pointer-events-none` с `z-index`; в сетке — граница ячейки); набор прод-вкладок — из `prodMembers`. Проверка по исходнику без комментариев |
+| [attachtab.guard.test.ts](../src/lib/attachtab.guard.test.ts) | Вкладка контейнера/пода печатает команду через `renderSessionCommand` (shell кончается вместе с контейнером), её закрытие не запускает автопереподключение и NO SIGNAL. Проверка по исходнику без комментариев |
+| [idlecard.guard.test.ts](../src/lib/idlecard.guard.test.ts) | Карточка заставки без цикла анимации (reduced motion): первый кадр — `$effect` над `active`+canvas, перерисовка после каждого замера, сброс цифр прошлой активации. Проверка по исходнику без комментариев |
 | [termfit.guard.test.ts](../src/lib/termfit.guard.test.ts) | У элемента, который `FitAddon` меряет как `parentElement`, нет паддинга — иначе сетка терминала выше своего места |
 | [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts) · `deny.toml` | Строгий CSP, минимальные capabilities, политика зависимостей |
 | [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) | Шаги `gh release upload` в релизном workflow (хелпер macOS + portable `.exe`); пол Node под запиненный мажор pnpm — бамп одного без другого зелен локально и роняет все три ОС. Тело релиза собирается из двух частей, и любая пропадает молча: краткое «Что нового» тянется из секции CHANGELOG по тегу (`RELEASE_NOTES` → `${{ env.RELEASE_NOTES }}`), инструкция запуска/обхода Gatekeeper сохранена. Плюс цепочка поставки CI: релиз стоит под `needs` на полном прогоне гейтов **и** на `nightly.yml` (фаззинг, live-sftp, E2E — по расписанию они идут лишь раз в месяц), экшены запинены по коммит-SHA с комментарием версии, свои workflow — через `$/…` (не `./…`), в ассетах есть `SHA256SUMS`/provenance/SBOM, отправка во VirusTotal остаётся opt-in. Проверки идут по **всем** workflow и по **каждому** вхождению: пин, устаревший во второй джобе, невидим для проверки по первому совпадению |

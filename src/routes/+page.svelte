@@ -126,7 +126,8 @@
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
   import { cdCommand, type CdShell } from "$lib/cdterminal";
-  import { renderArgv } from "$lib/termcmd";
+  import { renderArgv, renderSessionCommand } from "$lib/termcmd";
+  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabattach";
   import { submitLine } from "$lib/terminput";
   import { isNewTabChord, isPaletteChord } from "$lib/appshortcuts";
   import Icon from "$lib/Icon.svelte";
@@ -396,7 +397,7 @@
       const srv = servers.find((s) => s.id === tab.serverId);
       return {
         sessionId: tab.sessionId,
-        alias: tabAlias(tab),
+        alias: tabTitle(tab),
         host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
         status: localizedStatus(tab.status),
         dot: dotClass(tab.status),
@@ -505,7 +506,7 @@
     pendingBroadcast
       ? prodMembers(pendingBroadcast.targets, tabsState.list, servers).map((id) => {
           const tab = findTab(id);
-          return tab ? tabAlias(tab) : id;
+          return tab ? tabTitle(tab) : id;
         })
       : [],
   );
@@ -1187,6 +1188,21 @@
     return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias;
   }
 
+  /** Full title of a tab: `nginx · Rescalc dev` for a container/pod tab. */
+  function tabTitle(tab: Tab): string {
+    return attachTitle(tabAlias(tab), tab.attach);
+  }
+
+  /** Hover card of a container/pod tab: what it is attached to, then its status. */
+  function attachTooltip(tab: Tab): string | undefined {
+    if (!tab.attach) return undefined;
+    const head = t(tab.attach.kind === "pod" ? "tab.attachPod" : "tab.attachContainerTitle", {
+      name: tab.attach.name,
+    });
+    const rows = attachRows(tab.attach, tabAlias(tab)).map(([k, v]) => `${t(k)}: ${v}`);
+    return [head, ...rows, localizedStatus(tab.status)].join("\n");
+  }
+
   // ── Connection / tabs ──────────────────────────────────────────────────────
   async function connectServer(server: ServerProfile) {
     try {
@@ -1662,19 +1678,22 @@
   }
 
   /**
-   * Docker panel "open shell": open a new terminal tab on the SAME host as the
+   * Docker/k8s panel "open shell": open a new terminal tab on the SAME host as the
    * active session (reusing its credentials for SSH — no re-prompt) and run the
-   * `docker exec -it … `command once it connects. Reuses the terminal contract —
-   * no new backend; `pendingCommand` is flushed in the tab's `onstatus` handler.
+   * `docker exec -it …` command once it connects. Reuses the terminal contract —
+   * no new backend. With a `target` the tab is a container/pod tab (tabattach.ts):
+   * it carries the argv, runs it on every connect and ends with it. Without one
+   * (port-forward) the argv is a one-shot `pendingCommand`.
    */
-  function openContainerShell(argv: string[]) {
+  function openContainerShell(argv: string[], target?: AttachTarget) {
     const tab = activeTab;
     if (!tab) return;
+    const attach = target ? { ...target, argv } : undefined;
     const sid =
       tab.kind === "local"
-        ? openLocalTab()
-        : openTabStore(tab.serverId, tab.alias, tab.secret, tab.remember);
-    pendingCommand[sid] = argv;
+        ? openLocalTab(attach)
+        : openTabStore(tab.serverId, tab.alias, tab.secret, tab.remember, attach);
+    if (!attach) pendingCommand[sid] = argv;
   }
 
   /** Type an install command into the active terminal (user reviews + runs it). */
@@ -2059,7 +2078,8 @@
               : 'text-muted hover:bg-edge'} {prodTabIds.has(tab.sessionId)
               ? 'shadow-[inset_0_2px_0_0_var(--color-bad)]'
               : ''}"
-            title={localizedStatus(tab.status)}
+            title={tab.attach ? undefined : localizedStatus(tab.status)}
+            use:tooltip={attachTooltip(tab)}
           >
             <!-- Status / recording / broadcast dots grouped tightly together. -->
             <span class="flex shrink-0 items-center gap-0.5">
@@ -2092,7 +2112,22 @@
                 ></span>
               {/if}
             </span>
-            <span class="truncate">{tabAlias(tab)}</span>
+            {#if tab.attach}
+              <!-- Container/pod tab: its mark, the target's name, the host muted.
+                   The host yields its width first — the name is what tells two
+                   container tabs of one host apart. -->
+              <Icon
+                name={attachIcon(tab.attach.kind)}
+                size={14}
+                class="shrink-0 {isLive(tab.status) ? 'text-accent' : 'text-muted'}"
+              />
+              <span class="flex min-w-0 items-baseline gap-1">
+                <span class="max-w-full shrink-0 truncate">{tab.attach.name}</span>
+                <span class="min-w-0 truncate text-muted">· {tabAlias(tab)}</span>
+              </span>
+            {:else}
+              <span class="truncate">{tabAlias(tab)}</span>
+            {/if}
             {#if prodTabIds.has(tab.sessionId)}
               <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
             {/if}
@@ -2213,7 +2248,7 @@
                 {#if bcTile}
                   <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-meta">
                     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(tab.status)}"></span>
-                    <span class="shrink-0 truncate text-text">{tabAlias(tab)}</span>
+                    <span class="shrink-0 truncate text-text">{tabTitle(tab)}</span>
                     <span class="min-w-0 flex-1 truncate text-muted">
                       {bcSrv ? `${bcSrv.username}@${bcSrv.host}:${bcSrv.port}` : ""}
                     </span>
@@ -2321,7 +2356,27 @@
                 {/if}
                 <div class="relative min-h-0 flex-1 p-1">
                 <div class="absolute inset-0 {ws.active === TERMINAL_VIEW || bcOn ? '' : 'invisible'}">
-                {#if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
+                {#if tab.attach && tab.status.startsWith("Disconnected")}
+                  <!-- The container session ended (`exit`, or the container
+                       stopped): the tab's shell ended with it, so its output stays
+                       and the one way on is back into the same target. -->
+                  <div
+                    class="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-3 border-b border-edge bg-panel-alt/95 px-3 py-1.5 text-xs"
+                    data-testid="attach-ended"
+                  >
+                    <span class="text-muted">
+                      {t(tab.attach.kind === "pod" ? "tab.attachPodEnded" : "tab.attachEnded", {
+                        name: tab.attach.name,
+                      })}
+                    </span>
+                    <button
+                      class="rounded bg-accent px-2 py-0.5 text-panel-alt hover:bg-accent-hover"
+                      onclick={() => reconnectTabStore(tab.sessionId)}
+                    >
+                      {t("tab.attachReenter")}
+                    </button>
+                  </div>
+                {:else if tab.kind === "ssh" && tab.status.startsWith("Connecting")}
                   {@const srv = servers.find((s) => s.id === tab.serverId)}
                   <ConnectingOverlay
                     alias={tab.alias}
@@ -2404,14 +2459,19 @@
                       if (st !== "connecting") clearAuthPrompt(tab.sessionId);
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
                       if (st === "connected") idleWasConnected.add(tab.sessionId);
-                      if (st === "connected" && pendingCommand[tab.sessionId]) {
-                        const argv = pendingCommand[tab.sessionId];
+                      // A container/pod tab enters its target on EVERY connect (so
+                      // "Enter again" is a plain reconnect); a one-shot command once.
+                      const attach = findTab(tab.sessionId)?.attach;
+                      if (st === "connected" && (attach || pendingCommand[tab.sessionId])) {
+                        const argv = attach ? attach.argv : pendingCommand[tab.sessionId];
                         delete pendingCommand[tab.sessionId];
                         // SSH is always POSIX; a local tab reported its shell before
                         // it spawned (cmd.exe needs double quotes, not `'…'`).
                         const shell =
                           tab.kind === "local" ? (localShellKind[tab.sessionId] ?? "posix") : "posix";
-                        const cmd = renderArgv(argv, shell);
+                        const cmd = attach
+                          ? renderSessionCommand(argv, shell)
+                          : renderArgv(argv, shell);
                         if (!cmd) {
                           notifyError(t("page.commandUnquotable"));
                         } else {
@@ -2431,8 +2491,11 @@
                         // Unexpected drop of a connected session (tab survives) →
                         // NO SIGNAL, unless auto-reconnect will bring it back.
                         const was = idleWasConnected.delete(tab.sessionId);
+                        // A container tab closing is its session ending (`exit`),
+                        // not a drop: no NO SIGNAL, no auto-reconnect back inside.
                         if (
                           findTab(tab.sessionId) &&
+                          !attach &&
                           !settings.autoReconnect &&
                           tab.kind === "ssh" &&
                           showNoSignal({ userInitiated: false, wasConnected: was })
@@ -2444,7 +2507,7 @@
                       // Auth failures now keep the tab and show the error overlay
                       // (the user re-enters the secret via its button), so we no
                       // longer auto-close/re-prompt here.
-                      if (st === "closed" && settings.autoReconnect && tab.kind === "ssh") {
+                      if (st === "closed" && settings.autoReconnect && tab.kind === "ssh" && !attach) {
                         setTimeout(() => {
                           if (findTab(tab.sessionId)) reconnectTabStore(tab.sessionId);
                         }, 1000);
