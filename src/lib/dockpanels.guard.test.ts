@@ -124,6 +124,24 @@ describe("dock panel guard", () => {
     expect(effect).toMatch(/\bvisible\b/);
   });
 
+  it("lets no driver panel run before the tab's session exists", () => {
+    // Local tabs used to get `sessionReady={kind === "ssh" ? sessionReady : true}`.
+    // "Open shell" in Docker opens a NEW local tab, the dock remounts for it and
+    // Docker probed `docker version` before the PTY was registered: the backend
+    // found no session, and the panel said "Docker unavailable" until Retry —
+    // on Windows, where ConPTY spawns slowly, every time. Local tabs have a real
+    // connecting → connected status; every kind waits for it.
+    for (const component of ["GitPanel", "DockerPanel", "K8sPanel"]) {
+      const tag = instance(dock, component);
+      expect(tag, `${component} gets the dock's sessionReady`).toMatch(
+        /(?:^|\s)(?:\{sessionReady\}|sessionReady=\{sessionReady\})/m,
+      );
+    }
+    expect(dock, "sessionReady derives from the tab's connection").toMatch(
+      /const sessionReady = \$derived\(connection === "connected"\)/,
+    );
+  });
+
   it("ignores window-wide file drops aimed at a hidden file panel", () => {
     // The drop listener is registered on the webview, not on the panel's element,
     // so a hidden panel would happily upload into a directory the user cannot see.

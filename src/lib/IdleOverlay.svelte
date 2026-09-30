@@ -22,7 +22,7 @@
     type WordToken,
   } from "./idlefx";
   import { fetchMetrics } from "./api";
-  import { fmtUptime, memPct } from "./format";
+  import { fmtPct, fmtUptime, memPct } from "./format";
   import { t } from "./i18n";
 
   let {
@@ -66,8 +66,10 @@
   let tokens: WordToken[] = [];
 
   // ── live metrics for the card ──────────────────────────────────────────────
-  let cpu = 0;
-  let mem = 0;
+  // Null until this activation's first sample: the card must not show numbers
+  // left over from the previous screensaver — often another host's (principle 5).
+  let cpu: number | null = null;
+  let mem: number | null = null;
   // Null = this host has no load average (Windows) — shown as "—", not 0.00.
   let load1: number | null = null;
   let cpuCount: number | null = null;
@@ -87,6 +89,10 @@
       uptimeSecs = m.uptimeSecs ?? uptimeSecs;
       host = m.hostname || alias || host;
       hist = pushSample(hist, idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount));
+      // Reduced motion has no rAF loop: the frame drawn at activation predates
+      // the first sample, so without this the chart would never get its lines.
+      // (Windows turns reduced motion on with "Animation effects" off — common.)
+      if (active && reduce) draw(performance.now() - started);
     } catch {
       /* transient — keep last values */
     }
@@ -106,7 +112,7 @@
     if (shownEffect === "card" && sessionId) {
       host = alias;
       hist = [];
-      load1 = cpuCount = null;
+      cpu = mem = load1 = cpuCount = uptimeSecs = null;
       void pollMetrics();
       const every = Math.max(2, settings.statusPollInterval) * 1000;
       metricsTimer = setInterval(pollMetrics, every);
@@ -196,12 +202,11 @@
     if (!reduce) raf = requestAnimationFrame(loop);
   }
 
-  // Redraw a static frame once when reduced-motion; otherwise the rAF loop drives it.
+  // Reduced motion has no rAF loop. The canvas mounts only once `active` flips
+  // (`loop()` in `activate` runs before it exists), so this effect paints the
+  // static frame; `pollMetrics` repaints it after every sample.
   $effect(() => {
-    void cpu;
-    void mem;
-    void load1;
-    if (active && reduce) draw(performance.now() - started);
+    if (active && reduce && canvas) draw(performance.now() - started);
   });
 
   interface Ctx2 {
@@ -471,8 +476,8 @@
       );
       // metrics row — the dot before each label is the legend of its chart line
       const metrics: [string, string, string][] = [
-        ["CPU", `${Math.round(cpu)}%`, p.green],
-        ["MEM", `${Math.round(mem)}%`, p.blue],
+        ["CPU", fmtPct(cpu), p.green],
+        ["MEM", fmtPct(mem), p.blue],
         ["LOAD", load1 != null ? load1.toFixed(2) : "—", p.yellow],
       ];
       const cw = (cardW - 60) / 3;

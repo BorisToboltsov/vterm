@@ -11,6 +11,7 @@
   // in a real terminal (the shell button). Offline invariant intact: the daemon
   // is reached over the user's own session, never from the WebView.
   import Icon from "./Icon.svelte";
+  import type { AttachTarget } from "./tabattach";
   import EmptyState from "./EmptyState.svelte";
   import Skeleton from "./Skeleton.svelte";
   import CopyButton from "./CopyButton.svelte";
@@ -85,7 +86,7 @@
     /** Active tab is a prod-tagged server — destructive ops need confirmation. */
     prod?: boolean;
     /** Open a real terminal tab running `command` (docker exec shell). */
-    onOpenShell?: (argv: string[]) => void;
+    onOpenShell?: (argv: string[], target?: AttachTarget) => void;
     /** Hand a container's state + logs to the AI assistant (Phase 41). */
     onAsk?: (context: string) => void;
   } = $props();
@@ -302,7 +303,7 @@
   // ── Actions ────────────────────────────────────────────────────────────────
 
   function openShell(c: DockerContainer) {
-    onOpenShell?.(execShellArgv(c.id));
+    onOpenShell?.(execShellArgv(c.id), { kind: "container", name: c.name, image: c.image });
     notifySuccess(t("docker.shellOpened", { name: c.name }));
   }
 

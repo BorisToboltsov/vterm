@@ -3,6 +3,7 @@
 // secret orchestration stays in the page; this store is pure tab bookkeeping.
 
 import { t } from "../i18n";
+import type { TabAttach } from "../tabattach";
 
 export interface Tab {
   sessionId: string;
@@ -19,6 +20,9 @@ export interface Tab {
   status: string;
   /** Bumped to force the terminal to remount and reconnect. */
   gen: number;
+  /** Set when the tab is a shell INTO a container/pod (tabattach.ts): its argv
+   *  runs on every connect, and the tab's shell ends with it. */
+  attach?: TabAttach;
 }
 
 export type TabStatus = "connecting" | "connected" | "closed" | "error";
@@ -206,6 +210,7 @@ export function openTab(
   alias: string,
   secret: string | null,
   remember: boolean,
+  attach?: TabAttach,
 ): string {
   const tab: Tab = {
     sessionId: crypto.randomUUID(),
@@ -216,6 +221,7 @@ export function openTab(
     remember,
     status: "connecting",
     gen: 0,
+    attach,
   };
   tabsState.list = [...tabsState.list, tab];
   tabsState.activeId = tab.sessionId;
@@ -223,7 +229,7 @@ export function openTab(
 }
 
 /** Open a local-shell terminal tab (PTY on the machine running vterm). */
-export function openLocalTab(): string {
+export function openLocalTab(attach?: TabAttach): string {
   const tab: Tab = {
     sessionId: crypto.randomUUID(),
     kind: "local",
@@ -233,6 +239,7 @@ export function openLocalTab(): string {
     remember: false,
     status: "connecting",
     gen: 0,
+    attach,
   };
   tabsState.list = [...tabsState.list, tab];
   tabsState.activeId = tab.sessionId;

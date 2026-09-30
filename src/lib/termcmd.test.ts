@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderArgv, SHELL_SCRIPT } from "./termcmd";
+import { renderArgv, renderSessionCommand, SHELL_SCRIPT } from "./termcmd";
 import { execShellArgv } from "./docker";
 import { execShellArgv as kubeExecArgv, portForwardArgv } from "./k8s";
 
@@ -73,5 +73,34 @@ describe("renderArgv — quoting rules", () => {
       expect(renderArgv(argv, shell)).toBe(
         "kubectl port-forward --namespace web svc/api 8080:80",
       );
+  });
+});
+
+describe("renderSessionCommand — the tab's shell ends with the container session", () => {
+  const argv = execShellArgv("451d79ad656d");
+
+  it("posix: replaces the shell with exec", () => {
+    expect(renderSessionCommand(argv, "posix")).toBe(`exec ${renderArgv(argv, "posix")}`);
+  });
+
+  it("cmd: exits after the command, with & outside every quote", () => {
+    const line = renderSessionCommand(argv, "cmd")!;
+    expect(line).toBe(`${renderArgv(argv, "cmd")} & exit`);
+    // Exactly one metacharacter outside quotes: the `&` that chains the exit.
+    expect(line.replace(/"[^"]*"/g, "").match(/[<>&|]/g)).toEqual(["&"]);
+  });
+
+  it("powershell: exits after the command, the call operator intact", () => {
+    expect(renderSessionCommand(argv, "powershell")).toBe(
+      `${renderArgv(argv, "powershell")}; exit`,
+    );
+    const kube = kubeExecArgv(["C:\\Program Files\\kubectl.exe"], "web", "", null, SCOPE);
+    expect(renderSessionCommand(kube, "powershell")).toMatch(/^& '.*'.*; exit$/);
+  });
+
+  it("refuses what renderArgv refuses — never a bare exit", () => {
+    expect(renderSessionCommand(["docker", "exec", 'a"b'], "cmd")).toBeNull();
+    expect(renderSessionCommand(["docker", "exec", "a\nb"], "posix")).toBeNull();
+    expect(renderSessionCommand([], "posix")).toBeNull();
   });
 });
