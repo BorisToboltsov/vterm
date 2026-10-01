@@ -11,7 +11,8 @@
   import InfoHint from "./InfoHint.svelte";
   import { tooltip } from "./actions/tooltip";
   import { t, type MessageKey } from "./i18n";
-  import { netcheckRun } from "./api";
+  import { netcheckRun, recordAudit } from "./api";
+  import { isRecording } from "./stores/recordings.svelte";
   import { probeError, type ProbeSession } from "./probe";
   import type { OpenMenu } from "./ctxmenu";
   import {
@@ -43,6 +44,8 @@
     type NetTarget,
     type PortStatus,
     type Method,
+    netcheckAudit,
+    netcheckFailureAudit,
   } from "./netcheck";
   import {
     appendRuleLine,
@@ -229,8 +232,23 @@
     return rep;
   }
 
+  /**
+   * Record the run into an active session recording: the rules and the same
+   * report "Copy report" gives (`netcheckAudit`), or the error — never the raw
+   * line protocol. Record-only `[util]` block, like the sftp/git mirrors.
+   */
+  function recordRun(id: string, rules: NetRule[], retry: boolean) {
+    if (!isRecording(id)) return;
+    const entry =
+      report && reportWords && !error
+        ? netcheckAudit(rules, report, reportWords, ranAt, retry)
+        : netcheckFailureAudit(rules, error || t("util.probe.noOutput"), retry);
+    void recordAudit(id, entry).catch(() => {});
+  }
+
   async function run() {
     if (!canRun || !session) return;
+    const id = session.id;
     running = true;
     error = "";
     const rules = parsed.rules;
@@ -248,10 +266,12 @@
     } finally {
       running = false;
     }
+    recordRun(id, rules, false);
   }
 
   async function retryFailed() {
-    if (!report || running || retryKeys.size === 0) return;
+    if (!report || running || retryKeys.size === 0 || !session) return;
+    const id = session.id;
     running = true;
     error = "";
     try {
@@ -265,6 +285,7 @@
     } finally {
       running = false;
     }
+    recordRun(id, ranRules, true);
   }
 
   function onKeydown(e: KeyboardEvent) {

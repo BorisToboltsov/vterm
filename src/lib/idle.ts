@@ -47,6 +47,20 @@ export function msUntilIdle(lastActivityMs: number, nowMs: number, timeoutSec: n
 }
 
 /**
+ * Window events the screensaver listens to (v1.0.42). All of them count as
+ * activity — they keep the screensaver from starting — but only a click or a key
+ * dismisses one that is showing: a mouse drifting over the window, or a stray
+ * touchpad scroll, took it down by accident.
+ */
+export const ACTIVITY_EVENTS = ["keydown", "pointerdown", "pointermove", "wheel"] as const;
+export type ActivityEvent = (typeof ACTIVITY_EVENTS)[number];
+
+/** Does this event dismiss a screensaver that is showing? Click or key only. */
+export function dismissesScreensaver(type: string): boolean {
+  return type === "keydown" || type === "pointerdown";
+}
+
+/**
  * Whether the dismiss gesture should be *swallowed* (kept from reaching whatever
  * is underneath). The screensaver canvas covers only the terminal region and
  * holds keyboard focus, so a gesture on it (or its descendants) targets the

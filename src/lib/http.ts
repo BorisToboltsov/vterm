@@ -3,7 +3,8 @@
 // `-w`. Runs on the session host, so it exercises an API/webhook from that
 // server's network position — the debugging value of "does prod reach this
 // endpoint, and how fast?" (on a local tab: from this machine, ADR 0014).
-import { curlProgram } from "./probe";
+import { curlProgram, auditFailure, auditExit, auditText, type AuditEntry, type StepOutput } from "./probe";
+import { REDACTED } from "./redact";
 import type { CdShell } from "./cdterminal";
 
 export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
@@ -145,4 +146,38 @@ export function statusClass(status: number): "success" | "redirect" | "clientErr
   if (status >= 400 && status < 500) return "clientError";
   if (status >= 500 && status < 600) return "serverError";
   return "unknown";
+}
+
+// Header values safe to keep in a recording; every other value is masked —
+// `Authorization`, `Cookie`, `X-Api-Key` and whatever a vendor named its token.
+const PLAIN_HEADERS = new Set(["accept", "accept-encoding", "accept-language", "content-type", "user-agent", "cache-control", "host"]);
+
+/**
+ * The recording's line for one request: method, URL (credentials and token-ish
+ * query values masked), header NAMES (values only for a few harmless ones) and
+ * the body's size — never its content; then the status line and timings, never
+ * the response headers or body. Same restraint as the sftp audit's `save` (size,
+ * not text).
+ */
+export function httpAudit(req: HttpRequest, out: StepOutput): AuditEntry {
+  const parts = [`http ${req.method}`, auditText(req.url.trim())];
+  for (const h of req.headers) {
+    const name = h.name.trim();
+    if (!name) continue;
+    const value = PLAIN_HEADERS.has(name.toLowerCase()) ? auditText(h.value) : REDACTED;
+    parts.push(`-H '${name}: ${value}'`);
+  }
+  if (req.body) parts.push(`--data (${new TextEncoder().encode(req.body).length} B)`);
+  const op = parts.join(" ");
+  const res = out.exitCode === 0 ? parseHttp(out.stdout) : null;
+  if (!res) return { op, body: auditFailure(out), exitCode: auditExit(out.exitCode) };
+  const t = res.timings;
+  const line = [
+    `HTTP/${res.httpVersion} ${res.status} ${res.statusText}`.trim(),
+    t && `${t.totalMs} ms`,
+    t && `${t.sizeBytes} B`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return { op, body: auditText(line), exitCode: 0 };
 }

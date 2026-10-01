@@ -8,6 +8,7 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 import type { Extension } from "@codemirror/state";
 import type { TerminalTheme } from "./themes";
+import { readableOn } from "./colormix";
 
 /** Perceived-luminance test on a `#rrggbb` background (dark ⇒ light text). */
 export function isDark(hex: string): boolean {
@@ -44,8 +45,14 @@ export function editorTheme(term: TerminalTheme): Extension {
     { dark },
   );
 
+  // Comments keep the palette's "dim" colour, but never below readable: many dark
+  // themes ship a `brightBlack` that all but vanishes on their background (a YAML
+  // full of commented-out keys was a grey blur). Lifted toward the text colour
+  // just enough for WCAG AA (4.5:1) — a theme that already reads stays as it is.
+  const comment = readableOn(term.brightBlack, term.background, term.foreground);
+
   const highlight = HighlightStyle.define([
-    { tag: [t.comment, t.lineComment, t.blockComment], color: term.brightBlack, fontStyle: "italic" },
+    { tag: [t.comment, t.lineComment, t.blockComment], color: comment, fontStyle: "italic" },
     { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.moduleKeyword], color: term.magenta },
     { tag: [t.string, t.special(t.string), t.docString], color: term.green },
     { tag: [t.number, t.bool, t.null, t.atom], color: term.yellow },

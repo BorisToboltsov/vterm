@@ -241,19 +241,6 @@ pub async fn run_native(targets: &[NetTarget], timeout: Duration) -> String {
     out
 }
 
-/// Short audit label for the session recording: `netcheck host:22,80 …` — the
-/// SSH script itself is long and says less than this.
-pub fn audit_label(targets: &[NetTarget]) -> String {
-    let parts: Vec<String> = targets
-        .iter()
-        .map(|t| {
-            let ports: Vec<String> = t.ports.iter().map(|p| p.to_string()).collect();
-            format!("{}:{}", t.host, ports.join(","))
-        })
-        .collect();
-    format!("netcheck {}", parts.join(" "))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,12 +271,6 @@ mod tests {
         assert_eq!(classify(ErrorKind::HostUnreachable), "unreachable");
         assert_eq!(classify(ErrorKind::NetworkUnreachable), "unreachable");
         assert_eq!(classify(ErrorKind::PermissionDenied), "error");
-    }
-
-    #[test]
-    fn audit_label_lists_targets_and_ports() {
-        let l = audit_label(&[target("10.0.0.1", &[22, 80]), target("db", &[5432])]);
-        assert_eq!(l, "netcheck 10.0.0.1:22,80 db:5432");
     }
 
     #[test]

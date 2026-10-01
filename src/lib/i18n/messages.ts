@@ -1427,6 +1427,9 @@ export const en = {
   "settings.fontGroupRetro": "Retro",
   "settings.fontSize": "Font size",
   "settings.lineHeight": "Line height",
+  "settings.prodTint": "Tint the terminal background of prod servers",
+  "settings.prodTintColor": "Colour",
+  "settings.prodTintStrength": "Strength",
 
   // custom-theme swatch labels
   "settings.swatch.background": "Background",
@@ -1904,7 +1907,7 @@ export const en = {
   "settings.idleSignal": "Weak signal",
   "settings.idleTimeout": "Start after",
   "settings.idleTimeoutUnit": "seconds",
-  "idle.dismissHint": "press any key to resume",
+  "idle.dismissHint": "press any key or click to resume",
   "idle.noSessions": "No active sessions",
   "idle.online": "online",
   "idle.uptime": "uptime",
@@ -3347,6 +3350,9 @@ const ru: Record<MessageKey, string> = {
   "settings.fontGroupRetro": "Ретро",
   "settings.fontSize": "Размер шрифта",
   "settings.lineHeight": "Межстрочный интервал",
+  "settings.prodTint": "Подкрашивать фон терминала прод-серверов",
+  "settings.prodTintColor": "Цвет",
+  "settings.prodTintStrength": "Сила",
 
   "settings.swatch.background": "Фон",
   "settings.swatch.foreground": "Текст",
@@ -3819,7 +3825,7 @@ const ru: Record<MessageKey, string> = {
   "settings.idleSignal": "Слабый сигнал",
   "settings.idleTimeout": "Запуск через",
   "settings.idleTimeoutUnit": "секунд",
-  "idle.dismissHint": "нажмите любую клавишу",
+  "idle.dismissHint": "нажмите любую клавишу или щёлкните",
   "idle.noSessions": "Нет активных сессий",
   "idle.online": "онлайн",
   "idle.uptime": "аптайм",

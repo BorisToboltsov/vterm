@@ -4,6 +4,7 @@
 // access at import time is fine. UI theme changes are applied to the document
 // automatically whenever the relevant settings change.
 
+import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "./prodtint";
 import {
   applyUiPalette,
   DEFAULT_THEME_ID,
@@ -205,6 +206,8 @@ export interface Settings {
   // or an absolute path); empty = the `kubectl` on PATH. Split into tokens by
   // `kubectlProg` in k8s.ts.
   kubectlPath: string;
+  /** Tint the terminal background of prod sessions (v1.0.42, prodtint.ts). */
+  prodTint: ProdTint;
 }
 
 /** Built-in starter highlight rules (a fresh copy each call). */
@@ -333,6 +336,7 @@ const DEFAULTS: Settings = {
   dockerRegistries: [],
   k8sRefreshSec: 5,
   kubectlPath: "",
+  prodTint: { ...DEFAULT_PROD_TINT },
 };
 
 /** Clamp the Docker refresh interval to 1…30 s (polling, not streaming). */
@@ -447,6 +451,7 @@ function load(): Settings {
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
+      prodTint: sanitizeProdTint(raw.prodTint),
     };
   } catch {
     return {
@@ -462,6 +467,7 @@ function load(): Settings {
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
       dockerRegistries: [],
+      prodTint: { ...DEFAULT_PROD_TINT },
     };
   }
 }

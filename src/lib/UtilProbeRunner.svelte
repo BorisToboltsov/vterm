@@ -9,16 +9,21 @@
   // prod tab confirms noisy ops first. Each tool passes its input form (`form`)
   // and result renderer (`result`) as snippets, the current argv (`args`, null
   // while inputs are invalid) and, where they differ, the local `steps` and the
-  // `terminalCommand`.
+  // `terminalCommand`. A captured run is recorded into an active session
+  // recording as a `[util]` block built by the tool's `audit` from the PARSED
+  // result, secrets masked (the sftp/git mirror shape, record-only). "Run in
+  // terminal" needs no audit: the typed command and its output are the
+  // recording's own input/output.
   import type { Snippet } from "svelte";
   import Icon from "./Icon.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
-  import { probeRun, type ProbeOutput } from "./api";
+  import { probeRun, recordAudit, type ProbeOutput } from "./api";
+  import { isRecording } from "./stores/recordings.svelte";
   import { writeToTerminal } from "./api";
   import { submitLine } from "./terminput";
-  import { stepFailed, type ProbeSession, type ProbeSteps } from "./probe";
+  import { stepFailed, type AuditEntry, type ProbeSession, type ProbeSteps } from "./probe";
 
   let {
     session,
@@ -27,6 +32,7 @@
     terminalCommand = null,
     timeoutSecs = 20,
     confirmProd = false,
+    audit = null,
     form,
     result,
   }: {
@@ -40,6 +46,8 @@
     timeoutSecs?: number;
     /** Require a confirm before running on a prod-tagged SSH tab (e.g. scans). */
     confirmProd?: boolean;
+    /** The run as the recording shows it, from its output (frozen inputs). */
+    audit?: ((out: ProbeOutput) => AuditEntry) | null;
     form: Snippet;
     result: Snippet<[ProbeOutput]>;
   } = $props();
@@ -63,7 +71,7 @@
   async function runSteps(id: string, chain: ProbeSteps): Promise<ProbeOutput> {
     let out: ProbeOutput | null = null;
     for (const [i, argv] of chain.entries()) {
-      out = await probeRun(id, argv, timeoutSecs, true, out ? out.stdout : null);
+      out = await probeRun(id, argv, timeoutSecs, out ? out.stdout : null);
       if (i < chain.length - 1 && stepFailed(out)) break;
     }
     return out!;
@@ -71,18 +79,25 @@
 
   async function execute() {
     if (!session || !args) return;
+    // Frozen at the click: the form may change while the probe runs.
+    const id = session.id;
+    const auditOf = audit;
     output = null;
     error = "";
     running = true;
     try {
       output =
         session.kind === "local"
-          ? await runSteps(session.id, steps ?? [args])
-          : await probeRun(session.id, args, timeoutSecs);
+          ? await runSteps(id, steps ?? [args])
+          : await probeRun(id, args, timeoutSecs);
     } catch (e) {
       error = String(e);
     } finally {
       running = false;
+    }
+    if (auditOf && isRecording(id)) {
+      const out = output ?? { stdout: "", stderr: error, exitCode: 1 };
+      void recordAudit(id, auditOf(out)).catch(() => {});
     }
   }
 

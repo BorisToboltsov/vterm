@@ -7,6 +7,7 @@
 // touches the DOM or network, so it unit-tests cleanly and the `Util*.svelte`
 // shells stay thin (INVARIANTS: "чистая логика в .ts").
 import type { CdShell } from "./cdterminal";
+import { redactSecrets } from "./redact";
 
 /** The session a network utility targets, resolved from the active tab. */
 export interface ProbeSession {
@@ -83,4 +84,39 @@ export function probeError(stdout: string, stderr: string, exitCode: number): st
   if (exitCode === 0 && stdout.trim()) return "";
   const msg = stderr.trim() || stdout.trim();
   return msg || `exit ${exitCode}`;
+}
+
+/**
+ * One utility run as the session recording shows it — `[util] $ <op>`, the body,
+ * `[util] exit N` (backend `record_audit`, the shape of the sftp/git mirrors).
+ * Built from the PARSED result, never the raw argv/response: those carry header
+ * values, request bodies and cookies. Secrets left in `op`/`body` are masked.
+ */
+export interface AuditEntry {
+  op: string;
+  body: string;
+  exitCode: number;
+}
+
+/** Mask recognised secrets (bias: over-mask) in text bound for a recording. */
+export function auditText(text: string): string {
+  return redactSecrets(text).text;
+}
+
+/** What went wrong, for the audit: the probe's first error line, masked. */
+export function auditFailure(out: StepOutput): string {
+  // An exit-0 run the parser couldn't use would read "exit 0" above an `exit 1`
+  // footer — say what actually came back instead.
+  const msg =
+    out.exitCode === 0 && !out.stderr.trim()
+      ? out.stdout.trim()
+        ? "unrecognized output"
+        : "no output"
+      : probeError(out.stdout, out.stderr, out.exitCode);
+  return auditText(msg.split("\n")[0].trim());
+}
+
+/** A non-zero exit for a run that "succeeded" without a usable answer. */
+export function auditExit(exitCode: number): number {
+  return exitCode === 0 ? 1 : exitCode;
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tlsArgs, tlsSteps, tlsTerminalCommand, parseTlsCert, expiryLevel } from "./tls";
+import { tlsArgs, tlsSteps, tlsTerminalCommand, tlsAudit, parseTlsCert, expiryLevel } from "./tls";
 
 describe("tlsArgs", () => {
   it("builds an sh -c openssl pipeline with SNI", () => {
@@ -86,5 +86,22 @@ describe("expiryLevel", () => {
     expect(expiryLevel(3)).toBe("critical");
     expect(expiryLevel(20)).toBe("warning");
     expect(expiryLevel(90)).toBe("ok");
+  });
+});
+
+describe("tlsAudit", () => {
+  const now = Date.UTC(2026, 6, 1);
+  it("records the cert's fields, not the PEM", () => {
+    const a = tlsAudit(" example.com ", 443, { stdout: SAMPLE, stderr: "", exitCode: 0 }, now);
+    expect(a.op).toBe("tls example.com:443");
+    expect(a.exitCode).toBe(0);
+    expect(a.body).toContain("subject=CN=example.com");
+    expect(a.body).toMatch(/notAfter=Sep {2}1 00:00:00 2026 GMT \(\d+ d\)/);
+    expect(a.body).not.toContain("BEGIN CERTIFICATE");
+  });
+  it("records why a fetch failed, with a non-zero exit", () => {
+    const a = tlsAudit("h", 8443, { stdout: "", stderr: "unable to load certificate\nmore", exitCode: 1 }, now);
+    expect(a).toEqual({ op: "tls h:8443", body: "unable to load certificate", exitCode: 1 });
+    expect(tlsAudit("h", 443, { stdout: "garbage", stderr: "", exitCode: 0 }, now).exitCode).toBe(1);
   });
 });

@@ -22,7 +22,7 @@ export interface SettingsGroup {
 // render order in the right pane.
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
-  { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom внешний вид тема шрифт цвет размер" },
+  { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер прод фон подкраска" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
   { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click right click context menu ctrl+v shift local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка правый клик контекстное меню локальный шелл оболочка виндовс" },
   { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },

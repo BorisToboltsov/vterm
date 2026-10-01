@@ -50,6 +50,7 @@
   import { cdShellKind, type CdShell } from "./cdterminal";
   import { hostEnv } from "./stores/hostenv.svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
+  import { terminalBackground, type ProdTint } from "./prodtint";
   import { readClipboard, writeClipboard } from "./clipboard";
   import { textLines } from "./aicontext";
 
@@ -61,6 +62,7 @@
     secret,
     remember,
     local = false,
+    tint = null,
     onstatus,
     onphase,
     onauthprompt,
@@ -79,6 +81,8 @@
     remember: boolean;
     /** Local-shell PTY tab instead of an SSH connection. */
     local?: boolean;
+    /** Background tint of a prod session (prodtint.ts); null = theme as is. */
+    tint?: ProdTint | null;
     onstatus?: (status: Status, detail?: string) => void;
     /** Reports SSH connection-phase progress for the connecting overlay. */
     onphase?: (phase: ConnPhase) => void;
@@ -110,9 +114,14 @@
   let container: HTMLDivElement;
   let term: Terminal;
   let fit: FitAddon;
-  // Terminal background for the container's padding strip (see the markup below),
-  // so the inset around the text matches xterm's canvas instead of the panel.
-  const termBg = $derived(activeTerminalTheme().background ?? "");
+  // The theme as this terminal paints it: a prod session's background is tinted.
+  // One source for xterm's canvas AND the container's padding strip (markup
+  // below), so the inset around the text matches the canvas instead of the panel.
+  function paintedTheme() {
+    const th = activeTerminalTheme();
+    return { ...th, background: terminalBackground(th.background ?? "", tint) };
+  }
+  const termBg = $derived(paintedTheme().background ?? "");
   let webgl: WebglAddon | undefined;
   let observer: ResizeObserver;
   let flashing = $state(false);
@@ -533,7 +542,7 @@
   }
 
   onMount(async () => {
-    const theme = activeTerminalTheme();
+    const theme = paintedTheme();
     term = new Terminal({
       // Right-click is ours (paste or menu, termmouse.ts). xterm's macOS default
       // selects the word under the pointer first — with copy-on-select that word
@@ -817,10 +826,10 @@
   // Live-apply appearance settings to the running terminal.
   $effect(() => {
     if (!term) return;
-    const t = activeTerminalTheme();
+    const t = paintedTheme();
     const fontFamily = settings.fontFamily;
     const fontSize = settings.fontSize;
-    term.options.theme = { ...t };
+    term.options.theme = t;
     term.options.fontFamily = fontFamily;
     term.options.fontSize = fontSize;
     term.options.lineHeight = settings.lineHeight;

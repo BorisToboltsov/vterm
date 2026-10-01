@@ -121,6 +121,7 @@
   import PasswordInput from "$lib/PasswordInput.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
+  import { activeTabStrip } from "$lib/tabstrip";
   import QuitDialog from "$lib/QuitDialog.svelte";
   import { quitRows } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
@@ -2102,10 +2103,8 @@
             data-prod={prodTabIds.has(tab.sessionId) || undefined}
             class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
             tab.sessionId
-              ? 'bg-panel text-text'
-              : 'text-muted hover:bg-edge'} {prodTabIds.has(tab.sessionId)
-              ? 'shadow-[inset_0_2px_0_0_var(--color-bad)]'
-              : ''}"
+              ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
+              : 'text-muted hover:bg-edge'}"
             title={tab.attach ? undefined : localizedStatus(tab.status)}
             use:tooltip={attachTooltip(tab)}
           >
@@ -2299,7 +2298,7 @@
                     <button
                       class="flex shrink-0 items-center gap-1.5 border-r border-edge px-3 py-1 {ws.active ===
                       TERMINAL_VIEW
-                        ? 'bg-panel text-text'
+                        ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 1)}`
                         : 'text-muted hover:bg-edge hover:text-text'}"
                       onclick={() => setActiveView(tab.sessionId, TERMINAL_VIEW)}
                     >
@@ -2309,7 +2308,7 @@
                     {#each ws.editors as ed (ed.id)}
                       <div
                         class="group flex shrink-0 items-center border-r border-edge {ws.active === ed.id
-                          ? 'bg-panel text-text'
+                          ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 1)}`
                           : 'text-muted hover:bg-edge'}"
                       >
                         <button
@@ -2469,6 +2468,7 @@
                     secret={tab.secret}
                     remember={tab.remember}
                     local={tab.kind === "local"}
+                    tint={prodTabIds.has(tab.sessionId) ? settings.prodTint : null}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
