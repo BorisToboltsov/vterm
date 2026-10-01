@@ -41,10 +41,31 @@
 > убирает только подпись Developer ID + нотаризация (Фаза 15, [ROADMAP.md](ROADMAP.md)).
 
 **Portable — это про один файл, а не про переносимое состояние.** Нужен системный
-**WebView2 Runtime** (предустановлен в Windows 11 и Windows 10 21H2+), а профили
+**WebView2 Runtime** (см. [ниже](#webview2-runtime-на-windows)), а профили
 серверов и `known_hosts` по-прежнему пишутся в `%APPDATA%\vterm`, секреты — в Windows
 Credential Manager. Запуск с флешки не оставит систему нетронутой и не перенесёт
 настройки на другую машину.
+
+### WebView2 Runtime на Windows
+
+Окно vterm рисует системный движок **Microsoft Edge WebView2**. В Windows 11 он есть
+всегда, в Windows 10 обычно приезжает с обновлениями — но на LTSC/LTSB, урезанных
+корпоративных образах и давно не обновлявшихся машинах его может не быть. Тогда
+portable-`.exe` при старте сообщает, что WebView2 не найден.
+
+- **Установщики `-setup.exe` и `.msi`** ставят WebView2 сами, если его нет (скачивают
+  загрузчик Microsoft — нужен интернет).
+- **Для portable** поставьте runtime один раз вручную — со страницы
+  [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/#download), блок
+  *Evergreen*:
+  - **Bootstrapper** (`MicrosoftEdgeWebview2Setup.exe`, ~2 МБ) — сам скачает и поставит
+    runtime; нужен интернет;
+  - **Standalone Installer x64** — полный офлайн-установщик: скачать на любой машине и
+    перенести, если на целевой интернета нет;
+  - или, если есть winget: `winget install --id Microsoft.EdgeWebView2Runtime -e`.
+
+Права администратора не обязательны: без них runtime ставится в профиль пользователя.
+После установки просто запустите vterm заново — перезагрузка не нужна.
 
 ### Проверить скачанное
 
@@ -95,7 +116,9 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 ### Windows с нуля
 
-На чистой машине всё ставится через **winget** (есть в Windows 10 1709+ и Windows 11):
+На чистой машине всё ставится через **winget**. В Windows 11 он есть сразу, в Windows 10
+(1809+) — только если установлен пакет App Installer; `winget` не распознан — сначала
+[поставьте его](#если-нет-winget).
 
 ```powershell
 winget install --id Rustlang.Rustup -e
@@ -113,6 +136,56 @@ corepack enable
 corepack prepare pnpm@latest --activate
 rustc --version; node --version; pnpm --version
 ```
+
+#### Если нет winget
+
+`winget` — не часть Windows 10, а компонент пакета **App Installer** («Установщик
+приложений») из Microsoft Store. Работает с Windows 10 **1809** (сборка 17763) и новее —
+версию покажет `winver`. На 1803 и старше winget не поставить: обновите Windows или
+ставьте инструменты [вручную](#без-winget).
+
+**Через Microsoft Store** (обычная Windows 10 Pro/Home):
+
+1. Откройте [App Installer в Store](https://apps.microsoft.com/detail/9nblggh4nns1)
+   (или найдите в Store «Установщик приложений») и нажмите **Получить/Обновить**.
+2. Откройте **новое** окно PowerShell и проверьте: `winget --version`.
+
+Если App Installer уже стоит, а `winget` всё равно «не распознан» — пакет не
+зарегистрирован для вашего пользователя (типично для свежей учётки, пока Store не
+обновил приложения). Зарегистрируйте его вручную и откройте PowerShell заново:
+
+```powershell
+Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+```
+
+**Без Store** (LTSC/LTSB, Store удалён или заблокирован политикой) — App Installer
+ставится из файлов. На странице
+[релизов winget-cli](https://github.com/microsoft/winget-cli/releases/latest) скачайте
+`Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle` и
+`DesktopAppInstaller_Dependencies.zip`, распакуйте архив и поставьте сначала
+зависимости (VCLibs, UI.Xaml) из папки `x64`, затем сам пакет:
+
+```powershell
+Expand-Archive .\DesktopAppInstaller_Dependencies.zip -DestinationPath .\deps
+Get-ChildItem .\deps\x64\*.appx | ForEach-Object { Add-AppxPackage $_.FullName }
+Add-AppxPackage .\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle
+```
+
+Ошибка `0x80073CF3` / «отсутствует зависимость» значит, что пропущен один из `.appx`
+зависимостей; `0x80073D02` — пакет уже открыт, закройте окна PowerShell/Store и
+повторите. Откройте новое окно PowerShell и проверьте `winget --version`.
+
+#### Без winget
+
+Всё то же ставится обычными установщиками, Build Tools — первыми (их ищет установщик
+Rust). После всех откройте PowerShell заново:
+
+| Компонент | Где взять |
+|-----------|-----------|
+| C++ Build Tools | [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — отметить «Разработка классических приложений на C++» |
+| Rust | `rustup-init.exe` с [rustup.rs](https://rustup.rs/) — вариант по умолчанию (MSVC) |
+| Node.js LTS | `.msi` с [nodejs.org](https://nodejs.org/) |
+| WebView2 Runtime | см. [WebView2 Runtime на Windows](#webview2-runtime-на-windows) |
 
 ---
 

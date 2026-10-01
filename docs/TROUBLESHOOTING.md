@@ -36,7 +36,16 @@
 
 - **`link.exe` not found** / ошибка линковки — не установлены **C++ Build Tools** или не
   перезапущен терминал после установки.
-- **Окно не открывается / белый экран** — не установлен **WebView2 Runtime**.
+- **Portable пишет, что WebView2 не найден / окно не открывается / белый экран** — в
+  системе нет **WebView2 Runtime** (бывает на Windows 10 LTSC и необновлённых образах).
+  Установщики `-setup.exe`/`.msi` ставят его сами; для portable поставьте его один раз
+  вручную (Bootstrapper или офлайн Standalone Installer) — [INSTALL.md](INSTALL.md#webview2-runtime-на-windows).
+- **`winget` не распознан** — в Windows 10 winget приходит с пакетом **App Installer** из
+  Store и предустановлен не везде. Поставьте App Installer (через Store или из файлов на
+  LTSC), а если он уже стоит — зарегистрируйте его
+  (`Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`)
+  и откройте PowerShell заново — [INSTALL.md](INSTALL.md#если-нет-winget). Для **запуска**
+  готовой сборки winget не нужен вовсе: он и Rust — только для сборки из исходников.
 - **`pnpm` не распознан** — не выполнен `corepack enable` или не перезапущен терминал.
 - **`failed to read file 'capabilities\._default.json': stream did not contain valid
   UTF-8`** — исходники скопированы с macOS (флешка FAT/exFAT, сетевая шара, zip), и рядом
