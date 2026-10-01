@@ -11,7 +11,7 @@
   // forced via the `noSignal` prop regardless of the idle timer.
   import { untrack } from "svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
-  import { isIdle, swallowDismiss } from "./idle";
+  import { ACTIVITY_EVENTS, dismissesScreensaver, isIdle, swallowDismiss } from "./idle";
   import {
     bufferGrid,
     idleSample,
@@ -140,7 +140,7 @@
   // let through, so that control still responds to the same click.
   function onUserActivity(e: Event) {
     lastActivity = performance.now();
-    if (!active) return;
+    if (!active || !dismissesScreensaver(e.type)) return;
     if (swallowDismiss(e.target as Node | null, canvas)) {
       e.preventDefault();
       e.stopPropagation();
@@ -181,17 +181,13 @@
     // phase — focus events don't bubble but capture-phase reaches the window for
     // EVERY element, and xterm re-focuses its hidden textarea constantly, which
     // would reset the idle timer forever whenever a terminal is connected. Pointer
-    // moves fire only on actual movement; keys/clicks/scroll are genuine input.
-    const evs: (keyof WindowEventMap)[] = ["keydown", "pointerdown", "wheel"];
-    for (const ev of evs) window.addEventListener(ev, onUserActivity, { capture: true });
-    const onMove = () => {
-      lastActivity = performance.now();
-      if (active && !noSignal) deactivate();
-    };
-    window.addEventListener("pointermove", onMove, { capture: true, passive: true });
+    // moves fire only on actual movement. Every event re-arms the idle timer; only
+    // a click or a key dismisses a showing screensaver (`dismissesScreensaver`).
+    for (const ev of ACTIVITY_EVENTS) {
+      window.addEventListener(ev, onUserActivity, { capture: true, passive: !dismissesScreensaver(ev) });
+    }
     return () => {
-      for (const ev of evs) window.removeEventListener(ev, onUserActivity, { capture: true });
-      window.removeEventListener("pointermove", onMove, { capture: true });
+      for (const ev of ACTIVITY_EVENTS) window.removeEventListener(ev, onUserActivity, { capture: true });
     };
   });
 

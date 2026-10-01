@@ -51,12 +51,23 @@ export interface DockSessionState {
   k8sScope: K8sScopeState | null;
   /** Active sub-tab per driver panel (`"changes"`, `"images"`, `"pods"`, …). */
   sub: Partial<Record<SubTabPanel, string>>;
+  /** Upload batches still running, per destination directory. */
+  uploads: Record<string, number>;
+  /**
+   * Per directory, bumped when the LAST running upload batch into it finishes
+   * (v1.0.42). The panel that started an upload can be gone by then — the dock is
+   * remounted on every terminal-tab switch, and a remounted panel lists the folder
+   * at once, before the upload ended — so "re-list after upload" can't live in the
+   * component that started it. Any mounted panel showing the directory re-lists on
+   * a bump; a hidden one re-lists when it comes back into view anyway.
+   */
+  dirRev: Record<string, number>;
 }
 
 const sessions = $state<Record<string, DockSessionState>>({});
 
 function empty(): DockSessionState {
-  return { files: null, cwd: null, k8sScope: null, sub: {} };
+  return { files: null, cwd: null, k8sScope: null, sub: {}, uploads: {}, dirRev: {} };
 }
 
 /**
@@ -83,6 +94,33 @@ export function dockCwd(sessionId: string): string | null {
 export function setDockCwd(sessionId: string, path: string): void {
   const s = dockState(sessionId);
   if (s.cwd !== path) s.cwd = path;
+}
+
+/** An upload batch into `dir` started — the listing is about to go stale. */
+export function beginUpload(sessionId: string, dir: string): void {
+  const s = dockState(sessionId);
+  s.uploads[dir] = (s.uploads[dir] ?? 0) + 1;
+}
+
+/**
+ * An upload batch into `dir` ended (success, failure or cancel alike). Only the
+ * last of the overlapping batches bumps the directory's revision, so fifty files —
+ * or two batches started back to back — re-list the panel once, at the end.
+ */
+export function endUpload(sessionId: string, dir: string): void {
+  const s = dockState(sessionId);
+  const left = (s.uploads[dir] ?? 1) - 1;
+  if (left > 0) {
+    s.uploads[dir] = left;
+    return;
+  }
+  delete s.uploads[dir];
+  s.dirRev[dir] = (s.dirRev[dir] ?? 0) + 1;
+}
+
+/** The directory's upload revision, read-only (safe inside `$derived`/`$effect`). */
+export function dirRevision(sessionId: string, dir: string): number {
+  return sessions[sessionId]?.dirRev[dir] ?? 0;
 }
 
 /** Drop everything this session's dock remembered (part of the tab teardown). */

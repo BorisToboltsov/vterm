@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   clampIdleTimeout,
+  ACTIVITY_EVENTS,
+  dismissesScreensaver,
   DEFAULT_IDLE_TIMEOUT,
   IDLE_EFFECTS,
   IDLE_TIMEOUT_MAX,
@@ -70,5 +72,16 @@ describe("isIdle / msUntilIdle", () => {
     expect(msUntilIdle(0, 0, 180)).toBe(180_000);
     expect(msUntilIdle(0, 60_000, 180)).toBe(120_000);
     expect(msUntilIdle(0, 999_999, 180)).toBe(0);
+  });
+});
+
+describe("what dismisses the screensaver", () => {
+  it("a click or a key dismisses; a mouse move or a scroll only counts as activity", () => {
+    expect(dismissesScreensaver("keydown")).toBe(true);
+    expect(dismissesScreensaver("pointerdown")).toBe(true);
+    expect(dismissesScreensaver("pointermove")).toBe(false);
+    expect(dismissesScreensaver("wheel")).toBe(false);
+    // All four still keep it from starting.
+    expect([...ACTIVITY_EVENTS].sort()).toEqual(["keydown", "pointerdown", "pointermove", "wheel"]);
   });
 });

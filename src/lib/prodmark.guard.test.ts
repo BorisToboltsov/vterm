@@ -1,6 +1,9 @@
 // Production-marking guard: a tab whose server is prod must be marked on the tab
 // strip AND around its terminal (a red ring; in the broadcast grid, the tile's
-// border), and the frame must stay an inert overlay.
+// border), and the frame must stay an inert overlay. On the strip the mark is the
+// `prod` chip; the top line belongs to the ACTIVE tab only (v1.0.42) — accent, or
+// red when that tab is prod — because a red line on every prod tab read as
+// "active" (tabstrip.ts). The editor sub-tabs carry the same line, 1px.
 //
 // Why a source guard: +page.svelte is the orchestrator and has no component test.
 // The failure modes are silent — the mark vanishes from one of the two places (you
@@ -50,8 +53,14 @@ export function prodMarkViolations(src: string): string[] {
   if (!/data-prod=\{prodTabIds\.has\(tab\.sessionId\)/.test(tab)) {
     out.push("tab carries no data-prod marker");
   }
-  if (!/prodTabIds\.has\(tab\.sessionId\)[\s\S]{0,80}?var\(--color-bad\)/.test(tab)) {
-    out.push("tab has no red top strip for prod");
+  if (!/tabsState\.activeId ===\s*tab\.sessionId\s*\?\s*`[^`]*\$\{activeTabStrip\(prodTabIds\.has\(tab\.sessionId\), 2\)\}`/.test(tab)) {
+    out.push("the active tab has no top strip (accent, red for prod)");
+  }
+  if (/var\(--color-bad\)/.test(tab)) {
+    out.push("tab strip is drawn outside activeTabStrip — an inactive prod tab would look active");
+  }
+  if ((c.match(/activeTabStrip\(prodTabIds\.has\(tab\.sessionId\), 1\)/g) ?? []).length < 2) {
+    out.push("editor sub-tabs (terminal + files) have no 1px active strip");
   }
   if (!/\{#if prodTabIds\.has\(tab\.sessionId\)\}\s*<span[^>]*text-bad[^>]*>prod<\/span>/.test(tab)) {
     out.push("tab has no prod chip");
@@ -87,6 +96,19 @@ describe("production marking guard", () => {
     expect(
       prodMarkViolations(src.replace('text-caption text-bad">prod</span>', 'text-caption text-bad">x</span>')),
     ).toContain("tab has no prod chip");
+    // The old always-on red line on every prod tab, put back.
+    expect(
+      prodMarkViolations(
+        src.replace(
+          "? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`",
+          "? 'bg-panel text-text'",
+        ).replace("data-tab\n", "data-tab\n            class:shadow-[inset_0_2px_0_0_var(--color-bad)]={prodTabIds.has(tab.sessionId)}\n"),
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        "the active tab has no top strip (accent, red for prod)",
+      ]),
+    );
   });
 
   it("is not satisfied by a comment that only names the markers", () => {

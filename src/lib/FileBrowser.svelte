@@ -39,7 +39,7 @@
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
-  import { dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
+  import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
   import { t } from "./i18n";
 
   let {
@@ -332,10 +332,16 @@
    * the current listing is kept and the error is shown as a banner, so the user is
    * never stuck in a dir they couldn't enter.
    */
+  // Only the newest listing may land: two in flight (a re-list after an upload and
+  // a click, say) can answer out of order, and the older answer would put back a
+  // folder without the file that was just uploaded.
+  let loadSeq = 0;
   async function load(path: string) {
+    const seq = ++loadSeq;
     loading = true;
     try {
       const next = await adapter.list(path);
+      if (seq !== loadSeq) return;
       cwd = path;
       entries = next;
       error = "";
@@ -350,9 +356,9 @@
         setDockCwd(sessionKey, path);
       }
     } catch (e) {
-      error = String(e);
+      if (seq === loadSeq) error = String(e);
     } finally {
-      loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
 
@@ -829,15 +835,31 @@
     if (hardError) notifyError(t("sftp.moveFailed", { name: lastName, error: hardError }));
   }
 
+  // No refresh here: the adapter reports the batch to the dock store, and the
+  // revision effect below re-lists — also in a panel remounted mid-upload.
   async function uploadFiles() {
     if (adapter.upload) await adapter.upload(cwd);
-    await refresh();
   }
 
   async function uploadPaths(paths: string[]) {
     if (adapter.uploadPaths) await adapter.uploadPaths(cwd, paths);
-    await refresh();
   }
+
+  // Re-list when an upload batch into the shown folder has ended (dockstate
+  // `dirRev`). Only a bump of the SAME folder counts: navigating elsewhere reads
+  // that folder's revision too, which must not trigger a second listing. A hidden
+  // panel waits — it re-lists on coming back into view.
+  let seenRev = { dir: "", rev: 0 };
+  $effect(() => {
+    if (!sessionKey) return;
+    const dir = cwd;
+    const rev = dirRevision(sessionKey, dir);
+    untrack(() => {
+      const bumped = dir === seenRev.dir && rev > seenRev.rev;
+      seenRev = { dir, rev };
+      if (bumped && visible && isConnected) refresh();
+    });
+  });
 
   /** `ls`-style colour for a file name, from the active terminal palette. */
   function nameStyle(entry: FileEntry): string {

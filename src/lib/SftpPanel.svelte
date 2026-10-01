@@ -33,6 +33,7 @@
   import FileBrowser from "./FileBrowser.svelte";
   import SyncModal from "./SyncModal.svelte";
   import { isBusy, peekSyncJob } from "./stores/syncjob.svelte";
+  import { beginUpload, endUpload } from "./stores/dockstate.svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
 
@@ -84,12 +85,23 @@
     }
   }
 
+  /**
+   * Upload one batch. The listing is re-listed once, when the last batch into
+   * `destDir` ends — through the dock store, because this panel may have been
+   * remounted (a terminal-tab switch) before the upload finished.
+   */
   async function uploadPaths(destDir: string, paths: string[]) {
-    for (const p of paths) {
-      const name = p.split(/[\\/]/).pop() ?? p;
-      await runTransfer((id) =>
-        sftpUpload(sessionId, id, p, `${destDir}/${name}`.replace(/\/+/g, "/")),
-      );
+    if (paths.length === 0) return;
+    beginUpload(sessionId, destDir);
+    try {
+      for (const p of paths) {
+        const name = p.split(/[\\/]/).pop() ?? p;
+        await runTransfer((id) =>
+          sftpUpload(sessionId, id, p, `${destDir}/${name}`.replace(/\/+/g, "/")),
+        );
+      }
+    } finally {
+      endUpload(sessionId, destDir);
     }
   }
 

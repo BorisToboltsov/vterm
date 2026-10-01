@@ -3,7 +3,8 @@
   // palette) and font picker (grouped + live preview) plus size/line-height.
   // Extracted from SettingsPanel.svelte in Phase 18.5. Reads/writes the settings
   // store directly, like AiSettingsSection.
-  import { settings } from "./settings.svelte";
+  import { activeTerminalTheme, settings } from "./settings.svelte";
+  import { PROD_TINT_MAX, PROD_TINT_MIN, terminalBackground } from "./prodtint";
   import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
@@ -254,5 +255,47 @@ print(greet("world"))  # => 12345`;
         bind:value={settings.lineHeight}
       />
     </label>
+  </div>
+
+  <!-- Prod terminal tint (v1.0.42, prodtint.ts): a barely-there background colour
+       on prod sessions' terminals, on top of the red frame and the `prod` chip. -->
+  <div class="mt-3" data-testid="prod-tint">
+    <label class="flex items-center gap-2 text-xs text-muted">
+      <input type="checkbox" bind:checked={settings.prodTint.enabled} data-testid="prod-tint-enabled" />
+      {t("settings.prodTint")}
+    </label>
+    {#if settings.prodTint.enabled}
+      <div class="mt-2 flex items-center gap-3 pl-5">
+        <label class="flex items-center gap-1.5 text-meta text-muted">
+          <input
+            type="color"
+            class="h-6 w-6 shrink-0 rounded border border-edge bg-panel"
+            bind:value={settings.prodTint.color}
+            data-testid="prod-tint-color"
+          />
+          {t("settings.prodTintColor")}
+        </label>
+        <label class="flex flex-1 items-center gap-2 text-meta text-muted">
+          {t("settings.prodTintStrength")}
+          <input
+            type="range"
+            min={PROD_TINT_MIN}
+            max={PROD_TINT_MAX}
+            class="w-full accent-accent"
+            bind:value={settings.prodTint.strength}
+            data-testid="prod-tint-strength"
+          />
+          <span class="w-8 shrink-0 text-right font-mono">{settings.prodTint.strength}%</span>
+        </label>
+      </div>
+      <!-- Live preview: the current theme's background, tinted as a prod terminal. -->
+      <div
+        class="mt-2 ml-5 rounded border border-edge px-2 py-1.5 font-mono text-xs"
+        style="background-color: {terminalBackground(activeTerminalTheme().background ?? '', settings.prodTint)}; color: {activeTerminalTheme().foreground}"
+        data-testid="prod-tint-preview"
+      >
+        root@prod-db-01:~#
+      </div>
+    {/if}
   </div>
 </section>

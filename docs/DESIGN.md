@@ -172,11 +172,18 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Ресайз:** восемь невидимых грип-полос по краям/углам (`z-20`, скрыты в maximized), геометрия и
   курсоры — из [windowchrome.ts](../src/lib/windowchrome.ts).
 
+## Полоса активной вкладки
+
+Активная вкладка сервера несёт полосу 2px по верхнему краю, активная подвкладка панели сессии —
+1px ([tabstrip.ts](../src/lib/tabstrip.ts), `shadow-[inset_0_Npx_0_0_…]`): токен `accent`, а у
+прод-сессии — `bad`. У неактивных вкладок полосы нет; прод среди них отличает чип `prod`.
+
 ## Панель сессии
 
 Полоса под вкладками серверов (`data-testid="session-bar"`): `bg-panel-alt border-b border-edge
 text-xs`. Слева — подвкладки рабочего пространства («Терминал» + открытые файлы; активная
-`bg-panel text-text`, прочие `text-muted hover:bg-edge`, разделитель `border-r border-edge`),
+`bg-panel text-text` + полоса 1px сверху, прочие `text-muted hover:bg-edge`, разделитель
+`border-r border-edge`),
 горизонтальный скролл только у этой части. Справа — инструменты терминала: icon-кнопки «Спросить
 ИИ» (`aiMark`; без выделения — `disabled:opacity-40`, причина в подсказке), «Очистить» (`trash`) и
 поиска (`p-1 text-muted hover:bg-edge hover:text-text`, иконка 14), затем сегментный
