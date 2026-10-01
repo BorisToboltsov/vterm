@@ -3,7 +3,7 @@
 // that text into a structured cert. Runs on the session host (see probe.ts), so
 // the cert is seen from that server's network vantage — useful for "does prod
 // still trust / reach this endpoint, and when does it expire?".
-import { shellQuote } from "./probe";
+import { shellQuote, auditFailure, auditExit, auditText, type AuditEntry, type StepOutput } from "./probe";
 import type { CdShell } from "./cdterminal";
 
 // What `x509` prints — the fields `parseTlsCert` reads.
@@ -142,4 +142,24 @@ export function expiryLevel(daysRemaining: number | null): TlsExpiry {
   if (daysRemaining <= 7) return "critical";
   if (daysRemaining <= 30) return "warning";
   return "ok";
+}
+
+/**
+ * The recording's line for one inspection: who answered and until when — the
+ * cert's own fields, no PEM. A failed fetch records why. Pure (`now` injectable).
+ */
+export function tlsAudit(host: string, port: number, out: StepOutput, now = Date.now()): AuditEntry {
+  const op = `tls ${host.trim()}:${port}`;
+  const cert = out.exitCode === 0 ? parseTlsCert(out.stdout, now) : null;
+  if (!cert) return { op, body: auditFailure(out), exitCode: auditExit(out.exitCode) };
+  const days = cert.daysRemaining === null ? "" : ` (${cert.daysRemaining} d)`;
+  const body = [
+    cert.subject && `subject=${cert.subject}`,
+    cert.issuer && `issuer=${cert.issuer}`,
+    cert.notAfter && `notAfter=${cert.notAfter}${days}`,
+    cert.sans.length > 0 && `SAN=${cert.sans.join(", ")}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return { op, body: auditText(body), exitCode: 0 };
 }

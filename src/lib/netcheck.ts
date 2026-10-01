@@ -28,7 +28,7 @@
 //   N  <target> <port> <status> <ms> <detail>          native (already classified)
 //   E                                   end of run
 
-import { shellQuote } from "./probe";
+import { shellQuote, auditText, type AuditEntry } from "./probe";
 
 export type Proto = "tcp" | "udp";
 
@@ -784,6 +784,44 @@ export function formatReport(
     out.push(line.trimEnd());
   }
   return out.join("\n");
+}
+
+/** One rule back in the syntax it was written in (notes kept), for the audit line. */
+function ruleText(r: NetRule): string {
+  const note = (n?: string) => (n ? ` (${n})` : "");
+  const targets = r.targets.length === 1 ? r.targets[0] : `[${r.targets.join(", ")}]`;
+  const ports = r.ports.length === 1 ? String(r.ports[0]) : `[${r.ports.join(", ")}]`;
+  const src = r.source ? `${r.source}${note(r.sourceLabel)} -> ` : "";
+  return `${src}${targets}:${ports}/${r.proto}${note(r.label)}`;
+}
+
+/**
+ * The recording's block for one run: the rules as written, then the same report
+ * "Copy report" gives (who checked, when, how, one line per port) — not the raw
+ * line protocol, which says nothing to a reader. `exitCode` 1 when the run was
+ * cut short (no `E` marker): the unanswered ports read "no answer", not "closed".
+ */
+export function netcheckAudit(
+  rules: NetRule[],
+  rep: NetReport,
+  words: ReportWords,
+  at: string,
+  retry = false,
+): AuditEntry {
+  return {
+    op: netcheckOp(rules, retry),
+    body: formatReport(rules, rep, words, { at }),
+    exitCode: rep.complete ? 0 : 1,
+  };
+}
+
+/** A run that produced no report (no session answer, a transport error). */
+export function netcheckFailureAudit(rules: NetRule[], message: string, retry = false): AuditEntry {
+  return { op: netcheckOp(rules, retry), body: auditText(message.split("\n")[0].trim()), exitCode: 1 };
+}
+
+function netcheckOp(rules: NetRule[], retry: boolean): string {
+  return `netcheck${retry ? " --retry" : ""} ${rules.map(ruleText).join("; ")}`;
 }
 
 // ── History ─────────────────────────────────────────────────────────────────

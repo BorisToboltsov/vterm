@@ -11,6 +11,7 @@
     tlsArgs,
     tlsSteps,
     tlsTerminalCommand,
+    tlsAudit,
     parseTlsCert,
     expiryLevel,
     type TlsExpiry,
@@ -26,6 +27,11 @@
   const valid = $derived(isValidHost(host.trim()) && isValidPort(port));
   const args = $derived(valid ? tlsArgs(host, port) : null);
   const steps = $derived(valid ? tlsSteps(host, port) : null);
+  const audit = $derived.by(() => {
+    const h = host;
+    const p = port;
+    return (out: ProbeOutput) => tlsAudit(h, p, out);
+  });
   const terminalCommand = $derived(
     valid && session ? tlsTerminalCommand(host, port, session.shell) : null,
   );
@@ -46,7 +52,7 @@
   };
 </script>
 
-<UtilProbeRunner {session} {args} {steps} {terminalCommand} timeoutSecs={15}>
+<UtilProbeRunner {session} {args} {steps} {terminalCommand} {audit} timeoutSecs={15}>
   {#snippet form()}
     <div class="flex flex-wrap items-end gap-2">
       <label class="block">

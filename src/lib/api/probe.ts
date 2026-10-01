@@ -17,16 +17,16 @@ export interface ProbeOutput {
  * token on SSH, passed verbatim locally — where only curl/openssl may run).
  * `stdin` feeds the command and closes it. Never throws on a non-zero exit —
  * inspect `exitCode`/`stderr`. Rejects when `sessionId` has no live session.
- * `mirror` audits the run into the session recording (`[util] $ …`) like git.
+ * Nothing is recorded here — the caller records a masked summary of the parsed
+ * result with `recordAudit` (the raw argv/output carry secrets).
  */
 export function probeRun(
   sessionId: string,
   args: string[],
   timeoutSecs = 20,
-  mirror = true,
   stdin: string | null = null,
 ): Promise<ProbeOutput> {
-  return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, mirror, stdin });
+  return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, stdin });
 }
 
 /** One host with its ports for `netcheckRun` (mirror of `netcheck::NetTarget`). */

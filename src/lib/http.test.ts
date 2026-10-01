@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { httpArgs, httpTerminalArgv, parseHttp, statusClass, type HttpRequest } from "./http";
+import { httpArgs, httpTerminalArgv, httpAudit, parseHttp, statusClass, type HttpRequest } from "./http";
 import { renderArgv } from "./termcmd";
 
 const base: HttpRequest = {
@@ -107,5 +107,43 @@ describe("statusClass", () => {
     expect(statusClass(404)).toBe("clientError");
     expect(statusClass(500)).toBe("serverError");
     expect(statusClass(100)).toBe("unknown");
+  });
+});
+
+describe("httpAudit", () => {
+  const raw =
+    "HTTP/1.1 200 OK\r\nSet-Cookie: session=SECRETCOOKIE\r\n\r\n" +
+    `{"token":"RESPONSESECRET"}` +
+    "\n__VTERM_HTTP__\t200\t0.010\t0.020\t0.030\t0.045\t512\n";
+  const req: HttpRequest = {
+    ...base,
+    method: "POST",
+    url: "https://u:pw123456@api.test/x?token=QUERYSECRET&page=2",
+    headers: [
+      { name: "Authorization", value: "Bearer HEADERSECRET" },
+      { name: "X-Api-Key", value: "VENDORSECRET" },
+      { name: "Content-Type", value: "application/json" },
+    ],
+    body: `{"password":"BODYSECRET"}`,
+  };
+
+  it("records the request shape and the status, no secrets and no bodies", () => {
+    const a = httpAudit(req, { stdout: raw, stderr: "", exitCode: 0 });
+    const all = a.op + "\n" + a.body;
+    for (const secret of ["HEADERSECRET", "VENDORSECRET", "BODYSECRET", "QUERYSECRET", "pw123456", "SECRETCOOKIE", "RESPONSESECRET"]) {
+      expect(all, secret).not.toContain(secret);
+    }
+    // The token rule masks to the next space — over-masking `&page=2` is the safe side.
+    expect(a.op).toMatch(/^http POST https:\/\/u:‹redacted›@api\.test\/x\?token=‹redacted› /);
+    expect(a.op).toContain("-H 'Authorization: ‹redacted›'");
+    expect(a.op).toContain("-H 'Content-Type: application/json'");
+    expect(a.op).toContain(`--data (${req.body.length} B)`);
+    expect(a.body).toBe("HTTP/1.1 200 OK · 45 ms · 512 B");
+    expect(a.exitCode).toBe(0);
+  });
+
+  it("records a transport failure with its exit code", () => {
+    const a = httpAudit(base, { stdout: "", stderr: "curl: (6) Could not resolve host", exitCode: 6 });
+    expect(a).toEqual({ op: "http GET https://api.test/health", body: "curl: (6) Could not resolve host", exitCode: 6 });
   });
 });

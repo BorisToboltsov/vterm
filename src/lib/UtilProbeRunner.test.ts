@@ -5,10 +5,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const probeRun = vi.fn();
 const writeToTerminal = vi.fn();
+const recordAudit = vi.fn();
+let recording = false;
 vi.mock("./api", () => ({
   probeRun: (...a: unknown[]) => probeRun(...a),
   writeToTerminal: (...a: unknown[]) => writeToTerminal(...a),
+  recordAudit: (...a: unknown[]) => recordAudit(...a),
 }));
+vi.mock("./stores/recordings.svelte", () => ({ isRecording: () => recording }));
 
 import UtilProbeRunner from "./UtilProbeRunner.svelte";
 import type { ProbeSession } from "./probe";
@@ -24,6 +28,8 @@ const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
 beforeEach(() => {
   probeRun.mockReset();
   writeToTerminal.mockReset();
+  recordAudit.mockReset().mockResolvedValue(undefined);
+  recording = false;
 });
 
 describe("UtilProbeRunner", () => {
@@ -43,8 +49,8 @@ describe("UtilProbeRunner", () => {
     await userEvent.click(screen.getByTestId("probe-run"));
     await waitFor(() => expect(screen.getByTestId("out")).toHaveTextContent("subject=CN=x"));
     expect(probeRun.mock.calls).toEqual([
-      ["l1", ["openssl", "s_client"], 20, true, null],
-      ["l1", ["openssl", "x509"], 20, true, "PEM"],
+      ["l1", ["openssl", "s_client"], 20, null],
+      ["l1", ["openssl", "x509"], 20, "PEM"],
     ]);
     expect(writeToTerminal).not.toHaveBeenCalled();
   });
@@ -80,5 +86,38 @@ describe("UtilProbeRunner", () => {
     render(UtilProbeRunner, { props: { session: local, args: ["curl", "x"], form, result } });
     expect(screen.getByTestId("probe-terminal")).toBeDisabled();
     expect(screen.getByTestId("probe-run")).toBeEnabled();
+  });
+
+  it("records the tool's audit entry into an active recording", async () => {
+    recording = true;
+    probeRun.mockResolvedValue(ok("subject=CN=x"));
+    const audit = vi.fn((out: { stdout: string }) => ({ op: "tls x:443", body: out.stdout, exitCode: 0 }));
+    render(UtilProbeRunner, { props: { session: ssh, args: ["sh"], audit, form, result } });
+    await userEvent.click(screen.getByTestId("probe-run"));
+    await waitFor(() => expect(recordAudit).toHaveBeenCalledOnce());
+    expect(recordAudit).toHaveBeenCalledWith("s1", { op: "tls x:443", body: "subject=CN=x", exitCode: 0 });
+  });
+
+  it("records a failed call as a failure, not silence", async () => {
+    recording = true;
+    probeRun.mockRejectedValue(new Error("boom"));
+    const audit = vi.fn((out: { stderr: string; exitCode: number }) => ({ op: "x", body: out.stderr, exitCode: out.exitCode }));
+    render(UtilProbeRunner, { props: { session: ssh, args: ["sh"], audit, form, result } });
+    await userEvent.click(screen.getByTestId("probe-run"));
+    await waitFor(() => expect(recordAudit).toHaveBeenCalledOnce());
+    expect(recordAudit.mock.calls[0][1]).toEqual({ op: "x", body: "Error: boom", exitCode: 1 });
+  });
+
+  it("records nothing without an active recording, or for a typed command", async () => {
+    probeRun.mockResolvedValue(ok("x"));
+    const audit = vi.fn(() => ({ op: "x", body: "", exitCode: 0 }));
+    render(UtilProbeRunner, {
+      props: { session: local, args: ["curl"], terminalCommand: "curl x", audit, form, result },
+    });
+    await userEvent.click(screen.getByTestId("probe-run"));
+    await waitFor(() => expect(probeRun).toHaveBeenCalled());
+    recording = true;
+    await userEvent.click(screen.getByTestId("probe-terminal"));
+    expect(recordAudit).not.toHaveBeenCalled();
   });
 });

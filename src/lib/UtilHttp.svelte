@@ -9,6 +9,7 @@
   import {
     httpArgs,
     httpTerminalArgv,
+    httpAudit,
     parseHttp,
     statusClass,
     HTTP_METHODS,
@@ -43,6 +44,10 @@
   const validUrl = $derived(/^https?:\/\/\S+/i.test(url.trim()));
   const request = $derived({ method, url, headers, body, followRedirects });
   const args = $derived(validUrl ? httpArgs(request) : null);
+  const audit = $derived.by(() => {
+    const req = { ...request, headers: [...request.headers] };
+    return (out: ProbeOutput) => httpAudit(req, out);
+  });
   // A body with newlines (or a `"` under cmd.exe) can't be typed into a prompt:
   // renderArgv says null and the terminal button explains why.
   const terminalCommand = $derived(
@@ -58,7 +63,7 @@
   };
 </script>
 
-<UtilProbeRunner {session} {args} {terminalCommand} timeoutSecs={25}>
+<UtilProbeRunner {session} {args} {terminalCommand} {audit} timeoutSecs={25}>
   {#snippet form()}
     <div class="flex items-end gap-2">
       <label class="block">

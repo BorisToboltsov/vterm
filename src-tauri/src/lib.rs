@@ -932,6 +932,30 @@ async fn annotate_recording(
     Ok(())
 }
 
+/// Record a network utility's run into the session's active recording as a
+/// `[util] $ <op> … [util] exit N` block — the record-only shape of the sftp/git
+/// mirrors (`netprobe::audit_block`). The frontend builds `op`/`body` from the
+/// parsed result with secrets masked (tls.ts/http.ts/netcheck.ts), because only
+/// it knows which tokens are header values and which output is a response body.
+/// Like the other mirrors it goes through `record_output`, so a paused recording
+/// drops it. No-op without a session or a recording.
+#[tauri::command]
+async fn record_audit(
+    state: State<'_, AppState>,
+    session_id: String,
+    op: String,
+    body: String,
+    exit_code: i32,
+) -> AppResult<()> {
+    let block = netprobe::audit_block(&op, &body, exit_code);
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        session.record_output(block.as_bytes());
+    } else if let Some(pty) = state.local_ptys.lock().unwrap().get(&session_id).cloned() {
+        pty.record_output(block.as_bytes());
+    }
+    Ok(())
+}
+
 /// Result of an AI agent command execution (17.8), returned to the dialog loop.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -1039,10 +1063,10 @@ async fn git_run(
 /// the frontend-built script (`args`, see netcheck.ts) on the server; a local
 /// tab answers natively (`netcheck::run_native`) — the one narrow, click-only
 /// exception to the offline invariant. Both reply in the same line protocol, so
-/// the frontend parses one format. `targets` is what the local side connects to
-/// and what the audit line names; on SSH the script already embeds them.
-/// Audited as `[util] $ netcheck …` in the session recording, never emitted to
-/// the live terminal.
+/// the frontend parses one format. `targets` is what the local side connects to;
+/// on SSH the script already embeds them. Not mirrored here: the raw protocol
+/// says nothing to a reader — the frontend records the parsed report through
+/// [`record_audit`].
 #[tauri::command]
 async fn netcheck_run(
     state: State<'_, AppState>,
@@ -1053,8 +1077,6 @@ async fn netcheck_run(
     timeout_secs: u64,
 ) -> AppResult<netprobe::ProbeOutput> {
     netcheck::validate(&targets).map_err(AppError::Message)?;
-    let label = netcheck::audit_label(&targets);
-    let audit = !targets.is_empty();
     if let Ok(session) = session_arc(&state, &session_id).await {
         if args.is_empty() {
             return Err(AppError::Message("netcheck: no arguments".into()));
@@ -1069,11 +1091,6 @@ async fn netcheck_run(
         } else {
             (outcome.stderr, outcome.exit_code)
         };
-        if audit {
-            session.record_output(
-                netprobe::probe_mirror(&label, &outcome.stdout, &stderr, exit_code).as_bytes(),
-            );
-        }
         return Ok(netprobe::ProbeOutput {
             stdout: outcome.stdout,
             stderr,
@@ -1081,12 +1098,9 @@ async fn netcheck_run(
         });
     }
     let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
+    if local.is_some() {
         let timeout = std::time::Duration::from_secs(connect_timeout_secs.clamp(1, 30));
         let stdout = netcheck::run_native(&targets, timeout).await;
-        if audit {
-            pty.record_output(netprobe::probe_mirror(&label, &stdout, "", 0).as_bytes());
-        }
         return Ok(netprobe::ProbeOutput {
             stdout,
             stderr: String::new(),
@@ -1106,16 +1120,15 @@ async fn netcheck_run(
 /// tool into the next without `sh -c` (Windows has no `sh`). Argument building
 /// and output parsing are pure frontend logic; this only executes and captures.
 /// A timeout collapses into a non-zero exit + stderr note so the frontend sees a
-/// uniform `ProbeOutput`. `mirror` audits the command into the active session
-/// recording as `[util] $ …` output — never emitted to the live terminal,
-/// exactly like `git_run`/`container_run`.
+/// uniform `ProbeOutput`. Not mirrored here: the argv carries header values and
+/// request bodies, the output whole responses — the frontend records a masked
+/// summary of the parsed result through [`record_audit`].
 #[tauri::command]
 async fn probe_run(
     state: State<'_, AppState>,
     session_id: String,
     args: Vec<String>,
     timeout_secs: u64,
-    mirror: bool,
     stdin: Option<String>,
 ) -> AppResult<netprobe::ProbeOutput> {
     if args.is_empty() {
@@ -1137,11 +1150,6 @@ async fn probe_run(
         } else {
             (outcome.stderr, outcome.exit_code)
         };
-        if mirror {
-            session.record_output(
-                netprobe::probe_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
-            );
-        }
         return Ok(netprobe::ProbeOutput {
             stdout: outcome.stdout,
             stderr,
@@ -1149,7 +1157,7 @@ async fn probe_run(
         });
     }
     let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
+    if local.is_some() {
         if !netprobe::local_program_allowed(&args[0]) {
             return Err(AppError::Message(format!(
                 "probe: {} is not a local probe tool",
@@ -1160,12 +1168,6 @@ async fn probe_run(
             Some(input) => container::run_local_stdin(&args, input.as_bytes(), timeout).await?,
             None => container::run_local(&args, timeout).await?,
         };
-        if mirror {
-            let cmd = netprobe::probe_command(&args);
-            pty.record_output(
-                netprobe::probe_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
-            );
-        }
         return Ok(netprobe::ProbeOutput {
             stdout: out.stdout,
             stderr: out.stderr,
@@ -2460,6 +2462,7 @@ pub fn run() {
             stop_recording,
             set_recording_paused,
             annotate_recording,
+            record_audit,
             list_recordings,
             delete_recording,
             set_recording_meta,
@@ -2570,6 +2573,41 @@ mod tests {
             !code.contains('?'),
             "connect_session propagates an error after login — the live session would be dropped:\n{code}"
         );
+    }
+
+    /// The body of `async fn <name>(` up to its closing `}` at column 0, with
+    /// line comments stripped.
+    fn command_code(src: &str, name: &str) -> String {
+        let at = src
+            .find(&format!("async fn {name}("))
+            .unwrap_or_else(|| panic!("{name} not found"));
+        let body = &src[at..];
+        let body = &body[..body.find("\n}\n").expect("end of fn")];
+        body.lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn network_utilities_never_record_raw_argv_or_output() {
+        // Guard (v1.0.41): `probe_run` mirrored its argv and the whole response into
+        // the recording — `-H 'Authorization: Bearer …'`, `--data-raw` with a
+        // password, the response body and its `Set-Cookie`. The frontend records a
+        // masked summary of the PARSED result through `record_audit` instead; the
+        // executors themselves must not write to the recording at all.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        for name in ["probe_run", "netcheck_run"] {
+            let code = command_code(&src, name);
+            for banned in ["record_output", "annotate_recording", "audit_block"] {
+                assert!(
+                    !code.contains(banned),
+                    "{name} writes to the recording ({banned}) — record a masked summary via record_audit"
+                );
+            }
+        }
+        // …and the one recording path stays the formatted, sanitized block.
+        assert!(command_code(&src, "record_audit").contains("netprobe::audit_block("));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shellQuote, isCommandMissing, probeError, stepFailed, curlProgram } from "./probe";
+import { shellQuote, isCommandMissing, probeError, stepFailed, curlProgram, auditFailure, auditExit, auditText } from "./probe";
 
 describe("shellQuote", () => {
   it("leaves safe tokens unquoted", () => {
@@ -57,5 +57,21 @@ describe("probeError", () => {
   it("falls back to stdout then exit code", () => {
     expect(probeError("partial", "", 2)).toBe("partial");
     expect(probeError("", "", 7)).toBe("exit 7");
+  });
+});
+
+describe("audit helpers", () => {
+  it("records the first error line, masked", () => {
+    expect(auditFailure({ stdout: "", stderr: "curl: (7) refused\nmore", exitCode: 7 })).toBe("curl: (7) refused");
+    expect(auditFailure({ stdout: "", stderr: "", exitCode: 0 })).toBe("no output");
+    expect(auditFailure({ stdout: "<html>", stderr: "", exitCode: 0 })).toBe("unrecognized output");
+    expect(auditFailure({ stdout: "", stderr: "Authorization: Bearer abcdefghijkl failed", exitCode: 1 })).not.toContain("abcdefghijkl");
+  });
+  it("never records a failed answer as exit 0", () => {
+    expect(auditExit(0)).toBe(1);
+    expect(auditExit(7)).toBe(7);
+  });
+  it("masks secrets", () => {
+    expect(auditText("https://u:hunter2@h/x?token=abc123")).not.toMatch(/hunter2|abc123/);
   });
 });
