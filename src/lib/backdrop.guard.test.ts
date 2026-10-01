@@ -27,7 +27,21 @@ function svelteFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const stripComments = (s: string) => s.replace(/<!--[\s\S]*?-->/g, "");
+/** Drop `<!-- … -->` blocks by scanning — a one-pass regex replace can leave a
+ *  `<!--` behind (`<!--<!-- -->`); an unclosed comment drops the rest. */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("<!--", i);
+    if (open < 0) return out + src.slice(i);
+    out += src.slice(i, open);
+    const close = src.indexOf("-->", open + 4);
+    if (close < 0) return out;
+    i = close + 3;
+  }
+  return out;
+}
 
 /** The opening tag around `at`: back to its `<`, forward to the `>` outside `{…}`. */
 function openingTag(src: string, at: number): string {
@@ -44,7 +58,7 @@ function openingTag(src: string, at: number): string {
 
 /** Every dimming backdrop element's opening tag in a component's markup. */
 export function backdropTags(src: string): string[] {
-  const markup = stripComments(src);
+  const markup = stripHtmlComments(src);
   const out: string[] = [];
   const re = /bg-black\/\d+/g;
   for (let m = re.exec(markup); m; m = re.exec(markup)) {
