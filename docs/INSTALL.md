@@ -23,6 +23,7 @@
 | **macOS** | `.dmg` | Открыть, перетащить **vterm.app** в `/Applications`. Сборка не подписана — см. врезку ниже |
 | **Windows** | `-setup.exe` (NSIS) · `.msi` | Обычная установка. SmartScreen → *«Подробнее» → «Выполнить в любом случае»* |
 | **Windows** | `vterm-portable-…-x86_64.exe` | Один файл, без установки — скопировал и запустил |
+| **Windows** без WebView2 и без сети (LTSC) | `vterm-portable-…-x86_64-webview2.exe` | Тот же portable со встроенным WebView2 (~330 МБ) — см. [ниже](#webview2-runtime-на-windows) |
 | **Linux** | `.deb` · `.rpm` · AppImage | Пакетный менеджер; AppImage — `chmod +x` и запуск |
 
 > **macOS: «не удаётся проверить разработчика» / «программа повреждена».** Сборка не
@@ -53,9 +54,17 @@ Credential Manager. Запуск с флешки не оставит систе�
 корпоративных образах и давно не обновлявшихся машинах его может не быть. Тогда
 portable-`.exe` при старте сообщает, что WebView2 не найден.
 
+- **Нет ни WebView2, ни Store, ни сети — берите `vterm-portable-…-x86_64-webview2.exe`.**
+  Это тот же portable, внутри которого лежит WebView2 Fixed Version runtime. Ставить ничего
+  не нужно, права администратора не нужны. Если системный WebView2 есть, файл работает с
+  ним, как обычный portable. Если нет, при **первом** запуске он покажет окно «Подготовка…»
+  и распакует runtime в `%LOCALAPPDATA%\vcore\vterm\data\webview2\` (сотни МБ на
+  диске, до пары минут). Следующие запуски — обычные. Учтите: встроенный движок сам **не
+  обновляется**, свежий приходит только с новым релизом vterm. Как это устроено — ADR
+  [0013](adr/0013-bundled-webview2.md).
 - **Установщики `-setup.exe` и `.msi`** ставят WebView2 сами, если его нет (скачивают
   загрузчик Microsoft — нужен интернет).
-- **Для portable** поставьте runtime один раз вручную — со страницы
+- **Для обычного portable** поставьте runtime один раз вручную — со страницы
   [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/#download), блок
   *Evergreen*:
   - **Bootstrapper** (`MicrosoftEdgeWebview2Setup.exe`, ~2 МБ) — сам скачает и поставит
@@ -230,6 +239,19 @@ pnpm tauri:build:mac    # то же + open-on-mac.sh рядом с .dmg
 `release/` уже самодостаточен. CI кладёт его в релиз как
 `vterm-portable-<версия>-x86_64.exe`.
 
+Второй, «полный» portable — `vterm-portable-<версия>-x86_64-webview2.exe` — CI собирает из
+того же `vterm.exe`: находит на странице Microsoft свежий WebView2 Fixed Version runtime,
+проверяет подпись `.cab` и дописывает его в конец exe
+([scripts/webview2-runtime.mjs](../scripts/webview2-runtime.mjs), ADR
+[0013](adr/0013-bundled-webview2.md)). Локально то же:
+
+```powershell
+$r = node scripts/webview2-runtime.mjs resolve      # «<версия> <url>»
+$ver, $url = $r -split ' ', 2
+Invoke-WebRequest $url -OutFile webview2.cab
+node scripts/webview2-runtime.mjs embed src-tauri/target/release/vterm.exe webview2.cab $ver vterm-full.exe
+```
+
 > Сборки не подписаны. Для распространения без предупреждений ОС нужны Apple Developer
 > ID + нотаризация (macOS) и code-signing сертификат (Windows) — Фаза 15, см.
 > [ROADMAP.md](ROADMAP.md).
@@ -329,10 +351,10 @@ git push origin v1.0.0
 | ОС | Должно быть |
 |----|-------------|
 | **macOS** | `vterm_<версия>_universal.dmg` · **`open-on-mac.sh`** |
-| **Windows** | `vterm_<версия>_x64_en-US.msi` · `vterm_<версия>_x64-setup.exe` · **`vterm-portable-<версия>-x86_64.exe`** |
+| **Windows** | `vterm_<версия>_x64_en-US.msi` · `vterm_<версия>_x64-setup.exe` · **`vterm-portable-<версия>-x86_64.exe`** · **`vterm-portable-<версия>-x86_64-webview2.exe`** |
 | **Linux** | `.deb` · `.rpm` · `.AppImage` (x86_64) |
 
-**Жирным** — два файла, которых бандлер Tauri не производит: их доливают отдельные шаги
+**Жирным** — файлы, которых бандлер Tauri не производит: их доливают отдельные шаги
 через `gh release upload`. Если какого-то файла нет — упал job этой ОС, смотрите Actions.
 Скачанный из релиза `open-on-mac.sh` теряет флаг исполняемости, получателю нужен `chmod +x`
 (это написано в теле релиза).
@@ -367,7 +389,8 @@ write`, но настройка репозитория — потолок над
 ### Что закреплено тестами
 
 [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) читает workflow и
-падает, если: пропал шаг заливки `open-on-mac.sh` или portable-`.exe`; `node-version` не
+падает, если: пропал шаг заливки `open-on-mac.sh`, portable-`.exe` или portable с WebView2
+(или из него пропала проверка подписи `.cab`); `node-version` не
 перекрывает пол запиненного мажора pnpm (pnpm 11 требует Node ≥ 22.13 и умирает первым же
 вызовом); какой-то экшен откатился на мажор с рантаймом Node 20. Все три — поломки, зелёные
 локально и видимые только в CI.

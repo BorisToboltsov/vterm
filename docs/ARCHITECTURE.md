@@ -133,6 +133,7 @@
 | [git.rs](../src-tauri/src/git.rs) · [container.rs](../src-tauri/src/container.rs) · [kube.rs](../src-tauri/src/kube.rs) · [netprobe.rs](../src-tauri/src/netprobe.rs) | Драйверы панелей — дамповые исполнители argv |
 | [netcheck.rs](../src-tauri/src/netcheck.rs) | «Проверка доступа» на локальной вкладке: нативное TCP-рукопожатие, тот же протокол ответа, что у SSH-скрипта (ADR 0012) |
 | [localenv.rs](../src-tauri/src/localenv.rs) | Реконструкция `PATH` для локального спавна (упакованное приложение наследует минимальный) |
+| [webview2.rs](../src-tauri/src/webview2.rs) | «Полный» portable Windows: хвост exe с WebView2 Fixed Version runtime, выбор системный/вшитый, атомарная распаковка до создания окна (ADR 0013); упаковка — [scripts/webview2-runtime.mjs](../scripts/webview2-runtime.mjs) |
 | [keygen.rs](../src-tauri/src/keygen.rs) · [servertools.rs](../src-tauri/src/servertools.rs) · [textenc.rs](../src-tauri/src/textenc.rs) | Генерация SSH-ключей · серверные линтеры · определение и round-trip кодировок |
 | [error.rs](../src-tauri/src/error.rs) | `AppResult`/`AppError` |
 

@@ -960,6 +960,15 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   0…1 (`idleSample`): load — от числа логических CPU (`Metrics.cpuCount`, считается тем же `awk`,
   что `cpustat`, без лишнего процесса на тике); без load average или без числа ядер — `null`,
   прочерк и разрыв линии, а не ноль (принцип 5).
+- **Вшитый WebView2 — только когда системного нет** (ADR 0013). «Полный» portable несёт
+  Fixed Version runtime в хвосте exe; `webview2::prepare` — первая строка `run()`, до окна и
+  tokio. Системный runtime (и явная `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` пользователя)
+  побеждает **всегда**: вшитый не обновляется. Распаковка — только атомарная (temp-папка →
+  sha256 из хвоста → `rename` в `<версия>`), оборванная не выдаёт себя за готовую; версия из
+  хвоста — строго `a.b.c.d`, иначе хвост не наш. `.cab` в CI вшивается только с подписью
+  Microsoft. Формат хвоста описан в Rust и в `scripts/webview2-runtime.mjs` — держит их
+  вместе гейт `webview2runtime.test.ts`. Тексты окон «Подготовка…»/ошибки — в
+  `webview2.rs` на en/ru: `t()` до WebView не существует.
 - **Оконное обрамление: macOS нативное, Windows/Linux — своё** (ADR 0011). На macOS окно
   оставляем с нативными декорациями и системным меню-баром; `build_app_menu` строит там app-меню
   «vterm» + Help. На Windows/Linux окно **безрамочное**: декорации снимаются в Rust `setup`
@@ -1030,13 +1039,14 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [dependabot.guard.test.ts](../src/lib/dependabot.guard.test.ts) | Группы Dependabot: мажор не едет в группе, russh не группируется вовсе, minor Svelte/SvelteKit — отдельным PR, catch-all `*` — последняя группа экосистемы (Dependabot берёт первую подходящую), выдержка `cooldown` ≥ 7 дней у каждой экосистемы. Нераспознанная форма YAML роняет тест, а не пропускается |
 | [untrusted.fuzz.test.ts](../src/lib/untrusted.fuzz.test.ts) · `textenc::props` | Свойства недоверенного входа на **произвольных** данных: из рендера markdown не выходит исполняемого (узлы и имена атрибутов проверяются парсером браузера, не регулярками), декодер не паникует на любых байтах, UTF-16 без BOM — текст, а не бинарь |
 | [quitguard.guard.test.ts](../src/lib/quitguard.guard.test.ts) | Защита закрытия взводится ровно в одном месте — в `.then` подписки на `menu://quit`, иначе окно нельзя закрыть. Проверка по исходнику без комментариев |
+| [webview2runtime.test.ts](../src/lib/webview2runtime.test.ts) | Формат хвоста «полного» portable один в Rust (`webview2.rs`) и в скрипте CI (`webview2-runtime.mjs`): сигнатура, длина, смещения полей, переменная загрузчика; скрипт берёт `.cab` только с хоста Microsoft. Шаг CI с проверкой подписи держит `releaseassets.guard` |
 | [version.guard.test.ts](../src/lib/version.guard.test.ts) | Версия — только в `package.json`; `tauri.conf.json` держит ссылку, а не литерал; `Cargo.toml`/`Cargo.lock` синхронны. CI читает версию оттуда же: `.version` из `tauri.conf.json` теперь вернёт `"../package.json"` — не ошибка, а имя файла в релизе |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона — ни `..Default::default()`, ни конструктором-шаблоном russh-sftp. Сканирует исходник **без комментариев**, чтобы доки могли называть анти-паттерн; строка отказывается от проверки маркером `guard-allow` — его несёт только тест, документирующий ловушку |
 | `login_answers_come_only_from_the_plan` (Rust) | Ответы на вопросы сервера (`keyboard-interactive`) уходят одним вызовом и только из `kbdauth::merge` (пароль — лишь в вопрос, выбранный `plan`); вопросы в UI — только через `kbdauth::ask`; `disconnect` и повторный `connect_session` снимают ожидающий вопрос. Сканирует код без комментариев |
 | `nothing_after_login_can_fail_the_connection` (Rust) | В `connect_session` после успешного `ssh::connect` нет ни одного `?`: сбой сохранения секрета не рвёт живую сессию. Сканирует код без комментариев |
 | `quitting_always_goes_through_the_confirmation` (Rust) | В меню macOS нет системного `quit()`, пункт «quit» и закрытие окна идут через `request_quit`, закрытие откладывается `prevent_close` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
-| `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl) идёт через `no_console_window` — на Windows без окна |
+| `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl, а также `expand`/`icacls` распаковки WebView2) идёт через `no_console_window`/`no_console_window_std` — на Windows без окна |
 | `app_originated_sockets_live_only_in_ssh_and_netcheck` (Rust) | Сокеты приложения (`TcpStream::connect`, `TcpSocket`, `UdpSocket`, `lookup_host`, `to_socket_addrs`) открываются только в `ssh.rs` и `netcheck.rs` — иначе модуль тихо нарушает офлайн. Сканирует все `.rs` без строчных комментариев |
 | `probe_scripts_report_raw_readings_not_differences` (Rust) | Зонды метрик не вычитают на хосте: ни одна awk-программа в `*_SCRIPT` не содержит вычитания операндов. Дефис внутри регулярок и имён устройств (`[a-z0-9]`, `dm-`, `overall-health`) арифметикой не считается — операнды распознаются как `$N` или одиночная буква |
 

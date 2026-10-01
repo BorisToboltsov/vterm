@@ -363,3 +363,57 @@ describe("Windows: portable .exe ships alongside the installers", () => {
     expect(step).toMatch(/if:\s*matrix\.platform == 'windows-latest'/);
   });
 });
+
+// «Полный» portable (ADR 0013): тот же exe + WebView2 Fixed Version runtime в хвосте.
+// Пропадёт шаг — релиз молча выйдет без единственного варианта для Windows без
+// WebView2 и без сети; пропадёт проверка подписи — в exe поедет что угодно.
+describe("Windows: portable .exe with the bundled WebView2", () => {
+  const step = uploadStepWith("x86_64-webview2.exe");
+  const gitlab = readFileSync(join(ROOT, ".gitlab-ci.yml"), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+  it("exists and runs only on the Windows runner", () => {
+    expect(step).toBeDefined();
+    expect(step).toMatch(/if:\s*matrix\.platform == 'windows-latest'/);
+  });
+
+  it("finds the runtime and embeds it with the shared script", () => {
+    expect(step).toContain("node scripts/webview2-runtime.mjs resolve");
+    expect(step).toMatch(/node scripts\/webview2-runtime\.mjs embed \$exe \$cab \$wvVersion \$full/);
+    expect(step).toContain("src-tauri/target/release/vterm.exe");
+  });
+
+  it("refuses a .cab that is not signed by Microsoft", () => {
+    expect(step).toContain("Get-AuthenticodeSignature");
+    expect(step).toContain("'Valid'");
+    expect(step).toContain("O=Microsoft Corporation");
+    expect(step).toContain("throw");
+  });
+
+  it("fails on a failed script instead of uploading a broken file", () => {
+    expect(step!.match(/\$LASTEXITCODE -ne 0/g)?.length).toBe(2);
+  });
+
+  it("names it from the real app version and uploads it", () => {
+    expect(step).toContain("package.json");
+    expect(step).toMatch(/vterm-portable-\$v-x86_64-webview2\.exe/);
+    expect(step).toContain("${{ github.ref_name }}");
+    expect(step).toContain("GH_TOKEN");
+  });
+
+  it("the script it runs actually exists", () => {
+    expect(existsSync(join(ROOT, "scripts/webview2-runtime.mjs"))).toBe(true);
+  });
+
+  it("GitLab build:windows builds the same file the same way", () => {
+    expect(gitlab).toContain("node scripts/webview2-runtime.mjs resolve");
+    expect(gitlab).toContain("Get-AuthenticodeSignature");
+    expect(gitlab).toMatch(/vterm-portable-\$v-x86_64-webview2\.exe/);
+  });
+
+  it("the release body tells which portable to take", () => {
+    expect(stepWith("releaseBody")).toContain("x86_64-webview2.exe");
+  });
+});

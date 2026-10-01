@@ -182,7 +182,7 @@ jobs:
             Готовые сборки vterm ${{ github.ref_name }}. Скачайте файл под свою ОС из списка **Assets** ниже.
 
             - **macOS** — `.dmg`; рядом лежит `open-on-mac.sh` — хелпер запуска неподписанной сборки (снимает карантин Gatekeeper): `chmod +x open-on-mac.sh && ./open-on-mac.sh`.
-            - **Windows** — `-setup.exe` (NSIS) / `.msi` (установщики) и `vterm-portable-*-x86_64.exe` — **portable**, один файл без установки (нужен системный WebView2 Runtime).
+            - **Windows** — `-setup.exe` (NSIS) / `.msi` (установщики) и `vterm-portable-*-x86_64.exe` — **portable**, один файл без установки (нужен системный WebView2 Runtime); `vterm-portable-*-x86_64-webview2.exe` — тот же portable со встроенным WebView2 для Windows без него и без сети (LTSC).
             - **Linux** — `.deb` / `.rpm` / AppImage (x86_64).
 
             Сборки не подписаны — при первом запуске ОС может показать предупреждение; как снять, см. [docs/INSTALL.md](https://github.com/BorisToboltsov/vterm/blob/main/docs/INSTALL.md).
@@ -226,6 +226,42 @@ jobs:
           $portable = "artifacts/portable/vterm-portable-$v-x86_64.exe"
           Copy-Item $exe $portable
           gh release upload "$env:TAG" $portable --clobber
+
+      # «Полный» portable (v1.1.0, ADR 0013): тот же vterm.exe, к концу которого
+      # дописан НЕИЗМЕНЁННЫЙ .cab WebView2 Fixed Version runtime и 64-байтовый
+      # хвост-описание. Для Windows без WebView2 и без сети (LTSC): на старте vterm
+      # сам распакует runtime, если системного нет (src-tauri/src/webview2.rs).
+      #   • Версию берём со страницы Microsoft в момент сборки: старые .cab с
+      #     сервера пропадают, пин в репозитории протух бы за пару месяцев.
+      #   • Подлинность — подпись Authenticode Microsoft на самом .cab; без неё
+      #     шаг падает, а не вшивает что попало. Ручное переопределение —
+      #     переменные WEBVIEW2_CAB_URL/WEBVIEW2_VERSION (см. скрипт).
+      - name: Portable .exe с вшитым WebView2 (Windows)
+        if: matrix.platform == 'windows-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          $v = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $exe = "src-tauri/target/release/vterm.exe"
+          if (-not (Test-Path $exe)) { throw "Не найден $exe — portable-файл собрать не из чего" }
+          $resolved = node scripts/webview2-runtime.mjs resolve
+          if ($LASTEXITCODE -ne 0) { throw "Не найден WebView2 Fixed Version runtime на странице Microsoft" }
+          $wvVersion, $wvUrl = $resolved -split ' ', 2
+          $cab = Join-Path $env:RUNNER_TEMP "webview2-$wvVersion-x64.cab"
+          Invoke-WebRequest -Uri $wvUrl -OutFile $cab
+          $sig = Get-AuthenticodeSignature $cab
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') {
+            throw "Подпись .cab не Microsoft или недействительна: $($sig.Status) $($sig.SignerCertificate.Subject)"
+          }
+          New-Item -ItemType Directory -Force -Path artifacts/portable | Out-Null
+          $full = "artifacts/portable/vterm-portable-$v-x86_64-webview2.exe"
+          node scripts/webview2-runtime.mjs embed $exe $cab $wvVersion $full
+          if ($LASTEXITCODE -ne 0) { throw "Не удалось вшить WebView2 в portable-файл" }
+          Write-Host "WebView2 $wvVersion вшит: $full ($([math]::Round((Get-Item $full).Length / 1MB)) МБ)"
+          gh release upload "$env:TAG" $full --clobber
 
   # ── Целостность релиза ──────────────────────────────────────────────────────
   # Сборки не подписаны, и страница релиза прямо учит снимать карантин Gatekeeper
