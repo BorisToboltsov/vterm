@@ -44,6 +44,18 @@ export function annotateRecording(sessionId: string, text: string): Promise<void
   return invoke<void>("annotate_recording", { sessionId, text });
 }
 
+/**
+ * Record a network utility's run as a `[util] $ <op> … [util] exit N` block
+ * (record-only, like the sftp/git mirrors). `op`/`body` come from the parsed
+ * result with secrets masked — `tlsAudit`/`httpAudit`/`netcheckAudit`.
+ */
+export function recordAudit(
+  sessionId: string,
+  entry: { op: string; body: string; exitCode: number },
+): Promise<void> {
+  return invoke<void>("record_audit", { sessionId, ...entry });
+}
+
 /** List stored recordings, newest first. */
 export function listRecordings(): Promise<RecordingMeta[]> {
   return invoke<RecordingMeta[]>("list_recordings");

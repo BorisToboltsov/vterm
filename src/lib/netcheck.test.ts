@@ -21,6 +21,8 @@ import {
   serviceName,
   tally,
   formatReport,
+  netcheckAudit,
+  netcheckFailureAudit,
   reportStamp,
   pushHistory,
   sanitizeHistory,
@@ -512,6 +514,24 @@ describe("presentation", () => {
     expect(formatReport(rules, rep(), words, { at }).split("\n")[3]).toBe(
       "✓ 10.64.48.180 → db:5432/tcp  open  4 ms  postgres  (10.70.39.20)  (rule says 10.64.48.181 gitlab)",
     );
+  });
+
+  it("audits a run as the rules plus the copyable report, not the protocol", () => {
+    const { rules } = parseRules("10.64.48.180 (gitlab) -> db:[5432,6379] (pg)\ndb:53/udp");
+    const a = netcheckAudit(rules, rep(), words, at);
+    expect(a.op).toBe("netcheck 10.64.48.180 (gitlab) -> db:[5432, 6379]/tcp (pg); db:53/udp");
+    expect(a.body).toBe(formatReport(rules, rep(), words, { at }));
+    expect(a.body).not.toMatch(/^R\t/m);
+    expect(a.exitCode).toBe(0);
+    expect(netcheckAudit(rules, { ...rep(), complete: false }, words, at, true)).toMatchObject({
+      op: expect.stringMatching(/^netcheck --retry /),
+      exitCode: 1,
+    });
+  });
+
+  it("audits a run without a report as a failure", () => {
+    const { rules } = parseRules("db:22");
+    expect(netcheckFailureAudit(rules, "no session\nstack")).toEqual({ op: "netcheck db:22/tcp", body: "no session", exitCode: 1 });
   });
 
   it("stamps the time unambiguously, with the zone offset", () => {

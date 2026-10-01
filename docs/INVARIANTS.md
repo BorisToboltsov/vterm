@@ -188,8 +188,18 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
 - **Аудит в записи — record-only.** Мутирующий вызов с флагом `mirror` пишется в активную запись
   сессии как `[тег] $ … / [тег] exit N` через `record_output` (функция `*_mirror` в модуле
   драйвера: `git::git_mirror`, `container::container_mirror`, `kube::kube_mirror`,
-  `netprobe::probe_mirror`, `sftp::sftp_mirror`); в живой терминал **не** эмитится (GUI чистый).
-  Чтения и поллинг не мирроятся. Секреты не логируются никогда.
+  `sftp::sftp_mirror`); в живой терминал **не** эмитится (GUI чистый). Чтения и поллинг не
+  мирроятся. Секреты не логируются никогда.
+  - **Сетевые утилиты пишут итог, а не сырьё.** `probe_run`/`netcheck_run` в запись не пишут
+    ничего: в argv HTTP-клиента — значения заголовков (`Authorization`) и тело запроса, в выводе —
+    тело ответа и `Set-Cookie`, у проверки доступа — нечитаемый протокол. Блок `[util] $ … /
+    [util] exit N` пишет `record_audit` (`netprobe::audit_block`, вычищает управляющие символы
+    ответа сервера), а строку и тело собирает фронт из **разобранного** результата
+    (`tlsAudit`/`httpAudit`/`netcheckAudit`): поля сертификата, метод и URL с маской, **имена**
+    заголовков, размер тела, статус и тайминги; отчёт проверки доступа — тот же, что «Скопировать
+    отчёт». Провал записывается провалом (`exit ≠ 0`), а не тишиной. «Выполнить в терминале»
+    аудита не требует — команда и вывод и так идут в запись. Гейт
+    `network_utilities_never_record_raw_argv_or_output`.
 - **Живой вид — снимок раз в N сек, не поток** (`--no-stream`, `logs --tail` без `-f`); поллер
   живёт только пока панель **видима** — проп `visible` от [RightDock](../src/lib/RightDock.svelte),
   а не факт монтирования (панели дока не размонтируются, см. ниже). Возврат во вкладку делает
@@ -1068,6 +1078,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона — ни `..Default::default()`, ни конструктором-шаблоном russh-sftp. Сканирует исходник **без комментариев**, чтобы доки могли называть анти-паттерн; строка отказывается от проверки маркером `guard-allow` — его несёт только тест, документирующий ловушку |
 | `login_answers_come_only_from_the_plan` (Rust) | Ответы на вопросы сервера (`keyboard-interactive`) уходят одним вызовом и только из `kbdauth::merge` (пароль — лишь в вопрос, выбранный `plan`); вопросы в UI — только через `kbdauth::ask`; `disconnect` и повторный `connect_session` снимают ожидающий вопрос. Сканирует код без комментариев |
 | `nothing_after_login_can_fail_the_connection` (Rust) | В `connect_session` после успешного `ssh::connect` нет ни одного `?`: сбой сохранения секрета не рвёт живую сессию. Сканирует код без комментариев |
+| `network_utilities_never_record_raw_argv_or_output` (Rust) | `probe_run`/`netcheck_run` не пишут в запись (`record_output`/`annotate_recording`/`audit_block`) — только `record_audit` с маскированным итогом от фронта; иначе в запись снова уходят заголовки, тела запросов и ответов. Сканирует код без комментариев |
 | `quitting_always_goes_through_the_confirmation` (Rust) | В меню macOS нет системного `quit()`, пункт «quit» и закрытие окна идут через `request_quit`, закрытие откладывается `prevent_close` |
 | `never_probes_network_or_optical_drives` (Rust) | Перечисление дисков не обращается к сетевым/оптическим томам |
 | `every_local_cli_spawn_hides_the_console_window` (Rust) | Каждый локальный спавн консольного CLI (git/docker/kubectl, а также `expand`/`icacls` распаковки WebView2) идёт через `no_console_window`/`no_console_window_std` — на Windows без окна |
