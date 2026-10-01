@@ -137,11 +137,8 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
-    <button
-      class="absolute inset-0 bg-black/50"
-      aria-label={t("settings.close")}
-      onclick={() => (open = false)}
-    ></button>
+    <!-- Dims only; closing is the × or Escape (gate `backdrop.guard`). -->
+    <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div
       class="relative flex max-h-[85vh] w-[46rem] flex-col rounded-lg border border-edge bg-panel-alt"
     >

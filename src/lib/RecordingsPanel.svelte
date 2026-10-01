@@ -740,6 +740,7 @@
   open={aiMenuFor !== null}
   width="w-80"
   title={t("recordings.ai")}
+  showClose
   onclose={() => (aiMenuFor = null)}
 >
   <div class="flex flex-col gap-1">
@@ -789,7 +790,7 @@
   />
 {/if}
 
-<Modal open={planOpen} title={t("recordings.planTitle")} width="w-[42rem]" onclose={closePlan}>
+<Modal open={planOpen} title={t("recordings.planTitle")} width="w-[42rem]" showClose onclose={closePlan}>
   <div class="flex items-center justify-between gap-2 border-b border-edge pb-2">
     <span class="truncate text-xs text-muted" title={planTitle}>{planTitle}</span>
     <div class="flex items-center gap-2">
@@ -837,6 +838,7 @@
   open={exportFor !== null}
   width="w-80"
   title={t("recordings.export")}
+  showClose
   onclose={() => (exportFor = null)}
 >
   <div class="flex flex-col gap-1">

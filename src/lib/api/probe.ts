@@ -1,7 +1,7 @@
 // Network utilities API (Phase 34). One thin wrapper over the `probe_run`
 // backend command; the frontend builds argument vectors and parses output in the
-// per-tool pure modules (tls/http). SSH only — a local tab runs the command in
-// its PTY instead (variant B), so this is not called for local sessions.
+// per-tool pure modules (tls/http). Transport by session: an SSH tab runs it on
+// the server, a local tab spawns the user's own curl/openssl here (ADR 0014).
 import { invoke } from "@tauri-apps/api/core";
 
 /** Captured result of one probe invocation (mirror of `netprobe::ProbeOutput`). */
@@ -12,10 +12,11 @@ export interface ProbeOutput {
 }
 
 /**
- * Run one diagnostic command on the SSH session's host, capturing
- * stdout/stderr/exit code. `args` is the argument vector (each token is
- * shell-quoted on the backend). Never throws on a non-zero exit — inspect
- * `exitCode`/`stderr`. Rejects only when there is no SSH session for `sessionId`.
+ * Run one diagnostic command on the session's host, capturing
+ * stdout/stderr/exit code. `args` is the argument vector (shell-quoted per
+ * token on SSH, passed verbatim locally — where only curl/openssl may run).
+ * `stdin` feeds the command and closes it. Never throws on a non-zero exit —
+ * inspect `exitCode`/`stderr`. Rejects when `sessionId` has no live session.
  * `mirror` audits the run into the session recording (`[util] $ …`) like git.
  */
 export function probeRun(
@@ -23,8 +24,9 @@ export function probeRun(
   args: string[],
   timeoutSecs = 20,
   mirror = true,
+  stdin: string | null = null,
 ): Promise<ProbeOutput> {
-  return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, mirror });
+  return invoke<ProbeOutput>("probe_run", { sessionId, args, timeoutSecs, mirror, stdin });
 }
 
 /** One host with its ports for `netcheckRun` (mirror of `netcheck::NetTarget`). */

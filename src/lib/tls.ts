@@ -4,6 +4,10 @@
 // the cert is seen from that server's network vantage — useful for "does prod
 // still trust / reach this endpoint, and when does it expire?".
 import { shellQuote } from "./probe";
+import type { CdShell } from "./cdterminal";
+
+// What `x509` prints — the fields `parseTlsCert` reads.
+const X509_FIELDS = ["-noout", "-subject", "-issuer", "-serial", "-dates", "-fingerprint", "-sha256", "-ext", "subjectAltName"];
 
 /** A parsed leaf certificate (what `openssl x509 -noout …` prints). */
 export interface TlsCert {
@@ -33,8 +37,46 @@ export function tlsArgs(host: string, port = 443): string[] {
   const p = String(port);
   const pipeline =
     `echo | openssl s_client -connect ${h}:${p} -servername ${h} 2>/dev/null` +
-    ` | openssl x509 -noout -subject -issuer -serial -dates -fingerprint -sha256 -ext subjectAltName`;
+    ` | openssl x509 ${X509_FIELDS.join(" ")}`;
   return ["sh", "-c", pipeline];
+}
+
+/**
+ * The same probe as two steps for a local tab (no shell — Windows has no `sh`):
+ * `s_client` fetches the chain (stdin closed, so it doesn't wait for input),
+ * then `x509` reads the leaf from it. The runner pipes step 1 into step 2.
+ */
+export function tlsSteps(host: string, port = 443): string[][] {
+  const h = host.trim();
+  return [
+    ["openssl", "s_client", "-connect", `${h}:${port}`, "-servername", h],
+    ["openssl", "x509", ...X509_FIELDS],
+  ];
+}
+
+// A host safe to type bare into any shell — validated hosts already are; this
+// is the belt to that brace, since the line is built by hand per dialect.
+const BARE_HOST = /^[A-Za-z0-9.-]+$/;
+
+/**
+ * The pipeline typed into a local tab's terminal, in that shell's own syntax:
+ * how stdin is closed and stderr dropped differs in each (`echo |`/`2>/dev/null`,
+ * `$null |`/`2>$null`, `echo.|`/`2>NUL`). `null` when the host can't be written
+ * bare — then nothing is sent.
+ */
+export function tlsTerminalCommand(host: string, port: number, shell: CdShell): string | null {
+  const h = host.trim();
+  if (!BARE_HOST.test(h) || !Number.isInteger(port)) return null;
+  const x509 = `openssl x509 ${X509_FIELDS.join(" ")}`;
+  const client = `openssl s_client -connect ${h}:${port} -servername ${h}`;
+  switch (shell) {
+    case "posix":
+      return `echo | ${client} 2>/dev/null | ${x509}`;
+    case "powershell":
+      return `$null | ${client} 2>$null | ${x509}`;
+    case "cmd":
+      return `echo.| ${client} 2>NUL | ${x509}`;
+  }
 }
 
 /** Parse an openssl date (`notAfter=Jun  1 12:00:00 2027 GMT`) to epoch ms. */

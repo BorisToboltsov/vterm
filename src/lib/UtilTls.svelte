@@ -7,7 +7,14 @@
   import UtilProbeRunner from "./UtilProbeRunner.svelte";
   import { t, type MessageKey } from "./i18n";
   import { isValidHost, isValidPort } from "./serverform";
-  import { tlsArgs, parseTlsCert, expiryLevel, type TlsExpiry } from "./tls";
+  import {
+    tlsArgs,
+    tlsSteps,
+    tlsTerminalCommand,
+    parseTlsCert,
+    expiryLevel,
+    type TlsExpiry,
+  } from "./tls";
   import type { ProbeSession } from "./probe";
   import type { ProbeOutput } from "./api";
 
@@ -16,8 +23,11 @@
   let host = $state("");
   let port = $state(443);
 
-  const args = $derived(
-    isValidHost(host.trim()) && isValidPort(port) ? tlsArgs(host, port) : null,
+  const valid = $derived(isValidHost(host.trim()) && isValidPort(port));
+  const args = $derived(valid ? tlsArgs(host, port) : null);
+  const steps = $derived(valid ? tlsSteps(host, port) : null);
+  const terminalCommand = $derived(
+    valid && session ? tlsTerminalCommand(host, port, session.shell) : null,
   );
 
   const EXPIRY_CLASS: Record<TlsExpiry, string> = {
@@ -36,7 +46,7 @@
   };
 </script>
 
-<UtilProbeRunner {session} {args} timeoutSecs={15}>
+<UtilProbeRunner {session} {args} {steps} {terminalCommand} timeoutSecs={15}>
   {#snippet form()}
     <div class="flex flex-wrap items-end gap-2">
       <label class="block">

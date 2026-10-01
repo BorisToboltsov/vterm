@@ -175,6 +175,18 @@
   // is the ".." parent-nav when not at the top.
   const ROW_H = 28;
   let listScrollTop = $state(0);
+  // True while the list is moving (and ~150 ms after). Rows stop taking the
+  // pointer meanwhile: WebView2 (Chromium) re-evaluates hover only once a scroll
+  // settles, so the row under a resting cursor stayed lit and rode along with
+  // the content — read as "the mouse grabbed a file" mid-fling.
+  let listScrolling = $state(false);
+  let scrollIdle: ReturnType<typeof setTimeout> | undefined;
+  function onListScroll(e: Event) {
+    listScrollTop = (e.currentTarget as HTMLElement).scrollTop;
+    listScrolling = true;
+    clearTimeout(scrollIdle);
+    scrollIdle = setTimeout(() => (listScrolling = false), 150);
+  }
   let listViewportH = $state(600);
   const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
   const rowCount = $derived((hasParent ? 1 : 0) + shownEntries.length);
@@ -297,7 +309,10 @@
     else if (!requiresConnect) await loadStart();
   });
 
-  onDestroy(() => unlisten.forEach((u) => u()));
+  onDestroy(() => {
+    unlisten.forEach((u) => u());
+    clearTimeout(scrollIdle);
+  });
 
   // Re-list when the pane comes back into view. It stayed mounted while hidden, so
   // nothing refreshed it — and a listing that silently ages is the one thing the
@@ -1174,7 +1189,7 @@
         <div
           bind:this={listEl}
           bind:clientHeight={listViewportH}
-          onscroll={(e) => (listScrollTop = e.currentTarget.scrollTop)}
+          onscroll={onListScroll}
           onpointermove={listPointerMove}
           onpointerup={listPointerUp}
           onpointercancel={listPointerUp}
@@ -1186,7 +1201,8 @@
           }}
           role="tree"
           tabindex="0"
-          class="min-h-0 flex-1 overflow-y-auto text-sm outline-none {dragEntry
+          data-testid="{testPrefix}-list"
+          class="min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {dragEntry
             ? 'select-none cursor-grabbing'
             : ''}"
         >
@@ -1203,7 +1219,14 @@
             <!-- Virtual window: total height sizes the scrollbar, the inner block is
                  translated to the first visible row (Phase 18.7). -->
             <div style="height: {win.totalHeight}px; position: relative;">
-              <div style="transform: translateY({win.padTop}px);">
+              <!-- `overflow-anchor: none` on the scroller: rows above the view are
+                   swapped as it scrolls, and Chromium's scroll anchoring (WebView2;
+                   WebKit has none) "corrected" scrollTop for each swap — the list
+                   jerked under a touchpad fling on Windows only. -->
+              <div
+                style="transform: translateY({win.padTop}px);"
+                class={listScrolling ? "pointer-events-none" : ""}
+              >
                 {#each visibleItems as item (item.key)}
                   {#if item.entry === null}
                     <button

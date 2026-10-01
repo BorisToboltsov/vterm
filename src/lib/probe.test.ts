@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shellQuote, toShellCommand, isCommandMissing, probeError } from "./probe";
+import { shellQuote, isCommandMissing, probeError, stepFailed, curlProgram } from "./probe";
 
 describe("shellQuote", () => {
   it("leaves safe tokens unquoted", () => {
@@ -20,9 +20,19 @@ describe("shellQuote", () => {
   });
 });
 
-describe("toShellCommand", () => {
-  it("joins argv into a readable, safe command line", () => {
-    expect(toShellCommand(["ping", "-c", "4", "a b"])).toBe("ping -c 4 'a b'");
+describe("stepFailed", () => {
+  it("stops a chain on a failed step, keeping its message", () => {
+    expect(stepFailed({ stdout: "", stderr: "connect: Connection refused", exitCode: 1 })).toBe(true);
+    expect(stepFailed({ stdout: "", stderr: "", exitCode: 0 })).toBe(true);
+    expect(stepFailed({ stdout: "-----BEGIN CERTIFICATE-----", stderr: "depth=0", exitCode: 0 })).toBe(false);
+  });
+});
+
+describe("curlProgram", () => {
+  it("names curl.exe outside POSIX", () => {
+    expect(curlProgram("posix")).toBe("curl");
+    expect(curlProgram("powershell")).toBe("curl.exe");
+    expect(curlProgram("cmd")).toBe("curl.exe");
   });
 });
 

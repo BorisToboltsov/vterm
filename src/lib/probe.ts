@@ -1,11 +1,12 @@
 // Shared pure logic for the network utilities (Phase 34). These tools run a
-// diagnostic on the ACTIVE SESSION'S host: on an SSH tab the backend runs it
-// remotely (`probe_run` → `exec_captured`) and we parse the output here; on a
-// local tab we write the command into the PTY (variant B) and let the user's own
-// shell run it. Nothing here touches the DOM or network, so it unit-tests
-// cleanly and the `Util*.svelte` shells stay thin (INVARIANTS: "чистая логика в
-// .ts"). The offline invariant holds because the app never opens a third-party
-// socket itself — the user's server (or the user's own shell) does.
+// diagnostic on the ACTIVE SESSION'S host, transport by session: on an SSH tab
+// the backend runs it remotely (`probe_run` → `exec_captured`); on a local tab
+// it spawns the user's own `curl`/`openssl` on this machine (ADR 0014) — either
+// way we parse the output here. A local tab can also type the command into its
+// terminal instead, rendered for the shell that tab actually runs. Nothing here
+// touches the DOM or network, so it unit-tests cleanly and the `Util*.svelte`
+// shells stay thin (INVARIANTS: "чистая логика в .ts").
+import type { CdShell } from "./cdterminal";
 
 /** The session a network utility targets, resolved from the active tab. */
 export interface ProbeSession {
@@ -18,23 +19,47 @@ export interface ProbeSession {
   host: string;
   /** Prod-tagged server — gate noisy ops (port scan) behind a confirm. */
   isProd: boolean;
+  /** The shell the tab runs (SSH is always POSIX) — for "run in terminal". */
+  shell: CdShell;
 }
 
-// Characters safe to leave unquoted when rendering a command for the PTY
-// (variant B). Anything else gets single-quoted so the user's shell runs the
-// exact same tokens the backend would. The backend quotes unconditionally; this
-// is only about keeping the echoed terminal line readable.
+/**
+ * A probe as a chain of argv steps for a local tab: each step's stdout is the
+ * next one's stdin — a pipe without `sh -c`, which Windows doesn't have. The
+ * last step's output is the result.
+ */
+export type ProbeSteps = string[][];
+
+/** Captured output of one step (mirror of `api.ProbeOutput`, kept DOM/API-free). */
+export interface StepOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}
+
+/**
+ * Whether a chain stops after this step's output instead of feeding the next:
+ * a failed step (the connect was refused, the tool is missing) carries the
+ * message worth showing — the next tool would only say "no input".
+ */
+export function stepFailed(out: StepOutput): boolean {
+  return probeError(out.stdout, out.stderr, out.exitCode) !== "";
+}
+
+/** The program name for `curl` in a shell: PowerShell 5.1 aliases bare `curl`. */
+export function curlProgram(shell: CdShell): string {
+  return shell === "posix" ? "curl" : "curl.exe";
+}
+
+// Characters safe to leave unquoted when a builder embeds a token in a POSIX
+// pipeline (the TLS `sh -c` string, the access-check script). Anything else gets
+// single-quoted.
 const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,.\/-]+$/;
 
 /** Single-quote a token for a shell command (POSIX), escaping embedded quotes. */
 export function shellQuote(token: string): string {
   if (token !== "" && SAFE_TOKEN.test(token)) return token;
   return `'${token.replace(/'/g, `'\\''`)}'`;
-}
-
-/** Render an argv as a shell command line — written into the PTY for variant B. */
-export function toShellCommand(args: string[]): string {
-  return args.map(shellQuote).join(" ");
 }
 
 /**

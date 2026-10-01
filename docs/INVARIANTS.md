@@ -56,8 +56,9 @@
    «недостижима». Неизвестное — `None`/«—»/явная пометка. «Нет данных» и «здесь невозможно» —
    **разные** сообщения.
 6. **Офлайн** (ADR 0004). Никаких runtime-обращений в сеть, кроме исходящего SSH к серверам
-   пользователя (в т.ч. через **его** proxy), — при opt-in ИИ — к **его** LLM-эндпоинту и
-   TCP-рукопожатия «Проверки доступа» с локальной вкладки (ADR 0012, см. «Утилиты»).
+   пользователя (в т.ч. через **его** proxy), — при opt-in ИИ — к **его** LLM-эндпоинту,
+   TCP-рукопожатия «Проверки доступа» с локальной вкладки (ADR 0012) и запуска **своих**
+   `curl`/`openssl` пользователя TLS-инспектором и HTTP-клиентом там же (ADR 0014, см. «Утилиты»).
    Весь такой трафик идёт **из Rust**, не из WebView, поэтому CSP остаётся строгим, а фронт
    вообще не делает сетевых вызовов. Шрифты встроены (`@fontsource`), внешние ссылки — только
    по явному клику через `tauri-plugin-opener`. Диагностика хоста исполняется **на хосте
@@ -231,7 +232,7 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
 | **Git** ([GitPanel](../src/lib/GitPanel.svelte)) | `git_run` · `[git]` | [git.ts](../src/lib/git.ts) (`statusArgs`/`logArgs`/`parseStatus`/`parseLog`/`parseBranches`/`parseDiff`/`buildGraph`/`isDestructive`/`needsConfirm`), вид — [gitview.ts](../src/lib/gitview.ts) | Каталог выбирает чистый `gitCwd` ([followcwd.ts](../src/lib/followcwd.ts)): при выключенной синхронизации пути — **каталог терминала**, при включённой — общий каталог дока (см. «Следовать за терминалом»). Подтверждение — `needsConfirm` на **любом** сервере, в том числе в `syncRun` (pull/push); stage/unstage/fetch/создание ветки намеренно без диалога — диалог на каждый клик приучает прокликивать и тот, что важен. `confirmed` пропускает повторный вопрос только для уже подтверждённого действия (push после коммита, повтор после stash). `GIT_TERMINAL_PROMPT=0` **обязателен** (иначе промпт кредов без TTY = зависание). Диффы — унифицированные (`parseDiff` + [GitDiffView](../src/lib/GitDiffView.svelte)) **только для файлов исторических коммитов**; изменённый файл рабочего дерева открывается в существующем [EditorTab](../src/lib/EditorTab.svelte) как редактируемый инлайн-diff против HEAD (`showFileAtArgs("HEAD", path)` → `EditorDoc.gitBase`) — нового редактора не плодим. Тумблер «checkout в терминале» пишет команду в PTY (аудит), а не подменяет `git_run` |
 | **Docker** ([DockerPanel](../src/lib/DockerPanel.svelte)) | `container_run` (`args[0]="docker"`) · `[docker]` | [docker.ts](../src/lib/docker.ts) (`psArgs`/`imagesArgs`/`statsArgs`/`parsePs`/`parseImages`/`parseStats`/`groupByCompose`/`parseAvailability`/`stateTone`/`needsConfirm`) | Машиночитаемый вывод через `--format` с US-разделителем. `dockerRefreshSec` = 3 (кламп 1…30). Группировка по лейблу `com.docker.compose.project`. Логи/inspect — [DockerTextModal](../src/lib/DockerTextModal.svelte), детали — [DockerDetailModal](../src/lib/DockerDetailModal.svelte) (Overview/Logs/Inspect + действия); строка несёт одну кнопку «Подробнее», факты — в hover-карточку (`containerInfoRows`). Скелет до первого `ps` (`firstLoadDone`). `needsConfirm` шире `isDestructive`: + stop/restart/kill. CVE-скан образов не делаем (нет офлайн-способа) |
 | **k8s** ([K8sPanel](../src/lib/K8sPanel.svelte)) | `kubectl_run` (ведущие токены = программа) · `[k8s]` | [k8s.ts](../src/lib/k8s.ts) (билдеры, `parse*`, `groupByOwner`, `parseAvailability`, `isDestructive`, `needsConfirm`, `kubectlProg`) | **Отдельный драйвер со своим видом**, не втиснут в список Docker. Вывод — **`-o json`** (строгий JSON надёжнее разделителей). `context`/`namespace` — выбор в UI, вшиваемый в argv (`withScope`; per-object — `objectScope` с namespace самого объекта, чтобы бить верно даже при `-A`); **kubeconfig не мутируем** (никаких `config use-context`). Пустой `--namespace` = дефолт контекста; node-команды cluster-scoped идут вовсе без флага. Группировка подов — по `ownerReferences` (ReplicaSet → Deployment rollup, бакет Standalone). `k8sRefreshSec` = 5 (`clampK8sRefresh` 1…30). Путь к бинарю — `settings.kubectlPath` (`k3s kubectl`/`microk8s kubectl`/абс. путь) |
-| **Сетевые пробы** ([UtilProbeRunner](../src/lib/UtilProbeRunner.svelte)) | `probe_run` · `[util]` | [probe.ts](../src/lib/probe.ts), [tls.ts](../src/lib/tls.ts), [http.ts](../src/lib/http.ts) | Структурный режим — **только SSH** (иначе `NoSession`): трафик из сети сервера пользователя. На локальной вкладке команда пишется в PTY и исполняется шеллом пользователя. Приложение само в сеть не ходит |
+| **Сетевые пробы** ([UtilProbeRunner](../src/lib/UtilProbeRunner.svelte)) | `probe_run` · `[util]` | [probe.ts](../src/lib/probe.ts), [tls.ts](../src/lib/tls.ts), [http.ts](../src/lib/http.ts) | Транспорт по сессии: SSH — сервер; локальная вкладка — **только** `curl`/`openssl` пользователя (`local_program_allowed`), без шелла (ADR 0014). Конвейер без `sh` — шагами через `stdin` (`tlsSteps`), падение шага останавливает цепочку его сообщением. «Выполнить в терминале» (только локально) печатает строку под **реально запущенную** оболочку вкладки (`tlsTerminalCommand`/`httpTerminalArgv`+`renderArgv`, `curl.exe` вне POSIX — PowerShell 5.1 алиасит `curl`); невыразимое → `null` → не шлём ничего. Argv — сырые токены: квотит транспорт, пред-квотинг в билдере квотил URL дважды |
 | **Метрики** (status bar, оверлей) | `fetch_metrics`/`fetch_metrics_detail`/`fetch_pending_updates`/`fetch_extras` | парсеры в [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), маппинг sysinfo в [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO (`Metrics`/`MetricsDetail`/`Extras`) на оба транспорта: SSH → `/proc`-пробы, локальный PTY → нативный `sysinfo` (два снимка ~200 мс для CPU%/rate, stateless). Гейт UI — пур-хелпер `isMonitorable(tab)`, **не** ручная проверка `kind==="ssh"` |
 
 - **Потолок нагрузки берётся из спека, а не из процентов.** Доля «сколько использовано из
@@ -319,7 +320,8 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   `AppError::KeyExists`; **тихой перезаписи нет**. UI — общий
   [KeyGenModal](../src/lib/KeyGenModal.svelte) за двумя входами (панель и шорткат в форме сервера).
 - **Сетевые утилиты — только поверх сессии** (см. таблицу выше). Утилита, которая ходит в сеть
-  из WebView/Rust, нарушает офлайн-инвариант.
+  из WebView/Rust, нарушает офлайн-инвариант. Локальная вкладка запускает процессы
+  пользователя из allowlist (ADR 0014), а не открывает сокеты сама.
 - **«Проверка доступа» — единственное исключение, и оно узкое** (ADR 0012). Команда одна —
   `netcheck_run`, транспорт выбирается по сессии. На SSH сервер исполняет скрипт `netcheckArgs`
   ([netcheck.ts](../src/lib/netcheck.ts)): порядок средств «Авто» — `bash /dev/tcp` под `timeout` →
@@ -341,7 +343,10 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   не «ошибка». Цель `0.0.0.0` отклоняется разбором (`unspecified`): соединение с ней попадает
   на сам проверяющий хост, и «открыт» был бы ответом не про ту машину. Конструктор правила
   ([netcheckform.ts](../src/lib/netcheckform.ts)) своего понятия о валидном правиле не
-  имеет — собирает строку и спрашивает `parseRules`. UDP не проверяется **нигде**: тишина
+  имеет — собирает строку и спрашивает `parseRules`. Правила приходят из заявок и чатов,
+  поэтому `parseRules` сначала прогоняет строку через `normalizeRuleLine` (стрелки `—>`/`- >`/`➜`
+  → `->`, полноширинная пунктуация, экзотические пробелы); подпись `(…)` у источника или цели —
+  только заметка (`sourceLabel`/`label`), в проверку и протокол она не попадает. UDP не проверяется **нигде**: тишина
   ничего не значит. Сокеты приложения живут только в `ssh.rs` и `netcheck.rs` — новый сетевой
   примитив в другом модуле ломает гейт.
 
@@ -839,9 +844,17 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   записи, правила — кнопка-иконка только **открывает** диалог (стейт с целью удаления), сам
   вызов бэкенда — в `onconfirm`; отмена и закрытие панели стейт сбрасывают. Единственное
   исключение — пост-стоп-диалог записи, который сам и есть выбор «сохранить или удалить».
+  Закрытие изменённого файла — тоже выбор, а не удаление: `UnsavedCloseDialog` с тремя
+  ответами «Сохранить / Не сохранять / Отмена»; «Сохранить» идёт обычным путём записи (с diff,
+  если он включён) и закрывает файл **только** после успешной записи.
   Правка **черновика в поле ввода** (корзинка у строки правил «Проверки доступа») — не удаление
   данных: диалога нет, но удаление обязано быть **отменяемым** — идёт штатной командой
   редактирования (`execCommand("delete")` по выделенной строке), чтобы `⌘/Ctrl+Z` её вернул.
+- **Фон диалога только затемняет — не закрывает.** Клик мимо карточки `Modal` (и панелей
+  Настройки/Справка/Утилиты) ничего не делает: вернувшись из другого приложения, первый клик
+  легко попадает на фон, и наполовину заполненная форма исчезала вместе с введённым. Закрытие —
+  кнопки, ×, `Esc`. Окну без кнопки отмены нужен `showClose`. Исключение — палитра ⌘K
+  (мимолётная, ничего не теряет). Гейт `backdrop.guard`.
 - **Тосты — единственный канал неблокирующих сообщений** (`notifyError`/`notifySuccess`/
   `notifyInfo`), не инлайновые баннеры; исключение — контекстная валидация прямо в форме или на
   экране подключения. Пустые состояния — общий [EmptyState](../src/lib/EmptyState.svelte), не
@@ -878,6 +891,12 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   `border-box` включает паддинг, сетка выходила на 4 px выше места, и спозиционированный canvas
   закрывал верхнюю линию статус-бара (на Windows при растягивании окна). Обёртка —
   `overflow-hidden`. Внутрь `.xterm` паддинг тоже не переноси. Гейт `termfit.guard`.
+- **Виртуальный список выключает scroll anchoring.** Скроллер любого списка на `windowRange`
+  несёт `[overflow-anchor:none]`: окно подменяет строки над видимой областью, и Chromium
+  (WebView2) сам «доправлял» `scrollTop` под якорную строку — прокрутка тачпадом дёргалась
+  **только на Windows** (в WebKit якорения нет). Строки на время прокрутки не принимают
+  указатель — hover в Chromium обновляется только после остановки и «ехал» вместе с
+  содержимым. Гейт `virtualscroll.guard`.
 - **Состояние — в runes-сторах** `src/lib/stores/*.svelte.ts` (по образцу
   [settings.svelte.ts](../src/lib/settings.svelte.ts)): `layout`, `tabs`, `syncrun`, … Не
   разбрасывай состояние по компонентам.
@@ -1015,6 +1034,8 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [tabteardown.guard.test.ts](../src/lib/tabteardown.guard.test.ts) | `closeTabFully` — единственный путь сноса вкладки; список очищаемого состояния |
 | [dockpanels.guard.test.ts](../src/lib/dockpanels.guard.test.ts) | Панели дока не размонтируются при смене вкладки — и скрытая панель не опрашивает хост (`visible` у Docker/k8s/git, drop-обработчик файловой панели); Git/Docker/k8s получают `sessionReady` дока на вкладке любого вида. Голое `void visible;` не считается гейтом: первая версия проверки на нём и прошла |
 | [overlay.guard.test.ts](../src/lib/overlay.guard.test.ts) | У каждого оверлея явный `z-index` |
+| [backdrop.guard.test.ts](../src/lib/backdrop.guard.test.ts) | Затемняющий фон диалога не кнопка и без обработчика клика (кроме палитры ⌘K): закрытие — кнопками, ×, `Esc`. Проверка поэлементная, по исходнику без комментариев |
+| [virtualscroll.guard.test.ts](../src/lib/virtualscroll.guard.test.ts) | Каждый компонент на `windowRange` выключает scroll anchoring (`overflow-anchor: none`) — иначе прокрутка тачпадом дёргается в WebView2 |
 | [passwordinput.guard.test.ts](../src/lib/passwordinput.guard.test.ts) | Нет сырых `<input type="password">` |
 | [motion.guard.test.ts](../src/lib/motion.guard.test.ts) | Длительности переходов — из `motion.ts`, не литералы |
 | [statuscolor.guard.test.ts](../src/lib/statuscolor.guard.test.ts) | Семантический цвет — из токенов темы, не из палитры Tailwind |

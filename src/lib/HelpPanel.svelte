@@ -66,11 +66,8 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
-    <button
-      class="absolute inset-0 bg-black/50"
-      aria-label={t("help.close")}
-      onclick={() => (open = false)}
-    ></button>
+    <!-- Dims only; closing is the × or Escape (gate `backdrop.guard`). -->
+    <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div
       class="relative flex max-h-[80vh] w-[90vw] flex-col rounded-lg border border-edge bg-panel-alt {tab ===
       'manual'
@@ -154,7 +151,7 @@
               {t("help.author")}: <span class="text-text">Тобольцов Борис Олегович</span>
             </p>
             <p class="text-muted">
-              {t("help.email")}: <span class="select-text text-text">bt@vcore.su</span>
+              {t("help.email")}: <span class="select-text text-text">toboltsov.b@gmail.com</span>
             </p>
             <p class="text-muted">
               Telegram: <button

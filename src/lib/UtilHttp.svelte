@@ -8,6 +8,7 @@
   import { t } from "./i18n";
   import {
     httpArgs,
+    httpTerminalArgv,
     parseHttp,
     statusClass,
     HTTP_METHODS,
@@ -15,6 +16,7 @@
     type HttpHeader,
   } from "./http";
   import type { ProbeSession } from "./probe";
+  import { renderArgv } from "./termcmd";
   import type { ProbeOutput } from "./api";
 
   let { session }: { session: ProbeSession | null } = $props();
@@ -39,8 +41,12 @@
   );
 
   const validUrl = $derived(/^https?:\/\/\S+/i.test(url.trim()));
-  const args = $derived(
-    validUrl ? httpArgs({ method, url, headers, body, followRedirects }) : null,
+  const request = $derived({ method, url, headers, body, followRedirects });
+  const args = $derived(validUrl ? httpArgs(request) : null);
+  // A body with newlines (or a `"` under cmd.exe) can't be typed into a prompt:
+  // renderArgv says null and the terminal button explains why.
+  const terminalCommand = $derived(
+    validUrl && session ? renderArgv(httpTerminalArgv(request, session.shell), session.shell) : null,
   );
 
   const STATUS_CLASS: Record<ReturnType<typeof statusClass>, string> = {
@@ -52,7 +58,7 @@
   };
 </script>
 
-<UtilProbeRunner {session} {args} timeoutSecs={25}>
+<UtilProbeRunner {session} {args} {terminalCommand} timeoutSecs={25}>
   {#snippet form()}
     <div class="flex items-end gap-2">
       <label class="block">

@@ -98,12 +98,11 @@
          the animation, and the common pattern here is "confirm closes, the next
          dialog opens in the same tick": two overlapping z-40 layers, the dying
          one still hit-testable. Appearing softly is the part worth having. -->
-    <button
-      class="absolute inset-0 bg-black/50"
-      aria-label={t("common.closeDialog")}
-      onclick={() => onclose?.()}
-      in:fade={motion()}
-    ></button>
+    <!-- The backdrop only dims — it does not close. Coming back from another app
+         to copy a password, the first click easily lands outside the card, and a
+         half-filled form vanished with it. Closing is the buttons, ×, or Escape
+         (gate `backdrop.guard`). -->
+    <div class="absolute inset-0 bg-black/50" aria-hidden="true" in:fade={motion()}></div>
     <!-- Wrapper shrink-wraps the card so the close button (a sibling of the
          scrolling card, not a child) stays pinned to the corner and never
          scrolls away — and stays outside the focus trap so it can't steal the

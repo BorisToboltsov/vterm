@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   parseRules,
+  normalizeRuleLine,
   checkTargets,
   checkKey,
   netcheckArgs,
@@ -496,6 +497,23 @@ describe("presentation", () => {
     );
   });
 
+  it("carries the service notes into the report", () => {
+    const { rules } = parseRules("10.64.48.180 (gitlab) -> db:5432 (postgres-main)");
+    const text = formatReport(rules, rep(), words, { at });
+    expect(text.split("\n")[3]).toBe(
+      "✓ 10.64.48.180 (gitlab) → db:5432/tcp  open  4 ms  postgres-main  postgres  (10.70.39.20)",
+    );
+    const md = formatReport(rules, rep(), words, { at, format: "markdown" }).split("\n")[5];
+    expect(md).toBe("| ✓ | 10.64.48.180 (gitlab) | db (10.70.39.20) — postgres-main | 5432/tcp | open | 4 ms | postgres |");
+  });
+
+  it("puts the source note with the rule's source when the route differs", () => {
+    const { rules } = parseRules("10.64.48.181 (gitlab) -> db:5432");
+    expect(formatReport(rules, rep(), words, { at }).split("\n")[3]).toBe(
+      "✓ 10.64.48.180 → db:5432/tcp  open  4 ms  postgres  (10.70.39.20)  (rule says 10.64.48.181 gitlab)",
+    );
+  });
+
   it("stamps the time unambiguously, with the zone offset", () => {
     const d = new Date(2026, 8, 30, 4, 7);
     const off = -d.getTimezoneOffset();
@@ -542,5 +560,62 @@ describe("visibleAddrs", () => {
       "10.0.0.5",
       "2001:db8::5",
     ]);
+  });
+});
+
+describe("pasted rules", () => {
+  // Verbatim from a real request: notes on both sides, an arrow split by a space.
+  const vault = { source: "192.168.0.1", targets: ["192.168.0.5"], ports: [22, 8200], label: "vault" };
+
+  it("reads service notes in parentheses on either side", () => {
+    const { rules, errors } = parseRules(
+      [
+        "192.168.0.1 (gitlab) -> 192.168.0.5:[22, 8200] (vault)",
+        "192.168.0.1 -> 192.168.0.5:[22, 8200] (vault)",
+        "192.168.0.1 (gitlab) - > 192.168.0.5:[22, 8200] (vault)",
+      ].join("\n"),
+    );
+    expect(errors).toEqual([]);
+    expect(rules[0]).toMatchObject({ ...vault, sourceLabel: "gitlab" });
+    expect(rules[1]).toMatchObject(vault);
+    expect(rules[1].sourceLabel).toBeUndefined();
+    expect(rules[2]).toMatchObject({ ...vault, sourceLabel: "gitlab" });
+  });
+
+  it("accepts a note before the colon and joins several", () => {
+    const { rules } = parseRules("db.internal (pg) (primary): 5432");
+    expect(rules[0]).toMatchObject({ source: null, targets: ["db.internal"], ports: [5432], label: "pg, primary" });
+  });
+
+  it("folds every arrow a ticket or chat substitutes", () => {
+    for (const arrow of ["->", "- >", "-->", "—>", "–>", "— >", "=>", "==>", "→", "⟶", "➜", "➡️", "⇒"]) {
+      const { rules, errors } = parseRules(`10.0.0.1 ${arrow} 10.0.0.2:22`);
+      expect(errors, arrow).toEqual([]);
+      expect(rules[0], arrow).toMatchObject({ source: "10.0.0.1", targets: ["10.0.0.2"], ports: [22] });
+    }
+    // Without spaces around it too.
+    expect(parseRules("10.0.0.1—>10.0.0.2:22").rules[0]).toMatchObject({ source: "10.0.0.1" });
+  });
+
+  it("folds full-width punctuation and exotic spaces", () => {
+    const { rules, errors } = parseRules("10.0.0.1\u00a0→\u202f10.0.0.2：［22，443］（web）;");
+    expect(errors).toEqual([]);
+    expect(rules[0]).toMatchObject({ source: "10.0.0.1", targets: ["10.0.0.2"], ports: [22, 443], label: "web" });
+  });
+
+  it("leaves hyphens in names and port ranges alone", () => {
+    const { rules } = parseRules("app-01 -> db-02.local:[8000-8002]");
+    expect(rules[0]).toMatchObject({ source: "app-01", targets: ["db-02.local"], ports: [8000, 8001, 8002] });
+  });
+
+  it("normalizeRuleLine is idempotent and keeps canonical lines", () => {
+    const canonical = "10.64.48.180 -> [10.70.39.10, db.internal]:[5432, 8000-8010]/tcp";
+    expect(normalizeRuleLine(canonical)).toBe(canonical);
+    const once = normalizeRuleLine("a (x) - > b：22 (y).");
+    expect(normalizeRuleLine(once)).toBe(once);
+  });
+
+  it("still reports a broken line, with notes stripped", () => {
+    expect(parseRules("10.0.0.1 (gitlab) -> (vault)").errors[0]).toMatchObject({ line: 1, code: "syntax" });
   });
 });
