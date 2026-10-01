@@ -227,7 +227,7 @@ jobs:
           Copy-Item $exe $portable
           gh release upload "$env:TAG" $portable --clobber
 
-      # «Полный» portable (v1.1.0, ADR 0013): тот же vterm.exe, к концу которого
+      # «Полный» portable (v1.0.40, ADR 0013): тот же vterm.exe, к концу которого
       # дописан НЕИЗМЕНЁННЫЙ .cab WebView2 Fixed Version runtime и 64-байтовый
       # хвост-описание. Для Windows без WebView2 и без сети (LTSC): на старте vterm
       # сам распакует runtime, если системного нет (src-tauri/src/webview2.rs).

@@ -131,8 +131,11 @@ pub fn read_trailer<R: Read + Seek>(r: &mut R) -> io::Result<Option<(Trailer, u6
 /// Что делать на старте.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
-    /// Ничего: движок даст система (или пользователь), либо вшитого нет вовсе.
+    /// Ничего: движок даст система (или пользователь).
     Leave,
+    /// Движка нет нигде: ни в системе, ни в exe. Вместо падения при создании
+    /// окна — объяснение, что скачать или поставить.
+    Missing,
     /// Вшитый runtime уже распакован — только указать на него.
     UseCache,
     /// Распаковать вшитый runtime и указать на него.
@@ -142,8 +145,10 @@ pub enum Choice {
 /// Выбор источника движка. Порядок важен: системный runtime (и явный выбор
 /// пользователя) всегда побеждает вшитый — тот не обновляется никогда.
 pub fn decide(env_set: bool, system_installed: bool, bundled: bool, cache_ready: bool) -> Choice {
-    if env_set || system_installed || !bundled {
+    if env_set || system_installed {
         Choice::Leave
+    } else if !bundled {
+        Choice::Missing
     } else if cache_ready {
         Choice::UseCache
     } else {
@@ -157,6 +162,18 @@ pub fn decide(env_set: bool, system_installed: bool, bundled: bool, cache_ready:
 pub fn is_installed_version(pv: &str) -> bool {
     let pv = pv.trim();
     !pv.is_empty() && pv != "0.0.0.0"
+}
+
+/// Есть ли движок в каталоге установки Evergreen (`…\EdgeWebView\Application`):
+/// там лежат папки версий, во время обновления — сразу две. Страховка поверх
+/// реестра: ложное «не найден» запретило бы запуск, который бы удался.
+pub fn has_installed_engine(app_dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(app_dir) else {
+        return false;
+    };
+    entries.flatten().any(|e| {
+        valid_version(&e.file_name().to_string_lossy()) && e.path().join(ENGINE_EXE).is_file()
+    })
 }
 
 /// Корень распакованного runtime — папка, где лежит `msedgewebview2.exe`: сам
@@ -335,6 +352,7 @@ pub fn cleanup_stale(base: &Path, keep: &str) {
 pub enum Msg {
     Preparing,
     Failed,
+    Missing,
 }
 
 pub fn text(msg: Msg, russian: bool) -> &'static str {
@@ -351,8 +369,19 @@ pub fn text(msg: Msg, russian: bool) -> &'static str {
         (Msg::Failed, false) => {
             "Could not prepare the bundled WebView2 Runtime.\n\nReason: {err}\nFolder: {dir}\n\nFree up disk space and start vterm again, or install the WebView2 Runtime (docs/INSTALL.md)."
         }
+        (Msg::Missing, true) => {
+            "Не найден Microsoft Edge WebView2 Runtime — без него окно vterm не откроется.\n\nЧто можно сделать:\n\n• Скачать vterm-portable-…-x86_64-webview2.exe — тот же portable, WebView2 уже внутри (без установки, без сети и без прав администратора):\n{releases}\n\n• Или установить WebView2 Runtime (на машине без сети — Standalone Installer):\n{webview2}\n\nCtrl+C копирует этот текст вместе со ссылками."
+        }
+        (Msg::Missing, false) => {
+            "Microsoft Edge WebView2 Runtime was not found — vterm cannot open its window without it.\n\nWhat you can do:\n\n• Download vterm-portable-…-x86_64-webview2.exe — the same portable with WebView2 inside (no install, no network, no admin rights):\n{releases}\n\n• Or install the WebView2 Runtime (Standalone Installer for an offline machine):\n{webview2}\n\nCtrl+C copies this text with the links."
+        }
     }
 }
+
+/// Ссылки окна «WebView2 не найден». Только показываются: перейти по ним —
+/// решение пользователя, приложение в сеть не ходит.
+pub const RELEASES_URL: &str = "https://github.com/BorisToboltsov/vterm/releases/latest";
+pub const WEBVIEW2_URL: &str = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
 /// Точка входа: зовётся первой строкой `run()`, до создания окна и рантайма tokio.
 #[cfg(windows)]
@@ -361,14 +390,24 @@ pub fn prepare() {
     if env_set || win::system_runtime_installed() {
         return;
     }
-    let Ok(exe_path) = std::env::current_exe() else {
+    let bundle = std::env::current_exe()
+        .and_then(fs::File::open)
+        .ok()
+        .and_then(|mut exe| match read_trailer(&mut exe) {
+            Ok(Some((trailer, offset))) => Some((exe, trailer, offset)),
+            _ => None,
+        });
+    let Some((mut exe, trailer, offset)) = bundle else {
+        // Лёгкий portable или установленная сборка на машине без WebView2: окно
+        // всё равно не создастся — объясняем, что делать, вместо падения.
+        if decide(false, false, false, false) == Choice::Missing {
+            let msg = text(Msg::Missing, win::ui_is_russian())
+                .replace("{releases}", RELEASES_URL)
+                .replace("{webview2}", WEBVIEW2_URL);
+            win::message_box(&msg, false);
+            std::process::exit(1);
+        }
         return;
-    };
-    let Ok(mut exe) = fs::File::open(&exe_path) else {
-        return;
-    };
-    let Ok(Some((trailer, offset))) = read_trailer(&mut exe) else {
-        return; // лёгкий portable или установленная сборка — поведение прежнее
     };
     let Some(base) = directories::ProjectDirs::from("su", "vcore", "vterm")
         .map(|d| d.data_local_dir().join("webview2"))
@@ -396,7 +435,7 @@ pub fn prepare() {
                     let msg = text(Msg::Failed, russian)
                         .replace("{err}", &e.to_string())
                         .replace("{dir}", &base.display().to_string());
-                    win::error_box(&msg);
+                    win::message_box(&msg, true);
                     std::process::exit(1);
                 }
             }
@@ -424,8 +463,9 @@ mod win {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, GetSystemMetrics,
         MessageBoxW, PostMessageW, PostQuitMessage, RegisterClassW, SendMessageW, TranslateMessage,
-        MB_ICONERROR, MB_OK, MSG, SM_CXSCREEN, SM_CYSCREEN, WM_CLOSE, WM_DESTROY, WM_SETFONT,
-        WNDCLASSW, WS_BORDER, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_VISIBLE,
+        MB_ICONERROR, MB_ICONWARNING, MB_OK, MSG, SM_CXSCREEN, SM_CYSCREEN, WM_CLOSE, WM_DESTROY,
+        WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CHILD, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        WS_VISIBLE,
     };
 
     /// GUID клиента EdgeUpdate для WebView2 Runtime — из документации Microsoft
@@ -461,9 +501,28 @@ mod win {
         Some(String::from_utf16_lossy(&buf[..len]))
     }
 
-    /// Установлен ли Evergreen WebView2 — ровно три места, которые перечисляет
-    /// Microsoft: на машину (32-битная ветка реестра), на машину (64), на пользователя.
+    /// Установлен ли Evergreen WebView2 — ровно три места реестра, которые
+    /// перечисляет Microsoft: на машину (32-битная ветка), на машину (64), на
+    /// пользователя; плюс каталоги установки как страховка от ложного «нет».
     pub fn system_runtime_installed() -> bool {
+        registry_says_installed()
+            || install_dirs()
+                .iter()
+                .any(|d| super::has_installed_engine(d))
+    }
+
+    fn install_dirs() -> Vec<PathBuf> {
+        let tail = Path::new("Microsoft")
+            .join("EdgeWebView")
+            .join("Application");
+        ["ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(|root| PathBuf::from(root).join(&tail))
+            .collect()
+    }
+
+    fn registry_says_installed() -> bool {
         let places = [
             (
                 HKEY_LOCAL_MACHINE,
@@ -528,7 +587,9 @@ mod win {
         run(cmd, "icacls.exe")
     }
 
-    pub fn error_box(text: &str) {
+    /// Модальное окно с текстом: `error` — красный крест, иначе предупреждение.
+    pub fn message_box(text: &str, error: bool) {
+        let icon = if error { MB_ICONERROR } else { MB_ICONWARNING };
         let (text, title) = (wide(text), wide("vterm"));
         // SAFETY: строки NUL-терминированы и живут до возврата.
         unsafe {
@@ -536,7 +597,7 @@ mod win {
                 std::ptr::null_mut(),
                 text.as_ptr(),
                 title.as_ptr(),
-                MB_OK | MB_ICONERROR,
+                MB_OK | icon,
             );
         }
     }
@@ -771,7 +832,9 @@ mod tests {
         use Choice::*;
         assert_eq!(decide(false, true, true, true), Leave);
         assert_eq!(decide(true, false, true, false), Leave);
-        assert_eq!(decide(false, false, false, false), Leave);
+        // Ни системного, ни вшитого — не падение при создании окна, а объяснение.
+        assert_eq!(decide(false, false, false, false), Missing);
+        assert_eq!(decide(false, true, false, false), Leave);
         assert_eq!(decide(false, false, true, true), UseCache);
         assert_eq!(decide(false, false, true, false), Extract);
     }
@@ -781,6 +844,22 @@ mod tests {
         assert!(is_installed_version("154.0.4258.48"));
         assert!(!is_installed_version(""));
         assert!(!is_installed_version(" 0.0.0.0 "));
+    }
+
+    #[test]
+    fn engine_in_an_evergreen_install_dir_counts_as_installed() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_installed_engine(dir.path()));
+        assert!(!has_installed_engine(&dir.path().join("missing")));
+        // Папка версии без движка (обновление в процессе) и посторонняя папка — нет.
+        fs::create_dir(dir.path().join("141.0.3537.71")).unwrap();
+        fs::create_dir(dir.path().join("SetupMetrics")).unwrap();
+        fs::write(dir.path().join("SetupMetrics").join(ENGINE_EXE), b"x").unwrap();
+        assert!(!has_installed_engine(dir.path()));
+        // Две версии рядом во время обновления — достаточно одной с движком.
+        fs::create_dir(dir.path().join("142.0.1.2")).unwrap();
+        fs::write(dir.path().join("142.0.1.2").join(ENGINE_EXE), b"x").unwrap();
+        assert!(has_installed_engine(dir.path()));
     }
 
     #[test]
@@ -978,5 +1057,12 @@ mod tests {
             assert!(failed.contains("{err}") && failed.contains("{dir}"));
         }
         assert_ne!(text(Msg::Preparing, true), text(Msg::Preparing, false));
+        for ru in [true, false] {
+            let missing = text(Msg::Missing, ru);
+            // Оба выхода названы: portable с WebView2 и установка runtime.
+            assert!(missing.contains("x86_64-webview2.exe"));
+            assert!(missing.contains("{releases}") && missing.contains("{webview2}"));
+        }
+        assert!(RELEASES_URL.starts_with("https://") && WEBVIEW2_URL.starts_with("https://"));
     }
 }
