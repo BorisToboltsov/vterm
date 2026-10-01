@@ -272,8 +272,8 @@ build:windows:
     # `vterm.exe` из target/release уже самодостаточен: фронтенд вшит в бинарь,
     # .msi/.exe — только установочные обёртки вокруг него. Поэтому просто кладём
     # его рядом с инсталляторами под говорящим именем.
-    #   • Требуется системный WebView2 Runtime (есть по умолчанию в Win11 и
-    #     Win10 21H2+); на более старых системах нужен инсталлятор.
+    #   • Требуется системный WebView2 Runtime; для машин без него ниже
+    #     собирается второй, «полный» portable со встроенным runtime.
     #   • «Portable» здесь про один файл, а не про переносимое состояние:
     #     профили/настройки по-прежнему живут в %APPDATA%\vterm.
     # Версия — из package.json: он единственный источник (tauri.conf.json берёт
@@ -281,6 +281,19 @@ build:windows:
     - $v = (Get-Content package.json | ConvertFrom-Json).version
     - New-Item -ItemType Directory -Force -Path artifacts/portable | Out-Null
     - Copy-Item src-tauri/target/release/vterm.exe "artifacts/portable/vterm-portable-$v-x86_64.exe"
+    # «Полный» portable: тот же exe + WebView2 Fixed Version runtime в хвосте
+    # (ADR 0013, тот же шаг, что в release.yml). Раннеру нужен доступ к сайту
+    # Microsoft; подлинность .cab — подпись Authenticode Microsoft.
+    - $ProgressPreference = 'SilentlyContinue'
+    - $resolved = node scripts/webview2-runtime.mjs resolve
+    - if ($LASTEXITCODE -ne 0) { throw "Не найден WebView2 Fixed Version runtime на странице Microsoft" }
+    - $wvVersion, $wvUrl = $resolved -split ' ', 2
+    - $cab = Join-Path $env:TEMP "webview2-$wvVersion-x64.cab"
+    - Invoke-WebRequest -Uri $wvUrl -OutFile $cab
+    - $sig = Get-AuthenticodeSignature $cab
+    - if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'O=Microsoft Corporation') { throw "Подпись .cab не Microsoft или недействительна" }
+    - node scripts/webview2-runtime.mjs embed src-tauri/target/release/vterm.exe $cab $wvVersion "artifacts/portable/vterm-portable-$v-x86_64-webview2.exe"
+    - if ($LASTEXITCODE -ne 0) { throw "Не удалось вшить WebView2 в portable-файл" }
   artifacts:
     name: vterm-windows
     paths:

@@ -237,6 +237,10 @@ macOS**, и это главное отличие от GitLab-схемы ниже
   которое апстрим может переписать, а `tauri-action` работает с токеном на запись в релизы.
   Обновляет их Dependabot ([dependabot.yml](../.github/dependabot.yml)), так что пин не
   консервирует уязвимость. Тоже гейт.
+- **«Полный» portable собирается из проверенного `.cab` и читается тем же форматом.** Шаг
+  релиза вшивает WebView2 только с подписью Microsoft (`releaseassets.guard.test.ts`), а
+  формат хвоста exe один в скрипте CI и в `webview2.rs` (`webview2runtime.test.ts`; сама
+  распаковка — Rust-тесты `webview2::tests`, на любой ОС через подменённый `expand`).
 - **Группы Dependabot не прячут рискованный бамп.** Патчи и связанные экосистемы идут одним
   PR, но мажоры, russh и minor Svelte — поштучно, выдержка 7 дней у всех. Держит
   `dependabot.guard.test.ts`.

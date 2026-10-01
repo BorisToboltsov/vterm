@@ -25,6 +25,7 @@ mod ssh;
 mod store;
 mod sync;
 mod textenc;
+mod webview2;
 
 use error::{AppError, AppResult};
 
@@ -2272,6 +2273,11 @@ fn file_args(argv: &[String]) -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // «Полный» portable несёт WebView2 Runtime в хвосте exe: если системного нет,
+    // распаковываем его и указываем загрузчику — до создания окна и рантайма tokio.
+    #[cfg(windows)]
+    webview2::prepare();
+
     // Files passed on the command line at first launch (Windows/Linux "open with"
     // gives the path as argv; macOS uses the `Opened` run event below).
     let initial_files = file_args(&std::env::args().collect::<Vec<_>>());

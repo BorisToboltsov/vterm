@@ -36,7 +36,26 @@
 
 - **`link.exe` not found** / ошибка линковки — не установлены **C++ Build Tools** или не
   перезапущен терминал после установки.
-- **Окно не открывается / белый экран** — не установлен **WebView2 Runtime**.
+- **Окно «Не найден Microsoft Edge WebView2 Runtime» / окно не открывается / белый экран** — в
+  системе нет **WebView2 Runtime** (бывает на Windows 10 LTSC и необновлённых образах).
+  Проще всего взять `vterm-portable-…-x86_64-webview2.exe` — runtime уже внутри, ни сети,
+  ни администратора не нужно. Установщики `-setup.exe`/`.msi` ставят его сами (нужен
+  интернет); для обычного portable его можно поставить один раз вручную (Bootstrapper или
+  офлайн Standalone Installer) — [INSTALL.md](INSTALL.md#webview2-runtime-на-windows).
+- **Portable с WebView2: окно «Не удалось подготовить встроенный WebView2 Runtime»** —
+  распаковка не удалась, в окне есть причина и папка. Чаще всего это нехватка места на диске:
+  runtime занимает сотни МБ в `%LOCALAPPDATA%\vcore\vterm\data\webview2`. Освободите место
+  и запустите снова: недоделанная распаковка за готовую не считается, всё начнётся заново.
+  Если файл повреждён при копировании («checksum mismatch»), скачайте его заново и сверьте
+  `SHA256SUMS`.
+- **Portable с WebView2: первый запуск долгий** — так и задумано: окно «Подготовка…»
+  означает, что идёт распаковка runtime. Она делается один раз.
+- **`winget` не распознан** — в Windows 10 winget приходит с пакетом **App Installer** из
+  Store и предустановлен не везде. Поставьте App Installer (через Store или из файлов на
+  LTSC), а если он уже стоит — зарегистрируйте его
+  (`Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`)
+  и откройте PowerShell заново — [INSTALL.md](INSTALL.md#если-нет-winget). Для **запуска**
+  готовой сборки winget не нужен вовсе: он и Rust — только для сборки из исходников.
 - **`pnpm` не распознан** — не выполнен `corepack enable` или не перезапущен терминал.
 - **`failed to read file 'capabilities\._default.json': stream did not contain valid
   UTF-8`** — исходники скопированы с macOS (флешка FAT/exFAT, сетевая шара, zip), и рядом

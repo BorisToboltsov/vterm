@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "1.0.39"
+version = "1.0.40"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -105,6 +105,14 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_IO",
+    # Встроенный WebView2 «полного» portable (webview2.rs): проверка установленного
+    # runtime в реестре, язык интерфейса ОС, окно «Подготовка…» и окно ошибки.
+    "Win32_Foundation",
+    "Win32_Globalization",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

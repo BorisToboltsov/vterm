@@ -187,6 +187,22 @@ pub fn no_console_window(cmd: &mut tokio::process::Command) {
     }
 }
 
+/// То же для синхронного `std::process::Command` — им пользуется подготовка
+/// встроенного WebView2 (`webview2.rs`), которая идёт до рантайма tokio.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn no_console_window_std(cmd: &mut std::process::Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +319,13 @@ mod tests {
                  a console window will flash on Windows"
             );
         }
+        // Синхронные спавны (встроенный WebView2 до старта tokio) — тем же правилом.
+        let src = include_str!("webview2.rs");
+        let spawns = src.matches("Command::new(").count();
+        let guarded = src.matches("no_console_window_std(&mut").count();
+        assert!(
+            spawns > 0 && guarded >= spawns,
+            "webview2.rs: {spawns} spawn(s) but only {guarded} no_console_window_std call(s)"
+        );
     }
 }

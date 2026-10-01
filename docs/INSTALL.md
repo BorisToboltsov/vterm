@@ -23,6 +23,7 @@
 | **macOS** | `.dmg` | Открыть, перетащить **vterm.app** в `/Applications`. Сборка не подписана — см. врезку ниже |
 | **Windows** | `-setup.exe` (NSIS) · `.msi` | Обычная установка. SmartScreen → *«Подробнее» → «Выполнить в любом случае»* |
 | **Windows** | `vterm-portable-…-x86_64.exe` | Один файл, без установки — скопировал и запустил |
+| **Windows** без WebView2 и без сети (LTSC) | `vterm-portable-…-x86_64-webview2.exe` | Тот же portable со встроенным WebView2 (~330 МБ) — см. [ниже](#webview2-runtime-на-windows) |
 | **Linux** | `.deb` · `.rpm` · AppImage | Пакетный менеджер; AppImage — `chmod +x` и запуск |
 
 > **macOS: «не удаётся проверить разработчика» / «программа повреждена».** Сборка не
@@ -41,10 +42,40 @@
 > убирает только подпись Developer ID + нотаризация (Фаза 15, [ROADMAP.md](ROADMAP.md)).
 
 **Portable — это про один файл, а не про переносимое состояние.** Нужен системный
-**WebView2 Runtime** (предустановлен в Windows 11 и Windows 10 21H2+), а профили
+**WebView2 Runtime** (см. [ниже](#webview2-runtime-на-windows)), а профили
 серверов и `known_hosts` по-прежнему пишутся в `%APPDATA%\vterm`, секреты — в Windows
 Credential Manager. Запуск с флешки не оставит систему нетронутой и не перенесёт
 настройки на другую машину.
+
+### WebView2 Runtime на Windows
+
+Окно vterm рисует системный движок **Microsoft Edge WebView2**. В Windows 11 он есть
+всегда, в Windows 10 обычно приезжает с обновлениями — но на LTSC/LTSB, урезанных
+корпоративных образах и давно не обновлявшихся машинах его может не быть. Тогда обычный
+portable-`.exe` при старте показывает окно «WebView2 не найден» с двумя вариантами ниже и
+ссылками на них (`Ctrl+C` в окне копирует текст вместе со ссылками).
+
+- **Нет ни WebView2, ни Store, ни сети — берите `vterm-portable-…-x86_64-webview2.exe`.**
+  Это тот же portable, внутри которого лежит WebView2 Fixed Version runtime. Ставить ничего
+  не нужно, права администратора не нужны. Если системный WebView2 есть, файл работает с
+  ним, как обычный portable. Если нет, при **первом** запуске он покажет окно «Подготовка…»
+  и распакует runtime в `%LOCALAPPDATA%\vcore\vterm\data\webview2\` (сотни МБ на
+  диске, до пары минут). Следующие запуски — обычные. Учтите: встроенный движок сам **не
+  обновляется**, свежий приходит только с новым релизом vterm. Как это устроено — ADR
+  [0013](adr/0013-bundled-webview2.md).
+- **Установщики `-setup.exe` и `.msi`** ставят WebView2 сами, если его нет (скачивают
+  загрузчик Microsoft — нужен интернет).
+- **Для обычного portable** поставьте runtime один раз вручную — со страницы
+  [WebView2](https://developer.microsoft.com/microsoft-edge/webview2/#download), блок
+  *Evergreen*:
+  - **Bootstrapper** (`MicrosoftEdgeWebview2Setup.exe`, ~2 МБ) — сам скачает и поставит
+    runtime; нужен интернет;
+  - **Standalone Installer x64** — полный офлайн-установщик: скачать на любой машине и
+    перенести, если на целевой интернета нет;
+  - или, если есть winget: `winget install --id Microsoft.EdgeWebView2Runtime -e`.
+
+Права администратора не обязательны: без них runtime ставится в профиль пользователя.
+После установки просто запустите vterm заново — перезагрузка не нужна.
 
 ### Проверить скачанное
 
@@ -95,7 +126,9 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 ### Windows с нуля
 
-На чистой машине всё ставится через **winget** (есть в Windows 10 1709+ и Windows 11):
+На чистой машине всё ставится через **winget**. В Windows 11 он есть сразу, в Windows 10
+(1809+) — только если установлен пакет App Installer; `winget` не распознан — сначала
+[поставьте его](#если-нет-winget).
 
 ```powershell
 winget install --id Rustlang.Rustup -e
@@ -113,6 +146,56 @@ corepack enable
 corepack prepare pnpm@latest --activate
 rustc --version; node --version; pnpm --version
 ```
+
+#### Если нет winget
+
+`winget` — не часть Windows 10, а компонент пакета **App Installer** («Установщик
+приложений») из Microsoft Store. Работает с Windows 10 **1809** (сборка 17763) и новее —
+версию покажет `winver`. На 1803 и старше winget не поставить: обновите Windows или
+ставьте инструменты [вручную](#без-winget).
+
+**Через Microsoft Store** (обычная Windows 10 Pro/Home):
+
+1. Откройте [App Installer в Store](https://apps.microsoft.com/detail/9nblggh4nns1)
+   (или найдите в Store «Установщик приложений») и нажмите **Получить/Обновить**.
+2. Откройте **новое** окно PowerShell и проверьте: `winget --version`.
+
+Если App Installer уже стоит, а `winget` всё равно «не распознан» — пакет не
+зарегистрирован для вашего пользователя (типично для свежей учётки, пока Store не
+обновил приложения). Зарегистрируйте его вручную и откройте PowerShell заново:
+
+```powershell
+Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+```
+
+**Без Store** (LTSC/LTSB, Store удалён или заблокирован политикой) — App Installer
+ставится из файлов. На странице
+[релизов winget-cli](https://github.com/microsoft/winget-cli/releases/latest) скачайте
+`Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle` и
+`DesktopAppInstaller_Dependencies.zip`, распакуйте архив и поставьте сначала
+зависимости (VCLibs, UI.Xaml) из папки `x64`, затем сам пакет:
+
+```powershell
+Expand-Archive .\DesktopAppInstaller_Dependencies.zip -DestinationPath .\deps
+Get-ChildItem .\deps\x64\*.appx | ForEach-Object { Add-AppxPackage $_.FullName }
+Add-AppxPackage .\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle
+```
+
+Ошибка `0x80073CF3` / «отсутствует зависимость» значит, что пропущен один из `.appx`
+зависимостей; `0x80073D02` — пакет уже открыт, закройте окна PowerShell/Store и
+повторите. Откройте новое окно PowerShell и проверьте `winget --version`.
+
+#### Без winget
+
+Всё то же ставится обычными установщиками, Build Tools — первыми (их ищет установщик
+Rust). После всех откройте PowerShell заново:
+
+| Компонент | Где взять |
+|-----------|-----------|
+| C++ Build Tools | [Build Tools for Visual Studio](https://visualstudio.microsoft.com/visual-cpp-build-tools/) — отметить «Разработка классических приложений на C++» |
+| Rust | `rustup-init.exe` с [rustup.rs](https://rustup.rs/) — вариант по умолчанию (MSVC) |
+| Node.js LTS | `.msi` с [nodejs.org](https://nodejs.org/) |
+| WebView2 Runtime | см. [WebView2 Runtime на Windows](#webview2-runtime-на-windows) |
 
 ---
 
@@ -156,6 +239,19 @@ pnpm tauri:build:mac    # то же + open-on-mac.sh рядом с .dmg
 а `.msi`/`.exe` — лишь установочные обёртки вокруг него, поэтому `vterm.exe` из
 `release/` уже самодостаточен. CI кладёт его в релиз как
 `vterm-portable-<версия>-x86_64.exe`.
+
+Второй, «полный» portable — `vterm-portable-<версия>-x86_64-webview2.exe` — CI собирает из
+того же `vterm.exe`: находит на странице Microsoft свежий WebView2 Fixed Version runtime,
+проверяет подпись `.cab` и дописывает его в конец exe
+([scripts/webview2-runtime.mjs](../scripts/webview2-runtime.mjs), ADR
+[0013](adr/0013-bundled-webview2.md)). Локально то же:
+
+```powershell
+$r = node scripts/webview2-runtime.mjs resolve      # «<версия> <url>»
+$ver, $url = $r -split ' ', 2
+Invoke-WebRequest $url -OutFile webview2.cab
+node scripts/webview2-runtime.mjs embed src-tauri/target/release/vterm.exe webview2.cab $ver vterm-full.exe
+```
 
 > Сборки не подписаны. Для распространения без предупреждений ОС нужны Apple Developer
 > ID + нотаризация (macOS) и code-signing сертификат (Windows) — Фаза 15, см.
@@ -256,10 +352,10 @@ git push origin v1.0.0
 | ОС | Должно быть |
 |----|-------------|
 | **macOS** | `vterm_<версия>_universal.dmg` · **`open-on-mac.sh`** |
-| **Windows** | `vterm_<версия>_x64_en-US.msi` · `vterm_<версия>_x64-setup.exe` · **`vterm-portable-<версия>-x86_64.exe`** |
+| **Windows** | `vterm_<версия>_x64_en-US.msi` · `vterm_<версия>_x64-setup.exe` · **`vterm-portable-<версия>-x86_64.exe`** · **`vterm-portable-<версия>-x86_64-webview2.exe`** |
 | **Linux** | `.deb` · `.rpm` · `.AppImage` (x86_64) |
 
-**Жирным** — два файла, которых бандлер Tauri не производит: их доливают отдельные шаги
+**Жирным** — файлы, которых бандлер Tauri не производит: их доливают отдельные шаги
 через `gh release upload`. Если какого-то файла нет — упал job этой ОС, смотрите Actions.
 Скачанный из релиза `open-on-mac.sh` теряет флаг исполняемости, получателю нужен `chmod +x`
 (это написано в теле релиза).
@@ -294,7 +390,8 @@ write`, но настройка репозитория — потолок над
 ### Что закреплено тестами
 
 [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) читает workflow и
-падает, если: пропал шаг заливки `open-on-mac.sh` или portable-`.exe`; `node-version` не
+падает, если: пропал шаг заливки `open-on-mac.sh`, portable-`.exe` или portable с WebView2
+(или из него пропала проверка подписи `.cab`); `node-version` не
 перекрывает пол запиненного мажора pnpm (pnpm 11 требует Node ≥ 22.13 и умирает первым же
 вызовом); какой-то экшен откатился на мажор с рантаймом Node 20. Все три — поломки, зелёные
 локально и видимые только в CI.
