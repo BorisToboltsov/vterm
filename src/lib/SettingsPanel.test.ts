@@ -296,7 +296,7 @@ describe("SettingsPanel — appearance & search", () => {
   it("closes via the header × button", async () => {
     render(SettingsPanel, { props: { open: true } });
     expect(screen.getByText("Settings")).toBeInTheDocument();
-    // The header × (aria-label "Close"), distinct from the backdrop ("Close settings").
+    // The header × (aria-label "Close") — the backdrop no longer closes anything.
     await userEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(screen.queryByText("Settings")).toBeNull();
   });

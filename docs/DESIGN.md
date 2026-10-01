@@ -105,7 +105,11 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Диалоги** строятся на [Modal](../src/lib/Modal.svelte) (`ConfirmDialog` и формы — поверх
   него). Крестик — проп `showClose`; он живёт вне фокус-трапа (сиблинг скролл-карточки),
   поэтому не крадёт стартовый фокус и не уезжает при скролле. Окна со своим оверлеем
-  (`SettingsPanel`, `HelpPanel`) используют тот же крестик.
+  (`SettingsPanel`, `HelpPanel`) используют тот же крестик. Фон — `bg-black/50` с
+  `aria-hidden`, некликабельный (правило — в INVARIANTS).
+- **Три ответа** ([UnsavedCloseDialog](../src/lib/UnsavedCloseDialog.svelte)) — порядок
+  «Отмена» (текстовая) · «Не сохранять» (контурная `border-danger text-danger`) · «Сохранить»
+  (`bg-accent`, справа — основное действие).
 - **Тосты** ([Toast.svelte](../src/lib/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).

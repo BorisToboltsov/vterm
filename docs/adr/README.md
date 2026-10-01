@@ -18,3 +18,4 @@
 | [0011](0011-custom-window-chrome.md) | Своё оконное обрамление на Windows/Linux (macOS — нативное) | Принято |
 | [0012](0012-local-access-check.md) | Проверка доступа с локальной вкладки: узкое исключение из офлайна | Принято |
 | [0013](0013-bundled-webview2.md) | Portable с вшитым WebView2 для Windows без него | Принято |
+| [0014](0014-local-tls-http-probes.md) | TLS-инспектор и HTTP-клиент с локальной вкладки: свои curl/openssl пользователя | Принято |

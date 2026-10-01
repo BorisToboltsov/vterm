@@ -473,7 +473,7 @@
         <div
           bind:this={listEl}
           bind:clientHeight={viewportH}
-          class="relative h-56 overflow-auto rounded border border-edge"
+          class="relative h-56 overflow-auto rounded border border-edge [overflow-anchor:none]"
           data-testid="sync-plan"
           onscroll={(e) => (scrollTop = (e.currentTarget as HTMLElement).scrollTop)}
         >

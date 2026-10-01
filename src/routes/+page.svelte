@@ -120,6 +120,7 @@
   import Modal from "$lib/Modal.svelte";
   import PasswordInput from "$lib/PasswordInput.svelte";
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
+  import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
   import QuitDialog from "$lib/QuitDialog.svelte";
   import { quitRows } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
@@ -347,7 +348,8 @@
     activeTab?.kind === "ssh" ? (servers.find((s) => s.id === activeTab.serverId) ?? null) : null,
   );
   // Active-tab context for the Utilities network tools (Phase 34): SSH tabs run
-  // the probe remotely (variant A), local tabs run it in the PTY (variant B).
+  // the probe on the server, local tabs on this computer (ADR 0014) or typed
+  // into the tab's terminal — in the dialect of the shell it spawned.
   const utilSession = $derived.by<ProbeSession | null>(() => {
     const tab = activeTab;
     if (!tab || (tab.kind !== "ssh" && tab.kind !== "local")) return null;
@@ -358,6 +360,7 @@
       live: isLive(tab.status),
       host: tab.kind === "ssh" ? (srv?.host ?? tab.alias) : "local",
       isProd: tab.kind === "ssh" ? isProdServer(srv) : false,
+      shell: tab.kind === "local" ? (localShellKind[tab.sessionId] ?? "posix") : "posix",
     };
   });
   // Notes belong to the active SSH tab's server when one is focused; on a local
@@ -1343,7 +1346,9 @@
   let savingEditorId = $state<string | null>(null);
   let closeEditorConfirm = $state<{ sid: string; doc: EditorDoc } | null>(null);
   // Pre-save diff confirmation (settings-gated) and conflict resolution.
-  let diffSave = $state<{ sid: string; doc: EditorDoc } | null>(null);
+  // `closeAfter`: the save came from the close-with-changes dialog — close the
+  // file once the write lands (and only then: a failed save keeps it open).
+  let diffSave = $state<{ sid: string; doc: EditorDoc; closeAfter?: boolean } | null>(null);
   let conflict = $state<{ sid: string; doc: EditorDoc; serverText: string } | null>(null);
 
   /** Configured editor open-size limit, in bytes. */
@@ -1752,9 +1757,16 @@
     void doWriteEditor(sid, doc, doc.baseSha256);
   }
 
-  /** Actually write to the server. `expectedSha` null = force overwrite (conflict). */
-  async function doWriteEditor(sid: string, doc: EditorDoc, expectedSha: string | null) {
-    if (savingEditorId) return;
+  /**
+   * Actually write to the server. `expectedSha` null = force overwrite (conflict).
+   * Resolves `true` only when the file was written.
+   */
+  async function doWriteEditor(
+    sid: string,
+    doc: EditorDoc,
+    expectedSha: string | null,
+  ): Promise<boolean> {
+    if (savingEditorId) return false;
     savingEditorId = doc.id;
     try {
       const before = doc.baseContent;
@@ -1778,6 +1790,7 @@
           t("editor.auditEdit", { path: doc.path, added: stat.added, removed: stat.removed }),
         );
       }
+      return true;
     } catch (e) {
       if (isFileChangedError(e)) {
         // Fetch the current on-disk text and let the user resolve the conflict.
@@ -1805,15 +1818,30 @@
       } else {
         notifyError(String(e));
       }
+      return false;
     } finally {
       savingEditorId = null;
     }
   }
 
-  function confirmDiffSave() {
+  async function confirmDiffSave() {
     const s = diffSave;
     diffSave = null;
-    if (s) void doWriteEditor(s.sid, s.doc, s.doc.baseSha256);
+    if (!s) return;
+    const ok = await doWriteEditor(s.sid, s.doc, s.doc.baseSha256);
+    if (ok && s.closeAfter) closeEditorStore(s.sid, s.doc.id);
+  }
+
+  /** "Save" in the close-with-changes dialog: write, then close on success. */
+  async function saveAndCloseEditor() {
+    const c = closeEditorConfirm;
+    closeEditorConfirm = null;
+    if (!c) return;
+    if (settings.editor.diffBeforeSave) {
+      diffSave = { sid: c.sid, doc: c.doc, closeAfter: true };
+      return;
+    }
+    if (await doWriteEditor(c.sid, c.doc, c.doc.baseSha256)) closeEditorStore(c.sid, c.doc.id);
   }
 
   /** Conflict: overwrite the server's newer version with mine (skip the hash check). */
@@ -2826,22 +2854,18 @@
 <!-- Tab-bar right-click menu -->
 <ContextMenu menu={tabCtxMenu} onclose={() => (tabCtxMenu = null)} />
 
-<!-- Discard-unsaved confirmation when closing an edited file -->
-<ConfirmDialog
+<!-- Save / Don't save / Cancel when closing an edited file -->
+<UnsavedCloseDialog
   open={!!closeEditorConfirm}
-  title={t("editor.discardTitle")}
-  confirmLabel={t("editor.discard")}
-  danger
-  onconfirm={() => {
+  name={closeEditorConfirm?.doc.name ?? ""}
+  canSave={!closeEditorConfirm?.doc.readOnly}
+  onsave={() => void saveAndCloseEditor()}
+  ondiscard={() => {
     if (closeEditorConfirm) closeEditorStore(closeEditorConfirm.sid, closeEditorConfirm.doc.id);
     closeEditorConfirm = null;
   }}
   oncancel={() => (closeEditorConfirm = null)}
->
-  {t("editor.discardBody1")}
-  <span class="text-text">{closeEditorConfirm?.doc.name}</span>
-  {t("editor.discardBody2")}
-</ConfirmDialog>
+/>
 
 <!-- Sudo prompt: reopen (or re-save) a permission-denied file as root -->
 <Modal open={!!sudoPrompt} title={sudoPromptTitle} onclose={() => (sudoPrompt = null)}>

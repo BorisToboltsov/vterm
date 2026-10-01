@@ -1,15 +1,15 @@
 // Network-diagnostics backend (Phase 34). A single thin executor runs one
-// diagnostic command on an SSH session and captures stdout/stderr/exit code —
-// nothing more. All argument building and output parsing lives on the frontend
-// (`src/lib/{probe,tls,dns,net,portscan,http,externalip}.ts`), keeping this side
-// dumb and testable-in-TS per the "pure logic in .ts" invariant.
+// diagnostic command and captures stdout/stderr/exit code — nothing more. All
+// argument building and output parsing lives on the frontend
+// (`src/lib/{probe,tls,http}.ts`), keeping this side dumb and testable-in-TS per
+// the "pure logic in .ts" invariant.
 //
-// SSH ONLY (variant A of the offline contract): the probe runs on the user's
-// server, so the traffic originates from that server — part of the path to the
-// user's own hosts, never from the app/WebView. Local tabs use variant B instead
-// (the frontend writes the command into the PTY via `write_to_terminal`; the
-// user's own shell runs it), so there is deliberately no local executor here and
-// the app itself makes no third-party network calls (offline invariant intact).
+// Two transports by session (`probe_run` in lib.rs): an SSH tab runs the probe
+// on the user's server, so the traffic originates there. A local tab spawns the
+// user's own `curl`/`openssl` on this machine (ADR 0014) — the narrow, click-only
+// counterpart of the access check (ADR 0012): only the programs allowed below,
+// only to the address the user typed, never through a shell. The app itself
+// still opens no socket for it (the socket gate in netcheck.rs holds).
 
 use crate::git::shell_quote;
 use serde::Serialize;
@@ -32,6 +32,16 @@ pub fn probe_command(args: &[String]) -> String {
         .map(|a| shell_quote(a))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// The programs a local tab may spawn for the Utilities' network tools: the
+/// user's own `curl` (HTTP client) and `openssl` (TLS inspector), by bare name
+/// or a path ending in one (`.exe` on Windows). Anything else — `sh`, `cmd`,
+/// `powershell` — would turn the probe into an arbitrary local command.
+pub fn local_program_allowed(prog: &str) -> bool {
+    let name = prog.rsplit(['/', '\\']).next().unwrap_or(prog);
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    matches!(name, "curl" | "openssl")
 }
 
 /// Render a network-utility run for the session recording (audit): a magenta
@@ -57,6 +67,31 @@ mod tests {
         assert!(m.contains("[util] $ 'curl' 'https://x'"));
         assert!(m.contains("200 OK\r\n"));
         assert!(m.contains("[util] exit 0"));
+    }
+
+    #[test]
+    fn only_curl_and_openssl_run_locally() {
+        for ok in [
+            "curl",
+            "openssl",
+            "curl.exe",
+            "C:\\Windows\\System32\\curl.exe",
+            "/opt/homebrew/bin/openssl",
+        ] {
+            assert!(local_program_allowed(ok), "{ok}");
+        }
+        for bad in [
+            "sh",
+            "bash",
+            "cmd",
+            "powershell",
+            "curlx",
+            "evil/curl-wrapper",
+            "",
+            "rm",
+        ] {
+            assert!(!local_program_allowed(bad), "{bad}");
+        }
     }
 
     #[test]

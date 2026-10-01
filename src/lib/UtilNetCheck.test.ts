@@ -13,7 +13,7 @@ import type { ProbeSession } from "./probe";
 const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
 const identity = (method = "bash") =>
   `H\tapp-01\nA\t127.0.0.1/8\nA\t10.64.48.180/24\nM\t${method}\n`;
-const ssh: ProbeSession = { id: "s1", kind: "ssh", live: true, host: "10.64.48.180", isProd: false };
+const ssh: ProbeSession = { id: "s1", kind: "ssh", live: true, host: "10.64.48.180", isProd: false, shell: "posix" };
 
 /** Answer the identity probe, then a run where 22 is open and 8888 refused. */
 function serve(method = "bash") {

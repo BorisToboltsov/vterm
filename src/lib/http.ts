@@ -2,8 +2,9 @@
 // parses its response (status, headers, body) plus timing metrics emitted via
 // `-w`. Runs on the session host, so it exercises an API/webhook from that
 // server's network position — the debugging value of "does prod reach this
-// endpoint, and how fast?".
-import { shellQuote } from "./probe";
+// endpoint, and how fast?" (on a local tab: from this machine, ADR 0014).
+import { curlProgram } from "./probe";
+import type { CdShell } from "./cdterminal";
 
 export const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
 export type HttpMethod = (typeof HTTP_METHODS)[number];
@@ -27,17 +28,36 @@ export interface HttpRequest {
 const METRIC_MARKER = "__VTERM_HTTP__";
 const WRITEOUT = `\n${METRIC_MARKER}\t%{http_code}\t%{time_namelookup}\t%{time_connect}\t%{time_starttransfer}\t%{time_total}\t%{size_download}\n`;
 
-/** Build `curl -sS -i [-L] [-X M] [-H …] [--data-raw …] -w <metrics> URL`. */
-export function httpArgs(req: HttpRequest, timeoutSecs = 20): string[] {
-  const args = ["curl", "-sS", "-i", "--max-time", String(timeoutSecs)];
+/** `curl -sS -i [-L] [-X M] [-H …] [--data-raw …]` — everything but `-w` and the URL. */
+function curlRequest(program: string, req: HttpRequest, timeoutSecs: number): string[] {
+  const args = [program, "-sS", "-i", "--max-time", String(timeoutSecs)];
   if (req.followRedirects) args.push("-L");
   if (req.method !== "GET") args.push("-X", req.method);
   for (const h of req.headers) {
     if (h.name.trim()) args.push("-H", `${h.name.trim()}: ${h.value}`);
   }
   if (req.body) args.push("--data-raw", req.body);
-  args.push("-w", WRITEOUT, shellQuote(req.url.trim()));
   return args;
+}
+
+/**
+ * Build `curl -sS -i [-L] [-X M] [-H …] [--data-raw …] -w <metrics> URL`. Every
+ * token is raw: the SSH transport quotes each one, a local run passes argv
+ * verbatim. (Pre-quoting the URL here quoted it twice on SSH — a URL with a
+ * query string reached curl wrapped in literal `'…'`.)
+ */
+export function httpArgs(req: HttpRequest, timeoutSecs = 20): string[] {
+  return [...curlRequest("curl", req, timeoutSecs), "-w", WRITEOUT, req.url.trim()];
+}
+
+/**
+ * The argv typed into a local tab's terminal: no `-w` metrics (the output is
+ * read by a person, and its newlines can't be typed into a prompt), and
+ * `curl.exe` outside POSIX — PowerShell 5.1 aliases bare `curl` to
+ * `Invoke-WebRequest`, which rejects every curl flag. Render with `renderArgv`.
+ */
+export function httpTerminalArgv(req: HttpRequest, shell: CdShell, timeoutSecs = 20): string[] {
+  return [...curlRequest(curlProgram(shell), req, timeoutSecs), req.url.trim()];
 }
 
 export interface HttpTimings {

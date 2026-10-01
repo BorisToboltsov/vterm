@@ -4,6 +4,7 @@ import { createRawSnippet } from "svelte";
 import { describe, expect, it, vi } from "vitest";
 import Modal from "./Modal.svelte";
 import ConfirmDialog from "./ConfirmDialog.svelte";
+import UnsavedCloseDialog from "./UnsavedCloseDialog.svelte";
 
 // A tiny text snippet usable as `children`.
 const text = (s: string) =>
@@ -21,11 +22,16 @@ describe("Modal", () => {
     expect(screen.getByText("body")).toBeInTheDocument();
   });
 
-  it("calls onclose when the backdrop is clicked", async () => {
+  it("does not close when the backdrop is clicked", async () => {
+    // Returning from another app, the first click often lands outside the card;
+    // a half-filled form must survive it (backdrop.guard).
     const onclose = vi.fn();
-    render(Modal, { props: { open: true, onclose, children: text("body") } });
-    await userEvent.click(screen.getByLabelText("Close dialog"));
-    expect(onclose).toHaveBeenCalledOnce();
+    const { container } = render(Modal, { props: { open: true, onclose, children: text("body") } });
+    const backdrop = container.querySelector(".bg-black\\/50") as HTMLElement;
+    expect(backdrop).not.toBeNull();
+    await userEvent.click(backdrop);
+    expect(onclose).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Close dialog")).toBeNull();
   });
 
   it("calls onclose on Escape", async () => {
@@ -151,5 +157,29 @@ describe("ConfirmDialog", () => {
     const confirm = screen.getByTestId("confirm");
     expect(confirm.className).toContain("bg-accent");
     expect(confirm.className).not.toContain("bg-danger");
+  });
+});
+
+describe("UnsavedCloseDialog", () => {
+  it("offers Save / Don't save / Cancel and wires each", async () => {
+    const onsave = vi.fn();
+    const ondiscard = vi.fn();
+    const oncancel = vi.fn();
+    render(UnsavedCloseDialog, {
+      props: { open: true, name: "nginx.conf", onsave, ondiscard, oncancel },
+    });
+    expect(screen.getByText("Save changes to nginx.conf?")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Don't save" }));
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onsave).toHaveBeenCalledOnce();
+    expect(ondiscard).toHaveBeenCalledOnce();
+    expect(oncancel).toHaveBeenCalledOnce();
+  });
+
+  it("hides Save for a read-only doc", () => {
+    render(UnsavedCloseDialog, { props: { open: true, name: "x", canSave: false } });
+    expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Don't save" })).toBeInTheDocument();
   });
 });

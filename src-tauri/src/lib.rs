@@ -1096,16 +1096,19 @@ async fn netcheck_run(
     Err(AppError::NoSession)
 }
 
-/// Run one network-diagnostic command for the Utilities panel (Phase 34). SSH
-/// only (variant A): the probe runs on the user's server via a dedicated exec
-/// channel, so the traffic originates from that server — never from the app. A
-/// local tab has no session here; the frontend runs it in the PTY instead
-/// (variant B), so a missing SSH session collapses to `NoSession`. Argument
-/// building and output parsing are pure frontend logic; this only executes and
-/// captures. A timeout collapses into a non-zero exit + stderr note so the
-/// frontend sees a uniform `ProbeOutput`. `mirror` audits the command into the
-/// active session recording as `[util] $ …` output — never emitted to the live
-/// terminal, exactly like `git_run`/`container_run`.
+/// Run one network-diagnostic command for the Utilities panel (Phase 34).
+/// Transport by session (INVARIANTS principle 3): on an SSH tab the probe runs
+/// on the user's server via a dedicated exec channel, so the traffic originates
+/// from that server. On a local tab (ADR 0014) the user's own `curl`/`openssl`
+/// is spawned on this machine — only those two programs (`netprobe::
+/// local_program_allowed`), only on the user's click, never through a shell.
+/// `stdin` feeds the child (closing it), which lets a two-step probe pipe one
+/// tool into the next without `sh -c` (Windows has no `sh`). Argument building
+/// and output parsing are pure frontend logic; this only executes and captures.
+/// A timeout collapses into a non-zero exit + stderr note so the frontend sees a
+/// uniform `ProbeOutput`. `mirror` audits the command into the active session
+/// recording as `[util] $ …` output — never emitted to the live terminal,
+/// exactly like `git_run`/`container_run`.
 #[tauri::command]
 async fn probe_run(
     state: State<'_, AppState>,
@@ -1113,31 +1116,63 @@ async fn probe_run(
     args: Vec<String>,
     timeout_secs: u64,
     mirror: bool,
+    stdin: Option<String>,
 ) -> AppResult<netprobe::ProbeOutput> {
     if args.is_empty() {
         return Err(AppError::Message("probe: no arguments".into()));
     }
-    let session = session_arc(&state, &session_id).await?;
-    let cmd = netprobe::probe_command(&args);
-    let outcome = session.exec_captured(&cmd, timeout_secs.max(1)).await?;
-    let (stderr, exit_code) = if outcome.timed_out {
-        (
-            format!("probe timed out after {}s", timeout_secs.max(1)),
-            -1,
-        )
-    } else {
-        (outcome.stderr, outcome.exit_code)
-    };
-    if mirror {
-        session.record_output(
-            netprobe::probe_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
-        );
+    let timeout = timeout_secs.max(1);
+    if let Ok(session) = session_arc(&state, &session_id).await {
+        let cmd = netprobe::probe_command(&args);
+        let outcome = match &stdin {
+            Some(input) => {
+                session
+                    .exec_captured_stdin(&cmd, input.as_bytes(), timeout)
+                    .await?
+            }
+            None => session.exec_captured(&cmd, timeout).await?,
+        };
+        let (stderr, exit_code) = if outcome.timed_out {
+            (format!("probe timed out after {timeout}s"), -1)
+        } else {
+            (outcome.stderr, outcome.exit_code)
+        };
+        if mirror {
+            session.record_output(
+                netprobe::probe_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
+            );
+        }
+        return Ok(netprobe::ProbeOutput {
+            stdout: outcome.stdout,
+            stderr,
+            exit_code,
+        });
     }
-    Ok(netprobe::ProbeOutput {
-        stdout: outcome.stdout,
-        stderr,
-        exit_code,
-    })
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    if let Some(pty) = local {
+        if !netprobe::local_program_allowed(&args[0]) {
+            return Err(AppError::Message(format!(
+                "probe: {} is not a local probe tool",
+                args[0]
+            )));
+        }
+        let out = match &stdin {
+            Some(input) => container::run_local_stdin(&args, input.as_bytes(), timeout).await?,
+            None => container::run_local(&args, timeout).await?,
+        };
+        if mirror {
+            let cmd = netprobe::probe_command(&args);
+            pty.record_output(
+                netprobe::probe_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
+            );
+        }
+        return Ok(netprobe::ProbeOutput {
+            stdout: out.stdout,
+            stderr: out.stderr,
+            exit_code: out.exit_code,
+        });
+    }
+    Err(AppError::NoSession)
 }
 
 /// Run one `docker` command for the Docker panel (Phase 35). Dispatches by

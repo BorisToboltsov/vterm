@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { httpArgs, parseHttp, statusClass, type HttpRequest } from "./http";
+import { httpArgs, httpTerminalArgv, parseHttp, statusClass, type HttpRequest } from "./http";
+import { renderArgv } from "./termcmd";
 
 const base: HttpRequest = {
   method: "GET",
@@ -33,6 +34,38 @@ describe("httpArgs", () => {
     expect(a).not.toContain("skip"); // blank header name dropped
     expect(a).toContain("--data-raw");
     expect(a).toContain(`{"a":1}`);
+  });
+});
+
+describe("argv is raw (the transport quotes)", () => {
+  it("does not pre-quote a URL with a query string", () => {
+    // Pre-quoting it here made SSH quote it twice: curl got literal `'…'`.
+    const a = httpArgs({ ...base, url: " https://api.test/x?a=1&b=2 " });
+    expect(a[a.length - 1]).toBe("https://api.test/x?a=1&b=2");
+  });
+});
+
+describe("httpTerminalArgv", () => {
+  it("drops the -w metrics and keeps the request", () => {
+    const a = httpTerminalArgv({ ...base, method: "POST", body: "x" }, "posix");
+    expect(a[0]).toBe("curl");
+    expect(a).not.toContain("-w");
+    expect(a).toEqual(expect.arrayContaining(["-X", "POST", "--data-raw", "x"]));
+    expect(a[a.length - 1]).toBe("https://api.test/health");
+  });
+  it("calls curl.exe outside POSIX (PowerShell aliases bare curl)", () => {
+    expect(httpTerminalArgv(base, "powershell")[0]).toBe("curl.exe");
+    expect(httpTerminalArgv(base, "cmd")[0]).toBe("curl.exe");
+  });
+  it("renders for each shell, and refuses what can't be typed", () => {
+    const q = { ...base, url: "https://api.test/x?a=1&b=2" };
+    expect(renderArgv(httpTerminalArgv(q, "posix"), "posix")).toContain("'https://api.test/x?a=1&b=2'");
+    expect(renderArgv(httpTerminalArgv(q, "cmd"), "cmd")).toContain('"https://api.test/x?a=1&b=2"');
+    expect(renderArgv(httpTerminalArgv(q, "powershell"), "powershell")).toMatch(/^curl\.exe /);
+    // A multi-line body would submit half a command.
+    expect(renderArgv(httpTerminalArgv({ ...base, body: "a\nb" }, "posix"), "posix")).toBeNull();
+    // cmd.exe has no escape for an embedded double quote.
+    expect(renderArgv(httpTerminalArgv({ ...base, body: '{"a":1}' }, "cmd"), "cmd")).toBeNull();
   });
 });
 

@@ -93,7 +93,7 @@ describe("HelpPanel", () => {
 
   it("shows the author contacts on the About tab", () => {
     render(HelpPanel, { props: { open: true, tab: "about" } });
-    expect(screen.getByText("bt@vcore.su")).toBeInTheDocument();
+    expect(screen.getByText("toboltsov.b@gmail.com")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "@BorisToboltsov" })).toBeInTheDocument();
   });
 

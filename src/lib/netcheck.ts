@@ -3,6 +3,12 @@
 //
 //     10.64.48.180 -> 10.70.39.10:[22, 80, 443]/tcp
 //     10.64.48.180 -> [10.70.39.10, db.internal]:[5432, 8000-8010]
+//     10.0.0.1 (gitlab) -> 10.0.0.5:[22, 8200] (vault)
+//
+// Rules are pasted from tickets, wikis and chats, which "improve" the text: an
+// arrow becomes `—>` or `→`, gets a space inside (`- >`), the colon turns
+// full-width. `normalizeRuleLine` folds those back before parsing, and a
+// parenthesised note names the service on either side.
 //
 // Everything here is pure (INVARIANTS "чистая логика в .ts"): parsing the rules,
 // building the POSIX script the SSH transport runs, parsing the line protocol
@@ -32,7 +38,11 @@ export interface NetRule {
   line: number;
   /** Source the user expects the traffic to come from (IP or hostname), if given. */
   source: string | null;
+  /** `(gitlab)` written next to the source — a note, never part of the check. */
+  sourceLabel?: string;
   targets: string[];
+  /** `(vault)` written on the target side — a note, never part of the check. */
+  label?: string;
   ports: number[];
   proto: Proto;
 }
@@ -53,6 +63,41 @@ export const DEFAULT_TIMEOUT_SECS = 3;
 export const BATCH = 32;
 
 const ARROW = /\s*(?:->|=>|→)\s*/;
+
+// Arrows a pasted rule arrives with: any dash (or `=`) run before `>`, spaces
+// allowed inside (`- >`, `—>`, `==>`), and the single-glyph arrows editors and
+// chat apps substitute. Folded to `->` before parsing.
+const ARROW_VARIANTS = /\s*(?:[-‐‑‒–—―−]+\s*>|=+\s*>|[→⟶⟹⇒⇨➔➙➛➜➝➞➟➠➡➤⭢]\ufe0f?)\s*/g;
+
+/**
+ * Fold what tickets, wikis and chats do to a rule back into the canonical
+ * syntax: arrows (`—>`, `- >`, `➜` → `->`), full-width punctuation (`：`, `，`,
+ * `［］`, `（）`), exotic spaces (NBSP, thin, ideographic) and a trailing `.`/`;`.
+ * Pure and idempotent; never changes a line that was already canonical.
+ */
+export function normalizeRuleLine(line: string): string {
+  return line
+    .replace(/[\u00a0\u2000-\u200b\u202f\u205f\u3000\ufeff]/g, " ")
+    .replace(/[：꞉∶]/g, ":")
+    .replace(/[，、]/g, ",")
+    .replace(/［/g, "[")
+    .replace(/］/g, "]")
+    .replace(/（/g, "(")
+    .replace(/）/g, ")")
+    .replace(ARROW_VARIANTS, " -> ")
+    .replace(/[.;,]+\s*$/, "")
+    .trim();
+}
+
+/** Pull `(notes)` out of one side of a rule: the bare side + the joined notes. */
+function takeLabels(side: string): { rest: string; label?: string } {
+  const notes: string[] = [];
+  const rest = side.replace(/\(([^()]*)\)/g, (_, note: string) => {
+    if (note.trim()) notes.push(note.trim().replace(/\s+/g, " "));
+    return " ";
+  });
+  return notes.length ? { rest, label: notes.join(", ") } : { rest };
+}
 // Hostnames and IPv4 only: the script embeds targets, so the alphabet is strict
 // (quoted anyway). IPv6 would collide with the `host:port` syntax.
 const HOST = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
@@ -101,12 +146,14 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
   let total = 0;
   text.split(/\r?\n/).forEach((rawLine, i) => {
     const line = i + 1;
-    const body = rawLine.replace(/#.*$/, "").trim();
+    const body = normalizeRuleLine(rawLine.replace(/#.*$/, ""));
     if (!body) return;
     const parts = body.split(ARROW);
     if (parts.length > 2) return void errors.push({ line, code: "syntax", token: body });
-    const source = parts.length === 2 ? parts[0].trim() : null;
-    const rhs = parts.length === 2 ? parts[1] : parts[0];
+    const src = parts.length === 2 ? takeLabels(parts[0]) : null;
+    const source = src ? src.rest.trim() : null;
+    const dst = takeLabels(parts.length === 2 ? parts[1] : parts[0]);
+    const rhs = dst.rest;
     if (source !== null && (!source || !validHost(source))) {
       return void errors.push({ line, code: "host", token: source });
     }
@@ -138,7 +185,10 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
       return void errors.push({ line, code: "tooMany", token: String(MAX_CHECKS) });
     }
     total += cost;
-    rules.push({ line, source, targets, ports, proto });
+    const rule: NetRule = { line, source, targets, ports, proto };
+    if (src?.label) rule.sourceLabel = src.label;
+    if (dst.label) rule.label = dst.label;
+    rules.push(rule);
   });
   return { rules, errors };
 }
@@ -621,7 +671,11 @@ interface ReportRow {
   source: string;
   /** The rule's source when it differs from `source` — a firewall rule for it won't match. */
   ruleSource: string | null;
+  /** The note written next to the rule's source (`(gitlab)`), if any. */
+  sourceLabel: string;
   host: string;
+  /** The note written on the target side (`(vault)`), if any. */
+  label: string;
   resolved: string | null;
   port: number;
   proto: Proto;
@@ -642,7 +696,9 @@ function reportRows(rules: NetRule[], rep: NetReport): ReportRow[] {
           mark: mark(r.status),
           source,
           ruleSource: rule.source && route && rule.source !== route ? rule.source : null,
+          sourceLabel: rule.sourceLabel ?? "",
           host,
+          label: rule.label ?? "",
           resolved,
           port: r.port,
           proto: rule.proto,
@@ -685,8 +741,15 @@ export function formatReport(
       "|---|---|---|---|---|---|---|",
     ];
     for (const r of rows) {
-      const src = r.ruleSource ? `${r.source} (${words.ruleSource(r.ruleSource)})` : r.source;
-      const target = r.resolved ? `${r.host} (${r.resolved})` : r.host;
+      // The source note names the rule's source: it follows that address, which
+      // is the one in brackets when the route leaves from elsewhere.
+      const ruleSrc = r.ruleSource && [r.ruleSource, r.sourceLabel].filter(Boolean).join(" ");
+      const src = ruleSrc
+        ? `${r.source} (${words.ruleSource(ruleSrc)})`
+        : [r.source, r.sourceLabel && `(${r.sourceLabel})`].filter(Boolean).join(" ");
+      const target = [r.host, r.resolved && `(${r.resolved})`, r.label && `— ${r.label}`]
+        .filter(Boolean)
+        .join(" ");
       out.push(
         `| ${r.mark} | ${src || "—"} | ${target} | ${r.port}/${r.proto} | ${words.status[r.status]} | ${time(r) || "—"} | ${r.service || "—"} |`,
       );
@@ -696,15 +759,21 @@ export function formatReport(
 
   const who = [rep.hostname, addrs && `(${addrs})`].filter(Boolean).join(" ");
   const out = [[words.title, who, opts.at, tallyText].filter(Boolean).join(" · "), words.method, ""];
-  const rule = (r: ReportRow) => `${r.source ? `${r.source} → ` : ""}${r.host}:${r.port}/${r.proto}`;
+  // Same shape the rule was written in: `src (note) → host:port/proto`, the
+  // target's note joining the tail next to the service name.
+  const srcNote = (r: ReportRow) => (r.sourceLabel && !r.ruleSource ? ` (${r.sourceLabel})` : "");
+  const rule = (r: ReportRow) =>
+    `${r.source ? `${r.source}${srcNote(r)} → ` : ""}${r.host}:${r.port}/${r.proto}`;
   const ruleW = Math.max(0, ...rows.map((r) => rule(r).length));
   const statusW = Math.max(0, ...rows.map((r) => words.status[r.status].length));
   const timeW = Math.max(0, ...rows.map((r) => time(r).length));
   for (const r of rows) {
+    const ruleSrc = r.ruleSource && [r.ruleSource, r.sourceLabel].filter(Boolean).join(" ");
     const tail = [
+      r.label,
       r.service,
       r.resolved ? `(${r.resolved})` : "",
-      r.ruleSource ? `(${words.ruleSource(r.ruleSource)})` : "",
+      ruleSrc ? `(${words.ruleSource(ruleSrc)})` : "",
     ].filter(Boolean);
     const line = `${r.mark} ` + [
       rule(r).padEnd(ruleW),

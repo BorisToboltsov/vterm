@@ -370,6 +370,10 @@
     };
   }
 
+  /** The rule's source as written, with its `(note)` — for warnings that name it. */
+  const sourceText = (rule: NetRule) =>
+    [rule.source, rule.sourceLabel && `(${rule.sourceLabel})`].filter(Boolean).join(" ");
+
   const reportWords = $derived<ReportWords | null>(
     report
       ? {
@@ -677,7 +681,7 @@
           <span>
             {t("util.netcheck.sourceForeign", {
               n: rule.line,
-              source: rule.source ?? "",
+              source: sourceText(rule),
               addrs: shownAddrs.join(", ") || "—",
             })}
           </span>
@@ -711,6 +715,9 @@
           <div class="rounded border border-edge" data-testid="netcheck-target">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-edge bg-panel px-3 py-1.5">
               <span class="font-mono text-sm text-text">{host}</span>
+              {#if rule.label}
+                <span class="text-sm text-accent" data-testid="netcheck-label">{rule.label}</span>
+              {/if}
               {#if !isIpv4(host) && resolved}
                 <span class="font-mono text-meta text-muted">{resolved}</span>
               {:else if resolved === ""}
@@ -743,7 +750,7 @@
             </div>
             {#if egressDiffers(rule.source, host, report)}
               <p class="border-b border-edge px-3 py-1 text-meta text-warn">
-                {t("util.netcheck.egressDiffers", { source: rule.source ?? "", src: src ?? "" })}
+                {t("util.netcheck.egressDiffers", { source: sourceText(rule), src: src ?? "" })}
               </p>
             {/if}
             <table class="w-full">

@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.0.40-blue)
+![version](https://img.shields.io/badge/version-1.0.41-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -117,7 +117,8 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 ## Сеть и автономность
 
 **Полностью офлайн.** Единственный сетевой трафик — исходящий SSH к вашим серверам
-(и, если включите ИИ, запросы к вашему эндпоинту). Ни CDN, ни телеметрии, ни
+(и, если включите ИИ, запросы к вашему эндпоинту; сетевые утилиты на локальной вкладке
+ходят только по вашей кнопке и только на введённый вами адрес). Ни CDN, ни телеметрии, ни
 аналитики; шрифты встроены, секреты — в системном keychain. Инвариант закреплён
 тест-гейтами — см. [SECURITY.md](SECURITY.md).
 
@@ -126,6 +127,6 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 ## Контакты · Лицензия
 
 **Telegram** [@BorisToboltsov](https://t.me/BorisToboltsov) ·
-**Email** [bt@vcore.su](mailto:bt@vcore.su)
+**Email** [toboltsov.b@gmail.com](mailto:toboltsov.b@gmail.com)
 
 [MIT](LICENSE) © 2026 Тобольцов Борис Олегович

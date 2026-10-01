@@ -127,7 +127,8 @@ Definition of Done каждой фазы — в [../CLAUDE.md](../CLAUDE.md).
 
 **После 1.0** работа идёт фиксами в `1.0.x` (подробно — CHANGELOG). Крупное: portable со
 встроенным WebView2 для Windows без него и без сети, окно «WebView2 не найден» вместо падения
-обычного portable, установка на Windows 10 без winget/Store (ADR 0013) — `v1.0.40`.
+обычного portable, установка на Windows 10 без winget/Store (ADR 0013) — `v1.0.40`; TLS-инспектор
+и HTTP-клиент с разобранным ответом на локальной вкладке (ADR 0014) — `v1.0.41`.
 
 ---
 

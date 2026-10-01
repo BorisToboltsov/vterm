@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { tlsArgs, parseTlsCert, expiryLevel } from "./tls";
+import { tlsArgs, tlsSteps, tlsTerminalCommand, parseTlsCert, expiryLevel } from "./tls";
 
 describe("tlsArgs", () => {
   it("builds an sh -c openssl pipeline with SNI", () => {
@@ -13,6 +13,34 @@ describe("tlsArgs", () => {
   it("honours a custom port and quotes odd hosts", () => {
     expect(tlsArgs("h.test", 8443)[2]).toContain(":8443");
     expect(tlsArgs("a b")[2]).toContain("'a b'");
+  });
+});
+
+describe("tlsSteps (local tab, no shell)", () => {
+  it("splits the pipeline into s_client then x509, argv verbatim", () => {
+    const [client, x509] = tlsSteps(" example.com ", 8443);
+    expect(client).toEqual(["openssl", "s_client", "-connect", "example.com:8443", "-servername", "example.com"]);
+    expect(x509.slice(0, 3)).toEqual(["openssl", "x509", "-noout"]);
+    // Same fields as the SSH pipeline, so one parser reads both.
+    expect(tlsArgs("example.com")[2]).toContain(x509.join(" "));
+  });
+});
+
+describe("tlsTerminalCommand", () => {
+  it("closes stdin and drops stderr in each shell's own syntax", () => {
+    expect(tlsTerminalCommand("example.com", 443, "posix")).toMatch(/^echo \| openssl s_client -connect example\.com:443 -servername example\.com 2>\/dev\/null \| openssl x509 -noout /);
+    expect(tlsTerminalCommand("example.com", 443, "powershell")).toMatch(/^\$null \| openssl s_client .* 2>\$null \| openssl x509 /);
+    expect(tlsTerminalCommand("example.com", 443, "cmd")).toMatch(/^echo\.\| openssl s_client .* 2>NUL \| openssl x509 /);
+  });
+  it("never types a POSIX redirect into cmd.exe or PowerShell", () => {
+    for (const sh of ["powershell", "cmd"] as const) {
+      expect(tlsTerminalCommand("h.test", 443, sh)).not.toContain("/dev/null");
+    }
+  });
+  it("refuses a host it can't write bare", () => {
+    expect(tlsTerminalCommand("a b", 443, "posix")).toBeNull();
+    expect(tlsTerminalCommand("h;rm -rf /", 443, "cmd")).toBeNull();
+    expect(tlsTerminalCommand("h&calc", 443, "cmd")).toBeNull();
   });
 });
 
