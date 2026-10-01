@@ -2591,7 +2591,7 @@ mod tests {
 
     #[test]
     fn network_utilities_never_record_raw_argv_or_output() {
-        // Guard (v1.0.41): `probe_run` mirrored its argv and the whole response into
+        // Guard (v1.0.42): `probe_run` mirrored its argv and the whole response into
         // the recording — `-H 'Authorization: Bearer …'`, `--data-raw` with a
         // password, the response body and its `Set-Cookie`. The frontend records a
         // masked summary of the PARSED result through `record_audit` instead; the
