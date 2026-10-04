@@ -12,6 +12,7 @@
 // ({@link groupByOwner}) as the analogue of docker's compose grouping.
 
 import { SHELL_SCRIPT } from "./termcmd";
+import { compactAge } from "./age";
 
 // ── Program resolution ───────────────────────────────────────────────────────
 
@@ -255,24 +256,13 @@ export interface PodGroup {
 // ── Age formatting ───────────────────────────────────────────────────────────
 
 /**
- * Compact kubectl-style age from an ISO creation timestamp: "45s", "12m",
- * "3h20m", "5d", "5d4h". Two units at most; empty for an unparseable stamp. Pure
- * (accepts `nowMs` for deterministic tests).
+ * Compact age from an ISO creation timestamp ("45s", "3h20m", "5d4h", "3w",
+ * "8mo" — see {@link compactAge}); empty for an unparseable stamp. Pure (accepts
+ * `nowMs` for deterministic tests).
  */
 export function k8sAge(iso: string, nowMs: number = Date.now()): string {
   const t = Date.parse(iso ?? "");
-  if (!Number.isFinite(t)) return "";
-  let s = Math.max(0, Math.floor((nowMs - t) / 1000));
-  const d = Math.floor(s / 86400);
-  s -= d * 86400;
-  const h = Math.floor(s / 3600);
-  s -= h * 3600;
-  const m = Math.floor(s / 60);
-  s -= m * 60;
-  if (d > 0) return h > 0 && d < 7 ? `${d}d${h}h` : `${d}d`;
-  if (h > 0) return m > 0 ? `${h}h${m}m` : `${h}h`;
-  if (m > 0) return `${m}m`;
-  return `${s}s`;
+  return Number.isFinite(t) ? compactAge(t, nowMs) : "";
 }
 
 // ── Parsers ──────────────────────────────────────────────────────────────────

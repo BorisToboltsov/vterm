@@ -609,6 +609,6 @@
     tabindex="-1"
     data-testid="idle-overlay"
     aria-hidden="true"
-    style="position:fixed;left:0;top:0;z-index:35;outline:none;cursor:none;"
+    style="position:fixed;left:0;top:0;z-index:35;outline:none;"
   ></canvas>
 {/if}

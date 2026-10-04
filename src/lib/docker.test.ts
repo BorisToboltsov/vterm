@@ -44,6 +44,9 @@ import {
   stateTone,
   normalizeState,
   containerInfoRows,
+  parseDockerTime,
+  dockerAge,
+  dockerDate,
   loginArgs,
   logoutArgs,
   registryLabel,
@@ -83,6 +86,9 @@ describe("argument builders", () => {
 
   it("resource list builders are well-formed", () => {
     expect(imagesArgs().slice(0, 3)).toEqual(["docker", "images", "--format"]);
+    // The timestamp, not docker's own "3 weeks ago" phrase (too wide, unlocalizable).
+    expect(imagesArgs()[3]).toContain("{{.CreatedAt}}");
+    expect(imagesArgs()[3]).not.toContain("CreatedSince");
     expect(networksArgs().slice(0, 4)).toEqual(["docker", "network", "ls", "--format"]);
     expect(volumesArgs().slice(0, 4)).toEqual(["docker", "volume", "ls", "--format"]);
     expect(statsArgs()).toContain("--no-stream");
@@ -143,11 +149,12 @@ describe("parsers", () => {
   });
 
   it("parseImages skips id-less noise and keeps dangling images", () => {
-    const raw = ["img1", "nginx", "latest", "20MB", "2 days ago"].join(US) + "\n" +
-                ["img2", "<none>", "<none>", "5MB", "1 day ago"].join(US);
+    const raw = ["img1", "nginx", "latest", "20MB", "2026-09-12 14:03:11 +0300 MSK"].join(US) + "\n" +
+                ["img2", "<none>", "<none>", "5MB", "2026-09-13 09:00:00 +0000 UTC"].join(US);
     const imgs = parseImages(raw);
     expect(imgs).toHaveLength(2);
     expect(imgs[1]).toMatchObject({ id: "img2", repository: "<none>", tag: "<none>" });
+    expect(imgs[0].created).toBe("2026-09-12 14:03:11 +0300 MSK");
   });
 
   it("parseNetworks / parseVolumes / parseStats map fields", () => {
@@ -389,5 +396,49 @@ describe("groupUsage", () => {
 
   it("is null-null for an empty project rather than a confident zero", () => {
     expect(groupUsage([], new Map(), pct)).toEqual({ cpu: null, mem: null });
+  });
+});
+
+describe("docker creation time", () => {
+  const now = Date.parse("2026-10-03T11:03:11Z");
+
+  it("parses CreatedAt with a numeric offset, ignoring the zone name", () => {
+    expect(parseDockerTime("2026-09-12 14:03:11 +0300 MSK")).toBe(Date.parse("2026-09-12T11:03:11Z"));
+    expect(parseDockerTime("2026-09-12 06:03:11 -0500 EST")).toBe(Date.parse("2026-09-12T11:03:11Z"));
+    expect(parseDockerTime("2026-09-12 16:33:11 +05:30 IST")).toBe(Date.parse("2026-09-12T11:03:11Z"));
+    // podman prints fractional seconds; ISO stamps come from `inspect`.
+    expect(parseDockerTime("2026-09-12 14:03:11.123456789 +0300 MSK")).toBe(Date.parse("2026-09-12T11:03:11Z"));
+    expect(parseDockerTime("2026-09-12T11:03:11Z")).toBe(Date.parse("2026-09-12T11:03:11Z"));
+  });
+
+  it("reads a stamp without an offset as UTC", () => {
+    expect(parseDockerTime("2026-07-19 10:00:00")).toBe(Date.parse("2026-07-19T10:00:00Z"));
+  });
+
+  it("rejects what is not a timestamp", () => {
+    expect(parseDockerTime("")).toBeNull();
+    expect(parseDockerTime("3 weeks ago")).toBeNull();
+    expect(parseDockerTime("N/A")).toBeNull();
+  });
+
+  it("dockerAge is compact, and a dash when unknown", () => {
+    expect(dockerAge("2026-09-12 14:03:11 +0300 MSK", now)).toBe("3w");
+    expect(dockerAge("2026-10-03 13:03:11 +0300 MSK", now)).toBe("1h");
+    expect(dockerAge("About an hour ago", now)).toBe("—");
+  });
+
+  it("dockerDate localizes the date and appends the age", () => {
+    const raw = "2026-09-12 14:03:11 +0300 MSK";
+    const en = dockerDate(raw, "en", now, "UTC");
+    expect(en).toContain("Sep 12, 2026");
+    expect(en).toContain("11:03");
+    expect(en.endsWith(" · 3w")).toBe(true);
+    const ru = dockerDate(raw, "ru", now, "UTC");
+    expect(ru).toContain("12 сент. 2026");
+    expect(ru).not.toBe(en);
+  });
+
+  it("dockerDate hands back an unreadable stamp as docker printed it", () => {
+    expect(dockerDate("3 weeks ago", "en", now)).toBe("3 weeks ago");
   });
 });

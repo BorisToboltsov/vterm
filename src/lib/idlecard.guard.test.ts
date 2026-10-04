@@ -67,4 +67,11 @@ describe("idle card guard", () => {
       );
     }
   });
+
+  it("leaves the pointer visible over the screensaver", () => {
+    // Hiding it made sense while a mouse move dismissed the screensaver. Now only
+    // a click or a key does, so `cursor: none` reads as a pointer that vanished
+    // over a window that is still waiting for a click.
+    expect(src).not.toMatch(/cursor\s*:\s*none/);
+  });
 });

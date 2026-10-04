@@ -226,8 +226,9 @@ describe("k8sAge", () => {
     expect(k8sAge("2026-07-14T12:00:00Z", now)).toBe("3d");
     expect(k8sAge("2026-07-16T08:00:00Z", now)).toBe("1d4h");
   });
-  it("drops the hours suffix past a week", () => {
-    expect(k8sAge("2026-07-01T08:00:00Z", now)).toBe("16d");
+  it("coarsens past a week", () => {
+    expect(k8sAge("2026-07-08T08:00:00Z", now)).toBe("9d");
+    expect(k8sAge("2026-07-01T08:00:00Z", now)).toBe("2w");
   });
   it("returns empty for an unparseable stamp", () => {
     expect(k8sAge("", now)).toBe("");
