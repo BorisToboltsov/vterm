@@ -18,6 +18,7 @@
     composeDownArgs,
     composeRestartArgs,
     containerInfoRows,
+    dockerDate,
     parseMemUsed,
     groupUsage,
     isRunning,
@@ -29,7 +30,7 @@
     type DockerInfoKey,
   } from "./docker";
   import type { MenuItem } from "./ctxmenu";
-  import { t, type MessageKey } from "./i18n";
+  import { t, currentLocale, type MessageKey } from "./i18n";
 
   let {
     groups,
@@ -125,7 +126,7 @@
   /** Multi-line hover card content (label: value per line) — `.vt-tooltip` keeps newlines. */
   function infoTip(c: DockerContainer): string {
     return containerInfoRows(c, stat(c))
-      .map((r) => `${t(INFO_LABEL[r.key])}: ${r.value}`)
+      .map((r) => `${t(INFO_LABEL[r.key])}: ${r.key === "created" ? dockerDate(r.value, currentLocale()) : r.value}`)
       .join("\n");
   }
 

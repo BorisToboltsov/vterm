@@ -10,6 +10,7 @@
 // because its `Labels`/`Ports` fields are themselves comma-joined and ambiguous.
 
 import { SHELL_SCRIPT } from "./termcmd";
+import { compactAge } from "./age";
 
 const US = "\x1f";
 
@@ -47,8 +48,13 @@ export function psArgs(): string[] {
   return ["docker", "ps", "-a", "--format", fmt];
 }
 
+/**
+ * `CreatedAt`, not `CreatedSince`: docker's own phrase ("About an hour ago",
+ * "3 weeks ago") needs an 80px column and cannot be localized; the timestamp
+ * gives both the compact age and a real date for the tooltip.
+ */
 export function imagesArgs(): string[] {
-  const fmt = ["{{.ID}}", "{{.Repository}}", "{{.Tag}}", "{{.Size}}", "{{.CreatedSince}}"].join(US);
+  const fmt = ["{{.ID}}", "{{.Repository}}", "{{.Tag}}", "{{.Size}}", "{{.CreatedAt}}"].join(US);
   return ["docker", "images", "--format", fmt];
 }
 
@@ -337,6 +343,7 @@ export interface DockerImage {
   repository: string;
   tag: string;
   size: string;
+  /** Raw `CreatedAt` stamp — see {@link dockerAge} / {@link dockerDate}. */
   created: string;
 }
 
@@ -557,6 +564,48 @@ export function needsConfirm(args: string[]): boolean {
 /** Whether a container is currently running (drives action availability). */
 export function isRunning(c: DockerContainer): boolean {
   return c.state === "running";
+}
+
+// ── Creation time ────────────────────────────────────────────────────────────
+
+const DOCKER_TIME =
+  /^(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d):(\d\d)(?:\.\d+)?\s*(?:(Z)|([+-])(\d\d):?(\d\d))?/;
+
+/**
+ * Epoch ms of a docker `CreatedAt` stamp ("2026-09-12 14:03:11 +0300 MSK";
+ * the trailing zone name is ignored — the numeric offset is the unambiguous
+ * half). A stamp without an offset is read as UTC. `null` when unparseable.
+ */
+export function parseDockerTime(raw: string): number | null {
+  const m = DOCKER_TIME.exec((raw ?? "").trim());
+  if (!m) return null;
+  const utc = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (!Number.isFinite(utc)) return null;
+  const offsetMin = m[8] ? (m[8] === "-" ? -1 : 1) * (+m[9] * 60 + +m[10]) : 0;
+  return utc - offsetMin * 60_000;
+}
+
+/** Compact age of a `CreatedAt` stamp ("3w"); "—" when it cannot be read. */
+export function dockerAge(raw: string, nowMs: number = Date.now()): string {
+  const t = parseDockerTime(raw);
+  return t == null ? "—" : compactAge(t, nowMs);
+}
+
+/**
+ * A `CreatedAt` stamp as a date in the UI language and the viewer's zone, with
+ * the compact age appended ("12 сент. 2026 г., 14:03 · 3w"). An unparseable
+ * stamp is returned as docker printed it — better raw than invented.
+ */
+export function dockerDate(
+  raw: string,
+  locale: string,
+  nowMs: number = Date.now(),
+  timeZone?: string,
+): string {
+  const t = parseDockerTime(raw);
+  if (t == null) return raw;
+  const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short", timeZone }).format(t);
+  return `${date} · ${compactAge(t, nowMs)}`;
 }
 
 /** One labelled fact about a container, for the hover card / detail overview. */

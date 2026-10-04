@@ -5,9 +5,9 @@
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import { tooltip } from "./actions/tooltip";
-  import { removeImageArgs, pruneImagesArgs, type DockerImage } from "./docker";
+  import { removeImageArgs, pruneImagesArgs, dockerAge, dockerDate, type DockerImage } from "./docker";
   import type { MenuItem } from "./ctxmenu";
-  import { t } from "./i18n";
+  import { t, currentLocale } from "./i18n";
 
   let {
     images,
@@ -23,6 +23,18 @@
     /** Open the shared context menu at the event position with these items. */
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
   } = $props();
+
+  /**
+   * Hover card on the name: the untruncated reference plus the two facts the row
+   * cross-fades away under the pointer (`.vt-tooltip` keeps newlines).
+   */
+  function infoTip(img: DockerImage): string {
+    return [
+      `${img.repository}:${img.tag}`,
+      img.size,
+      `${t("docker.created")}: ${dockerDate(img.created, currentLocale())}`,
+    ].join("\n");
+  }
 
   function copyId(img: DockerImage) {
     void navigator.clipboard?.writeText(img.id);
@@ -52,14 +64,19 @@
     {#each images as img (img.id + img.repository + img.tag)}
       <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" oncontextmenu={(e) => showMenu(e, menuItems(img))} role="listitem">
         <Icon name="container" size={14} class="shrink-0 text-accent" />
-        <div class="min-w-0 flex-1 truncate">
+        <div class="min-w-0 flex-1 truncate" use:tooltip={infoTip(img)}>
           <span class="text-text/90">{img.repository}</span><span class="text-muted">:{img.tag}</span>
         </div>
-        <span class="shrink-0 text-caption text-text/50">{img.size}</span>
-        <span class="w-20 shrink-0 truncate text-right text-caption text-muted" use:tooltip={img.created}>{img.created}</span>
-        <button class="shrink-0 rounded p-1 text-danger opacity-0 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeImageArgs([img.id], true), { destructive: true, successKey: "docker.removed" })}>
-          <Icon name="trash" size={13} />
-        </button>
+        <!-- Size + age and the hover action share one reserved box, cross-faded
+             (same no-reflow rule as the container rows): a button of its own
+             cost 25px of every row, and the image name is what gets truncated. -->
+        <div class="relative flex shrink-0 items-center gap-2 text-caption tabular-nums">
+          <span class="w-12 text-right text-text/50 transition-opacity duration-150 group-hover:opacity-0">{img.size}</span>
+          <span class="w-9 text-right text-muted transition-opacity duration-150 group-hover:opacity-0">{dockerAge(img.created)}</span>
+          <button class="absolute right-0 rounded p-1 text-danger opacity-0 transition-opacity duration-150 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeImageArgs([img.id], true), { destructive: true, successKey: "docker.removed" })}>
+            <Icon name="trash" size={13} />
+          </button>
+        </div>
       </div>
     {/each}
   </div>

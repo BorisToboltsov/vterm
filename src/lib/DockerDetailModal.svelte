@@ -17,6 +17,7 @@
     logsArgs,
     inspectArgs,
     containerInfoRows,
+    dockerDate,
     isRunning,
     stateTone,
     type DockerContainer,
@@ -24,7 +25,7 @@
     type DockerInfoKey,
   } from "./docker";
   import type { ContainerOutput } from "./api";
-  import { t, type MessageKey } from "./i18n";
+  import { t, currentLocale, type MessageKey } from "./i18n";
 
   let {
     open = false,
@@ -222,7 +223,7 @@
         {/if}
         {#each rows as row (row.key)}
           <dt class="text-muted">{t(INFO_LABEL[row.key])}</dt>
-          <dd class="break-all text-text/85">{row.value}</dd>
+          <dd class="break-all text-text/85">{row.key === "created" ? dockerDate(row.value, currentLocale()) : row.value}</dd>
         {/each}
       </dl>
     {:else if tab === "logs"}
