@@ -6,9 +6,13 @@ import {
   isHistoryChord,
   isNewTabChord,
   isPaletteChord,
+  isPaneChord,
   isPlainCtrlVChord,
+  isSplitDownChord,
+  isSplitRightChord,
   isTermCopyChord,
   isTermPasteChord,
+  paneStepChord,
 } from "./appshortcuts";
 
 /** Build a keydown-like chord; `key` case must match real events (Shift ⇒ upper). */
@@ -154,5 +158,77 @@ describe("plain Ctrl+V", () => {
     expect(isPlainCtrlVChord(chord("V", { ctrl: true, shift: true }))).toBe(false);
     expect(isPlainCtrlVChord(chord("v", { meta: true }))).toBe(false);
     expect(isPlainCtrlVChord(chord("v", { ctrl: true, alt: true }))).toBe(false);
+  });
+});
+
+describe("pane chords", () => {
+  it("⌘D / Ctrl+Shift+D open a pane to the right", () => {
+    expect(isSplitRightChord(chord("d", { meta: true }))).toBe(true);
+    expect(isSplitRightChord(chord("D", { ctrl: true, shift: true }))).toBe(true);
+    // Plain Ctrl+D is the shell's EOF.
+    expect(isSplitRightChord(chord("d", { ctrl: true }))).toBe(false);
+    // ⌘⇧D is the other split.
+    expect(isSplitRightChord(chord("D", { meta: true, shift: true }))).toBe(false);
+  });
+
+  it("⌘⇧D / Ctrl+Shift+E open a pane below", () => {
+    expect(isSplitDownChord(chord("D", { meta: true, shift: true }))).toBe(true);
+    expect(isSplitDownChord(chord("E", { ctrl: true, shift: true }))).toBe(true);
+    expect(isSplitDownChord(chord("d", { meta: true }))).toBe(false);
+    // Plain Ctrl+E is the shell's end-of-line.
+    expect(isSplitDownChord(chord("e", { ctrl: true }))).toBe(false);
+  });
+
+  it("the two splits never answer to the same chord", () => {
+    for (const c of [
+      chord("d", { meta: true }),
+      chord("D", { meta: true, shift: true }),
+      chord("D", { ctrl: true, shift: true }),
+      chord("E", { ctrl: true, shift: true }),
+    ]) {
+      expect(isSplitRightChord(c) && isSplitDownChord(c)).toBe(false);
+    }
+  });
+
+  it("⌘] / ⌘[ and Ctrl+Shift+] / Ctrl+Shift+[ step between panes", () => {
+    expect(paneStepChord(chord("]", { meta: true, code: "BracketRight" }))).toBe(1);
+    expect(paneStepChord(chord("[", { meta: true, code: "BracketLeft" }))).toBe(-1);
+    // With Shift the layout reports braces.
+    expect(paneStepChord(chord("}", { ctrl: true, shift: true, code: "BracketRight" }))).toBe(1);
+    expect(paneStepChord(chord("{", { ctrl: true, shift: true, code: "BracketLeft" }))).toBe(-1);
+    // No physical code (a hand-built chord): the character decides.
+    expect(paneStepChord(chord("]", { meta: true }))).toBe(1);
+    expect(paneStepChord(chord("{", { ctrl: true, shift: true }))).toBe(-1);
+  });
+
+  it("works on a non-Latin layout, where the bracket keys type letters", () => {
+    expect(paneStepChord(chord("ъ", { meta: true, code: "BracketRight" }))).toBe(1);
+    expect(paneStepChord(chord("Х", { ctrl: true, shift: true, code: "BracketLeft" }))).toBe(-1);
+    expect(isSplitRightChord(chord("в", { meta: true, code: "KeyD" }))).toBe(true);
+    expect(isSplitDownChord(chord("У", { ctrl: true, shift: true, code: "KeyE" }))).toBe(true);
+  });
+
+  it("leaves the plain and unrelated forms alone", () => {
+    expect(paneStepChord(chord("]", { ctrl: true, code: "BracketRight" }))).toBeNull();
+    expect(paneStepChord(chord("]", { code: "BracketRight" }))).toBeNull();
+    expect(paneStepChord(chord("}", { meta: true, shift: true, code: "BracketRight" }))).toBeNull();
+    expect(paneStepChord(chord("p", { meta: true, code: "KeyP" }))).toBeNull();
+    expect(paneStepChord(chord("p", { meta: true }))).toBeNull();
+  });
+
+  it("the terminal releases every pane chord", () => {
+    const chords = [
+      chord("d", { meta: true }),
+      chord("D", { meta: true, shift: true }),
+      chord("E", { ctrl: true, shift: true }),
+      chord("]", { meta: true, code: "BracketRight" }),
+      chord("{", { ctrl: true, shift: true, code: "BracketLeft" }),
+    ];
+    for (const c of chords) {
+      expect(isPaneChord(c)).toBe(true);
+      expect(isAppShortcut(c)).toBe(true);
+    }
+    expect(isAppShortcut(chord("d", { ctrl: true }))).toBe(false);
+    expect(isAppShortcut(chord("e", { ctrl: true }))).toBe(false);
   });
 });

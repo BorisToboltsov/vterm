@@ -94,17 +94,25 @@ describe("dock panel guard", () => {
     expect(dock).not.toMatch(/\{#key\b/);
     expect(dock).not.toMatch(/\{(?:#if|:else if)\s+active\s*===/);
     // Panels come from the visited list, keyed, and are hidden rather than removed.
-    expect(dock).toMatch(/\{#each\s+panes\s+as\s+id\s+\(paneKey\(id\)\)\s*\}/);
-    expect(dock).toMatch(/visited\.includes\(paneKey\(id\)\)/);
-    expect(dock).toMatch(/paneShown\(id\)\s*\?\s*'vt-dock-pane'\s*:\s*'hidden'/);
+    expect(dock).toMatch(/\{#each\s+panes\s+as\s+p\s+\(p\.key\)\s*\}/);
+    expect(dock).toMatch(/visited\.includes\(p\.key\)/);
+    expect(dock).toMatch(/paneShown\(p\)\s*\?\s*'vt-dock-pane'\s*:\s*'hidden'/);
   });
 
   it("rebuilds a session panel for another session, and nothing else", () => {
     // The session id is part of a session panel's key; the server tree's key is
     // its bare id, so switching terminal tabs leaves it alone.
     expect(dock).toMatch(
-      /paneKey\s*=\s*\(id: PanelId\): string\s*=>\s*\(?\s*isSessionPanel\(id\)\s*\?\s*`\$\{sessionId\}\/\$\{id\}`\s*:\s*id/,
+      /paneKey\s*=\s*\(id: PanelId, sid: string \| null\): string\s*=>\s*\(?\s*isSessionPanel\(id\)\s*\?\s*`\$\{sid\}\/\$\{id\}`\s*:\s*id/,
     );
+    // Since v1.2 the panels of every session ON SCREEN are kept (two terminals
+    // side by side: the focus moves on every click) — and only those. The kept
+    // set is the focused session plus the ones the page names; with no session
+    // in focus nothing session-bound is kept at all.
+    expect(dock).toMatch(
+      /const kept = \$derived\(\s*sessionId === null \? \[\] : \[\.\.\.new Set\(\[\.\.\.sessions, sessionId\]\)\]\s*,?\s*\)/,
+    );
+    expect(dock).toMatch(/kept\.map\(\(sid\) => \(\{ key: paneKey\(id, sid\), id, sid \}\)\)/);
     // …and the page does not put the docks back under a key on the active tab.
     expect(page).not.toMatch(/\{#key[^}]*\}\s*<Dock\b/);
   });
@@ -112,10 +120,18 @@ describe("dock panel guard", () => {
   it("tells every driver panel whether it is on screen", () => {
     // Dock → snippet → DockPanel → panel: `visible` has to survive all three hops.
     expect(dock, "the dock renders a panel with its on-screen state").toMatch(
-      /\{@render\s+panel\(id,\s*paneShown\(id\)\)\}/,
+      /\{@render\s+panel\(p\.id,\s*paneShown\(p\),\s*p\.sid\)\}/,
     );
-    expect(dock, "on screen = the shown tab of an open dock on a live session").toMatch(
-      /paneShown\s*=\s*\(id: PanelId\): boolean\s*=>\s*id === active && !collapsed && !\(offline && isSessionPanel\(id\)\)/,
+    // A panel kept for a session that is not in focus is mounted but OFF screen:
+    // without `inFocus` here, two sessions' Docker panels would both poll.
+    expect(
+      dock,
+      "on screen = the shown tab of an open dock, for the session in focus, on a live session",
+    ).toMatch(
+      /paneShown\s*=\s*\(p: PaneRef\): boolean\s*=>\s*p\.id === active && inFocus\(p\) && !collapsed && !\(offline && isSessionPanel\(p\.id\)\)/,
+    );
+    expect(dock).toMatch(
+      /inFocus\s*=\s*\(p: PaneRef\): boolean\s*=>\s*p\.sid === null \|\| p\.sid === sessionId/,
     );
     expect(instance(page, "DockPanel"), "the page passes it on").toMatch(
       /(?:^|\s)(?:\{visible\}|visible=\{visible\})/m,

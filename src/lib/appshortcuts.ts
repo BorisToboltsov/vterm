@@ -66,13 +66,62 @@ export function isNewTabChord(e: KeyChord): boolean {
   return metaChord(e, "t") || ctrlShiftChord(e, "t");
 }
 
+/** ⌘⇧<letter> (macOS form with Shift). */
+function metaShiftChord(e: KeyChord, letter: string): boolean {
+  return e.metaKey && e.shiftKey && chordLetter(e) === letter;
+}
+
+/** ⌘D (macOS) or Ctrl+Shift+D (Windows/Linux) — a new terminal in a pane to the right. */
+export function isSplitRightChord(e: KeyChord): boolean {
+  return metaChord(e, "d") || ctrlShiftChord(e, "d");
+}
+
+/**
+ * ⌘⇧D (macOS) or Ctrl+Shift+E (Windows/Linux) — a new terminal in a pane below.
+ * The Windows/Linux form needs its own letter: Ctrl+Shift+D is already "to the
+ * right" there, and plain Ctrl+D / Ctrl+E belong to the shell (EOF, end of line).
+ */
+export function isSplitDownChord(e: KeyChord): boolean {
+  return metaShiftChord(e, "d") || (!e.metaKey && ctrlShiftChord(e, "e"));
+}
+
+/**
+ * Which bracket key a chord was pressed on: `1` for `]`, `-1` for `[`, else 0.
+ * By the physical key first — with Shift held the layout reports `{`/`}`, and a
+ * non-Latin layout reports a letter (`х`/`ъ` in Russian).
+ */
+function bracket(e: Pick<KeyChord, "key" | "code">): 1 | -1 | 0 {
+  if (e.code === "BracketRight") return 1;
+  if (e.code === "BracketLeft") return -1;
+  if (e.code) return 0;
+  if (e.key === "]" || e.key === "}") return 1;
+  if (e.key === "[" || e.key === "{") return -1;
+  return 0;
+}
+
+/**
+ * ⌘] / ⌘[ (macOS) or Ctrl+Shift+] / Ctrl+Shift+[ (Windows/Linux) — focus the
+ * next (`1`) or previous (`-1`) pane; null for any other chord.
+ */
+export function paneStepChord(e: KeyChord): 1 | -1 | null {
+  const mac = e.metaKey && !e.shiftKey && !e.ctrlKey;
+  const other = e.ctrlKey && e.shiftKey && !e.metaKey;
+  if (!mac && !other) return null;
+  return bracket(e) || null;
+}
+
+/** Any of the pane chords: split right, split down, focus the next/previous pane. */
+export function isPaneChord(e: KeyChord): boolean {
+  return isSplitRightChord(e) || isSplitDownChord(e) || paneStepChord(e) !== null;
+}
+
 /**
  * Any window-level app chord the terminal must release so it reaches the window
  * handler instead of going to the PTY. Deliberately excludes plain Ctrl+T /
  * Ctrl+K — those belong to the shell.
  */
 export function isAppShortcut(e: KeyChord): boolean {
-  return isPaletteChord(e) || isNewTabChord(e);
+  return isPaletteChord(e) || isNewTabChord(e) || isPaneChord(e);
 }
 
 /** ⌘F (macOS) or Ctrl+Shift+F (Windows/Linux) — full-buffer terminal search.

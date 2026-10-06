@@ -63,6 +63,7 @@
     remember,
     local = false,
     tint = null,
+    focusOnConnect = true,
     onstatus,
     onphase,
     onauthprompt,
@@ -83,6 +84,10 @@
     local?: boolean;
     /** Background tint of a prod session (prodtint.ts); null = theme as is. */
     tint?: ProdTint | null;
+    /** Take the keyboard once the session connects. Only the pane in focus does
+     *  (v1.2): a terminal reconnecting in the pane next to it must not pull the
+     *  cursor out from under whatever the user is typing. Read at connect time. */
+    focusOnConnect?: boolean;
     onstatus?: (status: Status, detail?: string) => void;
     /** Reports SSH connection-phase progress for the connecting overlay. */
     onphase?: (phase: ConnPhase) => void;
@@ -294,6 +299,11 @@
   /** Switch Raw ↔ Table from outside (the session bar). */
   export function setViewMode(on: boolean) {
     setStructured(on && jsonViewEnabled);
+  }
+
+  /** Put the keyboard in this terminal (moving the focus to its pane from a key). */
+  export function focus() {
+    term?.focus();
   }
 
   /** Open full-buffer search from outside (the session bar's search button). */
@@ -748,7 +758,7 @@
         }
       }
       onstatus?.("connected");
-      term.focus();
+      if (focusOnConnect) term.focus();
     } catch (err) {
       onstatus?.("error", String(err));
       term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);

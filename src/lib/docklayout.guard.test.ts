@@ -144,9 +144,16 @@ describe("dock layout guard", () => {
   });
 
   describe("a panel does not know its dock", () => {
-    it("the dock hands a panel its id and whether it is on screen — nothing else", () => {
-      expect(read("lib/Dock.svelte")).toMatch(/panel:\s*Snippet<\[PanelId,\s*boolean\]>/);
-      expect(code(PAGE)).toMatch(/\{#snippet dockPanel\(id: PanelId, visible: boolean\)\}/);
+    it("the dock hands a panel its id, whether it is on screen and its session — nothing else", () => {
+      // The session (v1.2) is what the panel works on, not where it stands: the
+      // docks keep the panels of every session on screen. The side is still
+      // never passed.
+      expect(read("lib/Dock.svelte")).toMatch(
+        /panel:\s*Snippet<\[PanelId,\s*boolean,\s*string \| null\]>/,
+      );
+      expect(code(PAGE)).toMatch(
+        /\{#snippet dockPanel\(id: PanelId, visible: boolean, sid: string \| null\)\}/,
+      );
     });
 
     it("no panel reads the layout or the dock model", () => {
@@ -257,8 +264,9 @@ describe("dock layout guard", () => {
       expect(dock).toMatch(/previewPanels\(layout\.docks, dockDrag\.panel, dockDrag\.over\)\[side\]/);
       // Both the strip and the rail iterate the preview; the panels below do not.
       expect(dock.match(/\{#each stripTabs as id \(id\)\}/g) ?? []).toHaveLength(2);
-      expect(dock).toMatch(/\{#each panes as id \(paneKey\(id\)\)\s*\}/);
-      expect(dock).toMatch(/const panes = \$derived\(\s*tabs\.filter\(/);
+      expect(dock).toMatch(/\{#each panes as p \(p\.key\)\s*\}/);
+      expect(dock).toMatch(/const refs = \$derived\(\s*tabs\.flatMap\(/);
+      expect(dock).toMatch(/const panes = \$derived\(\s*refs\.filter\(/);
     });
 
     it("hit-tests where tabs sit, not where a slide draws them", () => {
@@ -272,13 +280,8 @@ describe("dock layout guard", () => {
       expect(hit).toMatch(/layoutBox\(tab\)/);
       expect(hit).not.toMatch(/getBoundingClientRect/);
 
-      const page = code(PAGE);
-      const at = page.indexOf("function barPointerMove(");
-      expect(at).toBeGreaterThan(-1);
-      const bar = page.slice(at, page.indexOf("\n  }\n", at));
-      expect(bar).toMatch(/layoutBox\(el\)/);
-      expect(bar).toMatch(/moveTab\(dragSession, slotIndex\(/);
-      expect(bar).not.toMatch(/getBoundingClientRect/);
+      // The terminal tabs' own drag (the page's strips slide too) is held to the
+      // same rule by `centerlayout.guard`.
     });
   });
 });

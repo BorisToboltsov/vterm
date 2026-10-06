@@ -37,7 +37,12 @@ const server: ServerProfile = {
 function renderPrompt() {
   const result = render(SecretPrompt);
   const comp = result.component as unknown as {
-    prompt: (s: ServerProfile, label: string, error?: string) => void;
+    prompt: (
+      s: ServerProfile,
+      label: string,
+      error?: string,
+      onopened?: (sessionId: string) => void,
+    ) => void;
   };
   return { ...result, comp };
 }
@@ -79,6 +84,31 @@ describe("SecretPrompt", () => {
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
     expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", false);
+  });
+
+  it("tells the caller which tab it opened — and nothing if the prompt is cancelled", async () => {
+    // ⌘D on a server that asks for a password: the new tab goes into a new pane
+    // only once it exists. A cancelled prompt must not leave the request armed
+    // for whatever connects next.
+    const { comp } = renderPrompt();
+    const placed = vi.fn();
+    openTab.mockReturnValue("sess-1");
+    comp.prompt(server, "Password", "", placed);
+    await tick();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(placed).not.toHaveBeenCalled();
+
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(placed).not.toHaveBeenCalled();
+
+    comp.prompt(server, "Password", "", placed);
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(placed).toHaveBeenCalledExactlyOnceWith("sess-1");
   });
 
   it("re-arms the default for the next server instead of remembering the last choice", async () => {

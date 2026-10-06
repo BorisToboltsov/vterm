@@ -9,6 +9,12 @@
   // collapses to its own tab strip. Tabs can be dragged to another dock (or
   // reordered) — the other tabs slide apart to show where it lands — and moved
   // or hidden from their right-click menu.
+  //
+  // The session panels follow the pane in focus (v1.2). With two terminals side
+  // by side the focus changes on every click, so the panels of every session on
+  // screen stay mounted (`sessions`) and only the focused one's are shown — a
+  // click on the other pane flips which is visible instead of rebuilding five
+  // panels; `caption` says whose panel it is.
   import { untrack, type Snippet } from "svelte";
   import { tooltip } from "./actions/tooltip";
   import { glide, resizableHandle } from "./actions/drag";
@@ -47,26 +53,35 @@
   let {
     side,
     sessionId = null,
+    sessions = [],
+    caption = null,
     sessionKind = "ssh",
     connection = "offline",
     stripHeight = 0,
     panel,
   }: {
     side: DockSide;
-    /** The session the session panels work on; null = no tab is open, and only
-     *  the global panels (the server tree) are offered. */
+    /** The session the session panels work on — the pane in focus; null = no
+     *  session there, and only the global panels (the server tree) are offered. */
     sessionId?: string | null;
+    /** Every session on screen (one per pane). Their panels are kept mounted,
+     *  hidden, so moving the focus between panes does not rebuild them. */
+    sessions?: readonly string[];
+    /** Whose panel this is — shown above a session panel while there is more
+     *  than one pane to tell apart; null = no need to say. */
+    caption?: string | null;
     sessionKind?: "ssh" | "local";
     /** State of that session (`dockConnection`): an offline session replaces its
      *  panels with one notice. */
     connection?: DockConnection;
     /** Height in px of the bar this dock's tab strip stands next to (the terminal
-     *  tab bar, for the left dock), so the two bottom borders form one line. That
+     *  tab bar, for a side dock), so the two bottom borders form one line. That
      *  bar grows when the first tab opens; 0 = not measured, use the default. */
     stripHeight?: number;
-    /** Renders one tool panel, content-only. `visible` tells it whether it is on
-     *  screen — a hidden panel stays mounted but must not poll. */
-    panel: Snippet<[PanelId, boolean]>;
+    /** Renders one tool panel, content-only: its id, whether it is on screen — a
+     *  hidden panel stays mounted but must not poll — and, for a session panel,
+     *  the session it works on. */
+    panel: Snippet<[PanelId, boolean, string | null]>;
   } = $props();
 
   /**
@@ -121,16 +136,39 @@
   // hidden — pollers stop, and on the way back it takes one fresh snapshot,
   // exactly as when the user returns from another tab of the dock.
   const offline = $derived(connection === "offline");
-  const paneShown = (id: PanelId): boolean =>
-    id === active && !collapsed && !(offline && isSessionPanel(id));
   const offlineNotice = $derived(
     !collapsed && active !== null && isSessionPanel(active) && offline,
   );
 
-  // A session panel belongs to one session: its key carries the session id, so a
-  // switch to another terminal tab builds a fresh panel while the server tree —
-  // the one global panel — is left alone.
-  const paneKey = (id: PanelId): string => (isSessionPanel(id) ? `${sessionId}/${id}` : id);
+  /** One mounted panel: a global one (`sid` null) or a session's. */
+  interface PaneRef {
+    key: string;
+    id: PanelId;
+    sid: string | null;
+  }
+
+  // A session panel belongs to one session: its key carries the session id, so
+  // another session gets its own panel while the server tree — the one global
+  // panel — is left alone.
+  const paneKey = (id: PanelId, sid: string | null): string =>
+    isSessionPanel(id) ? `${sid}/${id}` : id;
+
+  // The sessions whose panels may stay mounted: the others on screen and the one
+  // in focus — in the page's order, so a change of focus does not shuffle the
+  // DOM. A session that leaves the screen (its tab goes behind another, or
+  // closes) loses its panels, as before.
+  const kept = $derived(sessionId === null ? [] : [...new Set([...sessions, sessionId])]);
+  const refs = $derived(
+    tabs.flatMap((id): PaneRef[] =>
+      isSessionPanel(id)
+        ? kept.map((sid) => ({ key: paneKey(id, sid), id, sid }))
+        : [{ key: paneKey(id, null), id, sid: null }],
+    ),
+  );
+  /** The panel the dock shows belongs to the session in focus (or to no session). */
+  const inFocus = (p: PaneRef): boolean => p.sid === null || p.sid === sessionId;
+  const paneShown = (p: PaneRef): boolean =>
+    p.id === active && inFocus(p) && !collapsed && !(offline && isSessionPanel(p.id));
 
   // Which panels exist in the DOM. A panel is mounted the first time it is on
   // screen and then kept — switching tabs or collapsing the dock only hides it
@@ -145,19 +183,20 @@
   // halves together.
   let visited = $state<string[]>([]);
   $effect(() => {
-    const live = tabs.map(paneKey);
-    const open = active && !collapsed ? paneKey(active) : null;
+    const live = refs.map((p) => p.key);
+    const open = active && !collapsed ? paneKey(active, sessionId) : null;
     untrack(() => {
-      // Keys of another session, or of a panel that moved to another dock, go.
-      const kept = visited.filter((k) => live.includes(k));
-      const next = open && !kept.includes(open) ? [...kept, open] : kept;
+      // Keys of a session no longer on screen, or of a panel that moved to
+      // another dock, go.
+      const still = visited.filter((k) => live.includes(k));
+      const next = open && !still.includes(open) ? [...still, open] : still;
       if (next.length !== visited.length || next.some((k, i) => k !== visited[i])) {
         visited = next;
       }
     });
   });
   const panes = $derived(
-    tabs.filter((id) => visited.includes(paneKey(id)) || (id === active && !collapsed)),
+    refs.filter((p) => visited.includes(p.key) || (p.id === active && inFocus(p) && !collapsed)),
   );
 
   function pick(id: PanelId) {
@@ -264,7 +303,7 @@
   <div
     data-dock-axis="x"
     data-testid={`dock-strip-${side}`}
-    style={side === "left" && stripHeight > 0 ? `height: ${stripHeight}px` : undefined}
+    style={side !== "bottom" && stripHeight > 0 ? `height: ${stripHeight}px` : undefined}
     class="flex shrink-0 select-none border-b text-xs {side === 'right'
       ? 'items-center border-edge'
       : side === 'left'
@@ -319,6 +358,17 @@
      `vt-dock-pane` CSS animation, which the reduced-motion guard in app.css
      covers. -->
 {#snippet body()}
+  {#if caption && active !== null && isSessionPanel(active)}
+    <!-- Whose panel this is: the docks follow the pane in focus, and with more
+         than one terminal on screen that is no longer obvious. -->
+    <div
+      data-testid="dock-session-caption"
+      class="flex shrink-0 items-center gap-1.5 border-b border-edge px-2 py-0.5 text-meta text-muted"
+    >
+      <Icon name="terminal" size={12} class="shrink-0" />
+      <span class="truncate">{caption}</span>
+    </div>
+  {/if}
   {#if offlineNotice}
     <!-- Reconnecting lives in the terminal area (one button, not one per
          panel); the dock only says why it has nothing to show. -->
@@ -330,12 +380,13 @@
       />
     </div>
   {/if}
-  {#each panes as id (paneKey(id))}
+  {#each panes as p (p.key)}
     <div
-      data-testid={`dock-pane-${id}`}
-      class="min-h-0 flex-1 {paneShown(id) ? 'vt-dock-pane' : 'hidden'}"
+      data-testid={`dock-pane-${p.id}`}
+      data-session={p.sid ?? undefined}
+      class="min-h-0 flex-1 {paneShown(p) ? 'vt-dock-pane' : 'hidden'}"
     >
-      {@render panel(id, paneShown(id))}
+      {@render panel(p.id, paneShown(p), p.sid)}
     </div>
   {/each}
 {/snippet}
