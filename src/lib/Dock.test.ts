@@ -21,15 +21,23 @@ import { toastsState } from "./stores/toasts.svelte";
 let mounts: string[] = [];
 let unmounts: string[] = [];
 let visibleOf: Record<string, () => boolean> = {};
+// The same, per session: `"s1/files"` for a session panel, the bare id for the tree.
+let sessionMounts: string[] = [];
+let sessionUnmounts: string[] = [];
+let visibleIn: Record<string, () => boolean> = {};
 
-const panel = createRawSnippet<[PanelId, boolean]>((id, visible) => ({
+const panel = createRawSnippet<[PanelId, boolean, string | null]>((id, visible, sid) => ({
   render: () => `<div data-probe="${id()}"></div>`,
   setup: () => {
     const key = id();
+    const full = sid() === null ? key : `${sid()}/${key}`;
     mounts.push(key);
+    sessionMounts.push(full);
     visibleOf[key] = visible;
+    visibleIn[full] = visible;
     return () => {
       unmounts.push(key);
+      sessionUnmounts.push(full);
     };
   },
 }));
@@ -45,6 +53,9 @@ beforeEach(() => {
   mounts = [];
   unmounts = [];
   visibleOf = {};
+  sessionMounts = [];
+  sessionUnmounts = [];
+  visibleIn = {};
 });
 
 describe("Dock — what it offers", () => {
@@ -84,13 +95,26 @@ describe("Dock — chrome", () => {
     void rerender({ stripHeight: 37 });
     flushSync();
     expect(strip.style.height).toBe("37px");
+  });
+
+  it("gives the right dock's strip a height only when it stands next to a pane's strip", () => {
+    // Unsplit, the terminal tab bar spans the row above the right dock and the
+    // page hands it no height. Split, the dock rises next to the panes' strips.
     setDockCollapsed("right", false);
-    render(Dock, {
-      props: { side: "right", sessionId: "s1", connection: "connected", stripHeight: 37, panel },
+    const { rerender } = render(Dock, {
+      props: { side: "right", sessionId: "s1", connection: "connected", panel },
     });
     const right = screen.getByTestId("dock-strip-right");
     expect(right).not.toHaveClass("min-h-8");
     expect(right.style.height).toBe("");
+    void rerender({ stripHeight: 37 });
+    flushSync();
+    expect(right.style.height).toBe("37px");
+    // The bottom dock's strip is its own collapsed state and never follows a pane.
+    render(Dock, {
+      props: { side: "bottom", sessionId: "s1", connection: "connected", stripHeight: 37, panel },
+    });
+    expect(screen.getByTestId("dock-strip-bottom").style.height).toBe("");
   });
 
   it("puts the collapse button on the inner edge of a side dock and in the bottom dock's left corner", () => {
@@ -265,6 +289,92 @@ describe("Dock — panels are kept, not rebuilt", () => {
     // The new session's file panel mounts when it is first shown, not eagerly.
     await fireEvent.click(screen.getByTestId("dock-tab-files"));
     expect(mounts).toEqual(["files", "servers", "files"]);
+  });
+
+  it("keeps the panels of every session on screen, and shows only the focused one's", async () => {
+    // Two terminals side by side: the dock follows the pane in focus, and a click
+    // on the other pane must flip which panel is visible — not rebuild it.
+    setDockCollapsed("right", false);
+    const { rerender } = render(Dock, {
+      props: {
+        side: "right",
+        sessionId: "s1",
+        sessions: ["s1", "s2"],
+        connection: "connected",
+        panel,
+      },
+    });
+    // Lazy: the other session's panel is not built until it is first shown.
+    expect(sessionMounts).toEqual(["s1/files"]);
+    await rerender({ sessionId: "s2" });
+    expect(sessionMounts).toEqual(["s1/files", "s2/files"]);
+    expect(sessionUnmounts).toEqual([]);
+    expect(visibleIn["s1/files"]()).toBe(false);
+    expect(visibleIn["s2/files"]()).toBe(true);
+    const [first, second] = screen.getAllByTestId("dock-pane-files");
+    expect(first).toHaveAttribute("data-session", "s1");
+    expect(first).toHaveClass("hidden");
+    expect(second).not.toHaveClass("hidden");
+    // Back again: the same two instances, the other one visible.
+    await rerender({ sessionId: "s1" });
+    expect(sessionMounts).toEqual(["s1/files", "s2/files"]);
+    expect(visibleIn["s1/files"]()).toBe(true);
+    expect(visibleIn["s2/files"]()).toBe(false);
+  });
+
+  it("drops the panels of a session that left the screen", async () => {
+    setDockCollapsed("right", false);
+    const { rerender } = render(Dock, {
+      props: {
+        side: "right",
+        sessionId: "s1",
+        sessions: ["s1", "s2"],
+        connection: "connected",
+        panel,
+      },
+    });
+    await rerender({ sessionId: "s2" });
+    // s1's tab went behind another one (or closed): only s2 is on screen now.
+    await rerender({ sessions: ["s2"] });
+    expect(sessionUnmounts).toEqual(["s1/files"]);
+    expect(visibleIn["s2/files"]()).toBe(true);
+  });
+
+  it("a hidden session's panel stays hidden whatever the focused session's state", async () => {
+    // The offline notice replaces the FOCUSED session's panel; a panel kept for
+    // another session must not surface in its place.
+    setDockCollapsed("right", false);
+    const { rerender } = render(Dock, {
+      props: {
+        side: "right",
+        sessionId: "s1",
+        sessions: ["s1", "s2"],
+        connection: "connected",
+        panel,
+      },
+    });
+    await rerender({ sessionId: "s2", connection: "offline" });
+    expect(screen.getByTestId("dock-offline")).toBeInTheDocument();
+    expect(visibleIn["s1/files"]()).toBe(false);
+    expect(visibleIn["s2/files"]()).toBe(false);
+  });
+
+  it("says whose panel it is while there are panes to tell apart", async () => {
+    setDockCollapsed("right", false);
+    const { rerender } = render(Dock, {
+      props: { side: "right", sessionId: "s1", connection: "connected", panel },
+    });
+    expect(screen.queryByTestId("dock-session-caption")).toBeNull();
+    await rerender({ caption: "web-01" });
+    expect(screen.getByTestId("dock-session-caption")).toHaveTextContent("web-01");
+  });
+
+  it("puts no session caption over the server tree", () => {
+    render(Dock, {
+      props: { side: "left", sessionId: "s1", connection: "connected", caption: "web-01", panel },
+    });
+    expect(pane("servers")).not.toHaveClass("hidden");
+    expect(screen.queryByTestId("dock-session-caption")).toBeNull();
   });
 
   it("drops a panel that moved to another dock", async () => {

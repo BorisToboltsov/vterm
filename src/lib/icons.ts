@@ -133,6 +133,9 @@ export const ICONS = {
   // Broadcast layout: one focused terminal + a roster list.
   layoutFocus:
     '<rect x="3" y="4" width="11" height="16" rx="1.5"/><path d="M17 6h4M17 10h4M17 14h4M17 18h4"/>',
+  // Panes of the centre: a new one to the right / below.
+  splitRight: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
+  splitDown: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>',
   // AI assistant — an "Ai" wordmark. Unlike the stroke line-icons, this entry is
   // fill-based text (mono, matching the terminal), so it overrides the svg's
   // stroke/fill on the <text> element itself. Scales with `size` via the viewBox.

@@ -46,26 +46,53 @@
     toggleDock,
   } from "$lib/stores/layout.svelte";
   import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/docklayout";
-  import { glide, layoutBox, slotIndex } from "$lib/actions/drag";
+  import { glide } from "$lib/actions/drag";
   import { moveLabel, moveTargets, panelLabel } from "$lib/dockui";
   import {
+    activateTab,
     closeTab as closeTabStore,
     tabsForServer,
     dotClass,
     findTab,
+    focusPane,
     isLive,
     isMonitorable,
+    joinPanes,
     monitoredSessionId,
-    moveTab,
+    moveTabTo,
     newTabAction,
     nextTabIndex,
     openTab as openTabStore,
     openLocalTab,
     reconnectTab as reconnectTabStore,
+    setSplitRatio,
     setTabStatus,
+    splitTabOff,
     tabsState,
+    type NewTabAction,
     type Tab,
   } from "$lib/stores/tabs.svelte";
+  import {
+    canSplit,
+    layoutRects,
+    neighbourPane,
+    orderedTabs,
+    paneOf,
+    panes,
+    previewFlat,
+    previewTabs,
+    shownTabs,
+    type Edge,
+    type Pane,
+  } from "$lib/splitlayout";
+  import {
+    onScreenSessions,
+    pendingAuthSession,
+    recordingPauses,
+    rectStyle,
+  } from "$lib/centerview";
+  import { beginTabDrag, consumeTabDragClick, tabDrag } from "$lib/stores/tabdrag.svelte";
+  import SplitDivider from "$lib/SplitDivider.svelte";
   import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
@@ -137,7 +164,13 @@
   import { renderArgv, renderSessionCommand } from "$lib/termcmd";
   import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabattach";
   import { submitLine } from "$lib/terminput";
-  import { isNewTabChord, isPaletteChord } from "$lib/appshortcuts";
+  import {
+    isNewTabChord,
+    isPaletteChord,
+    isSplitDownChord,
+    isSplitRightChord,
+    paneStepChord,
+  } from "$lib/appshortcuts";
   import Icon from "$lib/Icon.svelte";
   import Toast from "$lib/Toast.svelte";
   import EmptyState from "$lib/EmptyState.svelte";
@@ -262,6 +295,7 @@
       selectionText?: () => string;
       bufferText?: (maxLines?: number) => string;
       find?: () => void;
+      focus?: () => void;
       setViewMode?: (structured: boolean) => void;
       clear?: () => void;
     }
@@ -307,6 +341,12 @@
   // it and takes the same height, so their bottom borders form one line — the bar
   // is taller once a tab (with its close button) is in it.
   let tabBarHeight = $state(0);
+  // What the single strip measures. Kept apart from `tabBarHeight` so that the
+  // height survives the strip going away: split, the panes' own strips take it.
+  let flatBarHeight = $state(0);
+  $effect(() => {
+    if (flatBarHeight > 0) tabBarHeight = flatBarHeight;
+  });
   // Which `cd` dialect each local tab's shell speaks, reported by Terminal at spawn
   // (Phase 39.4). Keyed per session because a tab keeps the shell it opened with
   // even if the preference changes afterwards.
@@ -322,23 +362,39 @@
   // Folders
   let folders = $state<string[]>([]);
 
-  // Tab drag-to-reorder (pointer events)
-  let barEl = $state<HTMLDivElement>();
-  let dragSession = $state<string | null>(null);
-  let dragStartX = 0;
-  let dragMoved = $state(false);
-  let tabDragX = $state(0);
-  let tabDragY = $state(0);
-  const draggingTab = $derived(
-    dragSession && dragMoved ? findTab(dragSession) : null,
-  );
+  // The terminal tab being dragged (stores/tabdrag.svelte.ts) — for its floating label.
+  const draggingTab = $derived(findTab(tabDrag.tab));
 
   const selected = $derived(servers.find((s) => s.id === selectedId) ?? null);
   // Drop a stale folder highlight after the folder is renamed/deleted.
   $effect(() => {
     if (selectedFolder !== null && !folders.includes(selectedFolder)) selectedFolder = null;
   });
+  // The tab in focus: the one shown by the focused pane (v1.2). Everything that
+  // follows a single session — docks, status bar, top bar, assistant — reads this.
   const activeTab = $derived(findTab(tabsState.activeId));
+
+  // ── The centre: panes side by side (v1.2) ──────────────────────────────────
+  // The tree of panes lives in the tabs store; here it becomes rectangles. The
+  // terminals stay in ONE flat keyed list (`tabsState.list`) and are positioned
+  // by the rectangle of the pane that holds them, so moving a tab to another pane
+  // never remounts its `Terminal` (which would disconnect the session).
+  const center = $derived(tabsState.center);
+  const paneList = $derived(panes(center));
+  const isSplit = $derived(paneList.length > 1);
+  /** The tab each pane shows — the terminals on screen outside broadcast mode. */
+  const shownIds = $derived(new Set(shownTabs(center)));
+  const tabPane = $derived.by(() => {
+    const map: Record<string, string> = {};
+    for (const pane of paneList) for (const id of pane.tabs) map[id] = pane.id;
+    return map;
+  });
+  const tabById = $derived(new Map(tabsState.list.map((tab) => [tab.sessionId, tab])));
+  const tabsOf = (ids: readonly string[]): Tab[] =>
+    ids.flatMap((id) => tabById.get(id) ?? []);
+  // Every tab in strip order, pane by pane — "tab order" for whatever lists tabs
+  // in a row (the broadcast grid, the single strip).
+  const orderedTabList = $derived(tabsOf(orderedTabs(center)));
   // serverId → statuses of its open SSH tabs, for the connection dots in the tree.
   const serverConnections = $derived.by(() => {
     const map: Record<string, string[]> = {};
@@ -395,10 +451,10 @@
   // Open tabs in the group, in tab order (may include connecting/errored ones,
   // which still tile so their overlay is visible).
   const bcMemberTabs = $derived(
-    tabsState.list.filter((tab) => isBroadcastMember(tab.sessionId)),
+    orderedTabList.filter((tab) => isBroadcastMember(tab.sessionId)),
   );
   // Live members that would actually receive a sent command.
-  const bcTargets = $derived(eligibleMembers(broadcastState.members, tabsState.list));
+  const bcTargets = $derived(eligibleMembers(broadcastState.members, orderedTabList));
   const bcLayout = $derived(effectiveLayout(bcTargets.length));
   // The focused member (focus layout) is simply the active tab.
   const bcFocusId = $derived(tabsState.activeId);
@@ -426,6 +482,61 @@
       };
     }),
   );
+
+  // Height of the centre area (its width is `bcAreaWidth`, measured for the grid too).
+  let areaHeight = $state(0);
+  const areaBounds = $derived({ width: bcAreaWidth, height: areaHeight });
+  const placement = $derived(layoutRects(center.root, areaBounds));
+  // Each pane carries its own tab strip only while there is more than one pane.
+  // Unsplit — and in broadcast mode, which lays the members out itself — there is
+  // a single strip above the area, exactly as before splits existed.
+  const paneStrips = $derived(isSplit && !bcOn);
+  const stripInset = $derived(paneStrips ? tabBarHeight : 0);
+  // The sessions whose terminals are on screen: one per pane, or the broadcast
+  // view's own set. A recording runs only while its tab is on screen, a server's
+  // login question waits until its tab is, and the docks keep the panels of
+  // these sessions mounted so that moving the focus between panes is cheap.
+  const onScreenIds = $derived(
+    new Set(
+      onScreenSessions({
+        shown: [...shownIds],
+        active: tabsState.activeId,
+        broadcast: bcOn,
+        grid: bcLayout === "grid",
+        members: bcMemberTabs.map((tab) => tab.sessionId),
+      }),
+    ),
+  );
+  const dockSessions = $derived([...shownIds]);
+  // Whose panel the docks show — said only while there are panes to tell apart.
+  const dockCaption = $derived(paneStrips && activeTab ? tabTitle(activeTab) : null);
+  const authSession = $derived(
+    pendingAuthSession([...onScreenIds], tabsState.activeId, (id) => !!authPrompts[id]),
+  );
+
+  /** Give a pane the focus and put the keyboard in the terminal it shows. */
+  function focusPaneAndTerminal(pane: Pane) {
+    focusPane(pane.id);
+    if (pane.active) termRefs[pane.active]?.focus?.();
+  }
+
+  /** Whether the focused pane can be split at `edge`: it holds a tab and has the room. */
+  const canSplitFocused = (edge: Edge): boolean =>
+    !bcOn && activeTab !== null && canSplit(placement.panes[center.focus], edge);
+
+  /**
+   * A new terminal in a new pane at `edge` of the focused one: the tab ⌘T would
+   * open, split off the moment it exists — so there is never an empty pane on
+   * screen, and a cancelled password prompt changes nothing.
+   */
+  function splitWithNewTerminal(edge: Edge) {
+    if (!canSplitFocused(edge)) {
+      if (activeTab && !bcOn) notifyInfo(t("split.noRoom"));
+      return;
+    }
+    const anchor = center.focus;
+    openNewTab(newTabAction(activeTab), (sid) => splitTabOff(sid, anchor, edge));
+  }
 
   /** Add/remove the active tab to/from the group (entering/leaving broadcast). */
   function toggleActiveBroadcast() {
@@ -486,7 +597,7 @@
   async function syncBatchRecording() {
     const batch = broadcastBatch;
     if (!batch) return;
-    const live = new Set(eligibleMembers(broadcastState.members, tabsState.list));
+    const live = new Set(eligibleMembers(broadcastState.members, orderedTabList));
     const starts: Promise<void>[] = [];
     for (const id of live) {
       if (batchRecMembers.has(id) || isRecording(id)) continue;
@@ -535,7 +646,7 @@
   function requestBroadcast(cmd: string) {
     const frame = frameCommand(cmd);
     if (!frame) return;
-    const targets = eligibleMembers(broadcastState.members, tabsState.list);
+    const targets = eligibleMembers(broadcastState.members, orderedTabList);
     if (targets.length === 0) return;
     if (groupHasProd(targets, tabsState.list, servers)) {
       pendingBroadcast = { frame, targets, cmd };
@@ -551,6 +662,8 @@
     for (const id of targets) {
       writeToTerminal(id, bytes).catch(() => {});
       if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(() => {});
+      // Input reached this session: its recording is not idle.
+      handleTerminalActivity(id);
     }
   }
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
@@ -561,19 +674,6 @@
   // live local PTY reports metrics natively via sysinfo. Gates the monitoring
   // button, the status bar and the idle card (`monitoredSessionId`).
   const monitorConnected = $derived(isMonitorable(activeTab));
-  // Prod-flagged active server → the AI assistant may not auto-execute (17.4).
-  const aiProd = $derived(
-    activeTab?.kind === "ssh"
-      ? isProdServer(servers.find((s) => s.id === activeTab.serverId))
-      : false,
-  );
-  // `noAi`-flagged active server → AI context + execution are fully blocked (17.7).
-  const aiNoAi = $derived(
-    activeTab?.kind === "ssh"
-      ? servers.find((s) => s.id === activeTab.serverId)?.noAi === true
-      : false,
-  );
-
   /** Open the detailed monitoring overlay (needs a connected SSH or local session). */
   function openMonitoring() {
     if (monitorConnected) {
@@ -590,9 +690,7 @@
    * recording read / metrics probe runs only when actually attached. All of it
    * is redacted + shown in the consent dialog (in AiChat) before it is sent.
    */
-  async function gatherAiContext(): Promise<RawContext> {
-    const id = tabsState.activeId;
-    if (!id) return {};
+  async function gatherAiContext(id: string): Promise<RawContext> {
     const ref = termRefs[id];
     // Tiers are chosen per-chat (Context popover); gate the expensive reads by them.
     const tiers = getChat(id).context;
@@ -622,20 +720,17 @@
    * send, so it must not probe the host. An unknown value stays empty and the
    * placeholder expands to nothing.
    */
-  const aiPromptVars = $derived.by((): PromptVars => {
-    const id = tabsState.activeId;
-    const tab = id ? findTab(id) : undefined;
-    if (!tab) return {};
+  function aiPromptVarsFor(tab: Tab): PromptVars {
     const srv = tab.kind === "ssh" ? servers.find((s) => s.id === tab.serverId) : undefined;
     return {
       host: srv?.host ?? "",
       alias: srv?.alias ?? (tab.kind === "local" ? t("tab.localShell") : ""),
-      cwd: (id && terminalCwd[id]) || "",
+      cwd: terminalCwd[tab.sessionId] || "",
       shell: tab.kind === "local" ? (settings.localShellPath ?? "") : "",
       // `os` is deliberately absent: it costs a metrics probe, and the consent-gated
       // metadata tier is the honest place for host details.
     };
-  });
+  }
 
   /** Whether the assistant is usable at all — gates every "ask AI" entry point. */
   // Every "ask the assistant about this" entry point hangs on this one flag. A
@@ -661,9 +756,7 @@
    * fetched its state and logs, so the question carries them; consent still runs
    * in the chat, exactly as for a hand-attached context.
    */
-  function askAiAboutResource(context: string, kind: "container" | "pod") {
-    const id = tabsState.activeId;
-    if (!id) return;
+  function askAiAboutResource(id: string, context: string, kind: "container" | "pod") {
     askAbout(id, { source: kind, context });
     revealPanel("ai");
   }
@@ -848,14 +941,15 @@
   }
 
   // ── Recording pause: skip disk when a recording tab is unwatched or idle ──────
-  let recordIdleTimer: ReturnType<typeof setTimeout> | undefined;
-  // The active recording tab we last resumed — guards against clobbering an idle
+  // One idle countdown per recording that is on screen.
+  const recordIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  // The on-screen recordings already resumed — guards against clobbering an idle
   // pause when the effect re-runs for an unrelated reason.
-  let resumedTab: string | null = null;
+  let resumedTabs = new Set<string>();
 
-  function clearRecordIdleTimer() {
-    if (recordIdleTimer) clearTimeout(recordIdleTimer);
-    recordIdleTimer = undefined;
+  function clearRecordIdleTimer(sessionId: string) {
+    clearTimeout(recordIdleTimers.get(sessionId));
+    recordIdleTimers.delete(sessionId);
   }
 
   /** Pause/resume a recording: update the tab indicator + tell the backend (only on change). */
@@ -865,36 +959,39 @@
     setRecordingPaused(sessionId, paused).catch(() => {});
   }
 
-  /** (Re)arm the idle countdown that pauses the active recording tab. */
+  /** (Re)arm the idle countdown that pauses a recording tab on screen. */
   function armRecordIdleTimer(sessionId: string) {
-    clearRecordIdleTimer();
+    clearRecordIdleTimer(sessionId);
     const secs = settings.recordIdlePauseSecs;
     if (secs <= 0 || !isRecording(sessionId)) return;
-    recordIdleTimer = setTimeout(() => applyPause(sessionId, true), secs * 1000);
+    recordIdleTimers.set(
+      sessionId,
+      setTimeout(() => applyPause(sessionId, true), secs * 1000),
+    );
   }
 
-  /** Keystroke on the active terminal → resume (if idle-paused) and re-arm the idle timer. */
+  /** Keystroke in a terminal on screen → resume (if idle-paused) and re-arm its idle timer. */
   function handleTerminalActivity(sessionId: string) {
-    if (sessionId !== tabsState.activeId || !isRecording(sessionId)) return;
+    if (!onScreenIds.has(sessionId) || !isRecording(sessionId)) return;
     applyPause(sessionId, false); // backend also auto-resumes on input
     armRecordIdleTimer(sessionId);
   }
 
-  // Keep exactly the active recording tab running; pause background recording tabs
-  // and re-arm the idle timer when the active recording tab changes.
+  // A recording runs only while its tab is on screen — one tab per pane, every
+  // member of the broadcast grid (centerview.ts). The others are paused; a tab
+  // that comes back on screen resumes with a fresh idle countdown.
   $effect(() => {
-    const active = tabsState.activeId;
-    const ids = Object.keys(recordingState);
-    for (const id of ids) {
-      if (id !== active) applyPause(id, true);
+    const { pause, watch } = recordingPauses(Object.keys(recordingState), [...onScreenIds]);
+    for (const id of pause) applyPause(id, true);
+    for (const id of watch) {
+      if (resumedTabs.has(id)) continue;
+      applyPause(id, false);
+      armRecordIdleTimer(id);
     }
-    const activeRecording = active && ids.includes(active) ? active : null;
-    if (activeRecording && activeRecording !== resumedTab) {
-      applyPause(activeRecording, false);
-      armRecordIdleTimer(activeRecording);
+    for (const id of [...recordIdleTimers.keys()]) {
+      if (!watch.includes(id)) clearRecordIdleTimer(id);
     }
-    if (!activeRecording) clearRecordIdleTimer();
-    resumedTab = activeRecording;
+    resumedTabs = new Set(watch);
   });
 
   /** Save the title/description entered after stopping a recording. */
@@ -955,6 +1052,51 @@
   }
 
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
+  const PANE_KEYWORDS =
+    "split pane terminal side by side layout сплит разделить область рядом терминал раскладка";
+  const paneCommands = $derived.by((): CommandItem[] => {
+    if (bcOn) return [];
+    const group = t("palette.groupActions");
+    const out: CommandItem[] = [];
+    const add = (id: string, title: string, icon: CommandItem["icon"], run: () => void) =>
+      out.push({ id, title, icon, group, keywords: PANE_KEYWORDS, run });
+    const tab = activeTab;
+    const pane = tab ? paneOf(center, tab.sessionId) : null;
+    if (canSplitFocused("right")) {
+      add("pane:new-right", t("palette.splitRight"), "splitRight", () => splitWithNewTerminal("right"));
+    }
+    if (canSplitFocused("bottom")) {
+      add("pane:new-down", t("palette.splitDown"), "splitDown", () => splitWithNewTerminal("bottom"));
+    }
+    if (tab && pane && pane.tabs.length > 1) {
+      if (canSplitFocused("right")) {
+        add("pane:tab-right", t("palette.moveTabRight"), "splitRight", () =>
+          splitTabOff(tab.sessionId, pane.id, "right"),
+        );
+      }
+      if (canSplitFocused("bottom")) {
+        add("pane:tab-down", t("palette.moveTabDown"), "splitDown", () =>
+          splitTabOff(tab.sessionId, pane.id, "bottom"),
+        );
+      }
+    }
+    if (isSplit) {
+      if (tab && pane) {
+        add("pane:tab-next", t("palette.moveTabNextPane"), "arrowRight", () =>
+          moveTabTo(tab.sessionId, neighbourPane(center, pane.id, 1).id),
+        );
+      }
+      add("pane:focus-next", t("palette.focusNextPane"), "arrowRight", () =>
+        focusPaneAndTerminal(neighbourPane(center, center.focus, 1)),
+      );
+      add("pane:focus-prev", t("palette.focusPrevPane"), "arrowLeft", () =>
+        focusPaneAndTerminal(neighbourPane(center, center.focus, -1)),
+      );
+      add("pane:join", t("palette.joinPanes"), "layoutFocus", joinPanes);
+    }
+    return out;
+  });
+
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
       keywords: "add server new сервер добавить", run: () => serverForm?.openAdd(selectedFolder ?? "") },
@@ -1035,6 +1177,9 @@
     { id: "act:new-local", title: t("palette.newLocalTerminal"), icon: "terminal",
       group: t("palette.groupActions"), keywords: "local terminal shell new локальный терминал новый",
       run: () => openLocalTab() },
+    // Panes of the centre — the twins of dragging a tab to a pane's edge and of
+    // the tab's right-click menu. Offered only while they would do something.
+    ...paneCommands,
     { id: "act:open-local-file", title: t("palette.openLocalFile"), icon: "pencil",
       group: t("palette.groupActions"), keywords: "open local file edit editor открыть локальный файл редактор",
       run: () => openLocalFileFromDialog() },
@@ -1094,16 +1239,58 @@
     // Plain Ctrl+T stays with the shell (transpose-chars / fzf).
     if (isNewTabChord(e)) {
       e.preventDefault();
-      const action = newTabAction(activeTab);
-      if (action.kind === "ssh") {
-        const server = servers.find((s) => s.id === action.serverId);
-        if (server) {
-          void connectServer(server);
-          return;
-        }
-      }
-      openLocalTab();
+      openNewTab(newTabAction(activeTab));
+      return;
     }
+    onPaneKey(e);
+  }
+
+  /**
+   * Open what ⌘T opens: another tab of the same server, or a local shell.
+   * `place` is told the new tab's session id as soon as the tab exists (for an
+   * SSH server that asks for a password — once the user has given it).
+   */
+  function openNewTab(action: NewTabAction, place?: (sessionId: string) => void) {
+    if (action.kind === "ssh") {
+      const server = servers.find((s) => s.id === action.serverId);
+      if (server) {
+        void connectServer(server, place);
+        return;
+      }
+    }
+    // Not `place?.(openLocalTab())`: with no `place` the argument is never
+    // evaluated, and the tab would not open at all.
+    const sessionId = openLocalTab();
+    place?.(sessionId);
+  }
+
+  /**
+   * Pane chords (appshortcuts.ts): ⌘D / ⌘⇧D open a new terminal to the right /
+   * below, ⌘] / ⌘[ move the focus between panes (Ctrl+Shift+D / E / ] / [ on
+   * Windows and Linux). They belong to the terminal area: a chord the focused
+   * control already handled (the editor binds ⌘D and ⌘]) or one typed into a
+   * text field is left alone.
+   */
+  function onPaneKey(e: KeyboardEvent) {
+    const right = isSplitRightChord(e);
+    const down = !right && isSplitDownChord(e);
+    const step = right || down ? null : paneStepChord(e);
+    if (!right && !down && step === null) return;
+    if (e.defaultPrevented || bcOn) return;
+    const el = e.target instanceof HTMLElement ? e.target : null;
+    const field =
+      !!el &&
+      !el.closest(".xterm") &&
+      (el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+    if (field) return;
+    if (step !== null) {
+      if (!isSplit) return;
+      e.preventDefault();
+      focusPaneAndTerminal(neighbourPane(center, center.focus, step));
+      return;
+    }
+    e.preventDefault();
+    splitWithNewTerminal(right ? "right" : "bottom");
   }
 
   onMount(() => {
@@ -1239,11 +1426,15 @@
   }
 
   // ── Connection / tabs ──────────────────────────────────────────────────────
-  async function connectServer(server: ServerProfile) {
+  async function connectServer(server: ServerProfile, place?: (sessionId: string) => void) {
     try {
       const plan = await connectPlan(server.id);
-      if (plan.needsSecret) secretPrompt?.prompt(server, plan.secretLabel);
-      else openTabStore(server.id, server.alias, null, false);
+      if (plan.needsSecret) {
+        secretPrompt?.prompt(server, plan.secretLabel, "", place);
+        return;
+      }
+      const sessionId = openTabStore(server.id, server.alias, null, false);
+      place?.(sessionId);
     } catch (e) {
       notifyError(String(e));
     }
@@ -1322,38 +1513,68 @@
   // closing a single live tab still confirms via requestCloseTab.
   let tabCtxMenu = $state<OpenMenu | null>(null);
 
-  function closeOtherTabs(keep: string) {
-    for (const tab of [...tabsState.list]) {
+  // "Others" and "to the right" mean the tabs of the strip the menu was opened
+  // on (`peers`): a pane's own tabs, or all of them in the single strip.
+  function closeOtherTabs(keep: string, peers: Tab[]) {
+    for (const tab of peers) {
       if (tab.sessionId !== keep) closeTabFully(tab.sessionId);
     }
   }
 
-  function closeTabsToRight(sessionId: string) {
-    const idx = tabsState.list.findIndex((t) => t.sessionId === sessionId);
+  function closeTabsToRight(sessionId: string, peers: Tab[]) {
+    const idx = peers.findIndex((t) => t.sessionId === sessionId);
     if (idx < 0) return;
-    for (const tab of tabsState.list.slice(idx + 1)) closeTabFully(tab.sessionId);
+    for (const tab of peers.slice(idx + 1)) closeTabFully(tab.sessionId);
   }
 
-  function openTabMenu(e: MouseEvent, tab: Tab) {
+  function openTabMenu(e: MouseEvent, tab: Tab, peers: Tab[]) {
     e.preventDefault();
-    const idx = tabsState.list.findIndex((tt) => tt.sessionId === tab.sessionId);
-    const hasOthers = tabsState.list.length > 1;
-    const hasRight = idx >= 0 && idx < tabsState.list.length - 1;
+    const idx = peers.findIndex((tt) => tt.sessionId === tab.sessionId);
+    const hasOthers = peers.length > 1;
+    const hasRight = idx >= 0 && idx < peers.length - 1;
     const items: MenuItem[] = [
       { icon: "close", label: t("ctx.closeTab"), onSelect: () => requestCloseTab(tab.sessionId) },
       {
         icon: "close",
         label: t("ctx.closeOthers"),
         disabled: !hasOthers,
-        onSelect: () => closeOtherTabs(tab.sessionId),
+        onSelect: () => closeOtherTabs(tab.sessionId, peers),
       },
       {
         icon: "arrowRight",
         label: t("ctx.closeRight"),
         disabled: !hasRight,
-        onSelect: () => closeTabsToRight(tab.sessionId),
+        onSelect: () => closeTabsToRight(tab.sessionId, peers),
       },
     ];
+    // Panes: the tab into a new one beside or below its own, or into the next
+    // one — the twins of dragging it there. Not in broadcast mode, which lays
+    // the terminals out itself.
+    const pane = paneOf(center, tab.sessionId);
+    if (pane && !bcOn) {
+      const rect = placement.panes[pane.id];
+      const alone = pane.tabs.length < 2;
+      items.push({ kind: "separator" });
+      items.push({
+        icon: "splitRight",
+        label: t("ctx.splitRight"),
+        disabled: alone || !canSplit(rect, "right"),
+        onSelect: () => splitTabOff(tab.sessionId, pane.id, "right"),
+      });
+      items.push({
+        icon: "splitDown",
+        label: t("ctx.splitDown"),
+        disabled: alone || !canSplit(rect, "bottom"),
+        onSelect: () => splitTabOff(tab.sessionId, pane.id, "bottom"),
+      });
+      if (isSplit) {
+        items.push({
+          icon: "arrowRight",
+          label: t("ctx.moveToNextPane"),
+          onSelect: () => moveTabTo(tab.sessionId, neighbourPane(center, pane.id, 1).id),
+        });
+      }
+    }
     if (tab.kind === "ssh") {
       items.push({ kind: "separator" });
       items.push({
@@ -1388,7 +1609,7 @@
 
   // Sudo prompt: reopen a permission-denied file as root, or retry a save as root.
   let sudoPrompt = $state<
-    | { kind: "open"; path: string; name: string; gotoLine?: number }
+    | { kind: "open"; sid: string; path: string; name: string; gotoLine?: number }
     | { kind: "save"; sid: string; doc: EditorDoc }
     | null
   >(null);
@@ -1433,14 +1654,13 @@
     return promise;
   }
 
-  /** Open a remote file in the in-app editor (invoked from the SFTP panel). */
+  /** Open a remote file of session `sid` in the in-app editor (from its SFTP panel). */
   async function openFileInEditor(
+    sid: string,
     path: string,
     name: string,
     opts: { gotoLine?: number; sudo?: boolean; sudoPassword?: string; gitBase?: string } = {},
   ) {
-    const sid = tabsState.activeId;
-    if (!sid) return;
     // Any file opens in the editor; unknown/extensionless types fall back to plain
     // text (binary/oversize files are still rejected by the backend read below).
     // Pass the full path so custom nginx configs (conf.d, sites-available…) are
@@ -1466,7 +1686,7 @@
       // No read access on a non-sudo read → offer to reopen as root.
       if (!opts.sudo && isPermissionError(e)) {
         sudoPasswordInput = "";
-        sudoPrompt = { kind: "open", path, name, gotoLine: opts.gotoLine };
+        sudoPrompt = { kind: "open", sid, path, name, gotoLine: opts.gotoLine };
         return;
       }
       notifyError(String(e));
@@ -1493,7 +1713,11 @@
     sudoPasswordInput = "";
     if (!p) return;
     if (p.kind === "open") {
-      void openFileInEditor(p.path, p.name, { gotoLine: p.gotoLine, sudo: true, sudoPassword: pw });
+      void openFileInEditor(p.sid, p.path, p.name, {
+        gotoLine: p.gotoLine,
+        sudo: true,
+        sudoPassword: pw,
+      });
     } else {
       // Remember sudo on the doc (future saves reuse it), then retry from the store.
       setEditorSudo(p.sid, p.doc.id, pw);
@@ -1524,21 +1748,17 @@
   }
 
   /** Open a git-changed file as an editable inline diff (from the git panel). */
-  function openGitDiff(absPath: string, gitBase: string) {
-    const sid = tabsState.activeId;
-    if (!sid) return;
-    if (activeTab?.kind === "ssh") {
-      void openFileInEditor(absPath, absPath.split("/").pop() ?? absPath, { gitBase });
+  function openGitDiff(sid: string, absPath: string, gitBase: string) {
+    if (findTab(sid)?.kind === "ssh") {
+      void openFileInEditor(sid, absPath, absPath.split("/").pop() ?? absPath, { gitBase });
     } else {
       void openLocalFileInEditor(sid, absPath, { gitBase });
     }
   }
 
   /** Append a pattern to the repo's .gitignore (git panel "Ignore" action). */
-  async function appendGitignore(gitignorePath: string, pattern: string) {
-    const sid = tabsState.activeId;
-    if (!sid) return;
-    const ssh = activeTab?.kind === "ssh";
+  async function appendGitignore(sid: string, gitignorePath: string, pattern: string) {
+    const ssh = findTab(sid)?.kind === "ssh";
     let current = "";
     try {
       const f = ssh
@@ -1613,32 +1833,29 @@
   }
 
   /**
-   * Toggle "follow terminal" for the active session. Turning it off is immediate.
+   * Toggle "follow terminal" for a session. Turning it off is immediate.
    * Turning it on: if the shell already reports its cwd (OSC 7 seen) or we've already
    * set it up this session, just enable; otherwise open a confirm dialog before typing
    * the shell-integration snippet (session-only, nothing saved on the server).
    */
-  function toggleFollowTerminal() {
-    const id = tabsState.activeId;
-    if (!id) return;
+  function toggleFollowTerminal(id: string) {
     if (followTerminal[id]) {
       followTerminal[id] = false;
       return;
     }
-    enablePathSync();
+    enablePathSync(id);
   }
 
   /**
-   * Turn path sync on for the active session — the one dock-wide switch, whether
+   * Turn path sync on for a session — the one dock-wide switch, whether
    * it was flipped in SFTP, in Git's toolbar or by Git's "Enable path sync" button
    * (one label, one action: a file panel connected afterwards opens in the
    * terminal's folder, already following). Whether the shell still needs the OSC 7
    * snippet is pure logic — a local tab never does, since its cwd comes from the OS
    * (Phase 39.3). See needsShellSetup.
    */
-  function enablePathSync() {
-    const id = tabsState.activeId;
-    if (!id || followTerminal[id]) return;
+  function enablePathSync(id: string) {
+    if (followTerminal[id]) return;
     if (!needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
       followTerminal[id] = true;
       return;
@@ -1700,9 +1917,8 @@
    * the panel following the terminal), so there's no feedback loop; a no-op when the
    * terminal is already there.
    */
-  function cdTerminalTo(path: string) {
-    const id = tabsState.activeId;
-    if (!id || terminalCwd[id] === path) return;
+  function cdTerminalTo(id: string, path: string) {
+    if (terminalCwd[id] === path) return;
     // Phase 39.4: local tabs get this too, so the command has to match the shell
     // that tab actually spawned — cmd.exe neither quotes with apostrophes nor
     // changes drive without `/d`. SSH is always POSIX.
@@ -1715,15 +1931,15 @@
   }
 
   /**
-   * Docker/k8s panel "open shell": open a new terminal tab on the SAME host as the
-   * active session (reusing its credentials for SSH — no re-prompt) and run the
+   * Docker/k8s panel "open shell": open a new terminal tab on the SAME host as
+   * session `of` (reusing its credentials for SSH — no re-prompt) and run the
    * `docker exec -it …` command once it connects. Reuses the terminal contract —
    * no new backend. With a `target` the tab is a container/pod tab (tabattach.ts):
    * it carries the argv, runs it on every connect and ends with it. Without one
    * (port-forward) the argv is a one-shot `pendingCommand`.
    */
-  function openContainerShell(argv: string[], target?: AttachTarget) {
-    const tab = activeTab;
+  function openContainerShell(of: string, argv: string[], target?: AttachTarget) {
+    const tab = findTab(of);
     if (!tab) return;
     const attach = target ? { ...target, argv } : undefined;
     const sid =
@@ -1774,7 +1990,7 @@
     if (!sid) {
       sid = openLocalTab(); // creates the tab and makes it active
     } else {
-      tabsState.activeId = sid;
+      activateTab(sid);
     }
     void openLocalFileInEditor(sid, path);
   }
@@ -1891,7 +2107,7 @@
     closeEditorStore(c.sid, c.doc.id);
     if (c.doc.source === "local") void openLocalFileInEditor(c.sid, c.doc.path);
     else
-      void openFileInEditor(c.doc.path, c.doc.name, {
+      void openFileInEditor(c.sid, c.doc.path, c.doc.name, {
         sudo: c.doc.sudo,
         sudoPassword: c.doc.sudoPassword,
       });
@@ -1903,71 +2119,35 @@
     else closeEditorStore(sid, doc.id);
   }
 
-  // Roving keyboard navigation across tabs (a11y): arrows/Home/End move focus
-  // and selection; Enter/Space activate the focused tab.
-  function focusTab(index: number) {
-    barEl?.querySelectorAll<HTMLElement>("[data-tab]")[index]?.focus();
-  }
-
-  function onTabKey(event: KeyboardEvent, sessionId: string) {
+  // Roving keyboard navigation across the tabs of one strip (a11y): arrows/Home/End
+  // move focus and selection; Enter/Space activate the focused tab.
+  function onTabKey(event: KeyboardEvent, sessionId: string, peers: Tab[]) {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      tabsState.activeId = sessionId;
+      activateTab(sessionId);
       return;
     }
-    const i = tabsState.list.findIndex((t) => t.sessionId === sessionId);
-    const next = nextTabIndex(i, tabsState.list.length, event.key);
+    const i = peers.findIndex((t) => t.sessionId === sessionId);
+    const next = nextTabIndex(i, peers.length, event.key);
     if (next === null) return;
     event.preventDefault();
-    tabsState.activeId = tabsState.list[next].sessionId;
-    focusTab(next);
+    const target = peers[next].sessionId;
+    activateTab(target);
+    const strip = (event.currentTarget as HTMLElement).closest("[data-tabstrip]");
+    [...(strip?.querySelectorAll<HTMLElement>("[data-tab]") ?? [])]
+      .find((el) => el.dataset.tab === target)
+      ?.focus();
   }
 
-  // ── Tab drag-to-reorder ────────────────────────────────────────────────────
+  // ── Tab drag: reorder, move to another pane, split (stores/tabdrag.svelte.ts) ──
   function tabPointerDown(event: PointerEvent, sessionId: string) {
-    if (!barEl || (event.target as HTMLElement).closest("[data-close]")) return;
-    dragSession = sessionId;
-    dragStartX = event.clientX;
-    dragMoved = false;
+    if ((event.target as HTMLElement).closest("[data-close]")) return;
+    beginTabDrag(event, sessionId);
   }
 
-  function barPointerMove(event: PointerEvent) {
-    if (dragSession === null || !barEl) return;
-    if (!dragMoved) {
-      if (Math.abs(event.clientX - dragStartX) < 4) return;
-      dragMoved = true;
-      barEl.setPointerCapture(event.pointerId);
-    }
-    tabDragX = event.clientX;
-    tabDragY = event.clientY;
-
-    // The tab takes the slot past every other tab whose middle the pointer has
-    // crossed. Measured on layout boxes, not drawn ones: the neighbours glide to
-    // their new slots (`animate:glide`), and a tab that is still sliding out of
-    // the way must already count as moved — or it is swapped straight back.
-    const others = Array.from(barEl.querySelectorAll<HTMLElement>("[data-tab]"))
-      .filter((el) => el.dataset.tab !== dragSession)
-      .map((el) => {
-        const box = layoutBox(el);
-        return { start: box.left, size: box.width };
-      });
-    moveTab(dragSession, slotIndex(event.clientX, others));
-  }
-
-  function barPointerUp(event: PointerEvent) {
-    if (dragSession !== null) {
-      if (dragMoved) {
-        try {
-          barEl?.releasePointerCapture(event.pointerId);
-        } catch {
-          /* capture may already be released */
-        }
-      } else {
-        tabsState.activeId = dragSession;
-      }
-    }
-    dragSession = null;
-    dragMoved = false;
+  /** A click on a tab shows it — unless the click is the end of a drag. */
+  function tabClick(sessionId: string) {
+    if (!consumeTabDragClick()) activateTab(sessionId);
   }
 
   // ── Server CRUD ────────────────────────────────────────────────────────────
@@ -2008,8 +2188,11 @@
 <svelte:window onkeydown={onGlobalKey} />
 
 <!-- A tool panel, for whichever dock holds it (Dock.svelte calls this). The
-     panels are told whether they are on screen, never which dock they are in. -->
-{#snippet dockPanel(id: PanelId, visible: boolean)}
+     panels are told whether they are on screen, never which dock they are in.
+     A session panel is built for the session the dock names (`sid`), not for
+     "the active tab": the docks keep the panels of every session on screen
+     mounted, and a hidden one must go on working for its own session. -->
+{#snippet dockPanel(id: PanelId, visible: boolean, sid: string | null)}
   {#if id === "servers"}
     <ServerTree
       {servers}
@@ -2042,51 +2225,158 @@
       onMoveServer={requestMoveServer}
       onMoveFolder={requestMoveFolder}
     />
-  {:else if activeTab}
-    <DockPanel
-      {id}
-      {visible}
-      kind={activeTab.kind === "ssh" ? "ssh" : "local"}
-      sessionId={activeTab.sessionId}
-      chatPromptId={activeTab?.kind === "ssh"
-        ? (servers.find((s) => s.id === activeTab.serverId)?.chatPromptId ?? null)
-        : null}
-      serverExecMode={activeTab?.kind === "ssh"
-        ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
-        : null}
-      connection={dockConn}
-      terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
-      promptVars={aiPromptVars}
-      followTerminal={tabsState.activeId
-        ? (followTerminal[tabsState.activeId] ?? false)
-        : false}
-      onToggleFollowTerminal={toggleFollowTerminal}
-      onEnablePathSync={tabsState.activeId &&
-      needsShellSetup(
-        activeTab?.kind,
-        !!terminalCwd[tabsState.activeId],
-        !!shellIntegrated[tabsState.activeId],
-      )
-        ? enablePathSync
-        : undefined}
-      getAiContext={gatherAiContext}
-      aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
-      aiRecording={!!(tabsState.activeId && recordingState[tabsState.activeId])}
-      {aiProd}
-      {aiNoAi}
-      onOpenFile={(path, name, gotoLine) =>
-        openFileInEditor(path, name, { gotoLine })}
-      onOpenLocalFile={(path) => {
-        if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
-      }}
-      onOpenGitDiff={openGitDiff}
-      onIgnoreGitignore={appendGitignore}
-      onSftpNavigate={cdTerminalTo}
-      onOpenContainerShell={openContainerShell}
-      onAskAi={aiOn ? askAiAboutResource : undefined}
-    />
+  {:else}
+    {@const tab = findTab(sid)}
+    {#if tab}
+      {@const srv =
+        tab.kind === "ssh" ? (servers.find((s) => s.id === tab.serverId) ?? null) : null}
+      <DockPanel
+        {id}
+        {visible}
+        kind={tab.kind === "ssh" ? "ssh" : "local"}
+        sessionId={tab.sessionId}
+        chatPromptId={srv?.chatPromptId ?? null}
+        serverExecMode={srv?.execMode ?? null}
+        connection={dockConnection(tab.status)}
+        terminalCwd={terminalCwd[tab.sessionId] ?? null}
+        promptVars={aiPromptVarsFor(tab)}
+        followTerminal={followTerminal[tab.sessionId] ?? false}
+        onToggleFollowTerminal={() => toggleFollowTerminal(tab.sessionId)}
+        onEnablePathSync={needsShellSetup(
+          tab.kind,
+          !!terminalCwd[tab.sessionId],
+          !!shellIntegrated[tab.sessionId],
+        )
+          ? () => enablePathSync(tab.sessionId)
+          : undefined}
+        getAiContext={() => gatherAiContext(tab.sessionId)}
+        aiSelectionLines={termSelection[tab.sessionId] ?? 0}
+        aiRecording={!!recordingState[tab.sessionId]}
+        aiProd={isProdServer(srv)}
+        aiNoAi={srv?.noAi === true}
+        onOpenFile={(path, name, gotoLine) =>
+          openFileInEditor(tab.sessionId, path, name, { gotoLine })}
+        onOpenLocalFile={(path) => openLocalFileInEditor(tab.sessionId, path)}
+        onOpenGitDiff={(absPath, gitBase) => openGitDiff(tab.sessionId, absPath, gitBase)}
+        onIgnoreGitignore={(path, pattern) => appendGitignore(tab.sessionId, path, pattern)}
+        onSftpNavigate={(path) => cdTerminalTo(tab.sessionId, path)}
+        onOpenContainerShell={(argv, target) => openContainerShell(tab.sessionId, argv, target)}
+        onAskAi={aiOn
+          ? (context, kind) => askAiAboutResource(tab.sessionId, context, kind)
+          : undefined}
+      />
+    {/if}
   {/if}
 {/snippet}
+
+<!-- The tabs of one strip, and its "+". `tabs` is what the strip draws (while a
+     tab is dragged — the order the drop would give), `peers` the tabs it really
+     holds: a pane's own, or all of them in the single strip. `shownId` is the tab
+     the pane shows and `paneId` the pane (both null for the single strip). The top line marks the tab in
+     focus only — the one the docks and the status bar follow (tabstrip.ts); the
+     tab another pane shows is lit without it. -->
+{#snippet stripTabs(tabs: Tab[], peers: Tab[], shownId: string | null, paneId: string | null)}
+  {#each tabs as tab (tab.sessionId)}
+    <div
+      data-tab={tab.sessionId}
+      animate:glide={motion()}
+      role="tab"
+      tabindex={(shownId ?? tabsState.activeId) === tab.sessionId ? 0 : -1}
+      aria-selected={(shownId ?? tabsState.activeId) === tab.sessionId}
+      onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
+      onclick={() => tabClick(tab.sessionId)}
+      oncontextmenu={(e) => openTabMenu(e, tab, peers)}
+      onkeydown={(e) => onTabKey(e, tab.sessionId, peers)}
+      data-prod={prodTabIds.has(tab.sessionId) || undefined}
+      class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
+      tab.sessionId
+        ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
+        : shownId === tab.sessionId
+          ? 'bg-panel text-text'
+          : 'text-muted hover:bg-edge'}"
+      title={tab.attach ? undefined : localizedStatus(tab.status)}
+      use:tooltip={attachTooltip(tab)}
+    >
+      <!-- Status / recording / broadcast dots grouped tightly together. -->
+      <span class="flex shrink-0 items-center gap-0.5">
+        <span class="h-2 w-2 rounded-full {dotClass(tab.status)}"></span>
+        {#if recordingState[tab.sessionId]}
+          {#if recordingPaused[tab.sessionId]}
+            <Icon
+              name="pause"
+              size={12}
+              class="text-ok"
+              title={t("recordings.paused")}
+            />
+          {:else}
+            <span
+              class="h-2 w-2 animate-pulse rounded-full bg-danger"
+              use:tooltip={t("recordings.recording")}
+              aria-label={t("recordings.recording")}
+            ></span>
+          {/if}
+        {/if}
+        <!-- Broadcast membership indicator: a blue dot on every tab that
+             belongs to the group — shown regardless of which tab is active,
+             so the group stays visible while viewing a non-member tab. -->
+        {#if isBroadcastMember(tab.sessionId)}
+          <span
+            data-broadcast-member
+            class="h-2 w-2 rounded-full bg-accent"
+            use:tooltip={t("broadcast.memberDot")}
+            aria-label={t("broadcast.memberDot")}
+          ></span>
+        {/if}
+      </span>
+      {#if tab.attach}
+        <!-- Container/pod tab: its mark, the target's name, the host muted.
+             The host yields its width first — the name is what tells two
+             container tabs of one host apart. -->
+        <Icon
+          name={attachIcon(tab.attach.kind)}
+          size={14}
+          class="shrink-0 {isLive(tab.status) ? 'text-accent' : 'text-muted'}"
+        />
+        <span class="flex min-w-0 items-baseline gap-1">
+          <span class="max-w-full shrink-0 truncate">{tab.attach.name}</span>
+          <span class="min-w-0 truncate text-muted">· {tabAlias(tab)}</span>
+        </span>
+      {:else}
+        <span class="truncate">{tabAlias(tab)}</span>
+      {/if}
+      {#if prodTabIds.has(tab.sessionId)}
+        <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
+      {/if}
+      <button
+        data-close
+        class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
+        aria-label={t("tab.close")}
+        onclick={(e) => {
+          e.stopPropagation();
+          requestCloseTab(tab.sessionId);
+        }}
+      >
+        <Icon name="close" size={12} />
+      </button>
+    </div>
+  {/each}
+  <!-- Open a local-shell terminal tab (same "+" as the top bar) — in this pane.
+       A mouse press has already given the pane the focus; Enter on the button has
+       not, so it is given here. -->
+  <button
+    data-testid="new-local-terminal"
+    class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-text"
+    use:tooltip={t("tab.openLocalTerminal")}
+    aria-label={t("tab.openLocalTerminal")}
+    onclick={() => {
+      if (paneId) focusPane(paneId);
+      openLocalTab();
+    }}
+  >
+    <Icon name="plus" size={14} />
+  </button>
+{/snippet}
+
 
 <div class="flex h-screen w-screen flex-col">
   <!-- Signature-theme depth: a subtle full-window overlay above all content,
@@ -2145,6 +2435,8 @@
     <Dock
       side="left"
       sessionId={dockSessionId}
+      sessions={dockSessions}
+      caption={dockCaption}
       sessionKind={activeTab?.kind ?? "ssh"}
       connection={dockConn}
       stripHeight={tabBarHeight}
@@ -2153,109 +2445,30 @@
 
     <!-- Right: tabbed terminals -->
     <main bind:this={mainArea} class="flex min-w-0 flex-1 flex-col bg-panel">
-      <!-- Tab bar always visible so the local-terminal "+" is reachable even
-           with no open sessions. -->
-      <div
-        bind:this={barEl}
-        bind:offsetHeight={tabBarHeight}
-        role="tablist"
-        tabindex={-1}
-        onpointermove={barPointerMove}
-        onpointerup={barPointerUp}
-        class="flex min-h-8 select-none items-stretch border-b border-edge bg-panel-alt"
-      >
-        {#each tabsState.list as tab (tab.sessionId)}
-          <div
-            data-tab={tab.sessionId}
-            animate:glide={motion()}
-            role="tab"
-            tabindex={tabsState.activeId === tab.sessionId ? 0 : -1}
-            aria-selected={tabsState.activeId === tab.sessionId}
-            onpointerdown={(e) => tabPointerDown(e, tab.sessionId)}
-            oncontextmenu={(e) => openTabMenu(e, tab)}
-            onkeydown={(e) => onTabKey(e, tab.sessionId)}
-            data-prod={prodTabIds.has(tab.sessionId) || undefined}
-            class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
-            tab.sessionId
-              ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
-              : 'text-muted hover:bg-edge'}"
-            title={tab.attach ? undefined : localizedStatus(tab.status)}
-            use:tooltip={attachTooltip(tab)}
-          >
-            <!-- Status / recording / broadcast dots grouped tightly together. -->
-            <span class="flex shrink-0 items-center gap-0.5">
-              <span class="h-2 w-2 rounded-full {dotClass(tab.status)}"></span>
-              {#if recordingState[tab.sessionId]}
-                {#if recordingPaused[tab.sessionId]}
-                  <Icon
-                    name="pause"
-                    size={12}
-                    class="text-ok"
-                    title={t("recordings.paused")}
-                  />
-                {:else}
-                  <span
-                    class="h-2 w-2 animate-pulse rounded-full bg-danger"
-                    use:tooltip={t("recordings.recording")}
-                    aria-label={t("recordings.recording")}
-                  ></span>
-                {/if}
-              {/if}
-              <!-- Broadcast membership indicator: a blue dot on every tab that
-                   belongs to the group — shown regardless of which tab is active,
-                   so the group stays visible while viewing a non-member tab. -->
-              {#if isBroadcastMember(tab.sessionId)}
-                <span
-                  data-broadcast-member
-                  class="h-2 w-2 rounded-full bg-accent"
-                  use:tooltip={t("broadcast.memberDot")}
-                  aria-label={t("broadcast.memberDot")}
-                ></span>
-              {/if}
-            </span>
-            {#if tab.attach}
-              <!-- Container/pod tab: its mark, the target's name, the host muted.
-                   The host yields its width first — the name is what tells two
-                   container tabs of one host apart. -->
-              <Icon
-                name={attachIcon(tab.attach.kind)}
-                size={14}
-                class="shrink-0 {isLive(tab.status) ? 'text-accent' : 'text-muted'}"
-              />
-              <span class="flex min-w-0 items-baseline gap-1">
-                <span class="max-w-full shrink-0 truncate">{tab.attach.name}</span>
-                <span class="min-w-0 truncate text-muted">· {tabAlias(tab)}</span>
-              </span>
-            {:else}
-              <span class="truncate">{tabAlias(tab)}</span>
-            {/if}
-            {#if prodTabIds.has(tab.sessionId)}
-              <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
-            {/if}
-            <button
-              data-close
-              class="shrink-0 rounded p-0.5 text-muted hover:text-danger"
-              aria-label={t("tab.close")}
-              onclick={(e) => {
-                e.stopPropagation();
-                requestCloseTab(tab.sessionId);
-              }}
-            >
-              <Icon name="close" size={12} />
-            </button>
-          </div>
-        {/each}
-        <!-- Open a local-shell terminal tab (same "+" as the top bar). -->
-        <button
-          data-testid="new-local-terminal"
-          class="flex shrink-0 items-center rounded-none px-2.5 py-1.5 text-muted hover:bg-edge hover:text-text"
-          use:tooltip={t("tab.openLocalTerminal")}
-          aria-label={t("tab.openLocalTerminal")}
-          onclick={() => openLocalTab()}
+      <!-- The single tab strip: always there while the centre is one pane, so the
+           local-terminal "+" is reachable even with no open sessions, and in
+           broadcast mode, which lays its members out itself. Split, each pane
+           carries its own strip inside the area below. -->
+      {#if !paneStrips}
+        <div
+          data-tabstrip={isSplit ? "*" : paneList[0].id}
+          bind:offsetHeight={flatBarHeight}
+          role="tablist"
+          tabindex={-1}
+          class="flex min-h-8 select-none items-stretch border-b border-edge bg-panel-alt"
         >
-          <Icon name="plus" size={14} />
-        </button>
-      </div>
+          {@render stripTabs(
+            tabsOf(
+              isSplit
+                ? previewFlat(center, tabDrag.tab, tabDrag.over)
+                : previewTabs(center, paneList[0].id, tabDrag.tab, tabDrag.over),
+            ),
+            orderedTabList,
+            null,
+            null,
+          )}
+        </div>
+      {/if}
 
       <div class="flex min-h-0 flex-1">
         {#if tabsState.list.length > 0}
@@ -2317,6 +2530,7 @@
             <div
               bind:this={terminalArea}
               bind:clientWidth={bcAreaWidth}
+              bind:clientHeight={areaHeight}
               class={bcOn
                 ? bcLayout === "grid"
                   ? "grid min-h-0 min-w-0 flex-1 gap-1 overflow-y-auto p-1"
@@ -2326,6 +2540,44 @@
                 ? `grid-template-columns: repeat(${bcCols}, minmax(0, 1fr)); grid-auto-rows: minmax(220px, 1fr);`
                 : ""}
             >
+            {#if paneStrips}
+              <!-- The panes: each is its tab strip. The terminals are NOT inside
+                   them: they follow in one flat list and are placed over the pane
+                   that holds them, under its strip. -->
+              {#each paneList as pane (pane.id)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  data-pane={pane.id}
+                  data-testid="pane"
+                  data-focused={pane.id === center.focus || undefined}
+                  class="absolute flex flex-col"
+                  style={rectStyle(placement.panes[pane.id], areaBounds)}
+                  onpointerdowncapture={() => focusPane(pane.id)}
+                >
+                  <div
+                    data-tabstrip={pane.id}
+                    role="tablist"
+                    tabindex={-1}
+                    style="height: {tabBarHeight}px"
+                    class="flex shrink-0 select-none items-stretch border-b border-edge bg-panel-alt"
+                  >
+                    {@render stripTabs(
+                      tabsOf(previewTabs(center, pane.id, tabDrag.tab, tabDrag.over)),
+                      tabsOf(pane.tabs),
+                      pane.active,
+                      pane.id,
+                    )}
+                  </div>
+                </div>
+              {/each}
+              {#each placement.dividers as divider (divider.split)}
+                <SplitDivider
+                  {divider}
+                  bounds={areaBounds}
+                  onratio={(ratio) => setSplitRatio(divider.split, ratio)}
+                />
+              {/each}
+            {/if}
             {#each tabsState.list as tab (tab.sessionId)}
               {@const ws = getWorkspace(tab.sessionId)}
               {@const bcTile = bcOn && (bcLayout === "grid" ? isBroadcastMember(tab.sessionId) : tab.sessionId === bcFocusId)}
@@ -2339,12 +2591,26 @@
                 broadcast: bcOn,
                 ai: aiOn && bcSrv?.noAi !== true,
               })}
+              <!-- One terminal (with its editors), placed over its pane. A click or a
+                   keystroke inside gives that pane the focus — not in broadcast
+                   mode, where the tiles are not panes. -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
+                data-pane-body={bcOn ? undefined : tabPane[tab.sessionId]}
                 class={bcOn && !bcTile
                   ? "hidden"
                   : bcTile
                     ? `relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded border ${bcLayout === "grid" ? "" : "flex-1"} ${prodTabIds.has(tab.sessionId) ? "border-bad/60" : "border-edge"}`
-                    : `absolute inset-0 flex flex-col ${tabsState.activeId === tab.sessionId ? "" : "invisible"}`}
+                    : `absolute flex flex-col ${shownIds.has(tab.sessionId) ? "" : "invisible"}`}
+                style={bcOn
+                  ? undefined
+                  : rectStyle(placement.panes[tabPane[tab.sessionId]], areaBounds, stripInset)}
+                onpointerdowncapture={() => {
+                  if (!bcOn) focusPane(tabPane[tab.sessionId]);
+                }}
+                onfocusin={() => {
+                  if (!bcOn) focusPane(tabPane[tab.sessionId]);
+                }}
               >
                 {#if bcTile}
                   <div class="flex shrink-0 items-center gap-2 border-b border-edge bg-panel-alt px-2 py-1 font-mono text-meta">
@@ -2543,6 +2809,7 @@
                     remember={tab.remember}
                     local={tab.kind === "local"}
                     tint={prodTabIds.has(tab.sessionId) ? settings.prodTint : null}
+                    focusOnConnect={tabsState.activeId === tab.sessionId}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
@@ -2654,7 +2921,7 @@
               {#if bcOn && bcLayout === "focus" && bcMemberTabs.length > 0}
                 <BroadcastRoster
                   rows={bcRosterRows}
-                  onfocus={(id) => (tabsState.activeId = id)}
+                  onfocus={activateTab}
                   onremove={(id) => {
                     removeBroadcastMember(id);
                     void syncBatchRecording();
@@ -2689,11 +2956,16 @@
             </EmptyState>
           </div>
         {/if}
+        <!-- Split, there is no strip above the row: the right dock stands next to
+             the panes' own strips and takes their height, like the left one. -->
         <Dock
           side="right"
           sessionId={dockSessionId}
+          sessions={dockSessions}
+          caption={dockCaption}
           sessionKind={activeTab?.kind ?? "ssh"}
           connection={dockConn}
+          stripHeight={paneStrips ? tabBarHeight : 0}
           panel={dockPanel}
         />
       </div>
@@ -2704,6 +2976,8 @@
   <Dock
     side="bottom"
     sessionId={dockSessionId}
+    sessions={dockSessions}
+    caption={dockCaption}
     sessionKind={activeTab?.kind ?? "ssh"}
     connection={dockConn}
     panel={dockPanel}
@@ -2728,12 +3002,26 @@
 <!-- The label following the pointer while a tool-panel tab is dragged. -->
 <DockDragGhost />
 
-<!-- Drag ghost for a terminal tab being reordered. -->
+<!-- Where a dragged terminal tab would land on a pane's body: the whole pane (it
+     joins the pane) or the half a new pane would take. A tint, not a change of
+     layout — the terminals keep their size until the drop. -->
+{#if tabDrag.zone}
+  <div
+    aria-hidden="true"
+    data-testid="pane-drop-zone"
+    class="pointer-events-none fixed z-40 border-2 border-dashed border-accent bg-accent/25"
+    style="left: {tabDrag.zone.x}px; top: {tabDrag.zone.y}px; width: {tabDrag.zone.w}px; height: {tabDrag
+      .zone.h}px"
+  ></div>
+{/if}
+
+<!-- Drag ghost for a terminal tab being moved. -->
 {#if draggingTab}
   <div
     in:fade={motion()}
+    data-testid="tab-drag-ghost"
     class="pointer-events-none fixed z-50 flex max-w-48 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
-    style="left: {tabDragX + 12}px; top: {tabDragY + 8}px"
+    style="left: {tabDrag.x + 12}px; top: {tabDrag.y + 8}px"
   >
     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
     <span class="truncate">{tabAlias(draggingTab)}</span>
@@ -2991,10 +3279,10 @@
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->
 <SecretPrompt bind:this={secretPrompt} />
 
-<!-- The server's own login questions (keyboard-interactive) for the tab on screen;
-     a background tab's wait until the user switches to it. -->
-{#if tabsState.activeId && authPrompts[tabsState.activeId]}
-  {@const sid = tabsState.activeId}
+<!-- The server's own login questions (keyboard-interactive) for a tab on screen —
+     the one in focus first; a background tab's wait until the user switches to it. -->
+{#if authSession && authPrompts[authSession]}
+  {@const sid = authSession}
   <AuthPromptDialog
     sessionId={sid}
     request={authPrompts[sid]}

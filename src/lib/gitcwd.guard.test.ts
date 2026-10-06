@@ -50,8 +50,11 @@ describe("git follows the terminal guard", () => {
   it("git's path sync button turns on the same dock-wide following as the toggle", () => {
     const src = read(PAGE);
     expect(src).not.toMatch(/enableGitPathSync|pendingFollowTwoWay/);
-    expect(src).toMatch(/\?\s*enablePathSync\s*\n\s*:\s*undefined\}/);
-    const start = src.indexOf("function enablePathSync()");
+    // Per session since v1.2 (the docks keep a panel for every session on screen).
+    expect(src).toMatch(
+      /\?\s*\(\)\s*=>\s*enablePathSync\(tab\.sessionId\)\s*\n\s*:\s*undefined\}/,
+    );
+    const start = src.indexOf("function enablePathSync(id: string)");
     expect(start, "enablePathSync() not found in +page.svelte").toBeGreaterThan(-1);
     const body = src.slice(start, src.indexOf("\n  }", start));
     expect(body).toMatch(/followTerminal\[id\]\s*=\s*true/);

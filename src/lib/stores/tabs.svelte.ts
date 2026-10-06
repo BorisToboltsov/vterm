@@ -1,8 +1,36 @@
 // Terminal-tabs store (Svelte 5 runes): owns the list of open connection tabs
-// and which one is active, plus the operations that mutate them. Connection /
-// secret orchestration stays in the page; this store is pure tab bookkeeping.
+// and where each one stands in the centre — the tree of panes (`../splitlayout.ts`)
+// and the pane in focus. Connection / secret orchestration stays in the page;
+// this store is pure tab bookkeeping.
+//
+// **"The active tab" is the tab shown by the pane in focus** (v1.2). It is derived
+// from the layout, never stored: with two terminals side by side "the tab on
+// screen" is no longer one tab, and a second, writable `activeId` would be free to
+// disagree with the tree. Everything that follows one session — the docks, the
+// status bar, the assistant's context — reads `tabsState.activeId`; whoever wants
+// to change it calls `activateTab` / `focusPane`.
+//
+// The layout is only ever replaced with a result of the pure model
+// (`centerlayout.guard`). It is not persisted: tabs are not restored on restart,
+// so there is nothing for a saved centre to hold.
 
 import { t } from "../i18n";
+import {
+  activateTab as activateTabIn,
+  activeTab as activeTabIn,
+  addTab,
+  applyDrop,
+  emptyLayout,
+  focusPane as focusPaneIn,
+  joinPanes as joinPanesIn,
+  moveTab as moveTabIn,
+  removeTab,
+  setRatio,
+  splitWithTab,
+  type CenterLayout,
+  type Edge,
+  type TabDrop,
+} from "../splitlayout";
 import type { TabAttach } from "../tabattach";
 
 export interface Tab {
@@ -196,15 +224,38 @@ export function nextTabIndex(current: number, len: number, key: string): number 
   }
 }
 
-export const tabsState = $state<{ list: Tab[]; activeId: string | null }>({
-  list: [],
-  activeId: null,
-});
+let list = $state<Tab[]>([]);
+// Raw: the tree is replaced whole by the pure model, never edited in place.
+let center = $state.raw<CenterLayout>(emptyLayout());
+
+export const tabsState = {
+  /**
+   * Every open tab, in the order they were opened. Which pane a tab is in and
+   * where it stands in that pane's strip is the layout's business (`center`).
+   */
+  get list(): Tab[] {
+    return list;
+  },
+  /** The centre: the tree of panes and the pane in focus. */
+  get center(): CenterLayout {
+    return center;
+  },
+  /** The session in focus — the tab shown by the focused pane; null for an empty pane. */
+  get activeId(): string | null {
+    return activeTabIn(center);
+  },
+};
+
+/** Close everything and forget the layout (tests). */
+export function resetTabs(): void {
+  list = [];
+  center = emptyLayout();
+}
 
 export const findTab = (sessionId: string | null): Tab | null =>
-  tabsState.list.find((t) => t.sessionId === sessionId) ?? null;
+  list.find((t) => t.sessionId === sessionId) ?? null;
 
-/** Open a new tab for `serverId` and make it active; returns its sessionId. */
+/** Open a new tab for `serverId` in the focused pane and show it; returns its sessionId. */
 export function openTab(
   serverId: string,
   alias: string,
@@ -223,8 +274,8 @@ export function openTab(
     gen: 0,
     attach,
   };
-  tabsState.list = [...tabsState.list, tab];
-  tabsState.activeId = tab.sessionId;
+  list = [...list, tab];
+  center = addTab(center, tab.sessionId);
   return tab.sessionId;
 }
 
@@ -241,14 +292,14 @@ export function openLocalTab(attach?: TabAttach): string {
     gen: 0,
     attach,
   };
-  tabsState.list = [...tabsState.list, tab];
-  tabsState.activeId = tab.sessionId;
+  list = [...list, tab];
+  center = addTab(center, tab.sessionId);
   return tab.sessionId;
 }
 
 /**
- * Remove a tab from the list; if it was active, focus the neighbour that takes
- * its slot.
+ * Remove a tab from the list and from its pane; the pane shows the neighbour
+ * that takes its slot, and a pane left empty goes with it.
  *
  * **This is the list operation only — not "close a session".** A tab owns state
  * in other stores (workspace/editors, AI conversation, broadcast membership) and
@@ -259,18 +310,14 @@ export function openLocalTab(attach?: TabAttach): string {
  * was exactly how server deletion bypassed the teardown.
  */
 export function closeTab(sessionId: string): void {
-  const idx = tabsState.list.findIndex((t) => t.sessionId === sessionId);
-  if (idx === -1) return;
-  tabsState.list = tabsState.list.filter((t) => t.sessionId !== sessionId);
-  if (tabsState.activeId === sessionId) {
-    tabsState.activeId =
-      tabsState.list[idx]?.sessionId ?? tabsState.list[idx - 1]?.sessionId ?? null;
-  }
+  if (!list.some((t) => t.sessionId === sessionId)) return;
+  list = list.filter((t) => t.sessionId !== sessionId);
+  center = removeTab(center, sessionId);
 }
 
 /** Re-open a tab's connection in place (reuses its credentials). */
 export function reconnectTab(sessionId: string): void {
-  tabsState.list = tabsState.list.map((t) =>
+  list = list.map((t) =>
     t.sessionId === sessionId
       ? { ...t, status: "Connecting…", gen: t.gen + 1 }
       : t,
@@ -280,19 +327,48 @@ export function reconnectTab(sessionId: string): void {
 /** Set a tab's status from a raw status + detail. */
 export function setTabStatus(sessionId: string, st: TabStatus, detail?: string): void {
   const label = statusLabel(st, detail);
-  tabsState.list = tabsState.list.map((t) =>
-    t.sessionId === sessionId ? { ...t, status: label } : t,
-  );
+  list = list.map((t) => (t.sessionId === sessionId ? { ...t, status: label } : t));
 }
 
-/** Move the dragged tab so it sits at index `to` (used by drag-to-reorder). */
-export function moveTab(sessionId: string, to: number): void {
-  const from = tabsState.list.findIndex((t) => t.sessionId === sessionId);
-  if (from === -1 || to < 0 || to >= tabsState.list.length || from === to) return;
-  const next = [...tabsState.list];
-  const [moved] = next.splice(from, 1);
-  next.splice(to, 0, moved);
-  tabsState.list = next;
+// ── The centre: panes and focus ──────────────────────────────────────────────
+
+/** Show a tab in its pane and give that pane the focus. */
+export function activateTab(sessionId: string): void {
+  center = activateTabIn(center, sessionId);
+}
+
+/** Give a pane the focus (a click or a keystroke inside it). */
+export function focusPane(paneId: string): void {
+  center = focusPaneIn(center, paneId);
+}
+
+/** Move a tab to a pane (or reorder it in its own); `index` omitted = last. */
+export function moveTabTo(sessionId: string, paneId: string, index?: number | null): void {
+  center = moveTabIn(center, sessionId, paneId, index);
+}
+
+/** Drop a dragged tab where the pointer left it. */
+export function dropTab(sessionId: string, drop: TabDrop): void {
+  center = applyDrop(center, sessionId, drop);
+}
+
+/**
+ * Move a tab into a new pane at `edge` of pane `paneId` — the only way a pane
+ * comes to be. A pane goes when its last tab leaves; there is no empty pane to
+ * open or close.
+ */
+export function splitTabOff(sessionId: string, paneId: string, edge: Edge): void {
+  center = splitWithTab(center, sessionId, paneId, edge);
+}
+
+/** Undo every split: all tabs back in one pane. */
+export function joinPanes(): void {
+  center = joinPanesIn(center);
+}
+
+/** Resize the two halves of a split. */
+export function setSplitRatio(splitId: string, ratio: number): void {
+  center = setRatio(center, splitId, ratio);
 }
 
 /**
@@ -305,5 +381,5 @@ export function moveTab(sessionId: string, to: number): void {
  * the rows and leaked everything else.
  */
 export function tabsForServer(serverId: string): string[] {
-  return tabsState.list.filter((t) => t.serverId === serverId).map((t) => t.sessionId);
+  return list.filter((t) => t.serverId === serverId).map((t) => t.sessionId);
 }

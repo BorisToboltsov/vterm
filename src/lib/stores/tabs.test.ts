@@ -1,31 +1,45 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  activateTab,
   closeTab,
   tabsForServer,
   dotClass,
+  dropTab,
   findTab,
+  focusPane,
   dockConnection,
   isLive,
   isMonitorable,
+  joinPanes,
   localizedStatus,
   monitoredSessionId,
-  moveTab,
+  moveTabTo,
   newTabAction,
   nextTabIndex,
   openTab,
   openLocalTab,
   reconnectTab,
+  resetTabs,
   serverDots,
+  setSplitRatio,
   setTabStatus,
+  splitTabOff,
   statusLabel,
   tabsState,
 } from "./tabs.svelte";
+import { layoutProblems, panes } from "../splitlayout";
 import { settings } from "../settings.svelte";
 
-beforeEach(() => {
-  tabsState.list = [];
-  tabsState.activeId = null;
-});
+beforeEach(resetTabs);
+
+/** Tabs per pane, in reading order. */
+const shape = () => panes(tabsState.center).map((p) => p.tabs);
+/** The store's two halves agree: the layout holds exactly the open tabs. */
+const sound = () =>
+  layoutProblems(
+    tabsState.center,
+    tabsState.list.map((t) => t.sessionId),
+  );
 
 describe("pure helpers", () => {
   it("statusLabel maps raw status", () => {
@@ -185,7 +199,7 @@ describe("openTab / closeTab", () => {
     const a = openTab("s", "A", null, false);
     const b = openTab("s", "B", null, false);
     const c = openTab("s", "C", null, false);
-    tabsState.activeId = b;
+    activateTab(b);
     closeTab(b);
     // Slot b is taken by c.
     expect(tabsState.activeId).toBe(c);
@@ -217,20 +231,98 @@ describe("setTabStatus / reconnectTab", () => {
   });
 });
 
-describe("moveTab", () => {
-  it("reorders the dragged tab to a new index", () => {
-    const a = openTab("s", "A", null, false);
-    const b = openTab("s", "B", null, false);
-    const c = openTab("s", "C", null, false);
-    moveTab(a, 2);
-    expect(tabsState.list.map((t) => t.sessionId)).toEqual([b, c, a]);
+describe("the centre: panes and focus", () => {
+  const open3 = () => [
+    openTab("s", "A", null, false),
+    openTab("s", "B", null, false),
+    openTab("s", "C", null, false),
+  ];
+
+  it("the list keeps the order tabs were opened in; the strip order is the layout's", () => {
+    const [a, b, c] = open3();
+    moveTabTo(a, tabsState.center.focus, 2);
+    expect(shape()).toEqual([[b, c, a]]);
+    expect(tabsState.list.map((t) => t.sessionId)).toEqual([a, b, c]);
+    // A reorder changes neither the shown tab nor anything else.
+    expect(tabsState.activeId).toBe(c);
   });
-  it("ignores out-of-range / no-op moves", () => {
-    const a = openTab("s", "A", null, false);
-    const b = openTab("s", "B", null, false);
-    moveTab(a, 0);
-    moveTab(a, 9);
-    expect(tabsState.list.map((t) => t.sessionId)).toEqual([a, b]);
+
+  it("activeId is the tab shown by the pane in focus", () => {
+    const [a, b, c] = open3();
+    const left = tabsState.center.focus;
+    splitTabOff(c, left, "right");
+    expect(shape()).toEqual([[a, b], [c]]);
+    expect(tabsState.activeId).toBe(c);
+    // Focusing the other pane changes who is active without touching the tabs.
+    focusPane(left);
+    expect(tabsState.activeId).toBe(b);
+    activateTab(a);
+    expect(tabsState.activeId).toBe(a);
+    expect(sound()).toEqual([]);
+  });
+
+  it("a new tab opens in the pane in focus", () => {
+    const [a, b, c] = open3();
+    splitTabOff(c, tabsState.center.focus, "right");
+    const d = openLocalTab();
+    expect(shape()).toEqual([[a, b], [c, d]]);
+    expect(tabsState.activeId).toBe(d);
+    activateTab(a);
+    const e = openTab("s", "E", null, false);
+    expect(shape()).toEqual([[a, b, e], [c, d]]);
+    expect(sound()).toEqual([]);
+  });
+
+  it("a new tab can be opened straight into a new pane, in one step", () => {
+    // What ⌘D does: the tab is opened and split off before anything is drawn,
+    // so there is never an empty pane on screen.
+    const [a, b, c] = open3();
+    const anchor = tabsState.center.focus;
+    const d = openLocalTab();
+    splitTabOff(d, anchor, "bottom");
+    expect(shape()).toEqual([[a, b, c], [d]]);
+    expect(tabsState.activeId).toBe(d);
+    expect(sound()).toEqual([]);
+  });
+
+  it("closing a pane's last tab removes the pane", () => {
+    const [a, b, c] = open3();
+    splitTabOff(c, tabsState.center.focus, "bottom");
+    closeTab(c);
+    expect(shape()).toEqual([[a, b]]);
+    expect(tabsState.activeId).toBe(b);
+    expect(sound()).toEqual([]);
+  });
+
+  it("joining brings every tab back to one pane", () => {
+    const [a, b, c] = open3();
+    const first = tabsState.center.focus;
+    splitTabOff(a, first, "left");
+    expect(shape()).toEqual([[a], [b, c]]);
+    joinPanes();
+    expect(shape()).toEqual([[a, b, c]]);
+    expect(tabsState.activeId).toBe(a);
+  });
+
+  it("drops a dragged tab and resizes a split", () => {
+    const [a, b, c] = open3();
+    const first = tabsState.center.focus;
+    dropTab(c, { kind: "pane", pane: first, zone: "right" });
+    expect(shape()).toEqual([[a, b], [c]]);
+    const root = tabsState.center.root;
+    setSplitRatio(root.id, 0.3);
+    const after = tabsState.center.root;
+    expect(after.kind === "split" && after.ratio).toBe(0.3);
+    dropTab(c, { kind: "strip", pane: first, index: 0 });
+    expect(shape()).toEqual([[c, a, b]]);
+  });
+
+  it("closing an unknown tab changes nothing", () => {
+    open3();
+    const before = tabsState.center;
+    closeTab("nope");
+    expect(tabsState.center).toBe(before);
+    expect(tabsState.list).toHaveLength(3);
   });
 });
 

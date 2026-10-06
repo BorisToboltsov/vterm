@@ -54,6 +54,9 @@
   const hotkeys: [MessageKey, string, MessageKey?][] = [
     ["help.hkCommandPalette", "⌘K  /  Ctrl+Shift+K"],
     ["help.hkNewTab", "⌘T  /  Ctrl+Shift+T"],
+    ["help.hkSplitRight", "⌘D  /  Ctrl+Shift+D"],
+    ["help.hkSplitDown", "⌘⇧D  /  Ctrl+Shift+E"],
+    ["help.hkNextPane", "⌘]  ⌘[  /  Ctrl+Shift+]  ["],
     ["help.hkSearch", "⌘F  /  Ctrl+Shift+F"],
     ["help.hkHistory", "Ctrl+R"],
     ["help.hkCopySelection", "⌘C  /  Ctrl+Shift+C"],
@@ -61,6 +64,7 @@
     ["help.hkInterrupt", "Ctrl+C"],
     ["help.hkConnect", "", "help.hkConnectKeys"],
     ["help.hkReorder", "", "help.hkReorderKeys"],
+    ["help.hkSplitDrag", "", "help.hkSplitDragKeys"],
   ];
 </script>
 

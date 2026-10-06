@@ -39,7 +39,8 @@
 > Вручную то же самое для уже установленного бандла:
 > `xattr -dr com.apple.quarantine /Applications/vterm.app`. Это обход на стороне
 > получателя — прогнать нужно каждому, кому отдаёте сборку; предупреждения совсем
-> убирает только подпись Developer ID + нотаризация (Фаза 15, [ROADMAP.md](ROADMAP.md)).
+> убрала бы только подпись Developer ID + нотаризация, а её не будет
+> ([ROADMAP.md](ROADMAP.md), фаза 16).
 
 **Portable — это про один файл, а не про переносимое состояние.** Нужен системный
 **WebView2 Runtime** (см. [ниже](#webview2-runtime-на-windows)), а профили
@@ -103,8 +104,8 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 Это **не замена подписи разработчика**: Gatekeeper и SmartScreen проверяют совсем
 другое и о provenance не знают. Но на вопрос «те ли это байты, что вышли из сборки»
-он отвечает точно — а подпись Developer ID и нотаризация остаются в планах
-(Фаза 15, [ROADMAP.md](ROADMAP.md)).
+он отвечает точно — а подписи Developer ID и нотаризации у сборок нет и не будет
+([ROADMAP.md](ROADMAP.md), фаза 16).
 
 **Состав поставки.** `vterm-sbom.cdx.json` — SBOM в формате CycloneDX: полный список
 зависимостей обеих экосистем, если вашей стороне нужно прогнать его своим сканером.
@@ -253,9 +254,9 @@ Invoke-WebRequest $url -OutFile webview2.cab
 node scripts/webview2-runtime.mjs embed src-tauri/target/release/vterm.exe webview2.cab $ver vterm-full.exe
 ```
 
-> Сборки не подписаны. Для распространения без предупреждений ОС нужны Apple Developer
-> ID + нотаризация (macOS) и code-signing сертификат (Windows) — Фаза 15, см.
-> [ROADMAP.md](ROADMAP.md).
+> Сборки не подписаны и подписываться не будут ([ROADMAP.md](ROADMAP.md), фаза 16): для
+> распространения без предупреждений ОС нужны Apple Developer ID + нотаризация (macOS) и
+> code-signing сертификат (Windows).
 
 ---
 

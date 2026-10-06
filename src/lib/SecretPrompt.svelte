@@ -18,29 +18,45 @@
   // only after authentication succeeds, so a mistyped secret is never stored.
   let remember = $state(true);
   let error = $state("");
+  // What the caller wants done with the tab once it exists (e.g. put it in a new
+  // pane). Dropped with the prompt: a cancelled connection places nothing.
+  let opened: ((sessionId: string) => void) | undefined;
 
   /** Open the prompt for `server`. `label` is "Password" | "Passphrase" (from the
-   *  connect plan); `error` shows a red banner when re-prompting after a rejection. */
-  export function prompt(server: ServerProfile, secretLabel: string, secretError = "") {
+   *  connect plan); `error` shows a red banner when re-prompting after a rejection;
+   *  `onopened` is called with the new tab's session id if the user connects. */
+  export function prompt(
+    server: ServerProfile,
+    secretLabel: string,
+    secretError = "",
+    onopened?: (sessionId: string) => void,
+  ) {
     target = server;
     label = secretLabel;
     value = "";
     remember = true;
     error = secretError;
+    opened = onopened;
+  }
+
+  function close() {
+    target = null;
+    opened = undefined;
   }
 
   function submit(event: Event) {
     event.preventDefault();
     if (!target) return;
-    openTab(target.id, target.alias, value, remember);
-    target = null;
+    const sessionId = openTab(target.id, target.alias, value, remember);
+    opened?.(sessionId);
+    close();
     value = "";
     remember = true;
   }
 </script>
 
 <!-- Secret prompt (password or key passphrase) -->
-<Modal open={!!target} title={t("page.secretTitle")} onclose={() => (target = null)}>
+<Modal open={!!target} title={t("page.secretTitle")} onclose={close}>
   {#if target}
     <form onsubmit={submit}>
       <p class="mb-3 text-xs text-muted">
@@ -61,7 +77,7 @@
         <button
           type="button"
           class="rounded px-3 py-1 text-sm text-muted hover:text-text"
-          onclick={() => (target = null)}>{t("common.cancel")}</button
+          onclick={close}>{t("common.cancel")}</button
         >
         <button
           type="submit"
