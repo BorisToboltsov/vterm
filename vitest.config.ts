@@ -67,7 +67,10 @@ export default defineConfig({
         "src/lib/AiSettingsSection.svelte",
         // AI chat dock — event-stream glue over the broker (Phase 17.2).
         "src/lib/AiChat.svelte",
-        "src/lib/RightDock.svelte",
+        // The switch that picks a session tool panel for an id (v1.1) — every
+        // branch is one of the excluded shells above/below. The dock chrome
+        // around it (Dock.svelte) and the layout model (docklayout.ts) ARE covered.
+        "src/lib/DockPanel.svelte",
         // Git panel (Phase 29) — UI shells over git_run + rAF/effects glue. All
         // pure logic (arg builders, status/log/branch/diff parsers, graph lane
         // layout, destructive-op classifier, view helpers) lives in git.ts /

@@ -1,6 +1,6 @@
 <script lang="ts">
   // AI chat content (Phase 17.2 + 17.3). Renders inside the shared right dock
-  // (RightDock) as the "AI" tab — no own collapse/width chrome. Streams the
+  // (Dock.svelte) as the "AI" tab — no own collapse/width chrome. Streams the
   // model's reply over `ai://out|done|error/{streamId}`; the HTTP lives in the
   // Rust broker (ai.rs). Phase 17.3 adds opt-in session context: when "attach
   // context" is on, the terminal selection / buffer / recording / metadata

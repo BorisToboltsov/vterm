@@ -30,6 +30,9 @@
     type DockerInfoKey,
   } from "./docker";
   import type { MenuItem } from "./ctxmenu";
+  import ColumnHead from "./ColumnHead.svelte";
+  import { columnVars } from "./colwidths";
+  import { columns } from "./stores/colwidths.svelte";
   import { t, currentLocale, type MessageKey } from "./i18n";
 
   let {
@@ -70,6 +73,20 @@
     bad: "bg-bad",
     idle: "bg-muted",
   };
+  // The resizable columns of the wide layout → the CSS variables their cells read.
+  const COLS = {
+    "--c-name": "docker.name",
+    "--c-image": "docker.image",
+    "--c-status": "docker.status",
+    "--c-ports": "docker.ports",
+  } as const;
+  // The list's visible height: a column's border can be dragged anywhere along
+  // it, so the grip in the header reaches this far down (ColumnGrip, `--list-h`).
+  let listHeight = $state(0);
+  // A table cell in a wide container: the rule on its right, the row's vertical
+  // padding (the row itself has none there, so the rule runs edge to edge) and
+  // one line height for both text sizes.
+  const CELL = "@wide:border-r @wide:border-edge/40 @wide:py-1.5 @wide:leading-4";
   const INFO_LABEL: Record<DockerInfoKey, MessageKey> = {
     status: "docker.status",
     ports: "docker.ports",
@@ -152,7 +169,30 @@
   }
 </script>
 
-<div class="h-full overflow-auto text-xs">
+<!-- The column widths are CSS variables on the list: the header and every row
+     read the same ones, so dragging a border is one style write, not one per row. -->
+<div
+  class="h-full overflow-auto text-xs"
+  bind:clientHeight={listHeight}
+  style="{columnVars(columns.widths, COLS)}{listHeight > 0 ? `; --list-h: ${listHeight}px` : ''}"
+>
+  <!-- Column titles — only where there are columns, i.e. in a wide container. The
+       header repeats a row's structure (padding, state-dot slot, cells, the
+       metrics box) so its borders stand exactly over the rows' borders, and
+       shrinks the same way when the list is tight. -->
+  <div
+    class="sticky top-0 z-10 hidden items-stretch gap-2 border-b border-edge bg-panel-alt pl-2.5 pr-2 text-meta font-medium text-muted @wide:flex"
+    data-testid="docker-columns"
+  >
+    <span class="w-[7px] shrink-0"></span>
+    <div class="flex min-w-0 flex-1 items-stretch">
+      <ColumnHead col="docker.name" label={t("docker.name")} class="w-[var(--c-name)] pr-2" />
+      <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2" />
+      <ColumnHead col="docker.status" label={t("docker.status")} class="w-[var(--c-status)] px-2" />
+      <ColumnHead col="docker.ports" label={t("docker.ports")} class="w-[var(--c-ports)] px-2" />
+    </div>
+    <span class="w-[104px] shrink-0 self-center truncate text-right">{t("docker.cpu")}</span>
+  </div>
   {#each groups as g (g.project)}
     {#if g.project}
       <!-- Compose project header + group action bar -->
@@ -194,24 +234,33 @@
       {@const cpuNow = parsePercent(stat(c)?.cpu)}
       {@const mem = memUsage(c)}
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 {g.project ? 'pl-5' : 'pl-2.5'}"
+        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:py-0 {g.project ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'}"
         oncontextmenu={(e) => showMenu(e, menuItems(c))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <span class="h-[7px] w-[7px] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
         <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
              two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
              left the image as "ghcr.io/vc…" — the half that says *what is actually
-             running*. Two lines cost 10px of row height and show both. -->
-        <div class="min-w-0 flex-1" use:tooltip={infoTip(c)}>
-          <div class="truncate font-medium text-text/90">{c.name}</div>
-          <div class="truncate text-caption text-muted">{c.image}</div>
+             running*. Two lines cost 10px of row height and show both.
+             In a wide container (v1.1) the row has the room that argument lacked:
+             name and image go side by side as columns, and the status and ports
+             the hover card held come out next to them — one line per container,
+             which is what a short bottom dock needs. There the row is a table
+             row: the cells take the user's column widths and run the full height
+             of the row, so their right borders join into column rules (the
+             compose indent is dropped — every row has to start at the same x). -->
+        <div class="min-w-0 flex-1 @wide:flex @wide:items-stretch" use:tooltip={infoTip(c)}>
+          <div class="truncate font-medium text-text/90 @wide:w-[var(--c-name)] @wide:pr-2 {CELL}">{c.name}</div>
+          <div class="truncate text-caption text-muted @wide:w-[var(--c-image)] @wide:px-2 {CELL}">{c.image}</div>
+          <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-status)] @wide:px-2 {CELL}" data-testid="docker-col-status">{c.status}</div>
+          <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ports)] @wide:px-2 {CELL}" data-testid="docker-col-ports">{c.ports}</div>
         </div>
         <!-- CPU shape and the hover actions share one reserved box, stacked and
              cross-faded. Swapping them with `hidden`/`flex` would resize the row
              under the pointer — the design system's no-reflow rule for hover
              actions. Both layers are absolute, so the reserved width is fixed. -->
-        <div class="relative h-5 w-[104px] shrink-0">
+        <div class="relative h-5 w-[104px] shrink-0 @wide:self-center">
           {#if history.length > 0}
             <div
               class="absolute inset-0 flex items-center justify-end gap-1.5 transition-opacity duration-150 group-hover:opacity-0"

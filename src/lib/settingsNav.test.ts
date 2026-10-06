@@ -40,7 +40,7 @@ describe("settingsNav groups", () => {
 describe("visibleSectionIds", () => {
   it("shows the active group's sections when not searching", () => {
     const ids = visibleSectionIds("", "appearance");
-    expect(ids).toEqual(new Set(["appearance", "cursor", "idle"]));
+    expect(ids).toEqual(new Set(["appearance", "panels", "cursor", "idle"]));
   });
 
   it("blank/whitespace query falls back to the active group", () => {
@@ -73,5 +73,18 @@ describe("groupMatchCounts", () => {
     expect(counts.files).toBeGreaterThanOrEqual(1);
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
     expect(total).toBe(sectionsMatching("editor").size);
+  });
+});
+
+describe("the Panels section", () => {
+  it("lives in Appearance, right after the theme", () => {
+    expect(groupForSection("panels")).toBe("appearance");
+    expect(groupSections("appearance").slice(0, 2)).toEqual(["appearance", "panels"]);
+  });
+
+  it("is found by what the user would type, in both languages", () => {
+    for (const query of ["panels", "dock", "hide", "панели", "скрыть", "раскладка", "kubernetes"]) {
+      expect(sectionsMatching(query), query).toContain("panels");
+    }
   });
 });

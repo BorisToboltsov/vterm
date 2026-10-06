@@ -1,7 +1,7 @@
 // Overlay stacking guard (Phase 18.4): a full-screen overlay (`fixed inset-0`,
 // used for modal backdrops / dialogs / drag shields) MUST carry an explicit
 // z-index. Without one it renders at `z-auto` and, once its owning panel is
-// embedded inside another stacking context (e.g. SftpPanel inside RightDock),
+// embedded inside another stacking context (e.g. SftpPanel inside a dock),
 // higher-z siblings paint over it — the overlay stays visible but its buttons
 // become unclickable. This exact bug shipped in SftpPanel's hand-rolled delete
 // dialog; the fix was to use the shared <Modal>/<ConfirmDialog> (which set z-40).

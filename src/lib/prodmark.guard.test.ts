@@ -102,7 +102,10 @@ describe("production marking guard", () => {
         src.replace(
           "? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`",
           "? 'bg-panel text-text'",
-        ).replace("data-tab\n", "data-tab\n            class:shadow-[inset_0_2px_0_0_var(--color-bad)]={prodTabIds.has(tab.sessionId)}\n"),
+        ).replace(
+          "data-tab={tab.sessionId}\n",
+          "data-tab={tab.sessionId}\n            class:shadow-[inset_0_2px_0_0_var(--color-bad)]={prodTabIds.has(tab.sessionId)}\n",
+        ),
       ),
     ).toEqual(
       expect.arrayContaining([

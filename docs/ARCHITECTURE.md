@@ -106,14 +106,14 @@
 | Слой | Где | Правило |
 |------|-----|---------|
 | Оркестратор | [+page.svelte](../src/routes/+page.svelte) | Вкладки, доки, модалки, маршрутизация событий. Единственный, кто знает про всё сразу |
-| Компоненты | `src/lib/*.svelte` (91) | Панели, модалки, примитивы (`Modal`, `ConfirmDialog`, `ContextMenu`, `PasswordInput`, `Icon`, `CopyButton`) |
-| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout`, `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `syncjob` (синхронизация сессии: форма, план, сравнение/прогон — переживает закрытие окна), `recordings`, `toasts`, `hostenv`, `dockstate` (что панели правого дока помнят по `sessionId`, в т.ч. общий рабочий каталог дока, который читает git); настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
-| Чистая логика | `src/lib/*.ts` (89) | Сборка argv, парсеры, валидация, раскладки. Без DOM и сети → тесты дешёвые |
+| Компоненты | `src/lib/*.svelte` (103) | Панели, модалки, примитивы (`Modal`, `ConfirmDialog`, `ContextMenu`, `PasswordInput`, `Icon`, `CopyButton`) |
+| Состояние | `src/lib/stores/*.svelte.ts` | Руны: `tabs`, `layout` (раскладка доков: кто в каком доке, размеры, сворачивание — сохраняется), `dockdrag` (перетаскивание вкладки панели), `colwidths` (ширины колонок списков Docker и k8s — сохраняются), `workspaces`, `aichat`, `broadcast`, `transfers`, `syncrun`, `syncjob` (синхронизация сессии: форма, план, сравнение/прогон — переживает закрытие окна), `recordings`, `toasts`, `hostenv`, `dockstate` (что панели доков помнят по `sessionId`, в т.ч. общий рабочий каталог дока, который читает git); настройки — [settings.svelte.ts](../src/lib/settings.svelte.ts) |
+| Чистая логика | `src/lib/*.ts` (110) | Сборка argv, парсеры, валидация, раскладки. Без DOM и сети → тесты дешёвые |
 | API | [src/lib/api/](../src/lib/api/) | `core`/`servers`/`session`/`files`/`git`/`container`/`kube`/`probe`/`recording`/`ai` + barrel |
-| Действия | `src/lib/actions/` | `drag`, `tooltip`, `mdlinks`, `clipboardKeys` |
+| Действия | `src/lib/actions/` | `drag` (ресайз-ручка, `layoutBox`/`slotIndex` для перетаскивания вкладок, анимация `glide`), `tooltip`, `mdlinks`, `clipboardKeys` |
 | i18n | [src/lib/i18n/](../src/lib/i18n/) | `locales` (реестр) · `messages` (`en` канонический) · `translate` (чистые resolve/interpolate) · `index` (`t()` реактивен от `settings.language`) |
 
-Самые крупные компоненты — `+page.svelte` (2.6k строк, оркестратор), `FileBrowser` (общее
+Самые крупные компоненты — `+page.svelte` (3.0k строк, оркестратор), `FileBrowser` (общее
 тело обеих файловых панелей), `MonitoringOverlay`, `Terminal`, `EditorTab`.
 
 ## Бэкенд: модули
@@ -157,6 +157,7 @@
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact` |
 | **Утилиты** | `keygen.rs`, `store.rs` (known_hosts), `netcheck.rs` | `generate_ssh_key`, `list_known_hosts`, `remove_known_host`, `netcheck_run` | `UtilitiesPanel` + `Util*.svelte` (`UtilNetCheck`) | `utilities`, `netcheck` (+ стор `stores/netcheck`), `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
 | **Оформление** | — | `set_menu_language` · `arm_close_guard` · `quit_app` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel`, `QuitDialog` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav`, `quitsummary` |
+| **Раскладка (доки)** | — (всё на фронте; `vterm.layout` в `localStorage`) | — | `Dock` (три экземпляра: левый, правый, нижний), `DockPanel` (выбор сессионной панели по id), `DockDragGhost`; панели приходят сниппетом `dockPanel` из `+page.svelte`. `ColumnHead` + `ColumnGrip` — заголовок колонки и её перетаскиваемая граница (ручка общая с таблицей логов); `PanelsSettings` — секция «Панели» настроек (скрытие панелей) | `docklayout` (модель: `loadDocks`, `movePanel`, `revealPanel`, `shownPanel`, предпросмотр перетаскивания `previewPanels`, скрытые панели), `dockui` (подписи вкладок, меню вкладки: перенос и скрытие), `colwidths` (ширины колонок: арифметика, санитайзер; ею же пользуется таблица логов) + сторы `stores/layout`, `stores/dockdrag`, `stores/colwidths` |
 | **Оконное обрамление** | `lib.rs` `setup` (снятие декораций non-macOS) | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
 
 ---
@@ -170,8 +171,8 @@ vterm/
 │   ├── app.css                 # токены @theme, глобальные правила
 │   ├── app.html                # первый кадр темы, style-nonce для CodeMirror
 │   └── lib/
-│       ├── *.svelte            # компоненты и панели (92)
-│       ├── *.ts                # чистая логика (90) + тесты рядом
+│       ├── *.svelte            # компоненты и панели (103)
+│       ├── *.ts                # чистая логика (110) + тесты рядом
 │       ├── api/                # типизированные обёртки invoke()
 │       ├── stores/             # состояние в рунах
 │       ├── actions/            # drag · tooltip · mdlinks · clipboardKeys

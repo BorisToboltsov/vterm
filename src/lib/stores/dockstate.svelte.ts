@@ -1,15 +1,16 @@
-// Per-session right-dock state (v1.0.14).
+// Per-session dock state (v1.0.14).
 //
 // Why this store exists. The dock's panels used to be destroyed on every switch —
-// `{#key activeTab}` inside RightDock for a dock-tab switch, `{#key activeId}`
+// `{#key activeTab}` inside the dock for a dock-tab switch, `{#key activeId}`
 // around the whole dock for a terminal-tab switch. Component-local `$state` dies
 // with the component, so coming back meant: the SFTP panel offering its Connect
 // button again (the SFTP channel itself was still open on the session — see
 // `SshSession::sftp`, which caches it until `disconnect`), the file panel jumping
 // back to home, and the k8s panel forgetting the context/namespace the user had
-// picked. Not remounting on a dock-tab switch (RightDock keeps visited panels
+// picked. Not remounting on a dock-tab switch (Dock.svelte keeps visited panels
 // mounted) fixes the first half; this store carries the rest across the terminal-tab
-// switch, which does remount.
+// switch — which does rebuild the session panels — and, since v1.1, across a move
+// of the panel to another dock, which rebuilds it too.
 //
 // Deliberately small: only what a user would have to redo by hand. Scroll offsets,
 // selections and open modals are not worth persisting — they are cheap to recreate

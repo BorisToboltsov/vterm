@@ -438,7 +438,9 @@
   });
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-xs">
+<!-- `@container`: the panel lays itself out by its own width (`@wide:`), so one
+     component serves a narrow side dock and the full-width bottom dock. -->
+<div class="@container flex h-full min-h-0 flex-col text-xs">
   {#if !sessionReady}
     <EmptyState icon="container" title={t("docker.checking")} />
   {:else if availability === null}
@@ -463,35 +465,41 @@
       </button>
     </EmptyState>
   {:else}
-    <!-- Toolbar -->
-    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
-      <Icon name="container" size={15} class="text-accent" />
-      <div class="min-w-0 flex-1">
-        <div class="font-medium text-text/90">{t("docker.panelTitle")}</div>
-        <div class="truncate text-caption text-muted">{t("docker.serverVersion", { version: availability.version })}</div>
+    <!-- Header: title and actions on one line, sub-tabs under them. In a wide
+         container the three share a single row — there the panel has width to
+         spare and little height. -->
+    <div class="flex flex-wrap items-center border-b border-edge @wide:flex-nowrap" data-testid="docker-header">
+      <div class="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2 @wide:flex-none @wide:pr-3">
+        <Icon name="container" size={15} class="shrink-0 text-accent" />
+        <div class="min-w-0 flex-1">
+          <div class="font-medium text-text/90">{t("docker.panelTitle")}</div>
+          <div class="truncate text-caption text-muted">{t("docker.serverVersion", { version: availability.version })}</div>
+        </div>
       </div>
-      {#if registries.length > 0}
-        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.registryLogin")} aria-label={t("docker.registryLogin")} onclick={openLoginMenu}>
-          <Icon name="key" size={14} />
+      <div class="flex shrink-0 items-center gap-1.5 py-1.5 pl-1.5 pr-2 @wide:order-3 @wide:ml-auto">
+        {#if registries.length > 0}
+          <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.registryLogin")} aria-label={t("docker.registryLogin")} onclick={openLoginMenu}>
+            <Icon name="key" size={14} />
+          </button>
+        {/if}
+        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => refresh()}>
+          <Icon name="refresh" size={14} />
         </button>
-      {/if}
-      <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => refresh()}>
-        <Icon name="refresh" size={14} />
-      </button>
-    </div>
+      </div>
 
-    <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-meta">
-      {#each SUBS as s (s.id)}
-        <button
-          data-testid={`docker-subtab-${s.id}`}
-          class="flex-1 border-b-2 py-1.5 text-center {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
-          aria-current={activeSub === s.id ? "true" : undefined}
-          onclick={() => (activeSub = s.id)}
-        >
-          {s.label}
-        </button>
-      {/each}
+      <!-- Sub-tabs -->
+      <div class="flex basis-full border-t border-edge text-meta @wide:order-2 @wide:basis-auto @wide:self-stretch @wide:border-t-0">
+        {#each SUBS as s (s.id)}
+          <button
+            data-testid={`docker-subtab-${s.id}`}
+            class="flex-1 border-b-2 py-1.5 text-center @wide:flex-none @wide:px-4 {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
+            aria-current={activeSub === s.id ? "true" : undefined}
+            onclick={() => (activeSub = s.id)}
+          >
+            {s.label}
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Active sub-view -->

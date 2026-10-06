@@ -19,7 +19,7 @@
     type LevelCat,
   } from "./jsonlog";
   import { tooltip } from "./actions/tooltip";
-  import { resizableHandle } from "./actions/drag";
+  import ColumnGrip from "./ColumnGrip.svelte";
   import Icon from "./Icon.svelte";
   import EmptyState from "./EmptyState.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
@@ -47,18 +47,23 @@
   // "x:<field>" for user-added columns. Empty = use defaults. The grip captures
   // the column's start width on pointerdown, then sets the new width on move.
   let colWidths = $state<Record<string, number>>({});
-  let resizingCol = $state<string | null>(null);
   let resizeStartW = 0;
   const EXPAND_W = 28;
+  // Visible height of the table's scroller: a column's border can be dragged
+  // anywhere along it, so each header grip reaches this far down (ColumnGrip).
+  let listHeight = $state(0);
 
   function startColResize(key: string, fallback: number) {
-    resizingCol = key;
     resizeStartW = colWidth(colWidths, key, fallback);
   }
   function onColResize(key: string, dx: number) {
     colWidths = { ...colWidths, [key]: resizedWidth(resizeStartW, dx) };
   }
-  const endColResize = () => (resizingCol = null);
+  /** Double click on a border: the column goes back to its default width. */
+  function resetColWidth(key: string) {
+    const { [key]: _dropped, ...rest } = colWidths;
+    colWidths = rest;
+  }
 
   const totalWidth = $derived(
     EXPAND_W +
@@ -229,23 +234,22 @@
     </div>
   {:else}
     {#snippet grip(key: string, fallback: number)}
-      <!-- Drag-to-resize gutter on the column's right edge. Mouse-only, so it is
-           hidden from the a11y tree (kept out of the column header's name). -->
-      <div
-        aria-hidden="true"
-        use:tooltip={t("jsonlog.resizeColumn")}
-        class="absolute right-0 top-0 z-10 h-full w-1 cursor-col-resize hover:bg-accent {resizingCol ===
-        key
-          ? 'bg-accent'
-          : ''}"
-        use:resizableHandle={{
-          onStart: () => startColResize(key, fallback),
-          onResize: (dx) => onColResize(key, dx),
-          onEnd: endColResize,
-        }}
-      ></div>
+      <!-- The column's draggable border: in the header cell, reaching down over
+           the rows (shared with the dock lists). -->
+      <ColumnGrip
+        testid={`jsonlog-grip-${key}`}
+        onstart={() => startColResize(key, fallback)}
+        onresize={(dx) => onColResize(key, dx)}
+        onreset={() => resetColWidth(key)}
+      />
     {/snippet}
-    <div bind:this={scroller} onscroll={onScroll} class="min-h-0 flex-1 overflow-auto">
+    <div
+      bind:this={scroller}
+      bind:clientHeight={listHeight}
+      onscroll={onScroll}
+      class="min-h-0 flex-1 overflow-auto"
+      style={listHeight > 0 ? `--list-h: ${listHeight}px` : undefined}
+    >
       <table class="table-fixed border-collapse text-xs" style="width:{totalWidth}px">
         <colgroup>
           <col style="width:{EXPAND_W}px" />
@@ -269,8 +273,9 @@
               {t("jsonlog.colMessage")}{@render grip("message", COL_WIDTHS.message)}
             </th>
             {#each extraColumns as col}
-              <th class="relative truncate px-2 py-1 text-left font-mono font-medium" title={col}>
-                {col}{@render grip(`x:${col}`, COL_EXTRA_DEFAULT)}
+              <!-- The cell itself must not clip: the grip overflows it downwards. -->
+              <th class="relative px-2 py-1 text-left font-mono font-medium" title={col}>
+                <span class="block truncate">{col}</span>{@render grip(`x:${col}`, COL_EXTRA_DEFAULT)}
               </th>
             {/each}
           </tr>

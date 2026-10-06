@@ -81,7 +81,7 @@ docs/adr/             Architecture Decision Records
 
 ## Версионирование
 
-Схема `0.<фаза>.<фикс>`: вторая цифра — номер фазы (растёт на новой фазе, третья
-сбрасывается в 0), третья — фикс внутри фазы. Держите версию согласованной в
-`package.json`, `src-tauri/Cargo.toml` и `src-tauri/tauri.conf.json`; затем `cargo check`
-для синхронизации `Cargo.lock`.
+Схема `<major>.<minor>.<patch>`: minor — новая функциональность (patch сбрасывается в 0),
+patch — исправление внутри текущего minor. Версия лежит в `package.json` и меняется одной
+командой — `pnpm version:set 1.1.0`; руками остальные файлы не правьте. Подробности — в
+[CLAUDE.md](CLAUDE.md#версионирование).

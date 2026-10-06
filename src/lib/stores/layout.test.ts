@@ -1,60 +1,150 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
+import { defaultDocks, DOCK_BOUNDS, LAYOUT_VERSION } from "../docklayout";
+import { LIST_COLUMNS } from "../colwidths";
+import { resetSettings, settings } from "../settings.svelte";
+import { columnWidth, setColumnWidth } from "./colwidths.svelte";
 import {
-  clamp,
-  LEFT_MAX,
-  LEFT_MIN,
+  activatePanel,
+  isPanelHidden,
   layout,
+  movePanel,
   resetLayout,
-  SFTP_MAX,
+  resetPanelLayout,
+  revealPanel,
+  setDockCollapsed,
+  setDockSize,
+  setPanelHidden,
+  STORAGE_KEY,
+  toggleDock,
 } from "./layout.svelte";
+
+const stored = () => JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
 
 beforeEach(() => {
   localStorage.clear();
   resetLayout();
+  resetSettings();
   flushSync();
 });
 
-describe("clamp", () => {
-  it("bounds a value into [lo, hi]", () => {
-    expect(clamp(5, 0, 10)).toBe(5);
-    expect(clamp(-1, 0, 10)).toBe(0);
-    expect(clamp(99, 0, 10)).toBe(10);
-  });
-});
-
 describe("layout store", () => {
-  it("starts from defaults with SFTP collapsed", () => {
-    expect(layout.leftWidth).toBe(256);
-    expect(layout.leftCollapsed).toBe(false);
-    expect(layout.sftpWidth).toBe(384);
-    expect(layout.sftpCollapsed).toBe(true);
+  it("starts from the default arrangement", () => {
+    expect(layout.docks).toEqual(defaultDocks());
   });
 
-  it("persists widths and left-collapse (but not sftpCollapsed)", () => {
-    layout.leftWidth = 300;
-    layout.leftCollapsed = true;
-    layout.sftpWidth = 500;
-    layout.sftpCollapsed = false;
+  it("persists the whole dock configuration, collapse included", () => {
+    setDockSize("left", 300);
+    setDockCollapsed("right", false);
+    setDockSize("bottom", 333);
     flushSync();
-    const stored = JSON.parse(localStorage.getItem("vterm.layout") ?? "{}");
-    expect(stored.leftWidth).toBe(300);
-    expect(stored.leftCollapsed).toBe(true);
-    expect(stored.sftpWidth).toBe(500);
-    expect("sftpCollapsed" in stored).toBe(false);
+    const s = stored();
+    expect(s.version).toBe(LAYOUT_VERSION);
+    expect(s.docks.left.size).toBe(300);
+    expect(s.docks.right.collapsed).toBe(false);
+    expect(s.docks.bottom.size).toBe(333);
+    expect(s.docks.bottom.panels).toEqual(["docker", "k8s"]);
+  });
+
+  it("moves a panel between docks and persists the move", () => {
+    movePanel("docker", "left");
+    flushSync();
+    expect(layout.docks.left.panels).toEqual(["servers", "docker"]);
+    expect(layout.docks.bottom.panels).toEqual(["k8s"]);
+    expect(stored().docks.left.panels).toEqual(["servers", "docker"]);
+  });
+
+  it("does not replace the value when a move changes nothing", () => {
+    const before = layout.docks;
+    movePanel("servers", "left", 0);
+    expect(layout.docks).toBe(before);
+  });
+
+  it("reveals a panel: its dock opens on it", () => {
+    revealPanel("ai");
+    expect(layout.docks.right.active).toBe("ai");
+    expect(layout.docks.right.collapsed).toBe(false);
+  });
+
+  it("activates a tab without opening a collapsed dock", () => {
+    activatePanel("right", "git");
+    expect(layout.docks.right.active).toBe("git");
+    expect(layout.docks.right.collapsed).toBe(true);
+    // A panel that is not in that dock is ignored.
+    activatePanel("right", "docker");
+    expect(layout.docks.right.active).toBe("git");
+  });
+
+  it("toggles and clamps", () => {
+    toggleDock("bottom");
+    expect(layout.docks.bottom.collapsed).toBe(false);
+    toggleDock("bottom");
+    expect(layout.docks.bottom.collapsed).toBe(true);
+    setDockSize("right", 99999);
+    expect(layout.docks.right.size).toBe(DOCK_BOUNDS.right.max);
+    setDockSize("left", 1);
+    expect(layout.docks.left.size).toBe(DOCK_BOUNDS.left.min);
+  });
+
+  it("resets to the default arrangement", () => {
+    movePanel("ai", "bottom");
+    setDockSize("left", 400);
+    resetLayout();
+    expect(layout.docks).toEqual(defaultDocks());
   });
 });
 
-describe("layout load() clamping", () => {
-  it("clamps persisted widths back into range and forces SFTP collapsed", () => {
-    // Simulate a corrupt/out-of-range persisted layout, then reload via reset+set.
-    localStorage.setItem(
-      "vterm.layout",
-      JSON.stringify({ leftWidth: 9999, sftpWidth: 1, leftCollapsed: true }),
-    );
-    // The module-level `layout` was loaded at import; assert the clamp helper and
-    // bounds are wired to the same constants the loader uses.
-    expect(clamp(9999, LEFT_MIN, LEFT_MAX)).toBe(LEFT_MAX);
-    expect(clamp(1, 240, SFTP_MAX)).toBe(240);
+describe("hidden panels", () => {
+  it("hides and brings back a panel through the settings", () => {
+    expect(isPanelHidden("docker")).toBe(false);
+    setPanelHidden("docker", true);
+    expect(settings.hiddenPanels).toEqual(["docker"]);
+    expect(isPanelHidden("docker")).toBe(true);
+    setPanelHidden("docker", false);
+    expect(settings.hiddenPanels).toEqual([]);
+  });
+
+  it("does not hide the server tree", () => {
+    setPanelHidden("servers", true);
+    expect(settings.hiddenPanels).toEqual([]);
+    expect(isPanelHidden("servers")).toBe(false);
+  });
+
+  it("leaves the layout alone — the panel keeps its dock and its place", () => {
+    const before = layout.docks;
+    setPanelHidden("git", true);
+    expect(layout.docks).toBe(before);
+    expect(layout.docks.right.panels).toEqual(["files", "git", "ai"]);
+  });
+
+  it("does not replace the list when nothing changes", () => {
+    setPanelHidden("git", true);
+    const list = settings.hiddenPanels;
+    setPanelHidden("git", true);
+    expect(settings.hiddenPanels).toBe(list);
+  });
+
+  it("does not reveal a hidden panel — an indicator must not undo the setting", () => {
+    setPanelHidden("ai", true);
+    revealPanel("ai");
+    expect(layout.docks.right.collapsed).toBe(true);
+    expect(layout.docks.right.active).toBe("files");
+    setPanelHidden("ai", false);
+    revealPanel("ai");
+    expect(layout.docks.right.collapsed).toBe(false);
+    expect(layout.docks.right.active).toBe("ai");
+  });
+});
+
+describe("resetPanelLayout", () => {
+  it("puts back the docks and the column widths, and leaves hidden panels hidden", () => {
+    movePanel("docker", "left");
+    setColumnWidth("docker.image", 500);
+    setPanelHidden("k8s", true);
+    resetPanelLayout();
+    expect(layout.docks).toEqual(defaultDocks());
+    expect(columnWidth("docker.image")).toBe(LIST_COLUMNS["docker.image"]);
+    // Which panels are shown is a setting, not a layout.
+    expect(settings.hiddenPanels).toEqual(["k8s"]);
   });
 });

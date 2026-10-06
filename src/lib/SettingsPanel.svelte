@@ -15,6 +15,7 @@
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
   import StatusBarSettings from "./StatusBarSettings.svelte";
   import IdleSettings from "./IdleSettings.svelte";
+  import PanelsSettings from "./PanelsSettings.svelte";
   import SnippetsSettings from "./SnippetsSettings.svelte";
   import BackupSettings from "./BackupSettings.svelte";
   import DockerSettings from "./DockerSettings.svelte";
@@ -237,6 +238,10 @@
         {/if}
         {#if show("appearance")}
         <AppearanceSettings />
+        {/if}
+
+        {#if show("panels")}
+        <PanelsSettings />
         {/if}
 
         {#if show("cursor")}

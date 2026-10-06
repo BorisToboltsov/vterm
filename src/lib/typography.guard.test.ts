@@ -70,7 +70,8 @@ describe("type scale guard", () => {
   it("uses one treatment for uppercase micro-labels", () => {
     // Section rubrics and badges are `text-caption uppercase tracking-wider`. The
     // dock's vertical tab is a documented exception (an interactive label, rotated,
-    // where 10px reads badly) — any *other* variant is drift creeping back.
+    // where 10px reads badly) — and so is the copy of it that follows the pointer
+    // while it is dragged. Any *other* variant is drift creeping back.
     const variants = new Map<string, string[]>();
     for (const file of sourceFiles(SRC)) {
       const src = readFileSync(file, "utf8");
@@ -83,7 +84,7 @@ describe("type scale guard", () => {
     }
     const unexpected = [...variants.entries()]
       .filter(([k]) => k !== "text-caption uppercase tracking-wider")
-      .flatMap(([k, at]) => at.filter((a) => !a.includes("RightDock.svelte")).map((a) => `${a}: ${k}`));
+      .flatMap(([k, at]) => at.filter((a) => !/[\\/]Dock(?:DragGhost)?\.svelte:/.test(a)).map((a) => `${a}: ${k}`));
     expect(unexpected).toEqual([]);
   });
 });

@@ -39,6 +39,13 @@
      leading is a separate, visible decision; it is not folded in here. */
   --text-caption: 10px;
   --text-meta: 11px;
+
+  /* Container breakpoint for the tool panels (v1.1): `@wide:` applies once the
+     panel's own container is at least this wide. A panel can sit in any dock, so
+     it adapts to the room it actually has — never to which dock it is in. 48rem
+     is above the widest side dock (720px), so in practice it is the bottom dock
+     on a normal window, and the narrow layout again when the window is small. */
+  --container-wide: 48rem;
 }
 
 html,

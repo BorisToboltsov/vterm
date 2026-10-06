@@ -129,4 +129,37 @@ describe("JsonLogView", () => {
 
     expect(parseInt(timeCol().style.width, 10)).toBe(before + 60);
   });
+
+  it("lets a column be resized from any row: the grip reaches down the table", () => {
+    render(JsonLogView, { props: { entries } });
+    const grip = screen.getByTestId("jsonlog-grip-time");
+    // In the header cell, as tall as the table's visible part (`--list-h`).
+    expect(grip.closest("th")).not.toBeNull();
+    expect(grip.className).toContain("h-[var(--list-h,100%)]");
+    expect(grip).toHaveClass("cursor-col-resize");
+  });
+
+  it("does not clip the grip in the header of an added column", async () => {
+    render(JsonLogView, { props: { entries } });
+    await fireEvent.click(screen.getByRole("button", { name: "Columns" }));
+    await fireEvent.click(screen.getByRole("checkbox", { name: "code" }));
+    const th = screen.getByRole("columnheader", { name: "code" });
+    // The title truncates; the cell must not, or the grip ends at the header.
+    expect(th.className).not.toMatch(/(^|\s)(truncate|overflow-hidden)(\s|$)/);
+    expect(th.querySelector("span")).toHaveClass("truncate");
+    expect(th).toContainElement(screen.getByTestId("jsonlog-grip-x:code"));
+  });
+
+  it("puts a column back to its default width on a double click of its border", async () => {
+    const { container } = render(JsonLogView, { props: { entries } });
+    const timeCol = () => container.querySelectorAll("colgroup col")[1] as HTMLElement;
+    const before = timeCol().style.width;
+    const grip = screen.getByTestId("jsonlog-grip-time");
+    await fireEvent.pointerDown(grip, { clientX: 100, pointerId: 1 });
+    await fireEvent.pointerMove(grip, { clientX: 180, pointerId: 1 });
+    await fireEvent.pointerUp(grip, { clientX: 180, pointerId: 1 });
+    expect(timeCol().style.width).not.toBe(before);
+    await fireEvent.dblClick(grip);
+    expect(timeCol().style.width).toBe(before);
+  });
 });

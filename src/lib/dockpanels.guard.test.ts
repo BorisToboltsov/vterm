@@ -1,5 +1,6 @@
-// Dock-panel guard (v1.0.14): a right-dock panel is hidden, never destroyed,
-// when its tab goes inactive — and a hidden panel does not poll.
+// Dock-panel guard (v1.0.14, three docks since v1.1): a dock panel is hidden,
+// never destroyed, when its tab goes inactive or its dock collapses — and a
+// hidden panel does not poll.
 //
 // The two halves only work together. Before this fix the dock wrapped its
 // content in `{#key activeTab}`, so every switch tore the panel down: the SFTP
@@ -22,6 +23,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const LIB = join(process.cwd(), "src", "lib");
+const PAGE = join("..", "routes", "+page.svelte");
 
 /**
  * Drop `<!-- … -->` blocks. A scan rather than `.replace(/<!--[^]*?-->/g, "")`:
@@ -79,20 +81,45 @@ function pollEffect(src: string): string {
 }
 
 describe("dock panel guard", () => {
-  const dock = code("RightDock.svelte");
+  // The chrome (one instance per side) and the component that picks a session
+  // panel for an id. The page supplies the snippet joining the two.
+  const dock = code("Dock.svelte");
+  const host = code("DockPanel.svelte");
+  const page = code(PAGE);
 
   it("does not remount panels when the dock tab changes", () => {
-    // `{#key activeTab}` (or an {#if}/{:else if} chain over the active tab) is the
-    // shape that destroys the panel — the whole bug.
-    expect(dock).not.toMatch(/\{#key\s+activeTab\s*\}/);
-    for (const tab of ["files", "git", "docker", "k8s", "ai"]) {
-      expect(dock, `${tab} is mounted once and then kept`).toContain(
-        `mounted.includes("${tab}")`,
-      );
-    }
+    // `{#key active}` (or an {#if}/{:else if} chain over the active tab) is the
+    // shape that destroys the panel — the whole bug. The dock has no key block
+    // at all: a session panel is rebuilt for another session through its each-key.
+    expect(dock).not.toMatch(/\{#key\b/);
+    expect(dock).not.toMatch(/\{(?:#if|:else if)\s+active\s*===/);
+    // Panels come from the visited list, keyed, and are hidden rather than removed.
+    expect(dock).toMatch(/\{#each\s+panes\s+as\s+id\s+\(paneKey\(id\)\)\s*\}/);
+    expect(dock).toMatch(/visited\.includes\(paneKey\(id\)\)/);
+    expect(dock).toMatch(/paneShown\(id\)\s*\?\s*'vt-dock-pane'\s*:\s*'hidden'/);
+  });
+
+  it("rebuilds a session panel for another session, and nothing else", () => {
+    // The session id is part of a session panel's key; the server tree's key is
+    // its bare id, so switching terminal tabs leaves it alone.
+    expect(dock).toMatch(
+      /paneKey\s*=\s*\(id: PanelId\): string\s*=>\s*\(?\s*isSessionPanel\(id\)\s*\?\s*`\$\{sessionId\}\/\$\{id\}`\s*:\s*id/,
+    );
+    // …and the page does not put the docks back under a key on the active tab.
+    expect(page).not.toMatch(/\{#key[^}]*\}\s*<Dock\b/);
   });
 
   it("tells every driver panel whether it is on screen", () => {
+    // Dock → snippet → DockPanel → panel: `visible` has to survive all three hops.
+    expect(dock, "the dock renders a panel with its on-screen state").toMatch(
+      /\{@render\s+panel\(id,\s*paneShown\(id\)\)\}/,
+    );
+    expect(dock, "on screen = the shown tab of an open dock on a live session").toMatch(
+      /paneShown\s*=\s*\(id: PanelId\): boolean\s*=>\s*id === active && !collapsed && !\(offline && isSessionPanel\(id\)\)/,
+    );
+    expect(instance(page, "DockPanel"), "the page passes it on").toMatch(
+      /(?:^|\s)(?:\{visible\}|visible=\{visible\})/m,
+    );
     for (const component of [
       "SftpPanel",
       "LocalFilePanel",
@@ -100,8 +127,8 @@ describe("dock panel guard", () => {
       "DockerPanel",
       "K8sPanel",
     ]) {
-      expect(instance(dock, component), `${component} gets a visible prop`).toMatch(
-        /\bvisible=\{/,
+      expect(instance(host, component), `${component} gets a visible prop`).toMatch(
+        /(?:^|\s)(?:\{visible\}|visible=\{visible\})/m,
       );
     }
   });
@@ -132,12 +159,12 @@ describe("dock panel guard", () => {
     // on Windows, where ConPTY spawns slowly, every time. Local tabs have a real
     // connecting → connected status; every kind waits for it.
     for (const component of ["GitPanel", "DockerPanel", "K8sPanel"]) {
-      const tag = instance(dock, component);
+      const tag = instance(host, component);
       expect(tag, `${component} gets the dock's sessionReady`).toMatch(
         /(?:^|\s)(?:\{sessionReady\}|sessionReady=\{sessionReady\})/m,
       );
     }
-    expect(dock, "sessionReady derives from the tab's connection").toMatch(
+    expect(host, "sessionReady derives from the tab's connection").toMatch(
       /const sessionReady = \$derived\(connection === "connected"\)/,
     );
   });

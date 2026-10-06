@@ -15,7 +15,7 @@
   import { thresholdClass } from "./thresholds";
   import Icon from "./Icon.svelte";
   import Sparkline from "./Sparkline.svelte";
-  import { layout } from "./stores/layout.svelte";
+  import { revealPanel } from "./stores/layout.svelte";
   import { aggregateTransfers, transfersState } from "./stores/transfers.svelte";
   import { isCancellableTransfer } from "./transfer";
   import { t } from "./i18n";
@@ -316,7 +316,7 @@
           data-testid="transfer-indicator"
           class="flex items-center gap-1.5 rounded px-1 text-muted hover:text-text"
           use:tooltip={t("bar.transfers")}
-          onclick={() => (layout.sftpCollapsed = false)}
+          onclick={() => revealPanel("files")}
         >
           <Icon name={summary.direction === "upload" ? "upload" : "download"} size={13} />
           {#if expanded}
@@ -350,7 +350,7 @@
   <!-- Compact/expanded toggle — sibling of the scroll region (not inside it), so
        it stays fixed at the right edge and metrics never show through behind it.
        Single chevron, like the SFTP/server panel collapse toggles. Fixed 36px
-       (w-9) matches the collapsed RightDock strip so their left borders line up
+       (w-9) matches the collapsed right dock's rail so their left borders line up
        into one continuous vertical divider. -->
   {#if metrics}
     <button

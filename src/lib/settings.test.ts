@@ -472,3 +472,36 @@ describe("language", () => {
     expect(stored.language).toBe("ru");
   });
 });
+
+describe("hiddenPanels (v1.1)", () => {
+  it("hides nothing by default", () => {
+    expect(settings.hiddenPanels).toEqual([]);
+  });
+
+  it("takes a list from a backup, cleaned: known panels, each once, never the server tree", () => {
+    applyImportedSettings({ hiddenPanels: ["docker", "servers", "nope", "docker", "ai", 7] });
+    expect(settings.hiddenPanels).toEqual(["docker", "ai"]);
+  });
+
+  it("ignores a hiddenPanels value that is not a list", () => {
+    applyImportedSettings({ hiddenPanels: "docker" });
+    expect(settings.hiddenPanels).toEqual([]);
+    applyImportedSettings({ hiddenPanels: { docker: true } });
+    expect(settings.hiddenPanels).toEqual([]);
+  });
+
+  it("is persisted with the rest of the settings and cleared by a reset", () => {
+    settings.hiddenPanels = ["k8s"];
+    flushSync();
+    expect(JSON.parse(localStorage.getItem("vterm.settings") ?? "{}").hiddenPanels).toEqual(["k8s"]);
+    resetSettings();
+    expect(settings.hiddenPanels).toEqual([]);
+  });
+
+  it("gives every reset its own list", () => {
+    resetSettings();
+    settings.hiddenPanels.push("git");
+    resetSettings();
+    expect(settings.hiddenPanels).toEqual([]);
+  });
+});
