@@ -31,9 +31,9 @@ describe("git follows the terminal guard", () => {
   });
 
   it("the dock hands the terminal's cwd to the git panel", () => {
-    const src = read(join(LIB, "RightDock.svelte"));
+    const src = read(join(LIB, "DockPanel.svelte"));
     const start = src.indexOf("<GitPanel");
-    expect(start, "<GitPanel not found in RightDock.svelte").toBeGreaterThan(-1);
+    expect(start, "<GitPanel not found in DockPanel.svelte").toBeGreaterThan(-1);
     const tag = src.slice(start, src.indexOf("/>", start));
     expect(tag).toMatch(/\{terminalCwd\}|terminalCwd=\{/);
   });

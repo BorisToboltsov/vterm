@@ -36,13 +36,18 @@
   import ViewModeToggle from "$lib/ViewModeToggle.svelte";
   import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/tree";
   import {
-    clamp,
+    isPanelHidden,
     layout,
-    LEFT_MAX,
-    LEFT_MIN,
-    SFTP_MAX,
-    SFTP_MIN,
+    movePanel,
+    resetPanelLayout,
+    revealPanel,
+    setDockCollapsed,
+    setPanelHidden,
+    toggleDock,
   } from "$lib/stores/layout.svelte";
+  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/docklayout";
+  import { glide, layoutBox, slotIndex } from "$lib/actions/drag";
+  import { moveLabel, moveTargets, panelLabel } from "$lib/dockui";
   import {
     closeTab as closeTabStore,
     tabsForServer,
@@ -61,14 +66,15 @@
     tabsState,
     type Tab,
   } from "$lib/stores/tabs.svelte";
-  import { resizableHandle } from "$lib/actions/drag";
   import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
   import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
   import type { ConnPhase } from "$lib/connphase";
   import { sshErrorView } from "$lib/ssherror";
   import { showNoSignal } from "$lib/connlost";
-  import RightDock from "$lib/RightDock.svelte";
+  import Dock from "$lib/Dock.svelte";
+  import DockPanel from "$lib/DockPanel.svelte";
+  import DockDragGhost from "$lib/DockDragGhost.svelte";
   import EditorTab from "$lib/EditorTab.svelte";
   import DiffModal from "$lib/DiffModal.svelte";
   import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
@@ -297,6 +303,10 @@
   // The central column (`<main>`), used as the screensaver's fallback target when
   // no tab is open (so the ambient card stays within the central area).
   let mainArea = $state<HTMLElement>();
+  // Height of the terminal tab bar. The left dock's tab strip stands right next to
+  // it and takes the same height, so their bottom borders form one line — the bar
+  // is taller once a tab (with its close button) is in it.
+  let tabBarHeight = $state(0);
   // Which `cd` dialect each local tab's shell speaks, reported by Terminal at spawn
   // (Phase 39.4). Keyed per session because a tab keeps the shell it opened with
   // even if the preference changes afterwards.
@@ -305,10 +315,6 @@
   // session awaiting the user's confirmation before we type it.
   const shellIntegrated = $state<Record<string, boolean>>({});
   let pendingFollowSession = $state<string | null>(null);
-
-  // ── Panel resize (widths/collapse live in the layout store) ────────────────
-  let resizing = $state<null | "left" | "sftp">(null);
-  let resizeStartW = 0;
 
   // Password / passphrase prompt (owns its own state); opened via its export.
   let secretPrompt: SecretPrompt | undefined = $state();
@@ -343,6 +349,16 @@
     return map;
   });
   const dockConn = $derived(activeTab ? dockConnection(activeTab.status) : "offline");
+  // The session the docks' session panels work on — the tab in focus. Null with
+  // no tab open: the docks then offer only the server tree.
+  const dockSessionId = $derived(activeTab ? activeTab.sessionId : null);
+  const panelShown = (panel: PanelId): boolean =>
+    isPanelShown(layout.docks, panel, dockSessionId !== null, settings.hiddenPanels);
+  /** Palette toggle: bring a panel on screen, or collapse the dock showing it. */
+  function togglePanel(panel: PanelId) {
+    if (panelShown(panel)) setDockCollapsed(dockOf(layout.docks, panel), true);
+    else revealPanel(panel);
+  }
   // Top-bar breadcrumb of the active connection. Alias comes from the tab (SSH
   // alias or "Local shell"); the `user@host:port` line needs the SSH profile.
   const activeServer = $derived(
@@ -622,7 +638,10 @@
   });
 
   /** Whether the assistant is usable at all — gates every "ask AI" entry point. */
-  const aiOn = $derived(aiReady(settings.ai));
+  // Every "ask the assistant about this" entry point hangs on this one flag. A
+  // hidden AI panel switches them off as well: a button that opened the panel the
+  // user had put away would undo that choice from across the window.
+  const aiOn = $derived(aiReady(settings.ai) && !isPanelHidden("ai"));
 
   /**
    * Attach a terminal selection to the assistant's composer (Phase 41). The user
@@ -634,8 +653,7 @@
     const text = selection.trim();
     if (!text) return;
     askAbout(sessionId, { source: "selection", context: text });
-    layout.dockTab = "ai";
-    layout.sftpCollapsed = false;
+    revealPanel("ai");
   }
 
   /**
@@ -647,7 +665,7 @@
     const id = tabsState.activeId;
     if (!id) return;
     askAbout(id, { source: kind, context });
-    layout.dockTab = "ai";
+    revealPanel("ai");
   }
 
   /** Ask the assistant to read the host's metrics snapshot (Phase 41). */
@@ -655,8 +673,7 @@
     const id = tabsState.activeId;
     if (!id) return;
     askAbout(id, { source: "metrics", context: snapshot });
-    layout.dockTab = "ai";
-    layout.sftpCollapsed = false;
+    revealPanel("ai");
   }
 
   /** Host/session metadata block for the AI metadata tier (best-effort). */
@@ -969,27 +986,52 @@
     { id: "act:about", title: t("palette.about"), icon: "info", group: t("palette.groupActions"),
       keywords: "about version версия о программе", run: () => { helpTab = "about"; showHelp = true; } },
     { id: "act:toggle-left",
-      title: layout.leftCollapsed ? t("palette.showServerList") : t("palette.hideServerList"),
+      title: panelShown("servers") ? t("palette.hideServerList") : t("palette.showServerList"),
       icon: "server", group: t("palette.groupActions"), keywords: "panel sidebar toggle панель серверы",
-      run: () => (layout.leftCollapsed = !layout.leftCollapsed) },
-    { id: "act:toggle-sftp",
-      title: layout.sftpCollapsed ? t("palette.showSftp") : t("palette.hideSftp"),
+      run: () => togglePanel("servers") },
+    // A hidden panel is not offered here; it comes back through "Show panel: …"
+    // below (and Settings → Appearance → Panels).
+    ...(isPanelHidden("files") ? [] : [{ id: "act:toggle-sftp",
+      title: panelShown("files") ? t("palette.hideSftp") : t("palette.showSftp"),
       icon: "file", group: t("palette.groupActions"), keywords: "sftp files panel toggle панель файлы",
-      run: () => {
-        if (layout.sftpCollapsed) {
-          layout.dockTab = "files";
-          layout.sftpCollapsed = false;
-        } else {
-          layout.sftpCollapsed = true;
-        }
-      } },
-    { id: "act:toggle-ai",
+      run: () => togglePanel("files") } satisfies CommandItem]),
+    ...(isPanelHidden("ai") ? [] : [{ id: "act:toggle-ai",
       title: t("palette.showAi"),
       icon: "aiMark", group: t("palette.groupActions"), keywords: "ai chat assistant llm панель ии ассистент чат",
+      run: () => revealPanel("ai") } satisfies CommandItem]),
+    { id: "act:toggle-bottom",
+      title: layout.docks.bottom.collapsed ? t("palette.showBottomPanel") : t("palette.hideBottomPanel"),
+      icon: "layoutGrid", group: t("palette.groupActions"),
+      keywords: "bottom panel dock toggle docker k8s нижняя панель док",
+      run: () => toggleDock("bottom") },
+    { id: "act:reset-layout", title: t("palette.resetLayout"), icon: "layoutGrid",
+      group: t("palette.groupActions"),
+      keywords: "reset layout panels docks columns default сбросить раскладка панели доки колонки",
+      run: resetPanelLayout },
+    // The way back for a panel hidden from its tab's menu or in settings.
+    ...PANEL_IDS.filter(isPanelHidden).map((id): CommandItem => ({
+      id: `dock:show:${id}`,
+      title: t("palette.showPanel", { panel: panelLabel(id) }),
+      icon: "eye",
+      group: t("palette.groupActions"),
+      keywords: "panel dock show hidden unhide панель док показать скрытая вернуть",
       run: () => {
-        layout.dockTab = "ai";
-        layout.sftpCollapsed = false;
-      } },
+        setPanelHidden(id, false);
+        revealPanel(id);
+      },
+    })),
+    // Moving a tool panel to another dock without the mouse — the twin of
+    // dragging its tab (and of the tab's right-click menu).
+    ...PANEL_IDS.filter((id) => !isPanelHidden(id)).flatMap((id) =>
+      moveTargets(dockOf(layout.docks, id)).map((to): CommandItem => ({
+        id: `dock:${id}:${to}`,
+        title: `${panelLabel(id)}: ${moveLabel(to)}`,
+        icon: "layoutGrid",
+        group: t("palette.groupActions"),
+        keywords: "panel dock move layout left right bottom панель док переместить раскладка",
+        run: () => movePanel(id, to),
+      })),
+    ),
     { id: "act:new-local", title: t("palette.newLocalTerminal"), icon: "terminal",
       group: t("palette.groupActions"), keywords: "local terminal shell new локальный терминал новый",
       run: () => openLocalTab() },
@@ -1131,17 +1173,6 @@
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
     if (!selectedId && servers.length > 0) selectedId = servers[0].id;
   }
-
-  // ── Resize handles ─────────────────────────────────────────────────────────
-  function startLeftResize() {
-    resizing = "left";
-    resizeStartW = layout.leftWidth;
-  }
-  function startSftpResize() {
-    resizing = "sftp";
-    resizeStartW = layout.sftpWidth;
-  }
-  const endResize = () => (resizing = null);
 
   // Persist the notes window's edits and reflect them in the local server list
   // (so the top-bar "has notes" dot updates). Throws so NotesModal shows an error.
@@ -1625,7 +1656,7 @@
   $effect(() => {
     const id = tabsState.activeId;
     if (!id) return;
-    const gitShown = layout.dockTab === "git" && !layout.sftpCollapsed;
+    const gitShown = isPanelShown(layout.docks, "git", true, settings.hiddenPanels);
     // SSH has no local pid to inspect.
     if (!pollsLocalCwd(findTab(id)?.kind, !!followTerminal[id], gitShown)) return;
     let stopped = false;
@@ -1910,16 +1941,17 @@
     tabDragX = event.clientX;
     tabDragY = event.clientY;
 
-    const els = Array.from(barEl.querySelectorAll<HTMLElement>("[data-tab]"));
-    let over = -1;
-    for (let k = 0; k < els.length; k++) {
-      const r = els[k].getBoundingClientRect();
-      if (event.clientX >= r.left && event.clientX <= r.right) {
-        over = k;
-        break;
-      }
-    }
-    if (over !== -1 && dragSession) moveTab(dragSession, over);
+    // The tab takes the slot past every other tab whose middle the pointer has
+    // crossed. Measured on layout boxes, not drawn ones: the neighbours glide to
+    // their new slots (`animate:glide`), and a tab that is still sliding out of
+    // the way must already count as moved — or it is swapped straight back.
+    const others = Array.from(barEl.querySelectorAll<HTMLElement>("[data-tab]"))
+      .filter((el) => el.dataset.tab !== dragSession)
+      .map((el) => {
+        const box = layoutBox(el);
+        return { start: box.left, size: box.width };
+      });
+    moveTab(dragSession, slotIndex(event.clientX, others));
   }
 
   function barPointerUp(event: PointerEvent) {
@@ -1975,6 +2007,87 @@
 
 <svelte:window onkeydown={onGlobalKey} />
 
+<!-- A tool panel, for whichever dock holds it (Dock.svelte calls this). The
+     panels are told whether they are on screen, never which dock they are in. -->
+{#snippet dockPanel(id: PanelId, visible: boolean)}
+  {#if id === "servers"}
+    <ServerTree
+      {servers}
+      {folders}
+      {selectedId}
+      {selectedFolder}
+      connections={serverConnections}
+      onSelect={(serverId) => {
+        selectedId = serverId;
+        selectedFolder = null;
+      }}
+      onSelectFolder={(p) => {
+        selectedFolder = p;
+        selectedId = null;
+      }}
+      onConnect={startConnect}
+      onAddServer={() => serverForm?.openAdd(selectedFolder ?? "")}
+      onEditServer={(s) => {
+        selectedId = s.id;
+        serverForm?.openEdit(s);
+      }}
+      onDuplicateServer={(s) => {
+        selectedId = s.id;
+        serverForm?.openDuplicate(s);
+      }}
+      onDeleteServer={(s) => (serverToDelete = s)}
+      onNewFolder={(p) => folderModals?.openCreate(p)}
+      onRenameFolder={(p) => folderModals?.openRename(p)}
+      onDeleteFolder={(p) => folderModals?.openDelete(p, serversInSubtree(servers, p).length)}
+      onMoveServer={requestMoveServer}
+      onMoveFolder={requestMoveFolder}
+    />
+  {:else if activeTab}
+    <DockPanel
+      {id}
+      {visible}
+      kind={activeTab.kind === "ssh" ? "ssh" : "local"}
+      sessionId={activeTab.sessionId}
+      chatPromptId={activeTab?.kind === "ssh"
+        ? (servers.find((s) => s.id === activeTab.serverId)?.chatPromptId ?? null)
+        : null}
+      serverExecMode={activeTab?.kind === "ssh"
+        ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
+        : null}
+      connection={dockConn}
+      terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
+      promptVars={aiPromptVars}
+      followTerminal={tabsState.activeId
+        ? (followTerminal[tabsState.activeId] ?? false)
+        : false}
+      onToggleFollowTerminal={toggleFollowTerminal}
+      onEnablePathSync={tabsState.activeId &&
+      needsShellSetup(
+        activeTab?.kind,
+        !!terminalCwd[tabsState.activeId],
+        !!shellIntegrated[tabsState.activeId],
+      )
+        ? enablePathSync
+        : undefined}
+      getAiContext={gatherAiContext}
+      aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
+      aiRecording={!!(tabsState.activeId && recordingState[tabsState.activeId])}
+      {aiProd}
+      {aiNoAi}
+      onOpenFile={(path, name, gotoLine) =>
+        openFileInEditor(path, name, { gotoLine })}
+      onOpenLocalFile={(path) => {
+        if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
+      }}
+      onOpenGitDiff={openGitDiff}
+      onIgnoreGitignore={appendGitignore}
+      onSftpNavigate={cdTerminalTo}
+      onOpenContainerShell={openContainerShell}
+      onAskAi={aiOn ? askAiAboutResource : undefined}
+    />
+  {/if}
+{/snippet}
+
 <div class="flex h-screen w-screen flex-col">
   <!-- Signature-theme depth: a subtle full-window overlay above all content,
        below modals — unifies terminal + chrome without touching the renderer. -->
@@ -2029,55 +2142,14 @@
   />
 
   <div class="flex min-h-0 flex-1">
-    <ServerTree
-      {servers}
-      {folders}
-      {selectedId}
-      {selectedFolder}
-      connections={serverConnections}
-      onSelect={(id) => {
-        selectedId = id;
-        selectedFolder = null;
-      }}
-      onSelectFolder={(p) => {
-        selectedFolder = p;
-        selectedId = null;
-      }}
-      onConnect={startConnect}
-      onAddServer={() => serverForm?.openAdd(selectedFolder ?? "")}
-      onEditServer={(s) => {
-        selectedId = s.id;
-        serverForm?.openEdit(s);
-      }}
-      onDuplicateServer={(s) => {
-        selectedId = s.id;
-        serverForm?.openDuplicate(s);
-      }}
-      onDeleteServer={(s) => (serverToDelete = s)}
-      onNewFolder={(p) => folderModals?.openCreate(p)}
-      onRenameFolder={(p) => folderModals?.openRename(p)}
-      onDeleteFolder={(p) => folderModals?.openDelete(p, serversInSubtree(servers, p).length)}
-      onMoveServer={requestMoveServer}
-      onMoveFolder={requestMoveFolder}
-      animateWidth={resizing !== "left"}
+    <Dock
+      side="left"
+      sessionId={dockSessionId}
+      sessionKind={activeTab?.kind ?? "ssh"}
+      connection={dockConn}
+      stripHeight={tabBarHeight}
+      panel={dockPanel}
     />
-    {#if !layout.leftCollapsed}
-      <!-- Drag handle to resize the server list. -mx-0.5 cancels its 4px layout
-           width so the panel border sits flush against the tab bar; the strip
-           overlays the seam (blue on hover) instead of wedging a gap into it. -->
-      <div
-        role="separator"
-        aria-orientation="vertical"
-        class="relative z-10 -mx-0.5 w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'left'
-          ? 'bg-accent'
-          : 'bg-transparent'}"
-        use:resizableHandle={{
-          onStart: startLeftResize,
-          onResize: (dx) => (layout.leftWidth = clamp(resizeStartW + dx, LEFT_MIN, LEFT_MAX)),
-          onEnd: endResize,
-        }}
-      ></div>
-    {/if}
 
     <!-- Right: tabbed terminals -->
     <main bind:this={mainArea} class="flex min-w-0 flex-1 flex-col bg-panel">
@@ -2085,6 +2157,7 @@
            with no open sessions. -->
       <div
         bind:this={barEl}
+        bind:offsetHeight={tabBarHeight}
         role="tablist"
         tabindex={-1}
         onpointermove={barPointerMove}
@@ -2093,7 +2166,8 @@
       >
         {#each tabsState.list as tab (tab.sessionId)}
           <div
-            data-tab
+            data-tab={tab.sessionId}
+            animate:glide={motion()}
             role="tab"
             tabindex={tabsState.activeId === tab.sessionId ? 0 : -1}
             aria-selected={tabsState.activeId === tab.sessionId}
@@ -2183,8 +2257,8 @@
         </button>
       </div>
 
-      {#if tabsState.list.length > 0}
-        <div class="flex min-h-0 flex-1">
+      <div class="flex min-h-0 flex-1">
+        {#if tabsState.list.length > 0}
           <div class="flex min-h-0 min-w-0 flex-1 flex-col">
             {#if bcOn}
               <!-- Broadcast toolbar: group size, layout, quick actions, exit. -->
@@ -2596,88 +2670,44 @@
               />
             {/if}
           </div>
-          {#if tabsState.activeId && (activeTab?.kind === "ssh" || activeTab?.kind === "local")}
-            {#if !layout.sftpCollapsed}
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                class="relative z-10 -mx-0.5 w-1 shrink-0 cursor-col-resize hover:bg-accent {resizing === 'sftp'
-                  ? 'bg-accent'
-                  : 'bg-transparent'}"
-                use:resizableHandle={{
-                  onStart: startSftpResize,
-                  onResize: (dx) => (layout.sftpWidth = clamp(resizeStartW - dx, SFTP_MIN, SFTP_MAX)),
-                  onEnd: endResize,
-                }}
-              ></div>
-            {/if}
-            {#key tabsState.activeId}
-              <RightDock
-                width={layout.sftpWidth}
-                bind:collapsed={layout.sftpCollapsed}
-                bind:activeTab={layout.dockTab}
-                animateWidth={resizing !== "sftp"}
-                kind={activeTab?.kind === "ssh" ? "ssh" : "local"}
-                sessionId={tabsState.activeId}
-                chatPromptId={activeTab?.kind === "ssh"
-                  ? (servers.find((s) => s.id === activeTab.serverId)?.chatPromptId ?? null)
-                  : null}
-                serverExecMode={activeTab?.kind === "ssh"
-                  ? (servers.find((s) => s.id === activeTab.serverId)?.execMode ?? null)
-                  : null}
-                connection={dockConn}
-                terminalCwd={tabsState.activeId ? (terminalCwd[tabsState.activeId] ?? null) : null}
-                promptVars={aiPromptVars}
-                followTerminal={tabsState.activeId
-                  ? (followTerminal[tabsState.activeId] ?? false)
-                  : false}
-                onToggleFollowTerminal={toggleFollowTerminal}
-                onEnablePathSync={tabsState.activeId &&
-                needsShellSetup(
-                  activeTab?.kind,
-                  !!terminalCwd[tabsState.activeId],
-                  !!shellIntegrated[tabsState.activeId],
-                )
-                  ? enablePathSync
-                  : undefined}
-                getAiContext={gatherAiContext}
-                aiSelectionLines={tabsState.activeId ? (termSelection[tabsState.activeId] ?? 0) : 0}
-                aiRecording={!!(tabsState.activeId && recordingState[tabsState.activeId])}
-                {aiProd}
-                {aiNoAi}
-                onOpenFile={(path, name, gotoLine) =>
-                  openFileInEditor(path, name, { gotoLine })}
-                onOpenLocalFile={(path) => {
-                  if (tabsState.activeId) openLocalFileInEditor(tabsState.activeId, path);
-                }}
-                onOpenGitDiff={openGitDiff}
-                onIgnoreGitignore={appendGitignore}
-                onSftpNavigate={cdTerminalTo}
-                onOpenContainerShell={openContainerShell}
-                onAskAi={aiOn ? askAiAboutResource : undefined}
-              />
-            {/key}
-          {/if}
-        </div>
-      {:else}
-        <EmptyState
-          icon="server"
-          title={selected ? t("page.emptyServerTitle", { alias: selected.alias }) : t("page.emptyNoSession")}
-          hint={selected ? t("page.hintConnect") : t("page.hintSelect")}
-        >
-          {#if selected}
-            <button
-              data-testid="connect"
-              class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500"
-              onclick={startConnect}
+        {:else}
+          <div class="min-h-0 min-w-0 flex-1">
+            <EmptyState
+              icon="server"
+              title={selected ? t("page.emptyServerTitle", { alias: selected.alias }) : t("page.emptyNoSession")}
+              hint={selected ? t("page.hintConnect") : t("page.hintSelect")}
             >
-              {t("common.connect")}
-            </button>
-          {/if}
-        </EmptyState>
-      {/if}
+              {#if selected}
+                <button
+                  data-testid="connect"
+                  class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500"
+                  onclick={startConnect}
+                >
+                  {t("common.connect")}
+                </button>
+              {/if}
+            </EmptyState>
+          </div>
+        {/if}
+        <Dock
+          side="right"
+          sessionId={dockSessionId}
+          sessionKind={activeTab?.kind ?? "ssh"}
+          connection={dockConn}
+          panel={dockPanel}
+        />
+      </div>
     </main>
   </div>
+
+  <!-- Bottom dock: the full width of the window, above the status bar. -->
+  <Dock
+    side="bottom"
+    sessionId={dockSessionId}
+    sessionKind={activeTab?.kind ?? "ssh"}
+    connection={dockConn}
+    panel={dockPanel}
+  />
 
   {#if settings.showStatusBar && tabsState.activeId && monitorConnected}
     {#key tabsState.activeId}
@@ -2695,10 +2725,8 @@
   />
 {/if}
 
-<!-- While resizing: keep the col-resize cursor and suppress text selection. -->
-{#if resizing}
-  <div class="fixed inset-0 z-50 cursor-col-resize select-none"></div>
-{/if}
+<!-- The label following the pointer while a tool-panel tab is dragged. -->
+<DockDragGhost />
 
 <!-- Drag ghost for a terminal tab being reordered. -->
 {#if draggingTab}

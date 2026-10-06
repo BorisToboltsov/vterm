@@ -434,23 +434,35 @@
 
   // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-  // Full init when the session becomes ready (or changes).
+  // Full init when the session becomes ready (or changes) — and on nothing else.
+  // `initAll` is untracked: everything it reads before its first `await` (the
+  // remembered scope, and `scope`/`prog` inside the argv it builds) would become
+  // a dependency of this effect, and it then WRITES that scope itself. The effect
+  // re-ran on its own result, ahead of the effect that remembers the scope, so it
+  // reset the context it had just picked and probed again — every answer from
+  // `kubectl` started two more probes. On a host with a kubeconfig that was an
+  // exponential storm of `kubectl` on the session's server (v1.1.0).
   $effect(() => {
     void sessionId;
     if (sessionReady) {
       // Another cluster's pods are not this one's history.
       cpuHistory = {};
-      void initAll();
+      untrack(() => void initAll());
     }
   });
 
   // Reload when the sub-tab changes (and remember it for the next mount). Store
   // writes are untracked here and below: creating this session's entry writes the
-  // same state the call reads, which would make the effect its own trigger.
+  // same state the call reads, which would make the effect its own trigger. The
+  // reload is untracked for the same reason as the init above: `refresh` reads
+  // the scope, and every scope change already reloads on its own — tracked, each
+  // pick of a namespace ran `kubectl` twice.
   $effect(() => {
     const sub = activeSub;
-    untrack(() => rememberSub(sessionId, "k8s", sub));
-    if (availability?.ok) void refresh();
+    untrack(() => {
+      rememberSub(sessionId, "k8s", sub);
+      if (availability?.ok) void refresh();
+    });
   });
 
   // Remember the scope selection for the next mount of this session's panel.
@@ -509,7 +521,9 @@
   });
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-xs">
+<!-- `@container`: the panel lays itself out by its own width (`@wide:`), so one
+     component serves a narrow side dock and the full-width bottom dock. -->
+<div class="@container flex h-full min-h-0 flex-col text-xs">
   {#if !sessionReady || availability === null}
     <EmptyState icon="kubernetes" title={t("k8s.checking")} />
   {:else if !availability.ok}
@@ -523,76 +537,82 @@
       </button>
     </EmptyState>
   {:else}
-    <!-- Toolbar -->
-    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
-      <Icon name="kubernetes" size={15} class="text-accent" />
-      <div class="min-w-0 flex-1">
-        <div class="font-medium text-text/90">{t("k8s.panelTitle")}</div>
-        <div class="truncate text-caption text-muted">{t("k8s.clusterVersion", { version: availability.serverVersion })}</div>
+    <!-- Header: title + refresh, the scope selectors and the sub-tabs — three
+         lines in a narrow dock, one row in a wide container, where the panel has
+         width to spare and little height. -->
+    <div class="flex flex-wrap items-center border-b border-edge @wide:flex-nowrap" data-testid="k8s-header">
+      <div class="flex min-w-0 flex-1 items-center gap-1.5 py-1.5 pl-2 @wide:flex-none @wide:pr-3">
+        <Icon name="kubernetes" size={15} class="shrink-0 text-accent" />
+        <div class="min-w-0 flex-1">
+          <div class="font-medium text-text/90">{t("k8s.panelTitle")}</div>
+          <div class="truncate text-caption text-muted">{t("k8s.clusterVersion", { version: availability.serverVersion })}</div>
+        </div>
       </div>
-      <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
-        disabled={busy}
-        use:tooltip={t("k8s.refresh")}
-        aria-label={t("k8s.refresh")}
-        onclick={() => refresh()}
-      >
-        <Icon name="refresh" size={14} />
-      </button>
-    </div>
-
-    <!-- Scope selectors -->
-    <div class="flex items-center gap-1.5 border-b border-edge px-2 py-1.5 text-meta">
-      {#if contexts.length > 0}
-        <select
-          data-testid="k8s-context"
-          class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-text outline-none focus:border-accent"
-          value={scopeContext ?? ""}
-          use:tooltip={t("k8s.context")}
-          onchange={(e) => pickContext(e.currentTarget.value)}
+      <div class="flex shrink-0 items-center py-1.5 pl-1.5 pr-2 @wide:order-4">
+        <button
+          class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+          disabled={busy}
+          use:tooltip={t("k8s.refresh")}
+          aria-label={t("k8s.refresh")}
+          onclick={() => refresh()}
         >
-          {#each contexts as c (c)}
-            <option value={c}>{c}</option>
+          <Icon name="refresh" size={14} />
+        </button>
+      </div>
+
+      <!-- Scope selectors -->
+      <div class="flex basis-full items-center gap-1.5 border-t border-edge px-2 py-1.5 text-meta @wide:order-3 @wide:ml-auto @wide:basis-auto @wide:border-t-0 @wide:py-0 @wide:pr-0">
+        {#if contexts.length > 0}
+          <select
+            data-testid="k8s-context"
+            class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-text outline-none focus:border-accent @wide:w-44 @wide:flex-none"
+            value={scopeContext ?? ""}
+            use:tooltip={t("k8s.context")}
+            onchange={(e) => pickContext(e.currentTarget.value)}
+          >
+            {#each contexts as c (c)}
+              <option value={c}>{c}</option>
+            {/each}
+          </select>
+        {/if}
+        <select
+          data-testid="k8s-namespace"
+          class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-text outline-none focus:border-accent disabled:opacity-40 @wide:w-44 @wide:flex-none"
+          value={scopeNamespace ?? ""}
+          disabled={scopeAll}
+          use:tooltip={t("k8s.namespace")}
+          onchange={(e) => pickNamespace(e.currentTarget.value)}
+        >
+          <option value="">{t("k8s.defaultNamespace")}</option>
+          {#each namespaces as ns (ns)}
+            <option value={ns}>{ns}</option>
           {/each}
         </select>
-      {/if}
-      <select
-        data-testid="k8s-namespace"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-text outline-none focus:border-accent disabled:opacity-40"
-        value={scopeNamespace ?? ""}
-        disabled={scopeAll}
-        use:tooltip={t("k8s.namespace")}
-        onchange={(e) => pickNamespace(e.currentTarget.value)}
-      >
-        <option value="">{t("k8s.defaultNamespace")}</option>
-        {#each namespaces as ns (ns)}
-          <option value={ns}>{ns}</option>
-        {/each}
-      </select>
-      <button
-        data-testid="k8s-all-ns"
-        class="shrink-0 rounded border px-1.5 py-0.5 {scopeAll ? 'border-accent text-accent' : 'border-edge text-muted hover:text-text'}"
-        use:tooltip={t("k8s.allNamespaces")}
-        aria-label={t("k8s.allNamespaces")}
-        aria-pressed={scopeAll}
-        onclick={toggleAll}
-      >
-        -A
-      </button>
-    </div>
-
-    <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-meta">
-      {#each SUBS as s (s.id)}
         <button
-          data-testid={`k8s-subtab-${s.id}`}
-          class="flex-1 border-b-2 py-1.5 text-center {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
-          aria-current={activeSub === s.id ? "true" : undefined}
-          onclick={() => (activeSub = s.id)}
+          data-testid="k8s-all-ns"
+          class="shrink-0 rounded border px-1.5 py-0.5 {scopeAll ? 'border-accent text-accent' : 'border-edge text-muted hover:text-text'}"
+          use:tooltip={t("k8s.allNamespaces")}
+          aria-label={t("k8s.allNamespaces")}
+          aria-pressed={scopeAll}
+          onclick={toggleAll}
         >
-          {s.label}
+          -A
         </button>
-      {/each}
+      </div>
+
+      <!-- Sub-tabs -->
+      <div class="flex basis-full border-t border-edge text-meta @wide:order-2 @wide:basis-auto @wide:self-stretch @wide:border-t-0">
+        {#each SUBS as s (s.id)}
+          <button
+            data-testid={`k8s-subtab-${s.id}`}
+            class="flex-1 border-b-2 py-1.5 text-center @wide:flex-none @wide:px-4 {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
+            aria-current={activeSub === s.id ? "true" : undefined}
+            onclick={() => (activeSub = s.id)}
+          >
+            {s.label}
+          </button>
+        {/each}
+      </div>
     </div>
 
     <!-- Active sub-view -->

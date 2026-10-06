@@ -255,8 +255,10 @@ describe("StatusBar — transfers & states", () => {
     expect(await screen.findByTestId("transfer-indicator")).toBeInTheDocument();
   });
 
-  it("clicking the indicator expands the SFTP panel", async () => {
-    layout.sftpCollapsed = true;
+  it("clicking the indicator brings the file panel on screen, wherever it is docked", async () => {
+    // Collapsed dock, another tab in front: the click has to fix both.
+    layout.docks.right.collapsed = true;
+    layout.docks.right.active = "git";
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "t2" } });
     await screen.findByTestId("bar-os");
@@ -270,7 +272,8 @@ describe("StatusBar — transfers & states", () => {
       isFolder: false,
     });
     await userEvent.click(await screen.findByTestId("transfer-indicator"));
-    expect(layout.sftpCollapsed).toBe(false);
+    expect(layout.docks.right.collapsed).toBe(false);
+    expect(layout.docks.right.active).toBe("files");
   });
 
   it("cancels every in-flight transfer, but not a sync run's files", async () => {

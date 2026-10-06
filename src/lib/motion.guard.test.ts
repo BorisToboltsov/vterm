@@ -17,11 +17,12 @@ import { describe, expect, it } from "vitest";
 const SRC = join(process.cwd(), "src");
 
 /**
- * Svelte's built-in transition/animation functions. `animate:` belongs here for
- * the same reason as the rest: Svelte's `flip` is WAAPI-driven too, so a list that
+ * Svelte's built-in transition/animation functions, plus our own `glide` (the tab
+ * strips' translate-only stand-in for `flip`, actions/drag.ts). `animate:` belongs
+ * here for the same reason as the rest: it is WAAPI-driven too, so a list that
  * reorders under reduced motion would still slide.
  */
-const NAMES = "fade|slide|scale|fly|blur|draw|flip";
+const NAMES = "fade|slide|scale|fly|blur|draw|flip|glide";
 const DIRECTIVE = new RegExp(`(?:^|\\s)(transition|in|out|animate):(${NAMES})\\b`, "g");
 
 /** Reads a balanced `{…}` starting at `from`; returns null when there is no block. */

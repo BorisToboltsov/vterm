@@ -16,6 +16,7 @@ import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { isRightClickAction, type RightClickAction } from "./termmouse";
 import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
+import { sanitizeHiddenPanels, type PanelId } from "./docklayout";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
 import {
   clampIdleTimeout,
@@ -199,6 +200,11 @@ export interface Settings {
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
+  // Tool panels the user does not want in the docks (v1.1). A hidden panel is not
+  // drawn, does not poll and is not offered by ⌘K, but keeps its place in its dock
+  // (the layout is a separate store). Never contains the server tree — see
+  // `sanitizeHiddenPanels` in docklayout.ts.
+  hiddenPanels: PanelId[];
   // Kubernetes panel (Phase 37) — how often the live view re-polls the cluster
   // while the panel is open, in seconds. See k8s.ts.
   k8sRefreshSec: number;
@@ -334,6 +340,7 @@ const DEFAULTS: Settings = {
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
   dockerRefreshSec: 3,
   dockerRegistries: [],
+  hiddenPanels: [],
   k8sRefreshSec: 5,
   kubectlPath: "",
   prodTint: { ...DEFAULT_PROD_TINT },
@@ -449,6 +456,7 @@ function load(): Settings {
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
+      hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
       prodTint: sanitizeProdTint(raw.prodTint),
@@ -467,6 +475,7 @@ function load(): Settings {
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
       dockerRegistries: [],
+      hiddenPanels: [],
       prodTint: { ...DEFAULT_PROD_TINT },
     };
   }
@@ -495,6 +504,7 @@ export function resetSettings(): void {
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
     dockerRegistries: [],
+    hiddenPanels: [],
   });
 }
 
@@ -519,6 +529,7 @@ export function applyImportedSettings(raw: unknown): void {
     sftp: { ...DEFAULTS.sftp },
     ai: defaultAiSettings(),
     dockerRegistries: [],
+    hiddenPanels: [],
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -533,6 +544,7 @@ export function applyImportedSettings(raw: unknown): void {
     "sftp",
     "ai",
     "dockerRegistries",
+    "hiddenPanels",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -548,6 +560,7 @@ export function applyImportedSettings(raw: unknown): void {
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
+  next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
   next.k8sRefreshSec = clampK8sRefresh(next.k8sRefreshSec);
   if (typeof next.kubectlPath !== "string") next.kubectlPath = DEFAULTS.kubectlPath;
   if (r.customTheme && typeof r.customTheme === "object") {

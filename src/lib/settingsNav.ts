@@ -23,6 +23,7 @@ export interface SettingsGroup {
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
   { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер прод фон подкраска" },
+  { id: "panels", keywords: "Panels dock docks layout hide show sidebar bottom panel docker kubernetes k8s git sftp ai columns reset панели панель док доки раскладка скрыть показать нижняя боковая колонки сбросить" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
   { id: "terminal", keywords: "Terminal scrollback bell copy paste selection middle click right click context menu ctrl+v shift local shell cmd powershell pwsh windows терминал буфер сигнал копировать вставка правый клик контекстное меню локальный шелл оболочка виндовс" },
   { id: "smartlogs", keywords: "Logs text smart search find buffer highlight json structured логи текст поиск подсветка буфер регулярные" },
@@ -45,7 +46,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
 // Sidebar groups. Every section id appears in exactly one group (guarded by a test).
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   { id: "general", icon: "settings", sections: ["language", "behavior", "backup"] },
-  { id: "appearance", icon: "eye", sections: ["appearance", "cursor", "idle"] },
+  { id: "appearance", icon: "eye", sections: ["appearance", "panels", "cursor", "idle"] },
   { id: "terminal", icon: "terminal", sections: ["terminal", "smartlogs"] },
   { id: "connection", icon: "plug", sections: ["connection", "security"] },
   { id: "files", icon: "code", sections: ["sftp", "editor", "snippets"] },

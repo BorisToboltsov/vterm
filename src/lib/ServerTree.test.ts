@@ -2,7 +2,6 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ServerTree from "./ServerTree.svelte";
-import { layout } from "./stores/layout.svelte";
 import type { ServerProfile } from "./types";
 
 function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerProfile {
@@ -51,7 +50,6 @@ const baseProps = () => ({
 
 beforeEach(() => {
   localStorage.clear();
-  layout.leftCollapsed = false;
 });
 
 describe("ServerTree — row actions on a narrow sidebar", () => {
@@ -156,13 +154,15 @@ describe("ServerTree", () => {
     expect(rows[0]).toHaveAttribute("data-server-alias", "Alpha");
   });
 
-  it("the expanded header matches the tab-bar height (min-h-8) so it abuts the tab bar", () => {
+  it("is content-only: the dock owns the header, the width and the collapse", () => {
+    // v1.1: the tree is a tool panel that can sit in any dock, so it draws no
+    // chrome of its own — its tab, collapse button and width are Dock.svelte's.
     render(ServerTree, { props: baseProps() });
-    // The "Saved servers" title lives in the panel header row; that row must carry
-    // min-h-8 (32px) — the same height as the terminal tab bar — so the open panel
-    // lines up with the tab strip instead of sitting ~5px lower.
-    const header = screen.getByText("Saved servers").closest("div");
-    expect(header?.className).toContain("min-h-8");
+    expect(screen.queryByText("Saved servers")).toBeNull();
+    const root = screen.getByTestId("server-tree");
+    expect(root.tagName).toBe("DIV");
+    expect(root.getAttribute("style")).toBeNull();
+    expect(root).toHaveClass("h-full");
   });
 
   it("the new-folder button requests a root folder", async () => {

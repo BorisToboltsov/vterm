@@ -1,8 +1,10 @@
 <script lang="ts">
-  // Left panel: searchable, foldered tree of saved servers with pointer-based
-  // drag-and-drop (servers into folders; folders into folders). Owns its own
-  // search/collapse/drag UI state and emits intents via callbacks; all data
-  // mutation (persisting moves, opening modals) happens in the parent.
+  // The "Servers" tool panel: searchable, foldered tree of saved servers with
+  // pointer-based drag-and-drop (servers into folders; folders into folders).
+  // Content-only — the dock it sits in (Dock.svelte) owns the tab, the width and
+  // the collapse, so the tree works the same in any dock. Owns its own
+  // search/folder-collapse/drag UI state and emits intents via callbacks; all
+  // data mutation (persisting moves, opening modals) happens in the parent.
   import type { ServerProfile } from "./types";
   import { tooltip } from "./actions/tooltip";
   import {
@@ -15,7 +17,6 @@
   } from "./tree";
   import { dropTargetAt, passedThreshold } from "./actions/drag";
   import { nextCursor } from "./filekeys";
-  import { layout } from "./stores/layout.svelte";
   import { serverDots } from "./stores/tabs.svelte";
   import Icon from "./Icon.svelte";
   import { resolveServerIcon, resolveServerColorClass } from "./servericons";
@@ -45,7 +46,6 @@
     onDeleteFolder,
     onMoveServer,
     onMoveFolder,
-    animateWidth = true,
   }: {
     servers: ServerProfile[];
     folders: string[];
@@ -66,12 +66,7 @@
     onDeleteFolder: (path: string) => void;
     onMoveServer: (id: string, group: string | null) => void;
     onMoveFolder: (path: string, parent: string | null) => void;
-    /** Animate width changes (collapse). Disabled while the user drags-resizes. */
-    animateWidth?: boolean;
   } = $props();
-
-  /** Width of the collapsed strip (matches the w-9 = 36px rail). */
-  const COLLAPSED_W = 36;
 
   let serverSearch = $state("");
 
@@ -304,335 +299,299 @@
   }
 </script>
 
-<aside
-  style="width: {layout.leftCollapsed ? COLLAPSED_W : layout.leftWidth}px"
-  class="flex shrink-0 flex-col overflow-hidden border-r border-edge bg-panel-alt {animateWidth
-    ? 'transition-[width] duration-200 ease-out'
-    : ''}"
->
-  {#if layout.leftCollapsed}
-    <div class="flex w-9 flex-col items-center gap-3 py-2">
-      <button
-        class="rounded p-1 text-muted hover:bg-edge hover:text-text"
-        use:tooltip={t("tree.expandList")}
-        aria-label={t("tree.expandList")}
-        onclick={() => (layout.leftCollapsed = false)}
-      >
-        <Icon name="chevronRight" size={16} />
-      </button>
-      <span
-        class="text-caption uppercase tracking-wider text-muted [writing-mode:vertical-rl]"
-      >
-        {t("tree.servers")}
-      </span>
-    </div>
-  {:else}
-    <div
-      class="flex min-h-8 items-center justify-between px-3 py-1.5 text-xs uppercase tracking-wider text-muted"
+<div class="flex h-full min-h-0 flex-col" data-testid="server-tree">
+  <div class="flex items-center gap-1 p-2">
+    <input
+      data-testid="server-search"
+      class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
+      placeholder={t("tree.searchPlaceholder")}
+      bind:value={serverSearch}
+    />
+    <button
+      class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
+      use:tooltip={t("tree.newFolder")}
+      aria-label={t("tree.newFolder")}
+      onclick={() => onNewFolder("")}
     >
-      <span>{t("tree.savedServers")}</span>
-      <button
-        class="rounded p-0.5 hover:bg-edge hover:text-text"
-        use:tooltip={t("tree.collapseList")}
-        aria-label={t("tree.collapseList")}
-        onclick={() => (layout.leftCollapsed = true)}
-      >
-        <Icon name="chevronLeft" size={16} />
-      </button>
-    </div>
-    <div class="flex items-center gap-1 px-2 pb-2">
-      <input
-        data-testid="server-search"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
-        placeholder={t("tree.searchPlaceholder")}
-        bind:value={serverSearch}
-      />
-      <button
-        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
-        use:tooltip={t("tree.newFolder")}
-        aria-label={t("tree.newFolder")}
-        onclick={() => onNewFolder("")}
-      >
-        <Icon name="folderPlus" size={14} />
-      </button>
-      <button
-        data-testid="add-server"
-        class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
-        use:tooltip={t("tree.addServer")}
-        aria-label={t("tree.addServer")}
-        onclick={onAddServer}
-      >
-        <Icon name="filePlus" size={14} />
-      </button>
-    </div>
-    <div
-      bind:this={listEl}
-      data-drop=""
-      role="tree"
-      tabindex="0"
-      onkeydown={onTreeKeydown}
-      onpointermove={listPointerMove}
-      onpointerup={listPointerUp}
-      onpointercancel={listPointerUp}
-      class="min-h-0 flex-1 overflow-y-auto {pressing ? 'select-none' : ''} {dragId
-        ? 'cursor-grabbing'
-        : ''}"
+      <Icon name="folderPlus" size={14} />
+    </button>
+    <button
+      data-testid="add-server"
+      class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
+      use:tooltip={t("tree.addServer")}
+      aria-label={t("tree.addServer")}
+      onclick={onAddServer}
     >
-      <!-- Vertical guides marking each nesting level. -->
-      {#snippet guides(depth: number)}
-        {#each Array.from({ length: depth }) as _, i (i)}
-          <span
-            class="pointer-events-none absolute bottom-0 top-0 border-l border-muted/30"
-            style="left: {i * 16 + 8}px"
-          ></span>
-        {/each}
-      {/snippet}
-      {#each treeRows as row (row.kind === "folder" ? "f:" + row.path : "s:" + row.server.id)}
-        {#if row.kind === "folder"}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- Keyboard is handled at the focusable list container (roving focus). -->
-          <div
-            data-drop={row.path}
-            data-testid="folder-row"
-            data-folder-path={row.path}
-            role="treeitem"
-            aria-selected={selectedFolder === row.path}
-            tabindex="-1"
-            style="padding-left: {row.depth * 16}px"
-            onpointerdown={(e) => folderPointerDown(e, row.path)}
-            oncontextmenu={(e) => openFolderMenu(e, row.path)}
-            onclick={() => {
-              onSelectFolder(row.path);
-              listEl?.focus();
+      <Icon name="filePlus" size={14} />
+    </button>
+  </div>
+  <div
+    bind:this={listEl}
+    data-drop=""
+    role="tree"
+    tabindex="0"
+    onkeydown={onTreeKeydown}
+    onpointermove={listPointerMove}
+    onpointerup={listPointerUp}
+    onpointercancel={listPointerUp}
+    class="min-h-0 flex-1 overflow-y-auto {pressing ? 'select-none' : ''} {dragId
+      ? 'cursor-grabbing'
+      : ''}"
+  >
+    <!-- Vertical guides marking each nesting level. -->
+    {#snippet guides(depth: number)}
+      {#each Array.from({ length: depth }) as _, i (i)}
+        <span
+          class="pointer-events-none absolute bottom-0 top-0 border-l border-muted/30"
+          style="left: {i * 16 + 8}px"
+        ></span>
+      {/each}
+    {/snippet}
+    {#each treeRows as row (row.kind === "folder" ? "f:" + row.path : "s:" + row.server.id)}
+      {#if row.kind === "folder"}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- Keyboard is handled at the focusable list container (roving focus). -->
+        <div
+          data-drop={row.path}
+          data-testid="folder-row"
+          data-folder-path={row.path}
+          role="treeitem"
+          aria-selected={selectedFolder === row.path}
+          tabindex="-1"
+          style="padding-left: {row.depth * 16}px"
+          onpointerdown={(e) => folderPointerDown(e, row.path)}
+          oncontextmenu={(e) => openFolderMenu(e, row.path)}
+          onclick={() => {
+            onSelectFolder(row.path);
+            listEl?.focus();
+          }}
+          class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
+          row.path
+            ? 'border-accent outline outline-1 -outline-offset-1 outline-accent/70'
+            : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
+            ? 'bg-accent/20 ring-1 ring-inset ring-accent'
+            : selectedFolder === row.path
+              ? 'bg-edge'
+              : 'hover:bg-edge'} {dragKind === 'folder' && dragId === row.path
+            ? 'opacity-50'
+            : ''}"
+        >
+          {@render guides(row.depth)}
+          <button
+            class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-text"
+            use:tooltip={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
+            aria-label={t("tree.toggleFolder")}
+            onclick={(e) => {
+              e.stopPropagation();
+              toggleFolder(row.path);
             }}
-            class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
-            row.path
-              ? 'border-accent outline outline-1 -outline-offset-1 outline-accent/70'
-              : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
-              ? 'bg-accent/20 ring-1 ring-inset ring-accent'
-              : selectedFolder === row.path
-                ? 'bg-edge'
-                : 'hover:bg-edge'} {dragKind === 'folder' && dragId === row.path
-              ? 'opacity-50'
-              : ''}"
           >
-            {@render guides(row.depth)}
+            <Icon name={collapsedFolders.includes(row.path) ? "chevronRight" : "chevronDown"} size={14} />
+          </button>
+          <Icon name="folder" size={15} class="text-muted" />
+          <span class="truncate font-medium">{row.name}</span>
+          <span class="shrink-0 text-caption text-muted">{row.count}</span>
+          <div
+            class="invisible ml-auto flex shrink-0 items-center gap-1 group-hover:visible"
+          >
             <button
-              class="flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted hover:text-text"
-              use:tooltip={collapsedFolders.includes(row.path) ? t("tree.expand") : t("tree.collapse")}
-              aria-label={t("tree.toggleFolder")}
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.renameFolder")}
+              aria-label={t("tree.renameFolder")}
               onclick={(e) => {
                 e.stopPropagation();
-                toggleFolder(row.path);
+                onRenameFolder(row.path);
               }}
             >
-              <Icon name={collapsedFolders.includes(row.path) ? "chevronRight" : "chevronDown"} size={14} />
+              <Icon name="pencil" size={13} />
             </button>
-            <Icon name="folder" size={15} class="text-muted" />
-            <span class="truncate font-medium">{row.name}</span>
-            <span class="shrink-0 text-caption text-muted">{row.count}</span>
-            <div
-              class="invisible ml-auto flex shrink-0 items-center gap-1 group-hover:visible"
+            <button
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.newSubfolder")}
+              aria-label={t("tree.newSubfolder")}
+              onclick={(e) => {
+                e.stopPropagation();
+                onNewFolder(row.path);
+              }}
             >
-              <button
-                class="rounded p-0.5 text-muted hover:text-accent"
-                use:tooltip={t("tree.renameFolder")}
-                aria-label={t("tree.renameFolder")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onRenameFolder(row.path);
-                }}
-              >
-                <Icon name="pencil" size={13} />
-              </button>
-              <button
-                class="rounded p-0.5 text-muted hover:text-accent"
-                use:tooltip={t("tree.newSubfolder")}
-                aria-label={t("tree.newSubfolder")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onNewFolder(row.path);
-                }}
-              >
-                <Icon name="plus" size={13} />
-              </button>
-              <button
-                class="rounded p-0.5 text-muted hover:text-danger"
-                use:tooltip={t("tree.deleteFolder")}
-                aria-label={t("tree.deleteFolder")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onDeleteFolder(row.path);
-                }}
-              >
-                <Icon name="trash" size={13} />
-              </button>
-            </div>
+              <Icon name="plus" size={13} />
+            </button>
+            <button
+              class="rounded p-0.5 text-muted hover:text-danger"
+              use:tooltip={t("tree.deleteFolder")}
+              aria-label={t("tree.deleteFolder")}
+              onclick={(e) => {
+                e.stopPropagation();
+                onDeleteFolder(row.path);
+              }}
+            >
+              <Icon name="trash" size={13} />
+            </button>
           </div>
-        {:else}
-          {@const dots = serverDots(connections[row.server.id] ?? [])}
-          {@const badges = rowBadges(row.server)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- Keyboard is handled at the focusable list container (roving focus). -->
-          <div
-            data-testid="server-row"
-            data-server-alias={row.server.alias}
-            role="button"
-            tabindex="-1"
-            style="padding-left: {row.depth * 16}px"
-            class="group @container relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
-            row.server.id
-              ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'
-              : 'border-transparent'} {dragKind === 'server' && dragId === row.server.id
-              ? 'opacity-50'
-              : ''}"
-            onpointerdown={(e) => serverPointerDown(e, row.server.id)}
-            oncontextmenu={(e) => openServerMenu(e, row.server)}
-            onclick={() => {
-              onSelect(row.server.id);
-              listEl?.focus();
-            }}
-            ondblclick={onConnect}
-          >
-            {@render guides(row.depth)}
-            <!-- Empty toggle column so servers align with folder icons. -->
-            <span class="h-4 w-4 shrink-0"></span>
-            <div class="min-w-0 flex-1">
-              <!-- Alias + connection dots on one line, hugging the text (not the
-                   right edge) so the hover action buttons never overlap them. One
-                   dot per open SSH tab, overlapping, coloured by status with a thin
-                   tonal ring; a connecting tab's dot gently pulses. -->
-              <!-- On a wide row the alias line also reserves room for the three
-                   hover actions (pr-10 on top of the row's pr-7), so they never
-                   land on the name; a narrow row shows one «⋯» that fits pr-7. -->
-              <div class="flex min-w-0 items-center gap-1.5 @min-[12rem]:pr-10">
-                <Icon
-                  name={resolveServerIcon(row.server.icon)}
-                  size={15}
-                  class="shrink-0 {resolveServerColorClass(row.server.iconColor)}"
-                />
-                <span class="min-w-0 truncate font-medium">{row.server.alias}</span>
-                {#if dots.dots.length > 0}
-                  <div
-                    data-testid="conn-dots"
-                    class="flex shrink-0 items-center"
-                    use:tooltip={t("tree.activeConnections", {
-                      count: (connections[row.server.id] ?? []).length,
-                    })}
-                  >
-                    <div class="flex items-center -space-x-[3px]">
-                      {#each dots.dots as dot, i (i)}
-                        <span
-                          class="h-2.5 w-2.5 rounded-full {dot.cls}"
-                          class:pulse-dot={dot.pulse}
-                        ></span>
-                      {/each}
-                    </div>
-                    {#if dots.extra > 0}
-                      <span class="pl-1.5 text-caption font-medium text-muted">+{dots.extra}</span>
-                    {/if}
+        </div>
+      {:else}
+        {@const dots = serverDots(connections[row.server.id] ?? [])}
+        {@const badges = rowBadges(row.server)}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- Keyboard is handled at the focusable list container (roving focus). -->
+        <div
+          data-testid="server-row"
+          data-server-alias={row.server.alias}
+          role="button"
+          tabindex="-1"
+          style="padding-left: {row.depth * 16}px"
+          class="group @container relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
+          row.server.id
+            ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'
+            : 'border-transparent'} {dragKind === 'server' && dragId === row.server.id
+            ? 'opacity-50'
+            : ''}"
+          onpointerdown={(e) => serverPointerDown(e, row.server.id)}
+          oncontextmenu={(e) => openServerMenu(e, row.server)}
+          onclick={() => {
+            onSelect(row.server.id);
+            listEl?.focus();
+          }}
+          ondblclick={onConnect}
+        >
+          {@render guides(row.depth)}
+          <!-- Empty toggle column so servers align with folder icons. -->
+          <span class="h-4 w-4 shrink-0"></span>
+          <div class="min-w-0 flex-1">
+            <!-- Alias + connection dots on one line, hugging the text (not the
+                 right edge) so the hover action buttons never overlap them. One
+                 dot per open SSH tab, overlapping, coloured by status with a thin
+                 tonal ring; a connecting tab's dot gently pulses. -->
+            <!-- On a wide row the alias line also reserves room for the three
+                 hover actions (pr-10 on top of the row's pr-7), so they never
+                 land on the name; a narrow row shows one «⋯» that fits pr-7. -->
+            <div class="flex min-w-0 items-center gap-1.5 @min-[12rem]:pr-10">
+              <Icon
+                name={resolveServerIcon(row.server.icon)}
+                size={15}
+                class="shrink-0 {resolveServerColorClass(row.server.iconColor)}"
+              />
+              <span class="min-w-0 truncate font-medium">{row.server.alias}</span>
+              {#if dots.dots.length > 0}
+                <div
+                  data-testid="conn-dots"
+                  class="flex shrink-0 items-center"
+                  use:tooltip={t("tree.activeConnections", {
+                    count: (connections[row.server.id] ?? []).length,
+                  })}
+                >
+                  <div class="flex items-center -space-x-[3px]">
+                    {#each dots.dots as dot, i (i)}
+                      <span
+                        class="h-2.5 w-2.5 rounded-full {dot.cls}"
+                        class:pulse-dot={dot.pulse}
+                      ></span>
+                    {/each}
                   </div>
-                {/if}
-              </div>
-              <div class="text-xs text-muted">
-                {row.server.username}@{row.server.host}:{row.server.port}
-              </div>
-              {#if badges.prod || badges.tags.length > 0}
-                <div class="mt-1 flex flex-wrap gap-1">
-                  {#if badges.prod}
-                    <span
-                      class="rounded bg-bad/15 px-1.5 py-0.5 text-caption text-bad"
-                      data-testid="server-prod-badge">prod</span
-                    >
+                  {#if dots.extra > 0}
+                    <span class="pl-1.5 text-caption font-medium text-muted">+{dots.extra}</span>
                   {/if}
-                  {#each badges.tags as tag (tag)}
-                    <span class="rounded bg-edge px-1.5 py-0.5 text-caption text-muted">{tag}</span>
-                  {/each}
                 </div>
               {/if}
             </div>
-            <!-- Narrow row (sidebar squeezed): one overflow button opening the
-                 same menu as right-click, so the actions never cover the alias. -->
-            <div
-              class="invisible absolute right-1.5 top-1.5 flex items-center group-hover:visible @min-[12rem]:hidden"
-              data-testid="server-actions-compact"
-            >
-              <button
-                class="rounded p-0.5 text-muted hover:text-accent"
-                use:tooltip={t("tree.serverActions")}
-                aria-label={t("tree.serverActions")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  openServerMenu(e, row.server);
-                }}
-              >
-                <!-- Heavier and larger than the other row actions: at 1.8 the three
-                     dots were barely visible specks. -->
-                <Icon name="dots" size={16} strokeWidth={3} />
-              </button>
+            <div class="text-xs text-muted">
+              {row.server.username}@{row.server.host}:{row.server.port}
             </div>
-            <div
-              class="invisible absolute right-1.5 top-1.5 hidden items-center gap-1 group-hover:visible @min-[12rem]:flex"
-              data-testid="server-actions-full"
-            >
-              <button
-                class="rounded p-0.5 text-muted hover:text-accent"
-                use:tooltip={t("tree.editServer")}
-                aria-label={t("tree.editServer")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onEditServer(row.server);
-                }}
-              >
-                <Icon name="pencil" size={13} />
-              </button>
-              <button
-                class="rounded p-0.5 text-muted hover:text-accent"
-                use:tooltip={t("tree.duplicateServer")}
-                aria-label={t("tree.duplicateServer")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onDuplicateServer(row.server);
-                }}
-              >
-                <Icon name="copy" size={13} />
-              </button>
-              <button
-                class="rounded p-0.5 text-muted hover:text-danger"
-                use:tooltip={t("tree.deleteServer")}
-                aria-label={t("tree.deleteServer")}
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onDeleteServer(row.server);
-                }}
-              >
-                <Icon name="trash" size={13} />
-              </button>
-            </div>
+            {#if badges.prod || badges.tags.length > 0}
+              <div class="mt-1 flex flex-wrap gap-1">
+                {#if badges.prod}
+                  <span
+                    class="rounded bg-bad/15 px-1.5 py-0.5 text-caption text-bad"
+                    data-testid="server-prod-badge">prod</span
+                  >
+                {/if}
+                {#each badges.tags as tag (tag)}
+                  <span class="rounded bg-edge px-1.5 py-0.5 text-caption text-muted">{tag}</span>
+                {/each}
+              </div>
+            {/if}
           </div>
-        {/if}
-      {:else}
-        {#if servers.length === 0}
-          <EmptyState
-            icon="server"
-            title={t("tree.emptyTitle")}
-            hint={t("tree.emptyHint")}
+          <!-- Narrow row (sidebar squeezed): one overflow button opening the
+               same menu as right-click, so the actions never cover the alias. -->
+          <div
+            class="invisible absolute right-1.5 top-1.5 flex items-center group-hover:visible @min-[12rem]:hidden"
+            data-testid="server-actions-compact"
           >
             <button
-              data-testid="empty-add-server"
-              class="rounded bg-edge px-3 py-1 text-sm font-medium hover:bg-accent hover:text-panel-alt"
-              onclick={onAddServer}
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.serverActions")}
+              aria-label={t("tree.serverActions")}
+              onclick={(e) => {
+                e.stopPropagation();
+                openServerMenu(e, row.server);
+              }}
             >
-              {t("tree.addServer")}
+              <!-- Heavier and larger than the other row actions: at 1.8 the three
+                   dots were barely visible specks. -->
+              <Icon name="dots" size={16} strokeWidth={3} />
             </button>
-          </EmptyState>
-        {:else}
-          <div class="px-3 py-4 text-center text-sm text-muted">{t("common.nothingFound")}</div>
-        {/if}
-      {/each}
-    </div>
-  {/if}
-</aside>
+          </div>
+          <div
+            class="invisible absolute right-1.5 top-1.5 hidden items-center gap-1 group-hover:visible @min-[12rem]:flex"
+            data-testid="server-actions-full"
+          >
+            <button
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.editServer")}
+              aria-label={t("tree.editServer")}
+              onclick={(e) => {
+                e.stopPropagation();
+                onEditServer(row.server);
+              }}
+            >
+              <Icon name="pencil" size={13} />
+            </button>
+            <button
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.duplicateServer")}
+              aria-label={t("tree.duplicateServer")}
+              onclick={(e) => {
+                e.stopPropagation();
+                onDuplicateServer(row.server);
+              }}
+            >
+              <Icon name="copy" size={13} />
+            </button>
+            <button
+              class="rounded p-0.5 text-muted hover:text-danger"
+              use:tooltip={t("tree.deleteServer")}
+              aria-label={t("tree.deleteServer")}
+              onclick={(e) => {
+                e.stopPropagation();
+                onDeleteServer(row.server);
+              }}
+            >
+              <Icon name="trash" size={13} />
+            </button>
+          </div>
+        </div>
+      {/if}
+    {:else}
+      {#if servers.length === 0}
+        <EmptyState
+          icon="server"
+          title={t("tree.emptyTitle")}
+          hint={t("tree.emptyHint")}
+        >
+          <button
+            data-testid="empty-add-server"
+            class="rounded bg-edge px-3 py-1 text-sm font-medium hover:bg-accent hover:text-panel-alt"
+            onclick={onAddServer}
+          >
+            {t("tree.addServer")}
+          </button>
+        </EmptyState>
+      {:else}
+        <div class="px-3 py-4 text-center text-sm text-muted">{t("common.nothingFound")}</div>
+      {/if}
+    {/each}
+  </div>
+</div>
 
 <ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />
 

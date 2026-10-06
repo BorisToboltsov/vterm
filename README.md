@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.0.43-blue)
+![version](https://img.shields.io/badge/version-1.1.0-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -57,6 +57,7 @@ HTTP-клиент — на хосте активной сессии.
 #### ⚡ Продуктивность
 Синхронный ввод на несколько серверов, командная палитра ⌘K, история по Ctrl+R,
 заметки к серверу (Markdown), структурный просмотр логов, заставки простоя.
+Три панели инструментов — слева, справа и снизу: вкладки перетаскиваются между ними, раскладка запоминается.
 
 #### 🎨 Оформление и приватность
 Темы терминала и UI (включая фирменные с объёмным фоном), i18n (EN / RU), доступность.
