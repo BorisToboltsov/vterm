@@ -24,6 +24,7 @@ import {
   focusPane as focusPaneIn,
   joinPanes as joinPanesIn,
   moveTab as moveTabIn,
+  placeTab,
   removeTab,
   setRatio,
   splitWithTab,
@@ -306,15 +307,16 @@ export function openLocalTab(attach?: TabAttach): string {
 }
 
 /**
- * Add a tab that was moved here from another window (ADR 0017), in the focused
- * pane, and show it. Its session id, status and credentials are the ones it
- * had; `terminal` is what its terminal restores before taking the session over.
+ * Add a tab that was moved here from another window (ADR 0017) and show it:
+ * where it was dropped (`drop` — ADR 0018), or, moved by a command, in the
+ * focused pane. Its session id, status and credentials are the ones it had;
+ * `terminal` is what its terminal restores before taking the session over.
  * A tab that is already here is left alone.
  */
-export function adoptTab(tab: Tab, terminal: TermSnapshot): void {
+export function adoptTab(tab: Tab, terminal: TermSnapshot, drop: TabDrop | null = null): void {
   if (list.some((t) => t.sessionId === tab.sessionId)) return;
   list = [...list, { ...tab, gen: 0, adopt: terminal }];
-  center = addTab(center, tab.sessionId);
+  center = placeTab(center, tab.sessionId, drop);
 }
 
 /** The adopted terminal took its session over: the snapshot has served. */

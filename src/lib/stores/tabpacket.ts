@@ -23,6 +23,7 @@ import {
   setRecording,
   setRecordingPausedState,
 } from "./recordings.svelte";
+import type { TabDrop } from "../splitlayout";
 import { adoptSyncJob, peekSyncJob } from "./syncjob.svelte";
 import { adoptTab, findTab } from "./tabs.svelte";
 import { adoptWorkspace, peekWorkspace } from "./workspaces.svelte";
@@ -57,10 +58,11 @@ export function packTab(sessionId: string, terminal: TermSnapshot, page: PageFac
 }
 
 /**
- * Put a packet's state into this window's stores and open its tab. The tab
- * goes in last: its terminal and panels mount against what is already restored.
+ * Put a packet's state into this window's stores and open its tab — where it
+ * was dropped, when it was (`drop`). The tab goes in last: its terminal and
+ * panels mount against what is already restored.
  */
-export function unpackTab(packet: TabPacket): void {
+export function unpackTab(packet: TabPacket, drop: TabDrop | null = null): void {
   const id = packet.tab.sessionId;
   if (packet.workspace) adoptWorkspace(id, packet.workspace);
   if (packet.chat) adoptChat(id, packet.chat);
@@ -72,5 +74,5 @@ export function unpackTab(packet: TabPacket): void {
     setRecording(id, packet.page.recording);
     setRecordingPausedState(id, packet.page.recordingPaused);
   }
-  adoptTab(packet.tab, packet.terminal);
+  adoptTab(packet.tab, packet.terminal, drop);
 }

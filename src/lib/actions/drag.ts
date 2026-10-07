@@ -2,6 +2,54 @@
 // vterm uses pointer events everywhere (tab reorder, server/folder drag, panel
 // resize). The pure helpers here are shared and unit-tested; `resizableHandle`
 // is a Svelte action wrapping the capture/track/release dance for resize gutters.
+//
+// Every one of those drags starts with `holdSelection()`: a pointer dragged
+// across the page selects text unless something stops it, and each drag used to
+// stop it in its own, partial way.
+
+// ── Nothing is selected while something is dragged ───────────────────────────
+
+/** On `<html>` from a press that may become a drag until the pointer is let go (app.css). */
+export const DRAGGING_CLASS = "dragging";
+
+let holding = false;
+
+const refuseSelection = (e: Event): void => e.preventDefault();
+
+function letSelectionGo(): void {
+  if (!holding) return;
+  holding = false;
+  document.removeEventListener("selectstart", refuseSelection, true);
+  document.documentElement.classList.remove(DRAGGING_CLASS);
+  window.removeEventListener("pointerup", letSelectionGo, true);
+  window.removeEventListener("pointercancel", letSelectionGo, true);
+  window.removeEventListener("blur", letSelectionGo);
+}
+
+/**
+ * From this press until the pointer is let go, nothing on the page gets
+ * selected. Call it on the `pointerdown` that may become a drag — before the
+ * browser decides whether that press starts a selection.
+ *
+ * `user-select: none` on the thing being dragged is not enough: WebKit lets a
+ * selection begin inside an unselectable element, and it then runs over
+ * whatever text the pointer crosses — a tab dragged over a panel selected the
+ * panel. So the selection is refused where it starts (`selectstart`), and for
+ * the length of the drag the whole page is unselectable (`DRAGGING_CLASS`).
+ *
+ * It ends by itself — on the release, a cancelled pointer, or the window losing
+ * focus — so no drag has to remember to undo it, and none can leave the app
+ * with text that cannot be selected.
+ */
+export function holdSelection(): void {
+  if (holding || typeof document === "undefined") return;
+  holding = true;
+  document.addEventListener("selectstart", refuseSelection, true);
+  document.documentElement.classList.add(DRAGGING_CLASS);
+  window.addEventListener("pointerup", letSelectionGo, true);
+  window.addEventListener("pointercancel", letSelectionGo, true);
+  window.addEventListener("blur", letSelectionGo);
+}
 
 /** Has the pointer moved at least `min` px from its start point? */
 export function passedThreshold(
@@ -119,6 +167,7 @@ export function resizableHandle(node: HTMLElement, params: ResizableParams) {
     active = true;
     startX = e.clientX;
     startY = e.clientY;
+    holdSelection();
     node.setPointerCapture(e.pointerId);
     p.onStart?.();
   }

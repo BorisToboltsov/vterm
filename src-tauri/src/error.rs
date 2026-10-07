@@ -99,15 +99,16 @@ pub enum AppError {
     #[error("cancelled: stopped by the user")]
     Cancelled,
 
-    /// A tab could not be moved to a new window: the window never took it over
-    /// (it did not load in time, or was closed). The tab stays where it was; the
-    /// frontend matches `handoff-failed` (ADR 0017).
-    #[error("handoff-failed: the new window did not take the tab over")]
+    /// A tab could not be moved to another window: that window never took it
+    /// over — a new one did not load in time or was closed, an open one was gone,
+    /// declined or was busy taking another tab. The tab stays where it was; the
+    /// frontend matches `handoff-failed` (ADR 0017, 0018).
+    #[error("handoff-failed: the other window did not take the tab over")]
     HandoffNotTaken,
 
     /// Same outcome, different cause: the terminal printed more than a handoff
-    /// may hold while the window was starting (`handoff-overflow`). Nothing is
-    /// lost — the output went to the window that still has the tab.
+    /// may hold while the other window was taking the tab (`handoff-overflow`).
+    /// Nothing is lost — the output went to the window that still has the tab.
     #[error("handoff-overflow: the terminal is printing too fast to move it now")]
     HandoffOverflowed,
 

@@ -15,7 +15,7 @@
     rowBadges,
     type TreeRow,
   } from "./tree";
-  import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { dropTargetAt, holdSelection, passedThreshold } from "./actions/drag";
   import { nextCursor } from "./filekeys";
   import { serverDots } from "./stores/tabs.svelte";
   import Icon from "./Icon.svelte";
@@ -230,9 +230,6 @@
   let dragCandidate: DragItem | null = null;
   let dragKind = $state<"server" | "folder" | null>(null);
   let dragId = $state<string | null>(null);
-  // True from pointer-press on a draggable row until release. Drives `select-none`
-  // on the list so a press-drag never starts native text selection of the rows.
-  let pressing = $state(false);
   let dropTarget = $state<string | null>(null);
   let startX = 0;
   let startY = 0;
@@ -252,7 +249,8 @@
     dragCandidate = item;
     startX = event.clientX;
     startY = event.clientY;
-    pressing = true;
+    // A press-drag moves the row; it never selects the rows' text.
+    holdSelection();
   }
   const serverPointerDown = (e: PointerEvent, id: string) =>
     startDrag(e, { kind: "server", id });
@@ -266,8 +264,6 @@
       dragKind = dragCandidate.kind;
       dragId = dragCandidate.id;
       listEl.setPointerCapture(event.pointerId);
-      // Drop any selection that slipped in before `select-none` took effect.
-      window.getSelection()?.removeAllRanges();
     }
     dragX = event.clientX;
     dragY = event.clientY;
@@ -295,7 +291,6 @@
     dragKind = null;
     dragId = null;
     dropTarget = null;
-    pressing = false;
   }
 </script>
 
@@ -334,9 +329,7 @@
     onpointermove={listPointerMove}
     onpointerup={listPointerUp}
     onpointercancel={listPointerUp}
-    class="min-h-0 flex-1 overflow-y-auto {pressing ? 'select-none' : ''} {dragId
-      ? 'cursor-grabbing'
-      : ''}"
+    class="min-h-0 flex-1 overflow-y-auto {dragId ? 'cursor-grabbing' : ''}"
   >
     <!-- Vertical guides marking each nesting level. -->
     {#snippet guides(depth: number)}

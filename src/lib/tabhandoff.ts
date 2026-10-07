@@ -1,5 +1,6 @@
-// Moving a tab out into a window of its own (ADR 0017): what travels, when a
-// tab may go, and what to say when it may not.
+// Moving a tab to another window — one of its own (ADR 0017) or one that is
+// already open (ADR 0018): what travels, when a tab may go, and what to say
+// when it may not.
 //
 // A window is a separate WebView with its own memory, so a tab that moves takes
 // its state along as a **packet**: the tab itself, a snapshot of its terminal,
@@ -133,11 +134,13 @@ export interface DetachState {
  * Structural reasons come first (they are not something to wait out), then the
  * session, then work in flight.
  */
-export function detachBlocker(s: DetachState): DetachBlock | null {
+export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock | null {
   if (s.broadcast) return "broadcast";
-  // A secondary window exists for its tabs: moving its only one out would close
-  // it and open the same window again.
-  if (!s.mainWindow && s.tabs <= 1) return "lastTab";
+  // A secondary window exists for its tabs: moving its only one out to a NEW
+  // window would close it and open the same window again. Into a window that is
+  // already open it may go — that is how a tab returns — and this window then
+  // closes behind it.
+  if (!toOpenWindow && !s.mainWindow && s.tabs <= 1) return "lastTab";
   if (!s.connected) return "notConnected";
   if (s.syncBusy) return "sync";
   if (s.transfers > 0) return "transfers";
@@ -167,14 +170,27 @@ export function detachOffered(s: Pick<DetachState, "mainWindow" | "tabs" | "broa
 }
 
 /**
+ * Whether tabs here are offered the app's other windows at all: there has to
+ * be one (`windows` — how many others take tabs), and synchronous input lays
+ * its tabs out itself. Unlike a new window, the only tab of a secondary window
+ * may go too.
+ */
+export function moveOffered(s: Pick<DetachState, "broadcast">, windows: number): boolean {
+  return !s.broadcast && windows > 0;
+}
+
+/** The tab menu lists this many windows as rows of its own; more go into a submenu. */
+export const WINDOW_ROWS = 3;
+
+/**
  * i18n key for a handoff the backend rolled back. `handoff-overflow` is its own
  * case: the remedy is the user's (wait for the output to settle), unlike a
- * window that failed to start.
+ * window that did not take the tab — a new one that failed to start, or an open
+ * one (`toOpenWindow`) that was closed or busy with another tab.
  */
-export function detachErrorKey(error: unknown): MessageKey {
-  return String(error).includes("handoff-overflow")
-    ? "window.detachOverflow"
-    : "window.detachFailed";
+export function detachErrorKey(error: unknown, toOpenWindow = false): MessageKey {
+  if (String(error).includes("handoff-overflow")) return "window.detachOverflow";
+  return toOpenWindow ? "window.moveFailed" : "window.detachFailed";
 }
 
 /** Offset of a dragged tab's label from the pointer. */
@@ -186,7 +202,9 @@ const GHOST_BOX = { width: 260, height: 36, margin: 8 };
  * Where to draw the label of a tab being dragged. Inside the window it hangs
  * from the pointer; once the pointer has left, the label cannot follow it (a
  * page draws nothing outside its window), so it stops at the edge the pointer
- * went out through — still in sight, saying what letting go will do.
+ * went out through — still in sight, saying what letting go will do. (Over
+ * another window of the app that window draws the label instead, under the
+ * pointer — see `stores/tabincoming.svelte.ts`.)
  */
 export function ghostPlace(
   drag: { x: number; y: number; outside: boolean },
@@ -204,7 +222,8 @@ export function ghostPlace(
 
 /**
  * Whether a pointer released at (`x`, `y`) — viewport px — let go of a tab
- * outside the window: the gesture that moves it to a window of its own.
+ * outside the window: the gesture that moves it to another window — the one it
+ * was dropped on, or a new one.
  */
 export function releasedOutside(
   x: number,

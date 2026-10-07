@@ -553,6 +553,83 @@ export function previewFlat(layout: CenterLayout, tab: string | null, drop: TabD
   return orderedTabs(moveTabFlat(layout, tab, drop.index));
 }
 
+// ── A tab arriving from another window (v1.4, ADR 0018) ────────────────────
+
+/** `tab` put into `pane` at `index` among its tabs (out of range = the end), shown and in focus. */
+function insertTab(
+  layout: CenterLayout,
+  tab: string,
+  pane: Pane,
+  index?: number | null,
+): CenterLayout {
+  const at =
+    index === null || index === undefined || !Number.isFinite(index)
+      ? pane.tabs.length
+      : clamp(Math.trunc(index), 0, pane.tabs.length);
+  const tabs = [...pane.tabs.slice(0, at), tab, ...pane.tabs.slice(at)];
+  const root = mapPane(layout.root, pane.id, (p) => ({ ...p, tabs, active: tab }));
+  return { ...layout, root, focus: pane.id };
+}
+
+/**
+ * Put a tab that is not in the layout yet where it was dropped: at a slot of a
+ * strip, into a pane, or into a new pane at a pane's edge. It is shown there
+ * and its pane takes the focus. With no drop — or one that names a pane that is
+ * gone — it goes where a new tab goes: the end of the pane in focus.
+ *
+ * This is not "open the tab, then move it": opening it would first make the
+ * focused pane show it, and moving it on would leave that pane showing a
+ * neighbour instead of what it showed before. Here no pane but the one the tab
+ * lands in changes what it shows.
+ *
+ * An empty pane is the only pane there is (no tab is open); it is not split —
+ * the tab simply becomes its first.
+ */
+export function placeTab(layout: CenterLayout, tab: string, drop: TabDrop | null): CenterLayout {
+  if (paneOf(layout, tab)) return activateTab(layout, tab);
+  if (drop?.kind === "flat") {
+    // The single strip: next to the tab before that position, in that tab's pane.
+    const all = orderedTabs(layout);
+    const at = clamp(Number.isFinite(drop.index) ? Math.trunc(drop.index) : all.length, 0, all.length);
+    const anchor = all[Math.max(0, at - 1)];
+    const pane = anchor === undefined ? null : paneOf(layout, anchor);
+    if (pane) return insertTab(layout, tab, pane, pane.tabs.indexOf(anchor) + (at === 0 ? 0 : 1));
+  }
+  const pane = drop && drop.kind !== "flat" ? findPane(layout, drop.pane) : null;
+  if (!pane || !drop) return insertTab(layout, tab, focusedPane(layout));
+  if (drop.kind === "strip") return insertTab(layout, tab, pane, drop.index);
+  if (drop.kind === "flat" || drop.zone === "center" || pane.tabs.length === 0) {
+    return insertTab(layout, tab, pane);
+  }
+  const split = withNewPane(layout, pane.id, drop.zone);
+  return insertTab(split, tab, focusedPane(split));
+}
+
+/**
+ * What a pane's strip shows while a tab from another window is held over this
+ * one: its own tabs, with a place kept for the newcomer (`incoming`, an id no
+ * real tab has) where `placeTab` would put it. A drop on a pane's edge makes a
+ * new pane — that is shown by the tint over the pane, not in any strip.
+ */
+export function previewIncoming(
+  layout: CenterLayout,
+  pane: string,
+  incoming: string,
+  drop: TabDrop | null,
+): string[] {
+  const own = findPane(layout, pane)?.tabs ?? [];
+  return findPane(placeTab(layout, incoming, drop), pane)?.tabs ?? own;
+}
+
+/** The same preview for the single strip of the broadcast view. */
+export function previewIncomingFlat(
+  layout: CenterLayout,
+  incoming: string,
+  drop: TabDrop | null,
+): string[] {
+  return orderedTabs(placeTab(layout, incoming, drop));
+}
+
 // ── Invariants ─────────────────────────────────────────────────────────────
 
 /**

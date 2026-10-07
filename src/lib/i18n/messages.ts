@@ -151,13 +151,18 @@ export const en = {
   "window.closeTitle": "Close this window?",
   "window.closeConfirm": "Close window",
   "ctx.moveToWindow": "Move to a new window",
+  "ctx.moveToOtherWindow": "Move to another window",
   "palette.moveTabToWindow": "Move tab to a new window",
-  "tab.dropToWindow": "new window",
+  "palette.moveTabTo": "Tab: {target}",
+  "window.toMain": "Move to the main window",
+  "window.toNamed": "Move to the “{name}” window",
+  "window.toNamedMore": "Move to the “{name}” window (+{more})",
+  "window.toNumbered": "Move to window {n}",
   "window.detachBlockedBroadcast":
     "Leave synchronized input first — it lays its tabs out itself.",
   "window.detachBlockedLastTab":
     "This is the window's only tab — it is already in a window of its own.",
-  "window.detachBlockedNotConnected": "Only a connected tab can be moved to a new window.",
+  "window.detachBlockedNotConnected": "Only a connected tab can be moved to another window.",
   "window.detachBlockedSync":
     "Wait for the comparison or sync to finish — it can't move with the tab.",
   "window.detachBlockedTransfers": "Wait for this tab's file transfers to finish.",
@@ -165,6 +170,7 @@ export const en = {
   "window.detachBlockedEditor":
     "A file is still opening or being saved — try again in a moment.",
   "window.detachFailed": "Couldn't open the tab in a new window — it stays here.",
+  "window.moveFailed": "That window didn't take the tab — it stays here.",
   "window.detachOverflow":
     "The terminal is printing too fast to move it now — try again once the output settles.",
 
@@ -2134,14 +2140,19 @@ const ru: Record<MessageKey, string> = {
   "window.closeTitle": "Закрыть это окно?",
   "window.closeConfirm": "Закрыть окно",
   "ctx.moveToWindow": "В отдельное окно",
+  "ctx.moveToOtherWindow": "В другое окно",
   "palette.moveTabToWindow": "Вкладку — в отдельное окно",
-  "tab.dropToWindow": "в новое окно",
+  "palette.moveTabTo": "Вкладка: {target}",
+  "window.toMain": "В главное окно",
+  "window.toNamed": "В окно «{name}»",
+  "window.toNamedMore": "В окно «{name}» (+{more})",
+  "window.toNumbered": "В окно {n}",
   "window.detachBlockedBroadcast":
     "Сначала выйдите из синхронного ввода — он раскладывает вкладки сам.",
   "window.detachBlockedLastTab":
     "Это единственная вкладка окна — она и так в отдельном окне.",
   "window.detachBlockedNotConnected":
-    "В отдельное окно можно вынести только подключённую вкладку.",
+    "В другое окно можно перенести только подключённую вкладку.",
   "window.detachBlockedSync":
     "Дождитесь конца сравнения или синхронизации — вместе с вкладкой они не переносятся.",
   "window.detachBlockedTransfers": "Дождитесь окончания переносов файлов этой вкладки.",
@@ -2149,8 +2160,9 @@ const ru: Record<MessageKey, string> = {
   "window.detachBlockedEditor":
     "Файл ещё открывается или сохраняется — повторите через мгновение.",
   "window.detachFailed": "Не удалось открыть вкладку в новом окне — она осталась здесь.",
+  "window.moveFailed": "То окно не приняло вкладку — она осталась здесь.",
   "window.detachOverflow":
-    "Терминал сейчас печатает слишком быстро — вынесите вкладку, когда вывод утихнет.",
+    "Терминал сейчас печатает слишком быстро — перенесите вкладку, когда вывод утихнет.",
 
   // ── Server tree ──
   "tree.servers": "Серверы",

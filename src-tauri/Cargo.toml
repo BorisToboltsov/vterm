@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "1.3.0"
+version = "1.4.0"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -116,7 +116,17 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSPasteboard"] }
+# NSPasteboard — нативное чтение буфера обмена; NSWindow/NSEvent — «окно под
+# указателем» при переносе вкладки между окнами (winhit.rs, ADR 0018). `objc2`
+# нужен только за `MainThreadMarker`; оба уже в дереве через tao/wry.
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSEvent",
+    "NSPasteboard",
+    "NSResponder",
+    "NSWindow",
+] }
 
 [dev-dependencies]
 proptest = "1.11.0"

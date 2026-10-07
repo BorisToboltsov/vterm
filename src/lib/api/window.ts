@@ -1,5 +1,6 @@
-// The app's windows (ADR 0017, mirror of appwin.rs): moving a tab out into a
-// window of its own, closing that window, and what windows tell each other.
+// The app's windows (ADR 0017 and 0018, mirror of appwin.rs): moving a tab out
+// into a window of its own or into another open one, closing a window, and what
+// windows tell each other.
 import { invoke } from "@tauri-apps/api/core";
 import { emit, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -34,6 +35,12 @@ export const CATALOG_EVENT = "window://catalog";
 export const SETTINGS_EVENT = "window://settings";
 /** Another window deleted servers; their tabs here close too. */
 export const SERVERS_DELETED_EVENT = "window://servers-deleted";
+/** The windows that take tabs changed; the payload is the whole list. */
+export const WINDOWS_EVENT = "window://windows";
+/** This window is offered a tab: `takeHandoff()`, or `declineHandoff()`. */
+export const HANDOFF_EVENT = "window://handoff";
+/** A tab of another window is held over this one, was let go of here, or left. */
+export const DRAG_EVENT = "window://drag";
 
 export interface SettingsBroadcast {
   /** Label of the window that made the change (it ignores its own echo). */
@@ -74,10 +81,59 @@ export function otherWindowsSummary(): Promise<unknown> {
   return invoke<unknown>("other_windows_summary");
 }
 
-// ── Moving a tab out to a new window ──────────────────────────────────────────
+// ── Which windows take tabs ───────────────────────────────────────────────────
 
-/** Where the new window opens. */
+/**
+ * This window takes tabs, and this is what the others show of it: the title of
+ * the tab in its focused pane and how many tabs it has. Called once the window
+ * listens for an offer, and again when either changes; the list of all windows
+ * comes back as `WINDOWS_EVENT`, to this window too.
+ */
+export function announceWindow(title: string, tabs: number): Promise<void> {
+  return invoke<void>("announce_window", { title, tabs });
+}
+
+// ── A tab dragged over another window ─────────────────────────────────────────
+// Pointer events end at a window's edge, and the window under the pointer hears
+// nothing of a drag that began elsewhere. So the window giving the tab up tells
+// the backend, which asks the OS what the pointer is over and tells that window
+// — it draws the tab and parts its own to make room.
+
+/**
+ * A tab of this window is held outside it. Resolves with the label of the
+ * other window of the app the pointer is over — that window has been told and
+ * draws the tab — or null: over anything else, and wherever the OS cannot say.
+ * `tab` is what the other window needs to draw it.
+ */
+export function dragOver(tab: unknown): Promise<string | null> {
+  return invoke<string | null>("drag_over", { tab });
+}
+
+/**
+ * The tab was let go of outside this window. Asked anew — the release is the
+ * gesture. Resolves with the label of the window it was dropped on, which now
+ * keeps the tab's place until the tab arrives (`detachCommit` with that target,
+ * or `dragEnd()` if it will not); null — dropped on none of the app's windows.
+ */
+export function dragDrop(tab: unknown): Promise<string | null> {
+  return invoke<string | null>("drag_drop", { tab });
+}
+
+/**
+ * The drag is over without the tab having moved — it came back into this
+ * window, was cancelled, or the handoff after a drop failed: the window that
+ * drew the tab forgets it.
+ */
+export function dragEnd(): Promise<void> {
+  return invoke<void>("drag_end");
+}
+
+// ── Moving a tab to another window ────────────────────────────────────────────
+
+/** Where the tab goes, and where a new window opens for it. */
 export interface DetachOpts {
+  /** Label of an open window to move the tab into; absent — a new window. */
+  target?: string;
   /** Screen position the tab was dropped at; absent for the menu command. */
   x?: number;
   y?: number;
@@ -99,19 +155,29 @@ export function detachAbort(sessionId: string): Promise<void> {
 }
 
 /**
- * Step 2: open the new window with the tab's packet and wait until it has taken
- * the tab over. Rejects — with everything rolled back — if it does not.
+ * Step 2: leave the tab's packet for the window that takes it — a new one, or
+ * the open window `opts.target` — and wait until it has taken the tab over.
+ * Rejects — with everything rolled back — if it does not.
  */
 export function detachCommit(sessionId: string, packet: string, opts: DetachOpts): Promise<string> {
   return invoke<string>("detach_commit", { sessionId, packet, opts });
 }
 
-/** In a new window: the packet of the tab moved into it (handed out once). */
+/** In the window taking a tab: its packet (handed out once). */
 export function takeHandoff(): Promise<string | null> {
   return invoke<string | null>("take_handoff");
 }
 
-/** In a new window: its terminal is restored and listening — take the session. */
+/**
+ * In a window that was offered a tab and cannot take it: say so now, so the
+ * window giving it up is not left waiting for its timeout. `sessionId` names
+ * the tab when this window got as far as knowing it.
+ */
+export function declineHandoff(sessionId: string | null = null): Promise<void> {
+  return invoke<void>("decline_handoff", { sessionId });
+}
+
+/** In the window taking a tab: its terminal is restored and listening — take the session. */
 export function attachSession(sessionId: string): Promise<void> {
   return invoke<void>("attach_session", { sessionId });
 }

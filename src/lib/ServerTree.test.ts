@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ServerTree from "./ServerTree.svelte";
+import { DRAGGING_CLASS } from "./actions/drag";
 import type { ServerProfile } from "./types";
 
 function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerProfile {
@@ -264,21 +265,31 @@ describe("ServerTree", () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  it("disables text selection while pressing a row, and restores it on release", async () => {
+  it("nothing is selected from the press on a row until its release", async () => {
     render(ServerTree, {
       props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })] },
     });
     const list = screen.getByRole("tree");
-    expect(list.className).not.toContain("select-none");
+    const held = () => document.documentElement.classList.contains(DRAGGING_CLASS);
+    /** Whether a selection starting now would be refused. */
+    const refused = () => {
+      const e = new Event("selectstart", { bubbles: true, cancelable: true });
+      list.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(held()).toBe(false);
+    expect(refused()).toBe(false);
 
-    // Press on a server row → the list turns off text selection so a drag can't
-    // start selecting the rows below it.
+    // Press on a server row → the drag that may follow selects nothing, in the
+    // tree or anywhere the pointer goes (the shared hold, not a class on the list).
     await fireEvent.pointerDown(screen.getByTestId("server-row"));
-    expect(list.className).toContain("select-none");
+    expect(held()).toBe(true);
+    expect(refused()).toBe(true);
 
     // Releasing restores normal selection.
     await fireEvent.pointerUp(list);
-    expect(list.className).not.toContain("select-none");
+    expect(held()).toBe(false);
+    expect(refused()).toBe(false);
   });
 
   it("folder action buttons do not also select the folder", async () => {

@@ -7,6 +7,7 @@ import {
   detachErrorKey,
   detachOffered,
   ghostPlace,
+  moveOffered,
   parsePacket,
   releasedOutside,
   type DetachState,
@@ -111,6 +112,14 @@ describe("detachBlocker", () => {
     expect(detachBlocker({ ...idle, mainWindow: false, tabs: 2 })).toBeNull();
   });
 
+  it("into a window that is already open the only tab may go — that is how it returns", () => {
+    expect(detachBlocker({ ...idle, mainWindow: false, tabs: 1 }, true)).toBeNull();
+    // Everything else holds for an open window as for a new one.
+    expect(detachBlocker({ ...idle, broadcast: true }, true)).toBe("broadcast");
+    expect(detachBlocker({ ...idle, connected: false }, true)).toBe("notConnected");
+    expect(detachBlocker({ ...idle, transfers: 1 }, true)).toBe("transfers");
+  });
+
   it("only a connected tab has a session to take along", () => {
     expect(detachBlocker({ ...idle, connected: false })).toBe("notConnected");
   });
@@ -172,6 +181,28 @@ describe("detachOffered", () => {
   });
 });
 
+describe("moveOffered", () => {
+  it("needs another window to move to", () => {
+    expect(moveOffered({ broadcast: false }, 0)).toBe(false);
+    expect(moveOffered({ broadcast: false }, 1)).toBe(true);
+  });
+
+  it("not in synchronous-input mode, however many windows there are", () => {
+    expect(moveOffered({ broadcast: true }, 3)).toBe(false);
+  });
+
+  it("agrees with the blocker: what is offered is not structurally blocked", () => {
+    for (const mainWindow of [true, false]) {
+      for (const tabs of [1, 2]) {
+        for (const broadcast of [true, false]) {
+          const block = detachBlocker({ ...idle, mainWindow, tabs, broadcast }, true);
+          expect(moveOffered({ broadcast }, 1)).toBe(block === null);
+        }
+      }
+    }
+  });
+});
+
 describe("detachErrorKey", () => {
   it("a terminal printing too fast is its own message — the remedy is to wait", () => {
     expect(
@@ -180,11 +211,20 @@ describe("detachErrorKey", () => {
   });
 
   it("anything else is a window that did not take the tab", () => {
-    expect(detachErrorKey("handoff-failed: the new window did not take the tab over")).toBe(
+    expect(detachErrorKey("handoff-failed: the other window did not take the tab over")).toBe(
       "window.detachFailed",
     );
     expect(detachErrorKey(new Error("open window: no display"))).toBe("window.detachFailed");
     expect(detachErrorKey(undefined)).toBe("window.detachFailed");
+  });
+
+  it("an open window that did not take the tab is not a window that failed to open", () => {
+    expect(detachErrorKey("handoff-failed: the other window did not take the tab over", true)).toBe(
+      "window.moveFailed",
+    );
+    // Too much output is the same remedy wherever the tab was going.
+    expect(detachErrorKey("handoff-overflow: …", true)).toBe("window.detachOverflow");
+    for (const dict of Object.values(messages)) expect(dict["window.moveFailed"]).toBeTruthy();
   });
 });
 

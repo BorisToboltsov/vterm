@@ -12,7 +12,7 @@
 // (`previewPanels`), so the other tabs slide apart to make room. The layout
 // itself changes once, on release.
 
-import { layoutBox, passedThreshold, type Box } from "../actions/drag";
+import { holdSelection, layoutBox, passedThreshold, type Box } from "../actions/drag";
 import {
   dropChanges,
   insertionIndex,
@@ -140,8 +140,6 @@ function onMove(e: PointerEvent): void {
     } catch {
       /* the element may be gone; window listeners still see the pointer */
     }
-    // Drop a selection that slipped in before the drag was recognised.
-    window.getSelection()?.removeAllRanges();
   }
   dockDrag.x = e.clientX - candidate.grabX;
   dockDrag.y = e.clientY - candidate.grabY;
@@ -202,6 +200,7 @@ export function beginPanelDrag(e: PointerEvent, panel: PanelId): void {
   clearDrag();
   const el = e.currentTarget as HTMLElement;
   const box = el.getBoundingClientRect();
+  holdSelection();
   candidate = {
     panel,
     startX: e.clientX,
