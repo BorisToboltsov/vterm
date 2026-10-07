@@ -16,10 +16,13 @@
 // ADR 0017). The store only notices where the pointer is — what happens then is
 // the page's (`onTabDraggedOutside`): it owns the handoff. Pointer events end
 // at the window's edge, and the window out there hears nothing of this drag, so
-// while the tab is held outside the page is told (`over`), and tells the
-// backend, which tells the window under the pointer — that window draws the tab
-// (`tabincoming.svelte.ts`). What is said about one drag is said in the order it
-// happened: a move, then the next, then the release or the return.
+// the page is told of every move (`over`), and tells the backend, which brings
+// the window under the pointer forward and has the tab drawn — by that window
+// (`tabincoming.svelte.ts`), or over the desktop by a floating label. The answer
+// says where the tab is: another window brought forward may lie over this one,
+// and then the pointer is over it while still inside this window's bounds. What
+// is said about one drag is said in the order it happened: a move, then the
+// next, then the release or the end.
 //
 // **The layout changes once, on release.** While a tab is in the air the strips
 // draw the order the drop would give (`previewTabs`) and a tint shows the half
@@ -58,7 +61,9 @@ export const tabDrag = $state<{
    * gets a window of its own.
    */
   window: string | null;
-}>({ tab: null, x: 0, y: 0, over: null, zone: null, outside: false, window: null });
+  /** Over none of the app's windows: a floating label draws the tab, not this page. */
+  floating: boolean;
+}>({ tab: null, x: 0, y: 0, over: null, zone: null, outside: false, window: null, floating: false });
 
 /** Where on the screen a tab was let go of outside the window (screen px). */
 export interface ScreenPoint {
@@ -66,15 +71,27 @@ export interface ScreenPoint {
   y: number;
 }
 
+/** Where a dragged tab is, as the backend sees it. */
+export interface DragSight {
+  /** The other window of the app it is over — `tabDrag.window`. */
+  window: string | null;
+  /** Over none of the app's windows, where a floating label draws it — `tabDrag.floating`. */
+  floating: boolean;
+}
+
 /** What a tab dragged outside the window does — the page's part of the drag. */
 export interface OutsideDrag {
-  /** It was let go of outside, at this point of the screen. */
-  release: (tab: string, at: ScreenPoint) => void;
   /**
-   * It is held outside (called as the pointer moves there). Resolves with the
-   * label of the other window of the app it is over — `tabDrag.window` — or null.
+   * It was let go of away from this window's panes: outside the window
+   * (`outside`), or inside its bounds but over another window lying on top.
    */
-  over?: (tab: string) => Promise<string | null>;
+  release: (tab: string, at: ScreenPoint, outside: boolean) => void;
+  /**
+   * Called on every move of a dragged tab, inside the window too — another
+   * window, brought to the front, may lie over this one, and only the backend
+   * can tell. Resolves with where the tab is; null — there was nothing to ask.
+   */
+  over?: (tab: string) => Promise<DragSight | null>;
   /** It is no longer held outside, and was not let go of there. */
   left?: () => void;
 }
@@ -102,7 +119,7 @@ let told = false;
 function tellOver(): void {
   const drag = candidate;
   const over = outsideDrag?.over;
-  if (!over || !drag || !tabDrag.outside) return;
+  if (!over || !drag || tabDrag.tab === null) return;
   if (telling) {
     tellAgain = true;
     return;
@@ -110,10 +127,18 @@ function tellOver(): void {
   told = true;
   const said: Promise<void> = over(drag.tab)
     .catch(() => null)
-    .then((label) => {
+    .then((sight) => {
       if (telling === said) telling = null;
-      // Not for a drag that ended, or came back inside, while this was out.
-      if (candidate === drag && tabDrag.outside) tabDrag.window = label;
+      // Not for a drag that ended while this was out.
+      if (candidate === drag && tabDrag.tab !== null) {
+        tabDrag.window = sight?.window ?? null;
+        tabDrag.floating = sight?.floating ?? false;
+        // Over another window there is no pane of this one to land in.
+        if (tabDrag.window !== null) {
+          tabDrag.over = null;
+          tabDrag.zone = null;
+        }
+      }
       if (tellAgain) {
         tellAgain = false;
         tellOver();
@@ -211,6 +236,7 @@ function clearDrag(): void {
   tabDrag.zone = null;
   tabDrag.outside = false;
   tabDrag.window = null;
+  tabDrag.floating = false;
 }
 
 function stopListening(): void {
@@ -242,16 +268,20 @@ function onMove(e: PointerEvent): void {
   }
   tabDrag.x = e.clientX;
   tabDrag.y = e.clientY;
+  // The window may lose the focus mid-drag — the one under the pointer is
+  // brought forward — and losing it ends the hold on selection: taken again.
+  holdSelection();
   // Outside the window there is no pane to land in — only another window.
   tabDrag.outside = outsideDrag !== null && releasedOutside(e.clientX, e.clientY, viewport());
-  if (tabDrag.outside) {
+  // Told on every move, not only outside: a window brought to the front may
+  // lie over this one, and then the pointer is "inside" by this window's bounds
+  // while it is over the other.
+  tellOver();
+  if (tabDrag.outside || tabDrag.window !== null) {
     tabDrag.over = null;
     tabDrag.zone = null;
-    tellOver();
     return;
   }
-  tabDrag.window = null;
-  tellLeft();
   const hit = tabDropAt(e.clientX, e.clientY, candidate.tab);
   // A drop that would change nothing is not offered as a target.
   const offered = hit !== null && dropChanges(tabsState.center, candidate.tab, hit.drop);
@@ -265,7 +295,10 @@ function onUp(e: PointerEvent): void {
   // Decided from where the pointer was let go, not from the last move: the
   // release is the gesture.
   const drag = outsideDrag;
-  const out = tab !== null && drag !== null && releasedOutside(e.clientX, e.clientY, viewport());
+  const outside = releasedOutside(e.clientX, e.clientY, viewport());
+  // Inside this window's bounds but over another window lying on top of it,
+  // the tab was dropped on that window, not on a pane here.
+  const out = tab !== null && drag !== null && (outside || tabDrag.window !== null);
   // Let go of outside, the tab is not "no longer held there" — it was dropped
   // there, and what happens to it is the page's to say.
   if (out) told = false;
@@ -278,7 +311,7 @@ function onUp(e: PointerEvent): void {
   setTimeout(() => (swallowClick = false), 0);
   if (out && drag) {
     const at = { x: e.screenX, y: e.screenY };
-    afterTelling(() => drag.release(tab, at));
+    afterTelling(() => drag.release(tab, at, outside));
     return;
   }
   if (over) dropTab(tab, over);

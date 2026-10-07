@@ -14,6 +14,9 @@
 //!   taken over;
 //! - **which windows take tabs**: each announces itself once its frontend can
 //!   answer an offer, and the others list it as a place to move a tab to;
+//! - **a tab dragged between windows**: the window it is over hears nothing of
+//!   the drag, so it is told here — and brought to the front; over none of the
+//!   app's windows the tab is drawn by a window of its own ([`crate::dragghost`]);
 //! - **what each window would lose** on quit, so the main window's confirmation
 //!   lists the whole application.
 //!
@@ -147,6 +150,9 @@ struct Registry {
     /// A tab being dragged out of one window (first) is held over another
     /// (second), which draws it. There is one pointer, so one such pair.
     hover: Option<(String, String)>,
+    /// The window a drag last brought to the front — so that it is done once
+    /// per visit, not on every move over it.
+    raised: Option<String>,
     /// Number of the last secondary window opened.
     seq: u32,
 }
@@ -220,6 +226,16 @@ impl Registry {
     /// a tab already (a handoff is kept by its target's label — one at a time).
     fn takes_tabs(&self, target: &str, source: &str) -> bool {
         target != source && self.roster.contains_key(target) && !self.pending.contains_key(target)
+    }
+
+    /// The drag is over the window `label`. True when that window has to be
+    /// brought to the front — it is not the one brought there last.
+    fn raise(&mut self, label: &str) -> bool {
+        if self.raised.as_deref() == Some(label) {
+            return false;
+        }
+        self.raised = Some(label.to_string());
+        true
     }
 
     /// The tab `source` drags is over `target` now — or over none of the app's
@@ -541,14 +557,11 @@ enum DragEvent {
     Leave,
 }
 
-/// The other window of the app the mouse pointer is over — one that takes tabs
-/// — and the pointer's place in it. The OS is asked ([`crate::winhit`]); where
-/// it cannot say, the answer is `None`, never a guess from window rectangles.
-async fn pointer_target(
-    app: &AppHandle,
-    source: &str,
-    windows: &Windows,
-) -> AppResult<Option<crate::winhit::Hit>> {
+/// The window of the app the mouse pointer is over — any of them, the one the
+/// drag began in included — and the pointer's place in it. The OS is asked
+/// ([`crate::winhit`]); where it cannot say, the answer is `None`, never a
+/// guess from window rectangles. The floating label is never the answer.
+async fn pointer_window(app: &AppHandle) -> AppResult<Option<crate::winhit::Hit>> {
     // AppKit answers on the main thread only; a command runs on a worker.
     let (answer, hit) = oneshot::channel();
     let handle = app.clone();
@@ -557,34 +570,87 @@ async fn pointer_target(
     })
     .map_err(|e| AppError::Message(format!("window under pointer: {e}")))?;
     let hit = hit.await.ok().flatten();
-    Ok(hit.filter(|hit| windows.lock().takes_tabs(&hit.label, source)))
+    Ok(hit.filter(|hit| hit.label != crate::dragghost::LABEL))
 }
 
-/// A tab of this window is held outside it. If the pointer is over another
-/// window of the app, that window is told where — it draws the tab — and its
-/// label is returned; the window the tab was over before is told it left. `tab`
-/// is what the other window needs to draw it, passed on as it is.
+/// Bring the window a dragged tab is over to the front, and make it the
+/// active one: a tab cannot be aimed at a strip that another window covers,
+/// and a window that is not active draws the tab over it a beat late.
+fn raise_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_focus();
+    }
+}
+
+/// What the window a tab is dragged out of learns about where the tab is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DragAnswer {
+    /// The other window of the app the tab is over — it draws the tab.
+    window: Option<String>,
+    /// Over none of the app's windows: the floating label draws it
+    /// ([`crate::dragghost`]).
+    floating: bool,
+}
+
+/// A tab of this window is being dragged. The window of the app under the
+/// pointer comes to the front. If it is another window, it is told where the
+/// tab is — it draws the tab — and the window the tab was over before is told
+/// it left; over none of the app's windows the floating label draws it, looking
+/// as `look` says. `tab` is what the other window needs to draw it, passed on
+/// as it is.
 #[tauri::command]
 pub async fn drag_over(
     app: AppHandle,
     window: WebviewWindow,
     windows: State<'_, Windows>,
     tab: serde_json::Value,
-) -> AppResult<Option<String>> {
-    let hit = pointer_target(&app, window.label(), &windows).await?;
+    look: Option<crate::dragghost::Look>,
+) -> AppResult<DragAnswer> {
+    let source = window.label();
+    let under = pointer_window(&app).await?;
+    // The window under the pointer comes forward: the one the tab would land
+    // in, and the one it came from when the pointer is back over it.
+    if let Some(hit) = &under {
+        if windows.lock().raise(&hit.label) {
+            raise_window(&app, &hit.label);
+        }
+    }
+    let hit = under
+        .clone()
+        .filter(|hit| windows.lock().takes_tabs(&hit.label, source));
     let target = hit.as_ref().map(|hit| hit.label.as_str());
-    let left = windows.lock().hover(window.label(), target);
+    let left = windows.lock().hover(source, target);
     if let Some(left) = left {
         let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
     }
-    let Some(hit) = hit else { return Ok(None) };
+    // Over none of the app's windows no page can draw the tab: a window of its
+    // own does, kept next to the pointer.
+    let floating = match &look {
+        Some(look) if under.is_none() => crate::dragghost::show(&app, look),
+        _ => {
+            crate::dragghost::hide(&app);
+            // Loaded while the tab is still over a window, ready for the desktop.
+            crate::dragghost::prepare(&app);
+            false
+        }
+    };
+    let Some(hit) = hit else {
+        return Ok(DragAnswer {
+            window: None,
+            floating,
+        });
+    };
     let (x, y) = (hit.x, hit.y);
     let _ = app.emit_to(
         hit.label.as_str(),
         DRAG_EVENT,
         DragEvent::Over { x, y, tab },
     );
-    Ok(Some(hit.label))
+    Ok(DragAnswer {
+        window: Some(hit.label),
+        floating,
+    })
 }
 
 /// The tab was let go of outside this window. Asked anew — the release is the
@@ -598,9 +664,14 @@ pub async fn drag_drop(
     windows: State<'_, Windows>,
     tab: serde_json::Value,
 ) -> AppResult<Option<String>> {
-    let hit = pointer_target(&app, window.label(), &windows).await?;
+    let source = window.label();
+    crate::dragghost::hide(&app);
+    windows.lock().raised = None;
+    let hit = pointer_window(&app)
+        .await?
+        .filter(|hit| windows.lock().takes_tabs(&hit.label, source));
     let target = hit.as_ref().map(|hit| hit.label.as_str());
-    let left = windows.lock().hover(window.label(), target);
+    let left = windows.lock().hover(source, target);
     if let Some(left) = left {
         let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
     }
@@ -619,7 +690,12 @@ pub async fn drag_drop(
 /// window that drew the tab is told it left.
 #[tauri::command]
 pub fn drag_end(app: AppHandle, window: WebviewWindow, windows: State<Windows>) {
-    let left = windows.lock().end_hover(window.label());
+    crate::dragghost::hide(&app);
+    let left = {
+        let mut reg = windows.lock();
+        reg.raised = None;
+        reg.end_hover(window.label())
+    };
     if let Some(left) = left {
         let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
     }
@@ -1069,6 +1145,17 @@ mod tests {
         reg.hover("win-2", Some(MAIN));
         assert_eq!(reg.hover_gone("win-4"), None);
         assert_eq!(reg.end_hover("win-2"), Some(MAIN.to_string()));
+    }
+
+    #[test]
+    fn a_window_is_brought_forward_once_per_visit() {
+        let mut reg = Registry::default();
+        assert!(reg.raise("win-2"));
+        // Still over it: nothing more to do.
+        assert!(!reg.raise("win-2"));
+        // Back over the window the drag began in: that one comes forward.
+        assert!(reg.raise(MAIN));
+        assert!(reg.raise("win-2"));
     }
 
     /// This file before its tests, line comments stripped.

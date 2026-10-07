@@ -100,13 +100,37 @@ export function announceWindow(title: string, tabs: number): Promise<void> {
 // — it draws the tab and parts its own to make room.
 
 /**
- * A tab of this window is held outside it. Resolves with the label of the
- * other window of the app the pointer is over — that window has been told and
- * draws the tab — or null: over anything else, and wherever the OS cannot say.
- * `tab` is what the other window needs to draw it.
+ * How the floating label of a dragged tab looks (mirror of `dragghost::Look`):
+ * what this page draws next to the pointer — measured, with its colours — for
+ * the window that draws the tab over the desktop.
  */
-export function dragOver(tab: unknown): Promise<string | null> {
-  return invoke<string | null>("drag_over", { tab });
+export interface DragLook {
+  title: string;
+  bg: string;
+  fg: string;
+  accent: string;
+  dot: string;
+  /** Size of the label as this page draws it, CSS px. */
+  w: number;
+  h: number;
+}
+
+/** Where a dragged tab is, as the backend sees it (mirror of `appwin::DragAnswer`). */
+export interface DragAnswer {
+  /** The other window of the app it is over — that window draws it. */
+  window: string | null;
+  /** Over none of the app's windows: a floating label draws it. */
+  floating: boolean;
+}
+
+/**
+ * A tab of this window is being dragged. The backend asks the OS which window
+ * of the app the pointer is over and brings it to the front: another window is
+ * told, and draws the tab; over none of them a floating label does, looking as
+ * `look` says. `tab` is what the other window needs to draw it.
+ */
+export function dragOver(tab: unknown, look: DragLook | null = null): Promise<DragAnswer> {
+  return invoke<DragAnswer>("drag_over", { tab, look });
 }
 
 /**

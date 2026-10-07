@@ -33,6 +33,11 @@
 //     arriving has to be said — a drop that was refused, a handoff that failed —
 //     or that window goes on showing a tab that is not coming. And the tab lands
 //     in the place that window kept for it, not wherever a new tab would go.
+//     Over the desktop the tab is drawn by a floating label; this page then
+//     draws none — two labels for one tab — and every release asks the backend,
+//     which is also what takes that label away. A tab only reordered in its own
+//     strip, with no other window that could lie over this one, asks nobody: a
+//     call per pointer move, and a window made for a label nobody will see.
 //
 // Every check is a function over source text, so that the same file can show it
 // catches the violation it exists for (the second `describe`). Sources are read
@@ -311,7 +316,7 @@ export function crossDragViolations(page: string): string[] {
     out.push("a handoff that failed after a drop leaves a place kept for a tab that is not coming");
   }
   // What ends the drag without a drop is said by the store, through `left`.
-  if (!/left: toWindows \? \(\) => void dragEnd\(\)/.test(c)) {
+  if (!/left: \(\) => void dragEnd\(\)/.test(c)) {
     out.push("a tab that came back into its window stays drawn in the other one");
   }
   // A tab that cannot go is shown to nobody.
@@ -324,9 +329,20 @@ export function crossDragViolations(page: string): string[] {
   if (!fn(c, "takeTab").includes("unpackTab(packet, takeIncomingDrop())")) {
     out.push("a tab dropped on a window lands where a new tab would, not where it was dropped");
   }
-  // One label for one tab: over another window, that window draws it.
-  if (!c.includes("{#if draggingTab && !heldOverWindow}")) {
+  // One label for one tab: over another window that window draws it, over the
+  // desktop the floating label does.
+  if (!c.includes("{#if draggingTab && !heldOverWindow && !tabDrag.floating}")) {
     out.push("a tab held over another window is drawn in both");
+  }
+  // Every release away from this window's panes asks the backend — with or
+  // without another window to land in: that is what hides the floating label.
+  if (!drop.includes("const under = await dragDrop(describeTab(tab))")) {
+    out.push("a tab let go of over the desktop leaves its floating label there");
+  }
+  // A tab reordered inside its window, with no other window, asks nobody.
+  const quiet = over.indexOf("if (!tabDrag.outside && windowTargets.length === 0) return null;");
+  if (quiet < 0 || quiet > over.indexOf("dragOver(")) {
+    out.push("a tab reordered in its own strip calls the backend on every move");
   }
   return out;
 }
@@ -528,8 +544,7 @@ describe("window guard — catches what it exists for", () => {
   });
 
   it("a drop outside decided by where the tab was last drawn instead of the release", () => {
-    const asked =
-      "const under = windowTargets.length > 0 ? await dragDrop(describeTab(tab)).catch(() => null) : null;";
+    const asked = "const under = await dragDrop(describeTab(tab)).catch(() => null);";
     for (const remembered of ["const under = tabDrag.window;", "const under = incoming.tab ? null : null;"]) {
       expect(openWindowViolations(mutate(page, asked, remembered))).toContain(
         "a tab dropped outside goes where it was last drawn, not where it was released",
@@ -564,7 +579,7 @@ describe("window guard — catches what it exists for", () => {
     ).toEqual(["a handoff that failed after a drop leaves a place kept for a tab that is not coming"]);
     expect(
       crossDragViolations(
-        mutate(page, "left: toWindows ? () => void dragEnd().catch(() => {}) : undefined,", "left: undefined,"),
+        mutate(page, "left: () => void dragEnd().catch(() => {}),", "left: undefined,"),
       ),
     ).toEqual(["a tab that came back into its window stays drawn in the other one"]);
   });
@@ -574,11 +589,28 @@ describe("window guard — catches what it exists for", () => {
       crossDragViolations(
         mutate(
           page,
-          "if (!tab || detachBlocker(detachStateOf(tab), true)) return null;\n    return dragOver(",
-          "if (!tab) return null;\n    return dragOver(",
+          "if (!tab || detachBlocker(detachStateOf(tab), true)) return null;",
+          "if (!tab) return null;",
         ),
       ),
     ).toEqual(["a tab that cannot move is drawn in another window all the same"]);
+  });
+
+  it("a floating label left on the desktop, or made for a tab that never leaves", () => {
+    expect(
+      crossDragViolations(
+        mutate(
+          page,
+          "const under = await dragDrop(describeTab(tab)).catch(() => null);",
+          "const under = windowTargets.length > 0 ? await dragDrop(describeTab(tab)).catch(() => null) : null;",
+        ),
+      ),
+    ).toEqual(["a tab let go of over the desktop leaves its floating label there"]);
+    expect(
+      crossDragViolations(
+        mutate(page, "    if (!tabDrag.outside && windowTargets.length === 0) return null;\n", ""),
+      ),
+    ).toEqual(["a tab reordered in its own strip calls the backend on every move"]);
   });
 
   it("a dropped tab that lands where a new one would", () => {
@@ -589,7 +621,9 @@ describe("window guard — catches what it exists for", () => {
 
   it("a tab drawn in both windows at once", () => {
     expect(
-      crossDragViolations(mutate(page, "{#if draggingTab && !heldOverWindow}", "{#if draggingTab}")),
+      crossDragViolations(
+        mutate(page, "{#if draggingTab && !heldOverWindow && !tabDrag.floating}", "{#if draggingTab}"),
+      ),
     ).toEqual(["a tab held over another window is drawn in both"]);
   });
 

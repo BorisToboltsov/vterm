@@ -52,6 +52,8 @@
     SETTINGS_EVENT,
     WINDOW_CLOSE_EVENT,
     WINDOWS_EVENT,
+    type DragAnswer,
+    type DragLook,
     type ServersDeleted,
     type SettingsBroadcast,
   } from "$lib/api";
@@ -1618,37 +1620,73 @@
   // the window with a tab is not a drop target at all. While it is held over
   // another window, that window draws it: this one only says where it is.
   $effect(() => {
-    const offered = canOfferDetach || windowTargets.length > 0;
-    const toWindows = windowTargets.length > 0;
     onTabDraggedOutside(
-      offered
+      leavesWindow
         ? {
-            release: (sessionId, at) => void dropOutside(sessionId, at),
-            over: toWindows ? tellDragOver : undefined,
-            left: toWindows ? () => void dragEnd().catch(() => {}) : undefined,
+            release: (sessionId, at, outside) => void dropOutside(sessionId, at, outside),
+            // Told of with or without another window to land in: over the
+            // desktop the tab is drawn by the floating label either way.
+            over: tellDragOver,
+            left: () => void dragEnd().catch(() => {}),
           }
         : null,
     );
   });
+  /** A tab of this window can be carried out of it at all. */
+  const leavesWindow = $derived(canOfferDetach || windowTargets.length > 0);
+  // Where the tab over the desktop is drawn by a window of its own (mirror of
+  // `dragghost::SUPPORTED`). There the label never stops at this window's edge,
+  // so it has nothing to say about what letting go will do.
+  const floatsOutside = $derived(hostEnv.os === "macos" || hostEnv.os === "windows");
   /** The tab in the air is over another window of the app, which draws it. */
   const heldOverWindow = $derived(windowTargets.some((w) => w.label === tabDrag.window));
   // The edge of a pane a drop would make a new pane at: of a tab of this
   // window, or of one held over it from another.
   const dropZone = $derived(tabDrag.zone ?? incoming.zone);
 
-  /**
-   * A tab of this window is held outside it: say so, and learn which window of
-   * the app it is over. A tab that cannot go anywhere right now is shown to
-   * nobody — letting go of it says why.
-   */
-  async function tellDragOver(sessionId: string): Promise<string | null> {
-    const tab = findTab(sessionId);
-    if (!tab || detachBlocker(detachStateOf(tab), true)) return null;
-    return dragOver(describeTab(tab));
+  // An unseen copy of the label a dragged tab gets — measured, and its colours
+  // read, for the floating label that shows the tab over the desktop (a window
+  // of its own: this page cannot draw there).
+  let ghostProbe = $state<HTMLElement>();
+
+  /** How the floating label looks: like the one this page would draw. */
+  function dragLook(tab: Tab): DragLook | null {
+    const probe = ghostProbe;
+    if (!probe) return null;
+    const box = probe.getBoundingClientRect();
+    const style = getComputedStyle(probe);
+    const dot = probe.querySelector<HTMLElement>('[data-part="dot"]');
+    return {
+      title: tabAlias(tab),
+      bg: style.backgroundColor,
+      fg: style.color,
+      accent: style.borderTopColor,
+      dot: dot ? getComputedStyle(dot).backgroundColor : style.color,
+      w: Math.ceil(box.width),
+      h: Math.ceil(box.height),
+    };
   }
 
-  /** A tab was let go of outside this window, at `at` on the screen. */
-  async function dropOutside(sessionId: string, at: ScreenPoint) {
+  /**
+   * A tab of this window is being dragged: say so, and learn where it is — over
+   * another window of the app, or over none of them. A tab that cannot go
+   * anywhere right now is shown to nobody — letting go of it says why.
+   */
+  async function tellDragOver(sessionId: string): Promise<DragAnswer | null> {
+    const tab = findTab(sessionId);
+    if (!tab || detachBlocker(detachStateOf(tab), true)) return null;
+    // Inside this window, with no other one that could lie over it, there is
+    // nothing the backend could add: a tab reordered in its strip asks nobody.
+    if (!tabDrag.outside && windowTargets.length === 0) return null;
+    return dragOver(describeTab(tab), dragLook(tab));
+  }
+
+  /**
+   * A tab was let go of away from this window's panes, at `at` on the screen:
+   * outside the window, or (`outside` false) inside its bounds but over another
+   * window lying on top of it.
+   */
+  async function dropOutside(sessionId: string, at: ScreenPoint, outside: boolean) {
     const tab = findTab(sessionId);
     if (!tab) return;
     // What keeps a tab from every other window keeps it here: said now.
@@ -1660,14 +1698,18 @@
     }
     // Asked now, not taken from where the tab was last drawn: the release is
     // the gesture. The window it was dropped on keeps its place from here on.
-    const under = windowTargets.length > 0 ? await dragDrop(describeTab(tab)).catch(() => null) : null;
+    // Asked even with no other window to land in: this is also what takes the
+    // floating label off the desktop.
+    const under = await dragDrop(describeTab(tab)).catch(() => null);
     if (under && windowTargets.some((w) => w.label === under)) {
       // If the tab does not get there after all, that window is told.
       if (!(await detachTab(sessionId, { window: under }))) void dragEnd().catch(() => {});
       return;
     }
     if (under) void dragEnd().catch(() => {});
-    if (canOfferDetach) void detachTab(sessionId, { at });
+    // Inside this window after all (the other one was gone by the release):
+    // nothing to open a window for.
+    if (outside && canOfferDetach) void detachTab(sessionId, { at });
   }
 
   /**
@@ -3512,7 +3554,19 @@
 <!-- Drag ghost for a terminal tab being moved: one of this window's — or one
      held over this window from another (ADR 0018), which keeps the pointer
      while this window draws it. -->
-{#if draggingTab && !heldOverWindow}
+{#if draggingTab && leavesWindow}
+  <!-- The label as it is drawn next to the pointer, unseen — its size and
+       colours are what the floating label over the desktop is given. -->
+  <div
+    bind:this={ghostProbe}
+    aria-hidden="true"
+    class="pointer-events-none invisible fixed left-0 top-0 flex max-w-64 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm"
+  >
+    <span data-part="dot" class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
+    <span class="truncate">{tabAlias(draggingTab)}</span>
+  </div>
+{/if}
+{#if draggingTab && !heldOverWindow && !tabDrag.floating}
   <!-- Outside the window the label cannot follow the pointer, so it waits at the
        edge the pointer left through and says what letting go will do. Over
        another window of the app there is nothing to draw here: that window
@@ -3526,7 +3580,7 @@
   >
     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
     <span class="truncate">{tabAlias(draggingTab)}</span>
-    {#if tabDrag.outside && canOfferDetach}
+    {#if tabDrag.outside && canOfferDetach && !floatsOutside}
       <Icon name="popOut" size={13} class="shrink-0 text-accent" />
       <span class="min-w-0 truncate text-meta text-muted" data-testid="tab-drag-outside">
         {t("ctx.moveToWindow")}

@@ -336,7 +336,7 @@ describe("a tab let go of outside the window", () => {
     expect(tabDrag.zone).toBeNull();
     releaseAt(1500, 230, 2100, 400);
     expect(moved).toHaveBeenCalledTimes(1);
-    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 });
+    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true);
     // The layout here is not touched — the page moves the tab once it is taken.
     expect(shape()).toEqual([[a, b], [c]]);
     expect(tabDrag.tab).toBeNull();
@@ -368,7 +368,7 @@ describe("a tab let go of outside the window", () => {
     expect(tabDrag.over).not.toBeNull();
     // The release itself is past the bottom edge.
     releaseAt(690, 800, 690, 1000);
-    expect(moved).toHaveBeenCalledWith(a, { x: 690, y: 1000 });
+    expect(moved).toHaveBeenCalledWith(a, { x: 690, y: 1000 }, true);
     expect(shape()).toEqual([[a, b], [c]]);
   });
 
@@ -392,47 +392,80 @@ describe("a tab let go of outside the window", () => {
   });
 });
 
-describe("a tab held outside the window", () => {
+describe("a dragged tab the backend is told of", () => {
   /** Let what was said (a resolved promise and what hangs on it) land. */
   const said = async () => {
     for (let i = 0; i < 6; i++) await Promise.resolve();
   };
+  const sight = (window: string | null, floating = false) => ({ window, floating });
 
   /** An `over` answered by hand: `answer[i]` settles the i-th call. */
   function manualOver() {
-    const answer: ((label: string | null) => void)[] = [];
+    const answer: ((s: { window: string | null; floating: boolean } | null) => void)[] = [];
     const over = vi.fn(
-      (_tab: string) => new Promise<string | null>((resolve) => answer.push(resolve)),
+      (_tab: string) =>
+        new Promise<{ window: string | null; floating: boolean } | null>((resolve) =>
+          answer.push(resolve),
+        ),
     );
     return { over, answer };
   }
 
-  const releaseOutside = () =>
+  const releaseAt = (x: number, y: number) =>
     window.dispatchEvent(
       new PointerEvent("pointerup", {
-        clientX: 1500,
-        clientY: 230,
-        screenX: 2100,
-        screenY: 400,
+        clientX: x,
+        clientY: y,
+        screenX: x + 600,
+        screenY: y + 170,
         pointerId: 7,
       }),
     );
 
-  it("is told of only once the pointer has left, and the window it is over is shown", async () => {
-    const over = vi.fn().mockResolvedValue("win-2");
+  it("is told of on every move once it is a drag — inside the window too", async () => {
+    const over = vi.fn().mockResolvedValue(sight(null));
+    onTabDraggedOutside({ release: vi.fn(), over });
+    beginTabDrag(press(byId("tabA")), a);
+    // A press is not a drag yet: nothing to tell.
+    expect(over).not.toHaveBeenCalled();
+    at("bodyR");
+    move(900, 230);
+    expect(over).toHaveBeenCalledTimes(1);
+    expect(over).toHaveBeenCalledWith(a);
+    await said();
+    // Over no other window: the panes of this one are still the targets.
+    expect(tabDrag.window).toBeNull();
+    move(910, 230);
+    expect(tabDrag.over).not.toBeNull();
+  });
+
+  it("over another window — even inside this one's bounds — no pane here is a target", async () => {
+    const over = vi.fn().mockResolvedValue(sight("win-2"));
+    onTabDraggedOutside({ release: vi.fn(), over });
+    beginTabDrag(press(byId("tabA")), a);
+    at("bodyR");
+    move(900, 230);
+    // Until the backend answers, the page can only go by its own bounds.
+    expect(tabDrag.over).not.toBeNull();
+    await said();
+    expect(tabDrag.window).toBe("win-2");
+    expect(tabDrag.over).toBeNull();
+    expect(tabDrag.zone).toBeNull();
+    // And it stays so while the pointer moves on under that window.
+    move(905, 230);
+    expect(tabDrag.over).toBeNull();
+  });
+
+  it("over none of the app's windows a floating label draws it", async () => {
+    const over = vi.fn().mockResolvedValue(sight(null, true));
     onTabDraggedOutside({ release: vi.fn(), over });
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
-    at("bodyR");
-    move(900, 230);
-    // Inside, the page sees what is under the pointer itself.
-    expect(over).not.toHaveBeenCalled();
     move(1500, 230);
-    expect(over).toHaveBeenCalledTimes(1);
-    expect(over).toHaveBeenCalledWith(a);
-    expect(tabDrag.window).toBeNull();
     await said();
-    expect(tabDrag.window).toBe("win-2");
+    expect(tabDrag.outside).toBe(true);
+    expect(tabDrag.floating).toBe(true);
+    expect(tabDrag.window).toBeNull();
   });
 
   it("is told one move at a time — and the place the pointer stopped at is always told", async () => {
@@ -442,79 +475,73 @@ describe("a tab held outside the window", () => {
     move(40, 40);
     move(1500, 230);
     move(1510, 230);
-    move(1520, 230);
-    // Three moves outside, one call out.
+    // Three moves, one call out.
     expect(over).toHaveBeenCalledTimes(1);
-    answer[0](null);
+    answer[0](sight(null));
     await said();
     // The moves made meanwhile are told once, now.
     expect(over).toHaveBeenCalledTimes(2);
-    answer[1]("main");
+    answer[1](sight("main"));
     await said();
     expect(tabDrag.window).toBe("main");
     // Nothing moved since: nothing more to tell.
     expect(over).toHaveBeenCalledTimes(2);
-    move(1530, 230);
-    expect(over).toHaveBeenCalledTimes(3);
   });
 
-  it("coming back is said — after the move that was still being told", async () => {
+  it("dropped on a pane of this window, the drag is said to be over", async () => {
+    const left = vi.fn();
+    onTabDraggedOutside({ release: vi.fn(), over: vi.fn().mockResolvedValue(sight(null)), left });
+    beginTabDrag(press(byId("tabA")), a);
+    at("stripR");
+    move(690, 10);
+    await said();
+    release();
+    expect(left).toHaveBeenCalledTimes(1);
+    expect(shape()).toEqual([[b], [c, a]]);
+  });
+
+  it("a drag cancelled is said to be over — after what was still being told", async () => {
     const { over, answer } = manualOver();
     const left = vi.fn();
     onTabDraggedOutside({ release: vi.fn(), over, left });
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
     move(1500, 230);
-    at("stripR");
-    move(690, 10);
-    expect(tabDrag.outside).toBe(false);
-    expect(tabDrag.window).toBeNull();
-    // The call about the last move outside is still out: `left` waits for it.
-    expect(left).not.toHaveBeenCalled();
-    answer[0]("win-2");
-    await said();
-    expect(left).toHaveBeenCalledTimes(1);
-    // The late answer does not bring the window back onto the label.
-    expect(tabDrag.window).toBeNull();
-    // Said once: moving on inside says nothing more.
-    move(680, 10);
-    await said();
-    expect(left).toHaveBeenCalledTimes(1);
-  });
-
-  it("a tab that never left is not said to have come back", () => {
-    const left = vi.fn();
-    onTabDraggedOutside({ release: vi.fn(), over: vi.fn().mockResolvedValue(null), left });
-    beginTabDrag(press(byId("tabA")), a);
-    at("stripR");
-    move(690, 10);
-    release();
-    expect(left).not.toHaveBeenCalled();
-  });
-
-  it("a drag cancelled outside is said to be over", async () => {
-    const left = vi.fn();
-    onTabDraggedOutside({ release: vi.fn(), over: vi.fn().mockResolvedValue("win-2"), left });
-    beginTabDrag(press(byId("tabA")), a);
-    move(40, 40);
-    move(1500, 230);
-    await said();
     window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 7 }));
+    expect(left).not.toHaveBeenCalled();
+    answer[0](sight("win-2"));
+    await said();
     expect(left).toHaveBeenCalledTimes(1);
+    // The late answer is about a drag that is over.
     expect(tabDrag.window).toBeNull();
+    expect(tabDrag.floating).toBe(false);
   });
 
-  it("let go of outside it is handed to the page — not said to have come back", async () => {
+  it("let go of outside it is handed to the page — not said to be over", async () => {
     const left = vi.fn();
     const moved = vi.fn();
-    onTabDraggedOutside({ release: moved, over: vi.fn().mockResolvedValue("win-2"), left });
+    onTabDraggedOutside({ release: moved, over: vi.fn().mockResolvedValue(sight("win-2")), left });
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
     move(1500, 230);
     await said();
-    releaseOutside();
-    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 });
+    releaseAt(1500, 230);
+    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true);
     expect(left).not.toHaveBeenCalled();
+  });
+
+  it("let go of inside this window's bounds but over another window, it went to that window", async () => {
+    const moved = vi.fn();
+    onTabDraggedOutside({ release: moved, over: vi.fn().mockResolvedValue(sight("win-2")) });
+    beginTabDrag(press(byId("tabA")), a);
+    at("bodyR");
+    move(900, 230);
+    await said();
+    releaseAt(900, 230);
+    // Handed to the page as a drop away from here — `outside` says it was within the bounds.
+    expect(moved).toHaveBeenCalledWith(a, { x: 1500, y: 400 }, false);
+    // No pane of this window took it.
+    expect(shape()).toEqual([[a, b], [c]]);
   });
 
   it("the release waits for the move that was still being told", async () => {
@@ -524,14 +551,12 @@ describe("a tab held outside the window", () => {
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
     move(1500, 230);
-    move(1510, 230);
-    releaseOutside();
+    releaseAt(1500, 230);
     // The backend must hear the drop after the last move, not before it.
     expect(moved).not.toHaveBeenCalled();
-    answer[0]("win-2");
+    answer[0](sight("win-2"));
     await said();
     expect(moved).toHaveBeenCalledTimes(1);
-    // The move that was waiting its turn is not told after the drop.
     expect(over).toHaveBeenCalledTimes(1);
   });
 
@@ -540,23 +565,22 @@ describe("a tab held outside the window", () => {
     onTabDraggedOutside({ release: vi.fn(), over });
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
-    move(1500, 230);
     release();
     expect(tabDrag.window).toBeNull();
-    // A new drag is outside before the old call is answered — and is told at once.
+    // A new drag is told at once, the old call still out.
     beginTabDrag(press(byId("tabB")), b);
     move(140, 40);
-    move(1500, 230);
     expect(over).toHaveBeenCalledTimes(2);
-    answer[0]("win-2");
+    answer[0](sight("win-2", true));
     await said();
     expect(tabDrag.window).toBeNull();
-    answer[1]("main");
+    expect(tabDrag.floating).toBe(false);
+    answer[1](sight("main"));
     await said();
     expect(tabDrag.window).toBe("main");
   });
 
-  it("a call that fails reads as no window, not as an error", async () => {
+  it("a call that fails reads as nowhere, not as an error", async () => {
     const over = vi.fn().mockRejectedValue(new Error("ipc"));
     onTabDraggedOutside({ release: vi.fn(), over });
     beginTabDrag(press(byId("tabA")), a);
@@ -564,21 +588,22 @@ describe("a tab held outside the window", () => {
     move(1500, 230);
     await said();
     expect(tabDrag.window).toBeNull();
-    expect(tabDrag.outside).toBe(true);
-    // And the next move is told all the same.
-    move(1510, 230);
+    expect(tabDrag.floating).toBe(false);
+    // Both moves were told (the second once the first had failed)…
     expect(over).toHaveBeenCalledTimes(2);
+    // …and the next one is told all the same.
+    move(1510, 230);
+    expect(over).toHaveBeenCalledTimes(3);
   });
 
-  it("with no `over` to call, a tab held outside is told to nobody", () => {
+  it("with no `over` to call, a dragged tab is told to nobody", () => {
     const left = vi.fn();
     onTabDraggedOutside({ release: vi.fn(), left });
     beginTabDrag(press(byId("tabA")), a);
     move(40, 40);
     move(1500, 230);
     expect(tabDrag.outside).toBe(true);
-    at("stripR");
-    move(690, 10);
+    release();
     // Nothing was said, so there is nothing to take back.
     expect(left).not.toHaveBeenCalled();
   });

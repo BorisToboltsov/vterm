@@ -2,6 +2,7 @@ mod ai;
 mod appwin;
 mod backup;
 mod container;
+mod dragghost;
 mod drives;
 mod error;
 mod folders;

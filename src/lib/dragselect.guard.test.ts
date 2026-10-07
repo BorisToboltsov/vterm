@@ -131,12 +131,14 @@ describe("drag-selection guard — catches what it exists for", () => {
   };
 
   it("a drag that does not hold the selection", () => {
-    expect(dragViolations(TABDRAG, mutate(tabdrag, "  holdSelection();\n", ""))).toEqual([
+    // (Every call of it: the store holds it on the press and again as it moves.)
+    expect(tabdrag.includes("  holdSelection();\n")).toBe(true);
+    expect(dragViolations(TABDRAG, tabdrag.replaceAll("  holdSelection();\n", ""))).toEqual([
       `${TABDRAG} tracks a pointer drag without holdSelection() — it selects the page in WebKit`,
     ]);
     // Importing it, or naming it in a comment, is not calling it.
     expect(
-      dragViolations(TABDRAG, mutate(tabdrag, "  holdSelection();\n", "  // holdSelection();\n")),
+      dragViolations(TABDRAG, tabdrag.replaceAll("  holdSelection();\n", "  // holdSelection();\n")),
     ).toHaveLength(1);
   });
 

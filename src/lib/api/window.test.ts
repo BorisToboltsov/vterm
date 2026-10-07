@@ -59,9 +59,10 @@ describe("window api", () => {
 
   it("a tab held outside the window: over another one, let go of, or neither", async () => {
     const tab = { kind: "ssh", serverId: "srv", alias: "web-01", status: "Connected" };
+    invoke.mockResolvedValue({ window: "win-2", floating: false });
+    expect(await api.dragOver(tab)).toEqual({ window: "win-2", floating: false });
+    expect(invoke).toHaveBeenLastCalledWith("drag_over", { tab, look: null });
     invoke.mockResolvedValue("win-2");
-    expect(await api.dragOver(tab)).toBe("win-2");
-    expect(invoke).toHaveBeenLastCalledWith("drag_over", { tab });
     expect(await api.dragDrop(tab)).toBe("win-2");
     expect(invoke).toHaveBeenLastCalledWith("drag_drop", { tab });
     invoke.mockResolvedValue(undefined);
