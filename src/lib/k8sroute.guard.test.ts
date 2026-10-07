@@ -23,9 +23,28 @@ import { describe, expect, it } from "vitest";
 
 const LIB = join(process.cwd(), "src", "lib");
 
+/**
+ * Drop `<!-- … -->` blocks by scanning, not with one non-greedy `.replace`: a
+ * single pass leaves the opener of a nested comment behind (`<!--<!-- -->` →
+ * `<!--`) — CodeQL's `js/incomplete-multi-character-sanitization`. Same as
+ * dockpanels.guard.test.ts.
+ */
+function stripHtmlComments(text: string): string {
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    if (text.startsWith("<!--", i)) {
+      const end = text.indexOf("-->", i + 4);
+      i = end < 0 ? text.length : end + 3;
+      continue;
+    }
+    out += text[i++];
+  }
+  return out;
+}
+
 function strip(src: string): string {
-  return src
-    .replace(/<!--[\s\S]*?-->/g, "")
+  return stripHtmlComments(src)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
