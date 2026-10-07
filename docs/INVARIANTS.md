@@ -1266,6 +1266,14 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   `SecretPrompt`;
   `SettingsPanel` — тонкий shell, секции — `*SettingsSection.svelte`; `api.ts` разложен по доменам
   в `src/lib/api/` с barrel-реэкспортом.
+- **Имена в одном каталоге не различаются только регистром — и имена их тестов тоже.** Том
+  macOS и Windows регистр не различает: `Foo.test.ts` и `foo.test.ts` там один файл, запись
+  второго молча затирает первый, и в коммит уходит уже один путь — CI этого не видит; два таких
+  пути, закоммиченные с Linux, там же не извлекаются вместе. Поэтому компонент не называется
+  как его модель: `k8sroute.ts` + `K8sRouteView.svelte`, а не `K8sRoute.svelte` — их тесты
+  `<имя>.test.ts` были бы одним файлом. Единственная старая пара, `FileBrowser.svelte` + `filebrowser.ts`,
+  записана в гейте исключением с причиной: своего `FileBrowser.test.ts` у компонента нет и
+  появиться не должно. Гейт `filecase.guard`.
 - **Переиспользуй примитивы**, своего не заводи:
   - `Modal` / `ConfirmDialog` — оверлеи; **всегда с явным `z-index`**.
   - [ContextMenu](../src/lib/ContextMenu.svelte) — **любое** меню ПКМ: поверхность описывает
@@ -1424,6 +1432,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [typography.guard.test.ts](../src/lib/typography.guard.test.ts) | Размеры шрифта — из шкалы; в шкале нет line-height companion-ов; одно оформление у прописных микро-меток |
 | [clipboardpaste.guard.test.ts](../src/lib/clipboardpaste.guard.test.ts) | Каретка после вставки не считается из `.length` сырого буфера (CRLF) |
 | [diagpath.guard.test.ts](../src/lib/diagpath.guard.test.ts) | Во фронте нет литералов `/tmp/…` |
+| [filecase.guard.test.ts](../src/lib/filecase.guard.test.ts) | Ни в дереве (`src`, `src-tauri`, `scripts`, `docs`, `static`, `e2e`, `.github`), ни в индексе git нет двух путей одного каталога, равных без учёта регистра, — каталоги считаются; нет двух исходников, чьи тесты `<имя>.test.ts` совпали бы без учёта регистра (`Foo.svelte` рядом с `foo.ts`), кроме пар из `KNOWN_CLASHES` с причиной, а исключение, которому больше нечего исключать, роняет гейт. На томе без учёта регистра обход дерева нарушения увидеть не может — там его видят индекс и проверка тестов. Каждая проверка — функция над списком путей, и гейт сам показывает, что ловит своё нарушение |
 | [settings.guard.test.ts](../src/lib/settings.guard.test.ts) | Язык интерфейса идёт через `setLocale()`, не `bind:value` |
 | [mdlink.guard.test.ts](../src/lib/mdlink.guard.test.ts) | Каждый markdown-`{@html}` висит на `use:mdLinks`. Проверка **поэлементная и по исходнику без комментариев**: файловая версия прошла на файле с удалённым экшеном, потому что рядом лежал комментарий со словами «use:mdLinks» |
 | [appicon.guard.test.ts](../src/lib/appicon.guard.test.ts) | Кадрирование бандл-иконки: Windows-артефакты заполняют квадрат, macOS сохраняет safe area. Проверка идёт **по пикселям** (декодирует PNG внутри `.ico`), а не по наличию скрипта: дефект возвращает не правка кода, а один безобидный прогон `tauri icon` |
