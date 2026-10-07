@@ -41,12 +41,15 @@ import {
   ingressArgs,
   nodesArgs,
   eventsArgs,
+  endpointSlicesArgs,
   cordonArgs,
   uncordonArgs,
   drainArgs,
   portForwardArgv,
   parseServices,
   parseIngress,
+  parseEndpointSlices,
+  listFailure,
   parseNodes,
   parseEvents,
   nodeRoles,
@@ -520,6 +523,12 @@ describe("network/cluster builders", () => {
     expect(nodesArgs()).toEqual(["get", "nodes", "-o", "json"]);
     expect(eventsArgs()).toEqual(["get", "events", "-o", "json"]);
   });
+  it("endpointSlicesArgs reads the slices, scoped like any namespaced list", () => {
+    expect(endpointSlicesArgs()).toEqual(["get", "endpointslices", "-o", "json"]);
+    expect(withScope(["kubectl"], endpointSlicesArgs(), SCOPE).join(" ")).toBe(
+      "kubectl get endpointslices -o json --context prod --namespace web",
+    );
+  });
   it("cordon / uncordon / drain", () => {
     expect(cordonArgs("n1")).toEqual(["cordon", "n1"]);
     expect(uncordonArgs("n1")).toEqual(["uncordon", "n1"]);
@@ -584,6 +593,59 @@ describe("parseServices", () => {
     expect(lb).toMatchObject({ externalIp: "203.0.113.7", firstPort: 8080 });
     expect(pend).toMatchObject({ externalIp: "<pending>", firstPort: null });
   });
+
+  it("keeps the ports apart, with the targetPort as it was written", () => {
+    const [s] = parseServices(
+      JSON.stringify({
+        items: [
+          {
+            metadata: { name: "web", namespace: "shop" },
+            spec: {
+              clusterIP: "10.0.0.5",
+              ports: [
+                { name: "http", port: 80, targetPort: "http", protocol: "TCP" },
+                { name: "metrics", port: 9100, targetPort: 9101, nodePort: 30910 },
+                { port: 53, protocol: "UDP" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+    expect(s.portList).toEqual([
+      { name: "http", port: 80, targetPort: "http", nodePort: null, protocol: "TCP" },
+      { name: "metrics", port: 9100, targetPort: "9101", nodePort: 30910, protocol: "TCP" },
+      // An omitted targetPort is the service port itself.
+      { name: "", port: 53, targetPort: "53", nodePort: null, protocol: "UDP" },
+    ]);
+  });
+
+  it("renders the selector as text, sorted by key", () => {
+    const of = (spec: Record<string, unknown>) =>
+      parseServices(JSON.stringify({ items: [{ metadata: { name: "s" }, spec }] }))[0].selector;
+    expect(of({ selector: { tier: "api", app: "web" } })).toBe("app=web, tier=api");
+    expect(of({ selector: {} })).toBe("");
+    expect(of({})).toBe("");
+    // Junk in place of a label map is not rendered as one.
+    expect(of({ selector: "app=web" })).toBe("");
+    expect(of({ selector: { app: 1 } })).toBe("");
+  });
+
+  it("recognizes headless and ExternalName services", () => {
+    const [headless, external, plain] = parseServices(
+      JSON.stringify({
+        items: [
+          { metadata: { name: "pg" }, spec: { clusterIP: "None" } },
+          { metadata: { name: "db" }, spec: { type: "ExternalName", externalName: "db.example.com" } },
+          // `externalName` on a service of another type is not an alias.
+          { metadata: { name: "web" }, spec: { clusterIP: "10.0.0.5", externalName: "stale.example.com" } },
+        ],
+      }),
+    );
+    expect(headless).toMatchObject({ headless: true, externalName: "" });
+    expect(external).toMatchObject({ headless: false, externalName: "db.example.com" });
+    expect(plain).toMatchObject({ headless: false, externalName: "" });
+  });
 });
 
 describe("parseIngress", () => {
@@ -603,6 +665,164 @@ describe("parseIngress", () => {
       hosts: "a.example.com,b.example.com",
       address: "lb.example.com",
     });
+    // Hosts without paths name no backend: there is no rule to follow.
+    expect(ing.rules).toEqual([]);
+    expect(ing.defaultBackend).toBeNull();
+  });
+
+  const one = (spec: Record<string, unknown>, metadata: Record<string, unknown> = {}) =>
+    parseIngress(JSON.stringify({ items: [{ metadata: { name: "shop", namespace: "shop", ...metadata }, spec }] }))[0];
+
+  it("reads every host and path with the backend it names", () => {
+    const ing = one({
+      rules: [
+        {
+          host: "shop.example.com",
+          http: {
+            paths: [
+              { path: "/api", pathType: "Prefix", backend: { service: { name: "api", port: { number: 8080 } } } },
+              { pathType: "ImplementationSpecific", backend: { service: { name: "web", port: { name: "http" } } } },
+            ],
+          },
+        },
+        { http: { paths: [{ path: "/", pathType: "Exact", backend: { service: { name: "fallback", port: { number: 80 } } } }] } },
+      ],
+    });
+    expect(ing.rules).toEqual([
+      { host: "shop.example.com", path: "/api", pathType: "Prefix", backend: { service: "api", port: "8080", resource: "" } },
+      // No path means the whole host.
+      { host: "shop.example.com", path: "/", pathType: "ImplementationSpecific", backend: { service: "web", port: "http", resource: "" } },
+      // No host means every host.
+      { host: "", path: "/", pathType: "Exact", backend: { service: "fallback", port: "80", resource: "" } },
+    ]);
+  });
+
+  it("reads the default backend, a resource backend and the tls hosts", () => {
+    const ing = one({
+      defaultBackend: { service: { name: "web", port: { number: 80 } } },
+      tls: [{ hosts: ["a.example.com", "b.example.com"], secretName: "tls" }, { secretName: "no-hosts" }],
+      rules: [
+        {
+          host: "assets.example.com",
+          http: { paths: [{ path: "/", backend: { resource: { apiGroup: "k8s.example.com", kind: "StorageBucket", name: "static" } } }] },
+        },
+      ],
+    });
+    expect(ing.defaultBackend).toEqual({ service: "web", port: "80", resource: "" });
+    expect(ing.tlsHosts).toEqual(["a.example.com", "b.example.com"]);
+    expect(ing.rules[0].backend).toEqual({ service: "", port: "", resource: "StorageBucket/static" });
+  });
+
+  it("skips a path whose backend names nothing", () => {
+    const ing = one({ rules: [{ host: "a.example.com", http: { paths: [{ path: "/" }, { path: "/x", backend: {} }] } }] });
+    expect(ing.rules).toEqual([]);
+  });
+
+  it("still reads the flat backend of the retired v1beta1 shape", () => {
+    const ing = one({
+      backend: { serviceName: "ignored-here", servicePort: 80 },
+      rules: [{ host: "a.example.com", http: { paths: [{ path: "/", backend: { serviceName: "web", servicePort: "http" } }] } }],
+    });
+    expect(ing.rules[0].backend).toEqual({ service: "web", port: "http", resource: "" });
+  });
+
+  it("takes the class from the field, else from the legacy annotation", () => {
+    expect(one({ ingressClassName: "nginx" }, { annotations: { "kubernetes.io/ingress.class": "traefik" } }).className).toBe("nginx");
+    expect(one({}, { annotations: { "kubernetes.io/ingress.class": "traefik" } }).className).toBe("traefik");
+    expect(one({}).className).toBe("");
+  });
+});
+
+describe("parseEndpointSlices", () => {
+  const raw = JSON.stringify({
+    apiVersion: "v1",
+    kind: "List",
+    items: [
+      {
+        apiVersion: "discovery.k8s.io/v1",
+        kind: "EndpointSlice",
+        metadata: {
+          name: "web-7xk2p",
+          namespace: "shop",
+          labels: { "kubernetes.io/service-name": "web", "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io" },
+        },
+        addressType: "IPv4",
+        ports: [{ name: "http", port: 8080, protocol: "TCP" }, { name: "", port: null }],
+        endpoints: [
+          {
+            addresses: ["10.1.0.5"],
+            conditions: { ready: true, serving: true, terminating: false },
+            nodeName: "node-1",
+            targetRef: { kind: "Pod", name: "web-abc", namespace: "shop" },
+          },
+          { addresses: ["10.1.0.6"], conditions: { ready: false, serving: false, terminating: true } },
+          { addresses: ["10.1.0.7"] },
+        ],
+      },
+      { metadata: { name: "custom", namespace: "shop" }, addressType: "FQDN" },
+    ],
+  });
+
+  it("maps a slice to its service, ports and endpoints", () => {
+    const [s] = parseEndpointSlices(raw);
+    expect(s).toMatchObject({ name: "web-7xk2p", namespace: "shop", service: "web", addressType: "IPv4" });
+    expect(s.ports).toEqual([
+      { name: "http", port: 8080, protocol: "TCP" },
+      { name: "", port: null, protocol: "TCP" },
+    ]);
+    expect(s.endpoints[0]).toEqual({
+      addresses: ["10.1.0.5"],
+      ready: true,
+      terminating: false,
+      targetKind: "Pod",
+      targetName: "web-abc",
+      node: "node-1",
+    });
+  });
+
+  it("reads conditions as the API defines an absent value", () => {
+    const [s] = parseEndpointSlices(raw);
+    expect(s.endpoints[1]).toMatchObject({ ready: false, terminating: true, targetName: "" });
+    // No conditions at all: ready, and not terminating.
+    expect(s.endpoints[2]).toMatchObject({ ready: true, terminating: false });
+  });
+
+  it("tolerates a slice with no service label, ports or endpoints", () => {
+    const [, bare] = parseEndpointSlices(raw);
+    expect(bare).toEqual({ name: "custom", namespace: "shop", service: "", addressType: "FQDN", ports: [], endpoints: [] });
+  });
+
+  it("is empty for junk", () => {
+    expect(parseEndpointSlices("not json")).toEqual([]);
+  });
+});
+
+describe("listFailure", () => {
+  it("trusts a list, empty or not", () => {
+    expect(listFailure(JSON.stringify({ items: [] }), "", 0)).toBeNull();
+    // kubectl says this on stderr for an empty namespace and still exits 0.
+    expect(listFailure(JSON.stringify({ kind: "List", items: [] }), "No resources found in shop namespace.", 0)).toBeNull();
+  });
+
+  it("reports a refused read with kubectl's own first line", () => {
+    const stderr =
+      'Error from server (Forbidden): endpointslices.discovery.k8s.io is forbidden: User "dev" cannot list resource "endpointslices"\n';
+    expect(listFailure("", stderr, 1)).toBe(stderr.trim());
+  });
+
+  it("falls back to stdout, then to the exit code", () => {
+    expect(listFailure("error: the server doesn't have a resource type \"endpointslices\"\n", "", 1)).toBe(
+      'error: the server doesn\'t have a resource type "endpointslices"',
+    );
+    expect(listFailure("", "  \n", 127)).toBe("exit 127");
+  });
+
+  it("does not trust exit 0 with something that is not a list", () => {
+    // An unreadable answer must not become "there are none".
+    expect(listFailure("", "", 0)).toBe("");
+    expect(listFailure("<html>proxy error</html>", "", 0)).toBe("");
+    expect(listFailure(JSON.stringify({ kind: "Status", status: "Failure" }), "", 0)).toBe("");
+    expect(listFailure("null", "", 0)).toBe("");
   });
 });
 

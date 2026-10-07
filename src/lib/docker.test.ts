@@ -32,6 +32,7 @@ import {
   composeRestartArgs,
   execShellArgv,
   parsePs,
+  parseNetworkNames,
   parseImages,
   parseNetworks,
   parseVolumes,
@@ -56,7 +57,7 @@ import {
 const US = "\x1f";
 
 /** Build a US-delimited ps row from fields (matches {@link psArgs} format order). */
-function psRow(f: Partial<Record<number, string>>, count = 11): string {
+function psRow(f: Partial<Record<number, string>>, count = 12): string {
   return Array.from({ length: count }, (_, i) => f[i] ?? "").join(US);
 }
 
@@ -67,6 +68,14 @@ describe("argument builders", () => {
     const fmt = a[a.length - 1];
     expect(fmt).toContain("com.docker.compose.project");
     expect(fmt).toContain(US);
+  });
+
+  it("psArgs asks for network membership last, after the fields it already had", () => {
+    // Appended, not inserted: every earlier field keeps its position.
+    const fields = psArgs().at(-1)!.split(US);
+    expect(fields.at(-1)).toBe("{{.Networks}}");
+    expect(fields).toHaveLength(12);
+    expect(fields[5]).toBe("{{.Ports}}");
   });
 
   it("versionArgs targets the server version", () => {
@@ -142,6 +151,31 @@ describe("parsers", () => {
     expect(cs).toHaveLength(2);
     expect(cs[0]).toMatchObject({ id: "abc123", name: "web-1", state: "running", project: "web", service: "nginx", workdir: "/srv/web" });
     expect(cs[1]).toMatchObject({ id: "def456", state: "exited", project: "", workdir: null });
+  });
+
+  it("parsePs reads the networks a container is attached to", () => {
+    const [two, hostMode, shared, old] = parsePs(
+      [
+        psRow({ 0: "1", 11: "shop_default,bridge" }),
+        psRow({ 0: "2", 11: "host" }),
+        // `--network container:…` shares another container's stack: docker lists none.
+        psRow({ 0: "3", 11: "" }),
+        // A row from before the field existed (11 fields) still parses.
+        psRow({ 0: "4" }, 11),
+      ].join("\n"),
+    );
+    expect(two.networks).toEqual(["bridge", "shop_default"]);
+    expect(hostMode.networks).toEqual(["host"]);
+    expect(shared.networks).toEqual([]);
+    expect(old.networks).toEqual([]);
+  });
+
+  it("parseNetworkNames sorts, because docker's own order is not stable", () => {
+    // The same container printed `vtp-net1,vtp-net2` created and
+    // `vtp-net2,vtp-net1` exited (docker 29.2).
+    expect(parseNetworkNames("vtp-net2,vtp-net1")).toEqual(parseNetworkNames("vtp-net1,vtp-net2"));
+    expect(parseNetworkNames(" a , ,b ")).toEqual(["a", "b"]);
+    expect(parseNetworkNames(undefined)).toEqual([]);
   });
 
   it("parsePs ignores blank lines", () => {
@@ -373,6 +407,7 @@ describe("groupUsage", () => {
       project: "p",
       service: "",
       workdir: null,
+      networks: [],
     }) as DockerContainer;
   const stat = (id: string, cpu: string, mem: string) =>
     ({ id, name: id, cpu, mem, memPerc: "", netIo: "", blockIo: "", pids: "" }) as DockerStat;

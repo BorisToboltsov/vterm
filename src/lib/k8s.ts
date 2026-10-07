@@ -707,6 +707,16 @@ export function ingressArgs(): string[] {
   return ["get", "ingress", "-o", "json"];
 }
 
+/**
+ * EndpointSlices in scope as JSON (v1.5) — the addresses the cluster actually
+ * routes a service to. Read instead of matching selectors against pod labels:
+ * a pod whose labels match is not an endpoint while it is not Ready, held back
+ * by a readiness gate, or terminating.
+ */
+export function endpointSlicesArgs(): string[] {
+  return ["get", "endpointslices", "-o", "json"];
+}
+
 /** All nodes as JSON (cluster-scoped — call {@link withScope} with `namespaced:false`). */
 export function nodesArgs(): string[] {
   return ["get", "nodes", "-o", "json"];
@@ -753,6 +763,17 @@ export function portForwardArgv(
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
+/** One port of a service, as declared in `spec.ports[]`. */
+export interface K8sServicePort {
+  /** Port name ("" when unnamed) — also how an EndpointSlice port is matched to it. */
+  name: string;
+  port: number;
+  /** `targetPort` as written: a number ("8080") or a container port name ("http"). */
+  targetPort: string;
+  nodePort: number | null;
+  protocol: string;
+}
+
 export interface K8sService {
   name: string;
   namespace: string;
@@ -766,6 +787,38 @@ export interface K8sService {
   /** First service port, for a default port-forward target (null if none). */
   firstPort: number | null;
   age: string;
+  /** The ports one by one (the route needs them apart; `ports` is the joined text). */
+  portList: K8sServicePort[];
+  /**
+   * `spec.selector` rendered for display ("app=web, tier=api"), "" when the
+   * service has none. Text on purpose: it is shown next to a service without
+   * endpoints, and never matched against anything (see {@link endpointSlicesArgs}).
+   */
+  selector: string;
+  /** `clusterIP: None` — no virtual IP, DNS answers with the endpoints themselves. */
+  headless: boolean;
+  /** `spec.externalName` of an ExternalName service, else "". */
+  externalName: string;
+}
+
+/** Where an ingress rule sends traffic. */
+export interface K8sBackend {
+  /** Backend service name, "" when the backend is not a service. */
+  service: string;
+  /** Backend service port as written: a number ("80") or a port name ("http"). */
+  port: string;
+  /** "Kind/name" of a non-service (`resource`) backend, else "". */
+  resource: string;
+}
+
+/** One host + path of an ingress and the backend it names. */
+export interface K8sIngressRule {
+  /** Rule host, "" when the rule applies to every host. */
+  host: string;
+  path: string;
+  /** Exact · Prefix · ImplementationSpecific. */
+  pathType: string;
+  backend: K8sBackend;
 }
 
 export interface K8sIngress {
@@ -777,6 +830,44 @@ export interface K8sIngress {
   /** Load-balancer address (ip/hostname), or "". */
   address: string;
   age: string;
+  /** Every host + path with its backend, in manifest order. */
+  rules: K8sIngressRule[];
+  /** `spec.defaultBackend` — where unmatched requests go — or null. */
+  defaultBackend: K8sBackend | null;
+  /** Hosts listed under `spec.tls`. */
+  tlsHosts: string[];
+}
+
+/** One endpoint of an EndpointSlice. */
+export interface K8sEndpoint {
+  addresses: string[];
+  /** `conditions.ready`; the API reads an absent value as true. */
+  ready: boolean;
+  /** `conditions.terminating`; the API reads an absent value as false. */
+  terminating: boolean;
+  /** Kind of the object behind the endpoint ("Pod"), "" when there is no `targetRef`. */
+  targetKind: string;
+  targetName: string;
+  node: string;
+}
+
+/** One port of an EndpointSlice: the number a service port resolved to. */
+export interface K8sSlicePort {
+  /** Same name as the service port it belongs to ("" when unnamed). */
+  name: string;
+  port: number | null;
+  protocol: string;
+}
+
+export interface K8sEndpointSlice {
+  name: string;
+  namespace: string;
+  /** Owning service (`kubernetes.io/service-name`), "" for a slice that has none. */
+  service: string;
+  /** IPv4 · IPv6 · FQDN. */
+  addressType: string;
+  ports: K8sSlicePort[];
+  endpoints: K8sEndpoint[];
 }
 
 export interface K8sNode {
@@ -822,6 +913,22 @@ function serviceExternal(item: Record<string, unknown>, type: string): string {
   return "-";
 }
 
+/** A number-or-name field (`targetPort`, a backend port) as the text it was written as. */
+function portText(v: unknown): string {
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  return str(v);
+}
+
+/** `spec.selector` as "k=v, k2=v2" (sorted by key), "" when absent or empty. */
+function selectorText(selector: unknown): string {
+  if (!selector || typeof selector !== "object") return "";
+  return Object.entries(selector as Record<string, unknown>)
+    .filter(([, v]) => typeof v === "string")
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v as string}`)
+    .join(", ");
+}
+
 export function parseServices(raw: string, nowMs: number = Date.now()): K8sService[] {
   return items(raw).map((it) => {
     const type = str(dig(it, "spec", "type")) || "ClusterIP";
@@ -830,38 +937,156 @@ export function parseServices(raw: string, nowMs: number = Date.now()): K8sServi
     const portsStr = portArr
       .map((p) => `${num(p.port)}${p.nodePort ? ":" + num(p.nodePort) : ""}/${str(p.protocol) || "TCP"}`)
       .join(", ");
+    const clusterIp = str(dig(it, "spec", "clusterIP"));
     return {
       name: str(dig(it, "metadata", "name")),
       namespace: str(dig(it, "metadata", "namespace")),
       type,
-      clusterIp: str(dig(it, "spec", "clusterIP")),
+      clusterIp,
       externalIp: serviceExternal(it, type),
       ports: portsStr,
       firstPort: portArr.length ? num(portArr[0].port) : null,
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+      portList: portArr.map((p) => ({
+        name: str(p.name),
+        port: num(p.port),
+        // An omitted targetPort defaults to the service port itself.
+        targetPort: portText(p.targetPort) || String(num(p.port)),
+        nodePort: p.nodePort ? num(p.nodePort) : null,
+        protocol: str(p.protocol) || "TCP",
+      })),
+      selector: selectorText(dig(it, "spec", "selector")),
+      headless: clusterIp === "None",
+      externalName: type === "ExternalName" ? str(dig(it, "spec", "externalName")) : "",
     };
   });
+}
+
+/**
+ * One ingress backend. `networking.k8s.io/v1` nests it as
+ * `service.{name, port.{number|name}}` or `resource.{kind, name}`; the flat
+ * `serviceName`/`servicePort` of the retired v1beta1 shape is still read, since a
+ * manifest dumped from an old cluster costs nothing to understand.
+ */
+function parseBackend(raw: unknown): K8sBackend | null {
+  if (!raw || typeof raw !== "object") return null;
+  const service = str(dig(raw, "service", "name")) || str(dig(raw, "serviceName"));
+  if (service) {
+    const port =
+      portText(dig(raw, "service", "port", "number")) ||
+      portText(dig(raw, "service", "port", "name")) ||
+      portText(dig(raw, "servicePort"));
+    return { service, port, resource: "" };
+  }
+  const kind = str(dig(raw, "resource", "kind"));
+  const name = str(dig(raw, "resource", "name"));
+  if (kind || name) return { service: "", port: "", resource: `${kind}/${name}` };
+  return null;
 }
 
 export function parseIngress(raw: string, nowMs: number = Date.now()): K8sIngress[] {
   return items(raw).map((it) => {
     const rules = dig(it, "spec", "rules");
-    const hosts = Array.isArray(rules)
-      ? (rules as Record<string, unknown>[]).map((r) => str(r.host)).filter(Boolean).join(",")
-      : "";
+    const ruleArr = Array.isArray(rules) ? (rules as Record<string, unknown>[]) : [];
+    const hosts = ruleArr.map((r) => str(r.host)).filter(Boolean).join(",");
     const lb = dig(it, "status", "loadBalancer", "ingress");
     const address = Array.isArray(lb)
       ? (lb as Record<string, unknown>[]).map((x) => str(x.ip) || str(x.hostname)).filter(Boolean).join(",")
       : "";
+    const parsedRules: K8sIngressRule[] = [];
+    for (const r of ruleArr) {
+      const paths = dig(r, "http", "paths");
+      for (const p of Array.isArray(paths) ? (paths as Record<string, unknown>[]) : []) {
+        const backend = parseBackend(p.backend);
+        if (!backend) continue;
+        parsedRules.push({
+          host: str(r.host),
+          // No path means "everything under the host".
+          path: str(p.path) || "/",
+          pathType: str(p.pathType),
+          backend,
+        });
+      }
+    }
+    const tls = dig(it, "spec", "tls");
+    const tlsHosts = Array.isArray(tls)
+      ? (tls as Record<string, unknown>[]).flatMap((x) =>
+          Array.isArray(x.hosts) ? (x.hosts as unknown[]).map(str).filter(Boolean) : [],
+        )
+      : [];
     return {
       name: str(dig(it, "metadata", "name")),
       namespace: str(dig(it, "metadata", "namespace")),
-      className: str(dig(it, "spec", "ingressClassName")),
+      // The class moved from an annotation to a field in v1; both are still written.
+      className:
+        str(dig(it, "spec", "ingressClassName")) ||
+        str((dig(it, "metadata", "annotations") as Record<string, unknown> | undefined)?.["kubernetes.io/ingress.class"]),
       hosts,
       address,
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+      rules: parsedRules,
+      defaultBackend: parseBackend(dig(it, "spec", "defaultBackend")),
+      tlsHosts,
     };
   });
+}
+
+/**
+ * Parse `get endpointslices -o json` (`discovery.k8s.io/v1`). Conditions follow
+ * the API's own reading of an absent value: `ready` missing is ready,
+ * `terminating` missing is not terminating.
+ */
+export function parseEndpointSlices(raw: string): K8sEndpointSlice[] {
+  return items(raw).map((it) => {
+    const labels = dig(it, "metadata", "labels") as Record<string, unknown> | undefined;
+    const ports = dig(it, "ports");
+    const endpoints = dig(it, "endpoints");
+    return {
+      name: str(dig(it, "metadata", "name")),
+      namespace: str(dig(it, "metadata", "namespace")),
+      service: str(labels?.["kubernetes.io/service-name"]),
+      addressType: str(dig(it, "addressType")),
+      ports: (Array.isArray(ports) ? (ports as Record<string, unknown>[]) : []).map((p) => ({
+        name: str(p.name),
+        port: typeof p.port === "number" && Number.isFinite(p.port) ? p.port : null,
+        protocol: str(p.protocol) || "TCP",
+      })),
+      endpoints: (Array.isArray(endpoints) ? (endpoints as Record<string, unknown>[]) : []).map((e) => ({
+        addresses: Array.isArray(e.addresses) ? (e.addresses as unknown[]).map(str).filter(Boolean) : [],
+        ready: dig(e, "conditions", "ready") !== false,
+        terminating: dig(e, "conditions", "terminating") === true,
+        targetKind: str(dig(e, "targetRef", "kind")),
+        targetName: str(dig(e, "targetRef", "name")),
+        node: str(e.nodeName),
+      })),
+    };
+  });
+}
+
+/**
+ * Why a `kubectl get … -o json` answer cannot be trusted as a list, or null when
+ * it can. An unreadable list and an empty one must not look alike: "no endpoints"
+ * says the service routes nowhere, while a forbidden `get` says nothing at all
+ * (EndpointSlices sit in their own API group, so a role that lists services may
+ * well not list them). The reason is kubectl's own first line — "" when it gave
+ * none, as when it exits 0 with something that is not a list.
+ */
+export function listFailure(stdout: string, stderr: string, exitCode: number): string | null {
+  if (exitCode === 0) {
+    try {
+      const doc = JSON.parse(stdout) as { items?: unknown } | null;
+      if (doc && Array.isArray(doc.items)) return null;
+    } catch {
+      /* not JSON */
+    }
+    return "";
+  }
+  const firstLine = (text: string) =>
+    text
+      .split("\n")
+      .map((l) => l.trim())
+      .find(Boolean) ?? "";
+  return firstLine(stderr) || firstLine(stdout) || `exit ${exitCode}`;
 }
 
 /** Extract node roles from `node-role.kubernetes.io/<role>` (and legacy) labels. */

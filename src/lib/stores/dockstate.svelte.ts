@@ -36,8 +36,12 @@ export interface K8sScopeState {
   allNamespaces: boolean;
 }
 
-/** Dock tabs that own a sub-tab strip. */
-export type SubTabPanel = "git" | "docker" | "k8s";
+/**
+ * Dock tabs that own a sub-tab strip — and, since v1.5, the two sub-tabs that
+ * have a view switch of their own (k8s Network: list / route, Docker networks:
+ * list / graph). Same kind of choice, so it is remembered the same way.
+ */
+export type SubTabPanel = "git" | "docker" | "k8s" | "k8sNet" | "dockerNet";
 
 export interface DockSessionState {
   files: FilesDockState | null;
@@ -50,7 +54,7 @@ export interface DockSessionState {
    */
   cwd: string | null;
   k8sScope: K8sScopeState | null;
-  /** Active sub-tab per driver panel (`"changes"`, `"images"`, `"pods"`, …). */
+  /** Active sub-tab per driver panel (`"changes"`, `"images"`, `"pods"`, …) and view per sub-tab. */
   sub: Partial<Record<SubTabPanel, string>>;
   /** Upload batches still running, per destination directory. */
   uploads: Record<string, number>;
