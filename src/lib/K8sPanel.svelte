@@ -43,6 +43,7 @@
     ingressArgs,
     nodesArgs,
     eventsArgs,
+    endpointSlicesArgs,
     describeArgs,
     getYamlArgs,
     execShellArgv,
@@ -56,6 +57,8 @@
     parseIngress,
     parseNodes,
     parseEvents,
+    parseEndpointSlices,
+    listFailure,
     metricsKey,
     parseCpuMillis,
     groupByOwner,
@@ -71,7 +74,9 @@
     type K8sIngress,
     type K8sNode,
     type K8sEvent,
+    type K8sEndpointSlice,
   } from "./k8s";
+  import { buildRoutes } from "./k8sroute";
   import { pushSamples, type LoadHistory } from "./loadhistory";
   import { dockState, rememberSub, storedSub } from "./stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
@@ -137,6 +142,23 @@
   let workloads = $state<K8sWorkload[]>([]);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
+  // The Network sub-tab has two views of the same lists (v1.5). The route needs
+  // EndpointSlices on top of them, and they are asked for only while it is on
+  // screen — the list view polls exactly what it polled before.
+  type NetView = "list" | "route";
+  let netView = $state<NetView>(untrack(() => storedSub<NetView>(sessionId, "k8sNet", "list")));
+  // null = not known: not asked for, on their way, or refused (`netErrors.slices`).
+  let slices = $state<K8sEndpointSlice[] | null>(null);
+  // Why a list could not be read, per source; null = it was read. Kept apart from
+  // the lists because an unread list and an empty one must not look the same.
+  let netErrors = $state<{ services: string | null; ingress: string | null; slices: string | null }>({
+    services: null,
+    ingress: null,
+    slices: null,
+  });
+  const routes = $derived(
+    netView === "route" ? buildRoutes(services, netErrors.ingress === null ? ingresses : null, slices) : null,
+  );
   let nodes = $state<K8sNode[]>([]);
   let events = $state<K8sEvent[]>([]);
 
@@ -310,12 +332,25 @@
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
       } else if (activeSub === "network") {
-        const [svc, ing] = await Promise.all([
+        const forRoute = netView === "route";
+        const [svc, ing, eps] = await Promise.all([
           kubectlRun(sessionId, viewArgs(servicesArgs()), 20, false),
           kubectlRun(sessionId, viewArgs(ingressArgs()), 20, false),
+          forRoute ? kubectlRun(sessionId, viewArgs(endpointSlicesArgs()), 20, false) : null,
         ]);
         services = parseServices(svc.stdout);
         ingresses = parseIngress(ing.stdout);
+        const slicesError = eps ? listFailure(eps.stdout, eps.stderr, eps.exitCode) : null;
+        // An answer asked for under the other view — the user switched while it
+        // was on its way — says nothing about the slices this view needs: a late
+        // list-view reload must not wipe the endpoints the route's own brought.
+        const current = forRoute === (netView === "route");
+        netErrors = {
+          services: listFailure(svc.stdout, svc.stderr, svc.exitCode),
+          ingress: listFailure(ing.stdout, ing.stderr, ing.exitCode),
+          slices: current ? slicesError : netErrors.slices,
+        };
+        if (current) slices = eps && slicesError === null ? parseEndpointSlices(eps.stdout) : null;
       } else {
         // Cluster: nodes are cluster-scoped (no namespace flag); events respect scope.
         const [nd, ev] = await Promise.all([
@@ -387,6 +422,20 @@
   }
   function toggleAll() {
     scopeAll = !scopeAll;
+    void refresh();
+  }
+
+  /**
+   * Switch the Network view. The slices on hand are dropped either way: the route
+   * must not be drawn from endpoints older than the services beside them, so it
+   * starts from "on their way" and fills on the reload below.
+   */
+  function pickNetView(view: NetView) {
+    if (view === netView) return;
+    netView = view;
+    slices = null;
+    netErrors.slices = null;
+    rememberSub(sessionId, "k8sNet", view);
     void refresh();
   }
 
@@ -648,20 +697,22 @@
           <K8sWorkloads {workloads} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
         {/if}
       {:else if activeSub === "network"}
-        {#if services.length === 0 && ingresses.length === 0}
-          <EmptyState icon="network" title={t("k8s.noServices")} hint={t("k8s.noServicesHint")} />
-        {:else}
-          <K8sNetwork
-            {services}
-            {ingresses}
-            {busy}
-            {run}
-            onDescribe={describeObj}
-            onYaml={yamlObj}
-            onPortForward={portForward}
-            {showMenu}
-          />
-        {/if}
+        <K8sNetwork
+          {services}
+          {ingresses}
+          view={netView}
+          onView={pickNetView}
+          {routes}
+          servicesError={netErrors.services}
+          ingressError={netErrors.ingress}
+          slicesError={netErrors.slices}
+          {busy}
+          {run}
+          onDescribe={describeObj}
+          onYaml={yamlObj}
+          onPortForward={portForward}
+          {showMenu}
+        />
       {:else if nodes.length === 0 && events.length === 0}
         <EmptyState icon="server" title={t("k8s.noNodes")} hint={t("k8s.noNodesHint")} />
       {:else}

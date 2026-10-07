@@ -30,7 +30,11 @@ export function versionArgs(): string[] {
   return ["docker", "version", "--format", "{{.Server.Version}}"];
 }
 
-/** All containers (running + stopped), US-delimited fields incl. compose labels. */
+/**
+ * All containers (running + stopped), US-delimited fields incl. compose labels.
+ * `{{.Networks}}` rides along (v1.5): membership costs one token here, where a
+ * `network inspect` per network would cost a call each.
+ */
 export function psArgs(): string[] {
   const fmt = [
     "{{.ID}}",
@@ -44,6 +48,7 @@ export function psArgs(): string[] {
     `{{.Label "${LABEL_WORKDIR}"}}`,
     "{{.CreatedAt}}",
     "{{.RunningFor}}",
+    "{{.Networks}}",
   ].join(US);
   return ["docker", "ps", "-a", "--format", fmt];
 }
@@ -336,6 +341,12 @@ export interface DockerContainer {
   workdir: string | null;
   createdAt: string;
   runningFor: string;
+  /**
+   * Names of the networks the container is attached to, sorted. `host` and `none`
+   * are network *modes* docker lists the same way; a container sharing another
+   * one's namespace (`--network container:…`) has none at all.
+   */
+  networks: string[];
 }
 
 export interface DockerImage {
@@ -402,7 +413,21 @@ export function parsePs(raw: string): DockerContainer[] {
     workdir: f[8] ? f[8] : null,
     createdAt: f[9] ?? "",
     runningFor: f[10] ?? "",
+    networks: parseNetworkNames(f[11]),
   }));
+}
+
+/**
+ * `{{.Networks}}` → sorted names. Docker joins them with commas in no stable
+ * order (the same container printed `a,b` created and `b,a` exited), so they are
+ * sorted here — otherwise a poll could reshuffle a list nothing happened to.
+ */
+export function parseNetworkNames(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
 }
 
 /** Canonicalize the state token (defensive — docker already lowercases it). */

@@ -16,6 +16,7 @@ function container(over: Partial<DockerContainer> = {}): DockerContainer {
     workdir: null,
     createdAt: "2026-07-19 10:00:00",
     runningFor: "2 hours",
+    networks: [],
     ...over,
   };
 }

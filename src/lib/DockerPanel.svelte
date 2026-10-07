@@ -116,6 +116,17 @@
   let images = $state<DockerImage[]>([]);
   let networks = $state<DockerNetwork[]>([]);
   let volumes = $state<DockerVolume[]>([]);
+  // Every container, ungrouped — what the networks sub-tab reads ports and
+  // membership from (v1.5). The same `ps` the containers sub-tab already runs.
+  let containers = $state<DockerContainer[]>([]);
+  // List or graph in the networks sub-tab, remembered like the sub-tab itself.
+  type NetView = "list" | "graph";
+  let netView = $state<NetView>(untrack(() => storedSub<NetView>(sessionId, "dockerNet", "list")));
+
+  function pickNetView(view: NetView) {
+    netView = view;
+    rememberSub(sessionId, "dockerNet", view);
+  }
 
   // Shared right-click menu (containers + images) and the container detail modal.
   let menu = $state<OpenMenu | null>(null);
@@ -268,7 +279,8 @@
     try {
       if (activeSub === "containers") {
         const [ps, st] = await Promise.all([runQuery(psArgs()), runQuery(statsArgs())]);
-        groups = groupByCompose(parsePs(ps.stdout));
+        containers = parsePs(ps.stdout);
+        groups = groupByCompose(containers);
         const map = new Map<string, DockerStat>();
         for (const s of parseStats(st.stdout)) map.set(s.id, s);
         statsById = map;
@@ -285,9 +297,15 @@
       } else if (activeSub === "images") {
         images = parseImages((await runQuery(imagesArgs())).stdout);
       } else {
-        const [ns, vs] = await Promise.all([runQuery(networksArgs()), runQuery(volumesArgs())]);
+        // `ps` rides along: ports and network membership are fields of it.
+        const [ns, vs, ps] = await Promise.all([
+          runQuery(networksArgs()),
+          runQuery(volumesArgs()),
+          runQuery(psArgs()),
+        ]);
         networks = parseNetworks(ns.stdout);
         volumes = parseVolumes(vs.stdout);
+        containers = parsePs(ps.stdout);
       }
       if (modalOpen && modalLive && modalArgs) {
         const res = await runQuery(modalArgs, 30);
@@ -537,7 +555,7 @@
       {:else if activeSub === "images"}
         <DockerImages {images} {busy} {run} onInspect={openImageInspect} {showMenu} />
       {:else}
-        <DockerNetworks {networks} {volumes} {busy} {run} />
+        <DockerNetworks {networks} {volumes} {containers} view={netView} onView={pickNetView} {busy} {run} />
       {/if}
     </div>
   {/if}

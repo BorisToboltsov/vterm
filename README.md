@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.4.0-blue)
+![version](https://img.shields.io/badge/version-1.5.0-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -37,7 +37,8 @@ diff перед сохранением, линт, sudo-правка root-кон�
 
 #### 🧭 DevOps-панели
 **Git**, **Docker** и **Kubernetes** по текущему пути терминала — на SSH и локально:
-граф и ветки, контейнеры и compose, поды и нагрузки, shell/exec и port-forward, диффы, логи.
+граф и ветки, контейнеры и compose, порты и граф сетей, поды и нагрузки, маршрут
+ingress → сервис → эндпоинты, shell/exec и port-forward, диффы, логи.
 Деструктив на прод-серверах — с подтверждением.
 
 #### 📈 Наблюдаемость
