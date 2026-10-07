@@ -22,6 +22,7 @@ import {
   type HashEntry,
   type SyncAction,
   type SyncProgressMap,
+  isSyncBusy,
 } from "./sync";
 
 const h = (path: string, sha256: string): HashEntry => ({ path, sha256 });
@@ -334,5 +335,13 @@ describe("big plans", () => {
     const f = planFacts([], [], "push", [".git"], 3);
     expect(f.excluded).toBe(3);
     expect(emptyPlanReason(f)).toBe("allExcluded");
+  });
+});
+
+describe("isSyncBusy", () => {
+  it("recognises the backend's refusal while another run holds the slot", () => {
+    expect(isSyncBusy("sync-busy: another synchronization is already running")).toBe(true);
+    expect(isSyncBusy("no active session")).toBe(false);
+    expect(isSyncBusy("")).toBe(false);
   });
 });

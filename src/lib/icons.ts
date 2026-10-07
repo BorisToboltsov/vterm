@@ -136,6 +136,8 @@ export const ICONS = {
   // Panes of the centre: a new one to the right / below.
   splitRight: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/>',
   splitDown: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/>',
+  // A tab moved out into a window of its own: a window with an arrow leaving it.
+  popOut: '<path d="M11 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-5"/><path d="M14 4h6v6"/><path d="M20 4l-9 9"/>',
   // AI assistant — an "Ai" wordmark. Unlike the stroke line-icons, this entry is
   // fill-based text (mono, matching the terminal), so it overrides the svg's
   // stroke/fill on the <text> element itself. Scales with `size` via the viewBox.

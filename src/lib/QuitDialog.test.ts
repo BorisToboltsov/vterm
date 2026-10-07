@@ -27,6 +27,18 @@ describe("QuitDialog", () => {
     expect(screen.queryByTestId("quit-row-local")).toBeNull();
   });
 
+  it("asks about a secondary window in its own words, with that window's rows", () => {
+    // A window a tab was moved out to (ADR 0017): closing it ends its sessions,
+    // the app stays — so the question is about the window, not about quitting.
+    render(QuitDialog, {
+      props: { open: true, kind: "window", rows: [{ key: "local", count: 2 }] },
+    });
+    expect(screen.getByText("Close this window?")).toBeInTheDocument();
+    expect(screen.queryByText("Quit vterm?")).toBeNull();
+    expect(screen.getByTestId("confirm")).toHaveTextContent("Close window");
+    expect(screen.getByTestId("quit-row-local")).toHaveTextContent(/Local tabs\s*2/);
+  });
+
   it("confirms and cancels through the callbacks", async () => {
     const onconfirm = vi.fn();
     const oncancel = vi.fn();

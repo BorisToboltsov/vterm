@@ -2,15 +2,17 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// The close guard is armed only once someone listens for `menu://quit`.
+// The close guard is armed only once someone listens for the question.
 //
-// Armed, the backend vetoes every window close and quit and asks the frontend
-// instead (QuitDialog). If the guard were armed before the listener exists — or
-// from a second place that has no listener at all — a close request would be
-// swallowed with nobody to answer it, and the window could not be closed short of
-// killing the process. So `armCloseGuard()` may be called in exactly one place:
-// the `.then` of the `menu://quit` subscription. Checked on the source with JS
-// comments stripped, so a comment cannot satisfy or trip it.
+// Armed, the backend vetoes this window's close (for the main window: every quit)
+// and asks the frontend instead (QuitDialog). If the guard were armed before the
+// listener exists — or from a second place that has no listener at all — a close
+// request would be swallowed with nobody to answer it, and the window could not
+// be closed short of killing the process. So `armCloseGuard()` may be called in
+// exactly one place: the `.then` of the subscription to the question — which is
+// `menu://quit` in the main window and `window://close` in a window a tab was
+// moved out to (v1.3, ADR 0017). Checked on the source with JS comments
+// stripped, so a comment cannot satisfy or trip it.
 
 const SRC = join(process.cwd(), "src");
 const PAGE = join(SRC, "routes", "+page.svelte");
@@ -59,14 +61,26 @@ describe("close guard", () => {
     expect(callers).toEqual([PAGE]);
   });
 
-  it("is armed once, after the menu://quit listener is registered", () => {
+  it("is armed once, after the listener for the question is registered", () => {
     const page = strip(readFileSync(PAGE, "utf8"));
     const calls = page.match(/\barmCloseGuard\(\)/g) ?? [];
     expect(calls).toHaveLength(1);
-    const listen = page.indexOf('listen("menu://quit"');
-    expect(listen, "no menu://quit listener").toBeGreaterThan(-1);
+    const listen = page.indexOf("listenHere(CLOSE_ASKED_EVENT");
+    expect(listen, "no listener for the close question").toBeGreaterThan(-1);
     // The call sits in that subscription's `.then`, before the next statement.
     const tail = page.slice(listen, page.indexOf(";", page.indexOf("armCloseGuard()", listen)));
-    expect(tail).toMatch(/^listen\("menu:\/\/quit"[\s\S]*\.then\([\s\S]*armCloseGuard\(\)$/);
+    expect(tail).toMatch(/^listenHere\(CLOSE_ASKED_EVENT[\s\S]*\.then\([\s\S]*armCloseGuard\(\)$/);
+  });
+
+  it("each window listens for its own question", () => {
+    // The main window is asked to quit, any other one to close itself — the two
+    // events the backend sends (`appwin.rs`). A window listening for the other
+    // one would arm a guard it can never answer.
+    const page = strip(readFileSync(PAGE, "utf8"));
+    expect(page).toMatch(
+      /const CLOSE_ASKED_EVENT = isMainWindow \? "menu:\/\/quit" : WINDOW_CLOSE_EVENT;/,
+    );
+    const api = strip(readFileSync(join(SRC, "lib", "api", "window.ts"), "utf8"));
+    expect(api).toMatch(/export const WINDOW_CLOSE_EVENT = "window:\/\/close";/);
   });
 });

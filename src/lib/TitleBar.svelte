@@ -9,6 +9,7 @@
   // (`data-tauri-drag-region`), double-click maximises via Tauri.
   import { onDestroy, onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { isMainWindow } from "./appwindow";
   import AppLogo from "./AppLogo.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import Icon from "./Icon.svelte";
@@ -73,7 +74,13 @@
     { icon: "settings", label: t("menu.settings"), onSelect: onSettings },
     { icon: "barChart", label: t("menu.monitoring"), onSelect: onMonitoring },
     { kind: "separator" },
-    { icon: "power", label: t("window.exit"), onSelect: close, danger: true },
+    // The main window's close is the app's exit; any other window just closes.
+    {
+      icon: "power",
+      label: t(isMainWindow ? "window.exit" : "window.closeWindow"),
+      onSelect: close,
+      danger: true,
+    },
   ];
   const helpItems = (): MenuItem[] => [
     { icon: "info", label: t("menu.about"), onSelect: onAbout },

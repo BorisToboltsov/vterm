@@ -5,6 +5,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { SearchAddon } from "@xterm/addon-search";
+  import { SerializeAddon } from "@xterm/addon-serialize";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { openUrl } from "@tauri-apps/plugin-opener";
@@ -32,9 +33,9 @@
   import { ctrlVPastes, rightClickEffect } from "./termmouse";
   import { recentUniqueCommands, mergeCommands, createCommandCapture } from "./history";
   import {
+    attachSession,
     closedEvent,
     connectSession,
-    disconnect,
     openLocalTerminal,
     outputEvent,
     phaseEvent,
@@ -45,6 +46,7 @@
   } from "./api";
   import type { ConnPhase } from "./connphase";
   import type { AuthPromptRequest } from "./types";
+  import type { TermSnapshot } from "./tabhandoff";
   import { accumulatePinch } from "./termzoom";
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "./cdterminal";
@@ -64,6 +66,9 @@
     local = false,
     tint = null,
     focusOnConnect = true,
+    adopt = null,
+    onadopted,
+    onadoptfailed,
     onstatus,
     onphase,
     onauthprompt,
@@ -88,6 +93,16 @@
      *  (v1.2): a terminal reconnecting in the pane next to it must not pull the
      *  cursor out from under whatever the user is typing. Read at connect time. */
     focusOnConnect?: boolean;
+    /**
+     * The tab came from another window (ADR 0017): its session is already live.
+     * Instead of connecting, the terminal replays this snapshot and takes the
+     * session over. Read once, at mount.
+     */
+    adopt?: TermSnapshot | null;
+    /** The session was taken over — the tab is this window's now. */
+    onadopted?: () => void;
+    /** It could not be: the tab stays with the window that was giving it up. */
+    onadoptfailed?: (reason: string) => void;
     onstatus?: (status: Status, detail?: string) => void;
     /** Reports SSH connection-phase progress for the connecting overlay. */
     onphase?: (phase: ConnPhase) => void;
@@ -128,7 +143,55 @@
   }
   const termBg = $derived(paintedTheme().background ?? "");
   let webgl: WebglAddon | undefined;
+  let serializer: SerializeAddon | undefined;
   let observer: ResizeObserver;
+
+  // ── Handing the tab to another window (ADR 0017) ───────────────────────────
+  // Output events seen since this terminal started listening. The backend holds
+  // the session's output while the tab moves and says how many events it sent
+  // before the hold; once that many arrived (and xterm parsed them) the buffer
+  // holds everything up to the hold, and nothing after it.
+  let received = 0;
+  let awaited: { count: number; arrived: () => void } | null = null;
+  // An adopted terminal keeps the grid its snapshot was taken at until the
+  // snapshot is written: replayed at another width, its lines would wrap
+  // differently and the cursor would land elsewhere.
+  let replaying = false;
+
+  /**
+   * The terminal as another window can restore it: screen, scrollback, colours
+   * and modes. `sent` is the number of output events the backend sent before it
+   * started holding; resolves null if they do not all arrive in `timeoutMs`
+   * (the handoff is then rolled back, never done on a partial buffer).
+   */
+  export async function snapshot(sent: number, timeoutMs = 3000): Promise<TermSnapshot | null> {
+    if (!term || !serializer) return null;
+    if (received < sent) {
+      const caughtUp = await new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => {
+          awaited = null;
+          resolve(false);
+        }, timeoutMs);
+        awaited = {
+          count: sent,
+          arrived: () => {
+            clearTimeout(timer);
+            resolve(true);
+          },
+        };
+      });
+      if (!caughtUp) return null;
+    }
+    // xterm parses what it is given asynchronously; the callback of an empty
+    // write runs once everything queued before it is in the buffer.
+    await new Promise<void>((parsed) => term.write("", parsed));
+    return {
+      cols: term.cols,
+      rows: term.rows,
+      data: serializer.serialize(),
+      commands: capturedCommands,
+    };
+  }
   let flashing = $state(false);
   const unlisten: UnlistenFn[] = [];
   const encoder = new TextEncoder();
@@ -568,9 +631,14 @@
       // which is still "proposed" in xterm 6 and throws unless opted in.
       allowProposedApi: true,
       theme,
+      ...(adopt ? { cols: adopt.cols, rows: adopt.rows } : {}),
     });
+    replaying = adopt !== null;
     fit = new FitAddon();
     term.loadAddon(fit);
+    // Loaded up front (cheap): the snapshot a tab handoff takes of this terminal.
+    serializer = new SerializeAddon();
+    term.loadAddon(serializer);
     // Search addon is always loaded (cheap); the UI/hotkey are gated by settings
     // so toggling the feature off at runtime needs no remount.
     searchAddon = new SearchAddon();
@@ -580,7 +648,7 @@
       search.count = e.resultCount;
     });
     term.open(container);
-    fit.fit();
+    if (!replaying) fit.fit();
     onresize?.(term.cols, term.rows);
 
     // Moving focus back to the terminal (e.g. a click on the console) closes the
@@ -700,6 +768,12 @@
     // Stream output and close events BEFORE connecting (don't miss the banner).
     unlisten.push(
       await listen<number[]>(outputEvent(sessionId), (e) => {
+        received += 1;
+        if (awaited && received >= awaited.count) {
+          const { arrived } = awaited;
+          awaited = null;
+          arrived();
+        }
         const text = decoder.decode(new Uint8Array(e.payload), { stream: true });
         // Only colour the normal buffer — never a full-screen app (vim/htop).
         const onNormalBuffer = term.buffer.active.type === "normal";
@@ -728,6 +802,46 @@
       );
     }
 
+    if (adopt) {
+      // The session is live and its output is being held for us. Put back what
+      // its terminal showed, then take it over: from that call on the held
+      // output — and everything after it — comes to the listener above.
+      capturedCommands = adopt.commands.slice(0, CAPTURE_CAP);
+      try {
+        const data = adopt.data;
+        await new Promise<void>((written) => term.write(data, written));
+        await attachSession(sessionId);
+      } catch (err) {
+        onadoptfailed?.(String(err));
+        return;
+      }
+      replaying = false;
+      onadopted?.();
+      if (focusOnConnect) term.focus();
+    } else if (!(await connect())) {
+      return;
+    }
+
+    // Keep the remote PTY in sync with the widget size. Debounced so a burst of
+    // resize callbacks (e.g. while dragging a panel divider) triggers a single
+    // refit + one resize round-trip to the server. Observing reports the current
+    // size once — which is also how an adopted terminal, restored at the grid of
+    // its old window, takes the size of this one.
+    const refit = debounce(() => {
+      try {
+        fit.fit();
+        resizePty(sessionId, term.cols, term.rows).catch(() => {});
+        onresize?.(term.cols, term.rows);
+      } catch {
+        /* container not measurable yet */
+      }
+    }, 80);
+    observer = new ResizeObserver(() => refit());
+    observer.observe(container);
+  });
+
+  /** Open the session this tab asked for; false when it could not be. */
+  async function connect(): Promise<boolean> {
     onstatus?.("connecting");
     try {
       if (local) {
@@ -759,27 +873,13 @@
       }
       onstatus?.("connected");
       if (focusOnConnect) term.focus();
+      return true;
     } catch (err) {
       onstatus?.("error", String(err));
       term.write(`\r\n\x1b[31m${String(err)}\x1b[0m\r\n`);
-      return;
+      return false;
     }
-
-    // Keep the remote PTY in sync with the widget size. Debounced so a burst of
-    // resize callbacks (e.g. while dragging a panel divider) triggers a single
-    // refit + one resize round-trip to the server.
-    const refit = debounce(() => {
-      try {
-        fit.fit();
-        resizePty(sessionId, term.cols, term.rows).catch(() => {});
-        onresize?.(term.cols, term.rows);
-      } catch {
-        /* container not measurable yet */
-      }
-    }, 80);
-    observer = new ResizeObserver(() => refit());
-    observer.observe(container);
-  });
+  }
 
   /** Middle-click paste (optional) — classic X11 terminal behavior. */
   function onMouseDown(e: MouseEvent) {
@@ -823,6 +923,7 @@
 
   /** Re-measure after a (possibly async-loaded) font is ready and refit. */
   function applyFontAndFit() {
+    if (replaying) return;
     try {
       fit?.fit();
       term.refresh(0, term.rows - 1);
@@ -885,8 +986,11 @@
     observer?.disconnect();
     container?.removeEventListener("wheel", onZoomWheel, { capture: true });
     unlisten.forEach((u) => u());
-    disconnect(sessionId).catch(() => {});
+    // The session is NOT ended here (ADR 0017): it belongs to the tab, not to
+    // this component — `closeTabFully` ends it. A tab handed to another window
+    // unmounts its terminal while the session lives on.
     searchAddon?.dispose();
+    serializer?.dispose();
     webLinks?.dispose();
     seedMark?.dispose();
     webgl?.dispose();

@@ -2,6 +2,11 @@
 // render — which tool panel sits where, the tab each dock shows, its size and
 // collapse — persisted to localStorage under `vterm.layout`.
 //
+// Each window has its own layout in memory, and only the main window saves it
+// (ADR 0017): a window a tab was moved out to starts from the saved layout and
+// may be rearranged freely, but it must not overwrite what the next launch opens
+// with.
+//
 // The model and every decision about it are pure (`../docklayout.ts`); this file
 // only holds the value, applies the pure functions to it and writes it back.
 // A stored layout reaches the store through `loadDocks` and nothing else: it
@@ -19,6 +24,7 @@ import {
   type DockSide,
   type PanelId,
 } from "../docklayout";
+import { isMainWindow } from "../appwindow";
 import { settings } from "../settings.svelte";
 import { resetColumnWidths } from "./colwidths.svelte";
 
@@ -102,6 +108,7 @@ export function setDockSize(side: DockSide, px: number): void {
 
 $effect.root(() => {
   $effect(() => {
+    if (!isMainWindow) return;
     const data = JSON.stringify(persistedLayout(layout.docks));
     try {
       localStorage.setItem(STORAGE_KEY, data);

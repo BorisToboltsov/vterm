@@ -7,6 +7,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::kbdauth;
+use crate::outgate::OutputGate;
 use crate::store;
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
 use russh::client::{self, AuthResult, Handle, KeyboardInteractiveAuthResponse, Msg};
@@ -51,16 +52,6 @@ impl HostKeyPolicy {
 // Credential-rejection and host-key-rejection are typed as AppError::AuthRejected
 // / AppError::HostKeyRejected (see error.rs); their Display strings carry the
 // `auth-rejected` / `host-key-rejected` markers the frontend matches on.
-
-/// Event name carrying raw terminal output bytes for a session.
-pub fn output_event(session_id: &str) -> String {
-    format!("term://out/{session_id}")
-}
-
-/// Event name signalling the remote shell/connection closed.
-pub fn closed_event(session_id: &str) -> String {
-    format!("term://closed/{session_id}")
-}
 
 /// Event name carrying live output chunks of a server-tool install (Phase 20.14).
 /// Payload is a UTF-8 string chunk; the frontend appends it to the install dialog's
@@ -144,12 +135,19 @@ pub struct SshSession {
     sftp: Mutex<Option<Arc<SftpSession>>>,
     /// Active session recorder, if recording (shared with the reader task).
     recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>>,
+    /// Where the shell's output goes — the windows, or a handoff's hold (ADR 0017).
+    gate: Arc<OutputGate>,
     /// The proxy/jump host connection, when this session is tunneled through one.
     /// Held only to keep it alive — dropping it closes the underlying tunnel.
     _proxy_handle: Option<Handle<ClientHandler>>,
 }
 
 impl SshSession {
+    /// The gate this session's terminal output goes through.
+    pub fn gate(&self) -> &Arc<OutputGate> {
+        &self.gate
+    }
+
     /// Send user keystrokes to the remote shell (recording input first if active).
     pub async fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
         if let Ok(mut g) = self.recorder.lock() {
@@ -467,6 +465,7 @@ impl Drop for SshSession {
     fn drop(&mut self) {
         // Stop the reader task; dropping `_handle` closes the SSH connection.
         self.reader.abort();
+        self.gate.shut();
     }
 }
 
@@ -1040,8 +1039,8 @@ pub async fn connect(
 
     let (mut read, write) = channel.split();
 
-    let out = output_event(&session_id);
-    let closed = closed_event(&session_id);
+    let gate = OutputGate::for_session(app, &session_id);
+    let gate_for_reader = gate.clone();
     let recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>> =
         Arc::new(std::sync::Mutex::new(None));
     let rec_for_reader = recorder.clone();
@@ -1055,10 +1054,10 @@ pub async fn connect(
                             r.output(&bytes);
                         }
                     }
-                    let _ = app.emit(&out, bytes);
+                    gate_for_reader.output(bytes);
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                    let _ = app.emit(&closed, ());
+                    gate_for_reader.closed();
                     break;
                 }
                 _ => {}
@@ -1072,6 +1071,7 @@ pub async fn connect(
         reader,
         sftp: Mutex::new(None),
         recorder,
+        gate,
         _proxy_handle: proxy_handle,
     })
 }
@@ -1134,8 +1134,6 @@ mod tests {
 
     #[test]
     fn event_names() {
-        assert_eq!(output_event("abc"), "term://out/abc");
-        assert_eq!(closed_event("abc"), "term://closed/abc");
         assert_eq!(phase_event("abc"), "term://phase/abc");
     }
 

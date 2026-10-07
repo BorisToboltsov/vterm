@@ -124,6 +124,20 @@ export function dirRevision(sessionId: string, dir: string): number {
   return sessions[sessionId]?.dirRev[dir] ?? 0;
 }
 
+/** What the session's dock remembers, as stored; null when nothing yet. */
+export function peekDockState(sessionId: string): DockSessionState | null {
+  return sessions[sessionId] ?? null;
+}
+
+/**
+ * Take over the dock state of a tab moved here from another window (ADR 0017):
+ * the file panel's connection and folder, the k8s scope, the sub-tabs. Upload
+ * batches are not carried — a tab does not move while one is running.
+ */
+export function adoptDockState(sessionId: string, state: DockSessionState): void {
+  sessions[sessionId] = { ...empty(), ...state, uploads: {}, dirRev: {} };
+}
+
 /** Drop everything this session's dock remembered (part of the tab teardown). */
 export function removeDockState(sessionId: string): void {
   delete sessions[sessionId];

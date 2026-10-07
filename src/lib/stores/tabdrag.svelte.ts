@@ -11,6 +11,10 @@
 // shows, `data-pane` on the whole pane — and reads `tabDrag` to draw the preview.
 // Where a drop lands is decided by the pure model (`../splitlayout.ts`).
 //
+// A tab let go of **outside the window** moves to a window of its own (v1.3,
+// ADR 0017). The store only notices where the pointer was released — what
+// happens then is the page's (`onTabReleasedOutside`): it owns the handoff.
+//
 // **The layout changes once, on release.** While a tab is in the air the strips
 // draw the order the drop would give (`previewTabs`) and a tint shows the half
 // of a pane it would take. Moving the tab for real on every pointer move would
@@ -26,6 +30,7 @@ import {
   type Rect,
   type TabDrop,
 } from "../splitlayout";
+import { releasedOutside } from "../tabhandoff";
 import { dropTab, tabsState } from "./tabs.svelte";
 
 export const tabDrag = $state<{
@@ -38,7 +43,29 @@ export const tabDrag = $state<{
   over: TabDrop | null;
   /** The part of a pane a drop on its body would give the tab, viewport px. */
   zone: Rect | null;
-}>({ tab: null, x: 0, y: 0, over: null, zone: null });
+  /** The pointer has left the window: letting go now moves the tab to a new one. */
+  outside: boolean;
+}>({ tab: null, x: 0, y: 0, over: null, zone: null, outside: false });
+
+/** Where on the screen a tab was let go of outside the window (screen px). */
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+let releaseOutside: ((tab: string, at: ScreenPoint) => void) | null = null;
+
+/**
+ * What a tab released outside the window does. Null (the default) — nothing:
+ * the drag just ends, as it did before windows.
+ */
+export function onTabReleasedOutside(
+  handler: ((tab: string, at: ScreenPoint) => void) | null,
+): void {
+  releaseOutside = handler;
+}
+
+const viewport = () => ({ width: window.innerWidth, height: window.innerHeight });
 
 interface Candidate {
   tab: string;
@@ -107,6 +134,7 @@ function clearDrag(): void {
   tabDrag.tab = null;
   tabDrag.over = null;
   tabDrag.zone = null;
+  tabDrag.outside = false;
 }
 
 function stopListening(): void {
@@ -138,6 +166,13 @@ function onMove(e: PointerEvent): void {
   }
   tabDrag.x = e.clientX;
   tabDrag.y = e.clientY;
+  // Outside the window there is no pane to land in — only "a window of its own".
+  tabDrag.outside = releaseOutside !== null && releasedOutside(e.clientX, e.clientY, viewport());
+  if (tabDrag.outside) {
+    tabDrag.over = null;
+    tabDrag.zone = null;
+    return;
+  }
   const hit = tabDropAt(e.clientX, e.clientY, candidate.tab);
   // A drop that would change nothing is not offered as a target.
   const offered = hit !== null && dropChanges(tabsState.center, candidate.tab, hit.drop);
@@ -145,7 +180,7 @@ function onMove(e: PointerEvent): void {
   tabDrag.zone = offered ? hit.zone : null;
 }
 
-function onUp(): void {
+function onUp(e: PointerEvent): void {
   const tab = tabDrag.tab;
   const over = tabDrag.over;
   stopListening();
@@ -155,6 +190,12 @@ function onUp(): void {
   // not activate that tab on top of the move.
   swallowClick = true;
   setTimeout(() => (swallowClick = false), 0);
+  // Decided from where the pointer was let go, not from the last move: the
+  // release is the gesture.
+  if (releaseOutside && releasedOutside(e.clientX, e.clientY, viewport())) {
+    releaseOutside(tab, { x: e.screenX, y: e.screenY });
+    return;
+  }
   if (over) dropTab(tab, over);
 }
 

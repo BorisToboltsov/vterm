@@ -25,7 +25,12 @@
   import type { FileBrowserAdapter } from "./filebrowser";
   import type { FileEntry } from "./types";
   import { notifyError } from "./stores/toasts.svelte";
-  import { removeTransfer, transfersState } from "./stores/transfers.svelte";
+  import {
+    removeTransfer,
+    trackTransfer,
+    transfersState,
+    untrackTransfer,
+  } from "./stores/transfers.svelte";
   import { isCancelled } from "./sync";
   import { etaSeconds, fmtEta, isCancellableTransfer } from "./transfer";
   import { fmtBytes, fmtRate } from "./format";
@@ -77,11 +82,14 @@
    */
   async function runTransfer(start: (id: string) => Promise<void>) {
     const id = crypto.randomUUID();
+    trackTransfer(id, sessionId);
     try {
       await start(id);
     } catch (e) {
       if (isCancelled(String(e))) removeTransfer(id);
       else notifyError(String(e));
+    } finally {
+      untrackTransfer(id);
     }
   }
 

@@ -6,8 +6,11 @@ import {
   clearTransfers,
   DONE_LINGER_MS,
   removeTransfer,
+  sessionTransfers,
   setTransferClock,
+  trackTransfer,
   transfersState,
+  untrackTransfer,
 } from "./transfers.svelte";
 
 function p(over: Partial<SftpProgress> & { id: string }): SftpProgress {
@@ -138,5 +141,37 @@ describe("rate tracking", () => {
     clock = 2000;
     applyProgress(p({ id: "a", transferred: 0, total: 10_000 }));
     expect(transfersState.rates.a).toBeNull();
+  });
+});
+
+describe("which session a running transfer belongs to", () => {
+  beforeEach(clearTransfers);
+
+  it("counts a session's transfers from start to the end of the call", () => {
+    expect(sessionTransfers("s1")).toBe(0);
+    trackTransfer("t1", "s1");
+    trackTransfer("t2", "s1");
+    trackTransfer("t3", "s2");
+    expect(sessionTransfers("s1")).toBe(2);
+    expect(sessionTransfers("s2")).toBe(1);
+    untrackTransfer("t1");
+    expect(sessionTransfers("s1")).toBe(1);
+  });
+
+  it("is over when the call returns, whatever the last progress event said", () => {
+    // A transfer that failed mid-way never reports `done`; its row may linger,
+    // but the tab is free to move — nothing is waiting on it any more.
+    trackTransfer("t1", "s1");
+    applyProgress(p({ id: "t1", transferred: 10, total: 100 }));
+    untrackTransfer("t1");
+    expect(sessionTransfers("s1")).toBe(0);
+    expect(transfersState.map.t1).toBeDefined();
+  });
+
+  it("forgetting everything forgets the owners too", () => {
+    trackTransfer("t1", "s1");
+    clearTransfers();
+    expect(sessionTransfers("s1")).toBe(0);
+    untrackTransfer("never-started");
   });
 });

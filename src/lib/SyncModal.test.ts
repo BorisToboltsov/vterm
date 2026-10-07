@@ -420,6 +420,6 @@ describe("SyncModal", () => {
     await compareWith(tree([{ path: "a.txt", sha256: "1" }]), tree([]));
     await screen.findByTitle("a.txt");
     expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByTestId("sync-block-reason").textContent).toMatch(/Another tab is syncing/);
+    expect(screen.getByTestId("sync-block-reason").textContent).toMatch(/Another sync is already running/);
   });
 });

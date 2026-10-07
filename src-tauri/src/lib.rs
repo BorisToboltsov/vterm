@@ -1,4 +1,5 @@
 mod ai;
+mod appwin;
 mod backup;
 mod container;
 mod drives;
@@ -14,6 +15,7 @@ mod metrics;
 mod model;
 mod netcheck;
 mod netprobe;
+mod outgate;
 mod proccwd;
 mod pty;
 mod recording;
@@ -53,11 +55,10 @@ pub(crate) struct AppState {
     /// Cancellation flags for in-progress transfers, sync runs and tree hashes,
     /// keyed by transfer / run id.
     cancels: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// Armed by the frontend once it listens for `menu://quit`: while set, closing
-    /// the window or quitting asks first instead of exiting. Unarmed (a frontend
-    /// that never loaded, or already confirmed) the app closes normally — a guard
-    /// nobody answers must not make the window impossible to close.
-    close_guard: AtomicBool,
+    /// The sync run applying right now, app-wide (its run id). One at a time: a
+    /// run's progress rows are keyed by path alone, so two runs — in two windows,
+    /// since v1.3 — would draw each other's bars.
+    sync_run: Mutex<Option<String>>,
     /// Per-session sample stores for the metrics probes (CPU%, throughput, etc.);
     /// see [`metrics::MetricsSamples`]. Cleared on disconnect.
     pub(crate) metrics_samples: metrics::MetricsSamples,
@@ -71,6 +72,34 @@ pub(crate) struct AppState {
 
 /// (uid→name, gid→name) maps resolved from passwd/group for one session.
 type IdNames = (HashMap<u32, String>, HashMap<u32, String>);
+
+/// The gate a session's terminal output goes through (SSH or local), if the
+/// session exists — the handle a tab handoff holds the output by (ADR 0017).
+pub(crate) async fn session_gate(
+    state: &State<'_, AppState>,
+    session_id: &str,
+) -> Option<Arc<outgate::OutputGate>> {
+    if let Some(session) = state.sessions.lock().await.get(session_id) {
+        return Some(session.gate().clone());
+    }
+    let local = state.local_ptys.lock().unwrap();
+    local.get(session_id).map(|pty| pty.gate().clone())
+}
+
+/// End a session and drop everything the backend keeps under its id. The one
+/// way a session goes: a closed tab (`disconnect`), a replaced one (reconnect)
+/// and a destroyed window all come here.
+pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
+    let state = app.state::<AppState>();
+    // A login still waiting on the user's answers (keyboard-interactive) ends
+    // here too — otherwise closing the tab would leave it parked forever.
+    app.state::<kbdauth::PendingPrompts>().cancel(session_id);
+    state.sessions.lock().await.remove(session_id);
+    // Removing the LocalPty drops it, which kills the child shell.
+    state.local_ptys.lock().unwrap().remove(session_id);
+    state.metrics_samples.clear_session(session_id);
+    state.id_names.lock().unwrap().remove(session_id);
+}
 
 /// Clone out the session for `session_id`, releasing the registry lock before
 /// any network round-trip so other sessions aren't blocked.
@@ -392,7 +421,9 @@ fn remember_failure(saved: AppResult<()>) -> Option<String> {
 #[allow(clippy::too_many_arguments)]
 async fn connect_session(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
+    windows: State<'_, appwin::Windows>,
     session_id: String,
     server_id: String,
     secret: Option<String>,
@@ -488,9 +519,10 @@ async fn connect_session(
     };
 
     // Replace any existing session with the same session id — and release a
-    // previous attempt still waiting on login questions for it.
-    app.state::<kbdauth::PendingPrompts>().cancel(&session_id);
-    state.sessions.lock().await.remove(&session_id);
+    // previous attempt still waiting on login questions for it. The tab is this
+    // window's from here on.
+    end_session(&app, &session_id).await;
+    windows.claim(&session_id, window.label());
 
     let opts = ConnectOptions {
         term_type: term_type.unwrap_or_else(|| "xterm-256color".to_string()),
@@ -541,6 +573,12 @@ async fn connect_session(
         }
     }
 
+    // The tab was closed while we were logging in: nobody would ever end this
+    // session, so it ends here instead of being registered.
+    if !windows.owns(&session_id, window.label()) {
+        drop(session);
+        return Err(AppError::NoSession);
+    }
     state
         .sessions
         .lock()
@@ -553,17 +591,22 @@ async fn connect_session(
 /// per-tab `session_id`. Output/close events reuse the `term://…` channels, so
 /// the frontend terminal widget drives it exactly like an SSH session.
 #[tauri::command]
+// Same as `connect_session`: the params are the wire contract with the frontend.
+#[allow(clippy::too_many_arguments)]
 async fn open_local_terminal(
     app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
+    windows: State<'_, appwin::Windows>,
     session_id: String,
     cols: u32,
     rows: u32,
     shell: Option<String>,
 ) -> AppResult<()> {
-    // Replace any existing session registered under this id.
-    state.sessions.lock().await.remove(&session_id);
-    state.local_ptys.lock().unwrap().remove(&session_id);
+    // Replace any existing session registered under this id; the tab is this
+    // window's from here on.
+    end_session(&app, &session_id).await;
+    windows.claim(&session_id, window.label());
 
     let local = pty::open_local(app, session_id.clone(), cols, rows, shell)?;
     state
@@ -681,20 +724,18 @@ async fn resize_pty(
     Ok(())
 }
 
+/// End the session of a tab this window is closing. A window that gave the tab
+/// away to another one no longer owns the session and cannot end it (ADR 0017).
 #[tauri::command]
 async fn disconnect(
-    state: State<'_, AppState>,
-    prompts: State<'_, kbdauth::PendingPrompts>,
+    app: AppHandle,
+    window: tauri::WebviewWindow,
+    windows: State<'_, appwin::Windows>,
     session_id: String,
 ) -> AppResult<()> {
-    // A login still waiting on the user's answers (keyboard-interactive) ends here
-    // too — otherwise closing the tab would leave it parked forever.
-    prompts.cancel(&session_id);
-    state.sessions.lock().await.remove(&session_id);
-    // Removing the LocalPty drops it, which kills the child shell.
-    state.local_ptys.lock().unwrap().remove(&session_id);
-    state.metrics_samples.clear_session(&session_id);
-    state.id_names.lock().unwrap().remove(&session_id);
+    if windows.release(&session_id, window.label()) {
+        end_session(&app, &session_id).await;
+    }
     Ok(())
 }
 
@@ -973,7 +1014,6 @@ struct AiExecResult {
 /// and bars it on prod/`noAi` servers.
 #[tauri::command]
 async fn ai_exec(
-    app: AppHandle,
     state: State<'_, AppState>,
     session_id: String,
     command: String,
@@ -991,7 +1031,7 @@ async fn ai_exec(
         outcome.timed_out,
         timeout_secs,
     );
-    let _ = app.emit(&ssh::output_event(&session_id), mirror.clone().into_bytes());
+    session.gate().output(mirror.clone().into_bytes());
     session.record_output(mirror.as_bytes());
 
     Ok(AiExecResult {
@@ -1700,7 +1740,7 @@ fn take_pending_opens(state: State<AppState>) -> Vec<String> {
 /// channel (no download). Returns `/`-relative path → sha256.
 #[tauri::command]
 async fn sftp_hash_tree(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     session_id: String,
     path: String,
@@ -1709,6 +1749,7 @@ async fn sftp_hash_tree(
 ) -> AppResult<sync::HashTree> {
     let session = session_arc(&state, &session_id).await?;
     let cancel = register_cancel(&state, &cancel_id);
+    let win = appwin::WindowSink::of(&window);
     let cmd = sync::remote_hash_command(&path, &sync::ExcludeSet::new(&excludes));
     // Count output lines as they stream in: one per file hashed (or unreadable).
     let mut out: Vec<u8> = Vec::new();
@@ -1719,7 +1760,7 @@ async fn sftp_hash_tree(
         lines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
         if last.elapsed() >= std::time::Duration::from_millis(150) {
             last = std::time::Instant::now();
-            sync::emit_scan(&app, &cancel_id, lines);
+            sync::emit_scan(&win, &cancel_id, lines);
         }
     });
     let res = sync::until_cancelled(run, &cancel).await;
@@ -1743,7 +1784,7 @@ fn register_cancel(state: &AppState, id: &str) -> Arc<AtomicBool> {
 /// Hash every file under a local directory (the local side of sync).
 #[tauri::command]
 async fn local_hash_tree(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     path: String,
     excludes: Vec<String>,
@@ -1754,11 +1795,12 @@ async fn local_hash_tree(
     let progress = Arc::new(AtomicU64::new(0));
     // Report the count every 200 ms until the walk ends.
     let ticker = {
-        let (app, id, progress) = (app.clone(), cancel_id.clone(), progress.clone());
+        let win = appwin::WindowSink::of(&window);
+        let (id, progress) = (cancel_id.clone(), progress.clone());
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                sync::emit_scan(&app, &id, progress.load(Ordering::Relaxed));
+                sync::emit_scan(&win, &id, progress.load(Ordering::Relaxed));
             }
         })
     };
@@ -1895,7 +1937,7 @@ async fn run_tool_install(
 /// contract, Phase 37.2), not one per file; `exit 130` marks a user stop.
 #[tauri::command]
 async fn sftp_sync_apply(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     session_id: String,
     run_id: String,
@@ -1905,6 +1947,8 @@ async fn sftp_sync_apply(
 ) -> AppResult<sync::SyncStats> {
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
+    // One run at a time, app-wide; the slot is freed however this command ends.
+    let _slot = SyncRunSlot::take(&state.sync_run, &run_id)?;
     let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
     let body = sync::sync_mirror_body(&actions);
 
@@ -1914,7 +1958,8 @@ async fn sftp_sync_apply(
         .lock()
         .unwrap()
         .insert(run_id.clone(), cancel.clone());
-    let res = sync::apply(&app, &sftp, &local_root, &remote_root, actions, cancel).await;
+    let win = appwin::WindowSink::of(&window);
+    let res = sync::apply(&win, &sftp, &local_root, &remote_root, actions, cancel).await;
     state.cancels.lock().unwrap().remove(&run_id);
 
     let (code, detail) = match &res {
@@ -1924,6 +1969,27 @@ async fn sftp_sync_apply(
     };
     session.record_output(sftp::sftp_mirror(&op, code, &detail).as_bytes());
     res
+}
+
+/// The app-wide "a sync run is applying" slot, held for the length of one run.
+struct SyncRunSlot<'a>(&'a Mutex<Option<String>>);
+
+impl<'a> SyncRunSlot<'a> {
+    /// Take the slot for `run_id`, or refuse while another run holds it.
+    fn take(slot: &'a Mutex<Option<String>>, run_id: &str) -> AppResult<Self> {
+        let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
+        if current.is_some() {
+            return Err(AppError::SyncBusy);
+        }
+        *current = Some(run_id.to_string());
+        Ok(Self(slot))
+    }
+}
+
+impl Drop for SyncRunSlot<'_> {
+    fn drop(&mut self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
 }
 
 /// Content search under a remote directory via `grep -rn` over SSH (Phase 12.6).
@@ -2020,7 +2086,7 @@ fn cancel_flag(state: &AppState, transfer_id: &str) -> Arc<AtomicBool> {
 
 #[tauri::command]
 async fn sftp_upload(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     session_id: String,
     transfer_id: String,
@@ -2030,8 +2096,9 @@ async fn sftp_upload(
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
     let cancel = cancel_flag(&state, &transfer_id);
+    let win = appwin::WindowSink::of(&window);
     let res = sftp::upload(
-        &app,
+        &win,
         transfer_id.clone(),
         &sftp,
         &local_path,
@@ -2054,7 +2121,7 @@ async fn sftp_upload(
 
 #[tauri::command]
 async fn sftp_download(
-    app: AppHandle,
+    window: tauri::WebviewWindow,
     state: State<'_, AppState>,
     session_id: String,
     transfer_id: String,
@@ -2065,10 +2132,11 @@ async fn sftp_download(
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
     let cancel = cancel_flag(&state, &transfer_id);
+    let win = appwin::WindowSink::of(&window);
     let res = if is_dir {
         // `local_path` is the destination *parent* directory.
         sftp::download_dir(
-            &app,
+            &win,
             transfer_id.clone(),
             &sftp,
             &remote_path,
@@ -2078,7 +2146,7 @@ async fn sftp_download(
         .await
     } else {
         sftp::download(
-            &app,
+            &win,
             transfer_id.clone(),
             &sftp,
             &remote_path,
@@ -2261,35 +2329,6 @@ fn build_app_menu<R: tauri::Runtime>(
     }
 }
 
-/// Whether closing must ask first (the frontend armed the guard).
-fn close_guarded<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
-    app.try_state::<AppState>()
-        .is_some_and(|s| s.close_guard.load(Ordering::SeqCst))
-}
-
-/// Ask the frontend to confirm quitting — it lists what would be cut off.
-fn request_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if close_guarded(app) {
-        let _ = app.emit("menu://quit", ());
-    } else {
-        app.exit(0);
-    }
-}
-
-/// Arm the close confirmation. Called by the frontend once its `menu://quit`
-/// listener is in place, so there is always someone to answer the question.
-#[tauri::command]
-fn arm_close_guard(state: State<AppState>) {
-    state.close_guard.store(true, Ordering::SeqCst);
-}
-
-/// The user confirmed: disarm the guard and exit.
-#[tauri::command]
-fn quit_app(app: AppHandle, state: State<AppState>) {
-    state.close_guard.store(false, Ordering::SeqCst);
-    app.exit(0);
-}
-
 /// Rebuild the native menu in the language chosen on the frontend. Called by the
 /// WebView on startup and whenever the user switches language in Settings.
 #[tauri::command]
@@ -2325,7 +2364,7 @@ pub fn run() {
         sessions: tokio::sync::Mutex::new(HashMap::new()),
         local_ptys: Mutex::new(HashMap::new()),
         cancels: Mutex::new(HashMap::new()),
-        close_guard: AtomicBool::new(false),
+        sync_run: Mutex::new(None),
         metrics_samples: metrics::MetricsSamples::default(),
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
@@ -2335,10 +2374,11 @@ pub fn run() {
         // single-instance must be registered first: a second launch (e.g. another
         // "open with vterm") forwards its file args to the running window instead.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // Files open in the main window — it owns "Open with" (ADR 0017).
             for path in file_args(&argv) {
-                let _ = app.emit("vterm://open-file", path);
+                let _ = app.emit_to(appwin::MAIN, "vterm://open-file", path);
             }
-            if let Some(w) = app.get_webview_window("main") {
+            if let Some(w) = app.get_webview_window(appwin::MAIN) {
                 let _ = w.set_focus();
             }
         }))
@@ -2351,40 +2391,46 @@ pub fn run() {
         // platforms.
         .setup(|app| {
             let win = app
-                .get_webview_window("main")
+                .get_webview_window(appwin::MAIN)
                 .expect("main window is defined in tauri.conf.json");
             #[cfg(not(target_os = "macos"))]
             win.set_decorations(false)?;
             win.show()?;
+            // Any write of the server list or the folders reaches every window:
+            // each keeps its own copy, and `prod` / `noAi` must not drift apart.
+            let handle = app.handle().clone();
+            store::on_catalog_change(move || {
+                let _ = handle.emit("window://catalog", ());
+            });
             Ok(())
         })
         .menu(|app| build_app_menu(app, &MenuLabels::default()))
         .on_menu_event(|app, event| {
-            let _ = match event.id().as_ref() {
-                "settings" => app.emit("menu://settings", ()),
-                "about" => app.emit("menu://about", ()),
-                "help" => app.emit("menu://help", ()),
-                "manual" => app.emit("menu://manual", ()),
-                "monitoring" => app.emit("menu://monitoring", ()),
-                "quit" => {
-                    request_quit(app);
-                    Ok(())
-                }
-                _ => Ok(()),
-            };
+            // A menu command is for the window the user is in; quitting is asked
+            // in the main one, which lists every window's sessions.
+            match event.id().as_ref() {
+                "settings" => appwin::emit_to_focused(app, "menu://settings"),
+                "about" => appwin::emit_to_focused(app, "menu://about"),
+                "help" => appwin::emit_to_focused(app, "menu://help"),
+                "manual" => appwin::emit_to_focused(app, "menu://manual"),
+                "monitoring" => appwin::emit_to_focused(app, "menu://monitoring"),
+                "quit" => appwin::request_quit(app),
+                _ => {}
+            }
         })
         .on_window_event(|window, event| {
-            // The window's close button, Alt+F4, the TitleBar's close and its
-            // File → Exit all arrive here.
+            // Closing asks first (the main window: quit; another one: close it
+            // with its sessions) — `appwin` decides, this only vetoes the close.
+            let asked = appwin::on_window_event(window, event);
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if close_guarded(window.app_handle()) {
+                if asked {
                     api.prevent_close();
-                    request_quit(window.app_handle());
                 }
             }
         })
         .manage(state)
         .manage(kbdauth::PendingPrompts::default())
+        .manage(appwin::Windows::default())
         .invoke_handler(tauri::generate_handler![
             kbdauth::answer_auth_prompt,
             servers::list_servers,
@@ -2484,8 +2530,16 @@ pub fn run() {
             delete_registry_secret,
             set_ai_key,
             forget_ai_key,
-            arm_close_guard,
-            quit_app
+            appwin::arm_close_guard,
+            appwin::quit_app,
+            appwin::close_window,
+            appwin::report_window_summary,
+            appwin::other_windows_summary,
+            appwin::detach_begin,
+            appwin::detach_abort,
+            appwin::detach_commit,
+            appwin::take_handoff,
+            appwin::attach_session
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
@@ -2498,9 +2552,9 @@ pub fn run() {
             code: None, api, ..
         } = &event
         {
-            if close_guarded(app_handle) {
+            if appwin::quit_guarded(app_handle) {
                 api.prevent_exit();
-                request_quit(app_handle);
+                appwin::request_quit(app_handle);
             }
         }
         // macOS delivers "Open with" / dropped files as an Opened run event (the
@@ -2523,7 +2577,7 @@ pub fn run() {
                         .extend(paths.iter().cloned());
                 }
                 for p in paths {
-                    let _ = app_handle.emit("vterm://open-file", p);
+                    let _ = app_handle.emit_to(appwin::MAIN, "vterm://open-file", p);
                 }
             }
         }
@@ -2610,27 +2664,92 @@ mod tests {
         assert!(command_code(&src, "record_audit").contains("netprobe::audit_block("));
     }
 
+    /// Everything before the tests, line comments stripped.
+    fn code_of(src: &str) -> String {
+        let src = src.replace("\r\n", "\n");
+        src[..src.find("#[cfg(test)]").expect("tests")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn quitting_always_goes_through_the_confirmation() {
         // Guard (v1.0.33): the predefined `quit()` menu item terminates the app
         // natively, past `request_quit` — ⌘Q would silently drop every session the
         // quit dialog exists to list. And a close request must be the one the
         // guard can veto (`prevent_close`), not left to close the window.
-        let src = include_str!("lib.rs").replace("\r\n", "\n");
-        let code: String = src[..src.find("#[cfg(test)]").expect("tests")]
-            .lines()
-            .map(|l| l.split("//").next().unwrap_or(""))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let code = code_of(include_str!("lib.rs"));
+        let windows = code_of(include_str!("appwin.rs"));
         assert!(
-            !code.contains(".quit()"),
+            !code.contains(".quit()") && !windows.contains(".quit()"),
             "native Quit bypasses the confirmation"
         );
-        assert!(code.contains("\"quit\" => {\n                    request_quit(app);"));
+        assert!(code.contains("\"quit\" => appwin::request_quit(app),"));
+        // A close request is vetoed exactly when `appwin` took it over…
         let close = &code[code
-            .find("WindowEvent::CloseRequested")
+            .find("appwin::on_window_event(")
             .expect("close handler")..];
-        assert!(close[..close.find("request_quit").expect("asks")].contains("api.prevent_close()"));
+        let close = &close[..close.find(".manage(").expect("end of handler")];
+        assert!(close.contains("if asked {\n                    api.prevent_close();"));
+        // …and it takes over only by asking: the main window to quit, any other
+        // one to close itself.
+        let asks = &windows[windows
+            .find("WindowEvent::CloseRequested")
+            .expect("close request")..];
+        let asks = &asks[..asks.find("WindowEvent::Destroyed").expect("next arm")];
+        assert!(asks.contains("request_quit(app);"));
+        // (`code_of` cuts a line at `//`, so the event name ends at its scheme.)
+        assert!(asks.contains("app.emit_to(label, \"window:"));
+    }
+
+    #[test]
+    fn a_session_ends_in_one_place_and_only_for_its_owner() {
+        // Guard (v1.3.0, ADR 0017): a tab can live in another window than the one
+        // that connected it. The session map is emptied in `end_session` alone, and
+        // the `disconnect` a window sends reaches it only past the owner check —
+        // otherwise the window that gave a tab away would end the session behind
+        // the new owner's back with its ordinary teardown.
+        let code = code_of(include_str!("lib.rs"));
+        for removal in [
+            "sessions.lock().await.remove(",
+            "local_ptys.lock().unwrap().remove(",
+        ] {
+            assert_eq!(
+                code.matches(removal).count(),
+                1,
+                "a session is dropped outside end_session: {removal}"
+            );
+        }
+        let end = command_code(&code, "end_session");
+        assert!(end.contains("sessions.lock().await.remove(session_id)"));
+        assert!(end.contains("local_ptys.lock().unwrap().remove(session_id)"));
+        let disconnect = command_code(&code, "disconnect");
+        let check = disconnect
+            .find("windows.release(&session_id, window.label())")
+            .expect("owner check");
+        assert!(check < disconnect.find("end_session(").expect("ends the session"));
+        // A window that is gone has its sessions ended for it.
+        let windows = code_of(include_str!("appwin.rs"));
+        let destroyed = &windows[windows.find("WindowEvent::Destroyed").expect("destroyed")..];
+        assert!(
+            destroyed[..destroyed.find("_ => false").expect("end of arms")]
+                .contains("crate::end_session(&app, &id).await")
+        );
+    }
+
+    #[test]
+    fn only_one_sync_run_applies_at_a_time() {
+        let slot = Mutex::new(None);
+        let first = SyncRunSlot::take(&slot, "run-1").expect("free slot");
+        assert!(matches!(
+            SyncRunSlot::take(&slot, "run-2"),
+            Err(AppError::SyncBusy)
+        ));
+        // However the run ends, the slot is free again.
+        drop(first);
+        assert!(SyncRunSlot::take(&slot, "run-2").is_ok());
     }
 
     // ── uuid_like ─────────────────────────────────────────────────────────────

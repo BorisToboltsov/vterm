@@ -363,6 +363,15 @@ export function isCancelled(err: string): boolean {
 }
 
 /**
+ * Another sync run already holds the app-wide slot — in this window or, since a
+ * tab can live in a window of its own, in another one (`AppError::SyncBusy`).
+ * Nothing ran: the compared plan is as good as it was.
+ */
+export function isSyncBusy(err: string): boolean {
+  return err.includes("sync-busy");
+}
+
+/**
  * Map a hashing error from the backend to a localizable message. The markers come
  * from `AppError`'s `Display` (`sync-dir-unreadable: cannot read folder <path>`,
  * `hash-tool-missing`, `hash-incomplete`); anything else is shown as is.

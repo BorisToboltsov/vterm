@@ -85,18 +85,26 @@
 
 ## Каналы событий
 
-Каналов пять, и новый заводится **только** под принципиально другой сорт данных — не под
+Новый канал заводится **только** под принципиально другой сорт данных — не под
 новую стадию тех же (поэтому `term://phase` отдельно от `term://out`, а `ai://think` —
 от `ai://out`).
 
+Окон может быть несколько (ADR 0017), поэтому у события есть ещё и **адресат**. События с id
+в имени (`term://…/{id}`, `ai://…/{id}`, `install://out/{id}`) идут всем: слушает их только тот,
+у кого эта сессия или этот стрим. События без id идут **одному окну** (`emit_to`), и фронт
+слушает их через `listenHere` — обычный `listen` слышит и то, что послано чужому окну.
+
 | Канал | Кто эмитит | Что несёт |
 |-------|-----------|-----------|
-| `term://out\|closed\|phase/{id}` | [ssh.rs](../src-tauri/src/ssh.rs), [pty.rs](../src-tauri/src/pty.rs) | Поток PTY, закрытие сессии, **реальные** фазы подключения (`connecting`→`authenticating`→`session` + подстадии прокси) |
+| `term://out\|closed/{id}` | [outgate.rs](../src-tauri/src/outgate.rs) — затвор вывода сессии; пишут в него [ssh.rs](../src-tauri/src/ssh.rs), [pty.rs](../src-tauri/src/pty.rs) и зеркало шагов ИИ | Поток PTY и закрытие сессии. На время передачи вкладки в другое окно затвор копит вывод вместо отправки |
+| `term://phase/{id}` | [ssh.rs](../src-tauri/src/ssh.rs) | **Реальные** фазы подключения (`connecting`→`authenticating`→`session` + подстадии прокси) |
 | `term://auth/{id}` | [kbdauth.rs](../src-tauri/src/kbdauth.rs) | Вопросы сервера при входе `keyboard-interactive`, на которые vterm не ответил сам (код, выбор Duo); ответ — команда `answer_auth_prompt` |
-| `sftp://progress` | [sftp.rs](../src-tauri/src/sftp.rs), [sync.rs](../src-tauri/src/sync.rs) | Прогресс передачи по id переноса (у синхронизации id детерминированный — `sync:<путь>`) |
-| `sync://scan` | [sync.rs](../src-tauri/src/sync.rs) | Сколько файлов уже прохэшировано при сравнении синхронизации (`{id, files}`, id = `<сравнение>:local`/`:remote`); счётчик без итога, поэтому не на `sftp://progress` |
+| `sftp://progress` | [sftp.rs](../src-tauri/src/sftp.rs), [sync.rs](../src-tauri/src/sync.rs) | Прогресс передачи по id переноса (у синхронизации id детерминированный — `sync:<путь>`). **Окну, запустившему перенос** (`WindowSink`) |
+| `sync://scan` | [sync.rs](../src-tauri/src/sync.rs) | Сколько файлов уже прохэшировано при сравнении синхронизации (`{id, files}`, id = `<сравнение>:local`/`:remote`); счётчик без итога, поэтому не на `sftp://progress`. Окну, запустившему сравнение |
 | `ai://out\|think\|done\|error/{id}` | [ai.rs](../src-tauri/src/ai.rs) | Токены ответа · рассуждение модели (отдельно, в `content` не попадает) · счёт токенов · ошибка |
-| `menu://…` | нативное меню (Rust) | `about`/`help`/`manual`/`monitoring`/`settings`; `quit` — запрос выхода (меню, закрытие окна, выход от ОС), отвечает `QuitDialog` |
+| `menu://…` | нативное меню (Rust) | `about`/`help`/`manual`/`monitoring`/`settings` — **окну в фокусе**; `quit` — запрос выхода (меню, закрытие главного окна, выход от ОС), **главному окну**, отвечает `QuitDialog` |
+| `vterm://open-file` | `lib.rs` (single-instance, `RunEvent::Opened`) | «Открыть с помощью vterm» — путь файла, **главному окну** |
+| `window://…` | [appwin.rs](../src-tauri/src/appwin.rs), [store.rs](../src-tauri/src/store.rs), окна друг другу | То, о чём окна договариваются (ADR 0017): `close` — вопрос второму окну перед закрытием; `catalog` — список серверов или папок изменился на диске, всем; `settings` — снимок настроек от изменившего их окна, всем; `servers-deleted` — серверы удалены, их вкладки закрываются во всех окнах |
 | `install://out` | [servertools.rs](../src-tauri/src/servertools.rs) | Вывод установки серверного инструмента (линтеры) |
 
 ---
@@ -122,6 +130,8 @@
 |--------|---------------------|
 | [lib.rs](../src-tauri/src/lib.rs) | Регистрация команд, `AppState`, bridge к сессиям, команды поверх общего состояния |
 | [ssh.rs](../src-tauri/src/ssh.rs) · [pty.rs](../src-tauri/src/pty.rs) | SSH-сессии (russh, proxy, keepalive, `exec_captured`) · локальный PTY |
+| [outgate.rs](../src-tauri/src/outgate.rs) | Затвор вывода сессии: шлёт `term://out`/`closed` или копит байты, пока вкладка переезжает в другое окно; счёт отправленного, предел накопленного, откат (ADR 0017) |
+| [appwin.rs](../src-tauri/src/appwin.rs) | Окна приложения: кто владеет сессией, подтверждение закрытия по окнам, передача вкладки новому окну (`detach_*` / `take_handoff` / `attach_session`), сводка для диалога выхода, адресные события (`WindowSink`, `emit_to_focused`) (ADR 0017) |
 | [kbdauth.rs](../src-tauri/src/kbdauth.rs) | Вход `keyboard-interactive`: кто отвечает на вопрос (`plan`/`after_first`), ожидание ответа пользователя (`PendingPrompts`, `answer_auth_prompt`) |
 | [sftp.rs](../src-tauri/src/sftp.rs) · [sync.rs](../src-tauri/src/sync.rs) | Файловые операции по SSH · синхронизация каталогов (SHA-256, dry-run, отмена) |
 | [localfile.rs](../src-tauri/src/localfile.rs) · [drives.rs](../src-tauri/src/drives.rs) · [proccwd.rs](../src-tauri/src/proccwd.rs) | Локальная ФС · перечисление дисков Windows · чтение cwd процесса |
@@ -146,7 +156,7 @@
 
 | Подсистема | Бэкенд | Команды · каналы | UI | Чистая логика |
 |-----------|--------|------------------|----|---------------|
-| **Терминал** | `ssh.rs`, `kbdauth.rs`, `pty.rs` | `connect_plan`/`connect_session`/`answer_auth_prompt`/`open_local_terminal`/`write_to_terminal`/`resize_pty`/`disconnect` · `term://` | `Terminal.svelte`, `ConnectingOverlay`, `AuthPromptDialog` (+ стор `stores/authprompt`) | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termcmd`, `tabattach`, `broadcast`, `termzoom`, `osc` |
+| **Терминал** | `ssh.rs`, `kbdauth.rs`, `pty.rs`, `outgate.rs` | `connect_plan`/`connect_session`/`answer_auth_prompt`/`open_local_terminal`/`write_to_terminal`/`resize_pty`/`disconnect` · `term://` | `Terminal.svelte`, `ConnectingOverlay`, `AuthPromptDialog` (+ стор `stores/authprompt`) | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termcmd`, `tabattach`, `broadcast`, `termzoom`, `osc` |
 | **Серверы и папки** | `servers.rs`, `folders.rs`, `store.rs`, `secrets.rs`, `backup.rs` | `list_servers`/`add_server`/…/`export_backup`/`import_backup` | `ServerTree`, `ServerFormModal`, `FolderModals`, `SecretPrompt` | `tree`, `serverform`, `servericons`, `notes`, `storewarn` |
 | **SFTP и файлы** | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs` | `sftp_*`, `local_*`, `sftp_sync_apply`, `sftp_grep` · `sftp://progress`, `sync://scan` | `FileBrowser` + тонкие `SftpPanel`/`LocalFilePanel`, `SyncModal` (+ `SyncRemotePicker`) | `filebrowser`, `fspath`, `sync`, `remotetree`, `filekeys`, `filemove`, `multiselect`, `fileicon`, `lscolors`, `transfer`, `virtuallist` |
 | **Редактор конфигов** | `sftp.rs`/`localfile.rs` (чтение-запись), `textenc.rs`, `servertools.rs` | `sftp_read_text`/`write_text`, `lint_remote`, `nginx_config_files`, `server_tools_status`, `run_tool_install` · `install://out` | `EditorTab`, `DiffModal` | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cmtheme`, `cspnonce`, `snippets` |
@@ -156,10 +166,11 @@
 | **Git · Docker · k8s · пробы** | `git.rs`, `container.rs`, `kube.rs`, `netprobe.rs` | `git_run`, `container_run`, `kubectl_run`, `probe_run`, `docker_login`, `record_audit` | `GitPanel`, `DockerPanel`, `K8sPanel`, `UtilProbeRunner` | `followcwd`, `git`, `gitview`, `docker`, `k8s`, `probe`, `tls`, `http` |
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact` |
 | **Утилиты** | `keygen.rs`, `store.rs` (known_hosts), `netcheck.rs` | `generate_ssh_key`, `list_known_hosts`, `remove_known_host`, `netcheck_run` | `UtilitiesPanel` + `Util*.svelte` (`UtilNetCheck`) | `utilities`, `netcheck` (+ стор `stores/netcheck`), `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
-| **Оформление** | — | `set_menu_language` · `arm_close_guard` · `quit_app` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel`, `QuitDialog` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav`, `quitsummary` |
+| **Окна** | `appwin.rs`, `outgate.rs` | `detach_begin`/`detach_commit`/`detach_abort` (окно, отдающее вкладку) · `take_handoff`/`attach_session` (окно, принимающее её) · `close_window` · `report_window_summary`/`other_windows_summary` · `arm_close_guard`/`quit_app` · `window://`, `menu://quit` | Та же страница в каждом окне (`+page.svelte`); `QuitDialog` (выход и закрытие окна); в `Terminal.svelte` — снимок (`snapshot`) и приём сессии (`adopt`) | `appwindow` (роль окна по метке), `tabhandoff` (пакет вкладки, `detachBlocker`, бросок за окно), `quitsummary` (`mergeQuitRows`) + `stores/tabpacket` (пакет из сторов и обратно), `api/window` (`listenHere`) |
+| **Оформление** | — | `set_menu_language` · `menu://` | `ThemeOverlay`, `IdleOverlay`, `AppLogo`, `SettingsPanel`, `QuitDialog` | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu`, `settingsNav`, `quitsummary` |
 | **Раскладка (центр)** | — (всё на фронте; не сохраняется — вкладки не восстанавливаются) | — | Области и их полосы вкладок рисует `+page.svelte` (сниппет `stripTabs`); терминалы — один плоский `{#each}`, поставленный по прямоугольникам областей; `SplitDivider` — разделитель двух половин сплита (мышь и клавиатура) | `splitlayout` (дерево областей: `addTab`/`removeTab`/`moveTab`/`splitWithTab`/`joinPanes`, прямоугольники `layoutRects` с минимумом области, зоны сброса `paneZone`/`applyDrop`, предпросмотр `previewTabs`, проверка `layoutProblems`), `centerview` (что на экране: `onScreenSessions`, позиция области в CSS, чей вопрос о входе показать, какие записи на паузе), `appshortcuts` (хорды областей) + сторы `stores/tabs`, `stores/tabdrag` |
 | **Раскладка (доки)** | — (всё на фронте; `vterm.layout` в `localStorage`) | — | `Dock` (три экземпляра: левый, правый, нижний), `DockPanel` (выбор сессионной панели по id), `DockDragGhost`; панели приходят сниппетом `dockPanel` из `+page.svelte`. `ColumnHead` + `ColumnGrip` — заголовок колонки и её перетаскиваемая граница (ручка общая с таблицей логов); `PanelsSettings` — секция «Панели» настроек (скрытие панелей) | `docklayout` (модель: `loadDocks`, `movePanel`, `revealPanel`, `shownPanel`, предпросмотр перетаскивания `previewPanels`, скрытые панели), `dockui` (подписи вкладок, меню вкладки: перенос и скрытие), `colwidths` (ширины колонок: арифметика, санитайзер; ею же пользуется таблица логов) + сторы `stores/layout`, `stores/dockdrag`, `stores/colwidths` |
-| **Оконное обрамление** | `lib.rs` `setup` (снятие декораций non-macOS) | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
+| **Оконное обрамление** | `lib.rs` `setup` (снятие декораций главного окна на non-macOS); вторые окна `appwin.rs` создаёт сразу без них | `core:window:*` (Tauri window API) | `TitleBar` (Win/Linux; macOS — нативное) | `windowchrome`, `hostenv` |
 
 ---
 
@@ -172,8 +183,8 @@ vterm/
 │   ├── app.css                 # токены @theme, глобальные правила
 │   ├── app.html                # первый кадр темы, style-nonce для CodeMirror
 │   └── lib/
-│       ├── *.svelte            # компоненты и панели (103)
-│       ├── *.ts                # чистая логика (110) + тесты рядом
+│       ├── *.svelte            # компоненты и панели (104)
+│       ├── *.ts                # чистая логика (113) + тесты рядом
 │       ├── api/                # типизированные обёртки invoke()
 │       ├── stores/             # состояние в рунах
 │       ├── actions/            # drag · tooltip · mdlinks · clipboardKeys

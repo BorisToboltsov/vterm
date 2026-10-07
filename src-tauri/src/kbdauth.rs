@@ -299,8 +299,9 @@ mod tests {
     /// question `plan` picked — a second `respond` call, or one fed anything but
     /// `merge`'s output, could send it into a one-time-code field or to a jump
     /// host's second factor. And a login parked on the user's answers must be
-    /// released by `disconnect` (tab closed) and by a new connect of the same
-    /// session, or it waits forever.
+    /// released when its session ends — `end_session`, which both `disconnect`
+    /// (tab closed) and a new connect of the same session go through — or it
+    /// waits forever.
     #[test]
     fn login_answers_come_only_from_the_plan() {
         let ssh = code(include_str!("ssh.rs"));
@@ -329,18 +330,23 @@ mod tests {
         );
 
         let lib = code(include_str!("lib.rs"));
-        let disc = &lib[lib.find("async fn disconnect(").expect("disconnect")..];
-        let disc = &disc[..disc.find("\n}\n").expect("end of disconnect")];
+        let body = |name: &str| {
+            let at = lib.find(name).unwrap_or_else(|| panic!("{name} not found"));
+            let rest = &lib[at..];
+            rest[..rest.find("\n}\n").expect("end of fn")].to_string()
+        };
         assert!(
-            disc.contains("prompts.cancel(&session_id)"),
-            "disconnect releases a parked login"
+            body("async fn end_session(").contains("PendingPrompts>().cancel(session_id)"),
+            "ending a session releases a parked login"
         );
-        let conn = &lib[lib
-            .find("async fn connect_session(")
-            .expect("connect_session")..];
+        assert!(
+            body("async fn disconnect(").contains("end_session(&app, &session_id)"),
+            "disconnect ends the session"
+        );
+        let conn = body("async fn connect_session(");
         let conn = &conn[..conn.find("ssh::connect(").expect("ssh::connect")];
         assert!(
-            conn.contains("PendingPrompts>().cancel(&session_id)"),
+            conn.contains("end_session(&app, &session_id)"),
             "a reconnect releases the previous attempt's questions"
         );
     }

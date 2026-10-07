@@ -174,11 +174,31 @@ pub fn load_servers() -> Vec<ServerProfile> {
     read_store(&path)
 }
 
+/// Called after every successful write of the server list or the folders.
+static CATALOG_CHANGED: std::sync::OnceLock<Box<dyn Fn() + Send + Sync>> =
+    std::sync::OnceLock::new();
+
+/// Register what to do when the catalog (servers, folders) changes on disk —
+/// the app tells every window to re-read it (ADR 0017). Hooked here, at the two
+/// functions every mutation ends in, rather than in each of the commands: a
+/// command added later cannot forget to announce its change. Set once.
+pub fn on_catalog_change(hook: impl Fn() + Send + Sync + 'static) {
+    let _ = CATALOG_CHANGED.set(Box::new(hook));
+}
+
+fn catalog_changed() {
+    if let Some(hook) = CATALOG_CHANGED.get() {
+        hook();
+    }
+}
+
 /// Persist the full list of profiles, creating the config directory if needed.
 pub fn save_servers(servers: &[ServerProfile]) -> AppResult<()> {
     let path = store_path().ok_or("could not resolve config directory")?;
     let json = serde_json::to_vec_pretty(servers).map_err(|e| format!("serialize: {e}"))?;
-    write_atomic(&path, &json)
+    write_atomic(&path, &json)?;
+    catalog_changed();
+    Ok(())
 }
 
 // ── Folders (server-list organization) ─────────────────────────────────────────
@@ -201,7 +221,9 @@ pub fn load_folders() -> Vec<String> {
 pub fn save_folders(folders: &[String]) -> AppResult<()> {
     let path = folders_path().ok_or("could not resolve config directory")?;
     let json = serde_json::to_vec_pretty(folders).map_err(|e| format!("serialize: {e}"))?;
-    write_atomic(&path, &json)
+    write_atomic(&path, &json)?;
+    catalog_changed();
+    Ok(())
 }
 
 // ── Host-key store (vterm-managed known_hosts) ─────────────────────────────────

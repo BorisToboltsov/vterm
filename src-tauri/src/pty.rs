@@ -2,20 +2,20 @@
 //! which uses forkpty on Unix and ConPTY on Windows).
 //!
 //! Mirrors the event/command contract of [`crate::ssh`] so the same xterm.js
-//! frontend drives both kinds of tab: output bytes are emitted on
-//! `term://out/{id}` and the close event on `term://closed/{id}`. Input/resize
-//! go through the same `write_to_terminal` / `resize_pty` commands, which route
-//! by session id.
+//! frontend drives both kinds of tab: output bytes and the close event go out
+//! through the session's [`OutputGate`], on the same channels an SSH session
+//! uses. Input/resize go through the same `write_to_terminal` / `resize_pty`
+//! commands, which route by session id.
 
 use crate::error::AppResult;
+use crate::outgate::OutputGate;
 use crate::recording::Recorder;
-use crate::ssh::{closed_event, output_event};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 /// Build a `PtySize` from terminal dimensions, clamping to at least 1×1 (a
 /// zero-sized pty is rejected by the kernel).
@@ -90,9 +90,16 @@ pub struct LocalPty {
     /// straight from the kernel (Phase 39.3). `None` when the platform didn't
     /// report one. See [`crate::proccwd`] for why we don't rely on OSC 7 here.
     pid: Option<u32>,
+    /// Where the shell's output goes — the windows, or a handoff's hold (ADR 0017).
+    gate: Arc<OutputGate>,
 }
 
 impl LocalPty {
+    /// The gate this session's terminal output goes through.
+    pub fn gate(&self) -> &Arc<OutputGate> {
+        &self.gate
+    }
+
     /// Fire-and-forget a message to the recorder thread (no-op if not recording).
     /// The lock is held only for the (non-blocking) channel send.
     fn record(&self, msg: RecMsg) {
@@ -181,7 +188,9 @@ impl LocalPty {
 impl Drop for LocalPty {
     fn drop(&mut self) {
         // Terminate the child shell; its exit closes the pty, which ends the
-        // reader thread (EOF) and lets it reap the process.
+        // reader thread (EOF) and lets it reap the process. That EOF must not be
+        // announced: the id may already belong to a new session (a reconnect).
+        self.gate.shut();
         let _ = self.killer.lock().unwrap().kill();
     }
 }
@@ -192,6 +201,17 @@ impl Drop for LocalPty {
 pub fn open_local(
     app: AppHandle,
     session_id: String,
+    cols: u32,
+    rows: u32,
+    shell: Option<String>,
+) -> AppResult<LocalPty> {
+    open_with_gate(OutputGate::for_session(app, &session_id), cols, rows, shell)
+}
+
+/// [`open_local`] over a given gate — the seam a test opens a real shell
+/// through, with a gate that records instead of emitting to windows.
+fn open_with_gate(
+    gate: Arc<OutputGate>,
     cols: u32,
     rows: u32,
     shell: Option<String>,
@@ -235,8 +255,7 @@ pub fn open_local(
         .take_writer()
         .map_err(|e| format!("could not write pty: {e}"))?;
 
-    let out = output_event(&session_id);
-    let closed = closed_event(&session_id);
+    let gate_reader = gate.clone();
     let rec_tx: Arc<Mutex<Option<mpsc::Sender<RecMsg>>>> = Arc::new(Mutex::new(None));
     let rec_tx_reader = rec_tx.clone();
     std::thread::spawn(move || {
@@ -253,13 +272,11 @@ pub fn open_local(
                             let _ = tx.send(RecMsg::Output(buf[..n].to_vec()));
                         }
                     }
-                    if app.emit(&out, buf[..n].to_vec()).is_err() {
-                        break;
-                    }
+                    gate_reader.output(buf[..n].to_vec());
                 }
             }
         }
-        let _ = app.emit(&closed, ());
+        gate_reader.closed();
         // Reap the child so it doesn't linger as a zombie.
         let _ = child.wait();
     });
@@ -271,6 +288,7 @@ pub fn open_local(
         rec_tx,
         rec_path: Mutex::new(None),
         pid,
+        gate,
     })
 }
 
@@ -285,6 +303,95 @@ mod tests {
         assert_eq!((z.cols, z.rows), (1, 1));
         let s = pty_size(120, 40);
         assert_eq!((s.cols, s.rows), (120, 40));
+    }
+
+    /// A real shell behind a real PTY, its output held while its tab "moves":
+    /// the reader thread, the gate and the kernel together. What the shell prints
+    /// during the hold must not reach the old listener, and must reach the new
+    /// one exactly once, before anything printed afterwards (ADR 0017).
+    #[cfg(unix)]
+    #[test]
+    fn output_printed_during_a_handoff_arrives_once_and_in_order() {
+        use crate::outgate::Emit;
+        use std::time::{Duration, Instant};
+
+        let log: Arc<Mutex<Vec<Emit>>> = Arc::default();
+        let sink = log.clone();
+        let gate = Arc::new(OutputGate::new(Box::new(move |e| {
+            sink.lock().unwrap().push(e)
+        })));
+        let pty = match open_with_gate(gate.clone(), 80, 24, Some("/bin/sh".into())) {
+            Ok(pty) => pty,
+            // No pseudo-terminals in this environment (a locked-down container):
+            // nothing to hold. Opening one is not what this test is about.
+            Err(e) => {
+                eprintln!("skipped: cannot open a pty here ({e})");
+                return;
+            }
+        };
+        let text = || -> String {
+            let mut bytes = Vec::new();
+            for e in log.lock().unwrap().iter() {
+                if let Emit::Output(b) = e {
+                    bytes.extend_from_slice(b);
+                }
+            }
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let events = || log.lock().unwrap().len();
+        let wait_for = |needle: &str| -> bool {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if text().contains(needle) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            false
+        };
+        // The tty echoes what is typed, so the commands spell their output as
+        // arithmetic: only the shell's answer contains the number.
+        pty.write_input(b"echo before-$((40+2))\n".to_vec())
+            .unwrap();
+        assert!(
+            wait_for("before-42"),
+            "the shell never answered: {}",
+            text()
+        );
+
+        let sent = gate.hold().expect("a live session can be held");
+        let seen = events();
+        assert_eq!(
+            sent as usize, seen,
+            "the count the window waits for is the number of events it was sent"
+        );
+        pty.write_input(b"echo held-$((6*7))\n".to_vec()).unwrap();
+        // Ample time for the shell to print — none of it may get through.
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(events(), seen, "output leaked past the hold: {}", text());
+
+        gate.hand_over().expect("the hold is handed over");
+        assert!(wait_for("held-42"), "held output never arrived: {}", text());
+        // It came as the very next event, whole.
+        match &log.lock().unwrap()[seen] {
+            Emit::Output(first) => {
+                assert!(String::from_utf8_lossy(first).contains("held-42"))
+            }
+            other => panic!("expected the held output, got {other:?}"),
+        }
+        pty.write_input(b"echo after-$((1+1))\n".to_vec()).unwrap();
+        assert!(
+            wait_for("after-2"),
+            "the session went quiet after the handoff"
+        );
+        let all = text();
+        assert_eq!(
+            all.matches("held-42").count(),
+            1,
+            "held output repeated: {all}"
+        );
+        assert!(all.find("before-42") < all.find("held-42"));
+        assert!(all.find("held-42") < all.find("after-2"));
     }
 
     /// A plain full-mode Recorder writing to `path` for the actor tests.

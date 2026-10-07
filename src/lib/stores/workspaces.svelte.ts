@@ -110,6 +110,19 @@ export function getWorkspace(sessionId: string | null): Workspace {
   return (sessionId && workspacesState.map[sessionId]) || EMPTY;
 }
 
+/** The session's workspace as stored, or null when it never opened an editor. */
+export function peekWorkspace(sessionId: string): Workspace | null {
+  return workspacesState.map[sessionId] ?? null;
+}
+
+/**
+ * Take over the workspace of a tab moved here from another window (ADR 0017):
+ * its open editors with their text and unsaved edits.
+ */
+export function adoptWorkspace(sessionId: string, ws: Workspace): void {
+  workspacesState.map = { ...workspacesState.map, [sessionId]: ws };
+}
+
 function ensure(sessionId: string): Workspace {
   let ws = workspacesState.map[sessionId];
   if (!ws) {

@@ -99,6 +99,24 @@ pub enum AppError {
     #[error("cancelled: stopped by the user")]
     Cancelled,
 
+    /// A tab could not be moved to a new window: the window never took it over
+    /// (it did not load in time, or was closed). The tab stays where it was; the
+    /// frontend matches `handoff-failed` (ADR 0017).
+    #[error("handoff-failed: the new window did not take the tab over")]
+    HandoffNotTaken,
+
+    /// Same outcome, different cause: the terminal printed more than a handoff
+    /// may hold while the window was starting (`handoff-overflow`). Nothing is
+    /// lost — the output went to the window that still has the tab.
+    #[error("handoff-overflow: the terminal is printing too fast to move it now")]
+    HandoffOverflowed,
+
+    /// Another sync run is already applying — in this window or another one. The
+    /// rows of a run are keyed by path alone, so two at once would draw each
+    /// other's progress (`sync-busy`).
+    #[error("sync-busy: another synchronization is already running")]
+    SyncBusy,
+
     /// Any other, message-carrying error (network, I/O, protocol, validation…).
     #[error("{0}")]
     Message(String),
@@ -173,6 +191,13 @@ mod tests {
             .to_string()
             .contains("hash-tool-missing"));
         assert!(AppError::Cancelled.to_string().contains("cancelled"));
+        assert!(AppError::HandoffNotTaken
+            .to_string()
+            .contains("handoff-failed"));
+        assert!(AppError::HandoffOverflowed
+            .to_string()
+            .contains("handoff-overflow"));
+        assert!(AppError::SyncBusy.to_string().contains("sync-busy"));
         assert!(AppError::HashIncomplete
             .to_string()
             .contains("hash-incomplete"));

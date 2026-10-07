@@ -10,3 +10,4 @@ export * from "./git";
 export * from "./probe";
 export * from "./container";
 export * from "./kube";
+export * from "./window";

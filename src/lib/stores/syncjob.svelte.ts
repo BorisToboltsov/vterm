@@ -17,6 +17,7 @@ import {
   applicable,
   diffTrees,
   isCancelled,
+  isSyncBusy,
   parseExcludes,
   planFacts,
   syncErrorView,
@@ -95,6 +96,23 @@ export function syncJob(sessionId: string): SyncJob {
 /** Read-only peek (safe inside `$derived`): null when this session never synced. */
 export function peekSyncJob(sessionId: string): SyncJob | null {
   return jobs[sessionId] ?? null;
+}
+
+/**
+ * Take over the sync form (and the compared plan) of a tab moved here from
+ * another window (ADR 0017). A tab does not move while it compares or applies,
+ * and the flags are reset regardless: work in flight cannot be carried over.
+ */
+export function adoptSyncJob(sessionId: string, job: SyncJob): void {
+  jobs[sessionId] = {
+    ...fresh(),
+    ...job,
+    comparing: false,
+    applying: false,
+    stopping: false,
+    dialogOpen: false,
+    phase: job.phase === "running" ? "idle" : job.phase,
+  };
 }
 
 /** A compare or a run is going on. */
@@ -239,8 +257,16 @@ export async function apply(sessionId: string, onapplied?: () => void): Promise<
       t("sync.applied", { up: stats.uploaded, down: stats.downloaded, del: stats.deleted }),
     );
   } catch (e) {
-    job.phase = "stopped";
-    notifyError(String(e));
+    const err = String(e);
+    if (isSyncBusy(err)) {
+      // Refused before it started (a run in another window holds the slot): the
+      // plan is untouched, so this is not a stopped run.
+      job.phase = "idle";
+      notifyError(t("sync.otherRunning"));
+    } else {
+      job.phase = "stopped";
+      notifyError(err);
+    }
   } finally {
     job.applying = false;
     job.stopping = false;
