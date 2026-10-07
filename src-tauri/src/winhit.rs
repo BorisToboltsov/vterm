@@ -27,7 +27,10 @@
 //! where Tauri says the window is on the screen, and never from an assumption
 //! about how tall a title bar is.
 
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+// Only where the window system is asked: elsewhere there are no windows to look through.
+#[cfg(any(target_os = "macos", windows))]
+use tauri::Manager;
 
 /// A window of the app under the mouse pointer.
 #[derive(Debug, Clone, PartialEq)]
