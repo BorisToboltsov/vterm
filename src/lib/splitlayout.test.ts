@@ -25,7 +25,10 @@ import {
   paneOf,
   panes,
   paneZone,
+  placeTab,
   previewFlat,
+  previewIncoming,
+  previewIncomingFlat,
   previewTabs,
   RATIO_MAX,
   RATIO_MIN,
@@ -499,6 +502,180 @@ describe("dropping a dragged tab", () => {
       "b",
       "c",
     ]);
+  });
+});
+
+describe("a tab arriving from another window", () => {
+  it("with no drop it goes where a new tab goes: the end of the pane in focus", () => {
+    const two = twoPanes();
+    const l = placeTab(two, "x", null);
+    expect(shape(l)).toEqual([["a", "b"], ["c", "x"]]);
+    expect(activeTab(l)).toBe("x");
+    expect(layoutProblems(l, ["a", "b", "c", "x"])).toEqual([]);
+    // The first tab of an empty centre.
+    expect(shape(placeTab(emptyLayout(), "x", null))).toEqual([["x"]]);
+  });
+
+  it("on a strip: that slot of that pane, shown and in focus", () => {
+    const two = twoPanes();
+    const left = panes(two)[0].id;
+    const l = placeTab(two, "x", { kind: "strip", pane: left, index: 1 });
+    expect(shape(l)).toEqual([["a", "x", "b"], ["c"]]);
+    expect(l.focus).toBe(left);
+    expect(activeTab(l)).toBe("x");
+    // Out of range is the end, as for a move.
+    expect(shape(placeTab(two, "x", { kind: "strip", pane: left, index: 99 }))).toEqual([
+      ["a", "b", "x"],
+      ["c"],
+    ]);
+    expect(shape(placeTab(two, "x", { kind: "strip", pane: left, index: -3 }))).toEqual([
+      ["x", "a", "b"],
+      ["c"],
+    ]);
+  });
+
+  it("on a pane's middle: joins it; on an edge: a new pane there", () => {
+    const two = twoPanes();
+    const left = panes(two)[0].id;
+    expect(shape(placeTab(two, "x", { kind: "pane", pane: left, zone: "center" }))).toEqual([
+      ["a", "b", "x"],
+      ["c"],
+    ]);
+    const split = placeTab(two, "x", { kind: "pane", pane: left, zone: "right" });
+    expect(shape(split)).toEqual([["a", "b"], ["x"], ["c"]]);
+    expect(activeTab(split)).toBe("x");
+    expect(layoutProblems(split, ["a", "b", "c", "x"])).toEqual([]);
+  });
+
+  it("no other pane changes what it shows", () => {
+    // `[a b] | [c]`, the left pane showing `a`, the right one in focus.
+    const two = activateTab(activateTab(twoPanes(), "a"), "c");
+    const [left, right] = panes(two).map((p) => p.id);
+    for (const drop of [
+      { kind: "strip", pane: left, index: 0 },
+      { kind: "pane", pane: left, zone: "center" },
+      { kind: "pane", pane: left, zone: "bottom" },
+      { kind: "pane", pane: right, zone: "left" },
+      null,
+    ] satisfies (TabDrop | null)[]) {
+      const l = placeTab(two, "x", drop);
+      const lands = paneOf(l, "x")!.id;
+      for (const pane of panes(two)) {
+        if (pane.id === lands) continue;
+        expect(findPane(l, pane.id)?.active, JSON.stringify(drop)).toBe(pane.active);
+      }
+    }
+    // "Open it, then move it" is exactly what this is not: the focused pane
+    // would first show the newcomer, and fall back to a neighbour when it left.
+    const viaOpen = applyDrop(addTab(activateTab(two, "a"), "x"), "x", {
+      kind: "pane",
+      pane: right,
+      zone: "center",
+    });
+    expect(findPane(viaOpen, left)?.active).toBe("b");
+  });
+
+  it("the only pane there is, while it is empty, is not split", () => {
+    const empty = emptyLayout();
+    const l = placeTab(empty, "x", { kind: "pane", pane: empty.focus, zone: "right" });
+    expect(shape(l)).toEqual([["x"]]);
+    expect(layoutProblems(l, ["x"])).toEqual([]);
+  });
+
+  it("a drop naming a pane that is gone falls back to the pane in focus", () => {
+    const two = twoPanes();
+    expect(shape(placeTab(two, "x", { kind: "strip", pane: "nope", index: 0 }))).toEqual([
+      ["a", "b"],
+      ["c", "x"],
+    ]);
+    expect(shape(placeTab(two, "x", { kind: "pane", pane: "nope", zone: "left" }))).toEqual([
+      ["a", "b"],
+      ["c", "x"],
+    ]);
+  });
+
+  it("in the single strip: next to the tab before that position, in its pane", () => {
+    const two = twoPanes();
+    expect(shape(placeTab(two, "x", { kind: "flat", index: 0 }))).toEqual([["x", "a", "b"], ["c"]]);
+    expect(shape(placeTab(two, "x", { kind: "flat", index: 2 }))).toEqual([["a", "b", "x"], ["c"]]);
+    expect(shape(placeTab(two, "x", { kind: "flat", index: 3 }))).toEqual([["a", "b"], ["c", "x"]]);
+    expect(shape(placeTab(two, "x", { kind: "flat", index: 99 }))).toEqual([["a", "b"], ["c", "x"]]);
+    // No tab to stand next to: the pane in focus.
+    expect(shape(placeTab(emptyLayout(), "x", { kind: "flat", index: 0 }))).toEqual([["x"]]);
+  });
+
+  it("a tab that is already here is shown, not added twice", () => {
+    const two = twoPanes();
+    const l = placeTab(two, "a", { kind: "pane", pane: panes(two)[1].id, zone: "center" });
+    expect(shape(l)).toEqual([["a", "b"], ["c"]]);
+    expect(activeTab(l)).toBe("a");
+  });
+
+  it("the preview keeps a place in the strip the tab would land in, and only there", () => {
+    const two = twoPanes();
+    const [left, right] = panes(two).map((p) => p.id);
+    const strip: TabDrop = { kind: "strip", pane: left, index: 1 };
+    expect(previewIncoming(two, left, "@in", strip)).toEqual(["a", "@in", "b"]);
+    expect(previewIncoming(two, right, "@in", strip)).toEqual(["c"]);
+    // A pane's middle: the end of its strip.
+    const middle: TabDrop = { kind: "pane", pane: left, zone: "center" };
+    expect(previewIncoming(two, left, "@in", middle)).toEqual(["a", "b", "@in"]);
+    // Nowhere in particular: the end of the pane in focus.
+    expect(previewIncoming(two, right, "@in", null)).toEqual(["c", "@in"]);
+    expect(previewIncoming(two, left, "@in", null)).toEqual(["a", "b"]);
+    // An edge makes a new pane: no strip on screen shows it.
+    const edge: TabDrop = { kind: "pane", pane: left, zone: "top" };
+    expect(previewIncoming(two, left, "@in", edge)).toEqual(["a", "b"]);
+    expect(previewIncoming(two, right, "@in", edge)).toEqual(["c"]);
+    // The preview is a picture: the layout itself is untouched.
+    expect(shape(two)).toEqual([["a", "b"], ["c"]]);
+  });
+
+  it("the single strip previews the same way", () => {
+    const two = twoPanes();
+    expect(previewIncomingFlat(two, "@in", { kind: "flat", index: 1 })).toEqual([
+      "a",
+      "@in",
+      "b",
+      "c",
+    ]);
+    expect(previewIncomingFlat(two, "@in", null)).toEqual(["a", "b", "c", "@in"]);
+  });
+
+  it("what the preview shows is where the tab lands", () => {
+    fc.assert(
+      fc.property(
+        fc.array(OP, { maxLength: 30 }),
+        PANE,
+        ZONE,
+        fc.option(fc.integer({ min: -2, max: 8 }), { nil: null }),
+        fc.constantFrom("strip", "pane", "flat", "none"),
+        (ops, at, zone, index, kind) => {
+          const state = { l: emptyLayout(), open: new Set<string>() };
+          for (const o of ops) step(state, o);
+          const all = panes(state.l);
+          const pane = all[at % all.length].id;
+          const drop: TabDrop | null =
+            kind === "strip"
+              ? { kind, pane, index: index ?? 0 }
+              : kind === "pane"
+                ? { kind, pane, zone }
+                : kind === "flat"
+                  ? { kind, index: index ?? 0 }
+                  : null;
+          const landed = placeTab(state.l, "x", drop);
+          expect(layoutProblems(landed, [...state.open, "x"])).toEqual([]);
+          expect(activeTab(landed)).toBe("x");
+          // Every strip that was on screen shows what the preview promised.
+          for (const p of all) {
+            const after = findPane(landed, p.id);
+            expect(after?.tabs).toEqual(previewIncoming(state.l, p.id, "x", drop));
+          }
+          expect(orderedTabs(landed)).toEqual(previewIncomingFlat(state.l, "x", drop));
+        },
+      ),
+      { numRuns: 300 },
+    );
   });
 });
 

@@ -1,0 +1,45 @@
+/* The floating label of a dragged tab (ghost.html, ADR 0018). It mirrors the
+   label a page draws next to the pointer; the colours come from the window the
+   tab is dragged out of, so it follows the theme without knowing the themes. */
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg, #0a0f18);
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: default;
+}
+
+#chip {
+  box-sizing: border-box;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid var(--accent, #7db3ff);
+  color: var(--fg, #cdd6e6);
+  font:
+    14px/1.2 Inter,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  white-space: nowrap;
+}
+
+#dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dot, #5f6b80);
+}
+
+#title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

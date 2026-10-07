@@ -1,0 +1,19 @@
+<!doctype html>
+<!-- The label of a tab dragged out of its window, shown over the desktop by a
+     small window of its own (src-tauri/src/dragghost.rs, ADR 0018). A picture:
+     it calls no command and is told how to look by the backend. No inline
+     script or style — the app's CSP applies here as everywhere. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title></title>
+    <link rel="stylesheet" href="/ghost.css" />
+    <script src="/ghost.js" defer></script>
+  </head>
+  <body>
+    <div id="chip">
+      <span id="dot"></span>
+      <span id="title"></span>
+    </div>
+  </body>
+</html>

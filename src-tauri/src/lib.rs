@@ -2,6 +2,7 @@ mod ai;
 mod appwin;
 mod backup;
 mod container;
+mod dragghost;
 mod drives;
 mod error;
 mod folders;
@@ -28,6 +29,7 @@ mod store;
 mod sync;
 mod textenc;
 mod webview2;
+mod winhit;
 
 use error::{AppError, AppResult};
 
@@ -2539,7 +2541,12 @@ pub fn run() {
             appwin::detach_abort,
             appwin::detach_commit,
             appwin::take_handoff,
-            appwin::attach_session
+            appwin::decline_handoff,
+            appwin::attach_session,
+            appwin::announce_window,
+            appwin::drag_over,
+            appwin::drag_drop,
+            appwin::drag_end
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

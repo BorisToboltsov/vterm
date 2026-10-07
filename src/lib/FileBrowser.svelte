@@ -12,7 +12,7 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { pickUploadFiles } from "./api";
   import { writeClipboard } from "./clipboard";
-  import { dropTargetAt, passedThreshold } from "./actions/drag";
+  import { dropTargetAt, holdSelection, passedThreshold } from "./actions/drag";
   import { chordLetter } from "./appshortcuts";
   import { checkMove } from "./filemove";
   import { joinPath, normalizeInputPath } from "./fspath";
@@ -759,6 +759,8 @@
     dragCandidate = entry;
     dragStartX = e.clientX;
     dragStartY = e.clientY;
+    // A press-drag moves the file; it never selects the rows' text.
+    holdSelection();
   }
 
   function listPointerMove(e: PointerEvent) {
@@ -770,7 +772,6 @@
         selection = { selected: new Set([dragCandidate.path]), anchor: dragCandidate.path };
       dragEntry = dragCandidate;
       listEl.setPointerCapture(e.pointerId);
-      window.getSelection()?.removeAllRanges();
     }
     dragX = e.clientX;
     dragY = e.clientY;
@@ -1225,7 +1226,7 @@
           tabindex="0"
           data-testid="{testPrefix}-list"
           class="min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {dragEntry
-            ? 'select-none cursor-grabbing'
+            ? 'cursor-grabbing'
             : ''}"
         >
           {#if loading}

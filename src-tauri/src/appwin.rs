@@ -8,9 +8,15 @@
 //!   end it, and a destroyed window's sessions are ended for it: a closed WebView
 //!   never runs its teardown;
 //! - **the close confirmation**, armed per window once its frontend can answer;
-//! - **the handoff** of a tab: the packet with its state waits here for the new
-//!   window, and the session's output is held ([`crate::outgate`]) until that
-//!   window says it has taken over;
+//! - **the handoff** of a tab: the packet with its state waits here for the
+//!   window taking it — a new one, or one already open (ADR 0018) — and the
+//!   session's output is held ([`crate::outgate`]) until that window says it has
+//!   taken over;
+//! - **which windows take tabs**: each announces itself once its frontend can
+//!   answer an offer, and the others list it as a place to move a tab to;
+//! - **a tab dragged between windows**: the window it is over hears nothing of
+//!   the drag, so it is told here — and brought to the front; over none of the
+//!   app's windows the tab is drawn by a window of its own ([`crate::dragghost`]);
 //! - **what each window would lose** on quit, so the main window's confirmation
 //!   lists the whole application.
 //!
@@ -33,9 +39,16 @@ pub const MAIN: &str = "main";
 /// Labels of windows a tab was moved out to: `win-2`, `win-3`, …
 const SECONDARY_PREFIX: &str = "win-";
 
-/// How long a new window has to load and take the tab over before the handoff
-/// is rolled back. Generous: a cold WebView start on a slow disk takes seconds.
+/// How long a window has to take the tab over before the handoff is rolled
+/// back. Generous: a cold WebView start on a slow disk takes seconds.
 const HANDOFF_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Tells a window that is already open that a tab waits for it (`take_handoff`).
+const HANDOFF_EVENT: &str = "window://handoff";
+/// The windows that take tabs changed; the payload is the whole list.
+const ROSTER_EVENT: &str = "window://windows";
+/// A tab of another window is held over this one, was let go of here, or left.
+const DRAG_EVENT: &str = "window://drag";
 
 /// Size of a new window when the source window cannot be measured.
 const FALLBACK_SIZE: (f64, f64) = (1100.0, 720.0);
@@ -60,12 +73,37 @@ pub struct SummaryRow {
     pub count: u32,
 }
 
+/// A window that takes tabs, as the others list it (mirror of `WindowEntry`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct WindowEntry {
+    pub label: String,
+    /// Title of the tab its focused pane shows — what tells windows apart.
+    pub title: String,
+    /// Tabs open in it.
+    pub tabs: u32,
+}
+
+/// Position of a window in every list of them: the main one, then the others in
+/// the order they were opened.
+fn window_order(label: &str) -> (u32, &str) {
+    let number = if label == MAIN {
+        1
+    } else {
+        label
+            .strip_prefix(SECONDARY_PREFIX)
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(u32::MAX)
+    };
+    (number, label)
+}
+
 /// How a handoff ended for the window waiting on it.
 type HandoffResult = Result<(), HandoffFailure>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandoffFailure {
-    /// The new window never took the tab (did not load, was closed, timed out).
+    /// The other window never took the tab (did not load, was closed, was busy
+    /// with another one, timed out).
     NotTaken,
     /// The terminal printed more than a handoff may hold.
     Overflowed,
@@ -80,7 +118,7 @@ impl From<HandoffFailure> for AppError {
     }
 }
 
-/// A tab on its way to a new window.
+/// A tab on its way to another window.
 struct Pending {
     session_id: String,
     /// The tab's state, opaque to the backend. Holds the tab's typed password and
@@ -103,6 +141,18 @@ struct Registry {
     summaries: HashMap<String, Vec<SummaryRow>>,
     /// Handoffs in progress, by the label of the window that will take the tab.
     pending: HashMap<String, Pending>,
+    /// Windows that take tabs — each announced itself once its frontend listens
+    /// for an offer — with what the others show of them: (title, tabs).
+    roster: HashMap<String, (String, u32)>,
+    /// Labels of windows that are gone. A label is never given out twice, so
+    /// whatever still arrives under one of these is a closed window's last word.
+    gone: HashSet<String>,
+    /// A tab being dragged out of one window (first) is held over another
+    /// (second), which draws it. There is one pointer, so one such pair.
+    hover: Option<(String, String)>,
+    /// The window a drag last brought to the front — so that it is done once
+    /// per visit, not on every move over it.
+    raised: Option<String>,
     /// Number of the last secondary window opened.
     seq: u32,
 }
@@ -147,12 +197,94 @@ impl Registry {
             .collect()
     }
 
+    /// `label` takes tabs, and shows this now. Not a window that is gone: a
+    /// closing window's last announcement can arrive after it was forgotten, and
+    /// the others would be offered a window that no longer exists — for good.
+    fn announce(&mut self, label: &str, title: String, tabs: u32) {
+        if !self.gone.contains(label) {
+            self.roster.insert(label.to_string(), (title, tabs));
+        }
+    }
+
+    /// The windows that take tabs, in [`window_order`].
+    fn roster(&self) -> Vec<WindowEntry> {
+        let mut list: Vec<WindowEntry> = self
+            .roster
+            .iter()
+            .map(|(label, (title, tabs))| WindowEntry {
+                label: label.clone(),
+                title: title.clone(),
+                tabs: *tabs,
+            })
+            .collect();
+        list.sort_by(|a, b| window_order(&a.label).cmp(&window_order(&b.label)));
+        list
+    }
+
+    /// Whether `source` may hand a tab to the open window `target` right now:
+    /// another window, one that answers offers, and not in the middle of taking
+    /// a tab already (a handoff is kept by its target's label — one at a time).
+    fn takes_tabs(&self, target: &str, source: &str) -> bool {
+        target != source && self.roster.contains_key(target) && !self.pending.contains_key(target)
+    }
+
+    /// The drag is over the window `label`. True when that window has to be
+    /// brought to the front — it is not the one brought there last.
+    fn raise(&mut self, label: &str) -> bool {
+        if self.raised.as_deref() == Some(label) {
+            return false;
+        }
+        self.raised = Some(label.to_string());
+        true
+    }
+
+    /// The tab `source` drags is over `target` now — or over none of the app's
+    /// windows. Returns the window that has to be told the tab left it: the one
+    /// it was over, when that is no longer where it is.
+    fn hover(&mut self, source: &str, target: Option<&str>) -> Option<String> {
+        let next = target.map(|t| (source.to_string(), t.to_string()));
+        let was = std::mem::replace(&mut self.hover, next);
+        was.map(|(_, over)| over)
+            .filter(|over| Some(over.as_str()) != target)
+    }
+
+    /// `source` no longer drags a tab over another window. Returns the window
+    /// that drew it, to be told. Nothing — and nothing changes — when the tab
+    /// held over a window is somebody else's.
+    fn end_hover(&mut self, source: &str) -> Option<String> {
+        match &self.hover {
+            Some((from, _)) if from == source => self.hover.take().map(|(_, over)| over),
+            _ => None,
+        }
+    }
+
+    /// The tab held over `target` arrived there: nobody is told anything.
+    fn landed(&mut self, target: &str) {
+        if self.hover.as_ref().is_some_and(|(_, over)| over == target) {
+            self.hover = None;
+        }
+    }
+
     /// Take the handoff addressed to `label`, if it carries `session_id`.
     fn take_pending(&mut self, label: &str, session_id: &str) -> Option<Pending> {
         if self.pending.get(label)?.session_id != session_id {
             return None;
         }
         self.pending.remove(label)
+    }
+
+    /// A window is gone, and with it the drag it was part of. Returns the window
+    /// still drawing a tab the gone one was dragging, to be told.
+    fn hover_gone(&mut self, label: &str) -> Option<String> {
+        let (from, over) = self.hover.take()?;
+        if over == label {
+            return None;
+        }
+        if from == label {
+            return Some(over);
+        }
+        self.hover = Some((from, over));
+        None
     }
 
     /// A window is gone. Returns the sessions it owned (to end them) and, if it
@@ -163,6 +295,8 @@ impl Registry {
     ) -> (Vec<String>, Option<oneshot::Sender<HandoffResult>>) {
         self.armed.remove(label);
         self.summaries.remove(label);
+        self.roster.remove(label);
+        self.gone.insert(label.to_string());
         if self.focused.as_deref() == Some(label) {
             self.focused = None;
         }
@@ -291,10 +425,21 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> bo
             true
         }
         tauri::WindowEvent::Destroyed => {
-            let (sessions, waker) = windows.lock().forget_window(label);
+            let (sessions, waker, left) = {
+                let mut reg = windows.lock();
+                let left = reg.hover_gone(label);
+                let (sessions, waker) = reg.forget_window(label);
+                (sessions, waker, left)
+            };
             if let Some(done) = waker {
                 let _ = done.send(Err(HandoffFailure::NotTaken));
             }
+            if let Some(over) = left {
+                // It was dragging a tab over another window, which still draws it.
+                let _ = app.emit_to(over, DRAG_EVENT, DragEvent::Leave);
+            }
+            // It no longer takes tabs: the others stop offering it.
+            broadcast_roster(app, &windows);
             if label == MAIN {
                 // The app ends with its main window. (Closing it normally goes
                 // through the quit confirmation, which exits by itself; this is
@@ -365,12 +510,206 @@ pub fn other_windows_summary(window: WebviewWindow, windows: State<Windows>) -> 
     windows.lock().other_summaries(window.label())
 }
 
-// ── Handoff of a tab to a new window ────────────────────────────────────────
+// ── Which windows take tabs ─────────────────────────────────────────────────
 
-/// Where and how the new window opens.
+/// Send every window the list of those that take tabs.
+fn broadcast_roster<R: tauri::Runtime>(app: &AppHandle<R>, windows: &Windows) {
+    let roster = windows.lock().roster();
+    let _ = app.emit(ROSTER_EVENT, roster);
+}
+
+/// This window takes tabs, and this is what the others show of it. Called by
+/// its frontend once it listens for an offer, and again whenever the title or
+/// the count changes. The answer is the whole list, sent to every window — the
+/// one that asked included, which is how a window that has just loaded learns
+/// of the others.
+#[tauri::command]
+pub fn announce_window(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<Windows>,
+    title: String,
+    tabs: u32,
+) {
+    windows.lock().announce(window.label(), title, tabs);
+    broadcast_roster(&app, &windows);
+}
+
+// ── A tab dragged over another window ───────────────────────────────────────
+
+/// What the window a tab is held over is told (mirror of `DragMessage`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum DragEvent {
+    /// The tab is over this window, at (`x`, `y`) of its page.
+    Over {
+        x: f64,
+        y: f64,
+        tab: serde_json::Value,
+    },
+    /// It was let go of here: keep its place until the tab itself arrives.
+    Drop {
+        x: f64,
+        y: f64,
+        tab: serde_json::Value,
+    },
+    /// It is no longer over this window, or the drop came to nothing.
+    Leave,
+}
+
+/// The window of the app the mouse pointer is over — any of them, the one the
+/// drag began in included — and the pointer's place in it. The OS is asked
+/// ([`crate::winhit`]); where it cannot say, the answer is `None`, never a
+/// guess from window rectangles. The floating label is never the answer.
+async fn pointer_window(app: &AppHandle) -> AppResult<Option<crate::winhit::Hit>> {
+    // AppKit answers on the main thread only; a command runs on a worker.
+    let (answer, hit) = oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = answer.send(crate::winhit::app_window_at_pointer(&handle));
+    })
+    .map_err(|e| AppError::Message(format!("window under pointer: {e}")))?;
+    let hit = hit.await.ok().flatten();
+    Ok(hit.filter(|hit| hit.label != crate::dragghost::LABEL))
+}
+
+/// Bring the window a dragged tab is over to the front, and make it the
+/// active one: a tab cannot be aimed at a strip that another window covers,
+/// and a window that is not active draws the tab over it a beat late.
+fn raise_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.set_focus();
+    }
+}
+
+/// What the window a tab is dragged out of learns about where the tab is.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DragAnswer {
+    /// The other window of the app the tab is over — it draws the tab.
+    window: Option<String>,
+    /// Over none of the app's windows: the floating label draws it
+    /// ([`crate::dragghost`]).
+    floating: bool,
+}
+
+/// A tab of this window is being dragged. The window of the app under the
+/// pointer comes to the front. If it is another window, it is told where the
+/// tab is — it draws the tab — and the window the tab was over before is told
+/// it left; over none of the app's windows the floating label draws it, looking
+/// as `look` says. `tab` is what the other window needs to draw it, passed on
+/// as it is.
+#[tauri::command]
+pub async fn drag_over(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    tab: serde_json::Value,
+    look: Option<crate::dragghost::Look>,
+) -> AppResult<DragAnswer> {
+    let source = window.label();
+    let under = pointer_window(&app).await?;
+    // The window under the pointer comes forward: the one the tab would land
+    // in, and the one it came from when the pointer is back over it.
+    if let Some(hit) = &under {
+        if windows.lock().raise(&hit.label) {
+            raise_window(&app, &hit.label);
+        }
+    }
+    let hit = under
+        .clone()
+        .filter(|hit| windows.lock().takes_tabs(&hit.label, source));
+    let target = hit.as_ref().map(|hit| hit.label.as_str());
+    let left = windows.lock().hover(source, target);
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+    // Over none of the app's windows no page can draw the tab: a window of its
+    // own does, kept next to the pointer.
+    let floating = match &look {
+        Some(look) if under.is_none() => crate::dragghost::show(&app, look),
+        _ => {
+            crate::dragghost::hide(&app);
+            // Loaded while the tab is still over a window, ready for the desktop.
+            crate::dragghost::prepare(&app);
+            false
+        }
+    };
+    let Some(hit) = hit else {
+        return Ok(DragAnswer {
+            window: None,
+            floating,
+        });
+    };
+    let (x, y) = (hit.x, hit.y);
+    let _ = app.emit_to(
+        hit.label.as_str(),
+        DRAG_EVENT,
+        DragEvent::Over { x, y, tab },
+    );
+    Ok(DragAnswer {
+        window: Some(hit.label),
+        floating,
+    })
+}
+
+/// The tab was let go of outside this window. Asked anew — the release is the
+/// gesture, not the last move. Over another window of the app, that window is
+/// told to keep the tab's place (the handoff follows) and its label is
+/// returned; anywhere else the window that drew the tab is told it left.
+#[tauri::command]
+pub async fn drag_drop(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    tab: serde_json::Value,
+) -> AppResult<Option<String>> {
+    let source = window.label();
+    crate::dragghost::hide(&app);
+    windows.lock().raised = None;
+    let hit = pointer_window(&app)
+        .await?
+        .filter(|hit| windows.lock().takes_tabs(&hit.label, source));
+    let target = hit.as_ref().map(|hit| hit.label.as_str());
+    let left = windows.lock().hover(source, target);
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+    let Some(hit) = hit else { return Ok(None) };
+    let (x, y) = (hit.x, hit.y);
+    let _ = app.emit_to(
+        hit.label.as_str(),
+        DRAG_EVENT,
+        DragEvent::Drop { x, y, tab },
+    );
+    Ok(Some(hit.label))
+}
+
+/// The drag is over without the tab having moved: it came back into this
+/// window, was cancelled, or the handoff that followed a drop failed. The
+/// window that drew the tab is told it left.
+#[tauri::command]
+pub fn drag_end(app: AppHandle, window: WebviewWindow, windows: State<Windows>) {
+    crate::dragghost::hide(&app);
+    let left = {
+        let mut reg = windows.lock();
+        reg.raised = None;
+        reg.end_hover(window.label())
+    };
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+}
+
+// ── Handoff of a tab to another window ──────────────────────────────────────
+
+/// Where the tab goes, and how a new window opens for it.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DetachOpts {
+    /// Label of an open window to move the tab into; absent — a new window.
+    #[serde(default)]
+    target: Option<String>,
     /// Screen position of the pointer the tab was dropped at (logical px);
     /// absent for the menu / palette command.
     #[serde(default)]
@@ -472,9 +811,22 @@ pub async fn detach_abort(
     Ok(())
 }
 
-/// Step 2: open the new window, leave the tab's packet for it and wait until it
-/// has taken the tab over. Returns the new window's label. Any failure rolls
-/// the hold back — the caller keeps its tab exactly as it was.
+/// Tell a window that is already open that a tab waits for it.
+fn offer_tab(app: &AppHandle, label: &str) -> AppResult<()> {
+    let target = app
+        .get_webview_window(label)
+        .ok_or(AppError::HandoffNotTaken)?;
+    // A minimized WebView is throttled like a background page: brought up
+    // first, or the tab would take seconds to arrive instead of a blink.
+    let _ = target.unminimize();
+    app.emit_to(label, HANDOFF_EVENT, ())
+        .map_err(|e| AppError::Message(format!("offer tab: {e}")))
+}
+
+/// Step 2: leave the tab's packet for the window that takes it — a new one, or
+/// the open window `opts.target` — and wait until it has taken the tab over.
+/// Returns that window's label. Any failure rolls the hold back — the caller
+/// keeps its tab exactly as it was.
 #[tauri::command]
 pub async fn detach_commit(
     app: AppHandle,
@@ -498,30 +850,52 @@ pub async fn detach_commit(
     }
 
     let (done, mut taken) = oneshot::channel::<HandoffResult>();
+    // A window opened for this tab goes with a failed handoff; one that was
+    // already open stays, whatever happens.
+    let created = opts.target.is_none();
     let label = {
         let mut reg = windows.lock();
-        let label = reg.next_label();
-        reg.pending.insert(
-            label.clone(),
-            Pending {
-                session_id: session_id.clone(),
-                packet: Some(packet),
-                done,
-            },
-        );
+        let label = match opts.target.as_deref() {
+            None => Some(reg.next_label()),
+            Some(target) => reg
+                .takes_tabs(target, window.label())
+                .then(|| target.to_string()),
+        };
+        if let Some(label) = &label {
+            reg.pending.insert(
+                label.clone(),
+                Pending {
+                    session_id: session_id.clone(),
+                    packet: Some(packet),
+                    done,
+                },
+            );
+        }
         label
     };
+    let Some(label) = label else {
+        // That window is gone, has not loaded, or is taking another tab.
+        gate.resume();
+        return Err(AppError::HandoffNotTaken);
+    };
 
-    if let Err(e) = build_window(&app, &window, &label, &opts) {
+    let opened = if created {
+        build_window(&app, &window, &label, &opts)
+            .map(|_| ())
+            .map_err(|e| AppError::Message(format!("open window: {e}")))
+    } else {
+        offer_tab(&app, &label)
+    };
+    if let Err(e) = opened {
         windows.lock().pending.remove(&label);
         gate.resume();
-        return Err(AppError::Message(format!("open window: {e}")));
+        return Err(e);
     }
 
     let result = match tokio::time::timeout(HANDOFF_TIMEOUT, &mut taken).await {
         Ok(result) => result.unwrap_or(Err(HandoffFailure::NotTaken)),
         Err(_elapsed) => {
-            // Out of time — unless the new window took the packet this very
+            // Out of time — unless the window took the tab over this very
             // moment: then its answer is on the way and is the one that counts.
             let still_waiting = windows.lock().pending.remove(&label).is_some();
             if still_waiting {
@@ -535,17 +909,21 @@ pub async fn detach_commit(
         Ok(()) => Ok(label),
         Err(failure) => {
             // Roll back: the held output goes to this window, which still has
-            // the tab, and the window that never took it is closed.
+            // the tab. A window opened for the tab is closed with it; one that
+            // was already open has tabs of its own and stays.
             gate.resume();
-            if let Some(w) = app.get_webview_window(&label) {
-                let _ = w.destroy();
+            if created {
+                if let Some(w) = app.get_webview_window(&label) {
+                    let _ = w.destroy();
+                }
             }
             Err(failure.into())
         }
     }
 }
 
-/// New window, on load: the packet of the tab moved into it. Handed out once;
+/// The packet of the tab being moved into this window — asked for by a new
+/// window on load and by an open one when it is offered a tab. Handed out once;
 /// `None` for a window that is not the target of a handoff.
 #[tauri::command]
 pub fn take_handoff(window: WebviewWindow, windows: State<Windows>) -> Option<String> {
@@ -554,9 +932,29 @@ pub fn take_handoff(window: WebviewWindow, windows: State<Windows>) -> Option<St
     Some(packet.as_str().to_owned())
 }
 
-/// New window, once it has restored the tab and listens for its output: take
-/// the session over. From here the held output flows to this window and it owns
-/// the session.
+/// This window cannot take the tab it was offered — the packet was no use, or
+/// its terminal failed before taking the session over. The window waiting in
+/// `detach_commit` is answered now instead of at the timeout, and keeps its tab.
+/// A no-op when nothing waits (the handoff has already ended either way).
+/// `session_id` names the tab when the window got as far as knowing it — so a
+/// late refusal cannot answer for a different tab offered since.
+#[tauri::command]
+pub fn decline_handoff(window: WebviewWindow, windows: State<Windows>, session_id: Option<String>) {
+    let pending = {
+        let mut reg = windows.lock();
+        match session_id {
+            Some(id) => reg.take_pending(window.label(), &id),
+            None => reg.pending.remove(window.label()),
+        }
+    };
+    if let Some(pending) = pending {
+        let _ = pending.done.send(Err(HandoffFailure::NotTaken));
+    }
+}
+
+/// The window taking a tab, once it has restored it and listens for its output:
+/// take the session over. From here the held output flows to this window and it
+/// owns the session.
 #[tauri::command]
 pub async fn attach_session(
     window: WebviewWindow,
@@ -573,7 +971,10 @@ pub async fn attach_session(
         None => Err(HandoffFailure::NotTaken),
         Some(gate) => match gate.hand_over() {
             Ok(()) => {
-                windows.claim(&session_id, &label);
+                let mut reg = windows.lock();
+                reg.claim(&session_id, &label);
+                // The tab it was shown is the one it now has.
+                reg.landed(&label);
                 Ok(())
             }
             Err(HandOverError::Overflowed) => Err(HandoffFailure::Overflowed),
@@ -634,6 +1035,7 @@ mod tests {
         reg.armed.insert("win-2".into());
         reg.focused = Some("win-2".into());
         reg.summaries.insert("win-2".into(), vec![]);
+        reg.announce("win-2", "web-01".into(), 2);
 
         let (sessions, waker) = reg.forget_window("win-2");
         assert_eq!(sessions, vec!["a".to_string(), "c".to_string()]);
@@ -642,6 +1044,166 @@ mod tests {
         assert!(!reg.armed.contains("win-2"));
         assert_eq!(reg.focused, None);
         assert!(reg.summaries.is_empty());
+        // Nobody is offered a window that is gone — not even when its last
+        // announcement, sent on its way out, arrives after it was forgotten.
+        assert!(reg.roster().is_empty());
+        reg.announce("win-2", String::new(), 0);
+        assert!(reg.roster().is_empty());
+        assert!(!reg.takes_tabs("win-2", MAIN));
+    }
+
+    #[test]
+    fn windows_are_listed_main_first_then_in_the_order_they_opened() {
+        let mut reg = Registry::default();
+        reg.announce("win-10", "db".into(), 1);
+        reg.announce("win-2", "web-01".into(), 3);
+        reg.announce(MAIN, "local".into(), 4);
+        let labels: Vec<String> = reg.roster().into_iter().map(|w| w.label).collect();
+        // By number, not by spelling: `win-10` comes after `win-2`.
+        assert_eq!(labels, ["main", "win-2", "win-10"]);
+
+        // Announcing again replaces what the others show of the window.
+        reg.announce("win-2", "web-02".into(), 1);
+        assert_eq!(
+            reg.roster()[1],
+            WindowEntry {
+                label: "win-2".into(),
+                title: "web-02".into(),
+                tabs: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn a_tab_is_offered_only_to_another_window_that_answers_and_is_free() {
+        let mut reg = Registry::default();
+        reg.announce(MAIN, String::new(), 0);
+        reg.announce("win-2", "web-01".into(), 1);
+        assert!(reg.takes_tabs(MAIN, "win-2"));
+        assert!(reg.takes_tabs("win-2", MAIN));
+        // Not to itself.
+        assert!(!reg.takes_tabs(MAIN, MAIN));
+        // Not to a window whose frontend never said it listens (still loading,
+        // or a label that names no window at all).
+        assert!(!reg.takes_tabs("win-3", MAIN));
+        // Not to a window in the middle of taking another tab: a handoff is
+        // kept under its target's label, and a second one would replace it.
+        let (p, _rx) = pending("s1");
+        reg.pending.insert("win-2".into(), p);
+        assert!(!reg.takes_tabs("win-2", MAIN));
+        assert!(reg.take_pending("win-2", "s1").is_some());
+        assert!(reg.takes_tabs("win-2", MAIN));
+    }
+
+    #[test]
+    fn a_tab_held_over_a_window_is_drawn_by_one_window_at_a_time() {
+        let mut reg = Registry::default();
+        // Entering a window tells nobody anything; it is told by the caller.
+        assert_eq!(reg.hover(MAIN, Some("win-2")), None);
+        // Moving on within it changes nothing either.
+        assert_eq!(reg.hover(MAIN, Some("win-2")), None);
+        // On to another window: the first one is told the tab left.
+        assert_eq!(reg.hover(MAIN, Some("win-3")), Some("win-2".to_string()));
+        // Off every window: so is that one.
+        assert_eq!(reg.hover(MAIN, None), Some("win-3".to_string()));
+        assert_eq!(reg.hover(MAIN, None), None);
+    }
+
+    #[test]
+    fn the_end_of_a_drag_is_told_to_the_window_that_drew_it_once() {
+        let mut reg = Registry::default();
+        reg.hover(MAIN, Some("win-2"));
+        // Not by a window that is not the one dragging.
+        assert_eq!(reg.end_hover("win-3"), None);
+        assert_eq!(reg.end_hover(MAIN), Some("win-2".to_string()));
+        assert_eq!(reg.end_hover(MAIN), None);
+    }
+
+    #[test]
+    fn a_tab_that_arrived_is_not_announced_as_gone() {
+        let mut reg = Registry::default();
+        reg.hover(MAIN, Some("win-2"));
+        // Another window taking a tab over is not this drag's business.
+        reg.landed("win-3");
+        assert_eq!(reg.hover, Some((MAIN.to_string(), "win-2".to_string())));
+        reg.landed("win-2");
+        assert_eq!(reg.end_hover(MAIN), None);
+    }
+
+    #[test]
+    fn a_window_that_closes_mid_drag_takes_the_drag_with_it() {
+        let mut reg = Registry::default();
+        // The window dragging the tab is gone: the one drawing it is told.
+        reg.hover("win-2", Some(MAIN));
+        assert_eq!(reg.hover_gone("win-2"), Some(MAIN.to_string()));
+        assert_eq!(reg.hover, None);
+        // The window drawing it is gone: nobody is left to tell.
+        reg.hover("win-2", Some("win-3"));
+        assert_eq!(reg.hover_gone("win-3"), None);
+        assert_eq!(reg.hover, None);
+        // A third window closing changes nothing.
+        reg.hover("win-2", Some(MAIN));
+        assert_eq!(reg.hover_gone("win-4"), None);
+        assert_eq!(reg.end_hover("win-2"), Some(MAIN.to_string()));
+    }
+
+    #[test]
+    fn a_window_is_brought_forward_once_per_visit() {
+        let mut reg = Registry::default();
+        assert!(reg.raise("win-2"));
+        // Still over it: nothing more to do.
+        assert!(!reg.raise("win-2"));
+        // Back over the window the drag began in: that one comes forward.
+        assert!(reg.raise(MAIN));
+        assert!(reg.raise("win-2"));
+    }
+
+    /// This file before its tests, line comments stripped.
+    fn code() -> String {
+        let src = include_str!("appwin.rs").replace("\r\n", "\n");
+        src[..src.find("#[cfg(test)]").expect("tests")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Body of the top-level `fn name` (to the next top-level item).
+    fn body<'a>(code: &'a str, name: &str) -> &'a str {
+        let at = code
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("no fn {name}"));
+        let rest = &code[at..];
+        &rest[..rest.find("\n}\n").expect("end of fn")]
+    }
+
+    #[test]
+    fn a_failed_handoff_never_closes_a_window_that_was_already_open() {
+        // Guard (v1.4.0, ADR 0018): a tab can be handed to a window that has
+        // tabs of its own. Rolling a handoff back used to close "the window that
+        // never took it" — right for a window opened for that tab, and the loss
+        // of every session in a window that was merely offered one.
+        let code = code();
+        let commit = body(&code, "detach_commit");
+        assert_eq!(commit.matches(".destroy()").count(), 1);
+        let destroy = commit.find(".destroy()").expect("closes the new window");
+        // …inside the nearest `if created {`, with no block closed in between.
+        let guarded = commit[..destroy]
+            .rfind("if created {")
+            .expect("only its own window");
+        assert!(!commit[guarded..destroy].contains('}'));
+        assert!(commit.contains("let created = opts.target.is_none();"));
+        // The window is chosen under the registry's rule, in the same lock that
+        // records the handoff — not looked up first and trusted later.
+        let lock = commit.find("let mut reg = windows.lock();").expect("lock");
+        let rule = commit
+            .find(".takes_tabs(target, window.label())")
+            .expect("rule");
+        let record = commit.find("reg.pending.insert(").expect("record");
+        assert!(lock < rule && rule < record);
+        // Nor does declining an offer, or being offered one, close anything.
+        assert!(!body(&code, "decline_handoff").contains("destroy"));
+        assert!(!body(&code, "offer_tab").contains("destroy"));
     }
 
     #[test]
@@ -701,6 +1263,7 @@ mod tests {
             x: Some(500.0),
             y: Some(300.0),
             background: None,
+            target: None,
         };
         assert_eq!(
             new_window_position(&dropped, Some((10.0, 10.0))),
@@ -711,6 +1274,7 @@ mod tests {
             x: Some(500.0),
             y: Some(4.0),
             background: None,
+            target: None,
         };
         assert_eq!(new_window_position(&top, None), Some((420.0, 0.0)));
         // The menu command cascades from the source window.
@@ -724,6 +1288,7 @@ mod tests {
             x: Some(f64::NAN),
             y: Some(1.0),
             background: None,
+            target: None,
         };
         assert_eq!(new_window_position(&nan, None), None);
     }

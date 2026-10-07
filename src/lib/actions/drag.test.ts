@@ -1,12 +1,79 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DRAGGING_CLASS,
   dropTargetAt,
   glide,
+  holdSelection,
   layoutBox,
   passedThreshold,
   resizableHandle,
   slotIndex,
 } from "./drag";
+
+describe("holdSelection", () => {
+  /** Whether a selection starting now would be refused. */
+  const refused = () => {
+    const e = new Event("selectstart", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(e);
+    return e.defaultPrevented;
+  };
+  const held = () => document.documentElement.classList.contains(DRAGGING_CLASS);
+  const letGo = (type = "pointerup") => window.dispatchEvent(new Event(type));
+
+  afterEach(() => letGo());
+
+  it("until it is called, selecting is the browser's business", () => {
+    expect(refused()).toBe(false);
+    expect(held()).toBe(false);
+  });
+
+  it("from the press on, no selection starts and the page says so", () => {
+    holdSelection();
+    expect(refused()).toBe(true);
+    expect(held()).toBe(true);
+    // A drag is many moves: it is refused every time, not once.
+    expect(refused()).toBe(true);
+  });
+
+  it("ends with the release", () => {
+    holdSelection();
+    letGo("pointerup");
+    expect(refused()).toBe(false);
+    expect(held()).toBe(false);
+  });
+
+  it("ends with a cancelled pointer and with the window losing focus", () => {
+    for (const end of ["pointercancel", "blur"]) {
+      holdSelection();
+      expect(refused()).toBe(true);
+      letGo(end);
+      expect(refused(), end).toBe(false);
+      expect(held(), end).toBe(false);
+    }
+  });
+
+  it("held twice is held once — one release ends it", () => {
+    holdSelection();
+    holdSelection();
+    letGo();
+    expect(refused()).toBe(false);
+    expect(held()).toBe(false);
+  });
+
+  it("can be held again after it ended", () => {
+    holdSelection();
+    letGo();
+    holdSelection();
+    expect(refused()).toBe(true);
+  });
+
+  it("a release nobody was holding for changes nothing", () => {
+    letGo();
+    letGo("blur");
+    expect(refused()).toBe(false);
+    expect(held()).toBe(false);
+  });
+});
 
 describe("passedThreshold", () => {
   it("is false for small moves", () => {
@@ -64,6 +131,24 @@ describe("resizableHandle action", () => {
     onResize.mockClear();
     node.dispatchEvent(new PointerEvent("pointermove", { clientX: 200, pointerId: 1 }));
     expect(onResize).not.toHaveBeenCalled();
+
+    handle.destroy();
+  });
+
+  it("holds the selection from the press to the release", () => {
+    const node = document.createElement("div");
+    node.setPointerCapture = vi.fn();
+    node.releasePointerCapture = vi.fn();
+    document.body.appendChild(node);
+    const handle = resizableHandle(node, { onResize: vi.fn() });
+    const held = () => document.documentElement.classList.contains(DRAGGING_CLASS);
+
+    node.dispatchEvent(new PointerEvent("pointerdown", { clientX: 0, pointerId: 1, bubbles: true }));
+    expect(held()).toBe(true);
+    node.dispatchEvent(new PointerEvent("pointermove", { clientX: 40, pointerId: 1, bubbles: true }));
+    expect(held()).toBe(true);
+    node.dispatchEvent(new PointerEvent("pointerup", { clientX: 40, pointerId: 1, bubbles: true }));
+    expect(held()).toBe(false);
 
     handle.destroy();
   });

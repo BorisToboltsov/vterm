@@ -198,6 +198,11 @@ export function pageViolations(source: string, terminal: string): string[] {
   if (!/previewTabs\(center, pane\.id, tabDrag\.tab, tabDrag\.over\)/.test(markup)) {
     out.push("a pane's strip does not draw the preview of the drop");
   }
+  // A tab held over the window from another one is previewed the same way: a
+  // place in the strip, drawn from the model — the layout itself is untouched.
+  if (!/previewIncoming\(center, pane\.id, INCOMING_TAB, incoming\.over\)/.test(markup)) {
+    out.push("a pane's strip keeps no place for a tab held over the window");
+  }
   if (/\?\.\(\s*open\w*\(/.test(c)) {
     out.push("a tab is opened inside an optional call — it opens only when someone listens");
   }
@@ -234,10 +239,32 @@ export function dragViolations(source: string): string[] {
   return out;
 }
 
+// ── 5: a tab held over the window from another one ───────────────────────────
+
+/**
+ * Its preview cannot change the layout: the store that keeps it knows the tabs
+ * store by type alone, so it has nothing to change the layout with. The tab is
+ * placed once, when it arrives — by the model's `placeTab`.
+ */
+export function incomingViolations(incoming: string, store: string): string[] {
+  const out: string[] = [];
+  const c = code(incoming);
+  for (const m of c.matchAll(/import\s+(type\s+)?\{[^}]*\}\s*from\s*["']\.\/tabs\.svelte["']/g)) {
+    if (!m[1]) out.push("the preview of an incoming tab can reach the tabs store");
+  }
+  if (/\btabsState\b/.test(c)) out.push("the preview of an incoming tab reads the tabs store");
+  const adopt = fn(code(store), "adoptTab");
+  if (!adopt.includes("center = placeTab(center, tab.sessionId, drop);")) {
+    out.push("a tab from another window is not placed by the model, where it was dropped");
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STORE = "lib/stores/tabs.svelte.ts";
 const DRAG = "lib/stores/tabdrag.svelte.ts";
+const INCOMING = "lib/stores/tabincoming.svelte.ts";
 const PAGE = "routes/+page.svelte";
 const TERMINAL = "lib/Terminal.svelte";
 
@@ -257,6 +284,10 @@ describe("centre layout guard", () => {
 
   it("the terminals are one flat list, placed over the panes — not inside them", () => {
     expect(pageViolations(raw(PAGE), raw(TERMINAL))).toEqual([]);
+  });
+
+  it("a tab held over the window is only previewed, and placed by the model when it arrives", () => {
+    expect(incomingViolations(raw(INCOMING), raw(STORE))).toEqual([]);
   });
 
   it("a dragged tab changes the layout once, and strips are hit-tested by layout", () => {
@@ -390,15 +421,45 @@ describe("centre layout guard — catches what it exists for", () => {
       pageViolations(
         mutate(
           page,
-          "tabsOf(previewTabs(center, pane.id, tabDrag.tab, tabDrag.over)),",
-          "tabsOf(pane.tabs),",
+          ": previewTabs(center, pane.id, tabDrag.tab, tabDrag.over),",
+          ": pane.tabs,",
         ),
         terminal,
       ),
     ).toContain("a pane's strip does not draw the preview of the drop");
     expect(
+      pageViolations(
+        mutate(
+          page,
+          "? previewIncoming(center, pane.id, INCOMING_TAB, incoming.over)",
+          "? [...pane.tabs, INCOMING_TAB]",
+        ),
+        terminal,
+      ),
+    ).toContain("a pane's strip keeps no place for a tab held over the window");
+    expect(
       pageViolations(mutate(page, "if (e.defaultPrevented || bcOn) return;", "if (bcOn) return;"), terminal),
     ).toContain("the pane chords fire even when the focused control already handled the key");
+  });
+
+  it("a preview of an incoming tab that could move the layout, or a tab that lands by hand", () => {
+    const incoming = raw(INCOMING);
+    expect(
+      incomingViolations(
+        mutate(incoming, 'import type { Tab } from "./tabs.svelte";', 'import { dropTab, type Tab } from "./tabs.svelte";'),
+        store,
+      ),
+    ).toEqual(["the preview of an incoming tab can reach the tabs store"]);
+    expect(
+      incomingViolations(
+        incoming,
+        mutate(
+          store,
+          "center = placeTab(center, tab.sessionId, drop);",
+          "center = addTab(center, tab.sessionId);",
+        ),
+      ),
+    ).toEqual(["a tab from another window is not placed by the model, where it was dropped"]);
   });
 
   it("a tab that opens only when someone asked where it went", () => {
