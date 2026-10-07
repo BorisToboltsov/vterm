@@ -29,7 +29,37 @@
     nginxConfigFiles,
     takeStoreWarnings,
     OPEN_FILE_EVENT,
+    disconnect,
+    listenHere,
+    closeWindow,
+    reportWindowSummary,
+    otherWindowsSummary,
+    broadcastSettings,
+    announceServersDeleted,
+    detachBegin,
+    detachAbort,
+    detachCommit,
+    takeHandoff,
+    CATALOG_EVENT,
+    SERVERS_DELETED_EVENT,
+    SETTINGS_EVENT,
+    WINDOW_CLOSE_EVENT,
+    type ServersDeleted,
+    type SettingsBroadcast,
   } from "$lib/api";
+  import { isMainWindow, windowLabel } from "$lib/appwindow";
+  import {
+    DETACH_BLOCK_MESSAGE,
+    detachBlocker,
+    detachErrorKey,
+    detachOffered,
+    ghostPlace,
+    parsePacket,
+    type DetachState,
+    type TermSnapshot,
+  } from "$lib/tabhandoff";
+  import { packTab, unpackTab } from "$lib/stores/tabpacket";
+  import { chatBusy } from "$lib/aiask";
   import type { ServerProfile } from "$lib/types";
   import { storeWarningMessage } from "$lib/storewarn";
   import { sessionBarParts, showSessionBar } from "$lib/sessionbar";
@@ -50,6 +80,7 @@
   import { moveLabel, moveTargets, panelLabel } from "$lib/dockui";
   import {
     activateTab,
+    clearAdopt,
     closeTab as closeTabStore,
     tabsForServer,
     dotClass,
@@ -91,7 +122,12 @@
     recordingPauses,
     rectStyle,
   } from "$lib/centerview";
-  import { beginTabDrag, consumeTabDragClick, tabDrag } from "$lib/stores/tabdrag.svelte";
+  import {
+    beginTabDrag,
+    consumeTabDragClick,
+    onTabReleasedOutside,
+    tabDrag,
+  } from "$lib/stores/tabdrag.svelte";
   import SplitDivider from "$lib/SplitDivider.svelte";
   import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
   import TerminalView from "$lib/Terminal.svelte";
@@ -128,8 +164,8 @@
     TERMINAL_VIEW,
     type EditorDoc,
   } from "$lib/stores/workspaces.svelte";
-  import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
-  import { removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
+  import { removeChat, getChat, askAbout, peekChat } from "$lib/stores/aichat.svelte";
+  import { peekDockState, removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
   import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
@@ -156,7 +192,7 @@
   import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
   import { activeTabStrip } from "$lib/tabstrip";
   import QuitDialog from "$lib/QuitDialog.svelte";
-  import { quitRows } from "$lib/quitsummary";
+  import { mergeQuitRows, quitRows, type QuitRow } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "$lib/ctxmenu";
   import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
@@ -178,7 +214,7 @@
   import RecordingsPanel from "$lib/RecordingsPanel.svelte";
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
-  import { applyProgress, transfersState } from "$lib/stores/transfers.svelte";
+  import { applyProgress, sessionTransfers, transfersState } from "$lib/stores/transfers.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
   import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
@@ -191,7 +227,7 @@
     clearRecording,
   } from "$lib/stores/recordings.svelte";
   import type { SftpProgress } from "$lib/api";
-  import { settings } from "$lib/settings.svelte";
+  import { activeChromePanel, applyImportedSettings, settings } from "$lib/settings.svelte";
   import { t } from "$lib/i18n";
   import {
     setMenuLanguage,
@@ -260,9 +296,14 @@
     showUtilities = true;
   }
   let showHelp = $state(false);
-  // Quit confirmation (window close / ⌘Q / File → Exit, via `menu://quit`).
+  // Quit confirmation (window close / ⌘Q / File → Exit, via `menu://quit`). In a
+  // window a tab was moved out to (ADR 0017) the same dialog asks about closing
+  // that window, via `window://close`.
   let showQuit = $state(false);
-  /** What quitting would cut off right now — read when the dialog opens. */
+  // What the other windows would lose — asked for when the main window's dialog
+  // opens, so that quitting lists the whole app.
+  let otherWindowRows = $state<unknown>([]);
+  /** What closing this window would cut off right now — read when the dialog opens. */
   function quitRowsNow() {
     return quitRows({
       tabs: tabsState.list,
@@ -298,6 +339,7 @@
       focus?: () => void;
       setViewMode?: (structured: boolean) => void;
       clear?: () => void;
+      snapshot?: (sent: number) => Promise<TermSnapshot | null>;
     }
   > = {};
   // Raw (false) ↔ structured table (true) per session, reported by the terminal —
@@ -1094,6 +1136,16 @@
       );
       add("pane:join", t("palette.joinPanes"), "layoutFocus", joinPanes);
     }
+    if (tab && canOfferDetach && tab.status.startsWith("Connected")) {
+      out.push({
+        id: "window:detach",
+        title: t("palette.moveTabToWindow"),
+        icon: "popOut",
+        group,
+        keywords: "window detach pop out tear off monitor окно отдельное вынести второй монитор",
+        run: () => void detachTab(tab.sessionId),
+      });
+    }
     return out;
   });
 
@@ -1298,63 +1350,252 @@
     // Resolve the host OS once so the custom window chrome (TitleBar) and the
     // macOS-only native-menu sync below become reactively available.
     void hostEnv.resolve();
-    // A config file that failed to parse was quarantined during the backend's
-    // startup load. Reported without a TTL: "your server list is gone and here is
-    // where it went" must not scroll away after six seconds.
-    void takeStoreWarnings().then((warnings) => {
-      for (const w of warnings) {
-        const m = storeWarningMessage(w);
-        notifyError(t(m.key, m.params), 0);
-      }
-    });
     const unlisteners: UnlistenFn[] = [];
-    listen("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));
-    listen("menu://about", () => {
+    // Everything a window is told individually is heard through `listenHere`:
+    // the plain `listen` also hears what the backend sent to ANOTHER window.
+    // Native-menu commands go to the window in focus.
+    listenHere("menu://settings", () => openSettings()).then((u) => unlisteners.push(u));
+    listenHere("menu://about", () => {
       helpTab = "about";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
-    listen("menu://help", () => {
+    listenHere("menu://help", () => {
       helpTab = "help";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
-    listen("menu://manual", () => {
+    listenHere("menu://manual", () => {
       helpTab = "manual";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
-    listen("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
-    // Quit confirmation. The guard is armed only once the listener is in place —
-    // an armed guard nobody answers would make the window impossible to close.
-    listen("menu://quit", () => (showQuit = true))
+    listenHere("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
+    // Close confirmation: the main window is asked about quitting, any other one
+    // about closing itself. The guard is armed only once the listener is in
+    // place — an armed guard nobody answers would make the window impossible to
+    // close.
+    listenHere(CLOSE_ASKED_EVENT, () => void askToClose())
       .then((u) => {
         unlisteners.push(u);
         return armCloseGuard();
       })
       .catch(() => {});
-    // App-level SFTP progress feed → shared store (read by SFTP panel + status bar),
-    // plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
-    listen<SftpProgress>("sftp://progress", (e) => {
+    // This window's SFTP progress feed → shared store (read by SFTP panel + status
+    // bar), plus the sync-run store (the dialog's per-row bars; ignores non-sync ids).
+    listenHere<SftpProgress>("sftp://progress", (e) => {
       applyProgress(e.payload);
       applySyncProgress(e.payload);
     }).then((u) => unlisteners.push(u));
     // Sync compare counters (files hashed per side) → the session's sync job.
-    listen<{ id: string; files: number }>("sync://scan", (e) =>
+    listenHere<{ id: string; files: number }>("sync://scan", (e) =>
       applyScanProgress(e.payload),
     ).then((u) => unlisteners.push(u));
-    // "Open with vterm": files asked for at launch (drained now) and while running.
-    takePendingOpens()
-      .then((paths) => paths.forEach(handleOpenFile))
-      .catch(() => {});
-    listen<string>(OPEN_FILE_EVENT, (e) => handleOpenFile(e.payload)).then((u) =>
+    // What windows tell each other (ADR 0017). The catalog and the settings are
+    // the app's, not a window's: each window keeps a copy and re-reads it when
+    // another one changes it.
+    listen(CATALOG_EVENT, () => void refresh()).then((u) => unlisteners.push(u));
+    listen<SettingsBroadcast>(SETTINGS_EVENT, (e) => applySettingsFrom(e.payload)).then((u) =>
       unlisteners.push(u),
     );
+    listen<ServersDeleted>(SERVERS_DELETED_EVENT, (e) => {
+      if (e.payload.from === windowLabel) return;
+      for (const id of e.payload.ids) for (const sid of tabsForServer(id)) closeTabFully(sid);
+    }).then((u) => unlisteners.push(u));
+    if (isMainWindow) {
+      // A config file that failed to parse was quarantined during the backend's
+      // startup load. Reported without a TTL: "your server list is gone and here
+      // is where it went" must not scroll away after six seconds.
+      void takeStoreWarnings().then((warnings) => {
+        for (const w of warnings) {
+          const m = storeWarningMessage(w);
+          notifyError(t(m.key, m.params), 0);
+        }
+      });
+      // "Open with vterm": files asked for at launch (drained now) and while
+      // running. The main window's alone — a second one would open them twice.
+      takePendingOpens()
+        .then((paths) => paths.forEach(handleOpenFile))
+        .catch(() => {});
+      listenHere<string>(OPEN_FILE_EVENT, (e) => handleOpenFile(e.payload)).then((u) =>
+        unlisteners.push(u),
+      );
+    } else {
+      // This window was opened for a tab: take it over.
+      void adoptHandoff();
+    }
     // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
     // even inside modals and before any field-local handler). See clipboardKeys.ts.
     document.addEventListener("keydown", handleClipboardShortcut, true);
     return () => {
       unlisteners.forEach((u) => u());
+      onTabReleasedOutside(null);
       document.removeEventListener("keydown", handleClipboardShortcut, true);
     };
   });
+
+  // ── Windows (ADR 0017) ─────────────────────────────────────────────────────
+  // The question this window is asked before it goes: the main one about
+  // quitting the app, any other one about closing itself.
+  const CLOSE_ASKED_EVENT = isMainWindow ? "menu://quit" : WINDOW_CLOSE_EVENT;
+
+  /** Open the close confirmation with what would be cut off. */
+  async function askToClose() {
+    // Quitting lists every window's sessions, not just this one's.
+    otherWindowRows = isMainWindow ? await otherWindowsSummary().catch(() => []) : [];
+    showQuit = true;
+  }
+
+  /** The rows of the close confirmation: this window's, plus — when quitting — the others'. */
+  function closeRowsNow(): QuitRow[] {
+    return mergeQuitRows(quitRowsNow(), otherWindowRows);
+  }
+
+  // A secondary window tells the backend what it would lose, as it changes, so
+  // the main window's quit confirmation can list it.
+  $effect(() => {
+    if (isMainWindow) return;
+    void reportWindowSummary(quitRowsNow()).catch(() => {});
+  });
+
+  // A secondary window exists for its tabs: once it has taken its first one, it
+  // goes with its last. (The main window stays — it is where servers are opened.)
+  let windowHasHadTab = $state(false);
+  $effect(() => {
+    if (!isMainWindow && windowHasHadTab && tabsState.list.length === 0) {
+      void closeWindow().catch(() => {});
+    }
+  });
+
+  // Settings are the app's: a change here goes to the other windows, a change
+  // there is applied here. `syncedSettings` is the snapshot both sides agree on —
+  // applying a received one must not send it back.
+  let syncedSettings = JSON.stringify(settings);
+  let settingsBroadcastTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const json = JSON.stringify(settings);
+    if (json === syncedSettings) return;
+    // Debounced: a pinch-zoom of the font writes a setting on every wheel tick.
+    clearTimeout(settingsBroadcastTimer);
+    settingsBroadcastTimer = setTimeout(() => {
+      if (json === syncedSettings) return;
+      syncedSettings = json;
+      void broadcastSettings({ from: windowLabel, json }).catch(() => {});
+    }, 150);
+  });
+
+  /** Another window changed the settings: take its snapshot. */
+  function applySettingsFrom(msg: SettingsBroadcast) {
+    if (msg.from === windowLabel) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(msg.json);
+    } catch {
+      return;
+    }
+    // The same sanitizing merge a backup import goes through; then note what we
+    // hold now (it may differ from what was sent only by that sanitizing).
+    applyImportedSettings(raw);
+    syncedSettings = JSON.stringify(settings);
+  }
+
+  /** The tab being handed to a new window; the page takes no input meanwhile. */
+  let detaching = $state<string | null>(null);
+  // The window's size — where the label of a tab dragged out of it is pinned.
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
+
+  function detachStateOf(tab: Tab): DetachState {
+    const sid = tab.sessionId;
+    const ws = getWorkspace(sid);
+    const chat = peekChat(sid);
+    return {
+      mainWindow: isMainWindow,
+      tabs: tabsState.list.length,
+      broadcast: bcOn,
+      connected: tab.status.startsWith("Connected"),
+      syncBusy: isBusy(peekSyncJob(sid)),
+      // Running transfers, and upload batches between two of their files.
+      transfers: sessionTransfers(sid) + Object.keys(peekDockState(sid)?.uploads ?? {}).length,
+      chatBusy: !!chat && chatBusy(chat),
+      editorBusy: ws.editors.some((ed) => ed.loading || ed.id === savingEditorId),
+    };
+  }
+
+  /** Whether "move to a new window" is offered for tabs here at all. */
+  const canOfferDetach = $derived(
+    detachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length, broadcast: bcOn }),
+  );
+  // A tab let go of outside the window moves to a window of its own — the third
+  // way in, next to the tab menu and the palette. Where the command is not
+  // offered, leaving the window with a tab is not a drop target either.
+  $effect(() => {
+    onTabReleasedOutside(
+      canOfferDetach ? (sessionId, at) => void detachTab(sessionId, at) : null,
+    );
+  });
+
+  /**
+   * Move a tab out into a window of its own. `at` is where on the screen it was
+   * dropped; absent for the menu and the palette.
+   *
+   * The session's output is held first, so the terminal's snapshot is exact;
+   * the tab leaves this window only once the new one has taken it over. Until
+   * then any failure leaves everything as it was.
+   */
+  async function detachTab(sessionId: string, at?: { x: number; y: number }) {
+    const tab = findTab(sessionId);
+    if (!tab || detaching) return;
+    const block = detachBlocker(detachStateOf(tab));
+    if (block) {
+      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));
+      return;
+    }
+    detaching = sessionId;
+    let held = false;
+    try {
+      const sent = await detachBegin(sessionId);
+      held = true;
+      const terminal = (await termRefs[sessionId]?.snapshot?.(sent)) ?? null;
+      const packet =
+        terminal &&
+        packTab(sessionId, terminal, {
+          terminalCwd: terminalCwd[sessionId] ?? null,
+          followTerminal: followTerminal[sessionId] ?? false,
+          followSeen: followSeen[sessionId] ?? null,
+          localShell: localShellKind[sessionId] ?? null,
+          shellIntegrated: shellIntegrated[sessionId] ?? false,
+        });
+      if (!packet) throw new Error("handoff-failed: no snapshot");
+      await detachCommit(sessionId, packet, { ...at, background: activeChromePanel() });
+      held = false;
+      // The new window owns the session now: drop the tab here, keep the session.
+      closeTabFully(sessionId, true);
+    } catch (e) {
+      // Give the held output back (a no-op if the backend already rolled back).
+      if (held) await detachAbort(sessionId).catch(() => {});
+      notifyError(t(detachErrorKey(e)));
+    } finally {
+      detaching = null;
+    }
+  }
+
+  /** A secondary window, on load: take over the tab it was opened for. */
+  async function adoptHandoff() {
+    const packet = parsePacket(await takeHandoff().catch(() => null));
+    if (!packet) {
+      // Nothing to show (the handoff was rolled back): a window with no tab goes.
+      void closeWindow().catch(() => {});
+      return;
+    }
+    const sid = packet.tab.sessionId;
+    const page = packet.page;
+    if (page.terminalCwd) terminalCwd[sid] = page.terminalCwd;
+    if (page.followTerminal) followTerminal[sid] = true;
+    if (page.followSeen) followSeen[sid] = page.followSeen;
+    if (page.localShell) localShellKind[sid] = page.localShell;
+    if (page.shellIntegrated) shellIntegrated[sid] = true;
+    // It arrives connected — a later drop of it is a real one (NO SIGNAL).
+    idleWasConnected.add(sid);
+    unpackTab(packet);
+  }
 
   async function refresh() {
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
@@ -1494,13 +1735,30 @@
    * [tabteardown.guard.test.ts](../lib/tabteardown.guard.test.ts). Adding
    * per-session state anywhere means adding its cleanup here.
    */
-  function closeTabFully(sessionId: string) {
+  function closeTabFully(sessionId: string, keepSession = false) {
+    // The session ends here — not when its terminal unmounts (ADR 0017). The one
+    // exception is a tab handed to another window (`keepSession`): that window
+    // owns the session now, and the backend would refuse this one anyway.
+    if (!keepSession) void disconnect(sessionId).catch(() => {});
     removeWorkspace(sessionId);
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
     removeSyncJob(sessionId); // also stops a compare/run still going on
+    // Flags only — a recording handed over with its tab keeps running; left set,
+    // this window would go on pausing it as "not on screen here".
+    clearRecording(sessionId);
+    clearRecordIdleTimer(sessionId);
+    batchRecMembers.delete(sessionId);
     delete followSeen[sessionId];
+    delete followTerminal[sessionId];
+    delete terminalCwd[sessionId];
+    delete localShellKind[sessionId];
+    delete shellIntegrated[sessionId];
+    delete pendingCommand[sessionId];
+    delete connPhase[sessionId];
+    delete termDims[sessionId];
+    idleWasConnected.delete(sessionId);
     nginxConfigCache.delete(sessionId);
     delete termStructured[sessionId];
     delete termSelection[sessionId];
@@ -1574,6 +1832,17 @@
           onSelect: () => moveTabTo(tab.sessionId, neighbourPane(center, pane.id, 1).id),
         });
       }
+    }
+    // A window of its own — the twin of dropping the tab outside this one. Why it
+    // cannot go right now (a transfer, an answer still streaming) is said when
+    // it is asked for; a tab that is not connected has no session to take along.
+    if (canOfferDetach) {
+      items.push({
+        icon: "popOut",
+        label: t("ctx.moveToWindow"),
+        disabled: !tab.status.startsWith("Connected"),
+        onSelect: () => void detachTab(tab.sessionId),
+      });
     }
     if (tab.kind === "ssh") {
       items.push({ kind: "separator" });
@@ -2158,6 +2427,8 @@
     for (const sid of tabsForServer(id)) closeTabFully(sid);
     try {
       await deleteServer(id);
+      // Its tabs in other windows close too (their own teardown, their own windows).
+      void announceServersDeleted({ from: windowLabel, ids: [id] }).catch(() => {});
       servers = servers.filter((s) => s.id !== id);
       if (selectedId === id) selectedId = servers[0]?.id ?? null;
       notifySuccess(t("page.serverDeleted", { alias }));
@@ -2175,6 +2446,7 @@
     for (const s of victims) for (const sid of tabsForServer(s.id)) closeTabFully(sid);
     try {
       await deleteFolderWithServers(path);
+      void announceServersDeleted({ from: windowLabel, ids: [...removed] }).catch(() => {});
       servers = servers.filter((s) => !removed.has(s.id));
       folders = await listFolders();
       if (selectedId && removed.has(selectedId)) selectedId = servers[0]?.id ?? null;
@@ -2185,7 +2457,11 @@
   }
 </script>
 
-<svelte:window onkeydown={onGlobalKey} />
+<svelte:window
+  onkeydown={onGlobalKey}
+  bind:innerWidth={viewportWidth}
+  bind:innerHeight={viewportHeight}
+/>
 
 <!-- A tool panel, for whichever dock holds it (Dock.svelte calls this). The
      panels are told whether they are on screen, never which dock they are in.
@@ -2810,6 +3086,18 @@
                     local={tab.kind === "local"}
                     tint={prodTabIds.has(tab.sessionId) ? settings.prodTint : null}
                     focusOnConnect={tabsState.activeId === tab.sessionId}
+                    adopt={tab.adopt ?? null}
+                    onadopted={() => {
+                      clearAdopt(tab.sessionId);
+                      windowHasHadTab = true;
+                    }}
+                    onadoptfailed={() => {
+                      // The tab stays with the window that was giving it up; this
+                      // one has nothing to show. Its copy of the tab's state goes
+                      // without ending the session — it was never ours.
+                      closeTabFully(tab.sessionId, true);
+                      void closeWindow().catch(() => {});
+                    }}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => handleTerminalActivity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
@@ -3017,15 +3305,30 @@
 
 <!-- Drag ghost for a terminal tab being moved. -->
 {#if draggingTab}
+  <!-- Outside the window the label cannot follow the pointer, so it waits at the
+       edge the pointer left through and says what letting go will do. -->
+  {@const ghost = ghostPlace(tabDrag, { width: viewportWidth, height: viewportHeight })}
   <div
     in:fade={motion()}
     data-testid="tab-drag-ghost"
-    class="pointer-events-none fixed z-50 flex max-w-48 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
-    style="left: {tabDrag.x + 12}px; top: {tabDrag.y + 8}px"
+    class="pointer-events-none fixed z-50 flex max-w-64 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm opacity-90 shadow-lg"
+    style="left: {ghost.x}px; top: {ghost.y}px"
   >
     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
     <span class="truncate">{tabAlias(draggingTab)}</span>
+    {#if tabDrag.outside}
+      <Icon name="popOut" size={13} class="shrink-0 text-accent" />
+      <span class="shrink-0 text-meta text-muted" data-testid="tab-drag-outside">
+        {t("tab.dropToWindow")}
+      </span>
+    {/if}
   </div>
+{/if}
+
+<!-- A tab is on its way to a new window: nothing here may be clicked until it
+     has settled — closing the tab now would end the session being handed over. -->
+{#if detaching}
+  <div class="fixed inset-0 z-[60] cursor-progress" data-testid="detach-shield"></div>
 {/if}
 
 <SettingsPanel
@@ -3076,8 +3379,9 @@
 
 <QuitDialog
   open={showQuit}
-  rows={showQuit ? quitRowsNow() : []}
-  onconfirm={() => void quitApp()}
+  kind={isMainWindow ? "quit" : "window"}
+  rows={showQuit ? closeRowsNow() : []}
+  onconfirm={() => void (isMainWindow ? quitApp() : closeWindow())}
   oncancel={() => (showQuit = false)}
 />
 

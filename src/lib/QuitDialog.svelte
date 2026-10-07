@@ -1,6 +1,8 @@
 <script lang="ts">
   // Quit confirmation: always asked, and lists — one row per kind — what closing
   // would cut off. The counting is `quitRows` (quitsummary.ts); this only draws it.
+  // The same question is asked of a window a tab was moved out to (`kind="window"`,
+  // ADR 0017): closing it ends its sessions, the app stays.
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import Icon from "./Icon.svelte";
   import type { IconName } from "./icons";
@@ -9,11 +11,14 @@
 
   let {
     open = false,
+    kind = "quit",
     rows,
     onconfirm,
     oncancel,
   }: {
     open?: boolean;
+    /** What is being closed: the app (`quit`) or one of its secondary windows. */
+    kind?: "quit" | "window";
     rows: QuitRow[];
     onconfirm?: () => void;
     oncancel?: () => void;
@@ -30,7 +35,13 @@
   };
 </script>
 
-<ConfirmDialog {open} title={t("quit.title")} confirmLabel={t("quit.confirm")} {onconfirm} {oncancel}>
+<ConfirmDialog
+  {open}
+  title={t(kind === "window" ? "window.closeTitle" : "quit.title")}
+  confirmLabel={t(kind === "window" ? "window.closeConfirm" : "quit.confirm")}
+  {onconfirm}
+  {oncancel}
+>
   {#if rows.length > 0}
     <p class="mb-2">{t("quit.lead")}</p>
     <ul class="divide-y divide-edge rounded border border-edge" data-testid="quit-rows">

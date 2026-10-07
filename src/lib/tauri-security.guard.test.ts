@@ -51,6 +51,14 @@ describe("capabilities are least-privilege", () => {
     expect(stringPerms).toContain("dialog:allow-save");
   });
 
+  it("covers exactly the app's own windows, which only the backend creates", () => {
+    // v1.3.0 (ADR 0017): a tab moved out gets a window labelled `win-N`. The
+    // capability names that pattern — never `*` — and the WebView is not given a
+    // way to open windows itself: every window comes from `appwin.rs`.
+    expect(cap.windows).toEqual(["main", "win-*"]);
+    expect(stringPerms.filter((p) => /allow-create/.test(p))).toEqual([]);
+  });
+
   it("restricts the opener to https URLs", () => {
     const opener = perms.find(
       (p): p is { identifier: string; allow?: { url?: string }[] } =>

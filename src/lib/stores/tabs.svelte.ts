@@ -32,6 +32,7 @@ import {
   type TabDrop,
 } from "../splitlayout";
 import type { TabAttach } from "../tabattach";
+import type { TermSnapshot } from "../tabhandoff";
 
 export interface Tab {
   sessionId: string;
@@ -51,6 +52,13 @@ export interface Tab {
   /** Set when the tab is a shell INTO a container/pod (tabattach.ts): its argv
    *  runs on every connect, and the tab's shell ends with it. */
   attach?: TabAttach;
+  /**
+   * Set on a tab that arrived from another window (ADR 0017): its session is
+   * already live, so its terminal restores this snapshot and takes the session
+   * over instead of connecting. Cleared once it has — a later reconnect is an
+   * ordinary one.
+   */
+  adopt?: TermSnapshot;
 }
 
 export type TabStatus = "connecting" | "connected" | "closed" | "error";
@@ -298,6 +306,28 @@ export function openLocalTab(attach?: TabAttach): string {
 }
 
 /**
+ * Add a tab that was moved here from another window (ADR 0017), in the focused
+ * pane, and show it. Its session id, status and credentials are the ones it
+ * had; `terminal` is what its terminal restores before taking the session over.
+ * A tab that is already here is left alone.
+ */
+export function adoptTab(tab: Tab, terminal: TermSnapshot): void {
+  if (list.some((t) => t.sessionId === tab.sessionId)) return;
+  list = [...list, { ...tab, gen: 0, adopt: terminal }];
+  center = addTab(center, tab.sessionId);
+}
+
+/** The adopted terminal took its session over: the snapshot has served. */
+export function clearAdopt(sessionId: string): void {
+  if (!list.some((t) => t.sessionId === sessionId && t.adopt)) return;
+  list = list.map((t) => {
+    if (t.sessionId !== sessionId) return t;
+    const { adopt: _used, ...rest } = t;
+    return rest;
+  });
+}
+
+/**
  * Remove a tab from the list and from its pane; the pane shows the neighbour
  * that takes its slot, and a pane left empty goes with it.
  *
@@ -317,11 +347,12 @@ export function closeTab(sessionId: string): void {
 
 /** Re-open a tab's connection in place (reuses its credentials). */
 export function reconnectTab(sessionId: string): void {
-  list = list.map((t) =>
-    t.sessionId === sessionId
-      ? { ...t, status: "Connecting…", gen: t.gen + 1 }
-      : t,
-  );
+  list = list.map((t) => {
+    if (t.sessionId !== sessionId) return t;
+    // A fresh connection, even for a tab that came from another window.
+    const { adopt: _stale, ...rest } = t;
+    return { ...rest, status: "Connecting…", gen: t.gen + 1 };
+  });
 }
 
 /** Set a tab's status from a raw status + detail. */

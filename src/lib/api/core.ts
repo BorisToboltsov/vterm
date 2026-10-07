@@ -166,9 +166,10 @@ export function setMenuLanguage(labels: MenuLabels): Promise<void> {
 // ── Quit confirmation ─────────────────────────────────────────────────────────
 
 /**
- * Make closing the window / quitting ask first. Call only once the `menu://quit`
- * listener is registered: an armed guard with nobody listening would leave the
- * window impossible to close.
+ * Make closing this window ask first (the main window: quitting). Call only once
+ * the listener for the question is registered — `menu://quit` in the main
+ * window, `window://close` in any other: an armed guard with nobody listening
+ * would leave the window impossible to close.
  */
 export function armCloseGuard(): Promise<void> {
   return invoke<void>("arm_close_guard");

@@ -8,10 +8,13 @@
 //  2. "The active tab" is derived from the layout, never stored. A second,
 //     writable `activeId` is free to disagree with the tree: the docks and the
 //     status bar would then follow a session other than the one in focus.
-//  3. The terminals stay in ONE flat list. `Terminal`'s `onDestroy` disconnects
-//     the session, so anything that makes its mount depend on the layout — an
+//  3. The terminals stay in ONE flat list. A `Terminal` that is created again
+//     connects again — replacing the session — and starts with an empty
+//     scrollback, so anything that makes its mount depend on the layout — an
 //     `{#each}` over panes, an `{#if}` on the split state, a `{#key}` — turns
-//     "move the tab to the other pane" into "drop the connection".
+//     "move the tab to the other pane" into "drop the connection". (Since v1.3
+//     the session is ended by the tab's teardown, not by the component going
+//     away — `windowhandoff.guard` — but a remount still reconnects.)
 //  4. A dragged tab changes the layout once, on release. Until then the strips
 //     draw a preview; moving the tab for real on every pointer move would resize
 //     terminals mid-drag. And what the strips hit-test is where tabs sit in the
@@ -174,7 +177,12 @@ export function pageViolations(source: string, terminal: string): string[] {
     out.push("a terminal takes the keyboard on connect whether or not its pane is in focus");
   }
   const t = code(terminal);
-  if (!/onstatus\?\.\("connected"\);\s*if \(focusOnConnect\) term\.focus\(\);/.test(t)) {
+  // Both ways a terminal comes to have a session: it connected, or it took one
+  // over from another window (v1.3).
+  if (
+    !/onstatus\?\.\("connected"\);\s*if \(focusOnConnect\) term\.focus\(\);/.test(t) ||
+    !/onadopted\?\.\(\);\s*if \(focusOnConnect\) term\.focus\(\);/.test(t)
+  ) {
     out.push("Terminal.svelte focuses on connect without asking focusOnConnect");
   }
 
@@ -345,9 +353,15 @@ describe("centre layout guard — catches what it exists for", () => {
         terminal,
       ),
     ).toContain("a terminal takes the keyboard on connect whether or not its pane is in focus");
-    expect(
-      pageViolations(page, mutate(terminal, "if (focusOnConnect) term.focus();", "term.focus();")),
-    ).toContain("Terminal.svelte focuses on connect without asking focusOnConnect");
+    for (const reached of ['onstatus?.("connected");', "onadopted?.();"]) {
+      const guarded = new RegExp(
+        `(${reached.replace(/[.*+?^$()|[\]\\]/g, "\\$&")}\\s*)if \\(focusOnConnect\\) term\\.focus\\(\\);`,
+      );
+      expect(guarded.test(terminal), `the source no longer guards the focus after ${reached}`).toBe(true);
+      expect(
+        pageViolations(page, terminal.replace(guarded, "$1term.focus();")),
+      ).toContain("Terminal.svelte focuses on connect without asking focusOnConnect");
+    }
   });
 
   it("a dock panel wired to the active tab", () => {

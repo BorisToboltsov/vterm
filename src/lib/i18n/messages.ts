@@ -147,6 +147,26 @@ export const en = {
   "window.restore": "Restore down",
   "window.close": "Close",
   "window.exit": "Exit",
+  "window.closeWindow": "Close window",
+  "window.closeTitle": "Close this window?",
+  "window.closeConfirm": "Close window",
+  "ctx.moveToWindow": "Move to a new window",
+  "palette.moveTabToWindow": "Move tab to a new window",
+  "tab.dropToWindow": "new window",
+  "window.detachBlockedBroadcast":
+    "Leave synchronized input first — it lays its tabs out itself.",
+  "window.detachBlockedLastTab":
+    "This is the window's only tab — it is already in a window of its own.",
+  "window.detachBlockedNotConnected": "Only a connected tab can be moved to a new window.",
+  "window.detachBlockedSync":
+    "Wait for the comparison or sync to finish — it can't move with the tab.",
+  "window.detachBlockedTransfers": "Wait for this tab's file transfers to finish.",
+  "window.detachBlockedAi": "Wait for the assistant to finish its answer.",
+  "window.detachBlockedEditor":
+    "A file is still opening or being saved — try again in a moment.",
+  "window.detachFailed": "Couldn't open the tab in a new window — it stays here.",
+  "window.detachOverflow":
+    "The terminal is printing too fast to move it now — try again once the output settles.",
 
   // ── Server tree (left panel) ──
   "tree.servers": "Servers",
@@ -316,7 +336,7 @@ export const en = {
   "sync.apply": "Apply",
   "sync.applying": "Applying…",
   "sync.compareReadyBg": "Folder comparison finished: {n} changes. Open the sync dialog to review them.",
-  "sync.otherRunning": "Another tab is syncing — wait for it to finish.",
+  "sync.otherRunning": "Another sync is already running — wait for it to finish.",
   "sync.scanProgress": "Hashing… local: {local} files · server: {remote} files",
   "sync.filterLabel": "Show",
   "sync.filterAll": "All",
@@ -2110,6 +2130,27 @@ const ru: Record<MessageKey, string> = {
   "window.restore": "Восстановить",
   "window.close": "Закрыть",
   "window.exit": "Выход",
+  "window.closeWindow": "Закрыть окно",
+  "window.closeTitle": "Закрыть это окно?",
+  "window.closeConfirm": "Закрыть окно",
+  "ctx.moveToWindow": "В отдельное окно",
+  "palette.moveTabToWindow": "Вкладку — в отдельное окно",
+  "tab.dropToWindow": "в новое окно",
+  "window.detachBlockedBroadcast":
+    "Сначала выйдите из синхронного ввода — он раскладывает вкладки сам.",
+  "window.detachBlockedLastTab":
+    "Это единственная вкладка окна — она и так в отдельном окне.",
+  "window.detachBlockedNotConnected":
+    "В отдельное окно можно вынести только подключённую вкладку.",
+  "window.detachBlockedSync":
+    "Дождитесь конца сравнения или синхронизации — вместе с вкладкой они не переносятся.",
+  "window.detachBlockedTransfers": "Дождитесь окончания переносов файлов этой вкладки.",
+  "window.detachBlockedAi": "Дождитесь, пока ассистент закончит ответ.",
+  "window.detachBlockedEditor":
+    "Файл ещё открывается или сохраняется — повторите через мгновение.",
+  "window.detachFailed": "Не удалось открыть вкладку в новом окне — она осталась здесь.",
+  "window.detachOverflow":
+    "Терминал сейчас печатает слишком быстро — вынесите вкладку, когда вывод утихнет.",
 
   // ── Server tree ──
   "tree.servers": "Серверы",
@@ -2279,7 +2320,7 @@ const ru: Record<MessageKey, string> = {
   "sync.apply": "Применить",
   "sync.applying": "Применение…",
   "sync.compareReadyBg": "Сравнение папок готово: изменений — {n}. Откройте окно синхронизации, чтобы их просмотреть.",
-  "sync.otherRunning": "Идёт синхронизация на другой вкладке — дождитесь её окончания.",
+  "sync.otherRunning": "Уже идёт другая синхронизация — дождитесь её окончания.",
   "sync.scanProgress": "Подсчёт хэшей… локально: {local} файлов · на сервере: {remote} файлов",
   "sync.filterLabel": "Показать",
   "sync.filterAll": "Все",

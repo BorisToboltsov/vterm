@@ -139,6 +139,23 @@ export function clearChat(sessionId: string | undefined): void {
 }
 
 /** Drop a session's conversation entirely (its tab was closed). */
+/** The session's conversation as stored, or null when there is none yet. */
+export function peekChat(sessionId: string): SessionChat | null {
+  return aiChatState.map[sessionId] ?? null;
+}
+
+/**
+ * Take over the conversation of a tab moved here from another window (ADR 0017).
+ * A tab only moves while its chat is idle; the turn flags are reset regardless —
+ * a stream cannot be carried over, so nothing here may claim one is running.
+ */
+export function adoptChat(sessionId: string, chat: SessionChat): void {
+  aiChatState.map = {
+    ...aiChatState.map,
+    [sessionId]: { ...chat, streaming: false, dialogRunning: false, pending: null, ask: null },
+  };
+}
+
 export function removeChat(sessionId: string): void {
   stopStream(sessionId);
   if (!aiChatState.map[sessionId]) return;

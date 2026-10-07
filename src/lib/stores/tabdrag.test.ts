@@ -5,6 +5,7 @@ import {
   beginTabDrag,
   cancelTabDrag,
   consumeTabDragClick,
+  onTabReleasedOutside,
   tabDrag,
   tabDropAt,
 } from "./tabdrag.svelte";
@@ -102,6 +103,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cancelTabDrag();
+  onTabReleasedOutside(null);
   document.body.innerHTML = "";
 });
 
@@ -307,5 +309,84 @@ describe("dragging a tab", () => {
     expect(tabDrag.tab).toBeNull();
     move(690, 10);
     expect(tabDrag.tab).toBe(b);
+  });
+});
+
+describe("a tab let go of outside the window", () => {
+  // jsdom's window is 1024×768.
+  const releaseAt = (x: number, y: number, screenX: number, screenY: number) =>
+    window.dispatchEvent(
+      new PointerEvent("pointerup", { clientX: x, clientY: y, screenX, screenY, pointerId: 7 }),
+    );
+
+  it("is handed to the page, with where on the screen it was dropped", () => {
+    const moved = vi.fn();
+    onTabReleasedOutside(moved);
+    beginTabDrag(press(byId("tabA")), a);
+    move(40, 40);
+    at("bodyR");
+    move(900, 230);
+    expect(tabDrag.outside).toBe(false);
+    expect(tabDrag.over).not.toBeNull();
+    // Past the right edge: no pane to land in, only a window of its own.
+    move(1500, 230);
+    expect(tabDrag.outside).toBe(true);
+    expect(tabDrag.over).toBeNull();
+    expect(tabDrag.zone).toBeNull();
+    releaseAt(1500, 230, 2100, 400);
+    expect(moved).toHaveBeenCalledTimes(1);
+    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 });
+    // The layout here is not touched — the page moves the tab once it is taken.
+    expect(shape()).toEqual([[a, b], [c]]);
+    expect(tabDrag.tab).toBeNull();
+    expect(tabDrag.outside).toBe(false);
+    expect(consumeTabDragClick()).toBe(true);
+  });
+
+  it("coming back inside is an ordinary drop again", () => {
+    const moved = vi.fn();
+    onTabReleasedOutside(moved);
+    beginTabDrag(press(byId("tabA")), a);
+    move(40, 40);
+    move(-20, 40);
+    expect(tabDrag.outside).toBe(true);
+    at("stripR");
+    move(690, 10);
+    expect(tabDrag.outside).toBe(false);
+    releaseAt(690, 10, 0, 0);
+    expect(moved).not.toHaveBeenCalled();
+    expect(shape()).toEqual([[b], [c, a]]);
+  });
+
+  it("is decided by where the pointer was released, not by its last move", () => {
+    const moved = vi.fn();
+    onTabReleasedOutside(moved);
+    beginTabDrag(press(byId("tabA")), a);
+    at("stripR");
+    move(690, 10);
+    expect(tabDrag.over).not.toBeNull();
+    // The release itself is past the bottom edge.
+    releaseAt(690, 800, 690, 1000);
+    expect(moved).toHaveBeenCalledWith(a, { x: 690, y: 1000 });
+    expect(shape()).toEqual([[a, b], [c]]);
+  });
+
+  it("a press that never became a drag moves nothing", () => {
+    const moved = vi.fn();
+    onTabReleasedOutside(moved);
+    beginTabDrag(press(byId("tabA")), a);
+    releaseAt(-50, -50, 0, 0);
+    expect(moved).not.toHaveBeenCalled();
+  });
+
+  it("with nobody to hand it to, the drag just ends", () => {
+    beginTabDrag(press(byId("tabA")), a);
+    move(40, 40);
+    // A real page has no element under a point outside its window.
+    at(null);
+    move(1500, 230);
+    expect(tabDrag.outside).toBe(false);
+    releaseAt(1500, 230, 0, 0);
+    expect(shape()).toEqual([[a, b], [c]]);
   });
 });

@@ -69,7 +69,7 @@ describe("tab teardown guard", () => {
     // And that one call sits in the teardown function, not somewhere that merely
     // happens to be in the same file.
     const body = src.slice(src.indexOf("function closeTabFully"));
-    expect(body.slice(0, body.indexOf("}"))).toContain(`${alias}(`);
+    expect(body.slice(0, body.indexOf("\n  }"))).toContain(`${alias}(`);
   });
 
   it("the teardown drops every store keyed by the session id", () => {
@@ -82,8 +82,13 @@ describe("tab teardown guard", () => {
       "removeChat",
       "removeBroadcastMember",
       "removeDockState",
+      "removeSyncJob",
+      "clearRecording",
       "nginxConfigCache.delete",
       "delete termSelection",
+      "delete terminalCwd",
+      "delete followTerminal",
+      "delete localShellKind",
       "clearAuthPrompt",
     ]) {
       expect(fn).toContain(cleanup);

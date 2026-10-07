@@ -3,6 +3,7 @@
 //! SSH exec channel (no download); the diff itself is pure TS (`sync.ts`). This
 //! module owns the remote-hash shell command + parser and the apply step.
 
+use crate::appwin::WindowSink;
 use crate::error::{AppError, AppResult};
 use crate::sftp::{self, apply_eol, detect_eol, looks_binary, sha256_hex, TextFile, WriteResult};
 use crate::ssh::SshSession;
@@ -11,7 +12,6 @@ use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::AppHandle;
 
 /// Marker appended to a sudo command to confirm it succeeded (exit status isn't
 /// captured over the exec channel, so a wrong password / failure is detected by
@@ -406,9 +406,8 @@ pub struct ScanProgress<'a> {
     pub files: u64,
 }
 
-pub fn emit_scan(app: &AppHandle, id: &str, files: u64) {
-    use tauri::Emitter;
-    let _ = app.emit("sync://scan", ScanProgress { id, files });
+pub fn emit_scan(win: &WindowSink, id: &str, files: u64) {
+    win.emit("sync://scan", ScanProgress { id, files });
 }
 
 /// Printed by the remote hash script when `cd` into the folder (or reading it) fails.
@@ -623,7 +622,7 @@ pub fn sync_mirror_body(actions: &[SyncAction]) -> String {
 /// damage as the `SETSTAT` truncation fixed in 0.39.6. Stopping costs one more file;
 /// tearing costs the file.
 pub async fn apply(
-    app: &AppHandle,
+    win: &WindowSink,
     sftp: &SftpSession,
     local_root: &str,
     remote_root: &str,
@@ -643,25 +642,25 @@ pub async fn apply(
         match a.op.as_str() {
             "upload" => {
                 ensure_remote_dirs(sftp, &remote).await;
-                sftp::upload(app, id, sftp, &local_str, &remote, None).await?;
+                sftp::upload(win, id, sftp, &local_str, &remote, None).await?;
                 stats.uploaded += 1;
             }
             "download" => {
                 if let Some(parent) = local.parent() {
                     let _ = tokio::fs::create_dir_all(parent).await;
                 }
-                sftp::download(app, id, sftp, &remote, &local_str, None).await?;
+                sftp::download(win, id, sftp, &remote, &local_str, None).await?;
                 stats.downloaded += 1;
             }
             "deleteRemote" => {
                 let _ = sftp.remove_file(remote).await;
                 stats.deleted += 1;
-                sftp::emit_done(app, &id, &a.path, "upload");
+                sftp::emit_done(win, &id, &a.path, "upload");
             }
             "deleteLocal" => {
                 let _ = tokio::fs::remove_file(&local).await;
                 stats.deleted += 1;
-                sftp::emit_done(app, &id, &a.path, "download");
+                sftp::emit_done(win, &id, &a.path, "download");
             }
             _ => {} // conflict / unknown → skip
         }

@@ -1,6 +1,7 @@
 //! SFTP operations (listing, mkdir, delete, upload/download with progress)
 //! on top of an open `SftpSession`.
 
+use crate::appwin::WindowSink;
 use crate::error::{AppError, AppResult};
 use crate::textenc;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -12,7 +13,6 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 const CHUNK: usize = 32 * 1024;
@@ -86,8 +86,8 @@ struct Progress {
 /// — without this the plan row would sit at "queued" forever while the file is
 /// long gone. Same channel and same DTO as a real transfer, so the shared store,
 /// the SFTP panel and the status bar need no special case.
-pub fn emit_done(app: &AppHandle, id: &str, name: &str, direction: &'static str) {
-    let _ = app.emit(
+pub fn emit_done(win: &WindowSink, id: &str, name: &str, direction: &'static str) {
+    win.emit(
         "sftp://progress",
         Progress {
             id: id.to_string(),
@@ -539,18 +539,18 @@ async fn copy_recursive(sftp: &SftpSession, from: &str, to: &str) -> AppResult<(
 /// same shape as the editor's save ([`write_text`]). `cancel` (the transfer's flag
 /// in the shared cancel map) is checked between chunks.
 pub async fn upload(
-    app: &AppHandle,
+    win: &WindowSink,
     id: String,
     sftp: &SftpSession,
     local: &str,
     remote: &str,
     cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
-    upload_staged(Some(app), &id, sftp, local, remote, cancel).await
+    upload_staged(Some(win), &id, sftp, local, remote, cancel).await
 }
 
 async fn upload_staged(
-    app: Option<&AppHandle>,
+    win: Option<&WindowSink>,
     id: &str,
     sftp: &SftpSession,
     local: &str,
@@ -569,7 +569,7 @@ async fn upload_staged(
         .await
         .map_err(|e| format!("create {remote}: {e}"))?;
     let t = Transfer {
-        app,
+        win,
         id,
         name: &name,
         direction: "upload",
@@ -609,19 +609,19 @@ async fn upload_staged(
 /// Download a single remote file to `local` (staged like [`upload`]; `cancel` is
 /// checked between chunks).
 pub async fn download(
-    app: &AppHandle,
+    win: &WindowSink,
     id: String,
     sftp: &SftpSession,
     remote: &str,
     local: &str,
     cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
-    download_file(Some(app), &id, sftp, remote, local, true, cancel).await
+    download_file(Some(win), &id, sftp, remote, local, true, cancel).await
 }
 
 /// Download a remote directory tree into `local_parent`/<dir name>.
 pub async fn download_dir(
-    app: &AppHandle,
+    win: &WindowSink,
     id: String,
     sftp: &SftpSession,
     remote_root: &str,
@@ -681,7 +681,7 @@ pub async fn download_dir(
             break;
         }
         Transfer {
-            app: Some(app),
+            win: Some(win),
             id: &id,
             name: &base_name(remote),
             direction: "download",
@@ -690,14 +690,14 @@ pub async fn download_dir(
         .emit(done, false, true);
         // The flag also reaches inside the file: staging means a large file cut
         // mid-stream leaves nothing behind, so there is no reason to finish it.
-        match download_file(Some(app), &id, sftp, remote, local, false, Some(&cancel)).await {
+        match download_file(Some(win), &id, sftp, remote, local, false, Some(&cancel)).await {
             Err(AppError::Cancelled) => break,
             other => other?,
         }
         done += 1;
     }
     Transfer {
-        app: Some(app),
+        win: Some(win),
         id: &id,
         name: &folder,
         direction: "download",
@@ -708,7 +708,7 @@ pub async fn download_dir(
 }
 
 async fn download_file(
-    app: Option<&AppHandle>,
+    win: Option<&WindowSink>,
     id: &str,
     sftp: &SftpSession,
     remote: &str,
@@ -733,7 +733,7 @@ async fn download_file(
         .await
         .map_err(|e| format!("create {local}: {e}"))?;
     let t = Transfer {
-        app,
+        win,
         id,
         name: &name,
         direction: "download",
@@ -762,10 +762,10 @@ async fn download_file(
 }
 
 /// The invariant descriptor of one transfer, shared by the copy loop and its
-/// progress events: `app`/`id`/`name`/`direction`/`total` don't change mid-copy.
+/// progress events: `win`/`id`/`name`/`direction`/`total` don't change mid-copy.
 struct Transfer<'a> {
     /// `None` only in the live tests, which have no Tauri runtime to emit into.
-    app: Option<&'a AppHandle>,
+    win: Option<&'a WindowSink>,
     id: &'a str,
     name: &'a str,
     direction: &'static str,
@@ -775,8 +775,8 @@ struct Transfer<'a> {
 impl Transfer<'_> {
     /// Emit one `sftp://progress` event for this transfer.
     fn emit(&self, transferred: u64, done: bool, is_folder: bool) {
-        let Some(app) = self.app else { return };
-        let _ = app.emit(
+        let Some(win) = self.win else { return };
+        win.emit(
             "sftp://progress",
             Progress {
                 id: self.id.to_string(),

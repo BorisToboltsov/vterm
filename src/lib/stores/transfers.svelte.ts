@@ -20,6 +20,27 @@ export const transfersState = $state<{
 /** Active (not-yet-finished) transfers, plus those still in their linger window. */
 export const transferList = (): SftpProgress[] => Object.values(transfersState.map);
 
+// Which session each running transfer belongs to. The progress event does not
+// say, and a tab that is still transferring cannot be moved to another window
+// (ADR 0017): the call awaiting the transfer lives in this window's memory.
+// Reactive, so a "move to window" command follows a transfer ending.
+const owners = $state<Record<string, string>>({});
+
+/** Transfer `id` is about to start on `sessionId`. */
+export function trackTransfer(id: string, sessionId: string): void {
+  owners[id] = sessionId;
+}
+
+/** The call that ran transfer `id` returned — done, failed or cancelled. */
+export function untrackTransfer(id: string): void {
+  delete owners[id];
+}
+
+/** How many transfers of `sessionId` are still running. */
+export function sessionTransfers(sessionId: string): number {
+  return Object.values(owners).filter((owner) => owner === sessionId).length;
+}
+
 // Pending "remove after done" timers, keyed by transfer id.
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 // Sliding rate-sample history, keyed by transfer id (see transfer.ts).
@@ -79,6 +100,7 @@ export function clearTransfers(): void {
   for (const t of timers.values()) clearTimeout(t);
   timers.clear();
   samples.clear();
+  for (const id of Object.keys(owners)) delete owners[id];
   transfersState.map = {};
   transfersState.rates = {};
 }
