@@ -15,6 +15,7 @@ import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locale
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { isRightClickAction, type RightClickAction } from "./termmouse";
+import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "./tabrestore";
 import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
 import { sanitizeHiddenPanels, type PanelId } from "./docklayout";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "./ai";
@@ -171,6 +172,8 @@ export interface Settings {
   statusPollInterval: number; // seconds
   // Reconnect
   autoReconnect: boolean;
+  /** What happens to the tabs of the previous launch (tabrestore.ts, ADR 0019). */
+  restoreTabs: RestoreMode;
   // Logs & text (Phase 10)
   smartLogs: SmartLogs;
   highlightRules: HighlightRule[];
@@ -323,6 +326,7 @@ const DEFAULTS: Settings = {
   },
   statusPollInterval: 5,
   autoReconnect: false,
+  restoreTabs: DEFAULT_RESTORE_MODE,
   smartLogs: {
     enabled: true,
   },
@@ -460,6 +464,7 @@ function load(): Settings {
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
       prodTint: sanitizeProdTint(raw.prodTint),
+      restoreTabs: isRestoreMode(raw.restoreTabs) ? raw.restoreTabs : DEFAULTS.restoreTabs,
     };
   } catch {
     return {
@@ -557,6 +562,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
   if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
+  if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);

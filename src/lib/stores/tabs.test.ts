@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   activateTab,
   closeTab,
+  connectTabWith,
   tabsForServer,
   dotClass,
   dropTab,
@@ -18,16 +19,22 @@ import {
   nextTabIndex,
   openTab,
   openLocalTab,
+  openRestored,
   reconnectTab,
   resetTabs,
   serverDots,
   setSplitRatio,
   setTabStatus,
+  setWaiting,
+  NOT_CONNECTED,
   splitTabOff,
   statusLabel,
   tabsState,
+  tilePanes,
+  untilePanes,
 } from "./tabs.svelte";
-import { layoutProblems, panes } from "../splitlayout";
+import { layoutProblems, panes, savedLayout } from "../splitlayout";
+import { savedTab, type SavedTab, type WaitReason } from "../tabrestore";
 import { settings } from "../settings.svelte";
 
 beforeEach(resetTabs);
@@ -361,5 +368,232 @@ describe("nextTabIndex", () => {
     expect(nextTabIndex(0, 3, "Enter")).toBeNull();
     expect(nextTabIndex(0, 3, "a")).toBeNull();
     expect(nextTabIndex(0, 0, "ArrowRight")).toBeNull();
+  });
+});
+
+// ── Tabs of the previous launch (v1.6, ADR 0019) ─────────────────────────────
+
+describe("tabs that come back from the previous launch", () => {
+  /** What a window with tabs `a b | c` would have saved, then forgotten. */
+  function saved(): { tabs: SavedTab[]; layout: unknown } {
+    const a = openTab("srv", "A", "typed-secret", true);
+    const b = openLocalTab();
+    const c = openTab("srv", "C", null, false);
+    splitTabOff(c, tabsState.center.focus, "right");
+    activateTab(a);
+    const out = {
+      tabs: tabsState.list.map(savedTab),
+      layout: JSON.parse(JSON.stringify(savedLayout(tabsState.center))),
+    };
+    resetTabs();
+    return out;
+  }
+  const all = (reason: WaitReason | null) => () => reason;
+
+  it("stand where they stood, and wait", () => {
+    const s = saved();
+    const [a, b, c] = s.tabs.map((t) => t.id);
+    openRestored(s.tabs, s.layout, all("manual"));
+    expect(shape()).toEqual([[a, b], [c]]);
+    expect(tabsState.activeId).toBe(a);
+    expect(sound()).toEqual([]);
+    for (const tab of tabsState.list) {
+      expect(tab.waiting).toBe("manual");
+      expect(tab.status).toBe(NOT_CONNECTED);
+      expect(tab.secret).toBeNull();
+      expect(tab.remember).toBe(false);
+    }
+  });
+
+  it("a waiting tab is not a live session for anything that asks", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, all("prod"));
+    const tab = tabsState.list[0];
+    expect(isLive(tab.status)).toBe(false);
+    expect(isMonitorable(tab)).toBe(false);
+    expect(dockConnection(tab.status)).toBe("offline");
+    expect(dotClass(tab.status)).toBe("bg-muted");
+    settings.language = "en";
+    expect(localizedStatus(tab.status)).toBe("Not connected");
+  });
+
+  it("a tab that may open at once comes back as any new tab does", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, (tab) => (tab.kind === "local" ? null : "checking"));
+    const local = tabsState.list.find((t) => t.kind === "local");
+    expect(local?.waiting).toBeUndefined();
+    expect(local?.status).toBe("connecting");
+    expect(tabsState.list.filter((t) => t.waiting === "checking")).toHaveLength(2);
+  });
+
+  it("a local tab is titled as a local tab, whatever was saved", () => {
+    openRestored([{ id: "l1", kind: "local", serverId: "", alias: "" }], null, all("manual"));
+    expect(findTab("l1")?.alias).toBe("Local shell");
+  });
+
+  it("a container tab keeps what it enters", () => {
+    const attach = { kind: "pod" as const, name: "api-0", argv: ["kubectl", "exec", "-it", "api-0", "--", "sh"] };
+    openRestored([{ id: "k1", kind: "ssh", serverId: "srv", alias: "A", attach }], null, all("attach"));
+    expect(findTab("k1")?.attach).toEqual(attach);
+  });
+
+  it("opening its session is a reconnect: the wait ends, the terminal is mounted anew", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, all("manual"));
+    const id = s.tabs[0].id;
+    reconnectTab(id);
+    const tab = findTab(id);
+    expect(tab?.waiting).toBeUndefined();
+    expect(tab?.status).toBe("Connecting…");
+    expect(tab?.gen).toBe(1);
+    // The others go on waiting, and nothing moved.
+    expect(tabsState.list.filter((t) => t.waiting)).toHaveLength(2);
+    expect(shape()).toEqual([[s.tabs[0].id, s.tabs[1].id], [s.tabs[2].id]]);
+  });
+
+  it("a secret typed for it connects it where it stands", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, all("secret"));
+    const id = s.tabs[2].id;
+    const before = shape();
+    connectTabWith(id, "typed", true);
+    const tab = findTab(id);
+    expect(tab).toMatchObject({ secret: "typed", remember: true, status: "Connecting…", gen: 1 });
+    expect(tab?.waiting).toBeUndefined();
+    expect(shape()).toEqual(before);
+    expect(tabsState.list).toHaveLength(3);
+    connectTabWith("nobody", "x", false);
+    expect(tabsState.list).toHaveLength(3);
+  });
+
+  it("the reason a tab waits can change, but only while it waits", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, all("checking"));
+    const [a, b] = s.tabs.map((t) => t.id);
+    setWaiting(a, "secret");
+    expect(findTab(a)?.waiting).toBe("secret");
+    reconnectTab(b);
+    setWaiting(b, "prod");
+    expect(findTab(b)?.waiting).toBeUndefined();
+    const list = tabsState.list;
+    setWaiting(a, "secret");
+    expect(tabsState.list).toBe(list);
+  });
+
+  it("tabs opened before the restore ran are kept and stay on screen", () => {
+    const s = saved();
+    const early = openLocalTab();
+    openRestored(s.tabs, s.layout, all("manual"));
+    expect(tabsState.list).toHaveLength(4);
+    expect(tabsState.activeId).toBe(early);
+    expect(sound()).toEqual([]);
+    // Restoring again brings nothing twice.
+    openRestored(s.tabs, s.layout, all("manual"));
+    expect(tabsState.list).toHaveLength(4);
+  });
+
+  it("a saved layout that is junk still gives every tab a pane", () => {
+    const s = saved();
+    openRestored(s.tabs, { root: "nope", focus: 3 }, all("manual"));
+    expect(shape()).toEqual([s.tabs.map((t) => t.id)]);
+    expect(sound()).toEqual([]);
+  });
+
+  it("closing a waiting tab takes it out like any other", () => {
+    const s = saved();
+    openRestored(s.tabs, s.layout, all("manual"));
+    closeTab(s.tabs[2].id);
+    expect(shape()).toEqual([[s.tabs[0].id, s.tabs[1].id]]);
+    expect(sound()).toEqual([]);
+  });
+});
+
+// ── A grid of panes with one command, and the way back (v1.9, ADR 0022) ──────
+
+describe("tiling tabs into a grid and coming back", () => {
+  /** `[a b] | [c d]`, focus on the right pane showing `d`. */
+  function fourInTwoPanes(): string[] {
+    const ids = [openLocalTab(), openLocalTab(), openLocalTab(), openLocalTab()];
+    const left = tabsState.center.focus;
+    splitTabOff(ids[2], left, "right");
+    moveTabTo(ids[3], tabsState.center.focus);
+    return ids;
+  }
+  const shown = () => panes(tabsState.center).map((p) => p.active);
+
+  it("gives each asked-for tab a pane of its own; the rest wait in the first", () => {
+    const [a, b, c, d] = fourInTwoPanes();
+    tilePanes([a, c, d], 2);
+    expect(shown()).toEqual([a, c, d]);
+    expect(shape()).toEqual([[a, b], [c], [d]]);
+    expect(sound()).toEqual([]);
+    expect(tabsState.tiled).toBe(true);
+    // The tab in focus kept the focus.
+    expect(tabsState.activeId).toBe(d);
+  });
+
+  it("coming back restores the layout as it was, and the tab in focus", () => {
+    const [a, b, c, d] = fourInTwoPanes();
+    const before = shape();
+    tilePanes([a, b, c, d], 2);
+    activateTab(b);
+    untilePanes();
+    expect(shape()).toEqual(before);
+    expect(tabsState.activeId).toBe(b);
+    expect(tabsState.tiled).toBe(false);
+    expect(sound()).toEqual([]);
+  });
+
+  it("a second grid over the first still returns to the layout before both", () => {
+    const [a, b, c, d] = fourInTwoPanes();
+    const before = shape();
+    tilePanes([a, b, c, d], 2);
+    tilePanes([a, b], 2);
+    untilePanes();
+    expect(shape()).toEqual(before);
+  });
+
+  it("tabs closed meanwhile are left out, tabs opened meanwhile get a pane", () => {
+    const [a, b, c, d] = fourInTwoPanes();
+    tilePanes([a, b, c, d], 2);
+    closeTab(c);
+    const fresh = openLocalTab();
+    untilePanes();
+    expect(sound()).toEqual([]);
+    const all = shape().flat();
+    expect(all).not.toContain(c);
+    expect(all).toContain(fresh);
+    // What survived stands where it stood: `d` alone on the right, `a b` on the left.
+    expect(shape().find((tabs) => tabs.includes(d))).not.toContain(a);
+    expect(shape().find((tabs) => tabs.includes(a))).toContain(b);
+  });
+
+  it("with nothing remembered, coming back is all tabs in one pane", () => {
+    const ids = fourInTwoPanes();
+    expect(tabsState.tiled).toBe(false);
+    untilePanes();
+    expect(shape()).toEqual([ids]);
+  });
+
+  it("joining the panes by hand forgets the layout before the grid", () => {
+    const [a, b, c, d] = fourInTwoPanes();
+    tilePanes([a, b, c, d], 2);
+    joinPanes();
+    expect(tabsState.tiled).toBe(false);
+    untilePanes();
+    expect(panes(tabsState.center)).toHaveLength(1);
+  });
+
+  it("a grid that changes nothing remembers nothing", () => {
+    fourInTwoPanes();
+    tilePanes(["nobody"], 2);
+    expect(tabsState.tiled).toBe(false);
+  });
+
+  it("closing everything forgets the grid", () => {
+    const ids = fourInTwoPanes();
+    tilePanes(ids, 2);
+    resetTabs();
+    expect(tabsState.tiled).toBe(false);
   });
 });

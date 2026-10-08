@@ -10,30 +10,43 @@
 // status bar, the assistant's context — reads `tabsState.activeId`; whoever wants
 // to change it calls `activateTab` / `focusPane`.
 //
+// **Every tab is a session.** For one version (1.8) an open file was a tab of
+// the centre too; since v1.11 it is shown inside its connection again (ADR
+// 0024), and what a connection's own area is divided into — the terminal, its
+// files — is that connection's business (`./workspaces.svelte.ts`).
+//
 // The layout is only ever replaced with a result of the pure model
-// (`centerlayout.guard`). It is not persisted: tabs are not restored on restart,
-// so there is nothing for a saved centre to hold.
+// (`centerlayout.guard`). What of it is written down, and how the tabs of the
+// previous launch come back, is `./tabrestore.svelte.ts` (ADR 0019); this store
+// only takes them in (`openRestored`).
 
 import { t } from "../i18n";
 import {
   activateTab as activateTabIn,
   activeTab as activeTabIn,
   addTab,
+  addTabBehind,
   applyDrop,
   emptyLayout,
   focusPane as focusPaneIn,
   joinPanes as joinPanesIn,
+  loadLayout,
   moveTab as moveTabIn,
   placeTab,
   removeTab,
+  savedLayout,
   setRatio,
   splitWithTab,
+  tileTabs as tileTabsIn,
   type CenterLayout,
+  type SavedLayout,
   type Edge,
+  type Beside,
   type TabDrop,
 } from "../splitlayout";
 import type { TabAttach } from "../tabattach";
 import type { TermSnapshot } from "../tabhandoff";
+import type { SavedTab, WaitReason } from "../tabrestore";
 
 export interface Tab {
   sessionId: string;
@@ -60,7 +73,17 @@ export interface Tab {
    * ordinary one.
    */
   adopt?: TermSnapshot;
+  /**
+   * Set on a tab that came back from the previous launch and has not opened its
+   * session yet (ADR 0019), with the reason it waits. Its terminal is mounted
+   * but connects to nothing; `reconnectTab` / `connectTabWith` open the session
+   * and clear this.
+   */
+  waiting?: WaitReason;
 }
+
+/** Status of a tab whose session was never opened in this launch (see `Tab.waiting`). */
+export const NOT_CONNECTED = "Not connected";
 
 export type TabStatus = "connecting" | "connected" | "closed" | "error";
 
@@ -236,6 +259,9 @@ export function nextTabIndex(current: number, len: number, key: string): number 
 let list = $state<Tab[]>([]);
 // Raw: the tree is replaced whole by the pure model, never edited in place.
 let center = $state.raw<CenterLayout>(emptyLayout());
+// The layout as it was before tabs were tiled into a grid (v1.9) — what "back to
+// my layout" returns to. Null while there is nothing to return to.
+let beforeTile = $state.raw<SavedLayout | null>(null);
 
 export const tabsState = {
   /**
@@ -249,9 +275,13 @@ export const tabsState = {
   get center(): CenterLayout {
     return center;
   },
-  /** The session in focus — the tab shown by the focused pane; null for an empty pane. */
+  /** The session in focus — the tab the focused pane shows; null for an empty pane. */
   get activeId(): string | null {
     return activeTabIn(center);
+  },
+  /** Tabs were tiled into a grid, and the layout before that can be returned to. */
+  get tiled(): boolean {
+    return beforeTile !== null;
   },
 };
 
@@ -259,6 +289,7 @@ export const tabsState = {
 export function resetTabs(): void {
   list = [];
   center = emptyLayout();
+  beforeTile = null;
 }
 
 export const findTab = (sessionId: string | null): Tab | null =>
@@ -312,10 +343,24 @@ export function openLocalTab(attach?: TabAttach): string {
  * focused pane. Its session id, status and credentials are the ones it had;
  * `terminal` is what its terminal restores before taking the session over.
  * A tab that is already here is left alone.
+ *
+ * `beside` — the tab came as part of a pane that moves whole (v1.10), after
+ * the tab that pane showed: it takes its place in that tab's pane and is not
+ * shown.
  */
-export function adoptTab(tab: Tab, terminal: TermSnapshot, drop: TabDrop | null = null): void {
+export function adoptTab(
+  tab: Tab,
+  terminal: TermSnapshot,
+  drop: TabDrop | null = null,
+  beside: { tab: string; where: Beside } | null = null,
+): void {
   if (list.some((t) => t.sessionId === tab.sessionId)) return;
   list = [...list, { ...tab, gen: 0, adopt: terminal }];
+  if (beside) {
+    // It came with its pane's first tab (v1.10) and stands next to it, unseen.
+    center = addTabBehind(center, tab.sessionId, beside.tab, beside.where);
+    return;
+  }
   center = placeTab(center, tab.sessionId, drop);
 }
 
@@ -347,14 +392,74 @@ export function closeTab(sessionId: string): void {
   center = removeTab(center, sessionId);
 }
 
-/** Re-open a tab's connection in place (reuses its credentials). */
+/**
+ * Re-open a tab's connection in place (reuses its credentials). This is also
+ * how a tab that came back from the previous launch opens its session.
+ */
 export function reconnectTab(sessionId: string): void {
   list = list.map((t) => {
     if (t.sessionId !== sessionId) return t;
     // A fresh connection, even for a tab that came from another window.
-    const { adopt: _stale, ...rest } = t;
+    const { adopt: _stale, waiting: _waited, ...rest } = t;
     return { ...rest, status: "Connecting…", gen: t.gen + 1 };
   });
+}
+
+/**
+ * Connect a tab in place with a secret that was just typed for it — a restored
+ * tab whose server asks for a password stays in its pane instead of being
+ * replaced by a new tab somewhere else.
+ */
+export function connectTabWith(sessionId: string, secret: string, remember: boolean): void {
+  if (!list.some((t) => t.sessionId === sessionId)) return;
+  list = list.map((t) => (t.sessionId === sessionId ? { ...t, secret, remember } : t));
+  reconnectTab(sessionId);
+}
+
+/**
+ * Bring back the tabs of the previous launch (ADR 0019), in the layout they
+ * stood in. `reasonOf` says why a tab waits for its button, or null when its
+ * session may be opened at once. Nothing here connects: a waiting tab's
+ * terminal mounts idle, the others connect when they mount, as any new tab.
+ *
+ * Tabs opened before this ran (a file opened with the app at launch) are kept:
+ * they join the pane in focus and stay on screen.
+ */
+export function openRestored(
+  saved: readonly SavedTab[],
+  layout: unknown,
+  reasonOf: (tab: SavedTab) => WaitReason | null,
+): void {
+  const have = new Set(list.map((t) => t.sessionId));
+  const fresh = saved
+    .filter((s) => !have.has(s.id))
+    .map((s): Tab => {
+      const waiting = reasonOf(s);
+      const tab: Tab = {
+        sessionId: s.id,
+        kind: s.kind,
+        serverId: s.serverId,
+        alias: s.kind === "local" ? "Local shell" : s.alias,
+        secret: null,
+        remember: false,
+        status: waiting === null ? "connecting" : NOT_CONNECTED,
+        gen: 0,
+      };
+      if (s.attach) tab.attach = s.attach;
+      if (waiting !== null) tab.waiting = waiting;
+      return tab;
+    });
+  if (fresh.length === 0) return;
+  const shown = activeTabIn(center);
+  list = [...fresh, ...list];
+  center = loadLayout(layout, list.map((t) => t.sessionId));
+  if (shown !== null) center = activateTabIn(center, shown);
+}
+
+/** Change why a restored tab waits (it was checked, and cannot open by itself). */
+export function setWaiting(sessionId: string, reason: WaitReason): void {
+  if (!list.some((t) => t.sessionId === sessionId && t.waiting && t.waiting !== reason)) return;
+  list = list.map((t) => (t.sessionId === sessionId ? { ...t, waiting: reason } : t));
 }
 
 /** Set a tab's status from a raw status + detail. */
@@ -396,7 +501,41 @@ export function splitTabOff(sessionId: string, paneId: string, edge: Edge): void
 
 /** Undo every split: all tabs back in one pane. */
 export function joinPanes(): void {
+  // The user laid the centre out anew: there is no "before the grid" to go back to.
+  beforeTile = null;
   center = joinPanesIn(center);
+}
+
+/**
+ * Lay `tabs` out as a grid of panes, `cols` to a row, with one command (v1.9);
+ * every other tab joins the first pane. The layout as it was is remembered, so
+ * that `untilePanes` can bring it back — the grid is a view one takes for a
+ * while (to watch several servers answer one command), not a rearrangement to
+ * undo by hand. A second grid over the first keeps the original to return to.
+ */
+export function tilePanes(tabs: readonly string[], cols: number): void {
+  const before = center;
+  center = tileTabsIn(center, tabs, cols);
+  if (center !== before && beforeTile === null) beforeTile = savedLayout(before);
+}
+
+/**
+ * Back from the grid: the layout as it was before `tilePanes`, rebuilt against
+ * the tabs open now (some were closed since, others opened — `loadLayout` keeps
+ * the first out and gives the second a pane). With nothing remembered, all tabs
+ * go into one pane. The tab in focus stays in focus.
+ */
+export function untilePanes(): void {
+  const saved = beforeTile;
+  beforeTile = null;
+  if (saved === null) {
+    center = joinPanesIn(center);
+    return;
+  }
+  const shown = activeTabIn(center);
+  const all = list.map((t) => t.sessionId);
+  center = loadLayout(saved, all);
+  if (shown !== null) center = activateTabIn(center, shown);
 }
 
 /** Resize the two halves of a split. */

@@ -9,6 +9,7 @@ vi.mock("./api", () => ({
 
 import GitPanel from "./GitPanel.svelte";
 import { removeDockState, setDockCwd } from "./stores/dockstate.svelte";
+import { panelSplits, resetPanelShares } from "./stores/panelsplit.svelte";
 
 const ok = (stdout = "") => ({ stdout, stderr: "", exitCode: 0 });
 
@@ -119,5 +120,114 @@ describe("GitPanel directory (v1.0.35)", () => {
     });
     await screen.findByRole("button", { name: "Pull" });
     expect(screen.getByTestId("git-follow-terminal").getAttribute("aria-pressed")).toBe("true");
+  });
+});
+
+// ── The wide layout (v1.7) ───────────────────────────────────────────────────
+
+describe("GitPanel in a wide container", () => {
+  /** Give the panel a width and let its observer see it (jsdom has no layout). */
+  async function resize(width: number) {
+    const root = document.querySelector<HTMLElement>("[data-wide]")!;
+    Object.defineProperty(root, "clientWidth", { configurable: true, value: width });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    // Whichever observer watches the panel: the others see no change.
+    for (const o of observers) o.cb([]);
+    await waitFor(() => expect(root.dataset.wide).toBe(String(width >= 768)));
+  }
+  const subTabs = () =>
+    [...document.querySelectorAll("[data-testid^='git-subtab-']")].map((e) =>
+      (e as HTMLElement).dataset.testid?.replace("git-subtab-", ""),
+    );
+  const columns = () =>
+    [...document.querySelectorAll("[data-testid^='git-column-']")].map((e) =>
+      (e as HTMLElement).dataset.testid?.replace("git-column-", ""),
+    );
+
+  it("a narrow dock shows one view at a time, behind three sub-tabs", async () => {
+    await mount();
+    expect(subTabs()).toEqual(["graph", "changes", "branches"]);
+    expect(columns()).toEqual(["changes"]);
+    await fireEvent.click(screen.getByTestId("git-subtab-graph"));
+    expect(columns()).toEqual(["graph"]);
+  });
+
+  it("wide: the history stands beside the changes and is no longer a tab", async () => {
+    await mount();
+    await resize(1200);
+    expect(subTabs()).toEqual(["changes", "branches"]);
+    expect(columns()).toEqual(["changes", "graph"]);
+    // The sub-tabs join the toolbar row.
+    expect(screen.getByTestId("git-subtabs-wide")).toContainElement(screen.getByTestId("git-subtab-changes"));
+    expect(screen.getByTestId("git-subtab-changes")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("wide: the border between the two columns is dragged; narrow has none", async () => {
+    resetPanelShares();
+    await mount();
+    expect(screen.queryByTestId("panel-divider")).toBeNull();
+    expect(screen.getByTestId("git-column-changes").style.width).toBe("");
+    await resize(1200);
+    const left = screen.getByTestId("git-column-changes");
+    const divider = screen.getByTestId("panel-divider");
+    expect(divider).toHaveAttribute("data-split", "git");
+    expect(divider.previousElementSibling).toBe(left);
+    expect(divider.nextElementSibling).toBe(screen.getByTestId("git-column-graph"));
+    // The history starts as the wider one.
+    expect(left.style.width).toBe("40%");
+
+    const row = left.parentElement!;
+    Object.defineProperty(row, "clientWidth", { configurable: true, value: 1000 });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const o of observers) o.cb([{ target: row }]);
+    divider.setPointerCapture = vi.fn();
+    divider.releasePointerCapture = vi.fn();
+    await fireEvent.pointerDown(divider, { pointerId: 1, clientX: 400, clientY: 10 });
+    await fireEvent.pointerMove(divider, { pointerId: 1, clientX: 550, clientY: 10 });
+    await fireEvent.pointerUp(divider, { pointerId: 1, clientX: 550, clientY: 10 });
+    expect(panelSplits.shares.git).toBeCloseTo(0.55);
+    expect(left.style.width).toBe("55%");
+    // The branches take the same column, at the same width.
+    await fireEvent.click(screen.getByTestId("git-subtab-branches"));
+    expect(screen.getByTestId("git-column-branches").style.width).toBe("55%");
+    // Narrow again: one view, the whole width, no border.
+    await resize(400);
+    expect(screen.queryByTestId("panel-divider")).toBeNull();
+    expect(screen.getByTestId("git-column-branches").style.width).toBe("");
+    resetPanelShares();
+  });
+
+  it("wide: branches take the left column, the history stays", async () => {
+    await mount();
+    await resize(1200);
+    await fireEvent.click(screen.getByTestId("git-subtab-branches"));
+    expect(columns()).toEqual(["branches", "graph"]);
+    expect(screen.getByTestId("git-subtab-branches")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("a panel left on the history shows changes beside it when wide — and the history again when narrow", async () => {
+    await mount();
+    await fireEvent.click(screen.getByTestId("git-subtab-graph"));
+    await resize(1200);
+    expect(columns()).toEqual(["changes", "graph"]);
+    expect(screen.getByTestId("git-subtab-changes")).toHaveAttribute("aria-current", "true");
+    await resize(400);
+    expect(subTabs()).toEqual(["graph", "changes", "branches"]);
+    expect(columns()).toEqual(["graph"]);
+    expect(screen.getByTestId("git-subtab-graph")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("widening the panel does not ask git for anything again", async () => {
+    await mount();
+    await waitFor(() => expect(calls("log")).toHaveLength(1));
+    await resize(1200);
+    await resize(400);
+    await resize(1200);
+    expect(calls("log")).toHaveLength(1);
+    expect(calls("status")).toHaveLength(1);
   });
 });

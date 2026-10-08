@@ -22,7 +22,7 @@ import type { SessionChat } from "./stores/aichat.svelte";
 
 /** Bumped when the packet's shape changes. Both windows run the same build, so
  *  a mismatch is not a migration case — the packet is refused. */
-export const PACKET_VERSION = 1;
+export const PACKET_VERSION = 4;
 
 /** A terminal's screen, scrollback and modes, as `@xterm/addon-serialize` writes them. */
 export interface TermSnapshot {
@@ -51,9 +51,24 @@ export interface PageSessionState {
   recordingPaused: boolean;
 }
 
+/**
+ * Where a tab stands in the pane it travels with (v1.10). A pane moves as one
+ * handoff per tab; the first to go is the tab the pane showed, and it opens the
+ * pane in the other window. Every other tab says where it stood against that
+ * one, so the pane arrives in its order and showing what it showed.
+ */
+export interface PaneSeat {
+  /** The pane's first arrival, already in the other window; `null` for that tab itself. */
+  lead: string | null;
+  /** It stood before the lead in the strip and goes right before it; otherwise to the pane's end. */
+  before: boolean;
+}
+
 export interface TabPacket {
   v: typeof PACKET_VERSION;
   tab: Tab;
+  /** Set when the tab travels as part of a pane; `null` when it travels alone. */
+  seat: PaneSeat | null;
   terminal: TermSnapshot;
   workspace: Workspace | null;
   chat: SessionChat | null;
@@ -90,12 +105,16 @@ export function parsePacket(raw: string | null): TabPacket | null {
   if (!positiveInt(terminal.cols) || !positiveInt(terminal.rows)) return null;
   if (!Array.isArray(terminal.commands)) return null;
   if (!isRecord(page)) return null;
+  const { seat } = value;
+  if (seat !== null) {
+    if (!isRecord(seat) || typeof seat.before !== "boolean") return null;
+    if (seat.lead !== null && (typeof seat.lead !== "string" || !seat.lead)) return null;
+  }
   return value as unknown as TabPacket;
 }
 
 /** Why a tab cannot be moved out right now. */
 export type DetachBlock =
-  | "broadcast"
   | "lastTab"
   | "notConnected"
   | "sync"
@@ -109,8 +128,6 @@ export interface DetachState {
   mainWindow: boolean;
   /** Tabs open in this window. */
   tabs: number;
-  /** Broadcast (synchronous input) mode is on — it lays its members out itself. */
-  broadcast: boolean;
   /** The tab's session is connected. */
   connected: boolean;
   /** Its sync job is comparing or applying. */
@@ -135,7 +152,6 @@ export interface DetachState {
  * session, then work in flight.
  */
 export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock | null {
-  if (s.broadcast) return "broadcast";
   // A secondary window exists for its tabs: moving its only one out to a NEW
   // window would close it and open the same window again. Into a window that is
   // already open it may go — that is how a tab returns — and this window then
@@ -151,7 +167,6 @@ export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock
 
 /** i18n key of the message explaining a {@link DetachBlock}. */
 export const DETACH_BLOCK_MESSAGE: Record<DetachBlock, MessageKey> = {
-  broadcast: "window.detachBlockedBroadcast",
   lastTab: "window.detachBlockedLastTab",
   notConnected: "window.detachBlockedNotConnected",
   sync: "window.detachBlockedSync",
@@ -165,18 +180,76 @@ export const DETACH_BLOCK_MESSAGE: Record<DetachBlock, MessageKey> = {
  * blocks hide the command — there is nothing to wait for; the others leave it
  * in place and explain themselves when it is used.
  */
-export function detachOffered(s: Pick<DetachState, "mainWindow" | "tabs" | "broadcast">): boolean {
-  return !s.broadcast && (s.mainWindow || s.tabs > 1);
+export function detachOffered(s: Pick<DetachState, "mainWindow" | "tabs">): boolean {
+  return s.mainWindow || s.tabs > 1;
 }
 
 /**
  * Whether tabs here are offered the app's other windows at all: there has to
- * be one (`windows` — how many others take tabs), and synchronous input lays
- * its tabs out itself. Unlike a new window, the only tab of a secondary window
- * may go too.
+ * be one (`windows` — how many others take tabs). Unlike a new window, the only
+ * tab of a secondary window may go too.
  */
-export function moveOffered(s: Pick<DetachState, "broadcast">, windows: number): boolean {
-  return !s.broadcast && windows > 0;
+export const moveOffered = (windows: number): boolean => windows > 0;
+
+// ── A whole pane (v1.10) ─────────────────────────────────────────────────────
+
+/** One tab's turn in a pane's move, and the seat its packet carries. */
+export interface PaneStep {
+  tab: string;
+  seat: PaneSeat;
+}
+
+/**
+ * The order a pane's tabs go in. `tabs` — its session tabs, in strip order (a
+ * file travels with its session); `shown` — the session of the tab the pane
+ * shows. That one goes first and opens the pane in the other window, so the
+ * window shows from the start what the pane showed; the tabs that stood before
+ * it follow, each right before it, then the ones after it, each to the end.
+ * Applied in this order the seats rebuild the strip as it was.
+ */
+export function paneMoveOrder(tabs: readonly string[], shown: string | null): PaneStep[] {
+  if (tabs.length === 0) return [];
+  const lead = shown !== null && tabs.includes(shown) ? shown : tabs[0];
+  const at = tabs.indexOf(lead);
+  return [
+    { tab: lead, seat: { lead: null, before: false } },
+    ...tabs.slice(0, at).map((tab) => ({ tab, seat: { lead, before: true } })),
+    ...tabs.slice(at + 1).map((tab) => ({ tab, seat: { lead, before: false } })),
+  ];
+}
+
+/**
+ * Whether "move the pane to a new window" is offered: not for a secondary
+ * window's every tab — that would close the window and open the same one again.
+ * (Into a window that is already open they may all go; this one then closes.)
+ */
+export function paneDetachOffered(s: Pick<DetachState, "mainWindow" | "tabs">, paneTabs: number): boolean {
+  return s.mainWindow || paneTabs < s.tabs;
+}
+
+/** Whether a pane is offered as a whole at all: with one session tab it is that tab's move. */
+export const paneMoveOffered = (paneTabs: number): boolean => paneTabs > 1;
+
+/**
+ * What keeps a pane from going: the first of its tabs that cannot (`at` — its
+ * place in `states`) and why. A pane moves whole or not at all, like a tab:
+ * leaving one tab behind would leave the pane behind with it, and the user
+ * would be told the pane went. Judged before the first tab leaves.
+ */
+export function paneMoveBlocker(
+  states: readonly DetachState[],
+  toOpenWindow: boolean,
+): { at: number; block: DetachBlock } | null {
+  const first = states[0];
+  if (!first) return null;
+  if (!toOpenWindow && !paneDetachOffered(first, states.length)) return { at: 0, block: "lastTab" };
+  for (let at = 0; at < states.length; at += 1) {
+    // Each tab by the rule of going to an open window: whether the *pane* may
+    // leave this window was decided above.
+    const block = detachBlocker(states[at], true);
+    if (block) return { at, block };
+  }
+  return null;
 }
 
 /** The tab menu lists this many windows as rows of its own; more go into a submenu. */

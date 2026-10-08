@@ -67,6 +67,7 @@
     tint = null,
     focusOnConnect = true,
     adopt = null,
+    waiting = false,
     onadopted,
     onadoptfailed,
     onstatus,
@@ -99,6 +100,13 @@
      * session over. Read once, at mount.
      */
     adopt?: TermSnapshot | null;
+    /**
+     * The tab came back from the previous launch and waits for its button
+     * (ADR 0019): the terminal mounts — the list of terminals is flat — but
+     * opens no session. Opening it is a reconnect, which mounts a new terminal.
+     * Read once, at mount.
+     */
+    waiting?: boolean;
     /** The session was taken over — the tab is this window's now. */
     onadopted?: () => void;
     /** It could not be: the tab stays with the window that was giving it up. */
@@ -818,6 +826,8 @@
       replaying = false;
       onadopted?.();
       if (focusOnConnect) term.focus();
+    } else if (waiting) {
+      return;
     } else if (!(await connect())) {
       return;
     }
@@ -998,7 +1008,7 @@
   });
 </script>
 
-<div class="relative h-full w-full @container">
+<div class="relative h-full w-full">
   <!-- px-2 pt-1: lift the console text off the left edge and the tab-bar border.
        The padding lives on this OUTER wrapper, never on `container`: FitAddon sizes
        the grid from its parent's getComputedStyle height/width, which under

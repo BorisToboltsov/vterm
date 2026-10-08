@@ -1,13 +1,36 @@
-// Per-connection workspace store (Svelte 5 runes): each open connection tab has a
-// workspace holding the sub-views shown under the main tab bar — the terminal
-// (always present) plus any open editor documents. Pure bookkeeping; reading the
-// file content and saving it stay in the page / api layer.
+// Per-connection workspace store (Svelte 5 runes): the files a session has open
+// in the editor, and how the connection's area is divided between them and the
+// terminal. Pure bookkeeping; reading the file content and saving it stay in
+// the page / api layer.
+//
+// A file is shown inside its connection (v1.11, ADR 0024): the connection's
+// area is one zone with the terminal and the files as views, or it is split —
+// the terminal beside a file, files side by side. That layout lives here, next
+// to the documents, and is only ever replaced with a result of the pure model
+// (`../sessionviews.ts`, over the same tree as the centre's panes); a document
+// and its view come and go in one step, so a document with no view
+// (unreachable) or a view with no document (an empty zone) cannot exist.
 
 import type { EditorLang } from "../editorlang";
 import type { TextFile, WriteResult } from "../types";
-
-/** The reserved view id for a workspace's terminal sub-tab. */
-export const TERMINAL_VIEW = "terminal";
+import {
+  closeView,
+  loadViews,
+  moveViewNext,
+  openView,
+  showView,
+  splitView,
+  terminalOnly,
+  type ViewLayout,
+} from "../sessionviews";
+import {
+  applyDrop,
+  focusPane,
+  joinPanes,
+  setRatio,
+  type Edge,
+  type TabDrop,
+} from "../splitlayout";
 
 /** An open editor document inside a workspace. */
 export interface EditorDoc {
@@ -63,9 +86,9 @@ export interface OpenEditorOpts {
 }
 
 export interface Workspace {
-  /** `TERMINAL_VIEW` or an editor id. */
-  active: string;
   editors: EditorDoc[];
+  /** The connection's zones: where the terminal and each file stand, and what each zone shows. */
+  layout: ViewLayout;
 }
 
 // ── Pure helpers (tested without runes/DOM) ───────────────────────────────────
@@ -80,30 +103,13 @@ export function hasUnsaved(ws: Workspace): boolean {
   return ws.editors.some(isDirty);
 }
 
-/**
- * Which view to focus after `closingId` is removed: keep the current view unless
- * it's the one closing, otherwise fall to the neighbour that takes its slot, then
- * the previous one, then the terminal.
- */
-export function nextActiveAfterClose(
-  editors: EditorDoc[],
-  closingId: string,
-  currentActive: string,
-): string {
-  if (currentActive !== closingId) return currentActive;
-  const idx = editors.findIndex((e) => e.id === closingId);
-  if (idx === -1) return currentActive;
-  const rest = editors.filter((e) => e.id !== closingId);
-  return rest[idx]?.id ?? rest[idx - 1]?.id ?? TERMINAL_VIEW;
-}
-
 // ── Runes state ───────────────────────────────────────────────────────────────
 
 export const workspacesState = $state<{ map: Record<string, Workspace> }>({
   map: {},
 });
 
-const EMPTY: Workspace = { active: TERMINAL_VIEW, editors: [] };
+const EMPTY: Workspace = { editors: [], layout: terminalOnly() };
 
 /** The workspace for a session, or a shared empty default (never null). */
 export function getWorkspace(sessionId: string | null): Workspace {
@@ -117,16 +123,20 @@ export function peekWorkspace(sessionId: string): Workspace | null {
 
 /**
  * Take over the workspace of a tab moved here from another window (ADR 0017):
- * its open editors with their text and unsaved edits.
+ * its open editors with their text and unsaved edits, standing in the zones
+ * they stood in. The layout came through a packet, so it is rebuilt against the
+ * editors that came with it rather than taken as it is.
  */
 export function adoptWorkspace(sessionId: string, ws: Workspace): void {
-  workspacesState.map = { ...workspacesState.map, [sessionId]: ws };
+  const editors = Array.isArray(ws.editors) ? ws.editors : [];
+  const layout = loadViews(ws.layout, editors.map((e) => e.id));
+  workspacesState.map = { ...workspacesState.map, [sessionId]: { editors, layout } };
 }
 
 function ensure(sessionId: string): Workspace {
   let ws = workspacesState.map[sessionId];
   if (!ws) {
-    ws = { active: TERMINAL_VIEW, editors: [] };
+    ws = { editors: [], layout: terminalOnly() };
     workspacesState.map = { ...workspacesState.map, [sessionId]: ws };
   }
   return ws;
@@ -145,7 +155,7 @@ export function findEditorByPath(sessionId: string, path: string): EditorDoc | n
   return ensure(sessionId).editors.find((e) => e.path === path) ?? null;
 }
 
-/** Add a placeholder (loading) editor and return its id. */
+/** Add a placeholder (loading) editor — shown, in the connection's file zone — and return its id. */
 export function addEditor(
   sessionId: string,
   path: string,
@@ -176,7 +186,7 @@ export function addEditor(
     gitBase: opts.gitBase,
   };
   const ws = ensure(sessionId);
-  patch(sessionId, { editors: [...ws.editors, doc], active: id });
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
   return id;
 }
 
@@ -214,7 +224,7 @@ export function addScratchEditor(
     gotoLine: null,
   };
   const ws = ensure(sessionId);
-  patch(sessionId, { editors: [...ws.editors, doc], active: id });
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
   return id;
 }
 
@@ -266,22 +276,65 @@ export function markSaved(sessionId: string, id: string, result: WriteResult): v
   });
 }
 
-/** Switch the active sub-view (terminal or an editor id). */
-export function setActiveView(sessionId: string, view: string): void {
-  patch(sessionId, { active: view });
-}
-
-/** Close an editor sub-tab, re-focusing a sensible neighbour. */
+/** Close a document: its view goes with it, and its zone shows the neighbour. */
 export function closeEditor(sessionId: string, id: string): void {
   const ws = ensure(sessionId);
-  const active = nextActiveAfterClose(ws.editors, id, ws.active);
   patch(sessionId, {
     editors: ws.editors.filter((e) => e.id !== id),
-    active,
+    layout: closeView(ws.layout, id),
   });
 }
 
-/** Drop a whole workspace (its connection tab closed). */
+// ── The connection's zones (v1.11) ───────────────────────────────────────────
+
+/**
+ * Replace a connection's layout with what the model makes of it. A connection
+ * that never opened a file has one zone and nothing to rearrange — it gets no
+ * workspace for the asking.
+ */
+function relayout(sessionId: string, next: (layout: ViewLayout) => ViewLayout): void {
+  const ws = workspacesState.map[sessionId];
+  if (!ws) return;
+  const layout = next(ws.layout);
+  if (layout !== ws.layout) patch(sessionId, { layout });
+}
+
+/** Show a view (the terminal or a file) in its zone; the zone takes the focus. */
+export function showSessionView(sessionId: string, view: string): void {
+  relayout(sessionId, (layout) => showView(layout, view));
+}
+
+/** Give a view a zone of its own at `edge` of the zone it is in. */
+export function splitSessionView(sessionId: string, view: string, edge: Edge): void {
+  relayout(sessionId, (layout) => splitView(layout, view, edge));
+}
+
+/** Move a view to the next zone. */
+export function moveSessionViewNext(sessionId: string, view: string): void {
+  relayout(sessionId, (layout) => moveViewNext(layout, view));
+}
+
+/** Drop a dragged view where the pointer left it (`viewdrag.svelte.ts`). */
+export function dropSessionView(sessionId: string, view: string, drop: TabDrop): void {
+  relayout(sessionId, (layout) => applyDrop(layout, view, drop));
+}
+
+/** The zone the user is working in. */
+export function focusSessionZone(sessionId: string, zone: string): void {
+  relayout(sessionId, (layout) => focusPane(layout, zone));
+}
+
+/** Undo the splits: one zone with every view, showing the one in focus. */
+export function joinSessionZones(sessionId: string): void {
+  relayout(sessionId, (layout) => joinPanes(layout));
+}
+
+/** Resize the two halves of a split between zones. */
+export function setSessionZoneRatio(sessionId: string, split: string, ratio: number): void {
+  relayout(sessionId, (layout) => setRatio(layout, split, ratio));
+}
+
+/** Drop a whole workspace (its connection tab closed): its files and its zones. */
 export function removeWorkspace(sessionId: string): void {
   if (!workspacesState.map[sessionId]) return;
   const next = { ...workspacesState.map };

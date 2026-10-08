@@ -131,12 +131,6 @@ describe("tabDropAt", () => {
     expect(tabDropAt(120, 10, a)?.drop).toEqual({ kind: "strip", pane: left, index: 0 });
   });
 
-  it("the single strip of the broadcast view answers with a flat position", () => {
-    byId("stripL").dataset.tabstrip = "*";
-    at("stripL");
-    expect(tabDropAt(160, 10, a)?.drop).toEqual({ kind: "flat", index: 1 });
-  });
-
   it("over a pane's body: its middle, or the edge the pointer is near", () => {
     at("inR");
     expect(tabDropAt(900, 230, a)).toEqual({

@@ -6,7 +6,8 @@ describe("activeTabStrip", () => {
     expect(activeTabStrip(false, 2)).toBe("shadow-[inset_0_2px_0_0_var(--color-accent)]");
     expect(activeTabStrip(true, 2)).toBe("shadow-[inset_0_2px_0_0_var(--color-bad)]");
   });
-  it("is thinner on editor sub-tabs", () => {
+
+  it("is thinner on the views inside a connection — its terminal and its files", () => {
     expect(activeTabStrip(false, 1)).toBe("shadow-[inset_0_1px_0_0_var(--color-accent)]");
     expect(activeTabStrip(true, 1)).toBe("shadow-[inset_0_1px_0_0_var(--color-bad)]");
   });

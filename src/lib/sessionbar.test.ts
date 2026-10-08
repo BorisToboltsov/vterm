@@ -7,17 +7,13 @@ import {
 } from "./sessionbar";
 
 const base: SessionBarInput = {
-  editors: 0,
-  onTerminal: true,
   connected: true,
   smartLogs: true,
   structured: false,
-  broadcast: false,
   ai: true,
 };
 
 const none: SessionBarParts = {
-  subtabs: false,
   search: false,
   viewToggle: false,
   clear: false,
@@ -27,24 +23,17 @@ const none: SessionBarParts = {
 describe("sessionBarParts", () => {
   it("a live terminal with smart logs and AI gets every tool", () => {
     expect(sessionBarParts(base)).toEqual({
-      subtabs: false,
       search: true,
       viewToggle: true,
       clear: true,
       askAi: true,
     });
   });
-  it("sub-tabs appear only with open editors", () => {
-    expect(sessionBarParts({ ...base, editors: 2 }).subtabs).toBe(true);
+  it("holds the terminal's tools and nothing else — a file is a tab of the centre (v1.8)", () => {
+    expect(Object.keys(sessionBarParts(base)).sort()).toEqual(["askAi", "clear", "search", "viewToggle"]);
   });
   it("the structured view keeps only the toggle to get back", () => {
     expect(sessionBarParts({ ...base, structured: true })).toEqual({ ...none, viewToggle: true });
-  });
-  it("tools hide while an editor is the active view", () => {
-    expect(sessionBarParts({ ...base, editors: 1, onTerminal: false })).toEqual({
-      ...none,
-      subtabs: true,
-    });
   });
   it("tools hide until the session is connected", () => {
     expect(sessionBarParts({ ...base, connected: false })).toEqual(none);
@@ -60,9 +49,6 @@ describe("sessionBarParts", () => {
     const p = sessionBarParts({ ...base, ai: false });
     expect(p.askAi).toBe(false);
     expect(p.clear).toBe(true);
-  });
-  it("broadcast hides everything", () => {
-    expect(sessionBarParts({ ...base, editors: 3, broadcast: true })).toEqual(none);
   });
 });
 

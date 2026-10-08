@@ -95,6 +95,24 @@ export function ownerLabel(entry: EntryLike): string {
   return `${u}:${g}`;
 }
 
+/**
+ * When an entry was last modified, as the listing's own column shows it:
+ * `2026-10-07 14:03`, local time — the `ls -l --time-style=long-iso` form. It is
+ * a point in time, not an age (the file is compared with other files and with
+ * the clock on the wall), so it is not `compactAge`; and it needs no
+ * translation. A time the listing did not report is `—`, never a made-up date.
+ */
+export function formatModified(epochSecs: number | null | undefined): string {
+  if (epochSecs == null || !Number.isFinite(epochSecs)) return "—";
+  const d = new Date(epochSecs * 1000);
+  if (Number.isNaN(d.getTime())) return "—";
+  const p = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ` +
+    `${p(d.getHours())}:${p(d.getMinutes())}`
+  );
+}
+
 /** Hover tooltip: permissions + owner (what `ls -l` shows). */
 export function fileTooltip(entry: EntryLike): string {
   const perms = formatMode(entry.mode, entry.isDir, entry.isSymlink, entry.attrs);

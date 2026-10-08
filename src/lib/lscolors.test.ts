@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { isExecutable, lsColorKey, formatMode, ownerLabel, fileTooltip } from "./lscolors";
+import {
+  isExecutable,
+  lsColorKey,
+  formatMode,
+  ownerLabel,
+  fileTooltip,
+  formatModified,
+} from "./lscolors";
 
 const e = (over: Partial<Parameters<typeof lsColorKey>[0]> = {}) => ({
   name: "f",
@@ -77,5 +84,26 @@ describe("ownerLabel / fileTooltip", () => {
     const win = e({ mode: null, attrs: "-a---", uid: null, gid: null });
     expect(ownerLabel(win)).toBe("");
     expect(fileTooltip(win)).toBe("-a---");
+  });
+});
+
+describe("formatModified", () => {
+  it("is the listing's own long-iso form, in local time", () => {
+    const at = (y: number, mo: number, d: number, h: number, mi: number) =>
+      new Date(y, mo - 1, d, h, mi, 59).getTime() / 1000;
+    expect(formatModified(at(2026, 10, 7, 14, 3))).toBe("2026-10-07 14:03");
+    expect(formatModified(at(2025, 1, 9, 0, 0))).toBe("2025-01-09 00:00");
+  });
+
+  it("says nothing was reported rather than inventing a date", () => {
+    expect(formatModified(null)).toBe("—");
+    expect(formatModified(undefined)).toBe("—");
+    expect(formatModified(Number.NaN)).toBe("—");
+    expect(formatModified(Number.POSITIVE_INFINITY)).toBe("—");
+    expect(formatModified(1e20)).toBe("—");
+  });
+
+  it("the epoch itself is a date like any other", () => {
+    expect(formatModified(0)).toMatch(/^19(69|70)-\d\d-\d\d \d\d:\d\d$/);
   });
 });

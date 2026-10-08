@@ -1,5 +1,6 @@
-// Window guard (v1.3, ADR 0017; v1.4, ADR 0018): the contracts a tab moved to
-// another window — one of its own, or one that is already open — stands on.
+// Window guard (v1.3, ADR 0017; v1.4, ADR 0018; v1.10, ADR 0023): the contracts
+// a tab moved to another window — one of its own, or one that is already open —
+// stands on.
 //
 //  1. A session is ended by the tab's teardown and by nothing else. `Terminal`
 //     used to disconnect in `onDestroy`; a tab handed to another window unmounts
@@ -38,6 +39,15 @@
 //     which is also what takes that label away. A tab only reordered in its own
 //     strip, with no other window that could lie over this one, asks nobody: a
 //     call per pointer move, and a window made for a label nobody will see.
+//  8. A pane moves as its tabs do (v1.10): one trip per tab, and the trip is the
+//     same function a single tab takes — a second copy of it would be a second
+//     order of holding and letting go. The pane is judged whole before its first
+//     tab leaves (a pane that left one tab behind did not move), each tab is
+//     asked again at its turn, a window opened for the first tab is waited for
+//     until it says it takes tabs, and a move that stopped midway says how far
+//     it got. In the window taking it, only the pane's first tab is shown; the
+//     others take their seats next to it — placed like a new tab, each would
+//     take the pane's view in turn and the order would be the order of arrival.
 //
 // Every check is a function over source text, so that the same file can show it
 // catches the violation it exists for (the second `describe`). Sources are read
@@ -104,6 +114,8 @@ function block(src: string, opener: string): string {
 }
 
 const PAGE = "routes/+page.svelte";
+const TABS = "lib/stores/tabs.svelte.ts";
+const PACKET = "lib/stores/tabpacket.ts";
 const TERMINAL = "lib/Terminal.svelte";
 const LAYOUT = "lib/stores/layout.svelte.ts";
 const SESSION_API = "lib/api/session.ts";
@@ -134,19 +146,25 @@ export function sessionEndViolations(rel: string, source: string): string[] {
 export function handoffViolations(page: string): string[] {
   const c = code(page);
   const out: string[] = [];
-  const detach = fn(c, "detachTab");
+  // The trip itself is one function (v1.10: a tab alone and a tab of a pane
+  // both take it); whether the tab may go is asked by whoever sends it.
+  const trip = fn(c, "handOver");
   const steps = [
-    "detachBlocker(",
     "await detachBegin(sessionId)",
     "snapshot?.(sent)",
     "await detachCommit(",
     "closeTabFully(sessionId, true)",
-  ].map((step) => detach.indexOf(step));
+  ].map((step) => trip.indexOf(step));
   if (steps.some((at) => at < 0) || steps.some((at, i) => i > 0 && at < steps[i - 1])) {
-    out.push("detachTab does not hold, snapshot, wait for the new window and only then let go");
+    out.push("a handoff does not hold, snapshot, wait for the new window and only then let go");
   }
-  if (!/if \(held\) await detachAbort\(sessionId\)/.test(detach)) {
+  if (!/if \(held\) await detachAbort\(sessionId\)/.test(trip)) {
     out.push("a failed handoff leaves the session's output held");
+  }
+  const detach = fn(c, "detachTab");
+  const asked = detach.indexOf("detachBlocker(");
+  if (asked < 0 || asked > detach.indexOf("await handOver(")) {
+    out.push("a tab is handed over without being asked whether it may go");
   }
   // Keeping the session is for exactly two cases: the tab has just been taken by
   // another window, or this window failed to take it.
@@ -325,8 +343,9 @@ export function crossDragViolations(page: string): string[] {
   if (blocked < 0 || blocked > over.indexOf("dragOver(")) {
     out.push("a tab that cannot move is drawn in another window all the same");
   }
-  // It lands where that window kept its place.
-  if (!fn(c, "takeTab").includes("unpackTab(packet, takeIncomingDrop())")) {
+  // It lands where that window kept its place — before anything else is tried.
+  const take = fn(c, "takeTab");
+  if (!take.includes("const drop = takeIncomingDrop() ??") || !take.includes("unpackTab(packet, drop)")) {
     out.push("a tab dropped on a window lands where a new tab would, not where it was dropped");
   }
   // One label for one tab: over another window that window draws it, over the
@@ -343,6 +362,60 @@ export function crossDragViolations(page: string): string[] {
   const quiet = over.indexOf("if (!tabDrag.outside && windowTargets.length === 0) return null;");
   if (quiet < 0 || quiet > over.indexOf("dragOver(")) {
     out.push("a tab reordered in its own strip calls the backend on every move");
+  }
+  return out;
+}
+
+// ── 8: a pane that moves whole ───────────────────────────────────────────────
+
+/** Calls of `name(` that are not its own declaration. */
+const calls = (src: string, name: string): number =>
+  src.match(new RegExp(`(?<!function )(?<![.\\w])${name}\\(`, "g"))?.length ?? 0;
+
+export function paneMoveViolations(page: string, tabs: string, packet: string): string[] {
+  const c = code(page);
+  const out: string[] = [];
+  const move = fn(c, "movePane");
+  // One trip, two senders: a tab alone, and a pane.
+  if (calls(c, "handOver") !== 2 || calls(move, "handOver") !== 1 || calls(c, "detachCommit") !== 1) {
+    out.push("a tab is handed to another window by something other than the one trip");
+  }
+  const at = (step: string) => move.indexOf(step);
+  const trip = at("await handOver(");
+  // Whole or not at all: decided before the first tab leaves.
+  if (at("paneMoveBlocker(") < 0 || at("paneMoveBlocker(") > at("paneMoveOrder(") || at("paneMoveOrder(") > trip) {
+    out.push("a pane starts to move before it is known that all of it can");
+  }
+  // Each tab again at its turn, by the rule of an open window.
+  const again = at("detachBlocker(detachStateOf(tab), true)");
+  if (again < 0 || again > trip) {
+    out.push("a tab of a moving pane is handed over without being asked at its turn");
+  }
+  // A window opened for the first tab takes the rest once it listens.
+  const listed = at("await windowListed(target)");
+  if (listed < 0 || listed > trip || !/windowsHeard\?\.\(\)/.test(c)) {
+    out.push("the rest of a pane is sent to a window that does not take tabs yet");
+  }
+  // The page takes no input until the last tab has settled.
+  if (at("detaching = step.tab") < 0 || at("detaching = step.tab") > trip || !/finally \{\s*detaching = null;/.test(move)) {
+    out.push("a pane on its way leaves the window open to input");
+  }
+  if (!move.includes('"window.paneMovedPartly"')) {
+    out.push("a pane that stopped midway is not said to have");
+  }
+  // Arriving: only the first tab opens the pane; the place the window kept wins.
+  const take = fn(c, "takeTab");
+  if (!take.includes("(leadsPane ? arrivalDrop(center, placement.panes) : null)")) {
+    out.push("a tab that only follows its pane opens a pane of its own");
+  }
+  // The others are seated, not placed.
+  if (!/adoptTab\(\s*packet\.tab,\s*packet\.terminal,\s*drop,\s*lead === null \? null : \{ tab: lead,/.test(code(packet))) {
+    out.push("a packet's seat is dropped on arrival");
+  }
+  const adopt = code(tabs);
+  const seated = block(adopt.slice(adopt.indexOf("export function adoptTab(")), "if (beside) {");
+  if (!seated.includes("center = addTabBehind(") || seated.includes("placeTab(") || !seated.includes("return;")) {
+    out.push("a tab that follows its pane is shown in place of the tab the pane showed");
   }
   return out;
 }
@@ -377,6 +450,10 @@ describe("window guard", () => {
 
   it("a tab held over another window is told of to its end, and lands where it was dropped", () => {
     expect(crossDragViolations(raw(PAGE))).toEqual([]);
+  });
+
+  it("a pane moves whole, by the trip a tab takes, and arrives as it was", () => {
+    expect(paneMoveViolations(raw(PAGE), raw(TABS), raw(PACKET))).toEqual([]);
   });
 });
 
@@ -437,14 +514,25 @@ describe("window guard — catches what it exists for", () => {
     const early = mutate(
       mutate(
         page,
-        "      closeTabFully(sessionId, true);\n      return true;\n    } catch (e) {",
-        "      return true;\n    } catch (e) {",
+        "      closeTabFully(sessionId, true);\n      return taken;\n    } catch (e) {",
+        "      return taken;\n    } catch (e) {",
       ),
       "      const sent = await detachBegin(sessionId);",
       "      closeTabFully(sessionId, true);\n      const sent = await detachBegin(sessionId);",
     );
     expect(handoffViolations(early)).toContain(
-      "detachTab does not hold, snapshot, wait for the new window and only then let go",
+      "a handoff does not hold, snapshot, wait for the new window and only then let go",
+    );
+  });
+
+  it("a tab sent on its way without being asked", () => {
+    const unasked = mutate(
+      page,
+      "    const block = detachBlocker(detachStateOf(tab), toOpenWindow);\n    if (block) {\n      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));\n      return false;\n    }\n    detaching = sessionId;",
+      "    detaching = sessionId;",
+    );
+    expect(handoffViolations(unasked)).toContain(
+      "a tab is handed over without being asked whether it may go",
     );
   });
 
@@ -614,9 +702,20 @@ describe("window guard — catches what it exists for", () => {
   });
 
   it("a dropped tab that lands where a new one would", () => {
+    const lost = "a tab dropped on a window lands where a new tab would, not where it was dropped";
     expect(
-      crossDragViolations(mutate(page, "unpackTab(packet, takeIncomingDrop());", "unpackTab(packet);")),
-    ).toEqual(["a tab dropped on a window lands where a new tab would, not where it was dropped"]);
+      crossDragViolations(mutate(page, "unpackTab(packet, drop);", "unpackTab(packet);")),
+    ).toEqual([lost]);
+    // The pane's own place tried first: a pane dropped on a strip would open a pane.
+    expect(
+      crossDragViolations(
+        mutate(
+          page,
+          "const drop = takeIncomingDrop() ?? (leadsPane ? arrivalDrop(center, placement.panes) : null);",
+          "const drop = (leadsPane ? arrivalDrop(center, placement.panes) : null) ?? takeIncomingDrop();",
+        ),
+      ),
+    ).toEqual([lost]);
   });
 
   it("a tab drawn in both windows at once", () => {
@@ -714,5 +813,132 @@ describe("window guard — catches what it exists for", () => {
     expect(
       mainOnlyViolations(mutate(page, "void adoptHandoff();", ""), layout),
     ).toContain("a secondary window does not take over the tab it was opened for");
+  });
+
+  // ── 8: a pane that moves whole ─────────────────────────────────────────────
+  const tabs = raw(TABS);
+  const packet = raw(PACKET);
+  const pane = (p = page, s = tabs, k = packet) => paneMoveViolations(p, s, k);
+
+  it("a second copy of the trip for the tabs of a pane", () => {
+    const copied = mutate(
+      page,
+      "        target = await handOver(step.tab, moved === 0 ? to : { window: target }, step.seat);",
+      "        target = await detachCommit(step.tab, \"{}\", { target, background: \"\" });\n        closeTabFully(step.tab, true);",
+    );
+    expect(pane(copied)).toContain(
+      "a tab is handed to another window by something other than the one trip",
+    );
+    // …and it is also a third place that drops a tab without ending its session.
+    expect(handoffViolations(copied)).toContain(
+      "a tab is dropped without ending its session outside a handoff",
+    );
+  });
+
+  it("a pane that starts to go before all of it may", () => {
+    const late = mutate(
+      mutate(
+        page,
+        "    const held = paneMoveBlocker(tabs.map(detachStateOf), toOpenWindow);\n    if (held) {",
+        "    const held = null as ReturnType<typeof paneMoveBlocker>;\n    if (held) {",
+      ),
+      "    } finally {\n      detaching = null;\n    }\n  }\n\n  /** A secondary window, on load",
+      "    } finally {\n      detaching = null;\n      paneMoveBlocker(tabs.map(detachStateOf), toOpenWindow);\n    }\n  }\n\n  /** A secondary window, on load",
+    );
+    expect(pane(late)).toEqual(["a pane starts to move before it is known that all of it can"]);
+  });
+
+  it("a tab of the pane whose session ended while the others went", () => {
+    expect(
+      pane(
+        mutate(
+          page,
+          "        if (!tab || detachBlocker(detachStateOf(tab), true)) throw new Error(\"handoff-not-taken\");\n",
+          "",
+        ),
+      ),
+    ).toEqual(["a tab of a moving pane is handed over without being asked at its turn"]);
+  });
+
+  it("the rest of a pane sent to a window that is still loading", () => {
+    const unheard = "the rest of a pane is sent to a window that does not take tabs yet";
+    expect(
+      pane(
+        mutate(
+          page,
+          "if (moved > 0 && !(target && (await windowListed(target)))) {",
+          "if (moved > 0 && !target) {",
+        ),
+      ),
+    ).toEqual([unheard]);
+    // Waiting for a list nobody reports the changes of is waiting for the timeout.
+    expect(pane(mutate(page, "        windowsHeard?.();\n", ""))).toEqual([unheard]);
+  });
+
+  it("a window left open to clicks while its pane is leaving", () => {
+    expect(pane(mutate(page, "        detaching = step.tab;\n", ""))).toEqual([
+      "a pane on its way leaves the window open to input",
+    ]);
+  });
+
+  it("a pane that stopped midway and said the whole of it failed", () => {
+    expect(
+      pane(
+        mutate(
+          page,
+          ': t("window.paneMovedPartly", { moved, total: steps.length }),',
+          ": t(detachErrorKey(e, true)),",
+        ),
+      ),
+    ).toEqual(["a pane that stopped midway is not said to have"]);
+  });
+
+  it("every tab of an arriving pane opening a pane of its own", () => {
+    expect(
+      pane(
+        mutate(
+          page,
+          "(leadsPane ? arrivalDrop(center, placement.panes) : null)",
+          "(packet.seat ? arrivalDrop(center, placement.panes) : null)",
+        ),
+      ),
+    ).toEqual(["a tab that only follows its pane opens a pane of its own"]);
+  });
+
+  it("a seat that never reaches the store", () => {
+    expect(
+      pane(
+        page,
+        tabs,
+        mutate(
+          packet,
+          'lead === null ? null : { tab: lead, where: packet.seat?.before ? "before" : "end" },',
+          "null,",
+        ),
+      ),
+    ).toEqual(["a packet's seat is dropped on arrival"]);
+  });
+
+  it("a tab that follows its pane shown instead of the one the pane showed", () => {
+    expect(
+      pane(
+        page,
+        mutate(
+          tabs,
+          "    center = addTabBehind(center, tab.sessionId, beside.tab, beside.where);\n    return;",
+          "    center = placeTab(center, tab.sessionId, null);\n    return;",
+        ),
+      ),
+    ).toEqual(["a tab that follows its pane is shown in place of the tab the pane showed"]);
+    expect(
+      pane(
+        page,
+        mutate(
+          tabs,
+          "    center = addTabBehind(center, tab.sessionId, beside.tab, beside.where);\n    return;",
+          "    center = addTabBehind(center, tab.sessionId, beside.tab, beside.where);",
+        ),
+      ),
+    ).toEqual(["a tab that follows its pane is shown in place of the tab the pane showed"]);
   });
 });

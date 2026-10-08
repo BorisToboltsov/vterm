@@ -209,6 +209,33 @@ export function addTab(layout: CenterLayout, tab: string, into?: string): Center
   return { ...layout, root, focus: target.id };
 }
 
+/** Where a tab that arrives with another one stands in that one's pane. */
+export type Beside = "after" | "before" | "end";
+
+/**
+ * Put `tab` into the pane that holds `beside` without showing it and without
+ * moving the focus — for a tab that arrives *with* another one: what the panes
+ * show stays what it was. A session's open files stand right `after` it when
+ * the session moves to this window; the other tabs of a pane that moves whole
+ * (v1.10) stand right `before` the tab it showed, or at the `end` of its pane.
+ * With `beside` in no pane the tab goes where a new tab goes, still unseen
+ * unless that pane was empty.
+ */
+export function addTabBehind(
+  layout: CenterLayout,
+  tab: string,
+  beside: string,
+  where: Beside = "after",
+): CenterLayout {
+  if (paneOf(layout, tab)) return layout;
+  const target = paneOf(layout, beside) ?? focusedPane(layout);
+  const found = target.tabs.indexOf(beside);
+  const at = found < 0 || where === "end" ? target.tabs.length : where === "before" ? found : found + 1;
+  const tabs = [...target.tabs.slice(0, at), tab, ...target.tabs.slice(at)];
+  const root = mapPane(layout.root, target.id, (p) => ({ ...p, tabs, active: p.active ?? tab }));
+  return { ...layout, root };
+}
+
 /**
  * Close a tab. Its pane shows the neighbour instead; a pane left with no tabs is
  * removed (the other half of its split takes the space), unless it is the last.
@@ -249,24 +276,6 @@ export function moveTab(
   let root = mapPane(layout.root, from.id, (p) => without(p, tab));
   root = mapPane(root, target.id, (p) => ({ ...p, tabs, active: tab }));
   return pruneEmpty({ ...layout, root, focus: target.id }, from.id);
-}
-
-/**
- * Reorder a tab in the single strip that shows every pane's tabs in a row (the
- * broadcast view): `index` is its position among all the *other* tabs. It lands
- * next to the tab before that position — in that tab's pane — or, at the very
- * start, before the first tab.
- */
-export function moveTabFlat(layout: CenterLayout, tab: string, index: number): CenterLayout {
-  if (!paneOf(layout, tab)) return layout;
-  const others = orderedTabs(layout).filter((t) => t !== tab);
-  if (others.length === 0) return layout;
-  const at = clamp(Number.isFinite(index) ? Math.trunc(index) : others.length, 0, others.length);
-  const anchor = others[Math.max(0, at - 1)];
-  const pane = paneOf(layout, anchor);
-  if (!pane) return layout;
-  const inPane = pane.tabs.filter((t) => t !== tab);
-  return moveTab(layout, tab, pane.id, inPane.indexOf(anchor) + (at === 0 ? 0 : 1));
 }
 
 /** The split that puts a new pane at `edge` of an existing node. */
@@ -311,6 +320,78 @@ export function joinPanes(layout: CenterLayout): CenterLayout {
   const tabs = orderedTabs(layout);
   const active = activeTab(layout) ?? shownTabs(layout)[0] ?? null;
   return { ...layout, root: { kind: "pane", id: layout.focus, tabs, active } };
+}
+
+/**
+ * The grid that fits in `bounds` when `cols` columns are asked for: how many
+ * columns it really gets, and how many panes it holds, with every pane keeping
+ * its minimum — never less than one of each. The limit is pixels, as everywhere
+ * in this model: a grid is not "as many as asked", it is as many as stay usable.
+ */
+export function gridFit(
+  bounds: { width: number; height: number },
+  cols: number,
+  lim: PaneLimits = PANE_LIMITS,
+): { cols: number; panes: number } {
+  const fit = (total: number, min: number): number =>
+    Math.max(1, Math.floor((Math.max(0, total) + lim.gap) / (min + lim.gap)));
+  const across = Math.min(Math.max(1, Math.trunc(cols) || 1), fit(bounds.width, lim.minW));
+  return { cols: across, panes: across * fit(bounds.height, lim.minH) };
+}
+
+/** `nodes` side by side (`row`) or one above the other (`col`), in equal shares. */
+function chain(nodes: LayoutNode[], dir: SplitDir, mint: () => string): LayoutNode {
+  if (nodes.length === 1) return nodes[0];
+  const [first, ...rest] = nodes;
+  return {
+    kind: "split",
+    id: mint(),
+    dir,
+    // The first takes its share of what is left: 1/k of k equal parts.
+    ratio: clampRatio(1 / nodes.length),
+    a: first,
+    b: chain(rest, dir, mint),
+  };
+}
+
+/**
+ * Lay tabs out as a grid of panes with one command (v1.9): each of `tabs` gets a
+ * pane of its own, `cols` to a row, in the order given; every other tab of the
+ * layout joins the first pane, behind the tab it shows. The pane that showed the
+ * tab in focus keeps the focus when that tab is one of the tiled, otherwise the
+ * first pane takes it.
+ *
+ * Tabs the layout does not hold are skipped; with none left to tile nothing
+ * changes. How many fit, and in how many columns, is the caller's question
+ * (`gridFit`) — this lays out what it is given.
+ */
+export function tileTabs(layout: CenterLayout, tabs: readonly string[], cols: number): CenterLayout {
+  const held = new Set(orderedTabs(layout));
+  const tiled = [...new Set(tabs)].filter((tab) => held.has(tab));
+  if (tiled.length === 0) return layout;
+  const across = Math.max(1, Math.min(tiled.length, Math.trunc(cols) || 1));
+  const rest = orderedTabs(layout).filter((tab) => !tiled.includes(tab));
+
+  let seq = layout.seq;
+  const mint = (kind: "p" | "s") => `${kind}${seq++}`;
+  const paneFor = new Map<string, string>();
+  const made: Pane[] = tiled.map((tab, i) => {
+    const pane: Pane = {
+      kind: "pane",
+      id: mint("p"),
+      tabs: i === 0 ? [tab, ...rest] : [tab],
+      active: tab,
+    };
+    paneFor.set(tab, pane.id);
+    return pane;
+  });
+  const rows: LayoutNode[] = [];
+  for (let i = 0; i < made.length; i += across) {
+    rows.push(chain(made.slice(i, i + across), "row", () => mint("s")));
+  }
+  const root = chain(rows, "col", () => mint("s"));
+  const active = activeTab(layout);
+  return { root, focus: (active !== null && paneFor.get(active)) || made[0].id, seq };
 }
 
 /** Set a split's ratio (clamped to the hard limits). */
@@ -487,8 +568,6 @@ export function zoneRect(rect: Rect, zone: PaneZone): Rect {
 export type TabDrop =
   /** In a pane's strip, at `index` among that pane's other tabs. */
   | { kind: "strip"; pane: string; index: number }
-  /** In the single strip of the broadcast view, at `index` among all other tabs. */
-  | { kind: "flat"; index: number }
   /** On a pane's body: its middle (join the pane) or an edge (a new pane there). */
   | { kind: "pane"; pane: string; zone: PaneZone };
 
@@ -497,8 +576,6 @@ export function applyDrop(layout: CenterLayout, tab: string, drop: TabDrop): Cen
   switch (drop.kind) {
     case "strip":
       return moveTab(layout, tab, drop.pane, drop.index);
-    case "flat":
-      return moveTabFlat(layout, tab, drop.index);
     default:
       if (drop.zone !== "center") return splitWithTab(layout, tab, drop.pane, drop.zone);
       // The body of the tab's own pane is where it already is — not "to the end".
@@ -519,9 +596,6 @@ export function dropChanges(layout: CenterLayout, tab: string, drop: TabDrop): b
       return from.id !== drop.pane
         ? findPane(layout, drop.pane) !== null
         : moveTab(layout, tab, drop.pane, drop.index) !== layout;
-    case "flat":
-      return orderedTabs(moveTabFlat(layout, tab, drop.index)).join("\n") !==
-        orderedTabs(layout).join("\n");
     default:
       return applyDrop(layout, tab, drop) !== layout;
   }
@@ -545,12 +619,6 @@ export function previewTabs(
   // The pane the tab is leaving may be gone from the result (it was its last
   // tab); until the drop it is still on screen, and its strip closes up too.
   return next ? next.tabs : own.filter((t) => t !== tab);
-}
-
-/** The same preview for the single strip of the broadcast view. */
-export function previewFlat(layout: CenterLayout, tab: string | null, drop: TabDrop | null): string[] {
-  if (tab === null || drop?.kind !== "flat") return orderedTabs(layout);
-  return orderedTabs(moveTabFlat(layout, tab, drop.index));
 }
 
 // ── A tab arriving from another window (v1.4, ADR 0018) ────────────────────
@@ -587,22 +655,33 @@ function insertTab(
  */
 export function placeTab(layout: CenterLayout, tab: string, drop: TabDrop | null): CenterLayout {
   if (paneOf(layout, tab)) return activateTab(layout, tab);
-  if (drop?.kind === "flat") {
-    // The single strip: next to the tab before that position, in that tab's pane.
-    const all = orderedTabs(layout);
-    const at = clamp(Number.isFinite(drop.index) ? Math.trunc(drop.index) : all.length, 0, all.length);
-    const anchor = all[Math.max(0, at - 1)];
-    const pane = anchor === undefined ? null : paneOf(layout, anchor);
-    if (pane) return insertTab(layout, tab, pane, pane.tabs.indexOf(anchor) + (at === 0 ? 0 : 1));
-  }
-  const pane = drop && drop.kind !== "flat" ? findPane(layout, drop.pane) : null;
+  const pane = drop ? findPane(layout, drop.pane) : null;
   if (!pane || !drop) return insertTab(layout, tab, focusedPane(layout));
   if (drop.kind === "strip") return insertTab(layout, tab, pane, drop.index);
-  if (drop.kind === "flat" || drop.zone === "center" || pane.tabs.length === 0) {
+  if (drop.zone === "center" || pane.tabs.length === 0) {
     return insertTab(layout, tab, pane);
   }
   const split = withNewPane(layout, pane.id, drop.zone);
   return insertTab(split, tab, focusedPane(split));
+}
+
+/**
+ * Where the first tab of a pane that moved here whole (v1.10) lands: a pane of
+ * its own beside the one in focus — below it when there is no room beside —
+ * so the pane arrives as a pane. `null` (it joins the pane in focus) when that
+ * pane is empty, or too small to be split either way.
+ */
+export function arrivalDrop(
+  layout: CenterLayout,
+  rects: Readonly<Record<string, Rect>>,
+  lim: PaneLimits = PANE_LIMITS,
+): TabDrop | null {
+  const pane = focusedPane(layout);
+  if (pane.tabs.length === 0) return null;
+  const rect = rects[pane.id];
+  if (canSplit(rect, "right", lim)) return { kind: "pane", pane: pane.id, zone: "right" };
+  if (canSplit(rect, "bottom", lim)) return { kind: "pane", pane: pane.id, zone: "bottom" };
+  return null;
 }
 
 /**
@@ -621,13 +700,101 @@ export function previewIncoming(
   return findPane(placeTab(layout, incoming, drop), pane)?.tabs ?? own;
 }
 
-/** The same preview for the single strip of the broadcast view. */
-export function previewIncomingFlat(
-  layout: CenterLayout,
-  incoming: string,
-  drop: TabDrop | null,
-): string[] {
-  return orderedTabs(placeTab(layout, incoming, drop));
+// ── A layout read back from storage (v1.6, ADR 0019) ───────────────────────
+
+/** What is written down of a layout: the tree and the pane in focus. */
+export interface SavedLayout {
+  root: LayoutNode;
+  focus: string;
+}
+
+/** The part of a layout worth saving; the id counter is recomputed on the way back. */
+export const savedLayout = (layout: CenterLayout): SavedLayout => ({
+  root: layout.root,
+  focus: layout.focus,
+});
+
+/** Splits nested deeper than this were not written by this model; what lies below becomes one pane. */
+const MAX_DEPTH = 24;
+/** Nodes looked at under a subtree that is too deep, before the rest is given up on. */
+const MAX_GATHERED = 4096;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * The layout to start with, from a saved one and the tabs that are being
+ * restored. The only way a stored tree reaches the store (`centerlayout.guard`).
+ *
+ * What was saved is read, not trusted — it sat in `localStorage`, and the tabs
+ * it names may no longer all exist (a server was deleted meanwhile). So the tree
+ * is rebuilt rather than checked: every tab of `tabs` ends up in exactly one
+ * pane and no other tab does, a pane left without tabs goes with its split,
+ * ratios are brought into range, node ids are minted afresh. A tab the tree does
+ * not mention — one that came back from another window — joins the pane in
+ * focus without being shown: the panes go on showing what they showed.
+ */
+export function loadLayout(raw: unknown, tabs: readonly string[]): CenterLayout {
+  const known = new Set(tabs);
+  const placed = new Set<string>();
+  const wanted = isRecord(raw) && typeof raw.focus === "string" ? raw.focus : null;
+  let seq = 0;
+  let focus: string | null = null;
+
+  /** The tabs of a saved pane that are being restored and stand nowhere yet. */
+  const take = (list: unknown): string[] => {
+    const out: string[] = [];
+    if (!Array.isArray(list)) return out;
+    for (const tab of list) {
+      if (typeof tab !== "string" || !known.has(tab) || placed.has(tab)) continue;
+      placed.add(tab);
+      out.push(tab);
+    }
+    return out;
+  };
+
+  /** Every tab under a subtree that is too deep to rebuild, as one strip. */
+  const gather = (node: unknown): string[] => {
+    const out: string[] = [];
+    const todo: unknown[] = [node];
+    for (let seen = 0; todo.length > 0 && seen < MAX_GATHERED; seen++) {
+      const n = todo.pop();
+      if (!isRecord(n)) continue;
+      if (n.kind === "split") todo.push(n.b, n.a);
+      else out.push(...take(n.tabs));
+    }
+    return out;
+  };
+
+  const build = (node: unknown, depth: number): LayoutNode | null => {
+    if (!isRecord(node)) return null;
+    if (node.kind === "split" && depth < MAX_DEPTH) {
+      const a = build(node.a, depth + 1);
+      const b = build(node.b, depth + 1);
+      if (!a || !b) return a ?? b;
+      const ratio = clampRatio(typeof node.ratio === "number" ? node.ratio : NaN);
+      return { kind: "split", id: `s${seq++}`, dir: node.dir === "col" ? "col" : "row", ratio, a, b };
+    }
+    const own = node.kind === "split" ? gather(node) : take(node.tabs);
+    if (own.length === 0) return null;
+    const id = `p${seq++}`;
+    if (focus === null && wanted !== null && node.id === wanted) focus = id;
+    const active = typeof node.active === "string" && own.includes(node.active) ? node.active : own[0];
+    return { kind: "pane", id, tabs: own, active };
+  };
+
+  const root = build(isRecord(raw) ? raw.root : null, 0);
+  const rest = [...known].filter((tab) => !placed.has(tab));
+  if (!root) {
+    if (rest.length === 0) return emptyLayout();
+    return { root: { kind: "pane", id: "p0", tabs: rest, active: rest[0] }, focus: "p0", seq: 1 };
+  }
+  const target = focus ?? firstPane(root).id;
+  return {
+    root: rest.length === 0 ? root : mapPane(root, target, (p) => ({ ...p, tabs: [...p.tabs, ...rest] })),
+    focus: target,
+    seq,
+  };
 }
 
 // ── Invariants ─────────────────────────────────────────────────────────────

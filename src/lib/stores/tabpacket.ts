@@ -12,6 +12,7 @@
 import {
   PACKET_VERSION,
   type PageSessionState,
+  type PaneSeat,
   type TabPacket,
   type TermSnapshot,
 } from "../tabhandoff";
@@ -34,8 +35,14 @@ export type PageFacts = Omit<PageSessionState, "recording" | "recordingPaused">;
 /**
  * Everything this window holds for the tab, serialized for the trip. `null`
  * when the tab is not here (it was closed while the handoff was starting).
+ * `seat` — its place in the pane it travels with, when it does not go alone.
  */
-export function packTab(sessionId: string, terminal: TermSnapshot, page: PageFacts): string | null {
+export function packTab(
+  sessionId: string,
+  terminal: TermSnapshot,
+  page: PageFacts,
+  seat: PaneSeat | null = null,
+): string | null {
   const tab = findTab(sessionId);
   if (!tab) return null;
   // A tab that itself arrived from another window has long used its snapshot up.
@@ -43,6 +50,7 @@ export function packTab(sessionId: string, terminal: TermSnapshot, page: PageFac
   const packet: TabPacket = {
     v: PACKET_VERSION,
     tab: plain,
+    seat,
     terminal,
     workspace: peekWorkspace(sessionId),
     chat: peekChat(sessionId),
@@ -61,6 +69,9 @@ export function packTab(sessionId: string, terminal: TermSnapshot, page: PageFac
  * Put a packet's state into this window's stores and open its tab — where it
  * was dropped, when it was (`drop`). The tab goes in last: its terminal and
  * panels mount against what is already restored.
+ *
+ * A tab that follows the first one of its pane (v1.10) takes its seat next to
+ * it instead, unseen: the pane goes on showing what it showed.
  */
 export function unpackTab(packet: TabPacket, drop: TabDrop | null = null): void {
   const id = packet.tab.sessionId;
@@ -74,5 +85,11 @@ export function unpackTab(packet: TabPacket, drop: TabDrop | null = null): void 
     setRecording(id, packet.page.recording);
     setRecordingPausedState(id, packet.page.recordingPaused);
   }
-  adoptTab(packet.tab, packet.terminal, drop);
+  const lead = packet.seat?.lead ?? null;
+  adoptTab(
+    packet.tab,
+    packet.terminal,
+    drop,
+    lead === null ? null : { tab: lead, where: packet.seat?.before ? "before" : "end" },
+  );
 }

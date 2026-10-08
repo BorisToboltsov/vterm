@@ -6164,7 +6164,7 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "1.5.0"
+version = "1.11.1"
 dependencies = [
  "async-http-proxy",
  "base64 0.23.1",
@@ -6172,6 +6172,8 @@ dependencies = [
  "directories",
  "encoding_rs",
  "futures-util",
+ "gdk",
+ "gtk",
  "keyring",
  "objc2",
  "objc2-app-kit",

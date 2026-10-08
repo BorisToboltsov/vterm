@@ -19,12 +19,21 @@
 //     draw a preview; moving the tab for real on every pointer move would resize
 //     terminals mid-drag. And what the strips hit-test is where tabs sit in the
 //     layout, not where a slide is drawing them.
-//  5. Only the pane in focus takes the keyboard when its terminal connects. A
-//     terminal reconnecting in the pane next to it must not pull the cursor out
-//     from under what the user is typing.
+//  5. Only the pane in focus takes the keyboard when its terminal connects — and
+//     only when the terminal is what that connection has in focus. A terminal
+//     reconnecting in the pane next to it, or behind the file one is editing
+//     (v1.11: a file is a view inside its connection), must not pull the cursor
+//     out from under what the user is typing.
 //  6. A dock panel is built for the session the dock names. The docks keep the
 //     panels of every session on screen mounted; one wired to "the active tab"
 //     would, while hidden, act on whichever session has the focus now.
+//  8. Synchronous input is a way of sending, not a view (v1.9, ADR 0022). Its
+//     members stand in the panes of the centre like any other tab; "show them
+//     all" is the layout's own command — a grid of panes, as many as keep the
+//     pane minimum, with the layout before it remembered. A second, private
+//     way of laying terminals out (the CSS grid the mode used to draw) is two
+//     sets of rules for the same screen: which tab is on screen, where a
+//     dragged tab lands, what a recording watches.
 //  7. Opening a tab is never the argument of an optional call. "Open the tab,
 //     then tell whoever asked where it went" written as `place?.(openTab(…))`
 //     opens nothing when nobody asked — `?.()` skips its arguments too. That
@@ -96,6 +105,9 @@ function modelImports(store: string): string[] {
     .map((spec) => spec.split(/\s+as\s+/).pop() as string);
 }
 
+/** The model functions that make a layout out of nothing the store holds. */
+const FRESH_LAYOUTS = ["emptyLayout", "loadLayout"];
+
 export function storeViolations(source: string): string[] {
   const c = code(source);
   const out: string[] = [];
@@ -103,19 +115,22 @@ export function storeViolations(source: string): string[] {
   if (!/let center = \$state\.raw<CenterLayout>\(emptyLayout\(\)\);/.test(c)) {
     out.push("the layout is not a raw state seeded by emptyLayout()");
   }
-  // Every later assignment: `center = <model function>(center, …)` or a fresh layout.
+  // Every later assignment: `center = <model function>(center, …)` or a fresh
+  // layout — an empty one, or one the model rebuilt from a saved tree (v1.6).
   for (const m of c.matchAll(/^[ \t]*center\s*=(?!=)\s*([^;]+);/gm)) {
     const rhs = m[1].trim();
     const call = /^([A-Za-z_$][\w$]*)\(\s*(center\b)?/.exec(rhs);
     const ok =
       call !== null &&
       model.includes(call[1]) &&
-      (call[2] !== undefined || call[1] === "emptyLayout");
+      (call[2] !== undefined || FRESH_LAYOUTS.includes(call[1]));
     if (!ok) out.push(`the layout is assigned something the model did not produce: ${rhs}`);
   }
   if (/\bset\s+(?:center|activeId|list)\s*\(/.test(c)) {
     out.push("tabsState must not expose a setter");
   }
+  // The tab the focused pane shows — every tab of the centre is a session
+  // (v1.11: a file is shown inside its connection, not as a tab of its own).
   if (!/get activeId\(\): string \| null \{\s*return activeTabIn\(center\);\s*\}/.test(c)) {
     out.push("activeId must be derived from the layout");
   }
@@ -173,7 +188,14 @@ export function pageViolations(source: string, terminal: string): string[] {
     }
   }
 
-  if (!/focusOnConnect=\{tabsState\.activeId === tab\.sessionId\}/.test(markup)) {
+  // The pane in focus, and the terminal in focus inside it: the connection may
+  // be showing a *file* where the user types (v1.11) — then the terminal is not
+  // what takes the keys.
+  if (
+    !/focusOnConnect=\{tabsState\.activeId === tab\.sessionId && terminalFocused\(views\)\}/.test(
+      markup,
+    )
+  ) {
     out.push("a terminal takes the keyboard on connect whether or not its pane is in focus");
   }
   const t = code(terminal);
@@ -209,6 +231,45 @@ export function pageViolations(source: string, terminal: string): string[] {
   const key = fn(c.replace(/\n  \}\n/g, "\n}\n"), "onPaneKey");
   if (!/e\.defaultPrevented/.test(key)) {
     out.push("the pane chords fire even when the focused control already handled the key");
+  }
+  return out;
+}
+
+// ── 8: synchronous input lays nothing out itself ─────────────────────────────
+
+export function gridViolations(pageSource: string, storeSource: string): string[] {
+  const c = code(pageSource);
+  const at = c.lastIndexOf("</script>");
+  const script = c.slice(0, at);
+  const markup = c.slice(at);
+  const out: string[] = [];
+  if (/\bbcLayout\b|\bbcTile\b|grid-template-columns/.test(c)) {
+    out.push("the page lays terminals out in a view of its own");
+  }
+  if (!/const paneStrips = \$derived\(isSplit\);/.test(script)) {
+    out.push("whether panes carry their strips depends on more than the split");
+  }
+  if (!/data-pane-body=\{tabPane\[tab\.sessionId\]\}/.test(markup)) {
+    out.push("a terminal is not always the body of its pane");
+  }
+  const tile = fn(script.replace(/\n  \}\n/g, "\n}\n"), "tileSessions");
+  if (
+    (script.match(/\btilePanes\(/g) ?? []).length !== 1 ||
+    !/const fit = gridFit\(areaBounds,/.test(tile) ||
+    !/tilePanes\([^;]*, fit\.cols\);/.test(tile)
+  ) {
+    out.push("a grid is laid out without asking how many panes fit");
+  }
+  const s = code(storeSource);
+  const tileStore = fn(s, "tilePanes");
+  if (
+    !/center = tileTabsIn\(center, tabs, cols\);/.test(tileStore) ||
+    !/beforeTile = savedLayout\(before\);/.test(tileStore)
+  ) {
+    out.push("the grid forgets the layout it replaces");
+  }
+  if (!/center = loadLayout\(saved, all\);/.test(fn(s, "untilePanes"))) {
+    out.push("coming back from the grid does not rebuild the saved layout against the open tabs");
   }
   return out;
 }
@@ -290,6 +351,10 @@ describe("centre layout guard", () => {
     expect(incomingViolations(raw(INCOMING), raw(STORE))).toEqual([]);
   });
 
+  it("synchronous input lays nothing out itself — a grid is the layout's command", () => {
+    expect(gridViolations(raw(PAGE), raw(STORE))).toEqual([]);
+  });
+
   it("a dragged tab changes the layout once, and strips are hit-tested by layout", () => {
     expect(dragViolations(raw(DRAG))).toEqual([]);
   });
@@ -321,6 +386,16 @@ describe("centre layout guard — catches what it exists for", () => {
     expect(
       storeViolations(
         mutate(store, "center = joinPanesIn(center);", "center = flatten(center);"),
+      ),
+    ).toEqual([expect.stringContaining("something the model did not produce")]);
+    // A saved tree is rebuilt by the model too (v1.6): parsed JSON is not a layout.
+    expect(
+      storeViolations(
+        mutate(
+          store,
+          "center = loadLayout(layout, list.map((t) => t.sessionId));",
+          "center = layout as CenterLayout;",
+        ),
       ),
     ).toEqual([expect.stringContaining("something the model did not produce")]);
     expect(
@@ -377,13 +452,20 @@ describe("centre layout guard — catches what it exists for", () => {
     ).toEqual([expect.stringContaining("rendered in 2 places")]);
   });
 
-  it("a terminal that takes the keyboard from the pane next to it", () => {
+  it("a terminal that takes the keyboard from the pane next to it, or from the file in front of it", () => {
+    const FOCUS = "focusOnConnect={tabsState.activeId === tab.sessionId && terminalFocused(views)}";
+    const stolen = "a terminal takes the keyboard on connect whether or not its pane is in focus";
+    expect(pageViolations(mutate(page, FOCUS, ""), terminal)).toContain(stolen);
+    // The pane is in focus, but a file of this connection is what is being typed in.
     expect(
       pageViolations(
-        mutate(page, "focusOnConnect={tabsState.activeId === tab.sessionId}", ""),
+        mutate(page, FOCUS, "focusOnConnect={tabsState.activeId === tab.sessionId}"),
         terminal,
       ),
-    ).toContain("a terminal takes the keyboard on connect whether or not its pane is in focus");
+    ).toContain(stolen);
+    expect(
+      pageViolations(mutate(page, FOCUS, "focusOnConnect={terminalFocused(views)}"), terminal),
+    ).toContain(stolen);
     for (const reached of ['onstatus?.("connected");', "onadopted?.();"]) {
       const guarded = new RegExp(
         `(${reached.replace(/[.*+?^$()|[\]\\]/g, "\\$&")}\\s*)if \\(focusOnConnect\\) term\\.focus\\(\\);`,
@@ -438,7 +520,7 @@ describe("centre layout guard — catches what it exists for", () => {
       ),
     ).toContain("a pane's strip keeps no place for a tab held over the window");
     expect(
-      pageViolations(mutate(page, "if (e.defaultPrevented || bcOn) return;", "if (bcOn) return;"), terminal),
+      pageViolations(mutate(page, "if (e.defaultPrevented) return;", "if (bcOn) return;"), terminal),
     ).toContain("the pane chords fire even when the focused control already handled the key");
   });
 
@@ -485,6 +567,45 @@ describe("centre layout guard — catches what it exists for", () => {
     ).toEqual(["a tab is opened inside an optional call — it opens only when someone listens"]);
   });
 
+  it("a view of its own for the synchronous-input group", () => {
+    expect(
+      gridViolations(
+        mutate(page, 'class="relative min-h-0 min-w-0 flex-1"', 'class={bcLayout === "grid" ? "grid" : "relative"}'),
+        store,
+      ),
+    ).toContain("the page lays terminals out in a view of its own");
+    expect(
+      gridViolations(mutate(page, "const paneStrips = $derived(isSplit);", "const paneStrips = $derived(isSplit && !bcOn);"), store),
+    ).toEqual(["whether panes carry their strips depends on more than the split"]);
+    expect(
+      gridViolations(
+        mutate(page, "data-pane-body={tabPane[tab.sessionId]}", "data-pane-body={bcOn ? undefined : tabPane[tab.sessionId]}"),
+        store,
+      ),
+    ).toEqual(["a terminal is not always the body of its pane"]);
+  });
+
+  it("a grid that ignores the pane minimum, or throws the layout before it away", () => {
+    expect(
+      gridViolations(
+        mutate(page, "tilePanes(ids.filter((id) => shown.includes(id)), fit.cols);", "tilePanes(ids, 4);"),
+        store,
+      ),
+    ).toEqual(["a grid is laid out without asking how many panes fit"]);
+    expect(
+      gridViolations(
+        page,
+        mutate(store, "  if (center !== before && beforeTile === null) beforeTile = savedLayout(before);\n", ""),
+      ),
+    ).toEqual(["the grid forgets the layout it replaces"]);
+    expect(
+      gridViolations(
+        page,
+        mutate(store, "  center = loadLayout(saved, all);\n", "  center = joinPanesIn(center);\n"),
+      ),
+    ).toEqual(["coming back from the grid does not rebuild the saved layout against the open tabs"]);
+  });
+
   it("a drag that moves the tab before the release", () => {
     expect(
       dragViolations(
@@ -525,8 +646,8 @@ describe("centre layout guard — catches what it exists for", () => {
   it("is not satisfied by a comment that only names the markers", () => {
     const gutted = mutate(
       page,
-      "focusOnConnect={tabsState.activeId === tab.sessionId}",
-      "<!-- focusOnConnect={tabsState.activeId === tab.sessionId} -->",
+      "focusOnConnect={tabsState.activeId === tab.sessionId && terminalFocused(views)}",
+      "<!-- focusOnConnect={tabsState.activeId === tab.sessionId && terminalFocused(views)} -->",
     );
     expect(pageViolations(gutted, terminal)).toContain(
       "a terminal takes the keyboard on connect whether or not its pane is in focus",

@@ -7,7 +7,7 @@
   import Modal from "./Modal.svelte";
   import PasswordInput from "./PasswordInput.svelte";
   import type { ServerProfile } from "./types";
-  import { openTab } from "./stores/tabs.svelte";
+  import { connectTabWith, openTab } from "./stores/tabs.svelte";
   import { t } from "./i18n";
 
   let target = $state<ServerProfile | null>(null);
@@ -21,15 +21,20 @@
   // What the caller wants done with the tab once it exists (e.g. put it in a new
   // pane). Dropped with the prompt: a cancelled connection places nothing.
   let opened: ((sessionId: string) => void) | undefined;
+  // A tab that is already open and waits for this secret (one restored from the
+  // previous launch): it is connected in place instead of opening a new one.
+  let into: string | undefined;
 
   /** Open the prompt for `server`. `label` is "Password" | "Passphrase" (from the
    *  connect plan); `error` shows a red banner when re-prompting after a rejection;
-   *  `onopened` is called with the new tab's session id if the user connects. */
+   *  `onopened` is called with the new tab's session id if the user connects;
+   *  `forTab` names an open tab to connect with the secret instead of a new one. */
   export function prompt(
     server: ServerProfile,
     secretLabel: string,
     secretError = "",
     onopened?: (sessionId: string) => void,
+    forTab?: string,
   ) {
     target = server;
     label = secretLabel;
@@ -37,18 +42,24 @@
     remember = true;
     error = secretError;
     opened = onopened;
+    into = forTab;
   }
 
   function close() {
     target = null;
     opened = undefined;
+    into = undefined;
   }
 
   function submit(event: Event) {
     event.preventDefault();
     if (!target) return;
-    const sessionId = openTab(target.id, target.alias, value, remember);
-    opened?.(sessionId);
+    if (into !== undefined) {
+      connectTabWith(into, value, remember);
+    } else {
+      const sessionId = openTab(target.id, target.alias, value, remember);
+      opened?.(sessionId);
+    }
     close();
     value = "";
     remember = true;

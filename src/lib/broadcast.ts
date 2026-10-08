@@ -77,28 +77,15 @@ export function frameCommand(cmd: string): string | null {
   return submitLine(cmd);
 }
 
-export type BroadcastLayout = "grid" | "focus";
-
-/** Above this many members the tiled grid gives way to focus + roster. */
-export const FOCUS_THRESHOLD = 9;
-
-/**
- * Default layout for `n` members: a readable tiled grid up to the threshold,
- * then a single focused terminal + a compact roster of the rest (so 10, 30 or
- * 50 members all stay usable instead of shrinking into unreadable tiles).
- */
-export function pickLayout(n: number, threshold = FOCUS_THRESHOLD): BroadcastLayout {
-  return n > threshold ? "focus" : "grid";
-}
-
-/** Minimum readable tile width (≈48 cols) before the grid scrolls instead. */
+/** Narrowest a pane of the grid is asked to be (≈48 terminal columns). */
 export const MIN_TILE = 380;
 /** Never more than this many columns, even on very wide windows. */
 export const MAX_COLS = 4;
 
 /**
- * How many columns the tiled grid uses: as many as fit at `minTile` width, but
- * never more than the member count or `maxCols`. Rows beyond what fits scroll.
+ * How many columns the grid of members asks for: as many as fit at `minTile`
+ * width, but never more than the member count or `maxCols`. Whether that many
+ * panes fit at all is the layout's question (`gridFit` in splitlayout.ts).
  */
 export function gridColumns(
   containerWidth: number,

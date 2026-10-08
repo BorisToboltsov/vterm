@@ -24,6 +24,12 @@
   import K8sCluster from "./K8sCluster.svelte";
   import K8sDetailModal from "./K8sDetailModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
+  import K8sDetail from "./K8sDetail.svelte";
+  import K8sText from "./K8sText.svelte";
+  import SidePane from "./SidePane.svelte";
+  import PanelDivider from "./PanelDivider.svelte";
+  import { partWidth } from "./stores/panelsplit.svelte";
+  import { wideWhen } from "./actions/panelwide";
   import { tooltip } from "./actions/tooltip";
   import { kubectlRun } from "./api";
   import { settings } from "./settings.svelte";
@@ -164,12 +170,21 @@
 
   let menu = $state<OpenMenu | null>(null);
 
+  // The wide layout (v1.7): the panel is laid out by its container query, but
+  // whether details open beside the list or as a dialog is behaviour, not layout
+  // — that reads the same threshold here (`panelwide.ts`).
+  let wide = $state(false);
+  // Width of that row, px — what the border is dragged within.
+  let rowWidth = $state(0);
   // Pod detail modal.
   let detailOpen = $state(false);
   let detailPod = $state<K8sPod | null>(null);
 
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
+  // Something stands beside the list (describe, YAML, a pod's details): the
+  // row is two parts with a border the user drags.
+  const sideOpen = $derived(wide && (textOpen || detailOpen));
   let textTitle = $state("");
   let textBody = $state("");
 
@@ -572,7 +587,7 @@
 
 <!-- `@container`: the panel lays itself out by its own width (`@wide:`), so one
      component serves a narrow side dock and the full-width bottom dock. -->
-<div class="@container flex h-full min-h-0 flex-col text-xs">
+<div class="@container flex h-full min-h-0 flex-col text-xs" use:wideWhen={(w) => (wide = w)} data-wide={wide}>
   {#if !sessionReady || availability === null}
     <EmptyState icon="kubernetes" title={t("k8s.checking")} />
   {:else if !availability.ok}
@@ -665,7 +680,14 @@
     </div>
 
     <!-- Active sub-view -->
-    <div class="min-h-0 flex-1">
+    <!-- In a wide panel describe/YAML and a pod's details open beside the
+         list (below), not over it. -->
+    <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <div
+      class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
+      style:width={sideOpen ? partWidth("k8s", rowWidth) : null}
+      data-testid="k8s-list-part"
+    >
       {#if !firstLoadDone}
         <div class="space-y-2 p-2.5" data-testid="k8s-skeleton" aria-hidden="true">
           {#each [0, 1, 2, 3, 4] as i (i)}
@@ -719,11 +741,48 @@
         <K8sCluster {nodes} {events} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
       {/if}
     </div>
+    {#if sideOpen}
+      <!-- Text asked for last (describe, YAML) stands in front of the pod's
+           details, as the dialogs stack; closing it shows them again. -->
+      <!-- The border between the list and what stands beside it is dragged
+           (`PanelDivider`); the share is the store's, one for every session. -->
+      <PanelDivider split="k8s" width={rowWidth} />
+      <div class="min-h-0 min-w-0 flex-1" data-testid="k8s-side">
+        {#if textOpen}
+          <SidePane title={textTitle} onclose={() => (textOpen = false)} testid="k8s-side-text">
+            <K8sText text={textBody} fill />
+          </SidePane>
+        {:else}
+          <SidePane
+            title={liveDetailPod?.name ?? ""}
+            onclose={() => (detailOpen = false)}
+            testid="k8s-side-detail"
+          >
+            <K8sDetail
+              active
+              fill
+              pod={liveDetailPod}
+              metrics={detailMetrics}
+              {busy}
+              {refreshSec}
+              {run}
+              {runQuery}
+              {openShell}
+              {onAsk}
+              onclose={() => (detailOpen = false)}
+            />
+          </SidePane>
+        {/if}
+      </div>
+    {/if}
+    </div>
   {/if}
 </div>
 
+<!-- The same two as dialogs — where the panel has no room to show them beside
+     the list. Outside the root: it is a query container (see INVARIANTS). -->
 <K8sDetailModal
-  open={detailOpen}
+  open={detailOpen && !wide}
   pod={liveDetailPod}
   metrics={detailMetrics}
   {busy}
@@ -735,7 +794,7 @@
   onclose={() => (detailOpen = false)}
 />
 
-<K8sTextModal open={textOpen} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />
+<K8sTextModal open={textOpen && !wide} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />
 
 <ContextMenu {menu} onclose={() => (menu = null)} />
 

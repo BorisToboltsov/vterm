@@ -22,6 +22,12 @@
   import DockerNetworks from "./DockerNetworks.svelte";
   import DockerTextModal from "./DockerTextModal.svelte";
   import DockerDetailModal from "./DockerDetailModal.svelte";
+  import DockerDetail from "./DockerDetail.svelte";
+  import DockerText from "./DockerText.svelte";
+  import SidePane from "./SidePane.svelte";
+  import PanelDivider from "./PanelDivider.svelte";
+  import { partWidth } from "./stores/panelsplit.svelte";
+  import { wideWhen } from "./actions/panelwide";
   import { tooltip } from "./actions/tooltip";
   import { containerRun, dockerLogin } from "./api";
   import { settings } from "./settings.svelte";
@@ -128,6 +134,12 @@
     rememberSub(sessionId, "dockerNet", view);
   }
 
+  // The wide layout (v1.7): the panel is laid out by its container query, but
+  // whether details open beside the list or as a dialog is behaviour, not layout
+  // — that reads the same threshold here (`panelwide.ts`).
+  let wide = $state(false);
+  // Width of that row, px — what the border is dragged within.
+  let rowWidth = $state(0);
   // Shared right-click menu (containers + images) and the container detail modal.
   let menu = $state<OpenMenu | null>(null);
   let detailOpen = $state(false);
@@ -161,6 +173,9 @@
   // Text modal (logs / inspect). `modalArgs` is re-run on each poll while
   // `modalLive` (logs) so the buffer stays fresh; inspect is fetched once.
   let modalOpen = $state(false);
+  // Something stands beside the list (logs, inspect, details): the row is
+  // two parts with a border the user drags.
+  const sideOpen = $derived(wide && (modalOpen || detailOpen));
   let modalTitle = $state("");
   let modalText = $state("");
   let modalLive = $state(false);
@@ -458,7 +473,7 @@
 
 <!-- `@container`: the panel lays itself out by its own width (`@wide:`), so one
      component serves a narrow side dock and the full-width bottom dock. -->
-<div class="@container flex h-full min-h-0 flex-col text-xs">
+<div class="@container flex h-full min-h-0 flex-col text-xs" use:wideWhen={(w) => (wide = w)} data-wide={wide}>
   {#if !sessionReady}
     <EmptyState icon="container" title={t("docker.checking")} />
   {:else if availability === null}
@@ -520,8 +535,14 @@
       </div>
     </div>
 
-    <!-- Active sub-view -->
-    <div class="min-h-0 flex-1">
+    <!-- Active sub-view; in a wide panel logs, inspect and a container's
+         details open beside it (below), not over it. -->
+    <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <div
+      class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
+      style:width={sideOpen ? partWidth("docker", rowWidth) : null}
+      data-testid="docker-list-part"
+    >
       {#if !firstLoadDone}
         <!-- Skeleton until the first load completes (Phase 36, point 2) — never
              flash "No containers" on a host that actually has some. -->
@@ -558,13 +579,50 @@
         <DockerNetworks {networks} {volumes} {containers} view={netView} onView={pickNetView} {busy} {run} />
       {/if}
     </div>
+    {#if sideOpen}
+      <!-- Text asked for last (logs, inspect) stands in front of the details,
+           as the dialogs stack; closing it shows them again. -->
+      <!-- The border between the list and what stands beside it is dragged
+           (`PanelDivider`); the share is the store's, one for every session. -->
+      <PanelDivider split="docker" width={rowWidth} />
+      <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side">
+        {#if modalOpen}
+          <SidePane title={modalTitle} onclose={closeModal} testid="docker-side-text">
+            <DockerText text={modalText} live={modalLive} fill />
+          </SidePane>
+        {:else}
+          <SidePane
+            title={liveDetail?.name ?? ""}
+            onclose={() => (detailOpen = false)}
+            testid="docker-side-detail"
+          >
+            <DockerDetail
+              active
+              fill
+              container={liveDetail}
+              stat={detailStat}
+              {busy}
+              {refreshSec}
+              {run}
+              runQuery={(args, timeout) => runQuery(args, timeout)}
+              onShell={openShell}
+              {onAsk}
+              onclose={() => (detailOpen = false)}
+            />
+          </SidePane>
+        {/if}
+      </div>
+    {/if}
+    </div>
   {/if}
 </div>
 
-<DockerTextModal open={modalOpen} title={modalTitle} text={modalText} live={modalLive} onclose={closeModal} />
+<!-- The same two as dialogs — where the panel has no room to show them beside
+     the list. Outside the root: it is a query container (see INVARIANTS). -->
+<DockerTextModal open={modalOpen && !wide} title={modalTitle} text={modalText} live={modalLive} onclose={closeModal} />
 
 <DockerDetailModal
-  open={detailOpen}
+  open={detailOpen && !wide}
   container={liveDetail}
   stat={detailStat}
   {busy}
