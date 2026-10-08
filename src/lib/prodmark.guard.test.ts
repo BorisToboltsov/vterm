@@ -1,9 +1,16 @@
 // Production-marking guard: a tab whose server is prod must be marked on the tab
-// strip AND around its terminal (a red ring; in the broadcast grid, the tile's
-// border), and the frame must stay an inert overlay. On the strip the mark is the
+// strip AND around its terminal (a red ring), and the frame must stay an inert
+// overlay. (Until v1.9 the synchronous-input grid drew tiles of its own with a
+// red border; its members stand in ordinary panes now and carry the same ring.) On the strip the mark is the
 // `prod` chip; the top line belongs to the ACTIVE tab only (v1.0.42) — accent, or
 // red when that tab is prod — because a red line on every prod tab read as
-// "active" (tabstrip.ts). The editor sub-tabs carry the same line, 1px.
+// "active" (tabstrip.ts).
+//
+// A file is shown inside its connection (v1.11, ADR 0024). A file of a prod
+// server is edited on prod — saving it is an action there — so the frame goes
+// around the whole connection, its files included, not around the terminal
+// alone; and the view in focus inside it carries the thin strip in the same
+// colour as the tab above.
 //
 // Why a source guard: +page.svelte is the orchestrator and has no component test.
 // The failure modes are silent — the mark vanishes from one of the two places (you
@@ -42,6 +49,16 @@ function code(src: string): string {
     .join("\n");
 }
 
+/** The `{#…}` blocks open at `offset` in a stretch of markup, outermost first. */
+function openBlocks(markup: string, offset: number): string[] {
+  const stack: string[] = [];
+  for (const m of markup.slice(0, offset).matchAll(/\{([#/])(\w+)([^}]*)\}/g)) {
+    if (m[1] === "#") stack.push(`#${m[2]}${m[3]}`.trim());
+    else stack.pop();
+  }
+  return stack;
+}
+
 /** Check the page source; returns the list of violated rules. */
 export function prodMarkViolations(src: string): string[] {
   const c = code(src);
@@ -59,22 +76,37 @@ export function prodMarkViolations(src: string): string[] {
   if (/var\(--color-bad\)/.test(tab)) {
     out.push("tab strip is drawn outside activeTabStrip — an inactive prod tab would look active");
   }
-  if ((c.match(/activeTabStrip\(prodTabIds\.has\(tab\.sessionId\), 1\)/g) ?? []).length < 2) {
-    out.push("editor sub-tabs (terminal + files) have no 1px active strip");
-  }
   if (!/\{#if prodTabIds\.has\(tab\.sessionId\)\}\s*<span[^>]*text-bad[^>]*>prod<\/span>/.test(tab)) {
     out.push("tab has no prod chip");
   }
-  const frame = /\{#if !bcTile && prodTabIds\.has\(tab\.sessionId\)\}\s*<div([^>]*)>/.exec(c);
+  // The frame: one, around the whole connection. `prod` is this connection's.
+  if (!/\{@const prod = prodTabIds\.has\(tab\.sessionId\)\}/.test(c)) {
+    out.push("the connection's prod flag is not read from prodTabIds");
+  }
+  const frame = /\{#if prod\}\s*<div([^>]*)>/.exec(c);
   if (!frame) {
     out.push("terminal has no prod frame");
   } else {
     if (!frame[1].includes("pointer-events-none")) out.push("prod frame must not take clicks");
     if (!/ring-bad/.test(frame[1])) out.push("prod frame must be a bad-token ring");
     if (!/\bz-\d/.test(frame[1])) out.push("prod frame needs an explicit z-index");
+    // Around the files too: it is drawn after the connection's editors, as a
+    // child of the connection's own box — not inside the terminal's, and not
+    // only while some condition on the zones holds.
+    const lastEditor = c.lastIndexOf("<EditorTab");
+    const blocks = openBlocks(c.slice(c.lastIndexOf("</script>")), frame.index - c.lastIndexOf("</script>"));
+    if (
+      lastEditor < 0 ||
+      frame.index < lastEditor ||
+      blocks.join(" | ") !==
+        ["#if tabsState.list.length > 0", "#each tabsState.list as tab (tab.sessionId)"].join(" | ")
+    ) {
+      out.push("a file of a prod server is edited outside the prod frame");
+    }
   }
-  if (!/prodTabIds\.has\(tab\.sessionId\) \? "border-bad\/60" : "border-edge"/.test(c)) {
-    out.push("broadcast tile border is not red for prod");
+  // The view in focus inside a prod connection is marked in the same colour.
+  if (!/\$\{activeTabStrip\(prod, 1\)\}/.test(c)) {
+    out.push("the view in focus inside a connection has no strip (accent, red for prod)");
   }
   return out;
 }
@@ -87,9 +119,9 @@ describe("production marking guard", () => {
   });
 
   it("catches a dropped frame, a clickable frame and a missing chip", () => {
-    expect(
-      prodMarkViolations(src.replace("{#if !bcTile && prodTabIds.has(tab.sessionId)}", "{#if false}")),
-    ).toContain("terminal has no prod frame");
+    expect(prodMarkViolations(src.replace(/\{#if prod\}(\s*<!-- Prod frame)/, "{#if false}$1"))).toContain(
+      "terminal has no prod frame",
+    );
     expect(
       prodMarkViolations(src.replace("pointer-events-none absolute inset-0 z-20 ring-1", "absolute inset-0 z-20 ring-1")),
     ).toContain("prod frame must not take clicks");
@@ -97,21 +129,42 @@ describe("production marking guard", () => {
       prodMarkViolations(src.replace('text-caption text-bad">prod</span>', 'text-caption text-bad">x</span>')),
     ).toContain("tab has no prod chip");
     // The old always-on red line on every prod tab, put back.
-    expect(
-      prodMarkViolations(
-        src.replace(
-          "? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`",
-          "? 'bg-panel text-text'",
-        ).replace(
-          "data-tab={tab.sessionId}\n",
-          "data-tab={tab.sessionId}\n            class:shadow-[inset_0_2px_0_0_var(--color-bad)]={prodTabIds.has(tab.sessionId)}\n",
-        ),
-      ),
-    ).toEqual(
+    const always = src
+      .replace(
+        "? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`",
+        "? 'bg-panel text-text'",
+      )
+      .replace(
+        "data-tab={tab.sessionId}\n",
+        "data-tab={tab.sessionId}\n            class:shadow-[inset_0_2px_0_0_var(--color-bad)]={prodTabIds.has(tab.sessionId)}\n",
+      );
+    expect(always).not.toBe(src);
+    expect(prodMarkViolations(always)).toEqual(
       expect.arrayContaining([
         "the active tab has no top strip (accent, red for prod)",
+        "tab strip is drawn outside activeTabStrip — an inactive prod tab would look active",
       ]),
     );
+  });
+
+  it("catches a frame that leaves the files of a prod server outside it", () => {
+    // Moved into the terminal's own box: the editors come after it.
+    const frame = /\n *\{#if prod\}\s*<!-- Prod frame[\s\S]*?\{\/if\}\n/.exec(src)?.[0] ?? "";
+    expect(frame).not.toBe("");
+    const inside = src
+      .replace(frame, "\n")
+      .replace("                <!-- The connection's files: one flat keyed list", `${frame}                <!-- The connection's files: one flat keyed list`);
+    expect(inside).not.toBe(src);
+    expect(prodMarkViolations(inside)).toEqual(["a file of a prod server is edited outside the prod frame"]);
+    // Drawn only while the connection has files: a bare prod terminal loses it.
+    const conditional = src.replace(frame, `\n{#if hasFiles}${frame}{/if}\n`);
+    expect(prodMarkViolations(conditional)).toEqual([
+      "a file of a prod server is edited outside the prod frame",
+    ]);
+    // The view in focus marked with the accent whatever the server.
+    expect(
+      prodMarkViolations(src.replace("${activeTabStrip(prod, 1)}", "${activeTabStrip(false, 1)}")),
+    ).toEqual(["the view in focus inside a connection has no strip (accent, red for prod)"]);
   });
 
   it("is not satisfied by a comment that only names the markers", () => {

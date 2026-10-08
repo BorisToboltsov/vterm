@@ -153,4 +153,7 @@ workflow — [docs/TESTS.md](docs/TESTS.md#ci-на-github); свойства ц�
 - pnpm гейтит нативные build-скрипты; esbuild разрешён через `allowBuilds: { esbuild: true }`
   в [pnpm-workspace.yaml](pnpm-workspace.yaml) (**не** `onlyBuiltDependencies` в package.json).
 - Запуск: `pnpm tauri dev` (первая Rust-сборка ~1–2 мин).
-- `tauri-driver` (E2E) — только Linux/Windows. Локально на macOS `pnpm test`, E2E гоняет CI.
+- `tauri-driver` (E2E) — только Linux/Windows. На macOS E2E и всё, что стоит под
+  `cfg(target_os = "linux")`, собирается и гоняется в Linux-контейнере (нужен Docker):
+  `pnpm e2e:linux`, `scripts/linux-box.sh <команда>` —
+  [docs/TESTS.md](docs/TESTS.md#linux-в-контейнере).

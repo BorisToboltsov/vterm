@@ -446,6 +446,20 @@
             <input type="checkbox" bind:checked={settings.autoReconnect} />
             {t("settings.autoReconnect")}
           </label>
+          <label class="mt-3 block text-xs text-muted">
+            <span class="flex items-center gap-1"
+              >{t("settings.restoreTabs")}<InfoHint text={t("settings.restoreTabsHint")} /></span
+            >
+            <select
+              data-testid="restore-tabs"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              bind:value={settings.restoreTabs}
+            >
+              <option value="off">{t("settings.restoreTabsOff")}</option>
+              <option value="manual">{t("settings.restoreTabsManual")}</option>
+              <option value="connect">{t("settings.restoreTabsConnect")}</option>
+            </select>
+          </label>
         </section>
 
         {/if}

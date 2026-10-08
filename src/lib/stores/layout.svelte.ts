@@ -27,6 +27,7 @@ import {
 import { isMainWindow } from "../appwindow";
 import { settings } from "../settings.svelte";
 import { resetColumnWidths } from "./colwidths.svelte";
+import { resetPanelShares } from "./panelsplit.svelte";
 
 export const STORAGE_KEY = "vterm.layout";
 
@@ -46,13 +47,14 @@ export function resetLayout(): void {
 }
 
 /**
- * "Reset panel layout": the docks and the column widths of their lists —
- * everything the user laid out by hand. Which panels are hidden is a setting
- * and stays as it is.
+ * "Reset panel layout": the docks, the column widths of their lists and the
+ * border between the two parts of a wide panel — everything the user laid out
+ * by hand. Which panels are hidden is a setting and stays as it is.
  */
 export function resetPanelLayout(): void {
   resetLayout();
   resetColumnWidths();
+  resetPanelShares();
 }
 
 /** Move a tool panel to another dock (or reorder it); `index` omitted = last. */

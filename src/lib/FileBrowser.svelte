@@ -28,7 +28,10 @@
   import type { GrepMatch } from "./sync";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
-  import { lsColorKey, fileTooltip } from "./lscolors";
+  import { lsColorKey, fileTooltip, formatMode, formatModified, ownerLabel } from "./lscolors";
+  import ColumnHead from "./ColumnHead.svelte";
+  import { columnVars } from "./colwidths";
+  import { columns } from "./stores/colwidths.svelte";
   import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
   import { windowRange } from "./virtuallist";
   import { filterHiddenFiles } from "./util";
@@ -188,6 +191,17 @@
     scrollIdle = setTimeout(() => (listScrolling = false), 150);
   }
   let listViewportH = $state(600);
+  // The wide layout (v1.7): in a wide container the listing is a table — name,
+  // size, permissions, owner, modified — under a sticky header. It is the same
+  // markup laid out by `@wide:` variants, so nothing here knows which one is
+  // on screen; the header's height is measured (0 while it is not drawn)
+  // because it covers the top of the scroller and the cursor must not hide
+  // under it.
+  const COLS = { "--c-name": "files.name", "--c-owner": "files.owner" } as const;
+  // A table cell in a wide container: the rule on its right and the row's
+  // vertical padding (6 + 16 + 6 = the 28px row), as in the other dock tables.
+  const CELL = "@wide:border-r @wide:border-edge/40 @wide:py-1.5 @wide:leading-4";
+  let headH = $state(0);
   const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
   const rowCount = $derived((hasParent ? 1 : 0) + shownEntries.length);
   const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
@@ -501,7 +515,9 @@
   function ensureCursorVisible() {
     if (cursor < 0 || !listEl) return;
     // Cursor is already an absolute row index (".." included), so no header offset.
-    const top = scrollForCursor(cursor, ROW_H, listViewportH, listScrollTop, 0);
+    // The sticky column header covers the top of the scroller: the rows have
+    // that much less to be seen in.
+    const top = scrollForCursor(cursor, ROW_H, listViewportH - headH, listScrollTop, 0);
     if (top !== listScrollTop) {
       listEl.scrollTop = top;
       listScrollTop = top;
@@ -1225,10 +1241,31 @@
           role="tree"
           tabindex="0"
           data-testid="{testPrefix}-list"
-          class="min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {dragEntry
+          class="@container min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {dragEntry
             ? 'cursor-grabbing'
             : ''}"
+          style="{columnVars(columns.widths, COLS)}; --list-h: {listViewportH}px"
         >
+          <!-- Column titles — only where there are columns, i.e. in a wide
+               container. The header repeats a row's structure cell for cell
+               (widths, paddings, the actions box), so its borders stand over
+               the rows' borders and it shrinks as they do. -->
+          {#if !loading && mutable}
+            <div
+              bind:offsetHeight={headH}
+              class="sticky top-0 z-10 hidden items-stretch gap-2 border-b border-edge bg-panel-alt px-2 text-meta font-medium text-muted @wide:flex"
+              data-testid="{testPrefix}-columns"
+            >
+              <div class="flex min-w-0 flex-1 items-stretch">
+                <ColumnHead col="files.name" label={t("sftp.colName")} class="w-[var(--c-name)] pr-2" />
+                <span class="w-[5.5rem] min-w-0 truncate border-r border-edge px-2 py-1 text-right">{t("sftp.colSize")}</span>
+                <span class="w-[6.5rem] min-w-0 truncate border-r border-edge px-2 py-1">{t("sftp.colMode")}</span>
+                <ColumnHead col="files.owner" label={t("sftp.colOwner")} class="w-[var(--c-owner)] px-2" />
+                <span class="w-[9rem] min-w-0 truncate px-2 py-1">{t("sftp.colModified")}</span>
+              </div>
+              <span class="w-16 shrink-0"></span>
+            </div>
+          {/if}
           {#if loading}
             <div data-testid="{testPrefix}-skeleton" class="py-1">
               {#each Array(7) as _, i (i)}
@@ -1331,7 +1368,7 @@
                         role="treeitem"
                         aria-selected={selection.selected.has(entry.path)}
                         tabindex="-1"
-                        class="group flex h-7 cursor-grab items-center gap-2 px-2 {dropOk(entry.path)
+                        class="group flex h-7 cursor-grab items-center gap-2 px-2 @wide:items-stretch {dropOk(entry.path)
                           ? 'bg-accent/20 ring-1 ring-inset ring-accent'
                           : selection.selected.has(entry.path)
                             ? 'bg-accent/25'
@@ -1339,19 +1376,30 @@
                           ? 'outline outline-1 -outline-offset-1 outline-accent/70'
                           : ''} {dragEntry && selection.selected.has(entry.path) ? 'opacity-50' : ''}"
                       >
+                        <!-- Narrow: name, and a file's size at the right edge.
+                             Wide: the same cells stand as table columns, joined
+                             by permissions, owner and the modified time — what
+                             the tooltip holds in a narrow dock. A folder has no
+                             size to show: its cell stays, empty. -->
                         <div
-                          class="flex min-w-0 flex-1 items-center gap-2 text-left"
+                          class="flex min-w-0 flex-1 items-center gap-2 text-left @wide:items-stretch @wide:gap-0"
                           use:tooltip={fileTooltip(entry)}
                         >
-                          <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
-                          <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
-                          {#if !entry.isDir}
-                            <span class="ml-auto shrink-0 text-xs text-muted">{fmtSize(entry.size)}</span>
-                          {/if}
+                          <div class="flex min-w-0 flex-1 items-center gap-2 @wide:w-[var(--c-name)] @wide:flex-initial @wide:border-r @wide:border-edge/40 @wide:pr-2">
+                            <Icon name={fileIconName(entry)} size={15} class="shrink-0 text-muted" />
+                            <span class="truncate" style={nameStyle(entry)}>{entry.name}</span>
+                          </div>
+                          <span
+                            class="ml-auto shrink-0 truncate text-xs text-muted @wide:ml-0 @wide:block @wide:w-[5.5rem] @wide:shrink @wide:px-2 @wide:text-right @wide:tabular-nums {entry.isDir ? 'hidden' : ''} {CELL}"
+                            data-testid="{testPrefix}-col-size"
+                          >{entry.isDir ? "" : fmtSize(entry.size)}</span>
+                          <span class="hidden truncate font-mono text-xs text-muted @wide:block @wide:w-[6.5rem] @wide:px-2 {CELL}" data-testid="{testPrefix}-col-mode">{formatMode(entry.mode, entry.isDir, entry.isSymlink, entry.attrs)}</span>
+                          <span class="hidden truncate text-xs text-muted @wide:block @wide:w-[var(--c-owner)] @wide:px-2 {CELL}" data-testid="{testPrefix}-col-owner">{ownerLabel(entry)}</span>
+                          <span class="hidden truncate text-xs tabular-nums text-muted @wide:block @wide:w-[9rem] @wide:px-2 @wide:py-1.5 @wide:leading-4" data-testid="{testPrefix}-col-modified">{formatModified(entry.modified)}</span>
                         </div>
                         <div
                           data-nodrag
-                          class="invisible flex shrink-0 items-center gap-1 group-hover:visible"
+                          class="invisible flex shrink-0 items-center gap-1 group-hover:visible @wide:w-16 @wide:justify-end"
                         >
                           {#if !entry.isDir && onOpenFile}
                             <button

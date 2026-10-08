@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import { panes } from "../splitlayout";
-import { parsePacket, type TermSnapshot } from "../tabhandoff";
+import { paneMoveOrder, parsePacket, type TermSnapshot } from "../tabhandoff";
 import { aiChatState, getChat, peekChat, removeChat } from "./aichat.svelte";
 import {
   beginUpload,
@@ -46,8 +46,10 @@ import {
   peekWorkspace,
   removeWorkspace,
   setEditorSudo,
+  splitSessionView,
   workspacesState,
 } from "./workspaces.svelte";
+import { TERMINAL_VIEW } from "../sessionviews";
 
 const SNAPSHOT: TermSnapshot = {
   cols: 132,
@@ -154,12 +156,12 @@ describe("a tab's packet", () => {
     expect(tab).toMatchObject({ kind: "ssh", serverId: "srv-1", status: "Connected", gen: 0 });
     expect(tab?.attach).toMatchObject({ name: "nginx" });
     expect(tab?.adopt).toEqual(SNAPSHOT);
-    // It is shown, in the pane in focus, and nothing else moved.
+    // It is shown, in the pane in focus, and nothing else moved. Its open file
+    // came with it, inside it (v1.11): the centre holds connections only.
     expect(tabsState.activeId).toBe(sid);
     expect(panes(tabsState.center).flatMap((p) => p.tabs)).toEqual([other, sid]);
 
     const ws = getWorkspace(sid);
-    expect(ws.active).toBe(ed);
     expect(ws.editors).toHaveLength(1);
     expect(ws.editors[0]).toMatchObject({
       name: "notes.txt",
@@ -292,5 +294,83 @@ describe("a tab taken over from another window", () => {
     unpackTab(packet);
     expect(tabsState.list.filter((t) => t.sessionId === sid)).toHaveLength(1);
     expect(panes(tabsState.center).flatMap((p) => p.tabs)).toEqual([sid]);
+  });
+});
+
+describe("a pane taken over from another window (v1.10)", () => {
+  /** Pack the tabs of this window's only pane as its move would, then start afresh. */
+  const packPane = (count: number, shownAt: number) => {
+    const ids = Array.from({ length: count }, () => openLocalTab());
+    for (const id of ids) setTabStatus(id, "connected");
+    const packets = paneMoveOrder(ids, ids[shownAt]).map(
+      (step) => parsePacket(packTab(step.tab, SNAPSHOT, FACTS, step.seat))!,
+    );
+    resetTabs();
+    return { ids, packets };
+  };
+
+  it("the seat travels in the packet; a tab that goes alone has none", () => {
+    const { ids, packets } = packPane(3, 1);
+    expect(packets.map((p) => [p.tab.sessionId, p.seat])).toEqual([
+      [ids[1], { lead: null, before: false }],
+      [ids[0], { lead: ids[1], before: true }],
+      [ids[2], { lead: ids[1], before: false }],
+    ]);
+    const alone = openLocalTab();
+    expect(parsePacket(packTab(alone, SNAPSHOT, FACTS))?.seat).toBeNull();
+  });
+
+  it("arrives in its order, showing the tab it showed", () => {
+    const { ids, packets } = packPane(4, 2);
+    for (const packet of packets) unpackTab(packet);
+    const [pane] = panes(tabsState.center);
+    expect(pane.tabs).toEqual(ids);
+    expect(pane.active).toBe(ids[2]);
+    expect(tabsState.activeId).toBe(ids[2]);
+    // Each of them restores its snapshot, shown or not.
+    for (const id of ids) expect(findTab(id)?.adopt).toEqual(SNAPSHOT);
+  });
+
+  it("joins a window that has tabs of its own without changing what it showed", () => {
+    const { ids, packets } = packPane(3, 0);
+    const own = openLocalTab();
+    // The first tab was given a pane of its own beside the one in focus.
+    const [first, ...rest] = packets;
+    unpackTab(first, { kind: "pane", pane: tabsState.center.focus, zone: "right" });
+    for (const packet of rest) unpackTab(packet);
+    expect(panes(tabsState.center).map((p) => ({ tabs: p.tabs, active: p.active }))).toEqual([
+      { tabs: [own], active: own },
+      { tabs: ids, active: ids[0] },
+    ]);
+  });
+
+  it("a tab whose lead is no longer there still arrives — where a new tab goes, unseen", () => {
+    const { ids, packets } = packPane(2, 0);
+    const own = openLocalTab();
+    unpackTab(packets[1]);
+    expect(panes(tabsState.center)[0]).toMatchObject({ tabs: [own, ids[1]], active: own });
+  });
+
+  it("each connection brings its files inside it, in the zones they stood in", () => {
+    const ids = [openLocalTab(), openLocalTab()];
+    for (const id of ids) setTabStatus(id, "connected");
+    const doc = addScratchEditor(ids[0], "notes.txt", { kind: "plain", label: "Text" }, "draft");
+    // The file beside its terminal.
+    splitSessionView(ids[0], doc, "right");
+    const packets = paneMoveOrder(ids, ids[0]).map(
+      (step) => parsePacket(packTab(step.tab, SNAPSHOT, FACTS, step.seat))!,
+    );
+    removeWorkspace(ids[0]);
+    resetTabs();
+    for (const packet of packets) unpackTab(packet);
+    // The pane holds the connections, in their order — and nothing else.
+    const [pane] = panes(tabsState.center);
+    expect(pane.tabs).toEqual(ids);
+    expect(pane.active).toBe(ids[0]);
+    // The file came inside its connection, still beside the terminal.
+    const zones = panes(getWorkspace(ids[0]).layout).map((zone) => zone.tabs);
+    expect(zones).toEqual([[TERMINAL_VIEW], [doc]]);
+    expect(getWorkspace(ids[0]).editors[0]).toMatchObject({ name: "notes.txt", content: "draft" });
+    expect(peekWorkspace(ids[1])).toBeNull();
   });
 });

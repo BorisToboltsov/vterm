@@ -505,3 +505,28 @@ describe("hiddenPanels (v1.1)", () => {
     expect(settings.hiddenPanels).toEqual([]);
   });
 });
+
+describe("restoreTabs (v1.6)", () => {
+  it("by default the tabs come back and wait for their button", () => {
+    expect(settings.restoreTabs).toBe("manual");
+  });
+
+  it("takes a known mode from a backup and nothing else", () => {
+    applyImportedSettings({ restoreTabs: "connect" });
+    expect(settings.restoreTabs).toBe("connect");
+    applyImportedSettings({ restoreTabs: "off" });
+    expect(settings.restoreTabs).toBe("off");
+    for (const junk of ["always", "", null, 1, true, ["connect"]]) {
+      applyImportedSettings({ restoreTabs: junk });
+      expect(settings.restoreTabs).toBe("manual");
+    }
+  });
+
+  it("is persisted with the rest of the settings and cleared by a reset", () => {
+    settings.restoreTabs = "connect";
+    flushSync();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}").restoreTabs).toBe("connect");
+    resetSettings();
+    expect(settings.restoreTabs).toBe("manual");
+  });
+});

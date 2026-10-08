@@ -8,8 +8,10 @@ import type { ServerProfile } from "./types";
 // The prompt hands the typed secret straight to the tab store; stub it so we can
 // assert what it was told without opening a real session.
 const openTab = vi.fn();
+const connectTabWith = vi.fn();
 vi.mock("./stores/tabs.svelte", () => ({
   openTab: (...args: unknown[]) => openTab(...args),
+  connectTabWith: (...args: unknown[]) => connectTabWith(...args),
 }));
 
 const server: ServerProfile = {
@@ -42,6 +44,7 @@ function renderPrompt() {
       label: string,
       error?: string,
       onopened?: (sessionId: string) => void,
+      forTab?: string,
     ) => void;
   };
   return { ...result, comp };
@@ -50,7 +53,10 @@ function renderPrompt() {
 const rememberBox = () => screen.getByRole("checkbox") as HTMLInputElement;
 
 describe("SecretPrompt", () => {
-  beforeEach(() => openTab.mockReset());
+  beforeEach(() => {
+    openTab.mockReset();
+    connectTabWith.mockReset();
+  });
 
   it("offers to save the secret by default", async () => {
     const { comp } = renderPrompt();
@@ -109,6 +115,33 @@ describe("SecretPrompt", () => {
     await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
     await userEvent.click(screen.getByTestId("secret-connect"));
     expect(placed).toHaveBeenCalledExactlyOnceWith("sess-1");
+  });
+
+  it("connects the tab that waits for the secret, in place — and opens no other", async () => {
+    // A tab restored from the previous launch (ADR 0019) stands in its pane; a
+    // new tab opened for it would land wherever the focus is.
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Passphrase", "", undefined, "sess-waiting");
+    await tick();
+    await userEvent.click(rememberBox());
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(connectTabWith).toHaveBeenCalledExactlyOnceWith("sess-waiting", "hunter2", false);
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("a cancelled prompt for a waiting tab leaves the next connect an ordinary one", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password", "", undefined, "sess-waiting");
+    await tick();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(connectTabWith).not.toHaveBeenCalled();
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true);
   });
 
   it("re-arms the default for the next server instead of remembering the last choice", async () => {

@@ -4,9 +4,7 @@ import {
   prodMembers,
   groupHasProd,
   frameCommand,
-  pickLayout,
   gridColumns,
-  FOCUS_THRESHOLD,
   type BroadcastTab,
 } from "./broadcast";
 
@@ -88,15 +86,6 @@ describe("frameCommand", () => {
 
   it("returns null for an empty command", () => {
     expect(frameCommand("")).toBeNull();
-  });
-});
-
-describe("pickLayout", () => {
-  it("uses the grid up to the threshold, then focus", () => {
-    expect(pickLayout(1)).toBe("grid");
-    expect(pickLayout(FOCUS_THRESHOLD)).toBe("grid");
-    expect(pickLayout(FOCUS_THRESHOLD + 1)).toBe("focus");
-    expect(pickLayout(50)).toBe("focus");
   });
 });
 

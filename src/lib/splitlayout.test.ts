@@ -4,7 +4,9 @@ import {
   activateTab,
   activeTab,
   addTab,
+  addTabBehind,
   applyDrop,
+  arrivalDrop,
   canSplit,
   clampRatio,
   dropChanges,
@@ -13,11 +15,12 @@ import {
   findPane,
   focusPane,
   focusedPane,
+  gridFit,
   joinPanes,
   layoutProblems,
   layoutRects,
+  loadLayout,
   moveTab,
-  moveTabFlat,
   neighbourPane,
   nudgedRatio,
   orderedTabs,
@@ -26,17 +29,17 @@ import {
   panes,
   paneZone,
   placeTab,
-  previewFlat,
   previewIncoming,
-  previewIncomingFlat,
   previewTabs,
   RATIO_MAX,
   RATIO_MIN,
   ratioAt,
   removeTab,
+  savedLayout,
   setRatio,
   shownTabs,
   splitWithTab,
+  tileTabs,
   zoneRect,
   type CenterLayout,
   type Edge,
@@ -207,16 +210,6 @@ describe("moving tabs", () => {
     expect(moveTab(l, "a", "nope")).toBe(l);
   });
 
-  it("the single strip maps a position among all tabs back to a pane", () => {
-    const two = twoPanes(); // [a b] | [c]
-    // Past `c`: after c, in c's pane.
-    expect(shape(moveTabFlat(two, "a", 2))).toEqual([["b"], ["c", "a"]]);
-    // To the very front: before the first tab.
-    expect(shape(moveTabFlat(two, "c", 0))).toEqual([["c", "a", "b"]]);
-    // Between b and c the tab stays next to the one before it.
-    expect(shape(moveTabFlat(two, "a", 1))).toEqual([["b", "a"], ["c"]]);
-    expect(moveTabFlat(withTabs("a"), "a", 0)).toEqual(withTabs("a"));
-  });
 });
 
 describe("splitting", () => {
@@ -461,10 +454,6 @@ describe("dropping a dragged tab", () => {
     // Another pane's strip always changes something.
     const two = twoPanes();
     expect(dropChanges(two, "a", { kind: "strip", pane: panes(two)[1].id, index: 0 })).toBe(true);
-    // The single strip.
-    expect(dropChanges(two, "a", { kind: "flat", index: 0 })).toBe(false);
-    expect(dropChanges(two, "a", { kind: "flat", index: 2 })).toBe(true);
-    expect(shape(applyDrop(two, "a", { kind: "flat", index: 2 }))).toEqual([["b"], ["c", "a"]]);
   });
 
   it("the strips preview the drop: the others make room, the old place closes up", () => {
@@ -493,16 +482,6 @@ describe("dropping a dragged tab", () => {
     ]);
   });
 
-  it("the single strip previews a flat reorder", () => {
-    const two = twoPanes();
-    expect(previewFlat(two, null, null)).toEqual(["a", "b", "c"]);
-    expect(previewFlat(two, "a", { kind: "flat", index: 2 })).toEqual(["b", "c", "a"]);
-    expect(previewFlat(two, "a", { kind: "pane", pane: "p0", zone: "left" })).toEqual([
-      "a",
-      "b",
-      "c",
-    ]);
-  });
 });
 
 describe("a tab arriving from another window", () => {
@@ -594,16 +573,6 @@ describe("a tab arriving from another window", () => {
     ]);
   });
 
-  it("in the single strip: next to the tab before that position, in its pane", () => {
-    const two = twoPanes();
-    expect(shape(placeTab(two, "x", { kind: "flat", index: 0 }))).toEqual([["x", "a", "b"], ["c"]]);
-    expect(shape(placeTab(two, "x", { kind: "flat", index: 2 }))).toEqual([["a", "b", "x"], ["c"]]);
-    expect(shape(placeTab(two, "x", { kind: "flat", index: 3 }))).toEqual([["a", "b"], ["c", "x"]]);
-    expect(shape(placeTab(two, "x", { kind: "flat", index: 99 }))).toEqual([["a", "b"], ["c", "x"]]);
-    // No tab to stand next to: the pane in focus.
-    expect(shape(placeTab(emptyLayout(), "x", { kind: "flat", index: 0 }))).toEqual([["x"]]);
-  });
-
   it("a tab that is already here is shown, not added twice", () => {
     const two = twoPanes();
     const l = placeTab(two, "a", { kind: "pane", pane: panes(two)[1].id, zone: "center" });
@@ -631,17 +600,6 @@ describe("a tab arriving from another window", () => {
     expect(shape(two)).toEqual([["a", "b"], ["c"]]);
   });
 
-  it("the single strip previews the same way", () => {
-    const two = twoPanes();
-    expect(previewIncomingFlat(two, "@in", { kind: "flat", index: 1 })).toEqual([
-      "a",
-      "@in",
-      "b",
-      "c",
-    ]);
-    expect(previewIncomingFlat(two, "@in", null)).toEqual(["a", "b", "c", "@in"]);
-  });
-
   it("what the preview shows is where the tab lands", () => {
     fc.assert(
       fc.property(
@@ -649,7 +607,7 @@ describe("a tab arriving from another window", () => {
         PANE,
         ZONE,
         fc.option(fc.integer({ min: -2, max: 8 }), { nil: null }),
-        fc.constantFrom("strip", "pane", "flat", "none"),
+        fc.constantFrom("strip", "pane", "none"),
         (ops, at, zone, index, kind) => {
           const state = { l: emptyLayout(), open: new Set<string>() };
           for (const o of ops) step(state, o);
@@ -660,9 +618,7 @@ describe("a tab arriving from another window", () => {
               ? { kind, pane, index: index ?? 0 }
               : kind === "pane"
                 ? { kind, pane, zone }
-                : kind === "flat"
-                  ? { kind, index: index ?? 0 }
-                  : null;
+                : null;
           const landed = placeTab(state.l, "x", drop);
           expect(layoutProblems(landed, [...state.open, "x"])).toEqual([]);
           expect(activeTab(landed)).toBe("x");
@@ -671,7 +627,6 @@ describe("a tab arriving from another window", () => {
             const after = findPane(landed, p.id);
             expect(after?.tabs).toEqual(previewIncoming(state.l, p.id, "x", drop));
           }
-          expect(orderedTabs(landed)).toEqual(previewIncomingFlat(state.l, "x", drop));
         },
       ),
       { numRuns: 300 },
@@ -735,7 +690,6 @@ type Op =
   | { op: "activate"; tab: string }
   | { op: "focus"; pane: number }
   | { op: "move"; tab: string; pane: number; index: number | null }
-  | { op: "flat"; tab: string; index: number }
   | { op: "splitTab"; tab: string; pane: number; edge: Edge }
   | { op: "drop"; tab: string; pane: number; zone: PaneZone }
   | { op: "join" }
@@ -752,7 +706,6 @@ const OP: fc.Arbitrary<Op> = fc.oneof(
     pane: PANE,
     index: fc.option(fc.integer({ min: -2, max: 8 }), { nil: null }),
   }),
-  fc.record({ op: fc.constant("flat" as const), tab: TAB, index: fc.integer({ min: -2, max: 8 }) }),
   fc.record({ op: fc.constant("splitTab" as const), tab: TAB, pane: PANE, edge: EDGE }),
   fc.record({ op: fc.constant("drop" as const), tab: TAB, pane: PANE, zone: ZONE }),
   fc.record({ op: fc.constant("join" as const) }),
@@ -784,9 +737,6 @@ function step(state: { l: CenterLayout; open: Set<string> }, o: Op): void {
       break;
     case "move":
       state.l = moveTab(state.l, o.tab, pane, o.index);
-      break;
-    case "flat":
-      state.l = moveTabFlat(state.l, o.tab, o.index);
       break;
     case "splitTab":
       state.l = splitWithTab(state.l, o.tab, pane, o.edge);
@@ -904,6 +854,435 @@ describe("properties", () => {
         // in a pane that still exists, and it is the target unless that vanished.
         expect(findPane(after, target) ? paneOf(after, tab)?.id : target).toBe(target);
       }),
+    );
+  });
+});
+
+// ── A layout read back from storage (v1.6) ──────────────────────────────────
+
+/** What a pane shows and holds, pane by pane — a layout without its node ids. */
+const picture = (l: CenterLayout) => panes(l).map((p) => ({ tabs: p.tabs, active: p.active }));
+
+/** Dir and ratio of every split, in the order `panes` walks the tree. */
+function splits(n: LayoutNode): { dir: string; ratio: number }[] {
+  return n.kind === "pane" ? [] : [{ dir: n.dir, ratio: n.ratio }, ...splits(n.a), ...splits(n.b)];
+}
+
+/** What survives a save and a load: everything but the node ids. */
+const essence = (l: CenterLayout) => ({
+  picture: picture(l),
+  splits: splits(l.root),
+  focus: panes(l).findIndex((p) => p.id === l.focus),
+});
+
+describe("a layout read back from storage", () => {
+  const roundTrip = (l: CenterLayout): CenterLayout =>
+    loadLayout(JSON.parse(JSON.stringify(savedLayout(l))), orderedTabs(l));
+
+  it("comes back as it was saved: panes, order, shown tabs, ratios, focus", () => {
+    let l = splitWithTab(withTabs("a", "b", "c", "d"), "d", "p0", "right");
+    l = splitWithTab(l, "c", "p0", "bottom");
+    l = setRatio(l, (l.root as { id: string }).id, 0.3);
+    l = activateTab(l, "a");
+    const back = roundTrip(l);
+    expect(essence(back)).toEqual(essence(l));
+    expect(layoutProblems(back, ["a", "b", "c", "d"])).toEqual([]);
+  });
+
+  it("nothing saved and nothing to restore is the empty centre", () => {
+    expect(loadLayout(null, [])).toEqual(emptyLayout());
+    expect(loadLayout({ root: 7, focus: [] }, [])).toEqual(emptyLayout());
+  });
+
+  it("tabs with no saved tree stand in one pane, the first shown", () => {
+    const l = loadLayout(undefined, ["a", "b"]);
+    expect(picture(l)).toEqual([{ tabs: ["a", "b"], active: "a" }]);
+    expect(layoutProblems(l, ["a", "b"])).toEqual([]);
+  });
+
+  it("a tab that is not being restored leaves its pane, and an emptied pane goes with its split", () => {
+    const saved = savedLayout(twoPanes()); // [a b] | [c]
+    const l = loadLayout(saved, ["a", "b"]);
+    expect(picture(l)).toEqual([{ tabs: ["a", "b"], active: "b" }]);
+    expect(l.root.kind).toBe("pane");
+    expect(layoutProblems(l, ["a", "b"])).toEqual([]);
+  });
+
+  it("a pane whose shown tab is gone shows its first", () => {
+    const saved = savedLayout(activateTab(twoPanes(), "b")); // [a b*] | [c]
+    expect(picture(loadLayout(saved, ["a", "c"]))).toEqual([
+      { tabs: ["a"], active: "a" },
+      { tabs: ["c"], active: "c" },
+    ]);
+  });
+
+  it("focus stays with its pane, or goes to the first when that pane is gone", () => {
+    const saved = savedLayout(twoPanes()); // focus on [c]
+    expect(essence(loadLayout(saved, ["a", "b", "c"])).focus).toBe(1);
+    expect(essence(loadLayout(saved, ["a", "b"])).focus).toBe(0);
+  });
+
+  it("a tab the tree does not mention joins the pane in focus without being shown", () => {
+    const saved = savedLayout(activateTab(twoPanes(), "a")); // [a* b] | [c], focus left
+    const l = loadLayout(saved, ["a", "b", "c", "x", "y"]);
+    expect(picture(l)).toEqual([
+      { tabs: ["a", "b", "x", "y"], active: "a" },
+      { tabs: ["c"], active: "c" },
+    ]);
+  });
+
+  it("a tab named twice stands once, where it is met first", () => {
+    const saved = {
+      focus: "q",
+      root: {
+        kind: "split",
+        id: "s",
+        dir: "row",
+        ratio: 0.5,
+        a: { kind: "pane", id: "p", tabs: ["a", "a", "b"], active: "a" },
+        b: { kind: "pane", id: "q", tabs: ["a", "c"], active: "a" },
+      },
+    };
+    const l = loadLayout(saved, ["a", "b", "c"]);
+    expect(picture(l)).toEqual([
+      { tabs: ["a", "b"], active: "a" },
+      { tabs: ["c"], active: "c" },
+    ]);
+    expect(layoutProblems(l, ["a", "b", "c"])).toEqual([]);
+  });
+
+  it("junk in a split is brought into range: the ratio, the direction", () => {
+    const pane = (id: string, tab: string) => ({ kind: "pane", id, tabs: [tab], active: tab });
+    const at = (ratio: unknown, dir: unknown) =>
+      loadLayout({ focus: "p", root: { kind: "split", dir, ratio, a: pane("p", "a"), b: pane("q", "b") } }, ["a", "b"]);
+    expect(splits(at(7, "col").root)).toEqual([{ dir: "col", ratio: RATIO_MAX }]);
+    expect(splits(at(-1, "diagonal").root)).toEqual([{ dir: "row", ratio: RATIO_MIN }]);
+    expect(splits(at("half", null).root)).toEqual([{ dir: "row", ratio: 0.5 }]);
+  });
+
+  it("node ids are minted afresh, and the next pane does not collide with them", () => {
+    const saved = {
+      focus: "same",
+      root: {
+        kind: "split",
+        id: "same",
+        dir: "row",
+        ratio: 0.5,
+        a: { kind: "pane", id: "same", tabs: ["a", "b"], active: "a" },
+        b: { kind: "pane", id: "same", tabs: ["c"], active: "c" },
+      },
+    };
+    const l = loadLayout(saved, ["a", "b", "c"]);
+    expect(layoutProblems(l, ["a", "b", "c"])).toEqual([]);
+    const split = splitWithTab(l, "b", l.focus, "bottom");
+    expect(layoutProblems(split, ["a", "b", "c"])).toEqual([]);
+    expect(panes(split)).toHaveLength(3);
+  });
+
+  it("a tree nested deeper than the model ever writes keeps its tabs, in one pane", () => {
+    let node: unknown = { kind: "pane", id: "deep", tabs: ["a", "b"], active: "b" };
+    for (let i = 0; i < 400; i++) {
+      node = { kind: "split", dir: "row", ratio: 0.5, a: node, b: { kind: "pane", tabs: [] } };
+    }
+    const l = loadLayout({ focus: "deep", root: node }, ["a", "b", "c"]);
+    expect(layoutProblems(l, ["a", "b", "c"])).toEqual([]);
+    expect(orderedTabs(l).sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("a saved layout survives the trip whatever was done to it", () => {
+    fc.assert(
+      fc.property(fc.array(OP, { maxLength: 40 }), (ops) => {
+        const state = { l: emptyLayout(), open: new Set<string>() };
+        for (const o of ops) step(state, o);
+        const back = roundTrip(state.l);
+        expect(layoutProblems(back, [...state.open])).toEqual([]);
+        expect(essence(back)).toEqual(essence(state.l));
+      }),
+      { numRuns: 300 },
+    );
+  });
+
+  it("whatever storage holds, the result is a sound layout of exactly the restored tabs", () => {
+    const paneish = fc.record({
+      kind: fc.constantFrom("pane", "tab", 3),
+      id: fc.oneof(fc.constantFrom("p0", "p1", "s1"), fc.anything()),
+      tabs: fc.oneof(fc.array(fc.oneof(TAB, fc.anything()), { maxLength: 6 }), fc.anything()),
+      active: fc.oneof(TAB, fc.anything()),
+    });
+    // The leaf comes first: it is what the recursion bottoms out on.
+    const junk = fc.letrec((tie) => ({
+      node: fc.oneof(
+        { maxDepth: 6 },
+        paneish,
+        fc.anything(),
+        fc.record({
+          kind: fc.constantFrom("split", "pane"),
+          id: fc.constantFrom("s1", "p0"),
+          dir: fc.constantFrom("row", "col", "x"),
+          ratio: fc.oneof(fc.double(), fc.anything()),
+          tabs: fc.array(TAB, { maxLength: 3 }),
+          a: tie("node"),
+          b: tie("node"),
+        }),
+      ),
+    })).node;
+    fc.assert(
+      fc.property(
+        fc.oneof(fc.record({ root: junk, focus: fc.oneof(fc.constantFrom("p0", "p1"), fc.anything()) }), fc.anything()),
+        fc.uniqueArray(TAB, { maxLength: 6 }),
+        (raw, tabs) => {
+          const l = loadLayout(raw, tabs);
+          expect(layoutProblems(l, tabs)).toEqual([]);
+          // …and it is a layout the model can go on working with.
+          const next = tabs.length > 0 ? removeTab(l, tabs[0]) : addTab(l, "z");
+          expect(layoutProblems(next)).toEqual([]);
+        },
+      ),
+      { numRuns: 400 },
+    );
+  });
+});
+
+// ── A tab that arrives with another one (v1.8) ───────────────────────────────
+
+describe("a tab put behind another", () => {
+  it("stands right after it, in its pane, and nothing on screen changes", () => {
+    const l = activateTab(twoPanes(), "a"); // [a* b] | [c], focus left
+    const next = addTabBehind(l, "x", "a");
+    expect(panes(next).map((p) => ({ tabs: p.tabs, active: p.active }))).toEqual([
+      { tabs: ["a", "x", "b"], active: "a" },
+      { tabs: ["c"], active: "c" },
+    ]);
+    expect(next.focus).toBe(l.focus);
+    expect(layoutProblems(next, ["a", "b", "c", "x"])).toEqual([]);
+  });
+
+  it("goes to the pane of the tab it came with, not to the one in focus", () => {
+    const l = twoPanes(); // focus on [c]
+    const next = addTabBehind(l, "x", "b");
+    expect(shape(next)).toEqual([["a", "b", "x"], ["c"]]);
+    expect(activeTab(next)).toBe("c");
+  });
+
+  it("with nothing to stand behind it joins the pane in focus, still unseen", () => {
+    const next = addTabBehind(twoPanes(), "x", "gone");
+    expect(shape(next)).toEqual([["a", "b"], ["c", "x"]]);
+    expect(activeTab(next)).toBe("c");
+  });
+
+  it("is shown only when its pane showed nothing", () => {
+    const next = addTabBehind(emptyLayout(), "x", "gone");
+    expect(panes(next)[0]).toMatchObject({ tabs: ["x"], active: "x" });
+  });
+
+  it("a tab already in the layout is left where it is", () => {
+    const l = twoPanes();
+    expect(addTabBehind(l, "c", "a")).toBe(l);
+  });
+
+  it("keeps the layout sound whatever came before", () => {
+    fc.assert(
+      fc.property(fc.array(OP, { maxLength: 30 }), TAB, (ops, beside) => {
+        const state = { l: emptyLayout(), open: new Set<string>() };
+        for (const o of ops) step(state, o);
+        const before = shownTabs(state.l);
+        const next = addTabBehind(state.l, "doc", beside);
+        expect(layoutProblems(next, [...state.open, "doc"])).toEqual([]);
+        // No pane that showed a tab shows another one because of it.
+        if (state.open.size > 0) expect(shownTabs(next)).toEqual(before);
+      }),
+      { numRuns: 200 },
+    );
+  });
+
+  it("before it, or at the end of its pane — for the tabs of a pane that moves whole", () => {
+    const l = activateTab(twoPanes(), "a"); // [a* b] | [c]
+    expect(shape(addTabBehind(l, "x", "b", "before"))).toEqual([["a", "x", "b"], ["c"]]);
+    expect(shape(addTabBehind(l, "x", "a", "end"))).toEqual([["a", "b", "x"], ["c"]]);
+    expect(shape(addTabBehind(l, "x", "a", "before"))).toEqual([["x", "a", "b"], ["c"]]);
+    // Neither shows the newcomer nor takes the focus.
+    for (const where of ["before", "end"] as const) {
+      const next = addTabBehind(l, "x", "a", where);
+      expect(shownTabs(next)).toEqual(shownTabs(l));
+      expect(next.focus).toBe(l.focus);
+    }
+    // With nothing to stand next to, every side is "where a new tab goes".
+    expect(shape(addTabBehind(l, "x", "gone", "before"))).toEqual([["a", "b", "x"], ["c"]]);
+  });
+});
+
+// ── A pane that arrives whole (v1.10) ────────────────────────────────────────
+
+describe("where the first tab of an arriving pane lands", () => {
+  const lim = PANE_LIMITS;
+  const wide = { x: 0, y: 0, w: 2 * lim.minW + lim.gap, h: lim.minH };
+  const tall = { x: 0, y: 0, w: 2 * lim.minW + lim.gap - 1, h: 2 * lim.minH + lim.gap };
+  const small = { x: 0, y: 0, w: lim.minW, h: lim.minH };
+
+  it("a pane of its own beside the one in focus", () => {
+    const l = withTabs("a", "b");
+    expect(arrivalDrop(l, { [l.focus]: wide })).toEqual({ kind: "pane", pane: l.focus, zone: "right" });
+  });
+
+  it("below it when there is no room beside", () => {
+    const l = withTabs("a");
+    expect(arrivalDrop(l, { [l.focus]: tall })).toEqual({ kind: "pane", pane: l.focus, zone: "bottom" });
+  });
+
+  it("the pane in focus itself when it cannot be split, or shows nothing", () => {
+    const l = withTabs("a");
+    expect(arrivalDrop(l, { [l.focus]: small })).toBeNull();
+    // Not measured yet — nothing to split by.
+    expect(arrivalDrop(l, {})).toBeNull();
+    // A window opened for the pane has one empty pane: the tab becomes its first.
+    const empty = emptyLayout();
+    expect(arrivalDrop(empty, { [empty.focus]: wide })).toBeNull();
+  });
+
+  it("is the pane in focus that is split, not the first one", () => {
+    const l = twoPanes(); // [a b] | [c], focus on [c]
+    expect(arrivalDrop(l, { [l.focus]: wide })?.pane).toBe(paneOf(l, "c")?.id);
+  });
+
+  it("what it names can be placed: the tab gets a pane of its own and is shown", () => {
+    const l = withTabs("a", "b");
+    const next = placeTab(l, "x", arrivalDrop(l, { [l.focus]: wide }));
+    expect(shape(next)).toEqual([["a", "b"], ["x"]]);
+    expect(activeTab(next)).toBe("x");
+  });
+});
+
+// ── A grid of panes with one command (v1.9) ──────────────────────────────────
+
+describe("tiling tabs into a grid of panes", () => {
+  /** The tree as nested arrays: a row split is `["row", a, b]`, a pane its shown tab. */
+  const sketch = (n: LayoutNode): unknown =>
+    n.kind === "pane" ? n.active : [n.dir, sketch(n.a), sketch(n.b)];
+  const six = () => withTabs("a", "b", "c", "d", "e", "f");
+
+  it("gives each tab a pane of its own, `cols` to a row, in the order given", () => {
+    const l = tileTabs(six(), ["a", "b", "c", "d"], 2);
+    expect(panes(l).map((p) => p.active)).toEqual(["a", "b", "c", "d"]);
+    expect(sketch(l.root)).toEqual(["col", ["row", "a", "b"], ["row", "c", "d"]]);
+    expect(layoutProblems(l, ["a", "b", "c", "d", "e", "f"])).toEqual([]);
+  });
+
+  it("the tabs that were not asked for join the first pane, behind its tab", () => {
+    const l = tileTabs(six(), ["c", "a"], 2);
+    expect(panes(l).map((p) => ({ tabs: p.tabs, active: p.active }))).toEqual([
+      { tabs: ["c", "b", "d", "e", "f"], active: "c" },
+      { tabs: ["a"], active: "a" },
+    ]);
+  });
+
+  it("the panes are equal: three in a row are thirds, three rows are thirds", () => {
+    const wide = layoutRects(tileTabs(six(), ["a", "b", "c"], 3).root, { width: 902, height: 400 });
+    expect(Object.values(wide.panes).map((r) => r.w)).toEqual([300, 300, 300]);
+    const tall = layoutRects(tileTabs(six(), ["a", "b", "c"], 1).root, { width: 400, height: 902 });
+    expect(Object.values(tall.panes).map((r) => r.h)).toEqual([300, 300, 300]);
+  });
+
+  it("a last row with fewer tabs is spread over the whole width", () => {
+    const l = tileTabs(six(), ["a", "b", "c"], 2);
+    expect(sketch(l.root)).toEqual(["col", ["row", "a", "b"], "c"]);
+    const rects = layoutRects(l.root, { width: 801, height: 601 });
+    expect(rects.panes[panes(l)[2].id].w).toBe(801);
+  });
+
+  it("the focus stays with the tab that had it, or goes to the first pane", () => {
+    const start = activateTab(six(), "c");
+    const kept = tileTabs(start, ["a", "b", "c"], 3);
+    expect(activeTab(kept)).toBe("c");
+    const moved = tileTabs(start, ["a", "b"], 2);
+    expect(activeTab(moved)).toBe("a");
+  });
+
+  it("one tab asked for is one pane holding everything", () => {
+    const l = tileTabs(twoPanes(), ["c"], 4);
+    expect(panes(l).map((p) => p.tabs)).toEqual([["c", "a", "b"]]);
+    expect(l.root.kind).toBe("pane");
+  });
+
+  it("skips tabs the layout does not hold, and does nothing when none is left", () => {
+    const start = six();
+    expect(panes(tileTabs(start, ["a", "zz", "b", "a"], 2)).map((p) => p.active)).toEqual(["a", "b"]);
+    expect(tileTabs(start, ["zz"], 2)).toBe(start);
+    expect(tileTabs(start, [], 2)).toBe(start);
+  });
+
+  it("more columns than tabs, or a column count that is junk, is as many as there are tabs — or one", () => {
+    expect(sketch(tileTabs(six(), ["a", "b"], 9).root)).toEqual(["row", "a", "b"]);
+    expect(sketch(tileTabs(six(), ["a", "b"], Number.NaN).root)).toEqual(["col", "a", "b"]);
+    expect(sketch(tileTabs(six(), ["a", "b"], 0).root)).toEqual(["col", "a", "b"]);
+  });
+
+  it("the new nodes do not collide with what the layout makes next", () => {
+    const l = tileTabs(six(), ["a", "b", "c", "d"], 2);
+    const next = splitWithTab(addTab(l, "g"), "g", l.focus, "right");
+    expect(layoutProblems(next, ["a", "b", "c", "d", "e", "f", "g"])).toEqual([]);
+  });
+
+  it("keeps the layout sound whatever came before, and holds exactly the same tabs", () => {
+    fc.assert(
+      fc.property(
+        fc.array(OP, { maxLength: 30 }),
+        fc.uniqueArray(TAB, { maxLength: 6 }),
+        fc.integer({ min: -1, max: 6 }),
+        (ops, asked, cols) => {
+          const state = { l: emptyLayout(), open: new Set<string>() };
+          for (const o of ops) step(state, o);
+          const l = tileTabs(state.l, asked, cols);
+          expect(layoutProblems(l, [...state.open])).toEqual([]);
+          const tiled = asked.filter((tab) => state.open.has(tab));
+          if (tiled.length > 0) {
+            // Each asked-for tab is on screen, in a pane of its own.
+            expect(shownTabs(l)).toEqual(tiled);
+          }
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+});
+
+describe("the grid that fits", () => {
+  it("holds columns times the rows that keep the pane minimum", () => {
+    // 240×140 minimum, 1px between panes.
+    expect(gridFit({ width: 1000, height: 600 }, 3)).toEqual({ cols: 3, panes: 12 });
+    expect(gridFit({ width: 1000, height: 281 }, 3)).toEqual({ cols: 3, panes: 6 });
+    expect(gridFit({ width: 1000, height: 280 }, 3)).toEqual({ cols: 3, panes: 3 });
+  });
+
+  it("gets fewer columns than asked when they would be narrower than a pane", () => {
+    expect(gridFit({ width: 481, height: 300 }, 4)).toEqual({ cols: 2, panes: 4 });
+    expect(gridFit({ width: 480, height: 300 }, 4)).toEqual({ cols: 1, panes: 2 });
+  });
+
+  it("is never less than one pane, whatever the room or the columns asked for", () => {
+    expect(gridFit({ width: 0, height: 0 }, 4)).toEqual({ cols: 1, panes: 1 });
+    expect(gridFit({ width: 1000, height: 600 }, 0)).toEqual({ cols: 1, panes: 4 });
+    expect(gridFit({ width: 1000, height: 600 }, Number.NaN)).toEqual({ cols: 1, panes: 4 });
+  });
+
+  it("what it says fits does fit: no pane of such a grid goes under the minimum", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 240, max: 3000 }),
+        fc.integer({ min: 140, max: 2000 }),
+        fc.integer({ min: 1, max: 6 }),
+        (width, height, asked) => {
+          const fit = gridFit({ width, height }, asked);
+          const tabs = Array.from({ length: fit.panes }, (_, i) => `t${i}`);
+          const open = tabs.reduce((acc, tab) => addTab(acc, tab), emptyLayout());
+          const rects = layoutRects(tileTabs(open, tabs, fit.cols).root, { width, height });
+          expect(Object.keys(rects.panes)).toHaveLength(fit.panes);
+          for (const r of Object.values(rects.panes)) {
+            expect(r.w).toBeGreaterThanOrEqual(PANE_LIMITS.minW);
+            expect(r.h).toBeGreaterThanOrEqual(PANE_LIMITS.minH);
+          }
+        },
+      ),
+      { numRuns: 200 },
     );
   });
 });

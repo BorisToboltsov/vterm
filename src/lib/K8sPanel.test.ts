@@ -37,6 +37,7 @@ vi.mock("./api", async (importOriginal) => ({
 
 import K8sPanel from "./K8sPanel.svelte";
 import { peekDockState, resetDockState } from "./stores/dockstate.svelte";
+import { panelSplits, resetPanelShares } from "./stores/panelsplit.svelte";
 
 const settle = (ms = 120) => new Promise((r) => setTimeout(r, ms));
 /** How many times a command was run, matched by a distinctive fragment of its argv. */
@@ -207,5 +208,107 @@ describe("K8sPanel — the route view", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
     await settle();
     expect(peekDockState("r5")?.sub).toMatchObject({ k8s: "network", k8sNet: "route" });
+  });
+});
+
+// ── Details beside the list in a wide panel (v1.7) ───────────────────────────
+
+describe("K8sPanel — where a pod's details open", () => {
+  const POD = {
+    metadata: {
+      name: "web-5f7c",
+      namespace: "shop",
+      creationTimestamp: "2026-10-07T10:00:00Z",
+      ownerReferences: [],
+    },
+    spec: { nodeName: "node-1", containers: [{ name: "web" }] },
+    status: { phase: "Running", containerStatuses: [{ ready: true, restartCount: 0 }] },
+  };
+
+  /** Give the panel a width and let its observer see it (jsdom has no layout). */
+  function resize(width: number) {
+    const root = document.querySelector<HTMLElement>("[data-wide]")!;
+    Object.defineProperty(root, "clientWidth", { configurable: true, value: width });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const o of observers) o.cb([]);
+  }
+
+  async function mountWithPod(id: string) {
+    answer = (args) =>
+      args.includes("pods") && args.includes("get")
+        ? { stdout: JSON.stringify({ items: [POD] }), stderr: "", exitCode: 0 }
+        : undefined;
+    render(K8sPanel, { props: { sessionId: id, visible: true, sessionReady: true } });
+    await settle();
+    expect(screen.getByText("web-5f7c")).toBeInTheDocument();
+  }
+
+  it("a narrow dock opens them as a dialog", async () => {
+    await mountWithPod("k-narrow");
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(screen.queryByTestId("k8s-side")).toBeNull();
+  });
+
+  it("a wide panel opens them beside the list, which stays on screen", async () => {
+    await mountWithPod("k-wide");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const side = screen.getByTestId("k8s-side");
+    expect(side).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    // The list is still there, next to the pane.
+    expect(screen.getByTestId("k8s-list-part")).toContainElement(
+      screen.getByRole("button", { name: "View details" }),
+    );
+    await fireEvent.click(screen.getByTestId("side-pane-close"));
+    expect(screen.queryByTestId("k8s-side")).toBeNull();
+  });
+
+  it("the border between the list and the pane is dragged, and is there only with two parts", async () => {
+    resetPanelShares();
+    await mountWithPod("k-border");
+    resize(1200);
+    const list = screen.getByTestId("k8s-list-part");
+    expect(screen.queryByTestId("panel-divider")).toBeNull();
+    expect(list.style.width).toBe("");
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    const divider = screen.getByTestId("panel-divider");
+    expect(divider).toHaveAttribute("data-split", "k8s");
+    expect(divider.previousElementSibling).toBe(list);
+    expect(divider.nextElementSibling).toBe(screen.getByTestId("k8s-side"));
+    expect(list.style.width).toBe("50%");
+
+    const row = list.parentElement!;
+    Object.defineProperty(row, "clientWidth", { configurable: true, value: 1000 });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const o of observers) o.cb([{ target: row }]);
+    divider.setPointerCapture = vi.fn();
+    divider.releasePointerCapture = vi.fn();
+    await fireEvent.pointerDown(divider, { pointerId: 1, clientX: 500, clientY: 10 });
+    await fireEvent.pointerMove(divider, { pointerId: 1, clientX: 650, clientY: 10 });
+    await fireEvent.pointerUp(divider, { pointerId: 1, clientX: 650, clientY: 10 });
+    expect(panelSplits.shares.k8s).toBeCloseTo(0.65);
+    expect(list.style.width).toBe("65%");
+    // Docker's border is its own.
+    expect(panelSplits.shares.docker).toBeUndefined();
+    await fireEvent.click(screen.getByTestId("side-pane-close"));
+    expect(screen.queryByTestId("panel-divider")).toBeNull();
+    resetPanelShares();
+  });
+
+  it("details that are open follow the panel across the threshold", async () => {
+    await mountWithPod("k-cross");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("k8s-side")).toBeInTheDocument();
+    resize(400);
+    await settle(20);
+    expect(screen.queryByTestId("k8s-side")).toBeNull();
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
   });
 });

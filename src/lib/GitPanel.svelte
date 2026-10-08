@@ -52,6 +52,9 @@
     type GitRunOpts,
   } from "./git";
   import { dockCwd, rememberSub, storedSub } from "./stores/dockstate.svelte";
+  import { wideWhen } from "./actions/panelwide";
+  import PanelDivider from "./PanelDivider.svelte";
+  import { partWidth } from "./stores/panelsplit.svelte";
   import { gitCwd } from "./followcwd";
   import { untrack } from "svelte";
   import { t } from "./i18n";
@@ -101,6 +104,18 @@
   type Sub = "graph" | "changes" | "branches";
   let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "git", "changes")));
   let sendToTerminal = $state(false);
+  // The wide layout (v1.7): the history stands beside the changes instead of
+  // behind a sub-tab. The panel measures itself rather than use a container
+  // query — its sub-views own dialogs and menus, which must not sit inside a
+  // query container (`panelwide.ts`).
+  let wide = $state(false);
+  // Width of the row the two wide columns share, px — what the border between
+  // them is dragged within.
+  let rowWidth = $state(0);
+  // What the left column shows when the history has a column of its own: the
+  // changes, unless the branches were asked for. The remembered sub-tab is left
+  // alone — back in a narrow dock the panel shows what it showed there.
+  const leftSub = $derived<Sub>(wide && activeSub === "graph" ? "changes" : activeSub);
 
   // Following on: the dock's shared directory, which the terminal and the file
   // panel move together. Following off: the terminal's own cwd — git is where the
@@ -390,9 +405,29 @@
     { id: "changes", label: t("git.changes") },
     { id: "branches", label: t("git.branches") },
   ];
+  // Wide: the history is always on screen, so it is not a tab to switch to.
+  const shownSubs = $derived(wide ? SUBS.filter((s) => s.id !== "graph") : SUBS);
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-xs">
+{#snippet subTabs()}
+  {#each shownSubs as s (s.id)}
+    <button
+      data-testid={`git-subtab-${s.id}`}
+      class="flex items-center justify-center gap-1 border-b-2 py-1.5 {wide
+        ? 'px-4'
+        : 'flex-1'} {leftSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
+      aria-current={leftSub === s.id ? "true" : undefined}
+      onclick={() => (activeSub = s.id)}
+    >
+      {s.label}
+      {#if s.id === "changes" && changeCount}
+        <span class="rounded-full bg-warn/20 px-1.5 text-caption text-warn">{changeCount}</span>
+      {/if}
+    </button>
+  {/each}
+{/snippet}
+
+<div class="flex h-full min-h-0 flex-col text-xs" use:wideWhen={(w) => (wide = w)} data-wide={wide}>
   {#if !cwd}
     <EmptyState
       icon="gitBranch"
@@ -418,7 +453,7 @@
     <!-- Toolbar: name · pull · push · refresh · fetch · follow (single row) -->
     <div class="flex items-center gap-0.5 border-b border-edge px-2 py-1.5">
       <Icon name="gitBranch" size={15} />
-      <div class="min-w-0 flex-1 px-1">
+      <div class="min-w-0 px-1 {wide ? 'max-w-[18rem]' : 'flex-1'}">
         <div class="truncate font-medium text-text/90" use:tooltip={repoRoot ?? ""}>{repoName}</div>
         {#if branchName}
           <div class="truncate text-caption text-muted">
@@ -428,6 +463,14 @@
           </div>
         {/if}
       </div>
+      {#if wide}
+        <!-- Wide: the sub-tabs join the toolbar row (as in the Docker and k8s
+             headers) and the buttons go to its right end. -->
+        <div class="-my-1.5 ml-2 flex self-stretch text-meta" data-testid="git-subtabs-wide">
+          {@render subTabs()}
+        </div>
+        <span class="flex-1"></span>
+      {/if}
       <button class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("git.pull")} aria-label={t("git.pull")} onclick={() => syncRun("pull", pullArgs())}>
         <Icon name="download" size={15} />
         {#if remoteError}<span use:tooltip={remoteError} class="text-warn"><Icon name="alert" size={11} /></span>{/if}
@@ -476,42 +519,49 @@
       </div>
     {/if}
 
-    <!-- Sub-tabs -->
-    <div class="flex border-b border-edge text-meta">
-      {#each SUBS as s (s.id)}
-        <button
-          data-testid={`git-subtab-${s.id}`}
-          class="flex flex-1 items-center justify-center gap-1 border-b-2 py-1.5 {activeSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
-          aria-current={activeSub === s.id ? "true" : undefined}
-          onclick={() => (activeSub = s.id)}
-        >
-          {s.label}
-          {#if s.id === "changes" && changeCount}
-            <span class="rounded-full bg-warn/20 px-1.5 text-caption text-warn">{changeCount}</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
+    <!-- Sub-tabs: a strip of their own in a narrow dock. -->
+    {#if !wide}
+      <div class="flex border-b border-edge text-meta">
+        {@render subTabs()}
+      </div>
+    {/if}
 
-    <!-- Active sub-view -->
-    <div class="min-h-0 flex-1">
-      {#if activeSub === "graph"}
-        <GitGraph {rows} {run} {runQuery} {openDiff} />
-      {:else if activeSub === "changes"}
-        {#if status}
-          <GitChanges
-            {status}
-            {busy}
-            {run}
-            onOpenInEditor={openInEditor}
-            onOpenReadonlyDiff={openReadonlyDiff}
-            onIgnore={ignoreInRepo}
-            {absPath}
-            {runQuery}
-          />
-        {/if}
-      {:else}
-        <GitBranches {branches} {stashes} bind:sendToTerminal {run} {runQuery} {openDiff} />
+    <!-- The views. Narrow: the one the sub-tab picked. Wide: changes (or
+         branches) on the left, the history always on the right. -->
+    <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+      {#if leftSub !== "graph"}
+        <div
+          class="min-h-0 min-w-0 {wide ? 'shrink-0' : 'flex-1'}"
+          style:width={wide ? partWidth("git", rowWidth) : null}
+          data-testid="git-column-{leftSub}"
+        >
+          {#if leftSub === "changes"}
+            {#if status}
+              <GitChanges
+                {status}
+                {busy}
+                {run}
+                onOpenInEditor={openInEditor}
+                onOpenReadonlyDiff={openReadonlyDiff}
+                onIgnore={ignoreInRepo}
+                {absPath}
+                {runQuery}
+              />
+            {/if}
+          {:else}
+            <GitBranches {branches} {stashes} bind:sendToTerminal {run} {runQuery} {openDiff} />
+          {/if}
+        </div>
+      {/if}
+      {#if wide}
+        <!-- The border between the two: dragged, it gives one room at the
+             other's expense (`PanelDivider`; the share is the store's). -->
+        <PanelDivider split="git" width={rowWidth} />
+      {/if}
+      {#if wide || activeSub === "graph"}
+        <div class="min-h-0 min-w-0 flex-1" data-testid="git-column-graph">
+          <GitGraph {rows} {run} {runQuery} {openDiff} />
+        </div>
       {/if}
     </div>
   {/if}

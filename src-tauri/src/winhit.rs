@@ -18,9 +18,15 @@
 //!   the frontmost window of any application at a screen point;
 //! - Windows — `WindowFromPoint`, then the top-level window of what it hit (the
 //!   WebView is a child window);
-//! - Linux — no answer: the drop opens a new window, as it did before windows
-//!   could take tabs, and the tab menu and the palette move it between windows.
-//!   (GDK can say it on X11, not on Wayland — see the roadmap.)
+//! - Linux on X11 — `gdk_device_get_window_at_position`: the X server walks its
+//!   window tree down from the root at the pointer, and GDK names the window it
+//!   ends in only when it is this process's;
+//! - Linux on Wayland — no answer. A client is told about the pointer only
+//!   while the pointer is over its own surface, and what GDK remembers during a
+//!   drag is the surface the drag began on. The same goes for an X11 backend
+//!   forced onto a Wayland session: its X server sees no native Wayland window
+//!   lying on top of ours. There the drop opens a new window, and the tab menu
+//!   and the palette move a tab between windows.
 //!
 //! Where in the window the pointer is comes from the same source — the part of
 //! the window its page occupies, as the window system reports it — never from
@@ -29,7 +35,7 @@
 
 use tauri::AppHandle;
 // Only where the window system is asked: elsewhere there are no windows to look through.
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 use tauri::Manager;
 
 /// A window of the app under the mouse pointer.
@@ -132,7 +138,67 @@ fn top_level_window_at_cursor() -> Option<(*mut core::ffi::c_void, f64, f64)> {
     }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+#[cfg(target_os = "linux")]
+fn at_pointer(app: &AppHandle) -> Option<Hit> {
+    use gtk::prelude::*;
+
+    let display = gdk::Display::default()?;
+    if !asks_an_x_server(&display) {
+        return None;
+    }
+    let pointer = display.default_seat()?.pointer()?;
+    // The server's answer, not ours: the window at the pointer, and only when
+    // it belongs to this process (a window of another application on top of
+    // ours ends the walk in a window GDK does not know).
+    let (under, _, _) = pointer.window_at_position();
+    let top = under?.toplevel();
+    app.webview_windows()
+        .into_iter()
+        .find_map(|(label, window)| {
+            let gtk_window = window.gtk_window().ok()?;
+            if gtk_window.window()? != top {
+                return None;
+            }
+            // The pointer in the window, read from the server, less where the
+            // toolkit says the page starts in it. Application px are CSS px.
+            let (_, x, y, _) = top.device_position(&pointer);
+            let (left, above) = page_origin(&gtk_window)?;
+            Some(Hit {
+                label,
+                x: f64::from(x - left),
+                y: f64::from(y - above),
+            })
+        })
+}
+
+/// Whether what GDK talks to is an X server that sees every window on the
+/// screen: an X11 backend, and not one run on top of a Wayland session.
+#[cfg(target_os = "linux")]
+fn asks_an_x_server(display: &gdk::Display) -> bool {
+    use gtk::prelude::*;
+
+    let wayland_session = std::env::var_os("WAYLAND_DISPLAY").is_some()
+        || std::env::var("XDG_SESSION_TYPE").is_ok_and(|kind| kind == "wayland");
+    display.type_().name() == "GdkX11Display" && !wayland_session
+}
+
+/// Where the page starts inside its window: the WebView's corner, as GTK laid
+/// it out — asked, not assumed to be the window's own.
+#[cfg(target_os = "linux")]
+fn page_origin(window: &gtk::ApplicationWindow) -> Option<(i32, i32)> {
+    use gtk::prelude::*;
+
+    fn web_view(widget: &gtk::Widget) -> Option<gtk::Widget> {
+        if widget.type_().name() == "WebKitWebView" {
+            return Some(widget.clone());
+        }
+        let children = widget.downcast_ref::<gtk::Container>()?.children();
+        children.iter().find_map(web_view)
+    }
+    web_view(window.upcast_ref())?.translate_coordinates(window, 0, 0)
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn at_pointer(_app: &AppHandle) -> Option<Hit> {
     None
 }
@@ -183,9 +249,29 @@ mod tests {
         assert!(code.contains("convertPointFromScreen(mouse)"));
         assert!(!code.contains("contentRectForFrameRect"));
         assert!(code.contains("ScreenToClient(root, &mut point)"));
+        // …Linux asks the X server through GDK, and only a server that sees
+        // every window: on Wayland, or on an X server run inside a Wayland
+        // session, it gives no answer rather than one about its own windows only…
+        let linux = &code[code
+            .find("#[cfg(target_os = \"linux\")]\nfn at_pointer")
+            .expect("the Linux answer")..];
+        let asked = linux
+            .find("pointer.window_at_position()")
+            .expect("X is asked");
+        let gate = linux
+            .find("if !asks_an_x_server(&display) {\n        return None;\n    }")
+            .expect("the session is checked");
+        assert!(
+            gate < asked,
+            "the X server is asked before it is known to see every window"
+        );
+        assert!(code.contains("\"GdkX11Display\" && !wayland_session"));
+        assert!(code.contains("var_os(\"WAYLAND_DISPLAY\")"));
+        assert!(linux.contains("top.device_position(&pointer)"));
+        assert!(linux.contains("page_origin(&gtk_window)?"));
         // …and a platform with no such answer gives none.
         let other = &code[code
-            .find("#[cfg(not(any(target_os = \"macos\", windows)))]")
+            .find("#[cfg(not(any(target_os = \"macos\", windows, target_os = \"linux\")))]")
             .expect("the fallback")..];
         assert!(other.contains("fn at_pointer(_app: &AppHandle) -> Option<Hit> {\n    None\n}"));
     }

@@ -36,6 +36,8 @@ export const LIST_COLUMNS = {
   "k8s.name": 280,
   "k8s.namespace": 130,
   "k8s.node": 170,
+  "files.name": 320,
+  "files.owner": 150,
 } as const;
 
 export type ListColumn = keyof typeof LIST_COLUMNS;

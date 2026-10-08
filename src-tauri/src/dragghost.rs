@@ -29,9 +29,14 @@ use tauri::{
 /// covers it, and no window of the app lists it as a place to move a tab to.
 pub const LABEL: &str = "drag-ghost";
 
-/// Where the window system can say what the pointer is over ([`crate::winhit`]).
-/// Elsewhere "over none of our windows" cannot be told from "over one of them",
-/// and the label stays what the page draws at the edge of its window.
+/// Where the label is a window of its own. It has to stay above everything,
+/// never take the focus and never be laid out among the other windows — on
+/// macOS and Windows that is the window system's to grant, and it does. On
+/// Linux each of the three is up to the window manager (a tiling one would
+/// tile it), and what has not been seen to hold is not shipped: there the label
+/// stays what the page draws at the edge of its window. (Nor can a Wayland
+/// session say that the pointer is over none of our windows — see
+/// [`crate::winhit`].)
 pub const SUPPORTED: bool = cfg!(any(target_os = "macos", windows));
 
 /// The label hangs from the pointer like the one a page draws (`GHOST_OFFSET`

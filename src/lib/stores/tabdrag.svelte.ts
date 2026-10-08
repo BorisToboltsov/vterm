@@ -6,8 +6,7 @@
 //
 // One drag at a time, app-wide: the strip a tab leaves, the strip or pane it
 // hovers and the one it lands in are different parts of the page. The page only
-// marks its targets — `data-tabstrip` (a pane id, or `*` for the single strip of
-// the broadcast view) with `data-tab` children, `data-pane-body` on what a pane
+// marks its targets — `data-tabstrip` (a pane id) with `data-tab` children, `data-pane-body` on what a pane
 // shows, `data-pane` on the whole pane — and reads `tabDrag` to draw the preview.
 // Where a drop lands is decided by the pure model (`../splitlayout.ts`).
 //
@@ -208,10 +207,7 @@ export function tabDropAt(x: number, y: number, tab: string): TabHit | null {
         return { start: box.left, size: box.width };
       });
     const index = slotIndex(x, others);
-    return {
-      drop: pane === "*" ? { kind: "flat", index } : { kind: "strip", pane, index },
-      zone: null,
-    };
+    return { drop: { kind: "strip", pane, index }, zone: null };
   }
   const body = el?.closest<HTMLElement>("[data-pane-body]");
   const pane = body?.dataset.paneBody;

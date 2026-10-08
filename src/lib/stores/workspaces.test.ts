@@ -4,10 +4,10 @@ import type { TextFile, WriteResult } from "../types";
 import {
   isDirty,
   hasUnsaved,
-  nextActiveAfterClose,
-  TERMINAL_VIEW,
+  adoptWorkspace,
   workspacesState,
   getWorkspace,
+  peekWorkspace,
   addEditor,
   addScratchEditor,
   fillEditor,
@@ -15,12 +15,26 @@ import {
   setEditorContent,
   setEditorSudo,
   markSaved,
-  setActiveView,
   findEditorByPath,
   closeEditor,
   removeWorkspace,
+  dropSessionView,
+  focusSessionZone,
+  joinSessionZones,
+  moveSessionViewNext,
+  setSessionZoneRatio,
+  showSessionView,
+  splitSessionView,
   type EditorDoc,
 } from "./workspaces.svelte";
+import { layoutProblems, paneOf, panes } from "../splitlayout";
+import {
+  TERMINAL_VIEW,
+  focusedFile,
+  terminalFocused,
+  terminalOnly,
+  terminalShown,
+} from "../sessionviews";
 
 const LANG: EditorLang = { kind: "yaml", label: "YAML" };
 
@@ -66,25 +80,10 @@ describe("pure helpers", () => {
   });
 
   it("hasUnsaved is true when any editor diverges", () => {
-    const ws = { active: TERMINAL_VIEW, editors: [doc(), doc({ id: "2", content: "z" })] };
+    const layout = terminalOnly();
+    const ws = { editors: [doc(), doc({ id: "2", content: "z" })], layout };
     expect(hasUnsaved(ws)).toBe(true);
-    expect(hasUnsaved({ active: TERMINAL_VIEW, editors: [doc()] })).toBe(false);
-  });
-
-  it("nextActiveAfterClose keeps a non-closing active view", () => {
-    const editors = [doc({ id: "a" }), doc({ id: "b" })];
-    expect(nextActiveAfterClose(editors, "a", "b")).toBe("b");
-    expect(nextActiveAfterClose(editors, "a", TERMINAL_VIEW)).toBe(TERMINAL_VIEW);
-  });
-
-  it("nextActiveAfterClose falls to the slot's neighbour, then terminal", () => {
-    const editors = [doc({ id: "a" }), doc({ id: "b" }), doc({ id: "c" })];
-    // Closing the active middle → the one that slides into its slot ("c").
-    expect(nextActiveAfterClose(editors, "b", "b")).toBe("c");
-    // Closing the active last → the previous ("b").
-    expect(nextActiveAfterClose(editors, "c", "c")).toBe("b");
-    // Closing the only editor → terminal.
-    expect(nextActiveAfterClose([doc({ id: "a" })], "a", "a")).toBe(TERMINAL_VIEW);
+    expect(hasUnsaved({ editors: [doc()], layout })).toBe(false);
   });
 });
 
@@ -93,11 +92,10 @@ describe("store mutators", () => {
     workspacesState.map = {};
   });
 
-  it("addEditor creates a loading doc and activates it; getWorkspace reflects it", () => {
+  it("addEditor creates a loading doc; getWorkspace reflects it", () => {
     const id = addEditor("s1", "/etc/app.yaml", "app.yaml", LANG);
     const ws = getWorkspace("s1");
     expect(ws.editors).toHaveLength(1);
-    expect(ws.active).toBe(id);
     expect(ws.editors[0].loading).toBe(true);
     expect(ws.editors[0].source).toBe("sftp"); // default source
     expect(findEditorByPath("s1", "/etc/app.yaml")?.id).toBe(id);
@@ -108,10 +106,9 @@ describe("store mutators", () => {
     expect(getWorkspace("s1").editors.find((e) => e.id === id)?.source).toBe("local");
   });
 
-  it("addScratchEditor opens a filled, dirty, new doc and activates it", () => {
+  it("addScratchEditor opens a filled, dirty, new doc", () => {
     const id = addScratchEditor("s1", "runbook.sh", LANG, "#!/bin/sh\nls", "sftp");
     const d = getWorkspace("s1").editors.find((e) => e.id === id)!;
-    expect(getWorkspace("s1").active).toBe(id);
     expect(d.loading).toBe(false);
     expect(d.content).toBe("#!/bin/sh\nls");
     expect(d.baseContent).toBe(""); // dirty — nothing saved yet
@@ -160,15 +157,13 @@ describe("store mutators", () => {
     expect(d.loadError).toBe("too large");
   });
 
-  it("closeEditor removes the tab and refocuses", () => {
+  it("closeEditor removes the document and only it", () => {
     const a = addEditor("s1", "/a", "a", LANG);
     const b = addEditor("s1", "/b", "b", LANG);
-    setActiveView("s1", a);
-    closeEditor("s1", b); // closing a background tab keeps the active one
-    expect(getWorkspace("s1").active).toBe(a);
-    closeEditor("s1", a); // closing the active last editor → terminal
+    closeEditor("s1", b);
+    expect(getWorkspace("s1").editors.map((e) => e.id)).toEqual([a]);
+    closeEditor("s1", a);
     expect(getWorkspace("s1").editors).toHaveLength(0);
-    expect(getWorkspace("s1").active).toBe(TERMINAL_VIEW);
   });
 
   it("removeWorkspace drops the whole session", () => {
@@ -177,6 +172,193 @@ describe("store mutators", () => {
     expect(workspacesState.map.s1).toBeUndefined();
     // Unknown session returns the shared empty default.
     expect(getWorkspace("s1").editors).toHaveLength(0);
-    expect(getWorkspace(null).active).toBe(TERMINAL_VIEW);
+    expect(getWorkspace(null).editors).toEqual([]);
+  });
+});
+
+// ── A file is a view inside its connection (v1.11, ADR 0024) ─────────────────
+
+describe("a connection's files and zones", () => {
+  const T = TERMINAL_VIEW;
+  /** Zones in reading order, `*` on the view each shows. */
+  const shape = (sid: string): string[][] =>
+    panes(getWorkspace(sid).layout).map((zone) =>
+      zone.tabs.map((view) => (zone.active === view ? `${view}*` : view)),
+    );
+  const views = (sid: string) => getWorkspace(sid).layout;
+  const ids = (sid: string) => [T, ...getWorkspace(sid).editors.map((e) => e.id)];
+
+  beforeEach(() => {
+    workspacesState.map = {};
+  });
+
+  it("a connection that never opened a file is one zone showing its terminal", () => {
+    expect(shape("s1")).toEqual([[`${T}*`]]);
+    expect(terminalShown(views("s1"))).toBe(true);
+    // Asking does not make a workspace of it.
+    expect(peekWorkspace("s1")).toBeNull();
+  });
+
+  it("an opened file is a view next to the terminal, shown in its place", () => {
+    const id = addEditor("s1", "/etc/app.yaml", "app.yaml", LANG);
+    expect(shape("s1")).toEqual([[T, `${id}*`]]);
+    expect(focusedFile(views("s1"))).toBe(id);
+    expect(terminalShown(views("s1"))).toBe(false);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+  });
+
+  it("a generated script opens the same way", () => {
+    const id = addScratchEditor("s1", "runbook.sh", LANG, "ls", "local");
+    expect(shape("s1")).toEqual([[T, `${id}*`]]);
+  });
+
+  it("the document and its view come and go in one step", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const b = addEditor("s1", "/b", "b", LANG);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+    closeEditor("s1", b);
+    expect(shape("s1")).toEqual([[T, `${a}*`]]);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+    closeEditor("s1", a);
+    expect(shape("s1")).toEqual([[`${T}*`]]);
+    expect(getWorkspace("s1").editors).toEqual([]);
+  });
+
+  it("the file goes beside the terminal, and a second file beside the first", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    splitSessionView("s1", a, "right");
+    expect(shape("s1")).toEqual([[`${T}*`], [`${a}*`]]);
+    expect(terminalShown(views("s1"))).toBe(true);
+    // Opened while the terminal's zone is in focus, the next file joins the files.
+    showSessionView("s1", T);
+    expect(terminalFocused(views("s1"))).toBe(true);
+    const b = addEditor("s1", "/b", "b", LANG);
+    expect(shape("s1")).toEqual([[`${T}*`], [a, `${b}*`]]);
+    splitSessionView("s1", b, "right");
+    expect(shape("s1")).toEqual([[`${T}*`], [`${a}*`], [`${b}*`]]);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+  });
+
+  it("a view moves to the next zone; the zones join back into one", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const b = addEditor("s1", "/b", "b", LANG);
+    splitSessionView("s1", b, "bottom");
+    moveSessionViewNext("s1", a);
+    expect(shape("s1")).toEqual([[`${T}*`], [b, `${a}*`]]);
+    joinSessionZones("s1");
+    expect(shape("s1")).toEqual([[T, b, `${a}*`]]);
+  });
+
+  it("a dragged view lands where it was dropped: a strip, a zone, or a new zone at an edge", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const b = addEditor("s1", "/b", "b", LANG);
+    const only = paneOf(views("s1"), T)!.id;
+    // Onto the body's lower edge: a zone of its own below.
+    dropSessionView("s1", b, { kind: "pane", pane: only, zone: "bottom" });
+    expect(shape("s1")).toEqual([[T, `${a}*`], [`${b}*`]]);
+    // Into the other zone's strip, at its start.
+    const lower = paneOf(views("s1"), b)!.id;
+    dropSessionView("s1", a, { kind: "strip", pane: lower, index: 0 });
+    expect(shape("s1")).toEqual([[`${T}*`], [`${a}*`, b]]);
+    // Onto a zone's middle: it joins that zone, and the zone it emptied goes.
+    dropSessionView("s1", T, { kind: "pane", pane: lower, zone: "center" });
+    expect(shape("s1")).toEqual([[a, b, `${T}*`]]);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+    // A drop that names a zone that is gone changes nothing.
+    const before = peekWorkspace("s1");
+    dropSessionView("s1", a, { kind: "pane", pane: "nope", zone: "right" });
+    expect(peekWorkspace("s1")).toBe(before);
+  });
+
+  it("a view that closed while it was in the air is not put back by its drop", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const b = addEditor("s1", "/b", "b", LANG);
+    const only = paneOf(views("s1"), T)!.id;
+    // The file is closed between the last move and the release.
+    closeEditor("s1", b);
+    const before = peekWorkspace("s1");
+    dropSessionView("s1", b, { kind: "pane", pane: only, zone: "right" });
+    dropSessionView("s1", b, { kind: "pane", pane: only, zone: "center" });
+    dropSessionView("s1", b, { kind: "strip", pane: only, index: 0 });
+    expect(peekWorkspace("s1")).toBe(before);
+    expect(shape("s1")).toEqual([[T, `${a}*`]]);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+  });
+
+  it("the zone the user works in takes the focus, and a split can be resized", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    splitSessionView("s1", a, "right");
+    const termZone = paneOf(views("s1"), T)!.id;
+    focusSessionZone("s1", termZone);
+    expect(terminalFocused(views("s1"))).toBe(true);
+    const root = views("s1").root;
+    expect(root.kind).toBe("split");
+    if (root.kind === "split") {
+      setSessionZoneRatio("s1", root.id, 0.3);
+      const next = views("s1").root;
+      expect(next.kind === "split" && next.ratio).toBe(0.3);
+    }
+  });
+
+  it("closing the last file of a zone gives its room back", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    splitSessionView("s1", a, "right");
+    closeEditor("s1", a);
+    expect(shape("s1")).toEqual([[`${T}*`]]);
+    expect(terminalFocused(views("s1"))).toBe(true);
+  });
+
+  it("a connection with no files has nothing to rearrange — and gets no workspace for the asking", () => {
+    showSessionView("nobody", T);
+    splitSessionView("nobody", T, "right");
+    moveSessionViewNext("nobody", T);
+    focusSessionZone("nobody", "p0");
+    joinSessionZones("nobody");
+    setSessionZoneRatio("nobody", "s1", 0.3);
+    dropSessionView("nobody", T, { kind: "pane", pane: "p0", zone: "right" });
+    expect(peekWorkspace("nobody")).toBeNull();
+  });
+
+  it("what changes nothing does not replace the workspace", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const before = peekWorkspace("s1");
+    showSessionView("s1", a);
+    splitSessionView("s1", "gone", "right");
+    joinSessionZones("s1");
+    expect(peekWorkspace("s1")).toBe(before);
+  });
+
+  it("files that arrive with their connection stand where they stood", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    const b = addEditor("s1", "/b", "b", LANG);
+    splitSessionView("s1", b, "right");
+    const packed = JSON.parse(JSON.stringify(peekWorkspace("s1")));
+    removeWorkspace("s1");
+    adoptWorkspace("s1", packed);
+    expect(shape("s1")).toEqual([[T, `${a}*`], [`${b}*`]]);
+    expect(layoutProblems(views("s1"), ids("s1"))).toEqual([]);
+  });
+
+  it("a layout that does not fit the files it came with is rebuilt, not trusted", () => {
+    const junk = { root: { kind: "pane", id: "x", tabs: ["ghost", "d1"], active: "ghost" }, focus: "x", seq: 9 };
+    adoptWorkspace("s1", {
+      editors: [doc({ id: "d1" }), doc({ id: "d2", path: "/b" })],
+      layout: junk as never,
+    });
+    expect(layoutProblems(views("s1"), [T, "d1", "d2"])).toEqual([]);
+    expect(paneOf(views("s1"), "ghost")).toBeNull();
+    // No layout at all: the terminal, with the files behind it.
+    adoptWorkspace("s2", { editors: [doc({ id: "d3" })], layout: undefined as never });
+    expect(shape("s2")).toEqual([[`${T}*`, "d3"]]);
+    adoptWorkspace("s3", { editors: undefined as never, layout: undefined as never });
+    expect(shape("s3")).toEqual([[`${T}*`]]);
+  });
+
+  it("the connection going takes its files and its zones", () => {
+    const a = addEditor("s1", "/a", "a", LANG);
+    splitSessionView("s1", a, "right");
+    removeWorkspace("s1");
+    expect(peekWorkspace("s1")).toBeNull();
+    expect(shape("s1")).toEqual([[`${T}*`]]);
   });
 });

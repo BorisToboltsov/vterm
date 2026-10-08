@@ -1,22 +1,18 @@
 // Broadcast store (Svelte 5 runes): which open tabs form the synchronous-input
-// group, plus the layout override. Broadcast mode itself is NOT a flag here — it
-// is derived in the page from whether the *active* tab is a member, so switching
-// tabs enters/leaves the mode automatically. Pure decisions (who's eligible, what
-// to send, grid vs focus) live in `../broadcast.ts`.
-
-import { pickLayout, type BroadcastLayout } from "../broadcast";
-
-/** "auto" defers to the member count; the others pin the layout. */
-export type BroadcastLayoutMode = "auto" | BroadcastLayout;
+// group. Broadcast mode itself is NOT a flag here — it is derived in the page
+// from whether the session in focus is a member, so moving the focus enters and
+// leaves the mode. Pure decisions (who's eligible, what to send) live in
+// `../broadcast.ts`.
+//
+// The group has no layout of its own (v1.9, ADR 0022): its members stand in the
+// panes of the centre like any other tab, and "show them all" is the layout's
+// own command (`tilePanes`).
 
 export const broadcastState = $state<{
   /** Session ids selected for the group (order is not significant). */
   members: string[];
-  /** Layout override; "auto" picks grid/focus from the member count. */
-  layoutMode: BroadcastLayoutMode;
 }>({
   members: [],
-  layoutMode: "auto",
 });
 
 export const isBroadcastMember = (sessionId: string): boolean =>
@@ -42,11 +38,4 @@ export function clearBroadcastMembers(): void {
 /** Drop a session from the group (e.g. when its tab closes). */
 export function removeBroadcastMember(sessionId: string): void {
   broadcastState.members = broadcastState.members.filter((id) => id !== sessionId);
-}
-
-/** Effective layout for `memberCount` members, honouring the override. */
-export function effectiveLayout(memberCount: number): BroadcastLayout {
-  return broadcastState.layoutMode === "auto"
-    ? pickLayout(memberCount)
-    : broadcastState.layoutMode;
 }
