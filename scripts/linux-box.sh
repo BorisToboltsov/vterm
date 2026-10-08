@@ -11,6 +11,7 @@
 # box builds (node_modules, target/) lands in the checkout, and the macOS build
 # next to it is left alone. The volumes keep the builds between runs; drop them
 # with `docker volume rm vterm-linux-work vterm-linux-cargo vterm-linux-pnpm`.
+# The box works as an ordinary user (`vterm`), not root.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -22,7 +23,7 @@ exec docker run --rm --init \
   --volume "$root":/src:ro \
   --volume vterm-linux-work:/work \
   --volume vterm-linux-cargo:/usr/local/cargo/registry \
-  --volume vterm-linux-pnpm:/root/.local/share/pnpm \
+  --volume vterm-linux-pnpm:/home/vterm/.local/share/pnpm \
   --env CI=1 \
   --env VTERM_E2E_PROFILE --env VTERM_E2E_WM --env VTERM_TEST_SSH_HOST \
   "$image" bash -c '

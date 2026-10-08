@@ -9,3 +9,10 @@ misconfigurations:
       Test-only sshd for the live keyboard-interactive tests. sshd has to run as
       root to switch to the user logging in; the container is local and
       short-lived (docker compose up … down around the test run).
+  - id: DS-0026
+    paths:
+      - e2e/linux/Dockerfile
+    statement: >-
+      The Linux box of scripts/linux-box.sh runs one command — a build or the
+      E2E suite — and exits with its status. It serves nothing and has no
+      state of health to probe; a HEALTHCHECK would have nothing to ask.
