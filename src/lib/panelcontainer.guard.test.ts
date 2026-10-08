@@ -22,26 +22,32 @@
 // catches the violation it exists for (the second `describe`). Sources are read
 // with comments stripped.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const SRC = join(process.cwd(), "src");
 
-/** Drop `<!-- … -->` blocks (a scan: one regex pass leaves a nested opener behind). */
-function stripHtmlComments(src: string): string {
+/**
+ * Drop every `open … close` block by scanning. One regex pass is not enough:
+ * it leaves a nested opener behind (`<!--<!-- -->` → `<!--`), and what is left
+ * would be read as markup. An opener with no closer takes the rest with it.
+ */
+function stripBlocks(src: string, open: string, close: string): string {
   let out = "";
   let i = 0;
   while (i < src.length) {
-    if (src.startsWith("<!--", i)) {
-      const end = src.indexOf("-->", i + 4);
-      i = end < 0 ? src.length : end + 3;
+    if (src.startsWith(open, i)) {
+      const end = src.indexOf(close, i + open.length);
+      i = end < 0 ? src.length : end + close.length;
       continue;
     }
     out += src[i++];
   }
   return out;
 }
+
+const stripHtmlComments = (src: string): string => stripBlocks(src, "<!--", "-->");
 
 /** Source with comments removed — HTML, block and line (`://` is not a comment). */
 function code(src: string): string {
@@ -52,10 +58,12 @@ function code(src: string): string {
 
 /** Every component under `src/`, as a path relative to it → its source. */
 function components(dir = SRC, acc: Record<string, string> = {}): Record<string, string> {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) components(full, acc);
-    else if (entry.endsWith(".svelte")) {
+  // What an entry is comes with the listing: asked of the path afterwards, the
+  // answer could be about a different file than the one then read.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) components(full, acc);
+    else if (entry.name.endsWith(".svelte")) {
       acc[relative(SRC, full).split(sep).join("/")] = readFileSync(full, "utf8");
     }
   }
@@ -66,7 +74,7 @@ function components(dir = SRC, acc: Record<string, string> = {}): Record<string,
 function markupOf(source: string): string {
   const c = code(source);
   const at = c.lastIndexOf("</script>");
-  return (at < 0 ? c : c.slice(at + "</script>".length)).replace(/<style[^]*?<\/style>/g, "");
+  return stripBlocks(at < 0 ? c : c.slice(at + "</script>".length), "<style", "</style>");
 }
 
 /** `fixed` as a class of its own (not `table-fixed`, not `@wide:fixed-…`). */

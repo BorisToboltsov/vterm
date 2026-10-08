@@ -377,7 +377,7 @@ describe("tabs that come back from the previous launch", () => {
   /** What a window with tabs `a b | c` would have saved, then forgotten. */
   function saved(): { tabs: SavedTab[]; layout: unknown } {
     const a = openTab("srv", "A", "typed-secret", true);
-    const b = openLocalTab();
+    openLocalTab();
     const c = openTab("srv", "C", null, false);
     splitTabOff(c, tabsState.center.focus, "right");
     activateTab(a);

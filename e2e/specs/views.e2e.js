@@ -27,7 +27,7 @@ import {
 /** A view's name with the terminal's label in either language made one. */
 const plain = (zones) =>
   zones.map((zone) =>
-    zone.map((view) => (TEXT.terminal.includes(view.replace("*", "")) ? view.replace(/^[^*]+/, "T") : view)),
+    zone.map((view) => (TEXT.terminal.includes(view.replace(/\*/g, "")) ? view.replace(/^[^*]+/, "T") : view)),
   );
 
 const zonesAre = (want, what) =>

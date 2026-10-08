@@ -230,7 +230,7 @@ describe("dragging a view", () => {
     move(20, 10);
     expect(viewDrag.over).toEqual({ kind: "strip", pane: left, index: 0 });
     release();
-    expect(shape()[0].map((v) => v.replace("*", ""))).toEqual([a, T]);
+    expect(shape()[0].map((v) => v.replace(/\*/g, ""))).toEqual([a, T]);
 
     at("stripR");
     beginViewDrag(press(byId("viewA"), 50, 10), S, a);
