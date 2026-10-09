@@ -198,6 +198,24 @@ describe("dragging a panel tab", () => {
     expect(tab.releasePointerCapture).toHaveBeenCalledWith(7);
   });
 
+  it("writes the target only when it is another one", () => {
+    dock("right", "x", [0, 1, 2]);
+    at("body");
+    beginPanelDrag(press(document.getElementById("tab0")!), "docker");
+    window.dispatchEvent(pointer("pointermove", 110, 240));
+    const over = dockDrag.over;
+    expect(over).toEqual({ side: "right", index: null });
+    // Over a dock's body every move gives the same answer. Written again, it
+    // would redraw the strips, and a redrawn strip starts its tabs' slides over.
+    window.dispatchEvent(pointer("pointermove", 130, 260));
+    expect(dockDrag.over).toBe(over);
+    rect(document.getElementById("tab1")!, { left: 100, width: 80 });
+    at("tab1");
+    window.dispatchEvent(pointer("pointermove", 110, 40));
+    expect(dockDrag.over).not.toBe(over);
+    expect(dockDrag.over).toEqual({ side: "right", index: 1 });
+  });
+
   it("swallows the click that ends a drag — once", async () => {
     dock("right", "x", [0]);
     at("body");

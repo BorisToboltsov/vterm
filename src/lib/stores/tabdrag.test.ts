@@ -223,6 +223,29 @@ describe("dragging a tab", () => {
     expect(tabDrag.zone).toBeNull();
   });
 
+  it("writes the target only when it is another one — a move inside a slot is not", () => {
+    beginTabDrag(press(byId("tabA")), a);
+    at("stripR");
+    move(690, 10); // past the middle of `c`
+    const over = tabDrag.over;
+    expect(over).toEqual({ kind: "strip", pane: right, index: 1 });
+    // Every move works the target out afresh. The same one written again would
+    // redraw the strips, and a redrawn strip starts its tabs' slides over.
+    move(692, 10);
+    move(699, 14);
+    expect(tabDrag.over).toBe(over);
+    move(610, 10); // back before the middle of `c`: another slot
+    expect(tabDrag.over).not.toBe(over);
+    expect(tabDrag.over).toEqual({ kind: "strip", pane: right, index: 0 });
+
+    at("inR");
+    move(900, 420);
+    const zone = tabDrag.zone;
+    expect(zone).toEqual({ x: 600, y: 230, w: 600, h: 200 });
+    move(905, 425);
+    expect(tabDrag.zone).toBe(zone);
+  });
+
   it("does not offer a target that would change nothing", () => {
     beginTabDrag(press(byId("tabC")), c);
     // The body of its own pane; an edge of a pane it is alone in.

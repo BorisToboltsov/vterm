@@ -602,6 +602,24 @@ export function dropChanges(layout: CenterLayout, tab: string, drop: TabDrop): b
 }
 
 /**
+ * Whether two drop targets are one target. A drag works a target out afresh on
+ * every pointer move, and has to tell "the same place again" from "another
+ * place": a strip redraws whenever its target is written, and a redraw starts
+ * every slide in it over (see `glide` in actions/drag).
+ */
+export function sameDrop(a: TabDrop | null, b: TabDrop | null): boolean {
+  if (a === null || b === null) return a === b;
+  if (a.kind === "strip") return b.kind === "strip" && a.pane === b.pane && a.index === b.index;
+  return b.kind === "pane" && a.pane === b.pane && a.zone === b.zone;
+}
+
+/** Whether two rectangles are one rectangle. */
+export function sameRect(a: Rect | null, b: Rect | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+/**
  * The tabs a pane's strip draws while `tab` is in the air over `drop`: the order
  * the drop would give, so the other tabs make room. Only a drop on a strip is
  * previewed this way — over a pane's body the strips keep the committed order,

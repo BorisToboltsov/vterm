@@ -110,6 +110,13 @@ export function layoutBox(el: HTMLElement): Box {
  * scales, and tabs that share a strip's width (`flex-1`) change size whenever one
  * is added, which squeezed their labels for the length of the animation.
  * `duration` comes from `motion()` (0 under reduced motion: the tab just moves).
+ *
+ * A slide lasts only as long as its strip is not redrawn. Each time the list an
+ * `{#each}` draws is replaced — by an equal one too — Svelte measures every item
+ * and begins every slide again from where the item stands, and a slide begins
+ * with a frame of standing still. So what a strip is drawn from must not be
+ * rewritten while nothing about it changes: a drag writes its target only when
+ * the target is another one (`dragtarget.guard.test.ts`).
  */
 export function glide(
   _node: Element,

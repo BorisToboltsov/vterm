@@ -371,6 +371,16 @@ export function insertionIndex(pos: number, start: number, size: number, index: 
   return pos < start + size / 2 ? index : index + 1;
 }
 
+/**
+ * Whether two drop targets are one target. A drag works its target out afresh
+ * on every pointer move; a strip redrawn for the same target again starts its
+ * slides over (see `glide` in actions/drag), so the same one is not rewritten.
+ */
+export function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.side === b.side && a.index === b.index;
+}
+
 /** Whether dropping `panel` on `target` would change anything. */
 export function dropChanges(docks: Docks, panel: PanelId, target: DropTarget): boolean {
   return movePanel(docks, panel, target.side, target.index) !== docks;

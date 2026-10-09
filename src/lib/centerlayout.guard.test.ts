@@ -611,8 +611,8 @@ describe("centre layout guard — catches what it exists for", () => {
       dragViolations(
         mutate(
           drag,
-          "tabDrag.over = offered ? hit.drop : null;",
-          "tabDrag.over = offered ? hit.drop : null;\n  if (offered) dropTab(candidate.tab, hit.drop);",
+          "offer(offered ? hit : null);",
+          "offer(offered ? hit : null);\n  if (offered) dropTab(candidate.tab, hit.drop);",
         ),
       ),
     ).toEqual(
