@@ -7,7 +7,7 @@
 // What cannot be promised is not handed over at all — the page's own drag goes
 // on, exactly as before 1.14 — and this module says which is which.
 
-import type { CarriedFiles, DropTab } from "./filedrop";
+import { describeFiles, type CarriedFiles, type DropTab } from "./filedrop";
 
 /** Where the system can carry a promised file (mirror of `SUPPORTED` in dragout.rs). */
 export function dragOutOffered(os: string): boolean {
@@ -66,20 +66,18 @@ export interface DragOutSpec {
   /**
    * The files as a window of the app is told of them: while the system has
    * the drag, the backend passes this on to the window under the pointer.
+   * Marked as the system's — it draws them, and a window draws no label.
    */
   carried: Record<string, unknown>;
 }
 
 /** What is handed over for `files`; null — they have no session to read from. */
-export function dragOutSpec(
-  files: CarriedFiles,
-  carried: Record<string, unknown>,
-): DragOutSpec | null {
+export function dragOutSpec(files: CarriedFiles): DragOutSpec | null {
   if (files.from === null || files.entries.length === 0) return null;
   return {
     session: files.from,
     label: files.label,
     items: files.entries.map(({ path, name, isDir }) => ({ path, name, isDir })),
-    carried,
+    carried: describeFiles({ ...files, system: true }),
   };
 }

@@ -32,6 +32,10 @@
 //     the length of its own text.
 //  7. The page and the backend agree on where this can be done, and on where a
 //     folder can be promised.
+//  8. One picture at the pointer. The system draws what it carries; files it
+//     carries back over a window of the app are marked as its own, and the
+//     window draws where they would land — not a second label beside the
+//     system's.
 //
 // Checked on the source with comments stripped; each check is a function over
 // text, shown to catch its own violation.
@@ -72,6 +76,8 @@ const MODEL = "src/lib/dragout.ts";
 const PAGE = "src/routes/+page.svelte";
 const API = "src/lib/api/window.ts";
 const BACKEND = "src-tauri/src/dragout.rs";
+const GHOST = "src/lib/FileDragGhost.svelte";
+const DROP = "src/lib/filedrop.ts";
 
 /** Every source file of the front end, tests aside. */
 function frontend(): { rel: string; source: string }[] {
@@ -231,6 +237,28 @@ export function mirrorViolations(model: string, backend: string): string[] {
   );
   const promised = /pub const FOLDERS: bool = cfg!\(target_os = "macos"\);/.test(b);
   if (!folders || !promised) out.push("the page and the backend differ on where a folder can be promised");
+  return out;
+}
+
+// ── 8: one picture at the pointer ───────────────────────────────────────────
+
+export function pictureViolations(model: string, drop: string, ghost: string): string[] {
+  const out: string[] = [];
+  if (!/carried: describeFiles\(\{ \.\.\.files, system: true \}\)/.test(fn(code(model), "dragOutSpec"))) {
+    out.push("files handed to the system are not marked as the system's to draw");
+  }
+  const d = code(drop);
+  if (
+    !/\.\.\.\(files\.system \? \{ system: true \} : \{\}\)/.test(fn(d, "describeFiles")) ||
+    !/if \(raw\.system === true\) read\.system = true;/.test(fn(d, "parseFiles"))
+  ) {
+    out.push("the mark does not reach the window the files are held over");
+  }
+  const g = code(ghost);
+  const drawn = /const files = \$derived\(([\s\S]*?)\n  \);/.exec(g)?.[1] ?? "";
+  if (!/!fileDrag\.files\.system/.test(drawn) || !/\{#if files !== null\}/.test(g)) {
+    out.push("a window draws its own label beside the system's picture");
+  }
   return out;
 }
 
@@ -425,5 +453,33 @@ describe("the page and the backend agree on what can be dragged out", () => {
     expect(mirrorViolations(model, everywhere)).toContain(
       "the page and the backend differ on where a folder can be promised",
     );
+  });
+});
+
+describe("there is one picture at the pointer", () => {
+  const model = read(MODEL);
+  const drop = read(DROP);
+  const ghost = read(GHOST);
+
+  it("holds: the system's files are marked, the mark is read, the label is not drawn", () => {
+    expect(pictureViolations(model, drop, ghost)).toEqual([]);
+  });
+
+  it("catches each way to end up with two", () => {
+    const unmarked = model.replace("describeFiles({ ...files, system: true })", "describeFiles(files)");
+    expect(unmarked).not.toBe(model);
+    expect(pictureViolations(unmarked, drop, ghost)).toEqual([
+      "files handed to the system are not marked as the system's to draw",
+    ]);
+    const unread = drop.replace("  if (raw.system === true) read.system = true;\n", "");
+    expect(unread).not.toBe(drop);
+    expect(pictureViolations(model, unread, ghost)).toEqual([
+      "the mark does not reach the window the files are held over",
+    ]);
+    const both = ghost.replace(" && !fileDrag.files.system", "");
+    expect(both).not.toBe(ghost);
+    expect(pictureViolations(model, drop, both)).toEqual([
+      "a window draws its own label beside the system's picture",
+    ]);
   });
 });

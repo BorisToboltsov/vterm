@@ -1530,7 +1530,7 @@
     systemDeclined = false;
     const mine = labelled(files);
     if (dragOutBlocker(mine, dropTabs, hostEnv.os) !== null) return false;
-    const spec = dragOutSpec(mine, describeFiles(mine));
+    const spec = dragOutSpec(mine);
     const took = spec ? await dragOutBegin(spec).catch(() => false) : false;
     // Nothing here stood in the way, and still it would not: a name it cannot
     // give a file, a folder behind a link, a file the server gives no length.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { dragOutBlocker, dragOutOffered, dragOutSpec, dragOutTold } from "./dragout";
-import { describeFiles, type CarriedFiles, type DropTab } from "./filedrop";
+import { describeFiles, parseFiles, type CarriedFiles, type DropTab } from "./filedrop";
 
 const tabs: DropTab[] = [
   { sessionId: "web", kind: "ssh", connected: true },
@@ -84,7 +84,7 @@ describe("which reasons the user is told", () => {
 describe("what the backend is handed", () => {
   it("names the session, its tab, each file, and the files as a window is told of them", () => {
     const carried = files({ entries: [files().entries[0], folder] });
-    const spec = dragOutSpec(carried, describeFiles(carried));
+    const spec = dragOutSpec(carried);
     expect(spec).toEqual({
       session: "web",
       label: "web-01",
@@ -92,20 +92,30 @@ describe("what the backend is handed", () => {
         { path: "/etc/nginx/nginx.conf", name: "nginx.conf", isDir: false },
         { path: "/var/www/site", name: "site", isDir: true },
       ],
-      carried: describeFiles(carried),
+      carried: { ...describeFiles(carried), system: true },
     });
+  });
+
+  it("marks them as the system's to draw — a window they pass over draws no label", () => {
+    const spec = dragOutSpec(files());
+    // Read back by the window they are held over, the mark is still there.
+    expect(parseFiles(spec?.carried)?.system).toBe(true);
+    // And it is this drag's alone: the files themselves are not changed.
+    const mine = files();
+    dragOutSpec(mine);
+    expect(mine.system).toBeUndefined();
   });
 
   it("claims no size: how long a file is, is the server's to say", () => {
     const withSize = files({
       entries: [{ ...files().entries[0], size: 42 } as CarriedFiles["entries"][number]],
     });
-    const spec = dragOutSpec(withSize, {});
+    const spec = dragOutSpec(withSize);
     expect(Object.keys(spec?.items[0] ?? {})).toEqual(["path", "name", "isDir"]);
   });
 
   it("is nothing for files with no session to read from, or for no files", () => {
-    expect(dragOutSpec(files({ from: null }), {})).toBeNull();
-    expect(dragOutSpec(files({ entries: [] }), {})).toBeNull();
+    expect(dragOutSpec(files({ from: null }))).toBeNull();
+    expect(dragOutSpec(files({ entries: [] }))).toBeNull();
   });
 });
