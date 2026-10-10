@@ -1345,8 +1345,10 @@ mod tests {
         // server in a copy between two — that is a write outside it; and a sync
         // plan, which comes back through the WebView, could name a delete there
         // as well.
-        let transfers = include_str!("transfers.rs");
-        let sync = include_str!("sync.rs");
+        // Read with `\n` line ends whatever the checkout: the mutations below
+        // span lines, and on Windows the sources arrive with `\r\n`.
+        let transfers = &include_str!("transfers.rs").replace("\r\n", "\n");
+        let sync = &include_str!("sync.rs").replace("\r\n", "\n");
         assert_eq!(server_name_violations(transfers, sync), Vec::<&str>::new());
 
         // The check catches what it is for. The join as it was:
@@ -1354,7 +1356,7 @@ mod tests {
             "child_path(dst.is_local(), &to_dir, &entry.name)?",
             "format!(\"{to_dir}/{}\", entry.name)",
         );
-        assert_ne!(joined, transfers);
+        assert_ne!(&joined, transfers);
         assert_eq!(
             server_name_violations(&joined, sync),
             ["a job joins a listed name onto its destination itself"]
@@ -1364,7 +1366,7 @@ mod tests {
             "                if entry.is_dir {\n                    stack.push((entry.path, to));",
             "                let _raw = Path::new(&to_dir).join(&entry.name);\n                if entry.is_dir {\n                    stack.push((entry.path, to));",
         );
-        assert_ne!(twice, transfers);
+        assert_ne!(&twice, transfers);
         assert_eq!(
             server_name_violations(&twice, sync),
             ["a job joins a listed name onto its destination itself"]
@@ -1374,7 +1376,7 @@ mod tests {
             "        sftp::safe_child(dir, name)\n",
             "        Ok(format!(\"{dir}/{name}\"))\n",
         );
-        assert_ne!(trusting, transfers);
+        assert_ne!(&trusting, transfers);
         assert_eq!(
             server_name_violations(&trusting, sync),
             ["a name one server listed is trusted on another"]
@@ -1384,7 +1386,7 @@ mod tests {
             "let local = crate::localfile::safe_join(local_root, &a.path)?;",
             "let local = std::path::PathBuf::from(local_root).join(&a.path);",
         );
-        assert_ne!(late, sync);
+        assert_ne!(&late, sync);
         assert_eq!(
             server_name_violations(transfers, &late),
             [
@@ -1397,7 +1399,7 @@ mod tests {
             "entries.retain(|e| crate::localfile::safe_rel(&e.path));",
             "",
         );
-        assert_ne!(unfiltered, sync);
+        assert_ne!(&unfiltered, sync);
         assert_eq!(
             server_name_violations(transfers, &unfiltered),
             ["a listed path that leaves the folder reaches the plan"]
