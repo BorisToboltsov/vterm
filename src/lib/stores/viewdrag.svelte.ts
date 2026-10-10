@@ -26,6 +26,8 @@ import {
   canSplit,
   dropChanges,
   paneZone,
+  sameDrop,
+  sameRect,
   zoneRect,
   type PaneZone,
   type Rect,
@@ -126,6 +128,18 @@ export function viewDropAt(x: number, y: number, session: string, view: string):
   return { drop: { kind: "pane", pane, zone }, zone: zoneRect(rect, zone) };
 }
 
+/**
+ * Say where the view would land — written only when that is somewhere else:
+ * a strip redrawn for the same target again starts its slides over (see
+ * `offer` in tabdrag.svelte.ts).
+ */
+function offer(hit: ViewHit | null): void {
+  const drop = hit?.drop ?? null;
+  const zone = hit?.zone ?? null;
+  if (!sameDrop(viewDrag.over, drop)) viewDrag.over = drop;
+  if (!sameRect(viewDrag.zone, zone)) viewDrag.zone = zone;
+}
+
 function clearDrag(): void {
   viewDrag.session = null;
   viewDrag.view = null;
@@ -164,14 +178,14 @@ function onMove(e: PointerEvent): void {
   viewDrag.y = e.clientY;
   holdSelection();
   // Measured on every move: the docks may fold, the window may be resized.
-  const area = areaOf(candidate.session);
-  viewDrag.area = area ? toRect(area.getBoundingClientRect()) : null;
+  const el = areaOf(candidate.session);
+  const area = el ? toRect(el.getBoundingClientRect()) : null;
+  if (!sameRect(viewDrag.area, area)) viewDrag.area = area;
   const hit = viewDropAt(e.clientX, e.clientY, candidate.session, candidate.view);
   // A drop that would change nothing is not offered as a target.
   const offered =
     hit !== null && dropChanges(getWorkspace(candidate.session).layout, candidate.view, hit.drop);
-  viewDrag.over = offered ? hit.drop : null;
-  viewDrag.zone = offered ? hit.zone : null;
+  offer(offered ? hit : null);
 }
 
 function onUp(): void {

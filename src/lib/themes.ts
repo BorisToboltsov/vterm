@@ -48,6 +48,27 @@ export interface UiPalette {
   /** Warning/threshold amber. Optional — see `ok`. */
   warn?: string;
   bad?: string;
+  /**
+   * Secondary text: labels, hints, icons — and the data that is not a row's main
+   * thing (a file's size, a log line's time). It is read, so it is tuned per
+   * theme instead of taken from the scheme's "comment" colour, which most
+   * schemes set too dim for 11px text:
+   *
+   * - never under WCAG AA (4.5:1) on `panel` and `panelAlt`;
+   * - on dark panels about the same *perceived* contrast everywhere (APCA
+   *   Lc ≈ 45). The WCAG ratio flatters near-black surfaces — 4.5:1 that reads
+   *   on Nord's slate is faint on Deep Well's `#0d131e` — so the darker the
+   *   panel, the higher the ratio `muted` takes there;
+   * - always visibly dimmer than `text`; a scheme whose own text is dim (One
+   *   Dark, Tokyo Night) keeps `muted` nearer the AA floor for that;
+   * - the scheme's own tone where it has one in that range (Catppuccin
+   *   Overlay 2, Gruvbox fg4 / fg3), otherwise its hue with only the lightness
+   *   moved.
+   *
+   * Solarized is the exception: its text is about 5:1 by design, so `muted` is
+   * the scheme's body tone (`base0` / `base00`) and stays under AA. All of this
+   * is held by `themes.test.ts`.
+   */
   muted: string;
   text: string;
 }
@@ -111,7 +132,7 @@ const catppuccin: ThemeDef = {
     accent: "#89b4fa",
     accentHover: "#b4befe",
     danger: "#f38ba8",
-    muted: "#6c7086",
+    muted: "#9399b2",
     text: "#cdd6f4",
   },
 };
@@ -149,7 +170,7 @@ const dracula: ThemeDef = {
     accent: "#bd93f9",
     accentHover: "#d6acff",
     danger: "#ff5555",
-    muted: "#6272a4",
+    muted: "#8a9bd0",
     text: "#f8f8f2",
   },
 };
@@ -187,7 +208,7 @@ const nord: ThemeDef = {
     accent: "#88c0d0",
     accentHover: "#8fbcbb",
     danger: "#bf616a",
-    muted: "#7b88a1",
+    muted: "#94a1bb",
     text: "#d8dee9",
   },
 };
@@ -225,7 +246,7 @@ const gruvbox: ThemeDef = {
     accent: "#fabd2f",
     accentHover: "#fe8019",
     danger: "#fb4934",
-    muted: "#928374",
+    muted: "#a89984",
     text: "#ebdbb2",
   },
 };
@@ -263,7 +284,7 @@ const solarizedDark: ThemeDef = {
     accent: "#268bd2",
     accentHover: "#2aa198",
     danger: "#dc322f",
-    muted: "#586e75",
+    muted: "#839496",
     text: "#93a1a1",
   },
 };
@@ -301,7 +322,7 @@ const tokyoNight: ThemeDef = {
     accent: "#7aa2f7",
     accentHover: "#bb9af7",
     danger: "#f7768e",
-    muted: "#565f89",
+    muted: "#8893c0",
     text: "#a9b1d6",
   },
 };
@@ -339,7 +360,7 @@ const oneDark: ThemeDef = {
     accent: "#61afef",
     accentHover: "#c678dd",
     danger: "#e06c75",
-    muted: "#5c6370",
+    muted: "#8d94a2",
     text: "#abb2bf",
   },
 };
@@ -379,7 +400,7 @@ const fallout: ThemeDef = {
     accent: "#33ff66",
     accentHover: "#7dff9e",
     danger: "#ff5555",
-    muted: "#1f9f3f",
+    muted: "#32ac4b",
     text: "#33ff66",
   },
 };
@@ -417,7 +438,7 @@ const amber: ThemeDef = {
     accent: "#ffb000",
     accentHover: "#ffcc33",
     danger: "#ff5555",
-    muted: "#cc7000",
+    muted: "#db7e20",
     text: "#ffb000",
   },
 };
@@ -493,7 +514,7 @@ const c64: ThemeDef = {
     accent: "#7c70da",
     accentHover: "#a7e6ed",
     danger: "#b86962",
-    muted: "#9f9f9f",
+    muted: "#acacac",
     text: "#cdc8f5",
   },
 };
@@ -533,7 +554,7 @@ const solarizedLight: ThemeDef = {
     accent: "#268bd2",
     accentHover: "#1f6fa8",
     danger: "#dc322f",
-    muted: "#93a1a1",
+    muted: "#657b83",
     text: "#586e75",
   },
 };
@@ -609,7 +630,7 @@ const catppuccinLatte: ThemeDef = {
     accent: "#1e66f5",
     accentHover: "#1552c9",
     danger: "#d20f39",
-    muted: "#8c8fa1",
+    muted: "#666879",
     text: "#4c4f69",
   },
 };
@@ -647,7 +668,7 @@ const gruvboxLight: ThemeDef = {
     accent: "#458588",
     accentHover: "#076678",
     danger: "#cc241d",
-    muted: "#7c6f64",
+    muted: "#665c54",
     text: "#3c3836",
   },
 };
@@ -699,7 +720,7 @@ const deepWell: ThemeDef = {
     accentHover: "#a9ccff",
     danger: "#f2707a",
     warn: "#e6b866",
-    muted: "#5f6b80",
+    muted: "#8a97ad",
     text: "#cdd6e6",
   },
 };
@@ -743,7 +764,7 @@ const aurora: ThemeDef = {
     accentHover: "#6ee7b7",
     danger: "#fb7185",
     warn: "#fbbf24",
-    muted: "#6b7488",
+    muted: "#8c96ab",
     text: "#d7e0e8",
   },
 };
@@ -787,7 +808,7 @@ const glass: ThemeDef = {
     accentHover: "#aecce6",
     danger: "#dd8b8b",
     warn: "#d8c07a",
-    muted: "#68727f",
+    muted: "#8d98a5",
     text: "#d4dae2",
   },
 };

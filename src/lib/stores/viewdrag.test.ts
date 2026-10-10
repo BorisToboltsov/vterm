@@ -239,6 +239,28 @@ describe("dragging a view", () => {
     expect(panes(getWorkspace(S).layout).map((z) => z.tabs)).toEqual([[T], [a, b]]);
   });
 
+  it("writes the target only when it is another one — a move inside a slot is not", () => {
+    at("stripL");
+    beginViewDrag(press(byId("viewA"), 150, 10), S, a);
+    move(20, 10);
+    const over = viewDrag.over;
+    const area = viewDrag.area;
+    expect(over).toEqual({ kind: "strip", pane: left, index: 0 });
+    // The same target written again would redraw the strip, and a redrawn
+    // strip starts its views' slides over.
+    move(24, 12);
+    expect(viewDrag.over).toBe(over);
+    expect(viewDrag.area).toBe(area);
+
+    at("inL");
+    move(300, 420);
+    const zone = viewDrag.zone;
+    expect(zone).not.toBeNull();
+    expect(viewDrag.over).not.toBe(over);
+    move(310, 424);
+    expect(viewDrag.zone).toBe(zone);
+  });
+
   it("a drop that would change nothing is not offered", () => {
     // `b` is its zone's only view: its own body, anywhere, is where it already is.
     at("inR");

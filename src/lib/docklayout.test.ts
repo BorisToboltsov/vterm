@@ -26,6 +26,7 @@ import {
   persistedLayout,
   previewPanels,
   revealPanel,
+  sameTarget,
   sanitizeDocks,
   sanitizeHiddenPanels,
   shownPanel,
@@ -343,6 +344,18 @@ describe("movePanel", () => {
     expect(movePanel(d, "ai", "right")).toBe(d);
     expect(dropChanges(d, "git", { side: "right", index: 1 })).toBe(false);
     expect(dropChanges(d, "git", { side: "bottom", index: null })).toBe(true);
+  });
+
+  it("tells the same drop target again from another one", () => {
+    expect(sameTarget({ side: "right", index: 1 }, { side: "right", index: 1 })).toBe(true);
+    expect(sameTarget({ side: "right", index: null }, { side: "right", index: null })).toBe(true);
+    expect(sameTarget({ side: "right", index: 1 }, { side: "right", index: 2 })).toBe(false);
+    expect(sameTarget({ side: "right", index: 1 }, { side: "bottom", index: 1 })).toBe(false);
+    // "At the end" is not "at slot 0".
+    expect(sameTarget({ side: "right", index: null }, { side: "right", index: 0 })).toBe(false);
+    expect(sameTarget(null, null)).toBe(true);
+    expect(sameTarget(null, { side: "left", index: null })).toBe(false);
+    expect(sameTarget({ side: "left", index: null }, null)).toBe(false);
   });
 
   it("keeps every panel exactly once across any sequence of moves", () => {

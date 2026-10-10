@@ -190,6 +190,26 @@ describe("a tab of another window held over this one", () => {
     expect(incoming.over).toEqual({ kind: "strip", pane: left, index: 0 });
   });
 
+  it("the same tab over the same place again is not written anew", () => {
+    at("stripL");
+    // Every message of a drag carries the tab, and the place is worked out afresh.
+    applyDragMessage({ kind: "over", x: 160, y: 10, tab: { ...web } });
+    const tab = incoming.tab;
+    const target = incoming.over;
+    applyDragMessage({ kind: "over", x: 163, y: 12, tab: { ...web } });
+    // Written again, either would redraw the strip the tab is shown in — and a
+    // redrawn strip starts its tabs' slides over.
+    expect(incoming.tab).toBe(tab);
+    expect(incoming.over).toBe(target);
+    expect([incoming.x, incoming.y]).toEqual([163, 12]);
+    // What changed is written: the tab's state, the slot.
+    applyDragMessage({ kind: "over", x: 163, y: 12, tab: { ...web, status: "Disconnected" } });
+    expect(incoming.tab).not.toBe(tab);
+    expect(incoming.tab?.status).toBe("Disconnected");
+    applyDragMessage({ kind: "over", x: 40, y: 10, tab: { ...web, status: "Disconnected" } });
+    expect(incoming.over).toEqual({ kind: "strip", pane: left, index: 0 });
+  });
+
   it("over a pane's body: its middle, or the half an edge would give it", () => {
     at("bodyR");
     over(900, 230);

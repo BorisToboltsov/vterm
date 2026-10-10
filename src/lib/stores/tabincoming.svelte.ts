@@ -15,7 +15,7 @@
 // pixel for programs that have nothing to do with the drag — and would have to
 // be undone if the tab went elsewhere.
 
-import type { Rect, TabDrop } from "../splitlayout";
+import { sameDrop, sameRect, type Rect, type TabDrop } from "../splitlayout";
 import type { AttachTarget } from "../tabattach";
 import { tabDropAt } from "./tabdrag.svelte";
 import type { Tab } from "./tabs.svelte";
@@ -124,18 +124,28 @@ export function clearIncoming(): void {
   incoming.landing = false;
 }
 
+/** Whether two messages describe one tab — `parseTab` builds both, in one key order. */
+function sameTab(a: IncomingTab | null, b: IncomingTab): boolean {
+  return a !== null && JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** Take in what the backend relayed about a tab dragged from another window. */
 export function applyDragMessage(msg: DragMessage): void {
   if (msg.kind === "leave") return clearIncoming();
   // Let go of here already: what is still on its way from the drag changes
   // nothing — the place it was dropped at is the place it gets.
   if (incoming.landing) return;
-  incoming.tab = msg.tab;
+  // Written only when it is another tab, or another place: every message of a
+  // drag carries both anew, and the strip the tab is drawn in would start its
+  // slides over on each one (see `offer` in tabdrag.svelte.ts).
+  if (!sameTab(incoming.tab, msg.tab)) incoming.tab = msg.tab;
   incoming.x = msg.x;
   incoming.y = msg.y;
   const hit = tabDropAt(msg.x, msg.y, INCOMING_TAB);
-  incoming.over = hit?.drop ?? null;
-  incoming.zone = hit?.zone ?? null;
+  const drop = hit?.drop ?? null;
+  const zone = hit?.zone ?? null;
+  if (!sameDrop(incoming.over, drop)) incoming.over = drop;
+  if (!sameRect(incoming.zone, zone)) incoming.zone = zone;
   if (msg.kind === "drop") {
     incoming.landing = true;
     // The tab follows as a handoff; if it never does, the place is given up.

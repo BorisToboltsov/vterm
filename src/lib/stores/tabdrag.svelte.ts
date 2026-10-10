@@ -34,6 +34,8 @@ import {
   dropChanges,
   findPane,
   paneZone,
+  sameDrop,
+  sameRect,
   zoneRect,
   type PaneZone,
   type Rect,
@@ -226,6 +228,21 @@ export function tabDropAt(x: number, y: number, tab: string): TabHit | null {
   return { drop: { kind: "pane", pane, zone }, zone: zoneRect(rect, zone) };
 }
 
+/**
+ * Say where the tab would land — written only when that is somewhere else.
+ *
+ * The strips are drawn from the target, and a strip that is redrawn starts
+ * every slide in it over (`glide`). Written on every pointer move, the same
+ * target again cut a neighbour's slide short and began it anew from where it
+ * stood: the tabs moved in jerks for as long as the pointer did.
+ */
+function offer(hit: TabHit | null): void {
+  const drop = hit?.drop ?? null;
+  const zone = hit?.zone ?? null;
+  if (!sameDrop(tabDrag.over, drop)) tabDrag.over = drop;
+  if (!sameRect(tabDrag.zone, zone)) tabDrag.zone = zone;
+}
+
 function clearDrag(): void {
   tabDrag.tab = null;
   tabDrag.over = null;
@@ -281,8 +298,7 @@ function onMove(e: PointerEvent): void {
   const hit = tabDropAt(e.clientX, e.clientY, candidate.tab);
   // A drop that would change nothing is not offered as a target.
   const offered = hit !== null && dropChanges(tabsState.center, candidate.tab, hit.drop);
-  tabDrag.over = offered ? hit.drop : null;
-  tabDrag.zone = offered ? hit.zone : null;
+  offer(offered ? hit : null);
 }
 
 function onUp(e: PointerEvent): void {

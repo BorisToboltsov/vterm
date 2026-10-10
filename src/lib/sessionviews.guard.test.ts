@@ -573,8 +573,8 @@ describe("session views guard — catches what it exists for", () => {
       dragViolations(
         mutate(
           drag,
-          "  viewDrag.over = offered ? hit.drop : null;",
-          "  viewDrag.over = offered ? hit.drop : null;\n  if (offered) dropSessionView(candidate.session, candidate.view, hit.drop);",
+          "  offer(offered ? hit : null);",
+          "  offer(offered ? hit : null);\n  if (offered) dropSessionView(candidate.session, candidate.view, hit.drop);",
         ),
         page,
       ),

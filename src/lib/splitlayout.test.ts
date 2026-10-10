@@ -35,6 +35,8 @@ import {
   RATIO_MIN,
   ratioAt,
   removeTab,
+  sameDrop,
+  sameRect,
   savedLayout,
   setRatio,
   shownTabs,
@@ -437,6 +439,35 @@ describe("dropping a dragged tab", () => {
     const drop: TabDrop = { kind: "pane", pane: "p0", zone: "center" };
     expect(applyDrop(l, "a", drop)).toBe(l);
     expect(dropChanges(l, "a", drop)).toBe(false);
+  });
+
+  it("tells the same target again from another one", () => {
+    const strip: TabDrop = { kind: "strip", pane: "p0", index: 1 };
+    expect(sameDrop(strip, { ...strip })).toBe(true);
+    expect(sameDrop(strip, { ...strip, index: 2 })).toBe(false);
+    expect(sameDrop(strip, { ...strip, pane: "p1" })).toBe(false);
+    const body: TabDrop = { kind: "pane", pane: "p0", zone: "left" };
+    expect(sameDrop(body, { ...body })).toBe(true);
+    expect(sameDrop(body, { ...body, zone: "center" })).toBe(false);
+    expect(sameDrop(body, { ...body, pane: "p1" })).toBe(false);
+    // A strip of a pane and that pane's body are different places.
+    expect(sameDrop(strip, body)).toBe(false);
+    expect(sameDrop(body, strip)).toBe(false);
+    // No target is the same as no target, and as nothing else.
+    expect(sameDrop(null, null)).toBe(true);
+    expect(sameDrop(null, strip)).toBe(false);
+    expect(sameDrop(body, null)).toBe(false);
+  });
+
+  it("tells the same rectangle again from another one", () => {
+    const r = { x: 10, y: 20, w: 300, h: 200 };
+    expect(sameRect(r, { ...r })).toBe(true);
+    for (const key of ["x", "y", "w", "h"] as const) {
+      expect(sameRect(r, { ...r, [key]: r[key] + 1 }), key).toBe(false);
+    }
+    expect(sameRect(null, null)).toBe(true);
+    expect(sameRect(null, r)).toBe(false);
+    expect(sameRect(r, null)).toBe(false);
   });
 
   it("offers only targets that change something", () => {

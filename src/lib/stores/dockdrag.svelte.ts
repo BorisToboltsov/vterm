@@ -17,6 +17,7 @@ import {
   dropChanges,
   insertionIndex,
   isDockSide,
+  sameTarget,
   type DropTarget,
   type PanelId,
 } from "../docklayout";
@@ -146,7 +147,10 @@ function onMove(e: PointerEvent): void {
   const over = dockDropAt(e.clientX, e.clientY);
   if (over === KEEP) return;
   // A drop that would change nothing is not offered as a target.
-  dockDrag.over = over && dropChanges(layout.docks, candidate.panel, over) ? over : null;
+  const next = over && dropChanges(layout.docks, candidate.panel, over) ? over : null;
+  // Written only when it is another target: over a dock's body the answer is
+  // the same on every move, and rewriting it started the strips' slides over.
+  if (!sameTarget(dockDrag.over, next)) dockDrag.over = next;
 }
 
 /** The slot the dragged tab holds in the strips right now, if it is laid out. */

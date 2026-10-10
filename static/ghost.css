@@ -35,7 +35,7 @@ body {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--dot, #5f6b80);
+  background: var(--dot, #8a97ad);
 }
 
 #title {
