@@ -51,6 +51,7 @@
     dragOver,
     dragDrop,
     dragEnd,
+    dragOutBegin,
     CATALOG_EVENT,
     DRAG_EVENT,
     HANDOFF_EVENT,
@@ -300,6 +301,7 @@
     showGuestFiles,
     type Spring,
   } from "$lib/stores/filedrag.svelte";
+  import { dragOutBlocker, dragOutSpec, dragOutTold } from "$lib/dragout";
   import {
     describeFiles,
     desktopFiles,
@@ -1519,6 +1521,41 @@
     return from ? { ...files, label: tabTitle(from) } : files;
   }
 
+  /**
+   * Files have left the window: hand the drag to the system, if it can carry
+   * them (v1.14) — files of a server whose session is up, on a system that
+   * knows how. Anything else stays the page's own drag, as it always was.
+   */
+  async function handToSystem(files: CarriedFiles): Promise<boolean> {
+    systemDeclined = false;
+    const mine = labelled(files);
+    if (dragOutBlocker(mine, dropTabs, hostEnv.os) !== null) return false;
+    const spec = dragOutSpec(mine, describeFiles(mine));
+    const took = spec ? await dragOutBegin(spec).catch(() => false) : false;
+    // Nothing here stood in the way, and still it would not: a name it cannot
+    // give a file, a folder behind a link, a file the server gives no length.
+    systemDeclined = !took;
+    return took;
+  }
+  /** The system was asked to carry the files of this drag and would not. */
+  let systemDeclined = false;
+
+  /**
+   * Files were let go of over none of the app's windows while the drag was
+   * still the page's: the system was not carrying them. Where it plainly could
+   * have been meant to, say why it was not — a drop that does nothing, with no
+   * word, reads as a drop that was lost.
+   */
+  function tellNotCarried(files: CarriedFiles) {
+    const why = dragOutBlocker(files, dropTabs, hostEnv.os);
+    if (why === null) {
+      if (systemDeclined) notifyInfo(t("dragout.declined"));
+      return;
+    }
+    if (!dragOutTold(why)) return;
+    notifyInfo(t(why === "folders" ? "dragout.foldersNotCarried" : "dragout.sessionDown"));
+  }
+
   $effect(() => {
     onFileDrag({
       meaning: fileDropMeaning,
@@ -1536,8 +1573,12 @@
       release: (files) =>
         void dragDrop(describeFiles(labelled(files)))
           .catch(() => null)
-          .then(() => dragEnd().catch(() => {})),
+          .then((under) => {
+            if (under === null) tellNotCarried(files);
+            return dragEnd().catch(() => {});
+          }),
       left: () => void dragEnd().catch(() => {}),
+      out: handToSystem,
     });
   });
 
@@ -1550,6 +1591,10 @@
 
   // Files the system drags in from the desktop. It names them when they enter
   // and when they are dropped; in between it only says where the pointer is.
+  // A drag that names no files is not one of these — the app's own files,
+  // promised to the system and passing back over a window (v1.14), arrive just
+  // so: this window is told of them through the backend, and what the system
+  // says of them here must not clear what the backend has it draw.
   let desktopCarried: CarriedFiles | null = null;
   function hearDesktopDrag(
     ev:
@@ -1557,21 +1602,21 @@
       | { type: "over"; position: { x: number; y: number } }
       | { type: "leave" },
   ) {
+    const named = desktopCarried !== null;
     if (ev.type === "leave") {
       desktopCarried = null;
-      return clearGuestFiles();
+      if (named) clearGuestFiles();
+      return;
     }
     const at = pagePoint(ev.position, window.devicePixelRatio);
-    if (ev.type === "enter") desktopCarried = desktopFiles(ev.paths);
+    if (ev.type === "enter") desktopCarried = ev.paths.length > 0 ? desktopFiles(ev.paths) : null;
     if (ev.type === "drop") {
       desktopCarried = null;
       if (ev.paths.length > 0) dropGuestFiles(desktopFiles(ev.paths), at.x, at.y);
-      else clearGuestFiles();
+      else if (named) clearGuestFiles();
       return;
     }
-    if (desktopCarried && desktopCarried.entries.length > 0) {
-      showGuestFiles(desktopCarried, at.x, at.y);
-    }
+    if (desktopCarried) showGuestFiles(desktopCarried, at.x, at.y);
   }
 
   const paletteCommands = $derived<CommandItem[]>([

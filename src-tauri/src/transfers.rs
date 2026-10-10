@@ -647,7 +647,8 @@ fn send(app: &AppHandle, view: &JobView, origin: &str) {
 
 /// Run a registered job to its end: tell its windows as it goes, take it off
 /// the registry, say the last word, and write it into the recordings of the
-/// SSH sessions it touched.
+/// SSH sessions it touched. Returns how it ended — for the one caller that has
+/// someone waiting on the file (a promise made to the system, `dragout`).
 pub async fn run(
     app: &AppHandle,
     spec: Spec,
@@ -655,7 +656,7 @@ pub async fn run(
     dst: Party,
     cancel: Arc<AtomicBool>,
     origin: String,
-) {
+) -> JobView {
     let started = std::time::Instant::now();
     let last_told = AtomicU64::new(0);
     let tell = |view: &JobView, minor: bool| {
@@ -690,6 +691,7 @@ pub async fn run(
             session.record_output(line.as_bytes());
         }
     }
+    done
 }
 
 #[cfg(test)]

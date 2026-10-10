@@ -428,6 +428,204 @@ describe("outside the window", () => {
   });
 });
 
+describe("past the edge the drag may become the system's", () => {
+  const cancel = () => window.dispatchEvent(pointer("pointercancel", 0, 0));
+  /** A host whose question to the system is answered by hand. */
+  function asking(over: Partial<FileDragHost> = {}) {
+    let answer!: (took: boolean) => void;
+    const out = vi.fn(() => new Promise<boolean>((r) => (answer = r)));
+    const released = vi.fn();
+    const left = vi.fn();
+    const told = vi.fn(async () => ({ window: null, floating: true }));
+    onFileDrag(host({ over: told, release: released, left, out, ...over }));
+    return { out, released, left, told, answer: (took: boolean) => answer(took) };
+  }
+  /** Pick the files up inside the window and carry them past its edge. */
+  async function carryOut() {
+    beginFileDrag(press(), () => files());
+    at("row-name");
+    move(50, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    move(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+  }
+
+  it("is not asked while the files are inside the window", async () => {
+    const { out } = asking();
+    beginFileDrag(press(), () => files());
+    at("row-name");
+    move(50, 50);
+    move(60, 60);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(out).not.toHaveBeenCalled();
+  });
+
+  it("is asked once, as they leave it — and nothing more is said of them meanwhile", async () => {
+    const { out, told } = asking();
+    await carryOut();
+    expect(out).toHaveBeenCalledTimes(1);
+    expect(out).toHaveBeenCalledWith(files());
+    const said = told.mock.calls.length;
+    move(2100, 60);
+    move(2200, 70);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(out).toHaveBeenCalledTimes(1);
+    // A word arriving after the system took them would put the app's own
+    // label up beside the system's.
+    expect(told).toHaveBeenCalledTimes(said);
+  });
+
+  it("is asked only after what was being said of them has been heard", async () => {
+    let heard!: (v: { window: string | null; floating: boolean }) => void;
+    const told = vi.fn(
+      () => new Promise<{ window: string | null; floating: boolean }>((r) => (heard = r)),
+    );
+    const { out } = asking({ over: told });
+    beginFileDrag(press(), () => files());
+    at("row-name");
+    move(50, 50);
+    move(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    // The word about where they are is still on its way.
+    expect(out).not.toHaveBeenCalled();
+    heard({ window: null, floating: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(out).toHaveBeenCalledTimes(1);
+    // And the word that was queued behind it is not said after all.
+    expect(told).toHaveBeenCalledTimes(1);
+  });
+
+  it("taken: the page lets go — no drop, nothing taken back, no click to swallow", async () => {
+    const { answer, released, left } = asking();
+    // Whatever an earlier drag left to be swallowed is not this one's.
+    consumeFileDragClick();
+    await carryOut();
+    answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toBeNull();
+    expect(fileDrag.outside).toBe(false);
+    // The system's release is not this page's.
+    release(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).not.toHaveBeenCalled();
+    expect(dropped).toEqual([]);
+    // The backend goes on telling the app's windows where the files are.
+    expect(left).not.toHaveBeenCalled();
+    expect(consumeFileDragClick()).toBe(false);
+  });
+
+  it("taken: from then on the page is told of the files like any other window", async () => {
+    const { answer } = asking();
+    await carryOut();
+    answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    at("row-name");
+    showGuestFiles(files("elsewhere"), 40, 40);
+    expect(fileDrag.guest).toBe(true);
+    expect(fileDrag.over).toEqual({ kind: "folder", session: "db", dir: "/srv/backup" });
+  });
+
+  it("not taken: the drag stays the page's own, and the system is not asked again", async () => {
+    const { answer, out, told, released } = asking();
+    await carryOut();
+    const said = told.mock.calls.length;
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toEqual(files());
+    move(2100, 60);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(out).toHaveBeenCalledTimes(1);
+    // What is said of the files is said again.
+    expect(told.mock.calls.length).toBeGreaterThan(said);
+    release(2100, 60);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toHaveBeenCalledWith(files());
+  });
+
+  it("a question that fails is an answer: no", async () => {
+    const out = vi.fn(async () => {
+      throw new Error("no backend");
+    });
+    const released = vi.fn();
+    onFileDrag(host({ out, release: released }));
+    await carryOut();
+    expect(fileDrag.files).toEqual(files());
+    release(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toHaveBeenCalledTimes(1);
+  });
+
+  it("let go of before the answer: the release waits — and is the system's if it took them", async () => {
+    const { answer, released } = asking();
+    await carryOut();
+    release(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    // Neither a drop nor a release yet: nobody knows whose it is.
+    expect(released).not.toHaveBeenCalled();
+    expect(fileDrag.files).toEqual(files());
+    answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).not.toHaveBeenCalled();
+    expect(fileDrag.files).toBeNull();
+  });
+
+  it("let go of before the answer, and the system would not: it is the page's release", async () => {
+    const { answer, released } = asking();
+    await carryOut();
+    release(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(released).toHaveBeenCalledWith(files());
+    expect(fileDrag.files).toBeNull();
+  });
+
+  it("the pointer taken away by the system's drag is not a cancelled one", async () => {
+    const { answer, left } = asking();
+    await carryOut();
+    // Taking the drag over is what takes the pointer from the page.
+    cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toEqual(files());
+    answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toBeNull();
+    expect(left).not.toHaveBeenCalled();
+  });
+
+  it("the pointer taken away, and the system would not: the drag is cancelled", async () => {
+    const { answer, left, released } = asking();
+    await carryOut();
+    cancel();
+    await vi.advanceTimersByTimeAsync(0);
+    answer(false);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toBeNull();
+    expect(left).toHaveBeenCalledTimes(1);
+    expect(released).not.toHaveBeenCalled();
+  });
+
+  it("an answer for a drag that is over changes nothing in the next one", async () => {
+    const first = asking();
+    await carryOut();
+    key("Escape");
+    await vi.advanceTimersByTimeAsync(0);
+    const second = asking();
+    beginFileDrag(press(), () => files("db"));
+    at("row-name");
+    move(50, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    // The first drag's question is answered only now.
+    first.answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fileDrag.files).toEqual(files("db"));
+    // And the next drag asks its own.
+    move(2000, 50);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(second.out).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("files this page does not hold itself", () => {
   const guest = files("elsewhere");
 

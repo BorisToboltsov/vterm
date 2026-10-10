@@ -323,6 +323,11 @@ export const en = {
   "transfer.failedSome": "{failed} of {count} not transferred: {error}",
   "transfer.skipped": "Left out of the transfer — links and unreadable folders: {count}",
   "filedrag.cannotPaste": "This path cannot be typed safely into this shell.",
+  "dragout.foldersNotCarried":
+    "A folder cannot be dragged into Explorer — only files. Copy it with a local tab's file panel.",
+  "dragout.sessionDown": "The session is not connected — there is nothing to read the file from.",
+  "dragout.declined":
+    "The system could not take these files. Copy them with a local tab's file panel.",
   "sftp.movedMulti": "Moved {count} items to “{dest}”",
   "sftp.moveSkipped": "Skipped {count} — a name already exists at the destination",
   "sftp.dragCount": "{count} items",
@@ -2433,6 +2438,11 @@ const ru: Record<MessageKey, string> = {
   "transfer.failedSome": "Не перенесено {failed} из {count}: {error}",
   "transfer.skipped": "Не вошли в перенос — ссылки и нечитаемые папки: {count}",
   "filedrag.cannotPaste": "Этот путь нельзя безопасно вписать в эту оболочку.",
+  "dragout.foldersNotCarried":
+    "Папку в Проводник перетащить нельзя — только файлы. Скопируйте её через файловую панель локальной вкладки.",
+  "dragout.sessionDown": "Сессия не подключена — файл не с чего читать.",
+  "dragout.declined":
+    "Система не смогла принять эти файлы. Скопируйте их через файловую панель локальной вкладки.",
   "sftp.movedMulti": "Перемещено: {count} → «{dest}»",
   "sftp.moveSkipped": "Пропущено: {count} (имя уже занято в папке назначения)",
   "sftp.dragCount": "объектов: {count}",

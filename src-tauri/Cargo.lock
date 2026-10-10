@@ -6164,10 +6164,11 @@ dependencies = [
 
 [[package]]
 name = "vterm"
-version = "1.13.0"
+version = "1.14.0"
 dependencies = [
  "async-http-proxy",
  "base64 0.23.1",
+ "block2",
  "chardetng",
  "directories",
  "encoding_rs",
@@ -6177,6 +6178,7 @@ dependencies = [
  "keyring",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
  "portable-pty",
  "proptest",
  "rand 0.10.3",
@@ -6197,6 +6199,8 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-socks",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
  "windows-sys 0.61.2",
  "zeroize",
  "zip",

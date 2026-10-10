@@ -21,6 +21,13 @@
 // held drag does is open what it is held over — a tab, the dock's Files tab —
 // after `SPRING_MS`: without that a panel behind another tab could not be
 // reached at all.
+//
+// **Past the edge of the window the drag may become the system's** (v1.14).
+// A page's drop reaches no other program: files of a server go onto the desktop
+// only in a drag of the system's own. So when they leave the window the page
+// asks — once — whether the system can carry them on (`out`), and if it can,
+// lets go: no drop, nothing taken back. From then on this page is told where
+// the files are like any other window of the app (`showGuestFiles`).
 
 import {
   cancelOnEscape,
@@ -95,6 +102,13 @@ export interface FileDragHost {
   release?: (files: CarriedFiles) => void;
   /** No longer held outside, and not let go of there. */
   left?: () => void;
+  /**
+   * The files have left the window: can the system carry them on — onto the
+   * desktop, into a folder of the file manager? True — it has them now, and
+   * this page lets go of them; false — it does not, and the drag stays the
+   * page's own.
+   */
+  out?: (files: CarriedFiles) => Promise<boolean>;
 }
 
 let host: FileDragHost | null = null;
@@ -287,6 +301,50 @@ function tellLeft(): void {
   afterTelling(() => left?.());
 }
 
+// ── Handing the drag to the system ──────────────────────────────────────────
+// Asked once per drag. While the question is out, nothing more is said of the
+// files (a word that arrived after the system took them would put the app's
+// own label up beside the system's), and whatever the pointer does waits for
+// the answer: taking a drag over is exactly what makes a page see its pointer
+// let go of or taken away — and that is not a drop.
+
+let handing: Promise<boolean> | null = null;
+let refused = false;
+
+/** The system carries the files now: no drop here, and nothing is taken back. */
+function systemTook(): void {
+  told = false;
+  stopListening();
+  clearDrag();
+}
+
+function handOver(): void {
+  const drag = candidate;
+  const files = fileDrag.files;
+  const out = host?.out;
+  if (!out || !drag || !files || handing || refused) return;
+  const asked: Promise<boolean> = new Promise<void>((heard) => afterTelling(heard))
+    .then(() => (candidate === drag ? out(files) : false))
+    .catch(() => false)
+    .then((took) => {
+      if (handing === asked) handing = null;
+      if (candidate === drag) {
+        if (took) systemTook();
+        else refused = true;
+      }
+      return took;
+    });
+  handing = asked;
+}
+
+/** Do `next` once the system has answered — unless it has the files. */
+function afterHanding(next: () => void): void {
+  const drag = candidate;
+  void handing?.then((took) => {
+    if (!took && candidate === drag) next();
+  });
+}
+
 // ── The pointer ─────────────────────────────────────────────────────────────
 
 function stopListening(): void {
@@ -321,7 +379,8 @@ function onMove(e: PointerEvent): void {
   }
   holdSelection();
   fileDrag.outside = releasedOutside(e.clientX, e.clientY, viewport());
-  tellOver();
+  if (fileDrag.outside) handOver();
+  if (!handing) tellOver();
   if (fileDrag.outside || fileDrag.window !== null) {
     fileDrag.x = e.clientX;
     fileDrag.y = e.clientY;
@@ -333,6 +392,11 @@ function onMove(e: PointerEvent): void {
 }
 
 function onUp(): void {
+  if (handing) return afterHanding(letGo);
+  letGo();
+}
+
+function letGo(): void {
   const files = fileDrag.files;
   const away = fileDrag.outside || fileDrag.window !== null;
   stopListening();
@@ -353,6 +417,7 @@ function onUp(): void {
 }
 
 function onCancel(): void {
+  if (handing) return afterHanding(cancelFileDrag);
   cancelFileDrag();
 }
 
@@ -373,6 +438,8 @@ export function beginFileDrag(e: PointerEvent, pick: () => CarriedFiles | null):
   // A call that never came back must not hold up every drag after it.
   telling = null;
   tellAgain = false;
+  handing = null;
+  refused = false;
   holdSelection();
   candidate = {
     pick,
