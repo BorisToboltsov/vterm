@@ -648,6 +648,79 @@ fn raise_window(app: &AppHandle, label: &str) {
     }
 }
 
+// ── Files in a system drag, over a window of the app (v1.14) ────────────────
+// Once the system has taken a drag over — files promised to the desktop — the
+// page that began it hears nothing more of the pointer. The drag's source does
+// (the system tells it where the pointer is, and where it was let go of), and
+// says here what a page used to say through `drag_over` / `drag_drop`: the
+// window under the pointer draws the files and, let go of there, takes them.
+// The window the drag began in is such a window too. Main thread only.
+
+/// The window of the app under the pointer that hears of drags, if any.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+fn drag_hearer(app: &AppHandle, windows: &Windows) -> Option<crate::winhit::Hit> {
+    crate::winhit::app_window_at_pointer(app)
+        .filter(|hit| hit.label != crate::dragghost::LABEL)
+        .filter(|hit| windows.lock().roster.contains_key(&hit.label))
+}
+
+/// The pointer of a system drag begun in `source` has moved. True when it is
+/// over a window of the app — which draws the files itself.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub(crate) fn system_drag_moved(app: &AppHandle, source: &str, what: &serde_json::Value) -> bool {
+    let windows = app.state::<Windows>();
+    let hit = drag_hearer(app, &windows);
+    let left = windows
+        .lock()
+        .hover(source, hit.as_ref().map(|hit| hit.label.as_str()));
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+    let Some(hit) = hit else { return false };
+    let (x, y, tab) = (hit.x, hit.y, what.clone());
+    let _ = app.emit_to(
+        hit.label.as_str(),
+        DRAG_EVENT,
+        DragEvent::Over { x, y, tab },
+    );
+    true
+}
+
+/// It was given up — Esc, or the system would not carry it: nobody takes the
+/// files, and the window that was drawing them is told they are gone.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub(crate) fn system_drag_cancelled(app: &AppHandle, source: &str) {
+    let left = app.state::<Windows>().lock().end_hover(source);
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+}
+
+/// It was let go of. True when that was over a window of the app, which now
+/// has the files; false — over the desktop, another program, or nothing.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+pub(crate) fn system_drag_ended(app: &AppHandle, source: &str, what: &serde_json::Value) -> bool {
+    let windows = app.state::<Windows>();
+    let hit = drag_hearer(app, &windows);
+    let left = {
+        let mut reg = windows.lock();
+        let left = reg.hover(source, hit.as_ref().map(|hit| hit.label.as_str()));
+        reg.end_hover(source);
+        left
+    };
+    if let Some(left) = left {
+        let _ = app.emit_to(left, DRAG_EVENT, DragEvent::Leave);
+    }
+    let Some(hit) = hit else { return false };
+    let (x, y, tab) = (hit.x, hit.y, what.clone());
+    let _ = app.emit_to(
+        hit.label.as_str(),
+        DRAG_EVENT,
+        DragEvent::Drop { x, y, tab },
+    );
+    true
+}
+
 /// What the window a tab is dragged out of learns about where the tab is.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

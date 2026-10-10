@@ -51,6 +51,17 @@ export function holdSelection(): void {
   window.addEventListener("blur", letSelectionGo);
 }
 
+/**
+ * The one end of a drag that no pointer event announces: the system took the
+ * drag over (files carried out of the window, v1.14). The page then hears
+ * neither a release nor a cancelled pointer — and, left alone, would stay
+ * unselectable until the next click, swallowing the first selection made after
+ * it. Whoever hands a drag to the system says so here.
+ */
+export function releaseSelection(): void {
+  letSelectionGo();
+}
+
 /** Has the pointer moved at least `min` px from its start point? */
 export function passedThreshold(
   startX: number,

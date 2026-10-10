@@ -69,7 +69,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 |---------|-----------------------------------|------|
 | Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `broadcast`, `osc` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
 | Драйверы панелей | `git`, `gitview`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
-| Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки) |
+| Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives`, `filedrop`, `dragout` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки), `dragout.rs` + `dragout/feed.rs` (вынос файла: что обещается, поток для Проводника, раскладка описателя) |
 | Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce` | `textenc.rs`, `servertools.rs` |
 | Мониторинг | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` | `metrics/mod.rs` (30 тестов — парсеры проб), `metrics/local.rs` |
 | Запись сессий | `recording`, `recgroup`, `airunbook`, `aiscript` | `recording.rs` (25 тестов — режимы, пауза, мета) |
@@ -386,6 +386,16 @@ macOS и Windows это проверяется в `pnpm tauri dev`.
 Основной пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
 macOS**, и это главное отличие от GitLab-схемы ниже: `#[cfg(windows)]`-код (`drives.rs`,
 `proccwd.rs`) на Linux-раннере структурно невидим, а windows-раннера под рукой нет.
+
+**COM-объекты выноса файла** (`dragout/windows.rs`, ADR 0027) раннер только собирает:
+системное перетаскивание в тесте не начать. Поэтому в них нет логики — она вынесена в
+`dragout/feed.rs`, который собирается и тестируется на любой ОС (поток файла, липкая
+ошибка чтения, раскладка `FILEGROUPDESCRIPTORW` по байтам). Перед пушем типы
+Windows-половины проверяются локально одноразовым крейтом под `x86_64-pc-windows-msvc`
+(`windows` + `windows-core`, заглушка `feed` с теми же сигнатурами): настоящий крейт под
+эту цель с macOS не собирается — `aws-lc-sys` требует Windows SDK. То же для macOS-класса
+источника: тест регистрирует его в рантайме Objective-C и сверяет селекторы и протоколы,
+сам жест проверяет человек.
 
 | Workflow | Когда | Что делает |
 |----------|-------|------------|

@@ -28,6 +28,12 @@ export interface CarriedFiles {
   /** What that tab is called. */
   label: string;
   entries: CarriedEntry[];
+  /**
+   * A drag of the system's own carries them (v1.14): files of a server taken
+   * out of their window. The system draws them wherever they are — a window
+   * they pass back over shows where they would land, and no label of its own.
+   */
+  system?: boolean;
 }
 
 /** What files can be dropped on. */
@@ -130,6 +136,7 @@ export function describeFiles(files: CarriedFiles): Record<string, unknown> {
     local: files.local,
     label: files.label,
     entries: files.entries.map(({ path, name, isDir }) => ({ path, name, isDir })),
+    ...(files.system ? { system: true } : {}),
   };
 }
 
@@ -150,7 +157,10 @@ export function parseFiles(raw: unknown): CarriedFiles | null {
     if (typeof isDir !== "boolean") return null;
     out.push({ path, name, isDir });
   }
-  return { from, local, label, entries: out };
+  const read: CarriedFiles = { from, local, label, entries: out };
+  // Said in so many words, or not at all: anything else is not "the system's".
+  if (raw.system === true) read.system = true;
+  return read;
 }
 
 /** What this window is told of files dragged from another one. */

@@ -3,6 +3,7 @@ mod appwin;
 mod backup;
 mod container;
 mod dragghost;
+mod dragout;
 mod drives;
 mod error;
 mod folders;
@@ -105,6 +106,14 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     state.local_ptys.lock().unwrap().remove(session_id);
     state.metrics_samples.clear_session(session_id);
     state.id_names.lock().unwrap().remove(session_id);
+}
+
+/// [`session_arc`] for code that has the app's handle, not a command's state.
+pub(crate) async fn session_arc_of(
+    app: &AppHandle,
+    session_id: &str,
+) -> AppResult<Arc<SshSession>> {
+    session_arc(&app.state::<AppState>(), session_id).await
 }
 
 /// Clone out the session for `session_id`, releasing the registry lock before
@@ -2098,31 +2107,24 @@ async fn transfer_party(
     })
 }
 
-/// Start a transfer the backend owns (v1.12, ADR 0025) and return at once: an
-/// upload, a download, a copy between two sessions or a local copy, by what the
-/// two sides are. Its state travels in `sftp://job` to whichever window shows
-/// the tab of each session it touches; `sftp_cancel` with its id stops it. The
-/// window that asked awaits nothing — it may give the tab away meanwhile.
-#[tauri::command]
-async fn transfer_start(
-    window: tauri::WebviewWindow,
-    app: AppHandle,
-    state: State<'_, AppState>,
+/// Take a job into the registry and carry it out in the background. Resolves
+/// at once with a receiver of how it ended — which the command drops (a window
+/// awaits no transfer) and a promise made to the system keeps (`dragout`).
+pub(crate) async fn launch_transfer(
+    app: &AppHandle,
+    origin: &str,
     spec: transfers::Spec,
-) -> AppResult<String> {
+) -> AppResult<tokio::sync::oneshot::Receiver<transfers::JobView>> {
     if spec.items.is_empty() {
         return Err("nothing to transfer".into());
     }
+    let state = app.state::<AppState>();
     let src = transfer_party(&state, &spec.src).await?;
     let dst = transfer_party(&state, &spec.dst).await?;
     let id = spec.id.clone();
     let cancel = Arc::new(AtomicBool::new(false));
     let jobs = app.state::<transfers::Jobs>();
-    if !jobs.add(
-        transfers::JobView::start(&spec),
-        cancel.clone(),
-        window.label(),
-    ) {
+    if !jobs.add(transfers::JobView::start(&spec), cancel.clone(), origin) {
         return Err("a transfer with this id is already running".into());
     }
     // The shared cancel map, for the life of the job: `sftp_cancel` stops it as
@@ -2132,16 +2134,29 @@ async fn transfer_start(
         .lock()
         .unwrap()
         .insert(id.clone(), cancel.clone());
-    let origin = window.label().to_string();
-    let job_id = id.clone();
+    let (ended, wait) = tokio::sync::oneshot::channel();
+    let (app, origin) = (app.clone(), origin.to_string());
     tokio::spawn(async move {
-        transfers::run(&app, spec, src, dst, cancel, origin).await;
-        app.state::<AppState>()
-            .cancels
-            .lock()
-            .unwrap()
-            .remove(&job_id);
+        let done = transfers::run(&app, spec, src, dst, cancel, origin).await;
+        app.state::<AppState>().cancels.lock().unwrap().remove(&id);
+        let _ = ended.send(done);
     });
+    Ok(wait)
+}
+
+/// Start a transfer the backend owns (v1.12, ADR 0025) and return at once: an
+/// upload, a download, a copy between two sessions or a local copy, by what the
+/// two sides are. Its state travels in `sftp://job` to whichever window shows
+/// the tab of each session it touches; `sftp_cancel` with its id stops it. The
+/// window that asked awaits nothing — it may give the tab away meanwhile.
+#[tauri::command]
+async fn transfer_start(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    spec: transfers::Spec,
+) -> AppResult<String> {
+    let id = spec.id.clone();
+    launch_transfer(&app, window.label(), spec).await?;
     Ok(id)
 }
 
@@ -2530,6 +2545,7 @@ pub fn run() {
             appwin::attach_session,
             appwin::announce_window,
             appwin::announce_copy_targets,
+            dragout::drag_out_begin,
             appwin::drag_over,
             appwin::drag_drop,
             appwin::drag_end

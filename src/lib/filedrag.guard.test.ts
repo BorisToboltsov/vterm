@@ -189,7 +189,12 @@ export function relayViolations(page: string): string[] {
   if (!/over: async \(files\) => \{[\s\S]*?return dragOver\(describeFiles\(labelled\(files\)\)/.test(host)) {
     out.push("files held outside the window are shown to nobody");
   }
-  if (!/release: \(files\) =>\s*void dragDrop\(describeFiles\(labelled\(files\)\)\)[\s\S]*?\.then\(\(\) => dragEnd\(\)/.test(host)) {
+  // Whatever else the release does once the backend has answered, it ends by
+  // saying the drag is over — on every path through it.
+  const release = /release: \(files\) =>\s*void dragDrop\(describeFiles\(labelled\(files\)\)\)([\s\S]*?)\n      left:/.exec(host)?.[1] ?? "";
+  const then = /\.then\(\(under\) => \{([\s\S]*?)\n          \}\),$/.exec(release)?.[1] ?? "";
+  const returns = then.match(/\breturn\b[^;]*;/g) ?? [];
+  if (returns.length === 0 || !returns.every((r) => /^return dragEnd\(\)/.test(r))) {
     out.push("files let go of over another window leave it drawing them");
   }
   if (!/left: \(\) => void dragEnd\(\)/.test(host)) {
@@ -334,14 +339,21 @@ describe("the guard catches", () => {
   it("a window left drawing files that are not coming", () => {
     const kept = mutate(
       page,
-      "          .then(() => dragEnd().catch(() => {})),\n      left: () => void dragEnd().catch(() => {}),\n    });",
-      "          .then(() => undefined),\n      left: () => void dragEnd().catch(() => {}),\n    });",
+      "            return dragEnd().catch(() => {});\n          }),\n      left:",
+      "            return undefined;\n          }),\n      left:",
     );
     expect(relayViolations(kept)).toEqual(["files let go of over another window leave it drawing them"]);
+    // A path through the release that says nothing is the same hole.
+    const early = mutate(
+      page,
+      "            if (under === null) tellNotCarried(files);\n",
+      "            if (under === null) return tellNotCarried(files);\n",
+    );
+    expect(relayViolations(early)).toEqual(["files let go of over another window leave it drawing them"]);
     const stuck = mutate(
       page,
-      "          .then(() => dragEnd().catch(() => {})),\n      left: () => void dragEnd().catch(() => {}),\n    });",
-      "          .then(() => dragEnd().catch(() => {})),\n      left: undefined,\n    });",
+      "      left: () => void dragEnd().catch(() => {}),\n      out: handToSystem,\n    });",
+      "      left: undefined,\n      out: handToSystem,\n    });",
     );
     expect(relayViolations(stuck)).toEqual([
       "files that came back into their window stay drawn in the other one",
