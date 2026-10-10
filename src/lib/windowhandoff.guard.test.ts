@@ -336,7 +336,8 @@ export function crossDragViolations(page: string): string[] {
     out.push("a handoff that failed after a drop leaves a place kept for a tab that is not coming");
   }
   // What ends the drag without a drop is said by the store, through `left`.
-  if (!/left: \(\) => void dragEnd\(\)/.test(c)) {
+  // (The tab's own `left` — dragged files have one of their own, see filedrag.guard.)
+  if (!/over: tellDragOver,\s*left: \(\) => void dragEnd\(\)/.test(c)) {
     out.push("a tab that came back into its window stays drawn in the other one");
   }
   // A tab that cannot go is shown to nobody.
@@ -669,7 +670,11 @@ describe("window guard — catches what it exists for", () => {
     ).toEqual(["a handoff that failed after a drop leaves a place kept for a tab that is not coming"]);
     expect(
       crossDragViolations(
-        mutate(page, "left: () => void dragEnd().catch(() => {}),", "left: undefined,"),
+        mutate(
+          page,
+          "over: tellDragOver,\n            left: () => void dragEnd().catch(() => {}),",
+          "over: tellDragOver,\n            left: undefined,",
+        ),
       ),
     ).toEqual(["a tab that came back into its window stays drawn in the other one"]);
   });

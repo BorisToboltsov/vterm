@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renderArgv, renderSessionCommand, SHELL_SCRIPT } from "./termcmd";
+import { quotePaths, renderArgv, renderSessionCommand, SHELL_SCRIPT } from "./termcmd";
 import { execShellArgv } from "./docker";
 import { execShellArgv as kubeExecArgv, portForwardArgv } from "./k8s";
 
@@ -102,5 +102,31 @@ describe("renderSessionCommand — the tab's shell ends with the container sessi
     expect(renderSessionCommand(["docker", "exec", 'a"b'], "cmd")).toBeNull();
     expect(renderSessionCommand(["docker", "exec", "a\nb"], "posix")).toBeNull();
     expect(renderSessionCommand([], "posix")).toBeNull();
+  });
+});
+
+describe("quotePaths — files dropped on a local terminal", () => {
+  it("types the paths as that shell reads them, with nothing that would run", () => {
+    expect(quotePaths(["/Users/me/a.txt", "/Users/me/My Files/b c.txt"], "posix")).toBe(
+      "/Users/me/a.txt '/Users/me/My Files/b c.txt'",
+    );
+    expect(quotePaths(["/tmp/it's.txt"], "posix")).toBe("'/tmp/it'\\''s.txt'");
+    expect(quotePaths(["C:\\Users\\me\\My Files\\a.txt"], "powershell")).toBe(
+      "'C:\\Users\\me\\My Files\\a.txt'",
+    );
+    expect(quotePaths(["C:\\Users\\me\\My Files\\a.txt"], "cmd")).toBe(
+      '"C:\\Users\\me\\My Files\\a.txt"',
+    );
+    // Not a command: a quoted first path gets no call operator in PowerShell.
+    expect(quotePaths(["C:\\My Files\\a.txt"], "powershell")?.startsWith("&")).toBe(false);
+  });
+
+  it("types nothing rather than something that reads as two lines or another command", () => {
+    expect(quotePaths([], "posix")).toBeNull();
+    expect(quotePaths([""], "posix")).toBeNull();
+    expect(quotePaths(["/tmp/a\nrm -rf ~"], "posix")).toBeNull();
+    // cmd has no way to write a quote or a `%VAR%` inside quotes.
+    expect(quotePaths(["C:\\a%PATH%b.txt"], "cmd")).toBeNull();
+    expect(quotePaths(["/ok", 'C:\\a"b'], "cmd")).toBeNull();
   });
 });

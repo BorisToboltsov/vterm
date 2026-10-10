@@ -28,7 +28,14 @@
 // of a pane it would take. Moving the tab for real on every pointer move would
 // resize terminals mid-drag — a `SIGWINCH` per pixel for the programs in them.
 
-import { holdSelection, layoutBox, passedThreshold, slotIndex } from "../actions/drag";
+import {
+  cancelOnEscape,
+  holdSelection,
+  layoutBox,
+  passedThreshold,
+  slotIndex,
+  swallowReleaseClick,
+} from "../actions/drag";
 import {
   canSplit,
   dropChanges,
@@ -252,12 +259,16 @@ function clearDrag(): void {
   tabDrag.floating = false;
 }
 
+let stopEscape: (() => void) | null = null;
+
 function stopListening(): void {
   // A drag that ends any way but by a release outside is no longer held there.
   tellLeft();
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
   window.removeEventListener("pointercancel", onCancel);
+  stopEscape?.();
+  stopEscape = null;
   if (candidate && tabDrag.tab !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
@@ -353,6 +364,15 @@ export function beginTabDrag(e: PointerEvent, tab: string): void {
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onCancel);
+  // `Esc` puts the tab back where it was (v1.13): nothing moves, and a window
+  // that was drawing it is told it left (`stopListening` → `tellLeft`).
+  stopEscape = cancelOnEscape(
+    () => tabDrag.tab !== null,
+    () => {
+      cancelTabDrag();
+      swallowReleaseClick((on) => (swallowClick = on));
+    },
+  );
 }
 
 /** True once for the click that ends a drag — the tab's `onclick` returns early. */

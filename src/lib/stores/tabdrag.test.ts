@@ -330,6 +330,60 @@ describe("dragging a tab", () => {
   });
 });
 
+const esc = () => {
+  const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  window.dispatchEvent(e);
+  return e;
+};
+
+describe("Esc puts a dragged tab back", () => {
+  it("nothing moves, and the key goes no further", () => {
+    const heard = vi.fn();
+    window.addEventListener("keydown", heard);
+    at("stripB");
+    beginTabDrag(press(byId("tabA")), a);
+    move(300, 20);
+    expect(tabDrag.tab).toBe(a);
+    const before = shape();
+    const e = esc();
+    expect(e.defaultPrevented).toBe(true);
+    expect(heard).not.toHaveBeenCalled();
+    expect(tabDrag.tab).toBeNull();
+    expect(tabDrag.over).toBeNull();
+    // The button is still down: letting go of it now moves nothing, and is
+    // not a click on the tab that was held.
+    expect(consumeTabDragClick()).toBe(true);
+    release();
+    expect(shape()).toEqual(before);
+    window.removeEventListener("keydown", heard);
+  });
+
+  it("a press that is not a drag yet leaves Esc alone", () => {
+    beginTabDrag(press(byId("tabA")), a);
+    expect(esc().defaultPrevented).toBe(false);
+    release();
+  });
+
+  it("a window that was drawing the tab is told it left", async () => {
+    const left = vi.fn();
+    onTabDraggedOutside({
+      release: vi.fn(),
+      over: async () => ({ window: "win-2", floating: false }),
+      left,
+    });
+    at("stripB");
+    beginTabDrag(press(byId("tabA")), a);
+    move(300, 20);
+    await Promise.resolve();
+    await Promise.resolve();
+    esc();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(left).toHaveBeenCalledTimes(1);
+    onTabDraggedOutside(null);
+  });
+});
+
 describe("a tab let go of outside the window", () => {
   // jsdom's window is 1024×768.
   const releaseAt = (x: number, y: number, screenX: number, screenY: number) =>

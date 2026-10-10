@@ -185,12 +185,19 @@ describe("dock panel guard", () => {
     );
   });
 
-  it("ignores window-wide file drops aimed at a hidden file panel", () => {
-    // The drop listener is registered on the webview, not on the panel's element,
-    // so a hidden panel would happily upload into a directory the user cannot see.
-    const src = code("FileBrowser.svelte");
-    const at = src.indexOf("onDragDropEvent");
+  it("a hidden file panel is no target for dropped files", () => {
+    // The system's drop is window-wide. While each panel listened for it, a
+    // panel hidden behind another dock tab uploaded into a directory the user
+    // could not see — it had to check `visible` itself. Since v1.13 no panel
+    // listens at all: the page hears the drop once, and what it lands on is
+    // what is under the pointer (`fileTargetAt`), which a hidden panel never is.
+    expect(code("FileBrowser.svelte")).not.toMatch(/onDragDropEvent|getCurrentWebview/);
+    const store = readFileSync(join(LIB, "stores", "filedrag.svelte.ts"), "utf8");
+    const at = store.indexOf("export function fileTargetAt(");
+    const fn = store.slice(at, store.indexOf("\n}\n", at));
     expect(at).toBeGreaterThan(-1);
-    expect(src.slice(at, at + 400)).toMatch(/\bvisible\b/);
+    expect(fn).toMatch(/document\.elementFromPoint\(x, y\)/);
+    // Found from the element under the pointer, never by looking for panels.
+    expect(fn).not.toMatch(/querySelector/);
   });
 });

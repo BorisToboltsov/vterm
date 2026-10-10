@@ -34,6 +34,9 @@
     transferList,
     sftpHome,
     localHome,
+    localKinds,
+    announceCopyTargets,
+    TARGETS_EVENT,
     closeWindow,
     reportWindowSummary,
     otherWindowsSummary,
@@ -279,16 +282,48 @@
     transfersState,
   } from "$lib/stores/transfers.svelte";
   import { jobNotice } from "$lib/transfer";
-  import { startTransfer } from "$lib/transferflow";
+  import { DISK, startTransfer } from "$lib/transferflow";
   import {
     fileSelectionOf,
     pendingCopyRequest,
+    requestMove,
     setCopyTargets,
     setFileSelection,
     takeCopyRequest,
     type CopyRequest,
   } from "$lib/stores/filecopy.svelte";
-  import { copyTargets, defaultDestDir, sideOf, targetsFrom, type CopyTarget } from "$lib/copyto";
+  import {
+    clearGuestFiles,
+    dropGuestFiles,
+    fileDrag,
+    onFileDrag,
+    showGuestFiles,
+    type Spring,
+  } from "$lib/stores/filedrag.svelte";
+  import {
+    describeFiles,
+    desktopFiles,
+    dropMeaning,
+    pagePoint,
+    parseFileDragMessage,
+    type CarriedFiles,
+    type DropMeaning,
+    type FileDragMessage,
+    type FileTarget,
+  } from "$lib/filedrop";
+  import { checkMove } from "$lib/filemove";
+  import { quotePaths } from "$lib/termcmd";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
+  import FileDragGhost from "$lib/FileDragGhost.svelte";
+  import {
+    copyTargets,
+    defaultDestDir,
+    foreignTargets,
+    shareTargets,
+    sideOf,
+    targetsFrom,
+    type CopyTarget,
+  } from "$lib/copyto";
   import CopyToDialog from "$lib/CopyToDialog.svelte";
   import ReplaceDialog from "$lib/ReplaceDialog.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
@@ -412,6 +447,7 @@
       bufferText?: (maxLines?: number) => string;
       find?: () => void;
       focus?: () => void;
+      pasteText?: (text: string) => void;
       setViewMode?: (structured: boolean) => void;
       clear?: () => void;
       snapshot?: (sent: number) => Promise<TermSnapshot | null>;
@@ -1365,7 +1401,7 @@
       picked.entries.length === 1
         ? picked.entries[0].name
         : t("sftp.dragCount", { count: picked.entries.length });
-    return targetsFrom(copyTargetsNow, from).map((target) => ({
+    return targetsFrom(allCopyTargets, from).map((target) => ({
       id: `copyto:${target.sessionId}`,
       title: t("palette.copyTo", { what, target: target.title }),
       icon: "arrowRight",
@@ -1380,6 +1416,163 @@
         }),
     }));
   });
+
+  // ── Dragging files (v1.13) ───────────────────────────────────────────────────
+  // Out of a file panel onto a folder of another session's panel, a session's
+  // tab or its terminal; in from the desktop; over from another window. The
+  // drag is the store's (`stores/filedrag`); what a drop means is the pure
+  // model's (`filedrop.ts`). Here: what this window's tabs make of it.
+  const dropTabs = $derived(
+    tabsState.list.map((tab) => ({
+      sessionId: tab.sessionId,
+      kind: tab.kind,
+      connected: tab.status.startsWith("Connected"),
+    })),
+  );
+  /** The session whose tab or terminal the files in the air would land on. */
+  const fileOverSession = $derived(
+    fileDrag.files !== null && fileDrag.over?.kind === "session" ? fileDrag.over.session : null,
+  );
+  let fileGhost = $state<ReturnType<typeof FileDragGhost>>();
+
+  /** What letting go over `target` would do — null, and it is not offered. */
+  function fileDropMeaning(files: CarriedFiles, target: FileTarget): DropMeaning | null {
+    const meaning = dropMeaning(files, target, dropTabs);
+    // Into the folder they are in, or a folder into itself: no move at all.
+    if (meaning?.kind === "move" && !files.entries.some((e) => checkMove(e.path, meaning.dir).ok)) {
+      return null;
+    }
+    return meaning;
+  }
+
+  /** The files, with which of them are folders — a drop from the desktop only names paths. */
+  async function withKinds(files: CarriedFiles): Promise<CarriedFiles> {
+    if (files.from !== null) return files;
+    let kinds: boolean[] = [];
+    try {
+      kinds = await localKinds(files.entries.map((e) => e.path));
+    } catch {
+      /* unknown: each is sent as a file, and the transfer says what is wrong */
+    }
+    return { ...files, entries: files.entries.map((e, i) => ({ ...e, isDir: kinds[i] ?? false })) };
+  }
+
+  /** Files were let go of over a target: do what it means. */
+  async function dropFiles(files: CarriedFiles, meaning: DropMeaning) {
+    switch (meaning.kind) {
+      case "move":
+        requestMove({
+          session: meaning.session,
+          paths: files.entries.map((e) => e.path),
+          dir: meaning.dir,
+        });
+        return;
+      case "copy": {
+        const carried = await withKinds(files);
+        void openCopyDialog(
+          {
+            from: carried.from,
+            local: carried.local,
+            label: carried.label,
+            to: meaning.to,
+            entries: carried.entries,
+          },
+          meaning.dir,
+        );
+        return;
+      }
+      case "send": {
+        // From the desktop into a folder a panel shows: sent at once, as a
+        // drop always was — a name already there is still asked about.
+        const target = copyTargetsNow.find((x) => x.sessionId === meaning.to);
+        if (!target) return;
+        const carried = await withKinds(files);
+        void startTransfer({
+          src: DISK,
+          dst: sideOf(target),
+          sources: carried.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
+          destDir: meaning.dir,
+        });
+        return;
+      }
+      case "paste": {
+        // Onto a local terminal: the paths are typed into it, quoted for the
+        // shell that runs there. One that cannot be written safely types nothing.
+        const shell = localShellKind[meaning.to] ?? "posix";
+        const text = quotePaths(files.entries.map((e) => e.path), shell);
+        if (text === null) notifyInfo(t("filedrag.cannotPaste"));
+        else termRefs[meaning.to]?.pasteText?.(`${text} `);
+        return;
+      }
+    }
+  }
+
+  /** Files were held over it long enough: open it under them. */
+  function springOpen(what: Spring) {
+    if (what.kind === "files") revealPanel("files");
+    else if (tabsState.activeId !== what.id) activateTab(what.id);
+  }
+
+  /** The files, named after their tab — another window has no other way to know. */
+  function labelled(files: CarriedFiles): CarriedFiles {
+    const from = files.from ? findTab(files.from) : null;
+    return from ? { ...files, label: tabTitle(from) } : files;
+  }
+
+  $effect(() => {
+    onFileDrag({
+      meaning: fileDropMeaning,
+      drop: (files, meaning) => void dropFiles(labelled(files), meaning),
+      spring: springOpen,
+      // Outside the window the files are another window's to draw, or the
+      // floating label's — the same relay a tab uses. Inside it, with no other
+      // window that could lie on top, the backend has nothing to add.
+      over: async (files) => {
+        if (!fileDrag.outside && windowTargets.length === 0) return null;
+        return dragOver(describeFiles(labelled(files)), fileGhost?.look() ?? null);
+      },
+      // Let go of out there: asked anew — the release is the gesture. The
+      // window under the pointer does the rest; over none of them, nothing.
+      release: (files) =>
+        void dragDrop(describeFiles(labelled(files)))
+          .catch(() => null)
+          .then(() => dragEnd().catch(() => {})),
+      left: () => void dragEnd().catch(() => {}),
+    });
+  });
+
+  /** Files of another window, held over this one or let go of here. */
+  function applyFileDragMessage(msg: FileDragMessage) {
+    if (msg.kind === "leave") clearGuestFiles();
+    else if (msg.kind === "over") showGuestFiles(msg.files, msg.x, msg.y);
+    else dropGuestFiles(msg.files, msg.x, msg.y);
+  }
+
+  // Files the system drags in from the desktop. It names them when they enter
+  // and when they are dropped; in between it only says where the pointer is.
+  let desktopCarried: CarriedFiles | null = null;
+  function hearDesktopDrag(
+    ev:
+      | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number } }
+      | { type: "over"; position: { x: number; y: number } }
+      | { type: "leave" },
+  ) {
+    if (ev.type === "leave") {
+      desktopCarried = null;
+      return clearGuestFiles();
+    }
+    const at = pagePoint(ev.position, window.devicePixelRatio);
+    if (ev.type === "enter") desktopCarried = desktopFiles(ev.paths);
+    if (ev.type === "drop") {
+      desktopCarried = null;
+      if (ev.paths.length > 0) dropGuestFiles(desktopFiles(ev.paths), at.x, at.y);
+      else clearGuestFiles();
+      return;
+    }
+    if (desktopCarried && desktopCarried.entries.length > 0) {
+      showGuestFiles(desktopCarried, at.x, at.y);
+    }
+  }
 
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
@@ -1665,10 +1858,18 @@
         appWindows = otherWindows(e.payload, windowLabel);
         windowsHeard?.();
       }),
+      // What every window offers as a place to copy files to; this window's
+      // own list is left out of it.
+      listen<unknown>(TARGETS_EVENT, (e) => {
+        otherWindowTargets = foreignTargets(e.payload, windowLabel);
+      }),
       // A tab of another window held over this one: it is drawn here.
       listenHere<unknown>(DRAG_EVENT, (e) => {
         const msg = parseDragMessage(e.payload);
         if (msg) applyDragMessage(msg);
+        // The same relay carries files held over this window from another one.
+        const files = parseFileDragMessage(e.payload);
+        if (files) applyFileDragMessage(files);
       }),
       listenHere(HANDOFF_EVENT, () => void receiveTab()),
     ])
@@ -1699,12 +1900,24 @@
       // This window was opened for a tab: take it over.
       void adoptHandoff();
     }
+    // Files the system drags over the window from the desktop (v1.13). One
+    // listener for the window: where they are dropped is read from where the
+    // pointer is, not from which panel happens to be mounted.
+    try {
+      getCurrentWebview()
+        .onDragDropEvent((ev) => hearDesktopDrag(ev.payload))
+        .then((u) => unlisteners.push(u))
+        .catch(() => {});
+    } catch {
+      /* no webview (browser preview) — nothing is dragged in */
+    }
     // Global Cmd/Ctrl + V/C/X/A for every text input (capture phase, so it works
     // even inside modals and before any field-local handler). See clipboardKeys.ts.
     document.addEventListener("keydown", handleClipboardShortcut, true);
     return () => {
       unlisteners.forEach((u) => u());
       onTabDraggedOutside(null);
+      onFileDrag(null);
       document.removeEventListener("keydown", handleClipboardShortcut, true);
     };
   });
@@ -1850,7 +2063,7 @@
   const heldOverWindow = $derived(windowTargets.some((w) => w.label === tabDrag.window));
   // The edge of a pane a drop would make a new pane at: of a tab of this
   // window, or of one held over it from another.
-  const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? viewDrag.zone);
+  const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? viewDrag.zone ?? fileDrag.zone);
 
   // An unseen copy of the label a dragged tab gets — measured, and its colours
   // read, for the floating label that shows the tab over the desktop (a window
@@ -2220,19 +2433,41 @@
       (sessionId) => prodTabIds.has(sessionId),
     ),
   );
+  // What the other windows offer (v1.13): a file is copied to a session
+  // whichever window shows its tab — the transfer is the backend's.
+  let otherWindowTargets = $state<CopyTarget[]>([]);
+  /** Every session a file can be copied to: this window's, then the others'. */
+  const allCopyTargets = $derived([...copyTargetsNow, ...otherWindowTargets]);
   $effect(() => {
-    setCopyTargets(copyTargetsNow);
+    setCopyTargets(allCopyTargets);
+  });
+  // This window's are told to the others — when they change, not on every
+  // change of a tab that leaves them as they were.
+  let targetsTold = "";
+  $effect(() => {
+    const mine = shareTargets(copyTargetsNow);
+    const said = JSON.stringify(mine);
+    if (said === targetsTold) return;
+    targetsTold = said;
+    void announceCopyTargets(mine).catch(() => {});
   });
 
   // The copy being set up: what, from which tab, to which — and where there.
   let copyAsk = $state<{ request: CopyRequest; target: CopyTarget } | null>(null);
   let copyDir = $state("");
 
-  /** Open the dialog for a request: the destination folder comes prefilled. */
-  async function openCopyDialog(request: CopyRequest) {
-    const target = copyTargetsNow.find((x) => x.sessionId === request.to);
+  /**
+   * Open the dialog for a request: the destination folder comes prefilled —
+   * with `dir` when the files were dropped on a folder, else with where that
+   * tab is.
+   */
+  async function openCopyDialog(request: CopyRequest, dir: string | null = null) {
+    const target = allCopyTargets.find((x) => x.sessionId === request.to);
     if (!target) return;
-    copyDir = defaultDestDir(dockCwd(target.sessionId), terminalCwd[target.sessionId] ?? null, null) ?? "";
+    copyDir =
+      dir ??
+      defaultDestDir(dockCwd(target.sessionId), terminalCwd[target.sessionId] ?? null, null) ??
+      "";
     copyAsk = { request, target };
     if (copyDir) return;
     // Nothing known of that tab's folders yet: ask the session for its home.
@@ -2258,13 +2493,19 @@
     const ask = copyAsk;
     copyAsk = null;
     if (!ask) return;
-    const from = findTab(ask.request.from);
+    const { request } = ask;
+    const from = request.from ? findTab(request.from) : null;
     void startTransfer({
-      src: sideOf({
-        sessionId: ask.request.from,
-        local: ask.request.local,
-        title: from ? tabTitle(from) : "",
-      }),
+      // From the desktop the files belong to no tab; from another window the
+      // tab is not this window's, and says what it is called itself.
+      src:
+        request.from === null
+          ? DISK
+          : sideOf({
+              sessionId: request.from,
+              local: request.local,
+              title: from ? tabTitle(from) : (request.label ?? ""),
+            }),
       dst: sideOf(ask.target),
       sources: ask.request.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
       destDir,
@@ -3484,7 +3725,10 @@
         ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
         : shownId === tab.sessionId
           ? 'bg-panel text-text'
-          : 'text-muted hover:bg-edge'}"
+          : 'text-muted hover:bg-edge'} {fileOverSession === tab.sessionId
+        ? 'ring-1 ring-inset ring-accent'
+        : ''}"
+      data-file-over={fileOverSession === tab.sessionId || undefined}
       title={tab.attach ? undefined : localizedStatus(tab.status)}
       use:tooltip={attachTooltip(tab)}
     >
@@ -4252,6 +4496,7 @@
 
 <!-- The label following the pointer while a tool-panel tab is dragged. -->
 <DockDragGhost />
+<FileDragGhost bind:this={fileGhost} />
 
 <!-- Where a dragged terminal tab would land on a pane's body: the whole pane (it
      joins the pane) or the half a new pane would take. A tint, not a change of

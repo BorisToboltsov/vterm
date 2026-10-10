@@ -42,6 +42,7 @@ vi.mock("./api", () => ({
 }));
 
 import LocalFilePanel from "./LocalFilePanel.svelte";
+import { resetDockState } from "./stores/dockstate.svelte";
 
 const dir = (name: string, path: string): FileEntry => ({
   name,
@@ -220,6 +221,9 @@ describe("path bar — SFTP panel", () => {
   beforeEach(() => {
     vi.mocked(sftpHome).mockReset().mockResolvedValue("/home/remote");
     vi.mocked(sftpList).mockReset().mockResolvedValue([]);
+    // A panel remembers that it was connected (`stores/dockstate`) and comes
+    // back so: each test starts from one that was never opened.
+    resetDockState();
   });
 
   it("navigates to a typed path and mirrors it into the terminal", async () => {

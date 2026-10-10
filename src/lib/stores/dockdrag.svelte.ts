@@ -12,7 +12,14 @@
 // (`previewPanels`), so the other tabs slide apart to make room. The layout
 // itself changes once, on release.
 
-import { holdSelection, layoutBox, passedThreshold, type Box } from "../actions/drag";
+import {
+  cancelOnEscape,
+  holdSelection,
+  layoutBox,
+  passedThreshold,
+  swallowReleaseClick,
+  type Box,
+} from "../actions/drag";
 import {
   dropChanges,
   insertionIndex,
@@ -117,10 +124,14 @@ function clearDrag(): void {
   dockDrag.settling = false;
 }
 
+let stopEscape: (() => void) | null = null;
+
 function stopListening(): void {
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
   window.removeEventListener("pointercancel", onCancel);
+  stopEscape?.();
+  stopEscape = null;
   if (candidate && dockDrag.panel !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
@@ -220,6 +231,15 @@ export function beginPanelDrag(e: PointerEvent, panel: PanelId): void {
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onCancel);
+  // `Esc` puts the panel back where it was (v1.13) — while it is still in the
+  // air: once it has been let go of and is settling into its slot, it is moved.
+  stopEscape = cancelOnEscape(
+    () => dockDrag.panel !== null && !dockDrag.settling,
+    () => {
+      cancelPanelDrag();
+      swallowReleaseClick((on) => (swallowClick = on));
+    },
+  );
 }
 
 /** True once for the click that ends a drag — the tab's `onclick` returns early. */

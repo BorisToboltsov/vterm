@@ -61,6 +61,23 @@ export function renderArgv(argv: string[], shell: CdShell): string | null {
 }
 
 /**
+ * Paths as they are typed into `shell`, quoted for it and separated by spaces —
+ * what dropping files onto a terminal types (v1.13), as every terminal does.
+ * Nothing is run: there is no newline, and the caller pastes the text. Null
+ * when a path cannot be written safely in that dialect, or holds a newline.
+ */
+export function quotePaths(paths: readonly string[], shell: CdShell): string | null {
+  if (paths.length === 0 || paths.some((p) => p === "" || /[\r\n]/.test(p))) return null;
+  const parts: string[] = [];
+  for (const path of paths) {
+    const q = quote(path, shell);
+    if (q === null) return null;
+    parts.push(q);
+  }
+  return parts.join(" ");
+}
+
+/**
  * Like {@link renderArgv}, but the tab's shell ENDS with the command: a
  * container/pod tab lives exactly as long as the session inside it (tabattach.ts).
  * POSIX replaces the shell (`exec`); cmd.exe and PowerShell have no `exec`, so

@@ -16,6 +16,11 @@ export interface CopyTarget {
   local: boolean;
   /** Its server is marked production. */
   prod: boolean;
+  /**
+   * The other window of the app that shows this tab; absent — this window
+   * does. Nothing of that tab is known here but what its window said.
+   */
+  window?: string;
 }
 
 /** What the picker needs to know of a tab. */
@@ -43,6 +48,39 @@ export function copyTargets(
       local: tab.kind === "local",
       prod: prod(tab.sessionId),
     }));
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** What a window tells the others of its targets: nothing but what the menu shows. */
+export function shareTargets(targets: readonly CopyTarget[]): Omit<CopyTarget, "window">[] {
+  return targets.map(({ sessionId, title, local, prod }) => ({ sessionId, title, local, prod }));
+}
+
+/** No window offers more than this. */
+export const MAX_SHARED_TARGETS = 500;
+
+/**
+ * The sessions the other windows offer, read from what the backend passed on
+ * (`window://targets`). Another window's word — read, not trusted: what is not
+ * a whole target is left out, and so is this window's own list.
+ */
+export function foreignTargets(raw: unknown, ownWindow: string): CopyTarget[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CopyTarget[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.window !== "string") continue;
+    if (entry.window === ownWindow || !Array.isArray(entry.targets)) continue;
+    for (const target of entry.targets.slice(0, MAX_SHARED_TARGETS)) {
+      if (!isRecord(target)) continue;
+      const { sessionId, title, local, prod } = target;
+      if (typeof sessionId !== "string" || sessionId === "" || typeof title !== "string") continue;
+      if (typeof local !== "boolean" || typeof prod !== "boolean") continue;
+      out.push({ sessionId, title, local, prod, window: entry.window });
+    }
+  }
+  return out;
 }
 
 /** The targets offered from the panel of `from`: every one but its own tab. */

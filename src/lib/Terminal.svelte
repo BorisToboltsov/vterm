@@ -517,6 +517,16 @@
     if (text) term?.paste(text);
   }
 
+  /**
+   * Type `text` into the prompt as a paste (v1.13: paths of files dropped on a
+   * local terminal). The same xterm paste as the clipboard's — bracketed when
+   * the shell asked for it — so nothing in it runs by itself.
+   */
+  export function pasteText(text: string) {
+    if (text) term?.paste(text);
+    term?.focus();
+  }
+
   /** Wipe the scrollback from outside (the session bar). */
   export function clear() {
     term?.clear();

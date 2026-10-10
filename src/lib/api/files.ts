@@ -98,6 +98,11 @@ export function localList(path: string): Promise<FileEntry[]> {
   return invoke<FileEntry[]>("local_list", { path });
 }
 
+/** Which of `paths` are folders (files dropped on the window name only their paths). */
+export function localKinds(paths: string[]): Promise<boolean[]> {
+  return invoke<boolean[]>("local_kinds", { paths });
+}
+
 /**
  * The working directory of a LOCAL shell, read from the OS (Phase 39.3) — the
  * shell-independent half of "follow the terminal". Null when the session is

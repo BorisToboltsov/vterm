@@ -21,19 +21,37 @@ export interface FileSelection {
   entries: FileEntry[];
 }
 
+/** One thing to copy: enough to start the transfer and to name it. */
+export type CopyEntry = Pick<FileEntry, "path" | "name" | "isDir">;
+
 /** "Copy these, from that tab's panel, to this tab." */
 export interface CopyRequest {
-  from: string;
+  /** The tab they come from; null — from the desktop (files dropped on the window). */
+  from: string | null;
   local: boolean;
+  /**
+   * What the source tab is called, when it is not a tab of this window (files
+   * held over this window from another one say so themselves).
+   */
+  label?: string;
   to: string;
-  entries: FileEntry[];
+  entries: CopyEntry[];
+}
+
+/** "Move these rows of that panel into this folder of it" (a drop inside one panel, v1.13). */
+export interface MoveRequest {
+  /** The panel the rows belong to — its session, or its own key when it has none. */
+  session: string;
+  paths: string[];
+  dir: string;
 }
 
 const state = $state<{
   targets: CopyTarget[];
   request: CopyRequest | null;
+  move: MoveRequest | null;
   selection: Record<string, FileSelection>;
-}>({ targets: [], request: null, selection: {} });
+}>({ targets: [], request: null, move: null, selection: {} });
 
 /** The tabs a file can be copied to (the page keeps this current). */
 export function setCopyTargets(targets: CopyTarget[]): void {
@@ -57,6 +75,23 @@ export function takeCopyRequest(): CopyRequest | null {
   return request;
 }
 
+/**
+ * Rows were let go of over a folder of their own panel. The panel that shows
+ * that session now picks the request up and asks its question — it need not be
+ * the instance the drag began in.
+ */
+export function requestMove(request: MoveRequest): void {
+  if (request.paths.length > 0) state.move = request;
+}
+
+export const pendingMoveRequest = (): MoveRequest | null => state.move;
+
+export function takeMoveRequest(): MoveRequest | null {
+  const request = state.move;
+  state.move = null;
+  return request;
+}
+
 /** What is selected in the panel of `sessionId`, or null to forget it. */
 export function setFileSelection(sessionId: string, selection: FileSelection | null): void {
   if (selection && selection.entries.length > 0) state.selection[sessionId] = selection;
@@ -71,5 +106,6 @@ export function fileSelectionOf(sessionId: string): FileSelection | null {
 export function resetFileCopy(): void {
   state.targets = [];
   state.request = null;
+  state.move = null;
   for (const id of Object.keys(state.selection)) delete state.selection[id];
 }

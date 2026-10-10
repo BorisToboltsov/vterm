@@ -53,8 +53,6 @@ export interface FileBrowserAdapter {
   // ── Optional, SFTP-only. Presence gates the corresponding UI in <FileBrowser>. ──
   /** Pick local files and upload them into `destDir`. */
   upload?(destDir: string): Promise<void>;
-  /** Upload OS-dropped paths into `destDir`. */
-  uploadPaths?(destDir: string, paths: string[]): Promise<void>;
   /** Download a file/dir to a user-picked destination. */
   download?(entry: FileEntry): Promise<void>;
   /** Content search (grep) under `cwd`. */
