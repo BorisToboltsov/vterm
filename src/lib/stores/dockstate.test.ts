@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  beginUpload,
   dirRevision,
-  endUpload,
+  touchDir,
   dockState,
   rememberSub,
   removeDockState,
@@ -17,7 +16,7 @@ describe("dock state store", () => {
 
   it("starts a session empty rather than undefined", () => {
     // Panels read this on mount and must not have to null-check the session itself.
-    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, uploads: {}, dirRev: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} });
   });
 
   it("returns the same object for a session, so writes are seen by the next reader", () => {
@@ -60,23 +59,18 @@ describe("dock state store", () => {
     rememberSub("s1", "docker", "images");
     setDockCwd("s1", "/repo");
     removeDockState("s1");
-    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, uploads: {}, dirRev: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} });
   });
 
-  it("bumps a folder's revision once, when the last overlapping upload batch ends", () => {
-    beginUpload("s1", "/srv");
-    beginUpload("s1", "/srv");
-    beginUpload("s1", "/tmp");
-    endUpload("s1", "/srv");
-    expect(dirRevision("s1", "/srv")).toBe(0); // a batch is still running
-    endUpload("s1", "/tmp");
-    expect(dirRevision("s1", "/tmp")).toBe(1);
-    endUpload("s1", "/srv");
+  it("bumps a folder's revision once for each transfer that ended in it", () => {
+    expect(dirRevision("s1", "/srv")).toBe(0);
+    touchDir("s1", "/srv");
     expect(dirRevision("s1", "/srv")).toBe(1);
-    expect(dockState("s1").uploads).toEqual({});
-    // An unmatched end still counts as "done" rather than going negative.
-    endUpload("s1", "/x");
-    expect(dirRevision("s1", "/x")).toBe(1);
+    // Another folder, and another session, keep counts of their own.
+    touchDir("s1", "/tmp");
+    touchDir("s1", "/srv");
+    expect(dirRevision("s1", "/srv")).toBe(2);
+    expect(dirRevision("s1", "/tmp")).toBe(1);
     expect(dirRevision("nobody", "/srv")).toBe(0);
   });
 

@@ -281,40 +281,74 @@ export function sftpCopy(sessionId: string, from: string, to: string): Promise<v
   return invoke<void>("sftp_copy", { sessionId, from, to });
 }
 
-/**
- * Upload a local file. `replace` says a file already at `remotePath` may go;
- * without it the backend refuses (`dest-exists`) rather than overwrite.
- */
-export function sftpUpload(
-  sessionId: string,
-  transferId: string,
-  localPath: string,
-  remotePath: string,
-  replace: boolean,
-): Promise<void> {
-  return invoke<void>("sftp_upload", {
-    sessionId,
-    transferId,
-    localPath,
-    remotePath,
-    replace,
-  });
+// ── Transfers the backend owns (v1.12, ADR 0025) ────────────────────────────
+// An upload, a download, a copy between two sessions or a local copy is a *job*:
+// started by one call that returns at once, carried out by the backend, and
+// reported in `sftp://job` to whichever window shows the tab of each session it
+// touches. A window awaits none of them (see `transfers.rs`).
+
+/** One side of a transfer. */
+export interface TransferSide {
+  /** The tab this side belongs to, or null — a path named outside any tab. */
+  session: string | null;
+  /** The files are on this machine, not on the session's server. */
+  local: boolean;
+  /** What the user calls that tab (shown, and written to the other side's recording). */
+  label: string;
 }
 
-export function sftpDownload(
-  sessionId: string,
-  transferId: string,
-  remotePath: string,
-  localPath: string,
-  isDir: boolean,
-): Promise<void> {
-  return invoke<void>("sftp_download", {
-    sessionId,
-    transferId,
-    remotePath,
-    localPath,
-    isDir,
-  });
+/** One file or folder to move. */
+export interface TransferItem {
+  from: string;
+  /** Where it lands — the full path, name included. */
+  to: string;
+  isDir: boolean;
+  /** What is already at `to` may go; without it the backend refuses (`dest-exists`). */
+  replace: boolean;
+}
+
+export interface TransferSpec {
+  id: string;
+  src: TransferSide;
+  dst: TransferSide;
+  items: TransferItem[];
+  /** The folder the items land in — a panel showing it re-lists when the job ends. */
+  destDir: string;
+}
+
+export type TransferState = "running" | "done" | "failed" | "cancelled";
+
+/** A job as the backend reports it. */
+export interface TransferJob {
+  id: string;
+  src: TransferSide;
+  dst: TransferSide;
+  destDir: string;
+  /** The file being moved now. */
+  name: string;
+  /** Files finished, of `fileCount` (0 of 0 while the tree is walked). */
+  fileIndex: number;
+  fileCount: number;
+  /** Bytes moved, of `total`, across the whole job. */
+  transferred: number;
+  total: number;
+  state: TransferState;
+  /** The first thing that went wrong. */
+  error: string | null;
+  /** Files and folders that did not make it. */
+  failed: number;
+  /** Symbolic links and unreadable sub-folders left out. */
+  skipped: number;
+}
+
+/** Start a transfer; resolves with its id as soon as the backend has taken it. */
+export function transferStart(spec: TransferSpec): Promise<string> {
+  return invoke<string>("transfer_start", { spec });
+}
+
+/** The transfers this window shows right now (asked on start and on taking a tab over). */
+export function transferList(): Promise<TransferJob[]> {
+  return invoke<TransferJob[]>("transfer_list");
 }
 
 /** Pick one or more local files to upload; returns absolute paths. */
@@ -345,20 +379,17 @@ export async function pickSaveDir(): Promise<string | null> {
   return typeof res === "string" ? res : null;
 }
 
+/** Progress of one file of a sync run (`sftp://progress`). */
 export interface SftpProgress {
   id: string;
   name: string;
   direction: "upload" | "download";
-  /** Bytes for single files; completed-file count for folders. */
   transferred: number;
-  /** Total bytes for single files; total file count for folders. */
   total: number;
   done: boolean;
-  /** True for aggregate folder downloads (transferred/total are file counts). */
-  isFolder: boolean;
 }
 
-/** Cancel an in-progress folder download. */
+/** Stop a transfer, a sync run or a tree hash by its id. */
 export function sftpCancel(transferId: string): Promise<void> {
   return invoke<void>("sftp_cancel", { transferId });
 }

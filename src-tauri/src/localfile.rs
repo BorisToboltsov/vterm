@@ -449,6 +449,13 @@ pub(crate) fn safe_component(name: &str) -> bool {
     safe_component_on(name, cfg!(windows))
 }
 
+/// The same rule for a path on a server — POSIX whatever this machine is. A name
+/// one server listed is no more to be trusted on another server than on this
+/// disk (a copy between two sessions, v1.12).
+pub(crate) fn safe_posix_component(name: &str) -> bool {
+    safe_component_on(name, false)
+}
+
 /// [`safe_component`] with the platform spelled out, so the Windows half is
 /// tested on every machine.
 fn safe_component_on(name: &str, windows: bool) -> bool {
@@ -493,6 +500,61 @@ pub(crate) fn safe_join(root: &str, rel: &str) -> AppResult<PathBuf> {
     let mut path = PathBuf::from(root);
     path.extend(rel.split('/'));
     Ok(path)
+}
+
+/// Copy one local file to another local path, staged like every other transfer:
+/// written to a hidden sibling temp and renamed over the target once complete,
+/// so a cancelled copy leaves the file that was there untouched. Without
+/// `replace` an existing target is refused. The copy takes the replaced file's
+/// permissions, or — a new file — the source's, as `cp` does.
+pub(crate) async fn copy_staged(
+    report: &crate::sftp::Report<'_>,
+    from: &str,
+    to: &str,
+    replace: bool,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> AppResult<()> {
+    use tokio::io::AsyncWriteExt;
+    let replaced = tokio::fs::symlink_metadata(to).await.ok();
+    if replaced.is_some() && !replace {
+        return Err(AppError::DestinationExists);
+    }
+    let mut src = tokio::fs::File::open(from)
+        .await
+        .map_err(|e| format!("open {from}: {e}"))?;
+    let source = src.metadata().await.ok();
+    let total = source.as_ref().map(|m| m.len()).unwrap_or(0);
+    let name = Path::new(to)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = local_temp(to);
+    let mut dst = tokio::fs::File::create(&tmp)
+        .await
+        .map_err(|e| format!("create {to}: {e}"))?;
+    let copied = async {
+        crate::sftp::copy_with_progress(report, &name, total, &mut src, &mut dst, cancel).await?;
+        dst.flush().await.map_err(|e| AppError::from(e.to_string()))
+    }
+    .await;
+    // Close the handle before renaming: Windows refuses to move an open file.
+    drop(dst);
+    if let Err(e) = copied {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(e);
+    }
+    let kept = match tokio::fs::metadata(to).await {
+        Ok(meta) => Some(meta.permissions()),
+        Err(_) => source.map(|m| m.permissions()),
+    };
+    if let Some(permissions) = kept {
+        let _ = tokio::fs::set_permissions(&tmp, permissions).await;
+    }
+    if let Err(e) = tokio::fs::rename(&tmp, to).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(format!("rename onto {to}: {e}").into());
+    }
+    Ok(())
 }
 
 /// Read a local file as text for the editor (same guards as SFTP). The encoding

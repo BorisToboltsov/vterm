@@ -31,6 +31,9 @@
     OPEN_FILE_EVENT,
     disconnect,
     listenHere,
+    transferList,
+    sftpHome,
+    localHome,
     closeWindow,
     reportWindowSummary,
     otherWindowsSummary,
@@ -220,7 +223,7 @@
   import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/sessionviews";
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
   import { removeChat, getChat, askAbout, peekChat } from "$lib/stores/aichat.svelte";
-  import { peekDockState, removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
+  import { dockCwd, removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
   import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
@@ -269,7 +272,25 @@
   import RecordingsPanel from "$lib/RecordingsPanel.svelte";
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
-  import { applyProgress, sessionTransfers, transfersState } from "$lib/stores/transfers.svelte";
+  import {
+    applyJob,
+    applyProgress,
+    dropTransfersOf,
+    transfersState,
+  } from "$lib/stores/transfers.svelte";
+  import { jobNotice } from "$lib/transfer";
+  import { startTransfer } from "$lib/transferflow";
+  import {
+    fileSelectionOf,
+    pendingCopyRequest,
+    setCopyTargets,
+    setFileSelection,
+    takeCopyRequest,
+    type CopyRequest,
+  } from "$lib/stores/filecopy.svelte";
+  import { copyTargets, defaultDestDir, sideOf, targetsFrom, type CopyTarget } from "$lib/copyto";
+  import CopyToDialog from "$lib/CopyToDialog.svelte";
+  import ReplaceDialog from "$lib/ReplaceDialog.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
   import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
@@ -281,7 +302,7 @@
     setRecordingPausedState,
     clearRecording,
   } from "$lib/stores/recordings.svelte";
-  import type { SftpProgress } from "$lib/api";
+  import type { SftpProgress, TransferJob } from "$lib/api";
   import { activeChromePanel, applyImportedSettings, settings } from "$lib/settings.svelte";
   import { t } from "$lib/i18n";
   import {
@@ -1336,6 +1357,30 @@
     return out;
   });
 
+  const copyCommands = $derived.by<CommandItem[]>(() => {
+    const from = tabsState.activeId;
+    const picked = from ? fileSelectionOf(from) : null;
+    if (!from || !picked) return [];
+    const what =
+      picked.entries.length === 1
+        ? picked.entries[0].name
+        : t("sftp.dragCount", { count: picked.entries.length });
+    return targetsFrom(copyTargetsNow, from).map((target) => ({
+      id: `copyto:${target.sessionId}`,
+      title: t("palette.copyTo", { what, target: target.title }),
+      icon: "arrowRight",
+      group: t("palette.groupActions"),
+      keywords: "copy file transfer server session копировать файл перенести сервер сессия",
+      run: () =>
+        void openCopyDialog({
+          from,
+          local: picked.local,
+          to: target.sessionId,
+          entries: picked.entries,
+        }),
+    }));
+  });
+
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
       keywords: "add server new сервер добавить", run: () => serverForm?.openAdd(selectedFolder ?? "") },
@@ -1360,6 +1405,9 @@
       keywords: "record recording session запись сессия rec asciicast", run: toggleRecording },
     { id: "act:recordings", title: t("palette.recordings"), icon: "activity", group: t("palette.groupActions"),
       keywords: "recordings library записи библиотека asciicast", run: () => (showRecordings = true) },
+    // Copy what is selected in the focused session's file panel to another
+    // session — the row menu's "Copy to session", without the mouse (v1.12).
+    ...copyCommands,
     { id: "act:help", title: t("palette.help"), icon: "info", group: t("palette.groupActions"),
       keywords: "help помощь справка", run: () => { helpTab = "help"; showHelp = true; } },
     { id: "act:manual", title: t("palette.manual"), icon: "info", group: t("palette.groupActions"),
@@ -1583,6 +1631,16 @@
       applyProgress(e.payload);
       applySyncProgress(e.payload);
     }).then((u) => unlisteners.push(u));
+    // Transfers are jobs of the backend (v1.12, ADR 0025): it tells the window
+    // that shows the tab of a session a job touches. Listened to first, then
+    // asked what is already under way — a window opened to take a tab over
+    // finds the job that came with it.
+    listenHere<TransferJob>("sftp://job", (e) => hearJob(e.payload))
+      .then((u) => {
+        unlisteners.push(u);
+        return refreshTransfers();
+      })
+      .catch(() => {});
     // Sync compare counters (files hashed per side) → the session's sync job.
     listenHere<{ id: string; files: number }>("sync://scan", (e) =>
       applyScanProgress(e.payload),
@@ -1731,8 +1789,6 @@
       tabs: tabsState.list.length,
       connected: tab.status.startsWith("Connected"),
       syncBusy: isBusy(peekSyncJob(sid)),
-      // Running transfers, and upload batches between two of their files.
-      transfers: sessionTransfers(sid) + Object.keys(peekDockState(sid)?.uploads ?? {}).length,
       chatBusy: !!chat && chatBusy(chat),
       editorBusy: ws.editors.some((ed) => ed.loading || ed.id === savingEditorId),
     };
@@ -2080,6 +2136,9 @@
     const leadsPane = packet.seat !== null && packet.seat.lead === null;
     const drop = takeIncomingDrop() ?? (leadsPane ? arrivalDrop(center, placement.panes) : null);
     unpackTab(packet, drop);
+    // A transfer under way came with the session: its events arrive here from
+    // now on, and what it has done so far is asked for once.
+    void refreshTransfers();
     return true;
   }
 
@@ -2132,6 +2191,86 @@
   }
 
   /** Alias shown on a tab — follows server edits, falls back to the snapshot. */
+  // ── Transfers: jobs of the backend (v1.12, ADR 0025) ─────────────────────────
+  /** What the backend says of a job: the list, and a word when it ends badly. */
+  function hearJob(job: TransferJob) {
+    applyJob(job);
+    const notice = jobNotice(job);
+    if (!notice) return;
+    const text = t(notice.key, notice.vars);
+    if (notice.kind === "error") notifyError(text);
+    else notifyInfo(text);
+  }
+
+  /** The jobs of this window's sessions that are under way right now. */
+  async function refreshTransfers() {
+    try {
+      for (const job of await transferList()) applyJob(job);
+    } catch {
+      /* no backend (browser preview) — nothing to show */
+    }
+  }
+
+  // ── Copy to another session (v1.12) ─────────────────────────────────────────
+  // The tabs a file can be copied to, for the file panels' menu.
+  const copyTargetsNow = $derived(
+    copyTargets(
+      tabsState.list,
+      (tab) => tabTitle(tab as Tab),
+      (sessionId) => prodTabIds.has(sessionId),
+    ),
+  );
+  $effect(() => {
+    setCopyTargets(copyTargetsNow);
+  });
+
+  // The copy being set up: what, from which tab, to which — and where there.
+  let copyAsk = $state<{ request: CopyRequest; target: CopyTarget } | null>(null);
+  let copyDir = $state("");
+
+  /** Open the dialog for a request: the destination folder comes prefilled. */
+  async function openCopyDialog(request: CopyRequest) {
+    const target = copyTargetsNow.find((x) => x.sessionId === request.to);
+    if (!target) return;
+    copyDir = defaultDestDir(dockCwd(target.sessionId), terminalCwd[target.sessionId] ?? null, null) ?? "";
+    copyAsk = { request, target };
+    if (copyDir) return;
+    // Nothing known of that tab's folders yet: ask the session for its home.
+    try {
+      const home = await (target.local ? localHome() : sftpHome(target.sessionId));
+      if (copyAsk?.request === request && !copyDir) copyDir = home;
+    } catch {
+      /* the field stays empty — the user types the folder */
+    }
+  }
+
+  // A file panel filed a request (its row menu): show it.
+  $effect(() => {
+    if (!pendingCopyRequest()) return;
+    untrack(() => {
+      const request = takeCopyRequest();
+      if (request) void openCopyDialog(request);
+    });
+  });
+
+  /** The dialog's "Copy": start the job (asking first about names taken there). */
+  function confirmCopy(destDir: string) {
+    const ask = copyAsk;
+    copyAsk = null;
+    if (!ask) return;
+    const from = findTab(ask.request.from);
+    void startTransfer({
+      src: sideOf({
+        sessionId: ask.request.from,
+        local: ask.request.local,
+        title: from ? tabTitle(from) : "",
+      }),
+      dst: sideOf(ask.target),
+      sources: ask.request.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
+      destDir,
+    });
+  }
+
   function tabAlias(tab: Tab): string {
     if (tab.kind === "local") return t("tab.localShell");
     return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias;
@@ -2332,6 +2471,11 @@
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
+    // Its transfers are the backend's: a closed session's are stopped there, a
+    // handed-over one's go on and are told to the window that has the tab now.
+    // Here only their rows go — but a copy to a tab still in this window stays.
+    dropTransfersOf(sessionId, (other) => tabsState.list.some((x) => x.sessionId === other));
+    setFileSelection(sessionId, null);
     removeSyncJob(sessionId); // also stops a compare/run still going on
     // Flags only — a recording handed over with its tab keeps running; left set,
     // this window would go on pausing it as "not on screen here".
@@ -4244,6 +4388,19 @@
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
   }}
 />
+
+<!-- Transfers (v1.12): where a copy to another session lands, and — for every
+     way a transfer starts — the question about names already taken there. -->
+<CopyToDialog
+  open={!!copyAsk}
+  target={copyAsk?.target ?? null}
+  names={copyAsk?.request.entries.map((e) => e.name) ?? []}
+  bind:dir={copyDir}
+  throughApp={!!copyAsk && !copyAsk.request.local && !copyAsk.target.local}
+  onconfirm={confirmCopy}
+  oncancel={() => (copyAsk = null)}
+/>
+<ReplaceDialog />
 
 <QuitDialog
   open={showQuit}

@@ -206,6 +206,7 @@ export function terminalViolations(terminal: string): string[] {
 const ADDRESSED = [
   '"menu://',
   '"sftp://progress"',
+  '"sftp://job"',
   '"sync://scan"',
   '"window://close"',
   '"window://handoff"',
@@ -241,6 +242,7 @@ export function pageListenerViolations(page: string): string[] {
     '"menu://monitoring"',
     "CLOSE_ASKED_EVENT",
     '"sftp://progress"',
+    '"sftp://job"',
     '"sync://scan"',
     "OPEN_FILE_EVENT",
     "HANDOFF_EVENT",
@@ -783,6 +785,18 @@ describe("window guard — catches what it exists for", () => {
       page,
       'listenHere<SftpProgress>("sftp://progress"',
       'listen<SftpProgress>("sftp://progress"',
+    );
+    expect(listenerViolations(PAGE, plain)).toHaveLength(1);
+    expect(pageListenerViolations(plain)).toHaveLength(1);
+  });
+
+  it("the jobs of another window's sessions", () => {
+    // A job is told to the window that shows the tab of a session it touches
+    // (v1.12): heard with a plain listen, its row would appear in every window.
+    const plain = mutate(
+      page,
+      'listenHere<TransferJob>("sftp://job"',
+      'listen<TransferJob>("sftp://job"',
     );
     expect(listenerViolations(PAGE, plain)).toHaveLength(1);
     expect(pageListenerViolations(plain)).toHaveLength(1);

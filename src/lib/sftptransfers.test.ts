@@ -29,7 +29,6 @@ const file = {
   direction: "download" as const,
   transferred: 10,
   total: 100,
-  isFolder: false,
 };
 
 describe("SftpPanel transfer rows", () => {

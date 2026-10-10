@@ -1301,15 +1301,25 @@ mod tests {
 
     /// Where a local path is built from a name the server chose without asking
     /// `localfile::safe_child` / `safe_join` / `safe_rel`. Empty when none is.
-    fn server_name_violations(sftp: &str, sync: &str) -> Vec<&'static str> {
-        let (sftp, sync) = (code(sftp), code(sync));
+    fn server_name_violations(transfers: &str, sync: &str) -> Vec<&'static str> {
+        let (transfers, sync) = (code(transfers), code(sync));
         let mut out = Vec::new();
-        let dir = body(&sftp, "download_dir");
-        if dir.contains(".join(") {
-            out.push("download_dir joins a listed name onto a local folder itself");
+        // A job's walk: every name the source listed reaches the destination
+        // through `child_path`, and through nothing else.
+        let walk = body(&transfers, "plan");
+        let checked = "child_path(dst.is_local(), &to_dir, &entry.name)?";
+        if walk.contains(".join(")
+            || walk.matches("entry.name").count() != walk.matches(checked).count()
+            || !walk.contains(checked)
+        {
+            out.push("a job joins a listed name onto its destination itself");
         }
-        if dir.matches("safe_child(").count() < 2 {
-            out.push("download_dir does not check the names it was listed");
+        let child = body(&transfers, "child_path");
+        if !child.contains("localfile::safe_child(") {
+            out.push("a listed name is trusted with a path on this disk");
+        }
+        if !child.contains("sftp::safe_child(") {
+            out.push("a name one server listed is trusted on another");
         }
         let apply = body(&sync, "apply");
         let checked = apply.find("safe_join(local_root, &a.path)?");
@@ -1328,27 +1338,46 @@ mod tests {
 
     #[test]
     fn local_paths_from_server_names_are_checked() {
-        // Guard (v1.11.3). A directory listing and a hash listing are the
-        // server's word, and a hostile or compromised server can name a file
-        // `../../.ssh/authorized_keys`. Joined onto the folder the user picked,
-        // that is a write outside it; and a sync plan, which comes back through
-        // the WebView, could name a delete there as well.
-        let sftp = include_str!("sftp.rs");
+        // Guard (v1.11.3; the walk moved into a job in v1.12). A directory
+        // listing and a hash listing are the server's word, and a hostile or
+        // compromised server can name a file `../../.ssh/authorized_keys`.
+        // Joined onto the folder the user picked — on this disk, or on another
+        // server in a copy between two — that is a write outside it; and a sync
+        // plan, which comes back through the WebView, could name a delete there
+        // as well.
+        let transfers = include_str!("transfers.rs");
         let sync = include_str!("sync.rs");
-        assert_eq!(server_name_violations(sftp, sync), Vec::<&str>::new());
+        assert_eq!(server_name_violations(transfers, sync), Vec::<&str>::new());
 
         // The check catches what it is for. The join as it was:
-        let joined = sftp.replace(
-            "crate::localfile::safe_child(Path::new(&ldir), &entry.name)?",
-            "Path::new(&ldir).join(&entry.name)",
+        let joined = transfers.replace(
+            "child_path(dst.is_local(), &to_dir, &entry.name)?",
+            "format!(\"{to_dir}/{}\", entry.name)",
         );
-        assert_ne!(joined, sftp);
+        assert_ne!(joined, transfers);
         assert_eq!(
             server_name_violations(&joined, sync),
-            [
-                "download_dir joins a listed name onto a local folder itself",
-                "download_dir does not check the names it was listed"
-            ]
+            ["a job joins a listed name onto its destination itself"]
+        );
+        // A second use of the name, next to the checked one:
+        let twice = transfers.replace(
+            "                if entry.is_dir {\n                    stack.push((entry.path, to));",
+            "                let _raw = Path::new(&to_dir).join(&entry.name);\n                if entry.is_dir {\n                    stack.push((entry.path, to));",
+        );
+        assert_ne!(twice, transfers);
+        assert_eq!(
+            server_name_violations(&twice, sync),
+            ["a job joins a listed name onto its destination itself"]
+        );
+        // One server's listing taken at its word on another server:
+        let trusting = transfers.replace(
+            "        sftp::safe_child(dir, name)\n",
+            "        Ok(format!(\"{dir}/{name}\"))\n",
+        );
+        assert_ne!(trusting, transfers);
+        assert_eq!(
+            server_name_violations(&trusting, sync),
+            ["a name one server listed is trusted on another"]
         );
         // A plan applied first and checked after:
         let late = sync.replace(
@@ -1357,7 +1386,7 @@ mod tests {
         );
         assert_ne!(late, sync);
         assert_eq!(
-            server_name_violations(sftp, &late),
+            server_name_violations(transfers, &late),
             [
                 "a sync plan is applied before its paths are checked",
                 "sync builds a local path itself"
@@ -1370,7 +1399,7 @@ mod tests {
         );
         assert_ne!(unfiltered, sync);
         assert_eq!(
-            server_name_violations(sftp, &unfiltered),
+            server_name_violations(transfers, &unfiltered),
             ["a listed path that leaves the folder reaches the plan"]
         );
         // And a check that is only a comment is no check.
@@ -1379,7 +1408,7 @@ mod tests {
             "// entries.retain(|e| crate::localfile::safe_rel(&e.path));",
         );
         assert_eq!(
-            server_name_violations(sftp, &commented),
+            server_name_violations(transfers, &commented),
             ["a listed path that leaves the folder reaches the plan"]
         );
     }

@@ -1,26 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { SftpProgress } from "../api";
+import type { TransferJob } from "../api";
+import type { TransferRow } from "../transfer";
+import { dirRevision, resetDockState } from "./dockstate.svelte";
 import {
   aggregateTransfers,
+  applyJob,
   applyProgress,
   clearTransfers,
   DONE_LINGER_MS,
+  dropTransfersOf,
   removeTransfer,
-  sessionTransfers,
   setTransferClock,
-  trackTransfer,
+  transfersOf,
   transfersState,
-  untrackTransfer,
 } from "./transfers.svelte";
 
-function p(over: Partial<SftpProgress> & { id: string }): SftpProgress {
+function p(over: Partial<TransferRow> & { id: string }): TransferRow {
   return {
     name: "f",
     direction: "upload",
     transferred: 0,
     total: 0,
     done: false,
-    isFolder: false,
     ...over,
   };
 }
@@ -38,6 +39,16 @@ describe("aggregateTransfers", () => {
     expect(s.active).toBe(1);
     expect(s.pct).toBe(50); // (1+3)/(4+4)
     expect(s.direction).toBe("download");
+  });
+
+  it("only copies in the set: the arrow of a copy", () => {
+    expect(aggregateTransfers([p({ id: "1", direction: "copy", total: 1 })]).direction).toBe("copy");
+    expect(
+      aggregateTransfers([
+        p({ id: "1", direction: "copy", total: 1 }),
+        p({ id: "2", direction: "download", total: 1 }),
+      ]).direction,
+    ).toBe("download");
   });
 
   it("an upload in the set wins the arrow", () => {
@@ -144,34 +155,90 @@ describe("rate tracking", () => {
   });
 });
 
-describe("which session a running transfer belongs to", () => {
-  beforeEach(clearTransfers);
-
-  it("counts a session's transfers from start to the end of the call", () => {
-    expect(sessionTransfers("s1")).toBe(0);
-    trackTransfer("t1", "s1");
-    trackTransfer("t2", "s1");
-    trackTransfer("t3", "s2");
-    expect(sessionTransfers("s1")).toBe(2);
-    expect(sessionTransfers("s2")).toBe(1);
-    untrackTransfer("t1");
-    expect(sessionTransfers("s1")).toBe(1);
-  });
-
-  it("is over when the call returns, whatever the last progress event said", () => {
-    // A transfer that failed mid-way never reports `done`; its row may linger,
-    // but the tab is free to move — nothing is waiting on it any more.
-    trackTransfer("t1", "s1");
-    applyProgress(p({ id: "t1", transferred: 10, total: 100 }));
-    untrackTransfer("t1");
-    expect(sessionTransfers("s1")).toBe(0);
-    expect(transfersState.map.t1).toBeDefined();
-  });
-
-  it("forgetting everything forgets the owners too", () => {
-    trackTransfer("t1", "s1");
+// A transfer is a job of the backend (v1.12, ADR 0025): the store only shows
+// what the backend last said of the jobs of this window's sessions.
+describe("jobs of the backend", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
     clearTransfers();
-    expect(sessionTransfers("s1")).toBe(0);
-    untrackTransfer("never-started");
+  });
+  afterEach(() => {
+    clearTransfers();
+    vi.useRealTimers();
+  });
+
+  const side = (session: string | null, local = false) => ({ session, local, label: "" });
+  function job(over: Partial<TransferJob> & { id: string }): TransferJob {
+    return {
+      src: side(null, true),
+      dst: side("s1"),
+      destDir: "/srv",
+      name: "a.txt",
+      fileIndex: 0,
+      fileCount: 1,
+      transferred: 0,
+      total: 100,
+      state: "running",
+      error: null,
+      failed: 0,
+      skipped: 0,
+      ...over,
+    };
+  }
+
+  it("shows a job as a row of the sessions it touches", () => {
+    resetDockState();
+    applyJob(job({ id: "u", transferred: 40 }));
+    applyJob(job({ id: "c", src: side("s1"), dst: side("s2"), fileCount: 3, fileIndex: 1 }));
+    applyProgress(p({ id: "sync:a/b", direction: "download" }));
+
+    expect(transfersState.map.u).toMatchObject({ direction: "upload", transferred: 40, done: false });
+    expect(transfersState.map.c).toMatchObject({ direction: "copy", fileIndex: 1, fileCount: 3 });
+    // A one-file job says nothing of "which file".
+    expect(transfersState.map.u.fileCount).toBeUndefined();
+
+    const ids = (session: string) => transfersOf(session).map((r) => r.id).sort();
+    // A file of a sync run names no session: it is listed everywhere.
+    expect(ids("s1")).toEqual(["c", "sync:a/b", "u"]);
+    expect(ids("s2")).toEqual(["c", "sync:a/b"]);
+    expect(ids("s3")).toEqual(["sync:a/b"]);
+  });
+
+  it("marks the folder changed once, when the job ends — however it ends", () => {
+    resetDockState();
+    applyJob(job({ id: "u", transferred: 10 }));
+    applyJob(job({ id: "u", transferred: 90 }));
+    expect(dirRevision("s1", "/srv")).toBe(0);
+    applyJob(job({ id: "u", transferred: 100, state: "done" }));
+    expect(dirRevision("s1", "/srv")).toBe(1);
+    // Stopped or failed, some of its files may have landed all the same.
+    applyJob(job({ id: "x", state: "cancelled" }));
+    applyJob(job({ id: "y", state: "failed", failed: 1, error: "boom" }));
+    expect(dirRevision("s1", "/srv")).toBe(3);
+    // A download lands on the disk, outside any tab: no panel to re-list.
+    applyJob(job({ id: "d", src: side("s1"), dst: side(null, true), destDir: "/Users/me", state: "done" }));
+    expect(dirRevision("s1", "/Users/me")).toBe(0);
+  });
+
+  it("a job that has ended lingers a moment and goes", () => {
+    resetDockState();
+    applyJob(job({ id: "u", state: "done", transferred: 100 }));
+    expect(transfersState.map.u.done).toBe(true);
+    vi.advanceTimersByTime(DONE_LINGER_MS + 1);
+    expect(transfersState.map.u).toBeUndefined();
+  });
+
+  it("a tab that leaves takes the rows that were only its own", () => {
+    resetDockState();
+    applyJob(job({ id: "own" }));
+    applyJob(job({ id: "to-s2", src: side("s1"), dst: side("s2") }));
+    applyJob(job({ id: "other", dst: side("s3") }));
+    applyProgress(p({ id: "sync:x" }));
+    // s1 leaves; s2 and s3 are still in this window.
+    dropTransfersOf("s1", (s) => s === "s2" || s === "s3");
+    expect(Object.keys(transfersState.map).sort()).toEqual(["other", "sync:x", "to-s2"]);
+    // Then s2 leaves too: the copy between them has no tab left here.
+    dropTransfersOf("s2", (s) => s === "s3");
+    expect(Object.keys(transfersState.map).sort()).toEqual(["other", "sync:x"]);
   });
 });

@@ -8,6 +8,9 @@
 // speed of the first ten seconds long after the link has degraded, and the ETA
 // built on it is confidently wrong.
 
+import type { SftpProgress, TransferJob } from "./api";
+import { isDestExists } from "./filebrowser";
+import type { MessageKey } from "./i18n/messages";
 import { isSyncTransferId } from "./sync";
 
 /** One observation of a transfer's progress counter. */
@@ -106,4 +109,89 @@ export function transferPct(transferred: number, total: number): number {
  */
 export function isCancellableTransfer(t: { id: string; done: boolean }): boolean {
   return !t.done && !isSyncTransferId(t.id);
+}
+
+// ── Jobs (v1.12) ─────────────────────────────────────────────────────────────
+// A transfer is a job of the backend (`transfers.rs`); a window only shows the
+// jobs of its sessions. These turn what the backend reports into what the panel
+// footer, the status bar and the toasts say.
+
+/** Which way a row points: to a server, from one, or between two places alike. */
+export type TransferDirection = "upload" | "download" | "copy";
+
+/**
+ * One line of the transfers list: a job, or one file of a sync run. A job
+ * carries the sessions it touches and how many files it has finished.
+ */
+export interface TransferRow extends Omit<SftpProgress, "direction"> {
+  direction: TransferDirection;
+  /** Sessions the job touches; absent for a file of a sync run. */
+  sessions?: string[];
+  /** Files finished, of `fileCount` — only when the job has more than one. */
+  fileIndex?: number;
+  fileCount?: number;
+}
+
+/** Up to a server, down from one — or a copy, when both sides are alike. */
+export function jobDirection(job: Pick<TransferJob, "src" | "dst">): TransferDirection {
+  if (job.src.local === job.dst.local) return "copy";
+  return job.src.local ? "upload" : "download";
+}
+
+/** The sessions a job reads from or writes to. */
+export function jobSessions(job: Pick<TransferJob, "src" | "dst">): string[] {
+  return [job.src.session, job.dst.session].filter((s): s is string => s !== null);
+}
+
+/** The list row of a job. */
+export function jobRow(job: TransferJob): TransferRow {
+  return {
+    id: job.id,
+    name: job.name,
+    direction: jobDirection(job),
+    transferred: job.transferred,
+    total: job.total,
+    done: job.state !== "running",
+    sessions: jobSessions(job),
+    ...(job.fileCount > 1 ? { fileIndex: job.fileIndex, fileCount: job.fileCount } : {}),
+  };
+}
+
+/** Whether a row belongs in the list of `sessionId`'s panel. */
+export function rowTouches(row: TransferRow, sessionId: string): boolean {
+  // A file of a sync run names no session: it is shown wherever the list is.
+  return row.sessions === undefined || row.sessions.includes(sessionId);
+}
+
+/** What to tell the user when a job ends; null — nothing (done, or stopped by them). */
+export interface JobNotice {
+  kind: "error" | "info";
+  key: MessageKey;
+  vars: Record<string, string | number>;
+}
+
+export function jobNotice(job: TransferJob): JobNotice | null {
+  if (job.state === "failed") {
+    // One file, refused because the name was taken meanwhile: said as the
+    // name conflict it is, not as a raw marker.
+    if (job.failed === 1 && job.fileCount <= 1 && job.error && isDestExists(job.error)) {
+      return {
+        kind: "error",
+        key: "sftp.moveConflict",
+        vars: { name: job.name, dest: job.destDir },
+      };
+    }
+    const error = job.error ?? "";
+    return job.fileCount > 1 || job.failed > 1
+      ? {
+          kind: "error",
+          key: "transfer.failedSome",
+          vars: { failed: job.failed, count: Math.max(job.fileCount, job.failed), error },
+        }
+      : { kind: "error", key: "transfer.failedOne", vars: { name: job.name, error } };
+  }
+  if (job.state === "done" && job.skipped > 0) {
+    return { kind: "info", key: "transfer.skipped", vars: { count: job.skipped } };
+  }
+  return null;
 }

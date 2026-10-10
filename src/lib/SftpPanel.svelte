@@ -10,45 +10,28 @@
     sftpCancel,
     sftpCreateFile,
     sftpDelete,
-    sftpDownload,
     sftpGrep,
     sftpHome,
     sftpList,
     sftpMkdir,
     sftpRename,
     sftpCopy,
-    sftpUpload,
-    type SftpProgress,
   } from "./api";
   import { parentDir } from "./filemove";
-  import { baseName, isRoot } from "./fspath";
-  import {
-    checkUpload,
-    isDestExists,
-    replaceList,
-    uploadItems,
-    type FileBrowserAdapter,
-    type ReplaceAnswer,
-    type UploadCheck,
-  } from "./filebrowser";
+  import { isRoot, joinPath, parentOf } from "./fspath";
+  import type { FileBrowserAdapter } from "./filebrowser";
   import type { FileEntry } from "./types";
   import { notifyError } from "./stores/toasts.svelte";
-  import {
-    removeTransfer,
-    trackTransfer,
-    transfersState,
-    untrackTransfer,
-  } from "./stores/transfers.svelte";
-  import { isCancelled } from "./sync";
-  import { etaSeconds, fmtEta, isCancellableTransfer } from "./transfer";
+  import { transfersOf, transfersState } from "./stores/transfers.svelte";
+  import { DISK, startTransfer } from "./transferflow";
+  import { etaSeconds, fmtEta, isCancellableTransfer, type TransferRow } from "./transfer";
   import { fmtBytes, fmtRate } from "./format";
   import { tooltip } from "./actions/tooltip";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import FileBrowser from "./FileBrowser.svelte";
   import SyncModal from "./SyncModal.svelte";
   import { isBusy, peekSyncJob } from "./stores/syncjob.svelte";
-  import { beginUpload, endUpload } from "./stores/dockstate.svelte";
   import Icon from "./Icon.svelte";
+  import type { IconName } from "./icons";
   import { t } from "./i18n";
 
   let {
@@ -84,91 +67,23 @@
   // adapter's list (which FileBrowser calls). SyncModal needs the remote path.
   let cwd = $state(".");
 
-  /**
-   * Run one transfer under a fresh id. A user's cancel is not an error: the row
-   * goes away (a cancelled file never emits its final event, so nothing else would
-   * clear it) and no toast is shown.
-   */
-  async function runTransfer(
-    start: (id: string) => Promise<void>,
-    explain: (error: string) => string = (error) => error,
-  ) {
-    const id = crypto.randomUUID();
-    trackTransfer(id, sessionId);
-    try {
-      await start(id);
-    } catch (e) {
-      if (isCancelled(String(e))) removeTransfer(id);
-      else notifyError(explain(String(e)));
-    } finally {
-      untrackTransfer(id);
-    }
-  }
+  /** This session's server, as a side of a transfer. */
+  const here = $derived({ session: sessionId, local: false, label: "" });
 
-  // The question an upload onto taken names waits on (v1.11.3). `names` null —
-  // the folder could not be listed, so which names are taken is not known.
-  let replaceAsk = $state<{
-    dest: string;
-    names: string[] | null;
-    more: number;
-    canSkip: boolean;
-    answer: (a: ReplaceAnswer) => void;
-  } | null>(null);
+  // Uploads and downloads are jobs of the backend (v1.12): this panel asks for
+  // one and waits for nothing — it may be remounted, or its tab given to another
+  // window, before the job ends. The list below, the re-listing of the folder a
+  // job wrote into and what to say when one fails all come from the events the
+  // backend sends (`stores/transfers`).
 
-  function askReplace(dest: string, check: UploadCheck | null): Promise<ReplaceAnswer> {
-    const listed = check ? replaceList(check.clash) : null;
-    return new Promise((resolve) => {
-      replaceAsk = {
-        dest,
-        names: listed?.names ?? null,
-        more: listed?.more ?? 0,
-        canSkip: !!check && check.fresh.length > 0,
-        answer: (a) => {
-          replaceAsk = null;
-          resolve(a);
-        },
-      };
-    });
-  }
-
-  /**
-   * Upload one batch. A file that would replace one already in `destDir` is
-   * asked about first — once for the batch; the folder is asked which names it
-   * holds, not this panel's listing, which may be minutes old. The listing is
-   * re-listed once, when the last batch into `destDir` ends — through the dock
-   * store, because this panel may have been remounted (a terminal-tab switch)
-   * before the upload finished.
-   */
+  /** Upload local files into `destDir`. A name already there is asked about first. */
   async function uploadPaths(destDir: string, paths: string[]) {
-    if (paths.length === 0) return;
-    let check: UploadCheck | null;
-    try {
-      check = checkUpload(
-        paths,
-        (await sftpList(sessionId, destDir)).map((e) => e.name),
-      );
-    } catch {
-      check = null;
-    }
-    // Nothing taken — nothing to ask: every name is free, and none may replace.
-    const ask = check === null || check.clash.length > 0;
-    const items = uploadItems(paths, check, ask ? await askReplace(destDir, check) : "skip");
-    if (items.length === 0) return;
-    beginUpload(sessionId, destDir);
-    try {
-      for (const { path, replace } of items) {
-        const name = baseName(path);
-        await runTransfer(
-          (id) =>
-            sftpUpload(sessionId, id, path, `${destDir}/${name}`.replace(/\/+/g, "/"), replace),
-          // Taken since the folder was asked: refused, not replaced.
-          (error) =>
-            isDestExists(error) ? t("sftp.moveConflict", { name, dest: destDir }) : error,
-        );
-      }
-    } finally {
-      endUpload(sessionId, destDir);
-    }
+    await startTransfer({
+      src: DISK,
+      dst: here,
+      sources: paths.map((path) => ({ path, isDir: false })),
+      destDir,
+    });
   }
 
   async function download(entry: FileEntry) {
@@ -180,9 +95,16 @@
       return;
     }
     if (!dest) return;
-    // For a folder `dest` is the parent directory the tree is created under.
-    const target = dest;
-    await runTransfer((id) => sftpDownload(sessionId, id, entry.path, target, entry.isDir));
+    // A file: the system's dialog named it, and asked if it was there already.
+    // A folder: `dest` is the folder the tree is created in.
+    const to = entry.isDir ? joinPath(dest, entry.name) : dest;
+    await startTransfer({
+      src: here,
+      dst: DISK,
+      sources: [{ path: entry.path, isDir: entry.isDir, to }],
+      destDir: entry.isDir ? dest : parentOf(dest),
+      agreed: true,
+    });
   }
 
   // Transport + POSIX navigation, plus the SFTP-only capabilities. The `list`
@@ -213,10 +135,16 @@
   let browser = $state<ReturnType<typeof FileBrowser>>();
   let showSync = $state(false);
 
-  const transferList = $derived(Object.values(transfersState.map));
-  function pct(tr: SftpProgress): number {
+  // This session's transfers — and the files of a sync run, which name no session.
+  const transferList = $derived(transfersOf(sessionId));
+  function pct(tr: TransferRow): number {
     return tr.total > 0 ? Math.round((tr.transferred / tr.total) * 100) : 0;
   }
+  const ARROW: Record<TransferRow["direction"], IconName> = {
+    upload: "arrowUp",
+    download: "arrowDown",
+    copy: "arrowRight",
+  };
 </script>
 
 <FileBrowser
@@ -251,12 +179,14 @@
         {@const rate = transfersState.rates[tr.id] ?? null}
         <div class="group py-0.5 text-xs">
           <div class="flex items-center gap-1.5 text-muted">
-            <Icon
-              name={tr.direction === "upload" ? "arrowUp" : "arrowDown"}
-              size={12}
-              class="shrink-0 text-accent"
-            />
+            <Icon name={ARROW[tr.direction]} size={12} class="shrink-0 text-accent" />
             <span class="min-w-0 flex-1 truncate" title={tr.name}>{tr.name}</span>
+            {#if tr.fileCount}
+              <!-- A job of several files: which one this is. -->
+              <span class="shrink-0 tabular-nums" data-testid="transfer-files">
+                {Math.min((tr.fileIndex ?? 0) + 1, tr.fileCount)}/{tr.fileCount}
+              </span>
+            {/if}
             <span class="shrink-0 text-accent">{pct(tr)}%</span>
             {#if isCancellableTransfer(tr)}
               <!-- Always visible, like the sync window's Stop: a hover-only
@@ -279,13 +209,9 @@
                zero while the window is still filling (see transfer.ts). -->
           <div class="mt-0.5 flex items-center justify-between gap-2 text-caption text-muted">
             <span class="min-w-0 truncate">
-              {#if tr.isFolder}
-                {tr.transferred}/{tr.total}
-              {:else}
-                {fmtBytes(tr.transferred)} / {fmtBytes(tr.total)}
-              {/if}
+              {fmtBytes(tr.transferred)} / {fmtBytes(tr.total)}
               {#if rate != null}
-                · {tr.isFolder ? t("sftp.filesPerSec", { n: rate.toFixed(1) }) : fmtRate(rate)}
+                · {fmtRate(rate)}
               {:else if !tr.done}
                 · {t("sftp.rateUnknown")}
               {/if}
@@ -302,40 +228,6 @@
     </div>
   {/if}
 {/snippet}
-
-<!-- Upload onto names the folder already holds: replace, skip them, or cancel. -->
-<ConfirmDialog
-  open={!!replaceAsk}
-  title={replaceAsk?.names === null ? t("sftp.replaceUncheckedTitle") : t("sftp.replaceTitle")}
-  confirmLabel={replaceAsk?.names === null
-    ? t("sftp.replaceUncheckedConfirm")
-    : t("sftp.replaceConfirm")}
-  altLabel={replaceAsk?.canSkip ? t("sftp.replaceSkip") : undefined}
-  onconfirm={() => replaceAsk?.answer("replace")}
-  onalt={() => replaceAsk?.answer("skip")}
-  oncancel={() => replaceAsk?.answer("cancel")}
->
-  {#if replaceAsk}
-    {#if replaceAsk.names === null}
-      {t("sftp.replaceUnchecked", { dest: replaceAsk.dest })}
-    {:else if replaceAsk.names.length === 1 && replaceAsk.more === 0}
-      {t("sftp.replaceOne", { name: replaceAsk.names[0], dest: replaceAsk.dest })}
-    {:else}
-      {t("sftp.replaceMany", {
-        count: replaceAsk.names.length + replaceAsk.more,
-        dest: replaceAsk.dest,
-      })}
-      <ul class="mt-1.5 space-y-0.5" data-testid="replace-names">
-        {#each replaceAsk.names as name, i (i)}
-          <li class="break-all text-text">{name}</li>
-        {/each}
-        {#if replaceAsk.more > 0}
-          <li>{t("sftp.replaceMore", { count: replaceAsk.more })}</li>
-        {/if}
-      </ul>
-    {/if}
-  {/if}
-</ConfirmDialog>
 
 <!-- Directory sync (compares local folder ⇄ current remote folder) -->
 <SyncModal

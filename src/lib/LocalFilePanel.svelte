@@ -51,6 +51,7 @@
   // shell. `navParent` walks up through it so a drive stays reachable when the path
   // bar is read-only text (Phase 39.1).
   const adapter: FileBrowserAdapter = {
+    local: true,
     list: (p) => localList(p),
     mkdir: (p) => localMkdir(p),
     createFile: (p) => localCreateFile(p),

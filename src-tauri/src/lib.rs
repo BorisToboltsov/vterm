@@ -28,6 +28,7 @@ mod ssh;
 mod store;
 mod sync;
 mod textenc;
+mod transfers;
 mod webview2;
 mod winhit;
 
@@ -96,6 +97,9 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     // A login still waiting on the user's answers (keyboard-interactive) ends
     // here too — otherwise closing the tab would leave it parked forever.
     app.state::<kbdauth::PendingPrompts>().cancel(session_id);
+    // Transfers reading from this session or writing to it stop here: each
+    // holds the session open until it notices, and removes what it staged.
+    app.state::<transfers::Jobs>().cancel_session(session_id);
     state.sessions.lock().await.remove(session_id);
     // Removing the LocalPty drops it, which kills the child shell.
     state.local_ptys.lock().unwrap().remove(session_id);
@@ -2073,107 +2077,84 @@ async fn sftp_copy(
     res
 }
 
-/// Register `transfer_id` in the shared cancel map for the lifetime of one
-/// transfer, so `sftp_cancel` can stop it (the same map sync runs and hashing
-/// use — a second cancel mechanism is not to be added).
-fn cancel_flag(state: &AppState, transfer_id: &str) -> Arc<AtomicBool> {
+/// One side of a transfer, resolved: this machine, or a session's SFTP — with
+/// the session itself, whose recording is told what was done.
+async fn transfer_party(
+    state: &State<'_, AppState>,
+    side: &transfers::Side,
+) -> AppResult<transfers::Party> {
+    if side.local {
+        return Ok(transfers::Party {
+            end: transfers::End::Local,
+            ssh: None,
+        });
+    }
+    let id = side.session.as_deref().ok_or(AppError::NoSession)?;
+    let session = session_arc(state, id).await?;
+    let sftp = session.sftp().await?;
+    Ok(transfers::Party {
+        end: transfers::End::Remote(sftp),
+        ssh: Some(session),
+    })
+}
+
+/// Start a transfer the backend owns (v1.12, ADR 0025) and return at once: an
+/// upload, a download, a copy between two sessions or a local copy, by what the
+/// two sides are. Its state travels in `sftp://job` to whichever window shows
+/// the tab of each session it touches; `sftp_cancel` with its id stops it. The
+/// window that asked awaits nothing — it may give the tab away meanwhile.
+#[tauri::command]
+async fn transfer_start(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    state: State<'_, AppState>,
+    spec: transfers::Spec,
+) -> AppResult<String> {
+    if spec.items.is_empty() {
+        return Err("nothing to transfer".into());
+    }
+    let src = transfer_party(&state, &spec.src).await?;
+    let dst = transfer_party(&state, &spec.dst).await?;
+    let id = spec.id.clone();
     let cancel = Arc::new(AtomicBool::new(false));
+    let jobs = app.state::<transfers::Jobs>();
+    if !jobs.add(
+        transfers::JobView::start(&spec),
+        cancel.clone(),
+        window.label(),
+    ) {
+        return Err("a transfer with this id is already running".into());
+    }
+    // The shared cancel map, for the life of the job: `sftp_cancel` stops it as
+    // it stops a sync run or a tree hash — a second way to cancel is not added.
     state
         .cancels
         .lock()
         .unwrap()
-        .insert(transfer_id.to_string(), cancel.clone());
-    cancel
+        .insert(id.clone(), cancel.clone());
+    let origin = window.label().to_string();
+    let job_id = id.clone();
+    tokio::spawn(async move {
+        transfers::run(&app, spec, src, dst, cancel, origin).await;
+        app.state::<AppState>()
+            .cancels
+            .lock()
+            .unwrap()
+            .remove(&job_id);
+    });
+    Ok(id)
 }
 
+/// The transfers this window shows right now — asked when a window opens, and
+/// when it takes a tab over: the job came with the session, its events from
+/// now on come here.
 #[tauri::command]
-async fn sftp_upload(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    session_id: String,
-    transfer_id: String,
-    local_path: String,
-    remote_path: String,
-    replace: bool,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let cancel = cancel_flag(&state, &transfer_id);
-    let win = appwin::WindowSink::of(&window);
-    let res = sftp::upload(
-        &win,
-        transfer_id.clone(),
-        &sftp,
-        &local_path,
-        &remote_path,
-        replace,
-        Some(&cancel),
-    )
-    .await;
-    state.cancels.lock().unwrap().remove(&transfer_id);
-    record_sftp(
-        &session,
-        &format!(
-            "put {} -> {}",
-            git::shell_quote(&local_path),
-            git::shell_quote(&remote_path)
-        ),
-        &res,
-    );
-    res
+fn transfer_list(window: tauri::WebviewWindow, app: AppHandle) -> Vec<transfers::JobView> {
+    let windows = app.state::<appwin::Windows>();
+    app.state::<transfers::Jobs>()
+        .shown_in(window.label(), |session| windows.owner_of(session))
 }
 
-#[tauri::command]
-async fn sftp_download(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    session_id: String,
-    transfer_id: String,
-    remote_path: String,
-    local_path: String,
-    is_dir: bool,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let cancel = cancel_flag(&state, &transfer_id);
-    let win = appwin::WindowSink::of(&window);
-    let res = if is_dir {
-        // `local_path` is the destination *parent* directory.
-        sftp::download_dir(
-            &win,
-            transfer_id.clone(),
-            &sftp,
-            &remote_path,
-            &local_path,
-            cancel,
-        )
-        .await
-    } else {
-        sftp::download(
-            &win,
-            transfer_id.clone(),
-            &sftp,
-            &remote_path,
-            &local_path,
-            Some(&cancel),
-        )
-        .await
-    };
-    state.cancels.lock().unwrap().remove(&transfer_id);
-    record_sftp(
-        &session,
-        &format!(
-            "get {} -> {}",
-            git::shell_quote(&remote_path),
-            git::shell_quote(&local_path)
-        ),
-        &res,
-    );
-    res
-}
-
-/// Request cancellation of an in-progress transfer (file or folder, upload or
-/// download), sync run or tree hash — whatever registered `transfer_id`.
 #[tauri::command]
 fn sftp_cancel(state: State<AppState>, transfer_id: String) {
     if let Some(flag) = state.cancels.lock().unwrap().get(&transfer_id) {
@@ -2435,6 +2416,7 @@ pub fn run() {
         .manage(state)
         .manage(kbdauth::PendingPrompts::default())
         .manage(appwin::Windows::default())
+        .manage(transfers::Jobs::default())
         .invoke_handler(tauri::generate_handler![
             kbdauth::answer_auth_prompt,
             servers::list_servers,
@@ -2503,8 +2485,8 @@ pub fn run() {
             sftp_delete,
             sftp_rename,
             sftp_copy,
-            sftp_upload,
-            sftp_download,
+            transfer_start,
+            transfer_list,
             sftp_cancel,
             read_clipboard_text,
             set_menu_language,

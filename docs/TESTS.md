@@ -137,8 +137,10 @@ Cobertura и JSON-summary для CI.
 
 ## Живые SFTP-тесты
 
-Модуль `live_sftp` в [sftp.rs](../src-tauri/src/sftp.rs) гоняет round-trip сохранения против
-**настоящего sshd**. Помечен `#[ignore]`, поэтому обычный `cargo test` остаётся герметичным:
+Модуль `live_sftp` в [sftp.rs](../src-tauri/src/sftp.rs) гоняет round-trip сохранения и
+переносов против **настоящего sshd**; одноимённый модуль в
+[transfers.rs](../src-tauri/src/transfers.rs) — задание целиком: папка с одной сессии на другую
+(два соединения к одному серверу). Помечен `#[ignore]`, поэтому обычный `cargo test` остаётся герметичным:
 
 ```sh
 docker compose -f e2e/docker-compose.ssh.yml up -d
