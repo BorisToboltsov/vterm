@@ -124,6 +124,20 @@ describe("files told to another window", () => {
     expect(parseFiles(JSON.parse(JSON.stringify(describeFiles(files))))).toEqual(files);
   });
 
+  it("say when a drag of the system's own carries them — in so many words, or not at all", () => {
+    const carried = { ...from("web"), system: true };
+    expect(describeFiles(carried).system).toBe(true);
+    expect(parseFiles(describeFiles(carried))).toEqual(carried);
+    // A page's own drag says nothing of it: the window it is over draws the label.
+    expect("system" in describeFiles(from("web"))).toBe(false);
+    expect("system" in (parseFiles(describeFiles(from("web"))) ?? {})).toBe(false);
+    // Anything but a plain "yes" is not one.
+    for (const loose of ["true", 1, {}, null]) {
+      const read = parseFiles({ ...describeFiles(from("web")), system: loose });
+      expect(read?.system, String(loose)).toBeUndefined();
+    }
+  });
+
   it("carry nothing but what the other window needs", () => {
     const loud = { ...from("web"), entries: [{ ...entry("a"), size: 9, mode: 0o644 }] };
     expect(describeFiles(loud).entries).toEqual([{ path: "/etc/a", name: "a", isDir: false }]);

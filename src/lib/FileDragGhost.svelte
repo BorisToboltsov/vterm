@@ -4,8 +4,10 @@
   // app-wide state (`stores/filedrag`), not a panel's: the panel a drag began in
   // is gone as soon as the files are held over another tab.
   //
-  // Files the system drags in from the desktop carry the system's own picture;
-  // nothing is drawn for them here. Over another window of the app that window
+  // Files the system drags carry the system's own picture — in from the
+  // desktop, or the app's own files taken out of a window and passing back over
+  // one (v1.14): nothing is drawn for them here, or there would be two pictures
+  // at the pointer. Over another window of the app that window
   // draws them, and over the desktop the floating label does — this one stays
   // in the page, unseen, only to be measured (`look`).
   import Icon from "./Icon.svelte";
@@ -15,11 +17,14 @@
 
   let label = $state<HTMLElement>();
 
-  const files = $derived(fileDrag.files);
-  /** Drawn by this page: its own files inside the window, or another window's held here. */
-  const mine = $derived(
-    files !== null && files.from !== null && !fileDrag.outside && fileDrag.window === null,
+  /** What this page may draw a label for: not what the system draws itself. */
+  const files = $derived(
+    fileDrag.files !== null && fileDrag.files.from !== null && !fileDrag.files.system
+      ? fileDrag.files
+      : null,
   );
+  /** Drawn by this page: its own files inside the window, or another window's held here. */
+  const mine = $derived(files !== null && !fileDrag.outside && fileDrag.window === null);
   const title = $derived(
     files === null
       ? ""
@@ -47,7 +52,7 @@
 </script>
 
 <!-- pointer-events-none so the hit test still sees what is under the files. -->
-{#if files !== null && files.from !== null}
+{#if files !== null}
   <div
     bind:this={label}
     data-testid="file-drag-ghost"
