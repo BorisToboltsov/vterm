@@ -127,6 +127,41 @@ describe("release runs behind the quality gates", () => {
     expect(release).toMatch(/needs:\s*\[[^\]]*\bdeep\b/);
   });
 
+  // The release is named by the tag, the files inside it by package.json. A
+  // mistyped tag (`v1.1.11` for 1.11.1) published the build under another
+  // version's name, with no notes — CHANGELOG has no section by that name — and
+  // nothing failed. The check is a job of its own, first, so a wrong tag costs
+  // seconds and not a full run of the gates.
+  it("refuses a tag that does not name the version in package.json", () => {
+    const tag = jobs.get("tag");
+    expect(tag, "job `tag` not found in release.yml").toBeDefined();
+    expect(tag).toContain("TAG: ${{ github.ref_name }}");
+    expect(tag).toMatch(/version="\$\(jq -r \.version package\.json\)"/);
+    expect(tag).toMatch(/if \[ "\$TAG" != "v\$version" \]; then[\s\S]*?exit 1/);
+    // Nothing is built, tested or published from a tag that failed it.
+    for (const name of ["verify", "deep", "release"]) {
+      expect(jobs.get(name), `job \`${name}\` runs without the tag check`).toMatch(
+        /needs:\s*(tag\b|\[[^\]]*\btag\b)/,
+      );
+    }
+  });
+
+  it("the GitLab release refuses such a tag too", () => {
+    const gitlab = codeOf(".gitlab-ci.yml");
+    const release = gitlab.slice(gitlab.indexOf("\nrelease:"));
+    expect(release).toMatch(/version="\$\(sed -n '[^']*"version"[^']*' package\.json\)"/);
+    expect(release).toMatch(/if \[ "\$CI_COMMIT_TAG" != "v\$version" \]; then[\s\S]*?exit 1/);
+    // Before the release is named after the tag.
+    expect(release.indexOf('"$CI_COMMIT_TAG" != "v$version"')).toBeLessThan(
+      release.indexOf("tag_name:"),
+    );
+    // The sed in it reads the version this repository's package.json holds.
+    const line = readFileSync(join(ROOT, "package.json"), "utf8")
+      .split("\n")
+      .find((l) => /^  "version": "[^"]*",$/.test(l));
+    expect(line, "package.json no longer spells the version the way the sed expects").toBeDefined();
+  });
+
   it("the reused workflows are actually callable", () => {
     // `workflow_call` is what makes them reusable; without it the `uses:` above
     // fails at dispatch time, i.e. only ever on a real tag push.

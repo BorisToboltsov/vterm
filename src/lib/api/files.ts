@@ -281,17 +281,23 @@ export function sftpCopy(sessionId: string, from: string, to: string): Promise<v
   return invoke<void>("sftp_copy", { sessionId, from, to });
 }
 
+/**
+ * Upload a local file. `replace` says a file already at `remotePath` may go;
+ * without it the backend refuses (`dest-exists`) rather than overwrite.
+ */
 export function sftpUpload(
   sessionId: string,
   transferId: string,
   localPath: string,
   remotePath: string,
+  replace: boolean,
 ): Promise<void> {
   return invoke<void>("sftp_upload", {
     sessionId,
     transferId,
     localPath,
     remotePath,
+    replace,
   });
 }
 

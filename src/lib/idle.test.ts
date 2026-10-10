@@ -10,6 +10,7 @@ import {
   isIdle,
   isIdleSetting,
   msUntilIdle,
+  screensaverAllowed,
   swallowDismiss,
 } from "./idle";
 
@@ -60,6 +61,22 @@ describe("swallowDismiss", () => {
     expect(swallowDismiss(null, canvas)).toBe(false);
     expect(swallowDismiss(dockButton, null)).toBe(false);
     expect(swallowDismiss(dockButton, undefined)).toBe(false);
+  });
+});
+
+describe("screensaverAllowed", () => {
+  it("never starts in a window with no tab", () => {
+    for (const e of IDLE_EFFECTS) expect(screensaverAllowed(e, 0)).toBe(false);
+  });
+  it("starts once there is a tab, whatever its state", () => {
+    for (const e of IDLE_EFFECTS) {
+      expect(screensaverAllowed(e, 1)).toBe(true);
+      expect(screensaverAllowed(e, 7)).toBe(true);
+    }
+  });
+  it("stays off when it is switched off", () => {
+    expect(screensaverAllowed("off", 0)).toBe(false);
+    expect(screensaverAllowed("off", 3)).toBe(false);
   });
 });
 

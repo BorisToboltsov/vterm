@@ -22,6 +22,34 @@ permissions:
   contents: read
 
 jobs:
+  # Тег обязан называть ту версию, что лежит в package.json. Имя релиза и
+  # «Что нового» берутся из тега, а имена файлов и версия внутри приложения — из
+  # package.json: опечатка в теге (`v1.1.11` вместо `v1.11.1`) опубликовала сборку
+  # 1.11.1 под чужим именем и без заметок — секции CHANGELOG с таким именем нет.
+  # Проверка идёт первой и дёшево: остальные джобы стоят под `needs: tag`.
+  #
+  # Тег едет через env, а не подстановкой в строку `run:` (инвариант workflow).
+  # Связь держится гейтом releaseassets.guard.test.ts.
+  tag:
+    name: Тег = версия
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Тег совпадает с версией в package.json
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="$(jq -r .version package.json)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::Тег $TAG не совпадает с версией из package.json (v$version)."
+            exit 1
+          fi
+
   # Тег не должен уметь опубликовать релиз из красного дерева. Гоняем ровно тот
   # же набор гейтов, что и на PR (линтеры, тесты, покрытие, production-сборка,
   # supply-chain) — переиспользованием ci.yml, а не копией шагов: копия разошлась
@@ -30,6 +58,7 @@ jobs:
   # Связь `needs: verify` держится гейтом releaseassets.guard.test.ts.
   verify:
     name: Гейты качества
+    needs: tag
     uses: $/.github/workflows/ci.yml
     permissions:
       contents: read
@@ -42,12 +71,13 @@ jobs:
   # Связь `needs: [verify, deep]` держится гейтом releaseassets.guard.test.ts.
   deep:
     name: Глубокие проверки
+    needs: tag
     uses: $/.github/workflows/nightly.yml
     permissions:
       contents: read
 
   release:
-    needs: [verify, deep]
+    needs: [tag, verify, deep]
     # tauri-action создаёт релиз и заливает ассеты — этой джобе нужна запись.
     permissions:
       contents: write

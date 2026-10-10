@@ -12,6 +12,11 @@
 // alone; and the view in focus inside it carries the thin strip in the same
 // colour as the tab above.
 //
+// That strip and the frame's top edge were the same pixels in the same red: with
+// a file open on prod, nobody could tell which view was in focus. So the frame
+// begins under the top row of view strips whenever the connection has one
+// (v1.11.3) — the views' bodies, the file's text among them, stay inside it.
+//
 // Why a source guard: +page.svelte is the orchestrator and has no component test.
 // The failure modes are silent — the mark vanishes from one of the two places (you
 // type into prod without the frame), the frame starts swallowing clicks, or it is
@@ -90,6 +95,11 @@ export function prodMarkViolations(src: string): string[] {
     if (!frame[1].includes("pointer-events-none")) out.push("prod frame must not take clicks");
     if (!/ring-bad/.test(frame[1])) out.push("prod frame must be a bad-token ring");
     if (!/\bz-\d/.test(frame[1])) out.push("prod frame needs an explicit z-index");
+    // Not over the strip of views: its top edge would be the line that marks
+    // the view in focus.
+    if (/\binset-0\b|\btop-0\b|\binset-y-0\b/.test(frame[1]) || !frame[1].includes('style="top: {hasFiles ? VIEW_STRIP : 0}px"')) {
+      out.push("prod frame lies over the strip of views — the view in focus cannot be told");
+    }
     // Around the files too: it is drawn after the connection's editors, as a
     // child of the connection's own box — not inside the terminal's, and not
     // only while some condition on the zones holds.
@@ -123,7 +133,7 @@ describe("production marking guard", () => {
       "terminal has no prod frame",
     );
     expect(
-      prodMarkViolations(src.replace("pointer-events-none absolute inset-0 z-20 ring-1", "absolute inset-0 z-20 ring-1")),
+      prodMarkViolations(src.replace("pointer-events-none absolute inset-x-0 bottom-0 z-20 ring-1", "absolute inset-x-0 bottom-0 z-20 ring-1")),
     ).toContain("prod frame must not take clicks");
     expect(
       prodMarkViolations(src.replace('text-caption text-bad">prod</span>', 'text-caption text-bad">x</span>')),
@@ -165,6 +175,28 @@ describe("production marking guard", () => {
     expect(
       prodMarkViolations(src.replace("${activeTabStrip(prod, 1)}", "${activeTabStrip(false, 1)}")),
     ).toEqual(["the view in focus inside a connection has no strip (accent, red for prod)"]);
+  });
+
+  it("catches a frame laid back over the strip of views", () => {
+    // As it was until v1.11.3: the whole connection, strips included.
+    const whole = src
+      .replace("absolute inset-x-0 bottom-0 z-20 ring-1", "absolute inset-0 z-20 ring-1")
+      .replace('                    style="top: {hasFiles ? VIEW_STRIP : 0}px"\n', "");
+    expect(whole).not.toBe(src);
+    expect(prodMarkViolations(whole)).toEqual([
+      "prod frame lies over the strip of views — the view in focus cannot be told",
+    ]);
+    // The offset dropped, the classes kept: the frame starts at the top again.
+    const noOffset = src.replace('                    style="top: {hasFiles ? VIEW_STRIP : 0}px"\n', "");
+    expect(noOffset).not.toBe(src);
+    expect(prodMarkViolations(noOffset)).toEqual([
+      "prod frame lies over the strip of views — the view in focus cannot be told",
+    ]);
+    // An offset that is always there would cut the frame of a bare terminal.
+    const always = src.replace("top: {hasFiles ? VIEW_STRIP : 0}px", "top: {VIEW_STRIP}px");
+    expect(prodMarkViolations(always)).toEqual([
+      "prod frame lies over the strip of views — the view in focus cannot be told",
+    ]);
   });
 
   it("is not satisfied by a comment that only names the markers", () => {

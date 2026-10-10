@@ -489,8 +489,15 @@ pub fn parse_hash_output(dir: &str, out: &str) -> AppResult<HashTree> {
     if !done {
         return Err(AppError::HashIncomplete);
     }
+    // The listing is the server's word. A path that would leave the folder it
+    // is joined onto (`../../.zshrc`) is never planned: it is counted with what
+    // could not be read, and the window says so.
+    let mut entries = parse_hashsum(out);
+    let listed = entries.len();
+    entries.retain(|e| crate::localfile::safe_rel(&e.path));
+    skipped += (listed - entries.len()) as u32;
     Ok(HashTree {
-        entries: parse_hashsum(out),
+        entries,
         skipped,
         excluded,
     })
@@ -527,15 +534,6 @@ pub fn parse_hashsum(out: &str) -> Vec<HashEntry> {
 fn remote_join(root: &str, rel: &str) -> String {
     let root = root.trim_end_matches('/');
     format!("{root}/{rel}")
-}
-
-/// Join a `/`-separated relative path onto a local root using OS separators.
-fn local_join(root: &str, rel: &str) -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(root);
-    for seg in rel.split('/').filter(|s| !s.is_empty()) {
-        p.push(seg);
-    }
-    p
 }
 
 /// Create every parent directory of a remote file path (mkdir -p), ignoring
@@ -635,14 +633,18 @@ pub async fn apply(
             stats.stopped = true;
             break;
         }
+        // The plan came back through the WebView, and its paths began as the
+        // server's listing: one that leaves the two roots stops the run before
+        // anything is written or deleted outside them.
+        let local = crate::localfile::safe_join(local_root, &a.path)?;
         let remote = remote_join(remote_root, &a.path);
-        let local = local_join(local_root, &a.path);
         let local_str = local.to_string_lossy().into_owned();
         let id = sync_transfer_id(&a.path);
         match a.op.as_str() {
             "upload" => {
                 ensure_remote_dirs(sftp, &remote).await;
-                sftp::upload(win, id, sftp, &local_str, &remote, None).await?;
+                // A sync plan is the decision to replace: the row said so.
+                sftp::upload(win, id, sftp, &local_str, &remote, true, None).await?;
                 stats.uploaded += 1;
             }
             "download" => {
@@ -1261,7 +1263,124 @@ mod tests {
     #[test]
     fn joins_respect_separators() {
         assert_eq!(remote_join("/srv/app/", "a/b.txt"), "/srv/app/a/b.txt");
-        let l = local_join("/home/me", "a/b.txt");
+        let l = crate::localfile::safe_join("/home/me", "a/b.txt").unwrap();
         assert!(l.ends_with("b.txt") && l.to_string_lossy().contains("a"));
+    }
+
+    #[test]
+    fn a_listed_path_that_leaves_the_folder_is_never_planned() {
+        let h = "a".repeat(64);
+        let out = format!(
+            "{h}  ./ok.txt\n{h}  ./../../.zshrc\n{h}  /etc/cron.d/x\n{h}  ./sub/../../up\n{HASH_DONE}\n"
+        );
+        let tree = parse_hash_output("/srv/app", &out).unwrap();
+        let paths: Vec<&str> = tree.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["ok.txt"]);
+        // Not dropped in silence: counted with what could not be read.
+        assert_eq!(tree.skipped, 3);
+    }
+
+    /// Source of a backend module before its tests, line comments stripped.
+    fn code(src: &str) -> String {
+        let src = src.replace("\r\n", "\n");
+        src[..src.find("#[cfg(test)]").expect("tests")]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Body of `fn name(` up to the next function at the same depth.
+    fn body<'a>(src: &'a str, name: &str) -> &'a str {
+        let at = src
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("fn {name}"));
+        let rest = &src[at..];
+        &rest[..rest.find("\n}\n").expect("end of fn")]
+    }
+
+    /// Where a local path is built from a name the server chose without asking
+    /// `localfile::safe_child` / `safe_join` / `safe_rel`. Empty when none is.
+    fn server_name_violations(sftp: &str, sync: &str) -> Vec<&'static str> {
+        let (sftp, sync) = (code(sftp), code(sync));
+        let mut out = Vec::new();
+        let dir = body(&sftp, "download_dir");
+        if dir.contains(".join(") {
+            out.push("download_dir joins a listed name onto a local folder itself");
+        }
+        if dir.matches("safe_child(").count() < 2 {
+            out.push("download_dir does not check the names it was listed");
+        }
+        let apply = body(&sync, "apply");
+        let checked = apply.find("safe_join(local_root, &a.path)?");
+        let acts = apply.find("match a.op");
+        if checked.is_none() || acts.is_none() || checked > acts {
+            out.push("a sync plan is applied before its paths are checked");
+        }
+        if sync.contains("PathBuf::from(") || sync.contains(".push(seg") {
+            out.push("sync builds a local path itself");
+        }
+        if !body(&sync, "parse_hash_output").contains("safe_rel(&e.path)") {
+            out.push("a listed path that leaves the folder reaches the plan");
+        }
+        out
+    }
+
+    #[test]
+    fn local_paths_from_server_names_are_checked() {
+        // Guard (v1.11.3). A directory listing and a hash listing are the
+        // server's word, and a hostile or compromised server can name a file
+        // `../../.ssh/authorized_keys`. Joined onto the folder the user picked,
+        // that is a write outside it; and a sync plan, which comes back through
+        // the WebView, could name a delete there as well.
+        let sftp = include_str!("sftp.rs");
+        let sync = include_str!("sync.rs");
+        assert_eq!(server_name_violations(sftp, sync), Vec::<&str>::new());
+
+        // The check catches what it is for. The join as it was:
+        let joined = sftp.replace(
+            "crate::localfile::safe_child(Path::new(&ldir), &entry.name)?",
+            "Path::new(&ldir).join(&entry.name)",
+        );
+        assert_ne!(joined, sftp);
+        assert_eq!(
+            server_name_violations(&joined, sync),
+            [
+                "download_dir joins a listed name onto a local folder itself",
+                "download_dir does not check the names it was listed"
+            ]
+        );
+        // A plan applied first and checked after:
+        let late = sync.replace(
+            "let local = crate::localfile::safe_join(local_root, &a.path)?;",
+            "let local = std::path::PathBuf::from(local_root).join(&a.path);",
+        );
+        assert_ne!(late, sync);
+        assert_eq!(
+            server_name_violations(sftp, &late),
+            [
+                "a sync plan is applied before its paths are checked",
+                "sync builds a local path itself"
+            ]
+        );
+        // The listing let through as it came:
+        let unfiltered = sync.replace(
+            "entries.retain(|e| crate::localfile::safe_rel(&e.path));",
+            "",
+        );
+        assert_ne!(unfiltered, sync);
+        assert_eq!(
+            server_name_violations(sftp, &unfiltered),
+            ["a listed path that leaves the folder reaches the plan"]
+        );
+        // And a check that is only a comment is no check.
+        let commented = sync.replace(
+            "entries.retain(|e| crate::localfile::safe_rel(&e.path));",
+            "// entries.retain(|e| crate::localfile::safe_rel(&e.path));",
+        );
+        assert_eq!(
+            server_name_violations(sftp, &commented),
+            ["a listed path that leaves the folder reaches the plan"]
+        );
     }
 }

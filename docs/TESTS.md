@@ -391,7 +391,7 @@ macOS**, и это главное отличие от GitLab-схемы ниже
 | [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
 | [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
 | [nightly.yml](../.github/workflows/nightly.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Фаззинг на глубине, живые SFTP-тесты, E2E |
-| [release.yml](../.github/workflows/release.yml) | тег `v*` | `verify` (вызов `ci.yml`) + `deep` (вызов `nightly.yml`) → сборка трёх бандлов → `integrity` |
+| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `nightly.yml`) → сборка трёх бандлов → `integrity` |
 
 Два свойства, которые легко потерять и которые поэтому закреплены гейтами:
 
@@ -400,6 +400,10 @@ macOS**, и это главное отличие от GitLab-схемы ниже
   `needs: [verify, deep]`. Глубокие слои (E2E, live-sftp, фаззинг) по расписанию идут лишь раз
   в месяц, поэтому без `deep` поломка основного сценария доезжала бы до релиза. Держит
   `releaseassets.guard.test.ts`.
+- **Тег называет версию приложения.** Первая джоба `tag` сравнивает имя тега с `v` + версия
+  из `package.json`; гейты, глубокие проверки и сборка стоят под `needs: tag`. Имя релиза и
+  заметки берутся из тега, имена файлов — из `package.json`, и тег с опечаткой публиковал
+  сборку под чужим именем. Тот же гейт.
 - **Экшены запинены по коммит-SHA** с комментарием версии: изменяемый тег — обещание,
   которое апстрим может переписать, а `tauri-action` работает с токеном на запись в релизы.
   Обновляет их Dependabot ([dependabot.yml](../.github/dependabot.yml)), так что пин не

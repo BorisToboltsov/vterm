@@ -3434,6 +3434,7 @@
        buffer; never writes to the PTY. -->
   <IdleOverlay
     sessionId={monitoredSessionId(activeTab)}
+    tabs={tabsState.list.length}
     alias={activeTab?.alias ?? ""}
     bufferText={() => termRefs[tabsState.activeId ?? ""]?.bufferText?.() ?? ""}
     outputTick={idleOutputTick}
@@ -4006,9 +4007,15 @@
                        is edited on prod. Never a border/padding on the terminal
                        itself — FitAddon measures that element (termfit.guard), and
                        a real border would shrink the grid. z-20 keeps it above the
-                       connecting overlay and the structured log view. -->
+                       connecting overlay and the structured log view.
+                       It begins under the top row of view strips, when there is
+                       one: the line that marks the view in focus runs along that
+                       same top edge in the same red, and under a frame laid over
+                       it nobody could tell which view that was (v1.11.3). What a
+                       view shows — the file's text — is inside the frame still. -->
                   <div
-                    class="pointer-events-none absolute inset-0 z-20 ring-1 ring-inset ring-bad/60"
+                    class="pointer-events-none absolute inset-x-0 bottom-0 z-20 ring-1 ring-inset ring-bad/60"
+                    style="top: {hasFiles ? VIEW_STRIP : 0}px"
                     data-testid="prod-frame"
                     aria-hidden="true"
                   ></div>

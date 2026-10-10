@@ -56,8 +56,9 @@ pub enum AppError {
     #[error("file-changed: file modified on server since it was opened")]
     FileChangedOnServer,
 
-    /// A drag-move target path already exists. Refused rather than clobbered; the
-    /// frontend matches the `dest-exists` marker to show a name-conflict toast.
+    /// A drag-move target path already exists — or an upload's, when the caller
+    /// did not say the file there may be replaced. Refused rather than clobbered;
+    /// the frontend matches the `dest-exists` marker to show a name-conflict toast.
     #[error("dest-exists: a file or folder with that name already exists")]
     DestinationExists,
 

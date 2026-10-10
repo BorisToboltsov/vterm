@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildVisibleItems,
+  checkUpload,
   cursorForReturnedFolder,
   isDestExists,
   pasteTargetName,
+  replaceList,
+  uploadItems,
 } from "./filebrowser";
 import type { FileEntry } from "./types";
 
@@ -94,5 +97,65 @@ describe("isDestExists", () => {
   it("is false for other errors", () => {
     expect(isDestExists("permission denied")).toBe(false);
     expect(isDestExists("")).toBe(false);
+  });
+});
+
+describe("upload onto taken names", () => {
+  const paths = ["/Users/me/a.conf", "C:\\work\\b.conf", "/tmp/c.conf"];
+
+  it("splits a batch by the names the folder already holds", () => {
+    expect(checkUpload(paths, ["b.conf", "zzz"])).toEqual({
+      fresh: ["/Users/me/a.conf", "/tmp/c.conf"],
+      clash: ["C:\\work\\b.conf"],
+    });
+    expect(checkUpload(paths, [])).toEqual({ fresh: paths, clash: [] });
+  });
+
+  it("compares names exactly — the server is case-sensitive", () => {
+    expect(checkUpload(["/l/Readme.md"], ["README.md"]).clash).toEqual([]);
+    expect(checkUpload(["/l/README.md"], ["README.md"]).clash).toEqual(["/l/README.md"]);
+  });
+
+  it("uploads nothing on cancel", () => {
+    expect(uploadItems(paths, checkUpload(paths, ["b.conf"]), "cancel")).toEqual([]);
+    expect(uploadItems(paths, null, "cancel")).toEqual([]);
+  });
+
+  it("skips the taken names and never lets a free one replace", () => {
+    expect(uploadItems(paths, checkUpload(paths, ["b.conf"]), "skip")).toEqual([
+      { path: "/Users/me/a.conf", replace: false },
+      { path: "/tmp/c.conf", replace: false },
+    ]);
+  });
+
+  it("lets only the asked-about names replace, in the order given", () => {
+    expect(uploadItems(paths, checkUpload(paths, ["b.conf"]), "replace")).toEqual([
+      { path: "/Users/me/a.conf", replace: false },
+      { path: "C:\\work\\b.conf", replace: true },
+      { path: "/tmp/c.conf", replace: false },
+    ]);
+  });
+
+  it("an unread folder uploads only on an explicit yes — and then may replace", () => {
+    expect(uploadItems(paths, null, "skip")).toEqual([]);
+    expect(uploadItems(paths, null, "replace")).toEqual(
+      paths.map((path) => ({ path, replace: true })),
+    );
+  });
+
+  it("lists the first names and counts the rest", () => {
+    const clash = Array.from({ length: 8 }, (_, i) => `/l/f${i}.txt`);
+    expect(replaceList(clash)).toEqual({
+      names: ["f0.txt", "f1.txt", "f2.txt", "f3.txt", "f4.txt"],
+      more: 3,
+    });
+    expect(replaceList(["/l/one.txt"])).toEqual({ names: ["one.txt"], more: 0 });
+  });
+
+  it("names a file once when two of the batch share its name", () => {
+    expect(replaceList(["/a/x.txt", "/b/x.txt", "/a/y.txt"])).toEqual({
+      names: ["x.txt", "y.txt"],
+      more: 0,
+    });
   });
 });
