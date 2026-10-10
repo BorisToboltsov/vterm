@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A cluster that answers: a kubeconfig with a current context, two namespaces.
 // Each call takes a macrotask, like a real IPC round trip — the storm this file
@@ -10,11 +10,18 @@ type Answer = { stdout: string; stderr: string; exitCode: number };
 let answer: ((args: string[]) => Answer | undefined) | null = null;
 // How long one call takes, when a test needs an answer to arrive late.
 let slow: ((args: string[]) => number) | null = null;
+// Calls asked and not answered yet — what `idle` waits out.
+let inFlight = 0;
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   kubectlRun: vi.fn(async (_session: string, args: string[]) => {
     calls.push(args.join(" "));
-    await new Promise((r) => setTimeout(r, slow?.(args) ?? 5));
+    inFlight++;
+    try {
+      await new Promise((r) => setTimeout(r, slow?.(args) ?? 5));
+    } finally {
+      inFlight--;
+    }
     const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
     const own = answer?.(args);
     if (own) return own;
@@ -39,7 +46,36 @@ import K8sPanel from "./K8sPanel.svelte";
 import { peekDockState, resetDockState } from "./stores/dockstate.svelte";
 import { panelSplits, resetPanelShares } from "./stores/panelsplit.svelte";
 
+/** A fixed pause — only for "and nothing more happens": there is no event to wait for. */
 const settle = (ms = 120) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Wait until the panel has finished what it started: no call in flight, and
+ * none begun for a few turns of the event loop after.
+ *
+ * Not a pause. "120 ms is enough for six calls of 5 ms" is a bet on how busy the
+ * machine is, and a full run under load lost it: a timer that fires late makes
+ * every hop of the chain late, and the test looked at a panel that had not
+ * finished loading. The panel's calls follow one another without a timer in
+ * between — the next is asked in the same turn the last one answered — so a
+ * turn with nothing in flight means the chain is over; three in a row is margin.
+ * A chain that never ends (the storm this file guards against) is cut off, and
+ * the counts that follow say what went wrong.
+ */
+async function idle(): Promise<void> {
+  const until = Date.now() + 4000;
+  let quiet = 0;
+  let seen = calls.length;
+  while (Date.now() < until) {
+    await new Promise((r) => setTimeout(r, 10));
+    if (inFlight === 0 && calls.length === seen) {
+      if (++quiet === 3) return;
+    } else {
+      quiet = 0;
+      seen = calls.length;
+    }
+  }
+}
 /** How many times a command was run, matched by a distinctive fragment of its argv. */
 const count = (fragment: string) => calls.filter((c) => c.includes(fragment)).length;
 
@@ -49,6 +85,8 @@ beforeEach(() => {
   slow = null;
   resetDockState();
 });
+// A test that ends with calls still out must not leave them to the next one.
+afterEach(idle);
 
 describe("K8sPanel — probing the cluster", () => {
   it("probes a host with a kubeconfig once, not in a loop", async () => {
@@ -57,7 +95,7 @@ describe("K8sPanel — probing the cluster", () => {
     // and probed again — every answer started two more probes. One mount made tens
     // of thousands of `kubectl` calls a second on the session's host.
     render(K8sPanel, { props: { sessionId: "k1", visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     expect(count("get-contexts")).toBe(1);
     expect(count("current-context")).toBe(1);
     expect(count("version")).toBe(1);
@@ -72,7 +110,7 @@ describe("K8sPanel — probing the cluster", () => {
 
   it("uses the kubeconfig's current context for every command after the probe", async () => {
     render(K8sPanel, { props: { sessionId: "k2", visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     // The context selector shows it, and it was not reset behind the user's back.
     expect((screen.getByTestId("k8s-context") as HTMLSelectElement).value).toBe("staging-eu");
     expect(calls.find((c) => c.includes("get pods"))).toContain("--context staging-eu");
@@ -80,10 +118,10 @@ describe("K8sPanel — probing the cluster", () => {
 
   it("reloads once when a namespace is picked, without probing again", async () => {
     render(K8sPanel, { props: { sessionId: "k3", visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     calls.length = 0;
     await fireEvent.change(screen.getByTestId("k8s-namespace"), { target: { value: "shop" } });
-    await settle();
+    await idle();
     expect(count("get pods")).toBe(1);
     expect(count("top pods")).toBe(1);
     expect(calls.find((c) => c.includes("get pods"))).toContain("--namespace shop");
@@ -94,10 +132,10 @@ describe("K8sPanel — probing the cluster", () => {
 
   it("reloads once when the sub-tab changes", async () => {
     render(K8sPanel, { props: { sessionId: "k4", visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     calls.length = 0;
     await fireEvent.click(screen.getByTestId("k8s-subtab-workloads"));
-    await settle();
+    await idle();
     expect(count("get deployments")).toBe(1);
     expect(count("version")).toBe(0);
   });
@@ -123,10 +161,10 @@ describe("K8sPanel — the route view", () => {
 
   async function openNetwork(session: string) {
     render(K8sPanel, { props: { sessionId: session, visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     calls.length = 0;
     await fireEvent.click(screen.getByTestId("k8s-subtab-network"));
-    await settle();
+    await idle();
   }
 
   it("does not ask for EndpointSlices while the list is on screen", async () => {
@@ -142,7 +180,7 @@ describe("K8sPanel — the route view", () => {
     await openNetwork("r2");
     calls.length = 0;
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
-    await settle();
+    await idle();
     expect(count("get services")).toBe(1);
     expect(count("get ingress")).toBe(1);
     expect(count("get endpointslices")).toBe(1);
@@ -152,7 +190,7 @@ describe("K8sPanel — the route view", () => {
     // …and stops asking for them once the list is back.
     calls.length = 0;
     await fireEvent.click(screen.getByRole("button", { name: "List" }));
-    await settle();
+    await idle();
     expect(count("get endpointslices")).toBe(0);
   });
 
@@ -168,7 +206,7 @@ describe("K8sPanel — the route view", () => {
           : undefined;
     await openNetwork("r3");
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
-    await settle();
+    await idle();
     expect(screen.getByText("Endpoints could not be read")).toBeInTheDocument();
     expect(screen.queryByText("No endpoints — traffic has nowhere to go")).toBeNull();
   });
@@ -198,7 +236,8 @@ describe("K8sPanel — the route view", () => {
     };
     await fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
-    await settle(200);
+    // Both reloads, the late one too.
+    await idle();
     expect(screen.getByTestId("k8s-route-endpoint")).toHaveTextContent("10.1.0.5");
   });
 
@@ -206,7 +245,7 @@ describe("K8sPanel — the route view", () => {
     answer = (args) => (args.includes("services") ? json(web) : args.includes("endpointslices") ? json(webSlice) : undefined);
     await openNetwork("r5");
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
-    await settle();
+    await idle();
     expect(peekDockState("r5")?.sub).toMatchObject({ k8s: "network", k8sNet: "route" });
   });
 });
@@ -241,7 +280,7 @@ describe("K8sPanel — where a pod's details open", () => {
         ? { stdout: JSON.stringify({ items: [POD] }), stderr: "", exitCode: 0 }
         : undefined;
     render(K8sPanel, { props: { sessionId: id, visible: true, sessionReady: true } });
-    await settle();
+    await idle();
     expect(screen.getByText("web-5f7c")).toBeInTheDocument();
   }
 
@@ -307,8 +346,7 @@ describe("K8sPanel — where a pod's details open", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.getByTestId("k8s-side")).toBeInTheDocument();
     resize(400);
-    await settle(20);
-    expect(screen.queryByTestId("k8s-side")).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
     expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
   });
 });
