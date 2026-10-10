@@ -44,6 +44,8 @@ export interface FileBrowserAdapter {
   hasParent(cwd: string): boolean;
   /** The directory ".." leads to, or null when already at the top. */
   parentForUp(cwd: string): string | null;
+  /** The files are on this machine (a local tab's panel), not on a server. */
+  local?: boolean;
   /** Can files be created / renamed / deleted / dropped into `cwd`? (Drives level: no.) */
   mutable(cwd: string): boolean;
   /** Should navigating to `path` mirror into the terminal? (Drives level: no.) */

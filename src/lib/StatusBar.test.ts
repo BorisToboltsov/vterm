@@ -250,7 +250,6 @@ describe("StatusBar — transfers & states", () => {
       transferred: 1,
       total: 2,
       done: false,
-      isFolder: false,
     });
     expect(await screen.findByTestId("transfer-indicator")).toBeInTheDocument();
   });
@@ -269,7 +268,6 @@ describe("StatusBar — transfers & states", () => {
       transferred: 1,
       total: 4,
       done: false,
-      isFolder: false,
     });
     await userEvent.click(await screen.findByTestId("transfer-indicator"));
     expect(layout.docks.right.collapsed).toBe(false);
@@ -281,7 +279,7 @@ describe("StatusBar — transfers & states", () => {
     fetchMetrics.mockResolvedValue(linux);
     render(StatusBar, { props: { sessionId: "t3" } });
     await screen.findByTestId("bar-os");
-    const base = { name: "f", direction: "download" as const, total: 4, isFolder: false };
+    const base = { name: "f", direction: "download" as const, total: 4 };
     applyProgress({ ...base, id: "dl-1", transferred: 1, done: false });
     applyProgress({ ...base, id: "sync:a/b.txt", transferred: 1, done: false });
     applyProgress({ ...base, id: "dl-2", transferred: 4, done: true });
@@ -301,7 +299,6 @@ describe("StatusBar — transfers & states", () => {
       transferred: 1,
       total: 2,
       done: false,
-      isFolder: false,
     });
     expect(await screen.findByTestId("transfer-indicator")).toBeInTheDocument();
     expect(screen.queryByTestId("transfer-cancel-all")).toBeNull();

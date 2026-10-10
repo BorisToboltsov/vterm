@@ -1,44 +1,43 @@
-// Shared SFTP transfer state (Svelte 5 runes). The `sftp://progress` event is
-// subscribed once at the app level (see +page.svelte) and funnelled through
-// `applyProgress`; both the SFTP panel and the status-bar indicator read from
-// here, so progress stays visible even when the SFTP panel is collapsed.
+// Shared transfer state (Svelte 5 runes): what this window shows of the
+// transfers under way. Two feeds, both subscribed once at the app level (see
+// +page.svelte): `sftp://job` — a job of the backend (`applyJob`), and
+// `sftp://progress` — one file of a sync run (`applyProgress`). The SFTP panel
+// and the status-bar indicator read from here, so progress stays visible even
+// when the panel is collapsed.
+//
+// A job is the backend's, not this window's (v1.12, ADR 0025): nothing here
+// starts one, awaits one or keeps it alive. A row is what the backend last said
+// about a job of one of this window's sessions — which is why a tab can leave
+// for another window with its transfer under way.
 
-import type { SftpProgress } from "../api";
-import { pushSample, sampleRate, type RateSample } from "../transfer";
+import type { TransferJob } from "../api";
+import {
+  jobRow,
+  pushSample,
+  rowTouches,
+  sampleRate,
+  type RateSample,
+  type TransferRow,
+} from "../transfer";
+import { touchDir } from "./dockstate.svelte";
 
 export const transfersState = $state<{
-  map: Record<string, SftpProgress>;
+  map: Record<string, TransferRow>;
   /**
-   * Observed speed per transfer id (bytes/s for files, files/s for folders), or
-   * null while it is not yet knowable. Derived here rather than in the panel so
-   * the status-bar indicator and the SFTP panel quote the same number, and so a
-   * collapsed panel does not lose the sample history that a reopened one needs.
+   * Observed speed per transfer id (bytes/s), or null while it is not yet
+   * knowable. Derived here rather than in the panel so the status-bar indicator
+   * and the SFTP panel quote the same number, and so a collapsed panel does not
+   * lose the sample history that a reopened one needs.
    */
   rates: Record<string, number | null>;
 }>({ map: {}, rates: {} });
 
 /** Active (not-yet-finished) transfers, plus those still in their linger window. */
-export const transferList = (): SftpProgress[] => Object.values(transfersState.map);
+export const transferList = (): TransferRow[] => Object.values(transfersState.map);
 
-// Which session each running transfer belongs to. The progress event does not
-// say, and a tab that is still transferring cannot be moved to another window
-// (ADR 0017): the call awaiting the transfer lives in this window's memory.
-// Reactive, so a "move to window" command follows a transfer ending.
-const owners = $state<Record<string, string>>({});
-
-/** Transfer `id` is about to start on `sessionId`. */
-export function trackTransfer(id: string, sessionId: string): void {
-  owners[id] = sessionId;
-}
-
-/** The call that ran transfer `id` returned — done, failed or cancelled. */
-export function untrackTransfer(id: string): void {
-  delete owners[id];
-}
-
-/** How many transfers of `sessionId` are still running. */
-export function sessionTransfers(sessionId: string): number {
-  return Object.values(owners).filter((owner) => owner === sessionId).length;
+/** The rows the panel of `sessionId` lists: its own jobs, and the files of a sync run. */
+export function transfersOf(sessionId: string): TransferRow[] {
+  return transferList().filter((row) => rowTouches(row, sessionId));
 }
 
 // Pending "remove after done" timers, keyed by transfer id.
@@ -55,8 +54,31 @@ export function setTransferClock(fn: () => number): void {
   now = fn;
 }
 
+/**
+ * What the backend says of a job. When it has ended — however — the folder it
+ * was writing into is marked changed, so a panel showing it re-lists once: the
+ * panel that asked for the transfer may be gone by then (v1.0.42), and since
+ * v1.12 nobody waits for a transfer at all.
+ */
+export function applyJob(job: TransferJob): void {
+  applyProgress(jobRow(job));
+  if (job.state !== "running" && job.dst.session) touchDir(job.dst.session, job.destDir);
+}
+
+/**
+ * A tab left this window (closed, or handed to another one): forget the rows
+ * that touch only sessions no longer here. A copy between two sessions stays
+ * while the other one's tab is still in this window.
+ */
+export function dropTransfersOf(sessionId: string, here: (sessionId: string) => boolean): void {
+  for (const row of transferList()) {
+    if (!row.sessions?.includes(sessionId)) continue;
+    if (!row.sessions.some((s) => s !== sessionId && here(s))) removeTransfer(row.id);
+  }
+}
+
 /** Record a progress update; finished transfers auto-clear after a short linger. */
-export function applyProgress(p: SftpProgress): void {
+export function applyProgress(p: TransferRow): void {
   transfersState.map = { ...transfersState.map, [p.id]: p };
   if (p.done) {
     // A finished transfer has no speed — showing the last window average next to
@@ -100,7 +122,6 @@ export function clearTransfers(): void {
   for (const t of timers.values()) clearTimeout(t);
   timers.clear();
   samples.clear();
-  for (const id of Object.keys(owners)) delete owners[id];
   transfersState.map = {};
   transfersState.rates = {};
 }
@@ -110,15 +131,15 @@ export interface TransferSummary {
   active: number;
   /** Aggregate percent across all listed transfers (0–100). */
   pct: number;
-  /** "upload" when any upload is active, else "download", else null when idle. */
-  direction: "upload" | "download" | null;
+  /** "upload" when any upload is listed, else "download", else "copy"; null when idle. */
+  direction: "upload" | "download" | "copy" | null;
 }
 
 /**
  * Summarise a list of transfers for the compact status-bar indicator. Percent is
  * the bytes/files weighted average; an upload in the set wins the arrow.
  */
-export function aggregateTransfers(list: SftpProgress[]): TransferSummary {
+export function aggregateTransfers(list: TransferRow[]): TransferSummary {
   const active = list.filter((t) => !t.done).length;
   let transferred = 0;
   let total = 0;
@@ -127,10 +148,8 @@ export function aggregateTransfers(list: SftpProgress[]): TransferSummary {
     total += t.total;
   }
   const pct = total > 0 ? Math.round((transferred / total) * 100) : 0;
-  const direction = list.length === 0
-    ? null
-    : list.some((t) => t.direction === "upload")
-      ? "upload"
-      : "download";
+  const has = (d: TransferRow["direction"]) => list.some((t) => t.direction === d);
+  const direction =
+    list.length === 0 ? null : has("upload") ? "upload" : has("download") ? "download" : "copy";
   return { active, pct, direction };
 }

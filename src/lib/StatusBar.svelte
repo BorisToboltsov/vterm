@@ -318,7 +318,10 @@
           use:tooltip={t("bar.transfers")}
           onclick={() => revealPanel("files")}
         >
-          <Icon name={summary.direction === "upload" ? "upload" : "download"} size={13} />
+          <Icon
+            name={summary.direction === "copy" ? "arrowRight" : summary.direction}
+            size={13}
+          />
           {#if expanded}
             <span class="tabular-nums">{summary.active} {summary.active === 1 ? t("bar.file") : t("bar.files")}</span>
             <span class="h-1.5 w-12 overflow-hidden rounded-full bg-edge">

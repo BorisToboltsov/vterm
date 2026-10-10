@@ -118,7 +118,6 @@ export type DetachBlock =
   | "lastTab"
   | "notConnected"
   | "sync"
-  | "transfers"
   | "ai"
   | "editor";
 
@@ -132,8 +131,6 @@ export interface DetachState {
   connected: boolean;
   /** Its sync job is comparing or applying. */
   syncBusy: boolean;
-  /** Its transfers still in flight. */
-  transfers: number;
   /** Its assistant is streaming, running a dialog step or awaiting a go-ahead. */
   chatBusy: boolean;
   /** One of its editors is loading or being saved. */
@@ -144,9 +141,13 @@ export interface DetachState {
  * The first reason a tab cannot go, or `null` when it can.
  *
  * A tab moves whole or not at all. Work that is *waiting* in this window's
- * memory — a compare, a sync run, an upload, a streaming answer, a save — cannot
- * be carried to another window: its continuation would be left behind, with
+ * memory — a compare, a sync run, a streaming answer, a save — cannot be
+ * carried to another window: its continuation would be left behind, with
  * nothing to hand its result to. So the tab waits for it instead.
+ *
+ * A file transfer is not such work (v1.12, ADR 0025): it is a job of the
+ * backend, told to whichever window shows the tab — so a tab leaves with its
+ * transfers under way.
  *
  * Structural reasons come first (they are not something to wait out), then the
  * session, then work in flight.
@@ -159,7 +160,6 @@ export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock
   if (!toOpenWindow && !s.mainWindow && s.tabs <= 1) return "lastTab";
   if (!s.connected) return "notConnected";
   if (s.syncBusy) return "sync";
-  if (s.transfers > 0) return "transfers";
   if (s.chatBusy) return "ai";
   if (s.editorBusy) return "editor";
   return null;
@@ -170,7 +170,6 @@ export const DETACH_BLOCK_MESSAGE: Record<DetachBlock, MessageKey> = {
   lastTab: "window.detachBlockedLastTab",
   notConnected: "window.detachBlockedNotConnected",
   sync: "window.detachBlockedSync",
-  transfers: "window.detachBlockedTransfers",
   ai: "window.detachBlockedAi",
   editor: "window.detachBlockedEditor",
 };

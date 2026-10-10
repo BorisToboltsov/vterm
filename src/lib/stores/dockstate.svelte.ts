@@ -56,15 +56,14 @@ export interface DockSessionState {
   k8sScope: K8sScopeState | null;
   /** Active sub-tab per driver panel (`"changes"`, `"images"`, `"pods"`, …) and view per sub-tab. */
   sub: Partial<Record<SubTabPanel, string>>;
-  /** Upload batches still running, per destination directory. */
-  uploads: Record<string, number>;
   /**
-   * Per directory, bumped when the LAST running upload batch into it finishes
-   * (v1.0.42). The panel that started an upload can be gone by then — the dock is
-   * remounted on every terminal-tab switch, and a remounted panel lists the folder
-   * at once, before the upload ended — so "re-list after upload" can't live in the
-   * component that started it. Any mounted panel showing the directory re-lists on
-   * a bump; a hidden one re-lists when it comes back into view anyway.
+   * Per directory, bumped when a transfer into it ends (v1.0.42; since v1.12 —
+   * when the backend says the job has ended, `stores/transfers`). The panel that
+   * started a transfer can be gone by then — the dock is remounted on every
+   * terminal-tab switch, and a remounted panel lists the folder at once, before
+   * the transfer ended — so "re-list after upload" can't live in the component
+   * that started it. Any mounted panel showing the directory re-lists on a bump;
+   * a hidden one re-lists when it comes back into view anyway.
    */
   dirRev: Record<string, number>;
 }
@@ -72,7 +71,7 @@ export interface DockSessionState {
 const sessions = $state<Record<string, DockSessionState>>({});
 
 function empty(): DockSessionState {
-  return { files: null, cwd: null, k8sScope: null, sub: {}, uploads: {}, dirRev: {} };
+  return { files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} };
 }
 
 /**
@@ -101,29 +100,17 @@ export function setDockCwd(sessionId: string, path: string): void {
   if (s.cwd !== path) s.cwd = path;
 }
 
-/** An upload batch into `dir` started — the listing is about to go stale. */
-export function beginUpload(sessionId: string, dir: string): void {
-  const s = dockState(sessionId);
-  s.uploads[dir] = (s.uploads[dir] ?? 0) + 1;
-}
-
 /**
- * An upload batch into `dir` ended (success, failure or cancel alike). Only the
- * last of the overlapping batches bumps the directory's revision, so fifty files —
- * or two batches started back to back — re-list the panel once, at the end.
+ * A transfer into `dir` has ended (done, failed or stopped alike — some of its
+ * files may have landed): the listing of that folder is stale. One bump per
+ * job, so fifty files re-list the panel once, at the end.
  */
-export function endUpload(sessionId: string, dir: string): void {
+export function touchDir(sessionId: string, dir: string): void {
   const s = dockState(sessionId);
-  const left = (s.uploads[dir] ?? 1) - 1;
-  if (left > 0) {
-    s.uploads[dir] = left;
-    return;
-  }
-  delete s.uploads[dir];
   s.dirRev[dir] = (s.dirRev[dir] ?? 0) + 1;
 }
 
-/** The directory's upload revision, read-only (safe inside `$derived`/`$effect`). */
+/** The directory's revision, read-only (safe inside `$derived`/`$effect`). */
 export function dirRevision(sessionId: string, dir: string): number {
   return sessions[sessionId]?.dirRev[dir] ?? 0;
 }
@@ -135,11 +122,12 @@ export function peekDockState(sessionId: string): DockSessionState | null {
 
 /**
  * Take over the dock state of a tab moved here from another window (ADR 0017):
- * the file panel's connection and folder, the k8s scope, the sub-tabs. Upload
- * batches are not carried — a tab does not move while one is running.
+ * the file panel's connection and folder, the k8s scope, the sub-tabs. A
+ * transfer under way is not part of it — it is the backend's, and its events
+ * follow the tab (`stores/transfers`).
  */
 export function adoptDockState(sessionId: string, state: DockSessionState): void {
-  sessions[sessionId] = { ...empty(), ...state, uploads: {}, dirRev: {} };
+  sessions[sessionId] = { ...empty(), ...state, dirRev: {} };
 }
 
 /** Drop everything this session's dock remembered (part of the tab teardown). */

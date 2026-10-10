@@ -12,7 +12,6 @@ import { panes } from "../splitlayout";
 import { paneMoveOrder, parsePacket, type TermSnapshot } from "../tabhandoff";
 import { aiChatState, getChat, peekChat, removeChat } from "./aichat.svelte";
 import {
-  beginUpload,
   dockState,
   peekDockState,
   removeDockState,
@@ -220,7 +219,6 @@ describe("a tab's packet", () => {
     job.stopping = true;
     job.phase = "running";
     job.dialogOpen = true;
-    beginUpload(sid, "/srv");
 
     const packet = parsePacket(packTab(sid, SNAPSHOT, FACTS))!;
     // Dropped by hand: the teardown would stop the (pretend) run through the backend.
@@ -238,7 +236,6 @@ describe("a tab's packet", () => {
       phase: "idle",
       dialogOpen: false,
     });
-    expect(peekDockState(sid)?.uploads).toEqual({});
   });
 
   it("a tab that arrived once can be moved on without its old snapshot", () => {

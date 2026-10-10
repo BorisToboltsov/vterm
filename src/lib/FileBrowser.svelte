@@ -43,6 +43,8 @@
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
+  import { copyTargetList, requestCopy, setFileSelection } from "./stores/filecopy.svelte";
+  import { targetsFrom } from "./copyto";
   import { t } from "./i18n";
 
   let {
@@ -639,6 +641,26 @@
       if (!entry.isDir && adapter.download) {
         items.push({ icon: "download", label: t("ctx.download"), onSelect: () => adapter.download?.(entry) });
       }
+    }
+    // Copy to another open session (v1.12): its server, or — a local tab —
+    // this machine. Offered only where there is somewhere to copy to.
+    const targets = sessionKey ? targetsFrom(copyTargetList(), sessionKey) : [];
+    if (sessionKey && targets.length > 0) {
+      const from = sessionKey;
+      items.push({
+        kind: "submenu",
+        key: "copyTo",
+        icon: "arrowRight",
+        label: t("ctx.copyTo"),
+        items: targets.map((target) => ({
+          icon: target.local ? "terminal" : "server",
+          label: target.title,
+          onSelect: () =>
+            requestCopy({ from, local: !!adapter.local, to: target.sessionId, entries: sel }),
+        })),
+      });
+    }
+    if (!multi) {
       items.push({ kind: "separator" });
       items.push({ icon: "pencil", label: t("ctx.rename"), onSelect: () => startRename(entry) });
     }
@@ -876,6 +898,16 @@
       seenRev = { dir, rev };
       if (bumped && visible && isConnected) refresh();
     });
+  });
+
+  // What is selected here, for a copy started from the command palette (v1.12).
+  // Only a panel on screen says so; hidden or gone, it takes its word back.
+  $effect(() => {
+    if (!sessionKey) return;
+    const key = sessionKey;
+    const picked = visible && isConnected ? selectedEntries() : [];
+    setFileSelection(key, picked.length > 0 ? { local: !!adapter.local, entries: picked } : null);
+    return () => setFileSelection(key, null);
   });
 
   /** `ls`-style colour for a file name, from the active terminal palette. */

@@ -82,6 +82,10 @@ describe("tab teardown guard", () => {
       "removeChat",
       "removeBroadcastMember",
       "removeDockState",
+      // The rows of its transfers, and what its file panel said was selected
+      // (v1.12). The jobs themselves are the backend's: `disconnect` stops them.
+      "dropTransfersOf",
+      "setFileSelection",
       "removeSyncJob",
       "clearRecording",
       "nginxConfigCache.delete",

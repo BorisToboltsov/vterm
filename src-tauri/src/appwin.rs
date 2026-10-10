@@ -333,6 +333,12 @@ impl Windows {
         self.lock().owns(session_id, label)
     }
 
+    /// The window showing the tab of `session_id` right now, if any — where
+    /// what happens to that session is to be told (a transfer's progress).
+    pub fn owner_of(&self, session_id: &str) -> Option<String> {
+        self.lock().owners.get(session_id).cloned()
+    }
+
     /// See [`Registry::release`].
     pub fn release(&self, session_id: &str, label: &str) -> bool {
         self.lock().release(session_id, label)

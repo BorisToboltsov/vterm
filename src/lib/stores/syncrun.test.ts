@@ -9,7 +9,6 @@ const ev = (id: string, transferred: number, total: number, done = false): SftpP
   transferred,
   total,
   done,
-  isFolder: false,
 });
 
 describe("syncrun store", () => {

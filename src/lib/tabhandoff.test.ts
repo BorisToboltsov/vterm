@@ -110,7 +110,6 @@ const idle: DetachState = {
   tabs: 2,
   connected: true,
   syncBusy: false,
-  transfers: 0,
   chatBusy: false,
   editorBusy: false,
 };
@@ -136,7 +135,7 @@ describe("detachBlocker", () => {
     expect(detachBlocker({ ...idle, mainWindow: false, tabs: 1 }, true)).toBeNull();
     // Everything else holds for an open window as for a new one.
     expect(detachBlocker({ ...idle, connected: false }, true)).toBe("notConnected");
-    expect(detachBlocker({ ...idle, transfers: 1 }, true)).toBe("transfers");
+    expect(detachBlocker({ ...idle, syncBusy: true }, true)).toBe("sync");
   });
 
   it("only a connected tab has a session to take along", () => {
@@ -145,9 +144,26 @@ describe("detachBlocker", () => {
 
   it("work waiting in this window keeps the tab here", () => {
     expect(detachBlocker({ ...idle, syncBusy: true })).toBe("sync");
-    expect(detachBlocker({ ...idle, transfers: 1 })).toBe("transfers");
     expect(detachBlocker({ ...idle, chatBusy: true })).toBe("ai");
     expect(detachBlocker({ ...idle, editorBusy: true })).toBe("editor");
+  });
+
+  it("a file transfer under way is no reason at all", () => {
+    // A transfer is a job of the backend (v1.12, ADR 0025), told to whichever
+    // window shows the tab: nothing of it waits here, so nothing of it is asked
+    // about. `DetachState` has no field for it — and must not grow one back.
+    const fields: Record<keyof DetachState, true> = {
+      mainWindow: true,
+      tabs: true,
+      connected: true,
+      syncBusy: true,
+      chatBusy: true,
+      editorBusy: true,
+    };
+    expect(Object.keys(fields).sort()).toEqual(
+      ["chatBusy", "connected", "editorBusy", "mainWindow", "syncBusy", "tabs"],
+    );
+    expect(Object.keys(DETACH_BLOCK_MESSAGE)).not.toContain("transfers");
   });
 
   it("names the reason that cannot be waited out first", () => {
@@ -156,7 +172,6 @@ describe("detachBlocker", () => {
       tabs: 1,
       connected: false,
       syncBusy: true,
-      transfers: 2,
       chatBusy: true,
       editorBusy: true,
     };
@@ -283,8 +298,7 @@ describe("paneMoveBlocker", () => {
     tabs: 4,
     connected: true,
     syncBusy: false,
-    transfers: 0,
-    chatBusy: false,
+  chatBusy: false,
     editorBusy: false,
   };
 
@@ -295,9 +309,9 @@ describe("paneMoveBlocker", () => {
   });
 
   it("one tab that cannot go keeps the whole pane, and is named", () => {
-    expect(paneMoveBlocker([idle, { ...idle, transfers: 2 }, idle], true)).toEqual({
+    expect(paneMoveBlocker([idle, { ...idle, syncBusy: true }, idle], true)).toEqual({
       at: 1,
-      block: "transfers",
+      block: "sync",
     });
     expect(paneMoveBlocker([idle, idle, { ...idle, connected: false }], false)).toEqual({
       at: 2,

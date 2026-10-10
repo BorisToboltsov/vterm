@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.11.3-blue)
+![version](https://img.shields.io/badge/version-1.12.0-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -32,7 +32,8 @@ SSH по паролю и ключу, вкладки, локальный шелл
 Proxy на каждый сервер — jump host, SOCKS5, HTTP CONNECT. Окно ожидания и переподключение.
 
 #### 📁 Файлы и конфиги
-SFTP с drag-and-drop и прогрессом (скорость, ETA). Редактор на CodeMirror (50+ языков):
+SFTP с drag-and-drop и прогрессом (скорость, ETA), копирование файлов с сервера на сервер
+через приложение. Редактор на CodeMirror (50+ языков):
 diff перед сохранением, линт, sudo-правка root-конфигов, markdown-превью, синхронизация папок, grep.
 
 #### 🧭 DevOps-панели

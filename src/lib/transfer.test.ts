@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  MIN_SPAN_MS,
-  RATE_WINDOW_MS,
   etaSeconds,
   fmtEta,
   isCancellableTransfer,
+  jobDirection,
+  jobNotice,
+  jobRow,
+  jobSessions,
+  MIN_SPAN_MS,
   pushSample,
+  RATE_WINDOW_MS,
+  rowTouches,
   sampleRate,
   transferPct,
   type RateSample,
 } from "./transfer";
+import type { TransferJob } from "./api";
 
 /** Builds a sample series at a fixed cadence with a constant rate. */
 function series(count: number, stepMs: number, perStep: number): RateSample[] {
@@ -139,5 +145,120 @@ describe("isCancellableTransfer", () => {
 
   it("leaves sync-run files to the sync window's Stop", () => {
     expect(isCancellableTransfer({ id: "sync:dir/a.txt", done: false })).toBe(false);
+  });
+});
+
+// ── Jobs of the backend (v1.12) ─────────────────────────────────────────────
+describe("a job, as the list and the toasts read it", () => {
+  const side = (session: string | null, local = false) => ({ session, local, label: "" });
+  function job(over: Partial<TransferJob> = {}): TransferJob {
+    return {
+      id: "j",
+      src: side(null, true),
+      dst: side("s1"),
+      destDir: "/srv",
+      name: "a.txt",
+      fileIndex: 0,
+      fileCount: 1,
+      transferred: 0,
+      total: 100,
+      state: "running",
+      error: null,
+      failed: 0,
+      skipped: 0,
+      ...over,
+    };
+  }
+
+  it("points up to a server, down from one, and sideways between two places alike", () => {
+    expect(jobDirection(job())).toBe("upload");
+    expect(jobDirection(job({ src: side("s1"), dst: side(null, true) }))).toBe("download");
+    expect(jobDirection(job({ src: side("s1"), dst: side("s2") }))).toBe("copy");
+    // Two local tabs: a copy on this machine.
+    expect(jobDirection(job({ src: side("l1", true), dst: side("l2", true) }))).toBe("copy");
+    // A local tab to a server is an upload like any other.
+    expect(jobDirection(job({ src: side("l1", true), dst: side("s1") }))).toBe("upload");
+  });
+
+  it("names the sessions a job touches", () => {
+    expect(jobSessions(job())).toEqual(["s1"]);
+    expect(jobSessions(job({ src: side("s1"), dst: side("s2") }))).toEqual(["s1", "s2"]);
+    expect(jobSessions(job({ src: side(null, true), dst: side(null, true) }))).toEqual([]);
+  });
+
+  it("becomes a row: done once it is no longer running, which file only if there are several", () => {
+    expect(jobRow(job({ transferred: 40 }))).toEqual({
+      id: "j",
+      name: "a.txt",
+      direction: "upload",
+      transferred: 40,
+      total: 100,
+      done: false,
+      sessions: ["s1"],
+    });
+    expect(jobRow(job({ fileCount: 3, fileIndex: 2 }))).toMatchObject({ fileIndex: 2, fileCount: 3 });
+    for (const state of ["done", "failed", "cancelled"] as const) {
+      expect(jobRow(job({ state })).done).toBe(true);
+    }
+  });
+
+  it("is listed in the panels of its sessions; a file of a sync run — in every one", () => {
+    const row = jobRow(job({ src: side("s1"), dst: side("s2") }));
+    expect(rowTouches(row, "s1")).toBe(true);
+    expect(rowTouches(row, "s2")).toBe(true);
+    expect(rowTouches(row, "s3")).toBe(false);
+    const syncFile = { id: "sync:a", name: "a", direction: "upload" as const, transferred: 0, total: 1, done: false };
+    expect(rowTouches(syncFile, "anything")).toBe(true);
+  });
+
+  it("says nothing of a job that is running, done cleanly, or stopped by the user", () => {
+    expect(jobNotice(job())).toBeNull();
+    expect(jobNotice(job({ state: "done" }))).toBeNull();
+    expect(jobNotice(job({ state: "cancelled", failed: 2, error: "x" }))).toBeNull();
+  });
+
+  it("says what was left out of a job that is done", () => {
+    expect(jobNotice(job({ state: "done", skipped: 3 }))).toEqual({
+      kind: "info",
+      key: "transfer.skipped",
+      vars: { count: 3 },
+    });
+  });
+
+  it("names the file that failed, and why", () => {
+    expect(jobNotice(job({ state: "failed", failed: 1, error: "open a.txt: permission denied" }))).toEqual({
+      kind: "error",
+      key: "transfer.failedOne",
+      vars: { name: "a.txt", error: "open a.txt: permission denied" },
+    });
+  });
+
+  it("a name taken meanwhile is said as a name conflict, not as a raw marker", () => {
+    const refused = job({
+      state: "failed",
+      failed: 1,
+      error: "dest-exists: a file or folder with that name already exists",
+    });
+    expect(jobNotice(refused)).toEqual({
+      kind: "error",
+      key: "sftp.moveConflict",
+      vars: { name: "a.txt", dest: "/srv" },
+    });
+  });
+
+  it("counts what failed in a job of several files", () => {
+    expect(
+      jobNotice(job({ state: "failed", fileCount: 10, failed: 3, error: "write x: disk full" })),
+    ).toEqual({
+      kind: "error",
+      key: "transfer.failedSome",
+      vars: { failed: 3, count: 10, error: "write x: disk full" },
+    });
+    // Refused before the tree was walked: the count is at least what failed.
+    expect(jobNotice(job({ state: "failed", fileCount: 0, failed: 2, error: null }))).toEqual({
+      kind: "error",
+      key: "transfer.failedSome",
+      vars: { failed: 2, count: 2, error: "" },
+    });
   });
 });

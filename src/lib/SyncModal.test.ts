@@ -34,7 +34,6 @@ const progress = (path: string, transferred: number, total: number, done = false
   transferred,
   total,
   done,
-  isFolder: false,
 });
 
 /** Render with a local folder chosen and a plan already compared. */

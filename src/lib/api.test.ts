@@ -117,14 +117,17 @@ describe("invoke wrappers pass the right command + args", () => {
   it("sftp commands", async () => {
     await api.sftpList("sess", "/tmp");
     expect(invoke).toHaveBeenCalledWith("sftp_list", { sessionId: "sess", path: "/tmp" });
-    await api.sftpDownload("sess", "t1", "/r", "/l", true);
-    expect(invoke).toHaveBeenCalledWith("sftp_download", {
-      sessionId: "sess",
-      transferId: "t1",
-      remotePath: "/r",
-      localPath: "/l",
-      isDir: true,
-    });
+    const spec = {
+      id: "t1",
+      src: { session: "sess", local: false, label: "web" },
+      dst: { session: null, local: true, label: "" },
+      items: [{ from: "/r", to: "/l", isDir: true, replace: true }],
+      destDir: "/",
+    };
+    await api.transferStart(spec);
+    expect(invoke).toHaveBeenCalledWith("transfer_start", { spec });
+    await api.transferList();
+    expect(invoke).toHaveBeenCalledWith("transfer_list");
     await api.sftpCancel("t1");
     expect(invoke).toHaveBeenCalledWith("sftp_cancel", { transferId: "t1" });
   });
@@ -347,11 +350,6 @@ describe("remaining invoke wrappers", () => {
         { sessionId: "s", text: "edited /x" },
       ],
       [api.sftpDelete("s", "/d", true), "sftp_delete", { sessionId: "s", path: "/d", isDir: true }],
-      [
-        api.sftpUpload("s", "t", "/l", "/r", false),
-        "sftp_upload",
-        { sessionId: "s", transferId: "t", localPath: "/l", remotePath: "/r", replace: false },
-      ],
     ];
     for (const [call, name, args] of cases) {
       await call;
