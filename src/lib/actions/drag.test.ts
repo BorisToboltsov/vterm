@@ -6,6 +6,7 @@ import {
   holdSelection,
   layoutBox,
   passedThreshold,
+  releaseSelection,
   resizableHandle,
   slotIndex,
 } from "./drag";
@@ -50,6 +51,21 @@ describe("holdSelection", () => {
       expect(refused(), end).toBe(false);
       expect(held(), end).toBe(false);
     }
+  });
+
+  it("ends when the drag is handed to the system — no pointer event will say so", () => {
+    holdSelection();
+    releaseSelection();
+    expect(refused()).toBe(false);
+    expect(held()).toBe(false);
+    // And it is the same end as any other: nothing is left listening for one.
+    holdSelection();
+    expect(refused()).toBe(true);
+    letGo();
+    expect(held()).toBe(false);
+    // Said with nothing held, it changes nothing.
+    releaseSelection();
+    expect(refused()).toBe(false);
   });
 
   it("held twice is held once — one release ends it", () => {

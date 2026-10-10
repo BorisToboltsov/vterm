@@ -21,7 +21,9 @@
 //     carrying them to the desktop.
 //  4. Taken means let go of: no drop, no release, nothing taken back. The
 //     backend goes on telling the app's windows where the files are; a "the
-//     drag is over" from the page would clear what they draw.
+//     drag is over" from the page would clear what they draw. And the hold on
+//     selection is let go of there too: no release will come to the page to
+//     end it, and the first selection after a drag-out would be swallowed.
 //  5. What the system says of a drag that names no files is not the desktop's
 //     business. The app's own promised files pass back over its windows as
 //     exactly that — and must not clear what the backend has them draw.
@@ -184,6 +186,9 @@ export function takenViolations(store: string): string[] {
   if (!/told = false;/.test(body) || !/stopListening\(\);/.test(body) || !/clearDrag\(\);/.test(body)) {
     out.push("the page does not let go of files the system took");
   }
+  if (!/releaseSelection\(\);/.test(body)) {
+    out.push("the page stays unselectable after the system took the files");
+  }
   return out;
 }
 
@@ -345,6 +350,11 @@ describe("files the system took are let go of — not dropped, not taken back", 
     expect(mutate("function systemTook(): void {\n  tellLeft();")).toEqual([
       "the page takes back what it said when the system takes the files",
       "the page does not let go of files the system took",
+    ]);
+    const held = store.replace("  releaseSelection();\n}", "}");
+    expect(held).not.toBe(store);
+    expect(takenViolations(held)).toEqual([
+      "the page stays unselectable after the system took the files",
     ]);
   });
 });

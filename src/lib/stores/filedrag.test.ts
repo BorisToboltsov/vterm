@@ -514,6 +514,19 @@ describe("past the edge the drag may become the system's", () => {
     expect(consumeFileDragClick()).toBe(false);
   });
 
+  it("taken: the page is selectable again at once — no release will come to say so", async () => {
+    const { answer } = asking();
+    await carryOut();
+    expect(document.documentElement.classList.contains("dragging")).toBe(true);
+    answer(true);
+    await vi.advanceTimersByTimeAsync(0);
+    // Left to the next click, the first selection after a drag-out was swallowed.
+    expect(document.documentElement.classList.contains("dragging")).toBe(false);
+    const started = new Event("selectstart", { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(started);
+    expect(started.defaultPrevented).toBe(false);
+  });
+
   it("taken: from then on the page is told of the files like any other window", async () => {
     const { answer } = asking();
     await carryOut();

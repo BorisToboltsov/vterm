@@ -33,6 +33,7 @@ import {
   cancelOnEscape,
   holdSelection,
   passedThreshold,
+  releaseSelection,
   swallowReleaseClick,
 } from "../actions/drag";
 import {
@@ -316,6 +317,8 @@ function systemTook(): void {
   told = false;
   stopListening();
   clearDrag();
+  // No release will come to this page: the hold on selection is let go of here.
+  releaseSelection();
 }
 
 function handOver(): void {
