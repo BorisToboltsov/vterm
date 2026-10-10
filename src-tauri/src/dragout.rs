@@ -80,6 +80,11 @@ pub struct OutSpec {
     /// The files as a window of the app is told of them (`describeFiles`):
     /// passed on unread to the window they are held over.
     pub carried: serde_json::Value,
+    /// A transfer of this drag was stopped: the promises not yet begun are not
+    /// kept ([`in_turn`]). Shared by every copy of the drag's description.
+    #[serde(skip)]
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// The items of a drag that can be promised: those whose name this machine can
@@ -179,9 +184,59 @@ async fn facts(app: &AppHandle, session_id: &str, items: &[OutItem]) -> Vec<Fact
     all
 }
 
+/// How many promises are kept at once. Whatever took the files asks for every
+/// one of them in one go — and a transfer each, all at once, would hold open as
+/// many files as were dragged, on this machine and on the server: a few hundred
+/// is past what either lets one program have.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+const KEPT_AT_ONCE: usize = 4;
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+static KEEPING: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(KEPT_AT_ONCE);
+
+/// How keeping one promise ended.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Debug, PartialEq)]
+pub enum Kept {
+    Done,
+    /// Its transfer was stopped by the user.
+    Stopped,
+    Failed(String),
+}
+
+/// Keep one promise of a drag when its turn comes. Once a transfer of the drag
+/// has been stopped, the ones still waiting are not begun: stopping a file that
+/// is on its way out says "not these", and the next few hundred starting up one
+/// after another, each to be stopped by hand, would say the app did not hear.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub async fn in_turn<K, W>(
+    turns: &tokio::sync::Semaphore,
+    stopped: &std::sync::atomic::AtomicBool,
+    keep: K,
+) -> Result<(), String>
+where
+    K: FnOnce() -> W,
+    W: std::future::Future<Output = Kept>,
+{
+    use std::sync::atomic::Ordering;
+    let _turn = turns.acquire().await.map_err(|_| "cancelled".to_string())?;
+    if stopped.load(Ordering::SeqCst) {
+        return Err("cancelled".into());
+    }
+    match keep().await {
+        Kept::Done => Ok(()),
+        Kept::Stopped => {
+            stopped.store(true, Ordering::SeqCst);
+            Err("cancelled".into())
+        }
+        Kept::Failed(why) => Err(why),
+    }
+}
+
 /// The transfer that keeps a promise: `item` of the session, to `dest` on this
 /// machine. `dest` is the system's — it named the folder, and settled what the
 /// file is called there — so what is at `dest` may be replaced.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn fetch_spec(
     spec: &OutSpec,
     item: &OutItem,
@@ -226,18 +281,23 @@ pub(crate) async fn fetch(
     item: &OutItem,
     dest: &str,
 ) -> Result<(), String> {
-    let id = format!("out-{}", crate::uuid_like());
-    let wait = crate::launch_transfer(app, origin, fetch_spec(spec, item, dest, id))
-        .await
-        .map_err(|e| e.to_string())?;
-    let done = wait
-        .await
-        .map_err(|_| "the transfer was dropped".to_string())?;
-    match done.state {
-        crate::transfers::State::Done => Ok(()),
-        crate::transfers::State::Cancelled => Err("cancelled".into()),
-        _ => Err(done.error.unwrap_or_else(|| "the transfer failed".into())),
-    }
+    in_turn(&KEEPING, &spec.stopped, || async {
+        let id = format!("out-{}", crate::uuid_like());
+        let job = fetch_spec(spec, item, dest, id);
+        let wait = match crate::launch_transfer(app, origin, job).await {
+            Ok(wait) => wait,
+            Err(e) => return Kept::Failed(e.to_string()),
+        };
+        match wait.await {
+            Ok(done) => match done.state {
+                crate::transfers::State::Done => Kept::Done,
+                crate::transfers::State::Cancelled => Kept::Stopped,
+                _ => Kept::Failed(done.error.unwrap_or_else(|| "the transfer failed".into())),
+            },
+            Err(_) => Kept::Failed("the transfer was dropped".into()),
+        }
+    })
+    .await
 }
 
 /// Files have left the window they were dragged from: hand the drag to the
@@ -354,6 +414,7 @@ mod tests {
             label: "web-01".into(),
             items: vec![],
             carried: serde_json::Value::Null,
+            stopped: Default::default(),
         };
         let job = fetch_spec(
             &spec,
@@ -397,6 +458,72 @@ mod tests {
             ]
         );
         assert_eq!(spec.carried["kind"], "files");
+    }
+
+    #[tokio::test]
+    async fn no_more_promises_are_kept_at_once_than_there_are_turns() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let turns = Arc::new(tokio::sync::Semaphore::new(3));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let mut all = Vec::new();
+        for _ in 0..40 {
+            let (turns, stopped, now, most) =
+                (turns.clone(), stopped.clone(), now.clone(), most.clone());
+            all.push(tokio::spawn(async move {
+                in_turn(&turns, &stopped, || async {
+                    let at = now.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(at, Ordering::SeqCst);
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                    now.fetch_sub(1, Ordering::SeqCst);
+                    Kept::Done
+                })
+                .await
+            }));
+        }
+        for one in all {
+            assert_eq!(one.await.unwrap(), Ok(()));
+        }
+        assert_eq!(most.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn a_transfer_stopped_keeps_the_rest_of_its_drag_from_starting() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let turns = tokio::sync::Semaphore::new(1);
+        let stopped = AtomicBool::new(false);
+        let begun = AtomicUsize::new(0);
+        let keep = |how: Kept| {
+            let begun = &begun;
+            move || async move {
+                begun.fetch_add(1, Ordering::SeqCst);
+                how
+            }
+        };
+        assert_eq!(in_turn(&turns, &stopped, keep(Kept::Done)).await, Ok(()));
+        // One that failed is one that failed: the rest are still wanted.
+        assert_eq!(
+            in_turn(
+                &turns,
+                &stopped,
+                keep(Kept::Failed("permission denied".into()))
+            )
+            .await,
+            Err("permission denied".to_string())
+        );
+        assert_eq!(in_turn(&turns, &stopped, keep(Kept::Done)).await, Ok(()));
+        // One stopped by the user: the ones behind it are not begun at all.
+        assert!(in_turn(&turns, &stopped, keep(Kept::Stopped))
+            .await
+            .is_err());
+        assert_eq!(begun.load(Ordering::SeqCst), 4);
+        assert!(in_turn(&turns, &stopped, keep(Kept::Done)).await.is_err());
+        assert!(in_turn(&turns, &stopped, keep(Kept::Done)).await.is_err());
+        assert_eq!(begun.load(Ordering::SeqCst), 4);
+        // Another drag is another matter.
+        let other = AtomicBool::new(false);
+        assert_eq!(in_turn(&turns, &other, keep(Kept::Done)).await, Ok(()));
     }
 
     #[test]
@@ -473,6 +600,18 @@ mod tests {
         let code = shipped(dragout);
         let body = block_of(&code, "pub async fn drag_out_begin(");
         let mut faults = Vec::new();
+        // Every promise is kept in its turn: the one place that starts its
+        // transfer does so inside `in_turn`.
+        let fetch = block_of(&code, "pub(crate) async fn fetch(");
+        if code.matches("launch_transfer(").count() != 1
+            || !in_order(
+                fetch,
+                "in_turn(&KEEPING, &spec.stopped,",
+                "launch_transfer(",
+            )
+        {
+            faults.push("a promise is kept out of turn");
+        }
         if !in_order(body, "promised(&spec.items", "begin(&handle") {
             faults.push("names are not checked before the drag is begun");
         }
@@ -547,6 +686,9 @@ mod tests {
         }
         if code.contains(".sftp()") || code.contains("download_file(") {
             faults.push("a promise is kept by a download of its own");
+        }
+        if code.contains("launch_transfer(") {
+            faults.push("a promise is kept out of turn");
         }
         if !block_of(&code, "fn file_name(").contains("self.item_of(provider)") {
             faults.push("a name is given for a promise that was not checked");
@@ -627,6 +769,12 @@ mod tests {
         );
         assert!(command_faults(&off_thread)
             .contains(&"the drag is not begun on the thread that owns the window"));
+        let at_once = broken(
+            dragout,
+            "in_turn(&KEEPING, &spec.stopped, || async {",
+            "in_turn(&tokio::sync::Semaphore::new(999), &spec.stopped, || async {",
+        );
+        assert!(command_faults(&at_once).contains(&"a promise is kept out of turn"));
         let claimed = broken(
             dragout,
             "#[serde(skip)]\n    pub size:",

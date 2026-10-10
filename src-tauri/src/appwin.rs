@@ -657,6 +657,7 @@ fn raise_window(app: &AppHandle, label: &str) {
 // The window the drag began in is such a window too. Main thread only.
 
 /// The window of the app under the pointer that hears of drags, if any.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 fn drag_hearer(app: &AppHandle, windows: &Windows) -> Option<crate::winhit::Hit> {
     crate::winhit::app_window_at_pointer(app)
         .filter(|hit| hit.label != crate::dragghost::LABEL)
@@ -665,6 +666,7 @@ fn drag_hearer(app: &AppHandle, windows: &Windows) -> Option<crate::winhit::Hit>
 
 /// The pointer of a system drag begun in `source` has moved. True when it is
 /// over a window of the app — which draws the files itself.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 pub(crate) fn system_drag_moved(app: &AppHandle, source: &str, what: &serde_json::Value) -> bool {
     let windows = app.state::<Windows>();
     let hit = drag_hearer(app, &windows);
@@ -686,6 +688,7 @@ pub(crate) fn system_drag_moved(app: &AppHandle, source: &str, what: &serde_json
 
 /// It was given up — Esc, or the system would not carry it: nobody takes the
 /// files, and the window that was drawing them is told they are gone.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 pub(crate) fn system_drag_cancelled(app: &AppHandle, source: &str) {
     let left = app.state::<Windows>().lock().end_hover(source);
     if let Some(left) = left {
@@ -695,6 +698,7 @@ pub(crate) fn system_drag_cancelled(app: &AppHandle, source: &str) {
 
 /// It was let go of. True when that was over a window of the app, which now
 /// has the files; false — over the desktop, another program, or nothing.
+#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
 pub(crate) fn system_drag_ended(app: &AppHandle, source: &str, what: &serde_json::Value) -> bool {
     let windows = app.state::<Windows>();
     let hit = drag_hearer(app, &windows);
