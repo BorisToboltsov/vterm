@@ -29,6 +29,7 @@ const SRC = join(process.cwd(), "src");
 /** The drag stores, and the fields of each that hold an object a strip is drawn from. */
 const DRAGS: Record<string, readonly string[]> = {
   "lib/stores/dockdrag.svelte.ts": ["over"],
+  "lib/stores/filedrag.svelte.ts": ["over", "zone"],
   "lib/stores/tabdrag.svelte.ts": ["over", "zone"],
   "lib/stores/tabincoming.svelte.ts": ["tab", "over", "zone"],
   "lib/stores/viewdrag.svelte.ts": ["over", "zone", "area"],

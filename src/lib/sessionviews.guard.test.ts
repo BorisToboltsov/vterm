@@ -328,7 +328,11 @@ export function dragViolations(drag: string, page: string): string[] {
   if (!/\{@const at = confinedGhost\(viewDrag\.x, viewDrag\.y, viewDrag\.area, viewGhost\)\}/.test(markup)) {
     out.push("the label of a dragged view follows the pointer out of its connection");
   }
-  if (!/const dropZone = \$derived\(tabDrag\.zone \?\? incoming\.zone \?\? viewDrag\.zone\);/.test(script)) {
+  if (
+    !/const dropZone = \$derived\(tabDrag\.zone \?\? incoming\.zone \?\? viewDrag\.zone \?\? fileDrag\.zone\);/.test(
+      script,
+    )
+  ) {
     out.push("the half of a zone a dragged view would take is not shown");
   }
   return out;
@@ -674,8 +678,8 @@ describe("session views guard — catches what it exists for", () => {
         drag,
         mutate(
           page,
-          "const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? viewDrag.zone);",
-          "const dropZone = $derived(tabDrag.zone ?? incoming.zone);",
+          "const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? viewDrag.zone ?? fileDrag.zone);",
+          "const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? fileDrag.zone);",
         ),
       ),
     ).toEqual(["the half of a zone a dragged view would take is not shown"]);

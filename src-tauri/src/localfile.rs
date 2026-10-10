@@ -738,6 +738,24 @@ pub async fn local_list(path: String) -> AppResult<Vec<FileEntry>> {
     list(&path).await
 }
 
+/// Which of `paths` are folders — asked of files the system drops on the window
+/// (v1.13): the drop names paths and nothing else, and a folder is uploaded as a
+/// tree, not opened as a file. A path that cannot be read counts as a file; the
+/// transfer then says what is wrong with it.
+#[tauri::command]
+pub async fn local_kinds(paths: Vec<String>) -> Vec<bool> {
+    let mut kinds = Vec::with_capacity(paths.len());
+    for path in &paths {
+        kinds.push(
+            tokio::fs::metadata(path)
+                .await
+                .map(|m| m.is_dir())
+                .unwrap_or(false),
+        );
+    }
+    kinds
+}
+
 #[tauri::command]
 pub async fn local_mkdir(path: String) -> AppResult<()> {
     mkdir(&path).await
@@ -978,6 +996,20 @@ mod tests {
         );
         assert!(safe_join("/home/me/site", "../../.zshrc").is_err());
         assert!(safe_join("/home/me/site", "/etc/passwd").is_err());
+    }
+
+    #[tokio::test]
+    async fn tells_folders_from_files_among_dropped_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("site");
+        let file = tmp.path().join("a.txt");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let kinds = local_kinds(vec![s(&file), s(&dir), s(&tmp.path().join("gone"))]).await;
+        // What cannot be read is no folder: the transfer says what is wrong.
+        assert_eq!(kinds, [false, true, false]);
+        assert!(local_kinds(vec![]).await.is_empty());
     }
 
     #[test]

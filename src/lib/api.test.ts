@@ -128,6 +128,11 @@ describe("invoke wrappers pass the right command + args", () => {
     expect(invoke).toHaveBeenCalledWith("transfer_start", { spec });
     await api.transferList();
     expect(invoke).toHaveBeenCalledWith("transfer_list");
+    await api.localKinds(["/a", "/b"]);
+    expect(invoke).toHaveBeenCalledWith("local_kinds", { paths: ["/a", "/b"] });
+    const targets = [{ sessionId: "s", title: "web", local: false, prod: false }];
+    await api.announceCopyTargets(targets);
+    expect(invoke).toHaveBeenCalledWith("announce_copy_targets", { targets });
     await api.sftpCancel("t1");
     expect(invoke).toHaveBeenCalledWith("sftp_cancel", { transferId: "t1" });
   });

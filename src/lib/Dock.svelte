@@ -325,6 +325,7 @@
       <button
         data-testid={`dock-tab-${id}`}
         data-dock-tab={panelIndex(id)}
+        data-dock-panel={id}
         data-dock-placeholder={slot(id)}
         animate:glide={motion()}
         class="relative min-w-0 touch-none border-b-2 text-center {vertical
@@ -428,6 +429,7 @@
               <button
                 data-testid={`dock-vtab-${id}`}
                 data-dock-tab={panelIndex(id)}
+        data-dock-panel={id}
                 data-dock-placeholder={slot(id)}
                 animate:glide={motion()}
                 class="relative touch-none rounded px-1 py-1.5 text-meta uppercase tracking-wider [writing-mode:vertical-rl] {id ===

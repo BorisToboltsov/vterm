@@ -348,3 +348,36 @@ describe("dragging a view", () => {
     expect(document.documentElement.classList.contains("dragging")).toBe(false);
   });
 });
+
+const esc = () => {
+  const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  window.dispatchEvent(e);
+  return e;
+};
+
+describe("Esc puts a dragged view back", () => {
+  it("the layout is what it was, and the key goes no further", () => {
+    const heard = vi.fn();
+    window.addEventListener("keydown", heard);
+    const before = shape();
+    const el = document.createElement("div");
+    beginViewDrag(press(el), S, T);
+    move(200, 200);
+    expect(viewDrag.view).toBe(T);
+    const e = esc();
+    expect(e.defaultPrevented).toBe(true);
+    expect(heard).not.toHaveBeenCalled();
+    expect(viewDrag.view).toBeNull();
+    expect(consumeViewDragClick()).toBe(true);
+    release();
+    expect(shape()).toEqual(before);
+    window.removeEventListener("keydown", heard);
+  });
+
+  it("with nothing in the air Esc is left alone", () => {
+    expect(esc().defaultPrevented).toBe(false);
+    beginViewDrag(press(document.createElement("div")), S, T);
+    expect(esc().defaultPrevented).toBe(false);
+    cancelViewDrag();
+  });
+});

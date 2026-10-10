@@ -62,6 +62,39 @@ export function passedThreshold(
   return Math.hypot(x - startX, y - startY) >= min;
 }
 
+/**
+ * `Esc` cancels a drag (v1.13) — one rule for every drag of the app: a session's
+ * tab, a view inside a connection, a dock's panel, files. Call it when a drag is
+ * armed; it returns what takes the listener off again.
+ *
+ * The key goes no further. The terminal under the pointer has the focus, and an
+ * `Esc` that reached it would be typed into the shell as an escape.
+ */
+export function cancelOnEscape(dragging: () => boolean, cancel: () => void): () => void {
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !dragging()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Nor to a listener on the window itself, set up after this one.
+    e.stopImmediatePropagation();
+    cancel();
+  };
+  window.addEventListener("keydown", onKey, true);
+  return () => window.removeEventListener("keydown", onKey, true);
+}
+
+/**
+ * After a drag is cancelled with the button still down, the release that
+ * follows is not a click on what was held. `swallow(true)` now, `swallow(false)`
+ * right after that release — whether or not it produced a click.
+ */
+export function swallowReleaseClick(swallow: (on: boolean) => void): void {
+  swallow(true);
+  window.addEventListener("pointerup", () => setTimeout(() => swallow(false), 0), {
+    once: true,
+  });
+}
+
 /** The `[data-drop]` target under a point ("" = root container), or null. */
 export function dropTargetAt(x: number, y: number): string | null {
   if (typeof document === "undefined") return null;

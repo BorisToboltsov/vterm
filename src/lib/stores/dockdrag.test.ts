@@ -299,6 +299,39 @@ describe("dragging a panel tab", () => {
   });
 });
 
+const esc = () => {
+  const e = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+  window.dispatchEvent(e);
+  return e;
+};
+
+describe("Esc puts a dragged panel back", () => {
+  it("the docks are what they were, and the key goes no further", () => {
+    const heard = vi.fn();
+    window.addEventListener("keydown", heard);
+    dock("right", "x", [0, 1, 2]);
+    const tab = document.getElementById("tab0")!;
+    rect(document.getElementById("tab1")!, { left: 100, width: 80 });
+    at("tab1");
+    const before = JSON.stringify(layout.docks);
+    beginPanelDrag(press(tab), "docker");
+    window.dispatchEvent(pointer("pointermove", 110, 40));
+    expect(dockDrag.panel).toBe("docker");
+    const e = esc();
+    expect(e.defaultPrevented).toBe(true);
+    expect(heard).not.toHaveBeenCalled();
+    expect(dockDrag.panel).toBeNull();
+    expect(consumeDragClick()).toBe(true);
+    window.dispatchEvent(pointer("pointerup", 110, 40));
+    expect(JSON.stringify(layout.docks)).toBe(before);
+    window.removeEventListener("keydown", heard);
+  });
+
+  it("with nothing in the air Esc is left alone", () => {
+    expect(esc().defaultPrevented).toBe(false);
+  });
+});
+
 describe("the dragged tab's copy", () => {
   it("takes the size and lettering of the tab that was picked up", () => {
     dock("right", "y", [0]);

@@ -93,6 +93,19 @@ export function announceWindow(title: string, tabs: number): Promise<void> {
   return invoke<void>("announce_window", { title, tabs });
 }
 
+/** Every window's word on where files can be copied to (`announceCopyTargets`). */
+export const TARGETS_EVENT = "window://targets";
+
+/**
+ * The sessions this window offers as a place to copy files to (v1.13). Sent to
+ * every window as `TARGETS_EVENT`, this one included: the menu of one window
+ * names the sessions of the others — the transfer is the backend's, so it does
+ * not matter which window shows the tab.
+ */
+export function announceCopyTargets(targets: unknown): Promise<void> {
+  return invoke<void>("announce_copy_targets", { targets });
+}
+
 // ── A tab dragged over another window ─────────────────────────────────────────
 // Pointer events end at a window's edge, and the window under the pointer hears
 // nothing of a drag that began elsewhere. So the window giving the tab up tells

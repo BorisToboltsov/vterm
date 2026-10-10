@@ -2469,6 +2469,7 @@ pub fn run() {
             store::take_store_warnings,
             localfile::local_home,
             localfile::local_list,
+            localfile::local_kinds,
             localfile::local_mkdir,
             localfile::local_create_file,
             localfile::local_delete,
@@ -2528,6 +2529,7 @@ pub fn run() {
             appwin::decline_handoff,
             appwin::attach_session,
             appwin::announce_window,
+            appwin::announce_copy_targets,
             appwin::drag_over,
             appwin::drag_drop,
             appwin::drag_end

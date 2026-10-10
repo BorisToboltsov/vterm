@@ -8,11 +8,9 @@
   // filebrowser.ts for the contract and why this exists.
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { tooltip } from "./actions/tooltip";
-  import { type UnlistenFn } from "@tauri-apps/api/event";
-  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import { pickUploadFiles } from "./api";
   import { writeClipboard } from "./clipboard";
-  import { dropTargetAt, holdSelection, passedThreshold } from "./actions/drag";
+  import { beginFileDrag, consumeFileDragClick, fileDrag } from "./stores/filedrag.svelte";
   import { chordLetter } from "./appshortcuts";
   import { checkMove } from "./filemove";
   import { joinPath, normalizeInputPath } from "./fspath";
@@ -43,7 +41,13 @@
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
-  import { copyTargetList, requestCopy, setFileSelection } from "./stores/filecopy.svelte";
+  import {
+    copyTargetList,
+    pendingMoveRequest,
+    requestCopy,
+    setFileSelection,
+    takeMoveRequest,
+  } from "./stores/filecopy.svelte";
   import { targetsFrom } from "./copyto";
   import { t } from "./i18n";
 
@@ -209,7 +213,6 @@
   const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
   const visibleItems = $derived(buildVisibleItems(win.start, win.end, hasParent, shownEntries));
 
-  let dragOver = $state(false);
 
   let showMkdir = $state(false);
   let mkdirName = $state("");
@@ -245,8 +248,6 @@
     const name = m.path.split("/").pop() ?? m.path;
     onOpenFile?.(joinPath(cwd, m.path), name, m.line);
   }
-
-  const unlisten: UnlistenFn[] = [];
 
   /** Open the transport and list the starting directory (SFTP connect button). */
   async function connect() {
@@ -302,22 +303,6 @@
   }
 
   onMount(async () => {
-    if (adapter.uploadPaths) {
-      unlisten.push(
-        await getCurrentWebview().onDragDropEvent((ev) => {
-          // The listener is window-wide, so a panel that is merely hidden behind
-          // another dock tab would otherwise swallow drops meant for nobody and
-          // upload them into a directory the user cannot see.
-          if (!isConnected || !visible) return;
-          if (ev.payload.type === "enter" || ev.payload.type === "over") dragOver = true;
-          else if (ev.payload.type === "leave") dragOver = false;
-          else if (ev.payload.type === "drop") {
-            dragOver = false;
-            uploadPaths(ev.payload.paths);
-          }
-        }),
-      );
-    }
     // Resume where this session's panel was left off; otherwise a kind without a
     // connect step lists immediately on mount.
     const saved = sessionKey ? dockState(sessionKey).files : null;
@@ -326,7 +311,6 @@
   });
 
   onDestroy(() => {
-    unlisten.forEach((u) => u());
     clearTimeout(scrollIdle);
   });
 
@@ -494,8 +478,7 @@
 
   function rowClick(e: MouseEvent, entry: FileEntry) {
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
-    if (suppressNextClick) {
-      suppressNextClick = false;
+    if (consumeFileDragClick()) {
       return;
     }
     cursor = (hasParent ? 1 : 0) + shownEntries.findIndex((x) => x.path === entry.path);
@@ -782,69 +765,72 @@
   }
 
   let listEl = $state<HTMLDivElement>();
-  let dragCandidate: FileEntry | null = null;
-  let dragStartX = 0;
-  let dragStartY = 0;
-  let suppressNextClick = false;
-  let dragEntry = $state<FileEntry | null>(null);
-  let dragX = $state(0);
-  let dragY = $state(0);
-  let dropDir = $state<string | null>(null);
   let moveTarget = $state<{ items: FileEntry[]; destDir: string } | null>(null);
+
+  // ── Dragging rows (v1.13) ───────────────────────────────────────────────────
+  // The panel says what is picked up and marks what can be dropped on; the drag
+  // itself is the store's (`stores/filedrag`). This panel is destroyed whenever
+  // its tab stops being on screen — and files held over another tab put that
+  // tab on screen: a drag kept here would end the moment it reached somewhere.
+
+  /** What this panel answers to in a drag: its session, or itself when it has none. */
+  const panelKey = $derived(sessionKey ?? `panel:${testPrefix}`);
+  /** Rows of this panel are in the air. */
+  const carrying = $derived(
+    fileDrag.files !== null && !fileDrag.guest && fileDrag.files.from === panelKey,
+  );
 
   function startMove(e: PointerEvent, entry: FileEntry) {
     if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
-    dragCandidate = entry;
-    dragStartX = e.clientX;
-    dragStartY = e.clientY;
-    // A press-drag moves the file; it never selects the rows' text.
-    holdSelection();
-  }
-
-  function listPointerMove(e: PointerEvent) {
-    if (!dragCandidate || !listEl) return;
-    if (!dragEntry) {
-      if (!passedThreshold(dragStartX, dragStartY, e.clientX, e.clientY, 5)) return;
+    beginFileDrag(e, () => {
       // Dragging a row that isn't part of the selection makes it the selection.
-      if (!selection.selected.has(dragCandidate.path))
-        selection = { selected: new Set([dragCandidate.path]), anchor: dragCandidate.path };
-      dragEntry = dragCandidate;
-      listEl.setPointerCapture(e.pointerId);
-    }
-    dragX = e.clientX;
-    dragY = e.clientY;
-    dropDir = dropTargetAt(e.clientX, e.clientY);
+      if (!selection.selected.has(entry.path)) {
+        selection = { selected: new Set([entry.path]), anchor: entry.path };
+      }
+      return {
+        from: panelKey,
+        local: !!adapter.local,
+        label: "",
+        entries: selectedEntries().map(({ path, name, isDir }) => ({ path, name, isDir })),
+      };
+    });
   }
 
-  function listPointerUp(e: PointerEvent) {
-    const entry = dragEntry;
-    const dir = dropDir;
-    if (entry) {
-      try {
-        listEl?.releasePointerCapture(e.pointerId);
-      } catch {
-        /* already released */
-      }
-      if (dir !== null) {
-        // All selected rows live in the current dir; keep only structurally-valid moves.
-        const items = entries.filter(
-          (x) => selection.selected.has(x.path) && checkMove(x.path, dir).ok,
-        );
-        if (items.length) moveTarget = { items, destDir: dir };
-      }
-      suppressNextClick = true;
-    }
-    dragCandidate = null;
-    dragEntry = null;
-    dropDir = null;
-  }
+  // Rows of this panel were let go of over one of its own folders: the move it
+  // always did, asked about first. All selected rows live in the current dir;
+  // only the structurally valid moves are kept.
+  $effect(() => {
+    const asked = pendingMoveRequest();
+    if (!asked || asked.session !== panelKey) return;
+    untrack(() => {
+      const request = takeMoveRequest();
+      if (!request) return;
+      const paths = new Set(request.paths);
+      const items = entries.filter(
+        (x) => paths.has(x.path) && checkMove(x.path, request.dir).ok,
+      );
+      if (items.length) moveTarget = { items, destDir: request.dir };
+    });
+  });
 
-  /** Is `dir` the folder under the pointer, and a valid drop for the dragged row? */
+  /** Is `dir` the folder the files in the air would be dropped into? */
   function dropOk(dir: string | null): boolean {
+    const over = fileDrag.over;
     return (
-      dragEntry !== null && dir !== null && dropDir === dir && checkMove(dragEntry.path, dir).ok
+      dir !== null &&
+      fileDrag.files !== null &&
+      over?.kind === "folder" &&
+      over.session === panelKey &&
+      over.dir === dir
     );
   }
+
+  /** The files in the air would land in this panel as a whole — its folder, or just "here". */
+  const panelTargeted = $derived.by(() => {
+    const over = fileDrag.over;
+    if (fileDrag.files === null || !over || over.session !== panelKey) return false;
+    return over.kind === "session" || over.dir === cwd;
+  });
 
   async function doMove() {
     const m = moveTarget;
@@ -880,9 +866,6 @@
     if (adapter.upload) await adapter.upload(cwd);
   }
 
-  async function uploadPaths(paths: string[]) {
-    if (adapter.uploadPaths) await adapter.uploadPaths(cwd, paths);
-  }
 
   // Re-list when an upload batch into the shown folder has ended (dockstate
   // `dirRev`). Only a bump of the SAME folder counts: navigating elsewhere reads
@@ -938,7 +921,8 @@
     ? ''
     : 'border-l border-edge'} {!embedded && animateWidth
     ? 'transition-[width] duration-200 ease-out'
-    : ''} {adapter.uploadPaths && dragOver ? 'ring-2 ring-inset ring-accent' : ''}"
+    : ''} {panelTargeted ? 'ring-2 ring-inset ring-accent' : ''}"
+  data-file-panel={panelKey}
 >
   {#if !embedded && collapsed}
     <div class="flex w-9 flex-col items-center gap-3 py-2">
@@ -1261,9 +1245,6 @@
           bind:this={listEl}
           bind:clientHeight={listViewportH}
           onscroll={onListScroll}
-          onpointermove={listPointerMove}
-          onpointerup={listPointerUp}
-          onpointercancel={listPointerUp}
           onkeydown={onListKeydown}
           onclick={onBackgroundClick}
           oncontextmenu={openBackgroundMenu}
@@ -1273,7 +1254,8 @@
           role="tree"
           tabindex="0"
           data-testid="{testPrefix}-list"
-          class="@container min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {dragEntry
+          data-file-cwd={isConnected && mutable ? cwd : undefined}
+          class="@container min-h-0 flex-1 overflow-y-auto text-sm outline-none [overflow-anchor:none] {carrying
             ? 'cursor-grabbing'
             : ''}"
           style="{columnVars(columns.widths, COLS)}; --list-h: {listViewportH}px"
@@ -1406,7 +1388,7 @@
                             ? 'bg-accent/25'
                             : 'hover:bg-edge'} {cursorPath === entry.path
                           ? 'outline outline-1 -outline-offset-1 outline-accent/70'
-                          : ''} {dragEntry && selection.selected.has(entry.path) ? 'opacity-50' : ''}"
+                          : ''} {carrying && selection.selected.has(entry.path) ? 'opacity-50' : ''}"
                       >
                         <!-- Narrow: name, and a file's size at the right edge.
                              Wide: the same cells stand as table columns, joined
@@ -1512,20 +1494,5 @@
       : t("sftp.moveBodyMulti", { count: moveTarget.items.length, dest: moveTarget.destDir })}
   {/if}
 </ConfirmDialog>
-
-<!-- Drag ghost (pointer-events-none so elementFromPoint still sees the drop row). -->
-{#if dragEntry}
-  <div
-    class="pointer-events-none fixed z-50 flex items-center gap-1 rounded border border-accent bg-panel px-2 py-1 text-xs shadow-lg"
-    style="left: {dragX + 12}px; top: {dragY + 8}px;"
-  >
-    <Icon name={fileIconName(dragEntry)} size={13} class="text-muted" />
-    <span class="font-medium text-text">
-      {selection.selected.size > 1
-        ? t("sftp.dragCount", { count: selection.selected.size })
-        : dragEntry.name}
-    </span>
-  </div>
-{/if}
 
 <ContextMenu menu={ctxMenu} onclose={() => (ctxMenu = null)} />

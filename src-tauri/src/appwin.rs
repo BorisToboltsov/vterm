@@ -144,6 +144,9 @@ struct Registry {
     /// Windows that take tabs — each announced itself once its frontend listens
     /// for an offer — with what the others show of them: (title, tabs).
     roster: HashMap<String, (String, u32)>,
+    /// The sessions each window offers as a place to copy files to, as its
+    /// frontend described them (v1.13). Passed on to the other windows as it is.
+    copy_targets: HashMap<String, serde_json::Value>,
     /// Labels of windows that are gone. A label is never given out twice, so
     /// whatever still arrives under one of these is a closed window's last word.
     gone: HashSet<String>,
@@ -204,6 +207,28 @@ impl Registry {
         if !self.gone.contains(label) {
             self.roster.insert(label.to_string(), (title, tabs));
         }
+    }
+
+    /// `label` offers these sessions to copy files to. Not a window that is
+    /// gone — as with [`Registry::announce`], its last word may come late.
+    fn share_targets(&mut self, label: &str, targets: serde_json::Value) {
+        if !self.gone.contains(label) {
+            self.copy_targets.insert(label.to_string(), targets);
+        }
+    }
+
+    /// What every window offers, in [`window_order`].
+    fn shared_targets(&self) -> Vec<SharedTargets> {
+        let mut list: Vec<SharedTargets> = self
+            .copy_targets
+            .iter()
+            .map(|(label, targets)| SharedTargets {
+                window: label.clone(),
+                targets: targets.clone(),
+            })
+            .collect();
+        list.sort_by(|a, b| window_order(&a.window).cmp(&window_order(&b.window)));
+        list
     }
 
     /// The windows that take tabs, in [`window_order`].
@@ -296,6 +321,7 @@ impl Registry {
         self.armed.remove(label);
         self.summaries.remove(label);
         self.roster.remove(label);
+        self.copy_targets.remove(label);
         self.gone.insert(label.to_string());
         if self.focused.as_deref() == Some(label) {
             self.focused = None;
@@ -518,10 +544,44 @@ pub fn other_windows_summary(window: WebviewWindow, windows: State<Windows>) -> 
 
 // ── Which windows take tabs ─────────────────────────────────────────────────
 
-/// Send every window the list of those that take tabs.
+/// Send every window the list of those that take tabs — and, with it, what
+/// each of them offers as a place to copy files to: a window that is gone
+/// offers nothing any more.
 fn broadcast_roster<R: tauri::Runtime>(app: &AppHandle<R>, windows: &Windows) {
     let roster = windows.lock().roster();
     let _ = app.emit(ROSTER_EVENT, roster);
+    broadcast_targets(app, windows);
+}
+
+/// One window's word on where files can be copied to.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SharedTargets {
+    window: String,
+    targets: serde_json::Value,
+}
+
+const TARGETS_EVENT: &str = "window://targets";
+
+fn broadcast_targets<R: tauri::Runtime>(app: &AppHandle<R>, windows: &Windows) {
+    let shared = windows.lock().shared_targets();
+    let _ = app.emit(TARGETS_EVENT, shared);
+}
+
+/// The sessions this window offers as a place to copy files to (v1.13) — told
+/// to every window, this one included, as `window://targets`. A file is copied
+/// to a session whichever window shows its tab: the transfer is the backend's
+/// (ADR 0025), so the menu of one window can name the sessions of another.
+/// The description is the frontend's and is passed on unread.
+#[tauri::command]
+pub fn announce_copy_targets(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<Windows>,
+    targets: serde_json::Value,
+) {
+    windows.lock().share_targets(window.label(), targets);
+    broadcast_targets(&app, &windows);
 }
 
 /// This window takes tabs, and this is what the others show of it. Called by
@@ -1181,6 +1241,37 @@ mod tests {
             .unwrap_or_else(|| panic!("no fn {name}"));
         let rest = &code[at..];
         &rest[..rest.find("\n}\n").expect("end of fn")]
+    }
+
+    #[test]
+    fn a_window_offers_its_sessions_to_the_others_until_it_is_gone() {
+        let mut reg = Registry::default();
+        let web = serde_json::json!([{ "sessionId": "a", "title": "web-01" }]);
+        let db = serde_json::json!([{ "sessionId": "b", "title": "db-01" }]);
+        reg.share_targets("win-2", db.clone());
+        reg.share_targets(MAIN, web.clone());
+        // The main window first, whatever order they spoke in.
+        assert_eq!(
+            reg.shared_targets(),
+            [
+                SharedTargets {
+                    window: MAIN.into(),
+                    targets: web.clone()
+                },
+                SharedTargets {
+                    window: "win-2".into(),
+                    targets: db
+                },
+            ]
+        );
+        // A window's later word replaces its earlier one.
+        reg.share_targets("win-2", serde_json::json!([]));
+        assert_eq!(reg.shared_targets()[1].targets, serde_json::json!([]));
+        // Gone, it offers nothing — and its last word, arriving late, is not taken.
+        reg.forget_window("win-2");
+        reg.share_targets("win-2", serde_json::json!([{ "sessionId": "b" }]));
+        assert_eq!(reg.shared_targets().len(), 1);
+        assert_eq!(reg.shared_targets()[0].window, MAIN);
     }
 
     #[test]

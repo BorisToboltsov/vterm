@@ -127,7 +127,6 @@
     mirrorsToTerminal: () => true,
     /** Toolbar "Upload": pick files, then upload them into `destDir`. */
     upload: async (destDir) => uploadPaths(destDir, await pickUploadFiles()),
-    uploadPaths,
     download,
     search: (dir, q, caseInsensitive, fixed) => sftpGrep(sessionId, dir, q, caseInsensitive, fixed),
   };

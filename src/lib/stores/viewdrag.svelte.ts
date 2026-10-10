@@ -21,7 +21,14 @@
 // would resize the terminal mid-drag — a `SIGWINCH` per pixel for what runs in
 // it — and re-lay the editors out under the pointer.
 
-import { holdSelection, layoutBox, passedThreshold, slotIndex } from "../actions/drag";
+import {
+  cancelOnEscape,
+  holdSelection,
+  layoutBox,
+  passedThreshold,
+  slotIndex,
+  swallowReleaseClick,
+} from "../actions/drag";
 import {
   canSplit,
   dropChanges,
@@ -148,10 +155,14 @@ function clearDrag(): void {
   viewDrag.area = null;
 }
 
+let stopEscape: (() => void) | null = null;
+
 function stopListening(): void {
   window.removeEventListener("pointermove", onMove);
   window.removeEventListener("pointerup", onUp);
   window.removeEventListener("pointercancel", onCancel);
+  stopEscape?.();
+  stopEscape = null;
   if (candidate && viewDrag.view !== null) {
     try {
       candidate.el.releasePointerCapture(candidate.pointerId);
@@ -224,6 +235,14 @@ export function beginViewDrag(e: PointerEvent, session: string, view: string): v
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onCancel);
+  // `Esc` puts the view back where it was (v1.13).
+  stopEscape = cancelOnEscape(
+    () => viewDrag.view !== null,
+    () => {
+      cancelViewDrag();
+      swallowReleaseClick((on) => (swallowClick = on));
+    },
+  );
 }
 
 /** True once for the click that ends a drag — the view's `onclick` returns early. */
