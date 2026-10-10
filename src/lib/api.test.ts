@@ -348,9 +348,9 @@ describe("remaining invoke wrappers", () => {
       ],
       [api.sftpDelete("s", "/d", true), "sftp_delete", { sessionId: "s", path: "/d", isDir: true }],
       [
-        api.sftpUpload("s", "t", "/l", "/r"),
+        api.sftpUpload("s", "t", "/l", "/r", false),
         "sftp_upload",
-        { sessionId: "s", transferId: "t", localPath: "/l", remotePath: "/r" },
+        { sessionId: "s", transferId: "t", localPath: "/l", remotePath: "/r", replace: false },
       ],
     ];
     for (const [call, name, args] of cases) {

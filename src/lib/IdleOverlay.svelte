@@ -11,7 +11,13 @@
   // forced via the `noSignal` prop regardless of the idle timer.
   import { untrack } from "svelte";
   import { settings, activeTerminalTheme } from "./settings.svelte";
-  import { ACTIVITY_EVENTS, dismissesScreensaver, isIdle, swallowDismiss } from "./idle";
+  import {
+    ACTIVITY_EVENTS,
+    dismissesScreensaver,
+    isIdle,
+    screensaverAllowed,
+    swallowDismiss,
+  } from "./idle";
   import {
     bufferGrid,
     idleSample,
@@ -27,6 +33,7 @@
 
   let {
     sessionId = null,
+    tabs = 0,
     alias = "",
     bufferText = () => "",
     outputTick = 0,
@@ -36,6 +43,8 @@
   }: {
     /** Connected SSH session for live metrics on the card, or null (ambient card). */
     sessionId?: string | null;
+    /** Tabs open in this window: with none, the screensaver never starts. */
+    tabs?: number;
     /** Host/alias shown on the card. */
     alias?: string;
     /** Snapshot the active terminal's visible text (for matrix/parallax/signal). */
@@ -166,11 +175,20 @@
     else if (!noSignal && active && shownEffect === "nosignal") deactivate();
   });
 
+  // The last tab closed under a showing screensaver (a server deleted in another
+  // window closes its tabs here): nothing is left to cover.
+  $effect(() => {
+    if (tabs > 0) return;
+    untrack(() => {
+      if (active && !noSignal) deactivate();
+    });
+  });
+
   // Idle poll: one cheap tick a second decides whether to raise the screensaver.
   $effect(() => {
     const id = setInterval(() => {
       if (active || noSignal) return;
-      if (settings.idleEffect === "off") return;
+      if (!screensaverAllowed(settings.idleEffect, tabs)) return;
       if (isIdle(lastActivity, performance.now(), settings.idleTimeoutSec)) activate();
     }, 1000);
     return () => clearInterval(id);

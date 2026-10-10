@@ -18,6 +18,7 @@
 import type { FileEntry } from "./types";
 import type { GrepMatch } from "./sync";
 import { uniqueCopyName } from "./filemove";
+import { baseName } from "./fspath";
 
 /** One rendered row of the virtualized list: either the ".." nav or a real entry. */
 export interface VisibleItem {
@@ -118,4 +119,77 @@ export function pasteTargetName(
  */
 export function isDestExists(errorMessage: string): boolean {
   return errorMessage.includes("dest-exists");
+}
+
+// ── Upload onto taken names (v1.11.3) ────────────────────────────────────────
+// A file dropped on the window replaced its namesake on the server without a
+// question — and a drop is the gesture most easily made by accident. Now the
+// folder is asked which names it holds, the user is asked once for the whole
+// batch, and the backend refuses any upload onto an existing name that was not
+// told it may replace (`dest-exists`), so a file that appeared in between is
+// refused rather than lost.
+
+/** An upload batch, split by whether the folder already holds that name. */
+export interface UploadCheck {
+  /** Local paths whose name is free in the folder. */
+  fresh: string[];
+  /** Local paths whose name the folder already holds. */
+  clash: string[];
+}
+
+/**
+ * Split `paths` (local) by the names `existing` (the remote folder's listing).
+ * Remote names are POSIX: compared exactly, case and all.
+ */
+export function checkUpload(paths: string[], existing: Iterable<string>): UploadCheck {
+  const taken = new Set(existing);
+  const out: UploadCheck = { fresh: [], clash: [] };
+  for (const p of paths) (taken.has(baseName(p)) ? out.clash : out.fresh).push(p);
+  return out;
+}
+
+/** The user's answer about the taken names. */
+export type ReplaceAnswer = "replace" | "skip" | "cancel";
+
+/** One file of a batch, and whether it may replace what is there. */
+export interface UploadItem {
+  path: string;
+  replace: boolean;
+}
+
+/**
+ * What to upload once the question is answered, in the order the files were
+ * given. `check` null — the folder could not be listed, so nothing is known:
+ * only an explicit "replace" uploads, and then every file may replace. A name
+ * believed free still goes without leave to replace: if it was taken meanwhile,
+ * the backend refuses that one file.
+ */
+export function uploadItems(
+  paths: string[],
+  check: UploadCheck | null,
+  answer: ReplaceAnswer,
+): UploadItem[] {
+  if (answer === "cancel") return [];
+  if (check === null) {
+    return answer === "replace" ? paths.map((path) => ({ path, replace: true })) : [];
+  }
+  const clash = new Set(check.clash);
+  return paths
+    .filter((path) => answer === "replace" || !clash.has(path))
+    .map((path) => ({ path, replace: clash.has(path) }));
+}
+
+/** How many taken names the question lists before "…and N more". */
+export const REPLACE_LIST_LIMIT = 5;
+
+/**
+ * The names to list in the question, and how many are left out. Each name once:
+ * two files of a batch may share one (`a/x.txt` and `b/x.txt`).
+ */
+export function replaceList(
+  clash: string[],
+  limit = REPLACE_LIST_LIMIT,
+): { names: string[]; more: number } {
+  const names = [...new Set(clash.map(baseName))];
+  return { names: names.slice(0, limit), more: Math.max(0, names.length - limit) };
 }

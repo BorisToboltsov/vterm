@@ -2094,6 +2094,7 @@ async fn sftp_upload(
     transfer_id: String,
     local_path: String,
     remote_path: String,
+    replace: bool,
 ) -> AppResult<()> {
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
@@ -2105,6 +2106,7 @@ async fn sftp_upload(
         &sftp,
         &local_path,
         &remote_path,
+        replace,
         Some(&cancel),
     )
     .await;

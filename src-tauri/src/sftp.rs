@@ -538,15 +538,21 @@ async fn copy_recursive(sftp: &SftpSession, from: &str, to: &str) -> AppResult<(
 /// upload therefore never truncates or half-writes the file that was there — the
 /// same shape as the editor's save ([`write_text`]). `cancel` (the transfer's flag
 /// in the shared cancel map) is checked between chunks.
+///
+/// `replace` is the caller's word that a file already at `remote` may go: without
+/// it an upload onto an existing name is refused ([`AppError::DestinationExists`])
+/// before a byte is sent. A file dropped on the window used to replace its
+/// namesake on the server without a question (v1.11.3).
 pub async fn upload(
     win: &WindowSink,
     id: String,
     sftp: &SftpSession,
     local: &str,
     remote: &str,
+    replace: bool,
     cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
-    upload_staged(Some(win), &id, sftp, local, remote, cancel).await
+    upload_staged(Some(win), &id, sftp, local, remote, replace, cancel).await
 }
 
 async fn upload_staged(
@@ -555,6 +561,7 @@ async fn upload_staged(
     sftp: &SftpSession,
     local: &str,
     remote: &str,
+    replace: bool,
     cancel: Option<&AtomicBool>,
 ) -> AppResult<()> {
     let name = base_name(remote);
@@ -563,6 +570,9 @@ async fn upload_staged(
         .map_err(|e| format!("open {local}: {e}"))?;
     let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
     let existing = sftp.metadata(remote).await.ok();
+    if existing.is_some() && !replace {
+        return Err(AppError::DestinationExists);
+    }
     let tmp = temp_sibling(remote);
     let mut dst = sftp
         .create(&tmp)
@@ -628,10 +638,16 @@ pub async fn download_dir(
     local_parent: &str,
     cancel: Arc<AtomicBool>,
 ) -> AppResult<()> {
-    let local_root = Path::new(local_parent)
-        .join(base_name(remote_root))
-        .to_string_lossy()
-        .to_string();
+    // Every local path below is built from a name the server reported — only
+    // through `safe_child`, which refuses one that would leave the folder.
+    let root_name = base_name(remote_root);
+    let local_root = if root_name.is_empty() {
+        Path::new(local_parent).to_path_buf()
+    } else {
+        crate::localfile::safe_child(Path::new(local_parent), &root_name)?
+    }
+    .to_string_lossy()
+    .to_string();
 
     // Phase 1: walk the tree — create local dirs, collect files (skip symlinks).
     let mut files: Vec<(String, String)> = Vec::new();
@@ -660,8 +676,7 @@ pub async fn download_dir(
             if entry.is_symlink {
                 continue;
             }
-            let lpath = Path::new(&ldir)
-                .join(&entry.name)
+            let lpath = crate::localfile::safe_child(Path::new(&ldir), &entry.name)?
                 .to_string_lossy()
                 .to_string();
             if entry.is_dir {
@@ -1504,6 +1519,7 @@ mod live_sftp {
             &sftp,
             local.to_str().unwrap(),
             &path,
+            true,
             Some(&stop),
         )
         .await;
@@ -1532,7 +1548,7 @@ mod live_sftp {
         let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
         std::fs::write(&local, b"new content\n").unwrap();
 
-        upload_staged(None, "t", &sftp, local.to_str().unwrap(), &path, None)
+        upload_staged(None, "t", &sftp, local.to_str().unwrap(), &path, true, None)
             .await
             .expect("upload");
 
@@ -1545,6 +1561,53 @@ mod live_sftp {
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
         let _ = sftp.remove_file(path).await;
+        let _ = std::fs::remove_file(local);
+    }
+
+    /// An upload that was not told it may replace: a file dropped on the window
+    /// used to overwrite its namesake on the server without a question. Refused
+    /// before a byte is sent — the file there is untouched and no temp is left —
+    /// while a new name goes through as before.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn upload_onto_an_existing_file_is_refused_unless_told_to_replace() {
+        let sftp = connect().await;
+        let path = path_for("upload-exists");
+        seed(&sftp, &path, b"theirs\n").await;
+        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        std::fs::write(&local, b"mine\n").unwrap();
+
+        let res = upload_staged(
+            None,
+            "t",
+            &sftp,
+            local.to_str().unwrap(),
+            &path,
+            false,
+            None,
+        )
+        .await;
+        assert!(matches!(res, Err(AppError::DestinationExists)), "{res:?}");
+        assert_eq!(sftp.read(path.clone()).await.expect("read"), b"theirs\n");
+        assert!(leftover_temps(&sftp, &path).await.is_empty());
+
+        let fresh = path_for("upload-fresh");
+        let _ = sftp.remove_file(fresh.clone()).await;
+        upload_staged(
+            None,
+            "t",
+            &sftp,
+            local.to_str().unwrap(),
+            &fresh,
+            false,
+            None,
+        )
+        .await
+        .expect("a new name needs no leave");
+        assert_eq!(sftp.read(fresh.clone()).await.expect("read"), b"mine\n");
+
+        let _ = sftp.remove_file(path).await;
+        let _ = sftp.remove_file(fresh).await;
         let _ = std::fs::remove_file(local);
     }
 

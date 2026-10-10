@@ -138,7 +138,8 @@ shields.io, ничем не резолвится). `tauri.conf.json` ничег�
 (`lint → security → test → build → release`). Локально доступна сборка только под текущую ОС.
 Подробности — [docs/INSTALL.md](docs/INSTALL.md).
 
-**Тег не собирает релиз из красного дерева:** `release.yml` первой джобой вызывает
+**Тег не собирает релиз из красного дерева:** `release.yml` первой джобой сверяет тег с
+версией из `package.json` (чужой тег не собирает ничего), затем вызывает
 [ci.yml](.github/workflows/ci.yml) целиком, матрица стоит под `needs`. Раскладка всех
 workflow — [docs/TESTS.md](docs/TESTS.md#ci-на-github); свойства цепочки поставки —
 [SECURITY.md](SECURITY.md). Правя workflow, помни: экшены пинятся **по коммит-SHA** с

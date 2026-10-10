@@ -355,6 +355,15 @@ release:
     - build:windows
     - build:linux
   script:
+    # Тег обязан называть версию из package.json — как джоба `tag` в release.yml
+    # на GitHub: имя релиза идёт из тега, имена файлов — из package.json. В образе
+    # release-cli нет ни jq, ни node, поэтому версию достаёт sed.
+    - |
+      version="$(sed -n 's/^  "version": "\([^"]*\)",$/\1/p' package.json)"
+      if [ "$CI_COMMIT_TAG" != "v$version" ]; then
+        echo "Тег $CI_COMMIT_TAG не совпадает с версией из package.json (v$version)."
+        exit 1
+      fi
     - echo "Публикуем релиз $CI_COMMIT_TAG (артефакты доступны в пайплайне)"
   release:
     tag_name: $CI_COMMIT_TAG

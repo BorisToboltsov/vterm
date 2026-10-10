@@ -41,6 +41,17 @@ export function isIdle(lastActivityMs: number, nowMs: number, timeoutSec: number
   return nowMs - lastActivityMs >= timeoutSec * 1000;
 }
 
+/**
+ * Whether the screensaver may start at all (v1.11.3): it is not switched off,
+ * and the window has a tab. With no tab open there is nothing to cover — the
+ * card had no host to show, and it sat over the empty window swallowing the
+ * first click meant for it. A tab that is waiting or has lost its session still
+ * counts: its terminal is on screen.
+ */
+export function screensaverAllowed(setting: IdleSetting, tabs: number): boolean {
+  return setting !== "off" && tabs > 0;
+}
+
 /** Milliseconds until idle should fire (never negative) — schedules one timer. */
 export function msUntilIdle(lastActivityMs: number, nowMs: number, timeoutSec: number): number {
   return Math.max(0, lastActivityMs + timeoutSec * 1000 - nowMs);

@@ -437,6 +437,64 @@ pub(crate) fn local_temp(path: &str) -> PathBuf {
     }
 }
 
+/// Whether a name a server reported is a single path component that may be
+/// created inside a local folder (v1.11.3).
+///
+/// A listing is the server's word, and a server may be hostile or compromised:
+/// an entry called `../../.ssh/authorized_keys`, or an absolute path, joined
+/// onto the folder the user picked, lands outside it (`Path::join` with an
+/// absolute path even throws the folder away). An honest server never sends
+/// such a name — a component cannot hold `/` — so nothing real is lost.
+pub(crate) fn safe_component(name: &str) -> bool {
+    safe_component_on(name, cfg!(windows))
+}
+
+/// [`safe_component`] with the platform spelled out, so the Windows half is
+/// tested on every machine.
+fn safe_component_on(name: &str, windows: bool) -> bool {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\0']) {
+        return false;
+    }
+    // On Windows `\` separates as well, `:` names a drive or a file's alternate
+    // stream, and Win32 drops a trailing space or dot before it opens the path —
+    // so `.. ` is `..` by then. All of these are legal in a POSIX file name; here
+    // such a file cannot be created under that name at all.
+    !(windows && (name.contains(['\\', ':']) || name.ends_with([' ', '.'])))
+}
+
+/// Whether a `/`-separated relative path — a line of a server's file listing,
+/// or a path of a sync plan that came back through the WebView — stays inside
+/// the folder it is joined onto: every segment a [`safe_component`].
+pub(crate) fn safe_rel(rel: &str) -> bool {
+    !rel.is_empty() && rel.split('/').all(safe_component)
+}
+
+fn unsafe_name(name: &str) -> AppError {
+    AppError::Message(format!(
+        "a file name from the server cannot be used on this computer: {name:?}"
+    ))
+}
+
+/// `dir`/`name`, for a `name` a server reported. Refused unless the name is a
+/// single safe component — the only way a local path is built from one.
+pub(crate) fn safe_child(dir: &Path, name: &str) -> AppResult<PathBuf> {
+    if !safe_component(name) {
+        return Err(unsafe_name(name));
+    }
+    Ok(dir.join(name))
+}
+
+/// `root` plus a `/`-separated relative path, in the OS's separators. Refused
+/// unless the path stays inside `root` ([`safe_rel`]).
+pub(crate) fn safe_join(root: &str, rel: &str) -> AppResult<PathBuf> {
+    if !safe_rel(rel) {
+        return Err(unsafe_name(rel));
+    }
+    let mut path = PathBuf::from(root);
+    path.extend(rel.split('/'));
+    Ok(path)
+}
+
 /// Read a local file as text for the editor (same guards as SFTP). The encoding
 /// is detected rather than assumed — on Windows, `.ini` and friends are commonly
 /// UTF-16 or a legacy codepage (textenc.rs) — and reported so a save re-encodes
@@ -793,6 +851,71 @@ mod tests {
             dos_attr_string(0x0000_4000 | FILE_ATTRIBUTE_ARCHIVE),
             "-a---"
         );
+    }
+
+    #[test]
+    fn a_name_from_a_server_must_be_one_component() {
+        for ok in ["a.txt", ".bashrc", "with space", "...", "файл", "a..b", "~"] {
+            assert!(safe_component_on(ok, false), "{ok:?}");
+        }
+        // Up, out, nowhere, and through a separator.
+        for bad in ["", ".", "..", "a/b", "../x", "/etc/passwd", "a\0b"] {
+            assert!(!safe_component_on(bad, false), "{bad:?}");
+            assert!(!safe_component_on(bad, true), "{bad:?}");
+        }
+        // Legal in a POSIX name, and that is where it stays legal.
+        for posix_only in [
+            "a\\b",
+            "..\\x",
+            "C:",
+            "notes: draft",
+            "f:stream",
+            ".. ",
+            "x.",
+            "x ",
+        ] {
+            assert!(safe_component_on(posix_only, false), "{posix_only:?}");
+            assert!(!safe_component_on(posix_only, true), "{posix_only:?}");
+        }
+        assert!(safe_component_on("ok.txt", true));
+    }
+
+    #[test]
+    fn a_relative_path_from_a_server_stays_inside_its_root() {
+        assert!(safe_rel("a.txt"));
+        assert!(safe_rel("sub/dir/a.txt"));
+        for bad in [
+            "",
+            "/etc/passwd",
+            "../a",
+            "a/../../b",
+            "a//b",
+            "a/./b",
+            "a/",
+            "..",
+        ] {
+            assert!(!safe_rel(bad), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn local_paths_are_built_only_from_safe_names() {
+        let dir = Path::new("/home/me/dl");
+        assert_eq!(
+            safe_child(dir, "a.txt").unwrap(),
+            Path::new("/home/me/dl/a.txt")
+        );
+        // An absolute name would replace the folder outright under `Path::join`.
+        for bad in ["/etc/cron.d/x", "../../.ssh/authorized_keys", "..", ""] {
+            let err = safe_child(dir, bad).unwrap_err().to_string();
+            assert!(err.contains("cannot be used on this computer"), "{err}");
+        }
+        assert_eq!(
+            safe_join("/home/me/site", "css/app.css").unwrap(),
+            Path::new("/home/me/site").join("css").join("app.css")
+        );
+        assert!(safe_join("/home/me/site", "../../.zshrc").is_err());
+        assert!(safe_join("/home/me/site", "/etc/passwd").is_err());
     }
 
     #[test]
