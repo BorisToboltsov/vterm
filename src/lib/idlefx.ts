@@ -127,3 +127,63 @@ export function seriesRuns(
   if (run.length) runs.push(run);
   return runs;
 }
+
+// ── Away card layout ─────────────────────────────────────────────────────────
+// The card is drawn over the terminal area, and that area is whatever the docks
+// leave: a raised bottom dock makes it a low strip, two wide side docks a narrow
+// column. A card laid out by fixed offsets cannot shrink — its numbers left the
+// card and its chart landed on its header — so the layout is picked from the
+// room there is (v1.14.1).
+
+/**
+ * How the card lays itself out:
+ * - `full`  — the card: header, three large numbers, the chart under them;
+ * - `wide`  — low and wide: one header line carrying the numbers, the chart on
+ *   everything below it;
+ * - `row`   — too low for a chart: that header line alone;
+ * - `stack` — narrow and tall: a column of three rows, each with its own line;
+ * - `mini`  — no room for a chart: the host and the three numbers;
+ * - `line`  — only the host fits.
+ */
+export type CardTier = "full" | "wide" | "row" | "stack" | "mini" | "line";
+
+/** The room each layout needs, px. */
+export const CARD_ROOM = {
+  /** Below this width the numbers no longer stand in one row with the host. */
+  wideW: 480,
+  /** The card's own header, numbers and a chart worth looking at. */
+  fullH: 280,
+  /** A header line and a chart at least as tall as that line. */
+  wideH: 110,
+  /** The column: a header and three rows, each a label over a number. */
+  stackW: 220,
+  stackH: 270,
+  /** The host over three numbers. */
+  miniW: 200,
+  miniH: 90,
+} as const;
+
+/**
+ * The layout a `w × h` px area has room for. An area not measured yet, or junk,
+ * gets the smallest one: it draws nothing it could not fit.
+ */
+export function cardTier(w: number, h: number): CardTier {
+  if (!(w > 0) || !(h > 0)) return "line";
+  const R = CARD_ROOM;
+  if (w >= R.wideW) return h >= R.fullH ? "full" : h >= R.wideH ? "wide" : "row";
+  if (w >= R.stackW && h >= R.stackH) return "stack";
+  if (w >= R.miniW && h >= R.miniH) return "mini";
+  return "line";
+}
+
+/**
+ * `text` cut to `max` characters, the cut marked with an ellipsis. The card is
+ * set in a monospace face, so a width in px is a count of characters.
+ */
+export function clipText(text: string, max: number): string {
+  const n = Math.floor(max);
+  if (!(n > 0)) return "";
+  const chars = [...text];
+  if (chars.length <= n) return text;
+  return n === 1 ? "…" : `${chars.slice(0, n - 1).join("")}…`;
+}
