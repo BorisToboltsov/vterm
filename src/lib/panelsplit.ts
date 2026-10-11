@@ -10,6 +10,9 @@ export const PANEL_SPLITS = {
   git: 0.4,
   // The history beside the commit opened from it: the list keeps a little more.
   gitCommit: 0.55,
+  // The file listing beside the search results and the transfers: the listing
+  // is the table, so it keeps the larger part.
+  files: 0.62,
   // The list beside what was opened from it: halves.
   docker: 0.5,
   k8s: 0.5,

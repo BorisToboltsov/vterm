@@ -8,6 +8,7 @@
   // dialog before anything is sent.
   import { tick } from "svelte";
   import { tooltip } from "./actions/tooltip";
+  import { wideWhen } from "./actions/panelwide";
   import { settings } from "./settings.svelte";
   import {
     aiReady,
@@ -120,6 +121,8 @@
 
   let input = $state("");
   let attach = $state(false);
+  // The wide layout (v1.17) — see the markup.
+  let wide = $state(false);
   let showTiers = $state(false); // context-tier popover open
   let scrollEl = $state<HTMLElement>();
   let inputEl = $state<HTMLTextAreaElement>();
@@ -343,53 +346,113 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col" data-testid="ai-chat">
-  <div class="flex items-center gap-2 border-b border-edge px-2 py-1">
-    {#if ready && endpoint}
-      {#if switchableEndpoints.length > 1}
-        <!-- Endpoint switcher (Phase 40): swapping models mid-question used to
-             mean a round trip through settings. -->
-        <select
-          data-testid="ai-endpoint-switch"
-          class="min-w-0 shrink rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
-          use:tooltip={t("ai.endpoint")}
-          value={endpoint.id}
-          onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
-        >
-          {#each switchableEndpoints as ep (ep.id)}
-            <option value={ep.id}>{ep.name}</option>
-          {/each}
-        </select>
-      {/if}
+<!-- The endpoint and the model: one row over the chat in a narrow panel, stacked
+     in the column beside it in a wide one (`stacked`). -->
+{#snippet endpointControls(stacked: boolean)}
+  {#if ready && endpoint}
+    {#if switchableEndpoints.length > 1}
+      <!-- Endpoint switcher (Phase 40): swapping models mid-question used to
+           mean a round trip through settings. -->
       <select
-        data-testid="ai-model"
-        class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
-        use:tooltip={t("ai.model")}
-        value={endpoint.model}
-        onchange={(e) => setModel(e.currentTarget.value)}
+        data-testid="ai-endpoint-switch"
+        class="min-w-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent {stacked
+          ? 'w-full'
+          : 'shrink'}"
+        use:tooltip={t("ai.endpoint")}
+        value={endpoint.id}
+        onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
       >
-        {#each modelOptions as m (m)}
-          <option value={m}>{m}</option>
+        {#each switchableEndpoints as ep (ep.id)}
+          <option value={ep.id}>{ep.name}</option>
         {/each}
       </select>
-      <button
-        class="shrink-0 rounded p-1 text-muted hover:text-text disabled:opacity-50"
-        use:tooltip={t("ai.modelRefresh")}
-        aria-label={t("ai.modelRefresh")}
-        disabled={loadingModels}
-        onclick={refreshModels}
-      >
-        <Icon name="refresh" size={13} class={loadingModels ? "animate-spin" : ""} />
-      </button>
-    {:else}
-      <span class="flex-1"></span>
     {/if}
-    <button
-      class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
-      onclick={clearChat}
-      disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
+    <select
+      data-testid="ai-model"
+      class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
+      use:tooltip={t("ai.model")}
+      value={endpoint.model}
+      onchange={(e) => setModel(e.currentTarget.value)}
     >
-  </div>
+      {#each modelOptions as m (m)}
+        <option value={m}>{m}</option>
+      {/each}
+    </select>
+    <button
+      class="shrink-0 rounded p-1 text-muted hover:text-text disabled:opacity-50"
+      use:tooltip={t("ai.modelRefresh")}
+      aria-label={t("ai.modelRefresh")}
+      disabled={loadingModels}
+      onclick={refreshModels}
+    >
+      <Icon name="refresh" size={13} class={loadingModels ? "animate-spin" : ""} />
+    </button>
+  {:else if !stacked}
+    <span class="flex-1"></span>
+  {/if}
+{/snippet}
+
+{#snippet clearButton()}
+  <button
+    class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
+    data-testid="ai-clear"
+    onclick={clearChat}
+    disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
+  >
+{/snippet}
+
+<!-- What may go with a question, as three switches: in a menu behind the
+     paperclip in a narrow panel, an open list in the column of a wide one. -->
+{#snippet tierBoxes()}
+  <label class="mb-1 flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeBuffer} />
+    {t("settings.aiIncludeBuffer")}
+  </label>
+  <label class="mb-1 flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeRecording} />
+    {t("settings.aiIncludeRecording")}
+  </label>
+  <label class="flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeMetadata} />
+    {t("settings.aiIncludeMetadata")}
+  </label>
+{/snippet}
+
+{#snippet attachToggle(stacked: boolean)}
+  <button
+    data-testid="ai-attach"
+    type="button"
+    class="flex items-center gap-1 px-1.5 py-1 text-meta disabled:opacity-40 {stacked
+      ? 'w-full rounded'
+      : 'rounded-l'} {attach ? 'bg-edge text-accent' : 'text-muted hover:text-text'}"
+    disabled={!canAttach}
+    aria-pressed={attach}
+    use:tooltip={t("ai.context.toggleHint")}
+    onclick={() => (attach = !attach)}
+  >
+    <Icon name="paperclip" size={13} />
+    {t("ai.context.attach")}{#if attach && tierCount > 0}&nbsp;· {tierCount}{/if}
+  </button>
+{/snippet}
+
+<!-- A wide panel (v1.17): the chat keeps the whole height, with the question
+     under it, and what a narrow panel puts over the chat and behind the
+     paperclip — the endpoint, the model, what goes with the question — stands
+     in a column beside. The panel measures itself: it owns a dialog (consent)
+     and a menu, so it cannot be a query container (`panelcontainer.guard`). -->
+<div
+  class="flex h-full min-h-0 {wide ? '' : 'flex-col'}"
+  use:wideWhen={(w) => (wide = w)}
+  data-wide={wide}
+  data-testid="ai-chat"
+>
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="ai-main">
+  {#if !wide}
+    <div class="flex items-center gap-2 border-b border-edge px-2 py-1" data-testid="ai-header">
+      {@render endpointControls(false)}
+      {@render clearButton()}
+    </div>
+  {/if}
 
   {#if noAi && ready}
     <div
@@ -598,65 +661,45 @@
       onkeydown={onKey}
     ></textarea>
     <div class="mt-1 flex items-center justify-between gap-2">
-      <div class="relative flex items-center">
-        <button
-          data-testid="ai-attach"
-          type="button"
-          class="flex items-center gap-1 rounded-l px-1.5 py-1 text-meta disabled:opacity-40 {attach
-            ? 'bg-edge text-accent'
-            : 'text-muted hover:text-text'}"
-          disabled={!canAttach}
-          aria-pressed={attach}
-          use:tooltip={t("ai.context.toggleHint")}
-          onclick={() => (attach = !attach)}
-        >
-          <Icon name="paperclip" size={13} />
-          {t("ai.context.attach")}{#if attach && tierCount > 0}&nbsp;· {tierCount}{/if}
-        </button>
-        <button
-          data-testid="ai-tiers"
-          type="button"
-          class="rounded-r px-1 py-1 text-meta text-muted hover:text-text disabled:opacity-40"
-          disabled={!canAttach}
-          aria-label={t("ai.context.tiers")}
-          use:tooltip={t("ai.context.tiers")}
-          onclick={() => (showTiers = !showTiers)}
-        >
-          <Icon name={showTiers ? "chevronDown" : "chevronUp"} size={12} />
-        </button>
-        {#if showTiers}
+      {#if !wide}
+        <div class="relative flex items-center">
+          {@render attachToggle(false)}
           <button
-            class="fixed inset-0 z-40 cursor-default"
-            aria-hidden="true"
-            tabindex="-1"
-            onclick={() => (showTiers = false)}
-          ></button>
-          <div
-            class="absolute bottom-full left-0 z-50 mb-1 w-60 rounded border border-edge bg-panel-alt p-2 text-meta shadow-lg"
-            data-testid="ai-tiers-menu"
+            data-testid="ai-tiers"
+            type="button"
+            class="rounded-r px-1 py-1 text-meta text-muted hover:text-text disabled:opacity-40"
+            disabled={!canAttach}
+            aria-label={t("ai.context.tiers")}
+            use:tooltip={t("ai.context.tiers")}
+            onclick={() => (showTiers = !showTiers)}
           >
-            <p class="mb-1.5 text-caption text-muted">{t("ai.context.base")}</p>
-            <label class="mb-1 flex items-center gap-2 text-muted">
-              <input type="checkbox" bind:checked={chat.context.includeBuffer} />
-              {t("settings.aiIncludeBuffer")}
-            </label>
-            <label class="mb-1 flex items-center gap-2 text-muted">
-              <input type="checkbox" bind:checked={chat.context.includeRecording} />
-              {t("settings.aiIncludeRecording")}
-            </label>
-            <label class="flex items-center gap-2 text-muted">
-              <input type="checkbox" bind:checked={chat.context.includeMetadata} />
-              {t("settings.aiIncludeMetadata")}
-            </label>
-          </div>
+            <Icon name={showTiers ? "chevronDown" : "chevronUp"} size={12} />
+          </button>
+          {#if showTiers}
+            <button
+              class="fixed inset-0 z-40 cursor-default"
+              aria-hidden="true"
+              tabindex="-1"
+              onclick={() => (showTiers = false)}
+            ></button>
+            <div
+              class="absolute bottom-full left-0 z-50 mb-1 w-60 rounded border border-edge bg-panel-alt p-2 text-meta shadow-lg"
+              data-testid="ai-tiers-menu"
+            >
+              <p class="mb-1.5 text-caption text-muted">{t("ai.context.base")}</p>
+              {@render tierBoxes()}
+            </div>
+          {/if}
+        </div>
+        {#if summary}
+          <span
+            class="min-w-0 flex-1 truncate text-caption text-muted"
+            data-testid="ai-context-summary"
+            use:tooltip={summary}>{summary}</span
+          >
         {/if}
-      </div>
-      {#if summary}
-        <span
-          class="min-w-0 flex-1 truncate text-caption text-muted"
-          data-testid="ai-context-summary"
-          use:tooltip={summary}>{summary}</span
-        >
+      {:else}
+        <span class="flex-1"></span>
       {/if}
       {#if streaming || (chat.dialogRunning && !pending)}
         <button
@@ -682,6 +725,34 @@
       {/if}
     </div>
   </div>
+  </div>
+  {#if wide}
+    <aside
+      class="flex w-64 shrink-0 flex-col gap-2 overflow-y-auto border-l border-edge p-2"
+      data-testid="ai-side"
+    >
+      {#if ready && endpoint}
+        <div class="flex flex-wrap items-center gap-1.5" data-testid="ai-side-endpoint">
+          {@render endpointControls(true)}
+        </div>
+      {/if}
+      <!-- What goes with the question — open, not behind a menu: what the model
+           is about to be sent is read before the question is. -->
+      <div class="text-meta" data-testid="ai-side-context">
+        <p class="mb-1.5 text-caption text-muted">{t("ai.context.sideTitle")}</p>
+        {@render attachToggle(true)}
+        <div class="mt-1.5 {attach && canAttach ? '' : 'opacity-50'}" data-testid="ai-tiers-open">
+          {@render tierBoxes()}
+        </div>
+        {#if summary}
+          <p class="mt-1.5 break-words text-caption text-muted" data-testid="ai-context-summary">{summary}</p>
+        {/if}
+      </div>
+      <div class="mt-auto flex justify-end">
+        {@render clearButton()}
+      </div>
+    </aside>
+  {/if}
 </div>
 
 {#if consent && endpoint}

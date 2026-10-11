@@ -26,6 +26,7 @@
     type DockerContainer,
     type DockerStat,
     type DockerInfoKey,
+    type DockerDetailTab,
   } from "./docker";
   import type { ContainerOutput } from "./api";
   import { t, currentLocale, type MessageKey } from "./i18n";
@@ -38,6 +39,7 @@
     refreshSec = 3,
     fill = false,
     closeOnAsk = false,
+    tab = $bindable("overview"),
     run,
     runQuery,
     onShell,
@@ -55,6 +57,14 @@
     fill?: boolean;
     /** Asking the assistant closes this — set by a dialog, which covers the chat. */
     closeOnAsk?: boolean;
+    /**
+     * The view on screen: Overview, Logs or Inspect. Bound by the panel (v1.17):
+     * the same details are shown by a dialog in a narrow dock and by the pane
+     * beside the list in a wide one — two instances — and a panel that crosses
+     * the width threshold must not throw the user from Logs back to Overview.
+     * Left unbound, the component keeps it itself.
+     */
+    tab?: DockerDetailTab;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     runQuery: (args: string[], timeout?: number) => Promise<ContainerOutput>;
     onShell: (c: DockerContainer) => void;
@@ -81,8 +91,7 @@
     return logsText.trim() ? `${facts}\n\n--- docker logs ---\n${logsText}` : facts;
   }
 
-  type Tab = "overview" | "logs" | "inspect";
-  let tab = $state<Tab>("overview");
+  type Tab = DockerDetailTab;
 
   let logsText = $state("");
   let inspectText = $state("");
@@ -115,13 +124,16 @@
   let shownId: string | null = null;
   let activeId = $state<string | null>(null);
 
-  // Reset to Overview whenever a different container opens (or the modal closes).
+  // Forget what was fetched whenever a different container opens (or this closes),
+  // and go back to Overview when the container changes under an open view. Not for
+  // the first container after a mount: the content may have just moved here from
+  // the other wrapper, and the view it showed there comes with it (`tab`).
   $effect(() => {
     const id = active ? (container?.id ?? null) : null;
     if (id === shownId) return;
+    if (shownId !== null && id !== null) tab = "overview";
     shownId = id;
     activeId = id;
-    tab = "overview";
     logsText = "";
     inspectText = "";
   });

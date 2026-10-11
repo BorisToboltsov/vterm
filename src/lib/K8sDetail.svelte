@@ -19,6 +19,7 @@
     podPhaseTone,
     type K8sPod,
     type K8sPodMetrics,
+    type K8sDetailTab,
   } from "./k8s";
   import type { KubeOutput } from "./api";
   import { t, type MessageKey } from "./i18n";
@@ -31,6 +32,8 @@
     refreshSec = 5,
     fill = false,
     closeOnAsk = false,
+    tab = $bindable("overview"),
+    container = $bindable(null),
     run,
     runQuery,
     openShell,
@@ -48,6 +51,15 @@
     fill?: boolean;
     /** Asking the assistant closes this — set by a dialog, which covers the chat. */
     closeOnAsk?: boolean;
+    /**
+     * The view on screen, and — in a pod of several containers — the one whose
+     * logs are shown. Bound by the panel (v1.17): a dialog in a narrow dock and
+     * the pane beside the list in a wide one are two instances, and crossing the
+     * width threshold must not throw the user from the logs of the second
+     * container back to Overview. Left unbound, the component keeps them itself.
+     */
+    tab?: K8sDetailTab;
+    container?: string | null;
     run: (
       bareArgs: string[],
       namespace: string,
@@ -79,9 +91,7 @@
     return logsText.trim() ? `${facts}\n\n--- kubectl logs ---\n${logsText}` : facts;
   }
 
-  type Tab = "overview" | "logs" | "describe" | "yaml";
-  let tab = $state<Tab>("overview");
-  let container = $state<string | null>(null);
+  type Tab = K8sDetailTab;
 
   let logsText = $state("");
   let describeText = $state("");
@@ -103,19 +113,26 @@
   let shownKey: string | null = null;
   let target = $state<{ name: string; namespace: string } | null>(null);
 
-  // Reset to Overview and pick a sensible default container whenever a different
-  // pod opens (multi-container pods need `-c` for logs/exec — default to the first).
+  // Forget what was fetched whenever a different pod opens (or this closes). When
+  // the pod changes under an open view: back to Overview, and a default container
+  // (multi-container pods need `-c` for logs/exec — the first). For the first pod
+  // after a mount the view and the container are kept as handed in: the content
+  // may have just moved here from the other wrapper (`tab`, `container`) — only a
+  // container the pod does not have is replaced.
   $effect(() => {
     const p = active ? pod : null;
     const key = p ? `${p.namespace}/${p.name}` : null;
     if (key === shownKey) return;
+    const switched = shownKey !== null && key !== null;
     shownKey = key;
     target = p ? { name: p.name, namespace: p.namespace } : null;
-    tab = "overview";
+    if (switched) tab = "overview";
     logsText = "";
     describeText = "";
     yamlText = "";
-    container = p && p.containers.length > 1 ? p.containers[0] : null;
+    if (!p) return;
+    const first = p.containers.length > 1 ? p.containers[0] : null;
+    if (switched || container === null || !p.containers.includes(container)) container = first;
   });
 
   async function fetchLogs(name: string, ns: string, c: string | null) {

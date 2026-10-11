@@ -2016,15 +2016,19 @@ async fn sftp_grep(
     query: String,
     case_insensitive: bool,
     fixed: bool,
-) -> AppResult<Vec<sync::GrepMatch>> {
+) -> AppResult<sync::GrepOutcome> {
     if query.trim().is_empty() {
-        return Ok(vec![]);
+        return Ok(sync::GrepOutcome {
+            matches: vec![],
+            truncated: false,
+            failed: false,
+        });
     }
     let session = session_arc(&state, &session_id).await?;
     let out = session
         .run_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
         .await?;
-    Ok(sync::parse_grep(&out))
+    Ok(sync::parse_grep_outcome(&out))
 }
 
 #[tauri::command]

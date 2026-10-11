@@ -64,6 +64,7 @@
     type DockerVolume,
     type DockerStat,
     type DockerContainer,
+    type DockerDetailTab,
     type DockerRegistry,
   } from "./docker";
   import { parsePercent, pushSamples, type LoadHistory } from "./loadhistory";
@@ -150,7 +151,13 @@
     menu = { x: e.clientX, y: e.clientY, items };
   }
 
+  // The view of the open details — the panel's, not the details' own: a dialog
+  // (narrow) and the pane beside the list (wide) are two instances, and going
+  // across the width threshold must show what was on screen, not Overview again.
+  let detailTab = $state<DockerDetailTab>("overview");
   function openDetails(c: DockerContainer) {
+    // Opened anew, or for another container: from the top.
+    if (!detailOpen || detailContainer?.id !== c.id) detailTab = "overview";
     detailContainer = c;
     detailOpen = true;
   }
@@ -599,6 +606,7 @@
             <DockerDetail
               active
               fill
+              bind:tab={detailTab}
               container={liveDetail}
               stat={detailStat}
               {busy}
@@ -623,6 +631,7 @@
 
 <DockerDetailModal
   open={detailOpen && !wide}
+  bind:tab={detailTab}
   container={liveDetail}
   stat={detailStat}
   {busy}

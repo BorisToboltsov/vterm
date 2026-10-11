@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // A cluster that answers: a kubeconfig with a current context, two namespaces.
@@ -348,5 +348,37 @@ describe("K8sPanel — where a pod's details open", () => {
     resize(400);
     await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
     expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+  });
+
+  it("…and keep the view they were on: Describe stays Describe, not Overview again (v1.17)", async () => {
+    await mountWithPod("k-keep");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    const side = screen.getByTestId("k8s-side");
+    await fireEvent.click(within(side).getByTestId("k8s-detail-tab-describe"));
+    expect(within(side).queryByTestId("k8s-detail-overview")).toBeNull();
+
+    // Wide → narrow: the pane gives way to the dialog, on the same view.
+    resize(400);
+    await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByTestId("k8s-detail-overview")).toBeNull();
+    expect(within(dialog).getByTestId("k8s-detail-tab-describe").className).toContain("text-accent");
+
+    // Narrow → wide again.
+    resize(1200);
+    const again = await screen.findByTestId("k8s-side");
+    expect(within(again).queryByTestId("k8s-detail-overview")).toBeNull();
+  });
+
+  it("details opened anew start from Overview", async () => {
+    await mountWithPod("k-anew");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await fireEvent.click(screen.getByTestId("k8s-detail-tab-yaml"));
+    expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
+    await fireEvent.click(screen.getByTestId("side-pane-close"));
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("k8s-detail-overview")).toBeInTheDocument();
   });
 });

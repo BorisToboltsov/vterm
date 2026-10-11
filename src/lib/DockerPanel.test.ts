@@ -175,4 +175,37 @@ describe("DockerPanel — where a container's details open", () => {
     await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
     expect(screen.queryByTestId("docker-side")).toBeNull();
   });
+
+  it("…and keep the view they were on: Logs stays Logs, not Overview again (v1.17)", async () => {
+    await mount("d-keep");
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await fireEvent.click(screen.getByTestId("docker-detail-tab-logs"));
+    await waitFor(() => expect(screen.getByRole("dialog")).toHaveTextContent("GET /healthz 200"));
+    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+
+    // Narrow → wide: the dialog gives way to the pane, on the same view.
+    resize(1200);
+    const side = await screen.findByTestId("docker-side");
+    expect(within(side).queryByTestId("docker-detail-overview")).toBeNull();
+    await waitFor(() => expect(side).toHaveTextContent("GET /healthz 200"));
+    expect(within(side).getByTestId("docker-detail-tab-logs").className).toContain("text-accent");
+
+    // Wide → narrow: back in the dialog, still the logs.
+    await fireEvent.click(within(side).getByTestId("docker-detail-tab-inspect"));
+    resize(400);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByTestId("docker-detail-overview")).toBeNull();
+    await waitFor(() => expect(dialog).toHaveTextContent('"Id":"abc123456789"'));
+  });
+
+  it("details opened anew start from Overview", async () => {
+    await mount("d-anew");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await fireEvent.click(screen.getByTestId("docker-detail-tab-logs"));
+    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+    await fireEvent.click(screen.getByTestId("side-pane-close"));
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
+  });
 });

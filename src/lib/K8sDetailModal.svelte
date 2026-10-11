@@ -11,9 +11,12 @@
   type Props = Omit<ComponentProps<typeof K8sDetail>, "active" | "fill" | "closeOnAsk"> & {
     open?: boolean;
   };
-  let { open = false, ...rest }: Props = $props();
+  // The view and the chosen container are passed on as bindings, not spread with
+  // the rest: the panel owns them, so that they are the same in this dialog and
+  // in the pane beside the list.
+  let { open = false, tab = $bindable("overview"), container = $bindable(null), ...rest }: Props = $props();
 </script>
 
 <Modal {open} title={rest.pod?.name ?? ""} width="w-[52rem]" showClose onclose={rest.onclose}>
-  <K8sDetail {...rest} active={open} closeOnAsk />
+  <K8sDetail {...rest} bind:tab bind:container active={open} closeOnAsk />
 </Modal>

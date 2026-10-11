@@ -46,6 +46,22 @@ export interface GrepMatch {
   text: string;
 }
 
+/** What a content search came back with (mirrors sync.rs `GrepOutcome`). */
+export interface GrepOutcome {
+  /** At most `GREP_LIMIT` matches. */
+  matches: GrepMatch[];
+  /** More lines matched than are returned. */
+  truncated: boolean;
+  /**
+   * grep reported an error, or never reported at all. With matches — some files
+   * were not read; with none — the search did not run.
+   */
+  failed: boolean;
+}
+
+/** The most matches a search returns (`GREP_LIMIT` in sync.rs). */
+export const GREP_LIMIT = 1000;
+
 /** Translate a single glob (`*`, `?`) into an anchored regex (no `/` crossing). */
 function globToRegex(glob: string): RegExp {
   let re = "";
