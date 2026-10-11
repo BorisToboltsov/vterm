@@ -18,6 +18,13 @@ import { describe, expect, it } from "vitest";
 // And it never starts in a window with no tab (v1.11.3): the card had no host to
 // show and sat over the empty window, swallowing the first click meant for it.
 // One rule decides — `screensaverAllowed` — fed with the window's tab count.
+//
+// And the card is laid out for the room it has (v1.14.1). It is drawn over the
+// terminal area, which a raised bottom dock turns into a low strip: laid out by
+// fixed offsets there, the numbers left the card and the chart landed on the
+// header. `drawCard` asks `cardTier` and draws the card itself only where it
+// fits; the smaller layouts carry no "press any key" hint — it has nowhere to
+// stand in them.
 // Checked on the source with comments stripped.
 
 function stripHtmlComments(text: string): string {
@@ -63,6 +70,38 @@ export function noTabViolations(overlay: string, page: string): string[] {
   const mount = /<IdleOverlay\b[\s\S]*?\n\s*\/>/.exec(bare(page))?.[0] ?? "";
   if (!/\btabs=\{tabsState\.list\.length\}/.test(mount)) {
     out.push("the page does not tell the screensaver how many tabs are open");
+  }
+  return out;
+}
+
+/** Body of `function name(…) { … }` in `text`, up to the next function of the component. */
+function bodyOf(text: string, name: string): string {
+  const at = text.indexOf(`function ${name}(`);
+  if (at < 0) return "";
+  const next = text.indexOf("\n  function ", at + 1);
+  return text.slice(at, next < 0 ? undefined : next);
+}
+
+/**
+ * What lets the card be drawn by fixed offsets in an area they do not fit —
+ * in the overlay's own source. Empty when the rule holds.
+ */
+export function cardLayoutViolations(overlay: string): string[] {
+  const o = bare(overlay);
+  const out: string[] = [];
+  if (!/const tier = cardTier\(W, H\);/.test(bodyOf(o, "drawCard"))) {
+    out.push("drawCard does not ask what layout the area has room for");
+  }
+  // `drawCardFull(ctx,` is a call; the definition reads `drawCardFull(ctx:`.
+  const calls = o.match(/\bdrawCardFull\(ctx,/g)?.length ?? 0;
+  const guarded = o.match(/if \(tier === "full"\) drawCardFull\(ctx,/g)?.length ?? 0;
+  if (calls !== 1 || guarded !== 1) {
+    out.push("the card itself is drawn outside the layout that fits it");
+  }
+  for (const small of ["drawCardWide", "drawCardStack", "drawCardSmall"]) {
+    const body = bodyOf(o, small);
+    if (!body) out.push(`${small} is gone`);
+    else if (/\bhint\(/.test(body)) out.push(`${small} draws the hint it has no room for`);
   }
   return out;
 }
@@ -132,6 +171,46 @@ describe("idle card guard", () => {
     expect(silent).not.toBe(page);
     expect(noTabViolations(overlay, silent)).toEqual([
       "the page does not tell the screensaver how many tabs are open",
+    ]);
+  });
+
+  it("lays the card out for the room the terminal area has", () => {
+    const overlay = read("lib", "IdleOverlay.svelte");
+    expect(cardLayoutViolations(overlay)).toEqual([]);
+    // The check catches its own violations: a card that never asks…
+    const fixed = overlay.replace("const tier = cardTier(W, H);", 'const tier = "full";');
+    expect(fixed).not.toBe(overlay);
+    expect(cardLayoutViolations(fixed)).toEqual([
+      "drawCard does not ask what layout the area has room for",
+    ]);
+    // …a rule that is only named in a comment…
+    const commented = overlay.replace("const tier = cardTier(W, H);", "// const tier = cardTier(W, H);");
+    expect(cardLayoutViolations(commented)).toEqual([
+      "drawCard does not ask what layout the area has room for",
+    ]);
+    // …the card drawn whatever the answer…
+    const always = overlay.replace('if (tier === "full") drawCardFull(ctx,', "drawCardFull(ctx,");
+    expect(always).not.toBe(overlay);
+    expect(cardLayoutViolations(always)).toEqual([
+      "the card itself is drawn outside the layout that fits it",
+    ]);
+    // …a second place that draws it, past the question…
+    const twice = overlay.replace(
+      "else drawCard(ctx, W, H, now, p);",
+      "else drawCardFull(ctx, W, H, now, p);",
+    );
+    expect(twice).not.toBe(overlay);
+    expect(cardLayoutViolations(twice)).toEqual([
+      "the card itself is drawn outside the layout that fits it",
+    ]);
+    // …and a small layout that brings the hint back.
+    const hinted = overlay.replace(
+      "    sharedChart(ctx, 16, 46, W - 32, H - 46 - 14, p);\n  }",
+      "    sharedChart(ctx, 16, 46, W - 32, H - 46 - 14, p);\n    hint(ctx, W, H, p);\n  }",
+    );
+    expect(hinted).not.toBe(overlay);
+    expect(cardLayoutViolations(hinted)).toEqual([
+      "drawCardWide draws the hint it has no room for",
     ]);
   });
 

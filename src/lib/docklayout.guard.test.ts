@@ -26,7 +26,6 @@ import { describe, expect, it } from "vitest";
 import { PANEL_IDS } from "./docklayout";
 
 const SRC = join(process.cwd(), "src");
-const LIB = join(SRC, "lib");
 const PAGE = join(SRC, "routes", "+page.svelte");
 
 /** Drop `<!-- … -->` blocks (a scan: one regex pass leaves a nested opener behind). */

@@ -20,6 +20,8 @@
   } from "./idle";
   import {
     bufferGrid,
+    cardTier,
+    clipText,
     idleSample,
     pushSample,
     seriesRuns,
@@ -450,10 +452,114 @@
     scanlines(ctx, W, H);
   }
 
-  // Server card with a CPU / memory / load chart along the bottom (the Away layout).
+  // Server card with a CPU / memory / load chart. The terminal area is whatever
+  // the docks leave, so the card is laid out for the room there is (`cardTier`):
+  // the card itself, or one of its smaller forms.
   function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, now: number, p: Pal) {
     ctx.fillStyle = p.background;
     ctx.fillRect(0, 0, W, H);
+    const tier = cardTier(W, H);
+    if (tier === "full") drawCardFull(ctx, W, H, now, p);
+    else if (tier === "wide" || tier === "row") drawCardWide(ctx, W, H, now, p, tier === "wide");
+    else if (tier === "stack") drawCardStack(ctx, W, H, now, p);
+    else drawCardSmall(ctx, W, H, now, p, tier === "mini");
+  }
+
+  const MONO = "ui-monospace,Menlo,monospace";
+  type CardMetric = [label: string, value: string, color: string, key: keyof IdleSample];
+  // The dot before each label is the legend of its chart line.
+  function cardMetrics(p: Pal): CardMetric[] {
+    return [
+      ["CPU", fmtPct(cpu), p.green, "cpu"],
+      ["MEM", fmtPct(mem), p.blue, "mem"],
+      ["LOAD", load1 != null ? load1.toFixed(2) : "—", p.yellow, "load"],
+    ];
+  }
+  const cardName = () => host || alias || "vterm";
+  // The line under (or beside) the host: a clock without a session to report on.
+  function cardStatus(): string {
+    if (sessionId) {
+      return `${t("idle.online")} · ${t("idle.uptime")} ${uptimeSecs != null ? fmtUptime(uptimeSecs) : "—"}`;
+    }
+    const d = new Date();
+    const pad = (n: number) => `${n}`.padStart(2, "0");
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  }
+  function statusDot(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, now: number, p: Pal) {
+    const pulse = 0.5 + 0.5 * Math.sin(now / 620);
+    ctx.fillStyle = hexAlpha(p.green, sessionId ? 0.5 + 0.5 * pulse : 0.35);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 7);
+    ctx.fill();
+  }
+  /** `text` cut to `maxW` px in the font the context is set to (a monospace one). */
+  function fit(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+    return clipText(text, maxW / ctx.measureText("0").width);
+  }
+  // The dashed top line is 100 % (load = every core busy); the axes are drawn
+  // even before data, so the chart area is always visible — a near-idle CPU
+  // line otherwise hugs the floor unseen.
+  function chartAxes(ctx: CanvasRenderingContext2D, gx: number, gy: number, gw: number, gh: number, p: Pal) {
+    ctx.strokeStyle = hexAlpha(p.foreground, 0.22);
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath();
+    ctx.moveTo(gx, gy + 0.5);
+    ctx.lineTo(gx + gw, gy + 0.5);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(gx + 0.5, gy);
+    ctx.lineTo(gx + 0.5, gy + gh + 0.5);
+    ctx.lineTo(gx + gw, gy + gh + 0.5);
+    ctx.stroke();
+  }
+  function drawSeries(
+    ctx: CanvasRenderingContext2D,
+    key: keyof IdleSample,
+    color: string,
+    gx: number,
+    gy: number,
+    gw: number,
+    gh: number,
+    fill: boolean,
+  ) {
+    const runs = seriesRuns(
+      hist.map((sample) => sample[key]),
+      gx,
+      gy,
+      gw,
+      gh,
+    );
+    for (const run of runs) {
+      if (fill && run.length > 1) {
+        ctx.beginPath();
+        ctx.moveTo(run[0].x, gy + gh);
+        run.forEach((pt) => ctx.lineTo(pt.x, pt.y));
+        ctx.lineTo(run[run.length - 1].x, gy + gh);
+        ctx.closePath();
+        ctx.fillStyle = hexAlpha(color, 0.1);
+        ctx.fill();
+      }
+      ctx.beginPath();
+      run.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
+      if (run.length === 1) ctx.lineTo(run[0].x + 1, run[0].y);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+  // Three series on one 0…1 axis. Only CPU gets the soft fill — three filled
+  // areas would muddy each other.
+  function sharedChart(ctx: CanvasRenderingContext2D, gx: number, gy: number, gw: number, gh: number, p: Pal) {
+    chartAxes(ctx, gx, gy, gw, gh, p);
+    drawSeries(ctx, "mem", p.blue, gx, gy, gw, gh, false);
+    drawSeries(ctx, "load", p.yellow, gx, gy, gw, gh, false);
+    drawSeries(ctx, "cpu", p.green, gx, gy, gw, gh, true);
+  }
+
+  // The card (the Away layout): header, three large numbers, the chart below.
+  function drawCardFull(ctx: CanvasRenderingContext2D, W: number, H: number, now: number, p: Pal) {
     const cardW = Math.min(560, W - 80);
     const cardH = Math.min(320, H - 80);
     const x = (W - cardW) / 2;
@@ -461,41 +567,22 @@
     ctx.fillStyle = hexAlpha(p.foreground, 0.04);
     roundRect(ctx, x, y, cardW, cardH, 14);
     ctx.fill();
-    const ambient = !sessionId;
-    // header
-    const pulse = 0.5 + 0.5 * Math.sin(now / 620);
-    ctx.fillStyle = hexAlpha(p.green, ambient ? 0.35 : 0.5 + 0.5 * pulse);
-    ctx.beginPath();
-    ctx.arc(x + 30, y + 34, 5, 0, 7);
-    ctx.fill();
+    statusDot(ctx, x + 30, y + 34, 5, now, p);
     ctx.fillStyle = p.foreground;
     ctx.font = "500 18px ui-monospace,Menlo,monospace";
-    ctx.fillText(host || alias || "vterm", x + 44, y + 27);
+    ctx.fillText(fit(ctx, cardName(), cardW - 68), x + 44, y + 27);
     ctx.fillStyle = hexAlpha(p.foreground, 0.55);
     ctx.font = "12px ui-monospace,monospace";
-    if (ambient) {
-      const d = new Date();
-      const pad = (n: number) => `${n}`.padStart(2, "0");
-      ctx.fillText(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`, x + 44, y + 48);
+    ctx.fillText(cardStatus(), x + 44, y + 48);
+    if (!sessionId) {
       ctx.fillStyle = p.foreground;
       ctx.font = "500 15px ui-monospace,monospace";
       ctx.textAlign = "center";
       ctx.fillText(t("idle.noSessions"), W / 2, y + cardH / 2);
       ctx.textAlign = "left";
     } else {
-      ctx.fillText(
-        `${t("idle.online")} · ${t("idle.uptime")} ${uptimeSecs != null ? fmtUptime(uptimeSecs) : "—"}`,
-        x + 44,
-        y + 48,
-      );
-      // metrics row — the dot before each label is the legend of its chart line
-      const metrics: [string, string, string][] = [
-        ["CPU", fmtPct(cpu), p.green],
-        ["MEM", fmtPct(mem), p.blue],
-        ["LOAD", load1 != null ? load1.toFixed(2) : "—", p.yellow],
-      ];
       const cw = (cardW - 60) / 3;
-      metrics.forEach(([label, val, color], i) => {
+      cardMetrics(p).forEach(([label, val, color], i) => {
         const mx0 = x + 30 + i * cw;
         ctx.fillStyle = color;
         ctx.beginPath();
@@ -508,61 +595,146 @@
         ctx.font = "200 34px ui-monospace,monospace";
         ctx.fillText(val, mx0, y + 96);
       });
-      // Chart: three series on one 0…1 axis. The dashed top line is 100 % (load
-      // = every core busy); axes are drawn even before data, so the chart area
-      // is always visible — a near-idle CPU line otherwise hugs the floor unseen.
       // Below the numbers (≈ y+140) down to a 24 px margin; shrinks on a short card.
       const gh = Math.max(24, Math.min(100, cardH - 164));
-      const gx = x + 24;
-      const gy = y + cardH - 24 - gh;
-      const gw = cardW - 48;
-      ctx.strokeStyle = hexAlpha(p.foreground, 0.22);
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      ctx.moveTo(gx, gy + 0.5);
-      ctx.lineTo(gx + gw, gy + 0.5);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(gx + 0.5, gy);
-      ctx.lineTo(gx + 0.5, gy + gh + 0.5);
-      ctx.lineTo(gx + gw, gy + gh + 0.5);
-      ctx.stroke();
-      const series: [keyof IdleSample, string][] = [
-        ["mem", p.blue],
-        ["load", p.yellow],
-        ["cpu", p.green],
-      ];
-      for (const [key, color] of series) {
-        const runs = seriesRuns(
-          hist.map((sample) => sample[key]),
-          gx,
-          gy,
-          gw,
-          gh,
-        );
-        for (const run of runs) {
-          // Only CPU gets the soft fill — three filled areas would muddy each other.
-          if (key === "cpu" && run.length > 1) {
-            ctx.beginPath();
-            ctx.moveTo(run[0].x, gy + gh);
-            run.forEach((pt) => ctx.lineTo(pt.x, pt.y));
-            ctx.lineTo(run[run.length - 1].x, gy + gh);
-            ctx.closePath();
-            ctx.fillStyle = hexAlpha(color, 0.1);
-            ctx.fill();
-          }
-          ctx.beginPath();
-          run.forEach((pt, i) => (i ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
-          if (run.length === 1) ctx.lineTo(run[0].x + 1, run[0].y);
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1.5;
-          ctx.stroke();
-        }
-      }
+      sharedChart(ctx, x + 24, y + cardH - 24 - gh, cardW - 48, gh, p);
     }
     hint(ctx, W, H, p);
+  }
+
+  // Low and wide: the numbers join the header line and the chart takes all the
+  // room under it. Without `chart` (too low for one) — that line alone.
+  function drawCardWide(
+    ctx: CanvasRenderingContext2D,
+    W: number,
+    H: number,
+    now: number,
+    p: Pal,
+    chart: boolean,
+  ) {
+    const top = chart ? 14 : Math.max(0, H / 2 - 9);
+    // Numbers stand at the right end; the host takes what is left of the line.
+    let right = W - 18;
+    if (sessionId) {
+      for (const [label, val, color] of cardMetrics(p).reverse()) {
+        ctx.font = `500 14px ${MONO}`;
+        const vw = ctx.measureText(val).width;
+        ctx.fillStyle = p.foreground;
+        ctx.fillText(val, right - vw, top);
+        ctx.font = `500 11px ${MONO}`;
+        const lw = ctx.measureText(label).width;
+        ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+        ctx.fillText(label, right - vw - 6 - lw, top + 2);
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(right - vw - lw - 14, top + 8, 3, 0, 7);
+        ctx.fill();
+        right -= vw + lw + 34;
+      }
+    }
+    statusDot(ctx, 22, top + 8, 4, now, p);
+    ctx.font = `500 14px ${MONO}`;
+    const name = fit(ctx, cardName(), right - 34);
+    ctx.fillStyle = p.foreground;
+    ctx.fillText(name, 34, top);
+    const after = 34 + ctx.measureText(name).width + 10;
+    ctx.font = `11px ${MONO}`;
+    const status = `· ${cardStatus()}`;
+    if (after + ctx.measureText(status).width <= right) {
+      ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+      ctx.fillText(status, after, top + 2);
+    }
+    if (!chart) return;
+    if (!sessionId) {
+      ctx.fillStyle = p.foreground;
+      ctx.font = `500 13px ${MONO}`;
+      ctx.textAlign = "center";
+      ctx.fillText(t("idle.noSessions"), W / 2, 46 + (H - 46) / 2 - 8);
+      ctx.textAlign = "left";
+      return;
+    }
+    sharedChart(ctx, 16, 46, W - 32, H - 46 - 14, p);
+  }
+
+  // Narrow and tall: a column of three rows, each number with a line of its own
+  // (so no legend is needed). The column is centred in an area taller than it.
+  function drawCardStack(ctx: CanvasRenderingContext2D, W: number, H: number, now: number, p: Pal) {
+    const head = 74;
+    const rh = Math.min(96, (H - head - 16) / 3);
+    const y = Math.max(0, (H - head - rh * 3) / 2 - 4);
+    statusDot(ctx, 24, y + 27, 4, now, p);
+    ctx.font = `500 15px ${MONO}`;
+    ctx.fillStyle = p.foreground;
+    ctx.fillText(fit(ctx, cardName(), W - 52), 36, y + 18);
+    ctx.font = `11px ${MONO}`;
+    ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+    ctx.fillText(fit(ctx, cardStatus(), W - 52), 36, y + 40);
+    if (!sessionId) {
+      ctx.fillStyle = p.foreground;
+      ctx.font = `500 13px ${MONO}`;
+      ctx.fillText(fit(ctx, t("idle.noSessions"), W - 40), 20, y + head + 12);
+      return;
+    }
+    cardMetrics(p).forEach(([label, val, color, key], i) => {
+      const ry = y + head + i * rh;
+      ctx.fillStyle = hexAlpha(p.foreground, 0.04);
+      roundRect(ctx, 14, ry, W - 28, rh - 8, 10);
+      ctx.fill();
+      ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+      ctx.font = `500 11px ${MONO}`;
+      ctx.fillText(label, 26, ry + 8);
+      ctx.fillStyle = p.foreground;
+      ctx.font = `300 22px ${MONO}`;
+      ctx.fillText(val, 26, ry + 23);
+      drawSeries(ctx, key, color, 120, ry + 10, W - 146, rh - 28, true);
+    });
+  }
+
+  // No room for a chart: the host over the three numbers (`numbers`), or — in an
+  // area that fits nothing else — the host alone.
+  function drawCardSmall(
+    ctx: CanvasRenderingContext2D,
+    W: number,
+    H: number,
+    now: number,
+    p: Pal,
+    numbers: boolean,
+  ) {
+    if (!numbers) {
+      statusDot(ctx, 18, H / 2, 4, now, p);
+      ctx.font = `500 14px ${MONO}`;
+      ctx.fillStyle = p.foreground;
+      ctx.fillText(fit(ctx, cardName(), W - 42), 30, H / 2 - 8);
+      return;
+    }
+    const cy = H / 2 - 3;
+    statusDot(ctx, 24, cy - 27, 4, now, p);
+    ctx.font = `500 14px ${MONO}`;
+    ctx.fillStyle = p.foreground;
+    ctx.fillText(fit(ctx, cardName(), W - 52), 36, cy - 36);
+    ctx.font = `11px ${MONO}`;
+    ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+    ctx.fillText(fit(ctx, cardStatus(), W - 52), 36, cy - 15);
+    if (!sessionId) {
+      ctx.fillStyle = p.foreground;
+      ctx.font = `500 12px ${MONO}`;
+      ctx.fillText(fit(ctx, t("idle.noSessions"), W - 40), 20, cy + 16);
+      return;
+    }
+    const cw = (W - 40) / 3;
+    cardMetrics(p).forEach(([label, val, color], i) => {
+      const mx0 = 20 + i * cw;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(mx0 + 3, cy + 18, 3, 0, 7);
+      ctx.fill();
+      ctx.fillStyle = hexAlpha(p.foreground, 0.55);
+      ctx.font = `500 11px ${MONO}`;
+      ctx.fillText(label, mx0 + 10, cy + 12);
+      ctx.fillStyle = p.foreground;
+      ctx.font = `500 15px ${MONO}`;
+      ctx.fillText(val, mx0, cy + 28);
+    });
   }
 
   // ── small canvas helpers ────────────────────────────────────────────────────
