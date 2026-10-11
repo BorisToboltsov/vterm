@@ -71,19 +71,28 @@ describe("pure helpers", () => {
   });
 
   it("dotClass picks a colour from a label", () => {
-    expect(dotClass("Connected")).toBe("bg-green-500");
-    expect(dotClass("Connecting…")).toBe("bg-yellow-500");
+    expect(dotClass("Connected")).toBe("bg-ok");
+    expect(dotClass("Connecting…")).toBe("bg-warn");
     expect(dotClass("Error: x")).toBe("bg-danger");
     expect(dotClass("Disconnected")).toBe("bg-muted");
+  });
+
+  it("every dot is a theme token, and its ring a darker shade of the same token", () => {
+    for (const status of ["Connected", "Connecting…", "Error: x", "Disconnected"]) {
+      const fill = dotClass(status);
+      const token = fill.replace("bg-", "");
+      expect(["ok", "warn", "danger", "muted"]).toContain(token);
+      // The tree's dot is the tab's dot with a ring around it.
+      expect(serverDots([status]).dots[0].cls).toBe(
+        `${fill} ring-1 ring-[color-mix(in_srgb,var(--color-${token})_45%,black)]`,
+      );
+    }
   });
 
   it("serverDots keeps tab order (newest last) with a connecting pulse", () => {
     // Rendered in the order given (tab order), not reshuffled by severity.
     const { dots, extra } = serverDots(["Connected", "Connecting…"]);
-    expect(dots.map((d) => d.cls)).toEqual([
-      "bg-green-500 ring-1 ring-[#166534]",
-      "bg-yellow-500 ring-1 ring-[#854d0e]",
-    ]);
+    expect(dots.map((d) => d.cls.split(" ")[0])).toEqual(["bg-ok", "bg-warn"]);
     // Only the connecting dot pulses.
     expect(dots.map((d) => d.pulse)).toEqual([false, true]);
     expect(extra).toBe(0);
@@ -92,7 +101,7 @@ describe("pure helpers", () => {
   it("serverDots appends a newly connected tab at the end of the stack", () => {
     // Two dropped (muted) tabs, then a new connected one → green stays last.
     const { dots } = serverDots(["Disconnected", "Disconnected", "Connected"]);
-    expect(dots[2].cls).toContain("bg-green-500");
+    expect(dots[2].cls).toContain("bg-ok");
   });
 
   it("serverDots caps at 3 and reports the remainder", () => {
@@ -118,7 +127,8 @@ describe("pure helpers", () => {
 
   it("serverDots falls back to a muted, non-pulsing dot for other statuses", () => {
     const { dots } = serverDots(["Disconnected"]);
-    expect(dots[0]).toEqual({ cls: "bg-muted ring-1 ring-[#3f3f5a]", pulse: false });
+    expect(dots[0].cls.split(" ")[0]).toBe("bg-muted");
+    expect(dots[0].pulse).toBe(false);
   });
 
   it("serverDots handles an empty list", () => {

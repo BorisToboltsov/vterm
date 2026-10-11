@@ -8,6 +8,8 @@
 export const PANEL_SPLITS = {
   // Changes (or branches) beside the history: the history is the wider one.
   git: 0.4,
+  // The history beside the commit opened from it: the list keeps a little more.
+  gitCommit: 0.55,
   // The list beside what was opened from it: halves.
   docker: 0.5,
   k8s: 0.5,
@@ -23,6 +25,16 @@ export const PART_MIN = 240;
 /** The share is never set outside these, whatever the width (also what storage may hold). */
 export const SHARE_MIN = 0.2;
 export const SHARE_MAX = 0.8;
+
+/**
+ * Whether a row `width` px wide holds two parts side by side, neither under
+ * `PART_MIN`. What a panel opens beside its list goes there only then; in a row
+ * too narrow for both it stays where a narrow panel shows it. Not a second
+ * width threshold: it follows from the one minimum a part already has.
+ */
+export function fitsBeside(width: number, min = PART_MIN): boolean {
+  return Number.isFinite(width) && width >= 2 * min;
+}
 
 /**
  * The shares a border may be set to in a row `width` px wide: within the fixed

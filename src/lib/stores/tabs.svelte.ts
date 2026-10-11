@@ -117,10 +117,13 @@ export function localizedStatus(statusText: string): string {
   return t("status.notConnected");
 }
 
-/** Tailwind colour class for a tab's status dot. */
+/**
+ * Colour class for a tab's status dot — the theme's status tokens (v1.15), not a
+ * fixed green and yellow: those cannot serve a near-black panel and a cream one.
+ */
 export function dotClass(statusText: string): string {
-  if (statusText.startsWith("Connected")) return "bg-green-500";
-  if (statusText.startsWith("Connecting")) return "bg-yellow-500";
+  if (statusText.startsWith("Connected")) return "bg-ok";
+  if (statusText.startsWith("Connecting")) return "bg-warn";
   if (statusText.startsWith("Error")) return "bg-danger";
   return "bg-muted";
 }
@@ -193,22 +196,29 @@ function statusRank(statusText: string): number {
 
 /** A single overlapping connection dot in the tree. */
 export interface StatusDot {
-  /** Fill colour + a thin (1px) tonal ring in the same hue (`ring-1 ring-[…]`). */
+  /** Fill colour + a thin (1px) tonal ring of the same hue, darker (`ring-1 ring-[…]`). */
   cls: string;
   /** True for a connecting tab — the dot gently breathes (pulses). */
   pulse: boolean;
 }
 
-/** Fill + tonal-ring classes and pulse flag for one tab status. The ring is a
- *  darker shade of the fill so overlapping dots separate softly (no harsh edge). */
+// A dot's fill and its ring: the ring is the fill's own colour mixed towards
+// black — a darker shade of whatever the theme's status colour is, so
+// overlapping dots separate softly (no harsh edge) on every theme. Each class
+// is written out whole: Tailwind finds class names by reading the source.
+const DOT = {
+  ok: "bg-ok ring-1 ring-[color-mix(in_srgb,var(--color-ok)_45%,black)]",
+  warn: "bg-warn ring-1 ring-[color-mix(in_srgb,var(--color-warn)_45%,black)]",
+  danger: "bg-danger ring-1 ring-[color-mix(in_srgb,var(--color-danger)_45%,black)]",
+  muted: "bg-muted ring-1 ring-[color-mix(in_srgb,var(--color-muted)_45%,black)]",
+} as const;
+
+/** Fill + tonal-ring classes and pulse flag for one tab status. */
 function dotStyle(statusText: string): StatusDot {
-  if (statusText.startsWith("Connected"))
-    return { cls: "bg-green-500 ring-1 ring-[#166534]", pulse: false };
-  if (statusText.startsWith("Connecting"))
-    return { cls: "bg-yellow-500 ring-1 ring-[#854d0e]", pulse: true };
-  if (statusText.startsWith("Error"))
-    return { cls: "bg-danger ring-1 ring-[#7d3350]", pulse: false };
-  return { cls: "bg-muted ring-1 ring-[#3f3f5a]", pulse: false };
+  if (statusText.startsWith("Connected")) return { cls: DOT.ok, pulse: false };
+  if (statusText.startsWith("Connecting")) return { cls: DOT.warn, pulse: true };
+  if (statusText.startsWith("Error")) return { cls: DOT.danger, pulse: false };
+  return { cls: DOT.muted, pulse: false };
 }
 
 /**

@@ -3,15 +3,34 @@
   // style): one SVG overlays the whole scroll height so rails never break between
   // rows; commit rows are fixed-height HTML beneath it. Lane assignment + segments
   // come from buildGraph (pure). Right-click a commit → actions menu (checkout,
-  // branch/tag here, reset, cherry-pick, revert, compare, copy). Selected commit's
-  // files show in a bottom strip (keeps rows uniform so the SVG stays aligned).
+  // branch/tag here, reset, cherry-pick, revert, compare, copy).
+  //
+  // A selected commit opens its details (v1.15, `GitCommitDetail`): in a wide
+  // panel beside the list, when the row holds both (`fitsBeside`); otherwise in a
+  // strip under it. Never between the rows — they stay uniform, so the SVG stays
+  // aligned. The list is a query container of its own: a wide list shows each
+  // commit's author and the moment it was made, a narrow one only its age.
   import Modal from "./Modal.svelte";
   import ContextMenu from "./ContextMenu.svelte";
+  import SidePane from "./SidePane.svelte";
+  import PanelDivider from "./PanelDivider.svelte";
+  import GitCommitDetail from "./GitCommitDetail.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
-  import type { GraphRow, CommitFile, GitCommit, ResetMode, DiffLine, GitRunOpts } from "./git";
+  import type {
+    GraphRow,
+    CommitDetail,
+    CommitFile,
+    GitCommit,
+    ResetMode,
+    DiffLine,
+    GitRunOpts,
+  } from "./git";
   import {
-    commitFilesArgs,
-    parseCommitFiles,
+    commitDetailArgs,
+    mergeFilesArgs,
+    mergeFileDiffArgs,
+    parseCommitDetail,
+    parseNameStatusZ,
     showFileArgs,
     diffCommitWorkingArgs,
     parseDiff,
@@ -26,18 +45,23 @@
   } from "./git";
   import type { GitOutput } from "./api";
   import { tooltip } from "./actions/tooltip";
-  import { fileStatusColor, relTime, commitTooltip } from "./gitview";
+  import { commitMoment, commitTooltip, gitAge } from "./gitview";
+  import { fitsBeside } from "./panelsplit";
+  import { partWidth } from "./stores/panelsplit.svelte";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
   import { t } from "./i18n";
 
   let {
     rows,
+    wide = false,
     run,
     runQuery,
     openDiff,
   }: {
     rows: GraphRow[];
+    /** The panel is in its wide layout: a commit's details may stand beside the list. */
+    wide?: boolean;
     run: (args: string[], opts?: GitRunOpts) => Promise<boolean>;
     runQuery: (args: string[]) => Promise<GitOutput>;
     openDiff: (title: string, lines: DiffLine[]) => void;
@@ -55,8 +79,19 @@
   const graphW = $derived(PAD + laneCount * COL_W + 6);
 
   let selected = $state<string | null>(null);
-  let files = $state<CommitFile[]>([]);
-  let loadingFiles = $state(false);
+  // What the query added to the selected commit; null until it answers.
+  let detail = $state<CommitDetail | null>(null);
+  let loadingDetail = $state(false);
+  let detailFailed = $state(false);
+  // Directories of the selected commit's file tree the user folded.
+  let closedDirs = $state<ReadonlySet<string>>(new Set());
+  const sel = $derived(selected ? rows.find((r) => r.commit.hash === selected)?.commit : undefined);
+
+  // Width of the row the list and the details share, px.
+  let rowWidth = $state(0);
+  // Beside the list only in a wide panel, and only while the row holds two parts;
+  // there is no width threshold of its own (`fitsBeside`).
+  const beside = $derived(wide && fitsBeside(rowWidth));
 
   // Context menu.
   let ctxMenu = $state<OpenMenu | null>(null);
@@ -92,26 +127,62 @@
     return `M${ax} ${ay} C${ax} ${cy} ${bx} ${cy} ${bx} ${by}`;
   }
 
-  async function select(hash: string) {
-    if (selected === hash) {
-      selected = null;
-      files = [];
-      return;
-    }
-    selected = hash;
-    files = [];
-    loadingFiles = true;
-    try {
-      const res = await runQuery(commitFilesArgs(hash));
-      files = parseCommitFiles(res.stdout);
-    } finally {
-      loadingFiles = false;
-    }
+  function closeDetail() {
+    selected = null;
+    detail = null;
+    loadingDetail = false;
+    detailFailed = false;
   }
 
-  async function showFile(hash: string, path: string) {
-    const res = await runQuery(showFileArgs(hash, path));
-    openDiff(path, parseDiff(res.stdout));
+  /** The answer for `hash`, or null when it is not one. A merge takes a second call. */
+  async function readDetail(commit: GitCommit): Promise<CommitDetail | null> {
+    const res = await runQuery(commitDetailArgs(commit.hash));
+    const parsed = res.exitCode === 0 ? parseCommitDetail(res.stdout) : null;
+    if (!parsed || commit.parents.length < 2) return parsed;
+    // `git show` lists nothing for a clean merge: its files are its diff
+    // against the first parent, and the pane says that is what they are.
+    const diff = await runQuery(mergeFilesArgs(commit.hash));
+    return diff.exitCode === 0 ? { ...parsed, files: parseNameStatusZ(diff.stdout) } : null;
+  }
+
+  async function select(hash: string) {
+    if (selected === hash) {
+      closeDetail();
+      return;
+    }
+    const commit = rows.find((r) => r.commit.hash === hash)?.commit;
+    if (!commit) return;
+    selected = hash;
+    detail = null;
+    detailFailed = false;
+    closedDirs = new Set();
+    loadingDetail = true;
+    let answer: CommitDetail | null = null;
+    try {
+      answer = await readDetail(commit);
+    } catch {
+      answer = null;
+    }
+    // Another commit was picked while this one was being read: its answer wins.
+    if (selected !== hash) return;
+    detail = answer;
+    detailFailed = answer === null;
+    loadingDetail = false;
+  }
+
+  function toggleDir(path: string) {
+    const next = new Set(closedDirs);
+    if (!next.delete(path)) next.add(path);
+    closedDirs = next;
+  }
+
+  async function showFile(commit: GitCommit, file: CommitFile) {
+    const args =
+      commit.parents.length > 1
+        ? mergeFileDiffArgs(commit.hash, file.path)
+        : showFileArgs(commit.hash, file.path);
+    const res = await runQuery(args);
+    openDiff(file.path, parseDiff(res.stdout));
   }
 
   // Build the right-click actions as a declarative list for the shared
@@ -164,10 +235,11 @@
     ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
-  async function copySha(c: GitCommit) {
-    await writeClipboard(c.hash);
+  async function copyText(text: string) {
+    await writeClipboard(text);
     notifySuccess(t("git.copied"));
   }
+  const copySha = (c: GitCommit) => copyText(c.hash);
   async function copyMsg(c: GitCommit) {
     await writeClipboard(c.subject);
     notifySuccess(t("git.copied"));
@@ -210,8 +282,14 @@
 {#if rows.length === 0}
   <p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p>
 {:else}
-  <div class="flex h-full min-h-0 flex-col text-xs">
-    <div class="relative min-h-0 flex-1 overflow-auto" data-testid="git-graph">
+  <div class="flex h-full min-h-0 text-xs {beside ? '' : 'flex-col'}" bind:clientWidth={rowWidth}>
+    <!-- `@container`: the list lays its rows out by its own width — it holds rows
+         and the rail SVG, no dialog or menu (those stand beside the root). -->
+    <div
+      class="@container relative min-h-0 overflow-auto {beside && sel ? 'shrink-0' : 'flex-1'}"
+      style:width={beside && sel ? partWidth("gitCommit", rowWidth) : null}
+      data-testid="git-graph"
+    >
       <!-- Continuous rail overlay — one SVG for the whole column. -->
       <svg
         class="pointer-events-none absolute left-0 top-0"
@@ -258,37 +336,45 @@
           {#each row.commit.refs as ref (ref)}
             <span class="shrink-0 rounded-sm bg-accent/20 px-1 text-caption leading-tight text-accent">{ref}</span>
           {/each}
-          <span class="truncate {row.commit.head ? 'text-text' : 'text-text/90'}">{row.commit.subject}</span>
-          <span class="ml-auto shrink-0 text-caption text-muted">{relTime(row.commit.timestamp)}</span>
+          <span class="min-w-0 flex-1 truncate {row.commit.head ? 'text-text' : 'text-text/90'}">{row.commit.subject}</span>
+          <!-- A wide list: who and at what moment. A narrow one: how long ago. -->
+          <span class="hidden w-32 shrink-0 truncate text-meta text-muted @wide:block" data-testid="git-row-author">{row.commit.author}</span>
+          <span class="hidden w-28 shrink-0 text-right text-caption tabular-nums text-muted @wide:block" data-testid="git-row-moment">{commitMoment(row.commit.timestamp)}</span>
+          <span class="shrink-0 text-caption text-muted @wide:hidden" data-testid="git-row-age">{gitAge(row.commit.timestamp)}</span>
         </button>
       {/each}
     </div>
 
-    <!-- Selected-commit detail strip. -->
-    {#if selected}
-      {@const sel = rows.find((r) => r.commit.hash === selected)?.commit}
-      {#if sel}
-        <div class="max-h-44 shrink-0 overflow-auto border-t border-edge bg-panel/60 px-2 py-1.5">
-          <div class="mb-1 flex items-center gap-1.5 text-meta">
-            <span class="font-mono text-muted">{sel.short}</span>
-            <span class="truncate text-text/80">{sel.subject}</span>
-          </div>
-          {#if loadingFiles}
-            <p class="py-1 text-caption text-muted">{t("git.loading")}</p>
-          {:else if files.length === 0}
-            <p class="py-1 text-caption text-muted">{t("git.noFiles")}</p>
-          {:else}
-            {#each files as f (f.path)}
-              <button
-                type="button"
-                class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-edge/50"
-                onclick={() => showFile(sel.hash, f.path)}
-              >
-                <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(f.status)}">{f.status}</span>
-                <span class="truncate text-meta text-text/80">{f.path}</span>
-              </button>
-            {/each}
-          {/if}
+    <!-- The selected commit's details: one content, two places. -->
+    {#snippet commitDetail(commit: GitCommit, fill: boolean)}
+      <GitCommitDetail
+        {commit}
+        {detail}
+        loading={loadingDetail}
+        failed={detailFailed}
+        closed={closedDirs}
+        known={(hash) => rows.some((r) => r.commit.hash === hash)}
+        {fill}
+        ontoggle={toggleDir}
+        onopenfile={(file) => showFile(commit, file)}
+        onselect={(hash) => select(hash)}
+        oncopy={(text) => copyText(text)}
+      />
+    {/snippet}
+    {#if sel}
+      {#if beside}
+        <PanelDivider split="gitCommit" width={rowWidth} />
+        <div class="min-h-0 min-w-0 flex-1" data-testid="git-commit-side">
+          <SidePane title={`${sel.short} · ${sel.subject}`} onclose={closeDetail} testid="git-commit-pane">
+            {@render commitDetail(sel, true)}
+          </SidePane>
+        </div>
+      {:else}
+        <div
+          class="max-h-[55%] shrink-0 overflow-auto border-t border-edge bg-panel/60 px-2 py-1.5"
+          data-testid="git-commit-strip"
+        >
+          {@render commitDetail(sel, false)}
         </div>
       {/if}
     {/if}

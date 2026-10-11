@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import BroadcastRoster from "./BroadcastRoster.svelte";
 
 const rows = [
-  { sessionId: "a", alias: "web-2", host: "app@10.0.0.12:22", status: "Connected", dot: "bg-green-500", isProd: false, active: true },
-  { sessionId: "b", alias: "db-prod", host: "app@10.0.0.31:22", status: "Connected", dot: "bg-green-500", isProd: true, active: false },
+  { sessionId: "a", alias: "web-2", host: "app@10.0.0.12:22", status: "Connected", dot: "bg-ok", isProd: false, active: true },
+  { sessionId: "b", alias: "db-prod", host: "app@10.0.0.31:22", status: "Connected", dot: "bg-ok", isProd: true, active: false },
 ];
 
 describe("BroadcastRoster", () => {
