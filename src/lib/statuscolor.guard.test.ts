@@ -76,10 +76,13 @@ function offenders(): string[] {
 
 /** Non-test TypeScript under `src/`, as a path relative to it → its source. */
 function scripts(dir = SRC, acc: Record<string, string> = {}): Record<string, string> {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) scripts(full, acc);
-    else if (entry.endsWith(".ts") && !entry.endsWith(".test.ts") && !entry.endsWith(".d.ts")) {
+  // What an entry is comes with the listing: asked of the path afterwards, the
+  // answer could be about a different file than the one then read.
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    const name = entry.name;
+    if (entry.isDirectory()) scripts(full, acc);
+    else if (name.endsWith(".ts") && !name.endsWith(".test.ts") && !name.endsWith(".d.ts")) {
       acc[relative(SRC, full).split(sep).join("/")] = readFileSync(full, "utf8");
     }
   }
