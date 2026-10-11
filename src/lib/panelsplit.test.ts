@@ -2,6 +2,7 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
   clampShare,
+  fitsBeside,
   isPanelSplit,
   nudgedShare,
   PANEL_SPLITS,
@@ -34,6 +35,30 @@ describe("shareRange", () => {
   it("a width that is not measured yet is bound by the fixed limits alone", () => {
     for (const width of [0, -5, Number.NaN]) {
       expect(shareRange(width)).toEqual({ min: SHARE_MIN, max: SHARE_MAX });
+    }
+  });
+});
+
+describe("fitsBeside", () => {
+  it("is true from two minimal parts up", () => {
+    expect(fitsBeside(2 * PART_MIN)).toBe(true);
+    expect(fitsBeside(1400)).toBe(true);
+  });
+  it("is false in a row that would squeeze one of them", () => {
+    expect(fitsBeside(2 * PART_MIN - 1)).toBe(false);
+    expect(fitsBeside(300)).toBe(false);
+  });
+  it("is false for a row not measured yet", () => {
+    expect(fitsBeside(0)).toBe(false);
+    expect(fitsBeside(NaN)).toBe(false);
+    expect(fitsBeside(-10)).toBe(false);
+  });
+  it("agrees with the border: where it fits, the border has room to move or stand", () => {
+    for (let w = 100; w <= 2000; w += 7) {
+      const range = shareRange(w);
+      // Not fitting is exactly the case the border answers with forced halves.
+      if (!fitsBeside(w)) expect(range).toEqual({ min: 0.5, max: 0.5 });
+      else expect(range.min * w).toBeGreaterThanOrEqual(PART_MIN - 1e-6);
     }
   });
 });

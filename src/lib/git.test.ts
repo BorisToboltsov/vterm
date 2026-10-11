@@ -35,6 +35,11 @@ import {
   showFileArgs,
   showFileAtArgs,
   commitFilesArgs,
+  commitDetailArgs,
+  mergeFilesArgs,
+  mergeFileDiffArgs,
+  parseCommitDetail,
+  parseNameStatusZ,
   checkoutCommitArgs,
   resetArgs,
   cherryPickArgs,
@@ -357,6 +362,91 @@ describe("parseCommitFiles", () => {
     expect(files).toHaveLength(3);
     expect(files[0]).toEqual({ path: "src/a.ts", status: "M" });
     expect(files[2]).toEqual({ path: "new.ts", status: "R" });
+  });
+});
+
+describe("commit details", () => {
+  const US = "\x1f";
+  const RS = "\x1e";
+  // What git 2.54 prints for `commitDetailArgs` — bytes taken from a real repo:
+  // a modified file, an added one with a space and Cyrillic in its name, a rename.
+  const meta = ["Anna Author", "anna@example.com", "1791671525", "Carl Committer", "carl@example.com", "1791671999"];
+  const answer =
+    `${RS}${meta.join(US)}${RS}\0\n` +
+    "M\0AGENTS.md\0A\0docs/заметка с пробелом.md\0R100\0src/old.ts\0src/new.ts\0";
+
+  it("asks for the header and the files in one NUL-terminated call", () => {
+    const args = commitDetailArgs("abc123");
+    expect(args[0]).toBe("show");
+    expect(args).toContain("-z");
+    expect(args).toContain("--name-status");
+    expect(args[args.length - 1]).toBe("abc123");
+    const format = args.find((a) => a.startsWith("--format="))!;
+    expect(format).toBe(`--format=${RS}%an${US}%ae${US}%at${US}%cn${US}%ce${US}%ct${RS}`);
+  });
+
+  it("asks a merge for its diff against the first parent, by name", () => {
+    expect(mergeFilesArgs("abc123")).toEqual(["diff", "-z", "--no-color", "--name-status", "abc123^1", "abc123"]);
+    expect(mergeFileDiffArgs("abc123", "src/a b.ts")).toEqual([
+      "diff",
+      "--no-color",
+      "abc123^1",
+      "abc123",
+      "--",
+      "src/a b.ts",
+    ]);
+  });
+
+  it("reads who wrote it, who applied it and the files", () => {
+    expect(parseCommitDetail(answer)).toEqual({
+      authorEmail: "anna@example.com",
+      committer: "Carl Committer",
+      committerEmail: "carl@example.com",
+      committed: 1791671999,
+      files: [
+        { path: "AGENTS.md", status: "M" },
+        { path: "docs/заметка с пробелом.md", status: "A" },
+        { path: "src/new.ts", status: "R", orig: "src/old.ts" },
+      ],
+    });
+  });
+
+  it("a clean merge answers with a header and no files", () => {
+    const merge = `${RS}${meta.join(US)}${RS}\0\0`;
+    expect(parseCommitDetail(merge)?.files).toEqual([]);
+  });
+
+  it("is null for what is not that answer", () => {
+    expect(parseCommitDetail("")).toBeNull();
+    expect(parseCommitDetail("fatal: bad object abc123")).toBeNull();
+    expect(parseCommitDetail(`${RS}only one fence`)).toBeNull();
+    expect(parseCommitDetail(`${RS}too${US}few${RS}`)).toBeNull();
+  });
+
+  it("an unreadable commit time is zero, not NaN", () => {
+    const odd = `${RS}a${US}b${US}c${US}d${US}e${US}soon${RS}`;
+    expect(parseCommitDetail(odd)?.committed).toBe(0);
+  });
+});
+
+describe("parseNameStatusZ", () => {
+  it("reads the listing of `git diff -z --name-status`", () => {
+    expect(parseNameStatusZ("M\0a.ts\0D\0gone.ts\0C75\0base.ts\0copy.ts\0")).toEqual([
+      { path: "a.ts", status: "M" },
+      { path: "gone.ts", status: "D" },
+      { path: "copy.ts", status: "C", orig: "base.ts" },
+    ]);
+  });
+  it("keeps a name with a tab or a line break whole", () => {
+    expect(parseNameStatusZ("A\0odd\tname\nhere.txt\0")).toEqual([
+      { path: "odd\tname\nhere.txt", status: "A" },
+    ]);
+  });
+  it("is empty for nothing, and drops a record cut short", () => {
+    expect(parseNameStatusZ("")).toEqual([]);
+    expect(parseNameStatusZ("\0\0")).toEqual([]);
+    expect(parseNameStatusZ("M\0a.ts\0R100\0old.ts")).toEqual([{ path: "a.ts", status: "M" }]);
+    expect(parseNameStatusZ("M\0a.ts\0D")).toEqual([{ path: "a.ts", status: "M" }]);
   });
 });
 

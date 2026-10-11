@@ -560,7 +560,7 @@
       {/if}
       {#if wide || activeSub === "graph"}
         <div class="min-h-0 min-w-0 flex-1" data-testid="git-column-graph">
-          <GitGraph {rows} {run} {runQuery} {openDiff} />
+          <GitGraph {rows} {wide} {run} {runQuery} {openDiff} />
         </div>
       {/if}
     </div>

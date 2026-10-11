@@ -32,7 +32,7 @@
   import type { GitOutput } from "./api";
   import { writeClipboard } from "./clipboard";
   import { notifySuccess, notifyError } from "./stores/toasts.svelte";
-  import { relTime, fileStatusColor } from "./gitview";
+  import { fileStatusColor } from "./gitview";
   import { t } from "./i18n";
 
   let {

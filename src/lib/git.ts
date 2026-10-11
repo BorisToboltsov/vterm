@@ -4,9 +4,11 @@
 // executor — this file owns the contract. See INVARIANTS ("чистая логика в .ts").
 //
 // Field/record separators for machine-readable git output:
-//   US (0x1f) between fields, RS (0x1e) is avoided — records are newline-split.
+//   US (0x1f) between fields; records are newline- or NUL-split. RS (0x1e)
+//   fences the one header a command prints ahead of a file list (`commitDetailArgs`).
 
 const US = "\x1f";
+const RS = "\x1e";
 
 // ── Argument builders ────────────────────────────────────────────────────────
 
@@ -250,6 +252,39 @@ export function commitFilesArgs(hash: string): string[] {
   return ["show", "--no-color", "--name-status", "--format=", hash];
 }
 
+/**
+ * One commit for the details pane, in one call: who wrote it and who applied
+ * it, fenced by RS, then the files it touched. `-z` ends every path with NUL
+ * and leaves it as it is — without it git quotes a non-ASCII name into octal
+ * escapes (`"\320\267…"`), and a tab or a newline in a name breaks the row.
+ */
+export function commitDetailArgs(hash: string): string[] {
+  return [
+    "show",
+    "-z",
+    "--no-color",
+    "--name-status",
+    `--format=${RS}%an${US}%ae${US}%at${US}%cn${US}%ce${US}%ct${RS}`,
+    hash,
+  ];
+}
+
+/**
+ * What a merge brought into the branch: its diff against the first parent.
+ * `git show` lists a merge's files only where the result differs from *both*
+ * parents — nothing, for a clean merge — and what `-m`/`--first-parent` do to
+ * that changed between git versions; a diff of two named commits reads the
+ * same everywhere.
+ */
+export function mergeFilesArgs(hash: string): string[] {
+  return ["diff", "-z", "--no-color", "--name-status", `${hash}^1`, hash];
+}
+
+/** One file of that list: what the merge changed in it, against the first parent. */
+export function mergeFileDiffArgs(hash: string, path: string): string[] {
+  return ["diff", "--no-color", `${hash}^1`, hash, "--", path];
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface GitFile {
@@ -471,6 +506,64 @@ export interface CommitFile {
   path: string;
   /** name-status letter: A M D R C … */
   status: string;
+  /** Where a renamed or copied file came from. */
+  orig?: string;
+}
+
+/**
+ * Parse a `-z --name-status` listing: `M\0path\0`, and for a rename or a copy
+ * `R100\0from\0to\0`. A listing cut short mid-record drops that record.
+ */
+export function parseNameStatusZ(raw: string): CommitFile[] {
+  const out: CommitFile[] = [];
+  const tokens = raw.split("\0");
+  for (let i = 0; i < tokens.length; i++) {
+    // The listing follows a header's line break; nothing else starts with one.
+    const code = tokens[i].replace(/^\n+/, "");
+    if (!code) continue;
+    const status = code[0];
+    if (status === "R" || status === "C") {
+      const orig = tokens[i + 1];
+      const path = tokens[i + 2];
+      i += 2;
+      if (orig && path) out.push({ path, status, orig });
+    } else {
+      const path = tokens[++i];
+      if (path) out.push({ path, status });
+    }
+  }
+  return out;
+}
+
+/** What the details pane adds to a commit of the log. */
+export interface CommitDetail {
+  authorEmail: string;
+  /** Who applied the commit — someone else after a rebase, a cherry-pick, `git am`. */
+  committer: string;
+  committerEmail: string;
+  /** When it was applied, unix seconds; 0 when git did not say. */
+  committed: number;
+  files: CommitFile[];
+}
+
+/**
+ * Parse the answer to `commitDetailArgs`. Null when it is not that answer (git
+ * failed, or printed something else): the pane says so instead of showing a
+ * commit with no author and no files.
+ */
+export function parseCommitDetail(raw: string): CommitDetail | null {
+  const from = raw.indexOf(RS);
+  const to = from < 0 ? -1 : raw.indexOf(RS, from + 1);
+  if (to < 0) return null;
+  const f = raw.slice(from + 1, to).split(US);
+  if (f.length < 6) return null;
+  return {
+    authorEmail: f[1],
+    committer: f[3],
+    committerEmail: f[4],
+    committed: Number(f[5]) || 0,
+    files: parseNameStatusZ(raw.slice(to + 1)),
+  };
 }
 
 /** Parse `git show --name-status --format=` output for one commit. */

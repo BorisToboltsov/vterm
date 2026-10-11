@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const gitRun = vi.fn();
@@ -229,5 +229,259 @@ describe("GitPanel in a wide container", () => {
     await resize(1200);
     expect(calls("log")).toHaveLength(1);
     expect(calls("status")).toHaveLength(1);
+  });
+});
+
+// ── The details of a commit (v1.15) ──────────────────────────────────────────
+
+describe("GitPanel commit details", () => {
+  const US = "\x1f";
+  const RS = "\x1e";
+  const AT = 1_700_000_000;
+  interface Row {
+    hash: string;
+    parents?: string[];
+    refs?: string;
+    subject: string;
+    body?: string;
+  }
+  const MERGE: Row = { hash: "c".repeat(40), parents: ["b".repeat(40), "f".repeat(40)], refs: "HEAD -> main", subject: "Merge branch 'feat'" };
+  const FEAT: Row = { hash: "f".repeat(40), parents: ["a".repeat(40)], subject: "Docs: umask before the build", body: "Why the\nstatic files answered 403." };
+  const MAIN: Row = { hash: "b".repeat(40), parents: ["a".repeat(40)], subject: "On main" };
+  const ROOT: Row = { hash: "a".repeat(40), subject: "First" };
+  const logLine = (c: Row) =>
+    [c.hash, c.hash.slice(0, 7), (c.parents ?? []).join(" "), "Anna Author", String(AT), c.refs ?? "", c.subject, c.body ?? ""].join(US);
+  const LOG = [MERGE, FEAT, MAIN, ROOT].map(logLine).join("\0");
+
+  const header = (committer = "Anna Author", email = "anna@example.com", at = AT) =>
+    `${RS}${["Anna Author", "anna@example.com", String(AT), committer, email, String(at)].join(US)}${RS}`;
+  const FILES = "M\0AGENTS.md\0A\0docs/operations/заметка.md\0R100\0src/old.ts\0src/new.ts\0";
+
+  /** What git answers; a test replaces single answers through `answers`. */
+  let answers: Record<string, (args: string[]) => unknown>;
+  beforeEach(() => {
+    resetPanelShares();
+    answers = {
+      "rev-parse": () => ok("/repo\n"),
+      log: () => ok(LOG),
+      show: (args) =>
+        args.includes("--name-status")
+          ? ok(`${header()}\0\n${args[args.length - 1] === MERGE.hash ? "" : FILES}`)
+          : ok("diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n"),
+      diff: (args) =>
+        args.includes("--name-status") ? ok("M\0merged.ts\0") : ok("diff --git a/m b/m\n@@ -1 +1 @@\n-a\n+b\n"),
+    };
+    gitRun.mockReset().mockImplementation(async (_s: string, _c: string, args: string[]) =>
+      (answers[args[0]] ?? (() => ok()))(args),
+    );
+  });
+
+  /** Give an element a width and let the observers see it (jsdom has no layout). */
+  function setWidth(el: HTMLElement, width: number) {
+    Object.defineProperty(el, "clientWidth", { configurable: true, value: width });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const o of observers) o.cb([{ target: el }]);
+  }
+  /** The panel `panelWidth` px wide, its history row `rowWidth` px wide. */
+  async function layout(panelWidth: number, rowWidth: number) {
+    const root = document.querySelector<HTMLElement>("[data-wide]")!;
+    setWidth(root, panelWidth);
+    await waitFor(() => expect(root.dataset.wide).toBe(String(panelWidth >= 768)));
+    setWidth(screen.getByTestId("git-graph").parentElement!, rowWidth);
+  }
+  async function mountHistory() {
+    await mount();
+    await fireEvent.click(screen.getByTestId("git-subtab-graph"));
+    await screen.findByText(FEAT.subject);
+  }
+  const commitRow = (c: Row) => within(screen.getByTestId("git-graph")).getByText(c.subject).closest("button")!;
+  const detailCalls = () => calls("show").filter((a) => a.includes("--name-status"));
+  const drawnTree = () =>
+    [...screen.getByTestId("git-commit-detail").querySelectorAll("[data-testid='git-commit-dir'], [data-testid='git-commit-file']")].map(
+      (e) => (e.textContent ?? "").replace(/\s+/g, " ").trim(),
+    );
+
+  it("a narrow dock opens the commit in a strip under the history", async () => {
+    await mountHistory();
+    expect(screen.queryByTestId("git-commit-detail")).toBeNull();
+    await fireEvent.click(commitRow(FEAT));
+
+    const strip = await screen.findByTestId("git-commit-strip");
+    expect(screen.queryByTestId("git-commit-pane")).toBeNull();
+    await waitFor(() => expect(within(strip).getAllByTestId("git-commit-file")).toHaveLength(3));
+    // The message whole, the author with the address, the hash in full.
+    expect(within(strip).getByText(FEAT.subject)).toBeInTheDocument();
+    expect(within(strip).getByTestId("git-commit-body").textContent).toBe(FEAT.body);
+    expect(within(strip).getByTestId("git-commit-author").textContent).toContain("Anna Author <anna@example.com>");
+    expect(within(strip).getByText(FEAT.hash)).toBeInTheDocument();
+    // Applied by its author as written: no committer line.
+    expect(within(strip).queryByTestId("git-commit-committer")).toBeNull();
+    // One call, NUL-terminated, for the header and the files together.
+    expect(detailCalls()).toHaveLength(1);
+    expect(detailCalls()[0]).toContain("-z");
+    expect(calls("diff")).toHaveLength(0);
+  });
+
+  it("shows the files as a tree: folders first, a chain of single folders folded, non-ASCII names as they are", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    await waitFor(() => expect(drawnTree()).toHaveLength(5));
+    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md", "src 1", "R new.ts", "M AGENTS.md"]);
+    // Folding a folder hides what is under it and keeps its count.
+    await fireEvent.click(within(screen.getByTestId("git-commit-detail")).getByText("src").closest("button")!);
+    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md", "src 1", "M AGENTS.md"]);
+  });
+
+  it("clicking the selected commit again closes its details", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    await screen.findByTestId("git-commit-strip");
+    await fireEvent.click(commitRow(FEAT));
+    await waitFor(() => expect(screen.queryByTestId("git-commit-detail")).toBeNull());
+  });
+
+  it("wide, and the row holds both: the commit opens beside the history, with a border to drag", async () => {
+    await mountHistory();
+    await layout(1200, 700);
+    await fireEvent.click(commitRow(FEAT));
+
+    const pane = await screen.findByTestId("git-commit-pane");
+    expect(screen.queryByTestId("git-commit-strip")).toBeNull();
+    expect(within(pane).getByTestId("git-commit-detail")).toBeInTheDocument();
+    const list = screen.getByTestId("git-graph");
+    expect(list.style.width).toBe("55%");
+    const border = [...document.querySelectorAll<HTMLElement>("[data-testid='panel-divider']")].find(
+      (d) => d.dataset.split === "gitCommit",
+    )!;
+    expect(border.previousElementSibling).toBe(list);
+    expect(border.nextElementSibling).toBe(screen.getByTestId("git-commit-side"));
+
+    // Its own share, not the one between changes and history.
+    border.setPointerCapture = vi.fn();
+    border.releasePointerCapture = vi.fn();
+    await fireEvent.pointerDown(border, { pointerId: 1, clientX: 385, clientY: 10 });
+    await fireEvent.pointerMove(border, { pointerId: 1, clientX: 315, clientY: 10 });
+    await fireEvent.pointerUp(border, { pointerId: 1, clientX: 315, clientY: 10 });
+    expect(panelSplits.shares.gitCommit).toBeCloseTo(0.45);
+    expect(panelSplits.shares.git).toBeUndefined();
+    expect(list.style.width).toBe("45%");
+
+    // The pane has a close button; the list takes the row back.
+    await fireEvent.click(within(pane).getByTestId("side-pane-close"));
+    await waitFor(() => expect(screen.queryByTestId("git-commit-detail")).toBeNull());
+    expect(screen.getByTestId("git-graph").style.width).toBe("");
+  });
+
+  it("wide, but the row cannot hold both: the strip, not a squeezed pane", async () => {
+    await mountHistory();
+    await layout(1200, 479);
+    await fireEvent.click(commitRow(FEAT));
+    await screen.findByTestId("git-commit-strip");
+    expect(screen.queryByTestId("git-commit-pane")).toBeNull();
+    // Room appears (the border to the changes was dragged): the same commit moves beside.
+    setWidth(screen.getByTestId("git-graph").parentElement!, 480);
+    await screen.findByTestId("git-commit-pane");
+    expect(screen.queryByTestId("git-commit-strip")).toBeNull();
+    // Moving it asked git for nothing again.
+    expect(detailCalls()).toHaveLength(1);
+  });
+
+  it("a narrow panel never puts it beside, however wide the row", async () => {
+    await mountHistory();
+    await layout(700, 700);
+    await fireEvent.click(commitRow(FEAT));
+    await screen.findByTestId("git-commit-strip");
+    expect(screen.queryByTestId("git-commit-pane")).toBeNull();
+  });
+
+  it("a merge lists what it brought in — its diff against the first parent — and says so", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(MERGE));
+    const detail = await screen.findByTestId("git-commit-detail");
+    await waitFor(() => expect(within(detail).getAllByTestId("git-commit-file")).toHaveLength(1));
+    expect(drawnTree()).toEqual(["M merged.ts"]);
+    expect(within(detail).getByTestId("git-commit-merge-note")).toBeInTheDocument();
+    expect(calls("diff")).toEqual([["diff", "-z", "--no-color", "--name-status", `${MERGE.hash}^1`, MERGE.hash]]);
+    // A file of it opens the same diff, for that file.
+    await fireEvent.click(within(detail).getByTestId("git-commit-file"));
+    await waitFor(() =>
+      expect(calls("diff")).toContainEqual(["diff", "--no-color", `${MERGE.hash}^1`, MERGE.hash, "--", "merged.ts"]),
+    );
+  });
+
+  it("an ordinary commit carries no merge note, and its file opens the commit's own diff", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    const detail = await screen.findByTestId("git-commit-detail");
+    await waitFor(() => expect(within(detail).getAllByTestId("git-commit-file")).toHaveLength(3));
+    expect(within(detail).queryByTestId("git-commit-merge-note")).toBeNull();
+    await fireEvent.click(within(detail).getByText("AGENTS.md").closest("button")!);
+    await waitFor(() =>
+      expect(calls("show")).toContainEqual(["show", "--no-color", "--format=", FEAT.hash, "--", "AGENTS.md"]),
+    );
+  });
+
+  it("names the committer when someone else applied the commit", async () => {
+    answers.show = () => ok(`${header("Carl Committer", "carl@example.com", AT + 3600)}\0\n${FILES}`);
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    const line = await screen.findByTestId("git-commit-committer");
+    expect(line.textContent?.trim()).toMatch(/^Carl Committer <carl@example\.com> · \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  });
+
+  it("a commit git could not show is an error, never 'no files'", async () => {
+    answers.show = () => ({ stdout: "", stderr: "fatal: bad object", exitCode: 128 });
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    expect(await screen.findByTestId("git-commit-failed")).toBeInTheDocument();
+    expect(screen.queryByText("No files in this commit")).toBeNull();
+    // What the log already knew is still shown.
+    expect(within(screen.getByTestId("git-commit-detail")).getByText(FEAT.subject)).toBeInTheDocument();
+  });
+
+  it("a merge whose diff failed is an error too, not an empty merge", async () => {
+    answers.diff = () => ({ stdout: "", stderr: "fatal: bad revision", exitCode: 128 });
+    await mountHistory();
+    await fireEvent.click(commitRow(MERGE));
+    expect(await screen.findByTestId("git-commit-failed")).toBeInTheDocument();
+  });
+
+  it("the answer for a commit left behind does not overwrite the one picked after it", async () => {
+    let releaseFeat: (v: unknown) => void = () => {};
+    answers.show = (args) =>
+      args[args.length - 1] === FEAT.hash
+        ? new Promise((resolve) => (releaseFeat = resolve))
+        : ok(`${header()}\0\nA\0only-main.txt\0`);
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    await fireEvent.click(commitRow(MAIN));
+    await waitFor(() => expect(drawnTree()).toEqual(["A only-main.txt"]));
+    // The slow answer arrives now — for a commit no longer shown.
+    releaseFeat(ok(`${header()}\0\n${FILES}`));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.getByTestId("git-commit-detail").dataset.commit).toBe(MAIN.hash);
+    expect(drawnTree()).toEqual(["A only-main.txt"]);
+  });
+
+  it("a parent is a way to its commit when the history has it", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(FEAT));
+    const detail = await screen.findByTestId("git-commit-detail");
+    await fireEvent.click(within(detail).getByTestId("git-commit-parent"));
+    await waitFor(() => expect(screen.getByTestId("git-commit-detail").dataset.commit).toBe(ROOT.hash));
+    // The root has no parents to offer.
+    expect(within(screen.getByTestId("git-commit-detail")).queryByTestId("git-commit-parent")).toBeNull();
+  });
+
+  it("the row shows the age every other list uses, and carries the author and the moment for a wide list", async () => {
+    await mountHistory();
+    const row = commitRow(FEAT);
+    const age = within(row).getByTestId("git-row-age").textContent ?? "";
+    // `compactAge`: digits and unit letters (2y, 8mo, 3w, 5d4h) — never the old "now".
+    expect(age).toMatch(/^(\d+(y|mo|w|d|h|m|s))+$/);
+    expect(within(row).getByTestId("git-row-author").textContent).toBe("Anna Author");
+    expect(within(row).getByTestId("git-row-moment").textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   });
 });

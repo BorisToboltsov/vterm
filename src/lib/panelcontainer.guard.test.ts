@@ -18,6 +18,11 @@
 // A panel whose sub-components own dialogs cannot be a container at all; it
 // measures itself instead (`actions/panelwide.ts`, the Git panel).
 //
+// What a panel opens beside its list goes there by the one rule there is — the
+// panel is wide and the row holds two parts (`fitsBeside`) — never by a width
+// of its own: a second threshold is a second answer to "is this panel wide"
+// (v1.15, the commit's details in the Git history).
+//
 // Every check is a function over source text, so that the same file can show it
 // catches the violation it exists for (the second `describe`). Sources are read
 // with comments stripped.
@@ -189,6 +194,40 @@ export function containerViolations(rel: string, all: Record<string, string>): s
 }
 
 /**
+ * What lets a commit's details stand beside the history where the row does not
+ * hold both, or by a width rule of their own — in `GitGraph`'s source. Empty
+ * when the rule holds.
+ */
+export function commitPaneViolations(source: string): string[] {
+  const c = code(source);
+  const out: string[] = [];
+  if (!/const beside = \$derived\(wide && fitsBeside\(rowWidth\)\);/.test(c)) {
+    out.push("where the details stand is not decided by `wide && fitsBeside(rowWidth)`");
+  }
+  if (/\browWidth\s*[<>]=?\s*\d/.test(c) || /\bisWide\(/.test(c)) {
+    out.push("the history decides by a width of its own");
+  }
+  const markup = markupOf(source);
+  const at = markup.indexOf("{#if beside}");
+  const mid = at < 0 ? -1 : markup.indexOf("{:else}", at);
+  const end = mid < 0 ? -1 : markup.indexOf("{/if}", mid);
+  if (end < 0) return [...out, "the details have no beside / under branches"];
+  const besideBranch = markup.slice(at, mid);
+  const underBranch = markup.slice(mid, end);
+  if (!/<SidePane\b/.test(besideBranch) || !/<PanelDivider split="gitCommit"/.test(besideBranch)) {
+    out.push("beside the list the details are not a SidePane behind the panel's divider");
+  }
+  if ((markup.match(/<SidePane\b/g) ?? []).length !== 1 || /<PanelDivider\b/.test(underBranch)) {
+    out.push("a pane or a divider stands outside the beside branch");
+  }
+  const same = /\{@render commitDetail\(/;
+  if (!same.test(besideBranch) || !same.test(underBranch)) {
+    out.push("the two places do not show the same content");
+  }
+  return out;
+}
+
+/**
  * Containers that hold a fixed element on purpose, each with the reason it is
  * safe there. An entry that no longer excuses anything fails the gate.
  */
@@ -202,7 +241,7 @@ describe("panel container guard", () => {
     expect(fixedChain("lib/ContextMenu.svelte", all)).toEqual(["ContextMenu"]);
     expect(fixedChain("lib/ConfirmDialog.svelte", all)).toEqual(["ConfirmDialog", "Modal"]);
     // What a wide panel shows beside its list owns no dialog…
-    for (const name of ["SidePane", "DockerDetail", "DockerText", "K8sDetail", "K8sText"]) {
+    for (const name of ["SidePane", "DockerDetail", "DockerText", "K8sDetail", "K8sText", "GitCommitDetail"]) {
       expect(fixedChain(`lib/${name}.svelte`, all), name).toBeNull();
     }
     // …and the dialog around the same content does.
@@ -225,6 +264,13 @@ describe("panel container guard", () => {
     for (const rel of excused) {
       expect(found.some((v) => v.startsWith(`${rel}:`)), `${rel} is exempt but clean`).toBe(true);
     }
+  });
+
+  it("a commit's details stand beside the history only where the row holds both", () => {
+    expect(commitPaneViolations(all["lib/GitGraph.svelte"])).toEqual([]);
+    // The list is a container of its own, and holds nothing fixed.
+    expect(containerSubtrees(markupOf(all["lib/GitGraph.svelte"]))).toHaveLength(1);
+    expect(containerViolations("lib/GitGraph.svelte", all)).toEqual([]);
   });
 
   it("a panel whose sub-views own dialogs measures itself instead of being a container", () => {
@@ -281,6 +327,44 @@ describe("panel container guard — catches what it exists for", () => {
     const found = containerViolations(rel, withSource(rel, broken));
     expect(found.some((v) => v.includes("<GitChanges>"))).toBe(true);
     expect(found.some((v) => v.includes("<GitBranches>"))).toBe(true);
+  });
+
+  it("a commit's details put beside the history by anything but the one rule", () => {
+    const src = all["lib/GitGraph.svelte"];
+    // Beside whenever the panel is wide — squeezed into a row that holds one part.
+    expect(commitPaneViolations(mutate(src, "wide && fitsBeside(rowWidth)", "wide"))).toEqual([
+      "where the details stand is not decided by `wide && fitsBeside(rowWidth)`",
+    ]);
+    // A threshold of its own.
+    expect(commitPaneViolations(mutate(src, "wide && fitsBeside(rowWidth)", "rowWidth >= 900"))).toEqual([
+      "where the details stand is not decided by `wide && fitsBeside(rowWidth)`",
+      "the history decides by a width of its own",
+    ]);
+    // The rule named only in a comment.
+    expect(
+      commitPaneViolations(
+        mutate(src, "const beside = $derived(wide && fitsBeside(rowWidth));", "// const beside = $derived(wide && fitsBeside(rowWidth));\n  const beside = $derived(wide);"),
+      ),
+    ).toEqual(["where the details stand is not decided by `wide && fitsBeside(rowWidth)`"]);
+    // A second, simpler content for the strip: the two places drift apart.
+    expect(commitPaneViolations(mutate(src, "{@render commitDetail(sel, false)}", "<p>{sel.subject}</p>"))).toEqual([
+      "the two places do not show the same content",
+    ]);
+    // The pane brought under the list as well.
+    expect(
+      commitPaneViolations(
+        mutate(src, "{@render commitDetail(sel, false)}", "<SidePane title={sel.short}>{@render commitDetail(sel, false)}</SidePane>"),
+      ),
+    ).toEqual(["a pane or a divider stands outside the beside branch"]);
+  });
+
+  it("the commit's details growing a dialog of their own", () => {
+    const rel = "lib/GitCommitDetail.svelte";
+    const grown = all[rel]
+      .replace('  import Icon from "./Icon.svelte";', '  import Icon from "./Icon.svelte";\n  import ContextMenu from "./ContextMenu.svelte";')
+      .concat("\n<ContextMenu menu={null} onclose={() => {}} />\n");
+    expect(grown).not.toBe(all[rel]);
+    expect(fixedChain(rel, withSource(rel, grown))).toEqual(["GitCommitDetail", "ContextMenu"]);
   });
 
   it("is not fooled by a comment, or by a class that merely contains the word", () => {
