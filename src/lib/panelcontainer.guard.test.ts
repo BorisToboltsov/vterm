@@ -228,6 +228,41 @@ export function commitPaneViolations(source: string): string[] {
 }
 
 /**
+ * What lets the file panel put its search and its transfers beside the listing
+ * where the row does not hold both, or by a width rule of its own — in
+ * `FileBrowser`'s source. Empty when the rule holds (v1.17).
+ */
+export function filePaneViolations(source: string): string[] {
+  const c = code(source);
+  const out: string[] = [];
+  if (!/const beside = \$derived\(wide && fitsBeside\(rowWidth\)\);/.test(c)) {
+    out.push("where the search and the transfers stand is not decided by `wide && fitsBeside(rowWidth)`");
+  }
+  if (/\browWidth\s*[<>]=?\s*\d/.test(c) || /\bisWide\(/.test(c)) {
+    out.push("the file panel decides by a width of its own");
+  }
+  const markup = markupOf(source);
+  const at = markup.indexOf("{#if sideOpen}");
+  const end = at < 0 ? -1 : markup.indexOf("\n        {/if}\n        </div>\n      {/if}", at);
+  if (end < 0) return [...out, "the file panel has no column beside the listing"];
+  const side = markup.slice(at, end);
+  const rest = markup.slice(0, at) + markup.slice(end);
+  if (!/<PanelDivider split="files"/.test(side) || !/<SidePane\b/.test(side)) {
+    out.push("beside the listing the search is not a SidePane behind the panel's divider");
+  }
+  if (/<SidePane\b|<PanelDivider\b/.test(rest)) out.push("a pane or a divider stands outside the side column");
+  // One content, two places: the same snippet under the path bar and in the pane.
+  if (!/\{@render searchBox\(true\)\}/.test(side) || !/\{#if searchOpen && !beside\}[^]*?\{@render searchBox\(false\)\}/.test(rest)) {
+    out.push("the search is not the same content in its two places");
+  }
+  // The footer stands in one of them, never in both.
+  if (!/\{#if !beside\}\{@render footer\?\.\(\)\}\{\/if\}/.test(rest) || !/\{@render footer\?\.\(\)\}/.test(side)) {
+    out.push("the footer does not move beside the listing with the search");
+  }
+  return out;
+}
+
+/**
  * Containers that hold a fixed element on purpose, each with the reason it is
  * safe there. An entry that no longer excuses anything fails the gate.
  */
@@ -241,7 +276,7 @@ describe("panel container guard", () => {
     expect(fixedChain("lib/ContextMenu.svelte", all)).toEqual(["ContextMenu"]);
     expect(fixedChain("lib/ConfirmDialog.svelte", all)).toEqual(["ConfirmDialog", "Modal"]);
     // What a wide panel shows beside its list owns no dialog…
-    for (const name of ["SidePane", "DockerDetail", "DockerText", "K8sDetail", "K8sText", "GitCommitDetail"]) {
+    for (const name of ["SidePane", "DockerDetail", "DockerText", "K8sDetail", "K8sText", "GitCommitDetail", "GrepResults"]) {
       expect(fixedChain(`lib/${name}.svelte`, all), name).toBeNull();
     }
     // …and the dialog around the same content does.
@@ -271,6 +306,19 @@ describe("panel container guard", () => {
     // The list is a container of its own, and holds nothing fixed.
     expect(containerSubtrees(markupOf(all["lib/GitGraph.svelte"]))).toHaveLength(1);
     expect(containerViolations("lib/GitGraph.svelte", all)).toEqual([]);
+  });
+
+  it("the file panel's search and transfers stand beside the listing only where the row holds both", () => {
+    expect(filePaneViolations(all["lib/FileBrowser.svelte"])).toEqual([]);
+    // Its query container is the listing, and that holds nothing fixed.
+    expect(containerViolations("lib/FileBrowser.svelte", all)).toEqual([]);
+  });
+
+  it("the assistant's chat owns a dialog, so it measures itself too", () => {
+    const chat = all["lib/AiChat.svelte"];
+    expect(containerSubtrees(markupOf(chat))).toEqual([]);
+    expect(code(chat)).toMatch(/use:wideWhen=\{/);
+    expect(fixedChain("lib/AiChat.svelte", all)).not.toBeNull();
   });
 
   it("a panel whose sub-views own dialogs measures itself instead of being a container", () => {
@@ -356,6 +404,32 @@ describe("panel container guard — catches what it exists for", () => {
         mutate(src, "{@render commitDetail(sel, false)}", "<SidePane title={sel.short}>{@render commitDetail(sel, false)}</SidePane>"),
       ),
     ).toEqual(["a pane or a divider stands outside the beside branch"]);
+  });
+
+  it("the file panel's side column put there by anything but the one rule", () => {
+    const src = all["lib/FileBrowser.svelte"];
+    expect(filePaneViolations(mutate(src, "wide && fitsBeside(rowWidth)", "wide"))).toEqual([
+      "where the search and the transfers stand is not decided by `wide && fitsBeside(rowWidth)`",
+    ]);
+    expect(filePaneViolations(mutate(src, "wide && fitsBeside(rowWidth)", "rowWidth >= 900"))).toEqual([
+      "where the search and the transfers stand is not decided by `wide && fitsBeside(rowWidth)`",
+      "the file panel decides by a width of its own",
+    ]);
+    // The footer drawn under the listing as well as beside it: the transfers twice.
+    expect(
+      filePaneViolations(mutate(src, "{#if !beside}{@render footer?.()}{/if}", "{@render footer?.()}")),
+    ).toEqual(["the footer does not move beside the listing with the search"]);
+    // A second, simpler search for the pane: the two places drift apart.
+    expect(filePaneViolations(mutate(src, "{@render searchBox(true)}", "<p>{searchQuery}</p>"))).toEqual([
+      "the search is not the same content in its two places",
+    ]);
+  });
+
+  it("the chat made a query container above its consent dialog", () => {
+    const rel = "lib/AiChat.svelte";
+    const broken = mutate(all[rel], 'class="flex h-full min-h-0 {wide', 'class="@container flex h-full min-h-0 {wide');
+    expect(containerSubtrees(markupOf(broken))).toHaveLength(1);
+    expect(containerViolations(rel, withSource(rel, broken)).length).toBeGreaterThan(0);
   });
 
   it("the commit's details growing a dialog of their own", () => {

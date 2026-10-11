@@ -81,6 +81,7 @@
     type K8sNode,
     type K8sEvent,
     type K8sEndpointSlice,
+    type K8sDetailTab,
   } from "./k8s";
   import { buildRoutes } from "./k8sroute";
   import { pushSamples, type LoadHistory } from "./loadhistory";
@@ -179,6 +180,12 @@
   // Pod detail modal.
   let detailOpen = $state(false);
   let detailPod = $state<K8sPod | null>(null);
+  // The view of the open details and the container picked in it — the panel's,
+  // not the details' own: a dialog (narrow) and the pane beside the list (wide)
+  // are two instances, and going across the width threshold must show what was
+  // on screen, not Overview again.
+  let detailTab = $state<K8sDetailTab>("overview");
+  let detailContainer = $state<string | null>(null);
 
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
@@ -479,6 +486,13 @@
   // ── Detail modal live sync ───────────────────────────────────────────────────
 
   function openDetails(pod: K8sPod) {
+    // Opened anew, or for another pod: from the top. The same pod again keeps
+    // the view it is on (see `detailTab`).
+    const same = detailOpen && detailPod?.namespace === pod.namespace && detailPod?.name === pod.name;
+    if (!same) {
+      detailTab = "overview";
+      detailContainer = null;
+    }
     detailPod = pod;
     detailOpen = true;
   }
@@ -761,6 +775,8 @@
             <K8sDetail
               active
               fill
+              bind:tab={detailTab}
+              bind:container={detailContainer}
               pod={liveDetailPod}
               metrics={detailMetrics}
               {busy}
@@ -783,6 +799,8 @@
      the list. Outside the root: it is a query container (see INVARIANTS). -->
 <K8sDetailModal
   open={detailOpen && !wide}
+  bind:tab={detailTab}
+  bind:container={detailContainer}
   pod={liveDetailPod}
   metrics={detailMetrics}
   {busy}

@@ -673,3 +673,6 @@ export function stateTone(state: string): "ok" | "warn" | "bad" | "idle" {
       return "idle";
   }
 }
+
+/** The views of a container's details (`DockerDetail`). */
+export type DockerDetailTab = "overview" | "logs" | "inspect";

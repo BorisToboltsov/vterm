@@ -56,6 +56,27 @@ pub struct GrepMatch {
     pub text: String,
 }
 
+/// What a content search came back with (v1.17). The matches alone said too
+/// little: a search cut at the cap looked complete, and one that never ran — a
+/// bad expression, no `grep`, a folder that is gone — looked like "no matches".
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GrepOutcome {
+    /// At most [`GREP_LIMIT`] matches.
+    pub matches: Vec<GrepMatch>,
+    /// More lines matched than are returned.
+    pub truncated: bool,
+    /// `grep` reported an error, or never reported at all. With matches — some
+    /// files were not read; with none — the search did not run.
+    pub failed: bool,
+}
+
+/// The most matches a search returns; a broad search must not flood the channel.
+pub const GREP_LIMIT: usize = 1000;
+
+/// The line the search prints after its matches: `grep`'s own exit status.
+const GREP_STATUS: &str = "::vterm-grep-status:";
+
 /// A real linter to run on the server for a given language (Phase 12.7).
 pub struct LintTool {
     pub bin: &'static str,
@@ -246,6 +267,12 @@ pub async fn nginx_config_files_sudo(
 
 /// `grep -rnI` over SSH under `dir`. `-F` (fixed string) or `-E` (regex), optional
 /// case-insensitivity; output capped so a broad search can't flood the channel.
+///
+/// After its matches the search prints `grep`'s exit status (0 — matched, 1 —
+/// nothing matched, 2 and up — an error), and the cap leaves room for one line
+/// past the limit and for that status: a cut search is told from a complete
+/// one, and a search that failed from one that found nothing. The exec channel
+/// gives stdout only, so the status has to travel in it.
 pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool) -> String {
     let d = shell_quote(dir);
     let q = shell_quote(query);
@@ -254,13 +281,44 @@ pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool)
         flags.push('i');
     }
     let mode = if fixed { "-F" } else { "-E" };
-    format!("cd -- {d} 2>/dev/null && grep {flags} {mode} -e {q} -- . 2>/dev/null | head -n 1000")
+    let cap = GREP_LIMIT + 2;
+    format!(
+        "cd -- {d} 2>/dev/null && {{ grep {flags} {mode} -e {q} -- . 2>/dev/null; echo \"{GREP_STATUS}$?\"; }} | head -n {cap}"
+    )
+}
+
+/// Read what [`grep_command`] printed: the matches, whether more matched than
+/// fit, and whether `grep` failed. No status line and no overflow means the
+/// command never got as far as `grep` (the folder is gone) — a failure, not an
+/// empty result.
+pub fn parse_grep_outcome(out: &str) -> GrepOutcome {
+    let status = out
+        .lines()
+        .find_map(|l| l.strip_prefix(GREP_STATUS))
+        .and_then(|s| s.trim().parse::<i32>().ok());
+    let mut matches = parse_grep(out);
+    let truncated = matches.len() > GREP_LIMIT;
+    matches.truncate(GREP_LIMIT);
+    let failed = match status {
+        Some(code) => code > 1,
+        // Past the cap the status line is cut off with the rest: not known.
+        None => !truncated,
+    };
+    GrepOutcome {
+        matches,
+        truncated,
+        failed,
+    }
 }
 
 /// Parse `grep -rn` output (`./path:line:text`) into matches; bad lines skipped.
 pub fn parse_grep(out: &str) -> Vec<GrepMatch> {
     let mut matches = Vec::new();
     for line in out.lines() {
+        // The status line of `grep_command` is not a match.
+        if line.starts_with(GREP_STATUS) {
+            continue;
+        }
         let rest = line.strip_prefix("./").unwrap_or(line);
         let Some(c1) = rest.find(':') else { continue };
         let (path, after) = rest.split_at(c1);
@@ -1241,6 +1299,121 @@ mod tests {
         assert!(c.contains("grep -rnIi -F -e 'TODO'"));
         let c2 = grep_command("/srv", "a.+b", false, false);
         assert!(c2.contains("grep -rnI -E -e 'a.+b'"));
+    }
+
+    #[test]
+    fn grep_command_reports_the_status_and_leaves_room_to_see_the_overflow() {
+        let c = grep_command("/srv", "TODO", true, true);
+        assert!(c.contains("echo \"::vterm-grep-status:$?\""));
+        assert!(c.ends_with(&format!("| head -n {}", GREP_LIMIT + 2)));
+    }
+
+    #[test]
+    fn a_search_outcome_tells_cut_from_complete_and_failed_from_empty() {
+        let hit = |n: usize| format!("./a.conf:{n}:upstream api\n");
+        // Found, and that is all there is.
+        let found = parse_grep_outcome(&format!("{}{}::vterm-grep-status:0\n", hit(1), hit(2)));
+        assert_eq!(found.matches.len(), 2);
+        assert!(!found.truncated && !found.failed);
+        // Nothing matched: an empty result that is true.
+        let none = parse_grep_outcome("::vterm-grep-status:1\n");
+        assert_eq!(
+            none,
+            GrepOutcome {
+                matches: vec![],
+                truncated: false,
+                failed: false
+            }
+        );
+        // A bad expression, or no grep: it did not run.
+        let bad = parse_grep_outcome("::vterm-grep-status:2\n");
+        assert!(bad.matches.is_empty() && bad.failed && !bad.truncated);
+        assert!(parse_grep_outcome("::vterm-grep-status:127\n").failed);
+        // Matches and an error: some files were not read.
+        let partial = parse_grep_outcome(&format!("{}::vterm-grep-status:2\n", hit(1)));
+        assert_eq!(partial.matches.len(), 1);
+        assert!(partial.failed);
+        // The folder is gone: `cd` failed and nothing was printed at all.
+        assert!(parse_grep_outcome("").failed);
+        // Past the cap: the limit is returned, the rest is said to exist, and
+        // the status — cut off with it — is not guessed.
+        let many: String = (1..=GREP_LIMIT + 2).map(hit).collect();
+        let cut = parse_grep_outcome(&many);
+        assert_eq!(cut.matches.len(), GREP_LIMIT);
+        assert!(cut.truncated && !cut.failed);
+        // Exactly the limit is not a cut.
+        let exact: String = (1..=GREP_LIMIT).map(hit).collect();
+        let whole = parse_grep_outcome(&format!("{exact}::vterm-grep-status:0\n"));
+        assert_eq!(whole.matches.len(), GREP_LIMIT);
+        assert!(!whole.truncated && !whole.failed);
+        // A file whose text looks like the status line is still a match.
+        let lookalike =
+            parse_grep_outcome("./notes:3:see ::vterm-grep-status:9\n::vterm-grep-status:0\n");
+        assert_eq!(lookalike.matches.len(), 1);
+        assert!(!lookalike.failed);
+    }
+
+    /// The command against a real `sh` and a real `grep`: what the parser is
+    /// written for is what they print.
+    #[cfg(unix)]
+    #[test]
+    fn the_search_command_runs_in_a_real_shell() {
+        let dir = std::env::temp_dir().join(format!("vterm-grep-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("conf.d")).unwrap();
+        std::fs::write(
+            dir.join("conf.d/api.conf"),
+            "proxy_pass http://upstream_api;\nlisten 80;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.join("upstreams.conf"), "upstream upstream_api {\n}\n").unwrap();
+        let run = |query: &str, fixed: bool, at: &std::path::Path| {
+            let cmd = grep_command(&at.to_string_lossy(), query, true, fixed);
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(cmd)
+                .output()
+                .unwrap();
+            parse_grep_outcome(&String::from_utf8_lossy(&out.stdout))
+        };
+
+        let found = run("upstream", true, &dir);
+        let mut hits: Vec<(String, u32)> = found
+            .matches
+            .iter()
+            .map(|m| (m.path.clone(), m.line))
+            .collect();
+        hits.sort();
+        assert_eq!(
+            hits,
+            vec![
+                ("conf.d/api.conf".to_string(), 1),
+                ("upstreams.conf".to_string(), 1)
+            ]
+        );
+        assert!(!found.truncated && !found.failed);
+
+        let none = run("no-such-text-anywhere", true, &dir);
+        assert_eq!(
+            none,
+            GrepOutcome {
+                matches: vec![],
+                truncated: false,
+                failed: false
+            }
+        );
+
+        // An expression grep rejects (an unbalanced parenthesis) is a failure,
+        // not "no matches" — and the same text as a fixed string is just a search.
+        let bad = run("(", false, &dir);
+        assert!(bad.matches.is_empty() && bad.failed, "{bad:?}");
+        let literal = run("(", true, &dir);
+        assert!(literal.matches.is_empty() && !literal.failed, "{literal:?}");
+
+        // A folder that is not there.
+        let gone = run("upstream", true, &dir.join("nope"));
+        assert!(gone.matches.is_empty() && gone.failed);
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

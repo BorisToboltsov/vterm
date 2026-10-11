@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry, TextFile, WriteResult } from "../types";
-import type { HashTree, SyncAction, SyncStats, GrepMatch } from "../sync";
+import type { HashTree, SyncAction, SyncStats, GrepOutcome } from "../sync";
 import type { ToolsStatus } from "../servertools";
 import type { RemoteLintResult } from "../remotelint";
 
@@ -209,8 +209,8 @@ export function sftpGrep(
   query: string,
   caseInsensitive: boolean,
   fixed: boolean,
-): Promise<GrepMatch[]> {
-  return invoke<GrepMatch[]>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed });
+): Promise<GrepOutcome> {
+  return invoke<GrepOutcome>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed });
 }
 
 /**

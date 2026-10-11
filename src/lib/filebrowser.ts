@@ -16,7 +16,7 @@
 // that can be tested without a DOM live here.
 
 import type { FileEntry } from "./types";
-import type { GrepMatch } from "./sync";
+import type { GrepOutcome } from "./sync";
 import { uniqueCopyName } from "./filemove";
 import { baseName } from "./fspath";
 
@@ -56,7 +56,7 @@ export interface FileBrowserAdapter {
   /** Download a file/dir to a user-picked destination. */
   download?(entry: FileEntry): Promise<void>;
   /** Content search (grep) under `cwd`. */
-  search?(cwd: string, query: string, caseInsensitive: boolean, fixedString: boolean): Promise<GrepMatch[]>;
+  search?(cwd: string, query: string, caseInsensitive: boolean, fixedString: boolean): Promise<GrepOutcome>;
 }
 
 /**

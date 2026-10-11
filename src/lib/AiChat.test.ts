@@ -820,3 +820,106 @@ describe("askAbout — questions raised from elsewhere (Phase 41)", () => {
     expect((screen.getByTestId("ai-input") as HTMLTextAreaElement).disabled).toBe(true);
   });
 });
+
+// ── The wide layout (v1.17) ──────────────────────────────────────────────────
+
+describe("AiChat — in a wide panel", () => {
+  /** Give the chat a width and let its observer see it (jsdom has no layout). */
+  async function resize(width: number) {
+    const root = screen.getByTestId("ai-chat");
+    Object.defineProperty(root, "clientWidth", { configurable: true, value: width });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const o of observers) o.cb([]);
+    await waitFor(() => expect(root.dataset.wide).toBe(String(width >= 768)));
+  }
+  const getContext = () => ({ buffer: "WHOLE-BUFFER", tail: "TAIL" });
+
+  it("narrow: the endpoint over the chat, the context behind the paperclip — as it was", () => {
+    enableAi();
+    render(AiChat, { props: { getContext } });
+    expect(screen.getByTestId("ai-chat").dataset.wide).toBe("false");
+    expect(within(screen.getByTestId("ai-header")).getByTestId("ai-model")).toBeInTheDocument();
+    expect(screen.getByTestId("ai-tiers")).toBeInTheDocument();
+    expect(screen.queryByTestId("ai-side")).toBeNull();
+  });
+
+  it("wide: the endpoint, the model and what goes with the question stand in a column beside", async () => {
+    enableAi();
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    const side = screen.getByTestId("ai-side");
+    expect(screen.queryByTestId("ai-header")).toBeNull();
+    expect(within(side).getByTestId("ai-model")).toBeInTheDocument();
+    expect(within(side).getByTestId("ai-attach")).toBeInTheDocument();
+    expect(within(side).getByTestId("ai-clear")).toBeInTheDocument();
+    // Each control exists once: it moved, it was not copied.
+    for (const id of ["ai-model", "ai-attach", "ai-clear"]) expect(screen.getAllByTestId(id)).toHaveLength(1);
+  });
+
+  it("wide: the question stays under the chat, not in the column", async () => {
+    enableAi();
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    const main = screen.getByTestId("ai-main");
+    expect(within(main).getByTestId("ai-input")).toBeInTheDocument();
+    expect(within(main).getByTestId("ai-send")).toBeInTheDocument();
+    expect(within(screen.getByTestId("ai-side")).queryByTestId("ai-input")).toBeNull();
+  });
+
+  it("wide: the three switches are open — no menu to find them in", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    expect(screen.queryByTestId("ai-tiers")).toBeNull();
+    expect(screen.queryByTestId("ai-tiers-menu")).toBeNull();
+    const open = screen.getByTestId("ai-tiers-open");
+    expect(within(open).getAllByRole("checkbox")).toHaveLength(3);
+
+    // They do what the menu's did: the whole buffer goes instead of the tail.
+    await user.click(screen.getByTestId("ai-attach"));
+    await user.click(within(open).getAllByRole("checkbox")[0]);
+    await user.type(screen.getByTestId("ai-input"), "what runs here?");
+    await user.click(screen.getByTestId("ai-send"));
+    const preview = await screen.findByTestId("ai-consent-preview");
+    expect(preview.textContent).toContain("WHOLE-BUFFER");
+    expect(preview.textContent).not.toContain("TAIL");
+  });
+
+  it("wide: what will be sent is said in the column, whole", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    expect(screen.queryByTestId("ai-context-summary")).toBeNull();
+    await user.click(screen.getByTestId("ai-attach"));
+    const summary = within(screen.getByTestId("ai-side")).getByTestId("ai-context-summary");
+    expect(summary.textContent?.trim().length).toBeGreaterThan(0);
+    expect(summary.className).not.toContain("truncate");
+  });
+
+  it("what was typed and what was chosen survive the panel going wide and narrow", async () => {
+    enableAi();
+    const user = userEvent.setup();
+    render(AiChat, { props: { getContext } });
+    await user.type(screen.getByTestId("ai-input"), "half a question");
+    await user.click(screen.getByTestId("ai-attach"));
+    await resize(1200);
+    expect(screen.getByTestId("ai-input")).toHaveValue("half a question");
+    expect(screen.getByTestId("ai-attach")).toHaveAttribute("aria-pressed", "true");
+    await resize(500);
+    expect(screen.getByTestId("ai-input")).toHaveValue("half a question");
+    expect(screen.getByTestId("ai-attach")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("ai-header")).toBeInTheDocument();
+  });
+
+  it("wide, with the assistant not set up: no endpoint controls to show, the column still says so by being plain", async () => {
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    const side = screen.getByTestId("ai-side");
+    expect(within(side).queryByTestId("ai-side-endpoint")).toBeNull();
+    expect(within(side).getByTestId("ai-attach")).toBeDisabled();
+  });
+});

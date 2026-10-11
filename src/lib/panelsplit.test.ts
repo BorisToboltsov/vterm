@@ -135,7 +135,10 @@ describe("sanitizeShares", () => {
   });
 
   it("drops what it cannot use", () => {
-    expect(sanitizeShares({ git: "0.3", files: 0.4, docker: Number.NaN, k8s: null })).toEqual({});
+    // `servers` is a panel, but not one that splits.
+    expect(sanitizeShares({ git: "0.3", servers: 0.4, docker: Number.NaN, k8s: null })).toEqual({});
+    // The file panel splits since v1.17: its share is kept.
+    expect(sanitizeShares({ files: 0.4, gitCommit: 0.5 })).toEqual({ files: 0.4, gitCommit: 0.5 });
     for (const junk of [null, undefined, 5, "x", [0.4], true]) {
       expect(sanitizeShares(junk)).toEqual({});
     }

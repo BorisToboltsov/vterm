@@ -169,6 +169,7 @@
   onSync={() => (showSync = true)}
   syncActive={isBusy(peekSyncJob(sessionId))}
   {footer}
+  footerCount={transferList.length}
 />
 
 {#snippet footer()}

@@ -1166,3 +1166,6 @@ export function nodeStatusTone(status: string): "ok" | "warn" | "bad" | "idle" {
 export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
   return type === "Warning" ? "warn" : "idle";
 }
+
+/** The views of a pod's details (`K8sDetail`). */
+export type K8sDetailTab = "overview" | "logs" | "describe" | "yaml";

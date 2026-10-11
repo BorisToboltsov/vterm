@@ -23,11 +23,28 @@
     pasteTargetName,
     type FileBrowserAdapter,
   } from "./filebrowser";
-  import type { GrepMatch } from "./sync";
+  import { GREP_LIMIT, type GrepMatch, type GrepOutcome } from "./sync";
+  import GrepResults from "./GrepResults.svelte";
+  import SidePane from "./SidePane.svelte";
+  import PanelDivider from "./PanelDivider.svelte";
+  import { fitsBeside } from "./panelsplit";
+  import { partWidth } from "./stores/panelsplit.svelte";
   import type { FileEntry } from "./types";
   import { fileIconName } from "./fileicon";
   import { lsColorKey, fileTooltip, formatMode, formatModified, ownerLabel } from "./lscolors";
   import ColumnHead from "./ColumnHead.svelte";
+  import SortTitle from "./SortTitle.svelte";
+  import {
+    DEFAULT_SORT,
+    nextSort,
+    sameSort,
+    sortEntries,
+    sortMenu,
+    type FileSort,
+    type SortKey,
+  } from "./filesort";
+  import { fileSort, setFileSort } from "./stores/filesort.svelte";
+  import { wideWhen } from "./actions/panelwide";
   import { columnVars } from "./colwidths";
   import { columns } from "./stores/colwidths.svelte";
   import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
@@ -96,6 +113,7 @@
     syncActive = false,
     /** Extra footer content, e.g. the SFTP transfers list. */
     footer,
+    footerCount = 0,
   }: {
     adapter: FileBrowserAdapter;
     width?: number;
@@ -124,6 +142,13 @@
     onSync?: () => void;
     syncActive?: boolean;
     footer?: Snippet;
+    /**
+     * How many things the footer lists right now (transfers). Zero — the footer
+     * draws nothing; the panel has to know, because in a wide panel the footer
+     * stands beside the listing and the column for it exists only while it has
+     * something to show.
+     */
+    footerCount?: number;
   } = $props();
 
   let cwd = $state("");
@@ -208,7 +233,25 @@
   // vertical padding (6 + 16 + 6 = the 28px row), as in the other dock tables.
   const CELL = "@wide:border-r @wide:border-edge/40 @wide:py-1.5 @wide:leading-4";
   let headH = $state(0);
-  const shownEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
+  // The order (v1.17): one for the app, by a column of the table. The level of
+  // drives is not a folder's listing and keeps the order it came in.
+  const shownEntries = $derived.by(() => {
+    const visible = filterHiddenFiles(entries, settings.sftp.showHiddenFiles);
+    return mutable ? sortEntries(visible, fileSort.sort) : visible;
+  });
+  // Whether the listing is laid out as a table — its own width against the one
+  // threshold (`panelwide.ts`), the same the `@wide:` variants answer to. A
+  // table is ordered from its column titles; a list has none, so the toolbar
+  // offers the same order as a menu.
+  let tableMode = $state(false);
+  const COLUMN_LABEL: Record<SortKey, () => string> = {
+    name: () => t("sftp.colName"),
+    size: () => t("sftp.colSize"),
+    mode: () => t("sftp.colMode"),
+    owner: () => t("sftp.colOwner"),
+    modified: () => t("sftp.colModified"),
+  };
+  const sortedBy = (key: SortKey) => (fileSort.sort.key === key ? fileSort.sort.dir : null);
   const rowCount = $derived((hasParent ? 1 : 0) + shownEntries.length);
   const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
   const visibleItems = $derived(buildVisibleItems(win.start, win.end, hasParent, shownEntries));
@@ -225,7 +268,10 @@
   // Content search (grep), SFTP only — gated by the adapter exposing `search`.
   let showSearch = $state(false);
   let searchQuery = $state("");
-  let searchResults = $state<GrepMatch[] | null>(null);
+  let searchOutcome = $state<GrepOutcome | null>(null);
+  // What the results on screen were searched for: the field may have been
+  // edited since, and the marks in the lines belong to the search that ran.
+  let searched = $state({ query: "", caseSensitive: false, regex: false });
   let searching = $state(false);
   let caseSensitive = $state(false);
   let useRegex = $state(false);
@@ -234,15 +280,29 @@
     const q = searchQuery.trim();
     if (!q || !adapter.search) return;
     searching = true;
+    const asked = { query: q, caseSensitive, regex: useRegex };
     try {
-      searchResults = await adapter.search(cwd || ".", q, !caseSensitive, !useRegex);
+      searchOutcome = await adapter.search(cwd || ".", q, !caseSensitive, !useRegex);
     } catch (e) {
       notifyError(String(e));
-      searchResults = [];
+      // The call itself failed: that is a search that did not run.
+      searchOutcome = { matches: [], truncated: false, failed: true };
     } finally {
+      searched = asked;
       searching = false;
     }
   }
+
+  // The wide layout (v1.17): what a narrow panel stacks over and under the
+  // listing — the content search and the footer (transfers) — stands in a
+  // column beside it, so the listing keeps its height. Beside only in a wide
+  // panel, and only while the row holds two parts (`fitsBeside`); the panel
+  // measures itself, since its query container is the listing, not its root.
+  let wide = $state(false);
+  let rowWidth = $state(0);
+  const beside = $derived(wide && fitsBeside(rowWidth));
+  const searchOpen = $derived(showSearch && !!adapter.search);
+  const sideOpen = $derived(beside && (searchOpen || footerCount > 0));
 
   function openMatch(m: GrepMatch) {
     const name = m.path.split("/").pop() ?? m.path;
@@ -466,6 +526,35 @@
     null,
   );
   let ctxMenu = $state<OpenMenu | null>(null);
+
+  /**
+   * Order the listing by `next`. The row under the keyboard cursor stays under
+   * it: the cursor is an index, and the same index is another file after a sort.
+   */
+  function orderBy(next: FileSort) {
+    const held = cursorEntry?.path ?? null;
+    setFileSort(next);
+    if (held === null) return;
+    const at = shownEntries.findIndex((x) => x.path === held);
+    if (at >= 0) cursor = (hasParent ? 1 : 0) + at;
+  }
+  /** A click on a column title: that column, or the same one the other way round. */
+  function orderByColumn(key: SortKey) {
+    orderBy(nextSort(fileSort.sort, key));
+  }
+  /** The menu of the narrow list — the same choice as the table's titles. */
+  function openSortMenu(e: MouseEvent) {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    ctxMenu = {
+      x: box.left,
+      y: box.bottom + 2,
+      items: sortMenu(
+        fileSort.sort,
+        { key: (key) => COLUMN_LABEL[key](), dir: (dir) => t(dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc") },
+        orderBy,
+      ),
+    };
+  }
   const cursorOnParent = $derived(hasParent && cursor === 0);
   const cursorEntry = $derived.by(() =>
     cursor < 0 || cursorOnParent ? null : (shownEntries[hasParent ? cursor - 1 : cursor] ?? null),
@@ -915,6 +1004,57 @@
   const COLLAPSED_W = 36;
 </script>
 
+<!-- The content search: the field, its two switches and the results. One content
+     for the two places it stands in — under the path bar of a narrow panel, in
+     the pane beside the listing of a wide one (`fill`: take the pane's height). -->
+{#snippet searchBox(fill: boolean)}
+  <div class="flex flex-col {fill ? 'min-h-0 flex-1' : ''}">
+    <form
+      class="flex gap-1"
+      onsubmit={(e) => {
+        e.preventDefault();
+        runSearch();
+      }}
+    >
+      <input
+        class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
+        placeholder={t("search.contentPlaceholder")}
+        data-testid="{testPrefix}-search-input"
+        bind:value={searchQuery}
+      />
+      <button
+        class="shrink-0 rounded bg-accent px-2 py-1 text-xs text-panel-alt"
+        disabled={searching}
+      >
+        {searching ? t("search.searching") : t("search.go")}
+      </button>
+    </form>
+    <div class="mt-1 flex gap-3 text-meta text-muted">
+      <label class="flex items-center gap-1">
+        <input type="checkbox" bind:checked={caseSensitive} />
+        {t("search.caseSensitive")}
+      </label>
+      <label class="flex items-center gap-1">
+        <input type="checkbox" bind:checked={useRegex} />
+        {t("search.regex")}
+      </label>
+    </div>
+    {#if searchOutcome}
+      <div class="mt-1 flex flex-col {fill ? 'min-h-0 flex-1' : ''}">
+        <GrepResults
+          outcome={searchOutcome}
+          query={searched.query}
+          caseSensitive={searched.caseSensitive}
+          regex={searched.regex}
+          limit={GREP_LIMIT}
+          {fill}
+          onopen={openMatch}
+        />
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
 <div
   style={embedded ? "" : `width: ${collapsed ? COLLAPSED_W : width}px`}
   class="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-panel-alt {embedded
@@ -946,6 +1086,8 @@
     <div
       class={embedded ? "flex h-full min-h-0 flex-col" : "absolute inset-y-0 right-0 flex flex-col"}
       style={embedded ? "" : `width: ${width}px`}
+      use:wideWhen={(w) => (wide = w)}
+      data-wide={wide}
     >
       <!-- Toolbar. When embedded and not yet connected (SFTP), the bar would hold only
            a redundant label — the tab already names it — so it's dropped. -->
@@ -982,6 +1124,23 @@
             >
               <Icon name="eye" size={14} />
             </button>
+            {#if !tableMode && mutable}
+              <!-- A list has no column titles: the same order, as a menu. Lit
+                   while the order is not the usual one — a listing that is not
+                   by name should say so. -->
+              <button
+                data-testid="{testPrefix}-sort"
+                class="flex items-center rounded p-1.5 {sameSort(fileSort.sort, DEFAULT_SORT)
+                  ? 'text-muted hover:bg-edge hover:text-text'
+                  : 'bg-edge text-accent'}"
+                use:tooltip={`${t("sftp.sort")}: ${COLUMN_LABEL[fileSort.sort.key]()}`}
+                aria-label={t("sftp.sort")}
+                aria-haspopup="menu"
+                onclick={openSortMenu}
+              >
+                <Icon name="arrowsUpDown" size={14} />
+              </button>
+            {/if}
             <button
               data-testid="{testPrefix}-follow-terminal"
               class="flex items-center rounded p-1.5 {followTerminal
@@ -1082,6 +1241,13 @@
           {/if}
         </div>
       {:else}
+        <!-- The listing's column and — in a wide panel — the column beside it. -->
+        <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth} data-testid="{testPrefix}-row">
+        <div
+          class="flex min-h-0 min-w-0 flex-col {sideOpen ? 'shrink-0' : 'flex-1'}"
+          style:width={sideOpen ? partWidth("files", rowWidth) : null}
+          data-testid="{testPrefix}-main"
+        >
         <!-- Current path, click-to-edit (Phase 39.2). A synthetic (non-mutable) cwd
              shows its label rather than its sentinel. -->
         {#if editingPath}
@@ -1119,54 +1285,10 @@
           </button>
         {/if}
 
-        {#if showSearch && adapter.search}
+        {#if searchOpen && !beside}
           <!-- Content search (grep) under the current folder -->
-          <div class="border-b border-edge px-2 py-1.5">
-            <form
-              class="flex gap-1"
-              onsubmit={(e) => {
-                e.preventDefault();
-                runSearch();
-              }}
-            >
-              <input
-                class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
-                placeholder={t("search.contentPlaceholder")}
-                bind:value={searchQuery}
-              />
-              <button
-                class="shrink-0 rounded bg-accent px-2 py-1 text-xs text-panel-alt"
-                disabled={searching}
-              >
-                {searching ? t("search.searching") : t("search.go")}
-              </button>
-            </form>
-            <div class="mt-1 flex gap-3 text-meta text-muted">
-              <label class="flex items-center gap-1">
-                <input type="checkbox" bind:checked={caseSensitive} />
-                {t("search.caseSensitive")}
-              </label>
-              <label class="flex items-center gap-1">
-                <input type="checkbox" bind:checked={useRegex} />
-                {t("search.regex")}
-              </label>
-            </div>
-            {#if searchResults}
-              <div class="mt-1 max-h-48 overflow-auto rounded border border-edge">
-                {#each searchResults as m (m.path + ":" + m.line)}
-                  <button
-                    class="block w-full truncate px-2 py-1 text-left text-meta hover:bg-edge"
-                    onclick={() => openMatch(m)}
-                    title={m.text}
-                  >
-                    <span class="text-accent">{m.path}:{m.line}</span>
-                    <span class="text-muted">{m.text}</span>
-                  </button>
-                {:else}
-                  <div class="px-2 py-2 text-meta text-muted">{t("search.noResults")}</div>
-                {/each}
-              </div>
-            {/if}
+          <div class="border-b border-edge px-2 py-1.5" data-testid="{testPrefix}-search-inline">
+            {@render searchBox(false)}
           </div>
         {/if}
 
@@ -1244,6 +1366,7 @@
         <div
           bind:this={listEl}
           bind:clientHeight={listViewportH}
+          use:wideWhen={(w) => (tableMode = w)}
           onscroll={onListScroll}
           onkeydown={onListKeydown}
           onclick={onBackgroundClick}
@@ -1271,11 +1394,45 @@
               data-testid="{testPrefix}-columns"
             >
               <div class="flex min-w-0 flex-1 items-stretch">
-                <ColumnHead col="files.name" label={t("sftp.colName")} class="w-[var(--c-name)] pr-2" />
-                <span class="w-[5.5rem] min-w-0 truncate border-r border-edge px-2 py-1 text-right">{t("sftp.colSize")}</span>
-                <span class="w-[6.5rem] min-w-0 truncate border-r border-edge px-2 py-1">{t("sftp.colMode")}</span>
-                <ColumnHead col="files.owner" label={t("sftp.colOwner")} class="w-[var(--c-owner)] px-2" />
-                <span class="w-[9rem] min-w-0 truncate px-2 py-1">{t("sftp.colModified")}</span>
+                <ColumnHead
+                  col="files.name"
+                  label={t("sftp.colName")}
+                  class="w-[var(--c-name)] pr-2"
+                  sorted={sortedBy("name")}
+                  onsort={() => orderByColumn("name")}
+                />
+                <span class="w-[5.5rem] min-w-0 border-r border-edge px-2 py-1">
+                  <SortTitle
+                    label={t("sftp.colSize")}
+                    sorted={sortedBy("size")}
+                    onsort={() => orderByColumn("size")}
+                    testid="column-sort-files.size"
+                    align="right"
+                  />
+                </span>
+                <span class="w-[6.5rem] min-w-0 border-r border-edge px-2 py-1">
+                  <SortTitle
+                    label={t("sftp.colMode")}
+                    sorted={sortedBy("mode")}
+                    onsort={() => orderByColumn("mode")}
+                    testid="column-sort-files.mode"
+                  />
+                </span>
+                <ColumnHead
+                  col="files.owner"
+                  label={t("sftp.colOwner")}
+                  class="w-[var(--c-owner)] px-2"
+                  sorted={sortedBy("owner")}
+                  onsort={() => orderByColumn("owner")}
+                />
+                <span class="w-[9rem] min-w-0 px-2 py-1">
+                  <SortTitle
+                    label={t("sftp.colModified")}
+                    sorted={sortedBy("modified")}
+                    onsort={() => orderByColumn("modified")}
+                    testid="column-sort-files.modified"
+                  />
+                </span>
               </div>
               <span class="w-16 shrink-0"></span>
             </div>
@@ -1456,7 +1613,37 @@
           {/if}
         </div>
 
-        {@render footer?.()}
+        {#if !beside}{@render footer?.()}{/if}
+        </div>
+        {#if sideOpen}
+          <!-- The border between the listing and what stands beside it is dragged
+               (`PanelDivider`); the share is the store's, one for every session. -->
+          <PanelDivider split="files" width={rowWidth} />
+          <div class="flex min-h-0 min-w-0 flex-1 flex-col text-xs" data-testid="{testPrefix}-side">
+            {#if searchOpen}
+              <div class="min-h-0 flex-1">
+                <SidePane
+                  title={t("search.contentSearch")}
+                  onclose={() => (showSearch = false)}
+                  testid="{testPrefix}-side-search"
+                >
+                  {@render searchBox(true)}
+                </SidePane>
+              </div>
+            {/if}
+            {#if footerCount > 0}
+              <!-- The footer (transfers): all of the column while nothing else is
+                   in it, the lower part of it under the search. -->
+              <div
+                class="overflow-auto {searchOpen ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1'}"
+                data-testid="{testPrefix}-side-footer"
+              >
+                {@render footer?.()}
+              </div>
+            {/if}
+          </div>
+        {/if}
+        </div>
       {/if}
     </div>
   {/if}
