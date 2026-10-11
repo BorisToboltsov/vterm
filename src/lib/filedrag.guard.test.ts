@@ -65,6 +65,7 @@ const DRAGS = [
   "src/lib/stores/tabdrag.svelte.ts",
   "src/lib/stores/viewdrag.svelte.ts",
   "src/lib/stores/dockdrag.svelte.ts",
+  "src/lib/stores/topbardrag.svelte.ts",
 ];
 
 // ── 1: the drag is the store's ──────────────────────────────────────────────

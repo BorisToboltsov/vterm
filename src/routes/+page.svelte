@@ -245,6 +245,10 @@
   import StatusBar from "$lib/StatusBar.svelte";
   import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
   import TopBar from "$lib/TopBar.svelte";
+  import { allTopbarIds, canUnpin, type SessionAction } from "$lib/topbaractions";
+  import type { SessionActionState } from "$lib/sessionactions";
+  import { actionLabel } from "$lib/topbarui";
+  import { isPinned, pinAction, resetTopbar, unpinAction } from "$lib/stores/topbarpins.svelte";
   import TitleBar from "$lib/TitleBar.svelte";
   import { hostEnv } from "$lib/stores/hostenv.svelte";
   import ServerTree from "$lib/ServerTree.svelte";
@@ -893,6 +897,28 @@
       notifyError(t("page.monitoringNeedsSession"));
     }
   }
+
+  // The session actions of the top bar (v1.16): what decides whether each can
+  // run now, and the one way to run it — read by the bar and by the Utilities
+  // window, where a button taken off the bar is still found.
+  const sessionActions = $derived<SessionActionState>({
+    connected: monitorConnected,
+    canRecord: bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status)),
+    recording: bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId)),
+    canBroadcast: !!tabsState.activeId,
+    broadcastActive: bcOn,
+    notesFor: notesServerTarget?.alias ?? null,
+  });
+  // A record, not a chain of `if`s: an action added to the bar without a way to
+  // run it does not compile.
+  const SESSION_RUN: Record<SessionAction, () => void> = {
+    monitoring: () => openMonitoring(),
+    record: () => void toggleRecording(),
+    recordings: () => (showRecordings = true),
+    broadcast: () => toggleActiveBroadcast(),
+    notes: () => (notesServer = notesServerTarget),
+  };
+  const runSessionAction = (id: SessionAction): void => SESSION_RUN[id]();
 
   /**
    * Collect the live session context the AI tab offers (Phase 17.3). Reads the
@@ -1643,6 +1669,21 @@
       keywords: "record recording session запись сессия rec asciicast", run: toggleRecording },
     { id: "act:recordings", title: t("palette.recordings"), icon: "activity", group: t("palette.groupActions"),
       keywords: "recordings library записи библиотека asciicast", run: () => (showRecordings = true) },
+    // Broadcast and the notes had no way in but their top-bar buttons; a button
+    // can be taken off the bar now (v1.16), so each has a command of its own.
+    ...(sessionActions.canBroadcast
+      ? [{ id: "act:broadcast",
+          title: sessionActions.broadcastActive ? t("broadcast.removeFromGroup") : t("broadcast.addToGroup"),
+          icon: "broadcast", group: t("palette.groupActions"),
+          keywords: "broadcast synchronized sync input group servers синхронный ввод группа рассылка серверы",
+          run: () => runSessionAction("broadcast") } satisfies CommandItem]
+      : []),
+    ...(sessionActions.notesFor !== null
+      ? [{ id: "act:notes", title: t("sessionact.notes.title"), subtitle: sessionActions.notesFor,
+          icon: "note", group: t("palette.groupActions"),
+          keywords: "notes server markdown memo заметки сервер записка",
+          run: () => runSessionAction("notes") } satisfies CommandItem]
+      : []),
     // Copy what is selected in the focused session's file panel to another
     // session — the row menu's "Copy to session", without the mouse (v1.12).
     ...copyCommands,
@@ -1675,6 +1716,27 @@
       group: t("palette.groupActions"),
       keywords: "reset layout panels docks columns default сбросить раскладка панели доки колонки",
       run: resetPanelLayout },
+    // The top bar's buttons without the mouse — the twin of its right-click
+    // menu: put on what is not there, take off what is (Settings stays).
+    ...allTopbarIds().filter((id) => !isPinned(id)).map((id): CommandItem => ({
+      id: `topbar:pin:${id}`,
+      title: t("topbar.pinCommand", { action: actionLabel(id) }),
+      icon: "pin",
+      group: t("palette.groupActions"),
+      keywords: "top bar toolbar button pin add quick верхняя панель кнопка закрепить добавить быстрый доступ",
+      run: () => pinAction(id),
+    })),
+    ...settings.topbar.filter(canUnpin).map((id): CommandItem => ({
+      id: `topbar:unpin:${id}`,
+      title: t("topbar.unpinCommand", { action: actionLabel(id) }),
+      icon: "close",
+      group: t("palette.groupActions"),
+      keywords: "top bar toolbar button unpin remove hide верхняя панель кнопка убрать открепить скрыть",
+      run: () => unpinAction(id),
+    })),
+    { id: "topbar:reset", title: t("topbar.reset"), icon: "refresh", group: t("palette.groupActions"),
+      keywords: "top bar toolbar buttons reset default верхняя панель кнопки сбросить исходный набор",
+      run: resetTopbar },
     // The way back for a panel hidden from its tab's menu or in settings.
     ...PANEL_IDS.filter(isPanelHidden).map((id): CommandItem => ({
       id: `dock:show:${id}`,
@@ -3896,20 +3958,20 @@
   <TopBar
     title={topTitle}
     subtitle={topSubtitle}
-    connected={monitorConnected}
-    canRecord={bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status))}
-    recording={bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId))}
-    onToggleRecording={toggleRecording}
-    onOpenRecordings={() => (showRecordings = true)}
-    onOpenMonitoring={openMonitoring}
+    connected={sessionActions.connected}
+    canRecord={sessionActions.canRecord}
+    recording={sessionActions.recording}
+    onToggleRecording={() => runSessionAction("record")}
+    onOpenRecordings={() => runSessionAction("recordings")}
+    onOpenMonitoring={() => runSessionAction("monitoring")}
     onOpenSettings={() => openSettings("servertools")}
-    onOpenUtilities={() => openUtilities()}
-    canBroadcast={!!tabsState.activeId}
-    broadcastActive={bcOn}
-    onToggleBroadcast={toggleActiveBroadcast}
-    showNotes={!!notesServerTarget}
+    onOpenUtilities={(utility) => openUtilities(utility ?? null)}
+    canBroadcast={sessionActions.canBroadcast}
+    broadcastActive={sessionActions.broadcastActive}
+    onToggleBroadcast={() => runSessionAction("broadcast")}
+    showNotes={sessionActions.notesFor !== null}
     hasNotes={hasNotes(notesServerTarget?.notes)}
-    onOpenNotes={() => (notesServer = notesServerTarget)}
+    onOpenNotes={() => runSessionAction("notes")}
   />
 
   <div class="flex min-h-0 flex-1">
@@ -4648,6 +4710,8 @@
   session={utilSession}
   onInstallTool={(tool) => openToolInstallByName(tool)}
   {toolsReloadToken}
+  actions={sessionActions}
+  onSessionAction={runSessionAction}
 />
 
 <!-- Server tool install dialog (Phase 12.8) -->

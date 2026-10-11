@@ -40,7 +40,7 @@ describe("settingsNav groups", () => {
 describe("visibleSectionIds", () => {
   it("shows the active group's sections when not searching", () => {
     const ids = visibleSectionIds("", "appearance");
-    expect(ids).toEqual(new Set(["appearance", "panels", "cursor", "idle"]));
+    expect(ids).toEqual(new Set(["appearance", "panels", "topbar", "cursor", "idle"]));
   });
 
   it("blank/whitespace query falls back to the active group", () => {
@@ -85,6 +85,19 @@ describe("the Panels section", () => {
   it("is found by what the user would type, in both languages", () => {
     for (const query of ["panels", "dock", "hide", "панели", "скрыть", "раскладка", "kubernetes"]) {
       expect(sectionsMatching(query), query).toContain("panels");
+    }
+  });
+});
+
+describe("the Top bar section (v1.16)", () => {
+  it("lives in Appearance, next to the panels", () => {
+    expect(groupForSection("topbar")).toBe("appearance");
+    expect(groupSections("appearance").slice(1, 3)).toEqual(["panels", "topbar"]);
+  });
+
+  it("is found by what the user would type, in both languages", () => {
+    for (const query of ["top bar", "toolbar", "pin", "buttons", "верхняя панель", "кнопки", "закрепить"]) {
+      expect(sectionsMatching(query), query).toContain("topbar");
     }
   });
 });
