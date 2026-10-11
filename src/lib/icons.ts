@@ -204,6 +204,11 @@ export const ICONS = {
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6"/><path d="m15.5 7.5 3 3L22 7l-3-3"/>',
   // Hash/checksum utility — the "#" glyph (four crossing strokes).
   hash: '<path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/>',
+  // A pushpin — "keep this button on the top bar" (v1.16).
+  pin: '<path d="M9 3h6l-1 6 3 4H7l3-4z"/><path d="M12 13v8"/>',
+  // A field with its characters masked — the password generator. The padlock
+  // stays with TLS, so the two stand apart when both are on the top bar.
+  password: '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M8 12h.01M12 12h.01M16 12h.01"/>',
   // A wrench (Feather "tool") — the "Utilities" settings group and panel.
   wrench:
     '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',

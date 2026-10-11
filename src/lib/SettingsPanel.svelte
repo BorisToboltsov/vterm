@@ -16,6 +16,7 @@
   import StatusBarSettings from "./StatusBarSettings.svelte";
   import IdleSettings from "./IdleSettings.svelte";
   import PanelsSettings from "./PanelsSettings.svelte";
+  import TopbarSettings from "./TopbarSettings.svelte";
   import SnippetsSettings from "./SnippetsSettings.svelte";
   import BackupSettings from "./BackupSettings.svelte";
   import DockerSettings from "./DockerSettings.svelte";
@@ -242,6 +243,10 @@
 
         {#if show("panels")}
         <PanelsSettings />
+        {/if}
+
+        {#if show("topbar")}
+        <TopbarSettings />
         {/if}
 
         {#if show("cursor")}

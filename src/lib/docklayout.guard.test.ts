@@ -273,14 +273,14 @@ describe("dock layout guard", () => {
       // from layout boxes. A neighbour that is still gliding away is under the
       // pointer for the length of its animation, and gets swapped straight back.
       const sliding = all.filter((f) => f.endsWith(".svelte") && /\banimate:glide\b/.test(read(f)));
-      expect(sliding.sort()).toEqual(["lib/Dock.svelte", "routes/+page.svelte"]);
+      expect(sliding.sort()).toEqual(["lib/Dock.svelte", "lib/TopBar.svelte", "routes/+page.svelte"]);
 
       const hit = fn("dockDropAt");
       expect(hit).toMatch(/layoutBox\(tab\)/);
       expect(hit).not.toMatch(/getBoundingClientRect/);
 
       // The terminal tabs' own drag (the page's strips slide too) is held to the
-      // same rule by `centerlayout.guard`.
+      // same rule by `centerlayout.guard`, the top bar's buttons by `topbar.guard`.
     });
   });
 });

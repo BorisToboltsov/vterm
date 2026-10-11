@@ -39,6 +39,16 @@
 
 <svelte:window onkeydown={(e) => menu && e.key === "Escape" && onclose()} />
 
+<!-- The tick column of a switch row: kept whether the row is on or off, so a
+     checklist's labels line up. A row that is not a switch has none. -->
+{#snippet tick(action: MenuAction)}
+  {#if action.checked !== undefined}
+    <span class="flex w-3.5 shrink-0 justify-center" data-checked={action.checked}>
+      {#if action.checked}<Icon name="check" size={13} />{/if}
+    </span>
+  {/if}
+{/snippet}
+
 {#if menu}
   <button
     type="button"
@@ -74,12 +84,15 @@
           {#each item.items as sub, j (j)}
             <button
               type="button"
-              class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left hover:bg-edge hover:text-text {sub.danger
+              class="flex w-full items-center gap-2 py-1 pl-8 pr-2 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {sub.danger
                 ? 'text-danger'
                 : 'text-muted'}"
-              role="menuitem"
+              role={sub.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={sub.checked}
+              disabled={sub.disabled}
               onclick={() => pick(sub)}
             >
+              {@render tick(sub)}
               <span class="flex-1 truncate">{sub.label}</span>
             </button>
           {/each}
@@ -90,11 +103,16 @@
           class="flex w-full items-center gap-2 px-2 py-1 text-left hover:bg-edge hover:text-text disabled:pointer-events-none disabled:opacity-40 {item.danger
             ? 'text-danger'
             : 'text-muted'}"
-          role="menuitem"
+          role={item.checked === undefined ? "menuitem" : "menuitemcheckbox"}
+          aria-checked={item.checked}
           disabled={item.disabled}
           onclick={() => pick(item)}
         >
-          {#if item.icon}<Icon name={item.icon} size={13} />{/if}
+          {#if item.checked === undefined}
+            {#if item.icon}<Icon name={item.icon} size={13} />{/if}
+          {:else}
+            {@render tick(item)}
+          {/if}
           <span class="flex-1 truncate">{item.label}</span>
         </button>
       {/if}

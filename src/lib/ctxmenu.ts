@@ -13,6 +13,12 @@ export interface MenuAction {
   /** Red styling + used for destructive ops (delete, reset --hard). */
   danger?: boolean;
   disabled?: boolean;
+  /**
+   * The row is a switch, on or off (v1.16). The menu then keeps a column for the
+   * tick in place of the icon, so the labels of a checklist line up whether a row
+   * is ticked or not, and announces the row as a checkbox.
+   */
+  checked?: boolean;
   onSelect: () => void;
 }
 

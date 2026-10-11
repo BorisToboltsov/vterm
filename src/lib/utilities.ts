@@ -75,7 +75,7 @@ export const UTILITIES: readonly UtilityDef[] = [
   },
   {
     id: "password",
-    icon: "lock",
+    icon: "password",
     titleKey: "util.password.title",
     descKey: "util.password.desc",
     keywords: "password secret generate random passphrase diceware entropy strength length symbols digits пароль секрет генерация случайный фраза энтропия длина символы цифры",

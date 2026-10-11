@@ -32,6 +32,7 @@ const DRAGS: Record<string, readonly string[]> = {
   "lib/stores/filedrag.svelte.ts": ["over", "zone"],
   "lib/stores/tabdrag.svelte.ts": ["over", "zone"],
   "lib/stores/tabincoming.svelte.ts": ["tab", "over", "zone"],
+  "lib/stores/topbardrag.svelte.ts": ["over"],
   "lib/stores/viewdrag.svelte.ts": ["over", "zone", "area"],
 };
 
