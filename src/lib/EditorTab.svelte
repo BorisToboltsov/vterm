@@ -96,6 +96,10 @@
     doc,
     saving = false,
     onsave,
+    onCheckSudo,
+    onSaveWithSudo,
+    onSaveCopy,
+    onDismissSaveIssue,
     onLintMissing,
   }: {
     sessionId: string;
@@ -104,6 +108,10 @@
     saving?: boolean;
     /** Invoked by the Save button / Ctrl+S. */
     onsave?: () => void;
+    onCheckSudo?: () => void;
+    onSaveWithSudo?: () => void;
+    onSaveCopy?: () => void;
+    onDismissSaveIssue?: () => void;
     /** Server linter isn't installed — let the page offer to install it. */
     onLintMissing?: (tool: string) => void;
   } = $props();
@@ -567,7 +575,7 @@
 
 <div class="flex h-full flex-col">
   <!-- Editor toolbar: path, language, read-only / dirty state, Save. -->
-  <div class="flex items-center gap-2 border-b border-edge px-2 py-1 text-xs">
+  <div class="relative flex items-center gap-2 border-b border-edge px-2 py-1 text-xs">
     <Icon name="file" size={13} class="shrink-0 text-muted" />
     <span class="truncate text-muted" title={doc.path}>{doc.path}</span>
     <span class="shrink-0 rounded bg-panel px-1.5 py-0.5 text-caption uppercase tracking-wider text-muted">
@@ -579,6 +587,18 @@
       </span>
     {/if}
     <div class="ml-auto flex shrink-0 items-center gap-2">
+      {#if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "restricted"}
+        <button
+          class="shrink-0 rounded border border-warn/50 px-1.5 py-0.5 text-caption text-warn hover:bg-edge"
+          use:tooltip={t("editor.checkSudo")}
+          aria-label={t("editor.checkSudo")}
+          onclick={() => onCheckSudo?.()}
+        >{t("editor.writeNeedsAccess")}</button>
+      {:else if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "checking"}
+        <span class="shrink-0 text-caption text-muted">{t("editor.accessChecking")}</span>
+      {:else if doc.source === "sftp" && !doc.sudo && doc.writeAccess === "unknown"}
+        <span class="shrink-0 text-caption text-muted" title={t("editor.writeUnknown")}>{t("editor.writeUnknown")}</span>
+      {/if}
       {#if doc.content !== doc.baseContent && !doc.readOnly}
         <span class="text-caption text-muted">{t("editor.unsaved")}</span>
       {/if}
@@ -673,6 +693,28 @@
         {t("editor.save")}
       </button>
     </div>
+    {#if doc.saveIssue !== "none"}
+      <div
+        class="absolute right-1 top-full z-30 mt-1 w-64 max-w-[calc(100%-0.5rem)] rounded border border-edge bg-panel-alt p-3 shadow-lg"
+        role="alert"
+      >
+        <div class="flex items-start justify-between gap-2">
+          <strong class="text-xs text-text">{doc.saveIssue === "sudo" ? t("editor.sudoUnavailable") : t("editor.saveFailed")}</strong>
+          <button
+            class="text-muted hover:text-text"
+            aria-label={t("common.dismiss")}
+            onclick={() => onDismissSaveIssue?.()}
+          ><Icon name="close" size={13} /></button>
+        </div>
+        <p class="mt-1 text-xs text-muted">{t("editor.changesKept")}</p>
+        <div class="mt-3 flex flex-wrap gap-2">
+          {#if doc.saveIssue === "permission" && doc.source === "sftp" && !doc.sudo}
+            <button class="rounded bg-accent px-2 py-1 text-caption text-panel-alt" onclick={() => onSaveWithSudo?.()}>{t("editor.saveWithSudo")}</button>
+          {/if}
+          <button class="rounded border border-edge px-2 py-1 text-caption text-text hover:bg-edge" onclick={() => onSaveCopy?.()}>{t("editor.saveCopy")}</button>
+        </div>
+      </div>
+    {/if}
   </div>
   <!-- CodeMirror host (always mounted so edits keep flowing); hidden in preview. -->
   <div

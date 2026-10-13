@@ -1658,6 +1658,37 @@ async fn sftp_read_text(
     sftp::read_text(&sftp, &path, limit).await
 }
 
+/// Advisory access to the directory used by the editor's staged SFTP save.
+#[tauri::command]
+async fn sftp_write_access(
+    state: State<'_, AppState>,
+    session_id: String,
+    path: String,
+) -> AppResult<String> {
+    let session = session_arc(&state, &session_id).await?;
+    let outcome = session
+        .exec_captured(&sftp::write_access_command(&path), 5)
+        .await?;
+    if outcome.timed_out || outcome.exit_code != 0 {
+        return Ok("unknown".into());
+    }
+    match outcome.stdout.as_str() {
+        "writable" | "restricted" => Ok(outcome.stdout),
+        _ => Ok("unknown".into()),
+    }
+}
+
+/// Check sudo credentials before editing, without touching the target file.
+#[tauri::command]
+async fn sftp_check_sudo(
+    state: State<'_, AppState>,
+    session_id: String,
+    password: String,
+) -> AppResult<bool> {
+    let session = session_arc(&state, &session_id).await?;
+    sync::check_sudo(&session, &password).await
+}
+
 /// Read a remote file as base64 bytes for the markdown preview's inline images
 /// (Phase 44.4). `max_bytes` is clamped to a hard ceiling that is deliberately far
 /// below the editor's: this path exists to show a screenshot next to a README, not
@@ -2473,11 +2504,14 @@ pub fn run() {
             sftp_mkdir,
             sftp_create_file,
             sftp_read_text,
+            sftp_write_access,
+            sftp_check_sudo,
             sftp_read_bytes,
             localfile::read_local_bytes,
             sftp_write_text,
             localfile::read_local_text,
             localfile::write_local_text,
+            localfile::save_editor_copy,
             local_cwd,
             take_pending_opens,
             keygen::generate_ssh_key,

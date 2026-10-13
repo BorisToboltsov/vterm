@@ -59,6 +59,10 @@ export interface EditorDoc {
   /** Unix permission bits, if known. */
   mode: number | null;
   readOnly: boolean;
+  /** Advisory access to the parent directory used by an ordinary SFTP save. */
+  writeAccess: "checking" | "writable" | "restricted" | "unknown";
+  /** Last failed save; the buffer remains editable and can be exported. */
+  saveIssue: "none" | "permission" | "sudo" | "other";
   /** True while the initial content is being fetched. */
   loading: boolean;
   /** Load error message, or null. */
@@ -178,6 +182,8 @@ export function addEditor(
     encoding: "utf-8",
     mode: null,
     readOnly: false,
+    writeAccess: source === "sftp" ? "checking" : "unknown",
+    saveIssue: "none",
     loading: true,
     loadError: null,
     sudo: opts.sudo ?? false,
@@ -217,6 +223,8 @@ export function addScratchEditor(
     encoding: "utf-8",
     mode: null,
     readOnly: false,
+    writeAccess: "unknown",
+    saveIssue: "none",
     loading: false,
     loadError: null,
     sudo: false,
@@ -237,6 +245,7 @@ function updateDoc(sessionId: string, id: string, next: Partial<EditorDoc>): voi
 
 /** Fill a loading editor with fetched file content. */
 export function fillEditor(sessionId: string, id: string, file: TextFile): void {
+  const source = ensure(sessionId).editors.find((e) => e.id === id)?.source;
   updateDoc(sessionId, id, {
     content: file.content,
     baseContent: file.content,
@@ -244,7 +253,9 @@ export function fillEditor(sessionId: string, id: string, file: TextFile): void 
     eol: file.eol,
     encoding: file.encoding,
     mode: file.mode,
-    readOnly: file.readOnly,
+    // Remote saves replace a temp sibling, so the file's write bits alone do
+    // not decide whether this user can save; keep the buffer editable.
+    readOnly: file.readOnly && source === "local",
     loading: false,
     loadError: null,
   });
@@ -262,7 +273,23 @@ export function setEditorContent(sessionId: string, id: string, content: string)
 
 /** Mark an editor as elevated (sudo) and remember its password for later saves. */
 export function setEditorSudo(sessionId: string, id: string, password: string): void {
-  updateDoc(sessionId, id, { sudo: true, sudoPassword: password });
+  updateDoc(sessionId, id, { sudo: true, sudoPassword: password, saveIssue: "none" });
+}
+
+export function setEditorWriteAccess(
+  sessionId: string,
+  id: string,
+  access: EditorDoc["writeAccess"],
+): void {
+  updateDoc(sessionId, id, { writeAccess: access });
+}
+
+export function setEditorSaveIssue(
+  sessionId: string,
+  id: string,
+  issue: EditorDoc["saveIssue"],
+): void {
+  updateDoc(sessionId, id, { saveIssue: issue });
 }
 
 /** Adopt fresh metadata after a successful save (clears the dirty state). */
@@ -272,6 +299,7 @@ export function markSaved(sessionId: string, id: string, result: WriteResult): v
   updateDoc(sessionId, id, {
     baseContent: doc.content,
     baseSha256: result.sha256,
+    saveIssue: "none",
     mode: doc.mode,
   });
 }

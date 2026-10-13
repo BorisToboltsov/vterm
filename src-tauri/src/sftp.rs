@@ -924,6 +924,20 @@ pub(crate) fn is_read_only(mode: Option<u32>) -> bool {
     mode.map(|m| m & 0o222 == 0).unwrap_or(false)
 }
 
+/// A best-effort check for the editor's temp-sibling save path. The remote
+/// shell's effective access check includes supplementary groups and POSIX ACLs;
+/// the final SFTP operation can still be refused (sticky dirs, chroot, races).
+pub(crate) fn write_access_command(path: &str) -> String {
+    let parent = path
+        .rsplit_once('/')
+        .map(|(dir, _)| if dir.is_empty() { "/" } else { dir })
+        .unwrap_or(".");
+    let quoted = crate::sync::shell_quote(parent);
+    format!(
+        "if test -w {quoted} && test -x {quoted}; then printf writable; else printf restricted; fi"
+    )
+}
+
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -984,6 +998,20 @@ mod tests {
         // Idempotent: crlf input normalized first, not doubled.
         assert_eq!(apply_eol("a\r\nb", "crlf"), "a\r\nb");
         assert_eq!(apply_eol("a\r\nb", "lf"), "a\nb");
+    }
+
+    #[test]
+    fn write_access_probe_checks_the_parent_and_quotes_hostile_names() {
+        assert_eq!(
+            write_access_command("/etc/nginx/app.conf"),
+            "if test -w '/etc/nginx' && test -x '/etc/nginx'; then printf writable; else printf restricted; fi"
+        );
+        let quoted = write_access_command("/tmp/it's here/config");
+        assert!(quoted.contains("'/tmp/it'\\''s here'"));
+        assert_eq!(
+            write_access_command("/config"),
+            "if test -w '/' && test -x '/'; then printf writable; else printf restricted; fi"
+        );
     }
 
     #[test]

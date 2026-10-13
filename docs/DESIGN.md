@@ -120,6 +120,10 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 - **Тосты** ([Toast.svelte](../src/lib/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).
+- **Доступ к сохранению в редакторе** — компактная текстовая метка рядом с «Сохранить»;
+  «Нужны права» служит кнопкой проверки sudo. Ошибка сохранения раскрывает привязанную к этой
+  же строке карточку с коротким сообщением и действиями sudo/локальной копии; иконки и цвета
+  берутся из существующего набора.
 - **Пустые состояния** — [EmptyState](../src/lib/EmptyState.svelte): бейдж-иконка в кружке +
   заголовок + подсказка + слот CTA. **Загрузка** — [Skeleton](../src/lib/Skeleton.svelte)
   (`animate-pulse`, `aria-hidden`).
