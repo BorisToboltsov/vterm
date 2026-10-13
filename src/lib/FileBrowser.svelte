@@ -55,7 +55,7 @@
   import Skeleton from "./Skeleton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
-  import type { MenuItem, OpenMenu } from "./ctxmenu";
+  import { isAction, type MenuItem, type OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
   import {
@@ -244,6 +244,16 @@
   // table is ordered from its column titles; a list has none, so the toolbar
   // offers the same order as a menu.
   let tableMode = $state(false);
+  // The SFTP toolbar has more actions than a 240px dock can hold. Measure the
+  // actual bar (also when embedded) and keep Upload visible in its compact form.
+  let toolbarWidth = $state(0);
+  const compactToolbar = $derived(!!adapter.upload && toolbarWidth > 0 && toolbarWidth < 320);
+  function measureToolbar(node: HTMLElement) {
+    const observer = new ResizeObserver(() => (toolbarWidth = node.clientWidth));
+    observer.observe(node);
+    toolbarWidth = node.clientWidth;
+    return { destroy: () => observer.disconnect() };
+  }
   const COLUMN_LABEL: Record<SortKey, () => string> = {
     name: () => t("sftp.colName"),
     size: () => t("sftp.colSize"),
@@ -554,6 +564,48 @@
         orderBy,
       ),
     };
+  }
+  function openToolbarMenu(e: MouseEvent) {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const items: MenuItem[] = [];
+    if (!tableMode && mutable) {
+      items.push({
+        kind: "submenu",
+        key: "sort",
+        icon: "arrowsUpDown",
+        label: t("sftp.sort"),
+        items: sortMenu(fileSort.sort, {
+          key: (key) => COLUMN_LABEL[key](),
+          dir: (dir) => t(dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc"),
+        }, orderBy).filter(isAction),
+      });
+    }
+    items.push({
+      icon: "folderPlus",
+      label: t("sftp.newFolder"),
+      disabled: !mutable,
+      onSelect: () => {
+        showMkdir = true;
+        showMkfile = false;
+      },
+    });
+    items.push({
+      icon: "filePlus",
+      label: t("sftp.newFile"),
+      disabled: !mutable,
+      onSelect: () => {
+        showMkfile = true;
+        showMkdir = false;
+      },
+    });
+    if (onSync) {
+      items.push({
+        icon: "sync",
+        label: syncActive ? t("sync.runningButton") : t("sync.button"),
+        onSelect: onSync,
+      });
+    }
+    ctxMenu = { x: box.right, y: box.bottom + 2, items };
   }
   const cursorOnParent = $derived(hasParent && cursor === 0);
   const cursorEntry = $derived.by(() =>
@@ -1092,7 +1144,11 @@
       <!-- Toolbar. When embedded and not yet connected (SFTP), the bar would hold only
            a redundant label — the tab already names it — so it's dropped. -->
       {#if isConnected || !embedded}
-        <div class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs">
+        <div
+          class="flex items-center gap-1 border-b border-edge px-2 py-1.5 text-xs"
+          use:measureToolbar
+          data-testid="{testPrefix}-toolbar"
+        >
           {#if !embedded}
             <button
               class="rounded p-1 text-muted hover:bg-edge hover:text-text"
@@ -1124,7 +1180,7 @@
             >
               <Icon name="eye" size={14} />
             </button>
-            {#if !tableMode && mutable}
+            {#if !compactToolbar && !tableMode && mutable}
               <!-- A list has no column titles: the same order, as a menu. Lit
                    while the order is not the usual one — a listing that is not
                    by name should say so. -->
@@ -1153,31 +1209,33 @@
             >
               <Icon name="terminal" size={14} />
             </button>
-            <button
-              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
-              use:tooltip={t("sftp.newFolder")}
-              aria-label={t("sftp.newFolder")}
-              disabled={!mutable}
-              onclick={() => {
-                showMkdir = !showMkdir;
-                if (showMkdir) showMkfile = false;
-              }}
-            >
-              <Icon name="folderPlus" size={14} />
-            </button>
-            <button
-              data-testid="{testPrefix}-new-file"
-              class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
-              use:tooltip={t("sftp.newFile")}
-              aria-label={t("sftp.newFile")}
-              disabled={!mutable}
-              onclick={() => {
-                showMkfile = !showMkfile;
-                if (showMkfile) showMkdir = false;
-              }}
-            >
-              <Icon name="filePlus" size={14} />
-            </button>
+            {#if !compactToolbar}
+              <button
+                class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+                use:tooltip={t("sftp.newFolder")}
+                aria-label={t("sftp.newFolder")}
+                disabled={!mutable}
+                onclick={() => {
+                  showMkdir = !showMkdir;
+                  if (showMkdir) showMkfile = false;
+                }}
+              >
+                <Icon name="folderPlus" size={14} />
+              </button>
+              <button
+                data-testid="{testPrefix}-new-file"
+                class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+                use:tooltip={t("sftp.newFile")}
+                aria-label={t("sftp.newFile")}
+                disabled={!mutable}
+                onclick={() => {
+                  showMkfile = !showMkfile;
+                  if (showMkfile) showMkdir = false;
+                }}
+              >
+                <Icon name="filePlus" size={14} />
+              </button>
+            {/if}
             {#if adapter.search}
               <button
                 class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
@@ -1188,7 +1246,7 @@
                 <Icon name="search" size={14} />
               </button>
             {/if}
-            {#if onSync}
+            {#if onSync && !compactToolbar}
               <!-- A compare or run going on in the background shows here: the
                    button reopens its dialog. -->
               <button
@@ -1211,6 +1269,18 @@
                 onclick={uploadFiles}
               >
                 <Icon name="upload" size={14} />
+              </button>
+            {/if}
+            {#if compactToolbar}
+              <button
+                data-testid="{testPrefix}-toolbar-more"
+                class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
+                use:tooltip={t("topbar.more")}
+                aria-label={t("topbar.more")}
+                aria-haspopup="menu"
+                onclick={openToolbarMenu}
+              >
+                <Icon name="dots" size={14} strokeWidth={3} />
               </button>
             {/if}
             {#if !adapter.search && !embedded}
