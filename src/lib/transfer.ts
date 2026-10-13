@@ -143,6 +143,16 @@ export function jobSessions(job: Pick<TransferJob, "src" | "dst">): string[] {
   return [job.src.session, job.dst.session].filter((s): s is string => s !== null);
 }
 
+/** A late event or list snapshot cannot restore a row after its SSH tab closed. */
+export function jobVisibleInWindow(
+  job: Pick<TransferJob, "src" | "dst">,
+  openSessions: ReadonlySet<string>,
+): boolean {
+  const sessions = jobSessions(job);
+  // A local-to-local job has no session; its origin window remains its audience.
+  return sessions.length === 0 || sessions.some((id) => openSessions.has(id));
+}
+
 /** The list row of a job. */
 export function jobRow(job: TransferJob): TransferRow {
   return {

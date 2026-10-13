@@ -666,8 +666,29 @@ describe("ServerFormModal server secret", () => {
     // The parent gets the profile the backend returned, so the list shows the hint.
     expect(onsaved).toHaveBeenCalledWith(
       expect.objectContaining({ hasSavedPassword: true }),
-      "add",
+      "edit",
     );
+  });
+
+  it("closes once the server is saved even while the keychain is still waiting", async () => {
+    let finishSecret!: (profile: ServerProfile) => void;
+    saveServerSecret.mockImplementation(
+      () => new Promise<ServerProfile>((resolve) => { finishSecret = resolve; }),
+    );
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(saveServerSecret).toHaveBeenCalledWith("s1", "hunter2"));
+    expect(onsaved).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }), "add");
+    await waitFor(() => expect(screen.queryByTestId("field-alias")).toBeNull());
+    finishSecret(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await waitFor(() => expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ hasSavedPassword: true }), "edit",
+    ));
   });
 
   it("leaves the keychain alone when the field is untouched", async () => {
@@ -722,5 +743,6 @@ describe("ServerFormModal server secret", () => {
       expect.objectContaining({ id: "s1", hasSavedPassword: false }),
       "add",
     );
+    await waitFor(() => expect(screen.queryByTestId("field-alias")).toBeNull());
   });
 });

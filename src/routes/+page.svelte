@@ -284,9 +284,10 @@
     applyJob,
     applyProgress,
     dropTransfersOf,
+    removeTransfer,
     transfersState,
   } from "$lib/stores/transfers.svelte";
-  import { jobNotice } from "$lib/transfer";
+  import { jobNotice, jobVisibleInWindow } from "$lib/transfer";
   import { DISK, startTransfer } from "$lib/transferflow";
   import {
     fileSelectionOf,
@@ -2514,6 +2515,10 @@
   // ── Transfers: jobs of the backend (v1.12, ADR 0025) ─────────────────────────
   /** What the backend says of a job: the list, and a word when it ends badly. */
   function hearJob(job: TransferJob) {
+    if (!jobVisibleInWindow(job, new Set(tabsState.list.map((tab) => tab.sessionId)))) {
+      removeTransfer(job.id);
+      return;
+    }
     applyJob(job);
     const notice = jobNotice(job);
     if (!notice) return;
@@ -2525,7 +2530,13 @@
   /** The jobs of this window's sessions that are under way right now. */
   async function refreshTransfers() {
     try {
-      for (const job of await transferList()) applyJob(job);
+      for (const job of await transferList()) {
+        if (jobVisibleInWindow(job, new Set(tabsState.list.map((tab) => tab.sessionId)))) {
+          applyJob(job);
+        } else {
+          removeTransfer(job.id);
+        }
+      }
     } catch {
       /* no backend (browser preview) — nothing to show */
     }

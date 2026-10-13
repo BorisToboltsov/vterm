@@ -15,6 +15,19 @@ pub fn list_servers(state: State<AppState>) -> Vec<ServerProfile> {
     state.servers.lock().unwrap().clone()
 }
 
+/// A rejected disk write must not leave a server visible only in this process.
+fn add_persisted(
+    servers: &mut Vec<ServerProfile>,
+    created: ServerProfile,
+    persist: impl FnOnce(&[ServerProfile]) -> AppResult<()>,
+) -> AppResult<ServerProfile> {
+    let mut next = servers.clone();
+    next.push(created.clone());
+    persist(&next)?;
+    *servers = next;
+    Ok(created)
+}
+
 #[tauri::command]
 pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResult<ServerProfile> {
     let created = ServerProfile {
@@ -38,13 +51,39 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         icon: profile.icon,
         icon_color: profile.icon_color,
     };
-    let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
-        servers.push(created.clone());
-        servers.clone()
-    };
-    store::save_servers(&snapshot)?;
-    Ok(created)
+    let mut servers = state.servers.lock().unwrap();
+    add_persisted(&mut servers, created, store::save_servers)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample(id: &str) -> ServerProfile {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "alias": id, "host": "example.com", "port": 22, "username": "root"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn failed_profile_write_does_not_create_a_memory_only_server() {
+        let mut servers = vec![sample("old")];
+        let result = add_persisted(&mut servers, sample("new"), |_| {
+            Err(AppError::Message("disk full".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(servers.len(), 1);
+        assert_eq!(servers[0].id, "old");
+
+        let saved = add_persisted(&mut servers, sample("new"), |snapshot| {
+            assert_eq!(snapshot.len(), 2);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(saved.id, "new");
+        assert_eq!(servers.len(), 2);
+    }
 }
 
 #[tauri::command]
