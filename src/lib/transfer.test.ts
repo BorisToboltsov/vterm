@@ -7,6 +7,7 @@ import {
   jobNotice,
   jobRow,
   jobSessions,
+  jobVisibleInWindow,
   MIN_SPAN_MS,
   pushSample,
   RATE_WINDOW_MS,
@@ -169,6 +170,16 @@ describe("a job, as the list and the toasts read it", () => {
       ...over,
     };
   }
+
+  it("rejects late events and list snapshots after the SSH tab closes", () => {
+    const download = job({ src: side("closed"), dst: side(null, true) });
+    expect(jobVisibleInWindow(download, new Set())).toBe(false);
+    expect(jobVisibleInWindow(download, new Set(["new-session"]))).toBe(false);
+    expect(jobVisibleInWindow(download, new Set(["closed"]))).toBe(true);
+    const between = job({ src: side("closed"), dst: side("other") });
+    expect(jobVisibleInWindow(between, new Set(["other"]))).toBe(true);
+    expect(jobVisibleInWindow(job({ src: side(null, true), dst: side(null, true) }), new Set())).toBe(true);
+  });
 
   it("points up to a server, down from one, and sideways between two places alike", () => {
     expect(jobDirection(job())).toBe("upload");

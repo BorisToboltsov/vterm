@@ -22,6 +22,8 @@
 //  5. The window hears of jobs first and asks what is under way second — both
 //     when it starts and when it takes a tab over. Asked first, a job that ended
 //     in between would stay in the list for good.
+//  6. A late event or list reply cannot restore a transfer after its SSH tab
+//     closed. Both feeds check that this window still owns a side of the job.
 //
 // Checked on the source with comments stripped; each check is a function over
 // text, shown to catch its own violation.
@@ -159,6 +161,18 @@ export function listenFirstViolations(page: string): string[] {
   return out;
 }
 
+export function closedTabViolations(page: string): string[] {
+  const c = code(page);
+  const heard = c.split("function hearJob(job: TransferJob) {")[1]?.split("/** The jobs of this window")[0] ?? "";
+  const listed = c.split("async function refreshTransfers() {")[1]?.split("// ──")[0] ?? "";
+  const rejectsLateEvent = /if \(!jobVisibleInWindow\(job, [^;]+\)\) \{\s*removeTransfer\(job\.id\);\s*return;\s*\}\s*applyJob\(job\)/.test(heard);
+  const rejectsLateList = /if \(jobVisibleInWindow\(job, [^;]+\)\) \{\s*applyJob\(job\);\s*\} else \{\s*removeTransfer\(job\.id\);/.test(listed);
+  const out: string[] = [];
+  if (!rejectsLateEvent) out.push("a late job event can restore a row after its SSH tab closed");
+  if (!rejectsLateList) out.push("a list reply can restore a row after its SSH tab closed");
+  return out;
+}
+
 describe("transfer-job guard", () => {
   const files = Object.fromEntries(sources().map((rel) => [unix(rel), read(rel)]));
 
@@ -180,6 +194,10 @@ describe("transfer-job guard", () => {
 
   it("the window hears of jobs first and asks what is under way second", () => {
     expect(listenFirstViolations(read(PAGE))).toEqual([]);
+  });
+
+  it("ignores jobs after the last tab of their sessions closes", () => {
+    expect(closedTabViolations(read(PAGE))).toEqual([]);
   });
 });
 
@@ -275,6 +293,18 @@ describe("the guard catches", () => {
     const bare = mutate(page, "    void refreshTransfers();\n    return true;", "    return true;");
     expect(listenFirstViolations(bare)).toEqual([
       "a tab taken over arrives without the transfers that came with its session",
+    ]);
+  });
+
+  it("a late event or list reply that resurrects a closed tab's transfer", () => {
+    const page = read(PAGE);
+    const event = mutate(page, "      removeTransfer(job.id);\n      return;", "      return;");
+    expect(closedTabViolations(event)).toEqual([
+      "a late job event can restore a row after its SSH tab closed",
+    ]);
+    const list = mutate(page, "        } else {\n          removeTransfer(job.id);", "        } else {");
+    expect(closedTabViolations(list)).toEqual([
+      "a list reply can restore a row after its SSH tab closed",
     ]);
   });
 });

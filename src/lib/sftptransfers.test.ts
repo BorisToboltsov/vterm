@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -55,5 +55,29 @@ describe("SftpPanel transfer rows", () => {
 
     expect(await screen.findAllByText("big.iso")).toHaveLength(2);
     expect(screen.queryByTestId("transfer-cancel")).toBeNull();
+  });
+
+  it("keeps Upload visible and moves less-used actions into More at dock minimum width", async () => {
+    await connected();
+    const toolbar = screen.getByTestId("sftp-toolbar");
+    Object.defineProperty(toolbar, "clientWidth", { configurable: true, value: 240 });
+    const observers = (
+      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
+    ).instances;
+    for (const observer of observers) observer.cb([{ target: toolbar }]);
+
+    const more = await screen.findByTestId("sftp-toolbar-more");
+    expect(within(toolbar).getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    expect(within(toolbar).queryByRole("button", { name: "New folder" })).toBeNull();
+    await userEvent.click(more);
+    expect(screen.getByRole("menuitem", { name: "New folder" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "New file" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Sync folder" })).toBeInTheDocument();
+
+    Object.defineProperty(toolbar, "clientWidth", { configurable: true, value: 384 });
+    for (const observer of observers) observer.cb([{ target: toolbar }]);
+    await waitFor(() => expect(screen.queryByTestId("sftp-toolbar-more")).toBeNull());
+    expect(within(toolbar).getByRole("button", { name: "Upload" })).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "New folder" })).toBeInTheDocument();
   });
 });

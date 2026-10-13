@@ -39,6 +39,19 @@ export function sftpReadText(
   return invoke<TextFile>("sftp_read_text", { sessionId, path, maxBytes, sudo, sudoPassword });
 }
 
+/** Advisory check for the editor's temp-sibling save directory. */
+export function sftpWriteAccess(
+  sessionId: string,
+  path: string,
+): Promise<"writable" | "restricted" | "unknown"> {
+  return invoke("sftp_write_access", { sessionId, path });
+}
+
+/** Check sudo authentication before editing; later write permission can still differ. */
+export function sftpCheckSudo(sessionId: string, password: string): Promise<boolean> {
+  return invoke("sftp_check_sudo", { sessionId, password });
+}
+
 /** Open a LOCAL file as text in the editor (throws on large/binary files). */
 export function readLocalText(path: string, maxBytes?: number): Promise<TextFile> {
   return invoke<TextFile>("read_local_text", { path, maxBytes });
@@ -81,6 +94,16 @@ export function writeLocalText(
     encoding,
     expectedSha256,
   });
+}
+
+/** Export the current buffer as a new local file, preserving its EOL and encoding. */
+export function saveEditorCopy(
+  path: string,
+  content: string,
+  eol: "lf" | "crlf",
+  encoding: string,
+): Promise<void> {
+  return invoke("save_editor_copy", { path, content, eol, encoding });
 }
 
 /** Drain the queue of files vterm was asked to open (CLI args / macOS Opened). */

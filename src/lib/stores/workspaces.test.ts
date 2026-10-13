@@ -14,6 +14,8 @@ import {
   failEditor,
   setEditorContent,
   setEditorSudo,
+  setEditorWriteAccess,
+  setEditorSaveIssue,
   markSaved,
   findEditorByPath,
   closeEditor,
@@ -52,6 +54,8 @@ function doc(over: Partial<EditorDoc> = {}): EditorDoc {
     encoding: "utf-8",
     mode: 0o644,
     readOnly: false,
+    writeAccess: "writable",
+    saveIssue: "none",
     loading: false,
     loadError: null,
     sudo: false,
@@ -147,6 +151,32 @@ describe("store mutators", () => {
     const d = getWorkspace("s1").editors[0];
     expect(d.sudo).toBe(true);
     expect(d.sudoPassword).toBe("secret");
+  });
+
+  it("keeps a remote 0444 file editable and records save recovery state", () => {
+    const id = addEditor("s1", "/etc/app.conf", "app.conf", LANG);
+    fillEditor("s1", id, { ...file("old"), mode: 0o444, readOnly: true });
+    setEditorContent("s1", id, "new");
+    setEditorWriteAccess("s1", id, "restricted");
+    setEditorSaveIssue("s1", id, "permission");
+    let d = getWorkspace("s1").editors[0];
+    expect(d.readOnly).toBe(false);
+    expect(isDirty(d)).toBe(true);
+    expect(d.writeAccess).toBe("restricted");
+    expect(d.saveIssue).toBe("permission");
+    setEditorSaveIssue("s1", id, "sudo");
+    expect(getWorkspace("s1").editors[0].saveIssue).toBe("sudo");
+    setEditorSudo("s1", id, "secret");
+    d = getWorkspace("s1").editors[0];
+    expect(d.sudo).toBe(true);
+    expect(d.saveIssue).toBe("none");
+    expect(isDirty(d)).toBe(true);
+  });
+
+  it("keeps local read-only files read-only", () => {
+    const id = addEditor("s1", "/tmp/readonly", "readonly", LANG, "local");
+    fillEditor("s1", id, { ...file("old"), mode: 0o444, readOnly: true });
+    expect(getWorkspace("s1").editors[0].readOnly).toBe(true);
   });
 
   it("failEditor records the error and stops loading", () => {

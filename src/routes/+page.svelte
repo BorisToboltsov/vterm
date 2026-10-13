@@ -16,6 +16,10 @@
     setServerNotes,
     sftpReadText,
     sftpWriteText,
+    sftpWriteAccess,
+    sftpCheckSudo,
+    saveEditorCopy,
+    pickSavePath,
     isBackupFailedError,
     isFileChangedError,
     isPermissionError,
@@ -212,6 +216,8 @@
     closeEditor as closeEditorStore,
     findEditorByPath,
     setEditorSudo,
+    setEditorWriteAccess,
+    setEditorSaveIssue,
     markSaved,
     isDirty,
     removeWorkspace,
@@ -284,9 +290,10 @@
     applyJob,
     applyProgress,
     dropTransfersOf,
+    removeTransfer,
     transfersState,
   } from "$lib/stores/transfers.svelte";
-  import { jobNotice } from "$lib/transfer";
+  import { jobNotice, jobVisibleInWindow } from "$lib/transfer";
   import { DISK, startTransfer } from "$lib/transferflow";
   import {
     fileSelectionOf,
@@ -2514,6 +2521,10 @@
   // ── Transfers: jobs of the backend (v1.12, ADR 0025) ─────────────────────────
   /** What the backend says of a job: the list, and a word when it ends badly. */
   function hearJob(job: TransferJob) {
+    if (!jobVisibleInWindow(job, new Set(tabsState.list.map((tab) => tab.sessionId)))) {
+      removeTransfer(job.id);
+      return;
+    }
     applyJob(job);
     const notice = jobNotice(job);
     if (!notice) return;
@@ -2525,7 +2536,13 @@
   /** The jobs of this window's sessions that are under way right now. */
   async function refreshTransfers() {
     try {
-      for (const job of await transferList()) applyJob(job);
+      for (const job of await transferList()) {
+        if (jobVisibleInWindow(job, new Set(tabsState.list.map((tab) => tab.sessionId)))) {
+          applyJob(job);
+        } else {
+          removeTransfer(job.id);
+        }
+      }
     } catch {
       /* no backend (browser preview) — nothing to show */
     }
@@ -3031,25 +3048,33 @@
   /** Configured editor open-size limit, in bytes. */
   const editorMaxBytes = () => settings.sftp.maxOpenMb * 1024 * 1024;
 
-  // Sudo prompt: reopen a permission-denied file as root, or retry a save as root.
+  // Sudo prompt: reopen, check access ahead of editing, or retry a save.
   let sudoPrompt = $state<
     | { kind: "open"; sid: string; path: string; name: string; gotoLine?: number }
-    | { kind: "save"; sid: string; doc: EditorDoc }
+    | { kind: "save" | "check"; sid: string; doc: EditorDoc }
     | null
   >(null);
   let sudoPasswordInput = $state("");
   const sudoPromptPath = $derived(
     sudoPrompt?.kind === "open"
       ? sudoPrompt.path
-      : sudoPrompt?.kind === "save"
+      : sudoPrompt
         ? sudoPrompt.doc.path
         : "",
   );
   const sudoPromptTitle = $derived(
-    sudoPrompt?.kind === "save" ? t("editor.sudoSaveTitle") : t("editor.sudoTitle"),
+    sudoPrompt?.kind === "save"
+      ? t("editor.sudoSaveTitle")
+      : sudoPrompt?.kind === "check"
+        ? t("editor.checkSudo")
+        : t("editor.sudoTitle"),
   );
   const sudoPromptConfirm = $derived(
-    sudoPrompt?.kind === "save" ? t("editor.save") : t("editor.sudoOpen"),
+    sudoPrompt?.kind === "save"
+      ? t("editor.save")
+      : sudoPrompt?.kind === "check"
+        ? t("editor.checkSudo")
+        : t("editor.sudoOpen"),
   );
 
   // Per-session cache of the paths nginx actually loads (`nginx -T`), so files that
@@ -3127,10 +3152,24 @@
       gitBase: opts.gitBase,
     });
     fillEditor(sid, id, file);
+    if (!opts.sudo) {
+      void sftpWriteAccess(sid, path)
+        .then((access) => {
+          if (findEditorByPath(sid, path)?.id === id) setEditorWriteAccess(sid, id, access);
+        })
+        .catch(() => {
+          if (findEditorByPath(sid, path)?.id === id) setEditorWriteAccess(sid, id, "unknown");
+        });
+    }
   }
 
-  /** Confirm the sudo prompt: reopen the pending file as root, or retry the save. */
-  function confirmSudo() {
+  function promptEditorSudo(sid: string, doc: EditorDoc, kind: "check" | "save") {
+    sudoPasswordInput = "";
+    sudoPrompt = { kind, sid, doc };
+  }
+
+  /** Confirm sudo credentials before retaining them for this editor. */
+  async function confirmSudo() {
     const p = sudoPrompt;
     const pw = sudoPasswordInput;
     sudoPrompt = null;
@@ -3143,10 +3182,24 @@
         sudoPassword: pw,
       });
     } else {
-      // Remember sudo on the doc (future saves reuse it), then retry from the store.
+      let usable: boolean;
+      try {
+        usable = await sftpCheckSudo(p.sid, pw);
+      } catch {
+        usable = false;
+      }
+      if (!usable) {
+        const updated = findEditorByPath(p.sid, p.doc.path);
+        if (p.kind === "check" && updated && isDirty(updated)) {
+          setEditorSaveIssue(p.sid, updated.id, "sudo");
+        } else {
+          notifyError(t("editor.sudoUnavailable"));
+        }
+        return;
+      }
       setEditorSudo(p.sid, p.doc.id, pw);
       const updated = findEditorByPath(p.sid, p.doc.path);
-      if (updated) void doWriteEditor(p.sid, updated, updated.baseSha256);
+      if (p.kind === "save" && updated) void doWriteEditor(p.sid, updated, updated.baseSha256);
     }
   }
 
@@ -3431,6 +3484,17 @@
     void doWriteEditor(sid, doc, doc.baseSha256);
   }
 
+  async function exportEditorCopy(doc: EditorDoc) {
+    const path = await pickSavePath(doc.name);
+    if (!path) return;
+    try {
+      await saveEditorCopy(path, doc.content, doc.eol, doc.encoding);
+      notifySuccess(t("editor.copySaved", { name: path.split(/[\\/]/).pop() ?? path }));
+    } catch (e) {
+      notifyError(String(e).includes("dest-exists") ? t("editor.copyExists") : String(e));
+    }
+  }
+
   /**
    * Actually write to the server. `expectedSha` null = force overwrite (conflict).
    * Resolves `true` only when the file was written.
@@ -3478,19 +3542,17 @@
           notifyError(t("editor.conflict", { name: doc.name }));
         }
       } else if (!doc.sudo && doc.source === "sftp" && isPermissionError(e)) {
-        // Can't write into the target dir (no permission) → offer to save as root.
-        // Deliberately ahead of the backup check: when it is the `.bak` copy that
-        // was refused for want of access, saving as root is the actual remedy
-        // (the sudo path makes the copy with `cp -p`), so keep that route open.
-        sudoPasswordInput = "";
-        sudoPrompt = { kind: "save", sid, doc };
+        // Keep the buffer and offer explicit recovery next to Save.
+        setEditorSaveIssue(sid, doc.id, "permission");
       } else if (isBackupFailedError(e)) {
         // The save was abandoned with the file untouched — say that plainly, or
         // the user reads it as "save failed" and cannot tell what state the
         // server is in. The cause is carried along; the way out is in the hint.
         notifyError(t("editor.backupFailed", { name: doc.name, detail: String(e) }));
+        setEditorSaveIssue(sid, doc.id, "other");
       } else {
         notifyError(String(e));
+        setEditorSaveIssue(sid, doc.id, "other");
       }
       return false;
     } finally {
@@ -4489,6 +4551,10 @@
                             doc={ed}
                             saving={savingEditorId === ed.id}
                             onsave={() => saveEditor(tab.sessionId, ed)}
+                            onCheckSudo={() => promptEditorSudo(tab.sessionId, ed, "check")}
+                            onSaveWithSudo={() => promptEditorSudo(tab.sessionId, ed, "save")}
+                            onSaveCopy={() => void exportEditorCopy(ed)}
+                            onDismissSaveIssue={() => setEditorSaveIssue(tab.sessionId, ed.id, "none")}
                             onLintMissing={offerLintInstall}
                           />
                         {/if}

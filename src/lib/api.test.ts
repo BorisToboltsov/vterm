@@ -152,6 +152,23 @@ describe("invoke wrappers pass the right command + args", () => {
       eol: "lf",
       expectedSha256: "abc123",
     });
+    await api.sftpWriteAccess("sess", "/etc/app.conf");
+    expect(invoke).toHaveBeenCalledWith("sftp_write_access", {
+      sessionId: "sess",
+      path: "/etc/app.conf",
+    });
+    await api.sftpCheckSudo("sess", "password");
+    expect(invoke).toHaveBeenCalledWith("sftp_check_sudo", {
+      sessionId: "sess",
+      password: "password",
+    });
+    await api.saveEditorCopy("/tmp/app.conf", "data\n", "crlf", "utf-8-bom");
+    expect(invoke).toHaveBeenCalledWith("save_editor_copy", {
+      path: "/tmp/app.conf",
+      content: "data\n",
+      eol: "crlf",
+      encoding: "utf-8-bom",
+    });
   });
 
   it("local file editor commands", async () => {

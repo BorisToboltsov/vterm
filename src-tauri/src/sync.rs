@@ -763,6 +763,12 @@ async fn sudo_ok(session: &SshSession, inner: &str, password: &str) -> AppResult
     Ok(out.contains(OK_MARKER))
 }
 
+/// Validate sudo authentication early. Command-specific sudoers rules may still
+/// reject the later copy; the editor keeps the buffer if that happens.
+pub async fn check_sudo(session: &SshSession, password: &str) -> AppResult<bool> {
+    sudo_ok(session, "true", password).await
+}
+
 /// Read a root-owned file as text via `sudo cat` (Phase 12.6 "edit as root").
 pub async fn sudo_read(
     session: &SshSession,

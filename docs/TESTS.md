@@ -22,7 +22,7 @@
 | **Rust unit** | `cargo test` | ~235 тестов | Чистая логика бэкенда: парсеры метрик, кодировки, пути, serde-модели, хранилище, политика host-key | Везде |
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
-| **Гейты-контракты** | Vitest (обычные тесты) | 35 файлов | Инварианты, которые нельзя проверить типами: см. [таблицу](INVARIANTS.md#гейты) | Везде |
+| **Гейты-контракты** | Vitest (обычные тесты) | 49 файлов | Инварианты, которые нельзя проверить типами: см. [таблицу](INVARIANTS.md#гейты) | Везде |
 | **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly и релиз |
 | **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly и релиз (нужен контейнер) |
 | **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → nightly и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
@@ -70,7 +70,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 | Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `broadcast`, `osc` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
 | Драйверы панелей | `git`, `gitview`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
 | Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives`, `filedrop`, `dragout` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки), `dragout.rs` + `dragout/feed.rs` (вынос файла: что обещается, поток для Проводника, раскладка описателя) |
-| Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce` | `textenc.rs`, `servertools.rs` |
+| Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce`, `workspaces`, `editoraccess.guard` | `textenc.rs`, `sftp.rs` (путь проверки прав), `localfile.rs` (локальная копия), `servertools.rs` |
 | Мониторинг | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` | `metrics/mod.rs` (30 тестов — парсеры проб), `metrics/local.rs` |
 | Запись сессий | `recording`, `recgroup`, `airunbook`, `aiscript` | `recording.rs` (25 тестов — режимы, пауза, мета) |
 | ИИ | `ai`, `aicore` (слои промпта), `aiprompts`, `aipresets`, `aiexec`, `aidialog`, `redact` | `ai.rs` (17 тестов — экстракторы дельт обоих протоколов) |
@@ -86,7 +86,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 
 ## Гейты-контракты
 
-42 файла `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
+49 файлов `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
 живёт в бинарном артефакте — сам артефакт) и падают на
 нарушении инварианта. Полный список «гейт → что держит» — в
 [INVARIANTS.md](INVARIANTS.md#гейты); там же причина, по которой каждый заведён.

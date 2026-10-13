@@ -308,18 +308,28 @@
       icon,
       iconColor,
     };
+    const serverSecret = secret;
+    const proxySecretToSave = useProxy ? proxySecret : "";
     try {
-      let saved =
+      const saved =
         mode === "edit" && editId
           ? await updateServer(editId, payload)
           : await addServer(payload);
-      // Secrets are stored only once the profile has an id, and a failure to
-      // reach the keychain must not swallow the profile that was just written:
-      // report it and still hand the parent the saved server, or the list would
-      // not show a server the backend already has.
-      if (secret.trim()) {
+      const savedMode = mode === "edit" && editId ? "edit" : "add";
+      // The profile is already persisted. Show it and close the form now: a
+      // slow keychain must not leave an apparently completed form open.
+      onsaved(saved, savedMode);
+      open = false;
+      notifySuccess(
+        savedMode === "edit"
+          ? t("page.serverUpdated", { alias: saved.alias })
+          : t("page.serverAdded", { alias: saved.alias }),
+      );
+      // Secrets need the persisted id. A keychain error is reported separately,
+      // and its updated profile replaces the first row when it succeeds.
+      if (serverSecret.trim()) {
         try {
-          saved = await saveServerSecret(saved.id, secret);
+          onsaved(await saveServerSecret(saved.id, serverSecret), "edit");
         } catch (e) {
           notifyError(t("page.secretNotSaved", { error: String(e) }));
         }
@@ -327,16 +337,9 @@
       // Store a just-typed proxy secret in the keychain — the jump host's
       // password/passphrase, or the SOCKS5/HTTP basic-auth password (the secret
       // kind follows the proxy's auth method, handled backend-side).
-      if (useProxy && proxySecret.trim()) {
-        await saveProxySecret(saved.id, proxySecret);
+      if (proxySecretToSave.trim()) {
+        await saveProxySecret(saved.id, proxySecretToSave);
       }
-      onsaved(saved, mode === "edit" && editId ? "edit" : "add");
-      notifySuccess(
-        mode === "edit" && editId
-          ? t("page.serverUpdated", { alias: saved.alias })
-          : t("page.serverAdded", { alias: saved.alias }),
-      );
-      open = false;
     } catch (e) {
       notifyError(String(e));
     }

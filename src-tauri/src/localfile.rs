@@ -689,6 +689,41 @@ pub async fn write_text(
     })
 }
 
+/// Export the current editor buffer as an explicit local copy. Never overwrite
+/// another file: the native save dialog's choice can race with a new file.
+pub async fn write_editor_copy(
+    path: &str,
+    content: &str,
+    eol: &str,
+    encoding: &str,
+) -> AppResult<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let bytes = textenc::encode(&apply_eol(content, eol), encoding);
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AlreadyExists {
+            AppError::DestinationExists
+        } else {
+            AppError::Message(format!("create local copy {path}: {e}"))
+        }
+    })?;
+    let result = async {
+        file.write_all(&bytes).await?;
+        file.sync_all().await
+    }
+    .await;
+    if let Err(e) = result {
+        drop(file);
+        let _ = tokio::fs::remove_file(path).await;
+        return Err(format!("write local copy {path}: {e}").into());
+    }
+    Ok(())
+}
+
 // ── Tauri commands ─────────────────────────────────────────────────────────────
 // The frontend-facing wrappers for the local file panel (Phase 44.9). They carry
 // no shared `AppState` and delegate straight to the functions above, so they live
@@ -726,6 +761,17 @@ pub async fn write_local_text(
 ) -> AppResult<WriteResult> {
     let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
     write_text(&path, &content, &eol, &encoding, expected_sha256.as_deref()).await
+}
+
+/// Save a copy of an unsaved editor buffer without replacing any existing file.
+#[tauri::command]
+pub async fn save_editor_copy(
+    path: String,
+    content: String,
+    eol: String,
+    encoding: String,
+) -> AppResult<()> {
+    write_editor_copy(&path, &content, &eol, &encoding).await
 }
 
 #[tauri::command]
@@ -1052,6 +1098,38 @@ mod tests {
         assert!(err.to_string().contains("file-changed"));
         // The successful write reported a fresh hash.
         assert_ne!(res.sha256, tf.sha256);
+    }
+
+    #[tokio::test]
+    async fn editor_copy_keeps_encoding_and_refuses_to_replace_an_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edited.conf");
+        let p = path.to_str().unwrap();
+        write_editor_copy(p, "ключ=да\n", "crlf", textenc::UTF8_BOM)
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::fs::read(&path).await.unwrap(),
+            textenc::encode("ключ=да\r\n", textenc::UTF8_BOM)
+        );
+        assert!(matches!(
+            write_editor_copy(p, "different", "lf", textenc::UTF8).await,
+            Err(AppError::DestinationExists)
+        ));
+        assert_eq!(
+            tokio::fs::read(&path).await.unwrap(),
+            textenc::encode("ключ=да\r\n", textenc::UTF8_BOM)
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = tokio::fs::metadata(&path)
+                .await
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
     }
 
     #[tokio::test]
