@@ -18,6 +18,15 @@ export function tabOverflowViolations(source: string): string[] {
   if (!/scrollIntoView\?\.\(\{[\s\S]*?inline:\s*"nearest"/.test(source)) {
     out.push("the shown tab is not revealed after programmatic activation");
   }
+  const snippetStart = source.indexOf("{#snippet stripTabs");
+  const snippetEnd = source.indexOf("{/snippet}", snippetStart);
+  const snippet = source.slice(snippetStart, snippetEnd);
+  const tabsEnd = snippet.indexOf("  {/each}");
+  const add = snippet.indexOf('data-testid="new-local-terminal"');
+  const scrollerEnd = snippet.indexOf("\n  </div>", tabsEnd);
+  if (!(tabsEnd < add && add < scrollerEnd)) {
+    out.push("the add button does not follow the final tab inside the scroller");
+  }
   return out;
 }
 
@@ -32,6 +41,15 @@ describe("session tab overflow guard", () => {
     const broken = page.replace("items-stretch overflow-x-auto", "items-stretch overflow-x-visible");
     expect(tabOverflowViolations(broken)).toContain(
       "the session tabs have no bounded horizontal scroller",
+    );
+  });
+
+  it("catches an add button pinned outside the tab scroller", () => {
+    const broken = page
+      .replace("  {/each}\n  <!-- Open", "  {/each}\n  </div>\n  <!-- Open")
+      .replace("  </button>\n  </div>\n{/snippet}", "  </button>\n{/snippet}");
+    expect(tabOverflowViolations(broken)).toContain(
+      "the add button does not follow the final tab inside the scroller",
     );
   });
 });

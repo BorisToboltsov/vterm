@@ -3983,7 +3983,6 @@
       </button>
     </div>
   {/each}
-  </div>
   <!-- Open a local-shell terminal tab (same "+" as the top bar) — in this pane.
        A mouse press has already given the pane the focus; Enter on the button has
        not, so it is given here. -->
@@ -3999,6 +3998,7 @@
   >
     <Icon name="plus" size={14} />
   </button>
+  </div>
 {/snippet}
 
 
