@@ -274,7 +274,6 @@
       name: pod.name,
       container: container ?? undefined,
     });
-    notifySuccess(t("k8s.shellOpened", { name: pod.name }));
   }
 
   // ── Data loading ───────────────────────────────────────────────────────────

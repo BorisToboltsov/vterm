@@ -1081,12 +1081,26 @@ export function listFailure(stdout: string, stderr: string, exitCode: number): s
     }
     return "";
   }
-  const firstLine = (text: string) =>
-    text
-      .split("\n")
-      .map((l) => l.trim())
-      .find(Boolean) ?? "";
-  return firstLine(stderr) || firstLine(stdout) || `exit ${exitCode}`;
+  const detail = (text: string): string => {
+    const body = text.trim();
+    if (!body) return "";
+    try {
+      const doc = JSON.parse(body) as { message?: unknown; reason?: unknown } | null;
+      if (doc && typeof doc.message === "string" && doc.message.trim()) return doc.message.trim();
+      if (doc && typeof doc.reason === "string" && doc.reason.trim()) return doc.reason.trim();
+    } catch {
+      // A truncated/foreign JSON response starts with punctuation, whose first
+      // line used to be shown literally as "{". It carries no useful detail.
+      if (/^[{\[]/u.test(body)) return "";
+    }
+    return (
+      body
+        .split("\n")
+        .map((line) => line.trim())
+        .find((line) => line && !/^[{}\[\],:]+$/u.test(line)) ?? ""
+    );
+  };
+  return detail(stderr) || detail(stdout) || `exit ${exitCode}`;
 }
 
 /** Extract node roles from `node-role.kubernetes.io/<role>` (and legacy) labels. */

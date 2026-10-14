@@ -211,11 +211,11 @@ describe("K8sPanel — the route view", () => {
     expect(screen.queryByText("No endpoints — traffic has nowhere to go")).toBeNull();
   });
 
-  it("says the services were not read instead of 'No services'", async () => {
+  it("reports a service load failure instead of 'No services'", async () => {
     answer = (args) =>
       args.includes("services") ? { stdout: "", stderr: "Error from server (Forbidden): services is forbidden", exitCode: 1 } : undefined;
     await openNetwork("r4");
-    expect(screen.getByText("Services could not be read")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't load services")).toBeInTheDocument();
     expect(screen.queryByText("No services")).toBeNull();
     // The switch stays reachable above the message.
     expect(screen.getByTestId("k8s-net-view")).toBeInTheDocument();

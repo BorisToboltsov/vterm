@@ -915,7 +915,10 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   [jsonlog.ts](../src/lib/jsonlog.ts) + `Terminal.svelte`, таблица презентационна.
 - **Вставка в терминал — только через `term.paste()`.** Прямой `writeToTerminal` текста из буфера
   обмена теряет bracketed paste: многострочный блок исполняется построчно, не дойдя до промпта, —
-  а вставка висит на одном клике ПКМ. Гейт `termpaste.guard`.
+  а вставка висит на одном клике ПКМ. Одна строка вставляется сразу; несколько сначала показывают
+  итог и дают сохранить блок, собрать одну строку или добавить продолжения `\` (только POSIX),
+  причём исходный блок выбран по умолчанию: комментарий/heredoc нельзя молча превратить в другую
+  команду. Гейт `termpaste.guard`.
 - **Поверх первой строки терминала ничего не висит.** Переключатель Raw/Table, поиск, «Очистить» и
   «Спросить ИИ» живут в панели сессии под вкладками (`+page.svelte`, видимость — чистый
   [sessionbar.ts](../src/lib/sessionbar.ts)), а не плавают над xterm: плавающий тумблер закрывал
@@ -1919,7 +1922,8 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [aiturn.guard.test.ts](../src/lib/aiturn.guard.test.ts) | ИИ: один ход на чат — `startChat` отказывает занятому чату до записи в диалог, `doSend` проверяет занятость, обработчик `askAbout` взвешивает запрос `askBlocker`, только потом кладёт чип и **не** отправляет сам (ни consent, ни `doSend`), не паркует запрос; `startChat` зовут только стор и `AiChat`. Проверка по исходнику без комментариев |
 | [termctxfocus.guard.test.ts](../src/lib/termctxfocus.guard.test.ts) | Закрытие меню ПКМ терминала возвращает фокус в xterm — иначе после «Копировать/Вставить» ввод уходит в никуда. Проверка по исходнику без комментариев |
-| [termpaste.guard.test.ts](../src/lib/termpaste.guard.test.ts) | Текст из буфера обмена попадает в терминал только через `term.paste()` (bracketed paste), не прямым `writeToTerminal`. Проверка по исходнику без комментариев |
+| [termpaste.guard.test.ts](../src/lib/termpaste.guard.test.ts) | Текст из буфера обмена попадает в терминал только через `term.paste()` (bracketed paste), не прямым `writeToTerminal`; многострочный текст открывает выбор формы, одна строка вставляется сразу. Проверка по исходнику без комментариев; гейт проверен на возврате прямой многострочной вставки |
+| [taboverflow.guard.test.ts](../src/lib/taboverflow.guard.test.ts) | Вкладки сессий лежат в ограниченном горизонтальном скроллере, делят доступную ширину до минимальной и возвращают показанную вкладку в видимую часть. Гейт проверен на снятом ограничении полосы |
 | [terminput.guard.test.ts](../src/lib/terminput.guard.test.ts) | Ввод в PTY идёт через `submitLine`/`submitBlock` (CR, построчно) |
 | [termwrite.guard.test.ts](../src/lib/termwrite.guard.test.ts) | `write_to_terminal` вызывается только из `api/session.ts` и только внутри `createOrderedWriter` — иначе нажатия снова переставляются. Проверка по исходнику без комментариев |
 | [hotkeylayout.guard.test.ts](../src/lib/hotkeylayout.guard.test.ts) | Буквенные хоткеи не сравнивают сырой `e.key` с латиницей (русская раскладка) — только `chordLetter`/`is*Chord` из `appshortcuts.ts`. Проверка по исходнику без комментариев |

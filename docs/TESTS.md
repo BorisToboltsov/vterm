@@ -67,7 +67,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 
 | Область | Чистая логика (основное покрытие) | Rust |
 |---------|-----------------------------------|------|
-| Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `broadcast`, `osc` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
+| Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termpaste`, `broadcast`, `osc`; компонентный `TerminalPasteDialog`; гейты `termpaste.guard`, `taboverflow.guard` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
 | Драйверы панелей | `git`, `gitview`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
 | Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives`, `filedrop`, `dragout` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки), `dragout.rs` + `dragout/feed.rs` (вынос файла: что обещается, поток для Проводника, раскладка описателя) |
 | Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce`, `workspaces`, `editoraccess.guard` | `textenc.rs`, `sftp.rs` (путь проверки прав), `localfile.rs` (локальная копия), `servertools.rs` |
@@ -86,7 +86,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 
 ## Гейты-контракты
 
-49 файлов `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
+50 файлов `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
 живёт в бинарном артефакте — сам артефакт) и падают на
 нарушении инварианта. Полный список «гейт → что держит» — в
 [INVARIANTS.md](INVARIANTS.md#гейты); там же причина, по которой каждый заведён.

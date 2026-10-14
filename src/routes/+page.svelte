@@ -658,6 +658,21 @@
   // existed.
   const paneStrips = $derived(isSplit);
   const stripInset = $derived(paneStrips ? tabBarHeight : 0);
+  // Every visible pane keeps its shown tab inside the horizontally scrollable
+  // part of the strip. Programmatic activation (palette, restore, split focus)
+  // has no focused DOM node for the browser to reveal by itself.
+  $effect(() => {
+    const visible = paneList.map((pane) => pane.active).filter((id): id is string => !!id);
+    queueMicrotask(() => {
+      const nodes = [...document.querySelectorAll<HTMLElement>("[data-tab]")];
+      for (const id of visible) {
+        nodes.find((node) => node.dataset.tab === id)?.scrollIntoView?.({
+          block: "nearest",
+          inline: "nearest",
+        });
+      }
+    });
+  });
   // The sessions whose terminals are on screen: the tab each pane shows, when
   // that connection shows its terminal (one showing only a file has no terminal
   // on screen — v1.11). A recording runs only while its terminal is on screen,
@@ -3872,7 +3887,11 @@
   {/if}
 {/snippet}
 
-{#snippet stripTabs(tabs: Tab[], peers: Tab[], shownId: string | null, paneId: string | null)}
+{#snippet stripTabs(tabs: Tab[], peers: Tab[], shownId: string | null, stripId: string, paneId: string | null)}
+  <div
+    data-tabstrip={stripId}
+    class="tab-strip-scroll flex min-w-0 flex-1 items-stretch overflow-x-auto"
+  >
   {#each tabs as tab (tab.sessionId)}
     <!-- `inert` on the place kept for a tab held over the window from another
          one: it is a picture of a tab — nothing to click, focus or read out. -->
@@ -3889,7 +3908,7 @@
       oncontextmenu={(e) => openTabMenu(e, tab, peers)}
       onkeydown={(e) => onTabKey(e, tab.sessionId, peers)}
       data-prod={prodTabIds.has(tab.sessionId) || undefined}
-      class="flex max-w-48 cursor-grab items-center gap-2 border-r border-edge px-3 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
+      class="flex min-w-16 max-w-48 flex-1 basis-0 cursor-grab items-center gap-2 overflow-hidden border-r border-edge px-2.5 py-1.5 text-sm touch-none active:cursor-grabbing {tabsState.activeId ===
       tab.sessionId
         ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
         : shownId === tab.sessionId
@@ -3941,12 +3960,12 @@
           size={14}
           class="shrink-0 {isLive(tab.status) ? 'text-accent' : 'text-muted'}"
         />
-        <span class="flex min-w-0 items-baseline gap-1">
-          <span class="max-w-full shrink-0 truncate">{tab.attach.name}</span>
+        <span class="flex min-w-0 flex-1 items-baseline gap-1">
+          <span class="min-w-0 truncate">{tab.attach.name}</span>
           <span class="min-w-0 truncate text-muted">· {tabAlias(tab)}</span>
         </span>
       {:else}
-        <span class="truncate">{tabAlias(tab)}</span>
+        <span class="min-w-0 flex-1 truncate">{tabAlias(tab)}</span>
       {/if}
       {#if prodTabIds.has(tab.sessionId)}
         <span class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
@@ -3964,6 +3983,7 @@
       </button>
     </div>
   {/each}
+  </div>
   <!-- Open a local-shell terminal tab (same "+" as the top bar) — in this pane.
        A mouse press has already given the pane the focus; Enter on the button has
        not, so it is given here. -->
@@ -4055,11 +4075,10 @@
            each pane carries its own strip inside the area below. -->
       {#if !paneStrips}
         <div
-          data-tabstrip={paneList[0].id}
           bind:offsetHeight={flatBarHeight}
           role="tablist"
           tabindex={-1}
-          class="flex min-h-8 select-none items-stretch border-b border-edge bg-panel-alt"
+          class="flex min-h-8 min-w-0 select-none items-stretch border-b border-edge bg-panel-alt"
         >
           {@render stripTabs(
             tabsOf(
@@ -4069,6 +4088,7 @@
             ),
             tabsOf(paneList[0].tabs),
             null,
+            paneList[0].id,
             null,
           )}
         </div>
@@ -4160,11 +4180,10 @@
                   onpointerdowncapture={() => focusPane(pane.id)}
                 >
                   <div
-                    data-tabstrip={pane.id}
                     role="tablist"
                     tabindex={-1}
                     style="height: {tabBarHeight}px"
-                    class="flex shrink-0 select-none items-stretch border-b border-edge bg-panel-alt"
+                    class="flex min-w-0 shrink-0 select-none items-stretch border-b border-edge bg-panel-alt"
                   >
                     {@render stripTabs(
                       tabsOf(
@@ -4174,6 +4193,7 @@
                       ),
                       tabsOf(pane.tabs),
                       pane.active,
+                      pane.id,
                       pane.id,
                     )}
                   </div>
@@ -4434,6 +4454,7 @@
                     secret={tab.secret}
                     remember={tab.remember}
                     local={tab.kind === "local"}
+                    pasteShell={tab.attach ? "posix" : (localShellKind[tab.sessionId] ?? "posix")}
                     tint={prodTabIds.has(tab.sessionId) ? settings.prodTint : null}
                     focusOnConnect={tabsState.activeId === tab.sessionId && terminalFocused(views)}
                     adopt={tab.adopt ?? null}

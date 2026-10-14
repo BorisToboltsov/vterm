@@ -28,6 +28,7 @@
   import { toLogEntry, type JsonLogEntry } from "./jsonlog";
   import JsonLogView from "./JsonLogView.svelte";
   import CommandHistory from "./CommandHistory.svelte";
+  import TerminalPasteDialog from "./TerminalPasteDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { ctrlVPastes, rightClickEffect } from "./termmouse";
@@ -55,6 +56,7 @@
   import { terminalBackground, type ProdTint } from "./prodtint";
   import { readClipboard, writeClipboard } from "./clipboard";
   import { textLines } from "./aicontext";
+  import { isMultilinePaste } from "./termpaste";
 
   type Status = "connecting" | "connected" | "closed" | "error";
 
@@ -64,6 +66,7 @@
     secret,
     remember,
     local = false,
+    pasteShell = "posix",
     tint = null,
     focusOnConnect = true,
     adopt = null,
@@ -88,6 +91,8 @@
     remember: boolean;
     /** Local-shell PTY tab instead of an SSH connection. */
     local?: boolean;
+    /** Dialect of the prompt receiving a transformed multi-line paste. */
+    pasteShell?: CdShell;
     /** Background tint of a prod session (prodtint.ts); null = theme as is. */
     tint?: ProdTint | null;
     /** Take the keyboard once the session connects. Only the pane in focus does
@@ -153,6 +158,7 @@
   let webgl: WebglAddon | undefined;
   let serializer: SerializeAddon | undefined;
   let observer: ResizeObserver;
+  let pendingPaste = $state<string | null>(null);
 
   // ── Handing the tab to another window (ADR 0017) ───────────────────────────
   // Output events seen since this terminal started listening. The backend holds
@@ -514,7 +520,20 @@
   // LF into CR (what Enter sends). The bytes then reach the PTY via onData.
   async function paste() {
     const text = await readClipboard();
-    if (text) term?.paste(text);
+    if (!text) return;
+    if (isMultilinePaste(text)) pendingPaste = text;
+    else term?.paste(text);
+  }
+
+  function finishPaste(text: string) {
+    pendingPaste = null;
+    term?.paste(text);
+    term?.focus();
+  }
+
+  function cancelPaste() {
+    pendingPaste = null;
+    term?.focus();
   }
 
   /**
@@ -1063,6 +1082,13 @@
       history.open = false;
       term?.focus();
     }}
+  />
+  <TerminalPasteDialog
+    open={pendingPaste !== null}
+    text={pendingPaste ?? ""}
+    continuation={pasteShell === "posix"}
+    onpaste={finishPaste}
+    oncancel={cancelPaste}
   />
   <!-- Full-buffer search overlay (Phase 10). -->
   {#if search.open}
