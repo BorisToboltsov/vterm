@@ -208,3 +208,5 @@ vterm/
 ├── .github/workflows/          # release.yml — сборка трёх ОС по тегу
 └── .gitlab-ci.yml              # lint → security → test → build → release
 ```
+Модель выбора шрифта — `src/lib/fonts.ts` (дефолты по группе темы и миграция).
+Реактивное разрешение для терминала, записей и превью — `activeFontFamily()` в settings.

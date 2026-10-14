@@ -10,7 +10,7 @@
   import "@xterm/xterm/css/xterm.css";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
-  import { settings, activeTerminalTheme } from "./settings.svelte";
+  import { settings, activeTerminalTheme, activeFontFamily } from "./settings.svelte";
   import {
     parseCast,
     outputUpTo,
@@ -135,7 +135,7 @@
     term = new Terminal({
       cols: Math.max(1, width),
       rows: Math.max(1, height),
-      fontFamily: settings.fontFamily,
+      fontFamily: activeFontFamily(),
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       // Keep history so the viewport can follow new output and scroll back.

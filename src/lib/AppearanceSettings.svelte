@@ -3,13 +3,14 @@
   // palette) and font picker (grouped + live preview) plus size/line-height.
   // Extracted from SettingsPanel.svelte in Phase 18.5. Reads/writes the settings
   // store directly, like AiSettingsSection.
-  import { activeTerminalTheme, settings } from "./settings.svelte";
+  import { activeTerminalTheme, activeFontFamily, selectFont, settings } from "./settings.svelte";
   import { PROD_TINT_MAX, PROD_TINT_MIN, terminalBackground } from "./prodtint";
   import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import DisclosureRow from "./DisclosureRow.svelte";
   import { t, type MessageKey } from "./i18n";
   import { slide } from "svelte/transition";
   import { motion, MOTION_BASE } from "./motion";
+  import { themeFont } from "./fonts";
 
   // Theme picker groups (visual swatch chips instead of a plain dropdown). The
   // group label is a message key, resolved reactively in the markup.
@@ -59,8 +60,6 @@
     { label: "JetBrains Mono", value: "'JetBrains Mono', monospace", group: "Coding" },
     { label: "Fira Code", value: "'Fira Code', monospace", group: "Coding" },
     { label: "Source Code Pro", value: "'Source Code Pro', monospace", group: "Coding" },
-    { label: "VT323 — CRT terminal", value: "'VT323', monospace", group: "Retro" },
-    { label: "Press Start 2P — 8-bit", value: "'Press Start 2P', monospace", group: "Retro" },
     { label: "Share Tech Mono", value: "'Share Tech Mono', monospace", group: "Retro" },
   ];
   const FONT_GROUPS: FontGroup[] = ["System", "Coding", "Retro"];
@@ -70,22 +69,8 @@
     Retro: "settings.fontGroupRetro",
   };
 
-  // Font that best matches each retro theme — applied when that theme is picked.
-  const THEME_FONT: Record<string, string> = {
-    fallout: "'VT323', monospace",
-    amber: "'VT323', monospace",
-    "ibm-3270": "'VT323', monospace",
-    c64: "'Press Start 2P', monospace",
-  };
-
-  function onThemeChange(themeId: string) {
-    const font = THEME_FONT[themeId];
-    if (font) settings.fontFamily = font;
-  }
-
   function selectTheme(themeId: string) {
     settings.theme = themeId;
-    onThemeChange(themeId);
   }
 
   // The theme picker is a collapsible sub-section, collapsed by default.
@@ -99,7 +84,7 @@
   // The font picker mirrors the theme one: collapsible, collapsed by default.
   let fontOpen = $state(false);
   const currentFontLabel = $derived(
-    FONTS.find((f) => f.value === settings.fontFamily)?.label ?? settings.fontFamily,
+    FONTS.find((f) => f.value === activeFontFamily())?.label ?? activeFontFamily(),
   );
   // Tiny Python snippet to preview the font (glyphs, ligatures, indentation).
   const FONT_SAMPLE = `def greet(name: str) -> str:
@@ -198,6 +183,11 @@ print(greet("world"))  # => 12345`;
     {#if fontOpen}
       <div transition:slide={motion(MOTION_BASE)}>
         <div role="radiogroup" aria-label={t("settings.font")} class="mt-2 space-y-2">
+          <button type="button" role="radio" aria-checked={settings.fontMode === "theme"}
+            onclick={() => (settings.fontMode = "theme")}
+            class="w-full rounded border border-edge px-2 py-1.5 text-left text-xs">
+            {t("settings.fontByTheme")} — {FONTS.find((f) => f.value === themeFont(settings.theme))?.label}
+          </button>
           {#each FONT_GROUPS as g (g)}
             <div>
               <span class="mb-1 block text-caption uppercase tracking-wider text-muted">
@@ -208,12 +198,12 @@ print(greet("world"))  # => 12345`;
                   <button
                     type="button"
                     role="radio"
-                    aria-checked={settings.fontFamily === f.value}
+                    aria-checked={settings.fontMode === "user" && settings.fontFamily === f.value}
                     data-testid="font-option"
                     title={f.label}
-                    onclick={() => (settings.fontFamily = f.value)}
+                    onclick={() => selectFont(f.value)}
                     style="font-family: {f.value}"
-                    class="truncate rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.fontFamily ===
+                    class="truncate rounded border px-2 py-1.5 text-left text-xs transition duration-150 {settings.fontMode === 'user' && settings.fontFamily ===
                     f.value
                       ? 'border-accent bg-edge text-text'
                       : 'border-edge text-muted hover:bg-edge'}"
@@ -229,7 +219,7 @@ print(greet("world"))  # => 12345`;
         <pre
           data-testid="font-preview"
           class="mt-2 overflow-x-auto rounded border border-edge bg-panel px-2 py-1.5 text-xs leading-snug text-text"
-          style="font-family: {settings.fontFamily}">{FONT_SAMPLE}</pre>
+          style="font-family: {activeFontFamily()}">{FONT_SAMPLE}</pre>
       </div>
     {/if}
   </div>
