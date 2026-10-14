@@ -117,6 +117,14 @@ summary:focus-visible,
   border-radius: 4px;
 }
 
+/* Session tabs shrink first, then scroll without adding a second visual row. */
+.tab-strip-scroll {
+  scrollbar-width: none;
+}
+.tab-strip-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 /* Motion tokens (Phase 7). Keep UI animations short and consistent; use these
    durations with Tailwind's `duration-[…]` or in component styles.
    NOTE: these cover CSS animations only. Svelte transitions run on the Web

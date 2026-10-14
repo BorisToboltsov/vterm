@@ -817,6 +817,27 @@ describe("listFailure", () => {
     expect(listFailure("", "  \n", 127)).toBe("exit 127");
   });
 
+  it("extracts the useful message from a Kubernetes Status response", () => {
+    const status = JSON.stringify(
+      {
+        kind: "Status",
+        status: "Failure",
+        message: 'services is forbidden: User "dev" cannot list resource "services"',
+        reason: "Forbidden",
+      },
+      null,
+      2,
+    );
+    expect(listFailure(status, "", 1)).toBe(
+      'services is forbidden: User "dev" cannot list resource "services"',
+    );
+  });
+
+  it("never exposes a bare JSON bracket as the failure detail", () => {
+    expect(listFailure("{\n", "", 1)).toBe("exit 1");
+    expect(listFailure("[\n", "", 1)).toBe("exit 1");
+  });
+
   it("does not trust exit 0 with something that is not a list", () => {
     // An unreadable answer must not become "there are none".
     expect(listFailure("", "", 0)).toBe("");

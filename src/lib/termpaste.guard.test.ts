@@ -31,6 +31,25 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+export function multilineChoiceViolations(src: string): string[] {
+  const clean = strip(src);
+  const start = clean.indexOf("async function paste()");
+  if (start < 0) return ["paste() is missing"];
+  const end = clean.indexOf("\n  function finishPaste", start);
+  const body = clean.slice(start, end < 0 ? undefined : end);
+  const out: string[] = [];
+  if (!/isMultilinePaste\(text\)/.test(body) || !/pendingPaste\s*=\s*text/.test(body)) {
+    out.push("a multi-line clipboard paste does not open the choice dialog");
+  }
+  if (!/else\s+term\??\.paste\(text\)/.test(body)) {
+    out.push("a single-line clipboard paste no longer goes straight through xterm");
+  }
+  if (!/TerminalPasteDialog/.test(clean) || !/onpaste=\{finishPaste\}/.test(clean)) {
+    out.push("the reviewed representation is not returned to the terminal");
+  }
+  return out;
+}
+
 describe("terminal paste guard", () => {
   it("the terminal pastes through term.paste(), not straight to the PTY", () => {
     const src = strip(readFileSync(join(SRC, "lib", "Terminal.svelte"), "utf8"));
@@ -49,5 +68,20 @@ describe("terminal paste guard", () => {
       })
       .map((f) => f.slice(SRC.length + 1));
     expect(offenders, "clipboard → PTY must go through Terminal's term.paste()").toEqual([]);
+  });
+
+  it("a multi-line paste is reviewed, while one line stays immediate", () => {
+    const src = readFileSync(join(SRC, "lib", "Terminal.svelte"), "utf8");
+    expect(multilineChoiceViolations(src)).toEqual([]);
+  });
+
+  it("catches the old direct multi-line paste", () => {
+    const src = readFileSync(join(SRC, "lib", "Terminal.svelte"), "utf8").replace(
+      "if (isMultilinePaste(text)) pendingPaste = text;",
+      "if (isMultilinePaste(text)) term?.paste(text);",
+    );
+    expect(multilineChoiceViolations(src)).toContain(
+      "a multi-line clipboard paste does not open the choice dialog",
+    );
   });
 });
