@@ -52,7 +52,7 @@
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "./cdterminal";
   import { hostEnv } from "./stores/hostenv.svelte";
-  import { settings, activeTerminalTheme } from "./settings.svelte";
+  import { settings, activeTerminalTheme, activeFontFamily } from "./settings.svelte";
   import { terminalBackground, type ProdTint } from "./prodtint";
   import { readClipboard, writeClipboard } from "./clipboard";
   import { textLines } from "./aicontext";
@@ -658,7 +658,7 @@
       // selects the word under the pointer first — with copy-on-select that word
       // replaced the clipboard right before the paste read it.
       rightClickSelectsWord: false,
-      fontFamily: settings.fontFamily,
+      fontFamily: activeFontFamily(),
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
       cursorBlink: settings.cursorBlink,
@@ -977,7 +977,7 @@
   $effect(() => {
     if (!term) return;
     const t = paintedTheme();
-    const fontFamily = settings.fontFamily;
+    const fontFamily = activeFontFamily();
     const fontSize = settings.fontSize;
     term.options.theme = t;
     term.options.fontFamily = fontFamily;

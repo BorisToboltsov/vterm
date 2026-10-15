@@ -5,6 +5,7 @@
 // automatically whenever the relevant settings change.
 
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "./prodtint";
+import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "./fonts";
 import {
   applyUiPalette,
   DEFAULT_THEME_ID,
@@ -139,6 +140,7 @@ export interface Settings {
   theme: string; // preset id, or "custom"
   customTheme: TerminalTheme;
   fontFamily: string;
+  fontMode: FontMode;
   fontSize: number;
   lineHeight: number;
   // Cursor
@@ -277,7 +279,8 @@ const DEFAULTS: Settings = {
   language: detectOsLocale(),
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
-  fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+  fontFamily: DEFAULT_FONT,
+  fontMode: "theme",
   fontSize: 13,
   lineHeight: 1.0,
   cursorStyle: "block",
@@ -433,6 +436,7 @@ function load(): Settings {
     return {
       ...DEFAULTS,
       ...raw,
+      ...migrateFont(raw),
       language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
       windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
         ? raw.windowsShell
@@ -496,6 +500,15 @@ function load(): Settings {
 }
 
 export const settings = $state<Settings>(load());
+
+export function activeFontFamily(): string {
+  return settings.fontMode === "theme" ? themeFont(settings.theme) : settings.fontFamily;
+}
+
+export function selectFont(font: string): void {
+  settings.fontFamily = font;
+  settings.fontMode = "user";
+}
 
 /** The resolved terminal palette (preset or the user's custom one). */
 export function activeTerminalTheme(): TerminalTheme {
@@ -624,7 +637,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (r.ai !== undefined) {
     next.ai = sanitizeAiSettings(r.ai);
   }
-  Object.assign(settings, next);
+  Object.assign(settings, next, migrateFont(r));
 }
 
 /** localStorage key holding the last chrome panel colour, read by the pre-CSS

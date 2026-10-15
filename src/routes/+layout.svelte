@@ -7,8 +7,6 @@
   import "@fontsource/source-code-pro/latin-400.css";
   import "@fontsource/cascadia-code/latin-400.css";
   // Retro display fonts, paired with the retro terminal themes.
-  import "@fontsource/vt323/latin-400.css";
-  import "@fontsource/press-start-2p/latin-400.css";
   import "@fontsource/share-tech-mono/latin-400.css";
   import { suppressContextMenu } from "$lib/util";
   let { children } = $props();

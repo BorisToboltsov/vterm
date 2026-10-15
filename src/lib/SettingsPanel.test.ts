@@ -18,7 +18,7 @@ vi.mock("./api", () => ({
 }));
 
 import SettingsPanel from "./SettingsPanel.svelte";
-import { settings } from "./settings.svelte";
+import { settings, resetSettings, activeFontFamily } from "./settings.svelte";
 import { DEFAULT_THEME_ID } from "./themes";
 
 beforeEach(() => {
@@ -110,6 +110,22 @@ describe("SettingsPanel — backup", () => {
 });
 
 describe("SettingsPanel — appearance & search", () => {
+  it("keeps a chosen font across retro themes and returns to automatic mode", async () => {
+    resetSettings();
+    settings.language = "en";
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("settings-group-appearance"));
+    await userEvent.click(screen.getByTestId("font-toggle"));
+    await userEvent.click(screen.getByTitle("Fira Code"));
+    await userEvent.click(screen.getByTestId("theme-toggle"));
+    await userEvent.click(screen.getByTitle("Amber CRT"));
+    expect(activeFontFamily()).toBe("'Fira Code', monospace");
+    await userEvent.click(screen.getByRole("radio", { name: /Follow theme/ }));
+    expect(activeFontFamily()).toBe("'Share Tech Mono', monospace");
+    await userEvent.click(screen.getByTitle("GitHub Light"));
+    expect(activeFontFamily()).toBe("'JetBrains Mono', monospace");
+    resetSettings();
+  });
   it("theme picker is collapsed by default and expands on click", async () => {
     render(SettingsPanel, { props: { open: true } });
     await userEvent.click(screen.getByTestId("settings-group-appearance"));

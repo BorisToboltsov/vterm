@@ -491,3 +491,7 @@ PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml && pnpm test && pnpm check
 ```
+## Шрифты
+
+`fonts.test.ts` проверяет темы, ручной выбор и миграцию старых настроек;
+`fonts.guard.test.ts` защищает единое разрешение шрифта и отсутствие удалённых пакетов.
