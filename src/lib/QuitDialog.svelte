@@ -18,7 +18,7 @@
   }: {
     open?: boolean;
     /** What is being closed: the app (`quit`) or one of its secondary windows. */
-    kind?: "quit" | "window";
+    kind?: "quit" | "window" | "update";
     rows: QuitRow[];
     onconfirm?: () => void;
     oncancel?: () => void;
@@ -31,17 +31,19 @@
     local: { icon: "terminal", tone: "text-accent", label: "quit.rowLocal" },
     transfers: { icon: "arrowsUpDown", tone: "text-warn", label: "quit.rowTransfers" },
     sync: { icon: "sync", tone: "text-warn", label: "quit.rowSync" },
+    editors: { icon: "note", tone: "text-warn", label: "quit.rowEditors" },
     recording: { icon: null, tone: "text-bad", label: "quit.rowRecording" },
   };
 </script>
 
 <ConfirmDialog
   {open}
-  title={t(kind === "window" ? "window.closeTitle" : "quit.title")}
-  confirmLabel={t(kind === "window" ? "window.closeConfirm" : "quit.confirm")}
+  title={t(kind === "update" ? "updates.install" : kind === "window" ? "window.closeTitle" : "quit.title")}
+  confirmLabel={t(kind === "update" ? "updates.install" : kind === "window" ? "window.closeConfirm" : "quit.confirm")}
   {onconfirm}
   {oncancel}
 >
+  {#if kind === "update"}<p class="mb-3">{t("updates.confirm")}</p>{/if}
   {#if rows.length > 0}
     <p class="mb-2">{t("quit.lead")}</p>
     <ul class="divide-y divide-edge rounded border border-edge" data-testid="quit-rows">

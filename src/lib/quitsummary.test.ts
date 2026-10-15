@@ -113,3 +113,7 @@ describe("mergeQuitRows", () => {
     ]);
   });
 });
+
+it("includes unsaved editors in the cross-window exit summary", () => {
+  expect(mergeQuitRows(quitRows({ ...none, dirtyEditors: 2 }), [{ key: "editors", count: 3 }])).toEqual([{ key: "editors", count: 5 }]);
+});

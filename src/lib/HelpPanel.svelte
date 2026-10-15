@@ -4,6 +4,9 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "./markdown";
   import { mdLinks } from "./actions/mdlinks";
+  import history from "../../CHANGELOG.md?raw";
+  import UpdatePanel from "./UpdatePanel.svelte";
+  import { changeEntries } from "./updates";
   import guide from "../../docs/GUIDE.md?raw";
   import Icon from "./Icon.svelte";
   import AppLogo from "./AppLogo.svelte";
@@ -11,8 +14,9 @@
 
   let {
     open = $bindable(false),
-    tab = $bindable<"help" | "about" | "manual">("help"),
-  }: { open?: boolean; tab?: "help" | "about" | "manual" } = $props();
+    onInstall = () => {}, mainWindow = true,
+    tab = $bindable<"help" | "about" | "manual" | "changelog" | "updates">("help"),
+  }: { onInstall?: (version: string) => void; mainWindow?: boolean; open?: boolean; tab?: "help" | "about" | "manual" | "changelog" | "updates" } = $props();
 
   let appName = $state("vterm");
   let version = $state("");
@@ -20,6 +24,7 @@
 
   // The bundled user guide (docs/GUIDE.md), rendered once (static content, no user input).
   const manualHtml = renderMarkdown(guide);
+  const changes = changeEntries(history).map((entry) => ({ ...entry, html: renderMarkdown(entry.markdown) }));
 
   onMount(async () => {
     try {
@@ -74,11 +79,11 @@
     <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div
       class="relative flex max-h-[80vh] w-[90vw] flex-col rounded-lg border border-edge bg-panel-alt {tab ===
-      'manual'
+      'manual' || tab === 'changelog' || tab === 'updates'
         ? 'sm:w-[46rem]'
         : 'sm:w-[30rem]'}"
     >
-      <div class="flex items-center gap-3 border-b border-edge px-4 py-3">
+      <div class="flex flex-wrap items-center gap-3 border-b border-edge px-4 py-3">
         <button
           class="text-sm font-semibold {tab === 'help'
             ? 'text-accent'
@@ -97,6 +102,10 @@
             : 'text-muted hover:text-text'}"
           onclick={() => (tab = "about")}>{t("help.tabAbout")}</button
         >
+        {#each ["changelog", "updates"] as section}
+          <button class="text-sm font-semibold {tab === section ? 'text-accent' : 'text-muted hover:text-text'}"
+            onclick={() => (tab = section as "changelog" | "updates")}>{t(section === "changelog" ? "menu.changelog" : "menu.updates")}</button>
+        {/each}
         <button
           class="ml-auto rounded p-0.5 text-muted hover:text-danger"
           aria-label={t("common.close")}
@@ -142,6 +151,16 @@
           <div class="manual text-xs leading-relaxed text-text" use:mdLinks>
             {@html manualHtml}
           </div>
+        {:else if tab === "changelog"}
+          <p class="mb-3 text-xs text-muted">{t("help.changelogSource")}</p>
+          {#each changes as entry, i (entry.version)}
+            <details class="manual border-b border-edge py-2" open={i === 0}>
+              <summary class="cursor-pointer text-xs font-semibold text-accent">{entry.title}</summary>
+              <div class="text-xs leading-relaxed" use:mdLinks>{@html entry.html}</div>
+            </details>
+          {/each}
+        {:else if tab === "updates"}
+          <UpdatePanel {onInstall} {mainWindow} />
         {:else}
           <div class="space-y-2 text-xs">
             <div class="text-lg font-semibold text-accent">{appName}</div>
@@ -151,6 +170,7 @@
                 · Tauri <span class="text-text">{tauriVersion}</span>
               {/if}
             </div>
+            <button class="text-accent hover:underline" onclick={() => (tab = "updates")}>{t("menu.updates")}</button>
             <p class="text-muted">
               {t("help.author")}: <span class="text-text">Тобольцов Борис Олегович</span>
             </p>

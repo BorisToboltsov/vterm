@@ -111,4 +111,14 @@ describe("HelpPanel", () => {
       screen.getByRole("heading", { name: "Руководство пользователя vterm", level: 1 }),
     ).toBeInTheDocument();
   });
+  it("opens bundled changelog sections", () => {
+    render(HelpPanel, { props: { open: true, tab: "changelog" } });
+    expect(screen.getByText(/v1.19.0 —/)).toBeInTheDocument();
+  });
+  it("opens the update panel from About without a network request", async () => {
+    render(HelpPanel, { props: { open: true, tab: "about" } });
+    await userEvent.click(screen.getAllByRole("button", { name: "Check for updates…" }).at(-1)!);
+    expect(screen.getByText("Checks GitHub only when you press the button.")).toBeInTheDocument();
+  });
+
 });

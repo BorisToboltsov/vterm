@@ -34,3 +34,6 @@ e2e/node_modules
 *.deb
 *.rpm
 
+
+# Private update signing key (public key is tracked separately).
+.update-keys/
