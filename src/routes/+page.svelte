@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from "svelte";
+  import { onMount, untrack, tick } from "svelte";
   import { tooltip } from "$lib/actions/tooltip";
   import { fade } from "svelte/transition";
   import { motion } from "$lib/motion";
@@ -210,6 +210,7 @@
   import { lineDiffStat } from "$lib/util";
   import {
     getWorkspace,
+    workspacesState,
     addEditor,
     addScratchEditor,
     fillEditor,
@@ -263,6 +264,8 @@
   import ConfirmDialog from "$lib/ConfirmDialog.svelte";
   import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
   import { activeTabStrip } from "$lib/tabstrip";
+  import { installUpdate, updateWindowReady, updateStartup } from "$lib/api/updater";
+  import { updateError } from "$lib/updates";
   import QuitDialog from "$lib/QuitDialog.svelte";
   import { mergeQuitRows, quitRows, type QuitRow } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
@@ -423,6 +426,22 @@
   // window a tab was moved out to (ADR 0017) the same dialog asks about closing
   // that window, via `window://close`.
   let showQuit = $state(false);
+  let quitForUpdate = $state(false);
+  let updateVersion = $state("");
+  let updateFreeze = $state(false);
+  const dirtyEditors = () => Object.values(workspacesState.map).reduce((n, ws) => n + ws.editors.filter(isDirty).length, 0);
+  async function askToUpdate(version: string) {
+    updateVersion = version;
+    quitForUpdate = true;
+    otherWindowRows = await otherWindowsSummary().catch(() => []);
+    showQuit = true;
+  }
+  async function confirmUpdate() {
+    showQuit = false;
+    try { await installUpdate(updateVersion); }
+    catch (e) { notifyError(t(updateError(e))); }
+    finally { quitForUpdate = false; }
+  }
   // What the other windows would lose — asked for when the main window's dialog
   // opens, so that quitting lists the whole app.
   let otherWindowRows = $state<unknown>([]);
@@ -433,9 +452,10 @@
       transfers: Object.values(transfersState.map),
       syncBusy: tabsState.list.filter((tab) => isBusy(peekSyncJob(tab.sessionId))).length,
       recordings: Object.values(recordingState).filter(Boolean).length,
+      dirtyEditors: dirtyEditors(),
     });
   }
-  let helpTab = $state<"help" | "about" | "manual">("help");
+  let helpTab = $state<"help" | "about" | "manual" | "changelog" | "updates">("help");
   // Custom window chrome replaces the OS title bar + menu on Windows/Linux; macOS
   // keeps its native decorations, so the TitleBar is never mounted there. Empty
   // `os` (pre-resolve) also renders nothing, so macOS never flashes a custom bar.
@@ -1836,6 +1856,8 @@
       about: t("menu.about"),
       help: t("menu.help"),
       manual: t("menu.manual"),
+      changelog: t("menu.changelog"),
+      updates: t("menu.updates"),
       monitoring: t("menu.monitoring"),
       quit: t("menu.quit"),
     }).catch(() => {});
@@ -1936,6 +1958,19 @@
       helpTab = "manual";
       showHelp = true;
     }).then((u) => unlisteners.push(u));
+    for (const section of ["changelog", "updates"] as const) {
+      listenHere(`menu://${section}`, () => { helpTab = section; showHelp = true; })
+        .then((u) => unlisteners.push(u));
+    }
+    listenHere<string>("update://prepare", (e) => {
+      updateFreeze = true;
+      void tick().then(() => updateWindowReady(e.payload, dirtyEditors() > 0 || notesServer !== null || showSettings || !!saveRec));
+    }).then((u) => unlisteners.push(u));
+    listenHere("update://resume", () => { updateFreeze = false; }).then((u) => unlisteners.push(u));
+    if (isMainWindow) void updateStartup().then((status) => {
+      if (status === "updated") notifySuccess(t("updates.updated"));
+      else if (status) notifyError(t(updateError(status)));
+    }).catch(() => {});
     listenHere("menu://monitoring", () => openMonitoring()).then((u) => unlisteners.push(u));
     // Close confirmation: the main window is asked about quitting, any other one
     // about closing itself. The guard is armed only once the listener is in
@@ -2058,6 +2093,7 @@
 
   /** Open the close confirmation with what would be cut off. */
   async function askToClose() {
+    quitForUpdate = false;
     // Quitting lists every window's sessions, not just this one's.
     otherWindowRows = isMainWindow ? await otherWindowsSummary().catch(() => []) : [];
     showQuit = true;
@@ -4021,6 +4057,8 @@
   />
   {#if showWindowChrome}
     <TitleBar
+      onChangelog={() => { helpTab = "changelog"; showHelp = true; }}
+      onUpdates={() => { helpTab = "updates"; showHelp = true; }}
       onSettings={() => openSettings()}
       onMonitoring={openMonitoring}
       onAbout={() => {
@@ -4810,7 +4848,8 @@
   onInstalled={() => (toolsReloadToken += 1)}
   onclose={() => (installTool = null)}
 />
-<HelpPanel bind:open={showHelp} bind:tab={helpTab} />
+<HelpPanel bind:open={showHelp} bind:tab={helpTab} onInstall={(version) => void askToUpdate(version)} mainWindow={isMainWindow} />
+<Modal open={updateFreeze} title={t("updates.preparing")} onclose={() => {}}><p class="text-xs text-muted">{t("updates.preparing")}</p></Modal>
 
 <!-- Per-server notes editor (opened from the top bar for the selected server). -->
 {#if notesServer}
@@ -4845,9 +4884,10 @@
 
 <QuitDialog
   open={showQuit}
-  kind={isMainWindow ? "quit" : "window"}
+  kind={quitForUpdate ? "update" : isMainWindow ? "quit" : "window"}
   rows={showQuit ? closeRowsNow() : []}
   onconfirm={() => {
+    if (quitForUpdate) { void confirmUpdate(); return; }
     if (isMainWindow) {
       void quitApp();
       return;

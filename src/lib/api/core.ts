@@ -154,6 +154,8 @@ export interface MenuLabels {
   about: string;
   help: string;
   manual: string;
+  changelog: string;
+  updates: string;
   monitoring: string;
   quit: string;
 }

@@ -9,7 +9,7 @@
 import { isLive } from "./stores/tabs.svelte";
 import { isCancellableTransfer } from "./transfer";
 
-export type QuitRowKey = "ssh" | "local" | "transfers" | "sync" | "recording";
+export type QuitRowKey = "ssh" | "local" | "transfers" | "sync" | "recording" | "editors";
 
 export interface QuitRow {
   key: QuitRowKey;
@@ -23,6 +23,7 @@ export interface QuitInput {
   syncBusy: number;
   /** Sessions being recorded. */
   recordings: number;
+  dirtyEditors?: number;
 }
 
 /**
@@ -40,11 +41,12 @@ export function quitRows(input: QuitInput): QuitRow[] {
     { key: "transfers", count: input.transfers.filter(isCancellableTransfer).length },
     { key: "sync", count: input.syncBusy },
     { key: "recording", count: input.recordings },
+    { key: "editors", count: input.dirtyEditors ?? 0 },
   ];
   return rows.filter((r) => r.count > 0);
 }
 
-const ROW_ORDER: readonly QuitRowKey[] = ["ssh", "local", "transfers", "sync", "recording"];
+const ROW_ORDER: readonly QuitRowKey[] = ["ssh", "local", "transfers", "sync", "recording", "editors"];
 
 /**
  * This window's rows plus the rows other windows reported, summed per kind and

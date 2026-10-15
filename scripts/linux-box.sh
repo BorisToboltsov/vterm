@@ -30,7 +30,7 @@ exec docker run --rm --init \
     set -euo pipefail
     rsync --archive --delete \
       --exclude node_modules --exclude /src-tauri/target --exclude /build \
-      --exclude /.svelte-kit --exclude /.git \
+      --exclude /.svelte-kit --exclude /.git --exclude /.update-keys \
       /src/ /work/
     cd /work
     exec "$@"

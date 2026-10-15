@@ -210,3 +210,17 @@ vterm/
 ```
 Модель выбора шрифта — `src/lib/fonts.ts` (дефолты по группе темы и миграция).
 Реактивное разрешение для терминала, записей и превью — `activeFontFamily()` в settings.
+
+## Обновления приложения
+
+`HelpPanel` содержит историю из `CHANGELOG.md` и `UpdatePanel`; обе вкладки доступны из
+нативного меню macOS и `TitleBar` Windows/Linux. `api/updater.ts` вызывает `updater.rs`:
+`update_check`, `update_download` (Channel прогресса), `update_install`,
+`update_window_ready`, `update_startup`. Состояние проверки/подготовленного файла принадлежит
+приложению; `update://prepare`/`update://resume` согласуют выход всех окон.
+
+`update_protocol.rs` описывает подписанный манифест. `update_helper.rs` — отдельный процесс,
+копия текущего исполняемого файла с режимом `--vterm-update-helper`, который исполняется до
+WebView и single-instance. Помощник работает без сети; установщик зависит от формата сборки.
+`scripts/update-release.mjs` готовит macOS ZIP и подписанное описание восьми форматов в CI.
+Обоснование — [ADR 0031](adr/0031-app-updates.md).

@@ -220,6 +220,16 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      - name: Архив приложения для собственного updater (macOS)
+        if: matrix.platform == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          node scripts/update-release.mjs maczip src-tauri/target/universal-apple-darwin/release/bundle/macos/vterm.app "vterm_${version}_universal_update.zip"
+          gh release upload "$TAG" "vterm_${version}_universal_update.zip" --clobber
+
       # tauri-action заливает только то, что произвёл бандлер Tauri. Два файла из
       # GitLab CI (build:macos / build:windows) он не знает — добавляем их в тот же
       # релиз через gh CLI (предустановлен на раннерах; `gh release upload` находит
@@ -331,6 +341,15 @@ jobs:
         run: |
           mkdir -p dist
           gh release download "$TAG" --dir dist --pattern '*'
+
+      - name: Подписанное описание всех форматов обновления
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          VTERM_UPDATE_PRIVATE_KEY: ${{ secrets.VTERM_UPDATE_PRIVATE_KEY }}
+        run: |
+          node scripts/update-release.mjs manifest dist "${TAG#v}"
+          gh release upload "$TAG" dist/vterm-update.json --clobber
           ls -la dist
 
       # Суммы считаются по именам файлов без пути, чтобы `sha256sum -c` работал

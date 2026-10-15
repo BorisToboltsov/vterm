@@ -30,6 +30,9 @@ mod store;
 mod sync;
 mod textenc;
 mod transfers;
+mod update_helper;
+mod update_protocol;
+mod updater;
 mod webview2;
 mod winhit;
 
@@ -2272,6 +2275,8 @@ struct MenuLabels {
     about: String,
     help: String,
     manual: String,
+    changelog: String,
+    updates: String,
     monitoring: String,
     #[serde(default = "default_quit_label")]
     quit: String,
@@ -2290,6 +2295,8 @@ impl Default for MenuLabels {
             about: "About vterm".into(),
             help: "Help".into(),
             manual: "Manual".into(),
+            changelog: "Changelog".into(),
+            updates: "Check for updates…".into(),
             monitoring: "Monitoring".into(),
             quit: default_quit_label(),
         }
@@ -2330,6 +2337,8 @@ fn build_app_menu<R: tauri::Runtime>(
         let about = MenuItemBuilder::with_id("about", &labels.about).build(app)?;
         let help = MenuItemBuilder::with_id("help", &labels.help).build(app)?;
         let manual = MenuItemBuilder::with_id("manual", &labels.manual).build(app)?;
+        let changelog = MenuItemBuilder::with_id("changelog", &labels.changelog).build(app)?;
+        let updates = MenuItemBuilder::with_id("updates", &labels.updates).build(app)?;
         let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
             .accelerator("CmdOrCtrl+Shift+M")
             .build(app)?;
@@ -2356,6 +2365,9 @@ fn build_app_menu<R: tauri::Runtime>(
         let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
             .item(&help)
             .item(&manual)
+            .item(&changelog)
+            .separator()
+            .item(&updates)
             .build()?;
         MenuBuilder::new(app)
             .item(&app_menu)
@@ -2384,6 +2396,13 @@ fn file_args(argv: &[String]) -> Vec<String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if update_helper::entry() {
+        return;
+    }
+    update_helper::capture_startup();
+    if update_helper::replacement_in_progress() {
+        return;
+    }
     // «Полный» portable несёт WebView2 Runtime в хвосте exe: если системного нет,
     // распаковываем его и указываем загрузчику — до создания окна и рантайма tokio.
     #[cfg(windows)]
@@ -2406,6 +2425,7 @@ pub fn run() {
     };
 
     let app = tauri::Builder::default()
+        .manage(updater::Updates::default())
         // single-instance must be registered first: a second launch (e.g. another
         // "open with vterm") forwards its file args to the running window instead.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
@@ -2446,6 +2466,8 @@ pub fn run() {
             match event.id().as_ref() {
                 "settings" => appwin::emit_to_focused(app, "menu://settings"),
                 "about" => appwin::emit_to_focused(app, "menu://about"),
+                "changelog" => appwin::emit_to_focused(app, "menu://changelog"),
+                "updates" => appwin::emit_to_focused(app, "menu://updates"),
                 "help" => appwin::emit_to_focused(app, "menu://help"),
                 "manual" => appwin::emit_to_focused(app, "menu://manual"),
                 "monitoring" => appwin::emit_to_focused(app, "menu://monitoring"),
@@ -2572,6 +2594,12 @@ pub fn run() {
             forget_ai_key,
             appwin::arm_close_guard,
             appwin::quit_app,
+            updater::update_check,
+            updater::update_snapshot,
+            updater::update_download,
+            updater::update_install,
+            updater::update_window_ready,
+            updater::update_startup,
             appwin::close_window,
             appwin::report_window_summary,
             appwin::other_windows_summary,

@@ -23,12 +23,16 @@
     onAbout,
     onHelp,
     onManual,
+    onChangelog,
+    onUpdates,
     onMonitoring,
   }: {
     onSettings: () => void;
     onAbout: () => void;
     onHelp: () => void;
     onManual: () => void;
+    onChangelog: () => void;
+    onUpdates: () => void;
     onMonitoring: () => void;
   } = $props();
 
@@ -86,6 +90,9 @@
     { icon: "info", label: t("menu.about"), onSelect: onAbout },
     { icon: "bulb", label: t("menu.help"), onSelect: onHelp },
     { icon: "note", label: t("menu.manual"), onSelect: onManual },
+    { icon: "note", label: t("menu.changelog"), onSelect: onChangelog },
+    { kind: "separator" },
+    { icon: "sync", label: t("menu.updates"), onSelect: onUpdates },
   ];
 
   function openTop(key: "file" | "help", target: HTMLElement) {
