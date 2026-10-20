@@ -7,6 +7,7 @@
   import { tooltip } from "./actions/tooltip";
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
+  import { terminalLinkHandler } from "./stores/linkopen.svelte";
   import "@xterm/xterm/css/xterm.css";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
@@ -142,6 +143,8 @@
       scrollback: 5000,
       disableStdin: true,
       cursorBlink: false,
+      // A recording replays a session's OSC 8 links too: same question as live.
+      linkHandler: terminalLinkHandler(() => term?.buffer.active),
       theme: { ...th },
     });
     fit = new FitAddon();

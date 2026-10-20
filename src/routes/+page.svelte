@@ -342,6 +342,7 @@
   } from "$lib/copyto";
   import CopyToDialog from "$lib/CopyToDialog.svelte";
   import ReplaceDialog from "$lib/ReplaceDialog.svelte";
+  import LinkOpenDialog from "$lib/LinkOpenDialog.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
   import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
@@ -4881,6 +4882,7 @@
   oncancel={() => (copyAsk = null)}
 />
 <ReplaceDialog />
+<LinkOpenDialog />
 
 <QuitDialog
   open={showQuit}

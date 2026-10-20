@@ -16,6 +16,11 @@ import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locale
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { isRightClickAction, type RightClickAction } from "./termmouse";
+import {
+  DEFAULT_TERMINAL_LINK_MODE,
+  isTerminalLinkMode,
+  type TerminalLinkMode,
+} from "./termlink";
 import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "./tabrestore";
 import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
 import { sanitizeHiddenPanels, type PanelId } from "./docklayout";
@@ -153,6 +158,8 @@ export interface Settings {
   middleClickPaste: boolean;
   /** Right-click in the terminal: paste or the context menu (Shift gives the other). */
   rightClick: RightClickAction;
+  /** A click on a web link in terminal output: ask first, open, or nothing (termlink.ts). */
+  terminalLinks: TerminalLinkMode;
   /** Plain Ctrl+V pastes on Windows/Linux (off = it goes to the shell). */
   ctrlVPaste: boolean;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
@@ -290,6 +297,7 @@ const DEFAULTS: Settings = {
   copyOnSelect: true,
   middleClickPaste: false,
   rightClick: "paste",
+  terminalLinks: DEFAULT_TERMINAL_LINK_MODE,
   ctrlVPaste: true,
   historySearch: true,
   windowsShell: "cmd",
@@ -442,6 +450,9 @@ function load(): Settings {
         ? raw.windowsShell
         : DEFAULTS.windowsShell,
       rightClick: isRightClickAction(raw.rightClick) ? raw.rightClick : DEFAULTS.rightClick,
+      terminalLinks: isTerminalLinkMode(raw.terminalLinks)
+        ? raw.terminalLinks
+        : DEFAULTS.terminalLinks,
       ctrlVPaste: typeof raw.ctrlVPaste === "boolean" ? raw.ctrlVPaste : DEFAULTS.ctrlVPaste,
       localShellPath:
         typeof raw.localShellPath === "string" ? raw.localShellPath : DEFAULTS.localShellPath,
@@ -585,6 +596,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
   if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
+  if (!isTerminalLinkMode(next.terminalLinks)) next.terminalLinks = DEFAULTS.terminalLinks;
   if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
