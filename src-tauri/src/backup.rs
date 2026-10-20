@@ -229,11 +229,15 @@ pub fn recording_entries(zip: &mut Archive) -> AppResult<Vec<(usize, String)>> {
         let f = zip
             .by_index(i)
             .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
-        let name = f.name();
+        // An entry whose name cannot be read is no safe recording name either:
+        // skipped, like one that would leave the recordings directory.
+        let Ok(name) = f.name() else {
+            continue;
+        };
         if !name.starts_with(RECORDINGS_PREFIX) {
             continue;
         }
-        if let Some(safe) = safe_recording_name(name) {
+        if let Some(safe) = safe_recording_name(&name) {
             out.push((i, safe));
         }
     }

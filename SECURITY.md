@@ -408,6 +408,14 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
   нами.
 - **proc-macro-error, unic-\* (RUSTSEC-2024-0370, 2025-0075/0080/0081/0098/0100).**
   Транзитивные unmaintained build/utility-крейты.
+- **zvariant, zbus_names, zvariant_derive (RUSTSEC-2026-0370…0372).** Unmaintained, потому
+  что влиты в `zbus` 6.0; это смена статуса, а не уязвимость, исправленных версий не будет.
+  Linux-only: `zbus` 5 под `keyring` (Secret Service) и плагинами Tauri `opener` и
+  `single-instance`. Снять исключение, когда они перейдут на `zbus` 6 — стабильной такой
+  версии пока нет.
+- **`zip` (RUSTSEC-2026-0367…0369)** — не исключение: закрыты обновлением до `zip` 9. vterm
+  `extract()` не вызывал — записи бэкапа читаются по одной, имя проверяет
+  `safe_recording_name`.
 - **Trivy DS-0002 (`root` в образе) — только `e2e/kbdint/Dockerfile`.** Тестовый sshd для
   живых тестов входа `keyboard-interactive`: sshd обязан работать от root, чтобы переключиться
   на входящего пользователя; контейнер локальный и живёт на время прогона. Исключение — в

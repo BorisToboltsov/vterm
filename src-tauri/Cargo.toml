@@ -56,7 +56,7 @@ tempfile = "3"
 portable-pty = "0.9.0"
 # Backups are shipped as a portable .zip archive (manifest + data); deflate-only
 # keeps the dependency tree small (flate2/crc32fast are already in the tree).
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 
 # AI broker (Phase 17, opt-in): all LLM HTTP lives in the backend so the WebView
 # CSP stays strict. TLS is rustls (never native-tls/OpenSSL) so the build stays

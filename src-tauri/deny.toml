@@ -7,12 +7,13 @@
 #
 # Triage note: of the ignores below, exactly ONE (RUSTSEC-2023-0071, rsa) is an
 # actual vulnerability; the rest are `unmaintained`/`unsound` STATUS advisories,
-# and every one of them is transitive from Tauri (its Linux WebKitGTK backend and
-# `tauri-utils`), not a crate we depend on directly. We cannot swap or drop them
-# without dropping Linux or the GUI framework — the realistic fix is an upstream
-# Tauri stack move (exactly how the quick-xml DoS advisories cleared, via a plist
+# all transitive, not crates we depend on directly: Tauri's Linux WebKitGTK
+# backend and `tauri-utils`, and the zbus 5 helper crates under `keyring` and two
+# Tauri plugins (Linux D-Bus). We cannot swap or drop them without dropping Linux,
+# the GUI framework or the Secret Service keychain — the realistic fix is an
+# upstream move (exactly how the quick-xml DoS advisories cleared, via a plist
 # bump — see the note in the block). So the standing action for this block is
-# "keep Tauri current and re-triage", not "find a replacement crate".
+# "keep Tauri and keyring current and re-triage", not "find a replacement crate".
 
 [advisories]
 version = 2
@@ -86,6 +87,19 @@ ignore = [
   "RUSTSEC-2025-0081",
   "RUSTSEC-2025-0098",
   "RUSTSEC-2025-0100",
+
+  # ── Unmaintained: zbus 5 helper crates (Linux D-Bus) ─────────────────────────
+  # zvariant, zbus_names, zvariant_derive — `unmaintained` because upstream
+  # merged them INTO zbus 6.0 (as its `wire`/`names` modules and derives); no
+  # fix is or will be released for the standalone crates (`patched = []`). It
+  # is a status change, not a vulnerability. Root, per `cargo tree --target all
+  # -i zvariant`: zbus 5.18 ← secret-service ← keyring (the Linux Secret Service
+  # store) and ← tauri-plugin-opener / tauri-plugin-single-instance. Linux-only.
+  # Clears when those move to zbus 6: as of 2026-10-20 the latest stable zbus is
+  # 5.19, and the plugins' zbus-6 line is 3.0.0-alpha only — no stable path.
+  "RUSTSEC-2026-0370",
+  "RUSTSEC-2026-0371",
+  "RUSTSEC-2026-0372",
 ]
 
 [licenses]

@@ -21,9 +21,23 @@ import { describe, expect, it } from "vitest";
 const ROOT = process.cwd();
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 
+/** Drop `<!-- … -->` blocks (a scan: one regex pass leaves a nested opener behind). */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i + 4);
+      i = end < 0 ? src.length : end + 3;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 function strip(src: string): string {
-  return src
-    .replace(/<!--[\s\S]*?-->/g, "")
+  return stripHtmlComments(src)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
