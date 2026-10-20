@@ -35,9 +35,7 @@
   import ColumnHead from "./ColumnHead.svelte";
   import SortTitle from "./SortTitle.svelte";
   import {
-    DEFAULT_SORT,
     nextSort,
-    sameSort,
     sortEntries,
     sortMenu,
     type FileSort,
@@ -55,7 +53,7 @@
   import Skeleton from "./Skeleton.svelte";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import ContextMenu from "./ContextMenu.svelte";
-  import { isAction, type MenuItem, type OpenMenu } from "./ctxmenu";
+  import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
   import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
   import {
@@ -239,11 +237,13 @@
     const visible = filterHiddenFiles(entries, settings.sftp.showHiddenFiles);
     return mutable ? sortEntries(visible, fileSort.sort) : visible;
   });
-  // Whether the listing is laid out as a table — its own width against the one
-  // threshold (`panelwide.ts`), the same the `@wide:` variants answer to. A
-  // table is ordered from its column titles; a list has none, so the toolbar
-  // offers the same order as a menu.
-  let tableMode = $state(false);
+  // A narrow list is ordered from its own header (v1.20): name and size — the
+  // two columns it shows — by a click, as in the table, the rest from a menu.
+  // The menu is lit while the order is by a column the list does not show, so
+  // a listing not by name or size still says it is ordered otherwise.
+  const hiddenSortKey = $derived(
+    fileSort.sort.key === "name" || fileSort.sort.key === "size" ? null : fileSort.sort.key,
+  );
   // The SFTP toolbar has more actions than a 240px dock can hold. Measure the
   // actual bar (also when embedded) and keep Upload visible in its compact form.
   let toolbarWidth = $state(0);
@@ -568,18 +568,6 @@
   function openToolbarMenu(e: MouseEvent) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const items: MenuItem[] = [];
-    if (!tableMode && mutable) {
-      items.push({
-        kind: "submenu",
-        key: "sort",
-        icon: "arrowsUpDown",
-        label: t("sftp.sort"),
-        items: sortMenu(fileSort.sort, {
-          key: (key) => COLUMN_LABEL[key](),
-          dir: (dir) => t(dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc"),
-        }, orderBy).filter(isAction),
-      });
-    }
     items.push({
       icon: "folderPlus",
       label: t("sftp.newFolder"),
@@ -1180,23 +1168,6 @@
             >
               <Icon name="eye" size={14} />
             </button>
-            {#if !compactToolbar && !tableMode && mutable}
-              <!-- A list has no column titles: the same order, as a menu. Lit
-                   while the order is not the usual one — a listing that is not
-                   by name should say so. -->
-              <button
-                data-testid="{testPrefix}-sort"
-                class="flex items-center rounded p-1.5 {sameSort(fileSort.sort, DEFAULT_SORT)
-                  ? 'text-muted hover:bg-edge hover:text-text'
-                  : 'bg-edge text-accent'}"
-                use:tooltip={`${t("sftp.sort")}: ${COLUMN_LABEL[fileSort.sort.key]()}`}
-                aria-label={t("sftp.sort")}
-                aria-haspopup="menu"
-                onclick={openSortMenu}
-              >
-                <Icon name="arrowsUpDown" size={14} />
-              </button>
-            {/if}
             <button
               data-testid="{testPrefix}-follow-terminal"
               class="flex items-center rounded p-1.5 {followTerminal
@@ -1436,7 +1407,6 @@
         <div
           bind:this={listEl}
           bind:clientHeight={listViewportH}
-          use:wideWhen={(w) => (tableMode = w)}
           onscroll={onListScroll}
           onkeydown={onListKeydown}
           onclick={onBackgroundClick}
@@ -1453,17 +1423,56 @@
             : ''}"
           style="{columnVars(columns.widths, COLS)}; --list-h: {listViewportH}px"
         >
-          <!-- Column titles — only where there are columns, i.e. in a wide
-               container. The header repeats a row's structure cell for cell
-               (widths, paddings, the actions box), so its borders stand over
-               the rows' borders and it shrinks as they do. -->
+          <!-- Column titles. Wide: the table's columns; the header repeats a
+               row's structure cell for cell (widths, paddings, the actions
+               box), so its borders stand over the rows' borders and it shrinks
+               as they do. Narrow: the two columns the list shows, over the name
+               and the size, and the order menu over the actions box. One
+               header, so one measured height for the cursor to stay clear of. -->
           {#if !loading && mutable}
             <div
               bind:offsetHeight={headH}
-              class="sticky top-0 z-10 hidden items-stretch gap-2 border-b border-edge bg-panel-alt px-2 text-meta font-medium text-muted @wide:flex"
+              class="sticky top-0 z-10 flex items-stretch gap-2 border-b border-edge bg-panel-alt px-2 text-meta font-medium text-muted"
               data-testid="{testPrefix}-columns"
             >
-              <div class="flex min-w-0 flex-1 items-stretch">
+              <div class="flex min-w-0 flex-1 items-center gap-2 py-1 @wide:hidden" data-testid="{testPrefix}-sorthead">
+                <span class="min-w-0 flex-1">
+                  <SortTitle
+                    label={t("sftp.colName")}
+                    sorted={sortedBy("name")}
+                    onsort={() => orderByColumn("name")}
+                    testid="{testPrefix}-sorthead-name"
+                  />
+                </span>
+                <span class="shrink-0">
+                  <SortTitle
+                    label={t("sftp.colSize")}
+                    sorted={sortedBy("size")}
+                    onsort={() => orderByColumn("size")}
+                    testid="{testPrefix}-sorthead-size"
+                    align="right"
+                  />
+                </span>
+              </div>
+              <div class="flex w-16 shrink-0 items-center justify-end @wide:hidden">
+                <button
+                  type="button"
+                  data-testid="{testPrefix}-sort"
+                  class="flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-edge {hiddenSortKey
+                    ? 'text-accent'
+                    : 'hover:text-text'}"
+                  use:tooltip={`${t("sftp.sort")}: ${COLUMN_LABEL[fileSort.sort.key]()}, ${t(fileSort.sort.dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc")}`}
+                  aria-label={t("sftp.sort")}
+                  aria-haspopup="menu"
+                  onclick={openSortMenu}
+                >
+                  {#if hiddenSortKey}
+                    <Icon name={fileSort.sort.dir === "asc" ? "arrowUp" : "arrowDown"} size={11} />
+                  {/if}
+                  <Icon name="chevronDown" size={12} />
+                </button>
+              </div>
+              <div class="hidden min-w-0 flex-1 items-stretch @wide:flex" data-testid="{testPrefix}-tablehead">
                 <ColumnHead
                   col="files.name"
                   label={t("sftp.colName")}
@@ -1504,7 +1513,7 @@
                   />
                 </span>
               </div>
-              <span class="w-16 shrink-0"></span>
+              <span class="hidden w-16 shrink-0 @wide:block"></span>
             </div>
           {/if}
           {#if loading}
@@ -1640,7 +1649,7 @@
                         </div>
                         <div
                           data-nodrag
-                          class="invisible flex shrink-0 items-center gap-1 group-hover:visible @wide:w-16 @wide:justify-end"
+                          class="invisible flex w-16 shrink-0 items-center justify-end gap-1 group-hover:visible"
                         >
                           {#if !entry.isDir && onOpenFile}
                             <button

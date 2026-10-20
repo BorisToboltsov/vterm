@@ -59,13 +59,18 @@ describe("the file listing as a table (wide layout)", () => {
     el.className.match(/(?:^|\s)(?:@wide:)?(w-\[[^\]]+\]|w-16)(?=\s|$)/)?.[1] ?? null;
   const pad = (el: Element) => el.className.match(/(?:^|\s)(?:@wide:)?(p[xr]-2)(?=\s|$)/)?.[1] ?? null;
 
-  it("titles the columns, in a header that only exists when wide", async () => {
+  it("titles the columns: the table's when wide, name and size when narrow", async () => {
     await renderPanel([entry("deploy.sh")]);
     const header = screen.getByTestId("localfiles-columns");
-    expect(header.className).toMatch(/(^|\s)hidden(\s|$)/);
-    expect(header.className).toContain("@wide:flex");
+    expect(header.className).not.toMatch(/(^|\s)hidden(\s|$)/);
     expect(header).toHaveClass("sticky", "top-0");
-    expect([...header.firstElementChild!.children].map((c) => c.textContent?.trim())).toEqual([
+    const table = screen.getByTestId("localfiles-tablehead");
+    expect(table.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(table.className).toContain("@wide:flex");
+    const narrow = screen.getByTestId("localfiles-sorthead");
+    expect(narrow.className).toContain("@wide:hidden");
+    expect(narrow.textContent?.replace(/\s+/g, " ").trim()).toBe("Name Size");
+    expect([...table.children].map((c) => c.textContent?.trim())).toEqual([
       "Name",
       "Size",
       "Permissions",
@@ -88,7 +93,7 @@ describe("the file listing as a table (wide layout)", () => {
     await renderPanel([entry("deploy.sh")]);
     const header = screen.getByTestId("localfiles-columns");
     const row = screen.getByRole("treeitem");
-    const headCells = [...header.firstElementChild!.children];
+    const headCells = [...screen.getByTestId("localfiles-tablehead").children];
     const rowCells = [...row.firstElementChild!.children];
     expect(headCells.map(width)).toEqual([
       "w-[var(--c-name)]",
@@ -173,15 +178,6 @@ describe("the order of the file listing", () => {
   const shown = () =>
     screen.getAllByRole("treeitem").map((row) => row.querySelector(".truncate")?.textContent?.trim());
   const title = (key: string) => screen.getByTestId(`column-sort-files.${key}`);
-  /** Tell the listing how wide it is (jsdom has no layout): a table, or a list. */
-  function setListWidth(width: number) {
-    const list = screen.getByTestId("localfiles-list");
-    Object.defineProperty(list, "clientWidth", { configurable: true, value: width });
-    const observers = (
-      globalThis.ResizeObserver as unknown as { instances: { cb: (entries: unknown[]) => void }[] }
-    ).instances;
-    for (const o of observers) o.cb([{ target: list }]);
-  }
 
   it("comes as it always did: folders first, then by name — and the title says so", async () => {
     await renderPanel(LISTING);
@@ -220,9 +216,27 @@ describe("the order of the file listing", () => {
     expect(shown().slice(2)).toEqual(["upstreams.conf", "nginx.conf", "mime.types"]);
   });
 
-  it("a list has no titles to click: the toolbar offers the same order as a menu", async () => {
+  it("a narrow list is ordered from its header: name and size by a click", async () => {
     await renderPanel(LISTING);
-    // Narrow: the menu button is there, plain while the order is the usual one.
+    const name = screen.getByTestId("localfiles-sorthead-name");
+    const size = screen.getByTestId("localfiles-sorthead-size");
+    expect(name).toHaveAttribute("data-sorted", "asc");
+    await fireEvent.click(size);
+    expect(fileSort.sort).toEqual({ key: "size", dir: "desc" });
+    expect(shown().slice(2)).toEqual(["mime.types", "nginx.conf", "upstreams.conf"]);
+    expect(size).toHaveAttribute("data-sorted", "desc");
+    expect(name).not.toHaveAttribute("data-sorted");
+    await fireEvent.click(size);
+    expect(fileSort.sort).toEqual({ key: "size", dir: "asc" });
+    await fireEvent.click(name);
+    expect(fileSort.sort).toEqual({ key: "name", dir: "asc" });
+    // The order the menu stands for is not lit while a title shows it.
+    expect(screen.getByTestId("localfiles-sort").className).not.toContain("text-accent");
+  });
+
+  it("the columns a list does not show are in the header's menu", async () => {
+    await renderPanel(LISTING);
+    // Narrow: the menu button is there, plain while the order is by a shown column.
     const button = screen.getByTestId("localfiles-sort");
     expect(button.className).not.toContain("text-accent");
     await fireEvent.click(button);
@@ -235,7 +249,7 @@ describe("the order of the file listing", () => {
     await fireEvent.click(row("Modified"));
     expect(fileSort.sort).toEqual({ key: "modified", dir: "desc" });
     await waitFor(() => expect(shown()).toEqual(["conf.d", "sites", "nginx.conf", "upstreams.conf", "mime.types"]));
-    // A listing that is not by name says so on the button.
+    // A listing by a column the list does not show says so on the button.
     expect(screen.getByTestId("localfiles-sort").className).toContain("text-accent");
 
     await fireEvent.click(screen.getByTestId("localfiles-sort"));
@@ -243,13 +257,14 @@ describe("the order of the file listing", () => {
     expect(fileSort.sort).toEqual({ key: "modified", dir: "asc" });
   });
 
-  it("a table is ordered from its titles — the toolbar button steps aside", async () => {
+  it("the order is chosen in the header, not the toolbar — and the menu steps aside in a table", async () => {
     await renderPanel(LISTING);
-    expect(screen.getByTestId("localfiles-sort")).toBeInTheDocument();
-    setListWidth(900);
-    await waitFor(() => expect(screen.queryByTestId("localfiles-sort")).toBeNull());
-    setListWidth(400);
-    await waitFor(() => expect(screen.getByTestId("localfiles-sort")).toBeInTheDocument());
+    const header = screen.getByTestId("localfiles-columns");
+    const button = screen.getByTestId("localfiles-sort");
+    expect(header.contains(button)).toBe(true);
+    expect(button.parentElement!.className).toContain("@wide:hidden");
+    expect(within(screen.getByTestId("localfiles-toolbar")).queryByRole("button", { name: "Order" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Order" })).toEqual([button]);
   });
 
   it("the row under the keyboard cursor stays under it when the order changes", async () => {
