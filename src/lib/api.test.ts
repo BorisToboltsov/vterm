@@ -409,9 +409,19 @@ describe("backup wrappers", () => {
       recordings: 0,
       settings: null,
     });
-    const res = await api.importBackup("/tmp/b.zip");
-    expect(invoke).toHaveBeenCalledWith("import_backup", { path: "/tmp/b.zip" });
+    const catalog = { servers: [], folders: ["A"] };
+    const res = await api.importBackup("/tmp/b.zip", catalog, true);
+    expect(invoke).toHaveBeenCalledWith("import_backup", {
+      path: "/tmp/b.zip",
+      catalog,
+      recordings: true,
+    });
     expect(res.servers).toBe(2);
+
+    invoke.mockResolvedValueOnce({ kind: "all", servers: [], folders: [], settings: true, recordings: 3 });
+    const contents = await api.readBackup("/tmp/b.zip");
+    expect(invoke).toHaveBeenCalledWith("read_backup", { path: "/tmp/b.zip" });
+    expect(contents.recordings).toBe(3);
   });
 
   it("pickBackupSavePath / pickBackupFile use the archive-filtered dialogs", async () => {

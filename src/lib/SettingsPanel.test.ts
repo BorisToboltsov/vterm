@@ -7,11 +7,17 @@ const exportBackup = vi.fn();
 const importBackup = vi.fn();
 const pickBackupSavePath = vi.fn();
 const pickBackupFile = vi.fn();
+const readBackup = vi.fn();
+const listServers = vi.fn();
+const listFolders = vi.fn();
 vi.mock("./api", () => ({
   exportBackup: (...a: unknown[]) => exportBackup(...a),
   importBackup: (...a: unknown[]) => importBackup(...a),
   pickBackupSavePath: (...a: unknown[]) => pickBackupSavePath(...a),
   pickBackupFile: (...a: unknown[]) => pickBackupFile(...a),
+  readBackup: (...a: unknown[]) => readBackup(...a),
+  listServers: (...a: unknown[]) => listServers(...a),
+  listFolders: (...a: unknown[]) => listFolders(...a),
   // The local-shell picker (Terminal section) queries the host OS and probes pwsh.
   hostOs: () => Promise.resolve("macos"),
   shellExists: () => Promise.resolve(true),
@@ -28,6 +34,31 @@ beforeEach(() => {
   importBackup.mockReset();
   pickBackupSavePath.mockReset();
   pickBackupFile.mockReset();
+  readBackup.mockReset();
+  listServers.mockReset().mockResolvedValue([]);
+  listFolders.mockReset().mockResolvedValue([]);
+});
+
+const backupServer = (id: string, username: string) => ({
+  id,
+  alias: id,
+  host: `${id}.example.net`,
+  port: 22,
+  username,
+  authMethod: "password",
+  keyPath: null,
+  hasSavedPassword: true,
+  group: null,
+  tags: [],
+  prod: false,
+  autoRecord: false,
+  noAi: false,
+  chatPromptId: null,
+  execMode: null,
+  proxy: null,
+  notes: "",
+  icon: "",
+  iconColor: "",
 });
 
 describe("SettingsPanel — backup", () => {
@@ -64,11 +95,18 @@ describe("SettingsPanel — backup", () => {
     expect(exportBackup).not.toHaveBeenCalled();
   });
 
-  it("imports after confirmation and notifies the parent", async () => {
+  it("shows what the backup holds before writing anything, then imports and notifies the parent", async () => {
     pickBackupFile.mockResolvedValue("/in/vterm.zip");
+    readBackup.mockResolvedValue({
+      kind: "all",
+      servers: [backupServer("a", "boris"), backupServer("b", "root")],
+      folders: ["Prod", "Dev"],
+      settings: true,
+      recordings: 5,
+    });
     importBackup.mockResolvedValue({
       kind: "all",
-      servers: 3,
+      servers: 2,
       folders: 2,
       recordings: 5,
       settings: { theme: "nord" },
@@ -76,21 +114,44 @@ describe("SettingsPanel — backup", () => {
     const onImported = vi.fn();
     render(SettingsPanel, { props: { open: true, onImported } });
 
-    // First click opens the confirmation dialog (destructive replace).
     await userEvent.click(screen.getByTestId("backup-import"));
+    await screen.findByTestId("backup-logins");
+    expect(readBackup).toHaveBeenCalledWith("/in/vterm.zip");
     expect(importBackup).not.toHaveBeenCalled();
 
-    await userEvent.click(await screen.findByTestId("confirm"));
+    // The backup was made by someone else: their login becomes ours.
+    await userEvent.type(screen.getByLabelText("Replace boris with"), "ivan");
+    await userEvent.click(screen.getByTestId("backup-import-confirm"));
 
-    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/vterm.zip"));
+    await waitFor(() => expect(importBackup).toHaveBeenCalledOnce());
+    const [path, catalog, recordings] = importBackup.mock.calls[0];
+    expect(path).toBe("/in/vterm.zip");
+    expect(recordings).toBe(true);
+    expect(catalog.servers.map((s: { username: string }) => s.username)).toEqual(["ivan", "root"]);
+    // No secret here for these servers: the hint does not claim one.
+    expect(catalog.servers.every((s: { hasSavedPassword: boolean }) => !s.hasSavedPassword)).toBe(true);
+    expect(catalog.folders).toEqual(["Prod", "Dev"].sort());
     expect(onImported).toHaveBeenCalledOnce();
     const msg = await screen.findByTestId("backup-msg");
-    expect(msg).toHaveTextContent(/Restored 3 server\(s\), 2 folder\(s\)/);
+    expect(msg).toHaveTextContent(/Added 2 server\(s\), skipped 0 already here; 2 folder\(s\)/);
+    expect(msg).toHaveTextContent(/Settings applied/);
     expect(msg).toHaveTextContent(/Imported 5 recording\(s\)/);
+  });
+
+  it("writes nothing when the preview is cancelled", async () => {
+    pickBackupFile.mockResolvedValue("/in/vterm.zip");
+    readBackup.mockResolvedValue({ kind: "servers", servers: [backupServer("a", "boris")], folders: [], settings: false, recordings: null });
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-import"));
+    await screen.findByTestId("backup-logins");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByTestId("backup-logins")).toBeNull());
+    expect(importBackup).not.toHaveBeenCalled();
   });
 
   it("reports a settings-only import without touching servers", async () => {
     pickBackupFile.mockResolvedValue("/in/settings.zip");
+    readBackup.mockResolvedValue({ kind: "settings", servers: null, folders: null, settings: true, recordings: null });
     importBackup.mockResolvedValue({
       kind: "settings",
       servers: null,
@@ -100,12 +161,22 @@ describe("SettingsPanel — backup", () => {
     });
     render(SettingsPanel, { props: { open: true } });
     await userEvent.click(screen.getByTestId("backup-import"));
-    await userEvent.click(await screen.findByTestId("confirm"));
+    await userEvent.click(await screen.findByTestId("backup-import-confirm"));
 
-    await waitFor(() => expect(importBackup).toHaveBeenCalled());
+    await waitFor(() => expect(importBackup).toHaveBeenCalledWith("/in/settings.zip", null, false));
     const msg = await screen.findByTestId("backup-msg");
     expect(msg).toHaveTextContent(/Settings applied/);
     expect(msg).not.toHaveTextContent(/server/i);
+  });
+
+  it("a backup that cannot be read is an error, not an empty preview", async () => {
+    pickBackupFile.mockResolvedValue("/in/broken.zip");
+    readBackup.mockRejectedValue("not a vterm backup (no manifest)");
+    render(SettingsPanel, { props: { open: true } });
+    await userEvent.click(screen.getByTestId("backup-import"));
+    const msg = await screen.findByTestId("backup-msg");
+    expect(msg).toHaveTextContent(/no manifest/);
+    expect(screen.queryByTestId("backup-import-confirm")).toBeNull();
   });
 });
 

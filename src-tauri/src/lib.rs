@@ -44,7 +44,7 @@ use std::sync::{Arc, Mutex};
 
 use model::{AuthMethod, ProxyKind, ServerProfile};
 use russh_sftp::client::SftpSession;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sftp::FileEntry;
 use ssh::{ConnectOptions, Credential, HostKeyPolicy, Proxy, ProxyJump, ProxyTcpAuth, SshSession};
 use std::time::Duration;
@@ -239,9 +239,10 @@ fn export_backup(
     Ok(())
 }
 
-/// Result of importing a backup. Each section count is `None` when the backup
-/// didn't include that section (so the frontend reports only what was restored
-/// and leaves the rest untouched). `settings` is the opaque UI snapshot to apply.
+/// Result of importing a backup. `servers`/`folders` count the catalog written
+/// (`None` when none was), `recordings` the recordings extracted (`None` when
+/// they were not asked for or the backup has none). `settings` is the backup's
+/// UI snapshot — the frontend applies it only if it was chosen.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ImportResult {
@@ -253,121 +254,97 @@ struct ImportResult {
     settings: Option<serde_json::Value>,
 }
 
-/// Restore a backup from `path`. Auto-detects the format: a `.zip` archive
-/// (current) restores exactly the sections its manifest declares; a bare JSON
-/// document (legacy) is treated as a full servers+folders+settings backup.
-#[tauri::command]
-fn import_backup(path: String, state: State<AppState>) -> AppResult<ImportResult> {
-    let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
-    // Zip files start with the "PK" local-file-header magic.
-    if bytes.starts_with(b"PK") {
-        import_archive(bytes, &state)
-    } else {
-        import_legacy_json(&bytes, &state)
-    }
+/// The server catalog an import writes (v1.20): the backup's profiles with
+/// logins and key paths changed as the user asked, on their own or added to
+/// the current ones — assembled by the frontend (`backupimport.ts`) from what
+/// `read_backup` showed.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportCatalog {
+    servers: Vec<ServerProfile>,
+    folders: Vec<String>,
 }
 
-/// Restore from a `.zip` backup archive, honouring the manifest's section list.
-fn import_archive(bytes: Vec<u8>, state: &State<AppState>) -> AppResult<ImportResult> {
-    use std::io::Read;
-    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
-        .map_err(|e| AppError::Message(format!("open backup archive: {e}")))?;
-
-    let manifest = {
-        let mut f = zip
-            .by_name(backup::MANIFEST_NAME)
-            .map_err(|_| AppError::Message("not a vterm backup (no manifest)".into()))?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf)
-            .map_err(|e| AppError::Message(format!("read manifest: {e}")))?;
-        backup::decode_manifest(&buf)?
+/// Restore a backup from `path` (a `.zip` archive or a legacy JSON document):
+/// write `catalog` when given — the archive's own server list is not written
+/// as is — and extract the recordings when `recordings` is set. Settings are
+/// returned, not applied. Nothing is written before the catalog is checked.
+#[tauri::command]
+fn import_backup(
+    path: String,
+    catalog: Option<ImportCatalog>,
+    recordings: bool,
+    state: State<AppState>,
+) -> AppResult<ImportResult> {
+    let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
+    if let Some(c) = &catalog {
+        backup::check_catalog(&c.servers)?;
+    }
+    let (kind, settings, mut archive) = if bytes.starts_with(b"PK") {
+        let (zip, manifest, doc) = backup::open_archive(bytes)?;
+        let settings = if manifest.has(backup::SECTION_SETTINGS) {
+            doc.and_then(|d| d.settings)
+        } else {
+            None
+        };
+        let zip = (recordings && manifest.has(backup::SECTION_RECORDINGS)).then_some(zip);
+        (manifest.kind, settings, zip)
+    } else {
+        (
+            backup::KIND_ALL.to_string(),
+            backup::decode(&bytes)?.settings,
+            None,
+        )
     };
 
     let mut result = ImportResult {
-        kind: manifest.kind.clone(),
+        kind,
         servers: None,
         folders: None,
         recordings: None,
-        settings: None,
+        settings,
     };
 
-    // Inner backup.json: restore only the sections the manifest declares.
-    if manifest.has(backup::SECTION_SERVERS) || manifest.has(backup::SECTION_SETTINGS) {
-        let doc = {
-            let mut f = zip
-                .by_name(backup::BACKUP_NAME)
-                .map_err(|_| AppError::Message("backup archive missing backup.json".into()))?;
-            let mut buf = Vec::new();
-            f.read_to_end(&mut buf)
-                .map_err(|e| AppError::Message(format!("read backup.json: {e}")))?;
-            backup::decode(&buf)?
-        };
-        if manifest.has(backup::SECTION_SERVERS) {
-            let servers = doc.servers;
-            let folders = backup::normalize_folders(doc.folders);
-            store::save_servers(&servers)?;
-            store::save_folders(&folders)?;
-            result.servers = Some(servers.len());
-            result.folders = Some(folders.len());
-            *state.servers.lock().unwrap() = servers;
-            *state.folders.lock().unwrap() = folders;
-        }
-        if manifest.has(backup::SECTION_SETTINGS) {
-            result.settings = doc.settings;
-        }
+    if let Some(c) = catalog {
+        let folders = backup::normalize_folders(c.folders);
+        store::save_servers(&c.servers)?;
+        store::save_folders(&folders)?;
+        result.servers = Some(c.servers.len());
+        result.folders = Some(folders.len());
+        *state.servers.lock().unwrap() = c.servers;
+        *state.folders.lock().unwrap() = folders;
     }
 
-    // Recordings: extract each recordings/*.cast into the recordings directory
+    // Recordings: each recordings/*.cast goes into the recordings directory
     // under a collision-safe name (never overwrites an existing recording).
-    if manifest.has(backup::SECTION_RECORDINGS) {
-        let mut count = 0usize;
-        if let Some(dir) = recording::recordings_dir() {
-            std::fs::create_dir_all(&dir)
-                .map_err(|e| AppError::Message(format!("create recordings dir: {e}")))?;
-            for i in 0..zip.len() {
-                let mut f = zip
-                    .by_index(i)
-                    .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
-                let entry_name = f.name().to_string();
-                if !entry_name.starts_with(backup::RECORDINGS_PREFIX) {
-                    continue;
-                }
-                let Some(safe) = backup::safe_recording_name(&entry_name) else {
-                    continue;
-                };
-                let mut buf = Vec::new();
-                f.read_to_end(&mut buf)
-                    .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
-                let dest = unique_recording_path(&dir, &safe);
-                std::fs::write(&dest, &buf)
-                    .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
-                count += 1;
-            }
-        }
-        result.recordings = Some(count);
+    if let Some(zip) = archive.as_mut() {
+        result.recordings = Some(import_recordings(zip)?);
     }
-
     Ok(result)
 }
 
-/// Restore a legacy single-JSON backup (servers + folders + settings).
-fn import_legacy_json(bytes: &[u8], state: &State<AppState>) -> AppResult<ImportResult> {
-    let doc = backup::decode(bytes)?;
-    let servers = doc.servers;
-    let folders = backup::normalize_folders(doc.folders);
-    store::save_servers(&servers)?;
-    store::save_folders(&folders)?;
-
-    let result = ImportResult {
-        kind: backup::KIND_ALL.to_string(),
-        servers: Some(servers.len()),
-        folders: Some(folders.len()),
-        recordings: None,
-        settings: doc.settings,
+/// Extract an archive's recordings; the number extracted.
+fn import_recordings(zip: &mut backup::Archive) -> AppResult<usize> {
+    use std::io::Read;
+    let Some(dir) = recording::recordings_dir() else {
+        return Ok(0);
     };
-    *state.servers.lock().unwrap() = servers;
-    *state.folders.lock().unwrap() = folders;
-    Ok(result)
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::Message(format!("create recordings dir: {e}")))?;
+    let mut count = 0usize;
+    for (index, safe) in backup::recording_entries(zip)? {
+        let mut f = zip
+            .by_index(index)
+            .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)
+            .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
+        let dest = unique_recording_path(&dir, &safe);
+        std::fs::write(&dest, &buf)
+            .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
+        count += 1;
+    }
+    Ok(count)
 }
 
 // ── SSH session commands ──────────────────────────────────────────────────────
@@ -2508,6 +2485,7 @@ pub fn run() {
             folders::set_server_group,
             export_backup,
             import_backup,
+            backup::read_backup,
             connect_plan,
             connect_session,
             open_local_terminal,
