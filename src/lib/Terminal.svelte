@@ -8,13 +8,13 @@
   import { SerializeAddon } from "@xterm/addon-serialize";
   import { WebLinksAddon } from "@xterm/addon-web-links";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { openUrl } from "@tauri-apps/plugin-opener";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "./util";
   import { parseOsc7, parseOsc9 } from "./osc";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import { clickLink, terminalLinkHandler } from "./stores/linkopen.svelte";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import {
     isAppShortcut,
@@ -289,7 +289,7 @@
     term?.focus();
   }
 
-  // ── Regex highlighting + clickable links (Phase 10) ────────────────────────
+  // ── Regex highlighting (Phase 10) ───────────────────────────────────────────
   // Output is decoded with a streaming decoder (handles multibyte chars split
   // across chunks) and, when highlighting is on and we're on the normal screen
   // buffer (not a full-screen TUI), matched tokens are wrapped in ANSI colours
@@ -299,6 +299,9 @@
   const compiledRules = $derived(
     highlightEnabled ? compileRules(settings.highlightRules) : [],
   );
+  // URLs found in the text are clickable under their own setting (v1.20), not
+  // the highlight toggle; every click goes to `clickLink`, which asks or opens.
+  const linksEnabled = $derived(settings.terminalLinks !== "off");
   let webLinks: WebLinksAddon | undefined;
 
   // ── Structured JSON log view (Phase 10) ────────────────────────────────────
@@ -667,6 +670,10 @@
       // Search highlight decorations (addon-search) use xterm's decoration API,
       // which is still "proposed" in xterm 6 and throws unless opted in.
       allowProposedApi: true,
+      // OSC 8 hyperlinks set what is shown apart from where it leads, so they
+      // take the same question as found URLs, with the text shown — never
+      // xterm's own English confirm() and window.open().
+      linkHandler: terminalLinkHandler(() => term?.buffer.active),
       theme,
       ...(adopt ? { cols: adopt.cols, rows: adopt.rows } : {}),
     });
@@ -1000,16 +1007,12 @@
     if (!searchEnabled && search.open) closeSearch();
   });
 
-  // Clickable links follow the highlight toggle. The handler opens only http(s)
-  // externally, on an explicit click (offline invariant) — via the Tauri opener.
   $effect(() => {
     if (!term) return;
-    if (highlightEnabled && !webLinks) {
-      webLinks = new WebLinksAddon((_event, uri) => {
-        if (/^https?:\/\//i.test(uri)) openUrl(uri).catch(() => {});
-      });
+    if (linksEnabled && !webLinks) {
+      webLinks = new WebLinksAddon((_event, uri) => clickLink(uri));
       term.loadAddon(webLinks);
-    } else if (!highlightEnabled && webLinks) {
+    } else if (!linksEnabled && webLinks) {
       webLinks.dispose();
       webLinks = undefined;
     }

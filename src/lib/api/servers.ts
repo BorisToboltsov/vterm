@@ -98,9 +98,29 @@ export function setServerGroup(
 export type BackupKind = "servers" | "settings" | "recordings" | "all";
 
 /**
- * Result of importing a backup. Each section count is `null` when the backup
- * didn't include it (so the UI reports only what was restored). `kind` echoes the
- * backup's declared kind; `settings` is the opaque UI snapshot to apply (if any).
+ * What a backup file holds, read without restoring anything (v1.20) — the
+ * import preview. A section the backup does not carry is `null` (`settings`:
+ * whether it carries a settings snapshot).
+ */
+export interface BackupContents {
+  kind: BackupKind;
+  servers: ServerProfile[] | null;
+  folders: string[] | null;
+  settings: boolean;
+  recordings: number | null;
+}
+
+/** The server catalog an import writes: assembled by `backupimport.ts`. */
+export interface ImportCatalog {
+  servers: ServerProfile[];
+  folders: string[];
+}
+
+/**
+ * Result of importing a backup. `servers`/`folders` count the catalog written
+ * and `recordings` the recordings extracted — `null` when nothing of the kind
+ * was written. `kind` echoes the backup's declared kind; `settings` is its UI
+ * snapshot, applied by the caller only if it was chosen.
  */
 export interface ImportResult {
   kind: BackupKind;
@@ -119,12 +139,22 @@ export function exportBackup(path: string, kind: BackupKind, settings: unknown):
   return invoke<void>("export_backup", { path, kind, settings });
 }
 
+/** What the backup at `path` holds (`.zip` archive or legacy `.json`); nothing is written. */
+export function readBackup(path: string): Promise<BackupContents> {
+  return invoke<BackupContents>("read_backup", { path });
+}
+
 /**
- * Restore a backup from `path`. The backend auto-detects the format (`.zip`
- * archive or legacy `.json`) and restores exactly the sections it contains.
+ * Restore a backup from `path`: write `catalog` (null — leave the servers as
+ * they are) and extract the recordings when `recordings` is set. The backup's
+ * own server list is never written as is.
  */
-export function importBackup(path: string): Promise<ImportResult> {
-  return invoke<ImportResult>("import_backup", { path });
+export function importBackup(
+  path: string,
+  catalog: ImportCatalog | null,
+  recordings: boolean,
+): Promise<ImportResult> {
+  return invoke<ImportResult>("import_backup", { path, catalog, recordings });
 }
 
 /** Native "save as" dialog for a backup archive; returns the chosen path or null. */

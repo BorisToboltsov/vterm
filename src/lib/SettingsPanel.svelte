@@ -328,6 +328,20 @@
               <option value="menu">{t("settings.rightClickContextMenu")}</option>
             </select>
           </label>
+          <label class="mt-2 block text-xs text-muted">
+            <span class="flex items-center gap-1"
+              >{t("settings.terminalLinks")}<InfoHint text={t("settings.terminalLinksHint")} /></span
+            >
+            <select
+              data-testid="settings-terminal-links"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              bind:value={settings.terminalLinks}
+            >
+              <option value="confirm">{t("settings.terminalLinksConfirm")}</option>
+              <option value="direct">{t("settings.terminalLinksDirect")}</option>
+              <option value="off">{t("settings.terminalLinksOff")}</option>
+            </select>
+          </label>
           {#if hostEnv.os !== "macos"}
             <label class="mt-2 flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" bind:checked={settings.ctrlVPaste} />

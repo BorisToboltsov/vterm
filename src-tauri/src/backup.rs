@@ -12,12 +12,14 @@
 //! `backup.json`; recordings are stored as `recordings/*.cast`.
 //!
 //! Secrets are intentionally **never** included — passwords/passphrases live in
-//! the OS keychain (see secrets.rs) and are not portable. `keyPath` (a local file
-//! path) and `hasSavedPassword` (a UI hint) are kept as-is; on another machine
-//! the keychain simply won't have the secret and the connect flow re-prompts.
+//! the OS keychain (see secrets.rs) and are not portable. An import is shown
+//! first (`read_backup`): the frontend changes logins and key paths, resets
+//! `hasSavedPassword` where this keychain has no secret, and replaces the
+//! catalog or adds to it (`backupimport.ts`); `import_backup` in lib.rs writes
+//! that catalog, never the archive's own list as is.
 //!
-//! The pure functions here (build/encode/decode + manifest helpers) are
-//! unit-tested; the Tauri commands in lib.rs wrap them with state + zip I/O.
+//! The pure functions here (build/encode/decode, manifest and archive helpers)
+//! are unit-tested; `import_backup` in lib.rs wraps them with state.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -190,6 +192,139 @@ pub fn normalize_folders(mut folders: Vec<String>) -> Vec<String> {
     folders
 }
 
+/// A backup archive held in memory.
+pub type Archive = zip::ZipArchive<std::io::Cursor<Vec<u8>>>;
+
+/// Open a `.zip` backup: the archive, its manifest and — when the manifest
+/// declares servers or settings — the inner `backup.json`.
+pub fn open_archive(bytes: Vec<u8>) -> AppResult<(Archive, Manifest, Option<Backup>)> {
+    use std::io::Read;
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| AppError::Message(format!("open backup archive: {e}")))?;
+    let mut read = |name: &str, missing: &str| -> AppResult<Vec<u8>> {
+        let mut f = zip
+            .by_name(name)
+            .map_err(|_| AppError::Message(missing.into()))?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf)
+            .map_err(|e| AppError::Message(format!("read {name}: {e}")))?;
+        Ok(buf)
+    };
+    let manifest = decode_manifest(&read(MANIFEST_NAME, "not a vterm backup (no manifest)")?)?;
+    let doc = if manifest.has(SECTION_SERVERS) || manifest.has(SECTION_SETTINGS) {
+        Some(decode(&read(
+            BACKUP_NAME,
+            "backup archive missing backup.json",
+        )?)?)
+    } else {
+        None
+    };
+    Ok((zip, manifest, doc))
+}
+
+/// The recordings an archive carries: (entry index, safe `*.cast` name).
+pub fn recording_entries(zip: &mut Archive) -> AppResult<Vec<(usize, String)>> {
+    let mut out = Vec::new();
+    for i in 0..zip.len() {
+        let f = zip
+            .by_index(i)
+            .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
+        // An entry whose name cannot be read is no safe recording name either:
+        // skipped, like one that would leave the recordings directory.
+        let Ok(name) = f.name() else {
+            continue;
+        };
+        if !name.starts_with(RECORDINGS_PREFIX) {
+            continue;
+        }
+        if let Some(safe) = safe_recording_name(&name) {
+            out.push((i, safe));
+        }
+    }
+    Ok(out)
+}
+
+/// What a backup holds, read without restoring anything (v1.20). The import
+/// preview shows it; what is written — and how the servers are changed on the
+/// way — the frontend decides (`backupimport.ts`).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupContents {
+    /// The backup's declared kind; "all" for a legacy JSON backup.
+    pub kind: String,
+    /// Server profiles; None when the backup has no servers section.
+    pub servers: Option<Vec<ServerProfile>>,
+    pub folders: Option<Vec<String>>,
+    /// The backup carries a settings snapshot.
+    pub settings: bool,
+    /// How many recordings it carries; None when it has no recordings section.
+    pub recordings: Option<usize>,
+}
+
+/// Read what a backup file (`.zip` archive or legacy JSON) holds.
+pub fn read_contents(bytes: Vec<u8>) -> AppResult<BackupContents> {
+    // Zip files start with the "PK" local-file-header magic.
+    if !bytes.starts_with(b"PK") {
+        let doc = decode(&bytes)?;
+        return Ok(BackupContents {
+            kind: KIND_ALL.to_string(),
+            settings: doc.settings.is_some(),
+            servers: Some(doc.servers),
+            folders: Some(normalize_folders(doc.folders)),
+            recordings: None,
+        });
+    }
+    let (mut zip, manifest, doc) = open_archive(bytes)?;
+    let recordings = if manifest.has(SECTION_RECORDINGS) {
+        Some(recording_entries(&mut zip)?.len())
+    } else {
+        None
+    };
+    let settings =
+        manifest.has(SECTION_SETTINGS) && doc.as_ref().is_some_and(|d| d.settings.is_some());
+    let (servers, folders) = match doc {
+        Some(d) if manifest.has(SECTION_SERVERS) => {
+            (Some(d.servers), Some(normalize_folders(d.folders)))
+        }
+        _ => (None, None),
+    };
+    Ok(BackupContents {
+        kind: manifest.kind,
+        servers,
+        folders,
+        settings,
+        recordings,
+    })
+}
+
+/// What a backup at `path` holds — the import preview; nothing is written.
+#[tauri::command]
+pub fn read_backup(path: String) -> AppResult<BackupContents> {
+    let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
+    read_contents(bytes)
+}
+
+/// A server catalog to be written by an import: every profile has an id, and
+/// no two share one — the keychain keeps secrets by id, so a repeated id would
+/// hand one server's password to another.
+pub fn check_catalog(servers: &[ServerProfile]) -> AppResult<()> {
+    let mut seen = std::collections::HashSet::new();
+    for s in servers {
+        if s.id.trim().is_empty() {
+            return Err(AppError::Message(
+                "backup import: a server without an id".into(),
+            ));
+        }
+        if !seen.insert(s.id.as_str()) {
+            return Err(AppError::Message(format!(
+                "backup import: server id {} appears twice",
+                s.id
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,6 +383,97 @@ mod tests {
         let lower = json.to_lowercase();
         assert!(!lower.contains("\"password\""));
         assert!(!lower.contains("passphrase"));
+    }
+
+    fn archive(manifest_kind: &str, doc: Option<&Backup>, casts: &[&str]) -> Vec<u8> {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts = zip::write::SimpleFileOptions::default();
+        zip.start_file(MANIFEST_NAME, opts).unwrap();
+        zip.write_all(
+            encode_manifest(&build_manifest(manifest_kind, 0))
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        if let Some(doc) = doc {
+            zip.start_file(BACKUP_NAME, opts).unwrap();
+            zip.write_all(encode(doc).unwrap().as_bytes()).unwrap();
+        }
+        for name in casts {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(b"{}\n").unwrap();
+        }
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn contents_of_a_full_archive_are_read_without_restoring() {
+        let doc = build(
+            vec![sample_server()],
+            vec!["Prod".into(), "Dev".into(), "Prod".into()],
+            Some(serde_json::json!({ "theme": "nord" })),
+            0,
+        );
+        let bytes = archive(
+            KIND_ALL,
+            Some(&doc),
+            &[
+                "recordings/a.cast",
+                "recordings/../evil.cast",
+                "recordings/notes.txt",
+            ],
+        );
+        let c = read_contents(bytes).unwrap();
+        assert_eq!(c.kind, KIND_ALL);
+        assert_eq!(c.servers.unwrap()[0].id, "srv-1");
+        assert_eq!(c.folders.unwrap(), vec!["Dev", "Prod"]);
+        assert!(c.settings);
+        // Only entries that would be restored are counted.
+        assert_eq!(c.recordings, Some(2));
+    }
+
+    #[test]
+    fn contents_name_only_the_sections_an_archive_declares() {
+        let doc = build(
+            vec![sample_server()],
+            vec![],
+            Some(serde_json::json!({})),
+            0,
+        );
+        let c = read_contents(archive(KIND_SETTINGS, Some(&doc), &[])).unwrap();
+        assert!(c.servers.is_none() && c.folders.is_none() && c.recordings.is_none());
+        assert!(c.settings);
+        let c = read_contents(archive(KIND_RECORDINGS, None, &["recordings/x.cast"])).unwrap();
+        assert!(c.servers.is_none() && !c.settings);
+        assert_eq!(c.recordings, Some(1));
+    }
+
+    #[test]
+    fn contents_of_a_legacy_json_backup_are_everything_but_recordings() {
+        let json = encode(&build(vec![sample_server()], vec!["A".into()], None, 0)).unwrap();
+        let c = read_contents(json.into_bytes()).unwrap();
+        assert_eq!(c.kind, KIND_ALL);
+        assert_eq!(c.servers.unwrap().len(), 1);
+        assert!(!c.settings);
+        assert!(c.recordings.is_none());
+    }
+
+    #[test]
+    fn an_archive_without_its_document_is_refused() {
+        assert!(read_contents(archive(KIND_ALL, None, &[])).is_err());
+        assert!(read_contents(b"PK not a zip".to_vec()).is_err());
+    }
+
+    #[test]
+    fn a_catalog_with_a_missing_or_repeated_id_is_refused() {
+        let a = sample_server();
+        let mut b = sample_server();
+        b.id = "srv-2".into();
+        assert!(check_catalog(&[a.clone(), b.clone()]).is_ok());
+        assert!(check_catalog(&[a.clone(), a.clone()]).is_err());
+        b.id = " ".into();
+        assert!(check_catalog(&[a, b]).is_err());
     }
 
     #[test]

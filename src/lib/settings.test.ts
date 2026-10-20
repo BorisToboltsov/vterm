@@ -460,6 +460,21 @@ describe("terminal paste", () => {
   });
 });
 
+describe("terminal links", () => {
+  it("asks before opening by default", () => {
+    expect(settings.terminalLinks).toBe("confirm");
+  });
+
+  it("imports a valid mode and rejects junk", () => {
+    applyImportedSettings({ terminalLinks: "direct" });
+    flushSync();
+    expect(settings.terminalLinks).toBe("direct");
+    applyImportedSettings({ terminalLinks: "always" });
+    flushSync();
+    expect(settings.terminalLinks).toBe("confirm");
+  });
+});
+
 describe("language", () => {
   it("defaults to English", () => {
     expect(settings.language).toBe("en");
