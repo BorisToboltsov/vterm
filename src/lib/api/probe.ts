@@ -40,7 +40,9 @@ export interface NetCheckTarget {
  * (the script from `netcheckArgs`) on the server; a local tab connects to
  * `targets` natively from this machine. Both answer in the netcheck line
  * protocol — parse `stdout` with `parseNetReport`. Empty `targets` = identity
- * probe (hostname/addresses/method only).
+ * probe (hostname/addresses/method only). `cancelId` is the handle
+ * `sftpCancel` stops the run with (ADR 0032); a stopped run rejects with
+ * `cancelled:` (`isCancelled`).
  */
 export function netcheckRun(
   sessionId: string,
@@ -48,6 +50,7 @@ export function netcheckRun(
   targets: NetCheckTarget[],
   connectTimeoutSecs: number,
   timeoutSecs: number,
+  cancelId: string,
 ): Promise<ProbeOutput> {
   return invoke<ProbeOutput>("netcheck_run", {
     sessionId,
@@ -55,5 +58,6 @@ export function netcheckRun(
     targets,
     connectTimeoutSecs,
     timeoutSecs,
+    cancelId,
   });
 }

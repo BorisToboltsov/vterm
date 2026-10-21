@@ -379,6 +379,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
+  import type { HostServer, HostTab } from "$lib/netroute";
   import BroadcastBar from "$lib/BroadcastBar.svelte";
   import BroadcastRoster from "$lib/BroadcastRoster.svelte";
   import {
@@ -628,6 +629,28 @@
       shell: tab.kind === "local" ? (localShellKind[tab.sessionId] ?? "posix") : "posix",
     };
   });
+  // The access check picks its servers from the catalog and the open tabs
+  // (v1.21, netroute.ts): where a rule's source lives, and whether a session to
+  // it is open.
+  const netServers = $derived<HostServer[]>(
+    servers.map((s) => ({ id: s.id, alias: s.alias, host: s.host, isProd: isProdServer(s) })),
+  );
+  const netTabs = $derived<HostTab[]>(
+    tabsState.list.map((tab) => ({
+      sessionId: tab.sessionId,
+      kind: tab.kind,
+      serverId: tab.serverId,
+      live: isLive(tab.status),
+      connecting: !tab.waiting && dockConnection(tab.status) === "connecting",
+    })),
+  );
+
+  /** "Connect" in the access check: the server's tab, opened the usual way. */
+  function connectServerById(serverId: string) {
+    const server = servers.find((s) => s.id === serverId);
+    if (server) void connectServer(server);
+  }
+
   // Notes belong to the active SSH tab's server when one is focused; on a local
   // tab (or with no tab) they fall back to the tree-selected server.
   const notesServerTarget = $derived(notesTarget(activeServer, selected));
@@ -3348,8 +3371,8 @@
    * when the tool reports installed (e.g. `sensors` present but unconfigured — the
    * very case the CTA appears) and surfaces a toast instead of failing silently.
    */
-  async function openToolInstallByName(toolName: string) {
-    const sid = toolsSessionId;
+  async function openToolInstallByName(toolName: string, sessionId?: string) {
+    const sid = sessionId ?? toolsSessionId;
     if (!sid) return;
     try {
       const status = await serverToolsStatus(sid);
@@ -4834,7 +4857,10 @@
   bind:open={showUtilities}
   initialUtility={utilitiesInitial}
   session={utilSession}
-  onInstallTool={(tool) => openToolInstallByName(tool)}
+  {netServers}
+  {netTabs}
+  onConnectServer={connectServerById}
+  onInstallTool={(tool, sid) => openToolInstallByName(tool, sid)}
   {toolsReloadToken}
   actions={sessionActions}
   onSessionAction={runSessionAction}

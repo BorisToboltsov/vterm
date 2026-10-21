@@ -4,6 +4,7 @@
 //     10.64.48.180 -> 10.70.39.10:[22, 80, 443]/tcp
 //     10.64.48.180 -> [10.70.39.10, db.internal]:[5432, 8000-8010]
 //     10.0.0.1 (gitlab) -> 10.0.0.5:[22, 8200] (vault)
+//     app-01, app-02 -> 192.168.0.0/24:[ssh, https]
 //
 // Rules are pasted from tickets, wikis and chats, which "improve" the text: an
 // arrow becomes `—>` or `→`, gets a space inside (`- >`), the colon turns
@@ -55,8 +56,12 @@ export interface ParseError {
   token: string;
 }
 
-/** Hard cap on connects per run — a typo like `1-65535` must not become a scan. */
-export const MAX_CHECKS = 512;
+/**
+ * Hard cap on connects one checking host makes in a run (ADR 0032): a subnet
+ * the user asked for fits (a /24 on eight ports), a typo like `1-65535` or a
+ * `/16` doesn't become a scan. The native side (`netcheck::MAX_CHECKS`) agrees.
+ */
+export const MAX_CHECKS = 2048;
 /** Default per-connect timeout (seconds). */
 export const DEFAULT_TIMEOUT_SECS = 3;
 /** Parallel connects per batch (remote script and native side agree on this). */
@@ -113,6 +118,80 @@ function validHost(s: string): boolean {
   return HOST.test(s);
 }
 
+// ── Subnets (ADR 0032) ──────────────────────────────────────────────────────
+// A target written as a subnet means "every address in it"; a source written as
+// a subnet means "the servers that live in it". IPv4 only, like the targets.
+
+/** An IPv4 subnet: its first address as a number and the prefix length. */
+export interface Cidr {
+  base: number;
+  prefix: number;
+}
+
+const CIDR_RE = /^(\d{1,3}(?:\.\d{1,3}){3})\/(\d{1,2})$/;
+
+function ipToInt(ip: string): number {
+  return ip.split(".").reduce((n, o) => n * 256 + Number(o), 0);
+}
+
+function intToIp(n: number): string {
+  return [24, 16, 8, 0].map((s) => Math.floor(n / 2 ** s) % 256).join(".");
+}
+
+/**
+ * `192.168.0.0/24` → the subnet; host bits set (`192.168.0.7/24`) are masked
+ * off, as `ip route` does. Null for anything that isn't an IPv4 subnet.
+ */
+export function parseCidr(s: string): Cidr | null {
+  const m = CIDR_RE.exec(s.trim());
+  if (!m || !IPV4.test(m[1])) return null;
+  const prefix = Number(m[2]);
+  if (prefix > 32) return null;
+  const size = 2 ** (32 - prefix);
+  return { base: Math.floor(ipToInt(m[1]) / size) * size, prefix };
+}
+
+export function isCidr(s: string): boolean {
+  return parseCidr(s) !== null;
+}
+
+/** The subnet in its canonical form, network address first. */
+export function cidrText(c: Cidr): string {
+  return `${intToIp(c.base)}/${c.prefix}`;
+}
+
+/** How many addresses a check of the subnet covers: every host address — the
+ *  network and broadcast addresses are not hosts, except in /31 and /32. */
+export function cidrHostCount(c: Cidr): number {
+  const size = 2 ** (32 - c.prefix);
+  return c.prefix >= 31 ? size : size - 2;
+}
+
+/** The host addresses of a subnet, in order. Callers check the count first. */
+export function cidrHosts(c: Cidr): string[] {
+  const first = c.prefix >= 31 ? c.base : c.base + 1;
+  return Array.from({ length: cidrHostCount(c) }, (_, i) => intToIp(first + i));
+}
+
+/** Whether an IPv4 address lies inside the subnet. */
+export function cidrContains(c: Cidr, ip: string): boolean {
+  if (!IPV4.test(ip)) return false;
+  const n = ipToInt(ip);
+  return n >= c.base && n < c.base + 2 ** (32 - c.prefix);
+}
+
+/** Addresses one rule target stands for: a subnet's hosts, else the target itself. */
+export function targetSize(target: string): number {
+  const c = parseCidr(target);
+  return c ? cidrHostCount(c) : 1;
+}
+
+/** One rule target as the addresses that get connected to. */
+export function expandTarget(target: string): string[] {
+  const c = parseCidr(target);
+  return c ? cidrHosts(c) : [target];
+}
+
 /** Split a list written as `[a, b]`, `a, b` or `a b`. */
 function splitList(raw: string): string[] {
   const inner = raw.trim().replace(/^\[/, "").replace(/\]$/, "");
@@ -122,8 +201,11 @@ function splitList(raw: string): string[] {
     .filter(Boolean);
 }
 
-/** Expand `22`, `8000-8010` into ports; `null` on a bad token. */
+/** Expand `22`, `8000-8010` or a service name (`ssh`, `https`) into ports;
+ *  `null` on a bad token. */
 function expandPort(tok: string): number[] | null {
+  const named = servicePort(tok);
+  if (named !== null) return [named];
   const m = /^(\d{1,5})(?:-(\d{1,5}))?$/.exec(tok);
   if (!m) return null;
   const a = Number(m[1]);
@@ -135,15 +217,18 @@ function expandPort(tok: string): number[] | null {
 }
 
 /**
- * Parse the rules box. Blank lines and `#` comments are skipped. Each rule is
- * `[SRC ->] TARGETS : PORTS [/tcp|/udp]`, where TARGETS/PORTS are a single item
- * or a `[..]`/comma list and ports may be ranges. Duplicates are dropped while
- * keeping order. Errors are per line so the rest still runs.
+ * Parse rules, one per line. Blank lines and `#` comments are skipped. Each rule
+ * is `[SOURCES ->] TARGETS : PORTS [/tcp|/udp]`, where every part is a single
+ * item or a `[..]`/comma list, targets and sources may be subnets, and ports may
+ * be ranges or service names. A line with several sources becomes one rule per
+ * source (same line number): each is checked from its own server. Duplicates are
+ * dropped while keeping order. Errors are per line so the rest still runs. The
+ * cap here is per rule; what one checking host may run in total is the plan's
+ * question (netroute.ts), since rules of one paste go to different servers.
  */
 export function parseRules(text: string): { rules: NetRule[]; errors: ParseError[] } {
   const rules: NetRule[] = [];
   const errors: ParseError[] = [];
-  let total = 0;
   text.split(/\r?\n/).forEach((rawLine, i) => {
     const line = i + 1;
     const body = normalizeRuleLine(rawLine.replace(/#.*$/, ""));
@@ -151,22 +236,24 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
     const parts = body.split(ARROW);
     if (parts.length > 2) return void errors.push({ line, code: "syntax", token: body });
     const src = parts.length === 2 ? takeLabels(parts[0]) : null;
-    const source = src ? src.rest.trim() : null;
+    const sources = src ? [...new Set(splitList(src.rest))] : [null];
     const dst = takeLabels(parts.length === 2 ? parts[1] : parts[0]);
     const rhs = dst.rest;
-    if (source !== null && (!source || !validHost(source))) {
-      return void errors.push({ line, code: "host", token: source });
-    }
-    const m = /^(.+?)\s*:\s*(\[[^\]]*\]|[\d\s,;-]+?)\s*(?:\/\s*(tcp|udp))?$/i.exec(rhs.trim());
+    if (sources.length === 0) return void errors.push({ line, code: "host", token: "" });
+    const badSource = sources.find((s) => s !== null && !validHost(s) && !isCidr(s));
+    if (badSource !== undefined) return void errors.push({ line, code: "host", token: badSource ?? "" });
+    const m = /^(.+?)\s*:\s*(\[[^\]]*\]|[A-Za-z0-9\s,;-]+?)\s*(?:\/\s*(tcp|udp))?$/i.exec(rhs.trim());
     if (!m) return void errors.push({ line, code: "syntax", token: rhs.trim() });
-    const targets = [...new Set(splitList(m[1]))];
-    if (targets.length === 0) return void errors.push({ line, code: "empty", token: m[1] });
-    const badHost = targets.find((h) => !validHost(h));
+    const written = [...new Set(splitList(m[1]))];
+    if (written.length === 0) return void errors.push({ line, code: "empty", token: m[1] });
+    const badHost = written.find((h) => !validHost(h) && !isCidr(h));
     if (badHost) return void errors.push({ line, code: "host", token: badHost });
+    // A subnet is kept as written in its canonical form: results group under it.
+    const targets = [...new Set(written.map((h) => (isCidr(h) ? cidrText(parseCidr(h)!) : h)))];
     // `0.0.0.0` means "any address": a connect to it lands on the checking host
     // itself (Linux routes it to loopback), so an "open" would be about the wrong
-    // machine. It's also the builder's placeholder — never let it through unfilled.
-    const unspecified = targets.find((h) => h === "0.0.0.0");
+    // machine. A /31 or /32 around it would smuggle it back in.
+    const unspecified = targets.find((h) => h === "0.0.0.0" || /^0\.0\.0\.0\/3[12]$/.test(h));
     if (unspecified) return void errors.push({ line, code: "unspecified", token: unspecified });
     const portToks = splitList(m[2]);
     if (portToks.length === 0) return void errors.push({ line, code: "empty", token: m[2] });
@@ -174,23 +261,33 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
     for (const tok of portToks) {
       const exp = expandPort(tok);
       if (!exp) {
-        return void errors.push({ line, code: /-/.test(tok) ? "range" : "port", token: tok });
+        return void errors.push({ line, code: /^\d+-/.test(tok) ? "range" : "port", token: tok });
       }
       for (const p of exp) if (!ports.includes(p)) ports.push(p);
     }
     const proto = (m[3]?.toLowerCase() ?? "tcp") as Proto;
     // UDP rows are never connected (see `udp` status), so they don't count.
-    const cost = proto === "tcp" ? targets.length * ports.length : 0;
-    if (total + cost > MAX_CHECKS) {
+    if (proto === "tcp" && ruleCost(targets, ports) > MAX_CHECKS) {
       return void errors.push({ line, code: "tooMany", token: String(MAX_CHECKS) });
     }
-    total += cost;
-    const rule: NetRule = { line, source, targets, ports, proto };
-    if (src?.label) rule.sourceLabel = src.label;
-    if (dst.label) rule.label = dst.label;
-    rules.push(rule);
+    for (const source of sources) {
+      const rule: NetRule = { line, source, targets, ports, proto };
+      if (src?.label) rule.sourceLabel = src.label;
+      if (dst.label) rule.label = dst.label;
+      rules.push(rule);
+    }
   });
   return { rules, errors };
+}
+
+/** Connects a rule's targets × ports amount to (subnets counted by their hosts). */
+function ruleCost(targets: string[], ports: number[]): number {
+  return targets.reduce((n, t) => n + targetSize(t), 0) * ports.length;
+}
+
+/** Connects a set of rules makes from one host — the number the cap is about. */
+export function checkCount(rules: NetRule[]): number {
+  return checkTargets(rules).reduce((n, t) => n + t.ports.length, 0);
 }
 
 /** A host to probe with its ports — what the native transport receives. */
@@ -200,14 +297,15 @@ export interface NetTarget {
 }
 
 /**
- * Merge every TCP rule into unique host → ports, preserving first-seen order.
- * `only` restricts to `host:port` keys (the "retry unreachable" pass).
+ * Merge every TCP rule into unique host → ports, preserving first-seen order;
+ * a subnet target turns into its host addresses. `only` restricts to
+ * `host:port` keys (the "retry unreachable" pass).
  */
 export function checkTargets(rules: NetRule[], only?: Set<string>): NetTarget[] {
   const map = new Map<string, number[]>();
   for (const r of rules) {
     if (r.proto !== "tcp") continue;
-    for (const h of r.targets) {
+    for (const h of r.targets.flatMap(expandTarget)) {
       for (const p of r.ports) {
         if (only && !only.has(checkKey(h, p))) continue;
         const list = map.get(h) ?? [];
@@ -325,15 +423,13 @@ export function netcheckArgs(
       `    [ -n "$sr" ] && printf 'S\\t%s\\t%s\\n' "$1" "$sr"`,
       `  fi`,
       `}`,
+      // One line per host, not per port: a subnet is hundreds of hosts, and the
+      // whole script travels as one argument (Linux caps it at 128 KiB).
+      `n=0`,
+      `c() { h=$1; shift; for p in "$@"; do chk "$h" "$p" & n=$((n+1)); [ $((n % ${BATCH})) -eq 0 ] && wait; done; }`,
     );
     for (const t of targets) lines.push(`res ${shellQuote(t.host)}`);
-    let n = 0;
-    for (const t of targets) {
-      for (const p of t.ports) {
-        lines.push(`chk ${shellQuote(t.host)} ${p} &`);
-        if (++n % BATCH === 0) lines.push("wait");
-      }
-    }
+    for (const t of targets) lines.push(`c ${shellQuote(t.host)} ${t.ports.join(" ")}`);
     lines.push("wait");
   }
   lines.push(`printf 'E\\n'`);
@@ -579,6 +675,8 @@ export function sourceMatch(source: string | null, rep: Pick<NetReport, "hostnam
   if (!source) return "none";
   const s = source.toLowerCase();
   if (rep.addrs.some((a) => a.toLowerCase() === s)) return "ok";
+  const net = parseCidr(source);
+  if (net && rep.addrs.some((a) => cidrContains(net, a))) return "ok";
   const host = rep.hostname.toLowerCase();
   if (host && (host === s || host.split(".")[0] === s)) return "ok";
   return rep.addrs.length === 0 ? "unknown" : "foreign";
@@ -587,23 +685,44 @@ export function sourceMatch(source: string | null, rep: Pick<NetReport, "hostnam
 /**
  * Whether the route to a target leaves from a different address than the rule's
  * source — the classic multi-homed trap: the firewall rule names `.180`, the
- * packets leave from `.181`. Only meaningful for an IP source that IS ours.
+ * packets leave from `.181`. Only meaningful for an IP (or subnet) source that
+ * IS ours; for a subnet, "different" means "outside it".
  */
 export function egressDiffers(source: string | null, target: string, rep: NetReport): boolean {
-  if (!source || !isIpv4(source)) return false;
   const src = rep.routeSrc[target];
-  return !!src && src !== source && sourceMatch(source, rep) === "ok";
+  if (!source || !src) return false;
+  // A subnet source: what matters is whether the packets leave from inside it.
+  const net = parseCidr(source);
+  if (net) return !cidrContains(net, src) && sourceMatch(source, rep) === "ok";
+  if (!isIpv4(source)) return false;
+  return src !== source && sourceMatch(source, rep) === "ok";
+}
+
+/**
+ * Whether the report should say "rule says …" next to the real egress: only
+ * when the rule names an address the packets don't leave from. A server named
+ * by its name (`app-01`) isn't contradicted by its own address, nor a subnet by
+ * an address inside it.
+ */
+function ruleSourceDiffers(source: string | null, route: string): boolean {
+  if (!source || !route || source === route) return false;
+  const net = parseCidr(source);
+  if (net) return !cidrContains(net, route);
+  return isIpv4(source);
 }
 
 // ── Presentation helpers ────────────────────────────────────────────────────
 
-/** Result rows for one rule target, in the rule's port order. */
-export function rowsFor(rule: NetRule, host: string, rep: NetReport | null): PortResult[] {
-  return rule.ports.map((port) => {
-    if (rule.proto === "udp") return { host, port, status: "udp" as const, ms: null, detail: "" };
-    const hit = rep?.results.find((r) => r.host === host && r.port === port);
-    return hit ?? { host, port, status: "missing" as const, ms: null, detail: "" };
-  });
+/** Result rows for one rule target, in the rule's port order — a subnet target
+ *  gives a row per host address and port. */
+export function rowsFor(rule: NetRule, target: string, rep: NetReport | null): PortResult[] {
+  return expandTarget(target).flatMap((host) =>
+    rule.ports.map((port) => {
+      if (rule.proto === "udp") return { host, port, status: "udp" as const, ms: null, detail: "" };
+      const hit = rep?.results.find((r) => r.host === host && r.port === port);
+      return hit ?? { host, port, status: "missing" as const, ms: null, detail: "" };
+    }),
+  );
 }
 
 // Well-known ports, as a hint next to the number. Protocol/product names are
@@ -626,6 +745,24 @@ export function serviceName(port: number): string {
   return SERVICES[port] ?? "";
 }
 
+// Names a request writes instead of a number: every name above, plus the
+// spellings tickets use for the same services.
+const SERVICE_PORTS: Record<string, number> = {
+  ...Object.fromEntries(Object.entries(SERVICES).map(([port, name]) => [name, Number(port)])),
+  postgresql: 5432,
+  mongo: 27017,
+  rabbitmq: 5672,
+  "ms-sql": 1433,
+  ldaps: 636,
+  winrm: 5985,
+  k8s: 6443,
+};
+
+/** The port a service name stands for (`ssh` → 22), or null for an unknown word. */
+export function servicePort(name: string): number | null {
+  return SERVICE_PORTS[name.toLowerCase()] ?? null;
+}
+
 /** Counts for a rule target's summary pill. */
 export function tally(rows: PortResult[]): { open: number; checked: number } {
   const checked = rows.filter((r) => r.status !== "udp" && r.status !== "missing").length;
@@ -643,6 +780,8 @@ export interface ReportWords {
   ms: (n: number) => string;
   /** "rule says 10.64.48.181" — the rule's source differs from the real one. */
   ruleSource: (source: string) => string;
+  /** "251 others: refused 5, timeout 246" — a subnet's hosts that didn't open. */
+  rest: (n: number, parts: string) => string;
   status: Record<PortStatus, string>;
   /** Markdown table headers. */
   cols: { source: string; target: string; port: string; status: string; time: string; service: string };
@@ -682,22 +821,28 @@ interface ReportRow {
   status: PortStatus;
   ms: number | null;
   service: string;
+  /** A subnet's hosts on this port that didn't open, counted by status — the
+   *  row then names the subnet, not one address. */
+  rest?: Partial<Record<PortStatus, number>>;
 }
+
+/** Statuses in the order a subnet's summary names them. */
+const REST_ORDER: readonly PortStatus[] = ["refused", "timeout", "unreachable", "dns", "error", "missing", "udp"];
 
 function reportRows(rules: NetRule[], rep: NetReport): ReportRow[] {
   const rows: ReportRow[] = [];
   for (const rule of rules) {
-    for (const host of rule.targets) {
-      const route = rep.routeSrc[host] ?? "";
-      const source = route || rule.source || "";
-      const resolved = rep.resolved[host] && rep.resolved[host] !== host ? rep.resolved[host] : null;
-      for (const r of rowsFor(rule, host, rep)) {
-        rows.push({
+    for (const target of rule.targets) {
+      const subnet = isCidr(target);
+      const row = (r: PortResult): ReportRow => {
+        const route = rep.routeSrc[r.host] ?? "";
+        const resolved = rep.resolved[r.host] && rep.resolved[r.host] !== r.host ? rep.resolved[r.host] : null;
+        return {
           mark: mark(r.status),
-          source,
-          ruleSource: rule.source && route && rule.source !== route ? rule.source : null,
+          source: route || rule.source || "",
+          ruleSource: ruleSourceDiffers(rule.source, route) ? rule.source : null,
           sourceLabel: rule.sourceLabel ?? "",
-          host,
+          host: r.host,
           label: rule.label ?? "",
           resolved,
           port: r.port,
@@ -705,11 +850,41 @@ function reportRows(rules: NetRule[], rep: NetReport): ReportRow[] {
           status: r.status,
           ms: r.ms,
           service: serviceName(r.port),
-        });
+        };
+      };
+      const results = rowsFor(rule, target, rep);
+      if (!subnet) {
+        rows.push(...results.map(row));
+        continue;
+      }
+      // A subnet: every host that opened by name, the rest as one counted line
+      // per port — 254 lines of "timeout" would bury the answer.
+      for (const port of rule.ports) {
+        const onPort = results.filter((r) => r.port === port);
+        const open = onPort.filter((r) => r.status === "open");
+        rows.push(...open.map(row));
+        const rest = onPort.filter((r) => r.status !== "open");
+        if (rest.length === 0) continue;
+        const counts: Partial<Record<PortStatus, number>> = {};
+        for (const r of rest) counts[r.status] = (counts[r.status] ?? 0) + 1;
+        const first = row(rest[0]);
+        const negative = rest.some((r) => mark(r.status) === "✗");
+        rows.push({ ...first, host: target, resolved: null, ms: null, mark: negative ? "✗" : "·", rest: counts });
       }
     }
   }
   return rows;
+}
+
+/** "refused 5, timeout 246" — a subnet summary's counts in a fixed order. */
+function restParts(rest: Partial<Record<PortStatus, number>>, words: ReportWords): string {
+  return REST_ORDER.filter((s) => rest[s])
+    .map((s) => `${words.status[s]} ${rest[s]}`)
+    .join(", ");
+}
+
+function restTotal(rest: Partial<Record<PortStatus, number>>): number {
+  return Object.values(rest).reduce((n, c) => n + (c ?? 0), 0);
 }
 
 /**
@@ -726,8 +901,10 @@ export function formatReport(
   opts: { at: string; format?: ReportFormat },
 ): string {
   const rows = reportRows(rules, rep);
-  const checked = rows.filter((r) => r.status !== "udp" && r.status !== "missing");
-  const tallyText = words.tally(checked.filter((r) => r.status === "open").length, checked.length);
+  // Counted over every address, a subnet's summary lines included.
+  const all = rules.flatMap((rule) => rule.targets.flatMap((target) => rowsFor(rule, target, rep)));
+  const sum = tally(all);
+  const tallyText = words.tally(sum.open, sum.checked);
   const addrs = visibleAddrs(rep.addrs).join(", ");
   const time = (r: ReportRow) => (r.ms === null ? "" : words.ms(r.ms));
 
@@ -750,8 +927,9 @@ export function formatReport(
       const target = [r.host, r.resolved && `(${r.resolved})`, r.label && `— ${r.label}`]
         .filter(Boolean)
         .join(" ");
+      const status = r.rest ? words.rest(restTotal(r.rest), restParts(r.rest, words)) : words.status[r.status];
       out.push(
-        `| ${r.mark} | ${src || "—"} | ${target} | ${r.port}/${r.proto} | ${words.status[r.status]} | ${time(r) || "—"} | ${r.service || "—"} |`,
+        `| ${r.mark} | ${src || "—"} | ${target} | ${r.port}/${r.proto} | ${status} | ${time(r) || "—"} | ${r.service || "—"} |`,
       );
     }
     return out.join("\n");
@@ -765,10 +943,17 @@ export function formatReport(
   const rule = (r: ReportRow) =>
     `${r.source ? `${r.source}${srcNote(r)} → ` : ""}${r.host}:${r.port}/${r.proto}`;
   const ruleW = Math.max(0, ...rows.map((r) => rule(r).length));
-  const statusW = Math.max(0, ...rows.map((r) => words.status[r.status].length));
-  const timeW = Math.max(0, ...rows.map((r) => time(r).length));
+  const plain = rows.filter((r) => !r.rest);
+  const statusW = Math.max(0, ...plain.map((r) => words.status[r.status].length));
+  const timeW = Math.max(0, ...plain.map((r) => time(r).length));
   for (const r of rows) {
     const ruleSrc = r.ruleSource && [r.ruleSource, r.sourceLabel].filter(Boolean).join(" ");
+    if (r.rest) {
+      const tail = [r.label, r.service, ruleSrc ? `(${words.ruleSource(ruleSrc)})` : ""].filter(Boolean);
+      const summary = words.rest(restTotal(r.rest), restParts(r.rest, words));
+      out.push(`${r.mark} ${[rule(r).padEnd(ruleW), summary, ...tail].join("  ")}`.trimEnd());
+      continue;
+    }
     const tail = [
       r.label,
       r.service,
@@ -786,8 +971,21 @@ export function formatReport(
   return out.join("\n");
 }
 
+/**
+ * The report of a run from several servers: each server's own report — who
+ * checked, how (its own method: `words` per part), one line per port — one
+ * after another. A blank line between
+ * them; each block reads on its own, so any one can be forwarded alone.
+ */
+export function formatReports(
+  parts: { rules: NetRule[]; rep: NetReport; words: ReportWords }[],
+  opts: { at: string; format?: ReportFormat },
+): string {
+  return parts.map((p) => formatReport(p.rules, p.rep, p.words, opts)).join("\n\n");
+}
+
 /** One rule back in the syntax it was written in (notes kept), for the audit line. */
-function ruleText(r: NetRule): string {
+export function ruleText(r: NetRule): string {
   const note = (n?: string) => (n ? ` (${n})` : "");
   const targets = r.targets.length === 1 ? r.targets[0] : `[${r.targets.join(", ")}]`;
   const ports = r.ports.length === 1 ? String(r.ports[0]) : `[${r.ports.join(", ")}]`;
@@ -818,6 +1016,11 @@ export function netcheckAudit(
 /** A run that produced no report (no session answer, a transport error). */
 export function netcheckFailureAudit(rules: NetRule[], message: string, retry = false): AuditEntry {
   return { op: netcheckOp(rules, retry), body: auditText(message.split("\n")[0].trim()), exitCode: 1 };
+}
+
+/** A run the user stopped (ADR 0032): not a failure — exit 130, like Ctrl+C. */
+export function netcheckStoppedAudit(rules: NetRule[], message: string, retry = false): AuditEntry {
+  return { op: netcheckOp(rules, retry), body: auditText(message), exitCode: 130 };
 }
 
 function netcheckOp(rules: NetRule[], retry: boolean): string {
