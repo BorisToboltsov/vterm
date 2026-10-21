@@ -28,7 +28,7 @@
 | Стили | **Tailwind CSS v4** | Плагин Vite, без `tailwind.config.js`/PostCSS; токены — через `@theme` в [app.css](../src/app.css) |
 | Сборка | **Vite 6** | Dev-сервер и бандл |
 | Терминал | **xterm.js 6** + fit/webgl/search/web-links | ANSI, поиск по буферу, кликабельные ссылки |
-| SSH | **russh 0.61** | Чистый Rust: пароль/ключ, PTY, shell, exec |
+| SSH | **russh 0.64** | Чистый Rust: пароль/ключ, PTY, shell, exec |
 | Локальный PTY | **portable-pty 0.9** | forkpty (Unix) / ConPTY (Windows) |
 | SFTP | **russh-sftp 2** | Поверх той же SSH-сессии |
 | Редактор | **CodeMirror 6** | 50+ языков, линт, инлайн-diff (`unifiedMergeView`) |
