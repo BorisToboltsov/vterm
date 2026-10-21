@@ -165,6 +165,20 @@ docker compose -f e2e/docker-compose.ssh.yml down
 Всё, что меняет **разговор с сервером** (атрибуты, порядок `remove`/`rename`, кодировки),
 закрепляй здесь, а не только юнит-тестом на чистой функции.
 
+### Живое исполнение команд и остановка
+
+Модуль `live_exec` в [ssh.rs](../src-tauri/src/ssh.rs) — против того же sshd, что `live_sftp`:
+код выхода приходит и тогда, когда сервер шлёт EOF раньше него (двадцать прогонов подряд —
+выход на EOF терял его примерно в каждом втором), `stdin` доходит до команды, а остановка
+(`exec_captured_until`) заканчивает команду **на сервере**: после «Остановить» файл, в который
+она пишет, перестаёт расти.
+
+```sh
+docker compose -f e2e/docker-compose.ssh.yml up -d
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_exec -- --ignored
+docker compose -f e2e/docker-compose.ssh.yml down
+```
+
 ### Живой вход через keyboard-interactive
 
 Модуль `live_kbdint` в [ssh.rs](../src-tauri/src/ssh.rs) логинится в PAM-sshd, где метод

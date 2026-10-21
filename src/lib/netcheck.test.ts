@@ -31,6 +31,16 @@ import {
   visibleAddrs,
   MAX_CHECKS,
   BATCH,
+  checkCount,
+  servicePort,
+  parseCidr,
+  cidrText,
+  cidrHostCount,
+  cidrContains,
+  isCidr,
+  expandTarget,
+  targetSize,
+  formatReports,
   HISTORY_MAX,
   HISTORY_HOSTS_MAX,
   type NetReport,
@@ -137,6 +147,53 @@ describe("parseRules", () => {
     expect(parseRules(`h:1-${MAX_CHECKS}/tcp\nh:1-2000/udp`).errors).toEqual([]);
   });
 
+  it("caps one rule, not the paste: rules of one request go to different servers", () => {
+    const half = `h:1-${MAX_CHECKS / 2}`;
+    expect(parseRules(`${half}\n${half}\n${half}`).errors).toEqual([]);
+    expect(checkCount(parseRules(`${half}\nh2:22`).rules)).toBe(MAX_CHECKS / 2 + 1);
+  });
+
+  it("reads several sources as one rule per source", () => {
+    const { rules, errors } = parseRules("app-01, app-02 (web) -> db:5432");
+    expect(errors).toEqual([]);
+    expect(rules.map((r) => [r.line, r.source, r.sourceLabel])).toEqual([
+      [1, "app-01", "web"],
+      [1, "app-02", "web"],
+    ]);
+    expect(parseRules("[a, b, a] -> db:22").rules.map((r) => r.source)).toEqual(["a", "b"]);
+  });
+
+  it("takes service names for ports", () => {
+    const { rules, errors } = parseRules("db:[ssh, https, PostgreSQL, 6432]\nweb:http");
+    expect(errors).toEqual([]);
+    expect(rules[0].ports).toEqual([22, 443, 5432, 6432]);
+    expect(rules[1].ports).toEqual([80]);
+    expect(parseRules("db:[ssh, nosuchservice]").errors[0]).toMatchObject({ code: "port", token: "nosuchservice" });
+    expect(servicePort("Redis")).toBe(6379);
+    expect(servicePort("nope")).toBeNull();
+  });
+
+  it("accepts subnets on both sides, in canonical form", () => {
+    const { rules, errors } = parseRules("10.64.48.0/24 -> [192.168.0.7/24, 10.0.0.4/30]:22");
+    expect(errors).toEqual([]);
+    expect(rules[0]).toMatchObject({ source: "10.64.48.0/24", targets: ["192.168.0.0/24", "10.0.0.4/30"] });
+    expect(checkTargets(rules).map((t) => t.host)).toHaveLength(254 + 2);
+  });
+
+  it("caps a subnet by the hosts it stands for", () => {
+    expect(parseRules("10.0.0.0/16:22").errors[0]).toMatchObject({ code: "tooMany" });
+    expect(parseRules("10.0.0.0/24:[22, 80, 443, 5432, 6379, 8080, 8443, 9090]").errors).toEqual([]);
+    expect(parseRules("10.0.0.0/24:1-9").errors[0]).toMatchObject({ code: "tooMany" });
+  });
+
+  it("refuses a subnet that would bring 0.0.0.0 back", () => {
+    expect(parseRules("0.0.0.0/32:22").errors[0]).toMatchObject({ code: "unspecified" });
+    expect(parseRules("0.0.0.0/31:22").errors[0]).toMatchObject({ code: "unspecified" });
+    // In a /30 and wider it is the network address — not a host, never checked.
+    expect(parseRules("0.0.0.0/30:22").errors).toEqual([]);
+    expect(expandTarget("0.0.0.0/30")).toEqual(["0.0.0.1", "0.0.0.2"]);
+  });
+
   it("isIpv4 is strict", () => {
     expect(isIpv4("10.0.0.1")).toBe(true);
     expect(isIpv4("10.0.0.256")).toBe(false);
@@ -159,13 +216,47 @@ describe("checkTargets", () => {
   });
 });
 
+describe("subnets", () => {
+  it("parses and masks like ip route", () => {
+    expect(parseCidr("192.168.0.7/24")).toEqual(parseCidr("192.168.0.0/24"));
+    expect(cidrText(parseCidr("192.168.0.7/24")!)).toBe("192.168.0.0/24");
+    for (const bad of ["192.168.0.0/33", "192.168.0.300/24", "192.168.0.0", "db/24", "192.168.0.0/"]) {
+      expect(parseCidr(bad), bad).toBeNull();
+    }
+    expect(isCidr("10.0.0.0/8")).toBe(true);
+  });
+
+  it("counts host addresses: no network or broadcast, except /31 and /32", () => {
+    expect(cidrHostCount(parseCidr("10.0.0.0/24")!)).toBe(254);
+    expect(cidrHostCount(parseCidr("10.0.0.0/30")!)).toBe(2);
+    expect(cidrHostCount(parseCidr("10.0.0.0/31")!)).toBe(2);
+    expect(cidrHostCount(parseCidr("10.0.0.5/32")!)).toBe(1);
+    expect(expandTarget("10.0.0.0/30")).toEqual(["10.0.0.1", "10.0.0.2"]);
+    expect(expandTarget("10.0.0.4/31")).toEqual(["10.0.0.4", "10.0.0.5"]);
+    expect(expandTarget("10.0.0.5/32")).toEqual(["10.0.0.5"]);
+    expect(expandTarget("db.internal")).toEqual(["db.internal"]);
+    const hosts = expandTarget("192.168.1.0/24");
+    expect([hosts[0], hosts.at(-1)]).toEqual(["192.168.1.1", "192.168.1.254"]);
+    expect(targetSize("192.168.1.0/24")).toBe(254);
+    expect(targetSize("db")).toBe(1);
+  });
+
+  it("knows what lies inside", () => {
+    const c = parseCidr("10.64.48.0/24")!;
+    expect(cidrContains(c, "10.64.48.180")).toBe(true);
+    expect(cidrContains(c, "10.64.49.1")).toBe(false);
+    expect(cidrContains(c, "db")).toBe(false);
+    expect(cidrContains(parseCidr("0.0.0.0/0")!, "255.255.255.255")).toBe(true);
+  });
+});
+
 describe("netcheckArgs", () => {
   it("is a single sh -c token ending in the completion marker", () => {
     const args = netcheckArgs([{ host: "10.0.0.1", ports: [22] }]);
     expect(args.slice(0, 2)).toEqual(["sh", "-c"]);
     expect(args).toHaveLength(3);
     expect(args[2].trimEnd().endsWith("printf 'E\\n'")).toBe(true);
-    expect(args[2]).toContain("chk 10.0.0.1 22 &");
+    expect(args[2]).toMatch(/^c 10\.0\.0\.1 22$/m);
     expect(args[2]).toContain("res 10.0.0.1");
   });
 
@@ -181,17 +272,27 @@ describe("netcheckArgs", () => {
     expect(s.indexOf("M=nc")).toBeLessThan(s.indexOf("M=telnet"));
   });
 
-  it("waits between batches", () => {
+  it("waits after every batch and once more at the end", () => {
     const ports = Array.from({ length: BATCH + 1 }, (_, i) => i + 1);
     const s = netcheckArgs([{ host: "h", ports }])[2];
-    expect(s.match(/^wait$/gm)).toHaveLength(2);
+    expect(s).toContain(`[ $((n % ${BATCH})) -eq 0 ] && wait`);
+    expect(s).toMatch(new RegExp(`^c h ${ports.join(" ")}$`, "m"));
+    expect(s.match(/^wait$/gm)).toHaveLength(1);
+  });
+
+  it("writes one line per host, so a /24 stays far below the argument limit", () => {
+    const targets = checkTargets(parseRules("192.168.0.0/24:[22, 80, 443, 5432, 6379, 8080, 8443, 9090]").rules);
+    expect(targets).toHaveLength(254);
+    const script = netcheckArgs(targets)[2];
+    expect(script.match(/^c /gm)).toHaveLength(254);
+    expect(script.length).toBeLessThan(32 * 1024);
   });
 
   it("clamps the timeout and quotes hosts", () => {
     expect(netcheckArgs([], 999)[2]).toMatch(/^T=30$/m);
     expect(netcheckArgs([], 0)[2]).toMatch(/^T=1$/m);
     // Validation keeps hostnames clean; quoting is the second line of defence.
-    expect(netcheckArgs([{ host: "a b", ports: [1] }])[2]).toContain("chk 'a b' 1 &");
+    expect(netcheckArgs([{ host: "a b", ports: [1] }])[2]).toContain("c 'a b' 1\n");
   });
 
   it("budgets every batch plus slack", () => {
@@ -437,6 +538,7 @@ describe("presentation", () => {
     method: "Method: bash · timeout 3 s",
     ms: (n) => `${n} ms`,
     ruleSource: (src) => `rule says ${src}`,
+    rest: (n, parts) => `${n} others: ${parts}`,
     status,
     cols: { source: "Source", target: "Target", port: "Port", status: "Status", time: "Time", service: "Service" },
   };
@@ -514,6 +616,55 @@ describe("presentation", () => {
     expect(formatReport(rules, rep(), words, { at }).split("\n")[3]).toBe(
       "✓ 10.64.48.180 → db:5432/tcp  open  4 ms  postgres  (10.70.39.20)  (rule says 10.64.48.181 gitlab)",
     );
+  });
+
+  it("names a subnet's open hosts and counts the rest in one line per port", () => {
+    const { rules } = parseRules("10.64.48.180 -> 192.168.0.0/29:[22, 80]");
+    const sub = report({
+      addrs: ["10.64.48.180"],
+      routeSrc: Object.fromEntries(expandTarget("192.168.0.0/29").map((h) => [h, "10.64.48.180"])),
+      results: [
+        { host: "192.168.0.2", port: 22, status: "open", ms: 3, detail: "" },
+        { host: "192.168.0.5", port: 22, status: "open", ms: 4, detail: "" },
+        ...["192.168.0.1", "192.168.0.3", "192.168.0.4", "192.168.0.6"].map((host, i) => ({
+          host,
+          port: 22,
+          status: (i === 0 ? "refused" : "timeout") as PortStatus,
+          ms: 1,
+          detail: "",
+        })),
+        ...expandTarget("192.168.0.0/29").map((host) => ({ host, port: 80, status: "timeout" as PortStatus, ms: 3000, detail: "" })),
+      ],
+    });
+    expect(formatReport(rules, sub, words, { at })).toBe(
+      [
+        "Access check · app-01 (10.64.48.180) · 2026-09-30 14:12 +03:00 · 2 of 12 open",
+        "Method: bash · timeout 3 s",
+        "",
+        "✓ 10.64.48.180 → 192.168.0.2:22/tcp     open  3 ms  ssh",
+        "✓ 10.64.48.180 → 192.168.0.5:22/tcp     open  4 ms  ssh",
+        "✗ 10.64.48.180 → 192.168.0.0/29:22/tcp  4 others: refused 1, timeout 3  ssh",
+        "✗ 10.64.48.180 → 192.168.0.0/29:80/tcp  6 others: timeout 6  http",
+      ].join("\n"),
+    );
+    const md = formatReport(rules, sub, words, { at, format: "markdown" }).split("\n");
+    expect(md[7]).toBe("| ✗ | 10.64.48.180 | 192.168.0.0/29 | 22/tcp | 4 others: refused 1, timeout 3 | — | ssh |");
+  });
+
+  it("puts the reports of several servers one after another", () => {
+    const { rules } = parseRules("db:5432");
+    const two = formatReports(
+      [
+        { rules, rep: rep(), words },
+        { rules, rep: { ...rep(), hostname: "app-02", addrs: ["10.64.48.181"] }, words: { ...words, method: "Method: nc · timeout 3 s" } },
+      ],
+      { at },
+    );
+    const second = two.indexOf("\n\nAccess check · app-02 (10.64.48.181) ·");
+    expect(two).toMatch(/^Access check · app-01 /);
+    expect(second).toBeGreaterThan(0);
+    expect(two.slice(0, second)).toContain("Method: bash · timeout 3 s");
+    expect(two.slice(second)).toContain("Method: nc · timeout 3 s");
   });
 
   it("audits a run as the rules plus the copyable report, not the protocol", () => {

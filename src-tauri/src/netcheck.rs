@@ -21,13 +21,15 @@ use futures_util::stream::{self, StreamExt};
 use serde::Deserialize;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::net::{TcpSocket, TcpStream};
 
 /// Parallel connects at a time (matches `BATCH` in netcheck.ts).
 const BATCH: usize = 32;
-/// Hard cap per run (matches `MAX_CHECKS` in netcheck.ts).
-pub const MAX_CHECKS: usize = 512;
+/// Hard cap per run from this host (matches `MAX_CHECKS` in netcheck.ts): a /24
+/// on eight ports fits, a typo like `1-65535` doesn't (ADR 0032).
+pub const MAX_CHECKS: usize = 2048;
 
 /// One host to probe and its ports (mirror of `NetTarget` in netcheck.ts).
 #[derive(Deserialize, Debug, Clone)]
@@ -191,8 +193,10 @@ async fn connect_once(ip: IpAddr, port: u16, timeout: Duration) -> (&'static str
 }
 
 /// Run every check natively and print the line protocol (`H`/`A`/`M`/`D`/`S`/
-/// `N`/`E`). With no targets it is an identity probe for the panel header.
-pub async fn run_native(targets: &[NetTarget], timeout: Duration) -> String {
+/// `N`/`E`). With no targets it is an identity probe for the panel header. Once
+/// `cancel` is set no further connect starts and the run ends without `E`; the
+/// caller reports it as stopped (ADR 0032).
+pub async fn run_native(targets: &[NetTarget], timeout: Duration, cancel: &AtomicBool) -> String {
     let (hostname, addrs) = host_facts();
     let mut out = format!("H\t{}\n", field(&hostname));
     for a in &addrs {
@@ -217,7 +221,10 @@ pub async fn run_native(targets: &[NetTarget], timeout: Duration) -> String {
         }
     }
 
-    let lines: Vec<String> = stream::iter(jobs)
+    // Unordered: a subnet is mostly hosts that never answer, and one waiting
+    // out its timeout must not hold back the lines behind it.
+    let mut lines = stream::iter(jobs)
+        .take_while(|_| std::future::ready(!cancel.load(Ordering::Relaxed)))
         .map(|(host, port, ip)| async move {
             match ip {
                 None => format!("N\t{}\t{port}\tdns\t\t\n", field(&host)),
@@ -231,13 +238,13 @@ pub async fn run_native(targets: &[NetTarget], timeout: Duration) -> String {
                 }
             }
         })
-        .buffered(BATCH)
-        .collect()
-        .await;
-    for l in lines {
+        .buffer_unordered(BATCH);
+    while let Some(l) = lines.next().await {
         out.push_str(&l);
     }
-    out.push_str("E\n");
+    if !cancel.load(Ordering::Relaxed) {
+        out.push_str("E\n");
+    }
     out
 }
 
@@ -292,6 +299,7 @@ mod tests {
         let out = run_native(
             &[target("127.0.0.1", &[open_port, closed_port])],
             Duration::from_secs(2),
+            &AtomicBool::new(false),
         )
         .await;
         assert!(out.starts_with("H\t"), "{out}");
@@ -325,6 +333,7 @@ mod tests {
         let out = run_native(
             &[target("no-such-host.invalid", &[22, 80])],
             Duration::from_secs(2),
+            &AtomicBool::new(false),
         )
         .await;
         assert!(out.contains("D\tno-such-host.invalid\t\n"), "{out}");
@@ -334,10 +343,53 @@ mod tests {
 
     #[tokio::test]
     async fn identity_probe_without_targets_is_complete() {
-        let out = run_native(&[], Duration::from_secs(1)).await;
+        let out = run_native(&[], Duration::from_secs(1), &AtomicBool::new(false)).await;
         assert!(out.contains("M\tnative\n"));
         assert!(!out.contains("N\t"));
         assert!(out.ends_with("E\n"));
+    }
+
+    #[tokio::test]
+    async fn a_stopped_run_starts_no_connect_and_has_no_end_marker() {
+        // Stopped before the first connect: identity lines only, no `N`, no `E` —
+        // the frontend reads the run as stopped, not as "nothing answered".
+        let out = run_native(
+            &[target("127.0.0.1", &[1, 2, 3])],
+            Duration::from_secs(1),
+            &AtomicBool::new(true),
+        )
+        .await;
+        assert!(out.starts_with("H\t"), "{out}");
+        assert!(!out.contains("N\t"), "{out}");
+        assert!(!out.ends_with("E\n"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn a_run_stopped_midway_keeps_what_it_checked() {
+        // 10.255.255.1 is unroutable-ish: the connect waits out the timeout, so
+        // the flag set meanwhile stops every connect not yet started.
+        let flag = std::sync::Arc::new(AtomicBool::new(false));
+        let f2 = flag.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            f2.store(true, Ordering::Relaxed);
+        });
+        let ports: Vec<u16> = (1..=200).collect();
+        let started = Instant::now();
+        let out = run_native(
+            &[target("10.255.255.1", &ports)],
+            Duration::from_secs(1),
+            &flag,
+        )
+        .await;
+        let rows = out.lines().filter(|l| l.starts_with("N\t")).count();
+        assert!(rows <= BATCH, "{rows} connects after the stop:\n{out}");
+        assert!(!out.ends_with("E\n"));
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     /// Gate (v1.0.36): the app opens sockets of its own only for SSH (incl. the

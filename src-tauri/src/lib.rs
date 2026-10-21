@@ -1101,7 +1101,10 @@ async fn git_run(
 /// the frontend parses one format. `targets` is what the local side connects to;
 /// on SSH the script already embeds them. Not mirrored here: the raw protocol
 /// says nothing to a reader — the frontend records the parsed report through
-/// [`record_audit`].
+/// [`record_audit`]. `cancel_id` registers the run in the shared cancel map, so
+/// `sftp_cancel(cancel_id)` stops it (ADR 0032): the server's script is
+/// signalled and its channel closed, a local run starts no further connect.
+/// A stopped run answers [`AppError::Cancelled`].
 #[tauri::command]
 async fn netcheck_run(
     state: State<'_, AppState>,
@@ -1110,14 +1113,42 @@ async fn netcheck_run(
     targets: Vec<netcheck::NetTarget>,
     connect_timeout_secs: u64,
     timeout_secs: u64,
+    cancel_id: String,
 ) -> AppResult<netprobe::ProbeOutput> {
     netcheck::validate(&targets).map_err(AppError::Message)?;
-    if let Ok(session) = session_arc(&state, &session_id).await {
+    let cancel = register_cancel(&state, &cancel_id);
+    let res = netcheck_exec(
+        &state,
+        &session_id,
+        &args,
+        &targets,
+        connect_timeout_secs,
+        timeout_secs,
+        &cancel,
+    )
+    .await;
+    state.cancels.lock().unwrap().remove(&cancel_id);
+    res
+}
+
+/// The body of [`netcheck_run`], between registering its stop flag and removing it.
+async fn netcheck_exec(
+    state: &State<'_, AppState>,
+    session_id: &str,
+    args: &[String],
+    targets: &[netcheck::NetTarget],
+    connect_timeout_secs: u64,
+    timeout_secs: u64,
+    cancel: &AtomicBool,
+) -> AppResult<netprobe::ProbeOutput> {
+    if let Ok(session) = session_arc(state, session_id).await {
         if args.is_empty() {
             return Err(AppError::Message("netcheck: no arguments".into()));
         }
-        let cmd = netprobe::probe_command(&args);
-        let outcome = session.exec_captured(&cmd, timeout_secs.max(1)).await?;
+        let cmd = netprobe::probe_command(args);
+        let outcome = session
+            .exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))
+            .await?;
         let (stderr, exit_code) = if outcome.timed_out {
             (
                 format!("netcheck timed out after {}s", timeout_secs.max(1)),
@@ -1132,10 +1163,15 @@ async fn netcheck_run(
             exit_code,
         });
     }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    let local = state.local_ptys.lock().unwrap().get(session_id).cloned();
     if local.is_some() {
         let timeout = std::time::Duration::from_secs(connect_timeout_secs.clamp(1, 30));
-        let stdout = netcheck::run_native(&targets, timeout).await;
+        // Dropping the run on a stop drops its connects in flight as well.
+        let run = async { Ok(netcheck::run_native(targets, timeout, cancel).await) };
+        let stdout = sync::until_cancelled(run, cancel).await?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(AppError::Cancelled);
+        }
         return Ok(netprobe::ProbeOutput {
             stdout,
             stderr: String::new(),
@@ -2704,7 +2740,7 @@ mod tests {
         // masked summary of the PARSED result through `record_audit` instead; the
         // executors themselves must not write to the recording at all.
         let src = include_str!("lib.rs").replace("\r\n", "\n");
-        for name in ["probe_run", "netcheck_run"] {
+        for name in ["probe_run", "netcheck_run", "netcheck_exec"] {
             let code = command_code(&src, name);
             for banned in ["record_output", "annotate_recording", "audit_block"] {
                 assert!(
@@ -2715,6 +2751,36 @@ mod tests {
         }
         // …and the one recording path stays the formatted, sanitized block.
         assert!(command_code(&src, "record_audit").contains("netprobe::audit_block("));
+    }
+
+    /// Whether a netcheck run as written can be stopped: the command registers
+    /// its stop flag and removes it again, the SSH path passes it to the exec
+    /// (which signals and closes the channel), the local path runs under it.
+    fn netcheck_is_stoppable(src: &str) -> bool {
+        let run = command_code(src, "netcheck_run");
+        let exec = command_code(src, "netcheck_exec");
+        run.contains("register_cancel(&state, &cancel_id)")
+            && run.contains("state.cancels.lock().unwrap().remove(&cancel_id)")
+            && exec.contains("exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))")
+            && exec.contains("sync::until_cancelled(run, cancel)")
+            && !exec.contains(".exec_captured(")
+    }
+
+    #[test]
+    fn a_netcheck_run_can_always_be_stopped() {
+        // Guard (v1.21, ADR 0032): "Stop" on a subnet sweep must reach whatever
+        // runs it — on the server and on this machine alike.
+        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        assert!(netcheck_is_stoppable(&src));
+        // Planted: the SSH path forgets the flag, the local one runs unguarded.
+        let planted = src.replacen(
+            "exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))",
+            "exec_captured_until(&cmd, timeout_secs.max(1), None)",
+            1,
+        );
+        assert!(!netcheck_is_stoppable(&planted));
+        let planted = src.replacen("sync::until_cancelled(run, cancel)", "run", 1);
+        assert!(!netcheck_is_stoppable(&planted));
     }
 
     /// Everything before the tests, line comments stripped.

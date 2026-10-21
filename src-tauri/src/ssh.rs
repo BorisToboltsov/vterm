@@ -333,50 +333,20 @@ impl SshSession {
     /// (17.8): a clean, deterministic result to feed back to the model. Stateless
     /// between calls (its own shell — no shared cwd/env with the interactive PTY).
     pub async fn exec_captured(&self, command: &str, timeout_secs: u64) -> AppResult<ExecOutcome> {
-        let mut channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("exec channel failed: {e}"))?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| format!("exec failed: {e}"))?;
+        self.exec_captured_until(command, timeout_secs, None).await
+    }
 
-        let mut out: Vec<u8> = Vec::new();
-        let mut err: Vec<u8> = Vec::new();
-        let mut code: i32 = -1;
-        let collect = async {
-            loop {
-                match channel.wait().await {
-                    Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
-                    Some(ChannelMsg::ExtendedData { data, ext }) => {
-                        // ext == 1 is stderr; anything else joins stdout.
-                        if ext == 1 {
-                            err.extend_from_slice(&data);
-                        } else {
-                            out.extend_from_slice(&data);
-                        }
-                    }
-                    Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                    _ => {}
-                }
-            }
-        };
-
-        let timed_out = timeout(Duration::from_secs(timeout_secs.max(1)), collect)
-            .await
-            .is_err();
-        if timed_out {
-            let _ = channel.close().await;
-        }
-        Ok(ExecOutcome {
-            stdout: String::from_utf8_lossy(&out).into_owned(),
-            stderr: String::from_utf8_lossy(&err).into_owned(),
-            exit_code: code,
-            timed_out,
-        })
+    /// [`exec_captured`](Self::exec_captured) that the user can stop (ADR 0032):
+    /// once `cancel` is set the remote command gets `SIGTERM` and its channel is
+    /// closed — a stopped subnet sweep must not keep connecting from the server —
+    /// and the call returns [`AppError::Cancelled`] without waiting for it.
+    pub async fn exec_captured_until(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> AppResult<ExecOutcome> {
+        exec_on(&self.handle, command, &[], timeout_secs, cancel).await
     }
 
     /// Like [`exec_captured`](Self::exec_captured) but writes `stdin` to the
@@ -390,56 +360,7 @@ impl SshSession {
         stdin: &[u8],
         timeout_secs: u64,
     ) -> AppResult<ExecOutcome> {
-        let mut channel = self
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("exec channel failed: {e}"))?;
-        channel
-            .exec(true, command.as_bytes())
-            .await
-            .map_err(|e| format!("exec failed: {e}"))?;
-        if !stdin.is_empty() {
-            channel
-                .data(stdin)
-                .await
-                .map_err(|e| format!("stdin write failed: {e}"))?;
-            let _ = channel.eof().await;
-        }
-
-        let mut out: Vec<u8> = Vec::new();
-        let mut err: Vec<u8> = Vec::new();
-        let mut code: i32 = -1;
-        let collect = async {
-            loop {
-                match channel.wait().await {
-                    Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
-                    Some(ChannelMsg::ExtendedData { data, ext }) => {
-                        if ext == 1 {
-                            err.extend_from_slice(&data);
-                        } else {
-                            out.extend_from_slice(&data);
-                        }
-                    }
-                    Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
-                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                    _ => {}
-                }
-            }
-        };
-
-        let timed_out = timeout(Duration::from_secs(timeout_secs.max(1)), collect)
-            .await
-            .is_err();
-        if timed_out {
-            let _ = channel.close().await;
-        }
-        Ok(ExecOutcome {
-            stdout: String::from_utf8_lossy(&out).into_owned(),
-            stderr: String::from_utf8_lossy(&err).into_owned(),
-            exit_code: code,
-            timed_out,
-        })
+        exec_on(&self.handle, command, stdin, timeout_secs, None).await
     }
 
     /// Push bytes into the active recording as output (no-op if not recording).
@@ -452,6 +373,115 @@ impl SshSession {
         }
     }
 }
+
+/// The body of [`SshSession::exec_captured_until`] and
+/// [`SshSession::exec_captured_stdin`] (`stdin` written first, then EOF), over a
+/// bare client handle so the live tests can drive it against a real sshd.
+pub(crate) async fn exec_on<H: client::Handler>(
+    handle: &Handle<H>,
+    command: &str,
+    stdin: &[u8],
+    timeout_secs: u64,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> AppResult<ExecOutcome> {
+    let mut channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("exec channel failed: {e}"))?;
+    channel
+        .exec(true, command.as_bytes())
+        .await
+        .map_err(|e| format!("exec failed: {e}"))?;
+    if !stdin.is_empty() {
+        channel
+            .data(stdin)
+            .await
+            .map_err(|e| format!("stdin write failed: {e}"))?;
+        let _ = channel.eof().await;
+    }
+
+    let mut out: Vec<u8> = Vec::new();
+    let mut err: Vec<u8> = Vec::new();
+    let mut code: Option<i32> = None;
+    let mut stopped = false;
+    let stop = |c: Option<&std::sync::atomic::AtomicBool>| {
+        c.is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed))
+    };
+    let collect = async {
+        // OpenSSH sends EOF, then the exit status, then CLOSE: stopping at EOF
+        // lost the exit code about half the time (it read -1). After EOF the
+        // output is whole; the code is waited for briefly, not forever — a
+        // server that never sends it still answers within the grace.
+        let mut eof_at: Option<tokio::time::Instant> = None;
+        loop {
+            let grace = async {
+                match eof_at {
+                    Some(at) => tokio::time::sleep_until(at + EXIT_STATUS_GRACE).await,
+                    None => std::future::pending().await,
+                }
+            };
+            let msg = tokio::select! {
+                m = channel.wait() => m,
+                _ = grace => break,
+                _ = tokio::time::sleep(Duration::from_millis(100)), if cancel.is_some() => {
+                    if stop(cancel) {
+                        stopped = true;
+                        break;
+                    }
+                    continue;
+                }
+            };
+            match msg {
+                Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                Some(ChannelMsg::ExtendedData { data, ext }) => {
+                    // ext == 1 is stderr; anything else joins stdout.
+                    if ext == 1 {
+                        err.extend_from_slice(&data);
+                    } else {
+                        out.extend_from_slice(&data);
+                    }
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    code = Some(exit_status as i32);
+                    if eof_at.is_some() {
+                        break;
+                    }
+                }
+                Some(ChannelMsg::Eof) => {
+                    if code.is_some() {
+                        break;
+                    }
+                    eof_at = Some(tokio::time::Instant::now());
+                }
+                Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+        }
+    };
+
+    let timed_out = timeout(Duration::from_secs(timeout_secs.max(1)), collect)
+        .await
+        .is_err();
+    if stopped {
+        // Best effort: an sshd without signal support still closes the pipes,
+        // and the script dies on its next write.
+        let _ = channel.signal(russh::Sig::TERM).await;
+        let _ = channel.close().await;
+        return Err(AppError::Cancelled);
+    }
+    if timed_out {
+        let _ = channel.close().await;
+    }
+    Ok(ExecOutcome {
+        stdout: String::from_utf8_lossy(&out).into_owned(),
+        stderr: String::from_utf8_lossy(&err).into_owned(),
+        exit_code: code.unwrap_or(-1),
+        timed_out,
+    })
+}
+
+/// How long [`exec_on`] waits for the exit status once the output has ended.
+const EXIT_STATUS_GRACE: Duration = Duration::from_secs(2);
 
 /// Result of [`SshSession::exec_captured`].
 pub struct ExecOutcome {
@@ -1413,5 +1443,148 @@ mod live_kbdint {
             login("otpbad", "otppass", &script).await.unwrap(),
             AuthOutcome::Rejected
         );
+    }
+}
+
+/// Against a real sshd (`e2e/docker-compose.ssh.yml`, ignored by default): what a
+/// stop does to a command already running on the server (ADR 0032).
+#[cfg(test)]
+mod live_exec {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct AcceptAnyKey;
+
+    impl client::Handler for AcceptAnyKey {
+        type Error = russh::Error;
+        // Throwaway local container; its host key is regenerated on every `up`.
+        async fn check_server_key(
+            &mut self,
+            _key: &russh::keys::PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    fn env_or(key: &str, fallback: &str) -> String {
+        std::env::var(key).unwrap_or_else(|_| fallback.into())
+    }
+
+    async fn connect() -> Handle<AcceptAnyKey> {
+        let port: u16 = env_or("VTERM_TEST_SSH_PORT", "2222")
+            .parse()
+            .unwrap_or(2222);
+        let host = env_or("VTERM_TEST_SSH_HOST", "127.0.0.1");
+        let mut handle = client::connect(
+            Arc::new(client::Config::default()),
+            (host, port),
+            AcceptAnyKey,
+        )
+        .await
+        .expect("no test SSH server — docker compose -f e2e/docker-compose.ssh.yml up -d");
+        let (user, pass) = (
+            env_or("VTERM_TEST_SSH_USER", "tester"),
+            env_or("VTERM_TEST_SSH_PASS", "testpass"),
+        );
+        assert!(handle
+            .authenticate_password(&user, &pass)
+            .await
+            .unwrap()
+            .success());
+        handle
+    }
+
+    async fn lines(h: &Handle<AcceptAnyKey>, file: &str) -> u32 {
+        let out = exec_on(h, &format!("wc -l < {file}"), &[], 5, None)
+            .await
+            .unwrap();
+        out.stdout.trim().parse().unwrap()
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn a_stop_ends_the_command_on_the_server() {
+        let handle = connect().await;
+        let mark = format!("/tmp/vterm-stop-{}", std::process::id());
+        // Appends a line every 100 ms until something ends it — a sweep that
+        // keeps starting connects is the same shape.
+        let cmd = format!("rm -f {mark}; while :; do echo x >> {mark}; sleep 0.1; done");
+        let flag = Arc::new(AtomicBool::new(false));
+        let f2 = flag.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(600)).await;
+            f2.store(true, Ordering::Relaxed);
+        });
+        let started = std::time::Instant::now();
+        let res = exec_on(&handle, &cmd, &[], 30, Some(&flag)).await;
+        assert!(matches!(res, Err(AppError::Cancelled)), "{:?}", res.err());
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let a = lines(&handle, &mark).await;
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        let b = lines(&handle, &mark).await;
+        assert!(a > 0, "the command never ran");
+        assert_eq!(
+            a, b,
+            "the command kept running on the server after the stop"
+        );
+        let _ = exec_on(&handle, &format!("rm -f {mark}"), &[], 5, None).await;
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn without_a_stop_the_output_is_whole() {
+        let handle = connect().await;
+        let flag = AtomicBool::new(false);
+        let out = exec_on(
+            &handle,
+            "printf 'a\\nb\\n'; echo err >&2; exit 3",
+            &[],
+            10,
+            Some(&flag),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.stdout, "a\nb\n");
+        assert_eq!(out.stderr.trim(), "err");
+        assert_eq!(out.exit_code, 3);
+        assert!(!out.timed_out);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn stdin_reaches_the_command_and_its_code_comes_back() {
+        let handle = connect().await;
+        let out = exec_on(
+            &handle,
+            "read v; echo got:$v; exit 4",
+            b"secret\n",
+            10,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(out.stdout, "got:secret\n");
+        assert_eq!(out.exit_code, 4);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn the_exit_code_survives_an_eof_that_comes_first() {
+        // The server sends EOF before the exit status as often as not: stopping
+        // at EOF read -1 about every other run. Twenty runs make a miss certain.
+        let handle = connect().await;
+        for i in 0..20 {
+            let out = exec_on(&handle, "echo out; exit 7", &[], 10, None)
+                .await
+                .unwrap();
+            assert_eq!(out.exit_code, 7, "run {i}");
+            assert_eq!(out.stdout, "out\n", "run {i}");
+        }
     }
 }

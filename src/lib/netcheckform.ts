@@ -1,19 +1,43 @@
-// Utilities → access check: the rule builder above the rules box and the
-// per-line delete beside it (v1.0.37). Pure (INVARIANTS "чистая логика в .ts"):
-// the component only binds these to inputs and the textarea.
+// Utilities → access check: the rows of the rules table (v1.21, ADR 0032). A row
+// is four cells of text — sources, targets, ports, protocol — plus the server
+// picked by hand, if any. Pure (INVARIANTS "чистая логика в .ts"): the component
+// only binds these to inputs.
 //
-// The builder never has its own idea of a valid rule — it writes one line and
-// asks `parseRules`, so a rule the box would reject can't be added through it.
+// A row never has its own idea of a valid rule: it is written as one canonical
+// line and handed to `parseRules`, so a rule the parser would reject can't get
+// through the table.
 
-import { parseRules, type ParseError, type Proto } from "./netcheck";
+import { parseRules, type NetRule, type ParseError, type Proto } from "./netcheck";
+import { recognize, type RuleDraft } from "./netcheckpaste";
 
-export interface BuilderFields {
-  /** The checking host's address the traffic should come from; "" = none. */
-  source: string;
-  target: string;
-  /** As typed: `22`, `22, 443`, `8000-8010`. */
-  ports: string;
-  proto: Proto;
+/** One row of the rules table. */
+export interface RuleRow extends RuleDraft {
+  id: string;
+  /** Host key the row is checked from, picked by hand; null = by its source. */
+  via: string | null;
+}
+
+/** Why a row can't run: an empty cell, or what the parser said. */
+export type RowError = { code: "noTarget" | "noPorts" } | ParseError;
+
+let seq = 0;
+
+/** A row for the table, with a fresh id. */
+export function newRow(draft: Partial<RuleDraft> = {}, via: string | null = null): RuleRow {
+  seq += 1;
+  return {
+    id: `r${Date.now().toString(36)}-${seq}`,
+    source: draft.source ?? "",
+    targets: draft.targets ?? "",
+    ports: draft.ports ?? "",
+    proto: draft.proto ?? "tcp",
+    via,
+  };
+}
+
+/** Whether nothing was typed into the row yet. */
+export function isBlankRow(row: RuleDraft): boolean {
+  return !row.source.trim() && !row.targets.trim() && !row.ports.trim();
 }
 
 /** Ports as the rule syntax writes them: one bare, several in brackets. */
@@ -25,76 +49,45 @@ function portsPart(raw: string): string {
   return toks.length === 1 ? toks[0] : `[${toks.join(", ")}]`;
 }
 
-/** The rule line the builder would add, e.g. `10.0.0.1 -> db:[22, 443]/tcp`. */
-export function buildRuleLine(f: BuilderFields): string {
-  const src = f.source.trim();
-  const body = `${f.target.trim()}:${portsPart(f.ports)}/${f.proto}`;
+/** The row as one canonical rule line: `src -> targets:[ports]/tcp`. */
+export function rowLine(row: RuleDraft): string {
+  const src = row.source.trim();
+  const body = `${row.targets.trim()}:${portsPart(row.ports)}/${row.proto}`;
   return src ? `${src} -> ${body}` : body;
 }
 
-/** Whether both required fields hold something — the Add button's gate. */
-export function builderFilled(f: BuilderFields): boolean {
-  return f.target.trim() !== "" && f.ports.trim() !== "";
+/** The row's rules (one per source), or why it has none. */
+export function rowRules(row: RuleDraft): { rules: NetRule[]; error: RowError | null } {
+  if (!row.targets.trim()) return { rules: [], error: { code: "noTarget" } };
+  if (!row.ports.trim()) return { rules: [], error: { code: "noPorts" } };
+  const { rules, errors } = parseRules(rowLine(row));
+  return errors.length ? { rules: [], error: errors[0] } : { rules, error: null };
 }
 
-/** Why the builder's line would be rejected, or null when it parses. Only asked
- *  once both fields are filled: a half-typed rule isn't an error yet. */
-export function builderError(f: BuilderFields): ParseError | null {
-  if (!builderFilled(f)) return null;
-  return parseRules(buildRuleLine(f)).errors[0] ?? null;
+/** The rows as canonical lines, one per row — history, the audit, the report. */
+export function rowsText(rows: readonly RuleDraft[]): string {
+  return rows
+    .filter((r) => !isBlankRow(r))
+    .map(rowLine)
+    .join("\n");
+}
+
+/** Rows back from text: a history entry, a paste — anything `recognize` reads. */
+export function textRows(text: string): RuleRow[] {
+  return recognize(text).rules.map((d) => newRow(d));
 }
 
 /**
- * A pasted/typed `host:ports` in the address field — split it across the two
- * fields. Null when there's no port part (then the text stays as typed).
+ * A pasted/typed `host:ports` in the targets cell — split it across the two
+ * cells. Null when there's no port part (then the text stays as typed).
  */
 export function splitHostPort(raw: string): { target: string; ports: string } | null {
-  const m = /^\s*([^\s:[\]]+)\s*:\s*\[?([\d\s,;-]+?)\]?\s*$/.exec(raw);
-  if (!m) return null;
+  const m = /^\s*([^\s:[\]]+)\s*:\s*\[?([\w\s,;-]+?)\]?\s*$/.exec(raw);
+  if (!m || !/\d|^[a-z]/i.test(m[2])) return null;
   return { target: m[1], ports: m[2].trim() };
 }
 
-/** Append `line` to the rules text on a line of its own. */
-export function appendRuleLine(text: string, line: string): string {
-  if (!text.trim()) return line;
-  return text.endsWith("\n") ? `${text}${line}` : `${text}\n${line}`;
-}
-
-/**
- * Which text line sits at a pointer offset. `y` is measured from the textarea's
- * content-box top (border and top padding already taken off); the box doesn't
- * wrap (`wrap="off"`), so every line is exactly `lineHeight` tall.
- */
-export function lineAtY(y: number, scrollTop: number, lineHeight: number): number {
-  if (lineHeight <= 0) return -1;
-  const i = Math.floor((y + scrollTop) / lineHeight);
-  return i < 0 ? -1 : i;
-}
-
-/** Whether line `index` exists and has something to delete. */
-export function isDeletableLine(text: string, index: number): boolean {
-  const lines = text.split("\n");
-  return index >= 0 && index < lines.length && lines[index].trim() !== "";
-}
-
-/**
- * The character range that removes line `index` whole — its text plus one line
- * break (the following one, or the preceding one for the last line), so no blank
- * line is left behind. Null for a line that doesn't exist.
- */
-export function lineRange(text: string, index: number): { start: number; end: number } | null {
-  const lines = text.split("\n");
-  if (index < 0 || index >= lines.length) return null;
-  let start = 0;
-  for (let i = 0; i < index; i++) start += lines[i].length + 1;
-  let end = start + lines[index].length;
-  if (index < lines.length - 1) end += 1;
-  else if (index > 0) start -= 1;
-  return { start, end };
-}
-
-/** `text` without line `index` — the fallback when the editor can't record undo. */
-export function removeLine(text: string, index: number): string {
-  const r = lineRange(text, index);
-  return r ? text.slice(0, r.start) + text.slice(r.end) : text;
+/** The protocol cell's value, whatever the select sent. */
+export function asProto(v: string): Proto {
+  return v === "udp" ? "udp" : "tcp";
 }
