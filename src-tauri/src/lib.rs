@@ -1104,8 +1104,11 @@ async fn git_run(
 /// [`record_audit`]. `cancel_id` registers the run in the shared cancel map, so
 /// `sftp_cancel(cancel_id)` stops it (ADR 0032): the server's script is
 /// signalled and its channel closed, a local run starts no further connect.
-/// A stopped run answers [`AppError::Cancelled`].
+/// A stopped run answers [`AppError::Cancelled`]. `local_tool` names one of the
+/// user's probe tools for a local tab (ADR 0033) — only the name: the argv is
+/// `netcheck::LocalTool`'s, never `args`; none means the native connect.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 async fn netcheck_run(
     state: State<'_, AppState>,
     session_id: String,
@@ -1114,8 +1117,16 @@ async fn netcheck_run(
     connect_timeout_secs: u64,
     timeout_secs: u64,
     cancel_id: String,
+    local_tool: Option<String>,
 ) -> AppResult<netprobe::ProbeOutput> {
     netcheck::validate(&targets).map_err(AppError::Message)?;
+    let tool =
+        match local_tool.as_deref() {
+            None => None,
+            Some(name) => Some(netcheck::LocalTool::parse(name).ok_or_else(|| {
+                AppError::Message(format!("netcheck: {name} is not a probe tool"))
+            })?),
+        };
     let cancel = register_cancel(&state, &cancel_id);
     let res = netcheck_exec(
         &state,
@@ -1125,6 +1136,7 @@ async fn netcheck_run(
         connect_timeout_secs,
         timeout_secs,
         &cancel,
+        tool,
     )
     .await;
     state.cancels.lock().unwrap().remove(&cancel_id);
@@ -1132,6 +1144,7 @@ async fn netcheck_run(
 }
 
 /// The body of [`netcheck_run`], between registering its stop flag and removing it.
+#[allow(clippy::too_many_arguments)]
 async fn netcheck_exec(
     state: &State<'_, AppState>,
     session_id: &str,
@@ -1140,6 +1153,7 @@ async fn netcheck_exec(
     connect_timeout_secs: u64,
     timeout_secs: u64,
     cancel: &AtomicBool,
+    tool: Option<netcheck::LocalTool>,
 ) -> AppResult<netprobe::ProbeOutput> {
     if let Ok(session) = session_arc(state, session_id).await {
         if args.is_empty() {
@@ -1166,8 +1180,14 @@ async fn netcheck_exec(
     let local = state.local_ptys.lock().unwrap().get(session_id).cloned();
     if local.is_some() {
         let timeout = std::time::Duration::from_secs(connect_timeout_secs.clamp(1, 30));
-        // Dropping the run on a stop drops its connects in flight as well.
-        let run = async { Ok(netcheck::run_native(targets, timeout, cancel).await) };
+        // Dropping the run on a stop drops its connects in flight as well — and
+        // kills a tool's children (`kill_on_drop`).
+        let run = async {
+            Ok(match tool {
+                Some(tool) => netcheck::run_tool(targets, timeout, cancel, tool).await,
+                None => netcheck::run_native(targets, timeout, cancel).await,
+            })
+        };
         let stdout = sync::until_cancelled(run, cancel).await?;
         if cancel.load(Ordering::Relaxed) {
             return Err(AppError::Cancelled);

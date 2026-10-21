@@ -1,15 +1,27 @@
 <script lang="ts">
-  // Utilities → access check, the servers a run checks from (v1.21, ADR 0032):
-  // a chip per server — whether its session is up, how many connects it makes,
-  // "Connect" for one that isn't — and, for the chip picked, who it is and how
-  // it probes. The probe-method tiles are per server (v1.0.37): a tool that
-  // isn't usable is struck through but still pickable — picking it says why and
-  // offers the install.
+  // Utilities → access check, the servers a run checks from (v1.21, ADR 0032;
+  // picking — v1.22, ADR 0033). A chip per server with an open tab (one per
+  // address; every local tab is "this computer") plus any server the rules
+  // route to: whether its session is up, how many connects it makes, "Connect"
+  // for one that isn't. A click picks or unpicks it — the picked servers check
+  // the rules without a source. Under the chips, one probe-method row per server
+  // that checks something (v1.0.37): tiles, where a tool that isn't usable is
+  // struck through but still pickable — picking it says why and, on a server,
+  // offers the install. This computer has the same row: "vterm" is the app's own
+  // connect, the tools are the user's.
   import Icon from "./Icon.svelte";
   import InfoHint from "./InfoHint.svelte";
   import { tooltip } from "./actions/tooltip";
   import { t } from "./i18n";
-  import { effectiveMethod, PROBE_TOOLS, visibleAddrs, type MethodChoice, type NetReport, type ProbeTool } from "./netcheck";
+  import {
+    effectiveMethod,
+    PROBE_TOOLS,
+    visibleAddrs,
+    type Method,
+    type MethodChoice,
+    type NetReport,
+    type ProbeTool,
+  } from "./netcheck";
   import type { NetHost } from "./netroute";
   import { methodLabel } from "./netcheckwords";
   import { methodFor, setMethod } from "./stores/netcheck.svelte";
@@ -17,56 +29,89 @@
 
   let {
     hosts,
-    selected = $bindable(""),
+    picked,
+    methodHosts,
     identities,
     checksOf,
     hostName,
+    onToggle,
     onConnect,
     onInstallTool,
   }: {
-    /** The servers on screen: the home tab's first, then those the rules name. */
+    /** The chips: the home tab's server first, then every other with a tab or a part in the run. */
     hosts: NetHost[];
-    /** The key of the chip whose details and tiles are shown. */
-    selected?: string;
+    /** Host keys picked to check rules without a source. */
+    picked: string[];
+    /** The servers that check something — a method row each. */
+    methodHosts: NetHost[];
     /** What each session's host reported, by session id. */
     identities: Record<string, NetReport>;
     checksOf: (key: string) => number;
     hostName: (key: string) => string;
+    onToggle: (key: string) => void;
     onConnect?: (serverId: string) => void;
     onInstallTool?: (tool: string, sessionId?: string) => void;
   } = $props();
 
-  const current = $derived(hosts.find((h) => h.key === selected) ?? hosts[0] ?? null);
-  const facts = $derived(current?.sessionId ? (identities[current.sessionId] ?? null) : null);
-  const isLocal = $derived(current?.kind === "local");
-  const tools = $derived(facts?.tools ?? {});
-  const choice = $derived<MethodChoice>(!current || isLocal ? "auto" : methodFor(current.key));
-  const effective = $derived(isLocal ? null : effectiveMethod(choice, tools));
-  // "auto" with nothing usable → the banner; a picked tool that isn't usable →
-  // the note under the tiles (and no run: it would silently do nothing).
-  const noMethod = $derived(choice === "auto" && facts?.method === "none");
-  const pickedUnusable = $derived(choice !== "auto" && effective === "none");
-  const shownMethod = $derived(isLocal ? (facts?.method ?? null) : (effective ?? facts?.method ?? null));
   const TILES: MethodChoice[] = ["auto", ...PROBE_TOOLS];
-  let tileEls: HTMLButtonElement[] = $state([]);
 
-  function pick(m: MethodChoice) {
-    if (current) setMethod(current.key, m);
+  /** What a method row shows for one server. */
+  function rowState(h: NetHost) {
+    const facts = h.sessionId ? (identities[h.sessionId] ?? null) : null;
+    const local = h.kind === "local";
+    const tools = facts?.tools ?? {};
+    const choice = methodFor(h.key);
+    const effective = effectiveMethod(choice, tools, local);
+    return {
+      facts,
+      local,
+      tools,
+      choice,
+      effective,
+      // "auto" with nothing usable on a server → the banner; a picked tool that
+      // isn't usable → the note under the tiles (and no run: it would silently
+      // do nothing).
+      noMethod: !local && choice === "auto" && facts?.method === "none",
+      pickedUnusable: choice !== "auto" && effective === "none",
+    };
   }
 
-  function onTileKey(e: KeyboardEvent, i: number) {
+  /** Who a server turned out to be, for the tooltips: hostname and addresses. */
+  function who(h: NetHost): string {
+    const facts = h.sessionId ? identities[h.sessionId] : undefined;
+    if (!facts) return "";
+    return [facts.hostname, visibleAddrs(facts.addrs).join(", ")].filter(Boolean).join(" · ");
+  }
+
+  function onTileKey(e: KeyboardEvent, key: string, i: number) {
     const next = segmentStep(e.key, i, TILES.length);
     if (next == null) return;
     e.preventDefault();
-    pick(TILES[next]);
-    tileEls[next]?.focus();
+    setMethod(key, TILES[next]);
+    ((e.currentTarget as HTMLElement).parentElement?.children[next] as HTMLElement | undefined)?.focus();
   }
 
-  const toolDot = (tool: ProbeTool): string => {
+  function tileLabel(m: MethodChoice, local: boolean): string {
+    if (m !== "auto") return m;
+    return local ? t("util.netcheck.methodBuiltin") : t("util.netcheck.methodAuto");
+  }
+
+  function tileHint(m: MethodChoice, local: boolean, effective: Method | null): string {
+    if (m !== "auto") return "";
+    if (local) return t("util.netcheck.methodNative");
+    return effective && effective !== "none" ? t("util.netcheck.methodAutoNow", { method: methodLabel(effective) }) : "";
+  }
+
+  function unusableNote(tool: ProbeTool, state: string | undefined, local: boolean): string {
+    if (state === "unsupported") return t("util.netcheck.toolUnsupported");
+    if (state === "notimeout") return t("util.netcheck.toolNoTimeout", { tool });
+    return local ? t("util.netcheck.toolMissingHere", { tool }) : t("util.netcheck.toolMissing", { tool });
+  }
+
+  const toolDot = (tools: Partial<Record<ProbeTool, string>>, tool: ProbeTool): string => {
     const st = tools[tool];
     return st === "ok" ? "bg-ok" : st ? "bg-bad" : "bg-edge";
   };
-  const toolUnusable = (tool: ProbeTool): boolean => !!tools[tool] && tools[tool] !== "ok";
   const dot = (h: NetHost) => (h.live ? "bg-ok" : h.connecting ? "bg-warn" : "bg-edge");
 </script>
 
@@ -77,14 +122,20 @@
   </div>
   <div class="flex flex-wrap gap-1.5" data-testid="netcheck-hosts">
     {#each hosts as h (h.key)}
-      {@const on = current?.key === h.key}
-      <div class="flex items-center rounded border {on ? 'border-accent' : 'border-edge'} bg-panel" data-testid="netcheck-host">
+      {@const on = picked.includes(h.key)}
+      <div
+        class="flex items-center rounded border {on ? 'border-accent bg-accent/10' : 'border-edge bg-panel'}"
+        data-testid="netcheck-host"
+      >
         <button
           type="button"
           class="flex items-center gap-1.5 px-2 py-1 text-text hover:bg-edge/60"
           aria-pressed={on}
-          onclick={() => (selected = h.key)}
+          data-testid="netcheck-pick"
+          use:tooltip={who(h)}
+          onclick={() => onToggle(h.key)}
         >
+          {#if on}<Icon name="check" size={12} class="text-accent" />{/if}
           <span class="h-1.5 w-1.5 shrink-0 rounded-full {dot(h)}"></span>
           <span>{hostName(h.key)}</span>
           {#if h.address && h.address !== h.name}<span class="font-mono text-meta text-muted">{h.address}</span>{/if}
@@ -114,94 +165,94 @@
       </div>
     {/each}
   </div>
+  <p class="mt-1 text-meta text-muted">{t("util.netcheck.pickCaption")}</p>
 
-  {#if current?.live}
-    <div class="mt-1 flex flex-wrap items-baseline gap-x-2 text-meta">
-      <span class="font-mono text-text" data-testid="netcheck-hostname">{facts?.hostname || hostName(current.key)}</span>
-      <span class="truncate font-mono text-muted" data-testid="netcheck-addrs">{facts ? visibleAddrs(facts.addrs).join(", ") : ""}</span>
-      {#if shownMethod && shownMethod !== "none"}
-        <span class="text-muted" data-testid="netcheck-method">· {t("util.netcheck.method", { method: methodLabel(shownMethod) })}</span>
-      {/if}
-    </div>
-  {/if}
-
-  {#if current?.live && noMethod}
-    <div class="mt-2 flex items-center gap-2 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-warn" data-testid="netcheck-nomethod">
-      <Icon name="wrench" size={14} class="shrink-0" />
-      <span class="flex-1">{t("util.netcheck.noMethod")}</span>
-      {#if !isLocal && onInstallTool}
-        <button
-          type="button"
-          class="rounded bg-edge px-2 py-1 text-text hover:bg-accent hover:text-panel-alt"
-          data-testid="netcheck-install-telnet"
-          onclick={() => onInstallTool("telnet", current?.sessionId ?? undefined)}
-        >
-          {t("util.netcheck.installTelnet")}
-        </button>
-      {/if}
-    </div>
-  {/if}
-
-  <!-- Tiles wrap 5 → 3+2 → 2+2+1 as the panel narrows (container queries). -->
-  {#if current?.live && !isLocal}
+  <!-- A row per server: the name beside its tiles where there's room, above
+       them where there isn't; tiles wrap 5 → 3+2 → 2+2+1 (container queries). -->
+  {#if methodHosts.length}
     <div class="mt-2 @container" data-testid="netcheck-methods">
       <div class="mb-1 flex items-center gap-1.5">
-        <span>{t("util.netcheck.methodOn", { host: hostName(current.key) })}</span>
+        <span>{t("util.netcheck.methodTitle")}</span>
         <InfoHint text={t("util.netcheck.methodsHint")} />
       </div>
-      <div
-        role="radiogroup"
-        aria-label={t("util.netcheck.methodTitle")}
-        class="grid grid-cols-2 gap-1 @min-[16rem]:grid-cols-3 @min-[26rem]:grid-cols-5"
-      >
-        {#each TILES as m, i (m)}
-          {@const sel = choice === m}
-          {@const bad = m !== "auto" && toolUnusable(m)}
-          <button
-            bind:this={tileEls[i]}
-            type="button"
-            role="radio"
-            aria-checked={sel}
-            tabindex={sel ? 0 : -1}
-            data-testid={`netcheck-method-${m}`}
-            class="flex min-w-0 items-center justify-center gap-1.5 rounded border px-2 py-1 font-mono {sel
-              ? 'border-accent bg-accent/15 text-accent'
-              : 'border-edge text-text hover:bg-edge'}"
-            use:tooltip={m === "auto" && effective && effective !== "none"
-              ? t("util.netcheck.methodAutoNow", { method: methodLabel(effective) })
-              : ""}
-            onclick={() => pick(m)}
-            onkeydown={(e) => onTileKey(e, i)}
-          >
-            {#if m !== "auto"}
-              <span class="h-1.5 w-1.5 shrink-0 rounded-full {toolDot(m)}"></span>
+      <div class="space-y-1.5">
+        {#each methodHosts as h (h.key)}
+          {@const st = rowState(h)}
+          <div data-testid="netcheck-method-row" data-host={h.key}>
+            <div class="grid grid-cols-1 gap-1 @min-[32rem]:grid-cols-[7rem_minmax(0,1fr)] @min-[32rem]:items-center">
+              <span class="truncate text-text" data-testid="netcheck-hostname" use:tooltip={who(h)}>{hostName(h.key)}</span>
+              {#if h.live}
+                <div
+                  role="radiogroup"
+                  aria-label={`${t("util.netcheck.methodTitle")} · ${hostName(h.key)}`}
+                  class="grid grid-cols-2 gap-1 @min-[16rem]:grid-cols-3 @min-[26rem]:grid-cols-5"
+                >
+                  {#each TILES as m, i (m)}
+                    {@const sel = st.choice === m}
+                    {@const bad = m !== "auto" && !!st.tools[m] && st.tools[m] !== "ok"}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={sel}
+                      tabindex={sel ? 0 : -1}
+                      data-testid={`netcheck-method-${m}`}
+                      class="flex min-w-0 items-center justify-center gap-1.5 rounded border px-2 py-1 font-mono {sel
+                        ? 'border-accent bg-accent/15 text-accent'
+                        : 'border-edge text-text hover:bg-edge'}"
+                      use:tooltip={tileHint(m, st.local, st.effective)}
+                      onclick={() => setMethod(h.key, m)}
+                      onkeydown={(e) => onTileKey(e, h.key, i)}
+                    >
+                      {#if m !== "auto"}
+                        <span class="h-1.5 w-1.5 shrink-0 rounded-full {toolDot(st.tools, m)}"></span>
+                      {/if}
+                      <span class="truncate {bad ? 'line-through' : ''} {bad && !sel ? 'text-muted' : ''}">
+                        {tileLabel(m, st.local)}
+                      </span>
+                    </button>
+                  {/each}
+                </div>
+              {:else}
+                <span class="text-meta text-warn" data-testid="netcheck-method-offline">{t("util.netcheck.methodNeedsSession")}</span>
+              {/if}
+            </div>
+
+            {#if h.live && st.noMethod}
+              <div class="mt-1.5 flex items-center gap-2 rounded border border-warn/40 bg-warn/10 px-3 py-2 text-warn" data-testid="netcheck-nomethod">
+                <Icon name="wrench" size={14} class="shrink-0" />
+                <span class="flex-1">{t("util.netcheck.noMethod")}</span>
+                {#if onInstallTool}
+                  <button
+                    type="button"
+                    class="rounded bg-edge px-2 py-1 text-text hover:bg-accent hover:text-panel-alt"
+                    data-testid="netcheck-install-telnet"
+                    onclick={() => onInstallTool("telnet", h.sessionId ?? undefined)}
+                  >
+                    {t("util.netcheck.installTelnet")}
+                  </button>
+                {/if}
+              </div>
             {/if}
-            <span class="truncate {bad ? 'line-through' : ''} {bad && !sel ? 'text-muted' : ''}">
-              {m === "auto" ? t("util.netcheck.methodAuto") : m}
-            </span>
-          </button>
+            {#if h.live && st.pickedUnusable && st.choice !== "auto"}
+              {@const tool = st.choice}
+              <div class="mt-1.5 flex flex-wrap items-center gap-2 text-meta text-warn" data-testid="netcheck-method-missing">
+                <Icon name="alert" size={12} class="shrink-0" />
+                <span class="min-w-0 flex-1">{unusableNote(tool, st.tools[tool], st.local)}</span>
+                {#if !st.local && st.tools[tool] === "missing" && tool !== "bash" && onInstallTool}
+                  <button
+                    type="button"
+                    class="rounded bg-edge px-2 py-0.5 text-text hover:bg-accent hover:text-panel-alt"
+                    data-testid="netcheck-method-install"
+                    onclick={() => onInstallTool(tool, h.sessionId ?? undefined)}
+                  >
+                    {t("util.netcheck.installTool", { tool })}
+                  </button>
+                {/if}
+              </div>
+            {/if}
+          </div>
         {/each}
       </div>
-      {#if pickedUnusable && choice !== "auto"}
-        <div class="mt-1.5 flex flex-wrap items-center gap-2 text-meta text-warn" data-testid="netcheck-method-missing">
-          <Icon name="alert" size={12} class="shrink-0" />
-          <span class="min-w-0 flex-1">
-            {tools[choice] === "notimeout"
-              ? t("util.netcheck.toolNoTimeout", { tool: choice })
-              : t("util.netcheck.toolMissing", { tool: choice })}
-          </span>
-          {#if tools[choice] === "missing" && choice !== "bash" && onInstallTool}
-            <button
-              type="button"
-              class="rounded bg-edge px-2 py-0.5 text-text hover:bg-accent hover:text-panel-alt"
-              data-testid="netcheck-method-install"
-              onclick={() => onInstallTool(choice, current?.sessionId ?? undefined)}
-            >
-              {t("util.netcheck.installTool", { tool: choice })}
-            </button>
-          {/if}
-        </div>
-      {/if}
     </div>
   {/if}
 </div>

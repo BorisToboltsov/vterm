@@ -1,12 +1,14 @@
 <script lang="ts">
   // Utilities → access check (v1.0.36; requests, several servers, subnets and a
-  // stop — v1.21, ADR 0032): "can those hosts reach those ports?". A request is
-  // pasted as it came and read into a table of rules (NetCheckRuleTable); each
-  // rule runs from the server its source names (netroute.ts) — the tab the tool
-  // was opened on when it names none — over that server's session, through one
-  // command (`netcheck_run`) whose transport follows the session. The answer is
-  // target:port × server (NetCheckMatrix). Rules and the last run live in the
-  // store per home host: another tab shows its own.
+  // stop — v1.21, ADR 0032; picked servers and this computer's tools — v1.22,
+  // ADR 0033): "can those hosts reach those ports?". A request is pasted as it
+  // came and read into a table of rules (NetCheckRuleTable); each rule runs from
+  // the server its source names (netroute.ts) — from the servers picked in the
+  // chips when it names none (the tab the tool was opened on, until others are
+  // picked) — over that server's session, through one command (`netcheck_run`)
+  // whose transport follows the session. The answer is target:port × server
+  // (NetCheckMatrix). Rules, picks and the last run live in the store per home
+  // host: another tab shows its own.
   import { untrack } from "svelte";
   import Icon from "./Icon.svelte";
   import CopyButton from "./CopyButton.svelte";
@@ -42,7 +44,17 @@
   } from "./netroute";
   import { rowRules, rowsText } from "./netcheckform";
   import { reportWords } from "./netcheckwords";
-  import { isRunning, methodFor, retryRun, rowsOf, runOf, startRun, stopRun } from "./stores/netcheck.svelte";
+  import {
+    isRunning,
+    methodFor,
+    pickedOf,
+    retryRun,
+    rowsOf,
+    runOf,
+    startRun,
+    stopRun,
+    togglePicked,
+  } from "./stores/netcheck.svelte";
 
   let {
     homeId = null,
@@ -75,7 +87,7 @@
   }
 
   // ── Who the sessions are (the identity probe) ───────────────────────────
-  // Hostname, addresses and probe tools, by session id: the chip details, the
+  // Hostname, addresses and probe tools, by session id: the chip tooltips, the
   // method tiles, and matching a rule's source to a multi-homed server.
   let identities = $state<Record<string, NetReport>>({});
   let asked = new Set<string>();
@@ -99,21 +111,25 @@
 
   // ── Rules, routes and the plan ───────────────────────────────────────────
   const rows = $derived(rowsOf(homeKey));
+  // Where rules without a source go: the picked chips.
+  const picked = $derived(pickedOf(homeKey));
   const parsed = $derived(rows.map((row) => ({ row, ...rowRules(row) })));
   const planRows = $derived(parsed.filter((p) => !p.error).map((p) => ({ rules: p.rules, via: p.row.via })));
-  const plan = $derived(homeKey ? planRun(planRows, hosts, facts, homeKey) : null);
+  const plan = $derived(homeKey ? planRun(planRows, hosts, facts, picked) : null);
   const routes = $derived(
-    parsed.map((p) => (p.error ? null : routeRow({ rules: p.rules, via: p.row.via }, hosts, facts, homeKey))),
+    parsed.map((p) => (p.error ? null : routeRow({ rules: p.rules, via: p.row.via }, hosts, facts, picked))),
   );
   const badRows = $derived(parsed.filter((p) => p.error && (p.row.targets.trim() || p.row.ports.trim())).length);
   const allPlans = $derived<HostPlan[]>(plan ? [...plan.ready, ...plan.overCap, ...plan.waiting] : []);
 
-  // Probe who a session is only where it matters: the home tab, the servers the
-  // run will use, and — while a source matches no server — every live session,
-  // since its address may be a second one of a server already open.
+  // Probe who a session is only where it matters: the home tab, the picked
+  // servers, the servers the run will use, and — while a source matches no
+  // server — every live session, since its address may be a second one of a
+  // server already open.
   const wanted = $derived.by(() => {
     const ids = new Set<string>();
     if (home?.live && home.sessionId) ids.add(home.sessionId);
+    for (const h of hosts) if (h.live && h.sessionId && picked.includes(h.key)) ids.add(h.sessionId);
     for (const p of plan?.ready ?? []) if (p.host.sessionId) ids.add(p.host.sessionId);
     if (routes.some((r) => r?.how === "fallback")) {
       for (const h of hosts) if (h.live && h.sessionId) ids.add(h.sessionId);
@@ -134,24 +150,25 @@
     });
   });
 
-  // The chips: the home tab's server first, then every server the rules name.
-  const shownHosts = $derived.by(() => {
-    const out: NetHost[] = [];
-    for (const h of [home, ...allPlans.map((p) => p.host)]) {
-      if (h && !out.some((x) => x.key === h.key)) out.push(h);
-    }
-    return out;
-  });
-  let selectedHost = $state("");
+  // The chips: the home tab's server first, then every other with an open tab
+  // (one per address), picked or with a part in the run.
+  const inPlan = $derived(new Set(allPlans.map((p) => p.host.key)));
+  const chips = $derived(
+    [home, ...hosts.filter((h) => h.key !== home?.key)].filter(
+      (h): h is NetHost => !!h && (h.hasTab || picked.includes(h.key) || inPlan.has(h.key)),
+    ),
+  );
+  // A method row for every server that checks something.
+  const methodHosts = $derived(chips.filter((h) => picked.includes(h.key) || inPlan.has(h.key)));
   const checksOf = (key: string) => allPlans.find((p) => p.host.key === key)?.checks ?? 0;
 
   // A server whose chosen probe can't run blocks the run, by name.
   const noMethodOn = $derived(
     (plan?.ready ?? [])
       .filter((p) => {
-        if (p.host.kind === "local" || !p.host.sessionId) return false;
+        if (!p.host.sessionId) return false;
         const id = identities[p.host.sessionId];
-        return !!id && effectiveMethod(methodFor(p.host.key), id.tools) === "none";
+        return !!id && effectiveMethod(methodFor(p.host.key), id.tools, p.host.kind === "local") === "none";
       })
       .map((p) => hostName(p.host.key)),
   );
@@ -162,7 +179,12 @@
   const running = $derived(isRunning(run));
   const totalChecks = $derived((plan?.ready ?? []).reduce((n, p) => n + p.checks, 0));
   const canRun = $derived(
-    !!plan && plan.ready.length > 0 && plan.overCap.length === 0 && noMethodOn.length === 0 && !running,
+    !!plan &&
+      plan.ready.length > 0 &&
+      plan.overCap.length === 0 &&
+      plan.unrouted === 0 &&
+      noMethodOn.length === 0 &&
+      !running,
   );
   // Sweeping a subnet is asked first, on any server; a production one says so.
   const subnetPlans = $derived((plan?.ready ?? []).filter((p) => p.subnet));
@@ -223,16 +245,18 @@
     </div>
   {:else}
     <NetCheckHosts
-      hosts={shownHosts}
-      bind:selected={selectedHost}
+      hosts={chips}
+      {picked}
+      {methodHosts}
       {identities}
       {checksOf}
       {hostName}
+      onToggle={(key) => togglePicked(homeKey, key)}
       {onConnect}
       {onInstallTool}
     />
 
-    <NetCheckRuleTable {homeKey} {hosts} errors={parsed.map((p) => p.error)} {routes} {hostName} />
+    <NetCheckRuleTable {homeKey} {hosts} {picked} errors={parsed.map((p) => p.error)} {routes} {hostName} />
 
     <!-- What keeps the run from starting, or part of it from running — by name. -->
     {#each plan?.overCap ?? [] as p (p.host.key)}
@@ -240,6 +264,11 @@
         <Icon name="alert" size={12} />{t("util.netcheck.overCap", { host: hostName(p.host.key), n: p.checks, max: MAX_CHECKS })}
       </p>
     {/each}
+    {#if plan?.unrouted}
+      <p class="flex items-center gap-1 text-meta text-warn" data-testid="netcheck-pick-none">
+        <Icon name="alert" size={12} />{t("util.netcheck.pickNone")}
+      </p>
+    {/if}
     {#if noMethodOn.length}
       <p class="flex items-center gap-1 text-meta text-warn" data-testid="netcheck-nomethod-on">
         <Icon name="wrench" size={12} />{t("util.netcheck.noMethodOn", { hosts: noMethodOn.join(", ") })}

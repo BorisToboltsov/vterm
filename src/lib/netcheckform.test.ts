@@ -6,8 +6,11 @@ import {
   rowLine,
   rowRules,
   rowsText,
+  sourceChoice,
+  sourceOptions,
   splitHostPort,
   textRows,
+  withSource,
 } from "./netcheckform";
 import { parseRules } from "./netcheck";
 
@@ -78,5 +81,38 @@ describe("splitHostPort", () => {
     expect(splitHostPort("10.70.39.10")).toBeNull();
     expect(splitHostPort("10.70.39.10:")).toBeNull();
     expect(splitHostPort("a -> b:22")).toBeNull();
+  });
+});
+
+describe("the From cell", () => {
+  const keys = ["local", "10.70.39.10", "10.64.48.180", "10.64.48.21"];
+  const row = (source: string, via: string | null = null) => ({ source, via });
+
+  it("shows all picked by default, a server picked by hand, or the source as written", () => {
+    expect(sourceChoice(row(""), keys)).toEqual({ kind: "all" });
+    expect(sourceChoice(row("  "), keys)).toEqual({ kind: "all" });
+    expect(sourceChoice(row("", "10.70.39.10"), keys)).toEqual({ kind: "host", key: "10.70.39.10" });
+    expect(sourceChoice(row("10.1.1.1"), keys)).toEqual({ kind: "text", text: "10.1.1.1" });
+    // The server picked by hand is what checks — it's what the cell names.
+    expect(sourceChoice(row("10.1.1.1", "local"), keys)).toEqual({ kind: "host", key: "local" });
+    // A server the catalog no longer has counts for nothing, as in routing.
+    expect(sourceChoice(row("", "gone.corp"), keys)).toEqual({ kind: "all" });
+  });
+
+  it("a choice sets one thing: a server replaces the address, an address drops the server", () => {
+    expect(withSource({ kind: "all" })).toEqual({ source: "", via: null });
+    expect(withSource({ kind: "host", key: "local" })).toEqual({ source: "", via: "local" });
+    expect(withSource({ kind: "text", text: " 10.0.0.0/24 " })).toEqual({ source: "10.0.0.0/24", via: null });
+  });
+
+  it("offers the picked servers in host order, and the row's own server too", () => {
+    const picked = ["10.64.48.21", "local", "gone.corp"];
+    expect(sourceOptions(picked, keys, { kind: "all" })).toEqual(["local", "10.64.48.21"]);
+    expect(sourceOptions(picked, keys, { kind: "host", key: "10.64.48.180" })).toEqual([
+      "local",
+      "10.64.48.21",
+      "10.64.48.180",
+    ]);
+    expect(sourceOptions([], keys, { kind: "text", text: "x" })).toEqual([]);
   });
 });

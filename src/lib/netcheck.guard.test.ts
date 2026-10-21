@@ -14,8 +14,13 @@ import { describe, expect, it } from "vitest";
 //   from the confirmation.
 // - A paste becomes rules only by an act — the "Add" button or ⌘/Ctrl+Enter —
 //   never from typing or an effect: what was read is shown before it is taken.
-// - Rules and runs are filed by the home host, not by session: another tab
-//   shows its own, never the previous server's (the bug this fixed).
+// - Rules, picked servers and runs are filed by the home host, not by session:
+//   another tab shows its own, never the previous server's (the bug this
+//   fixed).
+// - Where a rule without a source runs is the picked servers' (v1.22, ADR
+//   0033), and the tool hands them to the routing model and nothing else — a
+//   hard-wired "this tab" beside the chips would check from somewhere the
+//   chips don't say.
 // - One cap and one batch size on both sides: netcheck.ts and netcheck.rs.
 //
 // Every check is a function over source text (comments stripped) and shows,
@@ -88,7 +93,8 @@ function storeCallsAreStoppable(src: string): boolean {
   const call = probe.indexOf("netcheckRun(");
   if (set < 0 || call < 0 || set > call) return false;
   const args = probe.slice(call, probe.indexOf(");", call));
-  if (!/cancelId\s*,?\s*$/.test(args.trim())) return false;
+  // The handle, then (only) the local tool's name.
+  if (!/\bcancelId\s*,\s*(?:localToolOf\([^()]*\)\s*,?\s*)?$/.test(args.trim())) return false;
   if ((s.match(/netcheckRun\(/g) ?? []).length !== 1) return false;
   return /sftpCancel\(h\.cancelId\)/.test(fnBody(s, "stopRun"));
 }
@@ -124,7 +130,7 @@ function pasteAddsOnlyByAct(src: string): boolean {
 /** The tool asks the store by its home host — never by a session id. */
 function filedByHome(tool: string, store: string): boolean {
   const t = strip(tool);
-  for (const fn of ["rowsOf", "runOf", "startRun", "stopRun", "retryRun"]) {
+  for (const fn of ["rowsOf", "runOf", "startRun", "stopRun", "retryRun", "pickedOf", "togglePicked"]) {
     for (const m of t.matchAll(new RegExp(`\\b${fn}\\(([^,)]*)`, "g"))) {
       if (m[1].trim() !== "homeKey") return false;
     }
@@ -132,9 +138,19 @@ function filedByHome(tool: string, store: string): boolean {
   const st = strip(store);
   return (
     /rows:\s*Record<string, RuleRow\[\]>/.test(st) &&
+    /picked:\s*Record<string, string\[\]>/.test(st) &&
     /runs:\s*Record<string, NetRun>/.test(st) &&
-    ![...st.matchAll(/netcheckState\.(?:rows|runs)\[([^\]]+)\]/g)].some((m) => m[1].trim() !== "home")
+    ![...st.matchAll(/netcheckState\.(?:rows|runs|picked)\[([^\]]+)\]/g)].some((m) => m[1].trim() !== "home")
   );
+}
+
+/** Rules without a source go where the chips say: the tool takes the picked
+ *  servers from the store and gives every routing call exactly those. */
+function routedByPicks(tool: string): boolean {
+  const t = strip(tool);
+  if (!/const picked = \$derived\(pickedOf\(homeKey\)\);/.test(t)) return false;
+  const calls = [...t.matchAll(/\b(?:planRun|routeRow)\(([^;]*?)\)\s*(?::|\)|;)/gs)].map((m) => m[1]);
+  return calls.length >= 2 && calls.every((c) => /,\s*picked\s*$/.test(c.trim()));
 }
 
 /** The cap and the batch size are one number on both sides. */
@@ -165,7 +181,9 @@ describe("access check guard", () => {
 
   it("every check carries a stop handle, and Stop uses it", () => {
     expect(storeCallsAreStoppable(store)).toBe(true);
-    expect(storeCallsAreStoppable(store.replace(/\n\s*cancelId,\n(\s*\);)/, "\n$1"))).toBe(false);
+    const noHandle = store.replace(/\n\s*cancelId,\n/, "\n");
+    expect(noHandle).not.toBe(store);
+    expect(storeCallsAreStoppable(noHandle)).toBe(false);
     expect(storeCallsAreStoppable(store.replace("sftpCancel(h.cancelId)", "sftpCancel(\"\")"))).toBe(false);
     // Planted: the handle is set only after the check has started.
     const set = /\n(\s*)h\.cancelId = (`[^`]*`);/.exec(store)!;
@@ -193,10 +211,24 @@ describe("access check guard", () => {
     );
   });
 
-  it("rules and runs are filed by the home host", () => {
+  it("rules, picks and runs are filed by the home host", () => {
     expect(filedByHome(tool, store)).toBe(true);
     expect(filedByHome(tool.replace("rowsOf(homeKey)", "rowsOf(homeId ?? \"\")"), store)).toBe(false);
     expect(filedByHome(tool, store.replace("netcheckState.rows[home] = rows;", "netcheckState.rows[rows[0]?.id ?? home] = rows;"))).toBe(false);
+    // Planted: picks filed by session.
+    const bySession = tool.replace("togglePicked(homeKey, key)", "togglePicked(homeId ?? \"\", key)");
+    expect(bySession).not.toBe(tool);
+    expect(filedByHome(bySession, store)).toBe(false);
+  });
+
+  it("rules without a source go where the chips say", () => {
+    expect(routedByPicks(tool)).toBe(true);
+    // Planted: the plan hard-wires the tab the tool was opened on.
+    const here = tool.replace("planRun(planRows, hosts, facts, picked)", "planRun(planRows, hosts, facts, [homeKey])");
+    expect(here).not.toBe(tool);
+    expect(routedByPicks(here)).toBe(false);
+    // Planted: the picks come from somewhere other than the store.
+    expect(routedByPicks(tool.replace("$derived(pickedOf(homeKey))", "$derived([homeKey])"))).toBe(false);
   });
 
   it("the cap and the batch are one number on both sides", () => {

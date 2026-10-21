@@ -55,6 +55,19 @@ describe("buildHosts", () => {
     ]);
   });
 
+  it("marks which servers have a tab — a chip each, one per address", () => {
+    const hosts = buildHosts(servers, [tab("L", ""), tab("s1", "a1", false)]);
+    expect(hosts.map((h) => [h.key, h.hasTab])).toEqual([
+      [LOCAL_KEY, true],
+      ["10.64.48.180", true],
+      ["10.64.48.181", false],
+      ["db.int.corp", false],
+    ]);
+    // A tab of the second profile of an address counts for the one chip.
+    const merged = buildHosts(servers, [tab("s9", "a1b", false)]);
+    expect(merged.filter((h) => h.key === "10.64.48.180").map((h) => h.hasTab)).toEqual([true]);
+  });
+
   it("files a tab under its server's address", () => {
     expect(hostKeyOf(tab("s1", "a1"), servers)).toBe("10.64.48.180");
     expect(hostKeyOf(tab("L", ""), servers)).toBe(LOCAL_KEY);
@@ -89,23 +102,49 @@ describe("routing and the plan", () => {
   const facts: Record<string, HostFacts> = {};
   const rowOf = (line: string, via: string | null = null) => ({ rules: parseRules(line).rules, via });
 
-  it("runs a rule without a source here, a known source there, an unknown one here — and says so", () => {
-    expect(routeRow(rowOf("db:22"), hosts, facts, LOCAL_KEY)).toEqual({ hosts: [LOCAL_KEY], how: "here", unmatched: [] });
-    expect(routeRow(rowOf("app-02 -> db:22"), hosts, facts, LOCAL_KEY)).toEqual({
+  it("runs a rule without a source from the picked servers, a known source there, an unknown one picked — and says so", () => {
+    expect(routeRow(rowOf("db:22"), hosts, facts, [LOCAL_KEY])).toEqual({ hosts: [LOCAL_KEY], how: "picked", unmatched: [] });
+    expect(routeRow(rowOf("app-02 -> db:22"), hosts, facts, [LOCAL_KEY])).toEqual({
       hosts: ["10.64.48.181"],
       how: "source",
       unmatched: [],
     });
-    expect(routeRow(rowOf("10.1.1.1 -> db:22"), hosts, facts, LOCAL_KEY)).toEqual({
+    expect(routeRow(rowOf("10.1.1.1 -> db:22"), hosts, facts, [LOCAL_KEY])).toEqual({
       hosts: [LOCAL_KEY],
       how: "fallback",
       unmatched: ["10.1.1.1"],
     });
-    expect(routeRow(rowOf("10.1.1.1 -> db:22", "10.64.48.180"), hosts, facts, LOCAL_KEY).how).toBe("override");
+    expect(routeRow(rowOf("10.1.1.1 -> db:22", "10.64.48.180"), hosts, facts, [LOCAL_KEY]).how).toBe("override");
+  });
+
+  it("checks a rule without a source from every picked server, and a sourced one only from its own", () => {
+    const picked = [LOCAL_KEY, "10.64.48.180"];
+    expect(routeRow(rowOf("db:22"), hosts, facts, picked).hosts).toEqual(picked);
+    // Picking doesn't move a rule whose source names a server.
+    expect(routeRow(rowOf("app-02 -> db:22"), hosts, facts, picked).hosts).toEqual(["10.64.48.181"]);
+    const plan = planRun([rowOf("db:22"), rowOf("app-02 -> db:80")], hosts, facts, picked);
+    expect(plan.ready.map((p) => [p.host.key, p.rules.map((r) => r.ports.join())])).toEqual([
+      [LOCAL_KEY, ["22"]],
+      ["10.64.48.180", ["22"]],
+      ["10.64.48.181", ["80"]],
+    ]);
+    expect(plan.unrouted).toBe(0);
+  });
+
+  it("leaves a rule without a source unrouted when nothing is picked — and the plan counts it", () => {
+    const route = routeRow(rowOf("db:22"), hosts, facts, []);
+    expect(route).toEqual({ hosts: [], how: "picked", unmatched: [] });
+    const unmatched = routeRow(rowOf("10.1.1.1 -> db:22"), hosts, facts, []);
+    expect(unmatched).toEqual({ hosts: [], how: "fallback", unmatched: ["10.1.1.1"] });
+    const plan = planRun([rowOf("db:22"), rowOf("app-02 -> db:80")], hosts, facts, []);
+    expect(plan.unrouted).toBe(1);
+    expect(plan.ready.map((p) => p.host.key)).toEqual(["10.64.48.181"]);
+    // A picked key nobody knows (a server deleted since) goes nowhere either.
+    expect(routeRow(rowOf("db:22"), hosts, facts, ["gone.corp"]).hosts).toEqual([]);
   });
 
   it("files each source's rule under its own server, not every server of the row", () => {
-    const plan = planRun([rowOf("app-01, app-02 -> db:22"), rowOf("db:80")], hosts, facts, LOCAL_KEY);
+    const plan = planRun([rowOf("app-01, app-02 -> db:22"), rowOf("db:80")], hosts, facts, [LOCAL_KEY]);
     expect(plan.ready.map((p) => [p.host.key, p.rules.map((r) => `${r.source}:${r.ports}`), p.checks])).toEqual([
       ["10.64.48.180", ["app-01:22"], 1],
       ["10.64.48.181", ["app-02:22"], 1],
@@ -118,7 +157,7 @@ describe("routing and the plan", () => {
       [rowOf("db -> x:22"), rowOf(`app-01 -> 10.0.0.0/24:1-8`), rowOf(`app-01 -> 10.0.1.0/24:1-8`)],
       hosts,
       facts,
-      LOCAL_KEY,
+      [LOCAL_KEY],
     );
     expect(plan.waiting.map((p) => p.host.key)).toEqual(["db.int.corp"]);
     expect(plan.overCap.map((p) => [p.host.key, p.checks])).toEqual([["10.64.48.180", 2 * 254 * 8]]);

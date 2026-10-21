@@ -3,8 +3,11 @@
 // check runs FROM. A source is matched against the servers the app knows — by
 // name, by the address in the profile, by the addresses an open session reported
 // (multi-homed hosts), by its hostname, a subnet by the servers inside it. A rule
-// without a source runs from the tab the tool was opened on; a source no server
-// matches runs from there too, and says so. A row can name its server by hand.
+// without a source runs from the servers picked above the table — the tab the
+// tool was opened on, until the user picks others (v1.22, ADR 0033); a source no
+// server matches runs from them too, and says so. A row can name its server by
+// hand. Picking never moves a rule whose source names a server: the request asks
+// for access from that one.
 //
 // From that: the run plan (rules per server, connects per server, servers that
 // must be connected first) and the result matrix (target:port × server).
@@ -43,6 +46,8 @@ export interface NetHost {
   live: boolean;
   connecting: boolean;
   isProd: boolean;
+  /** A tab to it is open — live, connecting or not: it gets a chip to pick. */
+  hasTab: boolean;
 }
 
 /** What a live session reported about its host (the identity probe). */
@@ -107,12 +112,14 @@ export function buildHosts(
       live: !!local?.live,
       connecting: !!local?.connecting && !local.live,
       isProd: false,
+      hasTab: true,
     });
   }
   const byKey = new Map<string, NetHost>();
   for (const srv of servers) {
     if (!srv.host) continue;
-    const tab = pick(tabs.filter((t) => t.kind === "ssh" && t.serverId === srv.id));
+    const own = tabs.filter((t) => t.kind === "ssh" && t.serverId === srv.id);
+    const tab = pick(own);
     const host: NetHost = {
       key: srv.host,
       name: srv.alias,
@@ -123,14 +130,20 @@ export function buildHosts(
       live: !!tab?.live,
       connecting: !!tab?.connecting && !tab.live,
       isProd: srv.isProd,
+      hasTab: own.length > 0,
     };
     const seen = byKey.get(srv.host);
     if (!seen) {
       byKey.set(srv.host, host);
       out.push(host);
-    } else if (!seen.sessionId && host.sessionId) {
-      out[out.indexOf(seen)] = host;
-      byKey.set(srv.host, host);
+    } else {
+      // One address, one chip: the tab of either profile counts.
+      const merged = !seen.sessionId && host.sessionId ? host : seen;
+      merged.hasTab = seen.hasTab || host.hasTab;
+      if (merged !== seen) {
+        out[out.indexOf(seen)] = merged;
+        byKey.set(srv.host, merged);
+      }
     }
   }
   return out;
@@ -171,15 +184,16 @@ export function sourceHosts(
 }
 
 /**
- * here — no source: the tab the tool runs on. source — the source named a
- * server. fallback — no server matches the source, so it runs from the tab the
- * tool runs on (the answer may not be the one asked for). override — the row
+ * picked — no source: the servers picked above the table. source — the source
+ * named a server. fallback — no server matches the source, so it runs from the
+ * picked servers (the answer may not be the one asked for). override — the row
  * names its server by hand.
  */
-export type RouteHow = "here" | "source" | "fallback" | "override";
+export type RouteHow = "picked" | "source" | "fallback" | "override";
 
 export interface RowRoute {
-  /** Host keys, in the order the row's sources name them. */
+  /** Host keys, in the order the row's sources name them; empty when the row
+   *  goes to the picked servers and none is picked. */
   hosts: string[];
   how: RouteHow;
   /** Sources no server matched. */
@@ -193,32 +207,40 @@ export interface PlanRow {
   via: string | null;
 }
 
-/** Where one row's rules run. */
+/** The picked keys that name a known host, in the order given. */
+function pickedHosts(picked: readonly string[], hosts: readonly NetHost[]): string[] {
+  return picked.filter((k, i) => picked.indexOf(k) === i && hosts.some((h) => h.key === k));
+}
+
+/** Where one rule runs: the servers its source names, else the picked ones. */
+function ruleHosts(
+  rule: NetRule,
+  hosts: readonly NetHost[],
+  facts: Readonly<Record<string, HostFacts>>,
+  picked: readonly string[],
+): { keys: string[]; matched: boolean } {
+  if (!rule.source) return { keys: pickedHosts(picked, hosts), matched: false };
+  const found = sourceHosts(rule.source, hosts, facts).map((m) => m.host.key);
+  return found.length ? { keys: found, matched: true } : { keys: pickedHosts(picked, hosts), matched: false };
+}
+
+/** Where one row's rules run. `picked` — the servers picked above the table. */
 export function routeRow(
   row: PlanRow,
   hosts: readonly NetHost[],
   facts: Readonly<Record<string, HostFacts>>,
-  homeKey: string,
+  picked: readonly string[],
 ): RowRoute {
   if (row.via && hosts.some((h) => h.key === row.via)) return { hosts: [row.via], how: "override", unmatched: [] };
   const keys: string[] = [];
   const unmatched: string[] = [];
-  let how: RouteHow = "here";
-  const add = (k: string) => {
-    if (k && !keys.includes(k)) keys.push(k);
-  };
+  let how: RouteHow = "picked";
   for (const rule of row.rules) {
-    if (!rule.source) {
-      add(homeKey);
-      continue;
-    }
-    const found = sourceHosts(rule.source, hosts, facts);
-    if (found.length) {
-      found.forEach((m) => add(m.host.key));
-      how = how === "fallback" ? "fallback" : "source";
-    } else {
+    const r = ruleHosts(rule, hosts, facts, picked);
+    for (const k of r.keys) if (!keys.includes(k)) keys.push(k);
+    if (r.matched) how = how === "fallback" ? "fallback" : "source";
+    else if (rule.source) {
       unmatched.push(rule.source);
-      add(homeKey);
       how = "fallback";
     }
   }
@@ -242,34 +264,34 @@ export interface RunPlan {
   waiting: HostPlan[];
   /** Ready servers over the cap: the run doesn't start until they're under it. */
   overCap: HostPlan[];
+  /** Rules with nowhere to run: no source and no server picked. The run
+   *  doesn't start — they'd be silently left out. */
+  unrouted: number;
   routes: RowRoute[];
 }
 
 /**
  * The run: each row's rules filed under the servers they route to. A rule with
- * several matching servers (a subnet source) goes to each; a source that names
- * one server out of several rules goes only there.
+ * several matching servers (a subnet source, or several picked) goes to each; a
+ * source that names one server out of several rules goes only there.
  */
 export function planRun(
   rows: readonly PlanRow[],
   hosts: readonly NetHost[],
   facts: Readonly<Record<string, HostFacts>>,
-  homeKey: string,
+  picked: readonly string[],
 ): RunPlan {
-  const routes = rows.map((r) => routeRow(r, hosts, facts, homeKey));
+  const routes = rows.map((r) => routeRow(r, hosts, facts, picked));
   const plans = new Map<string, HostPlan>();
+  let unrouted = 0;
   rows.forEach((row, i) => {
     const route = routes[i];
     for (const rule of row.rules) {
-      // A rule goes to the servers its own source names (or here), unless the
-      // row picked its server: a two-source row doesn't cross its servers.
-      let keys: string[];
-      if (route.how === "override") keys = route.hosts;
-      else if (!rule.source) keys = [homeKey];
-      else {
-        const found = sourceHosts(rule.source, hosts, facts).map((m) => m.host.key);
-        keys = found.length ? found : [homeKey];
-      }
+      // A rule goes to the servers its own source names (or the picked ones),
+      // unless the row picked its server: a two-source row doesn't cross its
+      // servers.
+      const keys = route.how === "override" ? route.hosts : ruleHosts(rule, hosts, facts, picked).keys;
+      if (keys.length === 0) unrouted += 1;
       for (const key of keys) {
         const host = hosts.find((h) => h.key === key);
         if (!host) continue;
@@ -289,6 +311,7 @@ export function planRun(
     ready: ready.filter((p) => p.checks <= MAX_CHECKS),
     overCap: ready.filter((p) => p.checks > MAX_CHECKS),
     waiting: all.filter((p) => !(p.host.live && p.host.sessionId)),
+    unrouted,
     routes,
   };
 }

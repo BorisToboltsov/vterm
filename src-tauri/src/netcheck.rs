@@ -16,13 +16,22 @@
 // Output is the same tab-separated line protocol the remote script prints
 // (documented in netcheck.ts), with verdicts already classified (`N` lines), so
 // the frontend parses both transports with one function.
+//
+// The user may instead pick one of their own tools — bash /dev/tcp, nc, telnet,
+// curl — the same ones a server offers (v1.22, ADR 0033): to see what that tool
+// says from this machine. The argv of each is fixed here, the page only names
+// the tool, so a page that went bad can't make `bash -c` run anything else.
+// The wait is bounded here too (the child is killed at the timeout), which is
+// what macOS lacks a `timeout` for. Those runs print the raw readings (`R`
+// lines), like the remote script: the verdict is `classifyAttempt`'s.
 
 use futures_util::stream::{self, StreamExt};
 use serde::Deserialize;
+use std::ffi::{OsStr, OsString};
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::{TcpSocket, TcpStream};
 
 /// Parallel connects at a time (matches `BATCH` in netcheck.ts).
@@ -40,13 +49,21 @@ pub struct NetTarget {
 }
 
 /// Reject input the protocol can't carry (tabs/newlines would forge lines) or
-/// that exceeds the per-run cap. The frontend validates too; this is the
-/// backend's own boundary.
+/// that exceeds the per-run cap. A host is a name or an IPv4 address — the
+/// alphabet the frontend's rules allow — and never starts with `-`: a local tool
+/// gets it as an argument, and `-e…` would be read as an option. The frontend
+/// validates too; this is the backend's own boundary.
 pub fn validate(targets: &[NetTarget]) -> Result<(), String> {
     let mut total = 0usize;
     for t in targets {
         let h = t.host.trim();
-        if h.is_empty() || h.len() > 253 || h.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        if h.is_empty()
+            || h.len() > 253
+            || h.starts_with('-')
+            || !h
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        {
             return Err(format!("netcheck: bad host {:?}", t.host));
         }
         if t.ports.contains(&0) {
@@ -192,20 +209,208 @@ async fn connect_once(ip: IpAddr, port: u16, timeout: Duration) -> (&'static str
     }
 }
 
-/// Run every check natively and print the line protocol (`H`/`A`/`M`/`D`/`S`/
-/// `N`/`E`). With no targets it is an identity probe for the panel header. Once
-/// `cancel` is set no further connect starts and the run ends without `E`; the
-/// caller reports it as stopped (ADR 0032).
-pub async fn run_native(targets: &[NetTarget], timeout: Duration, cancel: &AtomicBool) -> String {
+// ── The user's own tools (ADR 0033) ─────────────────────────────────────────
+
+/// A probe tool of the user's that a local tab may run instead of the native
+/// connect — the same four a server offers (`PROBE_TOOLS` in netcheck.ts).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LocalTool {
+    Bash,
+    Nc,
+    Telnet,
+    Curl,
+}
+
+impl LocalTool {
+    pub const ALL: [LocalTool; 4] = [Self::Bash, Self::Nc, Self::Telnet, Self::Curl];
+
+    /// The tool the page named; anything else is not a tool.
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.name() == name)
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bash => "bash",
+            Self::Nc => "nc",
+            Self::Telnet => "telnet",
+            Self::Curl => "curl",
+        }
+    }
+
+    /// Whether this check can run it here. On Windows only curl can: `bash` in
+    /// System32 is WSL — another machine on the network as far as a firewall
+    /// rule is concerned — its telnet prints nothing on connect, so an open port
+    /// would read as a timeout, and the nc builds there disagree on `-z`.
+    fn supported(self) -> bool {
+        cfg!(not(windows)) || self == Self::Curl
+    }
+
+    /// The fixed argv after the program, for one `host:port`. The host comes
+    /// last or as a positional argument of `bash -c` (`$0`), never inside the
+    /// command text, and `validate` keeps it from starting with `-`.
+    fn argv(self, host: &str, port: u16, timeout_secs: u64, curl_scheme: &str) -> Vec<String> {
+        let t = timeout_secs.to_string();
+        let port = port.to_string();
+        match self {
+            Self::Bash => vec![
+                "-c".into(),
+                r#"exec 3<>"/dev/tcp/$0/$1""#.into(),
+                host.into(),
+                port,
+            ],
+            Self::Nc => vec!["-z".into(), "-v".into(), "-w".into(), t, host.into(), port],
+            Self::Telnet => vec![host.into(), port],
+            Self::Curl => vec![
+                "-sS".into(),
+                "-o".into(),
+                (if cfg!(windows) { "NUL" } else { "/dev/null" }).into(),
+                "-w".into(),
+                "TC=%{time_connect} ".into(),
+                "--connect-timeout".into(),
+                t.clone(),
+                "-m".into(),
+                t,
+                format!("{curl_scheme}://{host}:{port}"),
+            ],
+        }
+    }
+}
+
+/// One tool as found on this machine: its state in the protocol (`ok`,
+/// `missing`, `unsupported`) and the program to run when it is usable.
+struct Found {
+    tool: LocalTool,
+    state: &'static str,
+    program: OsString,
+}
+
+/// Look the four tools up on the user's PATH (`localenv`: a packaged macOS app
+/// starts with a minimal one). The wait is bounded here, so no tool needs
+/// `timeout`; what decides is whether the program is there.
+async fn find_tools() -> (OsString, Vec<Found>) {
+    let mut path = OsString::new();
+    let mut found = Vec::new();
+    for tool in LocalTool::ALL {
+        let exe = if cfg!(windows) {
+            format!("{}.exe", tool.name())
+        } else {
+            tool.name().to_string()
+        };
+        let (program, p) = crate::localenv::resolved_local(&exe).await;
+        path = p;
+        let there = std::path::Path::new(&program).is_absolute()
+            && std::path::Path::new(&program).is_file();
+        let state = if !tool.supported() {
+            "unsupported"
+        } else if there {
+            "ok"
+        } else {
+            "missing"
+        };
+        found.push(Found {
+            tool,
+            state,
+            program,
+        });
+    }
+    (path, found)
+}
+
+/// A minimal curl (curl-minimal on RHEL 9) has no `telnet://`; `http://`
+/// connects just the same, and the connect time is what's read either way —
+/// the remote script makes the same choice.
+async fn curl_scheme(program: &OsStr, path: &OsStr) -> &'static str {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.arg("-V")
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    crate::localenv::no_console_window(&mut cmd);
+    match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
+        Ok(Ok(out))
+            if String::from_utf8_lossy(&out.stdout)
+                .split_whitespace()
+                .any(|w| w == "telnet") =>
+        {
+            "telnet"
+        }
+        _ => "http",
+    }
+}
+
+/// Nanoseconds since the epoch — the remote script's `date +%s%N`.
+fn epoch_ns() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0)
+}
+
+/// Run a tool once and report the raw reading: `(rc, start ns, end ns, its
+/// output)`. A tool still waiting at the timeout is killed and reads 124, the
+/// code GNU `timeout` gives; curl and nc bound themselves and get half a second
+/// more to say so in their own words. Not found → 127, like a shell.
+async fn tool_once(
+    program: &OsStr,
+    path: &OsStr,
+    argv: Vec<String>,
+    timeout: Duration,
+) -> (i32, u128, u128, String) {
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(&argv)
+        .env("PATH", path)
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    crate::localenv::no_console_window(&mut cmd);
+    let start_ns = epoch_ns();
+    let start = Instant::now();
+    let res = tokio::time::timeout(timeout + Duration::from_millis(500), cmd.output()).await;
+    let end_ns = start_ns + start.elapsed().as_nanos();
+    match res {
+        Ok(Ok(out)) => {
+            let text = format!(
+                "{} {}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            (out.status.code().unwrap_or(-1), start_ns, end_ns, text)
+        }
+        Ok(Err(e)) => (127, start_ns, end_ns, e.to_string()),
+        Err(_) => (124, start_ns, end_ns, String::new()),
+    }
+}
+
+/// A tool's output as one protocol field: no separators, no line breaks, at
+/// most 240 characters (the script's `cut -c1-240`).
+fn reading(text: &str) -> String {
+    field(text.trim()).chars().take(240).collect()
+}
+
+// ── The runs ─────────────────────────────────────────────────────────────────
+
+/// Who is checking — `H`, `A` — and what it could check with — `C` per tool —
+/// for both kinds of run: the tool tiles read it from the identity probe.
+fn header(found: &[Found]) -> String {
     let (hostname, addrs) = host_facts();
     let mut out = format!("H\t{}\n", field(&hostname));
     for a in &addrs {
         out.push_str(&format!("A\t{a}\n"));
     }
-    out.push_str("M\tnative\n");
+    for f in found {
+        out.push_str(&format!("C\t{}\t{}\n", f.tool.name(), f.state));
+    }
+    out
+}
 
-    // Resolve each target once; a failed name still gets a row per port.
-    let mut jobs: Vec<(String, u16, Option<IpAddr>)> = Vec::new();
+/// Resolve each target once — `D` for a name, `S` for the address the route
+/// leaves from — and lay out one job per port. A failed name still gets its
+/// jobs (with no address).
+async fn resolve_targets(
+    targets: &[NetTarget],
+    out: &mut String,
+) -> Vec<(String, u16, Option<IpAddr>)> {
+    let mut jobs = Vec::new();
     for t in targets {
         let host = t.host.trim();
         let ip = resolve(host).await.ok();
@@ -220,6 +425,76 @@ pub async fn run_native(targets: &[NetTarget], timeout: Duration, cancel: &Atomi
             jobs.push((host.to_string(), p, ip));
         }
     }
+    jobs
+}
+
+/// Run every check with `tool` and print the line protocol: `H`/`A`/`C`/`M`,
+/// `D`/`S`, an `R` per port with the tool's raw reading, `E`. `M none` when the
+/// tool can't run here — then every port reads 127, as on a server that lacks
+/// the picked tool. Stops like [`run_native`].
+pub async fn run_tool(
+    targets: &[NetTarget],
+    timeout: Duration,
+    cancel: &AtomicBool,
+    tool: LocalTool,
+) -> String {
+    let (path, found) = find_tools().await;
+    let mut out = header(&found);
+    let usable = found
+        .iter()
+        .find(|f| f.tool == tool && f.state == "ok")
+        .map(|f| f.program.clone());
+    out.push_str(&format!(
+        "M\t{}\n",
+        if usable.is_some() {
+            tool.name()
+        } else {
+            "none"
+        }
+    ));
+    let scheme = match &usable {
+        Some(program) if tool == LocalTool::Curl && !targets.is_empty() => {
+            curl_scheme(program, &path).await
+        }
+        _ => "telnet",
+    };
+    let jobs = resolve_targets(targets, &mut out).await;
+    let secs = timeout.as_secs().max(1);
+    let (usable, path) = (&usable, &path);
+    let mut lines = stream::iter(jobs)
+        .take_while(|_| std::future::ready(!cancel.load(Ordering::Relaxed)))
+        .map(|(host, port, _)| async move {
+            let (rc, start, end, text) = match usable {
+                Some(program) => {
+                    tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout).await
+                }
+                None => (127, 0, 0, String::new()),
+            };
+            format!(
+                "R\t{}\t{port}\t{rc}\t{start}\t{end}\t{}\n",
+                field(&host),
+                reading(&text)
+            )
+        })
+        .buffer_unordered(BATCH);
+    while let Some(l) = lines.next().await {
+        out.push_str(&l);
+    }
+    if !cancel.load(Ordering::Relaxed) {
+        out.push_str("E\n");
+    }
+    out
+}
+
+/// Run every check natively and print the line protocol (`H`/`A`/`C`/`M`/`D`/
+/// `S`/`N`/`E`). With no targets it is an identity probe for the panel header
+/// and the tool tiles. Once `cancel` is set no further connect starts and the
+/// run ends without `E`; the caller reports it as stopped (ADR 0032).
+pub async fn run_native(targets: &[NetTarget], timeout: Duration, cancel: &AtomicBool) -> String {
+    let (_, found) = find_tools().await;
+    let mut out = header(&found);
+    out.push_str("M\tnative\n");
+    let jobs = resolve_targets(targets, &mut out).await;
 
     // Unordered: a subnet is mostly hosts that never answer, and one waiting
     // out its timeout must not hold back the lines behind it.
@@ -267,6 +542,11 @@ mod tests {
         assert!(validate(&[target("a\nE", &[22])]).is_err());
         assert!(validate(&[target("", &[22])]).is_err());
         assert!(validate(&[target("h", &[0])]).is_err());
+        // A local tool gets the host as an argument: no option, no URL parts.
+        assert!(validate(&[target("-e", &[22])]).is_err());
+        assert!(validate(&[target("a@b", &[22])]).is_err());
+        assert!(validate(&[target("a/b", &[22])]).is_err());
+        assert!(validate(&[target("db-01.corp_x", &[22])]).is_ok());
         let many: Vec<u16> = (1..=(MAX_CHECKS as u16 + 1)).collect();
         assert!(validate(&[target("h", &many)]).is_err());
     }
@@ -347,6 +627,122 @@ mod tests {
         assert!(out.contains("M\tnative\n"));
         assert!(!out.contains("N\t"));
         assert!(out.ends_with("E\n"));
+        // What each tool would do here: the tiles read it before the first run.
+        for tool in LocalTool::ALL {
+            let line = out
+                .lines()
+                .find(|l| l.starts_with(&format!("C\t{}\t", tool.name())))
+                .unwrap_or_else(|| panic!("no C line for {}:\n{out}", tool.name()));
+            let state = line.rsplit('\t').next().unwrap();
+            if tool.supported() {
+                assert!(matches!(state, "ok" | "missing"), "{line}");
+            } else {
+                assert_eq!(state, "unsupported", "{line}");
+            }
+        }
+    }
+
+    #[test]
+    fn tool_argv_is_fixed_and_the_host_is_never_command_text() {
+        let bash = LocalTool::Bash.argv("db.corp", 5432, 3, "telnet");
+        assert_eq!(bash[0], "-c");
+        assert!(!bash[1].contains("db.corp"), "{bash:?}");
+        assert_eq!(&bash[2..], ["db.corp", "5432"]);
+        assert_eq!(
+            LocalTool::Nc.argv("h", 22, 3, "telnet"),
+            ["-z", "-v", "-w", "3", "h", "22"]
+        );
+        assert_eq!(LocalTool::Telnet.argv("h", 22, 3, "telnet"), ["h", "22"]);
+        let curl = LocalTool::Curl.argv("h", 22, 3, "http");
+        assert_eq!(curl.last().unwrap(), "http://h:22");
+        assert!(curl.contains(&"--connect-timeout".to_string()));
+        assert_eq!(LocalTool::parse("nc"), Some(LocalTool::Nc));
+        assert_eq!(LocalTool::parse("sh"), None);
+        assert_eq!(LocalTool::parse("auto"), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_tool_still_waiting_at_the_timeout_is_killed_and_reads_124() {
+        let (program, path) = crate::localenv::resolved_local("sleep").await;
+        let started = Instant::now();
+        let (rc, t0, t1, _) = tool_once(
+            &program,
+            &path,
+            vec!["5".into()],
+            Duration::from_millis(200),
+        )
+        .await;
+        assert_eq!(rc, 124);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        // Epoch nanoseconds, like `date +%s%N`: the frontend reads the time from them.
+        assert!(t0.to_string().len() >= 16 && t1 > t0);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_bash_run_prints_raw_readings_on_loopback() {
+        let open = TcpListener::bind("127.0.0.1:0").unwrap();
+        let open_port = open.local_addr().unwrap().port();
+        let closed_port = {
+            let l = TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        let out = run_tool(
+            &[target("127.0.0.1", &[open_port, closed_port])],
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+            LocalTool::Bash,
+        )
+        .await;
+        assert!(out.contains("C\tbash\tok\n"), "{out}");
+        assert!(out.contains("M\tbash\n"), "{out}");
+        let row = |port: u16| -> Vec<String> {
+            out.lines()
+                .find(|l| l.starts_with(&format!("R\t127.0.0.1\t{port}\t")))
+                .unwrap_or_else(|| panic!("no R line for {port}:\n{out}"))
+                .split('\t')
+                .map(String::from)
+                .collect()
+        };
+        assert_eq!(row(open_port)[3], "0", "{out}");
+        let refused = row(closed_port);
+        assert_ne!(refused[3], "0", "{out}");
+        assert!(refused[6].to_lowercase().contains("refused"), "{out}");
+        assert!(refused[4].len() >= 16, "{out}");
+        assert!(out.ends_with("E\n"));
+    }
+
+    #[tokio::test]
+    async fn a_tool_that_cant_run_here_is_method_none_and_every_port_127() {
+        // On Windows bash is unsupported; elsewhere a stopped-before-start run
+        // is checked instead, so this test means something on every OS.
+        if cfg!(windows) {
+            let out = run_tool(
+                &[target("127.0.0.1", &[1])],
+                Duration::from_secs(1),
+                &AtomicBool::new(false),
+                LocalTool::Bash,
+            )
+            .await;
+            assert!(out.contains("C\tbash\tunsupported\n"), "{out}");
+            assert!(out.contains("M\tnone\n"), "{out}");
+            assert!(out.contains("R\t127.0.0.1\t1\t127\t"), "{out}");
+        } else {
+            let out = run_tool(
+                &[target("127.0.0.1", &[1, 2, 3])],
+                Duration::from_secs(1),
+                &AtomicBool::new(true),
+                LocalTool::Bash,
+            )
+            .await;
+            assert!(!out.contains("R\t"), "{out}");
+            assert!(!out.ends_with("E\n"), "{out}");
+        }
     }
 
     #[tokio::test]
@@ -390,6 +786,98 @@ mod tests {
             "{:?}",
             started.elapsed()
         );
+    }
+
+    /// A local spawn, spelled in two halves so this file's own count of spawns
+    /// (`every_local_cli_spawn_hides_the_console_window`) sees only real ones.
+    const SPAWN: &str = concat!("tokio::process::", "Command::new(");
+
+    /// Code before the tests, line comments dropped.
+    fn code(src: &str) -> String {
+        let src = src.replace("\r\n", "\n");
+        let end = src.find("#[cfg(test)]").unwrap_or(src.len());
+        src[..end]
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// The body of top-level `fn <name>(` (async or not) up to its closing `}`
+    /// at column 0.
+    fn body_of(code: &str, name: &str) -> String {
+        let at = code
+            .find(&format!("fn {name}("))
+            .unwrap_or_else(|| panic!("{name} not found"));
+        let rest = &code[at..];
+        rest[..rest.find("\n}\n").unwrap_or(rest.len())].to_string()
+    }
+
+    /// Whether, as written, a local tool runs only with the argv fixed here and
+    /// the page can do no more than name it: two spawns in this module (`-V` and
+    /// the check), the check's argv only from `LocalTool::argv`, the command
+    /// takes the tool by `LocalTool::parse`, and the local branch hands the
+    /// runner no `args` from the page.
+    fn tools_take_only_their_name(netcheck: &str, lib: &str) -> bool {
+        let nc = code(netcheck);
+        let spawns = nc.matches(SPAWN).count();
+        let scheme = body_of(&nc, "curl_scheme");
+        let once = body_of(&nc, "tool_once");
+        let calls: Vec<&str> = nc
+            .match_indices("tool_once(")
+            .map(|(i, _)| &nc[i..])
+            .collect();
+        let run_calls: Vec<&&str> = calls
+            .iter()
+            .filter(|c| !c.starts_with("tool_once(\n    program: &OsStr"))
+            .collect();
+        let lib = code(lib);
+        let run = body_of(&lib, "netcheck_run");
+        let exec = body_of(&lib, "netcheck_exec");
+        let local = &exec[exec.find("local_ptys").unwrap_or(0)..];
+        spawns == 2
+            && scheme.contains("Command::new(program)")
+            && scheme.contains(".arg(\"-V\")")
+            && !scheme.contains(".args(")
+            && once.contains(".args(&argv)")
+            && run_calls.len() == 1
+            && run_calls[0].starts_with("tool_once(program, path, tool.argv(")
+            && run.contains("netcheck::LocalTool::parse(name)")
+            && local.contains("netcheck::run_tool(targets, timeout, cancel, tool)")
+            && !local.contains("args")
+    }
+
+    #[test]
+    fn a_local_tool_runs_only_its_fixed_argv() {
+        // Gate (v1.22, ADR 0033): `bash` is a shell, so a page that could hand it
+        // an argv could run anything on this machine. The page names the tool;
+        // what runs is decided here.
+        let nc = include_str!("netcheck.rs");
+        let lib = include_str!("lib.rs");
+        assert!(tools_take_only_their_name(nc, lib));
+        // Planted: the check's argv comes from somewhere else.
+        let planted = nc.replacen(
+            "tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout)",
+            "tool_once(program, path, page_argv.clone(), timeout)",
+            1,
+        );
+        assert_ne!(planted, nc);
+        assert!(!tools_take_only_their_name(&planted, lib));
+        // Planted: a third spawn.
+        let planted = nc.replacen(
+            "fn epoch_ns() -> u128 {",
+            &format!("fn epoch_ns() -> u128 {{\n    let _ = {SPAWN}\"sh\");"),
+            1,
+        );
+        assert!(!tools_take_only_their_name(&planted, lib));
+        // Planted: the local branch passes the page's argv along.
+        let planted = lib.replacen(
+            "netcheck::run_tool(targets, timeout, cancel, tool)",
+            "netcheck::run_tool(targets, timeout, cancel, tool, args)",
+            1,
+        );
+        assert_ne!(planted, lib);
+        assert!(!tools_take_only_their_name(nc, &planted));
     }
 
     /// Gate (v1.0.36): the app opens sockets of its own only for SSH (incl. the
