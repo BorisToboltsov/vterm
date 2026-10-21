@@ -9,6 +9,7 @@
   // Above the tools stand the session actions of the top bar (v1.16,
   // sessionactions.ts): a button taken off the bar is still found, explained and
   // run from here, and put back with the same pin a tool has.
+  import { untrack } from "svelte";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
   import {
@@ -30,6 +31,7 @@
   import UtilNetCheck from "./UtilNetCheck.svelte";
   import UtilSessionAction from "./UtilSessionAction.svelte";
   import type { ProbeSession } from "./probe";
+  import type { HostServer, HostTab } from "./netroute";
   import { tooltip } from "./actions/tooltip";
   import { utilAction, type SessionAction, type TopbarId } from "./topbaractions";
   import {
@@ -46,6 +48,9 @@
     open = $bindable(false),
     initialUtility = null,
     session = null,
+    netServers = [],
+    netTabs = [],
+    onConnectServer,
     onInstallTool,
     toolsReloadToken = 0,
     actions = null,
@@ -56,8 +61,13 @@
     initialUtility?: string | null;
     /** Active-tab context for the network tools (SSH remote / local PTY). */
     session?: ProbeSession | null;
-    /** Offer a probe tool's install dialog (access check on an SSH host). */
-    onInstallTool?: (tool: string) => void;
+    /** The catalog and the open tabs, for the access check's choice of servers. */
+    netServers?: HostServer[];
+    netTabs?: HostTab[];
+    /** Open a session to a server the access check needs. */
+    onConnectServer?: (serverId: string) => void;
+    /** Offer a probe tool's install dialog on that session (access check on an SSH host). */
+    onInstallTool?: (tool: string, sessionId?: string) => void;
     /** Bumped after a server-tool install finishes. */
     toolsReloadToken?: number;
     /**
@@ -99,6 +109,14 @@
     if (!open) return;
     search = "";
     if (initialUtility && isUtility(initialUtility)) selected = initialUtility;
+  });
+
+  // The tab the window was opened on: the access check's home while the window
+  // is open. Connecting a server from the tool activates its new tab, and the
+  // rules on screen must not swap to that tab's under the user's hands.
+  let homeId = $state<string | null>(null);
+  $effect(() => {
+    if (open) homeId = untrack(() => session?.id ?? null);
   });
 
   // Keep the selection valid while filtering: if what is selected is filtered
@@ -241,7 +259,14 @@
               onrun={() => runAction(activeAction.id)}
             />
           {:else if selected === "netcheck"}
-            <UtilNetCheck {session} {onInstallTool} reloadToken={toolsReloadToken} />
+            <UtilNetCheck
+              {homeId}
+              servers={netServers}
+              tabs={netTabs}
+              onConnect={onConnectServer}
+              {onInstallTool}
+              reloadToken={toolsReloadToken}
+            />
           {:else if selected === "keys"}
             <UtilKeys />
           {:else if selected === "codec"}

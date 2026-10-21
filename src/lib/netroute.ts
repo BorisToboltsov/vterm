@@ -1,0 +1,427 @@
+// Utilities → access check: which server checks what (v1.21, ADR 0032). A rule's
+// source is no longer just a note to compare against: it names the server the
+// check runs FROM. A source is matched against the servers the app knows — by
+// name, by the address in the profile, by the addresses an open session reported
+// (multi-homed hosts), by its hostname, a subnet by the servers inside it. A rule
+// without a source runs from the tab the tool was opened on; a source no server
+// matches runs from there too, and says so. A row can name its server by hand.
+//
+// From that: the run plan (rules per server, connects per server, servers that
+// must be connected first) and the result matrix (target:port × server).
+//
+// Pure (INVARIANTS "чистая логика в .ts").
+
+import {
+  checkCount,
+  cidrContains,
+  egressDiffers,
+  isCidr,
+  isIpv4,
+  MAX_CHECKS,
+  parseCidr,
+  rowsFor,
+  serviceName,
+  tally,
+  type NetReport,
+  type NetRule,
+  type PortStatus,
+  type Proto,
+} from "./netcheck";
+
+/** A server (or this machine) that can run checks. */
+export interface NetHost {
+  /** "local", or the profile's address — the key history and probe methods use. */
+  key: string;
+  /** The profile's alias; "" for this machine (the UI names it). */
+  name: string;
+  kind: "ssh" | "local";
+  serverId: string | null;
+  /** The profile's address ("" for this machine). */
+  address: string;
+  /** An open session to it: live, or still connecting. */
+  sessionId: string | null;
+  live: boolean;
+  connecting: boolean;
+  isProd: boolean;
+}
+
+/** What a live session reported about its host (the identity probe). */
+export interface HostFacts {
+  hostname: string;
+  /** Visible addresses only — no loopback, no link-local: every host has those. */
+  addrs: string[];
+}
+
+/** The fields of a server profile this module reads. */
+export interface HostServer {
+  id: string;
+  alias: string;
+  host: string;
+  isProd: boolean;
+}
+
+/** The fields of a tab this module reads. */
+export interface HostTab {
+  sessionId: string;
+  kind: "ssh" | "local";
+  serverId: string;
+  live: boolean;
+  connecting: boolean;
+}
+
+export const LOCAL_KEY = "local";
+
+/** The key a tab's checks are filed under — the server's address, or "local". */
+export function hostKeyOf(tab: Pick<HostTab, "kind" | "serverId">, servers: readonly HostServer[]): string {
+  if (tab.kind === "local") return LOCAL_KEY;
+  return servers.find((s) => s.id === tab.serverId)?.host ?? "";
+}
+
+/**
+ * Every place a check can run from: this machine (when a local tab is open) and
+ * every server in the catalog, with its session if a tab to it is open — the
+ * tab the tool was opened on first, then a live one, then one still connecting.
+ * Two profiles of one address are one host (the first with a session wins).
+ */
+export function buildHosts(
+  servers: readonly HostServer[],
+  tabs: readonly HostTab[],
+  homeSession: string | null = null,
+): NetHost[] {
+  const pick = (cands: HostTab[]) =>
+    cands.find((t) => t.sessionId === homeSession) ??
+    cands.find((t) => t.live) ??
+    cands.find((t) => t.connecting) ??
+    null;
+  const out: NetHost[] = [];
+  const locals = tabs.filter((t) => t.kind === "local");
+  const local = pick(locals);
+  if (locals.length) {
+    out.push({
+      key: LOCAL_KEY,
+      name: "",
+      kind: "local",
+      serverId: null,
+      address: "",
+      sessionId: local?.sessionId ?? null,
+      live: !!local?.live,
+      connecting: !!local?.connecting && !local.live,
+      isProd: false,
+    });
+  }
+  const byKey = new Map<string, NetHost>();
+  for (const srv of servers) {
+    if (!srv.host) continue;
+    const tab = pick(tabs.filter((t) => t.kind === "ssh" && t.serverId === srv.id));
+    const host: NetHost = {
+      key: srv.host,
+      name: srv.alias,
+      kind: "ssh",
+      serverId: srv.id,
+      address: srv.host,
+      sessionId: tab?.sessionId ?? null,
+      live: !!tab?.live,
+      connecting: !!tab?.connecting && !tab.live,
+      isProd: srv.isProd,
+    };
+    const seen = byKey.get(srv.host);
+    if (!seen) {
+      byKey.set(srv.host, host);
+      out.push(host);
+    } else if (!seen.sessionId && host.sessionId) {
+      out[out.indexOf(seen)] = host;
+      byKey.set(srv.host, host);
+    }
+  }
+  return out;
+}
+
+/** How a source found its server. */
+export type MatchHow = "name" | "address" | "hostname" | "subnet";
+
+/**
+ * The hosts a rule's source names: by alias, by the profile's address, by an
+ * address a session reported, by hostname (or its first label), a subnet by
+ * every host with an address inside it.
+ */
+export function sourceHosts(
+  source: string,
+  hosts: readonly NetHost[],
+  facts: Readonly<Record<string, HostFacts>>,
+): { host: NetHost; how: MatchHow }[] {
+  const s = source.trim().toLowerCase();
+  if (!s) return [];
+  const net = parseCidr(s);
+  const out: { host: NetHost; how: MatchHow }[] = [];
+  for (const host of hosts) {
+    const f = host.sessionId ? facts[host.sessionId] : undefined;
+    const addrs = [...(isIpv4(host.address) ? [host.address] : []), ...(f?.addrs ?? [])];
+    let how: MatchHow | null = null;
+    if (net) {
+      if (addrs.some((a) => cidrContains(net, a))) how = "subnet";
+    } else if (host.name && host.name.toLowerCase() === s) how = "name";
+    else if (host.address.toLowerCase() === s || addrs.includes(s)) how = "address";
+    else if (f?.hostname) {
+      const hn = f.hostname.toLowerCase();
+      if (hn === s || hn.split(".")[0] === s) how = "hostname";
+    }
+    if (how) out.push({ host, how });
+  }
+  return out;
+}
+
+/**
+ * here — no source: the tab the tool runs on. source — the source named a
+ * server. fallback — no server matches the source, so it runs from the tab the
+ * tool runs on (the answer may not be the one asked for). override — the row
+ * names its server by hand.
+ */
+export type RouteHow = "here" | "source" | "fallback" | "override";
+
+export interface RowRoute {
+  /** Host keys, in the order the row's sources name them. */
+  hosts: string[];
+  how: RouteHow;
+  /** Sources no server matched. */
+  unmatched: string[];
+}
+
+/** One row of the rules table as planning sees it: its rules and its pick. */
+export interface PlanRow {
+  rules: NetRule[];
+  /** The host key picked by hand, or null to go by the source. */
+  via: string | null;
+}
+
+/** Where one row's rules run. */
+export function routeRow(
+  row: PlanRow,
+  hosts: readonly NetHost[],
+  facts: Readonly<Record<string, HostFacts>>,
+  homeKey: string,
+): RowRoute {
+  if (row.via && hosts.some((h) => h.key === row.via)) return { hosts: [row.via], how: "override", unmatched: [] };
+  const keys: string[] = [];
+  const unmatched: string[] = [];
+  let how: RouteHow = "here";
+  const add = (k: string) => {
+    if (k && !keys.includes(k)) keys.push(k);
+  };
+  for (const rule of row.rules) {
+    if (!rule.source) {
+      add(homeKey);
+      continue;
+    }
+    const found = sourceHosts(rule.source, hosts, facts);
+    if (found.length) {
+      found.forEach((m) => add(m.host.key));
+      how = how === "fallback" ? "fallback" : "source";
+    } else {
+      unmatched.push(rule.source);
+      add(homeKey);
+      how = "fallback";
+    }
+  }
+  return { hosts: keys, how, unmatched };
+}
+
+/** One server's part of a run. */
+export interface HostPlan {
+  host: NetHost;
+  rules: NetRule[];
+  /** Connects it makes — what the cap is about. */
+  checks: number;
+  /** A subnet among its targets: the run asks first. */
+  subnet: boolean;
+}
+
+export interface RunPlan {
+  /** Servers with a live session, in the order rules first name them. */
+  ready: HostPlan[];
+  /** Servers rules route to that have no live session yet. */
+  waiting: HostPlan[];
+  /** Ready servers over the cap: the run doesn't start until they're under it. */
+  overCap: HostPlan[];
+  routes: RowRoute[];
+}
+
+/**
+ * The run: each row's rules filed under the servers they route to. A rule with
+ * several matching servers (a subnet source) goes to each; a source that names
+ * one server out of several rules goes only there.
+ */
+export function planRun(
+  rows: readonly PlanRow[],
+  hosts: readonly NetHost[],
+  facts: Readonly<Record<string, HostFacts>>,
+  homeKey: string,
+): RunPlan {
+  const routes = rows.map((r) => routeRow(r, hosts, facts, homeKey));
+  const plans = new Map<string, HostPlan>();
+  rows.forEach((row, i) => {
+    const route = routes[i];
+    for (const rule of row.rules) {
+      // A rule goes to the servers its own source names (or here), unless the
+      // row picked its server: a two-source row doesn't cross its servers.
+      let keys: string[];
+      if (route.how === "override") keys = route.hosts;
+      else if (!rule.source) keys = [homeKey];
+      else {
+        const found = sourceHosts(rule.source, hosts, facts).map((m) => m.host.key);
+        keys = found.length ? found : [homeKey];
+      }
+      for (const key of keys) {
+        const host = hosts.find((h) => h.key === key);
+        if (!host) continue;
+        const plan = plans.get(key) ?? { host, rules: [], checks: 0, subnet: false };
+        plan.rules.push(rule);
+        plans.set(key, plan);
+      }
+    }
+  });
+  const all = [...plans.values()];
+  for (const p of all) {
+    p.checks = checkCount(p.rules);
+    p.subnet = p.rules.some((r) => r.proto === "tcp" && r.targets.some(isCidr));
+  }
+  const ready = all.filter((p) => p.host.live && p.host.sessionId);
+  return {
+    ready: ready.filter((p) => p.checks <= MAX_CHECKS),
+    overCap: ready.filter((p) => p.checks > MAX_CHECKS),
+    waiting: all.filter((p) => !(p.host.live && p.host.sessionId)),
+    routes,
+  };
+}
+
+// ── Result matrix ────────────────────────────────────────────────────────────
+
+/** One server's answer for one target:port. */
+export interface MatrixCell {
+  status: PortStatus;
+  ms: number | null;
+  detail: string;
+  /** The address the route leaves from, and whether a firewall rule for the
+   *  rule's source would miss it. */
+  egress: { src: string; differs: boolean } | null;
+}
+
+/** A subnet's answers on one port from one server. */
+export interface SubnetCell {
+  open: { host: string; ms: number | null }[];
+  counts: Partial<Record<PortStatus, number>>;
+  total: number;
+}
+
+export interface MatrixRow {
+  port: number;
+  service: string;
+  /** Per column; null = this server wasn't asked. */
+  cells: (MatrixCell | null)[];
+  /** Per column, for a subnet target. */
+  subnet: (SubnetCell | null)[] | null;
+}
+
+export interface MatrixGroup {
+  /** As written: a host, an address or a subnet. */
+  target: string;
+  proto: Proto;
+  labels: string[];
+  /** What the name resolved to, per column ("" = didn't resolve). */
+  resolved: (string | null)[];
+  isSubnet: boolean;
+  rows: MatrixRow[];
+}
+
+/** A column: one server's run. */
+export interface MatrixColumn {
+  key: string;
+  rules: NetRule[];
+  report: NetReport | null;
+}
+
+/**
+ * The results as target:port × server. Groups keep the order targets first
+ * appear in; a target several servers checked is one group with a cell each.
+ */
+export function buildMatrix(columns: readonly MatrixColumn[]): MatrixGroup[] {
+  const groups: MatrixGroup[] = [];
+  const find = (target: string, proto: Proto) => groups.find((g) => g.target === target && g.proto === proto);
+  for (const col of columns) {
+    for (const rule of col.rules) {
+      for (const target of rule.targets) {
+        let g = find(target, rule.proto);
+        if (!g) {
+          g = {
+            target,
+            proto: rule.proto,
+            labels: [],
+            resolved: columns.map(() => null),
+            isSubnet: isCidr(target),
+            rows: [],
+          };
+          groups.push(g);
+        }
+        if (rule.label && !g.labels.includes(rule.label)) g.labels.push(rule.label);
+        for (const port of rule.ports) {
+          if (!g.rows.some((r) => r.port === port)) {
+            g.rows.push({
+              port,
+              service: serviceName(port),
+              cells: columns.map(() => null),
+              subnet: g.isSubnet ? columns.map(() => null) : null,
+            });
+          }
+        }
+      }
+    }
+  }
+  columns.forEach((col, c) => {
+    for (const g of groups) {
+      const rules = col.rules.filter((r) => r.proto === g.proto && r.targets.includes(g.target));
+      if (rules.length === 0) continue;
+      if (col.report && !g.isSubnet && g.target in col.report.resolved) g.resolved[c] = col.report.resolved[g.target];
+      for (const row of g.rows) {
+        const rule = rules.find((r) => r.ports.includes(row.port));
+        if (!rule) continue;
+        const results = rowsFor({ ...rule, ports: [row.port] }, g.target, col.report);
+        if (g.isSubnet) {
+          const counts: Partial<Record<PortStatus, number>> = {};
+          for (const r of results) if (r.status !== "open") counts[r.status] = (counts[r.status] ?? 0) + 1;
+          row.subnet![c] = {
+            open: results.filter((r) => r.status === "open").map((r) => ({ host: r.host, ms: r.ms })),
+            counts,
+            total: results.length,
+          };
+          continue;
+        }
+        const r = results[0];
+        const src = col.report?.routeSrc[g.target];
+        row.cells[c] = {
+          status: r.status,
+          ms: r.ms,
+          detail: r.detail,
+          egress: src && col.report ? { src, differs: egressDiffers(rule.source, g.target, col.report) } : null,
+        };
+      }
+    }
+  });
+  return groups;
+}
+
+/** Open / checked over everything a column asked — its header's count. */
+export function columnTally(col: MatrixColumn): { open: number; checked: number } {
+  return tally(col.rules.flatMap((rule) => rule.targets.flatMap((t) => rowsFor(rule, t, col.report))));
+}
+
+/** A subnet's hosts on one port that didn't open, every one, for the expanded view. */
+export function subnetMisses(
+  col: MatrixColumn,
+  target: string,
+  port: number,
+): { host: string; status: PortStatus; ms: number | null; detail: string }[] {
+  const rule = col.rules.find((r) => r.targets.includes(target) && r.ports.includes(port));
+  if (!rule) return [];
+  return rowsFor({ ...rule, ports: [port] }, target, col.report)
+    .filter((r) => r.status !== "open")
+    .map((r) => ({ host: r.host, status: r.status, ms: r.ms, detail: r.detail }));
+}
