@@ -1,7 +1,9 @@
 <script lang="ts">
   // Utilities → access check, the rules (v1.21, ADR 0032): a box to paste a
   // request into as it came, and the table it becomes — a row per rule, four
-  // cells of text and, under each, which server will check it. Reading the
+  // cells and, under each, which server will check it (with no source: the
+  // picked ones, ADR 0033). "From" is a list — all picked, one picked server, or
+  // an address typed — not a box to type into. Reading the
   // paste is netcheckpaste.ts, a row's rules are netcheckform.ts, routing is
   // netroute.ts; this binds them to inputs. The rows live in the store, per home
   // host.
@@ -16,10 +18,14 @@
     asProto,
     isBlankRow,
     newRow,
+    sourceChoice,
+    sourceOptions,
     splitHostPort,
     textRows,
+    withSource,
     type RowError,
     type RuleRow,
+    type SourceChoice,
   } from "./netcheckform";
   import type { NetHost, RowRoute } from "./netroute";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
@@ -28,12 +34,15 @@
   let {
     homeKey,
     hosts,
+    picked,
     errors,
     routes,
     hostName,
   }: {
     homeKey: string;
     hosts: NetHost[];
+    /** Host keys picked under "Check from" — what the From list offers. */
+    picked: string[];
     /** Per row: why it can't run, or null. */
     errors: (RowError | null)[];
     /** Per row: where it runs (null for a row with an error). */
@@ -183,6 +192,76 @@
   };
   const errorText = (e: RowError) => t(ERR_KEY[e.code], { token: "token" in e ? e.token : "" });
 
+  // ── The From cell ────────────────────────────────────────────────────────
+  const hostKeys = $derived(hosts.map((h) => h.key));
+  // The row whose From cell is a text box right now, and what's typed in it.
+  let typingId = $state<string | null>(null);
+  let typed = $state("");
+  let sourceEls: Record<string, HTMLInputElement> = {};
+
+  function setSource(row: RuleRow, choice: SourceChoice) {
+    const next = withSource(choice);
+    row.source = next.source;
+    row.via = next.via;
+  }
+
+  /** A server as the list names it: its name, and the address beside it. */
+  function hostLabel(key: string): string {
+    const h = hostOf(key);
+    const name = hostName(key);
+    return h?.address && h.address !== name ? `${name} · ${h.address}` : name;
+  }
+
+  function startTyping(row: RuleRow) {
+    typed = row.via ? "" : row.source;
+    typingId = row.id;
+    queueMicrotask(() => sourceEls[row.id]?.focus());
+  }
+
+  /** Take what was typed: an address, or — nothing typed — all picked. */
+  function commitTyping(row: RuleRow) {
+    if (typingId !== row.id) return;
+    typingId = null;
+    setSource(row, typed.trim() ? { kind: "text", text: typed } : { kind: "all" });
+  }
+
+  function onTypingKey(e: KeyboardEvent, row: RuleRow) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitTyping(row);
+    } else if (e.key === "Escape") {
+      // Cancels the typing only: the Utilities window closes on an Escape that
+      // reaches the window.
+      e.preventDefault();
+      e.stopPropagation();
+      typingId = null;
+    }
+  }
+
+  function openSourceMenu(e: MouseEvent, row: RuleRow) {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const choice = sourceChoice(row, hostKeys);
+    const items: MenuItem[] = [
+      {
+        label: t("util.netcheck.sourceAll"),
+        checked: choice.kind === "all",
+        onSelect: () => setSource(row, { kind: "all" }),
+      },
+      ...sourceOptions(picked, hostKeys, choice).map((key) => ({
+        label: hostLabel(key),
+        checked: choice.kind === "host" && choice.key === key,
+        onSelect: () => setSource(row, { kind: "host", key }),
+      })),
+    ];
+    // The address the cell shows is in the list too; picking it edits it.
+    if (choice.kind === "text") items.push({ label: choice.text, checked: true, onSelect: () => startTyping(row) });
+    items.push(
+      { kind: "separator" },
+      { label: t("util.netcheck.sourceType"), icon: "pencil", onSelect: () => startTyping(row) },
+    );
+    menu = { x: r.left, y: r.bottom + 4, items };
+  }
+
   const hostOf = (key: string) => hosts.find((h) => h.key === key);
   const cell =
     "w-full min-w-0 rounded border border-edge bg-panel px-1.5 py-1 font-mono text-text outline-none placeholder:text-muted focus:border-accent";
@@ -296,14 +375,38 @@
         {@const route = routes[i] ?? null}
         <div class="border-b border-edge/60 px-2 py-1.5 last:border-0" data-testid="netcheck-rule-row">
           <div class="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.2fr)_minmax(0,1fr)_4.25rem_1.75rem] items-center gap-1.5">
-            <input
-              class={cell}
-              data-testid="netcheck-cell-source"
-              aria-label={t("util.netcheck.colFrom")}
-              placeholder={t("util.netcheck.sourcePlaceholder")}
-              spellcheck="false"
-              bind:value={row.source}
-            />
+            {#if typingId === row.id}
+              <input
+                bind:this={sourceEls[row.id]}
+                class={cell}
+                data-testid="netcheck-source-input"
+                aria-label={t("util.netcheck.colFrom")}
+                placeholder={t("util.netcheck.sourcePlaceholder")}
+                spellcheck="false"
+                bind:value={typed}
+                onkeydown={(e) => onTypingKey(e, row)}
+                onblur={() => commitTyping(row)}
+              />
+            {:else}
+              {@const choice = sourceChoice(row, hostKeys)}
+              <button
+                type="button"
+                class="{cell} flex items-center gap-1 text-left"
+                data-testid="netcheck-cell-source"
+                aria-haspopup="menu"
+                aria-label={t("util.netcheck.colFrom")}
+                onclick={(e) => openSourceMenu(e, row)}
+              >
+                <span class="min-w-0 flex-1 truncate {choice.kind === 'text' ? '' : 'font-sans'}">
+                  {choice.kind === "all"
+                    ? t("util.netcheck.sourceAll")
+                    : choice.kind === "host"
+                      ? hostName(choice.key)
+                      : choice.text}
+                </span>
+                <Icon name="chevronDown" size={12} class="shrink-0 text-muted" />
+              </button>
+            {/if}
             <input
               bind:this={rowEls[row.id]}
               class={cell}
@@ -349,6 +452,15 @@
               <span class="flex items-center gap-1 text-bad" data-testid="netcheck-row-error">
                 <Icon name="alert" size={12} />{errorText(err)}
               </span>
+            {:else if route && route.hosts.length === 0}
+              <span class="flex items-center gap-1 text-warn" data-testid="netcheck-route-none">
+                <Icon name="alert" size={12} />{t("util.netcheck.routeNone")}
+              </span>
+              {#if route.how === "fallback"}
+                <span class="text-muted" data-testid="netcheck-source-warn">
+                  · {t("util.netcheck.routeUnmatched", { source: route.unmatched.join(", ") })}
+                </span>
+              {/if}
             {:else if route}
               <Icon name="arrowRight" size={11} class="text-muted" />
               {#each route.hosts as key, k (key)}
@@ -358,8 +470,8 @@
                   <span class="text-warn">({h.connecting ? t("util.netcheck.hostConnecting") : t("util.netcheck.hostOffline")})</span>
                 {/if}
               {/each}
-              {#if route.how === "here"}
-                <span class="text-muted">· {t("util.netcheck.routeHere")}</span>
+              {#if route.how === "picked"}
+                <span class="text-muted">· {t("util.netcheck.routePicked")}</span>
               {:else if route.how === "override"}
                 <span class="text-accent">· {t("util.netcheck.routeOverride")}</span>
               {:else if route.how === "fallback"}

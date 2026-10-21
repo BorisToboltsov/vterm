@@ -91,3 +91,44 @@ export function splitHostPort(raw: string): { target: string; ports: string } | 
 export function asProto(v: string): Proto {
   return v === "udp" ? "udp" : "tcp";
 }
+
+// ── The "From" cell (v1.22, ADR 0033) ───────────────────────────────────────
+// A list, not a box to type into: every picked server (the default), one picked
+// server, or — for what a request names that no chip does — an address typed.
+
+/**
+ * What the cell shows: all — no source, no server by hand, so the picked
+ * servers check it. host — a server picked by hand (`via`). text — the source as
+ * written, from a request or typed. A hand-picked server the catalog no longer
+ * has counts for nothing, as in routing.
+ */
+export type SourceChoice = { kind: "all" } | { kind: "host"; key: string } | { kind: "text"; text: string };
+
+export function sourceChoice(row: Pick<RuleRow, "source" | "via">, hostKeys: readonly string[]): SourceChoice {
+  if (row.via && hostKeys.includes(row.via)) return { kind: "host", key: row.via };
+  const text = row.source.trim();
+  return text ? { kind: "text", text } : { kind: "all" };
+}
+
+/**
+ * The row's source and server after a choice. The cell shows one thing, so a
+ * server picked in it takes the place of the request's address, and a typed
+ * address drops the server picked by hand.
+ */
+export function withSource(choice: SourceChoice): { source: string; via: string | null } {
+  if (choice.kind === "host") return { source: "", via: choice.key };
+  if (choice.kind === "text") return { source: choice.text.trim(), via: null };
+  return { source: "", via: null };
+}
+
+/**
+ * The servers the list offers: the picked ones the catalog knows, in host
+ * order — and the row's own server when it isn't among them (picked by hand
+ * from the row's menu, or unpicked since), so the list names what the cell
+ * shows.
+ */
+export function sourceOptions(picked: readonly string[], hostKeys: readonly string[], choice: SourceChoice): string[] {
+  const out = hostKeys.filter((k) => picked.includes(k));
+  if (choice.kind === "host" && !out.includes(choice.key)) out.push(choice.key);
+  return out;
+}

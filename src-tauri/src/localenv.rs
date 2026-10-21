@@ -301,7 +301,8 @@ mod tests {
     #[test]
     fn every_local_cli_spawn_hides_the_console_window() {
         // Guard (bug fixed v1.0.10): each module that spawns a console CLI locally
-        // (git/docker/kubectl) must route EVERY spawn through `no_console_window`,
+        // (git/docker/kubectl, the access check's probe tools) must route EVERY
+        // spawn through `no_console_window`,
         // or a console window flashes on Windows each time the driver panel polls.
         // Counted by source so a newly-added spawn can't silently reintroduce the
         // flash. localenv's own login-shell probe is excluded — it's `#[cfg(unix)]`
@@ -310,6 +311,7 @@ mod tests {
             ("git.rs", include_str!("git.rs")),
             ("container.rs", include_str!("container.rs")),
             ("kube.rs", include_str!("kube.rs")),
+            ("netcheck.rs", include_str!("netcheck.rs")),
         ] {
             let spawns = src.matches("tokio::process::Command::new").count();
             let guarded = src.matches("no_console_window(&mut").count();

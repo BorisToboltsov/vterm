@@ -1,17 +1,19 @@
-// Access-check store (v1.0.36, v1.21 — ADR 0032): the rules table, the last run
-// and the per-host history of the Utilities "access check". Keyed by the HOME
-// host — the tab the tool was opened on (server address or "local") — not by
-// session: another tab shows its own rules and its own last answer, never the
-// previous server's, and nothing here outlives a session in a way that needs
-// clearing in `closeTabFully` (a run keeps a session id only to retry with; a
-// closed one answers "no session"). The Utilities window unmounts on close, so
-// rules and runs live here: a run started keeps going behind a closed window,
-// its answer waits for the reopen. History and probe methods persist to
-// localStorage (per-viewer conveniences; losing them only loses suggestions);
-// rules and runs don't.
+// Access-check store (v1.0.36, v1.21 — ADR 0032, v1.22 — ADR 0033): the rules
+// table, the servers picked to check rules without a source, the last run and
+// the per-host history of the Utilities "access check". Keyed by the HOME host —
+// the tab the tool was opened on (server address or "local") — not by session:
+// another tab shows its own rules, picks and last answer, never the previous
+// server's, and nothing here outlives a session in a way that needs clearing in
+// `closeTabFully` (a run keeps a session id only to retry with; a closed one
+// answers "no session"). The Utilities window unmounts on close, so rules and
+// runs live here: a run started keeps going behind a closed window, its answer
+// waits for the reopen. History and probe methods persist to localStorage
+// (per-viewer conveniences; losing them only loses suggestions); rules, picks
+// and runs don't.
 import {
   checkTargets,
   failedKeys,
+  localToolOf,
   mergeReports,
   netcheckArgs,
   netcheckAudit,
@@ -93,12 +95,16 @@ function load(): NetHistory {
 export const netcheckState = $state<{
   /** The rules table, per home host. */
   rows: Record<string, RuleRow[]>;
+  /** The host keys picked to check rules without a source, per home host;
+   *  absent = the home host itself. */
+  picked: Record<string, string[]>;
   /** The last run, per home host. */
   runs: Record<string, NetRun>;
   history: NetHistory;
   methods: Record<string, MethodChoice>;
 }>({
   rows: {},
+  picked: {},
   runs: {},
   history: load(),
   methods: loadMethods(),
@@ -113,6 +119,19 @@ export function rowsOf(home: string): RuleRow[] {
 export function setRows(home: string, rows: RuleRow[]): void {
   if (!home) return;
   netcheckState.rows[home] = rows;
+}
+
+/** The servers `home` checks rules without a source from: the home host itself
+ *  until something else is picked. */
+export function pickedOf(home: string): string[] {
+  return netcheckState.picked[home] ?? (home ? [home] : []);
+}
+
+/** Pick `key` to check rules without a source from `home`, or unpick it. */
+export function togglePicked(home: string, key: string): void {
+  if (!home || !key) return;
+  const now = pickedOf(home);
+  netcheckState.picked[home] = now.includes(key) ? now.filter((k) => k !== key) : [...now, key];
 }
 
 /** The last run from `home`, if any. */
@@ -175,7 +194,7 @@ export async function startRun(home: string, plan: HostPlan[], timeout: number, 
       sessionId: p.host.sessionId ?? "",
       isProd: p.host.isProd,
       rules: p.rules,
-      method: p.host.kind === "local" ? "auto" : methodFor(p.host.key),
+      method: methodFor(p.host.key),
       state: "running",
       report: null,
       error: "",
@@ -220,7 +239,7 @@ async function probeHost(home: string, id: number, i: number, targets: NetTarget
   h.state = "running";
   h.error = "";
   h.cancelId = `netcheck:${id}:${i}:${Date.now().toString(36)}`;
-  const { sessionId, cancelId, method, rules } = h;
+  const { sessionId, cancelId, method, rules, kind } = h;
   const timeout = run.timeout;
   const count = targets.reduce((n, x) => n + x.ports.length, 0);
   try {
@@ -231,6 +250,7 @@ async function probeHost(home: string, id: number, i: number, targets: NetTarget
       timeout,
       runBudgetSecs(count, timeout),
       cancelId,
+      localToolOf(kind, method),
     );
     const cur = hostOf(home, id, i);
     if (!cur) return;

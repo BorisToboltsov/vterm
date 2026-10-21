@@ -327,8 +327,10 @@ export type ProbeTool = (typeof PROBE_TOOLS)[number];
 /** What the user picked: a tool, or the first usable one. */
 export type MethodChoice = "auto" | ProbeTool;
 /** ok — usable. missing — not installed. notimeout — installed, but needs
- *  `timeout` to be bounded (bash, telnet) and there is none. */
-export type ToolState = "ok" | "missing" | "notimeout";
+ *  `timeout` to be bounded (bash, telnet) and there is none. unsupported — this
+ *  check can't run it on this OS whether it's there or not (Windows: all but
+ *  curl, ADR 0033) — "impossible here", not "not installed". */
+export type ToolState = "ok" | "missing" | "notimeout" | "unsupported";
 
 export function isMethodChoice(v: unknown): v is MethodChoice {
   return v === "auto" || (PROBE_TOOLS as readonly unknown[]).includes(v);
@@ -337,15 +339,27 @@ export function isMethodChoice(v: unknown): v is MethodChoice {
 /**
  * The method a run will use: the picked tool if it's usable, else "none" (never a
  * silent substitute); "auto" → the first usable in `PROBE_TOOLS` order, the same
- * rule the script applies. Null while the host hasn't reported its tools yet.
+ * rule the script applies — on this machine (`local`) "auto" is the app's own
+ * connect (ADR 0033). Null while the host hasn't reported its tools yet.
  */
 export function effectiveMethod(
   choice: MethodChoice,
   tools: Partial<Record<ProbeTool, ToolState>>,
-): ProbeTool | "none" | null {
+  local = false,
+): Method | null {
+  if (local && choice === "auto") return "native";
   if (Object.keys(tools).length === 0) return null;
   if (choice === "auto") return PROBE_TOOLS.find((tool) => tools[tool] === "ok") ?? "none";
   return tools[choice] === "ok" ? choice : "none";
+}
+
+/**
+ * The tool a local tab is told to run (`netcheck_run`'s `localTool`): the picked
+ * one, or null for the app's own connect. A server gets its tool inside the
+ * script, so it's told nothing here.
+ */
+export function localToolOf(kind: "ssh" | "local", choice: MethodChoice): ProbeTool | null {
+  return kind === "local" && choice !== "auto" ? choice : null;
 }
 
 // Shell variable holding each tool's state in the script.
@@ -482,7 +496,7 @@ export interface NetReport {
   results: PortResult[];
   /** False when the `E` marker never arrived — the output was cut short. */
   complete: boolean;
-  /** Which probe tools the host can use (SSH only; the native transport has none). */
+  /** Which probe tools the host can use — a server's, or this machine's (ADR 0033). */
   tools: Partial<Record<ProbeTool, ToolState>>;
 }
 
@@ -549,7 +563,7 @@ export function coarseElapsedMs(t0: string, t1: string): number | null {
 
 const STATUSES: readonly PortStatus[] = ["open", "refused", "timeout", "unreachable", "dns", "error"];
 const METHODS: readonly Method[] = ["bash", "nc", "telnet", "curl", "native", "none"];
-const TOOL_STATES: readonly ToolState[] = ["ok", "missing", "notimeout"];
+const TOOL_STATES: readonly ToolState[] = ["ok", "missing", "notimeout", "unsupported"];
 
 /** curl's `-w 'TC=%{time_connect} '` stamp: seconds to the completed handshake
  *  (0 when it never connected). Null when absent. */

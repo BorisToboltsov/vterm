@@ -5,6 +5,7 @@ import {
   checkTargets,
   checkKey,
   netcheckArgs,
+  localToolOf,
   effectiveMethod,
   curlConnectSecs,
   sanitizeMethods,
@@ -420,9 +421,48 @@ describe("probe method choice", () => {
     expect(effectiveMethod("telnet", { telnet: "notimeout", curl: "ok" })).toBe("none");
   });
 
+  it("on this computer, auto is the app's own connect and a tool is the user's", () => {
+    // Known before the tools are: nothing to wait for.
+    expect(effectiveMethod("auto", {}, true)).toBe("native");
+    expect(effectiveMethod("auto", { bash: "ok" }, true)).toBe("native");
+    expect(effectiveMethod("nc", { nc: "ok" }, true)).toBe("nc");
+    expect(effectiveMethod("nc", {}, true)).toBeNull();
+    expect(effectiveMethod("bash", { bash: "unsupported", curl: "ok" }, true)).toBe("none");
+    expect(effectiveMethod("telnet", { telnet: "missing" }, true)).toBe("none");
+  });
+
+  it("tells a local tab its tool by name, and a server nothing", () => {
+    expect(localToolOf("local", "nc")).toBe("nc");
+    expect(localToolOf("local", "auto")).toBeNull();
+    expect(localToolOf("ssh", "nc")).toBeNull();
+  });
+
+  // What `netcheck::run_tool` prints for bash on this machine: the wait is
+  // bounded by the app, a tool still waiting is killed and reads 124.
+  it("reads a local tool's raw readings like the server script's", () => {
+    const out = [
+      "H\tmac",
+      "C\tbash\tok\nC\tnc\tok\nC\ttelnet\tmissing\nC\tcurl\tok",
+      "M\tbash",
+      "R\t127.0.0.1\t50123\t0\t1790718842822016000\t1790718842825016000\t",
+      "R\t127.0.0.1\t1\t1\t1790718842822016000\t1790718842823016000\tbash: connect: Connection refused bash: line 1: /dev/tcp/127.0.0.1/1: Connection refused",
+      "R\t10.255.255.1\t22\t124\t1790718842822016000\t1790718845322016000\t",
+      "E",
+    ].join("\n");
+    const rep = parseNetReport(out, 3);
+    expect(rep.method).toBe("bash");
+    expect(rep.results.map((r) => [r.port, r.status, r.ms])).toEqual([
+      [50123, "open", 3],
+      [1, "refused", 1],
+      [22, "timeout", 2500],
+    ]);
+  });
+
   it("parses the tool states and ignores junk", () => {
-    const rep = parseNetReport("C\tbash\tnotimeout\nC\tnc\tok\nC\tcurl\tmissing\nC\tsocat\tok\nC\tnc2\tyes\n");
-    expect(rep.tools).toEqual({ bash: "notimeout", nc: "ok", curl: "missing" });
+    const rep = parseNetReport(
+      "C\tbash\tnotimeout\nC\tnc\tok\nC\tcurl\tmissing\nC\ttelnet\tunsupported\nC\tsocat\tok\nC\tnc2\tyes\n",
+    );
+    expect(rep.tools).toEqual({ bash: "notimeout", nc: "ok", curl: "missing", telnet: "unsupported" });
   });
 
   // Real curl 8 output from a macOS run (see the shell script above): the connect

@@ -62,25 +62,86 @@ beforeEach(() => {
   netcheckRun.mockReset();
   sftpCancel.mockReset();
   netcheckState.rows = {};
+  netcheckState.picked = {};
   netcheckState.runs = {};
   netcheckState.history = {};
   netcheckState.methods = {};
 });
 
 describe("UtilNetCheck", () => {
-  it("shows who is checking before the first run", async () => {
+  it("shows who is checking before the first run: the tab's server, picked", async () => {
     serve();
     render(UtilNetCheck, { props: props() });
     expect(await screen.findByTestId("netcheck-hostname")).toHaveTextContent("app-01");
-    // Loopback is hidden.
-    expect(screen.getByTestId("netcheck-addrs")).toHaveTextContent(/^10\.64\.48\.180$/);
+    const chips = screen.getAllByTestId("netcheck-pick");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]).toHaveAttribute("aria-pressed", "true");
     expect(netcheckRun.mock.calls[0][2]).toEqual([]);
+  });
+
+  it("offers a chip per server with an open tab, one per address, and checks unsourced rules from every picked one", async () => {
+    serve();
+    setRows("10.64.48.180", textRows("10.70.39.10:22"));
+    // Two tabs of app-01, one of app-02, one local: three chips.
+    render(UtilNetCheck, {
+      props: props({ tabs: [s1, tab("s1b", "a1"), tab("s2", "a2"), tab("L", "")] }),
+    });
+    await screen.findAllByTestId("netcheck-hostname");
+    const chips = screen.getAllByTestId("netcheck-pick");
+    expect(chips.map((c) => c.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      expect.stringContaining("app-01"),
+      expect.stringContaining("This machine"),
+      expect.stringContaining("app-02"),
+    ]);
+    expect(chips.map((c) => c.getAttribute("aria-pressed"))).toEqual(["true", "false", "false"]);
+    // Only the picked server has a method row until another is picked.
+    expect(screen.getAllByTestId("netcheck-method-row")).toHaveLength(1);
+
+    await fireEvent.click(chips[2]);
+    expect(screen.getAllByTestId("netcheck-pick")[2]).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getAllByTestId("netcheck-method-row")).toHaveLength(2);
+    expect(screen.getByTestId("netcheck-route")).toHaveTextContent("app-01, app-02");
+    expect(netcheckState.picked["10.64.48.180"]).toEqual(["10.64.48.180", "10.64.48.181"]);
+
+    await fireEvent.click(screen.getByTestId("netcheck-run"));
+    await waitFor(() =>
+      expect(runs()).toEqual(
+        expect.arrayContaining([
+          ["s1", [{ host: "10.70.39.10", ports: [22] }]],
+          ["s2", [{ host: "10.70.39.10", ports: [22] }]],
+        ]),
+      ),
+    );
+    expect(runs()).toHaveLength(2);
+  });
+
+  it("won't run rules without a source when nothing is picked, and says why", async () => {
+    serve();
+    setRows("10.64.48.180", textRows("10.70.39.10:22"));
+    render(UtilNetCheck, { props: props() });
+    await screen.findAllByTestId("netcheck-hostname");
+    expect(screen.getByTestId("netcheck-run")).not.toBeDisabled();
+    await fireEvent.click(screen.getByTestId("netcheck-pick"));
+    expect(screen.getByTestId("netcheck-pick")).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByTestId("netcheck-route-none")).toBeInTheDocument();
+    expect(screen.getByTestId("netcheck-pick-none")).toBeInTheDocument();
+    expect(screen.getByTestId("netcheck-run")).toBeDisabled();
+  });
+
+  it("keeps a sourced rule on its own server whatever is picked", async () => {
+    serve();
+    setRows("10.64.48.180", textRows("app-02 -> 10.70.39.10:22"));
+    render(UtilNetCheck, { props: props({ tabs: [s1, tab("s2", "a2")] }) });
+    await screen.findAllByTestId("netcheck-hostname");
+    // The home tab stays picked; the rule still goes to app-02 only.
+    await fireEvent.click(screen.getByTestId("netcheck-run"));
+    await waitFor(() => expect(runs()).toEqual([["s2", [{ host: "10.70.39.10", ports: [22] }]]]));
   });
 
   it("reads a pasted request into rules and runs them", async () => {
     serve();
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     const inbox = screen.getByTestId("netcheck-inbox");
     await fireEvent.input(inbox, {
       target: { value: "Прошу открыть доступ:\nИсточник\tНазначение\tПорт\n10.64.48.180\t10.70.39.10\t22, 8888" },
@@ -106,7 +167,7 @@ describe("UtilNetCheck", () => {
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     setRows("10.64.48.180", textRows("10.64.48.180 -> 10.70.39.10:[22, 8888]/tcp"));
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-run"));
     await screen.findByTestId("netcheck-tally");
 
@@ -125,7 +186,7 @@ describe("UtilNetCheck", () => {
     serve();
     setRows("10.64.48.180", textRows("10.70.39.10:[22, 8888]"));
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-run"));
     await fireEvent.click(await screen.findByTestId("netcheck-retry"));
     await waitFor(() => expect(runs().at(-1)).toEqual(["s1", [{ host: "10.70.39.10", ports: [8888] }]]));
@@ -135,7 +196,7 @@ describe("UtilNetCheck", () => {
     serve();
     setRows("10.64.48.180", textRows("app-02 -> 10.70.39.10:22\n10.70.39.10:8888"));
     render(UtilNetCheck, { props: props({ tabs: [s1, tab("s2", "a2")] }) });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     const routes = screen.getAllByTestId("netcheck-route");
     expect(routes[0]).toHaveTextContent("app-02");
     expect(routes[1]).toHaveTextContent("app-01");
@@ -164,7 +225,7 @@ describe("UtilNetCheck", () => {
     const onConnect = vi.fn();
     setRows("10.64.48.180", textRows("app-02 -> 10.70.39.10:22\n10.70.39.10:80"));
     render(UtilNetCheck, { props: props({ onConnect }) });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     expect(screen.getByTestId("netcheck-waiting")).toHaveTextContent("app-02");
     await fireEvent.click(screen.getByTestId("netcheck-connect"));
     expect(onConnect).toHaveBeenCalledWith("a2");
@@ -176,7 +237,7 @@ describe("UtilNetCheck", () => {
     serve();
     setRows("10.64.48.181", textRows("192.168.0.0/30:22"));
     render(UtilNetCheck, { props: props({ homeId: "s2", tabs: [tab("s2", "a2")] }) });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-run"));
     expect(screen.getByTestId("netcheck-confirm-hosts")).toHaveTextContent("app-02: 2 connects");
     expect(screen.getByTestId("netcheck-confirm-prod")).toHaveTextContent("production");
@@ -201,7 +262,7 @@ describe("UtilNetCheck", () => {
     sftpCancel.mockImplementation(async () => reject("cancelled: stopped by the user"));
     setRows("10.64.48.180", textRows("10.70.39.10:22"));
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-run"));
     await fireEvent.click(await screen.findByTestId("netcheck-stop"));
     const cancelId = netcheckRun.mock.calls.at(-1)![5];
@@ -214,7 +275,7 @@ describe("UtilNetCheck", () => {
     serve();
     setRows("10.64.48.180", textRows("10.70.39.10:22"));
     const first = render(UtilNetCheck, { props: props({ tabs: [s1, tab("s2", "a2")] }) });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-run"));
     await screen.findByTestId("netcheck-status-open");
     first.unmount();
@@ -234,9 +295,93 @@ describe("UtilNetCheck", () => {
     serve();
     setRows("10.64.48.180", textRows("10.70.39.300:22"));
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     expect(screen.getByTestId("netcheck-row-error")).toHaveTextContent("10.70.39.300");
     expect(screen.getByTestId("netcheck-run")).toBeDisabled();
+  });
+
+  describe("the From cell", () => {
+    const both = () => props({ tabs: [s1, tab("s2", "a2")] });
+    const pickBoth = () => (netcheckState.picked = { "10.64.48.180": ["10.64.48.180", "10.64.48.181"] });
+
+    it("is all picked by default, and lists the picked servers and typing", async () => {
+      serve();
+      pickBoth();
+      setRows("10.64.48.180", textRows("10.70.39.10:22"));
+      render(UtilNetCheck, { props: both() });
+      await screen.findAllByTestId("netcheck-hostname");
+      const cell = screen.getByTestId("netcheck-cell-source");
+      expect(cell).toHaveTextContent("All picked");
+      await fireEvent.click(cell);
+      const items = screen.getAllByRole("menuitemcheckbox").map((i) => [i.textContent?.trim(), i.getAttribute("aria-checked")]);
+      expect(items).toEqual([
+        ["All picked", "true"],
+        ["app-01 · 10.64.48.180", "false"],
+        ["app-02 · 10.64.48.181", "false"],
+      ]);
+      expect(screen.getByRole("menuitem", { name: /Type an address or subnet/ })).toBeInTheDocument();
+    });
+
+    it("a server picked in the list checks the row, by hand", async () => {
+      serve();
+      pickBoth();
+      setRows("10.64.48.180", textRows("10.70.39.10:22"));
+      render(UtilNetCheck, { props: both() });
+      await screen.findAllByTestId("netcheck-hostname");
+      await fireEvent.click(screen.getByTestId("netcheck-cell-source"));
+      await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "app-02 · 10.64.48.181" }));
+      expect(screen.getByTestId("netcheck-cell-source")).toHaveTextContent("app-02");
+      expect(screen.getByTestId("netcheck-route")).toHaveTextContent("app-02 · picked by hand");
+      await fireEvent.click(screen.getByTestId("netcheck-run"));
+      await waitFor(() => expect(runs()).toEqual([["s2", [{ host: "10.70.39.10", ports: [22] }]]]));
+      // And back to every picked server.
+      await fireEvent.click(screen.getByTestId("netcheck-cell-source"));
+      await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "All picked" }));
+      expect(screen.getByTestId("netcheck-route")).toHaveTextContent("app-01, app-02 · picked");
+    });
+
+    it("takes a typed address, and an emptied one goes back to all picked", async () => {
+      serve();
+      setRows("10.64.48.180", textRows("10.70.39.10:22"));
+      render(UtilNetCheck, { props: both() });
+      await screen.findAllByTestId("netcheck-hostname");
+      await fireEvent.click(screen.getByTestId("netcheck-cell-source"));
+      await fireEvent.click(screen.getByRole("menuitem", { name: /Type an address or subnet/ }));
+      const input = await screen.findByTestId("netcheck-source-input");
+      await fireEvent.input(input, { target: { value: "10.64.48.181" } });
+      await fireEvent.keyDown(input, { key: "Enter" });
+      expect(screen.getByTestId("netcheck-cell-source")).toHaveTextContent("10.64.48.181");
+      expect(screen.getByTestId("netcheck-route")).toHaveTextContent("app-02");
+      expect(netcheckState.rows["10.64.48.180"][0]).toMatchObject({ source: "10.64.48.181", via: null });
+
+      // The address is in the list; picking it edits it.
+      await fireEvent.click(screen.getByTestId("netcheck-cell-source"));
+      await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "10.64.48.181" }));
+      const again = await screen.findByTestId("netcheck-source-input");
+      expect((again as HTMLInputElement).value).toBe("10.64.48.181");
+      await fireEvent.input(again, { target: { value: " " } });
+      await fireEvent.blur(again);
+      expect(screen.getByTestId("netcheck-cell-source")).toHaveTextContent("All picked");
+    });
+
+    it("shows a request's source as written, and Escape keeps it", async () => {
+      serve();
+      setRows("10.64.48.180", textRows("10.1.1.1 -> 10.70.39.10:22"));
+      render(UtilNetCheck, { props: props() });
+      await screen.findAllByTestId("netcheck-hostname");
+      expect(screen.getByTestId("netcheck-cell-source")).toHaveTextContent("10.1.1.1");
+      await fireEvent.click(screen.getByTestId("netcheck-cell-source"));
+      await fireEvent.click(screen.getByRole("menuitem", { name: /Type an address or subnet/ }));
+      const input = await screen.findByTestId("netcheck-source-input");
+      await fireEvent.input(input, { target: { value: "10.9.9.9" } });
+      // Only the typing is cancelled — the Utilities window closes on an Escape that reaches it.
+      const reached = vi.fn();
+      window.addEventListener("keydown", reached);
+      await fireEvent.keyDown(input, { key: "Escape" });
+      window.removeEventListener("keydown", reached);
+      expect(reached).not.toHaveBeenCalled();
+      expect(screen.getByTestId("netcheck-cell-source")).toHaveTextContent("10.1.1.1");
+    });
   });
 
   it("deletes a row and brings it back", async () => {
@@ -254,7 +399,7 @@ describe("UtilNetCheck", () => {
   it("spreads a host:port typed into the target cell over two cells", async () => {
     serve();
     render(UtilNetCheck, { props: props() });
-    await screen.findByTestId("netcheck-hostname");
+    await screen.findAllByTestId("netcheck-hostname");
     await fireEvent.click(screen.getByTestId("netcheck-add-row"));
     await fireEvent.input(screen.getByTestId("netcheck-cell-targets"), { target: { value: "db.corp:5432" } });
     expect((screen.getByTestId("netcheck-cell-targets") as HTMLInputElement).value).toBe("db.corp");
@@ -270,11 +415,15 @@ describe("UtilNetCheck", () => {
     expect(onInstallTool).toHaveBeenCalledWith("telnet", "s1");
   });
 
-  it("never offers an install on a local tab", async () => {
-    serve("none");
+  it("never offers an install on a local tab: a missing tool is named, not installed", async () => {
+    netcheckRun.mockImplementation(async (sid: string) =>
+      ok(identity(sid) + "C\tbash\tok\nC\tnc\tmissing\nC\ttelnet\tmissing\nC\tcurl\tok\nE\n"),
+    );
+    netcheckState.methods = { local: "nc" };
     render(UtilNetCheck, { props: props({ homeId: "L", tabs: [tab("L", "")], onInstallTool: vi.fn() }) });
-    await screen.findByTestId("netcheck-nomethod");
-    expect(screen.queryByTestId("netcheck-install-telnet")).toBeNull();
+    expect(await screen.findByTestId("netcheck-method-missing")).toHaveTextContent("nc isn't found on this computer");
+    expect(screen.queryByTestId("netcheck-method-install")).toBeNull();
+    expect(screen.queryByTestId("netcheck-nomethod")).toBeNull();
   });
 
   it("asks for a connected tab when there is none", () => {
@@ -306,7 +455,7 @@ describe("UtilNetCheck", () => {
       const onInstallTool = vi.fn();
       setRows("10.64.48.180", textRows("10.70.39.10:22"));
       render(UtilNetCheck, { props: props({ onInstallTool }) });
-      await screen.findByTestId("netcheck-hostname");
+      await screen.findAllByTestId("netcheck-hostname");
       await waitFor(() => expect(screen.getByTestId("netcheck-run")).not.toBeDisabled());
       await fireEvent.click(screen.getByTestId("netcheck-method-telnet"));
       expect(screen.getByTestId("netcheck-method-missing")).toHaveTextContent("telnet isn't installed");
@@ -321,39 +470,73 @@ describe("UtilNetCheck", () => {
     it("explains a tool that's there but can't be bounded, without an install button", async () => {
       serveTools();
       render(UtilNetCheck, { props: props({ onInstallTool: vi.fn() }) });
-      await screen.findByTestId("netcheck-hostname");
+      await screen.findAllByTestId("netcheck-hostname");
       await waitFor(() => expect(screen.getByTestId("netcheck-method-curl").innerHTML).toContain("line-through"));
       await fireEvent.click(screen.getByTestId("netcheck-method-curl"));
       expect(screen.getByTestId("netcheck-method-missing")).toHaveTextContent("timeout");
       expect(screen.queryByTestId("netcheck-method-install")).toBeNull();
     });
 
-    it("runs with the picked tool and shows it as the method", async () => {
+    it("runs with the picked tool", async () => {
       serveTools();
       netcheckState.methods = { "10.64.48.180": "nc" };
       setRows("10.64.48.180", textRows("10.70.39.10:22"));
       render(UtilNetCheck, { props: props() });
-      await waitFor(() => expect(screen.getByTestId("netcheck-method")).toHaveTextContent("nc"));
+      await waitFor(() => expect(screen.getByTestId("netcheck-method-nc").innerHTML).toContain("bg-ok"));
       expect(screen.getByTestId("netcheck-method-nc")).toHaveAttribute("aria-checked", "true");
       await fireEvent.click(screen.getByTestId("netcheck-run"));
       await waitFor(() => expect(runs()).toHaveLength(1));
       const call = netcheckRun.mock.calls.find((c) => (c[2] as unknown[]).length > 0)!;
       expect((call[1] as string[])[2]).toContain(`[ "$Cn" = ok ] && M=nc`);
+      // A server gets its tool inside the script — no local tool named.
+      expect(call[6]).toBeNull();
     });
 
     it("arrow keys move the choice like a radio group", async () => {
       serveTools();
       render(UtilNetCheck, { props: props() });
-      await screen.findByTestId("netcheck-hostname");
+      await screen.findAllByTestId("netcheck-hostname");
       await fireEvent.keyDown(screen.getByTestId("netcheck-method-auto"), { key: "ArrowRight" });
       expect(screen.getByTestId("netcheck-method-bash")).toHaveAttribute("aria-checked", "true");
     });
 
-    it("is not offered on a local tab — the check is native there", async () => {
-      serve();
+    it("is offered on a local tab: vterm by default, the user's own tools beside it", async () => {
+      serveTools();
       render(UtilNetCheck, { props: props({ homeId: "L", tabs: [tab("L", "")] }) });
-      await screen.findByTestId("netcheck-hostname");
-      expect(screen.queryByTestId("netcheck-methods")).toBeNull();
+      await waitFor(() => expect(screen.getByTestId("netcheck-method-nc").innerHTML).toContain("bg-ok"));
+      expect(screen.getByTestId("netcheck-method-auto")).toHaveTextContent("vterm");
+      expect(screen.getByTestId("netcheck-method-auto")).toHaveAttribute("aria-checked", "true");
+      // The app bounds the wait itself: no "needs timeout" for a local tool.
+      await fireEvent.click(screen.getByTestId("netcheck-method-telnet"));
+      expect(screen.getByTestId("netcheck-method-missing")).toHaveTextContent("isn't found on this computer");
+      expect(netcheckState.methods).toEqual({ local: "telnet" });
+    });
+
+    it("runs the picked local tool by name, and the app's own connect by default", async () => {
+      serveTools();
+      setRows("local", textRows("10.70.39.10:22"));
+      render(UtilNetCheck, { props: props({ homeId: "L", tabs: [tab("L", "")] }) });
+      await waitFor(() => expect(screen.getByTestId("netcheck-run")).not.toBeDisabled());
+      await fireEvent.click(screen.getByTestId("netcheck-run"));
+      await waitFor(() => expect(runs()).toHaveLength(1));
+      expect(netcheckRun.mock.calls.find((c) => (c[2] as unknown[]).length > 0)![6]).toBeNull();
+
+      await waitFor(() => expect(screen.getByTestId("netcheck-run")).not.toBeDisabled());
+      await fireEvent.click(screen.getByTestId("netcheck-method-nc"));
+      await fireEvent.click(screen.getByTestId("netcheck-run"));
+      await waitFor(() => expect(runs()).toHaveLength(2));
+      expect(netcheckRun.mock.calls.filter((c) => (c[2] as unknown[]).length > 0)[1][6]).toBe("nc");
+    });
+
+    it("says a tool can't run here on Windows, without offering an install", async () => {
+      netcheckRun.mockImplementation(async (sid: string) =>
+        ok(identity(sid) + "C\tbash\tunsupported\nC\tnc\tunsupported\nC\ttelnet\tunsupported\nC\tcurl\tok\nE\n"),
+      );
+      render(UtilNetCheck, { props: props({ homeId: "L", tabs: [tab("L", "")], onInstallTool: vi.fn() }) });
+      await waitFor(() => expect(screen.getByTestId("netcheck-method-bash").innerHTML).toContain("line-through"));
+      await fireEvent.click(screen.getByTestId("netcheck-method-bash"));
+      expect(screen.getByTestId("netcheck-method-missing")).toHaveTextContent("On Windows");
+      expect(screen.queryByTestId("netcheck-method-install")).toBeNull();
     });
   });
 });
