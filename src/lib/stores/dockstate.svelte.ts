@@ -130,9 +130,34 @@ export function adoptDockState(sessionId: string, state: DockSessionState): void
   sessions[sessionId] = { ...empty(), ...state, dirRev: {} };
 }
 
+/**
+ * A folder the session's file panel is asked to open (v1.24: a folder named
+ * in terminal output was clicked). Held here, not in the panel: the panel may
+ * not be mounted yet — opening the "Files" tab mounts it, and it takes the
+ * request then — and a panel of another session must not take it.
+ */
+const openDirs = $state<Record<string, string>>({});
+
+export function requestFilesDir(sessionId: string, path: string): void {
+  openDirs[sessionId] = path;
+}
+
+/** The folder waiting for the session's file panel, read-only (reactive). */
+export function pendingFilesDir(sessionId: string | null): string | null {
+  return sessionId ? (openDirs[sessionId] ?? null) : null;
+}
+
+/** Take the waiting folder off — the panel is opening it now. */
+export function takeFilesDir(sessionId: string): string | null {
+  const path = openDirs[sessionId] ?? null;
+  delete openDirs[sessionId];
+  return path;
+}
+
 /** Drop everything this session's dock remembered (part of the tab teardown). */
 export function removeDockState(sessionId: string): void {
   delete sessions[sessionId];
+  delete openDirs[sessionId];
 }
 
 /** Read the stored sub-tab, or `fallback` when this session has none yet. */
@@ -152,4 +177,5 @@ export function rememberSub(sessionId: string, panel: SubTabPanel, sub: string):
 /** Reset every session's dock state (tests, and a potential "reset UI" action). */
 export function resetDockState(): void {
   for (const id of Object.keys(sessions)) delete sessions[id];
+  for (const id of Object.keys(openDirs)) delete openDirs[id];
 }

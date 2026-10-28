@@ -9,6 +9,9 @@ import {
   storedSub,
   dockCwd,
   setDockCwd,
+  pendingFilesDir,
+  requestFilesDir,
+  takeFilesDir,
 } from "./dockstate.svelte";
 
 describe("dock state store", () => {
@@ -80,6 +83,26 @@ describe("dock state store", () => {
     setDockCwd("fresh", "/srv");
     expect(dockCwd("fresh")).toBe("/srv");
     removeDockState("fresh");
+  });
+
+  it("holds a folder asked for until that session's panel takes it", () => {
+    expect(pendingFilesDir("s1")).toBeNull();
+    expect(pendingFilesDir(null)).toBeNull();
+    requestFilesDir("s1", "/srv/app");
+    expect(pendingFilesDir("s1")).toBe("/srv/app");
+    expect(pendingFilesDir("s2")).toBeNull();
+    expect(takeFilesDir("s1")).toBe("/srv/app");
+    expect(pendingFilesDir("s1")).toBeNull();
+    expect(takeFilesDir("s1")).toBeNull();
+  });
+
+  it("drops a folder asked for with the session, and on reset", () => {
+    requestFilesDir("s1", "/a");
+    requestFilesDir("s2", "/b");
+    removeDockState("s1");
+    expect(pendingFilesDir("s1")).toBeNull();
+    resetDockState();
+    expect(pendingFilesDir("s2")).toBeNull();
   });
 
   it("removing an unknown session is a no-op", () => {

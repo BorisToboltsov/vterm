@@ -13,6 +13,7 @@ use crate::recording::Recorder;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
@@ -92,6 +93,12 @@ pub struct LocalPty {
     pid: Option<u32>,
     /// Where the shell's output goes — the windows, or a handoff's hold (ADR 0017).
     gate: Arc<OutputGate>,
+    /// Whether `write_input` notes where the shell stood when it was handed a
+    /// line (v1.24): only while the tab's terminal shows file links.
+    watch_submits: AtomicBool,
+    /// That note for the last line sent — `None` when the shell was not at its
+    /// prompt or the OS would not say. See [`LocalPty::prompt_cwd`].
+    submitted: Mutex<Option<String>>,
 }
 
 impl LocalPty {
@@ -112,6 +119,12 @@ impl LocalPty {
 
     /// Send user keystrokes to the local shell (recording input first if active).
     pub fn write_input(&self, data: Vec<u8>) -> AppResult<()> {
+        // The folder a line runs in is the shell's folder at the moment the line
+        // reaches it — read before the bytes go out, since a moment later the
+        // shell may be running the command (or `cd` may have moved it).
+        if self.watch_submits.load(Ordering::Relaxed) && data.contains(&b'\r') {
+            *self.submitted.lock().unwrap() = self.prompt_cwd();
+        }
         // Queue the input to the recorder (cheap clone of a keystroke buffer) before
         // the echo it triggers can come back on the reader — keeps FIFO order.
         self.record(RecMsg::Input(data.clone()));
@@ -173,6 +186,44 @@ impl LocalPty {
     /// any escape sequence the shell may or may not emit (Phase 39.3).
     pub fn cwd(&self) -> Option<String> {
         crate::proccwd::process_cwd(self.pid?)
+    }
+
+    /// Start or stop noting where the shell stood when it was handed a line.
+    pub fn watch_submits(&self, on: bool) {
+        self.watch_submits.store(on, Ordering::Relaxed);
+    }
+
+    /// Where the shell stood when it was handed the last line (v1.24, ADR 0035).
+    pub fn submitted_cwd(&self) -> Option<String> {
+        self.submitted.lock().unwrap().clone()
+    }
+
+    /// The shell's folder — but only while the shell itself holds the terminal.
+    /// A line typed into `ssh`, `python` or `sudo -s` running in it goes to that
+    /// program, and the shell's folder says nothing about what that program
+    /// lists: a remote `ls` would be read against this machine's files.
+    fn prompt_cwd(&self) -> Option<String> {
+        let pid = self.pid?;
+        if !self.shell_in_foreground(pid) {
+            return None;
+        }
+        crate::proccwd::process_cwd(pid)
+    }
+
+    /// Whether the terminal's foreground process group is the shell's own. The
+    /// shell leads its group (the pty made it a session leader); while it runs
+    /// a command — or `ssh`, or a REPL — the foreground group is that one's.
+    #[cfg(unix)]
+    fn shell_in_foreground(&self, pid: u32) -> bool {
+        let leader = self.master.lock().unwrap().process_group_leader();
+        leader.is_some_and(|g| u32::try_from(g).ok() == Some(pid))
+    }
+
+    /// Windows has no foreground group: a shell that started a program has a
+    /// child process for as long as the program runs.
+    #[cfg(not(unix))]
+    fn shell_in_foreground(&self, pid: u32) -> bool {
+        !crate::proccwd::has_children(pid)
     }
 
     /// Inform the kernel (and the child) of a new terminal size.
@@ -289,6 +340,8 @@ fn open_with_gate(
         rec_path: Mutex::new(None),
         pid,
         gate,
+        watch_submits: AtomicBool::new(false),
+        submitted: Mutex::new(None),
     })
 }
 
@@ -392,6 +445,61 @@ mod tests {
         );
         assert!(all.find("before-42") < all.find("held-42"));
         assert!(all.find("held-42") < all.find("after-2"));
+    }
+
+    /// The folder a line runs in is noted only while the shell holds the
+    /// terminal (v1.24): at its prompt it is the shell's folder; while a program
+    /// runs in the foreground — `sleep` here, `ssh` or a REPL in life — a line
+    /// goes to that program, and its folder is unknown rather than the shell's.
+    #[cfg(unix)]
+    #[test]
+    fn a_line_sent_to_a_running_program_has_no_folder() {
+        use std::time::{Duration, Instant};
+
+        let gate = Arc::new(OutputGate::new(Box::new(|_| {})));
+        let pty = match open_with_gate(gate, 80, 24, Some("/bin/sh".into())) {
+            Ok(pty) => pty,
+            Err(e) => {
+                eprintln!("skipped: cannot open a pty here ({e})");
+                return;
+            }
+        };
+        let until = |want: &dyn Fn(Option<String>) -> bool| -> bool {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if want(pty.prompt_cwd()) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            false
+        };
+        pty.watch_submits(true);
+        pty.write_input(b"cd /\r".to_vec()).unwrap();
+        assert!(
+            until(&|c| c.as_deref() == Some("/")),
+            "the shell never got to /"
+        );
+
+        pty.write_input(b"sleep 2\r".to_vec()).unwrap();
+        assert_eq!(
+            pty.submitted_cwd().as_deref(),
+            Some("/"),
+            "sent at the prompt"
+        );
+        assert!(until(&|c| c.is_none()), "sleep never took the foreground");
+
+        pty.write_input(b"\r".to_vec()).unwrap();
+        assert_eq!(
+            pty.submitted_cwd(),
+            None,
+            "a line for sleep is not the shell's"
+        );
+
+        pty.watch_submits(false);
+        assert!(until(&|c| c.as_deref() == Some("/")), "sleep never ended");
+        pty.write_input(b"\r".to_vec()).unwrap();
+        assert_eq!(pty.submitted_cwd(), None, "not noted while nobody watches");
     }
 
     /// A plain full-mode Recorder writing to `path` for the actor tests.

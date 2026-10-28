@@ -235,7 +235,20 @@
   import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/sessionviews";
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
   import { removeChat, getChat, askAbout, peekChat } from "$lib/stores/aichat.svelte";
-  import { dockCwd, removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
+  import {
+    dockCwd,
+    removeDockState,
+    requestFilesDir,
+    setDockCwd,
+  } from "$lib/stores/dockstate.svelte";
+  import { baseName } from "$lib/fspath";
+  import {
+    fileLinkClick,
+    fileLinksAllowed,
+    type FileLinkQuestion,
+    type FileLinkTarget,
+    type NamedPath,
+  } from "$lib/termfiles";
   import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
   import { aiReady } from "$lib/ai";
   import SettingsPanel from "$lib/SettingsPanel.svelte";
@@ -354,6 +367,7 @@
   import CopyToDialog from "$lib/CopyToDialog.svelte";
   import ReplaceDialog from "$lib/ReplaceDialog.svelte";
   import LinkOpenDialog from "$lib/LinkOpenDialog.svelte";
+  import FileLinkDialog from "$lib/FileLinkDialog.svelte";
   import { applySyncProgress } from "$lib/stores/syncrun.svelte";
   import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
   import {
@@ -557,6 +571,8 @@
   // path-sync question awaiting an answer (PathSyncDialog, v1.23).
   const shellIntegrated = $state<Record<string, boolean>>({});
   let pathSyncAsk = $state<PathSyncAsk | null>(null);
+  // The question a file named in terminal output asks when clicked (v1.24).
+  let fileLinkAsk = $state<FileLinkQuestion | null>(null);
 
   // Password / passphrase prompt (owns its own state); opened via its export.
   let secretPrompt: SecretPrompt | undefined = $state();
@@ -2925,6 +2941,7 @@
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
+    if (fileLinkAsk?.sessionId === sessionId) fileLinkAsk = null;
     // Its transfers are the backend's: a closed session's are stopped there, a
     // handed-over one's go on and are told to the window that has the tab now.
     // Here only their rows go — but a copy to a tab still in this window stays.
@@ -3554,6 +3571,64 @@
     const writes = followUpdates(followTerminal, terminalCwd, followSeen);
     untrack(() => writes.forEach(([id, cwd]) => setDockCwd(id, cwd)));
   });
+
+  // ── Files named in terminal output (v1.24, ADR 0035) ─────────────────────────
+  // What a click does is `fileLinkClick`; the question is FileLinkDialog; a file
+  // opens the way the file panel opens one, a folder in the file panel itself.
+
+  /** The server a tab runs on, by name; null for a local tab — this computer. */
+  function tabWhere(tab: Tab): string | null {
+    return tab.kind === "local" ? null : (servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias);
+  }
+
+  function onFileLink(id: string, target: FileLinkTarget) {
+    const tab = findTab(id);
+    if (!tab) return;
+    const action = fileLinkClick(settings.terminalFileLinks, target);
+    if (action.kind === "open") {
+      openFileLink(id, action.target);
+    } else if (action.kind === "ask") {
+      fileLinkAsk = {
+        kind: "open",
+        sessionId: id,
+        target: action.target,
+        where: tabWhere(tab),
+        prod: prodTabIds.has(id),
+      };
+    } else if (action.kind === "offerSync") {
+      fileLinkAsk = { kind: "sync", sessionId: id, where: tabWhere(tab), following: !!followTerminal[id] };
+    }
+  }
+
+  /** Open what a file link names: a file in the session's editor, a folder in its file panel. */
+  function openFileLink(id: string, target: NamedPath) {
+    const tab = findTab(id);
+    if (!tab) return;
+    if (tabsState.activeId !== id) activateTab(id);
+    if (target.kind === "dir") {
+      requestFilesDir(id, target.path);
+      revealPanel("files");
+    } else if (tab.kind === "ssh") {
+      void openFileInEditor(id, target.path, baseName(target.path));
+    } else {
+      void openLocalFileInEditor(id, target.path);
+    }
+  }
+
+  function answerFileLink(answer: "open" | "sync" | "cancel", silence: boolean) {
+    const ask = fileLinkAsk;
+    fileLinkAsk = null;
+    if (!ask || answer === "cancel" || !findTab(ask.sessionId)) return;
+    if (ask.kind === "open" && answer === "open") {
+      if (silence) settings.terminalFileLinks = "direct";
+      openFileLink(ask.sessionId, ask.target);
+    } else if (ask.kind === "sync" && answer === "sync") {
+      // The server's own answer decides whether this asks first (v1.23); once
+      // following is on, the next command reports its folder.
+      enablePathSync(ask.sessionId);
+      if (followTerminal[ask.sessionId]) notifyInfo(t("filelink.syncThen"));
+    }
+  }
 
   /**
    * Two-way OSC 7 sync: when the user navigates in the SFTP panel (follow-terminal
@@ -4628,6 +4703,10 @@
                     onselection={(lines) => (termSelection[tab.sessionId] = lines)}
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onviewmode={(on) => (termStructured[tab.sessionId] = on)}
+                    onfilelink={fileLinksAllowed(tab)
+                      ? (target) => onFileLink(tab.sessionId, target)
+                      : undefined}
+                    filelinkDirs={!isPanelHidden("files")}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
                     onauthprompt={(req) => setAuthPrompt(tab.sessionId, req)}
                     onstatus={(st, d) => {
@@ -5005,6 +5084,7 @@
 />
 <ReplaceDialog />
 <LinkOpenDialog />
+<FileLinkDialog ask={fileLinkAsk} onanswer={answerFileLink} />
 
 <QuitDialog
   open={showQuit}

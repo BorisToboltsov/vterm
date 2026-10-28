@@ -490,6 +490,24 @@ describe("terminal links", () => {
   });
 });
 
+describe("file links in output", () => {
+  it("asks before opening, on a plain click, by default", () => {
+    expect(settings.terminalFileLinks).toBe("confirm");
+    expect(settings.terminalFileLinkClick).toBe("click");
+  });
+
+  it("imports valid values and rejects junk", () => {
+    applyImportedSettings({ terminalFileLinks: "off", terminalFileLinkClick: "modifier" });
+    flushSync();
+    expect(settings.terminalFileLinks).toBe("off");
+    expect(settings.terminalFileLinkClick).toBe("modifier");
+    applyImportedSettings({ terminalFileLinks: "maybe", terminalFileLinkClick: 3 });
+    flushSync();
+    expect(settings.terminalFileLinks).toBe("confirm");
+    expect(settings.terminalFileLinkClick).toBe("click");
+  });
+});
+
 describe("language", () => {
   it("defaults to English", () => {
     expect(settings.language).toBe("en");
