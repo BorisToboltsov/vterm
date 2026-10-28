@@ -99,6 +99,13 @@ pub struct ServerProfile {
     /// Optional proxy/jump host this server connects through (None → direct).
     #[serde(default)]
     pub proxy: Option<ServerProxy>,
+    /// How path sync ("follow terminal") starts on this server: `auto` — on every
+    /// connect, `manual` — by hand, without the question; None → ask when it is
+    /// turned on. Frontend-owned value (`pathsync.ts`): a value it does not know
+    /// reads as None there, so a mode added by a newer build never makes the
+    /// profiles file unreadable for an older one.
+    #[serde(default)]
+    pub path_sync: Option<String>,
     /// Free-form user notes (Markdown) about this server. Edited in the notes
     /// window, not the server form; `update_server` leaves it untouched so the two
     /// paths never clobber each other. Persisted inline in the profiles JSON.
@@ -141,6 +148,8 @@ pub struct NewServerProfile {
     pub exec_mode: Option<String>,
     #[serde(default)]
     pub proxy: Option<ServerProxy>,
+    #[serde(default)]
+    pub path_sync: Option<String>,
     #[serde(default)]
     pub icon: String,
     #[serde(default)]
@@ -188,6 +197,7 @@ mod tests {
                 key_path: Some("/home/u/.ssh/jump".into()),
                 has_saved_password: false,
             }),
+            path_sync: Some("auto".into()),
             notes: "deploys via CI\nkeep npm cache warm".into(),
             icon: "database".into(),
             icon_color: "green".into(),
@@ -212,6 +222,8 @@ mod tests {
         assert!(back.no_ai);
         assert_eq!(back.chat_prompt_id.as_deref(), Some("p-1"));
         assert_eq!(back.exec_mode.as_deref(), Some("confirm"));
+        assert_eq!(back.path_sync.as_deref(), Some("auto"));
+        assert!(json.contains("\"pathSync\":\"auto\"")); // camelCase for the TS frontend
         assert_eq!(back.notes, "deploys via CI\nkeep npm cache warm");
         assert_eq!(back.icon, "database");
         assert_eq!(back.icon_color, "green");
@@ -253,6 +265,7 @@ mod tests {
         assert!(!p.no_ai); // legacy profiles default to AI-allowed
         assert_eq!(p.chat_prompt_id, None);
         assert_eq!(p.exec_mode, None);
+        assert_eq!(p.path_sync, None); // legacy profiles ask before path sync
         assert!(p.proxy.is_none()); // legacy profiles default to a direct connection
 
         // No flag saved yet — `None`, so the frontend can fall back to the old
@@ -268,5 +281,6 @@ mod tests {
         assert!(np.tags.is_empty());
         assert_eq!(np.group, None);
         assert_eq!(np.prod, None);
+        assert_eq!(np.path_sync, None);
     }
 }

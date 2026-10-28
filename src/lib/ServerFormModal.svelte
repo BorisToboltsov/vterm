@@ -37,6 +37,15 @@
     recordingSummaryKeys,
     usernameOrDefault,
   } from "./serverform";
+  import {
+    PATH_SYNC_MODES,
+    pathSyncHintKey,
+    pathSyncMode,
+    pathSyncModeKey,
+    storedPathSync,
+    warnsProd,
+    type PathSyncMode,
+  } from "./pathsync";
   import { t } from "./i18n";
 
   let {
@@ -82,6 +91,12 @@
   let noAi = $state(false);
   let aiPromptId = $state("");
   let aiExecMode = $state("");
+  // How path sync starts on this server (pathsync.ts) — the same answer the
+  // question asked when sync is first turned on saves.
+  let pathSync = $state<PathSyncMode>("ask");
+  const pathSyncOptions = $derived(
+    PATH_SYNC_MODES.map((m) => ({ value: m, label: t(pathSyncModeKey(m)) })),
+  );
   // Proxy / jump host (Phase 21). `proxySecret` is the just-typed jump-host
   // password/passphrase (never persisted on the profile — saved to the keychain
   // via `saveProxySecret`); `proxyHasSavedPassword` mirrors the stored hint.
@@ -103,6 +118,7 @@
   let appearanceOpen = $state(false);
   let proxyOpen = $state(false);
   let recordingOpen = $state(false);
+  let terminalOpen = $state(false);
   const shownTags = $derived(previewTags(tagsInput));
   const PROXY_KIND_LABEL = {
     jump: "page.proxyKindJump",
@@ -119,7 +135,7 @@
   );
 
   function foldSections() {
-    appearanceOpen = proxyOpen = recordingOpen = false;
+    appearanceOpen = proxyOpen = recordingOpen = terminalOpen = false;
   }
   // Set on a failed submit so empty required fields light up; cleared per field
   // as the user types (derived below) and reset when the form (re)opens.
@@ -176,6 +192,7 @@
     noAi = false;
     aiPromptId = "";
     aiExecMode = "";
+    pathSync = "ask";
     loadProxy(null, false);
     foldSections();
     submitted = false;
@@ -203,6 +220,7 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
+    pathSync = pathSyncMode(server.pathSync);
     loadProxy(server.proxy, true);
     foldSections();
     submitted = false;
@@ -235,6 +253,7 @@
     noAi = server.noAi;
     aiPromptId = server.chatPromptId ?? "";
     aiExecMode = server.execMode ?? "";
+    pathSync = pathSyncMode(server.pathSync);
     // A duplicate is a new id, so neither secret is carried over.
     loadProxy(server.proxy, false);
     foldSections();
@@ -305,6 +324,7 @@
       chatPromptId: aiPromptId || null,
       execMode: (aiExecMode || null) as AiExecMode | null,
       proxy,
+      pathSync: storedPathSync(pathSync),
       icon,
       iconColor,
     };
@@ -676,6 +696,40 @@
             </label>
           {/if}
         </fieldset>
+      </div>
+    {/if}
+
+    <!-- ── Terminal: how path sync starts here (pathsync.ts) ── -->
+    <DisclosureRow
+      variant="list"
+      bind:open={terminalOpen}
+      label={t("page.groupTerminal")}
+      testid="server-section-terminal"
+    >
+      {#snippet preview()}
+        <span class="truncate text-muted"
+          >{t("sftp.followTerminal")}: {t(pathSyncModeKey(pathSync))}</span
+        >
+      {/snippet}
+    </DisclosureRow>
+    {#if terminalOpen}
+      <div class="pb-1 pt-2 text-xs text-text">
+        <div class="mb-1 flex items-center gap-1">
+          {t("sftp.followTerminal")}
+          <InfoHint text={t("pathSync.formHint")} />
+        </div>
+        <SegmentedControl
+          bind:value={pathSync}
+          options={pathSyncOptions}
+          label={t("sftp.followTerminal")}
+          testid="server-path-sync"
+        />
+        <p class="mt-1 text-meta text-muted">{t(pathSyncHintKey(pathSync))}</p>
+        {#if warnsProd("ssh", prod, pathSync)}
+          <p class="mt-1 text-meta text-bad" data-testid="server-path-sync-prod">
+            {t("pathSync.prodWarning")}
+          </p>
+        {/if}
       </div>
     {/if}
 

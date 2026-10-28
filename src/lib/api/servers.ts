@@ -30,6 +30,13 @@ export function setServerNotes(id: string, notes: string): Promise<ServerProfile
   return invoke<ServerProfile>("set_server_notes", { id, notes });
 }
 
+/** Save how path sync starts on a server (`storedPathSync`, null = ask). Its own
+ *  command, like the notes, so the path-sync question never writes back a stale
+ *  copy of the profile; returns the updated profile. */
+export function setServerPathSync(id: string, mode: string | null): Promise<ServerProfile> {
+  return invoke<ServerProfile>("set_server_path_sync", { id, mode });
+}
+
 /** Forget any stored password/passphrase for a server (including its proxy's). */
 export function forgetSecrets(id: string): Promise<void> {
   return invoke<void>("forget_secrets", { id });

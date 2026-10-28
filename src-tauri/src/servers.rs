@@ -47,6 +47,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         chat_prompt_id: profile.chat_prompt_id,
         exec_mode: profile.exec_mode,
         proxy: profile.proxy,
+        path_sync: profile.path_sync,
         notes: String::new(),
         icon: profile.icon,
         icon_color: profile.icon_color,
@@ -84,6 +85,37 @@ mod tests {
         assert_eq!(saved.id, "new");
         assert_eq!(servers.len(), 2);
     }
+
+    #[test]
+    fn path_sync_changes_only_its_field_and_only_once_written() {
+        let mut servers = vec![sample("a"), sample("b")];
+        servers[0].notes = "keep".into();
+        let failed = path_sync_persisted(&mut servers, "a", Some("auto".into()), |_| {
+            Err(AppError::Message("disk full".into()))
+        });
+        assert!(failed.is_err());
+        assert_eq!(
+            servers[0].path_sync, None,
+            "an unwritten choice stays unsaved"
+        );
+
+        let saved = path_sync_persisted(&mut servers, "a", Some("auto".into()), |snapshot| {
+            assert_eq!(snapshot[0].path_sync.as_deref(), Some("auto"));
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(saved.path_sync.as_deref(), Some("auto"));
+        assert_eq!(servers[0].path_sync.as_deref(), Some("auto"));
+        assert_eq!(servers[0].notes, "keep");
+        assert_eq!(servers[1].path_sync, None);
+
+        path_sync_persisted(&mut servers, "a", None, |_| Ok(())).unwrap();
+        assert_eq!(servers[0].path_sync, None);
+        assert!(matches!(
+            path_sync_persisted(&mut servers, "gone", None, |_| Ok(())),
+            Err(AppError::UnknownServer)
+        ));
+    }
 }
 
 #[tauri::command]
@@ -110,6 +142,7 @@ pub fn update_server(
                 server.chat_prompt_id = profile.chat_prompt_id;
                 server.exec_mode = profile.exec_mode;
                 server.proxy = profile.proxy;
+                server.path_sync = profile.path_sync;
                 server.icon = profile.icon;
                 server.icon_color = profile.icon_color;
             }
@@ -146,6 +179,39 @@ pub fn set_server_notes(
         .into_iter()
         .find(|s| s.id == id)
         .ok_or(AppError::UnknownServer)
+}
+
+/// Save how path sync starts on a server (`pathsync.ts`). Its own command, like
+/// the notes: the question asked when sync is turned on answers it, and writing
+/// the whole profile back from there could undo an edit made in the server form
+/// meanwhile. As with a new profile, memory changes only after the file does —
+/// a choice that did not reach the disk must not look saved.
+#[tauri::command]
+pub fn set_server_path_sync(
+    id: String,
+    mode: Option<String>,
+    state: State<AppState>,
+) -> AppResult<ServerProfile> {
+    let mut servers = state.servers.lock().unwrap();
+    path_sync_persisted(&mut servers, &id, mode, store::save_servers)
+}
+
+fn path_sync_persisted(
+    servers: &mut Vec<ServerProfile>,
+    id: &str,
+    mode: Option<String>,
+    persist: impl FnOnce(&[ServerProfile]) -> AppResult<()>,
+) -> AppResult<ServerProfile> {
+    let mut next = servers.clone();
+    let server = next
+        .iter_mut()
+        .find(|s| s.id == id)
+        .ok_or(AppError::UnknownServer)?;
+    server.path_sync = mode;
+    let updated = server.clone();
+    persist(&next)?;
+    *servers = next;
+    Ok(updated)
 }
 
 #[tauri::command]

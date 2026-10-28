@@ -54,6 +54,10 @@ export interface ServerProfile {
   execMode: AiExecMode | null;
   /** Proxy/jump host this server connects through, or null for a direct connection. */
   proxy: ServerProxy | null;
+  /** How path sync starts here, as stored (`auto`/`manual`, null = ask). Read it
+   *  through `pathSyncMode` (pathsync.ts): an unknown value means "ask". Saved by
+   *  the server form and, from the path-sync question, by `setServerPathSync`. */
+  pathSync?: string | null;
   /** Free-form user notes (Markdown) about this server. Edited in the notes
    *  window (not the server form); saved via the dedicated `setServerNotes`. */
   notes: string;
@@ -141,6 +145,8 @@ export interface NewServerProfile {
   chatPromptId: string | null;
   execMode: AiExecMode | null;
   proxy: ServerProxy | null;
+  /** `storedPathSync(mode)` — null for "ask". */
+  pathSync: string | null;
   icon: string;
   iconColor: string;
 }

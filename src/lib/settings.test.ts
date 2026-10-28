@@ -460,6 +460,21 @@ describe("terminal paste", () => {
   });
 });
 
+describe("local path sync", () => {
+  it("asks by default", () => {
+    expect(settings.localPathSync).toBe("ask");
+  });
+
+  it("imports a valid mode and reads junk as “ask”", () => {
+    applyImportedSettings({ localPathSync: "auto" });
+    flushSync();
+    expect(settings.localPathSync).toBe("auto");
+    applyImportedSettings({ localPathSync: "sometimes" });
+    flushSync();
+    expect(settings.localPathSync).toBe("ask");
+  });
+});
+
 describe("terminal links", () => {
   it("asks before opening by default", () => {
     expect(settings.terminalLinks).toBe("confirm");

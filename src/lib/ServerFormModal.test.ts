@@ -746,3 +746,69 @@ describe("ServerFormModal server secret", () => {
     await waitFor(() => expect(screen.queryByTestId("field-alias")).toBeNull());
   });
 });
+
+describe("ServerFormModal path sync", () => {
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Web");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+  }
+
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s2", alias: "Web (copy)" });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Web" });
+  });
+
+  it("is “ask” on a new server and stores no value for it", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Ask");
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: null }));
+  });
+
+  it("opens with the server's own answer and saves the one chosen", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", pathSync: "manual" }));
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Manually");
+    await userEvent.click(screen.getByTestId("server-section-terminal"));
+    const group = screen.getByTestId("server-path-sync");
+    expect(within(group).getByRole("radio", { name: "Manually" })).toBeChecked();
+    await userEvent.click(within(group).getByRole("radio", { name: "Always" }));
+    expect(screen.getByText(/On at every connect/)).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    expect(updateServer).toHaveBeenCalledWith("s1", expect.objectContaining({ pathSync: "auto" }));
+  });
+
+  it("reads a value it does not know as “ask”", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", pathSync: "sometimes" }));
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Ask");
+  });
+
+  it("warns on a prod server set to “Always”", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", prod: true, pathSync: "auto" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-terminal"));
+    expect(screen.getByTestId("server-path-sync-prod")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("server-prod"));
+    expect(screen.queryByTestId("server-path-sync-prod")).toBeNull();
+  });
+
+  it("a copy keeps the source's answer", async () => {
+    const { comp } = renderForm();
+    comp.openDuplicate(server({ id: "s1", alias: "Web", pathSync: "auto" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: "auto" }));
+  });
+});
