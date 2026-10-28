@@ -3,13 +3,10 @@
 // `k8s.ts`. Both transports (SSH + local) go through this one command — the
 // backend dispatches by session kind, like `container_run`.
 import { invoke } from "@tauri-apps/api/core";
+import type { ExecOutput } from "../types";
 
-/** Captured result of one `kubectl` invocation (mirror of `kube::KubeOutput`). */
-export interface KubeOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+/** Captured result of one `kubectl` invocation — the drivers' common shape. */
+export type KubeOutput = ExecOutput;
 
 /**
  * Run one `kubectl` command for the session (SSH or local — the backend

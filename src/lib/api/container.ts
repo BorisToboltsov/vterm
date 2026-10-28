@@ -3,13 +3,10 @@
 // Both transports (SSH + local) go through this one command — the backend
 // dispatches by session kind, like `git_run`.
 import { invoke } from "@tauri-apps/api/core";
+import type { ExecOutput } from "../types";
 
-/** Captured result of one `docker` invocation (mirror of `container::ContainerOutput`). */
-export interface ContainerOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+/** Captured result of one `docker` invocation — the drivers' common shape. */
+export type ContainerOutput = ExecOutput;
 
 /**
  * Run one `docker` command for the session (SSH or local — the backend

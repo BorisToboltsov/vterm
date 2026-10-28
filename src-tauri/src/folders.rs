@@ -7,6 +7,7 @@
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::locks::Locked;
 use crate::model::ServerProfile;
 use crate::{secrets, store, AppState};
 
@@ -21,7 +22,7 @@ fn normalize_path(path: &str) -> String {
 
 #[tauri::command]
 pub fn list_folders(state: State<AppState>) -> Vec<String> {
-    let mut folders = state.folders.lock().unwrap().clone();
+    let mut folders = state.folders.locked().clone();
     folders.sort();
     folders
 }
@@ -34,7 +35,7 @@ pub fn add_folder(path: String, state: State<AppState>) -> AppResult<Vec<String>
         return Err(AppError::Message("empty folder name".to_string()));
     }
     let snapshot = {
-        let mut folders = state.folders.lock().unwrap();
+        let mut folders = state.folders.locked();
         // Insert the path plus every ancestor so the tree is always well-formed.
         let mut acc = String::new();
         for seg in path.split('/') {
@@ -74,7 +75,7 @@ pub fn delete_folder(path: String, state: State<AppState>) -> AppResult<()> {
     }
     let prefix = format!("{path}/");
     let folders_snapshot = {
-        let mut folders = state.folders.lock().unwrap();
+        let mut folders = state.folders.locked();
         folders.retain(|f| f != &path && !f.starts_with(&prefix));
         folders.clone()
     };
@@ -82,7 +83,7 @@ pub fn delete_folder(path: String, state: State<AppState>) -> AppResult<()> {
 
     // Detach any servers that lived in the removed subtree.
     let servers_snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         for s in servers.iter_mut() {
             if group_in_subtree(s.group.as_deref(), &path) {
                 s.group = None;
@@ -108,7 +109,7 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
 
     // Remove the folder subtree.
     let folders_snapshot = {
-        let mut folders = state.folders.lock().unwrap();
+        let mut folders = state.folders.locked();
         folders.retain(|f| f != &path && !f.starts_with(&prefix));
         folders.clone()
     };
@@ -118,7 +119,7 @@ pub async fn delete_folder_with_servers(path: String, state: State<'_, AppState>
     // for secret + session cleanup below. One lock scope: no window where the
     // list on disk and the removed set disagree.
     let (removed_ids, servers_snapshot) = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         let removed_ids: Vec<String> = servers
             .iter()
             .filter(|s| group_in_subtree(s.group.as_deref(), &path))
@@ -159,7 +160,7 @@ fn reprefix_folder(state: &State<AppState>, old_path: &str, new_path: &str) -> A
     }
 
     let folders_snapshot = {
-        let mut folders = state.folders.lock().unwrap();
+        let mut folders = state.folders.locked();
         for f in folders.iter_mut() {
             *f = reprefixed(f, old_path, new_path);
         }
@@ -170,7 +171,7 @@ fn reprefix_folder(state: &State<AppState>, old_path: &str, new_path: &str) -> A
     store::save_folders(&folders_snapshot)?;
 
     let servers_snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         for s in servers.iter_mut() {
             if let Some(g) = &s.group {
                 s.group = Some(reprefixed(g, old_path, new_path));
@@ -244,7 +245,7 @@ pub fn set_server_group(
 ) -> AppResult<ServerProfile> {
     let group = group.map(|g| normalize_path(&g)).filter(|g| !g.is_empty());
     let snapshot = {
-        let mut servers = state.servers.lock().unwrap();
+        let mut servers = state.servers.locked();
         match servers.iter_mut().find(|s| s.id == id) {
             Some(server) => server.group = group,
             None => return Err(AppError::UnknownServer),

@@ -29,7 +29,7 @@ exec docker run --rm --init \
   "$image" bash -c '
     set -euo pipefail
     rsync --archive --delete \
-      --exclude node_modules --exclude /src-tauri/target --exclude /build \
+      --exclude node_modules --exclude /src-tauri/target --exclude /build --exclude /coverage \
       --exclude /.svelte-kit --exclude /.git --exclude /.update-keys \
       /src/ /work/
     cd /work

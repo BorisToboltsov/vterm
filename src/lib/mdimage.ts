@@ -6,7 +6,7 @@
 // `data:` URL, because that is the ONLY image source the app is allowed to have:
 //
 //   * remote `http(s)` targets — the README badges everyone starts with — cannot
-//     load at all. The CSP in tauri.conf.json ends at `img-src 'self' data: asset:`
+//     load at all. The CSP in tauri.conf.json ends at `img-src 'self' data:`
 //     and the offline invariant forbids the WebView reaching the network. Widening
 //     either to make shields.io render would hand every opened .md a way to phone
 //     home: an `<img>` fetch is a GET with the file's own URL, so a hostile

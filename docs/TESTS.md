@@ -305,7 +305,9 @@ scripts/linux-box.sh cargo test   --manifest-path src-tauri/Cargo.toml
 копирует его в том: ничего из собранного (`node_modules`, `target/`) не попадает в checkout, и
 macOS-сборка рядом не страдает. Тома держат сборки между прогонами (первая — несколько минут,
 дальше инкрементально); снести их — `docker volume rm vterm-linux-work vterm-linux-cargo
-vterm-linux-pnpm`. Внутри всё идёт от обычного пользователя (`vterm`), как на раннере CI, —
+vterm-linux-pnpm`. Тома держат и прошлый бинарник, поэтому упавшая сборка останавливает
+прогон (`onPrepare` в `wdio.conf.js` выходит с её кодом): иначе набор прогнал бы старый бинарник
+и отчитался о коде, которого уже нет. Внутри всё идёт от обычного пользователя (`vterm`), как на раннере CI, —
 root контейнеру после установки пакетов не нужен. Сценарию `app.e2e.js` нужен тестовый sshd на хосте
 (`docker compose -f e2e/docker-compose.ssh.yml up -d`) — контейнер ходит к нему через
 `host.docker.internal`.

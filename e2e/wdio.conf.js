@@ -61,10 +61,18 @@ export const config = {
   // appears. `tauri build` sets this feature; building via cargo we pass it.
   onPrepare: () => {
     const release = profile === "release" ? ["--release"] : [];
-    spawnSync("cargo", ["build", ...release, "--features", "tauri/custom-protocol"], {
+    const built = spawnSync("cargo", ["build", ...release, "--features", "tauri/custom-protocol"], {
       cwd: path.resolve(projectRoot, "src-tauri"),
       stdio: "inherit",
     });
+    // A failed build stops the run here. target/ outlives it (the Linux box keeps
+    // it in a volume), so going on would drive the previous binary and report on
+    // code that is no longer there. WDIO only logs an ordinary error thrown from
+    // onPrepare and carries on, hence the exit.
+    if (built.status !== 0) {
+      console.error(`cargo build failed (${built.error ?? `exit ${built.status ?? built.signal}`}) — not running the suite`);
+      process.exit(1);
+    }
   },
 
   // Start/stop tauri-driver around each WebDriver session.

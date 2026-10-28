@@ -15,6 +15,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::error::{AppError, AppResult};
+use crate::locks::Locked;
 use crate::AppState;
 
 /// Native local-system metrics for local shell tabs (Phase 38). SSH sessions get
@@ -29,7 +30,7 @@ mod local;
 /// collector instead of `run_command`. Mirrors the transport-by-session dispatch
 /// used by `git_run`/`container_run`/`kubectl_run`.
 fn is_local_session(state: &State<'_, AppState>, session_id: &str) -> bool {
-    state.local_ptys.lock().unwrap().contains_key(session_id)
+    state.local_ptys.locked().contains_key(session_id)
 }
 
 /// Per-session, per-device cumulative `(a, b)` counters + sample instant, used for
@@ -63,14 +64,14 @@ impl MetricsSamples {
     /// cleanup missed `net_samples`/`disk_samples`, leaking one entry per closed
     /// session; grouping the stores here lets us clear every one in a single place.
     pub fn clear_session(&self, id: &str) {
-        self.cpu_samples.lock().unwrap().remove(id);
-        self.net_samples.lock().unwrap().remove(id);
-        self.disk_samples.lock().unwrap().remove(id);
-        self.core_samples.lock().unwrap().remove(id);
-        self.cpu_stat_samples.lock().unwrap().remove(id);
-        self.iface_samples.lock().unwrap().remove(id);
-        self.diskdev_samples.lock().unwrap().remove(id);
-        self.ctxintr_samples.lock().unwrap().remove(id);
+        self.cpu_samples.locked().remove(id);
+        self.net_samples.locked().remove(id);
+        self.disk_samples.locked().remove(id);
+        self.core_samples.locked().remove(id);
+        self.cpu_stat_samples.locked().remove(id);
+        self.iface_samples.locked().remove(id);
+        self.diskdev_samples.locked().remove(id);
+        self.ctxintr_samples.locked().remove(id);
     }
 }
 
@@ -380,7 +381,7 @@ fn rate_from(
     cur: (u64, u64),
 ) -> (Option<u64>, Option<u64>) {
     let now = Instant::now();
-    let mut s = samples.lock().unwrap();
+    let mut s = samples.locked();
     let mut a = None;
     let mut b = None;
     if let Some(&(pa, pb, pinst)) = s.get(session_id) {
@@ -407,7 +408,7 @@ pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> Ap
 
     // CPU% needs two samples; the first poll for a session has no prior reading.
     if let Some((idle, total)) = parse_cpustat(&raw) {
-        let mut samples = state.metrics_samples.cpu_samples.lock().unwrap();
+        let mut samples = state.metrics_samples.cpu_samples.locked();
         if let Some(&(pidle, ptotal)) = samples.get(&session_id) {
             let dt = total.saturating_sub(ptotal);
             let di = idle.saturating_sub(pidle);
@@ -769,7 +770,7 @@ fn dev_rate_map(
     cur: &[(String, u64, u64)],
 ) -> HashMap<String, (u64, u64)> {
     let now = Instant::now();
-    let mut guard = store.lock().unwrap();
+    let mut guard = store.locked();
     let prevs = guard.entry(session_id.to_string()).or_default();
     let mut out = HashMap::new();
     let mut next = HashMap::new();
@@ -991,7 +992,7 @@ pub async fn fetch_metrics_detail(
     // Per-core CPU% needs two samples (per-core jiffies stored per session).
     let cur = parse_percpu(&raw);
     if !cur.is_empty() {
-        let mut samples = state.metrics_samples.core_samples.lock().unwrap();
+        let mut samples = state.metrics_samples.core_samples.locked();
         if let Some(prev) = samples.get(&session_id) {
             d.per_cpu = percpu_delta(prev, &cur);
         }
@@ -1000,7 +1001,7 @@ pub async fn fetch_metrics_detail(
 
     // CPU time breakdown (user/system/iowait/steal/idle) from two jiffy samples.
     if let Some(cur) = parse_cpu_jiffies(&raw) {
-        let mut samples = state.metrics_samples.cpu_stat_samples.lock().unwrap();
+        let mut samples = state.metrics_samples.cpu_stat_samples.locked();
         if let Some(prev) = samples.get(&session_id) {
             d.cpu_breakdown = cpu_breakdown(prev, &cur);
         }

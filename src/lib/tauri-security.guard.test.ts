@@ -34,6 +34,20 @@ describe("Tauri Content-Security-Policy", () => {
     const security = JSON.stringify(conf.app?.security ?? {});
     expect(security.toLowerCase()).not.toContain("dangerous");
   });
+
+  it("allows no inline script by name, only by the hashes the build adds", () => {
+    // v1.25.1: the build hashes every inline <script> of the page into
+    // script-src (tauri-codegen), and a hash cancels 'unsafe-inline' — the
+    // keyword only claimed a permission the build revoked. Dev keeps it (Vite).
+    expect(csp).toMatch(/script-src[^;]*'self'/);
+    expect(csp).not.toMatch(/script-src[^;]*'unsafe-(inline|eval)'/);
+  });
+
+  it("names no image source the app does not serve", () => {
+    // The asset protocol is off (no `protocol-asset` feature): `asset:` and
+    // http://asset.localhost in img-src were sources nothing answers.
+    expect(csp).not.toMatch(/img-src[^;]*asset/);
+  });
 });
 
 describe("capabilities are least-privilege", () => {
@@ -44,6 +58,31 @@ describe("capabilities are least-privilege", () => {
     expect(stringPerms).not.toContain("opener:default");
     expect(stringPerms).not.toContain("dialog:default");
     expect(stringPerms).not.toContain("fs:default");
+  });
+
+  it("grants no default set at all — core included — only named permissions", () => {
+    // v1.25.1: `core:default` gave the WebView the menu, tray, path, image and
+    // webview APIs and every window getter, none of which the page calls. The
+    // core permissions are the ones the frontend uses, named one by one; a new
+    // one is added here with the call that needs it.
+    expect(stringPerms.filter((p) => /:default$/.test(p))).toEqual([]);
+    expect(stringPerms.filter((p) => p.startsWith("core:")).sort()).toEqual(
+      [
+        "core:app:allow-name",
+        "core:app:allow-tauri-version",
+        "core:app:allow-version",
+        "core:event:allow-emit",
+        "core:event:allow-listen",
+        "core:event:allow-unlisten",
+        "core:window:allow-close",
+        "core:window:allow-internal-toggle-maximize",
+        "core:window:allow-is-maximized",
+        "core:window:allow-minimize",
+        "core:window:allow-start-dragging",
+        "core:window:allow-start-resize-dragging",
+        "core:window:allow-toggle-maximize",
+      ].sort(),
+    );
   });
 
   it("grants only the dialog open/save it actually uses", () => {

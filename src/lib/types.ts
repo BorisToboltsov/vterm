@@ -185,3 +185,15 @@ export interface AuthPromptRequest {
   /** `echo` false → a secret field. */
   prompts: { prompt: string; echo: boolean }[];
 }
+
+/**
+ * Captured result of one driver command — git, docker, kubectl, a network
+ * probe, the access check (mirror of `exec::ExecOutput`). A timeout and a
+ * program that cannot start arrive as a non-zero `exitCode` with a note in
+ * `stderr`, so every panel reads one shape.
+ */
+export interface ExecOutput {
+  stdout: string;
+  stderr: string;
+  exitCode: number;
+}

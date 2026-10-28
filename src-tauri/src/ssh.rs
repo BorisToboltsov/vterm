@@ -7,6 +7,7 @@
 
 use crate::error::{AppError, AppResult};
 use crate::kbdauth;
+use crate::locks::Locked;
 use crate::outgate::OutputGate;
 use crate::store;
 use async_http_proxy::{http_connect_tokio, http_connect_tokio_with_basic_auth};
@@ -163,28 +164,27 @@ impl SshSession {
 
     /// Begin recording on this session.
     pub fn begin_recording(&self, rec: crate::recording::Recorder) {
-        *self.recorder.lock().unwrap() = Some(rec);
+        *self.recorder.locked() = Some(rec);
     }
 
     /// Stop recording; returns the file path if a recording was active.
     pub fn end_recording(&self) -> Option<std::path::PathBuf> {
         self.recorder
-            .lock()
-            .unwrap()
+            .locked()
             .take()
             .map(|r| r.path().to_path_buf())
     }
 
     /// Pause or resume the active recording (no-op if not recording).
     pub fn set_recording_paused(&self, paused: bool) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+        if let Some(rec) = self.recorder.locked().as_mut() {
             rec.set_paused(paused);
         }
     }
 
     /// Write an audit annotation into the active recording (no-op if not recording).
     pub fn annotate_recording(&self, text: &str) {
-        if let Some(rec) = self.recorder.lock().unwrap().as_mut() {
+        if let Some(rec) = self.recorder.locked().as_mut() {
             rec.annotate(text);
         }
     }

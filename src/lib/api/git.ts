@@ -1,13 +1,10 @@
 // Git panel API (Phase 29). One thin wrapper over the `git_run` backend command;
 // the frontend builds argument vectors and parses output in `git.ts`.
 import { invoke } from "@tauri-apps/api/core";
+import type { ExecOutput } from "../types";
 
-/** Captured result of one `git` invocation (mirror of `git::GitOutput`). */
-export interface GitOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+/** Captured result of one `git` invocation — the drivers' common shape. */
+export type GitOutput = ExecOutput;
 
 /**
  * Run one `git` command in `cwd` for the session (SSH or local — the backend

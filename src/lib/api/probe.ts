@@ -3,13 +3,10 @@
 // per-tool pure modules (tls/http). Transport by session: an SSH tab runs it on
 // the server, a local tab spawns the user's own curl/openssl here (ADR 0014).
 import { invoke } from "@tauri-apps/api/core";
+import type { ExecOutput } from "../types";
 
-/** Captured result of one probe invocation (mirror of `netprobe::ProbeOutput`). */
-export interface ProbeOutput {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
+/** Captured result of one probe invocation — the drivers' common shape. */
+export type ProbeOutput = ExecOutput;
 
 /**
  * Run one diagnostic command on the session's host, capturing

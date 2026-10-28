@@ -8,6 +8,7 @@
 //! commands, which route by session id.
 
 use crate::error::AppResult;
+use crate::locks::Locked;
 use crate::outgate::OutputGate;
 use crate::recording::Recorder;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
@@ -123,12 +124,12 @@ impl LocalPty {
         // reaches it — read before the bytes go out, since a moment later the
         // shell may be running the command (or `cd` may have moved it).
         if self.watch_submits.load(Ordering::Relaxed) && data.contains(&b'\r') {
-            *self.submitted.lock().unwrap() = self.prompt_cwd();
+            *self.submitted.locked() = self.prompt_cwd();
         }
         // Queue the input to the recorder (cheap clone of a keystroke buffer) before
         // the echo it triggers can come back on the reader — keeps FIFO order.
         self.record(RecMsg::Input(data.clone()));
-        let mut w = self.writer.lock().unwrap();
+        let mut w = self.writer.locked();
         w.write_all(&data)
             .map_err(|e| format!("local write failed: {e}"))?;
         w.flush().map_err(|e| format!("local flush failed: {e}"))?;
@@ -140,10 +141,10 @@ impl LocalPty {
     /// sender, so that thread finalizes and exits (the frontend guards against
     /// double-start regardless).
     pub fn begin_recording(&self, rec: Recorder) {
-        *self.rec_path.lock().unwrap() = Some(rec.path().to_path_buf());
+        *self.rec_path.locked() = Some(rec.path().to_path_buf());
         let (tx, rx) = mpsc::channel::<RecMsg>();
         std::thread::spawn(move || run_recorder(rec, rx));
-        *self.rec_tx.lock().unwrap() = Some(tx);
+        *self.rec_tx.locked() = Some(tx);
     }
 
     /// Stop recording and return the recording's file path. Asks the recorder
@@ -153,8 +154,8 @@ impl LocalPty {
     /// post-stop dialog or report "saved" with no path. `None` only when nothing
     /// was recording.
     pub fn end_recording(&self) -> Option<PathBuf> {
-        let tx = self.rec_tx.lock().unwrap().take();
-        let known = self.rec_path.lock().unwrap().take();
+        let tx = self.rec_tx.locked().take();
+        let known = self.rec_path.locked().take();
         if let Some(tx) = tx {
             let (reply_tx, reply_rx) = mpsc::channel();
             if tx.send(RecMsg::Stop(reply_tx)).is_ok() {
@@ -195,7 +196,7 @@ impl LocalPty {
 
     /// Where the shell stood when it was handed the last line (v1.24, ADR 0035).
     pub fn submitted_cwd(&self) -> Option<String> {
-        self.submitted.lock().unwrap().clone()
+        self.submitted.locked().clone()
     }
 
     /// The shell's folder — but only while the shell itself holds the terminal.
@@ -215,7 +216,7 @@ impl LocalPty {
     /// a command — or `ssh`, or a REPL — the foreground group is that one's.
     #[cfg(unix)]
     fn shell_in_foreground(&self, pid: u32) -> bool {
-        let leader = self.master.lock().unwrap().process_group_leader();
+        let leader = self.master.locked().process_group_leader();
         leader.is_some_and(|g| u32::try_from(g).ok() == Some(pid))
     }
 
@@ -229,8 +230,7 @@ impl LocalPty {
     /// Inform the kernel (and the child) of a new terminal size.
     pub fn resize(&self, cols: u32, rows: u32) -> AppResult<()> {
         self.master
-            .lock()
-            .unwrap()
+            .locked()
             .resize(pty_size(cols, rows))
             .map_err(|e| format!("local resize failed: {e}").into())
     }
@@ -242,7 +242,7 @@ impl Drop for LocalPty {
         // reader thread (EOF) and lets it reap the process. That EOF must not be
         // announced: the id may already belong to a new session (a reconnect).
         self.gate.shut();
-        let _ = self.killer.lock().unwrap().kill();
+        let _ = self.killer.locked().kill();
     }
 }
 

@@ -58,7 +58,8 @@
 └──────────┬──────────────────────────────────────▲───────────────────┘
            │ invoke(): ~90 команд                 │ emit(): события
 ┌──────────▼──────────────────────────────────────┴───────────────────┐
-│  lib.rs — generate_handler!, AppState, bridge к сессиям             │
+│  lib.rs — generate_handler!, AppState, общие мосты к сессиям        │
+│      ├── commands/: bridge-слой — команды поверх AppState по доменам│
 │      ├── доменные модули: servers · folders · sftp · localfile ·    │
 │      │   recording · ai · git · container · kube · netprobe ·       │
 │      │   netcheck · …                                               │
@@ -75,7 +76,7 @@
 - **Команды** инкапсулированы в [src/lib/api/](../src/lib/api/) — UI не работает со
   строками-именами команд. Команда живёт в своём доменном модуле, `lib.rs` её только
   регистрирует; исключение — команды поверх общего `AppState` и приватные мосты
-  (`session_arc`/`get_sftp`/`record_sftp`).
+  (`get_sftp`/`record_sftp`/`run_driver`): bridge-слой в [commands/](../src-tauri/src/commands/).
 - **Модель данных** ([model.rs](../src-tauri/src/model.rs)) сериализуется через `serde` с
   `rename_all = "camelCase"` — зеркало в [types.ts](../src/lib/types.ts). Пароли в модели
   не хранятся: только в keychain ([secrets.rs](../src-tauri/src/secrets.rs)).
@@ -130,7 +131,9 @@
 
 | Модуль | Зона ответственности |
 |--------|---------------------|
-| [lib.rs](../src-tauri/src/lib.rs) | Регистрация команд, `AppState`, bridge к сессиям, команды поверх общего состояния |
+| [lib.rs](../src-tauri/src/lib.rs) | Регистрация команд (`generate_handler!`), `AppState`, общие мосты к сессиям (`session_arc`, `end_session`, `register_cancel`), запуск приложения |
+| [commands/](../src-tauri/src/commands/) | Bridge-слой — команды поверх общего `AppState` по доменам: `session` (SSH, локальный шелл, ввод, cwd), `sftp` (файлы, синхронизация, поиск, задания переноса), `drivers` (git/docker/kubectl/пробы/проверка доступа — один диспетчер по транспорту), `recording`, `backup`, `ai` (ключи, `ai_exec`), `chrome` (меню macOS, буфер обмена, «Открыть с помощью»). `BRIDGE` — список файлов для гейтов |
+| [exec.rs](../src-tauri/src/exec.rs) · [locks.rs](../src-tauri/src/locks.rs) | Общее исполнение драйверов: `ExecOutput`, команда для SSH, локальный запуск, строка аудита · `.locked()` — блокировка, переживающая панику |
 | [ssh.rs](../src-tauri/src/ssh.rs) · [pty.rs](../src-tauri/src/pty.rs) | SSH-сессии (russh, proxy, keepalive, `exec_captured`) · локальный PTY |
 | [outgate.rs](../src-tauri/src/outgate.rs) | Затвор вывода сессии: шлёт `term://out`/`closed` или копит байты, пока вкладка переезжает в другое окно; счёт отправленного, предел накопленного, откат (ADR 0017) |
 | [appwin.rs](../src-tauri/src/appwin.rs) | Окна приложения: кто владеет сессией, подтверждение закрытия по окнам, передача вкладки новому или открытому окну (`detach_*` / `take_handoff` / `attach_session` / `decline_handoff`; область уходит повтором той же передачи — порядок и место вкладок решает фронт, `paneMoveOrder` в `tabhandoff.ts`, ADR 0023), список окон, принимающих вкладки (`announce_window`), сводка для диалога выхода, адресные события (`WindowSink`, `emit_to_focused`) (ADR 0017, 0018) |
@@ -146,7 +149,7 @@
 | [metrics/](../src-tauri/src/metrics/) | `mod.rs` — шелл-пробы по SSH; `local.rs` — нативный сбор через sysinfo |
 | [recording.rs](../src-tauri/src/recording.rs) | Запись сессий (asciicast v2), маскирование ввода, экспорт |
 | [ai.rs](../src-tauri/src/ai.rs) | Брокер LLM: стрим, два протокола, `ai_models` |
-| [git.rs](../src-tauri/src/git.rs) · [container.rs](../src-tauri/src/container.rs) · [kube.rs](../src-tauri/src/kube.rs) · [netprobe.rs](../src-tauri/src/netprobe.rs) | Драйверы панелей — дамповые исполнители argv |
+| [git.rs](../src-tauri/src/git.rs) · [container.rs](../src-tauri/src/container.rs) · [kube.rs](../src-tauri/src/kube.rs) · [netprobe.rs](../src-tauri/src/netprobe.rs) | Драйверы панелей — дамповые исполнители argv; политика argv каждого драйвера (`check_args`) — граница WebView (ADR 0036) |
 | [netcheck.rs](../src-tauri/src/netcheck.rs) | «Проверка доступа» на локальной вкладке: нативное TCP-рукопожатие или инструмент пользователя (`LocalTool`: argv зашит здесь, ожидание ограничивает приложение), тот же протокол ответа, что у SSH-скрипта, остановка по флагу из общей карты отмен (ADR 0012, 0032, 0033) |
 | [localenv.rs](../src-tauri/src/localenv.rs) | Реконструкция `PATH` для локального спавна (упакованное приложение наследует минимальный) |
 | [webview2.rs](../src-tauri/src/webview2.rs) | «Полный» portable Windows: хвост exe с WebView2 Fixed Version runtime, выбор системный/вшитый, атомарная распаковка до создания окна (ADR 0013); упаковка — [scripts/webview2-runtime.mjs](../scripts/webview2-runtime.mjs) |
@@ -169,7 +172,7 @@
 | **Мониторинг** | `metrics/mod.rs`, `metrics/local.rs` | `fetch_metrics`/`fetch_metrics_detail`/`fetch_pending_updates`/`fetch_extras` | `StatusBar`, `MonitoringOverlay`, `Chart`, `Sparkline`, `StackedBar` | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` |
 | **Запись сессий** | `recording.rs` | `start_recording`/`stop_recording`/`export_recording`/… | `RecordingsPanel`, плеер | `recording`, `recgroup`, `airunbook`, `aiscript` |
 | **Логи и текст** | — (всё на фронте, поверх буфера xterm) | — | Переключатель Raw/Table, поиск по буферу, история | `jsonlog`, `highlight`, `search`, `history`, `command` |
-| **Git · Docker · k8s · пробы** | `git.rs`, `container.rs`, `kube.rs`, `netprobe.rs` | `git_run`, `container_run`, `kubectl_run`, `probe_run`, `docker_login`, `record_audit` | `GitPanel`, `PathSyncDialog` (как включать синхронизацию пути на этом сервере — ADR 0034), `DockerPanel` (сети — `DockerNetworks` + `DockerNetGraph`), `K8sPanel` (сеть — `K8sNetwork` + `K8sRouteView`), `UtilProbeRunner`; подробности и текст — `DockerDetail`/`DockerText`/`K8sDetail`/`K8sText`: окном (`*Modal`) в узком доке, в `SidePane` рядом со списком в широкой панели; подробности коммита — `GitCommitDetail`: в `SidePane` рядом с историей или полоской под ней | `followcwd`, `shellintegration`, `pathsync` (режим синхронизации пути сервера: спрашивать / всегда / вручную), `git`, `gitview`, `docker`, `dockernet` (порты, членство в сетях, раскладка графа), `k8s`, `k8sroute` (маршрут ingress → сервис → эндпоинты), `probe`, `tls`, `http`, `panelwide` (порог широкого вида для решений, которые CSS принять не может; действие `actions/panelwide`), `age` (возраст в строке списка — один формат на все панели) |
+| **Git · Docker · k8s · пробы** | `commands/drivers.rs` → `exec.rs`; политики `git.rs`, `container.rs`, `kube.rs`, `netprobe.rs` | `git_run`, `container_run`, `kubectl_run`, `probe_run`, `docker_login`, `record_audit` | `GitPanel`, `PathSyncDialog` (как включать синхронизацию пути на этом сервере — ADR 0034), `DockerPanel` (сети — `DockerNetworks` + `DockerNetGraph`), `K8sPanel` (сеть — `K8sNetwork` + `K8sRouteView`), `UtilProbeRunner`; подробности и текст — `DockerDetail`/`DockerText`/`K8sDetail`/`K8sText`: окном (`*Modal`) в узком доке, в `SidePane` рядом со списком в широкой панели; подробности коммита — `GitCommitDetail`: в `SidePane` рядом с историей или полоской под ней | `followcwd`, `shellintegration`, `pathsync` (режим синхронизации пути сервера: спрашивать / всегда / вручную), `git`, `gitview`, `docker`, `dockernet` (порты, членство в сетях, раскладка графа), `k8s`, `k8sroute` (маршрут ingress → сервис → эндпоинты), `probe`, `tls`, `http`, `panelwide` (порог широкого вида для решений, которые CSS принять не может; действие `actions/panelwide`), `age` (возраст в строке списка — один формат на все панели) |
 | **ИИ-ассистент** | `ai.rs` | `ai_chat`/`cancel_ai_chat`/`ai_models`/`ai_exec`/`set_ai_key` · `ai://` | `AiChat`, `AiConsentDialog`, `AiSettingsSection` | `ai`, `aicore`, `aiprompts`, `aipresets`, `aiexec`, `aicontext`, `aidialog`, `aimetrics`, `aierror`, `redact`, `aiask` (вопросы «спросить про…» и когда чат может начать ход) |
 | **Утилиты** | `keygen.rs`, `store.rs` (known_hosts), `netcheck.rs` | `generate_ssh_key`, `list_known_hosts`, `remove_known_host`, `netcheck_run` | `UtilitiesPanel` + `Util*.svelte` (`UtilNetCheck` → `NetCheckHosts`, `NetCheckRuleTable`, `NetCheckMatrix`) | `utilities`, `netcheck`, `netcheckpaste` (разбор заявки), `netcheckform` (строки таблицы), `netroute` (источник → сервер, план, матрица), `netcheckwords` (+ стор `stores/netcheck`: правила и прогон по хосту вкладки), `sshkeygen`, `knownhosts`, `codec`, `cidr`, `cron`, `jwt`, `pwgen`, `timeconv`, `wordlist` |
 | **Окна** | `appwin.rs`, `outgate.rs`, `winhit.rs`, `dragghost.rs` | `detach_begin`/`detach_commit`/`detach_abort` (окно, отдающее вкладку) · `take_handoff`/`attach_session`/`decline_handoff` (окно, принимающее её) · `announce_window` · `announce_copy_targets` (куда в этом окне можно скопировать файл) · `drag_over`/`drag_drop`/`drag_end` (вкладка или файлы над другим окном) · `drag_out_begin` (файлы сервера — системе; дальше окнам о них говорит бэкенд) · `close_window` · `report_window_summary`/`other_windows_summary` · `arm_close_guard`/`quit_app` · `window://`, `menu://quit` | Та же страница в каждом окне (`+page.svelte`); `QuitDialog` (выход и закрытие окна); в `Terminal.svelte` — снимок (`snapshot`) и приём сессии (`adopt`) | `appwindow` (роль окна по метке, другие окна и их имена), `tabhandoff` (пакет вкладки, `detachBlocker`, `moveOffered`, бросок за окно), `quitsummary` (`mergeQuitRows`) + `stores/tabpacket` (пакет из сторов и обратно), `stores/tabdrag` (бросок за окно; о перетаскиваемой вкладке говорится бэкенду по порядку, он отвечает, над каким она окном и рисует ли её окно-метка), `stores/tabincoming` (вкладка другого окна над этим: метка, место в полосе, подсветка), `dragout` (что можно отдать системе и что ей отдаётся), `splitlayout` (`placeTab`, `previewIncoming`), `api/window` (`listenHere`) |
@@ -196,7 +199,7 @@ vterm/
 │       ├── actions/            # drag · tooltip · mdlinks · clipboardKeys · panelwide
 │       └── i18n/               # locales · messages · translate · index
 ├── src-tauri/
-│   ├── src/                    # модули Rust (см. таблицу выше)
+│   ├── src/                    # модули Rust (см. таблицу выше); commands/ — bridge-слой
 │   ├── capabilities/           # минимальные разрешения Tauri
 │   ├── icons/                  # иконки бандла (статичные)
 │   └── tauri.conf.json         # окно, бандл, строгий CSP

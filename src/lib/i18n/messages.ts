@@ -1686,7 +1686,7 @@ export const en = {
   "settings.k8sRefresh": "Refresh interval (s)",
   "settings.k8sRefreshHint": "How often the live Kubernetes view re-polls the cluster (1–30 s).",
   "settings.kubectlPath": "kubectl program",
-  "settings.kubectlPathHint": "Override the kubectl command — e.g. \"k3s kubectl\", \"microk8s kubectl\", or an absolute path. Empty uses kubectl on PATH.",
+  "settings.kubectlPathHint": "Override the kubectl command — \"k3s kubectl\", \"microk8s kubectl\" or an absolute path to kubectl; other programs are refused. Empty uses kubectl on PATH.",
 
   "ai.panelTitle": "AI",
   "ai.clear": "Clear",
@@ -4008,7 +4008,7 @@ const ru: Record<MessageKey, string> = {
   "settings.k8sRefresh": "Интервал обновления (с)",
   "settings.k8sRefreshHint": "Как часто живой вид Kubernetes опрашивает кластер (1–30 с).",
   "settings.kubectlPath": "Программа kubectl",
-  "settings.kubectlPathHint": "Переопределить команду kubectl — напр. «k3s kubectl», «microk8s kubectl» или абсолютный путь. Пусто — kubectl из PATH.",
+  "settings.kubectlPathHint": "Переопределить команду kubectl — «k3s kubectl», «microk8s kubectl» или абсолютный путь к kubectl; другие программы не запускаются. Пусто — kubectl из PATH.",
 
   "ai.panelTitle": "ИИ",
   "ai.clear": "Очистить",

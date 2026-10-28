@@ -33,8 +33,11 @@
    обёртка в [src/lib/api/](../src/lib/api/); `lib.rs` только регистрирует её в
    `generate_handler!` как `модуль::имя` (имя команды для фронта от переезда не меняется).
    Исключение — команды поверх общего `AppState` и приватные мосты
-   (`get_sftp`/`session_arc`/`record_sftp`): остаются bridge-слоем в `lib.rs`, чтобы не
-   растаскивать `AppState` по чистым модулям. Бизнес-логику на фронте не дублируем.
+   (`get_sftp`/`record_sftp`/`run_driver`): это bridge-слой, файлы
+   [commands/](../src-tauri/src/commands/) по доменам, чтобы не растаскивать `AppState` по
+   чистым модулям; в `lib.rs` — само состояние, общие мосты (`session_arc`, `end_session`) и
+   регистрация. Новый файл моста вносится в `commands::BRIDGE` — по нему гейты читают код
+   команд. Бизнес-логику на фронте не дублируем.
 2. **Бэкенд — дамповый исполнитель, чистая логика — в `.ts`** (ADR 0003). Сборка argv,
    парсинг вывода, валидация, раскладки, маппинги живут в свободных функциях `.ts` (тестируются
    без DOM и сети), не в `.svelte` и не в командах: [tree.ts](../src/lib/tree.ts),
@@ -77,7 +80,9 @@
    (`AuthRejected`, `HostKeyRejected`, `NoSession`, `UnknownServer`, `KeyExists`,
    `FileChangedOnServer`), прочее — `AppError::Message`. `AppError` сериализуется в строку
    (контракт с фронтом не меняется), маркеры (`auth-rejected`, `key-exists`, `dest-exists`,
-   `file-changed`) живут в `Display`.
+   `file-changed`) живут в `Display`. Паника не каскадирует: `std::sync::Mutex` берётся через
+   `.locked()` ([locks.rs](../src-tauri/src/locks.rs)) — отравленная блокировка иначе роняла бы
+   каждую следующую команду над тем же реестром (гейт `a_poisoned_lock_never_cascades`).
 9. **Контракт типов — camelCase.** Rust-модели — `#[serde(rename_all = "camelCase")]`,
    зеркало в [types.ts](../src/lib/types.ts). Новые поля старых структур — `#[serde(default)]`.
 
@@ -304,7 +309,8 @@
   Форма сохраняет флаг **всегда явно**, так что наследие исчезает при первом сохранении, а явный
   флаг побеждает тег в обе стороны. Legacy-матчинг **не расширяй** до substring/токенов:
   `non-prod`/`pre-prod` ложно попали бы под защиту. Наследования `prod`/`noAi` через папки нет
-  (папка — строковая метка).
+  (папка — строковая метка). У бэкенда то же правило — `ServerProfile::is_prod`, на тех же
+  случаях, что тест `isProdServer`.
 - **Прод виден в двух местах сразу.** Вкладка прод-сервера несёт чип `prod`, а область её
   соединения — терминал и открытые в нём файлы — красную рамку: вкладку ищут
   глазами, а рамку видят, пока печатают. Набор вкладок — `prodTabIds` из того же
@@ -507,6 +513,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 на драйвер (`session_id` + argv), транспорт по принципу 3, бэкенд — дамповый исполнитель,
 argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие правила:
 
+- **WebView — граница доверия: argv драйвера проходит его политику в Rust** (ADR 0036) — на
+  обоих транспортах, до исполнения. `git::check_args` (подкоманды панели; ни одной опции,
+  запускающей программу или пишущей файл, с учётом сокращений длинных опций git),
+  `container::check_args` (программа `docker` по имени и команды панели; `docker login` —
+  только `docker_login`), `kube::check_args` (`kubectl`/путь к нему/`k3s`/`microk8s kubectl`,
+  глаголы панели, без `--kubeconfig`/`--server`/учётных данных), локально у проб —
+  `netprobe::local_program_allowed`. Новая подкоманда в `git.ts`/`docker.ts`/`k8s.ts` сначала
+  вносится в политику — и в тест `what_the_*_panel_runs_is_allowed`, перечисляющий формы
+  argv фронта. Shell и `port-forward` идут в терминал, через драйвер — никогда.
 - **Шелл-квотинг обязателен** на SSH-ветке (`git::shell_quote` — единственная реализация) —
   защита от инъекции. Пайплайн идёт одним токеном `sh -c '<pipeline>'`.
 - **Локальный спавн — только через [localenv.rs](../src-tauri/src/localenv.rs)**
@@ -514,8 +529,11 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   (`/usr/bin:/bin:/usr/sbin:/sbin`) без Docker Desktop/Homebrew, поэтому `Command::new("docker")`
   не находит бинарь **только в `tauri build`**. Реконструируем `PATH` из login-шелла (кэш) +
   известных каталогов и резолвим программу в абсолютный путь. Шеллом команду **не** оборачиваем
-  (аргументы verbatim). ENOENT возвращаем как `exit 127` + stderr, **не** `Err`, чтобы
-  `parseAvailability` честно сказал «не установлен». **Каждый** такой фоновый спавн
+  (аргументы verbatim). Драйверы запускают программу в одном месте —
+  [exec.rs](../src-tauri/src/exec.rs) (`run_local`). ENOENT у Docker, k8s и проб — `exit 127`
+  + stderr, **не** `Err`, чтобы `parseAvailability` честно сказал «не установлен»; у git и
+  входа в реестр — ошибка (`Missing::Error`): панель Git иначе показала бы «не репозиторий»
+  там, где нет самого git. **Каждый** такой фоновый спавн
   консольного CLI проходит через `localenv::no_console_window` (на Windows `CREATE_NO_WINDOW`,
   иначе no-op): приложение — GUI-бинарь, и без флага дочерний `conhost` мигает окном на каждый
   поллинг панели (гейт `every_local_cli_spawn_hides_the_console_window`). Интерактивный
@@ -525,9 +543,9 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   терял код примерно в половине прогонов — панель видела −1 у успешной команды. После EOF код
   ждут не дольше `EXIT_STATUS_GRACE`. Живые тесты `live_exec` ([TESTS.md](TESTS.md)).
 - **Аудит в записи — record-only.** Мутирующий вызов с флагом `mirror` пишется в активную запись
-  сессии как `[тег] $ … / [тег] exit N` через `record_output` (функция `*_mirror` в модуле
-  драйвера: `git::git_mirror`, `container::container_mirror`, `kube::kube_mirror`,
-  `sftp::sftp_mirror`); в живой терминал **не** эмитится (GUI чистый). Чтения и поллинг не
+  сессии как `[тег] $ … / [тег] exit N` через `record_output` (`exec::mirror` у драйверов —
+  тег `git`/`docker`/`k8s` задаёт вызов, — `sftp::sftp_mirror` у SFTP); в живой терминал
+  **не** эмитится (GUI чистый). Чтения и поллинг не
   мирроятся. Секреты не логируются никогда.
   - **Сетевые утилиты пишут итог, а не сырьё.** `probe_run`/`netcheck_run` в запись не пишут
     ничего: в argv HTTP-клиента — значения заголовков (`Authorization`) и тело запроса, в выводе —
@@ -1415,7 +1433,7 @@ argv/парсинг — чистый `.ts`, вид — в `*.svelte`. Общие
   `rm`/`rm -r`, `mv`, `cp`, `mkdir`, `touch`, `save` (**только размер**, содержимое — нет), `put`,
   `get`, `copy`. Чтения (`list`/`read_text`/`grep`/`hash_tree`) — нет. Пути квотятся
   `git::shell_quote`. Новую мутирующую команду подключай так же: `session_arc` →
-  `session.sftp()` → `record_sftp(&session, &op, &res)` в `lib.rs`. Пишется только в записи
+  `session.sftp()` → `record_sftp(&session, &op, &res)` в `commands/sftp.rs`. Пишется только в записи
   SSH-сессий: у локальной вкладки файловые операции в запись не идут.
   - **Задание переноса мирроится одной строкой, а не файлом** (`transfers::audit_op`), в запись
     каждой SSH-сессии, которой оно касается: одиночный файл — как раньше (`put '…' -> '…'`,
@@ -1606,7 +1624,10 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   предложенная команда попадает в терминал только по `execMode`
   (`suggest`/`confirm`/`dialog`/`dialogConfirm`); **диалоговые режимы никогда не запускаются на
   прод-сервере**; выполненное пишется в запись как аудит. Флаг сервера **`noAi`** полностью
-  блокирует и контекст, и исполнение — новая точка входа обязана его уважать.
+  блокирует и контекст, и исполнение — новая точка входа обязана его уважать. Исполнение
+  держит и бэкенд: `ai_exec` сверяет текущий профиль сервера сессии
+  (`ServerProfile::ai_exec_allowed`) и отказывает проду и `noAi` — WebView граница доверия
+  (ADR 0036).
 - **Вендор — это данные, а не транспорт.** `AiProvider` — два **реальных протокола**
   (`openai` = `/chat/completions` + `Bearer`, `anthropic` = `/v1/messages` + `x-api-key`);
   третьего заводить нельзя. Новый вендор — запись в чистом реестре
@@ -1657,8 +1678,10 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 ## Недоверенный вход
 
 - **CSP в `tauri.conf.json` держим строгим** (никаких удалённых origin'ов, не возвращай
-  `csp: null`); capabilities —
-  минимально необходимые (opener только `https://`, без `dialog:default`/`fs`/`dangerous*`).
+  `csp: null`; `script-src` без `'unsafe-inline'` — сборка хэширует inline-скрипты страницы
+  сама); capabilities — минимально необходимые и **поимённо**: ни одного набора `*:default`
+  (`core:default` тоже), core-права — те, что зовёт страница (события, имя и версии, кнопки
+  окна), opener только `https://`, без `fs`/`dangerous*`.
   Зависимости проходят `cargo audit`/`cargo deny`/`pnpm audit`/Semgrep (стадия `security` в CI).
   Исключение advisory живёт, пока ему есть что исключать: оставшееся после фикса или отзыва
   молча приняло бы тот же advisory, если обновление вернёт дерево к уязвимой версии, поэтому
@@ -2116,7 +2139,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [attachtab.guard.test.ts](../src/lib/attachtab.guard.test.ts) | Вкладка контейнера/пода печатает команду через `renderSessionCommand` (shell кончается вместе с контейнером), её закрытие не запускает автопереподключение и NO SIGNAL. Проверка по исходнику без комментариев |
 | [idlecard.guard.test.ts](../src/lib/idlecard.guard.test.ts) | Карточка заставки без цикла анимации (reduced motion): первый кадр — `$effect` над `active`+canvas, перерисовка после каждого замера, сброс цифр прошлой активации; курсор над заставкой не скрыт. Без вкладок заставка не включается: тик простоя спрашивает `screensaverAllowed`, страница передаёт число вкладок, показанная заставка не переживает последнюю вкладку. Карточка раскладывается под область: `drawCard` спрашивает `cardTier`, сама карточка рисуется в одном месте и только для раскладки `full`, меньшие раскладки не рисуют подсказку. Проверки сами показывают, что ловят своё нарушение. По исходнику без комментариев |
 | [termfit.guard.test.ts](../src/lib/termfit.guard.test.ts) | У элемента, который `FitAddon` меряет как `parentElement`, нет паддинга — иначе сетка терминала выше своего места |
-| [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts) · `deny.toml` | Строгий CSP, минимальные capabilities, политика зависимостей; capability действует ровно на `main` и `win-*` (не `*`), и у WebView нет разрешения создавать окна. `deny.toml` роняет прогон на исключении advisory и разрешённой лицензии, которым нечего исключать (`unused-ignored-advisory`/`unused-allowed-license = "deny"`), а `audit.toml` игнорирует ровно то же, что `deny.toml`; проверки — функции над текстом и сами ловят своё нарушение |
+| [tauri-security.guard.test.ts](../src/lib/tauri-security.guard.test.ts) · `deny.toml` | Строгий CSP, минимальные capabilities, политика зависимостей; capability действует ровно на `main` и `win-*` (не `*`), и у WebView нет разрешения создавать окна. `deny.toml` роняет прогон на исключении advisory и разрешённой лицензии, которым нечего исключать (`unused-ignored-advisory`/`unused-allowed-license = "deny"`), а `audit.toml` игнорирует ровно то же, что `deny.toml`; проверки — функции над текстом и сами ловят своё нарушение. Ни одного набора `*:default`, core-права — ровно названный список; `script-src` без `'unsafe-inline'`/`'unsafe-eval'`, в `img-src` нет источников, которых приложение не обслуживает |
 | [releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) | Тег называет версию из `package.json`: джоба `tag` сравнивает их первой, и гейты, глубокие проверки и сборка стоят под `needs: tag` (релиз GitLab сверяет то же) — тег с опечаткой публиковал сборку под чужим именем и без заметок. Шаги `gh release upload` в релизном workflow (хелпер macOS + portable `.exe`); пол Node под запиненный мажор pnpm — бамп одного без другого зелен локально и роняет все три ОС. Тело релиза собирается из двух частей, и любая пропадает молча: краткое «Что нового» тянется из секции CHANGELOG по тегу (`RELEASE_NOTES` → `${{ env.RELEASE_NOTES }}`), инструкция запуска/обхода Gatekeeper сохранена. Плюс цепочка поставки CI: релиз стоит под `needs` на полном прогоне гейтов **и** на `nightly.yml` (фаззинг, live-sftp, E2E — по расписанию они идут лишь раз в месяц), экшены запинены по коммит-SHA с комментарием версии, свои workflow — через `$/…` (не `./…`), в ассетах есть `SHA256SUMS`/provenance/SBOM, отправка во VirusTotal остаётся opt-in. Проверки идут по **всем** workflow и по **каждому** вхождению: пин, устаревший во второй джобе, невидим для проверки по первому совпадению. Каждый `pnpm install` в workflow и в `e2e/linux/run.sh` идёт с `--frozen-lockfile`, у каждого пакета репозитория (корень, `e2e/`) закоммичен свой lockfile |
 | [dependabot.guard.test.ts](../src/lib/dependabot.guard.test.ts) | Группы Dependabot: мажор не едет в группе, russh не группируется вовсе, minor Svelte/SvelteKit — отдельным PR, catch-all `*` — последняя группа экосистемы (Dependabot берёт первую подходящую), выдержка `cooldown` ≥ 7 дней у каждой экосистемы. Нераспознанная форма YAML роняет тест, а не пропускается |
 | [untrusted.fuzz.test.ts](../src/lib/untrusted.fuzz.test.ts) · `textenc::props` | Свойства недоверенного входа на **произвольных** данных: из рендера markdown не выходит исполняемого (узлы и имена атрибутов проверяются парсером браузера, не регулярками), декодер не паникует на любых байтах, UTF-16 без BOM — текст, а не бинарь |
@@ -2129,6 +2152,9 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | `a_job_is_told_only_to_the_windows_of_its_sessions` (Rust) | Событие задания переноса отправляет одно место (`transfers::send`) и только аудитории — окнам, которые показывают вкладки его сессий сейчас (`audience` + `Windows::owner_of`); рассылки всем окнам нет; задание уходит из реестра раньше, чем сказано последнее слово. Сканирует код без комментариев |
 | `login_answers_come_only_from_the_plan` (Rust) | Ответы на вопросы сервера (`keyboard-interactive`) уходят одним вызовом и только из `kbdauth::merge` (пароль — лишь в вопрос, выбранный `plan`); вопросы в UI — только через `kbdauth::ask`; ожидающий вопрос снимает `end_session`, через который идут и `disconnect`, и повторный `connect_session`. Сканирует код без комментариев |
 | `nothing_after_login_can_fail_the_connection` (Rust) | В `connect_session` после успешного `ssh::connect` нет ни одного `?`: сбой сохранения секрета не рвёт живую сессию. Сканирует код без комментариев |
+| `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов (ADR 0036): каждая форма argv, которую строит фронт, проходит, а то, что запускает программу, пишет файл или уводит учётные данные (`git config`, `--upload-pack`, `--output`, сокращения длинных опций; `docker run`/`exec`/`compose -f`; `kubectl exec`/плагин/`--kubeconfig`/`-s`), — нет. Новая форма argv во фронте дополняет список |
+| `a_poisoned_lock_never_cascades` (Rust) | Вне тестов нет `.lock().unwrap()`/`.lock().expect(` — только `.locked()`; считается по коду без комментариев и без пробелов (rustfmt разносит цепочку по строкам), до первого тестового **модуля** — `#[cfg(test)]` на отдельном элементе посреди кода не прячет то, что за ним. Проверен на подброшенном нарушении |
+| `the_bridge_source_lists_every_command_module` (Rust) | Гейты, читающие код команд, читают весь слой-мост (`commands::bridge_source`: `lib.rs` и `commands/*`, каждый без своих тестов); файл в `commands/`, не внесённый в список, роняет тест |
 | `network_utilities_never_record_raw_argv_or_output` (Rust) | `probe_run`/`netcheck_run` не пишут в запись (`record_output`/`annotate_recording`/`audit_block`) — только `record_audit` с маскированным итогом от фронта; иначе в запись снова уходят заголовки, тела запросов и ответов. Сканирует код без комментариев |
 | `a_netcheck_run_can_always_be_stopped` (Rust) | `netcheck_run` регистрирует флаг остановки под `cancel_id` и снимает его; SSH-путь передаёт его в `exec_captured_until` (сигнал и закрытие канала), локальный идёт под `sync::until_cancelled`. Проверка — функция над текстом, и гейт сам показывает, что ловит своё нарушение |
 | `quitting_always_goes_through_the_confirmation` (Rust) | В меню macOS нет системного `quit()`, пункт «quit» идёт через `request_quit`; закрытие окна откладывается `prevent_close` ровно тогда, когда `appwin` задал вопрос — главному окну о выходе, второму о закрытии |

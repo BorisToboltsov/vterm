@@ -29,6 +29,7 @@ use tokio::sync::oneshot;
 use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
+use crate::locks::Locked;
 use russh::MethodKind;
 
 /// Rounds of questions one login may take before we give up — a server that keeps
@@ -227,19 +228,19 @@ impl PendingPrompts {
     fn register(&self, session_id: &str) -> oneshot::Receiver<Answer> {
         let (tx, rx) = oneshot::channel();
         // A newer question for the same session replaces (and so cancels) an older one.
-        self.0.lock().unwrap().insert(session_id.to_string(), tx);
+        self.0.locked().insert(session_id.to_string(), tx);
         rx
     }
 
     /// Stop a login that's waiting on the user (tab closed, disconnect, reconnect).
     pub fn cancel(&self, session_id: &str) {
-        if let Some(tx) = self.0.lock().unwrap().remove(session_id) {
+        if let Some(tx) = self.0.locked().remove(session_id) {
             let _ = tx.send(None);
         }
     }
 
     fn answer(&self, session_id: &str, answers: Answer) -> bool {
-        match self.0.lock().unwrap().remove(session_id) {
+        match self.0.locked().remove(session_id) {
             Some(tx) => tx.send(answers).is_ok(),
             None => false,
         }
@@ -329,7 +330,7 @@ mod tests {
             "questions reach the UI only via kbdauth::ask"
         );
 
-        let lib = code(include_str!("lib.rs"));
+        let lib = code(&crate::commands::bridge_source());
         let body = |name: &str| {
             let at = lib.find(name).unwrap_or_else(|| panic!("{name} not found"));
             let rest = &lib[at..];

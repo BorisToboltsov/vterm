@@ -328,7 +328,7 @@ describe("terminal file link guard — catches what it exists for", () => {
 
   it("a folder noted after the line went out", () => {
     const rust = readRust("pty.rs");
-    const note = "        if self.watch_submits.load(Ordering::Relaxed) && data.contains(&b'\\r') {\n            *self.submitted.lock().unwrap() = self.prompt_cwd();\n        }\n";
+    const note = "        if self.watch_submits.load(Ordering::Relaxed) && data.contains(&b'\\r') {\n            *self.submitted.locked() = self.prompt_cwd();\n        }\n";
     const moved = swap(rust, note, "").replace(
       "        w.flush().map_err(|e| format!(\"local flush failed: {e}\"))?;\n",
       `        w.flush().map_err(|e| format!("local flush failed: {e}"))?;\n${note}`,

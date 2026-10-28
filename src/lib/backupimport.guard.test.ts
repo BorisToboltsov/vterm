@@ -109,7 +109,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
-const LIB = "src-tauri/src/lib.rs";
+const LIB = "src-tauri/src/commands/backup.rs";
 const DIALOG = "src/lib/BackupImportDialog.svelte";
 const SECTION = "src/lib/BackupSettings.svelte";
 const REMAP = "src/lib/backupimport.ts";
