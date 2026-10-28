@@ -17,7 +17,7 @@ import { en } from "./messages";
 
 const SRC = join(process.cwd(), "src");
 /** Files that define the dictionaries rather than use them. */
-const DICTIONARIES = ["lib/i18n/messages.ts"];
+const DICTIONARIES = ["lib/i18n/en.ts", "lib/i18n/ru.ts", "lib/i18n/messages.ts"];
 
 /** Drop `<!-- … -->` by scanning, not with one non-greedy `.replace` (CodeQL). */
 function stripHtmlComments(text: string): string {
@@ -67,7 +67,8 @@ describe("message keys", () => {
   });
 
   it("the dictionary itself is excluded, so a key cannot vouch for itself", () => {
-    expect(sourceFiles(SRC).some((f) => relative(SRC, f).split("\\").join("/") === DICTIONARIES[0])).toBe(true);
+    const seen = sourceFiles(SRC).map((f) => relative(SRC, f).split("\\").join("/"));
+    for (const dictionary of DICTIONARIES) expect(seen, dictionary).toContain(dictionary);
   });
 
   it("catches its own violations", () => {

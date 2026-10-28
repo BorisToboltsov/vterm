@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "./actions/tooltip";
-  import { EditorState, Compartment, type Extension } from "@codemirror/state";
+  import { EditorState, Compartment } from "@codemirror/state";
   import { unifiedMergeView } from "@codemirror/merge";
   import { ICONS } from "./icons";
   import {
@@ -15,70 +15,17 @@
   import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
   import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
   import {
-    StreamLanguage,
     bracketMatching,
     indentOnInput,
     syntaxTree,
   } from "@codemirror/language";
   import { lintGutter, linter, type Diagnostic } from "@codemirror/lint";
-  import { yaml } from "@codemirror/lang-yaml";
-  import { json, jsonParseLinter } from "@codemirror/lang-json";
-  import { markdown } from "@codemirror/lang-markdown";
-  import { python } from "@codemirror/lang-python";
-  import { javascript } from "@codemirror/lang-javascript";
-  import { java } from "@codemirror/lang-java";
-  // Official Lezer packages for the "green group": these parse to a syntax tree,
-  // so the generic error-node linter below gives them syntax linting for free.
-  import { html } from "@codemirror/lang-html";
-  import { css } from "@codemirror/lang-css";
-  import { sass } from "@codemirror/lang-sass";
-  import { less } from "@codemirror/lang-less";
-  import { xml } from "@codemirror/lang-xml";
-  import { cpp } from "@codemirror/lang-cpp";
-  import { rust } from "@codemirror/lang-rust";
-  import { go } from "@codemirror/lang-go";
-  import { sql } from "@codemirror/lang-sql";
-  import { shell } from "@codemirror/legacy-modes/mode/shell";
-  import { toml } from "@codemirror/legacy-modes/mode/toml";
-  import { properties } from "@codemirror/legacy-modes/mode/properties";
-  import { dockerFile } from "@codemirror/legacy-modes/mode/dockerfile";
-  import { ruby } from "@codemirror/legacy-modes/mode/ruby";
-  import { csharp, scala, kotlin, dart } from "@codemirror/legacy-modes/mode/clike";
-  import { powerShell } from "@codemirror/legacy-modes/mode/powershell";
-  import { lua } from "@codemirror/legacy-modes/mode/lua";
-  import { perl } from "@codemirror/legacy-modes/mode/perl";
-  import { nginx } from "./nginxmode";
-  import { cmake } from "@codemirror/legacy-modes/mode/cmake";
-  import { diff } from "@codemirror/legacy-modes/mode/diff";
-  import { http } from "@codemirror/legacy-modes/mode/http";
-  import { protobuf } from "@codemirror/legacy-modes/mode/protobuf";
-  import { puppet } from "@codemirror/legacy-modes/mode/puppet";
-  import { groovy } from "@codemirror/legacy-modes/mode/groovy";
-  import { swift } from "@codemirror/legacy-modes/mode/swift";
-  import { clojure } from "@codemirror/legacy-modes/mode/clojure";
-  import { haskell } from "@codemirror/legacy-modes/mode/haskell";
-  import { erlang } from "@codemirror/legacy-modes/mode/erlang";
-  import { elm } from "@codemirror/legacy-modes/mode/elm";
-  import { crystal } from "@codemirror/legacy-modes/mode/crystal";
-  import { r } from "@codemirror/legacy-modes/mode/r";
-  import { julia } from "@codemirror/legacy-modes/mode/julia";
-  import { coffeeScript } from "@codemirror/legacy-modes/mode/coffeescript";
-  import { vb } from "@codemirror/legacy-modes/mode/vb";
-  import { scheme } from "@codemirror/legacy-modes/mode/scheme";
-  import { commonLisp } from "@codemirror/legacy-modes/mode/commonlisp";
-  import { oCaml, fSharp } from "@codemirror/legacy-modes/mode/mllike";
-  import { tcl } from "@codemirror/legacy-modes/mode/tcl";
-  import { d } from "@codemirror/legacy-modes/mode/d";
-  import { verilog } from "@codemirror/legacy-modes/mode/verilog";
-  import { vhdl } from "@codemirror/legacy-modes/mode/vhdl";
-  import { pascal } from "@codemirror/legacy-modes/mode/pascal";
-  import { fortran } from "@codemirror/legacy-modes/mode/fortran";
-  import { cobol } from "@codemirror/legacy-modes/mode/cobol";
+  import { jsonParseLinter } from "@codemirror/lang-json";
+  import { loadLanguage } from "./editorlangs";
   import { editorTheme } from "./cmtheme";
   import { cspNonceExtension } from "./cspnonce";
   import { readClipboard, writeClipboard } from "./clipboard";
   import { activeTerminalTheme, settings } from "./settings.svelte";
-  import type { EditorLangKind } from "./editorlang";
   import { setEditorContent, type EditorDoc } from "./stores/workspaces.svelte";
   import { collectImages, renderMarkdown } from "./markdown";
   import { mdLinks } from "./actions/mdlinks";
@@ -120,6 +67,8 @@
   let view: EditorView | undefined;
   const themeC = new Compartment();
   const lintC = new Compartment();
+  // The grammar arrives after the view (editorlangs.ts loads it on first use).
+  const langC = new Compartment();
 
   // Custom merge-chunk controls for the git inline diff. The buffer IS the
   // working-tree file (diffed against HEAD), so CodeMirror's "accept" ("keep my
@@ -330,144 +279,6 @@
     return [lintGutter(), which];
   }
 
-  /** Resolve a language kind to a CodeMirror language extension. */
-  function langExt(kind: EditorLangKind): Extension {
-    switch (kind) {
-      case "yaml":
-        return yaml();
-      case "json":
-        return json();
-      case "markdown":
-        return markdown();
-      case "shell":
-        return StreamLanguage.define(shell);
-      case "toml":
-        return StreamLanguage.define(toml);
-      case "ini":
-        return StreamLanguage.define(properties);
-      case "python":
-        return python();
-      case "javascript":
-        return javascript({ jsx: true });
-      case "typescript":
-        return javascript({ typescript: true, jsx: true });
-      case "java":
-        return java();
-      case "dockerfile":
-        return StreamLanguage.define(dockerFile);
-      case "go":
-        return go();
-      case "rust":
-        return rust();
-      case "ruby":
-        return StreamLanguage.define(ruby);
-      case "c":
-      case "cpp":
-        return cpp();
-      case "csharp":
-        return StreamLanguage.define(csharp);
-      case "sql":
-        return sql();
-      case "powershell":
-        return StreamLanguage.define(powerShell);
-      case "lua":
-        return StreamLanguage.define(lua);
-      case "perl":
-        return StreamLanguage.define(perl);
-      case "html":
-        return html();
-      case "css":
-        return css();
-      case "scss":
-        return sass({ indented: false });
-      case "less":
-        return less();
-      case "xml":
-        return xml();
-      case "nginx":
-        return StreamLanguage.define(nginx);
-      // Daemon configs (Phase A): approximate highlighting — systemd units and the
-      // key/value daemon configs are INI-shaped; BIND's braces/semicolons fit nginx.
-      case "systemd":
-      case "sshdconfig":
-      case "sudoers":
-      case "haproxy":
-        return StreamLanguage.define(properties);
-      case "bind":
-        return StreamLanguage.define(nginx);
-      // YAML-family dialects (Phase B) are highlighted as YAML; only their server
-      // validator differs (docker compose config / actionlint / kubeconform / …).
-      case "compose":
-      case "ghactions":
-      case "prometheus":
-      case "ansible":
-      case "k8s":
-        return yaml();
-      case "cmake":
-        return StreamLanguage.define(cmake);
-      case "diff":
-        return StreamLanguage.define(diff);
-      case "http":
-        return StreamLanguage.define(http);
-      case "protobuf":
-        return StreamLanguage.define(protobuf);
-      case "puppet":
-        return StreamLanguage.define(puppet);
-      case "groovy":
-        return StreamLanguage.define(groovy);
-      case "scala":
-        return StreamLanguage.define(scala);
-      case "kotlin":
-        return StreamLanguage.define(kotlin);
-      case "dart":
-        return StreamLanguage.define(dart);
-      case "swift":
-        return StreamLanguage.define(swift);
-      case "clojure":
-        return StreamLanguage.define(clojure);
-      case "haskell":
-        return StreamLanguage.define(haskell);
-      case "erlang":
-        return StreamLanguage.define(erlang);
-      case "elm":
-        return StreamLanguage.define(elm);
-      case "crystal":
-        return StreamLanguage.define(crystal);
-      case "r":
-        return StreamLanguage.define(r);
-      case "julia":
-        return StreamLanguage.define(julia);
-      case "coffeescript":
-        return StreamLanguage.define(coffeeScript);
-      case "vb":
-        return StreamLanguage.define(vb);
-      case "scheme":
-        return StreamLanguage.define(scheme);
-      case "commonlisp":
-        return StreamLanguage.define(commonLisp);
-      case "ocaml":
-        return StreamLanguage.define(oCaml);
-      case "fsharp":
-        return StreamLanguage.define(fSharp);
-      case "tcl":
-        return StreamLanguage.define(tcl);
-      case "d":
-        return StreamLanguage.define(d);
-      case "verilog":
-        return StreamLanguage.define(verilog);
-      case "vhdl":
-        return StreamLanguage.define(vhdl);
-      case "pascal":
-        return StreamLanguage.define(pascal);
-      case "fortran":
-        return StreamLanguage.define(fortran);
-      case "cobol":
-        return StreamLanguage.define(cobol);
-      default:
-        return [];
-    }
-  }
-
   function triggerSave(): boolean {
     if (!doc.readOnly) onsave?.();
     return true;
@@ -536,7 +347,7 @@
               gitMergeTheme,
             ]
           : []),
-        langExt(doc.lang.kind),
+        langC.of([]),
         lintC.of(lintExt()),
         themeC.of(editorTheme(activeTerminalTheme())),
         // Mod+S saves; Mod+C/X/V use the backend clipboard. These sit before the
@@ -554,6 +365,15 @@
       ],
     });
     view = new EditorView({ state, parent: host });
+    const created = view;
+    loadLanguage(doc.lang.kind)
+      .then((ext) => {
+        // The view may be gone (file closed) before its grammar arrives.
+        if (view === created) view.dispatch({ effects: langC.reconfigure(ext) });
+      })
+      .catch(() => {
+        // No highlighting is the plain-text fallback, not an error worth a toast.
+      });
     // Jump to a requested line (e.g. from a content-search hit).
     if (doc.gotoLine && doc.gotoLine > 1) jumpTo(doc.gotoLine);
   });

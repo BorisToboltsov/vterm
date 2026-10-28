@@ -456,3 +456,23 @@ export function sortRecordings(
 ): RecordingMeta[] {
   return sortRecordingsBy(items, [{ key, dir }]);
 }
+
+/**
+ * Tag a recording's `vterm` env metadata with a broadcast batch id, so the
+ * library bundles every member of a group recording. Metadata that is not a
+ * JSON object is kept as it is rather than lost.
+ */
+export function withBatch(env: string, batchId: string): string {
+  try {
+    const obj: unknown = JSON.parse(env);
+    if (obj === null || typeof obj !== "object" || Array.isArray(obj)) return env;
+    return JSON.stringify({ ...obj, batch: batchId });
+  } catch {
+    return env;
+  }
+}
+
+/** A fresh broadcast batch id: unique per group recording, sortable by start. */
+export function newBatchId(now: number, random: () => number = Math.random): string {
+  return `bcast-${now}-${random().toString(36).slice(2, 8)}`;
+}

@@ -4,12 +4,11 @@
   import { openUrl } from "@tauri-apps/plugin-opener";
   import { renderMarkdown } from "./markdown";
   import { mdLinks } from "./actions/mdlinks";
-  import history from "../../CHANGELOG.md?raw";
   import UpdatePanel from "./UpdatePanel.svelte";
   import { changeEntries } from "./updates";
-  import guide from "../../docs/GUIDE.md?raw";
   import Icon from "./Icon.svelte";
   import AppLogo from "./AppLogo.svelte";
+  import Skeleton from "./Skeleton.svelte";
   import { t, type MessageKey } from "./i18n";
 
   let {
@@ -22,9 +21,34 @@
   let version = $state("");
   let tauriVersion = $state("");
 
-  // The bundled user guide (docs/GUIDE.md), rendered once (static content, no user input).
-  const manualHtml = renderMarkdown(guide);
-  const changes = changeEntries(history).map((entry) => ({ ...entry, html: renderMarkdown(entry.markdown) }));
+  // The bundled user guide (docs/GUIDE.md) and the changelog, rendered once
+  // (static content, no user input). Loaded the first time either tab is shown,
+  // not with the panel: the panel is mounted at startup, and rendering every
+  // release's notes there cost each launch ~250 KB of script and the markdown
+  // work for a page that is mostly never opened (v1.25.2).
+  type ChangeView = ReturnType<typeof changeEntries>[number] & { html: string };
+  let manualHtml = $state<string | null>(null);
+  let changes = $state<ChangeView[] | null>(null);
+  let docsRequested = false;
+
+  async function loadDocs() {
+    const [guide, history] = await Promise.all([
+      import("../../docs/GUIDE.md?raw"),
+      import("../../CHANGELOG.md?raw"),
+    ]);
+    manualHtml = renderMarkdown(guide.default);
+    changes = changeEntries(history.default).map((entry) => ({
+      ...entry,
+      html: renderMarkdown(entry.markdown),
+    }));
+  }
+
+  $effect(() => {
+    if (open && (tab === "manual" || tab === "changelog") && !docsRequested) {
+      docsRequested = true;
+      void loadDocs();
+    }
+  });
 
   onMount(async () => {
     try {
@@ -72,6 +96,15 @@
     ["help.hkSplitDrag", "", "help.hkSplitDragKeys"],
   ];
 </script>
+
+<!-- The guide and the changelog while their text loads (loadDocs). -->
+{#snippet docsLoading()}
+  <div class="space-y-2" data-testid="help-docs-loading">
+    {#each [70, 92, 55, 84, 63] as w (w)}
+      <Skeleton width="{w}%" height="0.7rem" />
+    {/each}
+  </div>
+{/snippet}
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
@@ -148,17 +181,25 @@
           </table>
         {:else if tab === "manual"}
           <!-- Bundled README, rendered to HTML. Links go through the opener. -->
-          <div class="manual text-xs leading-relaxed text-text" use:mdLinks>
-            {@html manualHtml}
-          </div>
+          {#if manualHtml === null}
+            {@render docsLoading()}
+          {:else}
+            <div class="manual text-xs leading-relaxed text-text" use:mdLinks>
+              {@html manualHtml}
+            </div>
+          {/if}
         {:else if tab === "changelog"}
           <p class="mb-3 text-xs text-muted">{t("help.changelogSource")}</p>
-          {#each changes as entry, i (entry.version)}
-            <details class="manual border-b border-edge py-2" open={i === 0}>
-              <summary class="cursor-pointer text-xs font-semibold text-accent">{entry.title}</summary>
-              <div class="text-xs leading-relaxed" use:mdLinks>{@html entry.html}</div>
-            </details>
-          {/each}
+          {#if changes === null}
+            {@render docsLoading()}
+          {:else}
+            {#each changes as entry, i (entry.version)}
+              <details class="manual border-b border-edge py-2" open={i === 0}>
+                <summary class="cursor-pointer text-xs font-semibold text-accent">{entry.title}</summary>
+                <div class="text-xs leading-relaxed" use:mdLinks>{@html entry.html}</div>
+              </details>
+            {/each}
+          {/if}
         {:else if tab === "updates"}
           <UpdatePanel {onInstall} {mainWindow} />
         {:else}

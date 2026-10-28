@@ -37,10 +37,7 @@
     disconnect,
     listenHere,
     transferList,
-    sftpHome,
-    localHome,
     localKinds,
-    announceCopyTargets,
     TARGETS_EVENT,
     closeWindow,
     reportWindowSummary,
@@ -167,7 +164,6 @@
   import {
     onScreenSessions,
     pendingAuthSession,
-    recordingPauses,
     confinedGhost,
     rectStyle,
     stripStyle,
@@ -237,7 +233,6 @@
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
   import { removeChat, getChat, askAbout, peekChat } from "$lib/stores/aichat.svelte";
   import {
-    dockCwd,
     removeDockState,
     requestFilesDir,
     setDockCwd,
@@ -312,6 +307,8 @@
   import EmptyState from "$lib/EmptyState.svelte";
   import CommandPalette from "$lib/CommandPalette.svelte";
   import RecordingsPanel from "$lib/RecordingsPanel.svelte";
+  import { createRecordingFlow, recordingTitle } from "$lib/page/recordingflow.svelte";
+  import { createCopyFlow } from "$lib/page/copyflow.svelte";
   import type { CommandItem } from "$lib/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
   import {
@@ -325,12 +322,8 @@
   import { DISK, startTransfer } from "$lib/transferflow";
   import {
     fileSelectionOf,
-    pendingCopyRequest,
     requestMove,
-    setCopyTargets,
     setFileSelection,
-    takeCopyRequest,
-    type CopyRequest,
   } from "$lib/stores/filecopy.svelte";
   import {
     clearGuestFiles,
@@ -357,13 +350,9 @@
   import { getCurrentWebview } from "@tauri-apps/api/webview";
   import FileDragGhost from "$lib/FileDragGhost.svelte";
   import {
-    copyTargets,
-    defaultDestDir,
     foreignTargets,
-    shareTargets,
     sideOf,
     targetsFrom,
-    type CopyTarget,
   } from "$lib/copyto";
   import CopyToDialog from "$lib/CopyToDialog.svelte";
   import ReplaceDialog from "$lib/ReplaceDialog.svelte";
@@ -375,9 +364,6 @@
     recordingState,
     recordingPaused,
     isRecording,
-    isRecordingPaused,
-    setRecording,
-    setRecordingPausedState,
     clearRecording,
   } from "$lib/stores/recordings.svelte";
   import type { SftpProgress, TransferJob } from "$lib/api";
@@ -389,10 +375,6 @@
     quitApp,
     startRecording,
     stopRecording,
-    setRecordingPaused,
-    setRecordingMeta,
-    setBatchLabel,
-    deleteRecording,
     annotateRecording,
     fetchMetrics,
     readRecording,
@@ -402,7 +384,6 @@
   import type { PromptVars } from "$lib/aicore";
   import { isProdServer } from "$lib/aiexec";
   import type { ProbeSession } from "$lib/probe";
-  import { getVersion } from "@tauri-apps/api/app";
   import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
   import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
   import type { HostServer, HostTab } from "$lib/netroute";
@@ -493,8 +474,6 @@
   let showRecordings = $state(false);
   // The server whose notes window is open (snapshot at open time), or null.
   let notesServer = $state<ServerProfile | null>(null);
-  // After stopping a recording: prompt to name/describe or discard it.
-  let saveRec = $state<{ path: string; defaultTitle: string } | null>(null);
 
   // Last-known terminal dimensions per session (for the recording header).
   const termDims = $state<Record<string, { cols: number; rows: number }>>({});
@@ -854,7 +833,7 @@
   function toggleActiveBroadcast() {
     const id = tabsState.activeId;
     if (id) toggleBroadcastMember(id);
-    void syncBatchRecording();
+    void recFlow.syncBatchRecording();
   }
 
   /** Add every live SSH/local session to the group (keeps existing members). */
@@ -865,83 +844,21 @@
         .filter((tab) => (tab.kind === "ssh" || tab.kind === "local") && isLive(tab.status))
         .map((tab) => tab.sessionId),
     ]);
-    void syncBatchRecording();
+    void recFlow.syncBatchRecording();
   }
 
-  // ── Group recording for broadcast (Phase 22) ───────────────────────────────
-  // While a broadcast group is being recorded, `broadcastBatch` holds the shared
-  // batch id (tags every member's cast → the library bundles them). Recordings are
-  // still per-session under the hood; this just fans start/stop out to the group.
-  let broadcastBatch = $state<string | null>(null);
-  let batchRecMembers = new Set<string>();
-
-  /** Start recording the whole group under a fresh batch id. */
-  async function startGroupRecording() {
-    broadcastBatch = `bcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    batchRecMembers = new Set();
-    await syncBatchRecording();
-  }
-
-  /** Stop every recording started as part of the current batch; returns the batch
-   *  id + saved file paths so the caller can offer to name (or discard) the bundle. */
-  async function stopGroupRecording(): Promise<{ batchId: string; paths: string[] } | null> {
-    const batchId = broadcastBatch;
-    const ids = [...batchRecMembers];
-    broadcastBatch = null;
-    batchRecMembers = new Set();
-    const paths: string[] = [];
-    for (const id of ids) {
-      const path = recordingState[id];
-      if (isRecording(id)) {
-        try {
-          await stopRecording(id);
-        } catch {
-          /* file is flushed regardless */
-        }
-        clearRecording(id);
-      }
-      if (path) paths.push(path);
-    }
-    return batchId ? { batchId, paths } : null;
-  }
-
-  /** Reconcile group recording with the live members: start missing, stop gone. */
-  async function syncBatchRecording() {
-    const batch = broadcastBatch;
-    if (!batch) return;
-    const live = new Set(eligibleMembers(broadcastState.members, orderedTabList));
-    const starts: Promise<void>[] = [];
-    for (const id of live) {
-      if (batchRecMembers.has(id) || isRecording(id)) continue;
-      batchRecMembers.add(id);
-      const tab = findTab(id);
-      if (tab) {
-        starts.push(
-          startSessionRecording(tab, batch).catch(() => {
-            batchRecMembers.delete(id);
-          }),
-        );
-      }
-    }
-    for (const id of [...batchRecMembers]) {
-      if (live.has(id)) continue;
-      batchRecMembers.delete(id);
-      if (isRecording(id)) {
-        try {
-          await stopRecording(id);
-        } catch {
-          /* gone */
-        }
-        clearRecording(id);
-      }
-    }
-    await Promise.all(starts);
-  }
-
-  /** Start the group recording if it isn't running (prod broadcast audit). */
-  async function ensureGroupRecording() {
-    if (!broadcastBatch) await startGroupRecording();
-  }
+  // ── Recording (the flow lives in page/recordingflow.svelte.ts) ─────────────
+  const recFlow = createRecordingFlow({
+    servers: () => servers,
+    findTab,
+    activeTab: () => activeTab,
+    broadcasting: () => bcOn,
+    members: () => broadcastState.members,
+    orderedTabs: () => orderedTabList,
+    onScreen: () => onScreenIds,
+    termSize: (id) => termDims[id],
+    promptLine: (id) => termRefs[id]?.currentPromptLine?.() ?? "",
+  });
 
   // A command awaiting confirmation because the group includes a prod server.
   let pendingBroadcast = $state<{ frame: string; targets: string[]; cmd: string } | null>(null);
@@ -975,7 +892,7 @@
       writeToTerminal(id, bytes).catch(() => {});
       if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(() => {});
       // Input reached this session: its recording is not idle.
-      handleTerminalActivity(id);
+      recFlow.activity(id);
     }
   }
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
@@ -1001,7 +918,7 @@
   const sessionActions = $derived<SessionActionState>({
     connected: monitorConnected,
     canRecord: bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status)),
-    recording: bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId)),
+    recording: bcOn ? !!recFlow.batch : !!(activeTab && isRecording(activeTab.sessionId)),
     canBroadcast: !!tabsState.activeId,
     broadcastActive: bcOn,
     notesFor: notesServerTarget?.alias ?? null,
@@ -1010,7 +927,7 @@
   // run it does not compile.
   const SESSION_RUN: Record<SessionAction, () => void> = {
     monitoring: () => openMonitoring(),
-    record: () => void toggleRecording(),
+    record: () => void recFlow.toggle(bcTargets.length),
     recordings: () => (showRecordings = true),
     broadcast: () => toggleActiveBroadcast(),
     notes: () => (notesServer = notesServerTarget),
@@ -1111,7 +1028,7 @@
     if (srv) {
       lines.push(`Host: ${srv.host}:${srv.port}`, `User: ${srv.username}`, `Alias: ${srv.alias}`);
     } else if (tab) {
-      lines.push(`Session: ${recordingTitle(tab)}`);
+      lines.push(`Session: ${recordingTitle(tab, servers)}`);
     }
     try {
       const m = await fetchMetrics(id);
@@ -1120,269 +1037,6 @@
       /* metrics probe failed — keep profile-derived fields */
     }
     return lines.join("\n");
-  }
-
-  /** Title for a recording: the tab's server alias (or "Local shell"). */
-  function recordingTitle(tab: Tab): string {
-    if (tab.kind === "local") return t("tab.localShell");
-    return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.serverId;
-  }
-
-  /**
-   * Collect host/session metadata to embed in the recording header (for later
-   * analysis and the export's info block). App version always; for SSH sessions
-   * a one-shot metrics probe adds hostname/ip/user/OS/kernel. Best-effort — never
-   * blocks recording on a failure.
-   */
-  async function recordingEnv(tab: Tab): Promise<string> {
-    const env: Record<string, string | number> = {};
-    try {
-      env.appVersion = await getVersion();
-    } catch {
-      /* version unavailable */
-    }
-    if (tab.kind === "ssh") {
-      const srv = servers.find((s) => s.id === tab.serverId);
-      if (srv) {
-        env.connectedHost = srv.host;
-        env.port = srv.port;
-        if (srv.username) env.username = srv.username;
-      }
-      try {
-        const m = await fetchMetrics(tab.sessionId);
-        if (m.hostname) env.hostname = m.hostname;
-        if (m.ip) env.ip = m.ip;
-        if (m.user) env.username = m.user;
-        if (m.prettyName || m.os) env.os = m.prettyName || m.os;
-        if (m.kernel) env.kernel = m.kernel;
-        if (m.serverTime) env.serverTime = m.serverTime;
-      } catch {
-        /* metrics probe failed — keep profile-derived fields */
-      }
-    }
-    return JSON.stringify(env);
-  }
-
-  /** Start recording a session (no-op if already recording). Used by the manual
-   *  REC toggle and by auto-record on connect. */
-  async function startSessionRecording(tab: Tab, batchId?: string) {
-    const id = tab.sessionId;
-    if (isRecording(id)) return;
-    const dims = termDims[id] ?? { cols: 80, rows: 24 };
-    // Seed the recording with the on-screen prompt so the first command has one.
-    const prompt = termRefs[id]?.currentPromptLine?.() ?? "";
-    let env = await recordingEnv(tab);
-    // Broadcast group recording: tag each member's cast with the batch id so the
-    // library can bundle them (rides in the `vterm` env metadata → header).
-    if (batchId) {
-      try {
-        const obj = JSON.parse(env);
-        obj.batch = batchId;
-        env = JSON.stringify(obj);
-      } catch {
-        /* keep the plain env if it somehow isn't valid JSON */
-      }
-    }
-    const path = await startRecording(
-      id,
-      recordingTitle(tab),
-      dims.cols,
-      dims.rows,
-      prompt,
-      env,
-      settings.recordMaskPasswords,
-      settings.recordMode,
-    );
-    setRecording(id, path);
-  }
-
-  /** Start/stop recording the active session (manual REC button / palette). In
-   *  broadcast mode this records the whole group instead of a single tab. */
-  async function toggleRecording() {
-    if (bcOn) {
-      try {
-        if (broadcastBatch) {
-          const res = await stopGroupRecording();
-          // Offer to name (or discard) the bundle, like the single-recording flow.
-          if (res && res.paths.length > 0) saveBatch = { batchId: res.batchId, paths: res.paths };
-          else notifySuccess(t("recordings.groupStopped"));
-        } else {
-          await startGroupRecording();
-          notifySuccess(t("recordings.groupStarted", { count: bcTargets.length }));
-        }
-      } catch (e) {
-        notifyError(String(e));
-      }
-      return;
-    }
-    const tab = activeTab;
-    if (!tab || !isLive(tab.status)) {
-      notifyError(t("recordings.needsSession"));
-      return;
-    }
-    await toggleRecordingFor(tab);
-  }
-
-  /** Start/stop recording a specific tab (single-session flow, no broadcast). */
-  async function toggleRecordingFor(tab: Tab) {
-    if (!isLive(tab.status)) {
-      notifyError(t("recordings.needsSession"));
-      return;
-    }
-    const id = tab.sessionId;
-    try {
-      if (isRecording(id)) {
-        const path = await stopRecording(id);
-        clearRecording(id);
-        // Prompt to name/describe (or discard) the just-saved recording.
-        if (path) saveRec = { path, defaultTitle: recordingTitle(tab) };
-        else notifySuccess(t("recordings.stopped"));
-      } else {
-        await startSessionRecording(tab);
-        notifySuccess(t("recordings.started"));
-      }
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /**
-   * Auto-record on connect for servers flagged `autoRecord` (e.g. production):
-   * starts a recording the moment an SSH session connects, for an audit trail.
-   */
-  async function maybeAutoRecord(tab: Tab) {
-    if (tab.kind !== "ssh" || isRecording(tab.sessionId)) return;
-    if (!servers.find((s) => s.id === tab.serverId)?.autoRecord) return;
-    try {
-      await startSessionRecording(tab);
-      notifyInfo(t("recordings.autoStarted", { alias: recordingTitle(tab) }));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Finalize a recording when its session closes (stamps end time), then clear. */
-  async function finalizeRecordingOnClose(sessionId: string) {
-    batchRecMembers.delete(sessionId);
-    if (isRecording(sessionId)) {
-      try {
-        await stopRecording(sessionId);
-      } catch {
-        /* session already gone — file is flushed regardless */
-      }
-    }
-    clearRecording(sessionId);
-  }
-
-  // ── Recording pause: skip disk when a recording tab is unwatched or idle ──────
-  // One idle countdown per recording that is on screen.
-  const recordIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // The on-screen recordings already resumed — guards against clobbering an idle
-  // pause when the effect re-runs for an unrelated reason.
-  let resumedTabs = new Set<string>();
-
-  function clearRecordIdleTimer(sessionId: string) {
-    clearTimeout(recordIdleTimers.get(sessionId));
-    recordIdleTimers.delete(sessionId);
-  }
-
-  /** Pause/resume a recording: update the tab indicator + tell the backend (only on change). */
-  function applyPause(sessionId: string, paused: boolean) {
-    if (isRecordingPaused(sessionId) === paused) return;
-    setRecordingPausedState(sessionId, paused);
-    setRecordingPaused(sessionId, paused).catch(() => {});
-  }
-
-  /** (Re)arm the idle countdown that pauses a recording tab on screen. */
-  function armRecordIdleTimer(sessionId: string) {
-    clearRecordIdleTimer(sessionId);
-    const secs = settings.recordIdlePauseSecs;
-    if (secs <= 0 || !isRecording(sessionId)) return;
-    recordIdleTimers.set(
-      sessionId,
-      setTimeout(() => applyPause(sessionId, true), secs * 1000),
-    );
-  }
-
-  /** Keystroke in a terminal on screen → resume (if idle-paused) and re-arm its idle timer. */
-  function handleTerminalActivity(sessionId: string) {
-    if (!onScreenIds.has(sessionId) || !isRecording(sessionId)) return;
-    applyPause(sessionId, false); // backend also auto-resumes on input
-    armRecordIdleTimer(sessionId);
-  }
-
-  // A recording runs only while its tab is on screen — one tab per pane, every
-  // member of the broadcast grid (centerview.ts). The others are paused; a tab
-  // that comes back on screen resumes with a fresh idle countdown.
-  $effect(() => {
-    const { pause, watch } = recordingPauses(Object.keys(recordingState), [...onScreenIds]);
-    for (const id of pause) applyPause(id, true);
-    for (const id of watch) {
-      if (resumedTabs.has(id)) continue;
-      applyPause(id, false);
-      armRecordIdleTimer(id);
-    }
-    for (const id of [...recordIdleTimers.keys()]) {
-      if (!watch.includes(id)) clearRecordIdleTimer(id);
-    }
-    resumedTabs = new Set(watch);
-  });
-
-  /** Save the title/description entered after stopping a recording. */
-  async function saveRecording(title: string, description: string) {
-    const rec = saveRec;
-    saveRec = null;
-    if (!rec) return;
-    try {
-      await setRecordingMeta(rec.path, title, description);
-      notifySuccess(t("recordings.stopped"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Discard the just-made recording from the save prompt. */
-  async function discardRecording() {
-    const rec = saveRec;
-    saveRec = null;
-    if (!rec) return;
-    try {
-      await deleteRecording(rec.path);
-      notifyInfo(t("recordings.discarded"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  // Naming prompt for a just-stopped broadcast bundle (batch id + member paths).
-  let saveBatch = $state<{ batchId: string; paths: string[] } | null>(null);
-
-  /** Name the broadcast bundle: writes the label into every member recording. */
-  async function saveBatchName(title: string) {
-    const b = saveBatch;
-    saveBatch = null;
-    if (!b) return;
-    try {
-      if (title) await setBatchLabel(b.batchId, title);
-      notifySuccess(t("recordings.groupStopped"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Discard the whole just-made broadcast bundle (delete every member file). */
-  async function discardBatch() {
-    const b = saveBatch;
-    saveBatch = null;
-    if (!b) return;
-    for (const path of b.paths) {
-      try {
-        await deleteRecording(path);
-      } catch {
-        /* keep going; avoid a toast storm on partial failure */
-      }
-    }
-    notifyInfo(t("recordings.discarded"));
   }
 
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
@@ -1526,14 +1180,14 @@
       picked.entries.length === 1
         ? picked.entries[0].name
         : t("sftp.dragCount", { count: picked.entries.length });
-    return targetsFrom(allCopyTargets, from).map((target) => ({
+    return targetsFrom(copyFlow.all, from).map((target) => ({
       id: `copyto:${target.sessionId}`,
       title: t("palette.copyTo", { what, target: target.title }),
       icon: "arrowRight",
       group: t("palette.groupActions"),
       keywords: "copy file transfer server session копировать файл перенести сервер сессия",
       run: () =>
-        void openCopyDialog({
+        void copyFlow.open({
           from,
           local: picked.local,
           to: target.sessionId,
@@ -1594,7 +1248,7 @@
         return;
       case "copy": {
         const carried = await withKinds(files);
-        void openCopyDialog(
+        void copyFlow.open(
           {
             from: carried.from,
             local: carried.local,
@@ -1609,7 +1263,7 @@
       case "send": {
         // From the desktop into a folder a panel shows: sent at once, as a
         // drop always was — a name already there is still asked about.
-        const target = copyTargetsNow.find((x) => x.sessionId === meaning.to);
+        const target = copyFlow.mine.find((x) => x.sessionId === meaning.to);
         if (!target) return;
         const carried = await withKinds(files);
         void startTransfer({
@@ -1763,7 +1417,7 @@
     { id: "act:record",
       title: activeTab && isRecording(activeTab.sessionId) ? t("palette.stopRecording") : t("palette.startRecording"),
       icon: "activity", group: t("palette.groupActions"),
-      keywords: "record recording session запись сессия rec asciicast", run: toggleRecording },
+      keywords: "record recording session запись сессия rec asciicast", run: () => void recFlow.toggle(bcTargets.length) },
     { id: "act:recordings", title: t("palette.recordings"), icon: "activity", group: t("palette.groupActions"),
       keywords: "recordings library записи библиотека asciicast", run: () => (showRecordings = true) },
     // Broadcast and the notes had no way in but their top-bar buttons; a button
@@ -2019,7 +1673,7 @@
     }
     listenHere<string>("update://prepare", (e) => {
       updateFreeze = true;
-      void tick().then(() => updateWindowReady(e.payload, dirtyEditors() > 0 || notesServer !== null || showSettings || !!saveRec));
+      void tick().then(() => updateWindowReady(e.payload, dirtyEditors() > 0 || notesServer !== null || showSettings || !!recFlow.saveRec));
     }).then((u) => unlisteners.push(u));
     listenHere("update://resume", () => { updateFreeze = false; }).then((u) => unlisteners.push(u));
     if (isMainWindow) void updateStartup().then((status) => {
@@ -2080,7 +1734,7 @@
       // What every window offers as a place to copy files to; this window's
       // own list is left out of it.
       listen<unknown>(TARGETS_EVENT, (e) => {
-        otherWindowTargets = foreignTargets(e.payload, windowLabel);
+        copyFlow.heardOthers(foreignTargets(e.payload, windowLabel));
       }),
       // A tab of another window held over this one: it is drawn here.
       listenHere<unknown>(DRAG_EVENT, (e) => {
@@ -2654,93 +2308,14 @@
     }
   }
 
-  // ── Copy to another session (v1.12) ─────────────────────────────────────────
-  // The tabs a file can be copied to, for the file panels' menu.
-  const copyTargetsNow = $derived(
-    copyTargets(
-      tabsState.list,
-      (tab) => tabTitle(tab as Tab),
-      (sessionId) => prodTabIds.has(sessionId),
-    ),
-  );
-  // What the other windows offer (v1.13): a file is copied to a session
-  // whichever window shows its tab — the transfer is the backend's.
-  let otherWindowTargets = $state<CopyTarget[]>([]);
-  /** Every session a file can be copied to: this window's, then the others'. */
-  const allCopyTargets = $derived([...copyTargetsNow, ...otherWindowTargets]);
-  $effect(() => {
-    setCopyTargets(allCopyTargets);
+  // ── Copy to another session (page/copyflow.svelte.ts) ─────────────────────
+  const copyFlow = createCopyFlow({
+    tabs: () => tabsState.list,
+    findTab,
+    title: tabTitle,
+    isProd: (sessionId) => prodTabIds.has(sessionId),
+    terminalCwd: (sessionId) => terminalCwd[sessionId] ?? null,
   });
-  // This window's are told to the others — when they change, not on every
-  // change of a tab that leaves them as they were.
-  let targetsTold = "";
-  $effect(() => {
-    const mine = shareTargets(copyTargetsNow);
-    const said = JSON.stringify(mine);
-    if (said === targetsTold) return;
-    targetsTold = said;
-    void announceCopyTargets(mine).catch(() => {});
-  });
-
-  // The copy being set up: what, from which tab, to which — and where there.
-  let copyAsk = $state<{ request: CopyRequest; target: CopyTarget } | null>(null);
-  let copyDir = $state("");
-
-  /**
-   * Open the dialog for a request: the destination folder comes prefilled —
-   * with `dir` when the files were dropped on a folder, else with where that
-   * tab is.
-   */
-  async function openCopyDialog(request: CopyRequest, dir: string | null = null) {
-    const target = allCopyTargets.find((x) => x.sessionId === request.to);
-    if (!target) return;
-    copyDir =
-      dir ??
-      defaultDestDir(dockCwd(target.sessionId), terminalCwd[target.sessionId] ?? null, null) ??
-      "";
-    copyAsk = { request, target };
-    if (copyDir) return;
-    // Nothing known of that tab's folders yet: ask the session for its home.
-    try {
-      const home = await (target.local ? localHome() : sftpHome(target.sessionId));
-      if (copyAsk?.request === request && !copyDir) copyDir = home;
-    } catch {
-      /* the field stays empty — the user types the folder */
-    }
-  }
-
-  // A file panel filed a request (its row menu): show it.
-  $effect(() => {
-    if (!pendingCopyRequest()) return;
-    untrack(() => {
-      const request = takeCopyRequest();
-      if (request) void openCopyDialog(request);
-    });
-  });
-
-  /** The dialog's "Copy": start the job (asking first about names taken there). */
-  function confirmCopy(destDir: string) {
-    const ask = copyAsk;
-    copyAsk = null;
-    if (!ask) return;
-    const { request } = ask;
-    const from = request.from ? findTab(request.from) : null;
-    void startTransfer({
-      // From the desktop the files belong to no tab; from another window the
-      // tab is not this window's, and says what it is called itself.
-      src:
-        request.from === null
-          ? DISK
-          : sideOf({
-              sessionId: request.from,
-              local: request.local,
-              title: from ? tabTitle(from) : (request.label ?? ""),
-            }),
-      dst: sideOf(ask.target),
-      sources: ask.request.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
-      destDir,
-    });
-  }
 
   function tabAlias(tab: Tab): string {
     if (tab.kind === "local") return t("tab.localShell");
@@ -2952,8 +2527,7 @@
     // Flags only — a recording handed over with its tab keeps running; left set,
     // this window would go on pausing it as "not on screen here".
     clearRecording(sessionId);
-    clearRecordIdleTimer(sessionId);
-    batchRecMembers.delete(sessionId);
+    recFlow.forget(sessionId);
     delete followSeen[sessionId];
     delete followTerminal[sessionId];
     delete terminalCwd[sessionId];
@@ -3137,7 +2711,7 @@
       items.push({
         icon: rec ? "stop" : "activity",
         label: rec ? t("ctx.stopRecording") : t("ctx.startRecording"),
-        onSelect: () => void toggleRecordingFor(tab),
+        onSelect: () => void recFlow.toggleRecordingFor(tab),
       });
     }
     tabCtxMenu = { x: e.clientX, y: e.clientY, items };
@@ -4386,7 +3960,7 @@
                   class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
                   onclick={() => {
                     if (tabsState.activeId) removeBroadcastMember(tabsState.activeId);
-                    void syncBatchRecording();
+                    void recFlow.syncBatchRecording();
                   }}
                   use:tooltip={t("broadcast.exit")}
                   aria-label={t("broadcast.exit")}
@@ -4702,7 +4276,7 @@
                     }}
                     onadoptfailed={() => adoptFailed(tab.sessionId)}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
-                    onactivity={() => handleTerminalActivity(tab.sessionId)}
+                    onactivity={() => recFlow.activity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
                     onExplain={aiOn && servers.find((s) => s.id === tab.serverId)?.noAi !== true
@@ -4753,7 +4327,7 @@
                       if (st === "connecting" && noSignalSession === tab.sessionId)
                         noSignalSession = null;
                       if (st === "closed") {
-                        finalizeRecordingOnClose(tab.sessionId);
+                        recFlow.finalizeOnClose(tab.sessionId);
                         stopFollowingOnClose(tab.sessionId);
                         // Unexpected drop of a connected session (tab survives) →
                         // NO SIGNAL, unless auto-reconnect will bring it back.
@@ -4770,7 +4344,7 @@
                           noSignalSession = tab.sessionId;
                         }
                       }
-                      if (st === "connected") maybeAutoRecord(tab);
+                      if (st === "connected") recFlow.maybeAutoRecord(tab);
                       if (st === "connected") pathSyncOnConnect(tab, runs);
                       // Auth failures now keep the tab and show the error overlay
                       // (the user re-enters the secret via its button), so we no
@@ -4858,7 +4432,7 @@
                   onfocus={activateTab}
                   onremove={(id) => {
                     removeBroadcastMember(id);
-                    void syncBatchRecording();
+                    void recFlow.syncBatchRecording();
                   }}
                 />
               {/if}
@@ -5082,13 +4656,13 @@
 <!-- Transfers (v1.12): where a copy to another session lands, and — for every
      way a transfer starts — the question about names already taken there. -->
 <CopyToDialog
-  open={!!copyAsk}
-  target={copyAsk?.target ?? null}
-  names={copyAsk?.request.entries.map((e) => e.name) ?? []}
-  bind:dir={copyDir}
-  throughApp={!!copyAsk && !copyAsk.request.local && !copyAsk.target.local}
-  onconfirm={confirmCopy}
-  oncancel={() => (copyAsk = null)}
+  open={!!copyFlow.ask}
+  target={copyFlow.ask?.target ?? null}
+  names={copyFlow.ask?.request.entries.map((e) => e.name) ?? []}
+  bind:dir={copyFlow.dir}
+  throughApp={!!copyFlow.ask && !copyFlow.ask.request.local && !copyFlow.ask.target.local}
+  onconfirm={copyFlow.confirm}
+  oncancel={copyFlow.cancel}
 />
 <ReplaceDialog />
 <LinkOpenDialog />
@@ -5152,7 +4726,7 @@
     pendingBroadcast = null;
     if (!pb) return;
     // Prod broadcast → auto-record the whole group first (audit trail), then send.
-    await ensureGroupRecording();
+    await recFlow.ensureGroupRecording();
     doBroadcast(pb.frame, pb.targets, pb.cmd);
   }}
   oncancel={() => (pendingBroadcast = null)}
@@ -5283,21 +4857,21 @@
 
 <!-- Name/describe (or discard) a recording right after stopping it -->
 <RecordingSaveDialog
-  open={saveRec !== null}
+  open={recFlow.saveRec !== null}
   heading={t("recordings.saveTitle")}
-  defaultTitle={saveRec?.defaultTitle ?? ""}
-  onsave={saveRecording}
-  ondelete={discardRecording}
-  onclose={() => (saveRec = null)}
+  defaultTitle={recFlow.saveRec?.defaultTitle ?? ""}
+  onsave={recFlow.saveRecording}
+  ondelete={recFlow.discardRecording}
+  onclose={recFlow.closeSavePrompt}
 />
 
 <!-- Name (or discard) a just-stopped broadcast bundle. -->
 <RecordingSaveDialog
-  open={saveBatch !== null}
+  open={recFlow.saveBatch !== null}
   heading={t("recordings.saveBroadcastTitle")}
-  onsave={(title) => saveBatchName(title)}
-  ondelete={discardBatch}
-  onclose={() => (saveBatch = null)}
+  onsave={(title) => recFlow.saveBatchName(title)}
+  ondelete={recFlow.discardBatch}
+  onclose={recFlow.closeBatchPrompt}
 />
 
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->

@@ -1898,7 +1898,18 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
   `Dock`/`DockPanel`, `ServerTree`, самодостаточные модалки — в `ServerFormModal`, `FolderModals`,
   `SecretPrompt`;
   `SettingsPanel` — тонкий shell, секции — `*SettingsSection.svelte`; `api.ts` разложен по доменам
-  в `src/lib/api/` с barrel-реэкспортом.
+  в `src/lib/api/` с barrel-реэкспортом. Логика страницы уходит в контроллеры
+  [src/lib/page/](../src/lib/page/) (`create…Flow`): своё состояние, а состояние страницы —
+  геттерами, прочитанными в момент нужды; тест — `*.svelte.test.ts` (руны в тесте работают
+  только с `.svelte` в имени файла).
+- **Объект, который узнают по идентичности, держат в `$state.raw`.** Глубокий `$state`
+  отдаёт прокси, а не присвоенный объект, и `state.x === x` не выполняется никогда: так поле
+  папки в окне копии ни разу не заполнилось домашним каталогом цели. Переприсваиваемый
+  целиком объект-«запрос» — `$state.raw`.
+- **Грамматики редактора грузятся по требованию** ([editorlangs.ts](../src/lib/editorlangs.ts),
+  динамический `import()` на язык): статический импорт `@codemirror/lang-*` (кроме
+  `lang-json` — его линтер нужен сразу) и `legacy-modes` вернул бы ~650 КБ в скрипт запуска.
+  Гейт — `editorlangs.test.ts`. Справка грузит CHANGELOG и GUIDE при первом показе вкладки.
 - **Имена в одном каталоге не различаются только регистром — и имена их тестов тоже.** Том
   macOS и Windows регистр не различает: `Foo.test.ts` и `foo.test.ts` там один файл, запись
   второго молча затирает первый, и в коммит уходит уже один путь — CI этого не видит; два таких
@@ -2120,6 +2131,7 @@ LLM-трафик идёт из Rust ([ai.rs](../src-tauri/src/ai.rs), `reqwest`)
 | [mdlink.guard.test.ts](../src/lib/mdlink.guard.test.ts) | Каждый markdown-`{@html}` висит на `use:mdLinks`. Проверка **поэлементная и по исходнику без комментариев**: файловая версия прошла на файле с удалённым экшеном, потому что рядом лежал комментарий со словами «use:mdLinks» |
 | [appicon.guard.test.ts](../src/lib/appicon.guard.test.ts) | Кадрирование бандл-иконки: Windows-артефакты заполняют квадрат, macOS сохраняет safe area. Проверка идёт **по пикселям** (декодирует PNG внутри `.ico`), а не по наличию скрипта: дефект возвращает не правка кода, а один безобидный прогон `tauri icon` |
 | [cspnonce.test.ts](../src/lib/cspnonce.test.ts) | Каждый `EditorView` отдаёт style-nonce |
+| [editorlangs.test.ts](../src/lib/editorlangs.test.ts) | Грамматики редактора грузятся по требованию: ни один исходник не импортирует статически `@codemirror/lang-*` (кроме `lang-json`), `@codemirror/legacy-modes` и `nginxmode`; у каждого вида файла есть грамматика, у plain — нет. Проверка сама ловит своё нарушение |
 | [autonomy.guard.test.ts](../src/lib/autonomy.guard.test.ts) | ИИ: consent + маскирование + прод/`noAi`-гейт на исполнении |
 | [aiturn.guard.test.ts](../src/lib/aiturn.guard.test.ts) | ИИ: один ход на чат — `startChat` отказывает занятому чату до записи в диалог, `doSend` проверяет занятость, обработчик `askAbout` взвешивает запрос `askBlocker`, только потом кладёт чип и **не** отправляет сам (ни consent, ни `doSend`), не паркует запрос; `startChat` зовут только стор и `AiChat`. Проверка по исходнику без комментариев |
 | [termctxfocus.guard.test.ts](../src/lib/termctxfocus.guard.test.ts) | Закрытие меню ПКМ терминала возвращает фокус в xterm — иначе после «Копировать/Вставить» ввод уходит в никуда. Проверка по исходнику без комментариев |

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  withBatch,
+  newBatchId,
   parseCast,
   extractTranscript,
   castDuration,
@@ -441,5 +443,25 @@ describe("activityBuckets", () => {
   it("clamps a nonsensical bucket count instead of returning nothing", () => {
     expect(activityBuckets([o(1, 10)], 0, 5)).toHaveLength(1);
     expect(activityBuckets([o(1, 10)], -3, 5)).toHaveLength(1);
+  });
+});
+
+describe("withBatch", () => {
+  it("adds the batch id to the env metadata", () => {
+    expect(JSON.parse(withBatch('{"appVersion":"1.0"}', "bcast-1"))).toEqual({
+      appVersion: "1.0",
+      batch: "bcast-1",
+    });
+  });
+
+  it("keeps metadata that is not a JSON object as it is", () => {
+    for (const env of ["not json", "[1,2]", "null", "42"]) expect(withBatch(env, "b")).toBe(env);
+  });
+});
+
+describe("newBatchId", () => {
+  it("names the start and a short random tail", () => {
+    expect(newBatchId(1700000000000, () => 0.5)).toBe("bcast-1700000000000-i");
+    expect(newBatchId(1, () => 0.123456789)).toMatch(/^bcast-1-[0-9a-z]{1,6}$/);
   });
 });

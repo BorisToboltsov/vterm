@@ -109,8 +109,9 @@ rm -rf src-tauri/target/release/bundle    # .app/.dmg/.msi/.exe
   запрещён (надписи, кнопки, `title`/`aria-label`, тосты, тексты ошибок). Ключ добавляется
   **сразу во все** словари — иначе `pnpm check` падает.
 - **Где живёт.** [src/lib/i18n/](src/lib/i18n/): `locales.ts` (реестр, `DEFAULT_LOCALE=en`),
-  `messages.ts` (`en` — канонический набор ключей), `translate.ts` (чистые
-  resolve/interpolate), `index.ts` (`t()` реактивен от `settings.language`).
+  словарь на язык — `en.ts` (канонический набор ключей) и `ru.ts`, `messages.ts` (сборка
+  словарей), `translate.ts` (чистые resolve/interpolate), `index.ts` (`t()` реактивен от
+  `settings.language`). Новый язык — свой файл и запись в `LOCALES`.
 - **Не переводим** доменные термины (`CPU`/`RAM`/`SSH`/`SFTP`/`IP`/`PSI`/`inodes`, имена тем).
 - **Логику не завязывай на перевод:** храни канонический английский в состоянии, локализуй
   при выводе. Поиск по настройкам — двуязычный (EN+RU в одной строке).

@@ -104,16 +104,25 @@ describe("HelpPanel", () => {
     expect(openUrl).toHaveBeenCalledWith("https://t.me/BorisToboltsov");
   });
 
-  it("renders the bundled user guide on the Manual tab", () => {
+  it("renders the bundled user guide on the Manual tab", async () => {
     render(HelpPanel, { props: { open: true, tab: "manual" } });
-    // The guide's (docs/GUIDE.md) top-level heading.
+    // The guide's (docs/GUIDE.md) top-level heading — loaded on first view.
     expect(
-      screen.getByRole("heading", { name: "Руководство пользователя vterm", level: 1 }),
+      await screen.findByRole("heading", { name: "Руководство пользователя vterm", level: 1 }),
     ).toBeInTheDocument();
   });
-  it("opens bundled changelog sections", () => {
+  it("opens bundled changelog sections", async () => {
     render(HelpPanel, { props: { open: true, tab: "changelog" } });
-    expect(screen.getByText(/v1.19.0 —/)).toBeInTheDocument();
+    expect(await screen.findByText(/v1.19.0 —/)).toBeInTheDocument();
+  });
+  it("loads the guide and the changelog only when one of them is shown", async () => {
+    // Mounted at startup and opened on Help: nothing is loaded or rendered yet.
+    const view = render(HelpPanel, { props: { open: true, tab: "help" } });
+    expect(screen.queryByTestId("help-docs-loading")).toBeNull();
+    await view.rerender({ open: true, tab: "changelog" });
+    // A skeleton stands in while the text loads, then the sections replace it.
+    expect(await screen.findByText(/v1.19.0 —/)).toBeInTheDocument();
+    expect(screen.queryByTestId("help-docs-loading")).toBeNull();
   });
   it("opens the update panel from About without a network request", async () => {
     render(HelpPanel, { props: { open: true, tab: "about" } });

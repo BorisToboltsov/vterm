@@ -88,6 +88,8 @@ describe("tab teardown guard", () => {
       "setFileSelection",
       "removeSyncJob",
       "clearRecording",
+      // The recording flow's idle timer and group membership (page/recordingflow).
+      "recFlow.forget",
       "nginxConfigCache.delete",
       "delete termSelection",
       "delete terminalCwd",
