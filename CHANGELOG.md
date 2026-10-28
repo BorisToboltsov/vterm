@@ -23,8 +23,9 @@
 - `crypto-bigint` 0.7.10, `ctutils` 0.4.6 и `tokio` 1.53.3 после новых advisory RustSec:
   закрыты `RUSTSEC-2026-0387`, `RUSTSEC-2026-0385` (операции, которые должны идти за постоянное
   время) и `RUSTSEC-2026-0386` (`AsyncFd` нарушает I/O safety).
-- `undici` 8.12.3 (только тесты, через `jsdom`): закрыты девять advisory линии 8.x до 8.12.2,
-  в том числе `GHSA-xjj6-f33q-929c`, `GHSA-4w7w-5xrc-9h26` и `GHSA-2m5v-pch6-74hx`.
+- `undici` 8.12.3 (только тесты, через `jsdom`): закрыты восемь advisory линии 8.x до 8.12.2
+  (четыре high, четыре moderate), в том числе `GHSA-xjj6-f33q-929c`, `GHSA-4w7w-5xrc-9h26` и
+  `GHSA-2m5v-pch6-74hx`.
 
 ## v1.22.0 — 2026-10-22
 
