@@ -346,6 +346,57 @@ describe("third-party actions are pinned by commit SHA", () => {
   });
 });
 
+// Supply chain, the npm half (v1.25.0): an install that may rewrite the lockfile
+// resolves whatever the registry serves that day. The E2E job did exactly that —
+// `e2e/` had no lockfile, so `pnpm install --no-frozen-lockfile` — and the E2E
+// job runs inside the release pipeline (release → deep → nightly). Every
+// `pnpm install` a workflow or a CI script runs insists on the committed
+// lockfile, and every package in the repo has one.
+
+/** Command lines (comments dropped) that run `pnpm install` without `--frozen-lockfile`. */
+const unfrozenInstalls = (text: string): string[] =>
+  text
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .filter((line) => /\bpnpm (?:install|i)\b/.test(line))
+    .filter((line) => !/(?:^|\s)--frozen-lockfile(?:\s|$)/.test(line))
+    .map((line) => line.trim());
+
+/** Directories (relative to the repo) holding a package.json, outside dependency/build trees. */
+const packageDirs = (dir = "", acc: string[] = []): string[] => {
+  const skip = new Set(["node_modules", ".git", "target", "build", "coverage", ".svelte-kit", ".claude"]);
+  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    if (entry.isDirectory() && !skip.has(entry.name)) packageDirs(join(dir, entry.name), acc);
+    else if (entry.isFile() && entry.name === "package.json") acc.push(dir);
+  }
+  return acc;
+};
+
+describe("dependencies install from a committed lockfile", () => {
+  const scripts = [
+    ...readdirSync(join(ROOT, ".github/workflows"))
+      .filter((f) => /\.ya?ml$/.test(f))
+      .map((f) => join(".github/workflows", f)),
+    "e2e/linux/run.sh",
+  ];
+
+  it.each(scripts)("%s never installs without --frozen-lockfile", (rel) => {
+    expect(unfrozenInstalls(readFileSync(join(ROOT, rel), "utf8"))).toEqual([]);
+  });
+
+  it("every package in the repo has its lockfile", () => {
+    const dirs = packageDirs();
+    expect(dirs).toContain("e2e");
+    expect(dirs.filter((d) => !existsSync(join(ROOT, d, "pnpm-lock.yaml")))).toEqual([]);
+  });
+
+  it("catches its own violations", () => {
+    expect(unfrozenInstalls("  cd e2e && pnpm install --no-frozen-lockfile")).toHaveLength(1);
+    expect(unfrozenInstalls("run: pnpm i")).toHaveLength(1);
+    expect(unfrozenInstalls("# pnpm install\nrun: pnpm install --frozen-lockfile")).toEqual([]);
+  });
+});
+
 describe("macOS: open-on-mac.sh ships next to the .dmg", () => {
   const step = uploadStepWith("scripts/open-on-mac.sh");
 

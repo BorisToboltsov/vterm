@@ -234,7 +234,10 @@ jobs:
           # e2e/pnpm-workspace.yaml затеняет корневой, поэтому pnpm ставит
           # зависимости e2e (без него видел бы только корень → `wdio: not found`)
           # и читает его allowBuilds (иначе падал бы на ERR_PNPM_IGNORED_BUILDS).
-          cd e2e && pnpm install --no-frozen-lockfile
+          # Lockfile у e2e свой и закоммичен: E2E идёт и в релизной цепочке
+          # (release → deep), а установка без него берёт то, что реестр отдаёт
+          # сегодня (гейт releaseassets.guard.test.ts).
+          cd e2e && pnpm install --frozen-lockfile
 
       # Фронт собирается ДО cargo build: tauri-build вшивает в бинарь
       # frontendDist (../build), и без него собирать нечего.

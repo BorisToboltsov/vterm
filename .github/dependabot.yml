@@ -37,7 +37,8 @@ updates:
 
   # ── npm-зависимости фронтенда ──────────────────────────────────────────────
   - package-ecosystem: npm
-    directory: "/"
+    # Корень приложения и отдельный пакет E2E (у него свой lockfile).
+    directories: ["/", "/e2e"]
     schedule:
       interval: monthly
     open-pull-requests-limit: 10
@@ -68,6 +69,11 @@ updates:
       # обновляется парой (Rust + JS), и поштучные PR разводили версии сторон.
       tauri:
         patterns: ["@tauri-apps/*"]
+        update-types: ["minor", "patch"]
+      # WebdriverIO пакета e2e/ ходит связкой: cli, раннер, фреймворк и репортёр
+      # одной версии.
+      e2e:
+        patterns: ["@wdio/*"]
         update-types: ["minor", "patch"]
       # Патчи всего остального — одним PR. Группа ПОСЛЕДНЯЯ: Dependabot кладёт
       # пакет в первую подходящую группу, и те, что выше, забирают своё.

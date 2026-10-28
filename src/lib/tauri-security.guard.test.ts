@@ -71,3 +71,80 @@ describe("capabilities are least-privilege", () => {
     expect(urls.every((u) => u?.startsWith("https://"))).toBe(true);
   });
 });
+
+// v1.25.0: an accepted advisory is a decision about ONE dependency tree. An
+// ignore left behind after its advisory cleared (an upstream bump, a withdrawal)
+// would silently re-accept it if a later bump regressed the tree back into the
+// affected versions — ten withdrawn gtk-rs ids and five cleared unic-* ids sat in
+// the list unnoticed. cargo-deny fails on such
+// leftovers only when told to, and cargo-audit never does, so the gate holds the
+// strict keys in deny.toml and keeps audit.toml an exact mirror of its ignores.
+
+/** Lines of a TOML file without `#` comments (no `#` inside our strings). */
+function tomlCode(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/#.*$/gm, "");
+}
+
+/** The body of one `[section]`, up to the next header. */
+function tomlSection(text: string, name: string): string {
+  const code = tomlCode(text);
+  const start = code.indexOf(`[${name}]`);
+  if (start < 0) return "";
+  const rest = code.slice(start + name.length + 2);
+  const next = rest.search(/^\[/m);
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+/** The advisory ids of `ignore = [ … ]` in `[advisories]`. */
+function ignoredAdvisories(text: string): string[] {
+  const list = /ignore\s*=\s*\[([\s\S]*?)\]/.exec(tomlSection(text, "advisories"));
+  return list ? [...list[1].matchAll(/"(RUSTSEC-\d{4}-\d{4})"/g)].map((m) => m[1]).sort() : [];
+}
+
+/** What is wrong with deny.toml's handling of stale exceptions, if anything. */
+function staleExceptionProblems(deny: string): string[] {
+  const problems: string[] = [];
+  if (!/^\s*unused-ignored-advisory\s*=\s*"deny"\s*$/m.test(tomlSection(deny, "advisories")))
+    problems.push('[advisories] must set unused-ignored-advisory = "deny"');
+  if (!/^\s*unused-allowed-license\s*=\s*"deny"\s*$/m.test(tomlSection(deny, "licenses")))
+    problems.push('[licenses] must set unused-allowed-license = "deny"');
+  return problems;
+}
+
+/** Ids one tool ignores and the other does not. */
+function mirrorProblems(deny: string, audit: string): string[] {
+  const d = ignoredAdvisories(deny);
+  const a = ignoredAdvisories(audit);
+  return [
+    ...d.filter((id) => !a.includes(id)).map((id) => `${id}: in deny.toml, not in audit.toml`),
+    ...a.filter((id) => !d.includes(id)).map((id) => `${id}: in audit.toml, not in deny.toml`),
+  ];
+}
+
+describe("dependency policy: an exception lives only as long as its advisory", () => {
+  const deny = readFileSync(join(ROOT, "src-tauri/deny.toml"), "utf8");
+  const audit = readFileSync(join(ROOT, "src-tauri/.cargo/audit.toml"), "utf8");
+
+  it("cargo-deny fails on an ignore or a license that matches nothing", () => {
+    expect(staleExceptionProblems(deny)).toEqual([]);
+  });
+
+  it("audit.toml ignores exactly what deny.toml ignores", () => {
+    expect(ignoredAdvisories(deny).length).toBeGreaterThan(0);
+    expect(mirrorProblems(deny, audit)).toEqual([]);
+  });
+
+  it("catches its own violations", () => {
+    // A key commented out or relaxed does not count.
+    const relaxed = deny.replace(/unused-ignored-advisory\s*=\s*"deny"/, 'unused-ignored-advisory = "warn"');
+    expect(staleExceptionProblems(relaxed)).toHaveLength(1);
+    const commented = deny.replace(/^(\s*)unused-allowed-license/m, "$1# unused-allowed-license");
+    expect(staleExceptionProblems(commented)).toHaveLength(1);
+    // An id kept only in a comment of audit.toml is not an ignore; an extra one is caught.
+    const first = ignoredAdvisories(deny)[0];
+    const dropped = audit.replace(`"${first}",`, `# "${first}",`);
+    expect(mirrorProblems(deny, dropped)).toEqual([`${first}: in deny.toml, not in audit.toml`]);
+    const extra = audit.replace("ignore = [", 'ignore = [\n  "RUSTSEC-2024-0411",');
+    expect(mirrorProblems(deny, extra)).toEqual(["RUSTSEC-2024-0411: in audit.toml, not in deny.toml"]);
+  });
+});

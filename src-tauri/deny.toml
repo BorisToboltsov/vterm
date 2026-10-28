@@ -3,21 +3,27 @@
 #   cargo deny check advisories (RUSTSEC)
 #
 # Every ignored advisory is documented with rationale and must be revisited
-# periodically (especially RUSTSEC-2023-0071 once `rsa` ships a fix).
+# periodically (especially RUSTSEC-2023-0071 once `rsa` ships a fix). An ignore
+# that no longer matches anything FAILS the gate (`unused-ignored-advisory`), and
+# so does an allowed license nothing uses (`unused-allowed-license`): a stale
+# exception would silently re-accept its advisory if a later bump regressed the
+# tree into it, under a rationale written for a tree that no longer exists. When
+# one goes away — an upstream bump, a withdrawn advisory — delete it.
 #
 # Triage note: of the ignores below, exactly ONE (RUSTSEC-2023-0071, rsa) is an
-# actual vulnerability; the rest are `unmaintained`/`unsound` STATUS advisories,
-# all transitive, not crates we depend on directly: Tauri's Linux WebKitGTK
-# backend and `tauri-utils`, and the zbus 5 helper crates under `keyring` and two
-# Tauri plugins (Linux D-Bus). We cannot swap or drop them without dropping Linux,
-# the GUI framework or the Secret Service keychain — the realistic fix is an
-# upstream move (exactly how the quick-xml DoS advisories cleared, via a plist
-# bump — see the note in the block). So the standing action for this block is
-# "keep Tauri and keyring current and re-triage", not "find a replacement crate".
+# actual vulnerability; the rest are `unmaintained` STATUS advisories, all
+# transitive, not crates we depend on directly: Tauri's Linux WebKitGTK backend
+# and the zbus 5 helper crates under `keyring` and two Tauri plugins (Linux
+# D-Bus). We cannot swap or drop them without dropping Linux, the GUI framework or
+# the Secret Service keychain — the realistic fix is an upstream move (exactly how
+# the quick-xml and unic-* advisories cleared — see the notes in the block). So the
+# standing action for this block is "keep the lockfile, Tauri and keyring current
+# (`cargo update`) and re-triage", not "find a replacement crate".
 
 [advisories]
 version = 2
 yanked = "deny"
+unused-ignored-advisory = "deny"
 ignore = [
   # ── Accepted vulnerability (no upstream fix available) ──────────────────────
   # rsa — "Marvin Attack" timing side-channel (potential key recovery).
@@ -27,7 +33,7 @@ ignore = [
   # Reaches us ONLY through RSA SSH-key support: `russh` (feature `rsa`, part of
   # its default set) and `ssh-key` (feature `rsa`, enabled in Cargo.toml) are the
   # only consumers — `cargo tree -i rsa` shows no others. There is no fixed
-  # release (still rsa 0.10.0-rc.18 after the russh 0.62.5 bump).
+  # release (rsa 0.10.0-rc.19 is out, still unpatched per RustSec).
   #
   # Why accepted rather than removed: dropping the `rsa` features would delete the
   # crate entirely but also drop support for RSA host keys and RSA user keys —
@@ -40,63 +46,41 @@ ignore = [
   # Revisit when a patched `rsa` ships.
   "RUSTSEC-2023-0071",
 
-  # ── Unmaintained, all transitive from Tauri's Linux WebKitGTK stack ──────────
-  # gtk-rs GTK3 bindings (atk/gdk/gtk/gtk3-macros/...) — `unmaintained` (the
-  # gtk-rs ecosystem moved to GTK4; the GTK3 line is in maintenance only, not a
-  # known-exploitable hole). Root, per `cargo tree -i gtk --target
-  # x86_64-unknown-linux-gnu`: tauri → muda / tao / wry / webkit2gtk → gtk 0.18.2.
-  # Linux-only (absent from macOS/Windows trees) and pulled by tauri CORE, so no
-  # plugin removal shrinks it and no crate swap is available to us — bound to
-  # gtk-rs 0.18 until Tauri's Linux backend moves off WebKitGTK/GTK3.
-  "RUSTSEC-2024-0411",
-  "RUSTSEC-2024-0412",
-  "RUSTSEC-2024-0413",
-  "RUSTSEC-2024-0414",
-  "RUSTSEC-2024-0415",
-  "RUSTSEC-2024-0416",
-  "RUSTSEC-2024-0417",
-  "RUSTSEC-2024-0418",
-  "RUSTSEC-2024-0419",
-  "RUSTSEC-2024-0420",
-  # NOTE: glib < 0.20.0 `VariantStrIter` unsoundness (RUSTSEC-2024-0429 /
-  # GHSA-wrw7-89jp-8q8g) is the same cluster (atk → glib 0.18.5), but it is filed
-  # `informational = "unsound"` and cargo-deny keeps it below the deny threshold —
-  # an active ignore only yields a perpetual "advisory-not-detected" warning, so
-  # it is documented, not suppressed. An external GHSA-based SCA scan does flag it;
-  # accepted for the same reason. Our code never calls `VariantStrIter` (we don't
-  # touch glib directly — it is purely under the webview), so the unsound path is
-  # never exercised. Resolves when Tauri's Linux stack moves to gtk-rs 0.20+.
+  # ── Unmaintained, transitive from Tauri's Linux WebKitGTK stack ─────────────
+  # proc-macro-error — pulled by `glib-macros 0.18.5` (`cargo tree -i
+  # proc-macro-error --target all`), i.e. the gtk-rs 0.18 (GTK3) bindings under
+  # tauri → muda / tao / wry / webkit2gtk. Linux-only and pulled by tauri CORE,
+  # so no plugin removal shrinks it. Clears when Tauri's Linux backend moves off
+  # gtk-rs 0.18.
+  "RUSTSEC-2024-0370",
+  # NOTE: the gtk-rs GTK3 "unmaintained" advisories (RUSTSEC-2024-0411…0420) were
+  # WITHDRAWN by RustSec on 2026-08-14 and are no longer reported — don't re-add.
+  # glib < 0.20.0 `VariantStrIter` unsoundness (RUSTSEC-2024-0429 /
+  # GHSA-wrw7-89jp-8q8g) is the same cluster (atk → glib 0.18.5), filed
+  # `informational = "unsound"`: cargo-deny keeps it below the deny threshold, so
+  # it is documented, not suppressed (an ignore would fail `unused-ignored-
+  # advisory`). An external GHSA-based SCA scan does flag it; accepted for the
+  # same reason. Our code never calls `VariantStrIter` (we touch glib only through
+  # gtk/gdk in winhit.rs), so the unsound path is never exercised. Resolves when
+  # Tauri's Linux stack moves to gtk-rs 0.20+.
 
   # NOTE: the two quick-xml DoS advisories (RUSTSEC-2026-0194/0195) were removed
   # here once `plist 1.10.0` pulled `quick-xml 0.41.0` (the fixed line) — the
   # dependency refresh RESOLVED them rather than suppressing them. Don't re-add a
   # suppression; if they resurface, a dep regressed to quick-xml <0.41.
-
-  # ── Unmaintained transitive build/helper crates (still Tauri-rooted) ─────────
-  # proc-macro-error — NOT a separate concern: it is pulled by `glib-macros 0.18.5`
-  # (`cargo tree -i proc-macro-error`), i.e. part of the same gtk-rs 0.18 cluster
-  # above. Clears together with the GTK stack.
-  "RUSTSEC-2024-0370",
-  # unic-* unicode helpers — the dormant `unic` project, pulled solely by
-  # `urlpattern 0.3.0` → `tauri-utils` (`cargo tree -i unic-ucd-ident`); partly a
-  # build-dependency (tauri-build/tauri-codegen). Not our choice of urlpattern
-  # version; may clear on a future Tauri bump if tauri-utils moves to a urlpattern
-  # that dropped unic-* (the quick-xml pattern above), not via a swap by us.
-  "RUSTSEC-2025-0075",
-  "RUSTSEC-2025-0080",
-  "RUSTSEC-2025-0081",
-  "RUSTSEC-2025-0098",
-  "RUSTSEC-2025-0100",
+  # NOTE: likewise the unic-* "unmaintained" advisories (RUSTSEC-2025-0075/0080/
+  # 0081/0098/0100) cleared with Tauri 2.12: `tauri-utils 2.10` moved to
+  # `urlpattern 0.6`, which no longer depends on unic-*.
 
   # ── Unmaintained: zbus 5 helper crates (Linux D-Bus) ─────────────────────────
   # zvariant, zbus_names, zvariant_derive — `unmaintained` because upstream
   # merged them INTO zbus 6.0 (as its `wire`/`names` modules and derives); no
   # fix is or will be released for the standalone crates (`patched = []`). It
   # is a status change, not a vulnerability. Root, per `cargo tree --target all
-  # -i zvariant`: zbus 5.18 ← secret-service ← keyring (the Linux Secret Service
+  # -i zvariant`: zbus 5 ← secret-service ← keyring (the Linux Secret Service
   # store) and ← tauri-plugin-opener / tauri-plugin-single-instance. Linux-only.
-  # Clears when those move to zbus 6: as of 2026-10-20 the latest stable zbus is
-  # 5.19, and the plugins' zbus-6 line is 3.0.0-alpha only — no stable path.
+  # Clears when those move to zbus 6: zbus 6 is stable, but as of 2026-10-28
+  # secret-service 5.2 and the plugins' latest 2.x releases are still on zbus 5.
   "RUSTSEC-2026-0370",
   "RUSTSEC-2026-0371",
   "RUSTSEC-2026-0372",
@@ -105,6 +89,7 @@ ignore = [
 [licenses]
 version = 2
 confidence-threshold = 0.8
+unused-allowed-license = "deny"
 # OSI-permissive licenses used across the Tauri/russh dependency tree.
 allow = [
   "MIT",
@@ -114,12 +99,9 @@ allow = [
   "BSD-3-Clause",
   "ISC",
   "Zlib",
-  "Unicode-DFS-2016",
   "Unicode-3.0",
   "MPL-2.0",
   "CC0-1.0",
-  "BSL-1.0",
-  "OpenSSL",
   # webpki-root-certs (fallback CA bundle via rustls-platform-verifier, reqwest
   # 0.13's default root source) ships the Mozilla CA set under CDLA-Permissive-2.0
   # — a permissive data license (certificates are data, not code).

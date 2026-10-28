@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "1.24.0"
+version = "1.25.0"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -95,9 +95,6 @@ sysinfo = "0.39"
 encoding_rs = "0.8"
 chardetng = "1"
 
-# Read the OS clipboard in-process so the frontend can avoid
-# navigator.clipboard.readText() and WebKit's "Paste" permission prompt.
-# Already in the tree transitively via Tauri; pinned here to use it directly.
 # Windows drive enumeration for the local file panel (Фаза 39.1). `GetLogicalDrives`
 # returns the letter bitmask WITHOUT touching any volume — the only complete source
 # that cannot block on a stale network mount (see drives.rs for the alternatives

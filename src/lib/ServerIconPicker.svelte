@@ -14,12 +14,12 @@
     color = $bindable(""),
     label,
     hint = undefined,
-  } = $props<{
+  }: {
     icon?: string;
     color?: string;
     label: string;
     hint?: string;
-  }>();
+  } = $props();
 </script>
 
 <div>

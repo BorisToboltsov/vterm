@@ -86,7 +86,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 
 ## Гейты-контракты
 
-50 файлов `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
+Файлы `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
 живёт в бинарном артефакте — сам артефакт) и падают на
 нарушении инварианта. Полный список «гейт → что держит» — в
 [INVARIANTS.md](INVARIANTS.md#гейты); там же причина, по которой каждый заведён.
@@ -216,7 +216,7 @@ Scratch-коды одноразовые: перед повторным прог�
 
 ```sh
 cd e2e
-pnpm install
+pnpm install --frozen-lockfile   # свой lockfile e2e/pnpm-lock.yaml
 docker compose -f docker-compose.ssh.yml up -d   # SSH на 127.0.0.1:2222, tester/testpass
 pnpm test:e2e
 docker compose -f docker-compose.ssh.yml down

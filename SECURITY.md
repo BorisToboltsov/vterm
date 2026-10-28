@@ -430,22 +430,36 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
 ## Принятые исключения (advisories)
 
 Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml) и
-зеркалятся в `.cargo/audit.toml`. Их нужно периодически пересматривать.
+зеркалятся в `.cargo/audit.toml`. Исключение, которому больше нечего исключать (advisory
+закрыт обновлением или отозван), и разрешённая лицензия, которой никто не пользуется, роняют
+`cargo deny` (`unused-ignored-advisory`/`unused-allowed-license`); список `audit.toml` равен
+списку `deny.toml` — гейт `tauri-security.guard.test.ts`. Lockfile освежается `cargo update`
+перед выпуском: Dependabot двигает только прямые зависимости, а исправления транзитивных
+приходят именно так.
 
 - **RUSTSEC-2023-0071 (`rsa`, Marvin timing side-channel).** Фикса вверх по
   течению **нет**. Доходит до нас только через поддержку RSA в `russh`.
   **Снижение риска:** используйте ключи **ed25519/ecdsa** (vterm их поддерживает) —
   тогда RSA-путь не задействуется. Снять исключение, когда выйдет патч `rsa`.
-- **gtk-rs / glib (RUSTSEC-2024-0411…0420, 0429).** Unmaintained/unsound; это
-  Linux-стек WebKitGTK самого Tauri, не используется в коде vterm и не обновляется
-  нами.
-- **proc-macro-error, unic-\* (RUSTSEC-2024-0370, 2025-0075/0080/0081/0098/0100).**
-  Транзитивные unmaintained build/utility-крейты.
+- **proc-macro-error (RUSTSEC-2024-0370)** — unmaintained, приходит через `glib-macros`
+  gtk-rs 0.18: Linux-стек WebKitGTK самого Tauri, нами не обновляется. **glib
+  (RUSTSEC-2024-0429)** — `unsound` из того же стека: оба инструмента показывают его
+  предупреждением и не падают, поэтому в исключения он не внесён; `VariantStrIter` мы не
+  вызываем. gtk-rs-advisory RUSTSEC-2024-0411…0420 RustSec отозвал 2026-08-14, `unic-*`
+  (RUSTSEC-2025-0075/0080/0081/0098/0100) ушли из дерева с Tauri 2.12 (`urlpattern` 0.6) —
+  оба набора исключений сняты в v1.25.0.
 - **zvariant, zbus_names, zvariant_derive (RUSTSEC-2026-0370…0372).** Unmaintained, потому
   что влиты в `zbus` 6.0; это смена статуса, а не уязвимость, исправленных версий не будет.
   Linux-only: `zbus` 5 под `keyring` (Secret Service) и плагинами Tauri `opener` и
-  `single-instance`. Снять исключение, когда они перейдут на `zbus` 6 — стабильной такой
-  версии пока нет.
+  `single-instance`. Снять исключение, когда они перейдут на `zbus` 6: сам `zbus` 6 уже
+  стабилен, но `secret-service` 5.2 и плагины 2.x на 2026-10-28 ещё на `zbus` 5.
+- **npm, уровень low (не блокируют CI: `pnpm audit --audit-level moderate`).** `deepmerge`
+  ≤ 4.3.1 (GHSA-gcqx-w48m-w2h4, загрязнение прототипа в `mergeObject()`) — сборочная
+  зависимость `@sveltejs/vite-plugin-svelte`, в бандл не попадает; исправленной версии нет
+  (последняя — 4.3.1), override поставить не на что. `@sveltejs/kit` < 3 — два advisory
+  (редирект через enhanced form, XSS через `cache-control` пререндеренной страницы): у
+  SPA внутри Tauri нет ни form actions, ни сервера, отдающего заголовки; закрываются
+  переходом на SvelteKit 3 в рамках 1.25.
 - **`zip` (RUSTSEC-2026-0367…0369)** — не исключение: закрыты обновлением до `zip` 9. vterm
   `extract()` не вызывал — записи бэкапа читаются по одной, имя проверяет
   `safe_recording_name`.
@@ -459,10 +473,6 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
   E2E-набор — и выходит с её кодом: он ничего не обслуживает, и проверять у него нечего.
   Исключение — там же, с `paths` на этот файл. Работает он от обычного пользователя, не от
   root: исключения для DS-0002 у него нет.
-
-## Не покрыто этой фазой
-
-CodeQL (опционально) — можно добавить в GitHub-зеркало; локально не запускается.
 
 ## Канал обновлений
 
