@@ -18,9 +18,24 @@ import { describe, expect, it } from "vitest";
 const LIB = join(process.cwd(), "src", "lib");
 const PAGE = join(process.cwd(), "src", "routes", "+page.svelte");
 
+/** Drop `<!-- … -->` blocks by scanning — one regex pass can leave a `<!--`
+ *  behind (`<!--<!-- -->`); an unclosed comment drops the rest. */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("<!--", i);
+    if (open < 0) return out + src.slice(i);
+    out += src.slice(i, open);
+    const close = src.indexOf("-->", open + 4);
+    if (close < 0) return out;
+    i = close + 3;
+  }
+  return out;
+}
+
 function strip(src: string): string {
-  return src
-    .replace(/<!--[\s\S]*?-->/g, "")
+  return stripHtmlComments(src)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 }
