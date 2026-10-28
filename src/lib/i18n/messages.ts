@@ -299,9 +299,37 @@ export const en = {
   "sftp.hiddenFiles": "Hidden files",
   "sftp.followTerminal": "Path sync",
   "sftp.followSetupTitle": "Enable path sync?",
-  "sftp.followSetupBody":
-    "To follow the terminal, the shell must report its current directory. Yours doesn't do this by default, so vterm will type the command below into this terminal session (bash/zsh) and run it. It affects only this session — nothing is saved on the server.",
   "sftp.followSetupConfirm": "Enable",
+  "pathSync.modeAsk": "Ask",
+  "pathSync.modeAuto": "Always",
+  "pathSync.modeManual": "Manually",
+  "pathSync.formHint":
+    "How path sync (the file and Git panels following the terminal's folder) starts on this server. Each server keeps its own choice; the question asked when you first turn it on saves it here too.",
+  "pathSync.hintAsk": "Asks when you turn path sync on.",
+  "pathSync.hintAuto":
+    "On at every connect. If the shell doesn't report its folder, vterm types a setup command into it (bash/zsh); nothing is saved on the server.",
+  "pathSync.hintManual": "You turn it on with the button, without the question.",
+  "pathSync.prodWarning":
+    "Production server: the setup command will be typed at every login and will go into the session recording.",
+  "pathSync.bodyFollow": "The file and Git panels will follow the terminal's folder.",
+  "pathSync.bodySetupNow":
+    "To follow the terminal, the shell must report its current folder. Yours doesn't by default, so vterm will type the command below into this terminal session (bash/zsh) and run it. Nothing is saved on the server.",
+  "pathSync.bodySetupLater":
+    "This shell already reports its folder. Where a shell doesn't, vterm types the command below into the session (bash/zsh); nothing is saved on the server.",
+  "pathSync.setupAlways": "With “Always”, vterm types this command at every connect.",
+  "pathSync.setupManual":
+    "With “Manually”, vterm types it without asking whenever a shell doesn't report its folder.",
+  "pathSync.choices": "When to turn on path sync",
+  "pathSync.choiceAlways": "Always on {target}",
+  "pathSync.choiceAlwaysHint": "Turn it on at every connect",
+  "pathSync.choiceOnce": "Only now",
+  "pathSync.choiceOnceHint": "Ask again next time",
+  "pathSync.choiceManual": "Manually, without asking",
+  "pathSync.choiceManualHint": "Turn it on with the button, no question",
+  "pathSync.thisComputer": "this computer",
+  "pathSync.whereServer": "You can change it later in the server card, under “Terminal”.",
+  "pathSync.whereLocal": "You can change it later in Settings → Terminal.",
+  "pathSync.saveFailed": "Path sync is on, but the choice wasn't saved: {error}",
   "sftp.newFolder": "New folder",
   "sftp.newFile": "New file",
   "sftp.upload": "Upload",
@@ -761,6 +789,7 @@ export const en = {
   "page.newServerTitle": "New server",
   "page.groupConnection": "Connection",
   "page.groupRecordingAi": "Recording & AI",
+  "page.groupTerminal": "Terminal",
   "page.copyOfAlias": "{alias} (copy)",
   "page.icon": "Icon",
   "serverIcon.generic": "Server",
@@ -1831,6 +1860,9 @@ export const en = {
   "settings.historySearch": "Ctrl+R searches command history",
   "settings.historySearchHint":
     "Opens an overlay to search this session's shell history and put a command on the prompt. Off = the shell's own Ctrl+R reverse-search.",
+  "settings.localPathSync": "Path sync in a local shell",
+  "settings.localPathSyncHint":
+    "How path sync starts in a local tab: ask when you turn it on, on in every new tab, or by hand without the question. A server keeps its own choice in its card.",
   "settings.localShell": "Local shell",
   "settings.localShellHint":
     "Which program a local (“+”) terminal tab launches. On Windows, choose cmd, Windows PowerShell, PowerShell 7 (pwsh), or a custom path. On macOS/Linux, leave blank to use your $SHELL, or set a custom path.",
@@ -2624,9 +2656,37 @@ const ru: Record<MessageKey, string> = {
   "sftp.hiddenFiles": "Скрытые файлы",
   "sftp.followTerminal": "Синхронизация пути",
   "sftp.followSetupTitle": "Включить синхронизацию пути?",
-  "sftp.followSetupBody":
-    "Чтобы следовать за терминалом, шелл должен сообщать текущий каталог. По умолчанию он этого не делает, поэтому vterm впишет в эту сессию терминала команду ниже (bash/zsh) и выполнит её. Действует только в текущей сессии — на сервере ничего не сохраняется.",
   "sftp.followSetupConfirm": "Включить",
+  "pathSync.modeAsk": "Спрашивать",
+  "pathSync.modeAuto": "Всегда",
+  "pathSync.modeManual": "Вручную",
+  "pathSync.formHint":
+    "Как на этом сервере включается синхронизация пути — панели файлов и Git следуют за каталогом терминала. У каждого сервера свой выбор; ответ на вопрос при первом включении сохраняется сюда же.",
+  "pathSync.hintAsk": "Спросит, когда вы включите синхронизацию пути.",
+  "pathSync.hintAuto":
+    "Включается при каждом подключении. Если шелл не сообщает каталог, vterm впишет в него команду настройки (bash/zsh); на сервере ничего не сохраняется.",
+  "pathSync.hintManual": "Включаете кнопкой, без вопроса.",
+  "pathSync.prodWarning":
+    "Прод-сервер: команда будет вписываться при каждом входе и попадёт в запись сессии.",
+  "pathSync.bodyFollow": "Панели файлов и Git будут следовать за каталогом терминала.",
+  "pathSync.bodySetupNow":
+    "Чтобы следовать за терминалом, шелл должен сообщать текущий каталог. По умолчанию он этого не делает, поэтому vterm впишет в эту сессию терминала команду ниже (bash/zsh) и выполнит её. На сервере ничего не сохраняется.",
+  "pathSync.bodySetupLater":
+    "Этот шелл уже сообщает каталог. Если шелл этого не делает, vterm впишет в сессию команду ниже (bash/zsh); на сервере ничего не сохраняется.",
+  "pathSync.setupAlways": "С выбором «Всегда» vterm будет вписывать эту команду при каждом подключении.",
+  "pathSync.setupManual":
+    "С выбором «Вручную» vterm впишет её без вопроса, если шелл не сообщает каталог.",
+  "pathSync.choices": "Когда включать синхронизацию пути",
+  "pathSync.choiceAlways": "Всегда на {target}",
+  "pathSync.choiceAlwaysHint": "Включать при каждом подключении",
+  "pathSync.choiceOnce": "Только сейчас",
+  "pathSync.choiceOnceHint": "В следующий раз спросить снова",
+  "pathSync.choiceManual": "Вручную, без вопроса",
+  "pathSync.choiceManualHint": "Включать кнопкой, окно не показывать",
+  "pathSync.thisComputer": "этом компьютере",
+  "pathSync.whereServer": "Изменить можно в карточке сервера, в разделе «Терминал».",
+  "pathSync.whereLocal": "Изменить можно в Настройки → Терминал.",
+  "pathSync.saveFailed": "Синхронизация пути включена, но выбор не сохранился: {error}",
   "sftp.newFolder": "Новая папка",
   "sftp.newFile": "Новый файл",
   "sftp.upload": "Загрузить",
@@ -3112,6 +3172,7 @@ const ru: Record<MessageKey, string> = {
   "serverColor.slate": "Серый",
   "page.groupConnection": "Подключение",
   "page.groupRecordingAi": "Запись и ИИ",
+  "page.groupTerminal": "Терминал",
   "page.copyOfAlias": "{alias} (копия)",
   "page.alias": "Псевдоним",
   "page.aliasPlaceholder": "Мой VPS",
@@ -4147,6 +4208,9 @@ const ru: Record<MessageKey, string> = {
   "settings.historySearch": "Ctrl+R ищет по истории команд",
   "settings.historySearchHint":
     "Открывает окно для поиска по истории шелла этой сессии и вставки команды в строку. Выкл — родной reverse-search шелла по Ctrl+R.",
+  "settings.localPathSync": "Синхронизация пути в локальном шелле",
+  "settings.localPathSyncHint":
+    "Как включается синхронизация пути на локальной вкладке: спросить при включении, включать в каждой новой вкладке или вручную без вопроса. У сервера свой выбор — в его карточке.",
   "settings.localShell": "Локальный шелл",
   "settings.localShellHint":
     "Какую программу запускает локальная вкладка терминала («+»). На Windows выберите cmd, Windows PowerShell, PowerShell 7 (pwsh) или произвольный путь. На macOS/Linux оставьте пустым для $SHELL или укажите свой путь.",

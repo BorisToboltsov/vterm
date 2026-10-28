@@ -1093,108 +1093,115 @@
     onpaste={finishPaste}
     oncancel={cancelPaste}
   />
-  <!-- Full-buffer search overlay (Phase 10). -->
+  <!-- Full-buffer search overlay (Phase 10). It never grows past its pane: the
+       field shrinks first, then the buttons wrap to a second row, and that row
+       wraps too where even it does not fit — a narrow pane otherwise saw the bar,
+       then the row of buttons, spill over the docks beside it. -->
   {#if search.open}
     <div
-      class="absolute right-2 top-2 z-20 flex items-center gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
+      class="absolute right-2 top-2 z-20 flex max-w-[calc(100%-1rem)] flex-wrap items-center justify-end gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
       data-testid="terminal-search"
     >
-      <Icon name="search" size={14} class="text-muted" />
-      <input
-        bind:this={searchInput}
-        bind:value={search.query}
-        oninput={runSearch}
-        onkeydown={onSearchKey}
-        type="text"
-        spellcheck="false"
-        placeholder={t("search.placeholder")}
-        aria-label={t("search.placeholder")}
-        class="w-44 bg-transparent text-sm text-text outline-none placeholder:text-muted"
-      />
-      <span
-        role="status"
-        aria-live="polite"
-        class="min-w-14 text-right text-xs tabular-nums {searchInvalid ? 'text-danger' : 'text-muted'}"
-      >
-        {#if searchInvalid}
-          {t("search.invalidRegex")}
-        {:else if search.query}{countLabel || t("search.noResults")}{/if}
-      </span>
-      <button
-        type="button"
-        onclick={() => {
-          settings.searchOptions.caseSensitive = !opts.caseSensitive;
-          runSearch();
-        }}
-        use:tooltip={t("search.caseSensitive")}
-        aria-label={t("search.caseSensitive")}
-        aria-pressed={opts.caseSensitive}
-        class="rounded px-1 text-xs font-medium {opts.caseSensitive
-          ? 'bg-edge text-accent'
-          : 'text-muted hover:text-accent'}">Aa</button
-      >
-      <button
-        type="button"
-        onclick={() => {
-          settings.searchOptions.wholeWord = !opts.wholeWord;
-          runSearch();
-        }}
-        use:tooltip={t("search.wholeWord")}
-        aria-label={t("search.wholeWord")}
-        aria-pressed={opts.wholeWord}
-        class="rounded px-1 text-xs font-medium {opts.wholeWord
-          ? 'bg-edge text-accent'
-          : 'text-muted hover:text-accent'}">W</button
-      >
-      <button
-        type="button"
-        onclick={() => {
-          settings.searchOptions.regex = !opts.regex;
-          runSearch();
-        }}
-        use:tooltip={t("search.regex")}
-        aria-label={t("search.regex")}
-        aria-pressed={opts.regex}
-        class="rounded px-1 text-xs font-medium {opts.regex
-          ? 'bg-edge text-accent'
-          : 'text-muted hover:text-accent'}">.*</button
-      >
-      <button
-        type="button"
-        onclick={prevMatch}
-        use:tooltip={t("search.prev")}
-        aria-label={t("search.prev")}
-        class="rounded p-0.5 text-muted hover:text-accent"
-      >
-        <Icon name="chevronUp" size={14} />
-      </button>
-      <button
-        type="button"
-        onclick={nextMatch}
-        use:tooltip={t("search.next")}
-        aria-label={t("search.next")}
-        class="rounded p-0.5 text-muted hover:text-accent"
-      >
-        <Icon name="chevronDown" size={14} />
-      </button>
-      <button
-        type="button"
-        onclick={copyContext}
-        use:tooltip={t("search.copyContext")}
-        aria-label={t("search.copyContext")}
-        class="rounded p-0.5 text-muted hover:text-accent"
-      >
-        <Icon name="copy" size={13} />
-      </button>
-      <button
-        type="button"
-        onclick={closeSearch}
-        use:tooltip={t("search.close")}
-        aria-label={t("search.close")}
-        class="rounded p-0.5 text-muted hover:text-danger"
-      >
-        <Icon name="close" size={14} />
-      </button>
+      <div class="flex min-w-0 flex-[1_1_9rem] items-center gap-1">
+        <Icon name="search" size={14} class="shrink-0 text-muted" />
+        <input
+          bind:this={searchInput}
+          bind:value={search.query}
+          oninput={runSearch}
+          onkeydown={onSearchKey}
+          type="text"
+          spellcheck="false"
+          placeholder={t("search.placeholder")}
+          aria-label={t("search.placeholder")}
+          class="w-44 min-w-0 flex-1 bg-transparent text-sm text-text outline-none placeholder:text-muted"
+        />
+        <span
+          role="status"
+          aria-live="polite"
+          class="min-w-14 text-right text-xs tabular-nums {searchInvalid ? 'text-danger' : 'text-muted'}"
+        >
+          {#if searchInvalid}
+            {t("search.invalidRegex")}
+          {:else if search.query}{countLabel || t("search.noResults")}{/if}
+        </span>
+      </div>
+      <div class="flex min-w-0 flex-wrap items-center justify-end gap-1">
+        <button
+          type="button"
+          onclick={() => {
+            settings.searchOptions.caseSensitive = !opts.caseSensitive;
+            runSearch();
+          }}
+          use:tooltip={t("search.caseSensitive")}
+          aria-label={t("search.caseSensitive")}
+          aria-pressed={opts.caseSensitive}
+          class="rounded px-1 text-xs font-medium {opts.caseSensitive
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:text-accent'}">Aa</button
+        >
+        <button
+          type="button"
+          onclick={() => {
+            settings.searchOptions.wholeWord = !opts.wholeWord;
+            runSearch();
+          }}
+          use:tooltip={t("search.wholeWord")}
+          aria-label={t("search.wholeWord")}
+          aria-pressed={opts.wholeWord}
+          class="rounded px-1 text-xs font-medium {opts.wholeWord
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:text-accent'}">W</button
+        >
+        <button
+          type="button"
+          onclick={() => {
+            settings.searchOptions.regex = !opts.regex;
+            runSearch();
+          }}
+          use:tooltip={t("search.regex")}
+          aria-label={t("search.regex")}
+          aria-pressed={opts.regex}
+          class="rounded px-1 text-xs font-medium {opts.regex
+            ? 'bg-edge text-accent'
+            : 'text-muted hover:text-accent'}">.*</button
+        >
+        <button
+          type="button"
+          onclick={prevMatch}
+          use:tooltip={t("search.prev")}
+          aria-label={t("search.prev")}
+          class="rounded p-0.5 text-muted hover:text-accent"
+        >
+          <Icon name="chevronUp" size={14} />
+        </button>
+        <button
+          type="button"
+          onclick={nextMatch}
+          use:tooltip={t("search.next")}
+          aria-label={t("search.next")}
+          class="rounded p-0.5 text-muted hover:text-accent"
+        >
+          <Icon name="chevronDown" size={14} />
+        </button>
+        <button
+          type="button"
+          onclick={copyContext}
+          use:tooltip={t("search.copyContext")}
+          aria-label={t("search.copyContext")}
+          class="rounded p-0.5 text-muted hover:text-accent"
+        >
+          <Icon name="copy" size={13} />
+        </button>
+        <button
+          type="button"
+          onclick={closeSearch}
+          use:tooltip={t("search.close")}
+          aria-label={t("search.close")}
+          class="rounded p-0.5 text-muted hover:text-danger"
+        >
+          <Icon name="close" size={14} />
+        </button>
+      </div>
     </div>
   {/if}
   <!-- Visual bell: a brief flash drawn on top of the terminal. -->

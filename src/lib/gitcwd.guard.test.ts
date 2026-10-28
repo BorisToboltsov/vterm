@@ -54,13 +54,20 @@ describe("git follows the terminal guard", () => {
     expect(src).toMatch(
       /\?\s*\(\)\s*=>\s*enablePathSync\(tab\.sessionId\)\s*\n\s*:\s*undefined\}/,
     );
-    const start = src.indexOf("function enablePathSync(id: string)");
-    expect(start, "enablePathSync() not found in +page.svelte").toBeGreaterThan(-1);
-    const body = src.slice(start, src.indexOf("\n  }", start));
-    expect(body).toMatch(/followTerminal\[id\]\s*=\s*true/);
-    // Confirming the shell-setup dialog always ends with following on.
-    const confirm = src.indexOf("function confirmFollowSetup()");
-    const cbody = src.slice(confirm, src.indexOf("\n  }", confirm));
-    expect(cbody).toMatch(/^\s*followTerminal\[id\]\s*=\s*true;/m);
+    const fn = (name: string) => {
+      const start = src.indexOf(`function ${name}(`);
+      expect(start, `${name}() not found in +page.svelte`).toBeGreaterThan(-1);
+      return src.slice(start, src.indexOf("\n  }", start));
+    };
+    // Following starts in one place (v1.23, pathsync.guard), and the button gets
+    // there: straight away, or through the path-sync question.
+    expect(fn("startFollowing")).toMatch(/followTerminal\[id\]\s*=\s*true/);
+    expect(fn("enablePathSync")).toMatch(/startFollowing\(id,/);
+    // Answering the question always ends with following on — before any answer
+    // is saved, so a failed save cannot leave it off.
+    const answer = fn("answerPathSync");
+    const starts = answer.indexOf("startFollowing(ask.sessionId");
+    expect(starts).toBeGreaterThan(-1);
+    expect(starts).toBeLessThan(answer.indexOf("if (!mode) return"));
   });
 });

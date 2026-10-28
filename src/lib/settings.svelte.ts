@@ -16,6 +16,7 @@ import { DEFAULT_LOCALE, isLocale, pickLocale, type Locale } from "./i18n/locale
 import { defaultSnippets, sanitizeSnippets, type Snippet } from "./snippets";
 import { WINDOWS_SHELLS, type WindowsShell } from "./localshell";
 import { isRightClickAction, type RightClickAction } from "./termmouse";
+import { pathSyncMode, type PathSyncMode } from "./pathsync";
 import {
   DEFAULT_TERMINAL_LINK_MODE,
   isTerminalLinkMode,
@@ -162,6 +163,9 @@ export interface Settings {
   terminalLinks: TerminalLinkMode;
   /** Plain Ctrl+V pastes on Windows/Linux (off = it goes to the shell). */
   ctrlVPaste: boolean;
+  /** How path sync starts in a local tab (pathsync.ts). A server keeps its own
+   *  answer in its profile; a local tab has none, so it lives here. */
+  localPathSync: PathSyncMode;
   /** Intercept Ctrl+R to open the command-history overlay (off = native shell reverse-search). */
   historySearch: boolean;
   /** Which shell a local terminal tab spawns on Windows (ignored elsewhere). */
@@ -299,6 +303,7 @@ const DEFAULTS: Settings = {
   rightClick: "paste",
   terminalLinks: DEFAULT_TERMINAL_LINK_MODE,
   ctrlVPaste: true,
+  localPathSync: "ask",
   historySearch: true,
   windowsShell: "cmd",
   localShellPath: "",
@@ -454,6 +459,7 @@ function load(): Settings {
         ? raw.terminalLinks
         : DEFAULTS.terminalLinks,
       ctrlVPaste: typeof raw.ctrlVPaste === "boolean" ? raw.ctrlVPaste : DEFAULTS.ctrlVPaste,
+      localPathSync: pathSyncMode(raw.localPathSync),
       localShellPath:
         typeof raw.localShellPath === "string" ? raw.localShellPath : DEFAULTS.localShellPath,
       customTheme: { ...DEFAULTS.customTheme, ...(raw.customTheme ?? {}) },
@@ -598,6 +604,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
   if (!isTerminalLinkMode(next.terminalLinks)) next.terminalLinks = DEFAULTS.terminalLinks;
   if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
+  next.localPathSync = pathSyncMode(next.localPathSync);
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);

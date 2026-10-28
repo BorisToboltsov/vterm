@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   availablePanels,
   BOTTOM_MAX_SHARE,
+  CENTRE_MIN_WIDTH,
+  COLLAPSED_RAIL,
   canHidePanel,
   clamp,
   clampSize,
@@ -30,11 +32,15 @@ import {
   sanitizeDocks,
   sanitizeHiddenPanels,
   shownPanel,
+  sideDockRoom,
+  sideDockWidths,
+  WINDOW_MIN_WIDTH,
   withPanelHidden,
   type Docks,
   type DockSide,
   type PanelId,
 } from "./docklayout";
+import { PANE_LIMITS } from "./splitlayout";
 
 /** Every panel sits in exactly one dock — the model's one structural invariant. */
 function expectWellFormed(docks: Docks) {
@@ -82,6 +88,50 @@ describe("guards and bounds", () => {
     expect(effectiveSize("bottom", 400, 0)).toBe(400);
     // Side docks are never capped here.
     expect(effectiveSize("right", 700, 400)).toBe(700);
+  });
+
+  it("the centre's minimum is one pane's, and the window holds it beside both docks", () => {
+    expect(CENTRE_MIN_WIDTH).toBe(PANE_LIMITS.minW);
+    expect(WINDOW_MIN_WIDTH).toBe(DOCK_BOUNDS.left.min + DOCK_BOUNDS.right.min + CENTRE_MIN_WIDTH);
+  });
+
+  it("draws side docks at their stored widths while the centre has room", () => {
+    expect(sideDockWidths(256, 384, 1100)).toEqual({ left: 256, right: 384 });
+    expect(sideDockWidths(null, "rail", 500)).toEqual({ left: 0, right: COLLAPSED_RAIL });
+    // Unknown viewport (0 before the first measure) — the stored widths.
+    expect(sideDockWidths(256, 384, 0)).toEqual({ left: 256, right: 384 });
+  });
+
+  it("gives width back in proportion to each dock's room above its minimum", () => {
+    // 256 + 384 + 240 = 880: 200px short; slack 96 + 144 → 80 + 120.
+    expect(sideDockWidths(256, 384, 680)).toEqual({ left: 176, right: 264 });
+    // A collapsed rail gives nothing back; the open dock gives what it can.
+    expect(sideDockWidths(400, "rail", 600)).toEqual({ left: 600 - 240 - COLLAPSED_RAIL, right: 36 });
+    // Never below a dock's own minimum — the window minimum covers the rest.
+    expect(sideDockWidths(256, 384, 300)).toEqual({ left: 160, right: 240 });
+  });
+
+  it("fitting keeps the centre its minimum whenever the docks can give it", () => {
+    const state = fc.oneof(
+      fc.constant(null),
+      fc.constant("rail" as const),
+      fc.integer({ min: 160, max: 720 }),
+    );
+    fc.assert(
+      fc.property(state, state, fc.integer({ min: WINDOW_MIN_WIDTH, max: 3000 }), (l, r, vw) => {
+        const right = typeof r === "number" ? Math.max(r, DOCK_BOUNDS.right.min) : r;
+        const w = sideDockWidths(l, right, vw);
+        expect(vw - w.left - w.right).toBeGreaterThanOrEqual(CENTRE_MIN_WIDTH);
+        if (typeof l === "number") expect(w.left).toBeGreaterThanOrEqual(DOCK_BOUNDS.left.min);
+        if (typeof right === "number") expect(w.right).toBeGreaterThanOrEqual(DOCK_BOUNDS.right.min);
+        if (typeof l === "number") expect(w.left).toBeLessThanOrEqual(l);
+      }),
+    );
+  });
+
+  it("a side dock is dragged no wider than leaves the centre its minimum", () => {
+    expect(sideDockRoom(384, 1100)).toBe(1100 - 240 - 384);
+    expect(sideDockRoom(0, 0)).toBe(Infinity);
   });
 });
 

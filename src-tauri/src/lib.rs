@@ -2528,6 +2528,7 @@ pub fn run() {
             servers::add_server,
             servers::update_server,
             servers::set_server_notes,
+            servers::set_server_path_sync,
             servers::delete_server,
             servers::forget_secrets,
             servers::save_server_secret,

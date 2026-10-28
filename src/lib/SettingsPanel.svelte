@@ -10,6 +10,8 @@
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import AiSettingsSection from "./AiSettingsSection.svelte";
   import LocalShellSettings from "./LocalShellSettings.svelte";
+  import SegmentedControl from "./SegmentedControl.svelte";
+  import { PATH_SYNC_MODES, pathSyncModeKey } from "./pathsync";
   import { hostEnv } from "./stores/hostenv.svelte";
   import AppearanceSettings from "./AppearanceSettings.svelte";
   import SmartLogsSettings from "./SmartLogsSettings.svelte";
@@ -353,6 +355,21 @@
             {t("settings.historySearch")}<InfoHint text={t("settings.historySearchHint")} />
           </label>
           <LocalShellSettings />
+          <!-- A local tab has no server card, so its path-sync answer lives here
+               (each server keeps its own in its card — pathsync.ts). -->
+          <div class="mt-2">
+            <span class="flex items-center gap-1 text-xs text-muted">
+              {t("settings.localPathSync")}<InfoHint text={t("settings.localPathSyncHint")} />
+            </span>
+            <div class="mt-1">
+              <SegmentedControl
+                bind:value={settings.localPathSync}
+                options={PATH_SYNC_MODES.map((m) => ({ value: m, label: t(pathSyncModeKey(m)) }))}
+                label={t("settings.localPathSync")}
+                testid="settings-local-path-sync"
+              />
+            </div>
+          </div>
         </section>
 
         {/if}

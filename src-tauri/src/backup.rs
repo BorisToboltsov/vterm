@@ -348,6 +348,7 @@ mod tests {
             chat_prompt_id: None,
             exec_mode: None,
             proxy: None,
+            path_sync: None,
             notes: String::new(),
             icon: String::new(),
             icon_color: String::new(),

@@ -88,13 +88,64 @@ export const clampSize = (side: DockSide, px: number): number =>
   clamp(Math.round(px), DOCK_BOUNDS[side].min, DOCK_BOUNDS[side].max);
 
 /**
- * The size a dock is actually drawn at: the stored size, but never more than
- * `BOTTOM_MAX_SHARE` of the window for the bottom dock. Left/right keep their
- * stored width (the centre column has its own `min-w-0` and simply narrows).
+ * The size the bottom dock is actually drawn at: the stored size, but never more
+ * than `BOTTOM_MAX_SHARE` of the window. Left/right are fitted together, against
+ * the centre's minimum — see `sideDockWidths`.
  */
 export function effectiveSize(side: DockSide, size: number, viewport: number): number {
   if (side !== "bottom" || !(viewport > 0)) return size;
   return Math.max(DOCK_BOUNDS.bottom.min, Math.min(size, Math.floor(viewport * BOTTOM_MAX_SHARE)));
+}
+
+/**
+ * The narrowest the centre column is drawn while the window has room: one pane
+ * at its own minimum (`PANE_LIMITS.minW` in splitlayout.ts — kept equal by the
+ * test). The side docks give way to it; the window itself never gets narrower
+ * than both docks at their minimum and this (`WINDOW_MIN_WIDTH`).
+ */
+export const CENTRE_MIN_WIDTH = 240;
+
+/** The narrowest window: both side docks at their minimum and the centre at its
+ *  own. Set on every window (tauri.conf.json, the builder in appwin.rs) — a
+ *  window narrower than this left the terminal ~100px wide between the docks. */
+export const WINDOW_MIN_WIDTH = DOCK_BOUNDS.left.min + DOCK_BOUNDS.right.min + CENTRE_MIN_WIDTH;
+
+/** How a side dock stands in the row: not drawn, a collapsed rail, or open at
+ *  its stored width. */
+export type SideDockState = null | "rail" | number;
+
+const drawnWidth = (s: SideDockState): number =>
+  s === null ? 0 : s === "rail" ? COLLAPSED_RAIL : s;
+
+/**
+ * The widths the side docks are drawn at. Their stored widths, unless that
+ * leaves the centre narrower than `CENTRE_MIN_WIDTH`: then the open docks give
+ * the difference back, each in proportion to how far it stands above its own
+ * minimum, and never below it. Stored sizes are not rewritten — widening the
+ * window brings the docks back to them.
+ */
+export function sideDockWidths(
+  left: SideDockState,
+  right: SideDockState,
+  viewport: number,
+): { left: number; right: number } {
+  const out = { left: drawnWidth(left), right: drawnWidth(right) };
+  if (!(viewport > 0)) return out;
+  const excess = out.left + out.right + CENTRE_MIN_WIDTH - viewport;
+  const slackL = typeof left === "number" ? Math.max(0, left - DOCK_BOUNDS.left.min) : 0;
+  const slackR = typeof right === "number" ? Math.max(0, right - DOCK_BOUNDS.right.min) : 0;
+  if (excess <= 0 || slackL + slackR <= 0) return out;
+  const give = Math.min(excess, slackL + slackR);
+  const takeL = Math.min(slackL, Math.round((give * slackL) / (slackL + slackR)));
+  const takeR = Math.min(slackR, give - takeL);
+  return { left: out.left - takeL, right: out.right - takeR };
+}
+
+/** The widest a side dock can be dragged to now: what leaves the centre its
+ *  minimum next to the other dock as drawn. Dragging past it would bank width
+ *  the handle then has to "pay back" before it moves again. */
+export function sideDockRoom(otherDrawn: number, viewport: number): number {
+  return viewport > 0 ? viewport - CENTRE_MIN_WIDTH - otherDrawn : Infinity;
 }
 
 /** The layout of a fresh install. */

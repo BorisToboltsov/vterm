@@ -14,6 +14,7 @@
     moveFolder,
     setServerGroup,
     setServerNotes,
+    setServerPathSync,
     sftpReadText,
     sftpWriteText,
     sftpWriteAccess,
@@ -270,7 +271,17 @@
   import { mergeQuitRows, quitRows, type QuitRow } from "$lib/quitsummary";
   import ContextMenu from "$lib/ContextMenu.svelte";
   import type { MenuAction, MenuItem, OpenMenu } from "$lib/ctxmenu";
-  import { needsShellSetup, OSC7_SETUP, osc7SetupDisplay } from "$lib/shellintegration";
+  import { needsShellSetup, OSC7_SETUP } from "$lib/shellintegration";
+  import PathSyncDialog, { type PathSyncAsk } from "$lib/PathSyncDialog.svelte";
+  import {
+    asksOnEnable,
+    choiceMode,
+    followsOnConnect,
+    pathSyncMode,
+    storedPathSync,
+    type PathSyncChoice,
+    type PathSyncMode,
+  } from "$lib/pathsync";
   import { cdCommand, type CdShell } from "$lib/cdterminal";
   import { renderArgv, renderSessionCommand } from "$lib/termcmd";
   import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabattach";
@@ -498,6 +509,9 @@
    *  One second is well under human reaction time for a `cd`, and the underlying
    *  read is a single cheap syscall on Linux/macOS. */
   const LOCAL_CWD_POLL_MS = 1000;
+  /** How long a command typed into a freshly connected shell waits, so the login
+   *  prompt is up first (a pending command, the path-sync snippet on connect). */
+  const LOGIN_PROMPT_DELAY_MS = 500;
 
   // Current SSH connection phase per session, driving the connecting overlay.
   const connPhase = $state<Record<string, ConnPhase>>({});
@@ -540,9 +554,9 @@
   // even if the preference changes afterwards.
   const localShellKind = $state<Record<string, CdShell>>({});
   // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
-  // session awaiting the user's confirmation before we type it.
+  // path-sync question awaiting an answer (PathSyncDialog, v1.23).
   const shellIntegrated = $state<Record<string, boolean>>({});
-  let pendingFollowSession = $state<string | null>(null);
+  let pathSyncAsk = $state<PathSyncAsk | null>(null);
 
   // Password / passphrase prompt (owns its own state); opened via its export.
   let secretPrompt: SecretPrompt | undefined = $state();
@@ -3385,10 +3399,8 @@
   }
 
   /**
-   * Toggle "follow terminal" for a session. Turning it off is immediate.
-   * Turning it on: if the shell already reports its cwd (OSC 7 seen) or we've already
-   * set it up this session, just enable; otherwise open a confirm dialog before typing
-   * the shell-integration snippet (session-only, nothing saved on the server).
+   * Toggle "follow terminal" for a session. Turning it off is immediate; turning
+   * it on goes through `enablePathSync`.
    */
   function toggleFollowTerminal(id: string) {
     if (followTerminal[id]) {
@@ -3398,21 +3410,111 @@
     enablePathSync(id);
   }
 
+  /** How path sync starts for a tab (pathsync.ts): the server's own answer from
+   *  its profile; a local tab has no profile, so its answer lives in settings. */
+  function tabPathSyncMode(tab: Tab): PathSyncMode {
+    if (tab.kind === "local") return settings.localPathSync;
+    return pathSyncMode(servers.find((s) => s.id === tab.serverId)?.pathSync);
+  }
+
+  /** Whether this session's shell still needs the OSC 7 snippet — never a local
+   *  tab, whose cwd comes from the OS (Phase 39.3). See needsShellSetup. */
+  function shellNeedsSetup(id: string): boolean {
+    return needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id]);
+  }
+
   /**
    * Turn path sync on for a session — the one dock-wide switch, whether
    * it was flipped in SFTP, in Git's toolbar or by Git's "Enable path sync" button
    * (one label, one action: a file panel connected afterwards opens in the
-   * terminal's folder, already following). Whether the shell still needs the OSC 7
-   * snippet is pure logic — a local tab never does, since its cwd comes from the OS
-   * (Phase 39.3). See needsShellSetup.
+   * terminal's folder, already following). A server without an answer asks
+   * first (v1.23); one that has answered — "always" or "by hand" — starts at once.
    */
   function enablePathSync(id: string) {
     if (followTerminal[id]) return;
-    if (!needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id])) {
-      followTerminal[id] = true;
+    const tab = findTab(id);
+    if (!tab) return;
+    if (!asksOnEnable(tabPathSyncMode(tab))) {
+      startFollowing(id, shellNeedsSetup(id));
       return;
     }
-    pendingFollowSession = id;
+    pathSyncAsk = {
+      sessionId: id,
+      kind: tab.kind,
+      target:
+        tab.kind === "local"
+          ? null
+          : (servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias),
+      prod: prodTabIds.has(id),
+      needsSetup: shellNeedsSetup(id),
+    };
+  }
+
+  /**
+   * The one place following starts: by hand, from the question, or on connect.
+   * `typeSetup` types the OSC 7 snippet into the shell first — session-only,
+   * nothing is saved on the server.
+   */
+  function startFollowing(id: string, typeSetup: boolean) {
+    if (typeSetup) {
+      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
+      shellIntegrated[id] = true;
+    }
+    followTerminal[id] = true;
+  }
+
+  /** The question's answer: following starts either way; a lasting answer is
+   *  saved where this tab reads it — the server's profile, or settings. */
+  async function answerPathSync(choice: PathSyncChoice) {
+    const ask = pathSyncAsk;
+    pathSyncAsk = null;
+    const tab = ask ? findTab(ask.sessionId) : undefined;
+    if (!ask || !tab) return;
+    startFollowing(ask.sessionId, shellNeedsSetup(ask.sessionId));
+    const mode = choiceMode(choice);
+    if (!mode) return;
+    if (tab.kind === "local") {
+      settings.localPathSync = mode;
+      return;
+    }
+    try {
+      const updated = await setServerPathSync(tab.serverId, storedPathSync(mode));
+      servers = servers.map((s) => (s.id === updated.id ? updated : s));
+    } catch (e) {
+      notifyError(t("pathSync.saveFailed", { error: String(e) }));
+    }
+  }
+
+  /**
+   * A session just connected: a server set to "always" starts following by
+   * itself — typing the snippet into a fresh SSH shell, which has reported no
+   * folder yet and knows nothing typed into the last one. Not in a shell running a
+   * program of its own (container/pod, `port-forward`): the line would land there.
+   * Typed after the same pause as a pending command, once the prompt is up.
+   */
+  function pathSyncOnConnect(tab: Tab, runs: { attach: boolean; pendingCommand: boolean }) {
+    const id = tab.sessionId;
+    if (followTerminal[id] || !followsOnConnect(tabPathSyncMode(tab), runs)) return;
+    const typeSetup = needsShellSetup(tab.kind, false, false);
+    if (!typeSetup) {
+      startFollowing(id, false);
+      return;
+    }
+    setTimeout(() => {
+      const now = findTab(id);
+      if (now && dockConnection(now.status) === "connected" && !followTerminal[id]) {
+        startFollowing(id, true);
+      }
+    }, LOGIN_PROMPT_DELAY_MS);
+  }
+
+  /** A session ended: its shell — and any snippet typed into it — is gone, so
+   *  following stops; a reconnect starts it again only under "always". */
+  function stopFollowingOnClose(id: string) {
+    followTerminal[id] = false;
+    delete shellIntegrated[id];
+    delete terminalCwd[id];
+    if (pathSyncAsk?.sessionId === id) pathSyncAsk = null;
   }
 
   // Poll the OS for a local shell's cwd while following is on (Phase 39.3). This
@@ -3452,16 +3554,6 @@
     const writes = followUpdates(followTerminal, terminalCwd, followSeen);
     untrack(() => writes.forEach(([id, cwd]) => setDockCwd(id, cwd)));
   });
-
-  /** User confirmed: type the OSC 7 setup into the shell and enable following. */
-  function confirmFollowSetup() {
-    const id = pendingFollowSession;
-    pendingFollowSession = null;
-    if (!id) return;
-    writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
-    shellIntegrated[id] = true;
-    followTerminal[id] = true;
-  }
 
   /**
    * Two-way OSC 7 sync: when the user navigates in the SFTP panel (follow-terminal
@@ -4547,6 +4639,8 @@
                       // A container/pod tab enters its target on EVERY connect (so
                       // "Enter again" is a plain reconnect); a one-shot command once.
                       const attach = findTab(tab.sessionId)?.attach;
+                      // Read before the pending command is consumed below.
+                      const runs = { attach: !!attach, pendingCommand: !!pendingCommand[tab.sessionId] };
                       if (st === "connected" && (attach || pendingCommand[tab.sessionId])) {
                         const argv = attach ? attach.argv : pendingCommand[tab.sessionId];
                         delete pendingCommand[tab.sessionId];
@@ -4566,13 +4660,14 @@
                               tab.sessionId,
                               new TextEncoder().encode(submitLine(cmd)),
                             ).catch(() => {});
-                          }, 500);
+                          }, LOGIN_PROMPT_DELAY_MS);
                         }
                       }
                       if (st === "connecting" && noSignalSession === tab.sessionId)
                         noSignalSession = null;
                       if (st === "closed") {
                         finalizeRecordingOnClose(tab.sessionId);
+                        stopFollowingOnClose(tab.sessionId);
                         // Unexpected drop of a connected session (tab survives) →
                         // NO SIGNAL, unless auto-reconnect will bring it back.
                         const was = idleWasConnected.delete(tab.sessionId);
@@ -4589,6 +4684,7 @@
                         }
                       }
                       if (st === "connected") maybeAutoRecord(tab);
+                      if (st === "connected") pathSyncOnConnect(tab, runs);
                       // Auth failures now keep the tab and show the error overlay
                       // (the user re-enters the secret via its button), so we no
                       // longer auto-close/re-prompt here.
@@ -4982,20 +5078,9 @@
   >{pendingBroadcast ? pendingBroadcast.frame.replace(/\n$/, "") : ""}</pre>
 </ConfirmDialog>
 
-<!-- Shell-integration consent for "follow terminal" (session-only OSC 7 setup) -->
-<ConfirmDialog
-  open={pendingFollowSession !== null}
-  title={t("sftp.followSetupTitle")}
-  confirmLabel={t("sftp.followSetupConfirm")}
-  danger={false}
-  onconfirm={confirmFollowSetup}
-  oncancel={() => (pendingFollowSession = null)}
->
-  <p class="mb-2">{t("sftp.followSetupBody")}</p>
-  <pre
-    class="overflow-x-auto rounded border border-edge bg-panel p-2 text-meta leading-relaxed text-muted"
-  >{osc7SetupDisplay()}</pre>
-</ConfirmDialog>
+<!-- Path sync's question where it has no answer yet (v1.23) — shows the OSC 7
+     setup command whenever the answer lets the app type it -->
+<PathSyncDialog ask={pathSyncAsk} onanswer={answerPathSync} oncancel={() => (pathSyncAsk = null)} />
 
 <!-- Tab close confirmation -->
 <ConfirmDialog
