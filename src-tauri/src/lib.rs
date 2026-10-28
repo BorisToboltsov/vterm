@@ -1809,6 +1809,24 @@ fn local_cwd(state: State<AppState>, session_id: String) -> Option<String> {
     local?.cwd()
 }
 
+/// Start or stop noting the folder each line typed into a LOCAL shell runs in
+/// (v1.24, ADR 0035) — on while the tab's terminal shows file links. False
+/// when there is no such session (yet).
+#[tauri::command]
+fn watch_local_submits(state: State<AppState>, session_id: String, on: bool) -> bool {
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    local.map(|pty| pty.watch_submits(on)).is_some()
+}
+
+/// The folder the last line typed into a LOCAL shell ran in, noted as it was
+/// sent: `None` when the shell was running a program then (`ssh`, a REPL) —
+/// the line was that program's — or the OS would not say.
+#[tauri::command]
+fn local_submitted_cwd(state: State<AppState>, session_id: String) -> Option<String> {
+    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
+    local?.submitted_cwd()
+}
+
 /// Take and clear the queue of files vterm was asked to open (CLI args at launch
 /// and macOS `Opened` events), so the frontend can open them on startup.
 #[tauri::command]
@@ -2570,6 +2588,8 @@ pub fn run() {
             localfile::write_local_text,
             localfile::save_editor_copy,
             local_cwd,
+            watch_local_submits,
+            local_submitted_cwd,
             take_pending_opens,
             keygen::generate_ssh_key,
             keygen::key_path_exists,

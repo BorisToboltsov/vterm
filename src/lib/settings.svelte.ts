@@ -22,6 +22,14 @@ import {
   isTerminalLinkMode,
   type TerminalLinkMode,
 } from "./termlink";
+import {
+  DEFAULT_FILE_LINK_CLICK,
+  DEFAULT_FILE_LINK_MODE,
+  isFileLinkClick,
+  isFileLinkMode,
+  type FileLinkClick,
+  type FileLinkMode,
+} from "./termfiles";
 import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "./tabrestore";
 import { sanitizeDockerRegistries, type DockerRegistry } from "./docker";
 import { sanitizeHiddenPanels, type PanelId } from "./docklayout";
@@ -161,6 +169,10 @@ export interface Settings {
   rightClick: RightClickAction;
   /** A click on a web link in terminal output: ask first, open, or nothing (termlink.ts). */
   terminalLinks: TerminalLinkMode;
+  /** A click on a file named in terminal output: ask first, open, or nothing (termfiles.ts). */
+  terminalFileLinks: FileLinkMode;
+  /** Which click opens it: a plain one, or ⌘/Ctrl-click only. */
+  terminalFileLinkClick: FileLinkClick;
   /** Plain Ctrl+V pastes on Windows/Linux (off = it goes to the shell). */
   ctrlVPaste: boolean;
   /** How path sync starts in a local tab (pathsync.ts). A server keeps its own
@@ -302,6 +314,8 @@ const DEFAULTS: Settings = {
   middleClickPaste: false,
   rightClick: "paste",
   terminalLinks: DEFAULT_TERMINAL_LINK_MODE,
+  terminalFileLinks: DEFAULT_FILE_LINK_MODE,
+  terminalFileLinkClick: DEFAULT_FILE_LINK_CLICK,
   ctrlVPaste: true,
   localPathSync: "ask",
   historySearch: true,
@@ -458,6 +472,12 @@ function load(): Settings {
       terminalLinks: isTerminalLinkMode(raw.terminalLinks)
         ? raw.terminalLinks
         : DEFAULTS.terminalLinks,
+      terminalFileLinks: isFileLinkMode(raw.terminalFileLinks)
+        ? raw.terminalFileLinks
+        : DEFAULTS.terminalFileLinks,
+      terminalFileLinkClick: isFileLinkClick(raw.terminalFileLinkClick)
+        ? raw.terminalFileLinkClick
+        : DEFAULTS.terminalFileLinkClick,
       ctrlVPaste: typeof raw.ctrlVPaste === "boolean" ? raw.ctrlVPaste : DEFAULTS.ctrlVPaste,
       localPathSync: pathSyncMode(raw.localPathSync),
       localShellPath:
@@ -603,6 +623,10 @@ export function applyImportedSettings(raw: unknown): void {
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
   if (!isRightClickAction(next.rightClick)) next.rightClick = DEFAULTS.rightClick;
   if (!isTerminalLinkMode(next.terminalLinks)) next.terminalLinks = DEFAULTS.terminalLinks;
+  if (!isFileLinkMode(next.terminalFileLinks)) next.terminalFileLinks = DEFAULTS.terminalFileLinks;
+  if (!isFileLinkClick(next.terminalFileLinkClick)) {
+    next.terminalFileLinkClick = DEFAULTS.terminalFileLinkClick;
+  }
   if (typeof next.ctrlVPaste !== "boolean") next.ctrlVPaste = DEFAULTS.ctrlVPaste;
   next.localPathSync = pathSyncMode(next.localPathSync);
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;

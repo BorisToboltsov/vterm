@@ -344,6 +344,37 @@
               <option value="off">{t("settings.terminalLinksOff")}</option>
             </select>
           </label>
+          <label class="mt-2 block text-xs text-muted">
+            <span class="flex items-center gap-1"
+              >{t("settings.terminalFileLinks")}<InfoHint text={t("settings.terminalFileLinksHint")} /></span
+            >
+            <select
+              data-testid="settings-terminal-file-links"
+              class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+              bind:value={settings.terminalFileLinks}
+            >
+              <option value="confirm">{t("settings.terminalFileLinksConfirm")}</option>
+              <option value="direct">{t("settings.terminalFileLinksDirect")}</option>
+              <option value="off">{t("settings.terminalFileLinksOff")}</option>
+            </select>
+          </label>
+          {#if settings.terminalFileLinks !== "off"}
+            <label class="mt-2 block text-xs text-muted">
+              {t("settings.terminalFileLinkClick")}
+              <select
+                data-testid="settings-terminal-file-link-click"
+                class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+                bind:value={settings.terminalFileLinkClick}
+              >
+                <option value="click">{t("settings.terminalFileLinkClickPlain")}</option>
+                <option value="modifier"
+                  >{t("settings.terminalFileLinkClickModifier", {
+                    key: hostEnv.os === "macos" ? "⌘" : "Ctrl",
+                  })}</option
+                >
+              </select>
+            </label>
+          {/if}
           {#if hostEnv.os !== "macos"}
             <label class="mt-2 flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" bind:checked={settings.ctrlVPaste} />

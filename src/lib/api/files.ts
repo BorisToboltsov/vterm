@@ -136,6 +136,24 @@ export function localCwd(sessionId: string): Promise<string | null> {
   return invoke<string | null>("local_cwd", { sessionId });
 }
 
+/**
+ * Start or stop noting the folder each line typed into a LOCAL shell runs in
+ * (v1.24) — while the tab's terminal shows file links. False when the session
+ * does not exist (yet).
+ */
+export function watchLocalSubmits(sessionId: string, on: boolean): Promise<boolean> {
+  return invoke<boolean>("watch_local_submits", { sessionId, on });
+}
+
+/**
+ * The folder the last line typed into a LOCAL shell ran in, noted as it was
+ * sent. Null when the shell was running a program then (`ssh`, a REPL) — the
+ * line was that program's, not the shell's — or the OS would not say.
+ */
+export function localSubmittedCwd(sessionId: string): Promise<string | null> {
+  return invoke<string | null>("local_submitted_cwd", { sessionId });
+}
+
 export function localMkdir(path: string): Promise<void> {
   return invoke<void>("local_mkdir", { path });
 }

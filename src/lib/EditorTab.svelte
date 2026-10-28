@@ -555,11 +555,23 @@
     });
     view = new EditorView({ state, parent: host });
     // Jump to a requested line (e.g. from a content-search hit).
-    if (doc.gotoLine && doc.gotoLine > 1) {
-      const n = Math.min(doc.gotoLine, view.state.doc.lines);
-      const line = view.state.doc.line(n);
-      view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
-    }
+    if (doc.gotoLine && doc.gotoLine > 1) jumpTo(doc.gotoLine);
+  });
+
+  /** Put the cursor at the start of 1-based `line` (clamped) and scroll to it. */
+  function jumpTo(lineNo: number) {
+    if (!view) return;
+    const n = Math.min(Math.max(1, lineNo), view.state.doc.lines);
+    const line = view.state.doc.line(n);
+    view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+  }
+
+  // A jump asked for once the file was open (v1.24: `file:line` clicked in
+  // terminal output, a search hit on a file already open) — `gotoEditorLine`.
+  $effect(() => {
+    const seq = doc.gotoSeq;
+    const lineNo = doc.gotoLine;
+    if (seq && lineNo) jumpTo(lineNo);
   });
 
   // Re-theme live when the user switches themes (settings.theme is a rune).

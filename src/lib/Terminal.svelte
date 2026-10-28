@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { tooltip } from "./actions/tooltip";
-  import { Terminal, type IMarker } from "@xterm/xterm";
+  import { Terminal, type IDisposable, type IMarker } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import { WebglAddon } from "@xterm/addon-webgl";
   import { SearchAddon } from "@xterm/addon-search";
@@ -13,8 +13,10 @@
   import { parseOsc7, parseOsc9 } from "./osc";
   import Icon from "./Icon.svelte";
   import { t } from "./i18n";
-  import { notifyError, notifySuccess } from "./stores/toasts.svelte";
+  import { notifyError, notifyInfo, notifySuccess } from "./stores/toasts.svelte";
   import { clickLink, terminalLinkHandler } from "./stores/linkopen.svelte";
+  import { createFileLinks, type FileLinks } from "./filelinkprovider";
+  import type { FileLinkTarget } from "./termfiles";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import {
     isAppShortcut,
@@ -37,12 +39,17 @@
     attachSession,
     closedEvent,
     connectSession,
+    localList,
+    localSubmittedCwd,
+    onSessionSubmit,
     openLocalTerminal,
     outputEvent,
     phaseEvent,
     authEvent,
     readShellHistory,
     resizePty,
+    sftpList,
+    watchLocalSubmits,
     writeToTerminal,
   } from "./api";
   import type { ConnPhase } from "./connphase";
@@ -84,6 +91,8 @@
     onselection,
     onlocalshell,
     onviewmode,
+    onfilelink,
+    filelinkDirs = true,
   }: {
     sessionId: string;
     serverId: string;
@@ -142,6 +151,12 @@
     /** Raw (false) ↔ structured table (true) — the session bar in +page.svelte
      *  shows the switch, the terminal owns the state and the parsed entries. */
     onviewmode?: (structured: boolean) => void;
+    /** A file link in the output was clicked (v1.24, ADR 0035). Omitted where
+     *  the output is no file of this session's — a shell inside a container —
+     *  which leaves the output without file links. */
+    onfilelink?: (target: FileLinkTarget) => void;
+    /** Folders are links too: the file panel can show them (it is not hidden). */
+    filelinkDirs?: boolean;
   } = $props();
 
   let container: HTMLDivElement;
@@ -303,6 +318,11 @@
   // the highlight toggle; every click goes to `clickLink`, which asks or opens.
   const linksEnabled = $derived(settings.terminalLinks !== "off");
   let webLinks: WebLinksAddon | undefined;
+  const fileLinksOn = $derived(!!onfilelink && settings.terminalFileLinks !== "off");
+  let fileLinks: FileLinks | undefined;
+  let fileLinkProvider: IDisposable | undefined;
+  // The session is open — a local one can be asked to note folders from now on.
+  let live = $state(false);
 
   // ── Structured JSON log view (Phase 10) ────────────────────────────────────
   // A raw↔structured toggle; in structured mode the output stream is parsed line
@@ -586,6 +606,18 @@
       { icon: "check", label: t("ctx.selectAll"), onSelect: () => term?.selectAll() },
       { kind: "separator" },
     ];
+    // The selected name, opened the way a click on it would (v1.24) — for a
+    // name the hover did not underline, or a hand that prefers the menu.
+    const selected = fileLinks && hasSelection ? term.getSelection() : "";
+    // xterm reports the selection's row 0-based, whatever its typings say.
+    const row = term?.getSelectionPosition()?.start.y;
+    if (selected.trim() && !selected.includes("\n") && row !== undefined) {
+      items.splice(3, 0, {
+        icon: "file",
+        label: t("ctx.openPath"),
+        onSelect: () => void openSelected(selected, row),
+      });
+    }
     if (searchEnabled) {
       items.push({ icon: "search", label: t("ctx.find"), onSelect: () => openSearch() });
     }
@@ -605,6 +637,13 @@
       );
     }
     ctxMenu = { x: e.clientX, y: e.clientY, items };
+  }
+
+  /** What the selected text names, opened as a click on it would be. */
+  async function openSelected(text: string, row: number) {
+    const target = await fileLinks?.targetOf(text, row);
+    if (target) onfilelink?.(target);
+    else notifyInfo(t("filelink.notFound", { name: text.trim() }));
   }
 
   /**
@@ -709,7 +748,10 @@
     // when the shell doesn't emit it — we never guess the path from the prompt.
     term.parser.registerOscHandler(7, (payload) => {
       const path = parseOsc7(payload);
-      if (path) oncwd?.(path);
+      if (path) {
+        oncwd?.(path);
+        fileLinks?.noteCwd(path);
+      }
       return true;
     });
     // OSC 9;9 is the same fact in the Windows dialect (Phase 39.3): PowerShell
@@ -718,7 +760,10 @@
     // subtypes (9;4 progress, notifications) to whoever else handles them.
     term.parser.registerOscHandler(9, (payload) => {
       const path = parseOsc9(payload);
-      if (path) oncwd?.(path);
+      if (path) {
+        oncwd?.(path);
+        fileLinks?.noteCwd(path);
+      }
       return path !== null;
     });
 
@@ -809,6 +854,10 @@
       return true;
     });
 
+    // Every line sent to the session — typed, pasted, broadcast — starts a
+    // block of output whose folder the file links read names in (v1.24).
+    unlisten.push(onSessionSubmit(sessionId, (written) => fileLinks?.noteSubmit(written)));
+
     // Stream output and close events BEFORE connecting (don't miss the banner).
     unlisten.push(
       await listen<number[]>(outputEvent(sessionId), (e) => {
@@ -860,6 +909,7 @@
         return;
       }
       replaying = false;
+      live = true;
       onadopted?.();
       if (focusOnConnect) term.focus();
     } else if (waiting) {
@@ -917,6 +967,7 @@
           notifyError(t("page.rememberFailed", { reason: outcome.rememberFailed }));
         }
       }
+      live = true;
       onstatus?.("connected");
       if (focusOnConnect) term.focus();
       return true;
@@ -1018,6 +1069,39 @@
     }
   });
 
+  // Names of files in the output (v1.24, ADR 0035), under their own setting.
+  // Off — or a tab whose output is not this session's files — registers no
+  // provider at all: the terminal stays plain xterm.
+  $effect(() => {
+    if (!term) return;
+    if (fileLinksOn && !fileLinks) {
+      fileLinks = createFileLinks(term, {
+        local,
+        style: () => (local && hostEnv.os === "windows" ? "windows" : "posix"),
+        shell: () => pasteShell,
+        dirs: () => filelinkDirs,
+        click: () => settings.terminalFileLinkClick,
+        mac: () => hostEnv.os === "macos",
+        open: (target) => onfilelink?.(target),
+        list: (dir) => (local ? localList(dir) : sftpList(sessionId, dir)),
+        submittedCwd: () => localSubmittedCwd(sessionId),
+      });
+      fileLinkProvider = term.registerLinkProvider(fileLinks.provider);
+    } else if (!fileLinksOn && fileLinks) {
+      fileLinkProvider?.dispose();
+      fileLinkProvider = undefined;
+      fileLinks.dispose();
+      fileLinks = undefined;
+    }
+  });
+
+  // A local shell notes the folder each line runs in only while it is asked
+  // to (the note costs a look at the process on every Enter).
+  $effect(() => {
+    if (!local || !live) return;
+    void watchLocalSubmits(sessionId, fileLinksOn).catch(() => {});
+  });
+
   // Leaving the structured view (and dropping its data) the moment the feature
   // is switched off keeps the terminal in its plain state.
   $effect(() => {
@@ -1034,6 +1118,8 @@
     searchAddon?.dispose();
     serializer?.dispose();
     webLinks?.dispose();
+    fileLinkProvider?.dispose();
+    fileLinks?.dispose();
     seedMark?.dispose();
     webgl?.dispose();
     term?.dispose();

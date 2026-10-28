@@ -55,7 +55,14 @@
   import ContextMenu from "./ContextMenu.svelte";
   import type { MenuItem, OpenMenu } from "./ctxmenu";
   import { notifyError, notifySuccess } from "./stores/toasts.svelte";
-  import { dirRevision, dockState, setDockCwd, type FilesDockState } from "./stores/dockstate.svelte";
+  import {
+    dirRevision,
+    dockState,
+    pendingFilesDir,
+    setDockCwd,
+    takeFilesDir,
+    type FilesDockState,
+  } from "./stores/dockstate.svelte";
   import {
     copyTargetList,
     pendingMoveRequest,
@@ -372,7 +379,16 @@
     await load(start);
   }
 
+  // Set once mounted: a folder asked for before then is taken on mount.
+  let started = false;
   onMount(async () => {
+    started = true;
+    // A folder clicked in terminal output (v1.24) — it is why the panel opened.
+    const asked = sessionKey ? takeFilesDir(sessionKey) : null;
+    if (asked) {
+      await openDir(asked);
+      return;
+    }
     // Resume where this session's panel was left off; otherwise a kind without a
     // connect step lists immediately on mount.
     const saved = sessionKey ? dockState(sessionKey).files : null;
@@ -383,6 +399,41 @@
   onDestroy(() => {
     clearTimeout(scrollIdle);
   });
+
+  // A folder asked for while the panel is already up.
+  $effect(() => {
+    const asked = pendingFilesDir(sessionKey);
+    if (!asked || !started || !sessionKey) return;
+    const key = sessionKey;
+    untrack(() => {
+      const dir = takeFilesDir(key);
+      if (dir) void openDir(dir);
+    });
+  });
+
+  /**
+   * Open `path` because something outside asked (a folder clicked in terminal
+   * output). An SFTP panel not connected yet connects straight to it — the
+   * click is the user's go-ahead, as the Connect button would be.
+   */
+  async function openDir(path: string) {
+    if (isConnected) {
+      await load(path);
+      return;
+    }
+    connecting = true;
+    error = "";
+    await load(path);
+    connecting = false;
+    connected = error === "";
+    persist();
+    if (connected && !homePath) {
+      adapter
+        .home()
+        .then((home) => (homePath = home))
+        .catch(() => {});
+    }
+  }
 
   // Re-list when the pane comes back into view. It stayed mounted while hidden, so
   // nothing refreshed it — and a listing that silently ages is the one thing the

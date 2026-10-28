@@ -64,6 +64,17 @@ pub fn process_cwd(pid: u32) -> Option<String> {
     (!cwd.is_empty()).then_some(cwd)
 }
 
+/// Whether process `pid` has a child process now. Windows' stand-in for "the
+/// shell is running a program" (v1.24): there is no foreground process group
+/// to ask. Walks every process — called once per line sent, never on a poll.
+#[cfg_attr(unix, allow(dead_code))]
+pub fn has_children(pid: u32) -> bool {
+    let parent = Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    sys.processes().values().any(|p| p.parent() == Some(parent))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,6 +90,23 @@ mod tests {
         let got_c = std::fs::canonicalize(&got).unwrap_or_else(|_| got.clone().into());
         let exp_c = std::fs::canonicalize(&expected).unwrap_or(expected);
         assert_eq!(got_c, exp_c);
+    }
+
+    #[test]
+    fn a_process_running_a_program_has_a_child_and_an_idle_one_has_none() {
+        let mut child = std::process::Command::new(if cfg!(windows) { "ping" } else { "sleep" })
+            .args(if cfg!(windows) {
+                &["-n", "5", "127.0.0.1"][..]
+            } else {
+                &["5"][..]
+            })
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("a child to run");
+        assert!(has_children(std::process::id()));
+        assert!(!has_children(child.id()));
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
