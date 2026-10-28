@@ -22,6 +22,9 @@
     availablePanels,
     COLLAPSED_RAIL,
     effectiveSize,
+    sideDockRoom,
+    sideDockWidths,
+    type SideDockState,
     isSessionPanel,
     offeredPanels,
     previewPanels,
@@ -129,7 +132,18 @@
   );
 
   let innerHeight = $state(0);
-  const size = $derived(effectiveSize(side, dock.size, innerHeight));
+  let innerWidth = $state(0);
+  // How each side dock stands in the row — read the same way by both, so they
+  // agree on how much each gives back when the window is too narrow.
+  const sideState = (s: "left" | "right"): SideDockState => {
+    const d = layout.docks[s];
+    if (availablePanels(d, hasSession, hidden).length === 0) return null;
+    return d.collapsed ? "rail" : d.size;
+  };
+  const sides = $derived(sideDockWidths(sideState("left"), sideState("right"), innerWidth));
+  const size = $derived(
+    side === "bottom" ? effectiveSize(side, dock.size, innerHeight) : sides[side],
+  );
 
   // No session to run on: a session panel shows one notice instead of itself.
   // It stays mounted underneath (its state survives the reconnect) but counts as
@@ -216,9 +230,14 @@
   function onResize(dx: number, dy: number) {
     const delta = side === "left" ? dx : side === "right" ? -dx : -dy;
     // Store what can actually be drawn: dragging the bottom dock past its share of
-    // the window would otherwise bank height the handle then has to "pay back"
-    // before it moves again.
-    setDockSize(side, effectiveSize(side, startSize + delta, innerHeight));
+    // the window, or a side dock past the centre's minimum, would otherwise bank
+    // size the handle then has to "pay back" before it moves again.
+    if (side === "bottom") {
+      setDockSize(side, effectiveSize(side, startSize + delta, innerHeight));
+    } else {
+      const other = sides[side === "left" ? "right" : "left"];
+      setDockSize(side, Math.min(startSize + delta, sideDockRoom(other, innerWidth)));
+    }
   }
 
   // ── Moving and hiding tabs ─────────────────────────────────────────────────
@@ -273,7 +292,7 @@
   );
 </script>
 
-<svelte:window bind:innerHeight />
+<svelte:window bind:innerHeight bind:innerWidth />
 
 {#snippet toggleButton()}
   <button

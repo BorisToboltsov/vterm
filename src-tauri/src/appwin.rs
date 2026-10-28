@@ -52,6 +52,11 @@ const DRAG_EVENT: &str = "window://drag";
 
 /// Size of a new window when the source window cannot be measured.
 const FALLBACK_SIZE: (f64, f64) = (1100.0, 720.0);
+/// The narrowest a window can be: both side docks at their minimum and the
+/// centre at its own (`WINDOW_MIN_WIDTH` in docklayout.ts, and `minWidth` of the
+/// main window in tauri.conf.json — `windowmin.guard` keeps the three equal).
+/// No minimum height: only the width squeezed the terminal between the docks.
+const WINDOW_MIN_WIDTH: f64 = 640.0;
 /// Offset of a new window from the one it came from (menu / palette command).
 const CASCADE: f64 = 32.0;
 /// A window dropped at the pointer keeps its tab strip under it.
@@ -895,6 +900,7 @@ fn build_window(
     let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
         .title("vterm")
         .inner_size(width, height)
+        .min_inner_size(WINDOW_MIN_WIDTH, 0.0)
         .shadow(true);
     if let Some((x, y)) = new_window_position(opts, source_pos) {
         builder = builder.position(x, y);

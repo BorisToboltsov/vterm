@@ -8,7 +8,8 @@ const TERMINAL = join(process.cwd(), "src", "lib", "Terminal.svelte");
  * The terminal's search bar stays inside its pane (v1.23). It is anchored to the
  * pane's right edge and used to be as wide as its contents (~400px), so in a
  * narrow pane — the centre allows 240px — it spilled over the docks beside it.
- * Now the bar is capped at the pane, the field shrinks, and the buttons wrap.
+ * Now the bar is capped at the pane, the field shrinks, and the buttons wrap —
+ * the row of buttons itself too: alone it is ~155px, wider than a squeezed pane.
  */
 export function searchBarViolations(source: string): string[] {
   const out: string[] = [];
@@ -21,6 +22,11 @@ export function searchBarViolations(source: string): string[] {
   const input = source.slice(start).match(/<input[\s\S]*?class="([^"]+)"/)?.[1] ?? "";
   for (const cls of ["min-w-0", "flex-1"]) {
     if (!input.split(/\s+/).includes(cls)) out.push(`the search field does not carry ${cls}`);
+  }
+  const afterInput = source.slice(source.indexOf("<input", start));
+  const buttons = afterInput.match(/<\/div>\s*<div class="([^"]+)">\s*<button/)?.[1] ?? "";
+  if (!["min-w-0", "flex-wrap"].every((cls) => buttons.split(/\s+/).includes(cls))) {
+    out.push("the row of buttons cannot wrap within the bar");
   }
   return out;
 }
@@ -38,6 +44,14 @@ describe("terminal search bar guard", () => {
       "the search bar is not capped at the width of its pane",
       "the search bar's buttons cannot wrap to a second row",
     ]);
+  });
+
+  it("catches a row of buttons that cannot wrap", () => {
+    const broken = source.replace(
+      '<div class="flex min-w-0 flex-wrap items-center justify-end gap-1">',
+      '<div class="flex items-center gap-1">',
+    );
+    expect(searchBarViolations(broken)).toEqual(["the row of buttons cannot wrap within the bar"]);
   });
 
   it("catches a field that keeps its full width", () => {

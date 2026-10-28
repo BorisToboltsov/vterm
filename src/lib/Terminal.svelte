@@ -1094,8 +1094,9 @@
     oncancel={cancelPaste}
   />
   <!-- Full-buffer search overlay (Phase 10). It never grows past its pane: the
-       field shrinks first, then the buttons wrap to a second row — a narrow pane
-       (240px minimum) otherwise saw the bar spill over the docks beside it. -->
+       field shrinks first, then the buttons wrap to a second row, and that row
+       wraps too where even it does not fit — a narrow pane otherwise saw the bar,
+       then the row of buttons, spill over the docks beside it. -->
   {#if search.open}
     <div
       class="absolute right-2 top-2 z-20 flex max-w-[calc(100%-1rem)] flex-wrap items-center justify-end gap-1 rounded border border-edge bg-panel-alt/95 px-2 py-1 shadow-lg"
@@ -1124,7 +1125,7 @@
           {:else if search.query}{countLabel || t("search.noResults")}{/if}
         </span>
       </div>
-      <div class="flex items-center gap-1">
+      <div class="flex min-w-0 flex-wrap items-center justify-end gap-1">
         <button
           type="button"
           onclick={() => {
