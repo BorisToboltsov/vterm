@@ -81,6 +81,8 @@ export type PathStyle = "posix" | "windows";
 export interface NamedPath {
   kind: "file" | "dir";
   path: string;
+  /** The line the output named in the file (`x.c:42`), 1-based; files only. */
+  line?: number;
 }
 
 /**
@@ -250,6 +252,8 @@ export interface Candidate {
   from: number;
   to: number;
   target: Resolved;
+  /** The place in the file the output named after the name, if any. */
+  line?: number;
 }
 
 interface Word {
@@ -271,13 +275,42 @@ function words(text: string): Word[] {
  */
 export const MAX_NAME_WORDS = 6;
 
+/** One way to read some characters as a name. */
+interface Reading {
+  value: string;
+  from: number;
+  to: number;
+  line?: number;
+}
+
+// A place in the file after its name: `x.c:42`, `x.c:42:5`, `x.c:42:5:`
+// (grep -n, gcc, rustc, eslint, nginx -t), `x.ts(17,3)` (tsc). The column is
+// read past, not kept: the editor opens on the line.
+const LOCATION = /(?::(\d+)(?::\d+)?|\((\d+)(?:,\s*\d+)?\)):?$/;
+// Python names the line after the name: `File "/srv/app.py", line 17, in main`.
+const LINE_AFTER = /^["']?,\s*line\s+(\d+)/;
+
 /** Ways to read the characters `text[from..to)` as a name, the plainest first. */
-function readings(text: string, from: number, to: number): { value: string; from: number; to: number }[] {
-  const out: { value: string; from: number; to: number }[] = [];
-  const add = (value: string, a: number, b: number) => {
-    if (value !== "" && !out.some((r) => r.value === value)) out.push({ value, from: a, to: b });
+function readings(text: string, from: number, to: number): Reading[] {
+  const out: Reading[] = [];
+  const add = (value: string, a: number, b: number, line?: number) => {
+    if (value === "" || out.some((r) => r.value === value)) return;
+    const after = line === undefined ? LINE_AFTER.exec(text.slice(b)) : null;
+    const at = line ?? (after ? Number(after[1]) : undefined);
+    const r: Reading = { value, from: a, to: b };
+    if (at !== undefined && at >= 1) r.line = at;
+    out.push(r);
+  };
+  // The name with the place after it taken off: the link covers both, as the
+  // output printed them, but a trailing colon is punctuation.
+  const located = (value: string, a: number, b: number) => {
+    const m = LOCATION.exec(value);
+    if (!m || m.index === 0) return;
+    const end = value.endsWith(":") ? b - 1 : b;
+    add(value.slice(0, m.index), a, end, Number(m[1] ?? m[2]));
   };
   const raw = text.slice(from, to);
+  // The plain name first: a file really called `notes:12` is that file.
   add(raw, from, to);
   // GNU `ls` quotes a name with spaces or quotes in it (`'my file.txt'`); the
   // link keeps the quotes, the name loses them.
@@ -287,11 +320,15 @@ function readings(text: string, from: number, to: number): { value: string; from
   // The mark is not underlined; a trailing `/` stays in the name (only a
   // folder fits it).
   if (/[*@|=]$/.test(raw)) add(raw.slice(0, -1), from, to - 1);
-  // A path in a sentence or a header: `(see /etc/hosts).`, `src:`.
+  located(raw, from, to);
+  // A path in a sentence or a header: `(see /etc/hosts).`, `src:`, and a
+  // stack frame `(/app/x.js:12:5)`.
   const lead = /^[(["'<]+/.exec(raw)?.[0].length ?? 0;
   const trail = /[)\]"'>.,;:]+$/.exec(raw.slice(lead))?.[0].length ?? 0;
   if (lead + trail > 0 && lead + trail < raw.length) {
-    add(raw.slice(lead, raw.length - trail), from + lead, to - trail);
+    const core = raw.slice(lead, raw.length - trail);
+    located(core, from + lead, to - trail);
+    add(core, from + lead, to - trail);
   }
   return out;
 }
@@ -314,7 +351,10 @@ export function lineCandidates(text: string, lineDir: string | null, style: Path
     for (let j = reach; j >= i; j--) {
       for (const r of readings(text, ws[i].start, ws[j].end)) {
         const target = resolveName(r.value, lineDir, style);
-        if (target) out.push({ i, j, from: r.from, to: r.to, target });
+        if (!target) continue;
+        const c: Candidate = { i, j, from: r.from, to: r.to, target };
+        if (r.line) c.line = r.line;
+        out.push(c);
       }
     }
   }
@@ -408,7 +448,10 @@ export function pickLinks(
     for (const c of byWord.get(i) ?? []) {
       const kind = listing(c.target.dir)?.get(nameKey(c.target.base, style));
       if (!kind || (kind === "dir" && !dirs) || (c.target.wantsDir && kind !== "dir")) continue;
-      out.push({ from: c.from, to: c.to, target: { kind, path: c.target.path } });
+      // A line is a place in a file; a folder has none.
+      const target: NamedPath =
+        kind === "file" && c.line ? { kind, path: c.target.path, line: c.line } : { kind, path: c.target.path };
+      out.push({ from: c.from, to: c.to, target });
       i = c.j;
       break;
     }

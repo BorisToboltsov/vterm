@@ -14,6 +14,7 @@ import {
   failEditor,
   setEditorContent,
   setEditorSudo,
+  gotoEditorLine,
   setEditorWriteAccess,
   setEditorSaveIssue,
   markSaved,
@@ -103,6 +104,22 @@ describe("store mutators", () => {
     expect(ws.editors[0].loading).toBe(true);
     expect(ws.editors[0].source).toBe("sftp"); // default source
     expect(findEditorByPath("s1", "/etc/app.yaml")?.id).toBe(id);
+  });
+
+  it("gotoEditorLine asks an open editor for a line — again for the same line", () => {
+    const id = addEditor("s1", "/etc/app.yaml", "app.yaml", LANG, "sftp", { gotoLine: 3 });
+    const doc = () => getWorkspace("s1").editors.find((e) => e.id === id)!;
+    expect(doc().gotoLine).toBe(3);
+    expect(doc().gotoSeq).toBeUndefined();
+    gotoEditorLine("s1", id, 40);
+    expect(doc()).toMatchObject({ gotoLine: 40, gotoSeq: 1 });
+    gotoEditorLine("s1", id, 40);
+    expect(doc().gotoSeq).toBe(2);
+    gotoEditorLine("s1", id, 0);
+    gotoEditorLine("s1", "nope", 5);
+    gotoEditorLine("s2", id, 5);
+    expect(doc()).toMatchObject({ gotoLine: 40, gotoSeq: 2 });
+    expect(peekWorkspace("s2")).toBeNull();
   });
 
   it("addEditor records a local source when given", () => {

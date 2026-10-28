@@ -23,8 +23,9 @@ import { describe, expect, it } from "vitest";
 //    while the shell itself holds the terminal (a line typed into `ssh` or a
 //    REPL is that program's);
 //  - the page opens a link only as `fileLinkClick` decided or as the question
-//    was answered, a file through the editor's own path and a folder through
-//    the file panel; "don't ask again" is the only writer of the setting.
+//    was answered, a file through the editor's own path — on the line the
+//    output named, if it named one — and a folder through the file panel;
+//    "don't ask again" is the only writer of the setting.
 // Each check is a function over source text, run against a planted violation
 // too. Checked without comments.
 
@@ -143,10 +144,16 @@ export function pageViolations(raw: string): string[] {
   if (
     !/if \(target\.kind === "dir"\) \{\s*requestFilesDir\(id, target\.path\);\s*revealPanel\("files"\);/.test(open) ||
     !/openFileInEditor\(id, target\.path/.test(open) ||
-    !/openLocalFileInEditor\(id, target\.path\)/.test(open) ||
+    !/openLocalFileInEditor\(id, target\.path/.test(open) ||
     /addEditor\(/.test(open)
   ) {
     out.push("a file link opens other than through the editor's and the file panel's own paths");
+  }
+  if (
+    !/openFileInEditor\(id, target\.path, baseName\(target\.path\), \{ gotoLine: target\.line \}\)/.test(open) ||
+    !/openLocalFileInEditor\(id, target\.path, \{ gotoLine: target\.line \}\)/.test(open)
+  ) {
+    out.push("a place in a file (`x.c:42`) opens at the top of the file");
   }
   return out;
 }
@@ -296,12 +303,21 @@ describe("terminal file link guard — catches what it exists for", () => {
   it("a file opened past the editor's own path", () => {
     const src = swap(
       read(PAGE),
-      "void openLocalFileInEditor(id, target.path);",
+      "void openLocalFileInEditor(id, target.path, { gotoLine: target.line });",
       'addEditor(id, target.path, baseName(target.path), editorLangOrPlain(target.path), "local");',
     );
     expect(pageViolations(src)).toContain(
       "a file link opens other than through the editor's and the file panel's own paths",
     );
+  });
+
+  it("a place in a file that loses its line", () => {
+    const src = swap(
+      read(PAGE),
+      "void openFileInEditor(id, target.path, baseName(target.path), { gotoLine: target.line });",
+      "void openFileInEditor(id, target.path, baseName(target.path));",
+    );
+    expect(pageViolations(src)).toContain("a place in a file (`x.c:42`) opens at the top of the file");
   });
 
   it("another writer of the mode", () => {

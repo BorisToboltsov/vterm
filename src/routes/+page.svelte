@@ -217,6 +217,7 @@
     fillEditor,
     closeEditor as closeEditorStore,
     findEditorByPath,
+    gotoEditorLine,
     setEditorSudo,
     setEditorWriteAccess,
     setEditorSaveIssue,
@@ -3224,6 +3225,7 @@
     const existing = findEditorByPath(sid, path);
     if (existing) {
       showSessionView(sid, existing.id);
+      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
       return;
     }
     // For a config-shaped file not already recognised as nginx, also consult the set
@@ -3310,11 +3312,16 @@
   }
 
   /** Open a LOCAL file in a given workspace's editor (from "Open with vterm"). */
-  async function openLocalFileInEditor(sid: string, path: string, opts: { gitBase?: string } = {}) {
+  async function openLocalFileInEditor(
+    sid: string,
+    path: string,
+    opts: { gitBase?: string; gotoLine?: number } = {},
+  ) {
     const name = path.split(/[\\/]/).pop() ?? path;
     const existing = findEditorByPath(sid, path);
     if (existing) {
       showSessionView(sid, existing.id);
+      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
       return;
     }
     let file;
@@ -3326,6 +3333,7 @@
     }
     const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
       gitBase: opts.gitBase,
+      gotoLine: opts.gotoLine,
     });
     fillEditor(sid, id, file);
   }
@@ -3609,9 +3617,9 @@
       requestFilesDir(id, target.path);
       revealPanel("files");
     } else if (tab.kind === "ssh") {
-      void openFileInEditor(id, target.path, baseName(target.path));
+      void openFileInEditor(id, target.path, baseName(target.path), { gotoLine: target.line });
     } else {
-      void openLocalFileInEditor(id, target.path);
+      void openLocalFileInEditor(id, target.path, { gotoLine: target.line });
     }
   }
 

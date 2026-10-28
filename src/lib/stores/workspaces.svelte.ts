@@ -73,6 +73,9 @@ export interface EditorDoc {
   sudoPassword: string;
   /** 1-based line to scroll to on open (e.g. from a grep hit), or null. */
   gotoLine: number | null;
+  /** Bumped by `gotoEditorLine`: a jump to `gotoLine` asked for after the
+   *  file was open (the same line twice is two jumps). */
+  gotoSeq?: number;
   /**
    * Git HEAD version of the file, set when opened from the git panel. Its
    * presence turns the editor into an **editable inline diff** (CodeMirror
@@ -269,6 +272,17 @@ export function failEditor(sessionId: string, id: string, message: string): void
 /** Live edit from the editor component. */
 export function setEditorContent(sessionId: string, id: string, content: string): void {
   updateDoc(sessionId, id, { content });
+}
+
+/**
+ * Move an open editor to a line (v1.24): a click on `file:line` in terminal
+ * output, or a search hit, on a file that is already open — opening it again
+ * would only show it where it was.
+ */
+export function gotoEditorLine(sessionId: string, id: string, line: number): void {
+  const doc = workspacesState.map[sessionId]?.editors.find((e) => e.id === id);
+  if (!doc || line < 1) return;
+  updateDoc(sessionId, id, { gotoLine: line, gotoSeq: (doc.gotoSeq ?? 0) + 1 });
 }
 
 /** Mark an editor as elevated (sudo) and remember its password for later saves. */

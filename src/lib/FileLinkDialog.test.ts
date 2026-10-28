@@ -48,6 +48,11 @@ describe("FileLinkDialog", () => {
     expect(screen.getByTestId("filelink-prod")).toBeInTheDocument();
   });
 
+  it("says the line a place in the file opens on", () => {
+    open(file({ target: { kind: "file", path: "/srv/app/main.c", line: 42 } }));
+    expect(screen.getByTestId("filelink-hint")).toHaveTextContent("at line 42");
+  });
+
   it("asks about a folder as a folder", () => {
     open(file({ target: { kind: "dir", path: "/srv/app" } }));
     expect(screen.getByText("Show the folder?")).toBeInTheDocument();

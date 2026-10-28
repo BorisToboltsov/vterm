@@ -56,8 +56,12 @@
       class="max-h-32 overflow-auto break-all rounded border border-edge bg-panel p-2 font-mono text-xs text-text"
       data-testid="filelink-path"
     >{ask.target.path}</p>
-    <p class="mt-2 text-xs text-muted">
-      {ask.target.kind === "dir" ? t("filelink.dirHint") : t("filelink.fileHint")}
+    <p class="mt-2 text-xs text-muted" data-testid="filelink-hint">
+      {ask.target.kind === "dir"
+        ? t("filelink.dirHint")
+        : ask.target.line
+          ? t("filelink.fileLineHint", { line: ask.target.line })
+          : t("filelink.fileHint")}
     </p>
 
     <div class="mt-4 flex flex-wrap items-center justify-end gap-2">
