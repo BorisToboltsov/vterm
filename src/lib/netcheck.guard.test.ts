@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -50,15 +50,6 @@ function strip(src: string): string {
     .replace(/^\s*\/\/.*$/gm, "");
 }
 
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    else if (/\.(svelte|ts)$/.test(entry) && !/\.test\.ts$/.test(entry)) acc.push(full);
-  }
-  return acc;
-}
-
 /** The text of `function name(` up to its closing brace at the start of a line. */
 function fnBody(src: string, name: string): string {
   const at = src.search(new RegExp(`(?:async\\s+)?function ${name}\\(`));
@@ -70,14 +61,6 @@ function fnBody(src: string, name: string): string {
 }
 
 // ── The checks ───────────────────────────────────────────────────────────────
-
-/** Files that call `netcheckRun(` (the API wrapper itself excluded). */
-function runCallers(files: Record<string, string>): string[] {
-  return Object.entries(files)
-    .filter(([name, src]) => !name.endsWith("api/probe.ts") && /\bnetcheckRun\(/.test(strip(src)))
-    .map(([name]) => name)
-    .sort();
-}
 
 /** In the tool, every `netcheckRun(` probes identity only: no targets. */
 function toolOnlyProbesIdentity(src: string): boolean {
@@ -170,13 +153,11 @@ describe("access check guard", () => {
   const store = read("stores/netcheck.svelte.ts");
   const table = read("NetCheckRuleTable.svelte");
 
-  it("checks run only through the store and the tool's identity probe", () => {
-    const files = Object.fromEntries(sourceFiles(LIB).map((f) => [f.slice(LIB.length + 1), readFileSync(f, "utf8")]));
-    expect(runCallers(files)).toEqual(["UtilNetCheck.svelte", "stores/netcheck.svelte.ts"]);
+  // That only the store and the tool call netcheckRun is the lint rule `vterm/owned-imports`.
+  it("the tool's own calls only ask a server who it is", () => {
     expect(toolOnlyProbesIdentity(tool)).toBe(true);
     // Planted: the tool checks targets itself.
     expect(toolOnlyProbesIdentity(tool.replace("netcheckArgs([]), []", "netcheckArgs(t), t"))).toBe(false);
-    expect(runCallers({ ...files, "Other.svelte": "netcheckRun(a, b, c);" })).toContain("Other.svelte");
   });
 
   it("every check carries a stop handle, and Stop uses it", () => {

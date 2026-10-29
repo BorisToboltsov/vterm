@@ -425,6 +425,115 @@ const rules = {
     }),
   ),
 
+  "owned-imports": {
+    meta: {
+      type: "problem",
+      docs: { description: "A call that one module owns is imported only there" },
+      schema: [
+        {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: { owners: { type: "array", items: { type: "string" } }, why: { type: "string" } },
+            required: ["owners", "why"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      messages: { bad: "{{name}} is called from {{owners}} alone: {{why}}" },
+    },
+    create(context) {
+      const owned = context.options[0] ?? {};
+      const rel = path.relative(ROOT, context.filename).split(path.sep).join("/");
+      const check = (node, name) => {
+        const entry = Object.hasOwn(owned, name) ? owned[name] : null;
+        if (!entry || entry.owners.includes(rel)) return;
+        context.report({ node, messageId: "bad", data: { name, owners: entry.owners.join(", "), why: entry.why } });
+      };
+      return {
+        // Named, under any alias: `import { closeTab as drop }` is still closeTab.
+        ImportSpecifier(node) {
+          if (node.importKind !== "type") check(node, node.imported.name ?? node.imported.value);
+        },
+        // Through a namespace or a dynamic import: `api.importBackup(…)`.
+        MemberExpression(node) {
+          if (!node.computed && node.property.type === "Identifier") check(node, node.property.name);
+        },
+      };
+    },
+  },
+
+  "forbidden-imports": {
+    meta: {
+      type: "problem",
+      docs: { description: "A module does not reach the modules its layer sits below" },
+      schema: [
+        {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              from: { type: "string" },
+              to: { type: "array", items: { type: "string" } },
+              types: { type: "boolean" },
+              why: { type: "string" },
+            },
+            required: ["from", "to", "why"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      messages: { bad: "{{from}} does not import {{to}}{{kind}}: {{why}}" },
+    },
+    create(context) {
+      const rel = path.relative(ROOT, context.filename).split(path.sep).join("/");
+      const mine = (context.options[0] ?? []).filter((r) => r.from === rel);
+      if (mine.length === 0) return {};
+      // `./tabs.svelte` names tabs.svelte.ts, `./fspath` names fspath.ts.
+      const resolved = (file) => (existsSync(`${file}.ts`) ? `${file}.ts` : file);
+      const visit = (node, typeOnly) => {
+        const src = node.source;
+        if (!src || src.type !== "Literal" || typeof src.value !== "string") return;
+        const t = target(context.filename, src.value);
+        if (!t.file) return;
+        const to = path.relative(ROOT, resolved(t.file)).split(path.sep).join("/");
+        for (const r of mine) {
+          if (!r.to.includes(to) || (typeOnly && r.types)) continue;
+          context.report({ node, messageId: "bad", data: { from: rel, to, kind: r.types ? " by value" : "", why: r.why } });
+        }
+      };
+      const typeOnly = (node) =>
+        node.importKind === "type" ||
+        node.exportKind === "type" ||
+        (node.specifiers?.length > 0 && node.specifiers.every((s) => s.importKind === "type" || s.exportKind === "type"));
+      return {
+        ImportDeclaration: (node) => visit(node, typeOnly(node)),
+        ExportNamedDeclaration: (node) => visit(node, typeOnly(node)),
+        ExportAllDeclaration: (node) => visit(node, typeOnly(node)),
+        ImportExpression: (node) => visit(node, false),
+      };
+    },
+  },
+
+  "path-sync-mode": rule(
+    "A stored path-sync answer is read through pathSyncMode()",
+    "Read a server's path-sync answer through pathSyncMode(): a mode a newer build wrote, or a hand-edited file, would count as \"always\" somewhere and type a command into a shell unasked.",
+    (_, report) => ({
+      MemberExpression(node) {
+        if (!isMember(node, "pathSync")) return;
+        for (let n = node; n.parent; n = n.parent) {
+          const p = n.parent;
+          if (p.type === "CallExpression" && p.arguments.includes(n)) {
+            if (p.callee.type === "Identifier" && p.callee.name === "pathSyncMode") return;
+            break;
+          }
+          if (!["ChainExpression", "MemberExpression", "TSNonNullExpression", "TSAsExpression"].includes(p.type)) break;
+        }
+        report(node);
+      },
+    }),
+  ),
+
   "each-as-t": rule(
     "An each-block variable is not named t",
     "Don't name the {#each} variable `t`: it shadows the translation function t() for the whole block.",

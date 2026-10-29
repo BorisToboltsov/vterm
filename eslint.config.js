@@ -94,4 +94,57 @@ export default defineConfig(
   own("md-links", MARKUP),
   own("backdrop-no-close", MARKUP),
   own("each-as-t", MARKUP),
+  own("path-sync-mode", SOURCE),
+  {
+    files: SOURCE,
+    ignores: TESTS,
+    rules: {
+      // A call one module owns, because the rule it keeps lives there.
+      "vterm/owned-imports": [
+        "error",
+        {
+          setServerPathSync: {
+            owners: ["src/lib/page/pathsyncflow.svelte.ts"],
+            why: "a server's path-sync answer is written by the form and by the path-sync question, nowhere else",
+          },
+          transferStart: {
+            owners: ["src/lib/transferflow.ts"],
+            why: "startTransfer asks before a file is replaced — a second starter replaces without asking (ADR 0025)",
+          },
+          importBackup: {
+            owners: ["src/lib/BackupSettings.svelte"],
+            why: "an import writes the catalog the preview planned, after the user saw it",
+          },
+          startChat: {
+            owners: ["src/lib/AiChat.svelte"],
+            why: "one AI turn at a time: the composer checks the chat first, and a raised question becomes a chip, never a send",
+          },
+          netcheckRun: {
+            owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/UtilNetCheck.svelte"],
+            why: "a check runs from the store, with a stop handle; the tool only asks a server who it is",
+          },
+          closeTab: {
+            owners: ["src/routes/+page.svelte"],
+            why: "a tab closes through closeTabFully, which drops everything kept by its session id",
+          },
+        },
+      ],
+      "vterm/forbidden-imports": [
+        "error",
+        [
+          {
+            from: "src/lib/stores/tabs.svelte.ts",
+            to: ["src/lib/stores/workspaces.svelte.ts", "src/lib/stores/aichat.svelte.ts"],
+            why: "the centre holds connections; their files and chats sit above it, and closeTabFully ties them together",
+          },
+          {
+            from: "src/lib/stores/tabincoming.svelte.ts",
+            to: ["src/lib/stores/tabs.svelte.ts"],
+            types: true,
+            why: "the preview of a tab from another window cannot move the layout; the tab is placed once, when it arrives",
+          },
+        ],
+      ],
+    },
+  },
 );

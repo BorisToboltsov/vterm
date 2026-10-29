@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -92,23 +92,6 @@ export function frontendViolations(dialog: string, settingsSection: string, rema
   return out;
 }
 
-/** Source files other than `BackupSettings.svelte` and the API that call `importBackup`. */
-export function otherImporters(files: { rel: string; src: string }[]): string[] {
-  return files
-    .filter(({ rel }) => !/BackupSettings\.svelte$|api[/\\]servers\.ts$/.test(rel))
-    .filter(({ src }) => /\bimportBackup\(/.test(strip(src)))
-    .map(({ rel }) => rel);
-}
-
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    else if (/\.(svelte|ts)$/.test(entry) && !/\.test\.ts$/.test(entry)) acc.push(full);
-  }
-  return acc;
-}
-
 const LIB = "src-tauri/src/commands/backup.rs";
 const DIALOG = "src/lib/BackupImportDialog.svelte";
 const SECTION = "src/lib/BackupSettings.svelte";
@@ -121,11 +104,6 @@ describe("backup import guard", () => {
 
   it("the frontend imports the catalog the preview planned", () => {
     expect(frontendViolations(read(DIALOG), read(SECTION), read(REMAP))).toEqual([]);
-  });
-
-  it("only the backup section starts an import", () => {
-    const files = sourceFiles(join(ROOT, "src")).map((f) => ({ rel: f.slice(ROOT.length + 1), src: readFileSync(f, "utf8") }));
-    expect(otherImporters(files)).toEqual([]);
   });
 
   it("catches a backend that writes the archive's servers", () => {
@@ -154,11 +132,5 @@ describe("backup import guard", () => {
     expect(frontendViolations(read(DIALOG), read(SECTION), src)).toContain(
       "the saved-password hint is taken from the backup",
     );
-  });
-
-  it("catches another place that starts an import", () => {
-    expect(otherImporters([{ rel: "src/lib/ServerTree.svelte", src: "importBackup(p, null, true)" }])).toEqual([
-      "src/lib/ServerTree.svelte",
-    ]);
   });
 });

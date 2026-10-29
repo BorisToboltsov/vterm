@@ -304,16 +304,12 @@ export function dragViolations(source: string): string[] {
 
 /**
  * Its preview cannot change the layout: the store that keeps it knows the tabs
- * store by type alone, so it has nothing to change the layout with. The tab is
- * placed once, when it arrives — by the model's `placeTab`.
+ * store by type alone (the lint rule `vterm/forbidden-imports`), so it has
+ * nothing to change the layout with. The tab is placed once, when it arrives —
+ * by the model's `placeTab`.
  */
-export function incomingViolations(incoming: string, store: string): string[] {
+export function incomingViolations(store: string): string[] {
   const out: string[] = [];
-  const c = code(incoming);
-  for (const m of c.matchAll(/import\s+(type\s+)?\{[^}]*\}\s*from\s*["']\.\/tabs\.svelte["']/g)) {
-    if (!m[1]) out.push("the preview of an incoming tab can reach the tabs store");
-  }
-  if (/\btabsState\b/.test(c)) out.push("the preview of an incoming tab reads the tabs store");
   const adopt = fn(code(store), "adoptTab");
   if (!adopt.includes("center = placeTab(center, tab.sessionId, drop);")) {
     out.push("a tab from another window is not placed by the model, where it was dropped");
@@ -325,7 +321,6 @@ export function incomingViolations(incoming: string, store: string): string[] {
 
 const STORE = "lib/stores/tabs.svelte.ts";
 const DRAG = "lib/stores/tabdrag.svelte.ts";
-const INCOMING = "lib/stores/tabincoming.svelte.ts";
 const PAGE = "routes/+page.svelte";
 const TERMINAL = "lib/Terminal.svelte";
 
@@ -348,7 +343,7 @@ describe("centre layout guard", () => {
   });
 
   it("a tab held over the window is only previewed, and placed by the model when it arrives", () => {
-    expect(incomingViolations(raw(INCOMING), raw(STORE))).toEqual([]);
+    expect(incomingViolations(raw(STORE))).toEqual([]);
   });
 
   it("synchronous input lays nothing out itself — a grid is the layout's command", () => {
@@ -524,17 +519,9 @@ describe("centre layout guard — catches what it exists for", () => {
     ).toContain("the pane chords fire even when the focused control already handled the key");
   });
 
-  it("a preview of an incoming tab that could move the layout, or a tab that lands by hand", () => {
-    const incoming = raw(INCOMING);
+  it("a tab from another window that lands by hand", () => {
     expect(
       incomingViolations(
-        mutate(incoming, 'import type { Tab } from "./tabs.svelte";', 'import { dropTab, type Tab } from "./tabs.svelte";'),
-        store,
-      ),
-    ).toEqual(["the preview of an incoming tab can reach the tabs store"]);
-    expect(
-      incomingViolations(
-        incoming,
         mutate(
           store,
           "center = placeTab(center, tab.sessionId, drop);",

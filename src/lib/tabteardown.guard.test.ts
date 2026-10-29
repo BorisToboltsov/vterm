@@ -52,11 +52,7 @@ function importersOfCloseTab(): { file: string; alias: string }[] {
 }
 
 describe("tab teardown guard", () => {
-  it("only the teardown file imports the raw closeTab", () => {
-    const importers = importersOfCloseTab();
-    expect(importers.map((i) => i.file)).toEqual([TEARDOWN_FILE]);
-  });
-
+  // Only the teardown file imports the raw closeTab: the lint rule `vterm/owned-imports`.
   it("the raw closeTab is called exactly once — inside closeTabFully", () => {
     const importers = importersOfCloseTab();
     const alias = importers[0].alias;
@@ -93,7 +89,8 @@ describe("tab teardown guard", () => {
       "nginxConfigCache.delete",
       "delete termSelection",
       "delete terminalCwd",
-      "delete followTerminal",
+      // Following and the setup typed into its shell (page/pathsyncflow).
+      "pathSync.forget",
       "delete localShellKind",
       "clearAuthPrompt",
     ]) {

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -34,15 +34,6 @@ function body(src: string, signature: string, indent: string): string {
   return src.slice(start, end);
 }
 
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    else if (/\.(svelte|ts)$/.test(entry) && !/\.test\.ts$/.test(entry)) acc.push(full);
-  }
-  return acc;
-}
-
 describe("one AI turn at a time", () => {
   it("startChat refuses a user turn over a busy chat before touching the conversation", () => {
     const fn = body(read("lib/stores/aichat.svelte.ts"), "export async function startChat(", "");
@@ -71,13 +62,5 @@ describe("one AI turn at a time", () => {
     // Weighed only once the question is there: a `ready` check ahead of taking the
     // request would leave it parked in the store.
     expect(handler.slice(0, handler.indexOf("chat.ask = null"))).not.toMatch(/!ready/);
-  });
-
-  it("only the chat store starts a turn", () => {
-    const callers = sourceFiles(SRC)
-      .filter((f) => /\bstartChat\(/.test(strip(readFileSync(f, "utf8"))))
-      .map((f) => f.slice(SRC.length + 1))
-      .sort();
-    expect(callers).toEqual(["lib/AiChat.svelte", "lib/stores/aichat.svelte.ts"]);
   });
 });

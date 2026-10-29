@@ -143,6 +143,45 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ],
     ],
   },
+  "owned-imports": {
+    bad: [
+      ["src/lib/ZzProbe.svelte", svelte(`import { setServerPathSync } from "./api";\nvoid setServerPathSync;`)],
+      ["src/lib/SftpPanel.svelte", svelte(`import { transferStart } from "./api";\nvoid transferStart;`)],
+      // Under an alias, and through a namespace.
+      ["src/lib/zz_probe.ts", `import { closeTab as drop } from "./stores/tabs.svelte";\nexport const x = drop;`],
+      ["src/lib/zz_probe.ts", `import * as api from "./api";\nexport const x = () => api.importBackup("/b", null, true);`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
+    ],
+    good: [
+      ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
+      ["src/lib/transferflow.ts", `import { transferStart } from "./api";\nexport const x = transferStart;`],
+      ["src/lib/ZzProbe.svelte", svelte(`import { setServerNotes } from "./api";\nvoid setServerNotes;`)],
+    ],
+  },
+  "forbidden-imports": {
+    bad: [
+      ["src/lib/stores/tabs.svelte.ts", `import { getWorkspace } from "./workspaces.svelte";\nexport const x = getWorkspace;`],
+      ["src/lib/stores/tabs.svelte.ts", `import type { SessionChat } from "./aichat.svelte";\nexport type X = SessionChat;`],
+      ["src/lib/stores/tabincoming.svelte.ts", `import { dropTab, type Tab } from "./tabs.svelte";\nexport const x: [unknown, Tab?] = [dropTab];`],
+    ],
+    good: [
+      ["src/lib/stores/tabincoming.svelte.ts", `import type { Tab } from "./tabs.svelte";\nexport type X = Tab;`],
+      // Prose in a comment is not a dependency.
+      ["src/lib/stores/tabs.svelte.ts", `// a connection's files live in ./workspaces.svelte\nexport const x = 1;`],
+    ],
+  },
+  "path-sync-mode": {
+    bad: [
+      ["src/lib/zz_probe.ts", `declare const srv: { pathSync?: string } | undefined;\nexport const auto = srv?.pathSync === "auto";`],
+      ["src/lib/zz_probe.ts", `declare const srv: { pathSync?: string };\nexport const raw = String(srv.pathSync);`],
+    ],
+    good: [
+      [
+        "src/lib/zz_probe.ts",
+        `import { pathSyncMode } from "./pathsync";\ndeclare const list: { pathSync?: string }[];\nexport const m = pathSyncMode(list.find(Boolean)?.pathSync);`,
+      ],
+    ],
+  },
   "each-as-t": {
     bad: [["src/lib/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as t}<span>{t}</span>{/each}`)]],
     good: [["src/lib/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as tag}<span>{tag}</span>{/each}`)]],

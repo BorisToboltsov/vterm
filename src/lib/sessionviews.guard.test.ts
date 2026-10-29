@@ -104,9 +104,6 @@ const PAGE = "routes/+page.svelte";
 export function centreViolations(tabs: string): string[] {
   const c = code(tabs);
   const out: string[] = [];
-  if (/from\s*["']\.\/workspaces\.svelte["']/.test(c)) {
-    out.push("the tabs store reaches the workspaces store");
-  }
   if (/\b(?:openDocTab|closeDocTab|sessionOfTab)\b|\bdocs\b/.test(c)) {
     out.push("the tabs store keeps tabs that are not connections");
   }
@@ -381,11 +378,8 @@ describe("session views guard — catches what it exists for", () => {
         ),
       ),
     ).toEqual(["the tabs store keeps tabs that are not connections"]);
-    expect(
-      centreViolations(`import { getWorkspace } from "./workspaces.svelte";\n${tabs}`),
-    ).toEqual(["the tabs store reaches the workspaces store"]);
-    // Prose in a comment is not a dependency.
-    expect(centreViolations(`// see ./workspaces.svelte for a connection's docs\n${tabs}`)).toEqual([]);
+    // That the tabs store does not reach the workspaces store is the lint rule
+    // `vterm/forbidden-imports`.
   });
 
   it("a layout built or edited by hand", () => {

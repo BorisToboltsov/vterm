@@ -11,6 +11,7 @@
 //     `transferflow.ts` and nowhere else: that is where the destination is asked
 //     which names it holds and the user is asked before a file is replaced
 //     (v1.11.3). A second caller is a way to replace a file without a question.
+//     Held by the lint rule `vterm/owned-imports` (and `invoke` by `invoke-in-api`).
 //  2. Leave to replace comes from an answer. In `startTransfer` a file may
 //     replace only because the caller said a system dialog agreed (`agreed`), or
 //     because `uploadItems` said so after the question — never as a literal.
@@ -28,8 +29,8 @@
 // Checked on the source with comments stripped; each check is a function over
 // text, shown to catch its own violation.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
@@ -50,39 +51,11 @@ export function code(source: string): string {
   return out.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 }
 
-function sources(dir = "src"): string[] {
-  const out: string[] = [];
-  for (const name of readdirSync(join(ROOT, dir))) {
-    const rel = join(dir, name);
-    if (statSync(join(ROOT, rel)).isDirectory()) out.push(...sources(rel));
-    else if (/\.(ts|svelte)$/.test(name) && !/\.test\.ts$/.test(name)) out.push(rel);
-  }
-  return out;
-}
-
-const unix = (rel: string): string => relative(ROOT, join(ROOT, rel)).split(sep).join("/");
-
-const API = "src/lib/api/files.ts";
 const FLOW = "src/lib/transferflow.ts";
 const STORE = "src/lib/stores/transfers.svelte.ts";
 const PANEL = "src/lib/SftpPanel.svelte";
 const HANDOFF = "src/lib/tabhandoff.ts";
 const PAGE = "src/routes/+page.svelte";
-
-// ── 1: one path starts a job ────────────────────────────────────────────────
-
-/** Files other than the API wrapper and the flow that start a job themselves. */
-export function starterViolations(files: Record<string, string>): string[] {
-  const out: string[] = [];
-  for (const [rel, source] of Object.entries(files)) {
-    if (rel === API || rel === FLOW) continue;
-    const c = code(source);
-    if (/\btransferStart\s*\(/.test(c) || /["']transfer_start["']/.test(c)) {
-      out.push(`${rel} starts a transfer itself — no question is asked before a file is replaced`);
-    }
-  }
-  return out;
-}
 
 // ── 2: leave to replace comes from an answer ────────────────────────────────
 
@@ -174,12 +147,6 @@ export function closedTabViolations(page: string): string[] {
 }
 
 describe("transfer-job guard", () => {
-  const files = Object.fromEntries(sources().map((rel) => [unix(rel), read(rel)]));
-
-  it("one path starts a job", () => {
-    expect(starterViolations(files)).toEqual([]);
-  });
-
   it("leave to replace comes from an answer", () => {
     expect(replaceViolations(read(FLOW))).toEqual([]);
   });
@@ -207,19 +174,6 @@ describe("the guard catches", () => {
     expect(out, `mutation "${from}" did not apply`).not.toBe(source);
     return out;
   };
-
-  it("a panel that starts a job itself", () => {
-    const panel = mutate(
-      read(PANEL),
-      "await startTransfer({\n      src: DISK,",
-      "await transferStart({\n      src: DISK,",
-    );
-    expect(starterViolations({ [PANEL]: panel })).toHaveLength(1);
-    // Or goes to the command directly.
-    expect(starterViolations({ "src/lib/x.ts": 'invoke("transfer_start", { spec });' })).toHaveLength(1);
-    // A comment that names the command starts nothing.
-    expect(starterViolations({ "src/lib/x.ts": "// see transferStart(spec)" })).toEqual([]);
-  });
 
   it("leave to replace handed out without a question", () => {
     const flow = read(FLOW);

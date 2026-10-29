@@ -47,27 +47,16 @@ describe("git follows the terminal guard", () => {
   // toggle. It used to set the shell up but leave following off, so an SFTP panel
   // connected afterwards neither followed nor showed the toggle on — the label
   // promised what the button didn't do. Checked on the wiring, not a name.
+  // That the switch, the button and the question all end with following on —
+  // and before an answer is saved — is the path-sync flow's, held by its
+  // behaviour tests (page/pathsyncflow.svelte.test.ts).
   it("git's path sync button turns on the same dock-wide following as the toggle", () => {
     const src = read(PAGE);
     expect(src).not.toMatch(/enableGitPathSync|pendingFollowTwoWay/);
     // Per session since v1.2 (the docks keep a panel for every session on screen).
     expect(src).toMatch(
-      /\?\s*\(\)\s*=>\s*enablePathSync\(tab\.sessionId\)\s*\n\s*:\s*undefined\}/,
+      /onEnablePathSync=\{pathSync\.needsSetup\(tab\.sessionId\)\s*\?\s*\(\)\s*=>\s*pathSync\.enable\(tab\.sessionId\)\s*:\s*undefined\}/,
     );
-    const fn = (name: string) => {
-      const start = src.indexOf(`function ${name}(`);
-      expect(start, `${name}() not found in +page.svelte`).toBeGreaterThan(-1);
-      return src.slice(start, src.indexOf("\n  }", start));
-    };
-    // Following starts in one place (v1.23, pathsync.guard), and the button gets
-    // there: straight away, or through the path-sync question.
-    expect(fn("startFollowing")).toMatch(/followTerminal\[id\]\s*=\s*true/);
-    expect(fn("enablePathSync")).toMatch(/startFollowing\(id,/);
-    // Answering the question always ends with following on — before any answer
-    // is saved, so a failed save cannot leave it off.
-    const answer = fn("answerPathSync");
-    const starts = answer.indexOf("startFollowing(ask.sessionId");
-    expect(starts).toBeGreaterThan(-1);
-    expect(starts).toBeLessThan(answer.indexOf("if (!mode) return"));
+    expect(src).toMatch(/onToggleFollowTerminal=\{\(\)\s*=>\s*pathSync\.toggle\(tab\.sessionId\)\}/);
   });
 });
