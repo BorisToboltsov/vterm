@@ -148,6 +148,15 @@ const DROP_TREE = new Set([
   "source", // srcset lives here — a remote fetch
 ]);
 
+/**
+ * The close tag of each DROP_TREE element, compiled once from the fixed names. A
+ * regex built from the parsed tag name at the use site is input-derived as far as
+ * a scanner can see (CodeQL js/incomplete-hostname-regexp), guard or not.
+ */
+const DROP_CLOSE: ReadonlyMap<string, RegExp> = new Map(
+  [...DROP_TREE].map((name) => [name, new RegExp(`</${name}[\\s>]`, "i")]),
+);
+
 /** Block-level tags: a line that opens/closes one is a raw-HTML block, not a paragraph. */
 const BLOCK = new Set([
   "div",
@@ -346,11 +355,11 @@ export function protectHtml(text: string, ctx: HtmlCtx): string {
     const run = m[2] ?? "";
     const closing = whole[1] === "/";
 
-    if (DROP_TREE.has(name)) {
+    const close = DROP_CLOSE.get(name);
+    if (close) {
       // Skip the element's whole subtree. Case-insensitive, tolerant of attributes
       // on the close tag; if unclosed, everything to the end goes.
       if (!closing && !whole.endsWith("/>")) {
-        const close = new RegExp(`</${name}[\\s>]`, "i");
         const rest = text.slice(i);
         const cm = close.exec(rest);
         if (cm) {

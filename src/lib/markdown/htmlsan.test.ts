@@ -45,6 +45,13 @@ describe("refuses everything dangerous", () => {
     expect(html("<style>*{x:1}")).toBe("");
   });
 
+  it("finds the close of each dropped-tree tag in any case, with attributes on it", () => {
+    for (const tag of ["script", "textarea", "noscript", "template", "select", "title"]) {
+      expect(html(`a<${tag}>secret</${tag.toUpperCase()}>b`)).toBe("ab");
+      expect(html(`a<${tag}>secret</${tag} x>b`)).toBe("ab");
+    }
+  });
+
   it("treats a self-closed dropped-tree tag as just that tag", () => {
     // `<svg/>` closes itself, so following content is NOT swallowed as its subtree.
     expect(html("<svg/>after")).toBe("after");
