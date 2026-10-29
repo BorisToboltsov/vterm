@@ -1,0 +1,68 @@
+name: Rust-окружение
+description: >-
+  Rust той версии, что названа в rust-toolchain.toml, системные зависимости
+  Tauri на Linux и, по желанию, кэш — единственное место, где workflow их ставят
+  (гейт ci.guard.test.ts).
+
+inputs:
+  targets:
+    description: Дополнительные цели через пробел (universal-сборка macOS).
+    default: ""
+  system-deps:
+    description: >-
+      "true" — системные пакеты Tauri 2 на Linux: без них не собирается сам крейт,
+      а значит не доходят до кода ни clippy, ни тесты, ни CodeQL.
+    default: "true"
+  extra-packages:
+    description: Пакеты apt сверх набора Tauri, через пробел (WebDriver и X для E2E).
+    default: ""
+  cache-key:
+    description: >-
+      Ключ кэша target/. Пусто (по умолчанию) — без кэша: так собирается
+      публикующий release.yml (zizmor cache-poisoning).
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # Версия читается из rust-toolchain.toml, а не передаётся строкой: `stable`
+    # в CI значил «что вышло сегодня», и новый clippy ронял зелёное вчера дерево.
+    # rustup на раннере есть на всех трёх ОС; файл он и сам читает при первом
+    # `cargo`, а явная установка ставит компоненты и цели до того.
+    - name: Rust из rust-toolchain.toml
+      shell: bash
+      env:
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+        if [ -z "$channel" ]; then
+          echo "::error::rust-toolchain.toml не называет channel"
+          exit 1
+        fi
+        rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy --no-self-update
+        for target in $TARGETS; do
+          rustup target add --toolchain "$channel" "$target"
+        done
+        echo "CARGO_TERM_COLOR=always" >> "$GITHUB_ENV"
+        rustup show active-toolchain
+
+    # WebKitGTK 4.1, tray, rsvg, patchelf для AppImage, rpm для .rpm.
+    - name: Системные зависимости Tauri (Linux)
+      if: runner.os == 'Linux' && inputs.system-deps == 'true'
+      shell: bash
+      env:
+        EXTRA: ${{ inputs.extra-packages }}
+      run: |
+        sudo apt-get update
+        # shellcheck disable=SC2086 # EXTRA — список пакетов, делится на слова намеренно
+        sudo apt-get install -y --no-install-recommends \
+          libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+          libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm \
+          $EXTRA
+
+    - name: Кэш Rust
+      if: inputs.cache-key != ''
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        workspaces: src-tauri -> target
+        key: ${{ inputs.cache-key }}

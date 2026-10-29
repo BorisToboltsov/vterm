@@ -114,8 +114,9 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 ## Требования
 
-Нужны только для сборки из исходников. На всех ОС: **Node.js 20+**, **pnpm**
-и **Rust stable** ([rustup](https://rustup.rs/)).
+Нужны только для сборки из исходников. На всех ОС: **Node.js 22+**, **pnpm** 11
+и **Rust** через [rustup](https://rustup.rs/): версию из `rust-toolchain.toml` он поставит сам
+при первом `cargo`.
 
 | ОС | Дополнительно |
 |----|---------------|
@@ -281,11 +282,6 @@ Linux-job намеренно собирается на **ubuntu-22.04**, а не
 с glibc сборочного хоста, поэтому его версия — пол совместимости артефакта. 22.04 (glibc 2.35)
 покрывает и Debian 12, и Ubuntu 22.04/24.04+; сборка на 24.04/26.04 этот охват сужает.
 
-**GitLab CI** — [.gitlab-ci.yml](../.gitlab-ci.yml) (`lint → security → test → build → release`) для
-**self-hosted** раннеров: теги `macos` / `windows` / `linux` в конфиге замените на теги
-своих раннеров (*Settings → CI/CD → Runners*). Пуш и MR дают артефакты пайплайна, тег
-`v1.2.3` — GitLab Release. Rust и pnpm CI ставит сам.
-
 ---
 
 ## Как выкатить релиз
@@ -449,8 +445,7 @@ gh secret set VTERM_UPDATE_PRIVATE_KEY --repo BorisToboltsov/vterm < .update-key
 Секрет CI должен соответствовать встроенному открытому ключу — скрипт проверяет это.
 Apple Developer ID, нотаризация и Windows Authenticode для этого ключа не нужны.
 
-GitLab остаётся альтернативной сборкой дистрибутивов; канал обновлений данного приложения —
-GitHub. Публикация одного GitLab-релиза не меняет GitHub Latest.
+Канал обновлений — релизы GitHub: другой сборки дистрибутивов, кроме `release.yml`, нет.
 
 Помощник запускается из копии текущей программы. Portable/AppImage сохраняют путь и имя;
 macOS обновляет весь `.app`. В каталоге назначения нужна запись. MSI/NSIS запускаются через

@@ -1,0 +1,9 @@
+# Версия Rust — одна на CI, машину разработчика и Linux-контейнер. rustup читает
+# этот файл из любого каталога под корнем репозитория; CI ставит ту же версию
+# (.github/actions/setup-rust), образ e2e/linux/Dockerfile собран на ней же.
+# Поднимается руками вместе со свежими lockfile перед minor (AGENTS.md); держит
+# гейт ci.guard.test.ts.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

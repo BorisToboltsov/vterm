@@ -783,7 +783,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 - **CSP строгий, capabilities поимённо** (ADR 0036): ни удалённых origin, ни `csp: null`,
   `script-src` без `'unsafe-inline'`; ни одного набора `*:default`, opener только `https://`, без
-  `fs`/`dangerous*`. Зависимости — `cargo deny`/`cargo audit`/`pnpm audit`/Semgrep; исключение
+  `fs`/`dangerous*`. Зависимости — `cargo deny`/`pnpm audit`/Semgrep; исключение
   advisory живёт, пока ему есть что исключать; npm ставится только `--frozen-lockfile`, у каждого
   пакета. Модель — [SECURITY.md](../SECURITY.md). Гейты `tauri-security.guard`,
   `releaseassets.guard`.
@@ -1036,6 +1036,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой |
+| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |

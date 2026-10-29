@@ -14,7 +14,7 @@
 //
 // Менять версию: `pnpm version:set X.Y.Z`.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -86,7 +86,9 @@ describe("README-плашка версии не отстаёт от package.json
 // оттуда `.version`, не упадёт — он соберёт файл с именем
 // `vterm-portable-../package.json-x86_64.exe` и зальёт его в релиз.
 describe("CI берёт версию из package.json, а не из tauri.conf.json", () => {
-  const WORKFLOWS = [".github/workflows/release.yml", ".gitlab-ci.yml"];
+  const WORKFLOWS = readdirSync(join(ROOT, ".github/workflows"))
+    .filter((f) => /\.ya?ml$/.test(f))
+    .map((f) => `.github/workflows/${f}`);
 
   const code = (rel: string): string =>
     read(rel)

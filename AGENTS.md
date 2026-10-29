@@ -84,8 +84,11 @@ pnpm update                                          # в пределах ди�
 ```
 
 Dependabot двигает только **прямые** зависимости; исправления транзитивных (так ушли `unic-*`
-вместе с пятью исключениями advisory) приходят только так. После — полный прогон: `cargo deny`
-упадёт на исключении, которому стало нечего исключать, — сними его из `deny.toml` и `audit.toml`.
+вместе с пятью исключениями advisory) приходят только так. Тогда же — версия Rust: `channel`
+в [rust-toolchain.toml](rust-toolchain.toml) и `FROM rust:…` в
+[e2e/linux/Dockerfile](e2e/linux/Dockerfile) на текущий stable, обе разом (гейт `ci.guard`):
+Dependabot её не двигает. После — полный прогон: `cargo deny` упадёт на исключении, которому
+стало нечего исключать, — сними его из `deny.toml`; новый clippy — чини код.
 
 ### Очистка после зелёного прогона
 
@@ -165,10 +168,8 @@ shields.io, ничем не резолвится). `tauri.conf.json` ничег�
 
 Каждая версия даёт три дистрибутива — macOS, Windows, Linux. Единый кросс-ОС файл невозможен,
 кросс-компиляция Tauri между ОС нерабочая, поэтому собирает CI:
-[release.yml](.github/workflows/release.yml) на раннерах GitHub по тегу `v*` (основной путь)
-и [.gitlab-ci.yml](.gitlab-ci.yml) на self-hosted раннерах
-(`lint → security → test → build → release`). Локально доступна сборка только под текущую ОС.
-Подробности — [docs/INSTALL.md](docs/INSTALL.md).
+[release.yml](.github/workflows/release.yml) на раннерах GitHub по тегу `v*`. Локально доступна
+сборка только под текущую ОС. Подробности — [docs/INSTALL.md](docs/INSTALL.md).
 
 **Тег не собирает релиз из красного дерева:** `release.yml` первой джобой сверяет тег с
 версией из `package.json` (чужой тег не собирает ничего), затем вызывает
@@ -176,11 +177,15 @@ shields.io, ничем не резолвится). `tauri.conf.json` ничег�
 workflow — [docs/TESTS.md](docs/TESTS.md#ci-на-github); свойства цепочки поставки —
 [SECURITY.md](SECURITY.md). Правя workflow, помни: экшены пинятся **по коммит-SHA** с
 комментарием версии, а `${{ … }}` в `run:` не подставляется (только через `env`) — оба
-правила держит гейт.
+правила держит гейт. Общие шаги — pnpm, Node, Rust, пакеты Tauri, кэш — только экшены
+[.github/actions/](.github/actions/), в workflow их не копируют; у публикующего `release.yml`
+кэша нет (гейт `ci.guard`).
 
 ## Toolchain (нестандартный на этой машине)
 
 - `cargo`/`rustc` через rustup, **не в PATH** свежей сессии → `source "$HOME/.cargo/env"`.
+  Версия — из [rust-toolchain.toml](rust-toolchain.toml), та же, что в CI: rustup ставит её сам
+  при первом `cargo` в репозитории, `stable` машины не используется.
 - `pnpm` — standalone в `$HOME/Library/pnpm/bin` (corepack-шим сломан под Node 25) →
   `export PATH="$HOME/Library/pnpm/bin:$PATH"`.
 - pnpm гейтит нативные build-скрипты; esbuild разрешён через `allowBuilds: { esbuild: true }`

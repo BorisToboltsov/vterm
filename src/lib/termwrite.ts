@@ -5,7 +5,7 @@
 // in flight at once can reach the PTY/SSH channel in either order. A human
 // rarely types fast enough to lose that race, but auto-type (password
 // managers), barcode scanners and key repeat do — "echo vterm" arrived as
-// "echo vtemr" in the nightly E2E.
+// "echo vtemr" in the deep-check E2E.
 //
 // So writes to one session are strictly sequential: the next one is sent only
 // after the previous resolved. Bytes that arrive meanwhile are not queued as

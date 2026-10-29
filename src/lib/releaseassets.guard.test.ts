@@ -5,8 +5,7 @@
 // Why a guard and not just a workflow: tauri-action uploads exactly the bundles
 // it built, so both files silently vanish from GitHub Releases the moment their
 // extra steps are dropped or renamed — and nothing fails, the release just comes
-// out incomplete. GitLab CI (build:macos / build:windows) carries the same two,
-// so the two pipelines must not drift apart.
+// out incomplete.
 //
 // Comments are stripped before matching: a file-level text match would happily
 // pass on a workflow whose step was deleted but whose comment still describes it
@@ -19,7 +18,7 @@ import { describe, expect, it } from "vitest";
 const ROOT = process.cwd();
 const WORKFLOW = ".github/workflows/release.yml";
 const CI_WORKFLOW = ".github/workflows/ci.yml";
-const NIGHTLY_WORKFLOW = ".github/workflows/nightly.yml";
+const DEEP_WORKFLOW = ".github/workflows/deep.yml";
 
 /** Файл workflow без строк-комментариев (см. преамбулу — комментарий лгал бы). */
 const codeOf = (rel: string): string =>
@@ -114,10 +113,10 @@ describe("release runs behind the quality gates", () => {
   // The deep layers (E2E in a real window, live SFTP against a real sshd, deep
   // fuzzing) never run on a PR and are scheduled only monthly — so without this
   // job a broken happy path merged into main would ship on the next tag.
-  it("has a deep job that reuses nightly.yml", () => {
+  it("has a deep job that reuses deep.yml", () => {
     const deep = jobs.get("deep");
     expect(deep, "job `deep` not found in release.yml").toBeDefined();
-    expect(deep).toMatch(/uses:\s*\$\/\.github\/workflows\/nightly\.yml/);
+    expect(deep).toMatch(/uses:\s*\$\/\.github\/workflows\/deep\.yml/);
   });
 
   it("blocks the build matrix on both jobs", () => {
@@ -146,33 +145,17 @@ describe("release runs behind the quality gates", () => {
     }
   });
 
-  it("the GitLab release refuses such a tag too", () => {
-    const gitlab = codeOf(".gitlab-ci.yml");
-    const release = gitlab.slice(gitlab.indexOf("\nrelease:"));
-    expect(release).toMatch(/version="\$\(sed -n '[^']*"version"[^']*' package\.json\)"/);
-    expect(release).toMatch(/if \[ "\$CI_COMMIT_TAG" != "v\$version" \]; then[\s\S]*?exit 1/);
-    // Before the release is named after the tag.
-    expect(release.indexOf('"$CI_COMMIT_TAG" != "v$version"')).toBeLessThan(
-      release.indexOf("tag_name:"),
-    );
-    // The sed in it reads the version this repository's package.json holds.
-    const line = readFileSync(join(ROOT, "package.json"), "utf8")
-      .split("\n")
-      .find((l) => /^  "version": "[^"]*",$/.test(l));
-    expect(line, "package.json no longer spells the version the way the sed expects").toBeDefined();
-  });
-
   it("the reused workflows are actually callable", () => {
     // `workflow_call` is what makes them reusable; without it the `uses:` above
     // fails at dispatch time, i.e. only ever on a real tag push.
     expect(codeOf(CI_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
-    expect(codeOf(NIGHTLY_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
+    expect(codeOf(DEEP_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
   });
 
-  it("the reused nightly runs the deep layers", () => {
-    const nightly = codeOf(NIGHTLY_WORKFLOW);
+  it("the reused deep workflow runs the deep layers", () => {
+    const deep = codeOf(DEEP_WORKFLOW);
     for (const job of ["fuzz:", "live-sftp:", "e2e:"]) {
-      expect(nightly, `nightly.yml lost job \`${job}\``).toMatch(new RegExp(`^ {2}${job}`, "m"));
+      expect(deep, `deep.yml lost job \`${job}\``).toMatch(new RegExp(`^ {2}${job}`, "m"));
     }
   });
 
@@ -189,71 +172,6 @@ describe("release runs behind the quality gates", () => {
       expect(ci, `CI does not run \`${cmd}\``).toContain(cmd);
     }
   });
-});
-
-// pnpm 11 needs Node >= 22.13 (it requires `node:sqlite`) and dies on the very
-// first invocation — which is the setup-node step itself, since `cache: pnpm`
-// runs `pnpm store path`. The pin is a floor, not a preference: bumping pnpm
-// without bumping Node passes review, passes locally, and takes out all three
-// platforms at once. Whoever raises either pin must look at the other.
-// Checked across BOTH workflows, and across every occurrence inside each: ci.yml
-// sets the pair up twice (the `web` and `deps` jobs), so a first-match check
-// would bless a file whose second job still pinned Node 20.
-describe.each([WORKFLOW, CI_WORKFLOW])("toolchain pins in %s", (rel) => {
-  const wf = codeOf(rel);
-
-  const majorsOf = (re: RegExp): number[] => {
-    const found = [...wf.matchAll(re)].map((m) => Number(m[1]));
-    expect(found.length, `pin not found: ${re}`).toBeGreaterThan(0);
-    return found;
-  };
-
-  // `@\S+[^\n]*` spans the SHA pin plus its trailing `# vX.Y.Z` comment; what is
-  // being read here is the pnpm major from `with: version:`, not the action tag.
-  const pnpmMajors = majorsOf(
-    /pnpm\/action-setup@\S+[^\n]*\s+with:\s+version:\s*(\d+)/g,
-  );
-  const nodeMajors = majorsOf(/node-version:\s*(\d+)/g);
-
-  it("every Node pin clears the floor of the highest pinned pnpm major", () => {
-    // pnpm >= 11 → Node >= 22; pnpm 10 was fine on Node 20.
-    const floor = Math.max(...pnpmMajors) >= 11 ? 22 : 20;
-    expect(Math.min(...nodeMajors)).toBeGreaterThanOrEqual(floor);
-  });
-
-  it("sets up Node wherever it sets up pnpm", () => {
-    expect(nodeMajors.length).toBe(pnpmMajors.length);
-  });
-
-  it("does not sit on a Node major GitHub has deprecated", () => {
-    expect(Math.min(...nodeMajors)).toBeGreaterThanOrEqual(22);
-  });
-
-  // Separate axis from `node-version`: this is the runtime the *actions* are
-  // built against (`runs.using` in their action.yml), not the Node the project
-  // builds on. GitHub currently force-runs node20 actions on Node 24 and warns;
-  // when that crutch is removed they stop working. These are the first majors
-  // shipping `using: node24` — verified against each action.yml.
-  const NODE24_FLOOR: Record<string, number> = {
-    "actions/checkout": 5,
-    "actions/setup-node": 5,
-    "pnpm/action-setup": 5,
-  };
-
-  // Actions are pinned by commit SHA, so the human-readable major lives in the
-  // trailing `# vX.Y.Z` comment — that comment is load-bearing, not decoration.
-  it.each(Object.entries(NODE24_FLOOR))(
-    "%s is pinned to a major that runs on Node 24",
-    (action, floor) => {
-      const found = [
-        ...wf.matchAll(new RegExp(`${action}@[0-9a-f]{40} # v(\\d+)`, "g")),
-      ];
-      expect(found.length, `${action} not pinned in ${rel}`).toBeGreaterThan(0);
-      // Every occurrence, not just the first: the same action is set up once per
-      // job, and a stale pin in the second job is invisible to a first-match check.
-      for (const m of found) expect(Number(m[1])).toBeGreaterThanOrEqual(floor);
-    },
-  );
 });
 
 // The builds are unsigned, and the release page actively teaches the recipient to
@@ -298,18 +216,26 @@ describe("release ships integrity material", () => {
 // time, and these workflows hand `tauri-action` a token with `contents: write`.
 // Whoever controls that tag controls what lands in the published release.
 //
-// Applies to every workflow, not just the two above — a scanner job that runs on
-// `main` is as good a foothold as the release job.
-describe("third-party actions are pinned by commit SHA", () => {
-  const dir = ".github/workflows";
-  const files = readdirSync(join(ROOT, dir)).filter((f) => /\.ya?ml$/.test(f));
+// Applies to every workflow and every shared action, not just the two above — a
+// scanner job that runs on `main`, or the action every job sets itself up with,
+// is as good a foothold as the release job.
+const CI_FILES = [
+  ...readdirSync(join(ROOT, ".github/workflows"))
+    .filter((f) => /\.ya?ml$/.test(f))
+    .map((f) => join(".github/workflows", f)),
+  ...readdirSync(join(ROOT, ".github/actions")).map((d) => join(".github/actions", d, "action.yml")),
+];
 
-  it("there are workflows to check", () => {
-    expect(files.length).toBeGreaterThan(0);
+describe("third-party actions are pinned by commit SHA", () => {
+  const files = CI_FILES;
+
+  it("there are workflows and shared actions to check", () => {
+    expect(files.some((f) => f.includes("workflows"))).toBe(true);
+    expect(files.some((f) => f.includes("actions/"))).toBe(true);
   });
 
   it.each(files)("%s pins every action it uses", (file) => {
-    const uses = [...codeOf(join(dir, file)).matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)]
+    const uses = [...codeOf(file).matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)]
       .map((m) => m[1])
       // In-repo references (`$/…`) are versioned by this repo's own history.
       .filter((ref) => !ref.startsWith("$/"));
@@ -327,7 +253,7 @@ describe("third-party actions are pinned by commit SHA", () => {
     // cloned something there could swap the action; `$/…` is fixed to this
     // commit and counts as pinned for GitHub's own "fully pinned" policy
     // (zizmor self-repository, code scanning #60).
-    const relative = [...codeOf(join(dir, file)).matchAll(/^\s*(?:- )?uses:\s*(\.\/\S*)/gm)].map(
+    const relative = [...codeOf(file).matchAll(/^\s*(?:- )?uses:\s*(\.\/\S*)/gm)].map(
       (m) => m[1],
     );
     expect(relative, `${file}: workspace-relative uses:`).toEqual([]);
@@ -336,7 +262,7 @@ describe("third-party actions are pinned by commit SHA", () => {
   it.each(files)("%s says which version each SHA is", (file) => {
     // Without the comment the pin is unreviewable and Dependabot has nothing to
     // bump against.
-    for (const line of codeOf(join(dir, file)).split("\n")) {
+    for (const line of codeOf(file).split("\n")) {
       if (/^\s*(?:- )?uses:\s*\S+@[0-9a-f]{40}/.test(line)) {
         expect(line, `${file}: pin without a version comment`).toMatch(
           /@[0-9a-f]{40} # v?\d/,
@@ -349,7 +275,7 @@ describe("third-party actions are pinned by commit SHA", () => {
 // Supply chain, the npm half (v1.25.0): an install that may rewrite the lockfile
 // resolves whatever the registry serves that day. The E2E job did exactly that —
 // `e2e/` had no lockfile, so `pnpm install --no-frozen-lockfile` — and the E2E
-// job runs inside the release pipeline (release → deep → nightly). Every
+// job runs inside the release pipeline (release → deep). Every
 // `pnpm install` a workflow or a CI script runs insists on the committed
 // lockfile, and every package in the repo has one.
 
@@ -373,12 +299,7 @@ const packageDirs = (dir = "", acc: string[] = []): string[] => {
 };
 
 describe("dependencies install from a committed lockfile", () => {
-  const scripts = [
-    ...readdirSync(join(ROOT, ".github/workflows"))
-      .filter((f) => /\.ya?ml$/.test(f))
-      .map((f) => join(".github/workflows", f)),
-    "e2e/linux/run.sh",
-  ];
+  const scripts = [...CI_FILES, "e2e/linux/run.sh"];
 
   it.each(scripts)("%s never installs without --frozen-lockfile", (rel) => {
     expect(unfrozenInstalls(readFileSync(join(ROOT, rel), "utf8"))).toEqual([]);
@@ -455,10 +376,6 @@ describe("Windows: portable .exe ships alongside the installers", () => {
 // WebView2 и без сети; пропадёт проверка подписи — в exe поедет что угодно.
 describe("Windows: portable .exe with the bundled WebView2", () => {
   const step = uploadStepWith("x86_64-webview2.exe");
-  const gitlab = readFileSync(join(ROOT, ".gitlab-ci.yml"), "utf8")
-    .split("\n")
-    .filter((line) => !/^\s*#/.test(line))
-    .join("\n");
 
   it("exists and runs only on the Windows runner", () => {
     expect(step).toBeDefined();
@@ -491,12 +408,6 @@ describe("Windows: portable .exe with the bundled WebView2", () => {
 
   it("the script it runs actually exists", () => {
     expect(existsSync(join(ROOT, "scripts/webview2-runtime.mjs"))).toBe(true);
-  });
-
-  it("GitLab build:windows builds the same file the same way", () => {
-    expect(gitlab).toContain("node scripts/webview2-runtime.mjs resolve");
-    expect(gitlab).toContain("Get-AuthenticodeSignature");
-    expect(gitlab).toMatch(/vterm-portable-\$v-x86_64-webview2\.exe/);
   });
 
   it("the release body tells which portable to take", () => {

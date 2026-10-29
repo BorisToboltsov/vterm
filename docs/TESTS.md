@@ -10,7 +10,7 @@
 [Что чем покрыто](#что-чем-покрыто) · [Гейты-контракты](#гейты-контракты) ·
 [Покрытие](#покрытие) · [Живые SFTP-тесты](#живые-sftp-тесты) ·
 [E2E и тестовый SSH](#e2e-и-тестовый-ssh) · [CI на GitHub](#ci-на-github) ·
-[CI на GitLab](#ci-на-gitlab) · [Фаззинг](#фаззинг-недоверенного-входа) ·
+[Фаззинг](#фаззинг-недоверенного-входа) ·
 [Как добавить тест](#как-добавить-тест)
 
 ---
@@ -23,10 +23,10 @@
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
 | **Правила линтера** | ESLint (`pnpm lint`) | 24 правила проекта | Инварианты, видные в одном месте кода: слои импорта, сеть из WebView, сырой `e.key`, LF в PTY, `{@html}` без `use:mdLinks`… — [lint/vterm.js](../lint/vterm.js), кейсы нарушений — `lint.guard.test.ts` | Везде |
-| **Гейты-контракты** | Vitest (обычные тесты) | 50 файлов | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
-| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly и релиз |
-| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly и релиз (нужен контейнер) |
-| **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → nightly и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
+| **Гейты-контракты** | Vitest (обычные тесты) | 51 файл | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
+| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — глубокие проверки (`deep.yml`) и релиз |
+| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + глубокие проверки и релиз (нужен контейнер) |
+| **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → глубокие проверки и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
 
 ## Быстрый старт
 
@@ -218,7 +218,7 @@ Scratch-коды одноразовые: перед повторным прог�
 пользователем в Dockerfile. Закрепляет: сервер
 действительно не берёт `password`; пароль отвечает на вопрос PAM сам, ничего не спрашивая;
 неверный пароль — отказ без переспроса; код спрашивается, и пароль туда не уходит; отмена
-вопроса завершает вход; неверный код — отказ. Гоняется в `nightly.yml` в джобе `live-sftp`.
+вопроса завершает вход; неверный код — отказ. Гоняется в `deep.yml` в джобе `live-sftp`.
 
 > **Прежде чем считать баг «только на Windows», проверь, воспроизводится ли он локально.**
 > Два дефекта из 39.6 пришли как windows-only и оба воспроизвелись на macOS, стоило завести
@@ -307,7 +307,8 @@ docker compose -f docker-compose.ssh.yml down
 `tauri-driver` для macOS не существует, а код под `cfg(target_os = "linux")` на macOS не
 собирается вовсе (GTK и WebKitGTK). Поэтому Linux-половина проекта живёт в образе
 [e2e/linux/Dockerfile](../e2e/linux/Dockerfile) — то же, что ставит раннер CI: WebKitGTK, его
-WebDriver, X-сервер без экрана, `tauri-driver` (нужен Docker):
+WebDriver, X-сервер без экрана, `tauri-driver`, Rust версии `rust-toolchain.toml`, Node и pnpm
+экшена `setup-web` (сверяет гейт `ci.guard`; нужен Docker):
 
 ```sh
 pnpm e2e:linux                                    # весь E2E-набор
@@ -418,9 +419,9 @@ macOS и Windows это проверяется в `pnpm tauri dev`.
 
 ## CI на GitHub
 
-Основной пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
-macOS**, и это главное отличие от GitLab-схемы ниже: `#[cfg(windows)]`-код (`drives.rs`,
-`proccwd.rs`) на Linux-раннере структурно невидим, а windows-раннера под рукой нет.
+Единственный пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
+macOS**: `#[cfg(windows)]`-код (`drives.rs`, `proccwd.rs`) на Linux-раннере структурно невидим,
+а windows-раннера под рукой нет.
 
 **COM-объекты выноса файла** (`dragout/windows.rs`, ADR 0027) раннер только собирает:
 системное перетаскивание в тесте не начать. Поэтому в них нет логики — она вынесена в
@@ -434,16 +435,21 @@ Windows-половины проверяются локально однораз�
 
 | Workflow | Когда | Что делает |
 |----------|-------|------------|
-| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `pnpm lint` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo audit`, `cargo deny`, `pnpm audit` — жёстко |
-| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
-| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
-| [nightly.yml](../.github/workflows/nightly.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Фаззинг на глубине, живые SFTP-тесты, E2E |
-| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `nightly.yml`) → сборка трёх бандлов → `integrity` |
+| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `pnpm lint` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo deny`, `pnpm audit` — жёстко |
+| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL: `javascript-typescript` и `actions` (сами workflow) — везде; `rust` — только push в `main` и ежемесячно (базу строит полная сборка) |
+| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep (TS, JS, Rust), Trivy (секреты, конфиги), zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
+| [deep.yml](../.github/workflows/deep.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Глубокие проверки: фаззинг на глубине, живые SFTP-тесты, E2E |
+| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `deep.yml`) → сборка трёх бандлов → `integrity` |
+
+Общие шаги — экшены [.github/actions/](../.github/actions/): `setup-web` (pnpm, Node,
+зависимости по lockfile), `setup-rust` (Rust версии [rust-toolchain.toml](../rust-toolchain.toml),
+пакеты Tauri на Linux, кэш), `test-sshd` (тестовый sshd). Кэш они включают только по просьбе
+джобы.
 
 Два свойства, которые легко потерять и которые поэтому закреплены гейтами:
 
 - **Тег не может опубликовать релиз из красного дерева.** `release.yml` не копирует шаги
-  CI, а вызывает `ci.yml` и `nightly.yml` через `workflow_call`, и матрица сборки стоит под
+  CI, а вызывает `ci.yml` и `deep.yml` через `workflow_call`, и матрица сборки стоит под
   `needs: [verify, deep]`. Глубокие слои (E2E, live-sftp, фаззинг) по расписанию идут лишь раз
   в месяц, поэтому без `deep` поломка основного сценария доезжала бы до релиза. Держит
   `releaseassets.guard.test.ts`.
@@ -462,17 +468,16 @@ Windows-половины проверяются локально однораз�
 - **Группы Dependabot не прячут рискованный бамп.** Патчи и связанные экосистемы идут одним
   PR, но мажоры, russh и minor Svelte — поштучно, выдержка 7 дней у всех. Держит
   `dependabot.guard.test.ts`.
+- **Общий шаг живёт в одном месте, и версия у инструмента одна.** Workflow не ставят pnpm,
+  Node, Rust, пакеты Tauri и кэш сами — только через `.github/actions/`; Rust — точная версия
+  из `rust-toolchain.toml`, а не «`stable` сегодня» (новый clippy ронял неизменённое дерево),
+  и на ней же собран образ Linux-контейнера; `release.yml` кэша не просит; у каждой заботы один
+  сканер. Держит `ci.guard.test.ts`.
 
 Жёсткое и советующее разделены намеренно: `cargo deny` с расписанными исключениями обязан
 ронять прогон, иначе это не политика; Semgrep с правилами из внешнего реестра ронять чужой
-PR не должен — его находки едут в витрину. `allow_failure` на всём подряд, как в
-GitLab-стадии `security`, приводит к тому, что отчёты не читает никто.
-
-## CI на GitLab
-
-[.gitlab-ci.yml](../.gitlab-ci.yml), стадии **`lint` → `security` → `test` → `build` →
-`release`** — для **self-hosted** раннеров. Роли те же, но `build:*` и `lint:windows`
-стоят `when: manual` + `allow_failure`, пока под них нет зарегистрированных раннеров.
+PR не должен — его находки едут в витрину. `allow_failure` на всём подряд (так стояла
+стадия `security` в снятом с 1.25.5 GitLab CI) приводит к тому, что отчёты не читает никто.
 
 ## Фаззинг недоверенного входа
 
@@ -494,7 +499,7 @@ GitLab-стадии `security`, приводит к тому, что отчёт�
 
 ```sh
 pnpm vitest run src/lib/untrusted.fuzz.test.ts                       # ~300 прогонов
-FUZZ_RUNS=150000 pnpm vitest run src/lib/untrusted.fuzz.test.ts      # как в nightly
+FUZZ_RUNS=150000 pnpm vitest run src/lib/untrusted.fuzz.test.ts      # как в deep.yml
 
 cargo test --manifest-path src-tauri/Cargo.toml --lib props          # 256 кейсов
 PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props

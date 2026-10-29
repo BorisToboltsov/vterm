@@ -216,8 +216,9 @@ vterm/
 │                               # linux-box (команда в Linux-контейнере)
 ├── lint/vterm.js               # правила ESLint проекта: слои импорта и инварианты одного места
 ├── eslint.config.js            # рекомендованные наборы JS/TS/Svelte + правила проекта
-├── .github/workflows/          # release.yml — сборка трёх ОС по тегу
-└── .gitlab-ci.yml              # lint → security → test → build → release
+├── .github/workflows/          # ci · codeql · security · deep (глубокие проверки) · release (три ОС по тегу)
+├── .github/actions/            # общие шаги CI: setup-web · setup-rust · test-sshd
+└── rust-toolchain.toml         # версия Rust — одна на CI, машину и Linux-контейнер
 ```
 Модель выбора шрифта — `src/lib/fonts.ts` (дефолты по группе темы и миграция).
 Реактивное разрешение для терминала, записей и превью — `activeFontFamily()` в settings.

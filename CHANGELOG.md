@@ -6,6 +6,17 @@
 
 ---
 
+## v1.25.5 — 2026-10-29
+
+Рефакторинг, этап F — CI.
+
+- GitLab CI снят: дистрибутивы собирает только GitHub (`release.yml`).
+- Общие шаги — composite actions `.github/actions/` (`setup-web`, `setup-rust`, `test-sshd`);
+  Rust закреплён в `rust-toolchain.toml` (1.99.1) — для CI, локальной сборки и Linux-контейнера.
+- Сканеры без дублей: `cargo deny` без `cargo audit` и его `audit.toml`, Trivy — секреты и
+  конфиги, Semgrep — и Rust, CodeQL по Rust — на `main` и по расписанию.
+- `nightly.yml` переименован в `deep.yml` («Глубокие проверки»); гейт `ci.guard`.
+
 ## v1.25.4 — 2026-10-29
 
 Рефакторинг, этап E — документация.

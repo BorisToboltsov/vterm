@@ -42,12 +42,12 @@ vterm — локальный SSH/SFTP-клиент. Он **офлайн по у�
 
 | Проверка | Инструмент | Что ищет |
 |----------|-----------|----------|
-| Rust advisories | `cargo audit` | RUSTSEC (известные уязвимости в зависимостях) |
-| Rust политика | `cargo deny check` | advisories + лицензии + дубликаты + источники |
+| Rust advisories и политика | `cargo deny check` | RUSTSEC (уязвимости, unmaintained, yanked) + лицензии + дубликаты + источники |
 | JS advisories | `pnpm audit` | уязвимости npm-зависимостей |
 
-Принятые advisory расписаны с причинами в [deny.toml](src-tauri/deny.toml) и зеркалятся
-в `.cargo/audit.toml`. Для npm аналогичного списка пока нет — база чистая; появится
+Принятые advisory расписаны с причинами в [deny.toml](src-tauri/deny.toml) — это единственный
+их список: `cargo audit` читал ту же базу RustSec, но держал второй список исключений и не умел
+падать на устаревшем, поэтому с 1.25.5 его нет. Для npm аналогичного списка пока нет — база чистая; появится
 advisory без апстрим-фикса, исключение заводится через `auditConfig.ignoreCves` в
 [pnpm-workspace.yaml](pnpm-workspace.yaml), с причиной рядом. Снимать блокировку молча
 нельзя.
@@ -57,12 +57,16 @@ advisory без апстрим-фикса, исключение заводитс
 
 | Проверка | Инструмент | Что ищет |
 |----------|-----------|----------|
-| SAST — весь код | **CodeQL** (`javascript-typescript`, `rust`) | поток данных, инъекции, небезопасные API |
+| SAST — весь код | **CodeQL** (`javascript-typescript`; `rust` — на `main` и ежемесячно, базу строит полная сборка) | поток данных, инъекции, небезопасные API |
 | SAST — сами workflow | **CodeQL** (`actions`) + **zizmor** | подстановка `${{ }}` в `run:`, незапиненные экшены, лишние права токена |
-| SAST (JS/TS) | **Semgrep** (`p/typescript`, `p/javascript`, `p/secrets`) | анти-паттерны, секреты |
-| Бандл/ФС | **Trivy** (`fs`: vuln/secret/misconfig) | уязвимости, секреты, misconfig |
+| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust`) | анти-паттерны фронтенда и бэкенда |
+| ФС | **Trivy** (`fs`: secret/misconfig) | секреты, misconfig |
 
-**Фаззинг недоверенного входа** — [nightly.yml](.github/workflows/nightly.yml). У vterm
+У каждой заботы один сканер: уязвимости зависимостей — только `cargo deny` и `pnpm audit`
+(Trivy `vuln` читал те же lockfile без их исключений), секреты — только Trivy (`p/secrets`
+Semgrep давал вторую копию находки). Держит гейт `ci.guard.test.ts`.
+
+**Фаззинг недоверенного входа** — [deep.yml](.github/workflows/deep.yml). У vterm
 нет ни одного HTTP-порта, поэтому DAST здесь нечего сканировать; динамическая поверхность
 — это парсеры, которым подают чужие байты (markdown из ответа LLM, `.md` по SFTP, вывод
 скомпрометированного хоста, кодировки файлов). Проверяются свойствами на произвольном
@@ -84,7 +88,7 @@ advisory без апстрим-фикса, исключение заводитс
     версию из комментария, — и это законно ловит zizmor (`ref-version-mismatch`). Правильный
     SHA — `git ls-remote --tags <repo> | awk '$2==\"refs/tags/<ver>^{}\"'`.
   - **Комментарий версии обязан совпадать с тем, куда тег указывает СЕЙЧАС.** У плавающего
-    тега (`dtolnay/rust-toolchain@v1`) SHA из старого PR Dependabot остаётся на линии тега, но
+    тега (так было с `dtolnay/rust-toolchain@v1`, пока Rust ставил он) SHA из старого PR Dependabot остаётся на линии тега, но
     `# v1` рядом с ним уже ложь — zizmor (`ref-version-mismatch`) это ловит. Перепиннивая, бери
     текущий SHA тега, а не SHA из PR.
 - **Свои workflow и экшены — через `$/…`, а не `./…`** (синтаксис self-repository, GitHub с
@@ -99,7 +103,13 @@ advisory без апстрим-фикса, исключение заводитс
 - **В публикующем `release.yml` нет кэша**: кэш в workflow, который публикует, — вектор
   отравления (недоверенный PR пишет в кэш-ключ, релизная сборка его восстанавливает; zizmor
   `cache-poisoning`). Релиз редок и собирается из чистого состояния — те байты мы подписываем
-  provenance. Кэш остаётся в `ci.yml`/`nightly.yml`, где публикации нет.
+  provenance. Кэш остаётся в `ci.yml`/`deep.yml`, где публикации нет; общие экшены
+  `.github/actions/` кэшируют только по просьбе джобы, и `release.yml` не просит
+  (`ci.guard.test.ts`).
+- **Общие шаги — один экшен на всех, версия Rust — одна.** pnpm, Node, Rust, пакеты Tauri и кэш
+  ставят только `setup-web`/`setup-rust` в `.github/actions/`: пин, поднятый в одной копии шага
+  и забытый в другой, больше негде оставить. Rust — версия из `rust-toolchain.toml`, а не
+  «`stable` сегодня»: сборка релиза воспроизводима тем же компилятором, что прошёл гейты.
 - **Имя тега уезжает в шаг через `env`**, а не подстановкой `${{ github.ref_name }}` прямо
   в `run:`: подстановка происходит **до** запуска шелла, то есть значение становится кодом.
   Создать тег может только тот, у кого есть push, но класс уязвимости от этого не меняется.
@@ -447,11 +457,10 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
 
 ## Принятые исключения (advisories)
 
-Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml) и
-зеркалятся в `.cargo/audit.toml`. Исключение, которому больше нечего исключать (advisory
-закрыт обновлением или отозван), и разрешённая лицензия, которой никто не пользуется, роняют
-`cargo deny` (`unused-ignored-advisory`/`unused-allowed-license`); список `audit.toml` равен
-списку `deny.toml` — гейт `tauri-security.guard.test.ts`. Lockfile освежается `cargo update`
+Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml). Исключение,
+которому больше нечего исключать (advisory закрыт обновлением или отозван), и разрешённая
+лицензия, которой никто не пользуется, роняют `cargo deny`
+(`unused-ignored-advisory`/`unused-allowed-license`) — гейт `tauri-security.guard.test.ts`. Lockfile освежается `cargo update`
 перед выпуском: Dependabot двигает только прямые зависимости, а исправления транзитивных
 приходят именно так.
 

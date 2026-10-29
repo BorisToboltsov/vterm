@@ -9,9 +9,11 @@ version: 2
 # и правит комментарий с версией.
 
 updates:
-  # ── Сами workflow ──────────────────────────────────────────────────────────
+  # ── Сами workflow и общие экшены ───────────────────────────────────────────
   - package-ecosystem: github-actions
-    directory: "/"
+    # "/" — это .github/workflows; экшены в .github/actions/ Dependabot видит,
+    # только если назвать их каталоги: иначе их SHA застыли бы навсегда.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: monthly
     open-pull-requests-limit: 5

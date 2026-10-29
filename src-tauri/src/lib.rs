@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn nothing_after_login_can_fail_the_connection() {
-        // Guard (nightly E2E, v1.0.31): once `ssh::connect` succeeded the session is
+        // Guard (deep-check E2E, v1.0.31): once `ssh::connect` succeeded the session is
         // live, and an early return drops it. A keychain `set_password(..)?` did
         // exactly that on Linux without a Secret Service — the user authenticated
         // and got an error instead of a shell. Scans the code (comments stripped)

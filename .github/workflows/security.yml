@@ -2,16 +2,18 @@ name: Security scan
 
 # Сканеры второго эшелона. Разделение с ci.yml намеренное:
 #
-#   ci.yml (deps)  — ЖЁСТКИЕ гейты: cargo audit / cargo deny / pnpm audit.
+#   ci.yml (deps)  — ЖЁСТКИЕ гейты: cargo deny / pnpm audit.
 #                    Политика с расписанными исключениями (deny.toml) — она
 #                    обязана ронять прогон, иначе это не политика.
 #   здесь          — СОВЕТУЮЩИЕ: Semgrep, Trivy, zizmor. Их находки едут в
 #                    Security tab SARIF-ом и разбираются там, а не роняют
 #                    чужой PR на правиле из внешнего реестра.
 #
-# Почему вообще SARIF: в GitLab-пайплайне те же сканеры стоят с
-# `allow_failure: true` и печатают в лог, то есть их не читает никто. Витрина
-# с дедупом и историей — единственное, что делает сканер полезным.
+# У каждой заботы один сканер (гейт ci.guard.test.ts): уязвимости зависимостей —
+# cargo deny и pnpm audit, секреты и конфиги — Trivy, анти-паттерны кода —
+# Semgrep, поток данных — CodeQL, сами workflow — zizmor и CodeQL `actions`.
+# Второй сканер той же заботы давал вторую копию находки и второй список
+# исключений, который расходился с первым.
 
 on:
   push:
@@ -28,7 +30,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ── Semgrep: анти-паттерны и секреты во фронтенде ───────────────────────────
+  # ── Semgrep: анти-паттерны во фронтенде и бэкенде ───────────────────────────
   semgrep:
     name: Semgrep (SAST)
     runs-on: ubuntu-latest
@@ -52,9 +54,9 @@ jobs:
         continue-on-error: true
         run: |
           semgrep scan \
-            --config p/typescript --config p/javascript --config p/secrets \
+            --config p/typescript --config p/javascript --config p/rust \
             --sarif --output semgrep.sarif \
-            src/
+            src/ src-tauri/src/
 
       - name: Результаты в Security tab
         if: always() && hashFiles('semgrep.sarif') != ''
@@ -63,7 +65,9 @@ jobs:
           sarif_file: semgrep.sarif
           category: semgrep
 
-  # ── Trivy: уязвимости, секреты и misconfig по дереву репозитория ────────────
+  # ── Trivy: секреты и misconfig по дереву репозитория ───────────────────────
+  # Без `vuln`: уязвимости зависимостей читаются из тех же lockfile, что у
+  # cargo deny и pnpm audit, — только без их политики исключений.
   trivy:
     name: Trivy (fs)
     runs-on: ubuntu-latest
@@ -82,7 +86,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
-          scanners: vuln,secret,misconfig
+          scanners: secret,misconfig
           format: sarif
           output: trivy.sarif
           # Accepted findings, each scoped to one path with its reason.

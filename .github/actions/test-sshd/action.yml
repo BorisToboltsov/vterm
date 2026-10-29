@@ -1,0 +1,23 @@
+name: Тестовый sshd
+description: >-
+  Поднимает sshd живых SFTP-тестов и E2E тем же docker compose, что описан в
+  docs/TESTS.md, и ждёт, пока он примет соединение. Гасит его джоба сама —
+  шагом с `if: always()`.
+
+runs:
+  using: composite
+  steps:
+    - name: Тестовый sshd
+      shell: bash
+      run: |
+        docker compose -f e2e/docker-compose.ssh.yml up -d
+        # Порт открывается позже контейнера — ждём именно готовности сервиса.
+        for i in $(seq 1 30); do
+          if (echo > /dev/tcp/127.0.0.1/2222) 2>/dev/null; then
+            echo "sshd готов через ${i}с"; exit 0
+          fi
+          sleep 1
+        done
+        echo "sshd не поднялся за 30с"
+        docker compose -f e2e/docker-compose.ssh.yml logs
+        exit 1
