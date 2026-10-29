@@ -483,10 +483,10 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
 - **npm, уровень low (не блокируют CI: `pnpm audit --audit-level moderate`).** `deepmerge`
   ≤ 4.3.1 (GHSA-gcqx-w48m-w2h4, загрязнение прототипа в `mergeObject()`) — сборочная
   зависимость `@sveltejs/vite-plugin-svelte`, в бандл не попадает; исправленной версии нет
-  (последняя — 4.3.1), override поставить не на что. `@sveltejs/kit` < 3 — два advisory
-  (редирект через enhanced form, XSS через `cache-control` пререндеренной страницы): у
-  SPA внутри Tauri нет ни form actions, ни сервера, отдающего заголовки; закрываются
-  переходом на SvelteKit 3 в рамках 1.25.
+  (последняя — 4.3.1), override поставить не на что. Два advisory `@sveltejs/kit` < 3
+  (GHSA-pfhg-q3qv-9q6r — редирект через enhanced form, GHSA-27mw-82g8-phjj — XSS через
+  `cache-control` пререндеренной страницы) закрыты переходом на SvelteKit 3 в v1.25.7; с ним
+  снят и override `cookie` `^0.7` — Kit 3 сам зависит от исправленного `cookie` 2.
 - **`zip` (RUSTSEC-2026-0367…0369)** — не исключение: закрыты обновлением до `zip` 9. vterm
   `extract()` не вызывал — записи бэкапа читаются по одной, имя проверяет
   `safe_recording_name`.

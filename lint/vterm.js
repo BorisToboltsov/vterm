@@ -71,10 +71,14 @@ const attributeName = (node) => (node.type === "SvelteAttribute" ? node.key.name
 
 // ── Imports and layers ──────────────────────────────────────────────────────────
 
-/** Where an import points: an absolute path for project files, the bare name otherwise. */
+/**
+ * Where an import points: an absolute path for project files, the bare name otherwise.
+ * `#lib/…` is the subpath import of package.json (SvelteKit 3 dropped `$lib`) and
+ * names its file with the extension: `#lib/stores/tabs.svelte.ts`.
+ */
 function target(file, source) {
   if (source.startsWith(".")) return { file: path.resolve(path.dirname(file), source) };
-  if (source === "$lib" || source.startsWith("$lib/")) return { file: path.join(LIB, source.slice(4)) };
+  if (source.startsWith("#lib/")) return { file: path.join(LIB, source.slice("#lib/".length)) };
   return { pkg: source };
 }
 

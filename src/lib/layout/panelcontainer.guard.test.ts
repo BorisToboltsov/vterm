@@ -90,7 +90,7 @@ function imports(rel: string, source: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const m of code(source).matchAll(/import\s+(\w+)\s+from\s+["']([^"']+\.svelte)["']/g)) {
     const spec = m[2];
-    const base = spec.startsWith("$lib/") ? join("lib", spec.slice(5)) : join(dirname(rel), spec);
+    const base = spec.startsWith("#lib/") ? join("lib", spec.slice(5)) : join(dirname(rel), spec);
     out[m[1]] = base.split(sep).join("/").replace(/^\.\//, "");
   }
   return out;

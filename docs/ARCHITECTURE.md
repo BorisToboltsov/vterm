@@ -24,19 +24,19 @@
 |------|-----------|------|
 | Оболочка | **Tauri 2** | WebView + Rust-бэкенд; окно нативное на macOS, безрамочное со своим обрамлением на Windows/Linux (ADR 0011) |
 | Бэкенд | **Rust** stable | Команды, состояние, SSH/SFTP/секреты, метрики, ИИ-брокер |
-| Фронтенд | **SvelteKit** (Svelte 5, runes), SPA через `adapter-static` | UI |
+| Фронтенд | **SvelteKit 3** (Svelte 5, runes), SPA через `adapter-static` | UI; конфигурация — в плагине Vite ([vite.config.js](../vite.config.js)), `svelte.config.js` нет (ADR 0046) |
 | Стили | **Tailwind CSS v4** | Плагин Vite, без `tailwind.config.js`/PostCSS; токены — через `@theme` в [app.css](../src/app.css) |
-| Сборка | **Vite 6** | Dev-сервер и бандл |
+| Сборка | **Vite 8** | Dev-сервер и бандл |
 | Терминал | **xterm.js 6** + fit/webgl/search/web-links | ANSI, поиск по буферу, кликабельные ссылки |
-| SSH | **russh 0.64** | Чистый Rust: пароль/ключ, PTY, shell, exec |
+| SSH | **russh 0.65** | Чистый Rust: пароль/ключ, PTY, shell, exec |
 | Локальный PTY | **portable-pty 0.9** | forkpty (Unix) / ConPTY (Windows) |
-| SFTP | **russh-sftp 2** | Поверх той же SSH-сессии |
+| SFTP | **russh-sftp 3** | Поверх той же SSH-сессии |
 | Редактор | **CodeMirror 6** | 50+ языков, линт, инлайн-diff (`unifiedMergeView`) |
-| Секреты | **keyring 3** | Keychain (macOS) / Credential Manager (Windows) / Secret Service |
+| Секреты | **keyring 4** | Keychain (macOS) / Credential Manager (Windows) / Secret Service |
 | Метрики (локально) | **sysinfo** | Нативный сбор без сети |
 | Ключи | **ssh-key** + `rand` | Офлайн-генерация, без внешнего `ssh-keygen` |
 | LLM | **reqwest** (rustls) | Только из Rust, только к эндпоинту пользователя |
-| Тесты | **cargo test** · **Vitest** · **WebdriverIO** | Юнит / компонентные / E2E |
+| Тесты | **cargo test** · **Vitest 5** · **WebdriverIO** | Юнит / компонентные / E2E |
 
 ---
 
@@ -51,7 +51,9 @@
 `lib/api/`; чистые `.ts` стоят сбоку и ни от кого из них не зависят. Компоненты и чистая
 логика лежат по папкам подсистем (`lib/terminal/`, `lib/files/`, …), слои — в своих папках
 (ADR 0045). Направление импортов держит правило линтера `vterm/layers`
-([lint/vterm.js](../lint/vterm.js)).
+([lint/vterm.js](../lint/vterm.js)). Страница берёт модули `src/lib` через `#lib/…` — subpath
+import из `package.json` с расширением файла (`#lib/stores/tabs.svelte.ts`, ADR 0046); внутри
+`src/lib` пути относительные.
 
 ```
 ┌──────────────────────── WebView · фронтенд ─────────────────────────┐
@@ -242,6 +244,7 @@ vterm/
 │                               # ARCHITECTURE · DESIGN · ROADMAP · TESTS · adr/
 ├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons ·
 │                               # linux-box (команда в Linux-контейнере)
+├── vite.config.js              # SvelteKit: адаптер, препроцессор, опрос версии (ADR 0046)
 ├── lint/vterm.js               # правила ESLint проекта: слои импорта и инварианты одного места
 ├── eslint.config.js            # рекомендованные наборы JS/TS/Svelte + правила проекта
 ├── .github/workflows/          # ci · codeql · security · deep (глубокие проверки) · release (три ОС по тегу)

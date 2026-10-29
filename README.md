@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.25.6-blue)
+![version](https://img.shields.io/badge/version-1.25.7-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -96,7 +96,7 @@ pnpm install      # JS-зависимости
 pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин)
 ```
 
-Нужны **Node.js 20+**, **pnpm** и **Rust stable**. Подробно — установка на Windows
+Нужны **Node.js 22.17+**, **pnpm** и **Rust stable**. Подробно — установка на Windows
 с нуля и сборка дистрибутивов — в [docs/INSTALL.md](docs/INSTALL.md).
 
 ---

@@ -23,7 +23,8 @@ runs:
         version: 11
 
     # Node 22+ обязателен: pnpm 11 требует ≥ 22.13 (тянет `node:sqlite`) и на
-    # Node 20 падает уже на `cache: pnpm`, который зовёт `pnpm store path`.
+    # Node 20 падает уже на `cache: pnpm`, который зовёт `pnpm store path`;
+    # SvelteKit 3 — ≥ 22.17 (мажор 22 ставит последний 22.x).
     # Пол держится гейтом ci.guard.test.ts.
     - name: Node
       uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

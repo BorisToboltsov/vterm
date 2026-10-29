@@ -1,4 +1,4 @@
-// Barrel: single `$lib/api` entry point re-exporting the domain modules (split
+// Barrel: single `#lib/api/index.ts` entry point re-exporting the domain modules (split
 // from a monolithic api.ts in Phase 18.6, mirroring the backend module layout).
 export * from "./core";
 export * from "./servers";

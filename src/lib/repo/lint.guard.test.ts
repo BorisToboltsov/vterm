@@ -42,12 +42,16 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/api/zz_probe.ts", `import { settings } from "../settings/settings.svelte";\nexport const x = settings;`],
       ["src/lib/stores/zz_probe.svelte.ts", `import Modal from "../ui/Modal.svelte";\nexport const x = Modal;`],
       ["src/lib/ui/ZzProbe.svelte", svelte(`import Page from "../../routes/+page.svelte";`, "<Page />")],
+      // The `#lib/…` subpath import (with its extension) is the same file as the relative path.
+      ["src/lib/ui/zz_probe.ts", `import { tabsState } from "#lib/stores/tabs.svelte.ts";\nexport const x = tabsState;`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import Modal from "#lib/ui/Modal.svelte";\nexport const x = Modal;`],
       // An exception whose module imports nothing impure any more.
       ["src/lib/windows/appwindow.ts", `export const x = 1;`],
     ],
     good: [
       ["src/lib/ui/zz_probe.ts", `import type { Tab } from "../stores/tabs.svelte";\nexport type X = Tab;`],
       ["src/lib/ui/zz_probe.ts", `import { t } from "../i18n";\nimport { joinPath } from "../files/fspath";\nexport const x = [t, joinPath];`],
+      ["src/lib/ui/zz_probe.ts", `import { joinPath } from "#lib/files/fspath.ts";\nexport const x = joinPath;`],
       ["src/lib/stores/zz_probe.svelte.ts", `import { settings } from "../settings/settings.svelte";\nexport const x = settings;`],
       // A layer folder is not a subsystem: its .ts is not held to purity.
       ["src/lib/actions/zz_probe.ts", `import { tabsState } from "../stores/tabs.svelte";\nexport const x = tabsState;`],
@@ -155,7 +159,7 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/ui/zz_probe.ts", `import { closeTab as drop } from "../stores/tabs.svelte";\nexport const x = drop;`],
       ["src/lib/ui/zz_probe.ts", `import * as api from "../api";\nexport const x = () => api.importBackup("/b", null, true);`],
       ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
-      ["src/routes/+page.svelte", svelte(`import { openRestored } from "$lib/stores/tabs.svelte";\nvoid openRestored;`)],
+      ["src/routes/+page.svelte", svelte(`import { openRestored } from "#lib/stores/tabs.svelte.ts";\nvoid openRestored;`)],
     ],
     good: [
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
@@ -166,7 +170,7 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
   "owned-writes": {
     bad: [
       ["src/lib/terminal/Terminal.svelte", svelte(`import { settings } from "../settings/settings.svelte";\nsettings.terminalLinks = "direct";`)],
-      ["src/routes/+page.svelte", svelte(`import { settings } from "$lib/settings/settings.svelte";\nconst silence = () => (settings.terminalFileLinks = "direct");\nvoid silence;`)],
+      ["src/routes/+page.svelte", svelte(`import { settings } from "#lib/settings/settings.svelte.ts";\nconst silence = () => (settings.terminalFileLinks = "direct");\nvoid silence;`)],
       ["src/lib/ui/ZzProbe.svelte", svelte(`import { settings } from "../settings/settings.svelte";`, `<select bind:value={settings.terminalLinks}></select>`)],
     ],
     good: [

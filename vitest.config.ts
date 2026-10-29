@@ -1,19 +1,16 @@
 import { defineConfig } from "vitest/config";
-import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { svelte, vitePreprocess } from "@sveltejs/vite-plugin-svelte";
 import { svelteTesting } from "@testing-library/svelte/vite";
-import { fileURLToPath } from "node:url";
 
 // Standalone Vitest config (independent of the Tauri/SvelteKit dev config).
 // Uses the plain Svelte plugin — components and `.svelte.ts` runes modules are
 // compiled for the browser and run under jsdom. The svelteTesting() plugin wires
-// up the "browser" resolve condition and auto-cleanup between tests.
+// up the "browser" resolve condition and auto-cleanup between tests. The
+// preprocessor is the one vite.config.js hands SvelteKit (there is no
+// svelte.config.js to share it since SvelteKit 3); `#lib/…` resolves through the
+// `imports` field of package.json, with no alias.
 export default defineConfig({
-  plugins: [svelte(), svelteTesting()],
-  resolve: {
-    alias: {
-      $lib: fileURLToPath(new URL("./src/lib", import.meta.url)),
-    },
-  },
+  plugins: [svelte({ preprocess: vitePreprocess() }), svelteTesting()],
   test: {
     environment: "jsdom",
     globals: true,

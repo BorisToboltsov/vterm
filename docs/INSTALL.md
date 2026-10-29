@@ -114,7 +114,7 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 ## Требования
 
-Нужны только для сборки из исходников. На всех ОС: **Node.js 22+**, **pnpm** 11
+Нужны только для сборки из исходников. На всех ОС: **Node.js 22.17+**, **pnpm** 11
 и **Rust** через [rustup](https://rustup.rs/): версию из `rust-toolchain.toml` он поставит сам
 при первом `cargo`.
 

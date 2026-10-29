@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack, tick } from "svelte";
-  import { tooltip } from "$lib/actions/tooltip";
+  import { tooltip } from "#lib/actions/tooltip.ts";
   import { fade } from "svelte/transition";
-  import { motion } from "$lib/ui/motion";
+  import { motion } from "#lib/ui/motion.ts";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     connectPlan,
@@ -39,26 +39,26 @@
     WINDOWS_EVENT,
     type ServersDeleted,
     type SettingsBroadcast,
-  } from "$lib/api";
+  } from "#lib/api/index.ts";
   import {
     isMainWindow,
     windowLabel,
-  } from "$lib/windows/appwindow";
+  } from "#lib/windows/appwindow.ts";
   import {
     WINDOW_ROWS,
     ghostPlace,
     paneDetachOffered,
     paneMoveOffered,
     type TermSnapshot,
-  } from "$lib/windows/tabhandoff";
-  import { waitView } from "$lib/tabs/tabrestore";
-  import { forgetSavedTabs } from "$lib/stores/tabrestore.svelte";
-  import { createRestoreFlow } from "$lib/page/restoreflow.svelte";
-  import type { ServerProfile } from "$lib/types";
-  import { storeWarningMessage } from "$lib/servers/storewarn";
-  import { sessionBarParts, showSessionBar } from "$lib/terminal/sessionbar";
-  import ViewModeToggle from "$lib/ui/ViewModeToggle.svelte";
-  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/servers/tree";
+  } from "#lib/windows/tabhandoff.ts";
+  import { waitView } from "#lib/tabs/tabrestore.ts";
+  import { forgetSavedTabs } from "#lib/stores/tabrestore.svelte.ts";
+  import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
+  import type { ServerProfile } from "#lib/types.ts";
+  import { storeWarningMessage } from "#lib/servers/storewarn.ts";
+  import { sessionBarParts, showSessionBar } from "#lib/terminal/sessionbar.ts";
+  import ViewModeToggle from "#lib/ui/ViewModeToggle.svelte";
+  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "#lib/servers/tree.ts";
   import {
     isPanelHidden,
     layout,
@@ -68,10 +68,10 @@
     setDockCollapsed,
     setPanelHidden,
     toggleDock,
-  } from "$lib/stores/layout.svelte";
-  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/layout/docklayout";
-  import { glide } from "$lib/actions/drag";
-  import { moveLabel, moveTargets, panelLabel } from "$lib/layout/dockui";
+  } from "#lib/stores/layout.svelte.ts";
+  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "#lib/layout/docklayout.ts";
+  import { glide } from "#lib/actions/drag.ts";
+  import { moveLabel, moveTargets, panelLabel } from "#lib/layout/dockui.ts";
   import {
     activateTab,
     clearAdopt,
@@ -98,7 +98,7 @@
     untilePanes,
     type NewTabAction,
     type Tab,
-  } from "$lib/stores/tabs.svelte";
+  } from "#lib/stores/tabs.svelte.ts";
   import {
     canSplit,
     gridFit,
@@ -112,41 +112,41 @@
     shownTabs,
     type Edge,
     type Pane,
-  } from "$lib/layout/splitlayout";
+  } from "#lib/layout/splitlayout.ts";
   import {
     onScreenSessions,
     pendingAuthSession,
     confinedGhost,
     rectStyle,
     stripStyle,
-  } from "$lib/layout/centerview";
+  } from "#lib/layout/centerview.ts";
   import {
     beginTabDrag,
     consumeTabDragClick,
     tabDrag,
-  } from "$lib/stores/tabdrag.svelte";
+  } from "#lib/stores/tabdrag.svelte.ts";
   import {
     INCOMING_TAB,
     applyDragMessage,
     incoming,
     incomingAsTab,
     parseDragMessage,
-  } from "$lib/stores/tabincoming.svelte";
-  import SplitDivider from "$lib/layout/SplitDivider.svelte";
-  import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
-  import TerminalView from "$lib/terminal/Terminal.svelte";
-  import ConnectingOverlay from "$lib/connect/ConnectingOverlay.svelte";
-  import type { ConnPhase } from "$lib/connect/connphase";
-  import { sshErrorView } from "$lib/connect/ssherror";
-  import { showNoSignal } from "$lib/connect/connlost";
-  import Dock from "$lib/layout/Dock.svelte";
-  import DockPanel from "$lib/layout/DockPanel.svelte";
-  import DockDragGhost from "$lib/layout/DockDragGhost.svelte";
-  import EditorTab from "$lib/editor/EditorTab.svelte";
-  import DiffModal from "$lib/editor/DiffModal.svelte";
-  import ToolInstallDialog from "$lib/editor/ToolInstallDialog.svelte";
-  import type { ToolStatus } from "$lib/editor/servertools";
-  import { editorLangOrPlain } from "$lib/editor/editorlang";
+  } from "#lib/stores/tabincoming.svelte.ts";
+  import SplitDivider from "#lib/layout/SplitDivider.svelte";
+  import { handleClipboardShortcut } from "#lib/actions/clipboardKeys.ts";
+  import TerminalView from "#lib/terminal/Terminal.svelte";
+  import ConnectingOverlay from "#lib/connect/ConnectingOverlay.svelte";
+  import type { ConnPhase } from "#lib/connect/connphase.ts";
+  import { sshErrorView } from "#lib/connect/ssherror.ts";
+  import { showNoSignal } from "#lib/connect/connlost.ts";
+  import Dock from "#lib/layout/Dock.svelte";
+  import DockPanel from "#lib/layout/DockPanel.svelte";
+  import DockDragGhost from "#lib/layout/DockDragGhost.svelte";
+  import EditorTab from "#lib/editor/EditorTab.svelte";
+  import DiffModal from "#lib/editor/DiffModal.svelte";
+  import ToolInstallDialog from "#lib/editor/ToolInstallDialog.svelte";
+  import type { ToolStatus } from "#lib/editor/servertools.ts";
+  import { editorLangOrPlain } from "#lib/editor/editorlang.ts";
   import {
     getWorkspace,
     workspacesState,
@@ -161,109 +161,109 @@
     setSessionZoneRatio,
     showSessionView,
     splitSessionView,
-  } from "$lib/stores/workspaces.svelte";
-  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/layout/sessionviews";
-  import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
-  import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
-  import { removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
-  import { baseName } from "$lib/files/fspath";
-  import { fileLinksAllowed } from "$lib/terminal/termfiles";
-  import { followUpdates, pollsLocalCwd } from "$lib/pathsync/followcwd";
-  import { aiReady } from "$lib/ai/ai";
-  import SettingsPanel from "$lib/settings/SettingsPanel.svelte";
-  import UtilitiesPanel from "$lib/utilities/UtilitiesPanel.svelte";
-  import ServerFormModal from "$lib/servers/ServerFormModal.svelte";
-  import NotesModal from "$lib/servers/NotesModal.svelte";
-  import { hasNotes, notesTarget } from "$lib/servers/notes";
-  import FolderModals from "$lib/servers/FolderModals.svelte";
-  import SecretPrompt from "$lib/connect/SecretPrompt.svelte";
-  import AuthPromptDialog from "$lib/connect/AuthPromptDialog.svelte";
-  import { authPrompts, clearAuthPrompt, setAuthPrompt } from "$lib/stores/authprompt.svelte";
-  import HelpPanel from "$lib/app/HelpPanel.svelte";
-  import ThemeOverlay from "$lib/appearance/ThemeOverlay.svelte";
-  import IdleOverlay from "$lib/screensaver/IdleOverlay.svelte";
-  import StatusBar from "$lib/monitoring/StatusBar.svelte";
-  import MonitoringOverlay from "$lib/monitoring/MonitoringOverlay.svelte";
-  import TopBar from "$lib/topbar/TopBar.svelte";
-  import { allTopbarIds, canUnpin, type SessionAction } from "$lib/topbar/topbaractions";
-  import type { SessionActionState } from "$lib/utilities/sessionactions";
-  import { actionLabel } from "$lib/topbar/topbarui";
-  import { isPinned, pinAction, resetTopbar, unpinAction } from "$lib/stores/topbarpins.svelte";
-  import TitleBar from "$lib/windows/TitleBar.svelte";
-  import { hostEnv } from "$lib/stores/hostenv.svelte";
-  import ServerTree from "$lib/servers/ServerTree.svelte";
-  import Modal from "$lib/ui/Modal.svelte";
-  import PasswordInput from "$lib/ui/PasswordInput.svelte";
-  import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
-  import UnsavedCloseDialog from "$lib/editor/UnsavedCloseDialog.svelte";
-  import { activeTabStrip } from "$lib/tabs/tabstrip";
-  import { installUpdate, updateWindowReady, updateStartup } from "$lib/api/updater";
-  import { updateError } from "$lib/app/updates";
-  import QuitDialog from "$lib/windows/QuitDialog.svelte";
-  import { mergeQuitRows, quitRows, type QuitRow } from "$lib/windows/quitsummary";
-  import ContextMenu from "$lib/ui/ContextMenu.svelte";
-  import type { MenuAction, MenuItem, OpenMenu } from "$lib/ui/ctxmenu";
-  import PathSyncDialog from "$lib/pathsync/PathSyncDialog.svelte";
-  import { createPathSyncFlow } from "$lib/page/pathsyncflow.svelte";
-  import { cdCommand, type CdShell } from "$lib/pathsync/cdterminal";
-  import { renderArgv, renderSessionCommand } from "$lib/terminal/termcmd";
-  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabs/tabattach";
-  import { submitLine } from "$lib/terminal/terminput";
+  } from "#lib/stores/workspaces.svelte.ts";
+  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "#lib/layout/sessionviews.ts";
+  import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
+  import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
+  import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
+  import { baseName } from "#lib/files/fspath.ts";
+  import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
+  import { followUpdates, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
+  import { aiReady } from "#lib/ai/ai.ts";
+  import SettingsPanel from "#lib/settings/SettingsPanel.svelte";
+  import UtilitiesPanel from "#lib/utilities/UtilitiesPanel.svelte";
+  import ServerFormModal from "#lib/servers/ServerFormModal.svelte";
+  import NotesModal from "#lib/servers/NotesModal.svelte";
+  import { hasNotes, notesTarget } from "#lib/servers/notes.ts";
+  import FolderModals from "#lib/servers/FolderModals.svelte";
+  import SecretPrompt from "#lib/connect/SecretPrompt.svelte";
+  import AuthPromptDialog from "#lib/connect/AuthPromptDialog.svelte";
+  import { authPrompts, clearAuthPrompt, setAuthPrompt } from "#lib/stores/authprompt.svelte.ts";
+  import HelpPanel from "#lib/app/HelpPanel.svelte";
+  import ThemeOverlay from "#lib/appearance/ThemeOverlay.svelte";
+  import IdleOverlay from "#lib/screensaver/IdleOverlay.svelte";
+  import StatusBar from "#lib/monitoring/StatusBar.svelte";
+  import MonitoringOverlay from "#lib/monitoring/MonitoringOverlay.svelte";
+  import TopBar from "#lib/topbar/TopBar.svelte";
+  import { allTopbarIds, canUnpin, type SessionAction } from "#lib/topbar/topbaractions.ts";
+  import type { SessionActionState } from "#lib/utilities/sessionactions.ts";
+  import { actionLabel } from "#lib/topbar/topbarui.ts";
+  import { isPinned, pinAction, resetTopbar, unpinAction } from "#lib/stores/topbarpins.svelte.ts";
+  import TitleBar from "#lib/windows/TitleBar.svelte";
+  import { hostEnv } from "#lib/stores/hostenv.svelte.ts";
+  import ServerTree from "#lib/servers/ServerTree.svelte";
+  import Modal from "#lib/ui/Modal.svelte";
+  import PasswordInput from "#lib/ui/PasswordInput.svelte";
+  import ConfirmDialog from "#lib/ui/ConfirmDialog.svelte";
+  import UnsavedCloseDialog from "#lib/editor/UnsavedCloseDialog.svelte";
+  import { activeTabStrip } from "#lib/tabs/tabstrip.ts";
+  import { installUpdate, updateWindowReady, updateStartup } from "#lib/api/updater.ts";
+  import { updateError } from "#lib/app/updates.ts";
+  import QuitDialog from "#lib/windows/QuitDialog.svelte";
+  import { mergeQuitRows, quitRows, type QuitRow } from "#lib/windows/quitsummary.ts";
+  import ContextMenu from "#lib/ui/ContextMenu.svelte";
+  import type { MenuAction, MenuItem, OpenMenu } from "#lib/ui/ctxmenu.ts";
+  import PathSyncDialog from "#lib/pathsync/PathSyncDialog.svelte";
+  import { createPathSyncFlow } from "#lib/page/pathsyncflow.svelte.ts";
+  import { cdCommand, type CdShell } from "#lib/pathsync/cdterminal.ts";
+  import { renderArgv, renderSessionCommand } from "#lib/terminal/termcmd.ts";
+  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "#lib/tabs/tabattach.ts";
+  import { submitLine } from "#lib/terminal/terminput.ts";
   import {
     isNewTabChord,
     isPaletteChord,
     isSplitDownChord,
     isSplitRightChord,
     paneStepChord,
-  } from "$lib/app/appshortcuts";
-  import Icon from "$lib/ui/Icon.svelte";
-  import Toast from "$lib/ui/Toast.svelte";
-  import EmptyState from "$lib/ui/EmptyState.svelte";
-  import CommandPalette from "$lib/app/CommandPalette.svelte";
-  import RecordingsPanel from "$lib/recording/RecordingsPanel.svelte";
-  import { createRecordingFlow, recordingTitle } from "$lib/page/recordingflow.svelte";
-  import { createCopyFlow } from "$lib/page/copyflow.svelte";
-  import type { CommandItem } from "$lib/app/command";
-  import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
+  } from "#lib/app/appshortcuts.ts";
+  import Icon from "#lib/ui/Icon.svelte";
+  import Toast from "#lib/ui/Toast.svelte";
+  import EmptyState from "#lib/ui/EmptyState.svelte";
+  import CommandPalette from "#lib/app/CommandPalette.svelte";
+  import RecordingsPanel from "#lib/recording/RecordingsPanel.svelte";
+  import { createRecordingFlow, recordingTitle } from "#lib/page/recordingflow.svelte.ts";
+  import { createCopyFlow } from "#lib/page/copyflow.svelte.ts";
+  import type { CommandItem } from "#lib/app/command.ts";
+  import { notifyError, notifySuccess, notifyInfo } from "#lib/stores/toasts.svelte.ts";
   import {
     applyJob,
     applyProgress,
     dropTransfersOf,
     removeTransfer,
     transfersState,
-  } from "$lib/stores/transfers.svelte";
-  import { jobNotice, jobVisibleInWindow } from "$lib/files/transfer";
+  } from "#lib/stores/transfers.svelte.ts";
+  import { jobNotice, jobVisibleInWindow } from "#lib/files/transfer.ts";
   import {
     fileSelectionOf,
     setFileSelection,
-  } from "$lib/stores/filecopy.svelte";
-  import { fileDrag } from "$lib/stores/filedrag.svelte";
-  import { parseFileDragMessage } from "$lib/files/filedrop";
+  } from "#lib/stores/filecopy.svelte.ts";
+  import { fileDrag } from "#lib/stores/filedrag.svelte.ts";
+  import { parseFileDragMessage } from "#lib/files/filedrop.ts";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import FileDragGhost from "$lib/files/FileDragGhost.svelte";
+  import FileDragGhost from "#lib/files/FileDragGhost.svelte";
   import {
     foreignTargets,
     targetsFrom,
-  } from "$lib/files/copyto";
-  import CopyToDialog from "$lib/files/CopyToDialog.svelte";
-  import ReplaceDialog from "$lib/files/ReplaceDialog.svelte";
-  import LinkOpenDialog from "$lib/terminal/LinkOpenDialog.svelte";
-  import FileLinkDialog from "$lib/terminal/FileLinkDialog.svelte";
-  import { createFileLinkFlow } from "$lib/page/filelinkflow.svelte";
-  import { createEditorFlow } from "$lib/page/editorflow.svelte";
-  import { createFileDragFlow } from "$lib/page/filedragflow.svelte";
-  import { createWindowFlow } from "$lib/page/windowflow.svelte";
-  import { applySyncProgress } from "$lib/stores/syncrun.svelte";
-  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
+  } from "#lib/files/copyto.ts";
+  import CopyToDialog from "#lib/files/CopyToDialog.svelte";
+  import ReplaceDialog from "#lib/files/ReplaceDialog.svelte";
+  import LinkOpenDialog from "#lib/terminal/LinkOpenDialog.svelte";
+  import FileLinkDialog from "#lib/terminal/FileLinkDialog.svelte";
+  import { createFileLinkFlow } from "#lib/page/filelinkflow.svelte.ts";
+  import { createEditorFlow } from "#lib/page/editorflow.svelte.ts";
+  import { createFileDragFlow } from "#lib/page/filedragflow.svelte.ts";
+  import { createWindowFlow } from "#lib/page/windowflow.svelte.ts";
+  import { applySyncProgress } from "#lib/stores/syncrun.svelte.ts";
+  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "#lib/stores/syncjob.svelte.ts";
   import {
     recordingState,
     recordingPaused,
     isRecording,
     clearRecording,
-  } from "$lib/stores/recordings.svelte";
-  import type { SftpProgress, TransferJob } from "$lib/api";
-  import { applyImportedSettings, settings } from "$lib/settings/settings.svelte";
-  import { t } from "$lib/i18n";
+  } from "#lib/stores/recordings.svelte.ts";
+  import type { SftpProgress, TransferJob } from "#lib/api/index.ts";
+  import { applyImportedSettings, settings } from "#lib/settings/settings.svelte.ts";
+  import { t } from "#lib/i18n/index.ts";
   import {
     setMenuLanguage,
     armCloseGuard,
@@ -271,17 +271,17 @@
     annotateRecording,
     fetchMetrics,
     readRecording,
-  } from "$lib/api";
-  import { extractTranscript } from "$lib/recording/recording";
-  import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/ai/aicontext";
-  import type { PromptVars } from "$lib/ai/aicore";
-  import { isProdServer } from "$lib/ai/aiexec";
-  import type { ProbeSession } from "$lib/utilities/probe";
-  import RecordingSaveDialog from "$lib/recording/RecordingSaveDialog.svelte";
-  import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
-  import type { HostServer, HostTab } from "$lib/netcheck/netroute";
-  import BroadcastBar from "$lib/terminal/BroadcastBar.svelte";
-  import BroadcastRoster from "$lib/terminal/BroadcastRoster.svelte";
+  } from "#lib/api/index.ts";
+  import { extractTranscript } from "#lib/recording/recording.ts";
+  import { DEFAULT_TAIL_LINES, type RawContext } from "#lib/ai/aicontext.ts";
+  import type { PromptVars } from "#lib/ai/aicore.ts";
+  import { isProdServer } from "#lib/ai/aiexec.ts";
+  import type { ProbeSession } from "#lib/utilities/probe.ts";
+  import RecordingSaveDialog from "#lib/recording/RecordingSaveDialog.svelte";
+  import { dockConnection, localizedStatus } from "#lib/stores/tabs.svelte.ts";
+  import type { HostServer, HostTab } from "#lib/netcheck/netroute.ts";
+  import BroadcastBar from "#lib/terminal/BroadcastBar.svelte";
+  import BroadcastRoster from "#lib/terminal/BroadcastRoster.svelte";
   import {
     broadcastState,
     isBroadcastMember,
@@ -289,14 +289,14 @@
     setBroadcastMembers,
     clearBroadcastMembers,
     removeBroadcastMember,
-  } from "$lib/stores/broadcast.svelte";
+  } from "#lib/stores/broadcast.svelte.ts";
   import {
     eligibleMembers,
     frameCommand,
     groupHasProd,
     gridColumns,
     prodMembers,
-  } from "$lib/terminal/broadcast";
+  } from "#lib/terminal/broadcast.ts";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);

@@ -77,7 +77,9 @@ WebView — граница доверия (политики argv драйвер�
 composite actions, у каждой заботы один сканер (`cargo deny` без `cargo audit`), Rust закреплён
 в `rust-toolchain.toml`, глубокие проверки — `deep.yml`. Этап G (1.25.6): `src/lib` по папкам
 подсистем — 535 файлов из корня в 25 папок, слои остались своими папками, в корне только
-`types.ts`, гейт `liblayout.guard`. Остальное — в «Что дальше».
+`types.ts`, гейт `liblayout.guard`. Этап H (1.25.7): SvelteKit 3 (конфигурация в плагине Vite,
+`#lib/…` вместо `$lib`), vitest 5, `russh` 0.65 / `russh-sftp` 3; TypeScript 7 отложен — у него
+нет JS API, на котором стоят svelte-check и typescript-eslint. Остальное — в «Что дальше».
 Версии 1.1, 1.2 и 1.3 отдельными релизами не выходили.
 
 ---
@@ -88,7 +90,7 @@ composite actions, у каждой заботы один сканер (`cargo de
 из приложения в систему (1.14); подробности коммита в Git — 1.15, настраиваемая верхняя
 панель — 1.16, долги широкого вида — 1.17.
 
-- **🔜 1.25 — рефакторинг, этапы patch-выпусками по порядку** (A — 1.25.0, B — 1.25.1, C — 1.25.2, D — 1.25.3, E — 1.25.4, F — 1.25.5, G — 1.25.6, сделаны):
+- **🔜 1.25 — рефакторинг, этапы patch-выпусками по порядку** (A — 1.25.0, B — 1.25.1, C — 1.25.2, D — 1.25.3, E — 1.25.4, F — 1.25.5, G — 1.25.6, H — 1.25.7, сделаны):
   - **✅ B — бэкенд (1.25.1).** Команды `lib.rs` по файлам `commands/` (тот же слой-мост над `AppState`);
     один исполнитель драйверов вместо почти одинаковых `git_run`/`container_run`/`kubectl_run`
     и одна `ExecOutput` вместо четырёх; блокировки `AppState` без каскада паник; WebView —
@@ -129,8 +131,16 @@ composite actions, у каждой заботы один сканер (`cargo de
     переписанными импортами и путями в доках, конфигах и гейтах. `vterm/layers` узнаёт чистый
     модуль по папке (`LAYER_DIRS`), гейт `liblayout.guard` сверяет папки с деревом
     ARCHITECTURE и не пускает файлы в корень.
-  - **H — мажорные версии:** `russh` 0.65 / `russh-sftp` 3, SvelteKit 3 (закрывает два low
-    advisory), TypeScript 7, vitest 5.
+  - **✅ H — мажорные версии (1.25.7).** SvelteKit 3: конфигурация — в плагине Vite
+    (`svelte.config.js` удалён), `$lib` → `#lib/…` с расширением файла (subpath import
+    `package.json`), tsconfig наследует `$app/tsconfig`, часовой опрос `version.json` выключен;
+    два low advisory Kit < 3 закрыты, override `cookie` снят. vitest 5 — набор покрываемых
+    файлов сверен с vitest 4. `russh` 0.65 / `russh-sftp` 3 без правок кода: живые
+    `live_sftp`/`live_exec`/`live_kbdint` зелёные. ADR 0046.
+  - **⬜ TypeScript 7.** У TS 7.0 нет JS API (обещан в 7.1), а на API TS 6 стоят
+    `svelte-kit sync`, svelte-check/svelte2tsx и typescript-eslint: установка роняет `pnpm check`
+    и `pnpm lint`. Переход — когда они примут TS 7; `@typescript/typescript6` рядом с TS 7
+    ничего не даёт — `tsc` в проекте не запускается.
 
 Ниже — долги.
 
