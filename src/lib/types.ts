@@ -1,6 +1,6 @@
 // Shared types mirroring the Rust backend models (src-tauri/src/model.rs).
 
-import type { AiExecMode } from "./ai";
+import type { AiExecMode } from "./ai/ai";
 
 export type AuthMethod = "password" | "key";
 
@@ -95,7 +95,7 @@ export interface FileEntry {
    * (Phase 39.1, `drives.rs` → `drives.ts`). Null for real filesystem entries and
    * over SFTP, which is POSIX and has no such level.
    */
-  drive?: import("./drives").DriveInfo | null;
+  drive?: import("./files/drives").DriveInfo | null;
 }
 
 /** A remote text file opened in the editor (mirrors sftp.rs TextFile). */

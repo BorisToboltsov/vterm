@@ -1,0 +1,767 @@
+<script lang="ts">
+  // AI chat content (Phase 17.2 + 17.3). Renders inside the shared right dock
+  // (Dock.svelte) as the "AI" tab — no own collapse/width chrome. Streams the
+  // model's reply over `ai://out|done|error/{streamId}`; the HTTP lives in the
+  // Rust broker (ai.rs). Phase 17.3 adds opt-in session context: when "attach
+  // context" is on, the terminal selection / buffer / recording / metadata
+  // (per AI settings tiers) are collected, redacted, and shown in a consent
+  // dialog before anything is sent.
+  import { tick } from "svelte";
+  import { tooltip } from "../actions/tooltip";
+  import { wideWhen } from "../actions/panelwide";
+  import { settings } from "../settings/settings.svelte";
+  import {
+    aiReady,
+    activeEndpoint,
+    mergeModelOptions,
+    resolvePromptContent,
+    effectiveExecMode,
+    trimHistory,
+    usageSummary,
+    formatElapsed,
+    defaultPrompt,
+    type AiExecMode,
+  } from "./ai";
+  import {
+    buildContext,
+    contextSummary,
+    textLines,
+    type RawContext,
+    type BuiltContext,
+    type ContextTiers,
+  } from "./aicontext";
+  import { buildSystemPrompt, resolveReplyLanguage, type PromptVars } from "./aicore";
+  import { parseChatSegments } from "./aiexec";
+  import { aiModels } from "../api";
+  import { writeClipboard } from "../app/clipboard";
+  import { notifySuccess, notifyInfo } from "../stores/toasts.svelte";
+  import { askBlocker, chatBusy, ASK_BLOCK_MESSAGE, ASK_PRESETS } from "./aiask";
+  import {
+    aiChatState,
+    getChat,
+    startChat,
+    stopChat,
+    runCommand,
+    confirmDialogStep,
+    skipDialogStep,
+    clearChat as clearSessionChat,
+    KEY_NONE,
+    type SessionChat,
+  } from "../stores/aichat.svelte";
+  import { renderMarkdown } from "../markdown/markdown";
+  import { mdLinks } from "../actions/mdlinks";
+  import AiConsentDialog from "./AiConsentDialog.svelte";
+  import Icon from "../ui/Icon.svelte";
+  import { t } from "../i18n";
+
+  let {
+    getContext,
+    sessionId,
+    chatPromptId = null,
+    serverExecMode = null,
+    prod = false,
+    noAi = false,
+    isLocal = false,
+    promptVars = {},
+    selectionLines = 0,
+    hasRecording = false,
+  }: {
+    /** Reads the live session context (impure); omitted when no session is active. */
+    getContext?: () => Promise<RawContext> | RawContext;
+    /** Active session for executing proposed commands (17.4); omitted = no executor. */
+    sessionId?: string;
+    /** The active server's chosen chat prompt id (overrides the active one). */
+    chatPromptId?: string | null;
+    /** Per-server execution-mode override, or null to use the global setting. */
+    serverExecMode?: AiExecMode | null;
+    /** The active server is prod-flagged — auto-run is barred (falls back to confirm). */
+    prod?: boolean;
+    /** The active server is `noAi`-flagged — block context attach + execution (17.7). */
+    noAi?: boolean;
+    /** The session is a local shell rather than SSH — shapes the core prompt. */
+    isLocal?: boolean;
+    /** Values for `{os}`/`{host}`/… placeholders in the user's prompt (Phase 41). */
+    promptVars?: PromptVars;
+    /** Lines selected in the terminal right now (0 = none) — for the caption. */
+    selectionLines?: number;
+    /** The session is being recorded, so the recording tier would add something. */
+    hasRecording?: boolean;
+  } = $props();
+
+  // The conversation + streaming live in a per-session store (stores/aichat), so
+  // switching tabs preserves each tab's dialog AND a reply keeps arriving in the
+  // background. The slot is ensured in an effect (writes belong in effects, not
+  // deriveds); `chat` is a pure read with a stable empty fallback for the first
+  // frame. All writes go through the store service.
+  const EMPTY_CHAT: SessionChat = {
+    messages: [],
+    executed: {},
+    streaming: false,
+    error: null,
+    dialogStep: 0,
+    dialogRunning: false,
+    pending: null,
+    ask: null,
+    attachment: null,
+    context: { includeBuffer: false, includeRecording: false, includeMetadata: false },
+  };
+  const sessionKey = $derived(sessionId ?? KEY_NONE);
+  $effect(() => {
+    getChat(sessionKey);
+  });
+  const chat = $derived(aiChatState.map[sessionKey] ?? EMPTY_CHAT);
+  const messages = $derived(chat.messages);
+  const executed = $derived(chat.executed);
+  const streaming = $derived(chat.streaming);
+  const error = $derived(chat.error);
+  const pending = $derived(chat.pending); // a dialog command awaiting confirm/skip
+  // Mid-turn: streaming, awaiting a dialog confirmation, or running a dialog step.
+  // A new question waits until it is over (aiask.ts).
+  const busy = $derived(chatBusy(chat));
+
+  let input = $state("");
+  let attach = $state(false);
+  // The wide layout (v1.17) — see the markup.
+  let wide = $state(false);
+  let showTiers = $state(false); // context-tier popover open
+  let scrollEl = $state<HTMLElement>();
+  let inputEl = $state<HTMLTextAreaElement>();
+  // Pending consent: a built context awaiting the user's explicit go-ahead.
+  // `attached` = it carries the composer chip, which goes once the send starts.
+  let consent = $state<{ question: string; built: BuiltContext; attached: boolean } | null>(null);
+  const attachment = $derived(chat.attachment);
+  // Which reasoning folds the user opened, by message index. Folded by default:
+  // the scratchpad is context for the wait, not the answer.
+  let openReasoning = $state<Record<number, boolean>>({});
+
+  const ready = $derived(aiReady(settings.ai));
+  const endpoint = $derived(activeEndpoint(settings.ai));
+  // A `noAi` server blocks attaching context and executing commands (17.7).
+  const canAttach = $derived(ready && !!getContext && !noAi);
+  // Count of extra context tiers on (base selection/tail is always included).
+  const tierCount = $derived(
+    (chat.context.includeBuffer ? 1 : 0) +
+      (chat.context.includeRecording ? 1 : 0) +
+      (chat.context.includeMetadata ? 1 : 0),
+  );
+  // Per-server override wins over the global execution mode (still gated by prod/noAi).
+  const execMode = $derived(effectiveExecMode(serverExecMode, settings.ai.execMode));
+  /** Commands can be executed at all (not "suggest only", live session, AI allowed). */
+  const canExecute = $derived(ready && !!sessionId && execMode !== "suggest" && !noAi);
+
+  // How much of the conversation the next request will leave behind (Phase 40).
+  // Computed from the live list rather than recorded per-request, so the marker
+  // reflects what would be sent *now*, not what was sent last time.
+  const droppedFromHistory = $derived(
+    trimHistory(
+      messages.map((m) => ({ role: m.role, content: m.sent ?? m.content })),
+      settings.ai.historyLimit,
+      settings.ai.historyCharCap,
+    ).dropped,
+  );
+
+  /** Endpoints the switcher offers — configured *and* usable (a model chosen). */
+  const switchableEndpoints = $derived(settings.ai.endpoints.filter((e) => e.model.trim()));
+
+  // Model picker: fetched model list per endpoint, chosen right here in the chat.
+  let models = $state<string[]>([]);
+  let loadingModels = $state(false);
+  let modelsFor: string | null = null; // guard: fetch once per endpoint
+  const modelOptions = $derived(mergeModelOptions(models, endpoint?.model ?? ""));
+
+  async function refreshModels() {
+    if (!endpoint) return;
+    loadingModels = true;
+    try {
+      models = await aiModels({
+        endpointId: endpoint.id,
+        provider: endpoint.provider,
+        baseUrl: endpoint.baseUrl,
+      });
+    } catch {
+      models = []; // keep the manually-entered model as the sole option
+    } finally {
+      loadingModels = false;
+    }
+  }
+
+  // Fetch the model list once when the active endpoint becomes available/changes.
+  $effect(() => {
+    const id = endpoint?.id ?? null;
+    if (ready && id && id !== modelsFor) {
+      modelsFor = id;
+      models = [];
+      refreshModels();
+    }
+  });
+
+  function setModel(m: string) {
+    if (endpoint) endpoint.model = m;
+  }
+
+  /**
+   * Pick up a question raised elsewhere (terminal "Explain", a container's logs,
+   * a metrics snapshot) as a chip in the composer: the user asks their own question
+   * about it, or sends the preset one. Nothing leaves here — the send runs the
+   * *existing* consent dialog, so no entry point can bypass the consent contract.
+   */
+  $effect(() => {
+    const req = chat.ask;
+    if (!req) return;
+    chat.ask = null;
+    // Attached or turned away with a reason — never parked: a request left in the
+    // store would pop up later, out of the blue, once the blocker cleared.
+    const block = askBlocker({ ready, noAi });
+    if (block) {
+      notifyInfo(t(ASK_BLOCK_MESSAGE[block]));
+      return;
+    }
+    chat.attachment = req;
+    void tick().then(() => inputEl?.focus());
+  });
+
+  async function scrollToBottom() {
+    await tick();
+    if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
+  }
+
+  // Keep pinned to the newest content as a reply streams in (while mounted).
+  $effect(() => {
+    void messages.length;
+    void messages[messages.length - 1]?.content;
+    scrollToBottom();
+  });
+
+  // "Sends: …" beside the paperclip — the same slot rule buildContext applies, so a
+  // stale selection scrolled off screen is visible before the consent dialog.
+  const summary = $derived(
+    attach && canAttach
+      ? t("ai.context.will", {
+          what: contextSummary({
+            attached: !!attachment,
+            selectionLines,
+            tiers: chat.context,
+            hasRecording,
+          })
+            .map((p) => t(p.key, p.params))
+            .join(" + "),
+        })
+      : "",
+  );
+
+  const NO_TIERS: ContextTiers = { includeBuffer: false, includeRecording: false, includeMetadata: false };
+
+  async function send() {
+    // An attached chip makes an empty send meaningful: its preset question.
+    const att = noAi ? null : attachment;
+    const text = input.trim() || (att ? t(ASK_PRESETS[att.source].question) : "");
+    if (!text || busy || !ready || consent) return;
+    const tiers = attach && !!getContext && !noAi;
+    if (att || tiers) {
+      let raw: RawContext = {};
+      if (tiers && getContext) {
+        try {
+          raw = await getContext();
+        } catch {
+          raw = {};
+        }
+      }
+      // The chip takes the terminal slot (it is what the user pointed at);
+      // recording/metadata tiers still add when the paperclip is on.
+      const attached = att ? { header: ASK_PRESETS[att.source].header, text: att.context } : undefined;
+      const built = buildContext(raw, tiers ? chat.context : NO_TIERS, attached);
+      if (built.text) {
+        consent = { question: text, built, attached: !!att };
+        return; // hold until the user confirms in the consent dialog
+      }
+    }
+    doSend(text, "");
+  }
+
+  function confirmConsent() {
+    if (!consent) return;
+    const { question, built, attached } = consent;
+    consent = null;
+    if (doSend(question, built.text) && attached) chat.attachment = null;
+  }
+
+  function cancelConsent() {
+    consent = null;
+  }
+
+  /** Hand off to the per-session streaming service (survives tab switches). */
+  function doSend(question: string, context: string): boolean {
+    // A dialog step can start between opening the consent dialog and confirming it.
+    if (chatBusy(chat)) {
+      notifyInfo(t("ai.ask.busy"));
+      return false;
+    }
+    input = "";
+    void startChat({
+      sessionId,
+      question,
+      context,
+      // The non-editable core (output contract, trust boundary, no-TTY rules,
+      // production warning) is prepended here rather than living in the editable
+      // prompt, so trimming the prompt can no longer switch execution off.
+      system: buildSystemPrompt(personaPrompt, sessionFacts(context !== ""), promptVars),
+      settings: settings.ai,
+      execMode,
+      prod,
+      noAi,
+    });
+    return true;
+  }
+
+  const personaPrompt = $derived(
+    resolvePromptContent(settings.ai.prompts.chat, chatPromptId, defaultPrompt("chat")),
+  );
+
+  /** What the core prompt is built from for this session. */
+  function sessionFacts(hasContext: boolean) {
+    return {
+      kind: isLocal ? ("local" as const) : ("ssh" as const),
+      canExecute,
+      execMode,
+      prod,
+      hasContext,
+      replyLanguage: resolveReplyLanguage(settings.ai.replyLanguage, settings.language),
+    };
+  }
+
+  function copyBlock(block: string) {
+    writeClipboard(block);
+    notifySuccess(t("ai.exec.copied"));
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  }
+
+  function clearChat() {
+    clearSessionChat(sessionId);
+  }
+</script>
+
+<!-- The endpoint and the model: one row over the chat in a narrow panel, stacked
+     in the column beside it in a wide one (`stacked`). -->
+{#snippet endpointControls(stacked: boolean)}
+  {#if ready && endpoint}
+    {#if switchableEndpoints.length > 1}
+      <!-- Endpoint switcher (Phase 40): swapping models mid-question used to
+           mean a round trip through settings. -->
+      <select
+        data-testid="ai-endpoint-switch"
+        class="min-w-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent {stacked
+          ? 'w-full'
+          : 'shrink'}"
+        use:tooltip={t("ai.endpoint")}
+        value={endpoint.id}
+        onchange={(e) => (settings.ai.activeEndpointId = e.currentTarget.value)}
+      >
+        {#each switchableEndpoints as ep (ep.id)}
+          <option value={ep.id}>{ep.name}</option>
+        {/each}
+      </select>
+    {/if}
+    <select
+      data-testid="ai-model"
+      class="min-w-0 flex-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
+      use:tooltip={t("ai.model")}
+      value={endpoint.model}
+      onchange={(e) => setModel(e.currentTarget.value)}
+    >
+      {#each modelOptions as m (m)}
+        <option value={m}>{m}</option>
+      {/each}
+    </select>
+    <button
+      class="shrink-0 rounded p-1 text-muted hover:text-text disabled:opacity-50"
+      use:tooltip={t("ai.modelRefresh")}
+      aria-label={t("ai.modelRefresh")}
+      disabled={loadingModels}
+      onclick={refreshModels}
+    >
+      <Icon name="refresh" size={13} class={loadingModels ? "animate-spin" : ""} />
+    </button>
+  {:else if !stacked}
+    <span class="flex-1"></span>
+  {/if}
+{/snippet}
+
+{#snippet clearButton()}
+  <button
+    class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
+    data-testid="ai-clear"
+    onclick={clearChat}
+    disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
+  >
+{/snippet}
+
+<!-- What may go with a question, as three switches: in a menu behind the
+     paperclip in a narrow panel, an open list in the column of a wide one. -->
+{#snippet tierBoxes()}
+  <label class="mb-1 flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeBuffer} />
+    {t("settings.aiIncludeBuffer")}
+  </label>
+  <label class="mb-1 flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeRecording} />
+    {t("settings.aiIncludeRecording")}
+  </label>
+  <label class="flex items-center gap-2 text-muted">
+    <input type="checkbox" bind:checked={chat.context.includeMetadata} />
+    {t("settings.aiIncludeMetadata")}
+  </label>
+{/snippet}
+
+{#snippet attachToggle(stacked: boolean)}
+  <button
+    data-testid="ai-attach"
+    type="button"
+    class="flex items-center gap-1 px-1.5 py-1 text-meta disabled:opacity-40 {stacked
+      ? 'w-full rounded'
+      : 'rounded-l'} {attach ? 'bg-edge text-accent' : 'text-muted hover:text-text'}"
+    disabled={!canAttach}
+    aria-pressed={attach}
+    use:tooltip={t("ai.context.toggleHint")}
+    onclick={() => (attach = !attach)}
+  >
+    <Icon name="paperclip" size={13} />
+    {t("ai.context.attach")}{#if attach && tierCount > 0}&nbsp;· {tierCount}{/if}
+  </button>
+{/snippet}
+
+<!-- A wide panel (v1.17): the chat keeps the whole height, with the question
+     under it, and what a narrow panel puts over the chat and behind the
+     paperclip — the endpoint, the model, what goes with the question — stands
+     in a column beside. The panel measures itself: it owns a dialog (consent)
+     and a menu, so it cannot be a query container (`panelcontainer.guard`). -->
+<div
+  class="flex h-full min-h-0 {wide ? '' : 'flex-col'}"
+  use:wideWhen={(w) => (wide = w)}
+  data-wide={wide}
+  data-testid="ai-chat"
+>
+  <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="ai-main">
+  {#if !wide}
+    <div class="flex items-center gap-2 border-b border-edge px-2 py-1" data-testid="ai-header">
+      {@render endpointControls(false)}
+      {@render clearButton()}
+    </div>
+  {/if}
+
+  {#if noAi && ready}
+    <div
+      class="flex items-center gap-1 border-b border-edge bg-panel px-2 py-1 text-meta text-muted"
+      data-testid="ai-noai-banner"
+    >
+      <Icon name="lock" size={12} />
+      {t("ai.noAiBanner")}
+    </div>
+  {/if}
+
+  <div bind:this={scrollEl} class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 text-xs">
+    {#if !ready}
+      <p class="py-6 text-center text-meta text-muted">{t("ai.disabledHint")}</p>
+    {:else if messages.length === 0}
+      <p class="py-6 text-center text-meta text-muted">{t("ai.empty")}</p>
+    {/if}
+    {#if droppedFromHistory > 0}
+      <!-- The conversation outgrew the caps: say so, rather than silently
+           dropping turns the user still sees on screen. -->
+      <div class="flex items-center gap-2 py-0.5" data-testid="ai-history-trimmed">
+        <span class="h-px flex-1 bg-edge"></span>
+        <span class="flex items-center gap-1 text-caption text-muted">
+          <Icon name="scissors" size={11} />
+          {t("ai.historyTrimmed", { count: String(droppedFromHistory) })}
+        </span>
+        <span class="h-px flex-1 bg-edge"></span>
+      </div>
+    {/if}
+    {#each messages as m, i (i)}
+      <div class="rounded border border-edge p-2 {m.role === 'user' ? 'bg-panel' : ''}">
+        <div class="mb-1 flex items-center gap-1 text-caption uppercase tracking-wider text-muted">
+          <span>{m.role === "user" ? t("ai.you") : t("ai.assistant")}</span>
+          {#if m.withContext}
+            <span class="flex items-center gap-0.5 text-accent" use:tooltip={t("ai.context.attached")}>
+              <Icon name="paperclip" size={10} />
+            </span>
+          {/if}
+        </div>
+        {#if m.role === "assistant"}
+          {#if m.reasoning}
+            <!-- Reasoning fold (Phase 40): a reasoning model can stay silent on
+                 the answer channel for a long time, and an empty bubble reads as
+                 a hang. Folded by default, and never parsed for command blocks. -->
+            <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-reasoning">
+              <button
+                type="button"
+                class="flex w-full items-center gap-1.5 bg-panel px-2 py-1 text-left hover:bg-edge"
+                aria-expanded={openReasoning[i] === true}
+                onclick={() => (openReasoning[i] = !openReasoning[i])}
+              >
+                <Icon name={openReasoning[i] ? "chevronDown" : "chevronRight"} size={12} class="shrink-0 text-muted" />
+                <Icon name="bulb" size={12} class="shrink-0 text-warn" />
+                <span class="text-caption text-muted">
+                  {streaming && i === messages.length - 1
+                    ? t("ai.reasoningLive")
+                    : m.elapsedMs
+                      ? t("ai.reasoningDone", { time: formatElapsed(m.elapsedMs) })
+                      : t("ai.reasoning")}
+                </span>
+                {#if streaming && i === messages.length - 1}
+                  <span class="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-warn"></span>
+                {/if}
+              </button>
+              {#if openReasoning[i]}
+                <div
+                  class="whitespace-pre-wrap break-words border-t border-edge p-2 text-meta leading-relaxed text-muted"
+                >{m.reasoning}</div>
+              {/if}
+            </div>
+          {/if}
+          {#each parseChatSegments(m.content) as seg, si (si)}
+            {#if seg.kind === "text"}
+              <!-- Model output — untrusted; links are gated by markdown.ts:safeUrl
+                   at render time and by use:mdLinks on click. -->
+              <div class="markdown-preview" use:mdLinks>{@html renderMarkdown(seg.content)}</div>
+            {:else}
+              <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-code">
+                <div
+                  class="flex items-center justify-between gap-2 border-b border-edge bg-panel px-2 py-0.5"
+                >
+                  <span class="text-caption uppercase tracking-wider text-muted">
+                    {seg.lang || "code"}
+                  </span>
+                  <div class="flex items-center gap-1">
+                    <button
+                      class="flex items-center gap-0.5 rounded px-1 py-0.5 text-caption text-muted hover:text-text"
+                      aria-label={t("ai.exec.copy")} use:tooltip={t("ai.exec.copy")}
+                      onclick={() => copyBlock(seg.content)}
+                    >
+                      <Icon name="copy" size={11} />
+                    </button>
+                    {#if seg.runnable && seg.closed && canExecute}
+                      <button
+                        data-testid="ai-run"
+                        class="flex items-center gap-0.5 rounded bg-edge px-1.5 py-0.5 text-caption hover:bg-accent hover:text-panel-alt disabled:opacity-50"
+                        disabled={streaming || executed[`${i}:${si}`]}
+                        onclick={() => runCommand(sessionId, chat, `${i}:${si}`, seg.content, noAi)}
+                      >
+                        <Icon name="play" size={11} />
+                        {executed[`${i}:${si}`] ? t("ai.exec.ran") : t("ai.exec.run")}
+                      </button>
+                    {/if}
+                  </div>
+                </div>
+                <pre class="overflow-x-auto p-2 text-meta leading-relaxed text-text"><code
+                    >{seg.content}</code
+                  ></pre>
+              </div>
+            {/if}
+          {/each}
+          {#if !streaming || i !== messages.length - 1}
+            {@const u = usageSummary(m.usage, m.elapsedMs)}
+            {#if u}
+              <!-- Only what the endpoint actually reported: a missing half is
+                   omitted, never shown as a zero we didn't measure. -->
+              <div
+                class="mt-1.5 flex items-center gap-2.5 whitespace-nowrap border-t border-edge pt-1 text-caption text-muted"
+                data-testid="ai-usage"
+              >
+                {#if u.input}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageIn")}>
+                    <Icon name="arrowUp" size={11} />{u.input}
+                  </span>
+                {/if}
+                {#if u.output}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageOut")}>
+                    <Icon name="arrowDown" size={11} />{u.output}
+                  </span>
+                {/if}
+                {#if u.elapsed}
+                  <span class="flex items-center gap-0.5" use:tooltip={t("ai.usageTime")}>
+                    <Icon name="clock" size={11} />{u.elapsed}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+          {/if}
+        {:else}
+          <div class="whitespace-pre-wrap break-words">{m.content}</div>
+        {/if}
+      </div>
+    {/each}
+    {#if error}
+      <p class="text-meta text-danger" data-testid="ai-error">{error}</p>
+    {/if}
+  </div>
+
+  {#if pending}
+    <!-- Dialog step awaiting the user's go-ahead (dialogConfirm / dangerous cmd). -->
+    <div class="border-t border-edge bg-panel px-2 py-2" data-testid="ai-pending">
+      <div class="mb-1 text-caption uppercase tracking-wider text-muted">
+        {t("ai.dialog.confirmTitle")}
+      </div>
+      <pre
+        class="mb-1.5 overflow-x-auto rounded bg-panel-alt p-2 font-mono text-meta text-text">{pending.command}</pre>
+      <div class="flex justify-end gap-2">
+        <button
+          data-testid="ai-dialog-skip"
+          class="rounded px-2 py-1 text-meta text-muted hover:text-text"
+          onclick={() => skipDialogStep(sessionId)}>{t("ai.dialog.skip")}</button
+        >
+        <button
+          data-testid="ai-dialog-run"
+          class="flex items-center gap-1 rounded bg-accent px-2 py-1 text-meta text-panel-alt hover:bg-accent-hover"
+          onclick={() => confirmDialogStep(sessionId)}
+        >
+          <Icon name="play" size={12} />
+          {t("ai.dialog.run")}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <div class="border-t border-edge p-2">
+    {#if attachment}
+      <!-- The composer chip: what the next question is about. Sent (after consent)
+           with the typed question, or with the preset one on an empty send. -->
+      <div
+        class="mb-1 flex items-center gap-1 rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-muted"
+        data-testid="ai-attachment"
+      >
+        <Icon name="paperclip" size={11} class="shrink-0 text-accent" />
+        <span class="truncate text-text">{t(ASK_PRESETS[attachment.source].label)}</span>
+        <span class="shrink-0">· {t("ai.attach.lines", { count: String(textLines(attachment.context)) })}</span>
+        <button
+          type="button"
+          class="ml-auto shrink-0 rounded p-0.5 hover:text-text"
+          data-testid="ai-attachment-remove"
+          aria-label={t("ai.attach.remove")}
+          use:tooltip={t("ai.attach.remove")}
+          onclick={() => (chat.attachment = null)}
+        >
+          <Icon name="close" size={11} />
+        </button>
+      </div>
+    {/if}
+    <textarea
+      data-testid="ai-input"
+      bind:this={inputEl}
+      rows="2"
+      placeholder={!ready ? t("ai.disabledHint") : attachment ? t("ai.attach.placeholder") : t("ai.placeholder")}
+      disabled={!ready || busy}
+      class="w-full resize-none rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent disabled:opacity-50"
+      bind:value={input}
+      onkeydown={onKey}
+    ></textarea>
+    <div class="mt-1 flex items-center justify-between gap-2">
+      {#if !wide}
+        <div class="relative flex items-center">
+          {@render attachToggle(false)}
+          <button
+            data-testid="ai-tiers"
+            type="button"
+            class="rounded-r px-1 py-1 text-meta text-muted hover:text-text disabled:opacity-40"
+            disabled={!canAttach}
+            aria-label={t("ai.context.tiers")}
+            use:tooltip={t("ai.context.tiers")}
+            onclick={() => (showTiers = !showTiers)}
+          >
+            <Icon name={showTiers ? "chevronDown" : "chevronUp"} size={12} />
+          </button>
+          {#if showTiers}
+            <button
+              class="fixed inset-0 z-40 cursor-default"
+              aria-hidden="true"
+              tabindex="-1"
+              onclick={() => (showTiers = false)}
+            ></button>
+            <div
+              class="absolute bottom-full left-0 z-50 mb-1 w-60 rounded border border-edge bg-panel-alt p-2 text-meta shadow-lg"
+              data-testid="ai-tiers-menu"
+            >
+              <p class="mb-1.5 text-caption text-muted">{t("ai.context.base")}</p>
+              {@render tierBoxes()}
+            </div>
+          {/if}
+        </div>
+        {#if summary}
+          <span
+            class="min-w-0 flex-1 truncate text-caption text-muted"
+            data-testid="ai-context-summary"
+            use:tooltip={summary}>{summary}</span
+          >
+        {/if}
+      {:else}
+        <span class="flex-1"></span>
+      {/if}
+      {#if streaming || (chat.dialogRunning && !pending)}
+        <button
+          data-testid="ai-stop"
+          type="button"
+          class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-danger hover:text-panel-alt"
+          use:tooltip={t("ai.stop")}
+          onclick={() => stopChat(sessionId)}
+        >
+          <Icon name="stop" size={12} />
+          {t("ai.stop")}
+        </button>
+      {:else}
+        <button
+          data-testid="ai-send"
+          class="flex items-center gap-1 rounded bg-edge px-2 py-1 text-xs hover:bg-accent hover:text-panel-alt disabled:opacity-50"
+          disabled={!ready || busy || (input.trim() === "" && !attachment)}
+          onclick={send}
+        >
+          <Icon name="arrowRight" size={13} />
+          {t("ai.send")}
+        </button>
+      {/if}
+    </div>
+  </div>
+  </div>
+  {#if wide}
+    <aside
+      class="flex w-64 shrink-0 flex-col gap-2 overflow-y-auto border-l border-edge p-2"
+      data-testid="ai-side"
+    >
+      {#if ready && endpoint}
+        <div class="flex flex-wrap items-center gap-1.5" data-testid="ai-side-endpoint">
+          {@render endpointControls(true)}
+        </div>
+      {/if}
+      <!-- What goes with the question — open, not behind a menu: what the model
+           is about to be sent is read before the question is. -->
+      <div class="text-meta" data-testid="ai-side-context">
+        <p class="mb-1.5 text-caption text-muted">{t("ai.context.sideTitle")}</p>
+        {@render attachToggle(true)}
+        <div class="mt-1.5 {attach && canAttach ? '' : 'opacity-50'}" data-testid="ai-tiers-open">
+          {@render tierBoxes()}
+        </div>
+        {#if summary}
+          <p class="mt-1.5 break-words text-caption text-muted" data-testid="ai-context-summary">{summary}</p>
+        {/if}
+      </div>
+      <div class="mt-auto flex justify-end">
+        {@render clearButton()}
+      </div>
+    </aside>
+  {/if}
+</div>
+
+{#if consent && endpoint}
+  <AiConsentDialog
+    open
+    context={consent.built}
+    endpointName={endpoint.name}
+    endpointUrl={endpoint.baseUrl}
+    onconfirm={confirmConsent}
+    oncancel={cancelConsent}
+  />
+{/if}

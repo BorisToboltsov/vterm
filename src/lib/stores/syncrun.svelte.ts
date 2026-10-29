@@ -9,7 +9,7 @@
 // here, so ordinary panel transfers never show up in the dialog.
 
 import type { SftpProgress } from "../api";
-import { progressWeight, type SyncProgressMap } from "../sync";
+import { progressWeight, type SyncProgressMap } from "../sync/sync";
 
 // `done`/`weight` are running totals kept alongside the map, so the dialog's
 // header reads them in O(1). Summing the whole plan per event (and copying the

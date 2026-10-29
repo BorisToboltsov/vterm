@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // tests stay free of Tauri `invoke` / navigator.clipboard wiring.
 const readClipboard = vi.fn<() => Promise<string>>();
 const writeClipboard = vi.fn<(t: string) => Promise<void>>();
-vi.mock("../clipboard", () => ({
+vi.mock("../app/clipboard", () => ({
   readClipboard: () => readClipboard(),
   writeClipboard: (t: string) => writeClipboard(t),
 }));

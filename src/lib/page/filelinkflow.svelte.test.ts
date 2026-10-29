@@ -14,7 +14,7 @@ vi.mock("../stores/tabs.svelte", () => ({ activateTab: stores.activateTab, tabsS
 vi.mock("../stores/toasts.svelte", () => ({ notifyInfo: stores.notifyInfo }));
 
 import { createFileLinkFlow, type FileLinkFlow } from "./filelinkflow.svelte";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import type { ServerProfile } from "../types";
 

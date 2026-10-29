@@ -17,7 +17,7 @@ vi.mock("@tauri-apps/api/app", () => ({ getVersion: vi.fn(async () => "1.25.2") 
 
 import { createRecordingFlow, type RecordingFlow } from "./recordingflow.svelte";
 import { clearRecording, isRecording, isRecordingPaused } from "../stores/recordings.svelte";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import type { ServerProfile } from "../types";
 

@@ -30,14 +30,14 @@ import {
   type NetReport,
   type NetRule,
   type NetTarget,
-} from "../netcheck";
-import type { RuleRow } from "../netcheckform";
-import type { HostPlan } from "../netroute";
+} from "../netcheck/netcheck";
+import type { RuleRow } from "../netcheck/netcheckform";
+import type { HostPlan } from "../netcheck/netroute";
 import { netcheckRun, recordAudit, sftpCancel } from "../api";
 import { isRecording } from "./recordings.svelte";
-import { probeError } from "../probe";
-import { isCancelled } from "../sync";
-import { reportWords } from "../netcheckwords";
+import { probeError } from "../utilities/probe";
+import { isCancelled } from "../sync/sync";
+import { reportWords } from "../netcheck/netcheckwords";
 import { t } from "../i18n";
 
 const STORAGE_KEY = "vterm.netcheck";

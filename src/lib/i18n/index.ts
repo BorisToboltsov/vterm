@@ -4,8 +4,8 @@
 //
 // Components import from here: `import { t } from "$lib/i18n";` (or "./i18n").
 
-import { settings } from "../settings.svelte";
-import { reseedBuiltinPrompts } from "../ai";
+import { settings } from "../settings/settings.svelte";
+import { reseedBuiltinPrompts } from "../ai/ai";
 import { resolve } from "./translate";
 import type { MessageKey, MessageParams } from "./messages";
 import {

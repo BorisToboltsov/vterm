@@ -2,7 +2,7 @@
   import { onMount, untrack, tick } from "svelte";
   import { tooltip } from "$lib/actions/tooltip";
   import { fade } from "svelte/transition";
-  import { motion } from "$lib/motion";
+  import { motion } from "$lib/ui/motion";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     connectPlan,
@@ -43,22 +43,22 @@
   import {
     isMainWindow,
     windowLabel,
-  } from "$lib/appwindow";
+  } from "$lib/windows/appwindow";
   import {
     WINDOW_ROWS,
     ghostPlace,
     paneDetachOffered,
     paneMoveOffered,
     type TermSnapshot,
-  } from "$lib/tabhandoff";
-  import { waitView } from "$lib/tabrestore";
+  } from "$lib/windows/tabhandoff";
+  import { waitView } from "$lib/tabs/tabrestore";
   import { forgetSavedTabs } from "$lib/stores/tabrestore.svelte";
   import { createRestoreFlow } from "$lib/page/restoreflow.svelte";
   import type { ServerProfile } from "$lib/types";
-  import { storeWarningMessage } from "$lib/storewarn";
-  import { sessionBarParts, showSessionBar } from "$lib/sessionbar";
-  import ViewModeToggle from "$lib/ViewModeToggle.svelte";
-  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/tree";
+  import { storeWarningMessage } from "$lib/servers/storewarn";
+  import { sessionBarParts, showSessionBar } from "$lib/terminal/sessionbar";
+  import ViewModeToggle from "$lib/ui/ViewModeToggle.svelte";
+  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/servers/tree";
   import {
     isPanelHidden,
     layout,
@@ -69,9 +69,9 @@
     setPanelHidden,
     toggleDock,
   } from "$lib/stores/layout.svelte";
-  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/docklayout";
+  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/layout/docklayout";
   import { glide } from "$lib/actions/drag";
-  import { moveLabel, moveTargets, panelLabel } from "$lib/dockui";
+  import { moveLabel, moveTargets, panelLabel } from "$lib/layout/dockui";
   import {
     activateTab,
     clearAdopt,
@@ -112,14 +112,14 @@
     shownTabs,
     type Edge,
     type Pane,
-  } from "$lib/splitlayout";
+  } from "$lib/layout/splitlayout";
   import {
     onScreenSessions,
     pendingAuthSession,
     confinedGhost,
     rectStyle,
     stripStyle,
-  } from "$lib/centerview";
+  } from "$lib/layout/centerview";
   import {
     beginTabDrag,
     consumeTabDragClick,
@@ -132,21 +132,21 @@
     incomingAsTab,
     parseDragMessage,
   } from "$lib/stores/tabincoming.svelte";
-  import SplitDivider from "$lib/SplitDivider.svelte";
+  import SplitDivider from "$lib/layout/SplitDivider.svelte";
   import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
-  import TerminalView from "$lib/Terminal.svelte";
-  import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
-  import type { ConnPhase } from "$lib/connphase";
-  import { sshErrorView } from "$lib/ssherror";
-  import { showNoSignal } from "$lib/connlost";
-  import Dock from "$lib/Dock.svelte";
-  import DockPanel from "$lib/DockPanel.svelte";
-  import DockDragGhost from "$lib/DockDragGhost.svelte";
-  import EditorTab from "$lib/EditorTab.svelte";
-  import DiffModal from "$lib/DiffModal.svelte";
-  import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
-  import type { ToolStatus } from "$lib/servertools";
-  import { editorLangOrPlain } from "$lib/editorlang";
+  import TerminalView from "$lib/terminal/Terminal.svelte";
+  import ConnectingOverlay from "$lib/connect/ConnectingOverlay.svelte";
+  import type { ConnPhase } from "$lib/connect/connphase";
+  import { sshErrorView } from "$lib/connect/ssherror";
+  import { showNoSignal } from "$lib/connect/connlost";
+  import Dock from "$lib/layout/Dock.svelte";
+  import DockPanel from "$lib/layout/DockPanel.svelte";
+  import DockDragGhost from "$lib/layout/DockDragGhost.svelte";
+  import EditorTab from "$lib/editor/EditorTab.svelte";
+  import DiffModal from "$lib/editor/DiffModal.svelte";
+  import ToolInstallDialog from "$lib/editor/ToolInstallDialog.svelte";
+  import type { ToolStatus } from "$lib/editor/servertools";
+  import { editorLangOrPlain } from "$lib/editor/editorlang";
   import {
     getWorkspace,
     workspacesState,
@@ -162,68 +162,68 @@
     showSessionView,
     splitSessionView,
   } from "$lib/stores/workspaces.svelte";
-  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/sessionviews";
+  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/layout/sessionviews";
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
   import { removeChat, getChat, askAbout } from "$lib/stores/aichat.svelte";
   import { removeDockState, setDockCwd } from "$lib/stores/dockstate.svelte";
-  import { baseName } from "$lib/fspath";
-  import { fileLinksAllowed } from "$lib/termfiles";
-  import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
-  import { aiReady } from "$lib/ai";
-  import SettingsPanel from "$lib/SettingsPanel.svelte";
-  import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
-  import ServerFormModal from "$lib/ServerFormModal.svelte";
-  import NotesModal from "$lib/NotesModal.svelte";
-  import { hasNotes, notesTarget } from "$lib/notes";
-  import FolderModals from "$lib/FolderModals.svelte";
-  import SecretPrompt from "$lib/SecretPrompt.svelte";
-  import AuthPromptDialog from "$lib/AuthPromptDialog.svelte";
+  import { baseName } from "$lib/files/fspath";
+  import { fileLinksAllowed } from "$lib/terminal/termfiles";
+  import { followUpdates, pollsLocalCwd } from "$lib/pathsync/followcwd";
+  import { aiReady } from "$lib/ai/ai";
+  import SettingsPanel from "$lib/settings/SettingsPanel.svelte";
+  import UtilitiesPanel from "$lib/utilities/UtilitiesPanel.svelte";
+  import ServerFormModal from "$lib/servers/ServerFormModal.svelte";
+  import NotesModal from "$lib/servers/NotesModal.svelte";
+  import { hasNotes, notesTarget } from "$lib/servers/notes";
+  import FolderModals from "$lib/servers/FolderModals.svelte";
+  import SecretPrompt from "$lib/connect/SecretPrompt.svelte";
+  import AuthPromptDialog from "$lib/connect/AuthPromptDialog.svelte";
   import { authPrompts, clearAuthPrompt, setAuthPrompt } from "$lib/stores/authprompt.svelte";
-  import HelpPanel from "$lib/HelpPanel.svelte";
-  import ThemeOverlay from "$lib/ThemeOverlay.svelte";
-  import IdleOverlay from "$lib/IdleOverlay.svelte";
-  import StatusBar from "$lib/StatusBar.svelte";
-  import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
-  import TopBar from "$lib/TopBar.svelte";
-  import { allTopbarIds, canUnpin, type SessionAction } from "$lib/topbaractions";
-  import type { SessionActionState } from "$lib/sessionactions";
-  import { actionLabel } from "$lib/topbarui";
+  import HelpPanel from "$lib/app/HelpPanel.svelte";
+  import ThemeOverlay from "$lib/appearance/ThemeOverlay.svelte";
+  import IdleOverlay from "$lib/screensaver/IdleOverlay.svelte";
+  import StatusBar from "$lib/monitoring/StatusBar.svelte";
+  import MonitoringOverlay from "$lib/monitoring/MonitoringOverlay.svelte";
+  import TopBar from "$lib/topbar/TopBar.svelte";
+  import { allTopbarIds, canUnpin, type SessionAction } from "$lib/topbar/topbaractions";
+  import type { SessionActionState } from "$lib/utilities/sessionactions";
+  import { actionLabel } from "$lib/topbar/topbarui";
   import { isPinned, pinAction, resetTopbar, unpinAction } from "$lib/stores/topbarpins.svelte";
-  import TitleBar from "$lib/TitleBar.svelte";
+  import TitleBar from "$lib/windows/TitleBar.svelte";
   import { hostEnv } from "$lib/stores/hostenv.svelte";
-  import ServerTree from "$lib/ServerTree.svelte";
-  import Modal from "$lib/Modal.svelte";
-  import PasswordInput from "$lib/PasswordInput.svelte";
-  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
-  import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
-  import { activeTabStrip } from "$lib/tabstrip";
+  import ServerTree from "$lib/servers/ServerTree.svelte";
+  import Modal from "$lib/ui/Modal.svelte";
+  import PasswordInput from "$lib/ui/PasswordInput.svelte";
+  import ConfirmDialog from "$lib/ui/ConfirmDialog.svelte";
+  import UnsavedCloseDialog from "$lib/editor/UnsavedCloseDialog.svelte";
+  import { activeTabStrip } from "$lib/tabs/tabstrip";
   import { installUpdate, updateWindowReady, updateStartup } from "$lib/api/updater";
-  import { updateError } from "$lib/updates";
-  import QuitDialog from "$lib/QuitDialog.svelte";
-  import { mergeQuitRows, quitRows, type QuitRow } from "$lib/quitsummary";
-  import ContextMenu from "$lib/ContextMenu.svelte";
-  import type { MenuAction, MenuItem, OpenMenu } from "$lib/ctxmenu";
-  import PathSyncDialog from "$lib/PathSyncDialog.svelte";
+  import { updateError } from "$lib/app/updates";
+  import QuitDialog from "$lib/windows/QuitDialog.svelte";
+  import { mergeQuitRows, quitRows, type QuitRow } from "$lib/windows/quitsummary";
+  import ContextMenu from "$lib/ui/ContextMenu.svelte";
+  import type { MenuAction, MenuItem, OpenMenu } from "$lib/ui/ctxmenu";
+  import PathSyncDialog from "$lib/pathsync/PathSyncDialog.svelte";
   import { createPathSyncFlow } from "$lib/page/pathsyncflow.svelte";
-  import { cdCommand, type CdShell } from "$lib/cdterminal";
-  import { renderArgv, renderSessionCommand } from "$lib/termcmd";
-  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabattach";
-  import { submitLine } from "$lib/terminput";
+  import { cdCommand, type CdShell } from "$lib/pathsync/cdterminal";
+  import { renderArgv, renderSessionCommand } from "$lib/terminal/termcmd";
+  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabs/tabattach";
+  import { submitLine } from "$lib/terminal/terminput";
   import {
     isNewTabChord,
     isPaletteChord,
     isSplitDownChord,
     isSplitRightChord,
     paneStepChord,
-  } from "$lib/appshortcuts";
-  import Icon from "$lib/Icon.svelte";
-  import Toast from "$lib/Toast.svelte";
-  import EmptyState from "$lib/EmptyState.svelte";
-  import CommandPalette from "$lib/CommandPalette.svelte";
-  import RecordingsPanel from "$lib/RecordingsPanel.svelte";
+  } from "$lib/app/appshortcuts";
+  import Icon from "$lib/ui/Icon.svelte";
+  import Toast from "$lib/ui/Toast.svelte";
+  import EmptyState from "$lib/ui/EmptyState.svelte";
+  import CommandPalette from "$lib/app/CommandPalette.svelte";
+  import RecordingsPanel from "$lib/recording/RecordingsPanel.svelte";
   import { createRecordingFlow, recordingTitle } from "$lib/page/recordingflow.svelte";
   import { createCopyFlow } from "$lib/page/copyflow.svelte";
-  import type { CommandItem } from "$lib/command";
+  import type { CommandItem } from "$lib/app/command";
   import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
   import {
     applyJob,
@@ -232,23 +232,23 @@
     removeTransfer,
     transfersState,
   } from "$lib/stores/transfers.svelte";
-  import { jobNotice, jobVisibleInWindow } from "$lib/transfer";
+  import { jobNotice, jobVisibleInWindow } from "$lib/files/transfer";
   import {
     fileSelectionOf,
     setFileSelection,
   } from "$lib/stores/filecopy.svelte";
   import { fileDrag } from "$lib/stores/filedrag.svelte";
-  import { parseFileDragMessage } from "$lib/filedrop";
+  import { parseFileDragMessage } from "$lib/files/filedrop";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import FileDragGhost from "$lib/FileDragGhost.svelte";
+  import FileDragGhost from "$lib/files/FileDragGhost.svelte";
   import {
     foreignTargets,
     targetsFrom,
-  } from "$lib/copyto";
-  import CopyToDialog from "$lib/CopyToDialog.svelte";
-  import ReplaceDialog from "$lib/ReplaceDialog.svelte";
-  import LinkOpenDialog from "$lib/LinkOpenDialog.svelte";
-  import FileLinkDialog from "$lib/FileLinkDialog.svelte";
+  } from "$lib/files/copyto";
+  import CopyToDialog from "$lib/files/CopyToDialog.svelte";
+  import ReplaceDialog from "$lib/files/ReplaceDialog.svelte";
+  import LinkOpenDialog from "$lib/terminal/LinkOpenDialog.svelte";
+  import FileLinkDialog from "$lib/terminal/FileLinkDialog.svelte";
   import { createFileLinkFlow } from "$lib/page/filelinkflow.svelte";
   import { createEditorFlow } from "$lib/page/editorflow.svelte";
   import { createFileDragFlow } from "$lib/page/filedragflow.svelte";
@@ -262,7 +262,7 @@
     clearRecording,
   } from "$lib/stores/recordings.svelte";
   import type { SftpProgress, TransferJob } from "$lib/api";
-  import { applyImportedSettings, settings } from "$lib/settings.svelte";
+  import { applyImportedSettings, settings } from "$lib/settings/settings.svelte";
   import { t } from "$lib/i18n";
   import {
     setMenuLanguage,
@@ -272,16 +272,16 @@
     fetchMetrics,
     readRecording,
   } from "$lib/api";
-  import { extractTranscript } from "$lib/recording";
-  import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
-  import type { PromptVars } from "$lib/aicore";
-  import { isProdServer } from "$lib/aiexec";
-  import type { ProbeSession } from "$lib/probe";
-  import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
+  import { extractTranscript } from "$lib/recording/recording";
+  import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/ai/aicontext";
+  import type { PromptVars } from "$lib/ai/aicore";
+  import { isProdServer } from "$lib/ai/aiexec";
+  import type { ProbeSession } from "$lib/utilities/probe";
+  import RecordingSaveDialog from "$lib/recording/RecordingSaveDialog.svelte";
   import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
-  import type { HostServer, HostTab } from "$lib/netroute";
-  import BroadcastBar from "$lib/BroadcastBar.svelte";
-  import BroadcastRoster from "$lib/BroadcastRoster.svelte";
+  import type { HostServer, HostTab } from "$lib/netcheck/netroute";
+  import BroadcastBar from "$lib/terminal/BroadcastBar.svelte";
+  import BroadcastRoster from "$lib/terminal/BroadcastRoster.svelte";
   import {
     broadcastState,
     isBroadcastMember,
@@ -296,7 +296,7 @@
     groupHasProd,
     gridColumns,
     prodMembers,
-  } from "$lib/broadcast";
+  } from "$lib/terminal/broadcast";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
@@ -1813,7 +1813,7 @@
    *
    * Every close path routes here (close button, bulk close, server deletion,
    * failed re-auth); `closeTabStore` is called nowhere else, enforced by
-   * [tabteardown.guard.test.ts](../lib/tabteardown.guard.test.ts). Adding
+   * [tabteardown.guard.test.ts](../lib/tabs/tabteardown.guard.test.ts). Adding
    * per-session state anywhere means adding its cleanup here.
    */
   function closeTabFully(sessionId: string, keepSession = false) {

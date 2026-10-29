@@ -6,7 +6,7 @@
 
 import { untrack } from "svelte";
 import { announceCopyTargets, localHome, sftpHome } from "../api";
-import { copyTargets, defaultDestDir, shareTargets, sideOf, type CopyTarget } from "../copyto";
+import { copyTargets, defaultDestDir, shareTargets, sideOf, type CopyTarget } from "../files/copyto";
 import { dockCwd } from "../stores/dockstate.svelte";
 import {
   pendingCopyRequest,
@@ -15,7 +15,7 @@ import {
   type CopyRequest,
 } from "../stores/filecopy.svelte";
 import type { Tab } from "../stores/tabs.svelte";
-import { DISK, startTransfer } from "../transferflow";
+import { DISK, startTransfer } from "../files/transferflow";
 
 /** What the page tells the copy flow, each read when it is needed. */
 export interface CopyDeps {

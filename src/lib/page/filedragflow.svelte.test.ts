@@ -36,7 +36,7 @@ vi.mock("../stores/filecopy.svelte", () => ({ requestMove: stores.requestMove })
 vi.mock("../stores/layout.svelte", () => ({ revealPanel: stores.revealPanel }));
 vi.mock("../stores/toasts.svelte", () => ({ notifyInfo: stores.notifyInfo }));
 vi.mock("../stores/hostenv.svelte", () => ({ hostEnv: { get os() { return stores.os; } } }));
-vi.mock("../transferflow", () => ({ DISK: { kind: "disk" }, startTransfer: stores.startTransfer }));
+vi.mock("../files/transferflow", () => ({ DISK: { kind: "disk" }, startTransfer: stores.startTransfer }));
 vi.mock("../stores/tabs.svelte", () => ({
   activateTab: stores.activateTab,
   findTab: (id: string) => stores.tabs.find((t) => t.sessionId === id) ?? null,
@@ -49,8 +49,8 @@ vi.mock("../stores/tabs.svelte", () => ({
 }));
 
 import { createFileDragFlow, type FileDragFlow } from "./filedragflow.svelte";
-import type { CarriedFiles } from "../filedrop";
-import type { CopyTarget } from "../copyto";
+import type { CarriedFiles } from "../files/filedrop";
+import type { CopyTarget } from "../files/copyto";
 
 type Host = {
   meaning: (f: CarriedFiles, t: unknown) => unknown;

@@ -81,33 +81,33 @@
 - **Единый контракт терминала.** SSH ([ssh.rs](../src-tauri/src/ssh.rs)) и локальный PTY
   ([pty.rs](../src-tauri/src/pty.rs)) — один канал `term://out|closed/{id}` и одни команды
   (`write_to_terminal`/`resize_pty`/`disconnect`) по `session_id`, поэтому
-  [Terminal.svelte](../src/lib/Terminal.svelte) общий (проп `local`); новый вид терминала —
+  [Terminal.svelte](../src/lib/terminal/Terminal.svelte) общий (проп `local`); новый вид терминала —
   сюда же. Поверх него, **без нового бэкенда и канала**: синхронный ввод (N вызовов из
-  `doBroadcast`, логика — [broadcast.ts](../src/lib/broadcast.ts), на прод — с подтверждением),
+  `doBroadcast`, логика — [broadcast.ts](../src/lib/terminal/broadcast.ts), на прод — с подтверждением),
   выбор шелла (та же `open_local_terminal` с `shell` из `resolveLocalShell`; ОС — команда
   `host_os`, не runtime-плагин), shell в
   контейнер/под и `port-forward` — новая вкладка хоста, команда уходит в PTY по `connected`, не
   через `container_run`/`kubectl_run`.
 - **Shell контейнера кончается вместе с контейнером.** Вкладка с `Tab.attach`
-  ([tabattach.ts](../src/lib/tabattach.ts)) подписана «nginx · хост», поэтому команду печатает
+  ([tabattach.ts](../src/lib/tabs/tabattach.ts)) подписана «nginx · хост», поэтому команду печатает
   `renderSessionCommand` (`exec …`/`…; exit`/`… & exit`): иначе после `exit` под именем
   контейнера остался бы шелл хоста. Её конец — не обрыв: ни автопереподключения, ни NO SIGNAL;
   argv исполняется на **каждом** `connected`. Гейт `attachtab.guard`.
 - **Строка для терминала собирается под запущенную оболочку.** Панели отдают argv, строку
-  собирает `renderArgv` ([termcmd.ts](../src/lib/termcmd.ts)) под оболочку вкладки, как
+  собирает `renderArgv` ([termcmd.ts](../src/lib/terminal/termcmd.ts)) под оболочку вкладки, как
   `cdCommand`: POSIX-строка в `cmd.exe` разваливается. Неэкранируемый токен → `null` → не шлём
   ничего.
 - **Команда в PTY завершается CR, а не LF**, многострочный блок — построчно: PSReadLine и
   `cmd.exe` не считают `\n` Enter'ом. Источник — `submitLine`/`submitBlock`
-  ([terminput.ts](../src/lib/terminput.ts)), правило `vterm/submit-with-cr`.
+  ([terminput.ts](../src/lib/terminal/terminput.ts)), правило `vterm/submit-with-cr`.
 - **Ввод в сессию идёт строго по порядку.** Два `invoke("write_to_terminal")` в полёте доходят
-  до PTY в любом порядке, поэтому `writeToTerminal` ([termwrite.ts](../src/lib/termwrite.ts))
+  до PTY в любом порядке, поэтому `writeToTerminal` ([termwrite.ts](../src/lib/terminal/termwrite.ts))
   шлёт следующую запись после ответа на предыдущую, склеивая накопленное; команду зовёт только
   он (`vterm/terminal-write`).
 - **Окно подключения — честный чек-лист.** Фазы
-  [ConnectingOverlay](../src/lib/ConnectingOverlay.svelte) — реальные события
+  [ConnectingOverlay](../src/lib/connect/ConnectingOverlay.svelte) — реальные события
   `term://phase/{id}` (`connecting`→`authenticating`→`session`), маппинг —
-  [connphase.ts](../src/lib/connphase.ts); новая обязательная стадия = `emit` в `connect` +
+  [connphase.ts](../src/lib/connect/connphase.ts); новая обязательная стадия = `emit` в `connect` +
   запись в `PHASE_ORDER`, не новый канал. Прокси-подстадии — тоже реальные события, вне
   `PHASE_ORDER` (`phaseSteps(current, errored, proxy)`), чек-лист всегда вложенный. Тот же
   компонент — экран ошибки (`failed`, маппинг — `sshErrorView`); провал аутентификации не
@@ -121,7 +121,7 @@
   `sessionId` — очистка в `closeTabFully`. Он же завершает сессию (см. «Окна»). Гейт
   `tabteardown.guard`.
 - **Центр — дерево областей, терминалы — один плоский список** (ADR 0016). Раскладка — чистое
-  дерево [splitlayout.ts](../src/lib/splitlayout.ts), терминал ставится по прямоугольнику
+  дерево [splitlayout.ts](../src/lib/layout/splitlayout.ts), терминал ставится по прямоугольнику
   своей области (`layoutRects`). `Terminal` рисует **один** `{#each tabsState.list}`, его
   монтирование не зависит от раскладки (ни `{#each}` по областям, ни `{#if}` на сплит, ни
   `{#key}` кроме `tab.gen`): пересозданный терминал переподключается с пустым scrollback.
@@ -139,7 +139,7 @@
 - **Файл показывается внутри своего соединения; область соединения делится на зоны**
   (ADR 0024). В центре — только соединения; у соединения свои виды (терминал и файлы) и своя
   раскладка зон в сторе рабочих пространств — тем же деревом, что центр
-  ([sessionviews.ts](../src/lib/sessionviews.ts)).
+  ([sessionviews.ts](../src/lib/layout/sessionviews.ts)).
   - Раскладку зон меняет только чистая модель; документ и его вид появляются и исчезают одним
     шагом (`addEditor`/`closeEditor`), больше никто документы не добавляет и не убирает.
   - Новый файл встаёт к файлам (`fileZone`), а не поверх терминала, в котором печатают.
@@ -164,14 +164,14 @@
   раскладку до сетки через `loadLayout`. Участник вне экрана назван списком рядом с областями.
   Гейт `centerlayout.guard`.
 - **«На экране» — показанная вкладка каждой области**, если её соединение показывает терминал
-  (`onScreenSessions`, [centerview.ts](../src/lib/centerview.ts)). От этого набора — запись
+  (`onScreenSessions`, [centerview.ts](../src/lib/layout/centerview.ts)). От этого набора — запись
   (остальные на паузе) и вопрос о входе (сперва для вкладки в фокусе); то, что следует за одной
   сессией (доки, статус-бар, контекст ИИ, заставка, заголовок окна), читает
   `tabsState.activeId`. Клавиатуру после подключения берёт только терминал области в фокусе
   (`focusOnConnect`). Пока область одна, полоса вкладок одна — над центром.
 - **После перезапуска возвращается вкладка, а не сессия** (ADR 0019). Вернувшаяся вкладка ждёт
   (`Tab.waiting`; для остального — `offline`). Кто подключается сам, решает только `waitReason`
-  ([tabrestore.ts](../src/lib/tabrestore.ts)): контейнер, прод и сервер с секретом не из
+  ([tabrestore.ts](../src/lib/tabs/tabrestore.ts)): контейнер, прод и сервер с секретом не из
   keychain ждут кнопки в любом режиме; `off`/`manual` при запуске не ходят в сеть и в keychain.
   Открывает сессию контроллер [restoreflow](../src/lib/page/restoreflow.svelte.ts). Запись
   вкладки собирается по полям (`savedTab`) — ни пароля, ни вывода на диске; сохранённое дерево
@@ -195,7 +195,7 @@
   инертный оверлей (`pointer-events-none`, `z-index`) поверх контейнера, а не border/padding
   терминала (его меряет `FitAddon`), и начинается под верхним рядом полос видов. Линию сверху
   несёт только активная вкладка (2px) и вид в фокусе (1px), источник — `activeTabStrip`
-  ([tabstrip.ts](../src/lib/tabstrip.ts)). Фон прод-терминала подкрашен (`settings.prodTint`,
+  ([tabstrip.ts](../src/lib/tabs/tabstrip.ts)). Фон прод-терминала подкрашен (`settings.prodTint`,
   `mixHex`), и одна `paintedTheme` красит canvas и полоску отступа. Гейт `prodmark.guard`.
 
 ---
@@ -207,7 +207,7 @@
 живёт в бэкенде ([appwin.rs](../src-tauri/src/appwin.rs)). Разборы — [ADR 0038](adr/0038-windows-and-tab-drag-details.md).
 
 - **Окно — та же страница, роль — по метке** (`main`/`win-N`,
-  [appwindow.ts](../src/lib/appwindow.ts)). Передачу ведёт контроллер
+  [appwindow.ts](../src/lib/windows/appwindow.ts)). Передачу ведёт контроллер
   [windowflow](../src/lib/page/windowflow.svelte.ts) (`detachTab`, `handOver`, `dropOutside`,
   `tellDragOver`, `adoptFailed`); «урезанной» страницы нет. Создаёт окна только Rust (гейт
   `tauri-security.guard`).
@@ -260,7 +260,7 @@
   его нет — метка остаётся у края окна с подписью. Гейт
   `the_floating_label_is_a_picture_and_never_a_window_of_the_app`.
 - **Выносится только то, что можно вынести целиком** (`detachBlocker`,
-  [tabhandoff.ts](../src/lib/tabhandoff.ts)): сравнение, синхронизация, ответ ИИ и сохранение
+  [tabhandoff.ts](../src/lib/windows/tabhandoff.ts)): сравнение, синхронизация, ответ ИИ и сохранение
   файла держат вкладку. Новая работа «в полёте» по сессии — в `DetachState` или бэкенду.
   Состояние вкладки собирают `packTab`/`unpackTab`; новое состояние по сессии — в обе.
 - **Область уходит целиком — передачей на вкладку, одной и той же** (`handOver`, ADR 0023):
@@ -312,9 +312,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   собственном ответе — шторм процессов на хосте. Гейт `K8sPanel.test.ts`.
 - **Три дока, два класса вкладок** (ADR 0015). Панели-инструменты (`PanelId`) живут только в
   левом, правом и нижнем доках; терминалы и редакторы — только в центре. Панель рисуется в
-  одном месте — сниппетом `dockPanel`, сессионные — через [DockPanel](../src/lib/DockPanel.svelte).
+  одном месте — сниппетом `dockPanel`, сессионные — через [DockPanel](../src/lib/layout/DockPanel.svelte).
   Гейт `docklayout.guard`.
-- **Раскладка доков — чистые данные** ([docklayout.ts](../src/lib/docklayout.ts)): в стор — только
+- **Раскладка доков — чистые данные** ([docklayout.ts](../src/lib/layout/docklayout.ts)): в стор — только
   через `loadDocks`, меняется только `movePanel`/`revealPanel` и функциями стора; каждая панель
   ровно в одном доке. В `vterm.layout` — только доки, пишет его только главное окно. Гейт
   `docklayout.guard`.
@@ -328,7 +328,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Внутри контейнера нет `fixed`-элементов — ни своих, ни компонента (`Modal`/`ConfirmDialog`/
     `ContextMenu`, по цепочке импортов): в части WebView `container-type` делает элемент
     containing block для `fixed`. Гейт `panelcontainer.guard`.
-  - Порог один: `--container-wide` = `WIDE_REM` в [panelwide.ts](../src/lib/panelwide.ts); JS
+  - Порог один: `--container-wide` = `WIDE_REM` в [panelwide.ts](../src/lib/layout/panelwide.ts); JS
     читает его через `wideWhen` — для поведения и для панелей, чьи диалоги в подкомпонентах
     (Git, чат ИИ, корень файловой панели).
   - Рядом со списком — содержимое, а не диалог: `SidePane` с `DockerDetail`/`K8sDetail`/
@@ -337,7 +337,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Коммит рядом с историей и поиск с переносами рядом с файлами — только когда помещается:
     `wide && fitsBeside(rowWidth)`, без второго порога (ADR 0028, 0030).
   - Граница между частями — в сторе [panelsplit](../src/lib/stores/panelsplit.svelte.ts), что
-    можно выставить — [panelsplit.ts](../src/lib/panelsplit.ts) (`PART_MIN`); сохранённое не
+    можно выставить — [panelsplit.ts](../src/lib/layout/panelsplit.ts) (`PART_MIN`); сохранённое не
     переписывается.
 - **Док без доступных панелей не рисуется;** сохранённая вкладка дока не переписывается
   (`shownPanel`); зона сброса невидимого дока — оверлей, а не полоса в раскладке.
@@ -374,13 +374,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 | Драйвер | Команда · тег | Чистая логика | Обязательное |
 |---------|---------------|---------------|--------------|
-| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git.ts), [gitview.ts](../src/lib/gitview.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
-| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker.ts), [dockernet.ts](../src/lib/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). CVE-скана нет — нет офлайн-способа |
-| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s.ts), [k8sroute.ts](../src/lib/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. Бинарь — `settings.kubectlPath` |
-| **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/probe.ts), [tls.ts](../src/lib/tls.ts), [http.ts](../src/lib/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
+| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
+| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). CVE-скана нет — нет офлайн-способа |
+| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. Бинарь — `settings.kubectlPath` |
+| **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
 
-- **Возраст в строке списка — один формат** (`compactAge`, [age.ts](../src/lib/age.ts): не
+- **Возраст в строке списка — один формат** (`compactAge`, [age.ts](../src/lib/ui/age.ts): не
   длиннее пяти знаков, без перевода; `k8sAge`/`dockerAge`/`gitAge`); фраза инструмента («3 weeks
   ago») не берётся; полная дата — в подсказке, нераспознанное — «—». Время файла и коммита, где
   есть место, — момент (`formatModified`, `commitMoment`), а не возраст.
@@ -392,10 +392,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `ExternalName` — DNS-псевдоним. Непрочитанный список — не пустой (`listFailure` → `null` → «не
   прочитаны»; «ещё не пришли» — скелет). EndpointSlice запрашиваются, только пока маршрут на
   экране. Гейты `k8sroute.guard`, `K8sPanel.test.ts`.
-- **Связность Docker — возможность, а не факт** ([dockernet.ts](../src/lib/dockernet.ts)): общая
+- **Связность Docker — возможность, а не факт** ([dockernet.ts](../src/lib/docker/dockernet.ts)): общая
   сеть — «могут связаться»; `host`/`none` — метки, не узлы; привязки одного порта с разной
   доступностью не сливаются; нераспознанный порт — как есть; раскладка графа — функция данных.
-- **Возможности хоста — по данным, а не по ОС приложения** ([hostcaps.ts](../src/lib/hostcaps.ts)
+- **Возможности хоста — по данным, а не по ОС приложения** ([hostcaps.ts](../src/lib/monitoring/hostcaps.ts)
   поверх `Metrics.os` — ОС **хоста сессии**); пустая ОС — блок остаётся. Новый «недоступный
   здесь» показатель — предикатом с тестом.
 - **Метрики опрашиваются на трёх уровнях:** `METRICS_SCRIPT` — на каждом тике (не раздувать),
@@ -410,9 +410,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Опрос идёт, только пока на него смотрят:** оверлей гасит петлю на закрытии,
   `showStatusBar=false` размонтирует `StatusBar`; поэтому вход на страницу мониторинга есть и в
   ⌘K, и в нативном меню (`menu://monitoring`).
-- **Пороги и health — единые источники:** уровень значения — [thresholds.ts](../src/lib/thresholds.ts)
+- **Пороги и health — единые источники:** уровень значения — [thresholds.ts](../src/lib/monitoring/thresholds.ts)
   (`settings.statusBarThresholds`, `null` = выкл), уровень блока —
-  [monhealth.ts](../src/lib/monhealth.ts) (`worstLevel`); новый показатель = ключ порога +
+  [monhealth.ts](../src/lib/monitoring/monhealth.ts) (`worstLevel`); новый показатель = ключ порога +
   дефолт + поле настроек + строка в `*Health`. Графики — `Chart`/`Sparkline`/`StackedBar`;
   безлимитный потолок — `∞` (`fmtLimit`).
 - **Пароль `docker login`** — только в keychain (`vterm:registry`), не в настройках, бэкапе и
@@ -421,25 +421,25 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 ### Утилиты
 
-- **Панель-оверлей [UtilitiesPanel](../src/lib/UtilitiesPanel.svelte)** (`z-index:40`), вход —
-  `wrench` в [TopBar](../src/lib/TopBar.svelte) и ⌘K, не секция настроек. Инструмент можно
+- **Панель-оверлей [UtilitiesPanel](../src/lib/utilities/UtilitiesPanel.svelte)** (`z-index:40`), вход —
+  `wrench` в [TopBar](../src/lib/topbar/TopBar.svelte) и ⌘K, не секция настроек. Инструмент можно
   закрепить на верхней панели, поэтому **у двух инструментов не бывает одной иконки**. Над
-  инструментами — действия сессии ([sessionactions.ts](../src/lib/sessionactions.ts)). Реестр —
-  [utilities.ts](../src/lib/utilities.ts).
+  инструментами — действия сессии ([sessionactions.ts](../src/lib/utilities/sessionactions.ts)). Реестр —
+  [utilities.ts](../src/lib/utilities/utilities.ts).
 - **Инструмент = чистая логика `.ts` с тестом + тонкая оболочка `Util*.svelte`**; копирование —
-  [CopyButton](../src/lib/CopyButton.svelte).
+  [CopyButton](../src/lib/ui/CopyButton.svelte).
 - **Всё офлайн:** codec/cidr/timeconv/cron/pwgen/jwt — без сети и бэкенда, CSPRNG —
   `crypto.getRandomValues`, словарь passphrase встроен; бэкенд — только для файлов и ОС
   (known_hosts).
 - **SSH-ключи генерируются локально** (`ssh-key` + `rand`, без внешнего `ssh-keygen`):
-  [keygen.rs](../src-tauri/src/keygen.rs) — одна команда, логика — [sshkeygen.ts](../src/lib/sshkeygen.ts).
+  [keygen.rs](../src-tauri/src/keygen.rs) — одна команда, логика — [sshkeygen.ts](../src/lib/utilities/sshkeygen.ts).
   Приватный ключ `0600`, `~/.ssh` `0700`, passphrase в `Zeroizing` и нигде не хранится,
   коллизия без `overwrite` — `KeyExists`. UI — общий `KeyGenModal`.
 - **Сетевые утилиты — только поверх сессии;** локальная вкладка запускает программы
   пользователя из allowlist (ADR 0014), а не открывает сокеты сама.
 - **«Проверка доступа» — единственное исключение, и оно узкое** (ADR 0012, 0032, 0033). Одна
   команда `netcheck_run`, транспорт по сессии. На SSH — скрипт `netcheckArgs`
-  ([netcheck.ts](../src/lib/netcheck.ts)); порядок «Авто»: `bash /dev/tcp` под `timeout` → `nc -z`
+  ([netcheck.ts](../src/lib/netcheck/netcheck.ts)); порядок «Авто»: `bash /dev/tcp` под `timeout` → `nc -z`
   (с `-G`, если есть) → `telnet` под `timeout` → `curl` («открыт» — по `time_connect`, а не по
   коду выхода); пригодность каждого средства — строкой `C`, выбранное, но непригодное блокирует
   запуск — тихой подмены нет. Локально —
@@ -451,10 +451,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   вердикт — `classifyAttempt`, без `E` прогон оборван. `0.0.0.0` и подсети вокруг — отказ; UDP
   не проверяется нигде.
   - Заявка вставляется как есть, но берётся только по действию: эвристика `recognize`
-    ([netcheckpaste.ts](../src/lib/netcheckpaste.ts)) показывает, что взято; в таблицу — кнопкой
+    ([netcheckpaste.ts](../src/lib/netcheck/netcheckpaste.ts)) показывает, что взято; в таблицу — кнопкой
     или ⌘/Ctrl+Enter. Строка таблицы своего понятия о правиле не имеет — уходит в `parseRules`
-    ([netcheckform.ts](../src/lib/netcheckform.ts)).
-  - Источник выбирает сервер ([netroute.ts](../src/lib/netroute.ts)); без источника — отмеченные
+    ([netcheckform.ts](../src/lib/netcheck/netcheckform.ts)).
+  - Источник выбирает сервер ([netroute.ts](../src/lib/netcheck/netroute.ts)); без источника — отмеченные
     серверы, и только они; отметка не перебивает источник; ничего не отмечено — запуск держит
     причина (`unrouted`).
   - Подсеть — каждый адрес хоста, после вопроса с числом соединений; `MAX_CHECKS` (2048) — на
@@ -473,22 +473,22 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Мастер-гейт `smartLogs.enabled`:** выключен — терминал ведёт себя **ровно как чистый
   xterm**, независимо от пер-фичевых флагов; под-фича = флаг в `SmartLogs` + дефолт + тумблер,
   читается `enabled && <feature>`. Ссылки в выводе — своя настройка.
-- **Поиск принадлежит терминалу** (`@xterm/addon-search`, логика — [search.ts](../src/lib/search.ts)):
+- **Поиск принадлежит терминалу** (`@xterm/addon-search`, логика — [search.ts](../src/lib/terminal/search.ts)):
   `Cmd+F`/`Ctrl+Shift+F`, а plain `Ctrl+F` уходит в шелл; терминал создан с
   `allowProposedApi: true` (decoration-API xterm 6); невалидный regex в аддон не идёт
   (`buildMatcher` → `null`). Строка поиска не шире своей области. Гейт `termsearch.guard`.
 - **Глобальные хоткеи не отнимают клавиши у шелла:** ⌘-хорды на macOS,
   `Ctrl+Shift+<key>` на Windows/Linux; plain `Ctrl+T`/`Ctrl+K` уходят в шелл. Терминал отпускает
-  app-хорды (`isAppShortcut`); предикаты — [appshortcuts.ts](../src/lib/appshortcuts.ts), одни
+  app-хорды (`isAppShortcut`); предикаты — [appshortcuts.ts](../src/lib/app/appshortcuts.ts), одни
   для терминала и окна. Хорды областей (`⌘D`/`⌘⇧D`, `⌘]`/`⌘[`) окно не трогает, если их уже
   обработал элемент в фокусе или их набрали в поле ввода. Буква хоткея — только через
   `chordLetter`: на русской раскладке `Ctrl+R` даёт «к» (`vterm/hotkey-letter`).
 - **Подсветка — ANSI-SGR в потоке до `term.write`**, базовыми цветами `31…37` (берут цвета
   темы); не внутри escape-последовательностей, только в нормальном буфере; порядок правил —
-  приоритет ([highlight.ts](../src/lib/highlight.ts)).
+  приоритет ([highlight.ts](../src/lib/terminal/highlight.ts)).
 - **Ссылка из вывода открывается одним путём — `clickLink`**
   ([stores/linkopen](../src/lib/stores/linkopen.svelte.ts)), только по клику и через `openUrl`;
-  что делает клик, решает `linkClick` ([termlink.ts](../src/lib/termlink.ts)) по
+  что делает клик, решает `linkClick` ([termlink.ts](../src/lib/terminal/termlink.ts)) по
   `settings.terminalLinks`. Каждый xterm (и проигрыватель записей) получает
   `terminalLinkHandler`, иначе OSC 8 уходит в `confirm()`/`window.open()` xterm. OSC 8-ссылка,
   текст которой называет другой сайт (`misleadingHost`), спрашивает в любом режиме, кроме
@@ -496,7 +496,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   которому подключится браузер (punycode, выделен). Открывается
   только https, http-ссылку предлагается скопировать. Гейт `termlink.guard`.
 - **Файл из вывода открывается по проверенному имени и в каталоге своей команды** (ADR 0035):
-  решение — `fileLinkClick` ([termfiles.ts](../src/lib/termfiles.ts)), открытие — контроллер
+  решение — `fileLinkClick` ([termfiles.ts](../src/lib/terminal/termfiles.ts)), открытие — контроллер
   [filelinkflow](../src/lib/page/filelinkflow.svelte.ts) теми же путями, что панель файлов.
   Ссылкой делает листинг каталога, а не формат `ls`; канал, сокет, устройство — не файл.
   Каталог строки — снимок при отправке (локально — бэкенд до байтов и только пока терминал
@@ -506,12 +506,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   сообщаемого каталога предлагает синхронизацию пути. Гейт `termfilelink.guard`.
 - **Структурный вид парсит, только пока открыт** (`feedJson`, буфер `MAX_JSON_ENTRIES`); формат
   построчно JSON → nginx → syslog → dmesg → logfmt последним; «Clear» ставит водяной знак
-  (`registerMarker`). Логика — [jsonlog.ts](../src/lib/jsonlog.ts).
+  (`registerMarker`). Логика — [jsonlog.ts](../src/lib/terminal/jsonlog.ts).
 - **Вставка в терминал — только `term.paste()`** (bracketed paste): прямой `writeToTerminal`
   исполнял многострочный блок построчно. Одна строка — сразу, несколько — выбор формы, исходный
   блок по умолчанию. Гейт `termpaste.guard`.
 - **Поверх первой строки терминала ничего не висит:** Raw/Table, поиск, «Очистить», «Спросить
-  ИИ» — в панели сессии ([sessionbar.ts](../src/lib/sessionbar.ts)); состояние держит
+  ИИ» — в панели сессии ([sessionbar.ts](../src/lib/terminal/sessionbar.ts)); состояние держит
   `Terminal.svelte`.
 - **Запись ведёт бэкенд, по сессии** ([ADR 0041](adr/0041-session-recording-and-audit.md)): `Recorder`
   ([recording.rs](../src-tauri/src/recording.rs)) внутри `SshSession`/`LocalPty`, asciicast v2 в
@@ -535,8 +535,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 Разборы — [ADR 0042](adr/0042-files-on-the-server.md).
 
-- **Файловые панели — один компонент** ([FileBrowser.svelte](../src/lib/FileBrowser.svelte) +
-  адаптер [FileBrowserAdapter](../src/lib/filebrowser.ts)): транспорт плюс две расходящиеся
+- **Файловые панели — один компонент** ([FileBrowser.svelte](../src/lib/files/FileBrowser.svelte) +
+  адаптер [FileBrowserAdapter](../src/lib/files/filebrowser.ts)): транспорт плюс две расходящиеся
   семантики (`navParent`, мутируемость); возможности SFTP — наличием методов адаптера, где лежат
   файлы — `adapter.local`. `SftpPanel`/`LocalFilePanel` — тонкие обёртки. Третьей копии нет.
   - В узкой SFTP-панели `upload` остаётся отдельной кнопкой, остальное — под `dots`. Гейт
@@ -544,7 +544,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Таблица файлов — та же разметка, что список (`@wide:`): строка 28 px (на ней стоит
     виртуальное окно), высота шапки вычитается при прокрутке к курсору, блок действий —
     фиксированной ширины.
-  - Порядок листинга — одна чистая модель ([filesort.ts](../src/lib/filesort.ts)) и один выбор
+  - Порядок листинга — одна чистая модель ([filesort.ts](../src/lib/files/filesort.ts)) и один выбор
     на приложение; папки над файлами, неизвестное — в конце, равные — по имени; курсор,
     выделение и окно ходят по `shownEntries`.
   - Ответ поиска говорит, чем он не является (`GrepOutcome.truncated`/`failed`): код `grep` —
@@ -569,7 +569,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `KEPT_AT_ONCE`); Windows: сбой чтения потока — никогда не конец файла
   ([feed.rs](../src-tauri/src/dragout/feed.rs)), длина — от сервера в момент начала. Гейты
   `dragout.guard`, `a_file_leaves_the_app_only_as_a_checked_promise`.
-- **Путевая арифметика — чистая и сепаратор-осознанная** ([fspath.ts](../src/lib/fspath.ts)):
+- **Путевая арифметика — чистая и сепаратор-осознанная** ([fspath.ts](../src/lib/files/fspath.ts)):
   корни POSIX, диска и UNC; сравнение путей на Windows — регистронезависимо. `isRoot`/`parentOf`
   — файловые, `navParent` — навигационный: выше корня диска — `DRIVES_ROOT` (`"::drives"`,
   бэкенд матчит его в `localfile::list`), где запрещены все мутации. Перечисление дисков не
@@ -603,7 +603,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   не глушить. Поведение сервера — живые тесты `live_sftp`.
 - **Синхронизация: хэши считает бэкенд, diff — чистый TS.** `sftp_hash_tree` через SSH exec
   (`sha256sum`/`shasum`), локально — обход; обе стороны дают `HashTree`, дальше
-  `diffTrees`/`apply` ([sync.ts](../src/lib/sync.ts)).
+  `diffTrees`/`apply` ([sync.ts](../src/lib/sync/sync.ts)).
   - Нечитаемое дерево — ошибка, а не пустое (`SyncDirUnreadable`/`HashToolMissing`/
     `HashIncomplete`): пустой список с «удалять лишнее» планирует стереть всё. Непрочитанное
     ниже корня — в `skipped`.
@@ -629,7 +629,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Серверные инструменты ставит менеджер сервера** (`TOOLS` + `install_command` в
   [servertools.rs](../src-tauri/src/servertools.rs), UI — `ToolInstallDialog`).
 - **Свои привязки буфера обмена у терминала и редактора убирать нельзя**
-  ([clipboard.ts](../src/lib/clipboard.ts)): на WKWebView без Edit-меню это единственный путь.
+  ([clipboard.ts](../src/lib/app/clipboard.ts)): на WKWebView без Edit-меню это единственный путь.
 - **«Открыть с помощью vterm»:** `tauri-plugin-single-instance` регистрируется первым; пути — из
   argv и `RunEvent::Opened` (только macOS, под `cfg`) в `pending_opens` + `vterm://open-file`.
 - **Перенос файла — задание бэкенда: окно его показывает, а не ждёт** (ADR 0025,
@@ -638,7 +638,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   (`audience`, отправка одна — `send`). В окне — только строка: окно сперва слушает
   `sftp://job`, потом спрашивает `transfer_list`; позднее событие попадает в стор, только пока
   открыта сессия задания. Запускает задание только `startTransfer`
-  ([transferflow.ts](../src/lib/transferflow.ts)). Конец сессии отменяет её задания
+  ([transferflow.ts](../src/lib/files/transferflow.ts)). Конец сессии отменяет её задания
   (`end_session` → `Jobs::cancel_session`). Копия между
   серверами — через процесс (`relay_staged`), права — как у `scp`. Один файл не останавливает
   остальные, пропущенное считается. Синхронизация в реестр не входит. Гейты
@@ -665,11 +665,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   раз в секунду и только при включённом тумблере; отказ — `None`. Только на OSC строить нельзя,
   подменять `TERM_PROGRAM` — тоже. Диалог сниппета показывает `needsShellSetup`.
   - Обратное направление (`cdTerminalTo`) — только на действиях пользователя при включённом
-    тумблере (иначе петля); команда — [cdterminal.ts](../src/lib/cdterminal.ts) под оболочку,
+    тумблере (иначе петля); команда — [cdterminal.ts](../src/lib/pathsync/cdterminal.ts) под оболочку,
     диалект фиксируется при спавне; невыразимый путь → `null`.
   - Переключатель и каталог дока одни (`followTerminal[sessionId]`, `dockstate.cwd`); пишут в
     каталог файловая панель и терминал — только при включённом тумблере и только при смене
-    ([followcwd.ts](../src/lib/followcwd.ts)); Git не пишет.
+    ([followcwd.ts](../src/lib/pathsync/followcwd.ts)); Git не пишет.
   - Git при выключенной синхронизации следует за терминалом (`gitCwd`), неизвестный cwd — «нет
     пути»; кнопка Git включает тот же переключатель (`pathSync.enable`). Гейт `gitcwd.guard`.
   - Как включается синхронизация — ответ сервера (ADR 0034): режим в профиле
@@ -721,7 +721,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   нельзя. `quarantined: None` — отдельное сообщение «данные под угрозой». Тост без TTL. Новый
   store-файл — через `read_store`/`write_atomic`.
 - **Импорт бэкапа пишет каталог, собранный предпросмотром:** `read_backup` ничего не пишет; что
-  станет с серверами, решает [backupimport.ts](../src/lib/backupimport.ts) (логины и пути ключей
+  станет с серверами, решает [backupimport.ts](../src/lib/servers/backupimport.ts) (логины и пути ключей
   по значению, без серверов, что уже есть по id или по хосту, порту и логину); `import_backup`
   пишет переданный каталог после `check_catalog`, никогда — список архива; «пароль сохранён» —
   только у текущего сервера с тем же id; по умолчанию — «Добавить к моим». Гейт
@@ -734,29 +734,29 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 **Выключен по умолчанию, зашитых облачных эндпоинтов нет**; весь LLM-трафик — из Rust
 ([ai.rs](../src-tauri/src/ai.rs)).
 
-- **Контекст уходит только после маскирования и согласия** ([redact.ts](../src/lib/redact.ts),
-  [AiConsentDialog](../src/lib/AiConsentDialog.svelte) — и для локального эндпоинта). Точки
+- **Контекст уходит только после маскирования и согласия** ([redact.ts](../src/lib/ai/redact.ts),
+  [AiConsentDialog](../src/lib/ai/AiConsentDialog.svelte) — и для локального эндпоинта). Точки
   входа «спросить про X» зовут один примитив `askAbout`: он кладёт запрос, `AiChat` делает из
   него чип (`SessionChat.attachment`), вопрос — свой или пресетный (`ASK_PRESETS`, на пустой
   Enter) — уходит обычной отправкой через тот же consent.
   Своего пути отправки не заводи. Гейт `autonomy.guard`.
 - **В слоте терминала — одно, самое узкое:** чип, иначе выделение, иначе весь буфер (тир),
   иначе хвост; выделение не складывается с буфером. Правило — `terminalSlot`
-  ([aicontext.ts](../src/lib/aicontext.ts)), по нему и `buildContext`, и подпись
+  ([aicontext.ts](../src/lib/ai/aicontext.ts)), по нему и `buildContext`, и подпись
   `contextSummary`.
 - **Один ход на чат** (`chatBusy`): новый вопрос не стартует, пока идёт стрим, ждёт шаг диалога
   или открыт consent; `askAbout` сразу становится чипом или отклоняется (`askBlocker`), не
   паркуется; ошибка ответа гасит `dialogRunning`. Гейт `aiturn.guard`.
 - **Раскладка чата по ширине — те же элементы в другом месте** (сниппеты
   `endpointControls`/`tierBoxes`/`attachToggle`/`clearButton`, каждый нарисован в одном месте).
-- **Исполнение команд** ([aiexec.ts](../src/lib/aiexec.ts), `execMode`:
+- **Исполнение команд** ([aiexec.ts](../src/lib/ai/aiexec.ts), `execMode`:
   `suggest`/`confirm`/`dialog`/`dialogConfirm`): диалоговые режимы **никогда** на проде,
   выполненное — в запись; `noAi` блокирует и контекст, и исполнение, новая точка входа обязана
   его уважать. Бэкенд держит то же: `ai_exec` отказывает проду и `noAi`
   (`ServerProfile::ai_exec_allowed`, ADR 0036).
 - **Вендор — данные, а не транспорт:** протоколов `AiProvider` два (`openai` —
   `/chat/completions` + `Bearer`, `anthropic` — `/v1/messages` + `x-api-key`), третьего нет;
-  вендор — запись в [aipresets.ts](../src/lib/aipresets.ts). Модельные id сверяй с документацией
+  вендор — запись в [aipresets.ts](../src/lib/ai/aipresets.ts). Модельные id сверяй с документацией
   вендора. Эндпоинт без модели — законное состояние (`sanitizeEndpoint`), годность решает
   `activeEndpoint`.
 - **Рассуждение модели — отдельный канал `ai://think/{id}`**, иначе черновик стал бы
@@ -767,12 +767,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   реплики ассистента.
 - **Таймаут стрима — `read_timeout`, а не `timeout`;** у листинга моделей — наоборот.
 - **Промпт расслоён, ядро не редактируется** (ADR 0006): только
-  `buildPromptLayers`/`buildSystemPrompt` ([aicore.ts](../src/lib/aicore.ts)) в порядке ядро →
+  `buildPromptLayers`/`buildSystemPrompt` ([aicore.ts](../src/lib/ai/aicore.ts)) в порядке ядро →
   `PERSONA_HANDOFF` → персона → `replyLanguageLine`. В ядре — контракт ```bash-блоков, значение
   `‹redacted›`, режим исполнения, неинтерактивность, прод-предупреждение; новое такое правило —
   секцией ядра с тестом. Ядро объявляет вывод терминала недоверенными данными и требует
   сообщать о попытках внедрения — секцию не убирать. Ядро английское, персона локализованная.
-  Дефолтные промпты — seed-данные ([aiprompts.ts](../src/lib/aiprompts.ts), `origin`,
+  Дефолтные промпты — seed-данные ([aiprompts.ts](../src/lib/ai/aiprompts.ts), `origin`,
   `reseedBuiltinPrompts`); `replyLanguage` — отдельная настройка.
 - **Deny-list** (`isDangerousCommand`) и маскирование — предохранители (принцип 7). Аудит и
   остаточные риски — [SECURITY.md](../SECURITY.md#аудит-ии-агента-фаза-20).
@@ -787,7 +787,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   advisory живёт, пока ему есть что исключать; npm ставится только `--frozen-lockfile`, у каждого
   пакета. Модель — [SECURITY.md](../SECURITY.md). Гейты `tauri-security.guard`,
   `releaseassets.guard`.
-- **Любой `EditorView` включает `cspNonceExtension()`** ([cspnonce.ts](../src/lib/cspnonce.ts)):
+- **Любой `EditorView` включает `cspNonceExtension()`** ([cspnonce.ts](../src/lib/editor/cspnonce.ts)):
   в `tauri build` nonce в `style-src` отменяет `'unsafe-inline'`, и стили CodeMirror без nonce не
   применяются — только в упакованной сборке. Дублировать стили в app.css и ослаблять CSP
   нельзя. Гейт `cspnonce.test.ts`.
@@ -796,12 +796,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   (`vterm/md-links`); обе проверяют схему независимо. Не-markdown `{@html}` — в `EXEMPT` с
   причиной.
 - **Картинки в превью — только `data:` из байтов, прочитанных нами** тем же транспортом, что
-  документ ([mdimage.ts](../src/lib/mdimage.ts)); удалённый `http(s)` — никогда: `<img>` — это GET.
+  документ ([mdimage.ts](../src/lib/markdown/mdimage.ts)); удалённый `http(s)` — никогда: `<img>` — это GET.
   `renderMarkdown` рисует `<img>` только из `opts.images` и сам перепроверяет схему. Отказ —
   плейсхолдер с alt-текстом. Статический бейдж shields.io рисуется из URL
   (`renderBadge`, инлайновый SVG с `fill`), динамический — плейсхолдер; `unescapeHtml` не
   становится общим декодером.
-- **Raw-HTML в превью — санитайзер по allowlist** ([htmlsan.ts](../src/lib/htmlsan.ts)): теги и
+- **Raw-HTML в превью — санитайзер по allowlist** ([htmlsan.ts](../src/lib/markdown/htmlsan.ts)): теги и
   атрибуты по списку, каждое значение перепроверяется, `on*`/`style`/`class`/`data-*` не проходят,
   опасные теги — вместе с содержимым; ручной токенайзер с биасом на drop; opt-in и только в
   превью редактора. Новый тег — с тестом на границу, DOM-санитайзер не вводить.
@@ -828,8 +828,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   возврата в окно попадал на фон и уносил заполненную форму; окну без кнопки отмены нужен
   `showClose`. Правило `vterm/backdrop-no-close`.
 - **Тосты — единственный канал неблокирующих сообщений** (`notifyError`/`notifySuccess`/
-  `notifyInfo`); пустые состояния — [EmptyState](../src/lib/EmptyState.svelte), загрузка —
-  [Skeleton](../src/lib/Skeleton.svelte).
+  `notifyInfo`); пустые состояния — [EmptyState](../src/lib/ui/EmptyState.svelte), загрузка —
+  [Skeleton](../src/lib/ui/Skeleton.svelte).
 - **Окно сжимается вместе с главным:** карточка `Modal` — `max-w-[95vw] max-h-[90vh]` со
   скроллом. `Modal` даёт `role="dialog"`, фокус-трап, возврат фокуса и стек (Esc закрывает
   верхнее) — не дублировать и не понижать; так же вкладки — tablist с роуминг-`tabindex`,
@@ -863,8 +863,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
     а не по месту анимации (`slotIndex` — по середине соседа).
 - **Состояние — в runes-сторах** `src/lib/stores/*.svelte.ts`, а не по компонентам.
 - **Кнопки верхней панели — список пользователя, и трёх вещей он не может** (ADR 0029).
-  `settings.topbar` — встроенные действия и `util:<id>`; модель — [topbaractions.ts](../src/lib/topbaractions.ts),
-  подписи и меню — [topbarui.ts](../src/lib/topbarui.ts).
+  `settings.topbar` — встроенные действия и `util:<id>`; модель — [topbaractions.ts](../src/lib/topbar/topbaractions.ts),
+  подписи и меню — [topbarui.ts](../src/lib/topbar/topbarui.ts).
   - «Утилиты» и «Настройки» не убираются (`ANCHORS`, `canUnpin`; `sanitizeTopbar` их возвращает).
   - Убранная кнопка не уносит действие: каждое из `SESSION_ACTIONS` стоит строкой в «Утилитах»
     с причиной у неактивной кнопки; запуск — через `Record<SessionAction, …>`; у синхронного
@@ -880,31 +880,36 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Компоненты декомпозированы:** `+page.svelte` — оркестратор; логика страницы — контроллеры
   [src/lib/page/](../src/lib/page/) (`create…Flow`, состояние страницы — геттерами), тест —
   `*.svelte.test.ts`; бэкенд — обёртки `src/lib/api/` по доменам.
+- **Модуль фронта — в папке своей подсистемы** (ADR 0045): в корне `src/lib` — только папки и
+  `types.ts`, тест — рядом со своим модулем. Каждая папка названа в дереве
+  [ARCHITECTURE](ARCHITECTURE.md); слои (`api`/`stores`/`page`/`actions`/`i18n`) — это
+  `LAYER_DIRS` линтера, остальные папки — подсистемы, и их `.ts` — чистая логика
+  (`vterm/layers`). Гейт `liblayout.guard`.
 - **Объект, который узнают по идентичности, — в `$state.raw`:** глубокий `$state` отдаёт прокси,
   и `===` не выполняется никогда.
-- **Грамматики редактора грузятся по требованию** ([editorlangs.ts](../src/lib/editorlangs.ts),
+- **Грамматики редактора грузятся по требованию** ([editorlangs.ts](../src/lib/editor/editorlangs.ts),
   статически — только `lang-json`); справка — при первом показе вкладки. Гейт
   `editorlangs.test.ts`.
 - **Имена в каталоге не различаются только регистром — и имена их тестов тоже:** компонент не
   называется как его модель. Гейт `filecase.guard`.
 - **Переиспользуй примитивы:** `Modal`/`ConfirmDialog` — всегда с явным `z-index`
-  (`vterm/overlay-z-index`); любое меню ПКМ — [ContextMenu](../src/lib/ContextMenu.svelte) с
-  `MenuItem[]` ([ctxmenu.ts](../src/lib/ctxmenu.ts)), native-меню подавлено; в терминале ПКМ —
+  (`vterm/overlay-z-index`); любое меню ПКМ — [ContextMenu](../src/lib/ui/ContextMenu.svelte) с
+  `MenuItem[]` ([ctxmenu.ts](../src/lib/ui/ctxmenu.ts)), native-меню подавлено; в терминале ПКМ —
   настройка `rightClick`, а `Shift`+ПКМ всегда даёт второе действие
-  ([termmouse.ts](../src/lib/termmouse.ts); гейты `rightclickmenu.guard`, `termctxfocus.guard`);
-  любое поле секрета — [PasswordInput](../src/lib/PasswordInput.svelte) (не префилится, «показан»
-  не персистится; `vterm/password-input`); иконки — `Icon` ([icons.ts](../src/lib/icons.ts)), не
+  ([termmouse.ts](../src/lib/terminal/termmouse.ts); гейты `rightclickmenu.guard`, `termctxfocus.guard`);
+  любое поле секрета — [PasswordInput](../src/lib/ui/PasswordInput.svelte) (не префилится, «показан»
+  не персистится; `vterm/password-input`); иконки — `Icon` ([icons.ts](../src/lib/ui/icons.ts)), не
   эмодзи; подсказки — `use:tooltip`, не `title`; icon-only кнопка — с `aria-label`; длинное
-  описание — [InfoHint](../src/lib/InfoHint.svelte).
+  описание — [InfoHint](../src/lib/ui/InfoHint.svelte).
 - **Семантический цвет — только из токенов темы** (`ok`/`warn`/`bad` + `accent`/`danger`/`muted`) —
   в разметке и в классах, которые отдаёт `.ts`: палитра Tailwind не обслужит все темы. `danger`
   — действие, `bad` — состояние. Правило `vterm/theme-colors`.
 - **Комментарии в редакторе — не ниже AA:** `brightBlack`, поднятый к цвету текста до 4.5:1
-  (`readableOn`, [colormix.ts](../src/lib/colormix.ts)); тест по всем темам.
+  (`readableOn`, [colormix.ts](../src/lib/appearance/colormix.ts)); тест по всем темам.
 - **Второстепенный текст читается в каждой теме:** `muted` не ниже 4.5:1 на `panel`/`panel-alt`,
   на тёмных — APCA Lc ≈ 45, всегда тусклее `text`; исключение Solarized — в тесте с причиной.
   Гейт `themes.test.ts`.
-- **Движение — только через [motion.ts](../src/lib/motion.ts)** (`motion()`/`motionScale()`,
+- **Движение — только через [motion.ts](../src/lib/ui/motion.ts)** (`motion()`/`motionScale()`,
   `vterm/motion-duration`): переходы Svelte идут через WAAPI, которому CSS-guard reduced motion
   не указ. Модалки анимируют только вход.
 - **Размер шрифта — из шкалы** (`text-caption`/`text-meta`/`text-xs`/…), без line-height
@@ -912,20 +917,20 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `vterm/micro-label`, гейт `typography.guard`.
 - **Шрифт терминала и записей — через `activeFontFamily()`:** ручной выбор не зависит от темы.
   Гейт `fonts.guard`.
-- **Темы** ([themes.ts](../src/lib/themes.ts)): фирменные (`group: "signature"`) — плотные панели
-  + оверлей [ThemeOverlay](../src/lib/ThemeOverlay.svelte) (чистый CSS, `pointer-events:none`,
+- **Темы** ([themes.ts](../src/lib/appearance/themes.ts)): фирменные (`group: "signature"`) — плотные панели
+  + оверлей [ThemeOverlay](../src/lib/appearance/ThemeOverlay.svelte) (чистый CSS, `pointer-events:none`,
   `z-index:30`); терминал не прозрачен; цвета пресетов не редактируются (только `custom`);
   `DEFAULT_THEME_ID = "deep-well"`; первый кадр — `vterm.chromePanel` в app.html синхронно с
-  `@theme`. Бандл-иконка ОС статична, под тему меняется только [AppLogo](../src/lib/AppLogo.svelte).
+  `@theme`. Бандл-иконка ОС статична, под тему меняется только [AppLogo](../src/lib/appearance/AppLogo.svelte).
   - Бандл-иконка: один мастер [icon-source.svg](../src-tauri/icons/icon-source.svg), Windows-артефакты
     — тем же SVG со сдвинутым `viewBox`; генерация только `pnpm icons`. Гейт `appicon.guard`.
-- **Заставка простоя** ([IdleOverlay](../src/lib/IdleOverlay.svelte), `z-index:35`): простой —
+- **Заставка простоя** ([IdleOverlay](../src/lib/screensaver/IdleOverlay.svelte), `z-index:35`): простой —
   нет ввода **и** вывода PTY; без вкладок заставки нет (`screensaverAllowed`); накрывает только
   область терминалов, раскладку карточки выбирает `cardTier`; первый кадр — `$effect` над
   `active`+canvas; рисует копию буфера и в PTY не пишет; метрики — `monitoredSessionId`; гасят
   только клик или клавиша (`dismissesScreensaver`), курсор не прячется, жест глотается только по
   самой заставке (`swallowDismiss`). NO SIGNAL — только реальный неожиданный обрыв
-  ([connlost.ts](../src/lib/connlost.ts)). Load на графике — доля от `cpuCount`, без данных —
+  ([connlost.ts](../src/lib/connect/connlost.ts)). Load на графике — доля от `cpuCount`, без данных —
   `null`. Гейт `idlecard.guard`.
 - **Вшитый WebView2 — только когда системного нет** (ADR 0013): системный и
   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` побеждают всегда; распаковка атомарная, со sha256; версия
@@ -933,9 +938,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   объяснением; тексты — в `webview2.rs` (до WebView `t()` нет). Гейт `webview2runtime.test.ts`.
 - **Оконное обрамление: macOS нативное, Windows/Linux — своё** (ADR 0011): декорации снимает
   Rust, пока окно скрыто; заголовок, меню Файл/Справка и кнопки рисует
-  [TitleBar.svelte](../src/lib/TitleBar.svelte) на общих `ContextMenu` и токенах; монтирование —
+  [TitleBar.svelte](../src/lib/windows/TitleBar.svelte) на общих `ContextMenu` и токенах; монтирование —
   по стору [hostenv](../src/lib/stores/hostenv.svelte.ts), не проверкой ОС по месту;
-  `set-decorations` в правах WebView нет; геометрия — [windowchrome.ts](../src/lib/windowchrome.ts).
+  `set-decorations` в правах WebView нет; геометрия — [windowchrome.ts](../src/lib/windows/windowchrome.ts).
 - **Выход — только через подтверждение:** любой запрос выхода → `menu://quit` главному окну,
   `QuitDialog` спрашивает всегда и перечисляет, что прервётся, во всех окнах
   (`quitRows`/`mergeQuitRows`); закрытие второго окна — тот же диалог (`window://close`).
@@ -985,7 +990,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 что каждое включено и ловит своё нарушение; исключение — `eslint-disable … -- причина`, а
 исключение, которому нечего подавлять, роняет прогон): `layers` (слои импорта: `src/lib` не
 импортирует страницу, `src/lib/api` — нижний слой, стор не тянет компоненты и контроллеры,
-чистый модуль — ни стора, ни бэкенда, ни Tauri, кроме `IMPURE_BY_DESIGN` с причиной) ·
+чистый модуль — `.ts` подсистемы или `types.ts` — ни стора, ни бэкенда, ни Tauri, кроме
+`IMPURE_BY_DESIGN` с причиной) ·
 `invoke-in-api` (`@tauri-apps/api/core` — только в `src/lib/api`) · `opener-on-click` · `no-network`
 · `password-input` · `no-scratch-path` · `hotkey-letter` · `submit-with-cr` · `terminal-write` ·
 `overlay-z-index` · `type-scale` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
@@ -1032,6 +1038,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `themes.test.ts` · `typography.guard` · `fonts.guard` · `appicon.guard` | Контраст `muted` во всех темах; шкала шрифтов без companion-ов; шрифт через `activeFontFamily()`; кадрирование иконки — по пикселям |
 | `clipboardpaste.guard` | Поведение CodeMirror, ради которого стоит `vterm/paste-caret` |
 | `filecase.guard` | Нет путей и тестов, различающихся только регистром |
+| `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |

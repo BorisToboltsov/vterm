@@ -11,7 +11,7 @@ import {
   sanitizeListWidths,
   type ListColumn,
   type ListWidths,
-} from "../colwidths";
+} from "../ui/colwidths";
 
 export const STORAGE_KEY = "vterm.columns";
 

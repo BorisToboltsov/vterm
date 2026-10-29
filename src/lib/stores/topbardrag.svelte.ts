@@ -16,7 +16,7 @@ import {
   passedThreshold,
   swallowReleaseClick,
 } from "../actions/drag";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import {
   KEEP_SLOT,
   moveChanges,
@@ -24,7 +24,7 @@ import {
   topbarSlot,
   type SlotBox,
   type TopbarId,
-} from "../topbaractions";
+} from "../topbar/topbaractions";
 import { moveAction } from "./topbarpins.svelte";
 
 export const topbarDrag = $state<{

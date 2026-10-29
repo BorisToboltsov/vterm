@@ -13,7 +13,7 @@
 //   • README.md — плашка shields.io (version-X.Y.Z): статичный литерал, ничем
 //     не резолвится, поэтому её тоже синкает этот скрипт (иначе тихо отстаёт).
 //
-// Расхождение ловит гейт src/lib/version.guard.test.ts.
+// Расхождение ловит гейт src/lib/repo/version.guard.test.ts.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

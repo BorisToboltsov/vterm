@@ -25,11 +25,11 @@ import {
   type DragAnswer,
   type DragLook,
 } from "../api";
-import { isMainWindow, otherWindows, windowLabel, windowTarget, type WindowEntry } from "../appwindow";
-import { chatBusy } from "../aiask";
+import { isMainWindow, otherWindows, windowLabel, windowTarget, type WindowEntry } from "../windows/appwindow";
+import { chatBusy } from "../ai/aiask";
 import { t } from "../i18n";
-import { activeChromePanel } from "../settings.svelte";
-import { arrivalDrop, findPane, layoutRects } from "../splitlayout";
+import { activeChromePanel } from "../settings/settings.svelte";
+import { arrivalDrop, findPane, layoutRects } from "../layout/splitlayout";
 import { peekChat } from "../stores/aichat.svelte";
 import { isBusy, peekSyncJob } from "../stores/syncjob.svelte";
 import { onTabDraggedOutside, tabDrag, type ScreenPoint } from "../stores/tabdrag.svelte";
@@ -49,7 +49,7 @@ import {
   type DetachState,
   type PaneSeat,
   type TermSnapshot,
-} from "../tabhandoff";
+} from "../windows/tabhandoff";
 
 /** What the page tells the window flow, each read when it is needed. */
 export interface WindowDeps {

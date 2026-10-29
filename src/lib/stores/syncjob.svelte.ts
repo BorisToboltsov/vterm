@@ -25,7 +25,7 @@ import {
   type SyncAction,
   type SyncDirection,
   type SyncRunPhase,
-} from "../sync";
+} from "../sync/sync";
 import { clearSyncRun } from "./syncrun.svelte";
 import { notifyError, notifyInfo, notifySuccess } from "./toasts.svelte";
 import { t } from "../i18n";

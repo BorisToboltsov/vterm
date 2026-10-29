@@ -27,7 +27,7 @@ const toasts = vi.hoisted(() => ({ notifyError: vi.fn(), notifyInfo: vi.fn(), no
 vi.mock("../stores/toasts.svelte", () => toasts);
 
 import { createEditorFlow, type EditorFlow } from "./editorflow.svelte";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import { findEditorByPath, getWorkspace, removeWorkspace, setEditorContent } from "../stores/workspaces.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import type { TextFile } from "../types";

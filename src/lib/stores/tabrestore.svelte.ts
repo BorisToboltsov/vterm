@@ -21,10 +21,10 @@
 // Never in a slot: a tab's typed secret, its status, its terminal's contents
 // (`savedTab` builds the record field by field — `tabrestore.guard`).
 
-import { isMainLabel, windowLabel } from "../appwindow";
-import { settings } from "../settings.svelte";
-import type { CenterLayout } from "../splitlayout";
-import { otherSlotKeys, savedWindow, slotKey, type RestoreMode } from "../tabrestore";
+import { isMainLabel, windowLabel } from "../windows/appwindow";
+import { settings } from "../settings/settings.svelte";
+import type { CenterLayout } from "../layout/splitlayout";
+import { otherSlotKeys, savedWindow, slotKey, type RestoreMode } from "../tabs/tabrestore";
 import { tabsState, type Tab } from "./tabs.svelte";
 
 /** What the slots held when the app started. */

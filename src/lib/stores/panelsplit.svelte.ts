@@ -14,7 +14,7 @@ import {
   shareWidth,
   type PanelShares,
   type PanelSplit,
-} from "../panelsplit";
+} from "../layout/panelsplit";
 
 export const STORAGE_KEY = "vterm.panelsplit";
 

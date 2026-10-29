@@ -1,0 +1,135 @@
+<script module lang="ts">
+  // Open modals, oldest first. A dialog can open another (sync → folder picker,
+  // any dialog → ConfirmDialog), and every one listens to Escape on the window:
+  // without a stack one key press closed the whole pile, not just the top one.
+  const openStack: object[] = [];
+</script>
+
+<script lang="ts">
+  // Reusable modal shell: dimmed backdrop + centered card. Controlled via `open`
+  // + `onclose` (backdrop click or Escape). Content is passed as children.
+  import type { Snippet } from "svelte";
+  import { fade, scale } from "svelte/transition";
+  import Icon from "./Icon.svelte";
+  import { motion, motionScale } from "./motion";
+  import { t } from "../i18n";
+
+  let {
+    open = false,
+    title,
+    titleClass = "text-accent",
+    width = "w-80",
+    showClose = false,
+    onclose,
+    children,
+  }: {
+    open?: boolean;
+    title?: string;
+    titleClass?: string;
+    /** Tailwind width class for the card. */
+    width?: string;
+    /** Show a close (×) button pinned to the card's top-right corner. */
+    showClose?: boolean;
+    onclose?: () => void;
+    children?: Snippet;
+  } = $props();
+
+  const token = {};
+  $effect(() => {
+    if (!open) return;
+    openStack.push(token);
+    return () => {
+      const i = openStack.indexOf(token);
+      if (i >= 0) openStack.splice(i, 1);
+    };
+  });
+
+  function onKey(e: KeyboardEvent) {
+    // Only the topmost open dialog answers Escape.
+    if (e.key === "Escape" && openStack[openStack.length - 1] === token) onclose?.();
+  }
+
+  // Accessibility: trap Tab within the dialog, focus the first control on open,
+  // and restore focus to whatever opened it on close. Runs while the card is
+  // mounted (i.e. only when `open`), so `destroy` fires exactly on close.
+  const FOCUSABLE =
+    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  function trap(node: HTMLElement) {
+    const opener = document.activeElement as HTMLElement | null;
+    const focusable = () => Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE));
+    (focusable()[0] ?? node).focus();
+
+    function onKeydown(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+      const items = focusable();
+      if (items.length === 0) {
+        e.preventDefault();
+        node.focus();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    node.addEventListener("keydown", onKeydown);
+    return {
+      destroy() {
+        node.removeEventListener("keydown", onKeydown);
+        opener?.focus?.();
+      },
+    };
+  }
+</script>
+
+<svelte:window onkeydown={open ? onKey : undefined} />
+
+{#if open}
+  <div class="fixed inset-0 z-40 flex items-center justify-center">
+    <!-- Entry motion only (Phase 42). An exit transition would keep a closed
+         dialog — backdrop, `aria-modal`, focus trap — mounted for the length of
+         the animation, and the common pattern here is "confirm closes, the next
+         dialog opens in the same tick": two overlapping z-40 layers, the dying
+         one still hit-testable. Appearing softly is the part worth having. -->
+    <!-- The backdrop only dims — it does not close. Coming back from another app
+         to copy a password, the first click easily lands outside the card, and a
+         half-filled form vanished with it. Closing is the buttons, ×, or Escape
+         (lint rule `vterm/backdrop-no-close`). -->
+    <div class="absolute inset-0 bg-black/50" aria-hidden="true" in:fade={motion()}></div>
+    <!-- Wrapper shrink-wraps the card so the close button (a sibling of the
+         scrolling card, not a child) stays pinned to the corner and never
+         scrolls away — and stays outside the focus trap so it can't steal the
+         initial focus from the first form control. -->
+    <div class="relative" in:scale={motionScale()}>
+      <div
+        use:trap
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabindex="-1"
+        class="relative {width} max-h-[90vh] max-w-[95vw] overflow-auto rounded-lg border border-edge bg-panel-alt p-4 outline-none"
+      >
+        {#if title}
+          <h2 class="mb-3 text-sm font-semibold {titleClass}">{title}</h2>
+        {/if}
+        {@render children?.()}
+      </div>
+      {#if showClose && onclose}
+        <button
+          class="absolute right-2 top-2 z-10 rounded p-0.5 text-muted hover:text-danger"
+          aria-label={t("common.close")}
+          onclick={() => onclose?.()}
+        >
+          <Icon name="close" size={16} />
+        </button>
+      {/if}
+    </div>
+  </div>
+{/if}

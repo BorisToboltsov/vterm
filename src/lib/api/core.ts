@@ -1,7 +1,7 @@
 // Cross-cutting API helpers: typed-error predicates, native clipboard read,
 // and the native-menu command. Split from api.ts in Phase 18.6.
 import { invoke } from "@tauri-apps/api/core";
-import type { GenerateKeyRequest } from "../sshkeygen";
+import type { GenerateKeyRequest } from "../utilities/sshkeygen";
 
 /** Marker (in `AppError::FileChangedOnServer`) that a save lost a race. */
 export const FILE_CHANGED_MARKER = "file-changed";

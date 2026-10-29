@@ -144,14 +144,14 @@ exe, а имя каталога версии разбирается строго
 Конфигурации без DOM-зависимостей дополнительно защищены **юнит-гейтами** (падают
 в обычном `pnpm test`):
 
-- `src/lib/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
-- `src/lib/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
+- `src/lib/ai/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
+- `src/lib/repo/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
   минимально необходимые, opener ограничен `https://`;
 - правило линтера `vterm/md-links` ([lint/vterm.js](lint/vterm.js)) — каждый показ markdown
   защищён обеими половинами ссылочной защиты (см. «Недоверенный markdown» ниже);
 - правило линтера `vterm/no-network` — из WebView нет `fetch`/`XMLHttpRequest`/`WebSocket`/
   `EventSource`/`sendBeacon`, `vterm/invoke-in-api` — бэкенд зовут только обёртки `src/lib/api`;
-- `src/lib/releaseassets.guard.test.ts` — цепочка поставки CI: пиннинг экшенов по SHA,
+- `src/lib/repo/releaseassets.guard.test.ts` — цепочка поставки CI: пиннинг экшенов по SHA,
   релиз под гейтом, материал целостности в ассетах, opt-in VirusTotal.
 
 ### Триаж внешнего SCA/SAST-скана (2026-08)
@@ -190,7 +190,7 @@ exe, а имя каталога версии разбирается строго
   а путь собран из **литеральных** констант; ни путь, ни содержимое не управляются извне.
   CWE-117 (log injection, ×2) — это `console.error`/`console.log` CLI-утилиты, а не запись в
   лог-файл; сообщение собрано из уже-валидированного semver.
-- `src/lib/util.ts` — CWE-400 на `setTimeout` в стандартном trailing-debounce; интервал
+- `src/lib/ui/util.ts` — CWE-400 на `setTimeout` в стандартном trailing-debounce; интервал
   задаётся внутренними вызовами (debounce ResizeObserver/resize), не входом извне.
 
 ## Hardening (что сделано)

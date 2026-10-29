@@ -18,7 +18,7 @@ import {
   sampleRate,
   type RateSample,
   type TransferRow,
-} from "../transfer";
+} from "../files/transfer";
 import { touchDir } from "./dockstate.svelte";
 
 export const transfersState = $state<{

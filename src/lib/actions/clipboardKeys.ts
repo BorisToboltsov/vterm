@@ -8,8 +8,8 @@
 // installed once on the document — covers them all. Reads go through the native
 // backend clipboard, so no WebKit "Paste" permission prompt appears (clipboard.ts).
 
-import { chordLetter } from "../appshortcuts";
-import { readClipboard, writeClipboard } from "../clipboard";
+import { chordLetter } from "../app/appshortcuts";
+import { readClipboard, writeClipboard } from "../app/clipboard";
 
 type Editable = HTMLInputElement | HTMLTextAreaElement;
 

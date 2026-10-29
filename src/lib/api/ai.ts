@@ -1,7 +1,7 @@
 // AI assistant (Phase 17, opt-in): chat/models/exec + keychain key ops. All LLM
 // HTTP happens in the Rust broker; the frontend only invokes + listens on events.
 import { invoke } from "@tauri-apps/api/core";
-import type { AiChatRequest, AiProvider } from "../ai";
+import type { AiChatRequest, AiProvider } from "../ai/ai";
 
 // ── AI assistant (Phase 17, opt-in) ─────────────────────────────────────────────
 // All LLM HTTP happens in the Rust broker; the frontend only invokes a command and

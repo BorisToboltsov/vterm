@@ -10,9 +10,9 @@ const toasts = vi.hoisted(() => ({ notifyError: vi.fn() }));
 vi.mock("../stores/toasts.svelte", () => toasts);
 
 import { createPathSyncFlow, type PathSyncFlow } from "./pathsyncflow.svelte";
-import { settings } from "../settings.svelte";
-import { OSC7_SETUP } from "../shellintegration";
-import { submitLine } from "../terminput";
+import { settings } from "../settings/settings.svelte";
+import { OSC7_SETUP } from "../pathsync/shellintegration";
+import { submitLine } from "../terminal/terminput";
 import type { Tab } from "../stores/tabs.svelte";
 import type { ServerProfile } from "../types";
 

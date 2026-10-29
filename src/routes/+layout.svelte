@@ -8,7 +8,7 @@
   import "@fontsource/cascadia-code/latin-400.css";
   // Retro display fonts, paired with the retro terminal themes.
   import "@fontsource/share-tech-mono/latin-400.css";
-  import { suppressContextMenu } from "$lib/util";
+  import { suppressContextMenu } from "$lib/ui/util";
   let { children } = $props();
 </script>
 

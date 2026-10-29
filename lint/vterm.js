@@ -4,7 +4,7 @@
 // As a rule it reads the syntax tree — a comment or a string can neither trip nor
 // satisfy it — and it shows up in the editor while the code is written, not only
 // in the test run. Every rule names the invariant it holds (docs/INVARIANTS.md);
-// src/lib/lint.guard.test.ts proves each one still catches the violation it
+// src/lib/repo/lint.guard.test.ts proves each one still catches the violation it
 // exists for. An exception is an `eslint-disable` comment with its reason: the
 // config reports a directive that no longer suppresses anything, so a stale
 // exception fails the run, as it did in the gates.
@@ -106,16 +106,23 @@ function eachImport(context, fn) {
 }
 
 /**
- * Pure modules (`src/lib/*.ts`) that reach a store, the backend or Tauri on
- * purpose. Principle 2: logic lives in `.ts` that tests run without a DOM or a
- * backend; a module on this list is a flow, not logic, and says why. An entry
- * whose module no longer imports anything impure is reported.
+ * The folders of src/lib that are layers, not subsystems: their `.ts` is not
+ * pure logic. Every other folder is a subsystem (ADR 0045), and its `.ts` is.
+ */
+const LAYER_DIRS = ["actions", "api", "i18n", "page", "stores"];
+
+/**
+ * Pure modules (`.ts` of a subsystem folder, or `types.ts`) that reach a store,
+ * the backend or Tauri on purpose. Principle 2: logic lives in `.ts` that tests
+ * run without a DOM or a backend; a module on this list is a flow, not logic,
+ * and says why. An entry whose module no longer imports anything impure is
+ * reported.
  */
 const IMPURE_BY_DESIGN = {
-  "appwindow.ts": "names the window this page runs in — asks Tauri, once",
-  "clipboard.ts": "reads the clipboard through the backend: WebKit would prompt",
-  "quitsummary.ts": "lists live sessions for the quit dialog from the tab store",
-  "transferflow.ts": "the one path that starts a transfer: asks before replacing, reports failures",
+  "windows/appwindow.ts": "names the window this page runs in — asks Tauri, once",
+  "app/clipboard.ts": "reads the clipboard through the backend: WebKit would prompt",
+  "windows/quitsummary.ts": "lists live sessions for the quit dialog from the tab store",
+  "files/transferflow.ts": "the one path that starts a transfer: asks before replacing, reports failures",
 };
 
 function impureFor(t) {
@@ -147,10 +154,14 @@ const layers = {
   create(context) {
     const file = context.filename;
     if (!under(file, LIB) || /\.test\.ts$/.test(file)) return {};
-    const rel = path.relative(LIB, file);
+    const rel = path.relative(LIB, file).split(path.sep).join("/");
     const inApi = under(file, path.join(LIB, "api"));
     const inStores = under(file, path.join(LIB, "stores"));
-    const pure = !rel.includes(path.sep) && file.endsWith(".ts") && !file.endsWith(".svelte.ts") && !file.endsWith(".d.ts");
+    const pure =
+      !LAYER_DIRS.includes(rel.split("/")[0]) &&
+      file.endsWith(".ts") &&
+      !file.endsWith(".svelte.ts") &&
+      !file.endsWith(".d.ts");
     const excused = pure && rel in IMPURE_BY_DESIGN;
     let impure = false;
     return {

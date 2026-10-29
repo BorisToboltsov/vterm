@@ -14,10 +14,10 @@ const toasts = vi.hoisted(() => ({ notifyInfo: vi.fn(), notifyError: vi.fn() }))
 vi.mock("../stores/toasts.svelte", () => toasts);
 
 import { createRestoreFlow, type RestoreFlow } from "./restoreflow.svelte";
-import { settings } from "../settings.svelte";
-import { addTab, emptyLayout } from "../splitlayout";
+import { settings } from "../settings/settings.svelte";
+import { addTab, emptyLayout } from "../layout/splitlayout";
 import { findTab, NOT_CONNECTED, resetTabs, tabsState, type Tab } from "../stores/tabs.svelte";
-import { savedWindow } from "../tabrestore";
+import { savedWindow } from "../tabs/tabrestore";
 import type { ServerProfile } from "../types";
 
 const tab = (sessionId: string, over: Partial<Tab> = {}): Tab => ({

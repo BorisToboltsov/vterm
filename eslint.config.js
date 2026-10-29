@@ -77,14 +77,14 @@ export default defineConfig(
   own("opener-on-click", SOURCE, [
     "src/lib/stores/linkopen.svelte.ts",
     "src/lib/actions/mdlinks.ts",
-    "src/lib/HelpPanel.svelte",
-    "src/lib/UpdatePanel.svelte",
+    "src/lib/app/HelpPanel.svelte",
+    "src/lib/app/UpdatePanel.svelte",
   ]),
   own("no-network", SOURCE),
   own("no-scratch-path", SOURCE),
-  own("password-input", MARKUP, ["src/lib/PasswordInput.svelte"]),
-  own("hotkey-letter", SOURCE, ["src/lib/appshortcuts.ts"]),
-  own("submit-with-cr", SOURCE, ["src/lib/terminput.ts"]),
+  own("password-input", MARKUP, ["src/lib/ui/PasswordInput.svelte"]),
+  own("hotkey-letter", SOURCE, ["src/lib/app/appshortcuts.ts"]),
+  own("submit-with-cr", SOURCE, ["src/lib/terminal/terminput.ts"]),
   own("terminal-write", SOURCE, ["src/lib/api/session.ts"]),
   own("overlay-z-index", MARKUP),
   own("type-scale", SOURCE),
@@ -111,19 +111,19 @@ export default defineConfig(
             why: "a server's path-sync answer is written by the form and by the path-sync question, nowhere else",
           },
           transferStart: {
-            owners: ["src/lib/transferflow.ts"],
+            owners: ["src/lib/files/transferflow.ts"],
             why: "startTransfer asks before a file is replaced — a second starter replaces without asking (ADR 0025)",
           },
           importBackup: {
-            owners: ["src/lib/BackupSettings.svelte"],
+            owners: ["src/lib/servers/BackupSettings.svelte"],
             why: "an import writes the catalog the preview planned, after the user saw it",
           },
           startChat: {
-            owners: ["src/lib/AiChat.svelte"],
+            owners: ["src/lib/ai/AiChat.svelte"],
             why: "one AI turn at a time: the composer checks the chat first, and a raised question becomes a chip, never a send",
           },
           netcheckRun: {
-            owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/UtilNetCheck.svelte"],
+            owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/netcheck/UtilNetCheck.svelte"],
             why: "a check runs from the store, with a stop handle; the tool only asks a server who it is",
           },
           dragOutBegin: {
@@ -161,11 +161,11 @@ export default defineConfig(
         "error",
         {
           "settings.terminalLinks": {
-            owners: ["src/lib/SettingsPanel.svelte", "src/lib/stores/linkopen.svelte.ts"],
+            owners: ["src/lib/settings/SettingsPanel.svelte", "src/lib/stores/linkopen.svelte.ts"],
             why: "\"don't ask again\" is offered only where canSilence allows it — never for a link whose text names another site",
           },
           "settings.terminalFileLinks": {
-            owners: ["src/lib/SettingsPanel.svelte", "src/lib/page/filelinkflow.svelte.ts"],
+            owners: ["src/lib/settings/SettingsPanel.svelte", "src/lib/page/filelinkflow.svelte.ts"],
             why: "only the answer to the file-link question silences it",
           },
         },

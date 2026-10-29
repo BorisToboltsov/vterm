@@ -391,7 +391,7 @@ write`, но настройка репозитория — потолок над
 
 ### Что закреплено тестами
 
-[releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) читает workflow и
+[releaseassets.guard.test.ts](../src/lib/repo/releaseassets.guard.test.ts) читает workflow и
 падает, если: пропал шаг заливки `open-on-mac.sh`, portable-`.exe` или portable с WebView2
 (или из него пропала проверка подписи `.cab`); `node-version` не
 перекрывает пол запиненного мажора pnpm (pnpm 11 требует Node ≥ 22.13 и умирает первым же

@@ -33,9 +33,9 @@ import {
   tilePanes,
   untilePanes,
 } from "./tabs.svelte";
-import { layoutProblems, panes, savedLayout } from "../splitlayout";
-import { savedTab, type SavedTab, type WaitReason } from "../tabrestore";
-import { settings } from "../settings.svelte";
+import { layoutProblems, panes, savedLayout } from "../layout/splitlayout";
+import { savedTab, type SavedTab, type WaitReason } from "../tabs/tabrestore";
+import { settings } from "../settings/settings.svelte";
 
 beforeEach(resetTabs);
 

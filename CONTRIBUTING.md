@@ -46,10 +46,12 @@ src-tauri/src/        Rust-бэкенд (вся логика SSH/SFTP/секре
   ssh.rs  sftp.rs       russh / russh-sftp     · secrets.rs — keychain
   store.rs              JSON-персистентность   · model.rs — serde camelCase ↔ TS
 src/lib/              Фронтенд (Svelte 5 + TS)
-  *.svelte              компоненты и панели
-  Icon/Modal/ConfirmDialog/ContextMenu/PasswordInput.svelte   примитивы
+  <подсистема>/         terminal · files · docker · k8s · git · ai · … — компоненты,
+                        чистая логика (.ts, без DOM и сети) и тесты рядом
+  ui/                   примитивы: Icon · Modal · ConfirmDialog · ContextMenu · PasswordInput
+  types.ts              зеркало моделей Rust — единственный файл в корне
   stores/*.svelte.ts    runes-сторы состояния (layout, tabs, workspaces, …)
-  *.ts                  чистая логика — тестируется без DOM и сети
+  page/                 контроллеры страницы
   actions/              drag · tooltip · mdlinks · clipboardKeys
   api/                  типизированные обёртки над invoke() (по доменам + barrel)
   i18n/                 locales · messages · translate

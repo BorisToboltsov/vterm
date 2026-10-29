@@ -17,7 +17,7 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => api);
 const env = vi.hoisted(() => ({ main: true }));
-vi.mock("../appwindow", () => ({
+vi.mock("../windows/appwindow", () => ({
   get isMainWindow() {
     return env.main;
   },

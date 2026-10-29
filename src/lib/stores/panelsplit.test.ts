@@ -1,6 +1,6 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
-import { PANEL_SPLITS, SHARE_MAX, SHARE_MIN } from "../panelsplit";
+import { PANEL_SPLITS, SHARE_MAX, SHARE_MIN } from "../layout/panelsplit";
 import { resetPanelLayout } from "./layout.svelte";
 import {
   drawnShare,

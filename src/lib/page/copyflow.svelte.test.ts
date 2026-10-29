@@ -8,12 +8,12 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../api", () => api);
 const flow = vi.hoisted(() => ({ startTransfer: vi.fn(async (_spec: unknown) => {}) }));
-vi.mock("../transferflow", () => ({ DISK: { kind: "disk" }, startTransfer: flow.startTransfer }));
+vi.mock("../files/transferflow", () => ({ DISK: { kind: "disk" }, startTransfer: flow.startTransfer }));
 
 import { createCopyFlow, type CopyFlow } from "./copyflow.svelte";
 import { copyTargetList, requestCopy, resetFileCopy } from "../stores/filecopy.svelte";
 import type { Tab } from "../stores/tabs.svelte";
-import type { CopyTarget } from "../copyto";
+import type { CopyTarget } from "../files/copyto";
 
 const tab = (sessionId: string, over: Partial<Tab> = {}): Tab =>
   ({

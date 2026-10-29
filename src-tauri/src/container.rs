@@ -1,7 +1,7 @@
 // Docker panel backend (Phase 35). `container_run` runs one `docker` command over
 // the session's transport (see `exec`): SSH tabs on a dedicated exec channel,
 // local shell tabs by spawning `docker` here. All argument building and output
-// parsing lives on the frontend (`src/lib/docker.ts`).
+// parsing lives on the frontend (`src/lib/docker/docker.ts`).
 //
 // Offline invariant intact: the Docker daemon is reached over the user's own
 // session (remote host or local machine); the app/WebView never opens a socket.

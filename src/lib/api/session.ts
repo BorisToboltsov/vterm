@@ -1,7 +1,7 @@
 // Live SSH/local session: connect, terminal I/O, disconnect, term event names,
 // and the status-bar/monitoring metric probes (mirror of metrics.rs types).
 import { invoke } from "@tauri-apps/api/core";
-import { createOrderedWriter } from "../termwrite";
+import { createOrderedWriter } from "../terminal/termwrite";
 
 // ── SSH session ───────────────────────────────────────────────────────────────
 

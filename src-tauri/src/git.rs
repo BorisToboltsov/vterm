@@ -1,7 +1,7 @@
 // Git panel backend (Phase 29). `git_run` runs one `git` command in a working
 // directory over the session's transport (see `exec`): SSH tabs on a dedicated
 // exec channel, local shell tabs by spawning `git` here. All argument building
-// and output parsing lives on the frontend (`src/lib/git.ts`).
+// and output parsing lives on the frontend (`src/lib/git/git.ts`).
 //
 // `GIT_TERMINAL_PROMPT=0` is forced so credential prompts (HTTPS-with-password
 // remotes over a non-TTY exec channel) fail fast with a readable error instead

@@ -17,11 +17,11 @@ import {
   startRecording,
   stopRecording,
 } from "../api";
-import { eligibleMembers } from "../broadcast";
-import { recordingPauses } from "../centerview";
+import { eligibleMembers } from "../terminal/broadcast";
+import { recordingPauses } from "../layout/centerview";
 import { t } from "../i18n";
-import { newBatchId, withBatch } from "../recording";
-import { settings } from "../settings.svelte";
+import { newBatchId, withBatch } from "../recording/recording";
+import { settings } from "../settings/settings.svelte";
 import {
   clearRecording,
   isRecording,

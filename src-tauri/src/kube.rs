@@ -1,7 +1,7 @@
 // Kubernetes panel backend (Phase 37). `kubectl_run` runs one `kubectl` command
 // over the session's transport (see `exec`): SSH tabs on a dedicated exec
 // channel, local shell tabs by spawning it here. All argument building and output
-// parsing lives on the frontend (`src/lib/k8s.ts`). This is a distinct
+// parsing lives on the frontend (`src/lib/k8s/k8s.ts`). This is a distinct
 // orchestration driver (its own view), not folded into the Docker panel — see
 // INVARIANTS «Панели-драйверы» (the k8s row of the driver table).
 //

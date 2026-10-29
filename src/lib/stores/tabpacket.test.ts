@@ -8,8 +8,8 @@ vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { panes } from "../splitlayout";
-import { paneMoveOrder, parsePacket, type TermSnapshot } from "../tabhandoff";
+import { panes } from "../layout/splitlayout";
+import { paneMoveOrder, parsePacket, type TermSnapshot } from "../windows/tabhandoff";
 import { aiChatState, getChat, peekChat, removeChat } from "./aichat.svelte";
 import {
   dockState,
@@ -48,7 +48,7 @@ import {
   splitSessionView,
   workspacesState,
 } from "./workspaces.svelte";
-import { TERMINAL_VIEW } from "../sessionviews";
+import { TERMINAL_VIEW } from "../layout/sessionviews";
 
 const SNAPSHOT: TermSnapshot = {
   cols: 132,

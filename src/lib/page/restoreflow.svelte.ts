@@ -4,14 +4,14 @@
 // their session by themselves is the pure `waitReason`, never a decision made
 // here — and besides that policy only a tab's own button opens a session.
 
-import { isProdServer } from "../aiexec";
+import { isProdServer } from "../ai/aiexec";
 import { connectPlan } from "../api";
 import { t } from "../i18n";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import { startSavingTabs, takeSavedTabs } from "../stores/tabrestore.svelte";
 import { findTab, openRestored, reconnectTab, setWaiting, tabsState, type Tab } from "../stores/tabs.svelte";
 import { notifyError, notifyInfo } from "../stores/toasts.svelte";
-import { restoreSaved, waitReason, type WaitFacts } from "../tabrestore";
+import { restoreSaved, waitReason, type WaitFacts } from "../tabs/tabrestore";
 import type { ServerProfile } from "../types";
 
 /** What the page tells the restore flow, each read when it is needed. */

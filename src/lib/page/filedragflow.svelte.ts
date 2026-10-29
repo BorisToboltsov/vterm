@@ -11,9 +11,9 @@
 // to carry the files in one place (`handToSystem`), after the model said it can.
 
 import { dragDrop, dragEnd, dragOutBegin, dragOver, localKinds } from "../api";
-import { sideOf } from "../copyto";
-import { dragOutBlocker, dragOutSpec, dragOutTold } from "../dragout";
-import { checkMove } from "../filemove";
+import { sideOf } from "../files/copyto";
+import { dragOutBlocker, dragOutSpec, dragOutTold } from "../files/dragout";
+import { checkMove } from "../files/filemove";
 import {
   describeFiles,
   desktopFiles,
@@ -23,7 +23,7 @@ import {
   type DropMeaning,
   type FileDragMessage,
   type FileTarget,
-} from "../filedrop";
+} from "../files/filedrop";
 import { t } from "../i18n";
 import { requestMove } from "../stores/filecopy.svelte";
 import {
@@ -38,10 +38,10 @@ import { hostEnv } from "../stores/hostenv.svelte";
 import { revealPanel } from "../stores/layout.svelte";
 import { activateTab, findTab, tabsState, type Tab } from "../stores/tabs.svelte";
 import { notifyInfo } from "../stores/toasts.svelte";
-import type { CdShell } from "../cdterminal";
+import type { CdShell } from "../pathsync/cdterminal";
 import type { DragLook } from "../api";
-import { quotePaths } from "../termcmd";
-import { DISK, startTransfer } from "../transferflow";
+import { quotePaths } from "../terminal/termcmd";
+import { DISK, startTransfer } from "../files/transferflow";
 import type { CopyFlow } from "./copyflow.svelte";
 
 /** What the page tells the file-drag flow, each read when it is needed. */

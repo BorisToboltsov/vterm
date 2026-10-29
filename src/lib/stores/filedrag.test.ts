@@ -2,7 +2,7 @@
 // pointer, what opens when files are held over it, what a release does, and the
 // ways a drag ends without one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SPRING_MS, type CarriedFiles, type DropMeaning, type FileTarget } from "../filedrop";
+import { SPRING_MS, type CarriedFiles, type DropMeaning, type FileTarget } from "../files/filedrop";
 import {
   beginFileDrag,
   cancelFileDrag,

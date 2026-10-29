@@ -10,7 +10,7 @@
 
 import { setServerPathSync, writeToTerminal } from "../api";
 import { t } from "../i18n";
-import type { PathSyncAsk } from "../PathSyncDialog.svelte";
+import type { PathSyncAsk } from "../pathsync/PathSyncDialog.svelte";
 import {
   asksOnEnable,
   choiceMode,
@@ -19,12 +19,12 @@ import {
   storedPathSync,
   type PathSyncChoice,
   type PathSyncMode,
-} from "../pathsync";
-import { settings } from "../settings.svelte";
-import { needsShellSetup, OSC7_SETUP } from "../shellintegration";
+} from "../pathsync/pathsync";
+import { settings } from "../settings/settings.svelte";
+import { needsShellSetup, OSC7_SETUP } from "../pathsync/shellintegration";
 import { dockConnection, type Tab } from "../stores/tabs.svelte";
 import { notifyError } from "../stores/toasts.svelte";
-import { submitLine } from "../terminput";
+import { submitLine } from "../terminal/terminput";
 import type { ServerProfile } from "../types";
 
 /** What a session runs of its own once connected — the setup line would land there. */

@@ -39,7 +39,7 @@ import {
   type PaneZone,
   type Rect,
   type TabDrop,
-} from "../splitlayout";
+} from "../layout/splitlayout";
 import { dropSessionView, getWorkspace } from "./workspaces.svelte";
 
 export const viewDrag = $state<{

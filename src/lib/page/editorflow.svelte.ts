@@ -23,9 +23,9 @@ import {
   sftpWriteText,
   writeLocalText,
 } from "../api";
-import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLangWithIncludes } from "../editorlang";
+import { couldBeNginxInclude, editorLangOrPlain, editorLangWithDialect, editorLangWithIncludes } from "../editor/editorlang";
 import { t } from "../i18n";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import { isRecording } from "../stores/recordings.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
@@ -43,7 +43,7 @@ import {
   showSessionView,
   type EditorDoc,
 } from "../stores/workspaces.svelte";
-import { lineDiffStat } from "../util";
+import { lineDiffStat } from "../ui/util";
 
 /** What the page tells the editor flow, each read when it is needed. */
 export interface EditorDeps {

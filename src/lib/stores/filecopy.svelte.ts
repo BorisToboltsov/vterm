@@ -11,7 +11,7 @@
 // Nothing here survives a tab: a selection is the panel's, republished whenever
 // the panel is on screen, and dropped in the tab's teardown.
 
-import type { CopyTarget } from "../copyto";
+import type { CopyTarget } from "../files/copyto";
 import type { FileEntry } from "../types";
 
 /** A panel's selection: what a copy started from the palette would take. */

@@ -23,9 +23,9 @@ import {
   type Docks,
   type DockSide,
   type PanelId,
-} from "../docklayout";
-import { isMainWindow } from "../appwindow";
-import { settings } from "../settings.svelte";
+} from "../layout/docklayout";
+import { isMainWindow } from "../windows/appwindow";
+import { settings } from "../settings/settings.svelte";
 import { resetColumnWidths } from "./colwidths.svelte";
 import { resetPanelShares } from "./panelsplit.svelte";
 

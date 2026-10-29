@@ -8,12 +8,12 @@
 // the question was answered; "don't ask again" is the only writer of the mode.
 
 import { t } from "../i18n";
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import { requestFilesDir } from "../stores/dockstate.svelte";
 import { revealPanel } from "../stores/layout.svelte";
 import { activateTab, tabsState, type Tab } from "../stores/tabs.svelte";
 import { notifyInfo } from "../stores/toasts.svelte";
-import { fileLinkClick, type FileLinkQuestion, type FileLinkTarget, type NamedPath } from "../termfiles";
+import { fileLinkClick, type FileLinkQuestion, type FileLinkTarget, type NamedPath } from "../terminal/termfiles";
 import type { ServerProfile } from "../types";
 
 /** What the page tells the file-link flow, each read when it is needed. */

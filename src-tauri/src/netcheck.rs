@@ -1,6 +1,6 @@
 // Network access check, local transport (v1.0.36). The Utilities "access check"
 // asks "can THIS host reach those ports?". On an SSH tab the question is answered
-// by a script run on the server (built in `src/lib/netcheck.ts`, executed by the
+// by a script run on the server (built in `src/lib/netcheck/netcheck.ts`, executed by the
 // `netcheck_run` bridge). On a local tab THIS host is the user's machine, so the
 // connects are made here, natively — no second script dialect for macOS
 // (no GNU `timeout`) and Windows (no `sh`), and exact refused/timeout verdicts

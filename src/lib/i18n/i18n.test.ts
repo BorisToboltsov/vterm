@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { settings } from "../settings.svelte";
-import { defaultAiSettings } from "../ai";
-import { defaultPromptFor } from "../aiprompts";
+import { settings } from "../settings/settings.svelte";
+import { defaultAiSettings } from "../ai/ai";
+import { defaultPromptFor } from "../ai/aiprompts";
 import { en, messages, type MessageKey } from "./messages";
 import { LOCALE_IDS, isLocale, DEFAULT_LOCALE, pickLocale } from "./locales";
 import { interpolate, resolve } from "./translate";

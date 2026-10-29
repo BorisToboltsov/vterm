@@ -1,0 +1,83 @@
+<script lang="ts">
+  // Image list for the Docker panel (Phase 35). Presentational + action wiring;
+  // arg building is pure (docker.ts). Per-row remove + a "prune unused" header
+  // action (both destructive → prod-confirmed by the orchestrator's `run`).
+  import Icon from "../ui/Icon.svelte";
+  import EmptyState from "../ui/EmptyState.svelte";
+  import { tooltip } from "../actions/tooltip";
+  import { removeImageArgs, pruneImagesArgs, dockerAge, dockerDate, type DockerImage } from "./docker";
+  import type { MenuItem } from "../ui/ctxmenu";
+  import { t, currentLocale } from "../i18n";
+
+  let {
+    images,
+    busy = false,
+    run,
+    onInspect,
+    showMenu,
+  }: {
+    images: DockerImage[];
+    busy?: boolean;
+    run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
+    onInspect: (img: DockerImage) => void;
+    /** Open the shared context menu at the event position with these items. */
+    showMenu: (e: MouseEvent, items: MenuItem[]) => void;
+  } = $props();
+
+  /**
+   * Hover card on the name: the untruncated reference plus the two facts the row
+   * cross-fades away under the pointer (`.vt-tooltip` keeps newlines).
+   */
+  function infoTip(img: DockerImage): string {
+    return [
+      `${img.repository}:${img.tag}`,
+      img.size,
+      `${t("docker.created")}: ${dockerDate(img.created, currentLocale())}`,
+    ].join("\n");
+  }
+
+  function copyId(img: DockerImage) {
+    void navigator.clipboard?.writeText(img.id);
+  }
+
+  // Right-click menu (Phase 36, point 5). No CVE scan — the app can't run one.
+  function menuItems(img: DockerImage): MenuItem[] {
+    return [
+      { icon: "braces", label: t("docker.inspect"), onSelect: () => onInspect(img) },
+      { icon: "copy", label: t("docker.copyId"), onSelect: () => copyId(img) },
+      { kind: "separator" },
+      { icon: "trash", label: t("docker.removeImage"), danger: true, onSelect: () => run(removeImageArgs([img.id], true), { destructive: true, successKey: "docker.removed" }) },
+    ];
+  }
+</script>
+
+{#if images.length === 0}
+  <EmptyState icon="container" title={t("docker.noImages")} />
+{:else}
+  <div class="h-full overflow-auto text-xs">
+    <div class="flex justify-end border-b border-edge px-2 py-1">
+      <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneImagesArgs(), { destructive: true, successKey: "docker.pruned" })}>
+        <Icon name="trash" size={12} />
+        {t("docker.pruneImages")}
+      </button>
+    </div>
+    {#each images as img (img.id + img.repository + img.tag)}
+      <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" oncontextmenu={(e) => showMenu(e, menuItems(img))} role="listitem">
+        <Icon name="container" size={14} class="shrink-0 text-accent" />
+        <div class="min-w-0 flex-1 truncate" use:tooltip={infoTip(img)}>
+          <span class="text-text/90">{img.repository}</span><span class="text-muted">:{img.tag}</span>
+        </div>
+        <!-- Size + age and the hover action share one reserved box, cross-faded
+             (same no-reflow rule as the container rows): a button of its own
+             cost 25px of every row, and the image name is what gets truncated. -->
+        <div class="relative flex shrink-0 items-center gap-2 text-caption tabular-nums">
+          <span class="w-12 text-right text-text/50 transition-opacity duration-150 group-hover:opacity-0">{img.size}</span>
+          <span class="w-9 text-right text-muted transition-opacity duration-150 group-hover:opacity-0">{dockerAge(img.created)}</span>
+          <button class="absolute right-0 rounded p-1 text-danger opacity-0 transition-opacity duration-150 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeImageArgs([img.id], true), { destructive: true, successKey: "docker.removed" })}>
+            <Icon name="trash" size={13} />
+          </button>
+        </div>
+      </div>
+    {/each}
+  </div>
+{/if}
