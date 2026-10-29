@@ -1529,7 +1529,8 @@ pub(crate) mod live_sftp {
         let sftp = connect().await;
         let path = path_for("upload-cancel");
         seed(&sftp, &path, b"original\n").await;
-        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("upload");
         std::fs::write(&local, vec![b'x'; 4 * CHUNK]).unwrap();
 
         let stop = AtomicBool::new(true);
@@ -1549,7 +1550,6 @@ pub(crate) mod live_sftp {
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
         let _ = sftp.remove_file(path).await;
-        let _ = std::fs::remove_file(local);
     }
 
     /// A completed upload replaces the content but keeps the target's mode — the
@@ -1564,7 +1564,8 @@ pub(crate) mod live_sftp {
         sftp.set_metadata(path.clone(), chmod_attrs(0o100_755))
             .await
             .expect("chmod");
-        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("upload");
         std::fs::write(&local, b"new content\n").unwrap();
 
         upload_staged(
@@ -1587,7 +1588,6 @@ pub(crate) mod live_sftp {
         assert!(leftover_temps(&sftp, &path).await.is_empty());
 
         let _ = sftp.remove_file(path).await;
-        let _ = std::fs::remove_file(local);
     }
 
     /// A copy from one connection to another (v1.12): the bytes arrive, a new
@@ -1665,7 +1665,8 @@ pub(crate) mod live_sftp {
         let sftp = connect().await;
         let path = path_for("upload-exists");
         seed(&sftp, &path, b"theirs\n").await;
-        let local = std::env::temp_dir().join(format!("vterm-up-{}", crate::uuid_like()));
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("upload");
         std::fs::write(&local, b"mine\n").unwrap();
 
         let res = upload_staged(
@@ -1697,7 +1698,6 @@ pub(crate) mod live_sftp {
 
         let _ = sftp.remove_file(path).await;
         let _ = sftp.remove_file(fresh).await;
-        let _ = std::fs::remove_file(local);
     }
 
     /// The download side of the same contract: a stopped download keeps the local
@@ -1708,8 +1708,8 @@ pub(crate) mod live_sftp {
         let sftp = connect().await;
         let path = path_for("download-cancel");
         seed(&sftp, &path, &vec![b'y'; 4 * CHUNK]).await;
-        let dir = std::env::temp_dir().join(format!("vterm-down-{}", crate::uuid_like()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         let local = dir.join("target.conf");
         std::fs::write(&local, b"mine\n").unwrap();
 
@@ -1727,7 +1727,7 @@ pub(crate) mod live_sftp {
 
         assert_eq!(std::fs::read(&local).unwrap(), b"mine\n");
         assert_eq!(
-            std::fs::read_dir(&dir).unwrap().count(),
+            std::fs::read_dir(dir).unwrap().count(),
             1,
             "staging temp left behind"
         );
@@ -1744,9 +1744,8 @@ pub(crate) mod live_sftp {
         .await
         .expect("download");
         assert_eq!(std::fs::read(&local).unwrap().len(), 4 * CHUNK);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        assert_eq!(std::fs::read_dir(dir).unwrap().count(), 1);
 
         let _ = sftp.remove_file(path).await;
-        let _ = std::fs::remove_dir_all(dir);
     }
 }

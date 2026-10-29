@@ -104,6 +104,9 @@ pub fn acknowledge() -> Result<bool, String> {
 
 /// Invoked before any runtime initialization. No network, shell or forced exit.
 pub fn entry() -> bool {
+    // argv only says "run as the helper" and where the plan is; the plan's
+    // signature, size and SHA-256 are verified again before anything is replaced.
+    // nosemgrep: rust.lang.security.args-os.args-os
     let mut args = std::env::args_os().skip(1);
     if args.next().as_deref() != Some(std::ffi::OsStr::new(FLAG)) {
         return false;
@@ -416,6 +419,8 @@ fn windows_installer(plan: &Plan) -> Result<(), String> {
         String::new()
     }));
     let verb = wide(std::ffi::OsStr::new("open"));
+    // SAFETY: a plain C struct of integers, pointers and handles, for which all
+    // zeroes is the documented empty value before `cbSize` and the fields are set.
     let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
     info.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -423,6 +428,9 @@ fn windows_installer(plan: &Plan) -> Result<(), String> {
     info.lpFile = file.as_ptr();
     info.lpParameters = params.as_ptr();
     info.nShow = 1;
+    // SAFETY: `info` is fully initialised and its strings point to NUL-terminated
+    // buffers that live to the end of this function. `SEE_MASK_NOCLOSEPROCESS`
+    // hands us `hProcess`: it is checked for null, waited on, read and closed once.
     unsafe {
         if ShellExecuteExW(&mut info) == 0 {
             return Err(std::io::Error::last_os_error().to_string());

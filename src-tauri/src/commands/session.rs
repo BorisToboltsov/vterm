@@ -450,6 +450,8 @@ mod tests {
     // ── program_on_path ───────────────────────────────────────────────────────
     #[test]
     fn program_on_path_finds_current_exe_by_absolute_path() {
+        // The test needs a real executable at an absolute path: its own binary.
+        // nosemgrep: rust.lang.security.current-exe.current-exe
         let exe = std::env::current_exe().unwrap();
         assert!(program_on_path(exe.to_str().unwrap()));
     }

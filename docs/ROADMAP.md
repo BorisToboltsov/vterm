@@ -81,7 +81,9 @@ composite actions, у каждой заботы один сканер (`cargo de
 `#lib/…` вместо `$lib`), vitest 5, `russh` 0.65 / `russh-sftp` 3; TypeScript 7 отложен — у него
 нет JS API, на котором стоят svelte-check и typescript-eslint. Этап I (1.25.8): план
 рефакторинга `docs/REFACTORING.md` — этапы по порядку, их поводы и критерии выхода; этап —
-PR в `main`. Остальное — в «Что дальше».
+PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после слияния 1.25 — `windows`
+0.62 вслед за Tauri, мажоры `@wdio/*` и windows-rs связкой, sudo-пароль в `Zeroizing`,
+`unsafe` с `// SAFETY:` под clippy вместо Semgrep. Остальное — в «Что дальше».
 Версии 1.1, 1.2 и 1.3 отдельными релизами не выходили.
 
 ---
@@ -145,8 +147,10 @@ PR в `main`. Остальное — в «Что дальше».
     выхода. Против 1.25 гейты встали перед фронтом (иначе разделы под текстовыми гейтами
     откладываются), документация, CI и раскладка — по поводу, добавлены замеры «до» и итог.
     Этап — patch-выпуск со своим PR в `main`: push вне `main` CI не запускает.
-  - **⬜ Проверка на раннерах.** Этапы A–I собраны локальной стопкой веток до правила «этап —
-    PR в `main`» и на раннерах GitHub ещё не проходили.
+  - **✅ Проверка на раннерах.** Этапы A–I прошли CI одним PR и слиты в `main`; обязательная
+    проверка зависимостей в ruleset `main` переименована вслед за джобой этапа F.
+  - **✅ Находки после слияния (1.25.9).** Две critical CodeQL и 50 заметок Semgrep по Rust,
+    PR Dependabot `windows`/`windows-core` и `@wdio/*` поштучно: см. CHANGELOG.
   - **⬜ TypeScript 7.** У TS 7.0 нет JS API (обещан в 7.1), а на API TS 6 стоят
     `svelte-kit sync`, svelte-check/svelte2tsx и typescript-eslint: установка роняет `pnpm check`
     и `pnpm lint`. Переход — когда они примут TS 7; `@typescript/typescript6` рядом с TS 7

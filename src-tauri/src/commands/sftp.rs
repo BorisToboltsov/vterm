@@ -14,6 +14,17 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager, State};
+use zeroize::Zeroizing;
+
+/// A sudo password from the page, wiped on drop wherever this command keeps it.
+fn sudo_secret(password: Option<String>) -> Option<Zeroizing<String>> {
+    password.map(Zeroizing::new)
+}
+
+/// The secret as the `sync` helpers take it.
+fn secret_str(password: &Option<Zeroizing<String>>) -> Option<&str> {
+    password.as_deref().map(String::as_str)
+}
 
 /// Per-session uid→name / gid→name maps (fetched once from passwd/group and
 /// cached) so the SFTP listing can show owner names. Returns empty maps if the
@@ -140,18 +151,13 @@ pub async fn sftp_read_text(
     sudo: Option<bool>,
     sudo_password: Option<String>,
 ) -> AppResult<sftp::TextFile> {
+    let sudo_password = sudo_secret(sudo_password);
     let limit = max_bytes
         .unwrap_or(sftp::MAX_EDIT_SIZE)
         .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
     if sudo == Some(true) {
         let session = session_arc(&state, &session_id).await?;
-        return sync::sudo_read(
-            &session,
-            &path,
-            limit,
-            sudo_password.as_deref().unwrap_or(""),
-        )
-        .await;
+        return sync::sudo_read(&session, &path, limit, secret_str(&sudo_password)).await;
     }
     let sftp = get_sftp(&state, &session_id).await?;
     sftp::read_text(&sftp, &path, limit).await
@@ -184,6 +190,7 @@ pub async fn sftp_check_sudo(
     session_id: String,
     password: String,
 ) -> AppResult<bool> {
+    let password = Zeroizing::new(password);
     let session = session_arc(&state, &session_id).await?;
     sync::check_sudo(&session, &password).await
 }
@@ -226,6 +233,7 @@ pub async fn sftp_write_text(
     sudo_password: Option<String>,
     backup: Option<bool>,
 ) -> AppResult<sftp::WriteResult> {
+    let sudo_password = sudo_secret(sudo_password);
     // The editor echoes back the encoding `read_text` reported, so the file is
     // rewritten in the encoding it arrived in. An older/absent value means UTF-8.
     let encoding = encoding.unwrap_or_else(|| crate::textenc::default_encoding().into());
@@ -240,13 +248,7 @@ pub async fn sftp_write_text(
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
     let res = if sudo == Some(true) {
-        sync::sudo_write(
-            &session,
-            &sftp,
-            &req,
-            sudo_password.as_deref().unwrap_or(""),
-        )
-        .await
+        sync::sudo_write(&session, &sftp, &req, secret_str(&sudo_password)).await
     } else {
         sftp::write_text(&sftp, &req).await
     };
@@ -335,7 +337,7 @@ pub async fn nginx_config_files(
     sudo_password: Option<String>,
 ) -> AppResult<Vec<String>> {
     let session = session_arc(&state, &session_id).await?;
-    if let Some(pw) = sudo_password.filter(|p| !p.is_empty()) {
+    if let Some(pw) = sudo_secret(sudo_password).filter(|p| !p.is_empty()) {
         return sync::nginx_config_files_sudo(&session, &pw).await;
     }
     let out = session
@@ -389,7 +391,8 @@ pub async fn lint_remote(
         );
     }
     sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
-    let out = sync::run_lint(&session, &tool, &tmp, sudo_password.as_deref()).await;
+    let sudo_password = sudo_secret(sudo_password);
+    let out = sync::run_lint(&session, &tool, &tmp, secret_str(&sudo_password)).await;
     let _ = sftp.remove_file(tmp.clone()).await;
     // Replace both the full temp path and its basename with `FILE`, since validators
     // vary in which they print.
@@ -430,8 +433,7 @@ pub async fn run_tool_install(
 ) -> AppResult<String> {
     let session = session_arc(&state, &session_id).await?;
     let cmd = format!("{} 2>&1", servertools::sudoize(&command));
-    let mut pw = sudo_password.unwrap_or_default().into_bytes();
-    pw.push(b'\n');
+    let pw = sync::sudo_stdin(secret_str(&sudo_secret(sudo_password)));
     let event = ssh::install_output_event(&session_id);
     session
         .run_command_stdin_streaming(&cmd, &pw, |chunk| {

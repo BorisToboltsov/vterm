@@ -59,12 +59,14 @@ advisory без апстрим-фикса, исключение заводитс
 |----------|-----------|----------|
 | SAST — весь код | **CodeQL** (`javascript-typescript`; `rust` — на `main` и ежемесячно, базу строит полная сборка) | поток данных, инъекции, небезопасные API |
 | SAST — сами workflow | **CodeQL** (`actions`) + **zizmor** | подстановка `${{ }}` в `run:`, незапиненные экшены, лишние права токена |
-| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust`) | анти-паттерны фронтенда и бэкенда |
+| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust` без `unsafe-usage`) | анти-паттерны фронтенда и бэкенда; находка, разобранная на месте, — `// nosemgrep` с причиной над ней |
 | ФС | **Trivy** (`fs`: secret/misconfig) | секреты, misconfig |
 
 У каждой заботы один сканер: уязвимости зависимостей — только `cargo deny` и `pnpm audit`
 (Trivy `vuln` читал те же lockfile без их исключений), секреты — только Trivy (`p/secrets`
-Semgrep давал вторую копию находки). Держит гейт `ci.guard.test.ts`.
+Semgrep давал вторую копию находки), `unsafe` — только clippy `undocumented_unsafe_blocks`,
+жёстко: у каждого блока `// SAFETY:` (правило Semgrep `unsafe-usage` помечало каждый блок
+подряд, с обоснованием или без). Держит гейт `ci.guard.test.ts`.
 
 **Фаззинг недоверенного входа** — [deep.yml](.github/workflows/deep.yml). У vterm
 нет ни одного HTTP-порта, поэтому DAST здесь нечего сканировать; динамическая поверхность

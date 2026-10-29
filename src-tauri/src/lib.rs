@@ -209,7 +209,9 @@ pub fn run() {
     webview2::prepare();
 
     // Files passed on the command line at first launch (Windows/Linux "open with"
-    // gives the path as argv; macOS uses the `Opened` run event below).
+    // gives the path as argv; macOS uses the `Opened` run event below). The paths
+    // are only opened in the editor, as a file chosen by the user would be.
+    // nosemgrep: rust.lang.security.args.args
     let initial_files = file_args(&std::env::args().collect::<Vec<_>>());
 
     let state = AppState {

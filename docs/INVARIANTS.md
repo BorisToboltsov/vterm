@@ -596,9 +596,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   статус, окончательный — результат записи; отказ оставляет правки и показывает рядом с
   «Сохранить» sudo и локальную копию; копия — только `create_new`, в исходной кодировке. Гейт
   `editoraccess.guard`.
-- **sudo-правка:** пароль только в памяти и через stdin (`sudo -S -p ''`, `run_command_stdin`),
-  успех — маркер `__VTERM_OK__`; отказ — `isPermissionError` (`permission denied` и `no such
-  file`).
+- **sudo-правка:** пароль только в памяти и через stdin (`sudo -S -p ''`, `run_command_stdin`);
+  строку stdin собирает только `sync::sudo_stdin` в `Zeroizing`, нет пароля — `None`, а не
+  `""`. Успех — маркер `__VTERM_OK__`; отказ — `isPermissionError` (`permission denied` и `no
+  such file`).
 - **Расписка о записи отражает сервер, а не намерение** (`WriteResult`); ошибку `set_metadata`
   не глушить. Поведение сервера — живые тесты `live_sftp`.
 - **Синхронизация: хэши считает бэкенд, diff — чистый TS.** `sftp_hash_tree` через SSH exec
@@ -1002,6 +1003,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret`.
 
+**Правило clippy** (`[lints.clippy]` в [Cargo.toml](../src-tauri/Cargo.toml), `-D warnings` на
+трёх ОС): `undocumented_unsafe_blocks` — `unsafe` только для FFI к ОС, и у каждого блока
+`// SAFETY:` с обоснованием. `unsafe` проверяет clippy, а не Semgrep (гейт `ci.guard`).
+
 | Гейт | Что держит |
 |------|------------|
 | `docs.guard` | `CLAUDE.md` — только импорт `AGENTS.md`; этот файл в бюджете; каждый гейт и ADR, названный здесь, существует, а каждый `*.guard.test.ts` здесь назван; цитаты INVARIANTS из кода и доков называют существующий пункт |
@@ -1043,7 +1048,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой |
-| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер |
+| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |
