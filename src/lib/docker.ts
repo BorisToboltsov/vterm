@@ -1,8 +1,8 @@
 // Pure Docker logic for the Docker panel (Phase 35). Everything here is
 // DOM/network free so it unit-tests cleanly: argument builders (what to run) and
 // parsers (how to read the output). The backend (`container.rs` + `container_run`)
-// is a dumb executor — this file owns the contract. See INVARIANTS ("чистая
-// логика в .ts"), mirrors `git.ts`.
+// is a dumb executor — this file owns the contract. See INVARIANTS «чистая логика — в .ts»;
+// mirrors `git.ts`.
 //
 // Output is made machine-readable with a custom `--format` using a US (0x1f)
 // field separator and newline records — robust to spaces/commas in values

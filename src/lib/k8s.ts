@@ -1,8 +1,8 @@
 // Pure Kubernetes logic for the k8s panel (Phase 37). Everything here is
 // DOM/network free so it unit-tests cleanly: argument builders (what to run) and
 // parsers (how to read the output). The backend (`kube.rs` + `kubectl_run`) is a
-// dumb executor — this file owns the contract. See INVARIANTS ("чистая логика в
-// .ts" and the orchestration-driver block); mirrors `docker.ts`.
+// dumb executor — this file owns the contract. See INVARIANTS «чистая логика — в .ts»
+// and the k8s row of the driver table; mirrors `docker.ts`.
 //
 // Deliberate differences from the Docker driver (not copy-paste): output is
 // parsed from `-o json` (kubectl emits strict JSON — more robust than the

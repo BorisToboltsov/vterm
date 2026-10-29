@@ -1,7 +1,7 @@
 name: CI
 
 # Гейты качества на каждом изменении: линтеры, тесты, покрытие, production-сборка
-# и supply-chain. Тот же набор, что в Definition of Done (CLAUDE.md), но на
+# и supply-chain. Тот же набор, что в Definition of Done (AGENTS.md), но на
 # раннерах GitHub — то есть там, где реально собираются публикуемые артефакты.
 #
 # Этот workflow вызывается ТРИЖДЫ:

@@ -5,7 +5,7 @@
 //
 // Language labels are short technical strings (YAML/JSON/TOML/…) and are NOT
 // translated — same rule as log-format badges and theme/font names (see the
-// i18n section of CLAUDE.md).
+// i18n section of AGENTS.md).
 
 /** Highlighting kind; `EditorTab` resolves each to a CodeMirror language. */
 export type EditorLangKind =

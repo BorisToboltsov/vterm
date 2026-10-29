@@ -296,7 +296,7 @@ Linux-job намеренно собирается на **ubuntu-22.04**, а не
 
 Версия живёт **только** в [package.json](../package.json); `tauri.conf.json` берёт её
 оттуда ссылкой, а `Cargo.toml`/`Cargo.lock` синхронизирует скрипт. Схема и правила — в
-[CLAUDE.md](../CLAUDE.md).
+[AGENTS.md](../AGENTS.md).
 
 ```bash
 pnpm version:set 1.0.1

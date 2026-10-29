@@ -2,7 +2,7 @@
 // every other locale is typed as `Record<MessageKey, string>`, so a missing
 // translation is a compile error. Placeholders use `{name}` (translate.ts).
 //
-// IMPORTANT (project rule, see CLAUDE.md): domain/technical terms are kept
+// IMPORTANT (project rule, see AGENTS.md): domain/technical terms are kept
 // identical across languages on purpose — e.g. `CPU`, `RAM`, `Swap`,
 // `Load average`, `Disk I/O`, `IP`, `PSI`, `TCP`, `SFTP`, `SSH`, `ulimit`,
 // `keychain`, `passphrase`.

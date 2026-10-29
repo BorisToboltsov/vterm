@@ -3,7 +3,7 @@
 // channel, local shell tabs by spawning it here. All argument building and output
 // parsing lives on the frontend (`src/lib/k8s.ts`). This is a distinct
 // orchestration driver (its own view), not folded into the Docker panel — see
-// INVARIANTS ("k8s — отдельный драйвер").
+// INVARIANTS «Панели-драйверы» (the k8s row of the driver table).
 //
 // The leading token(s) of the argv are the program — `kubectl`, a path to it, or
 // a configured wrapper like `k3s kubectl` (`settings.kubectlPath`) — and the

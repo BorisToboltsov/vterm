@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.25.3-blue)
+![version](https://img.shields.io/badge/version-1.25.4-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -120,7 +120,7 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 | Хочу поучаствовать | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 > **Собираетесь писать код или документацию?** Правила процесса и карта «что в какой файл
-> писать» — в [CLAUDE.md](CLAUDE.md). Жанр у каждого документа один, и дублировать мысль
+> писать» — в [AGENTS.md](AGENTS.md). Жанр у каждого документа один, и дублировать мысль
 > между ними нельзя: вместо копии ставится ссылка.
 
 ---
