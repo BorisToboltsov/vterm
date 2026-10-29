@@ -1047,8 +1047,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `i18nkeys.guard` | Каждый ключ словаря используется приложением |
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
-| `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой |
-| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy |
+| `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
+| `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |
 | `no_file_attributes_built_from_a_template` (Rust) | `FileAttributes` не строится из шаблона |

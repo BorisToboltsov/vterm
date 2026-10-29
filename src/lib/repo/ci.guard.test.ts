@@ -134,6 +134,20 @@ export function scannerOverlaps(files: {
   return problems;
 }
 
+/**
+ * What lets a finding suppressed in code (`nosemgrep`) reach the Security tab anyway.
+ * Semgrep writes it to SARIF with `suppressions`, and GitHub keeps such an alert open.
+ */
+export function suppressedUploads(security: string): string[] {
+  const code = codeOf(security);
+  const problems: string[] = [];
+  if (!/jq\s+'[^']*\.suppressions\b[^']*'[\s\\]+semgrep\.sarif\s*>\s*semgrep-open\.sarif/.test(code))
+    problems.push("nothing drops suppressed results from semgrep.sarif");
+  const upload = code.split(/^\s*- name:/m).find((step) => /category:\s*semgrep\b/.test(step)) ?? "";
+  if (!/sarif_file:\s*semgrep-open\.sarif\b/.test(upload)) problems.push("the Security tab gets Semgrep's raw SARIF");
+  return problems;
+}
+
 describe("shared CI steps live in .github/actions", () => {
   it.each(WORKFLOWS)("%s sets nothing up itself", (rel) => {
     expect(setupOutsideActions(read(rel))).toEqual([]);
@@ -227,6 +241,23 @@ describe("each concern has one scanner", () => {
     ]);
     expect(scannerOverlaps({ ...files, cargo: files.cargo.replace(/^undocumented_unsafe_blocks.*$/m, "") })).toEqual([
       "clippy must ask every unsafe block for its SAFETY reason",
+    ]);
+  });
+});
+
+describe("a finding settled in code leaves the Security tab", () => {
+  const security = read(".github/workflows/security.yml");
+
+  it("uploads only what nosemgrep did not suppress", () => {
+    expect(suppressedUploads(security)).toEqual([]);
+  });
+
+  it("catches its own violations", () => {
+    expect(suppressedUploads(security.replace("sarif_file: semgrep-open.sarif", "sarif_file: semgrep.sarif"))).toEqual([
+      "the Security tab gets Semgrep's raw SARIF",
+    ]);
+    expect(suppressedUploads(security.replace(/\.suppressions\b/g, ".level"))).toEqual([
+      "nothing drops suppressed results from semgrep.sarif",
     ]);
   });
 });

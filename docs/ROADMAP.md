@@ -83,7 +83,9 @@ composite actions, у каждой заботы один сканер (`cargo de
 рефакторинга `docs/REFACTORING.md` — этапы по порядку, их поводы и критерии выхода; этап —
 PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после слияния 1.25 — `windows`
 0.62 вслед за Tauri, мажоры `@wdio/*` и windows-rs связкой, sudo-пароль в `Zeroizing`,
-`unsafe` с `// SAFETY:` под clippy вместо Semgrep. Остальное — в «Что дальше».
+`unsafe` с `// SAFETY:` под clippy вместо Semgrep. Patch 1.25.10: подавленное `nosemgrep`
+не грузится в Security, `windows-core` поднимается только вместе с `windows`. Остальное — в
+«Что дальше».
 Версии 1.1, 1.2 и 1.3 отдельными релизами не выходили.
 
 ---
@@ -151,6 +153,10 @@ PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после 
     проверка зависимостей в ruleset `main` переименована вслед за джобой этапа F.
   - **✅ Находки после слияния (1.25.9).** Две critical CodeQL и 50 заметок Semgrep по Rust,
     PR Dependabot `windows`/`windows-core` и `@wdio/*` поштучно: см. CHANGELOG.
+  - **✅ Остаток находок (1.25.10).** Подавленное `nosemgrep` не грузится в Security;
+    `windows-core` 0.100 без `windows` — в ignore Dependabot.
+  - **⬜ WebdriverIO 10** (PR Dependabot `e2e-major`). На PR E2E не идёт: слияние — после
+    `pnpm e2e:linux` на его ветке.
   - **⬜ TypeScript 7.** У TS 7.0 нет JS API (обещан в 7.1), а на API TS 6 стоят
     `svelte-kit sync`, svelte-check/svelte2tsx и typescript-eslint: установка роняет `pnpm check`
     и `pnpm lint`. Переход — когда они примут TS 7; `@typescript/typescript6` рядом с TS 7

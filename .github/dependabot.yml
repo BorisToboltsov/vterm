@@ -108,13 +108,20 @@ updates:
       prefix: "deps"
     cooldown:
       default-days: 7
+    # `windows-core` — той версии, что требует `windows`, и никакой другой: иначе в
+    # сборке две копии, и COM-типы `#[implement]` не сходятся (dragout/windows.rs).
+    # Свои версии у них расходятся — `windows-core` 0.100 вышел, пока `windows`
+    # оставался на 0.62, — так что ни поштучный PR, ни группа его не поднимут
+    # правильно. Он идёт руками в PR, который поднимает `windows`.
+    ignore:
+      - dependency-name: "windows-core"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       tauri:
         patterns: ["tauri", "tauri-*"]
         update-types: ["minor", "patch"]
-      # windows-rs ходит связкой: `windows` без `windows-core` той же версии — две
-      # копии `windows-core` в сборке, и COM-типы `#[implement]` не сходятся
-      # (dragout/windows.rs). Для 0.x Dependabot считает 0.61 → 0.62 минором.
+      # windows-rs ходит связкой: патчи и `windows-sys` — одним PR. Для 0.x
+      # Dependabot считает 0.61 → 0.62 минором; минор `windows-core` в ignore выше.
       windows:
         patterns: ["windows", "windows-*"]
         update-types: ["minor", "patch"]
