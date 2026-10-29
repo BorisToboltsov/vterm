@@ -1,7 +1,7 @@
 name: CI
 
 # Гейты качества на каждом изменении: линтеры, тесты, покрытие, production-сборка
-# и supply-chain. Тот же набор, что в Definition of Done (CLAUDE.md), но на
+# и supply-chain. Тот же набор, что в Definition of Done (AGENTS.md), но на
 # раннерах GitHub — то есть там, где реально собираются публикуемые артефакты.
 #
 # Этот workflow вызывается ТРИЖДЫ:
@@ -41,25 +41,20 @@ jobs:
           # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
           persist-credentials: false
 
-      - name: pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      # pnpm, Node и зависимости — общим экшеном (.github/actions/setup-web);
+      # кэш хранилища здесь можно: этот workflow ничего не публикует.
+      - name: Фронтенд-окружение
+        uses: $/.github/actions/setup-web
         with:
-          version: 11
-
-      # Пол Node под запиненный мажор pnpm — тот же, что в release.yml, и по той
-      # же причине (pnpm 11 требует node:sqlite). Держится гейтом
-      # releaseassets.guard.test.ts, который проверяет ОБА workflow.
-      - name: Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Установка зависимостей
-        run: pnpm install --frozen-lockfile
+          cache: "true"
 
       - name: Типы (svelte-check)
         run: pnpm check
+
+      # Правила проекта (lint/vterm.js) — инварианты, которые раньше держали
+      # текстовые гейты в `pnpm test`; без этого шага их не проверяет никто.
+      - name: Линтер (ESLint)
+        run: pnpm lint
 
       # Пороги покрытия (≥ 90 % чистая логика, ≥ 80 % в целом) живут в
       # vitest.config.ts и роняют прогон сами.
@@ -93,8 +88,7 @@ jobs:
           - { os: ubuntu-22.04, name: Linux }
           # Ради этой строки всё и затевалось: код под `#[cfg(windows)]`
           # (drives.rs, proccwd.rs) на Linux-раннере структурно невидим, а
-          # GitLab-джоба lint:windows стоит manual и не запускалась ни разу —
-          # под неё нет раннера. У GitHub раннер бесплатный.
+          # windows-раннера под рукой нет. У GitHub раннер бесплатный.
           - { os: windows-latest, name: Windows }
           - { os: macos-latest, name: macOS }
 
@@ -105,30 +99,13 @@ jobs:
           # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
           persist-credentials: false
 
-      # Системные зависимости Tauri 2 под Linux — те же, что в release.yml:
-      # без них не собирается сам крейт, а значит и clippy не доходит до кода.
-      - name: Системные зависимости Tauri (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
-
-      # `toolchain` передаётся явно: при пине по SHA имя ссылки больше не
-      # выбирает тулчейн (форма @stable работала именно как «ветка stable»),
-      # а вход у экшена обязательный.
-      - name: Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      # Rust из rust-toolchain.toml, системные пакеты Tauri на Linux (без них не
+      # собирается сам крейт, а значит clippy не доходит до кода) и кэш —
+      # общим экшеном (.github/actions/setup-rust).
+      - name: Rust-окружение
+        uses: $/.github/actions/setup-rust
         with:
-          toolchain: stable
-          components: rustfmt, clippy
-
-      - name: Кэш Rust
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri -> target
-          key: ${{ matrix.os }}
+          cache-key: ${{ matrix.os }}
 
       # Формат от ОС не зависит — гоняем один раз, чтобы не платить трижды.
       - name: Формат
@@ -139,15 +116,18 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # Живые SFTP-тесты помечены #[ignore] и здесь не идут — им нужен sshd,
-      # они гоняются в nightly.yml.
+      # они гоняются в deep.yml.
       - name: Тесты
         run: cargo test --manifest-path src-tauri/Cargo.toml
 
   # ── Supply chain: уязвимости и политика зависимостей ────────────────────────
-  # Отдельная быстрая джоба: cargo-audit и cargo-deny читают Cargo.lock и не
-  # собирают проект, поэтому системные зависимости Tauri тут не нужны.
+  # Отдельная быстрая джоба: cargo-deny читает Cargo.lock и не собирает проект,
+  # поэтому системные зависимости Tauri тут не нужны. cargo-audit здесь больше
+  # нет: он читает ту же базу RustSec, что `cargo deny check advisories`, но не
+  # умеет падать на устаревшем исключении — второй список исключений только
+  # расходился с первым.
   deps:
-    name: Зависимости (audit / deny)
+    name: Зависимости (cargo deny, pnpm audit)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -156,41 +136,29 @@ jobs:
           # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
           persist-credentials: false
 
-      - name: Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      # cargo-deny зовёт `cargo metadata` — нужен cargo той же версии, что у сборки.
+      - name: Rust-окружение
+        uses: $/.github/actions/setup-rust
         with:
-          toolchain: stable
+          system-deps: "false"
 
-      # Готовые бинарники вместо `cargo install` — секунды против минут.
-      - name: cargo-audit + cargo-deny
+      # Готовый бинарник вместо `cargo install` — секунды против минут.
+      - name: cargo-deny
         uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
-          tool: cargo-audit,cargo-deny
+          tool: cargo-deny
 
-      # Принятые advisory расписаны с причинами в src-tauri/deny.toml и
-      # зеркалятся в .cargo/audit.toml. Гейт жёсткий: политика, которую можно
-      # «просто посмотреть в логе», не политика.
-      - name: cargo audit (RUSTSEC)
-        working-directory: src-tauri
-        run: cargo audit
-
+      # Принятые advisory расписаны с причинами в src-tauri/deny.toml; исключение,
+      # которому больше нечего исключать, роняет прогон (`unused-ignored-advisory`).
+      # Гейт жёсткий: политика, которую можно «просто посмотреть в логе», не политика.
       - name: cargo deny (advisories, licenses, bans, sources)
         working-directory: src-tauri
         run: cargo deny check
 
-      - name: pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Фронтенд-окружение
+        uses: $/.github/actions/setup-web
         with:
-          version: 11
-
-      - name: Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Установка зависимостей
-        run: pnpm install --frozen-lockfile
+          cache: "true"
 
       # База чистая на момент заведения джобы, поэтому гейт сразу жёсткий.
       # Появится advisory без апстрим-фикса — исключение заводится через

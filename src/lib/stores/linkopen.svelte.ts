@@ -7,9 +7,9 @@
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ILinkHandler } from "@xterm/xterm";
-import { linkClick, rangeText, type LinkQuestion, type TextBuffer } from "../termlink";
-import { settings } from "../settings.svelte";
-import { writeClipboard } from "../clipboard";
+import { linkClick, rangeText, type LinkQuestion, type TextBuffer } from "../terminal/termlink";
+import { settings } from "../settings/settings.svelte";
+import { writeClipboard } from "../app/clipboard";
 import { notifyError, notifySuccess } from "./toasts.svelte";
 import { t } from "../i18n";
 

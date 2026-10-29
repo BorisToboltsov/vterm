@@ -24,14 +24,14 @@
 | Токен | Роль |
 |-------|------|
 | `panel` · `panel-alt` · `edge` | Поверхности и границы chrome |
-| `text` · `muted` | Основной и второстепенный текст (`text-white` запрещён — тема его не переключает). `muted` — подписи, иконки и данные, которые не главное в строке; подобран под каждую тему так, чтобы читаться и оставаться тусклее `text` (правило — в [INVARIANTS](INVARIANTS.md#ui-и-оформление), значения — `ui.muted` в [themes.ts](../src/lib/themes.ts)) |
+| `text` · `muted` | Основной и второстепенный текст (`text-white` запрещён — тема его не переключает). `muted` — подписи, иконки и данные, которые не главное в строке; подобран под каждую тему так, чтобы читаться и оставаться тусклее `text` (правило — в [INVARIANTS](INVARIANTS.md#ui-и-оформление), значения — `ui.muted` в [themes.ts](../src/lib/appearance/themes.ts)) |
 | `accent` · `accent-hover` | Акцент, активные состояния, кольцо фокуса |
 | `danger` | Деструктивное **действие** (удаление, красный ховер) |
 | `ok` · `warn` · `bad` | **Состояние** объекта: здоров / деградировал / сломан |
 | `green-600/500` | Единственное исключение: primary-кнопка Connect |
 
 - Статусная тройка приходит из темы (`UiPalette.ok/warn/bad`); незаданное берётся из дефолта по
-  группе (`STATUS_DARK`/`STATUS_LIGHT` в [themes.ts](../src/lib/themes.ts), чистая
+  группе (`STATUS_DARK`/`STATUS_LIGHT` в [themes.ts](../src/lib/appearance/themes.ts), чистая
   `statusPalette`). Тема называет цвет сама, только если групповой дефолт ей не идёт.
 - Оттенки выводятся из токенов через `color-mix`, а не заводятся новыми: тинты диффа —
   `.vt-diff-add`/`.vt-diff-del` (смесь `ok`/`bad` с `transparent` даёт бледный тон на светлой
@@ -55,20 +55,20 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 
 ## Иконки и бренд
 
-- **Реестр** [icons.ts](../src/lib/icons.ts) → `<Icon name="…" />`: line-стиль, 24×24,
+- **Реестр** [icons.ts](../src/lib/ui/icons.ts) → `<Icon name="…" />`: line-стиль, 24×24,
   `currentColor`, `stroke-width 1.8`. Размеры по месту: тулбар — `size=14`, действия строки —
   `size=13`, крестик окна — `size=16`. Толщина линии — проп `strokeWidth` (дефолт 1.8); поднимается
   только у глифа из точек: «⋯» строки сервера — `size=16 strokeWidth=3`, иначе точки читаются как
   пылинки. Эмодзи не используются нигде, включая иконки ОС в
   статус-баре. Иконки папки/файла/симлинка одинаковы в дереве серверов и в файловых панелях.
 - **Пиктограммы серверов** — курируемый набор ~24 глифов
-  ([servericons.ts](../src/lib/servericons.ts)), цвет из фиксированной палитры 7 хью
+  ([servericons.ts](../src/lib/servers/servericons.ts)), цвет из фиксированной палитры 7 хью
   (`text-sky-400`…, читается на любой теме); пусто → `text-muted`, пустой глиф → generic
   `server`. Показывается перед именем в списке.
 - **Логотип** — два каскадных окна терминала с промптом `›_` на скруглённом квадрате.
   Мастер-исходник [icon-source.svg](../src-tauri/icons/icon-source.svg), иконки ОС генерятся
   `pnpm tauri icon`. Бандл-иконка **статична** (Deep Well); in-app
-  [AppLogo](../src/lib/AppLogo.svelte) берёт фон из `backdrop` активной темы — единственное
+  [AppLogo](../src/lib/appearance/AppLogo.svelte) берёт фон из `backdrop` активной темы — единственное
   место, где SVG инлайнится в компоненте.
 - Сворачивание — шевроны `chevronLeft`/`chevronRight` из реестра, не символы `«`/`»`.
 
@@ -83,7 +83,7 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 | Иконочное действие строки | `rounded p-0.5 text-muted hover:text-accent`, иконка 13 |
 | Удаление | те же классы + `hover:text-danger`, иконка `trash` |
 | Крестик закрытия (окно и вкладка) | `text-muted hover:text-danger` — подсветка иконки, **не** заливка `hover:bg-danger` |
-| Сегментный переключатель ([SegmentedControl](../src/lib/SegmentedControl.svelte)) | группа `inline-flex overflow-hidden rounded border border-edge text-sm`; сегмент `px-3 py-1`, между сегментами `border-l border-edge`; выбранный `bg-accent/15 text-accent`, прочие `text-muted hover:bg-edge hover:text-text` |
+| Сегментный переключатель ([SegmentedControl](../src/lib/ui/SegmentedControl.svelte)) | группа `inline-flex overflow-hidden rounded border border-edge text-sm`; сегмент `px-3 py-1`, между сегментами `border-l border-edge`; выбранный `bg-accent/15 text-accent`, прочие `text-muted hover:bg-edge hover:text-text` |
 
 - **Создание сущности — иконка с «+»:** папка — `folderPlus`, файл и «добавить сервер» —
   `filePlus`. «Добавить сервер» живёт в тулбаре списка серверов, «Новый файл» — в тулбаре SFTP.
@@ -110,32 +110,32 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 
 ## Диалоги и обратная связь
 
-- **Диалоги** строятся на [Modal](../src/lib/Modal.svelte) (`ConfirmDialog` и формы — поверх
+- **Диалоги** строятся на [Modal](../src/lib/ui/Modal.svelte) (`ConfirmDialog` и формы — поверх
   него). Крестик — проп `showClose`; он живёт вне фокус-трапа (сиблинг скролл-карточки),
   поэтому не крадёт стартовый фокус и не уезжает при скролле. Окна со своим оверлеем
   (`SettingsPanel`, `HelpPanel`) используют тот же крестик. Фон — `bg-black/50` с
   `aria-hidden`, некликабельный (правило — в INVARIANTS).
-- **Три ответа** ([UnsavedCloseDialog](../src/lib/UnsavedCloseDialog.svelte)) — порядок
+- **Три ответа** ([UnsavedCloseDialog](../src/lib/editor/UnsavedCloseDialog.svelte)) — порядок
   «Отмена» (текстовая) · «Не сохранять» (контурная `border-danger text-danger`) · «Сохранить»
   (`bg-accent`, справа — основное действие).
-- **Тосты** ([Toast.svelte](../src/lib/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
+- **Тосты** ([Toast.svelte](../src/lib/ui/Toast.svelte) + [стор](../src/lib/stores/toasts.svelte.ts))
   — контейнер снизу-справа, тон по типу: error → `danger` (`alert`), success → `ok` (`check`),
   info → `accent` (`info`); авто-дисмисс по `TOAST_TTL` (у критичных сообщений TTL = 0).
 - **Доступ к сохранению в редакторе** — компактная текстовая метка рядом с «Сохранить»;
   «Нужны права» служит кнопкой проверки sudo. Ошибка сохранения раскрывает привязанную к этой
   же строке карточку с коротким сообщением и действиями sudo/локальной копии; иконки и цвета
   берутся из существующего набора.
-- **Пустые состояния** — [EmptyState](../src/lib/EmptyState.svelte): бейдж-иконка в кружке +
-  заголовок + подсказка + слот CTA. **Загрузка** — [Skeleton](../src/lib/Skeleton.svelte)
+- **Пустые состояния** — [EmptyState](../src/lib/ui/EmptyState.svelte): бейдж-иконка в кружке +
+  заголовок + подсказка + слот CTA. **Загрузка** — [Skeleton](../src/lib/ui/Skeleton.svelte)
   (`animate-pulse`, `aria-hidden`).
 - **Командная палитра** — top-aligned оверлей: поле поиска (иконка `search`) + ранжированный
   список, активная строка `bg-edge`, чип группы `bg-panel`; ранжирование — только в
-  [command.ts](../src/lib/command.ts).
+  [command.ts](../src/lib/app/command.ts).
 
 ## Движение
 
 Токены — `--motion-fast` (120ms) / `--motion-base` (200ms) в app.css; в Svelte-переходах
-длительность берётся из [motion.ts](../src/lib/motion.ts), литералы запрещены (гейт `motion`).
+длительность берётся из [motion.ts](../src/lib/ui/motion.ts), литералы запрещены (гейт `motion`).
 Анимируются только дешёвые свойства: `opacity`, `transform`, цвет, `width`/`height` панелей.
 
 | Что | Паттерн |
@@ -153,13 +153,13 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 
 ## Темы
 
-Записи `ThemeDef` в [themes.ts](../src/lib/themes.ts): полная терминальная палитра + `UiPalette`
+Записи `ThemeDef` в [themes.ts](../src/lib/appearance/themes.ts): полная терминальная палитра + `UiPalette`
 (→ `--color-*`). Группы — `signature` / `light` / `modern` / `retro`; добавление темы = один
 объект + запись в `THEMES`, существующие палитры не правим.
 
 - **Фирменные** (`signature`): **Deep Well** (дефолт), **Aurora**, **Glass**. Панели `ui` —
   плотные (opaque), объём даёт `ThemeDef.overlay` — слой поверх всего окна
-  ([ThemeOverlay](../src/lib/ThemeOverlay.svelte), `fixed inset-0; pointer-events:none;
+  ([ThemeOverlay](../src/lib/appearance/ThemeOverlay.svelte), `fixed inset-0; pointer-events:none;
   z-index:30`, ≤ ~0.3 alpha: краевая виньетка / угловое свечение / диагональный блик).
   `ThemeDef.backdrop` (богатый градиент) — только для in-app логотипа. У классических тем нет ни
   того, ни другого.
@@ -170,7 +170,7 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 
 ## Оконное обрамление (Windows/Linux)
 
-Кастомный заголовок безрамочного окна ([TitleBar.svelte](../src/lib/TitleBar.svelte)); на macOS
+Кастомный заголовок безрамочного окна ([TitleBar.svelte](../src/lib/windows/TitleBar.svelte)); на macOS
 не рендерится (там нативная рамка). Контракт — в INVARIANTS («UI и оформление»); здесь только вид.
 
 - **Полоса:** `h-8`, `bg-panel-alt`, `border-b border-edge`, `select-none`; сам бар — drag-регион
@@ -184,19 +184,19 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   закрыть — `hover:bg-danger hover:text-text` (красный ховер, как в Windows; цвет — токен `danger`,
   не палитра). Иконка развернуть/восстановить следует реальному `isMaximized()`.
 - **Ресайз:** восемь невидимых грип-полос по краям/углам (`z-20`, скрыты в maximized), геометрия и
-  курсоры — из [windowchrome.ts](../src/lib/windowchrome.ts).
+  курсоры — из [windowchrome.ts](../src/lib/windows/windowchrome.ts).
 
 ## Полоса активной вкладки
 
 Активная вкладка сервера несёт полосу 2px по верхнему краю, активная подвкладка панели сессии —
-1px ([tabstrip.ts](../src/lib/tabstrip.ts), `shadow-[inset_0_Npx_0_0_…]`): токен `accent`, а у
+1px ([tabstrip.ts](../src/lib/tabs/tabstrip.ts), `shadow-[inset_0_Npx_0_0_…]`): токен `accent`, а у
 прод-сессии — `bad`. У неактивных вкладок полосы нет; прод среди них отличает чип `prod`.
 Когда областей в центре несколько, полосу несёт вкладка области **в фокусе**; вкладка, которую
 показывает другая область, — `bg-panel text-text` без полосы.
 
 ## Области центра
 
-Терминалы встают рядом — центр делится на области ([splitlayout.ts](../src/lib/splitlayout.ts),
+Терминалы встают рядом — центр делится на области ([splitlayout.ts](../src/lib/layout/splitlayout.ts),
 ADR 0016). Новых токенов нет: всё собрано из того, что уже есть в полосе вкладок и доках.
 
 - **Одна область** — окно как раньше: одна полоса вкладок над центром (`min-h-8 border-b
@@ -206,7 +206,7 @@ ADR 0016). Новых токенов нет: всё собрано из того
 - **Много вкладок** — вкладки поровну сжимают подписи до 4rem (`min-w-16`, многоточие), затем
   полоса прокручивается внутри области без видимого скроллбара; активная вкладка возвращается
   в видимую часть. «+» идёт сразу после последней вкладки и прокручивается вместе с полосой.
-- **Разделитель** ([SplitDivider](../src/lib/SplitDivider.svelte)) — линия 1px `bg-edge` между
+- **Разделитель** ([SplitDivider](../src/lib/layout/SplitDivider.svelte)) — линия 1px `bg-edge` между
   областями и полоска 5px поверх неё, за которую берутся (`hover:bg-accent`, при перетаскивании
   `bg-accent`) — та же форма, что у разделителя дока. Фокусируется с клавиатуры: стрелки двигают
   на 24px, `Home`/`End` — до упора, `Enter` и двойной клик — пополам. Меньше 240×140 область не
@@ -249,7 +249,7 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
 
 ## Статус-бар
 
-Ряд **групп** показаний ([StatusBar.svelte](../src/lib/StatusBar.svelte)); новый показатель =
+Ряд **групп** показаний ([StatusBar.svelte](../src/lib/monitoring/StatusBar.svelte)); новый показатель =
 новая запись в `groups`, а не вложение в чужую группу.
 
 - **Группа:** иконка (`size=14 text-muted`) + значение(я), внутри `gap-2`. Между любыми группами
@@ -276,15 +276,15 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
 
 ## Панель настроек
 
-- **Двухпанельная** ([SettingsPanel](../src/lib/SettingsPanel.svelte)): слева sidebar групп
+- **Двухпанельная** ([SettingsPanel](../src/lib/settings/SettingsPanel.svelte)): слева sidebar групп
   (иконка + название), справа — разделы активной группы. Состав групп — в чистом
-  [settingsNav.ts](../src/lib/settingsNav.ts) (каждый раздел ровно в одной группе, гард-тест).
+  [settingsNav.ts](../src/lib/settings/settingsNav.ts) (каждый раздел ровно в одной группе, гард-тест).
 - **Поиск** фильтрует разделы по всем группам (двуязычные keywords), на группах — бейдж-счётчик.
   Липкий заголовок «Результаты поиска» показывается **только** в режиме поиска (`scroll-pt-14`);
   при просмотре одной группы её уже называет вкладка сайдбара.
 - **Клавиатура:** роуминг-`tabindex`, `↑`/`↓` по кругу, `Home`/`End`, `aria-current="page"`.
   Deep-link — проп `initialSection` (`groupForSection`).
-- **Сворачиваемые блоки — только** [DisclosureRow](../src/lib/DisclosureRow.svelte): ведущий
+- **Сворачиваемые блоки — только** [DisclosureRow](../src/lib/ui/DisclosureRow.svelte): ведущий
   шеврон + лейбл + опциональные счётчик и правый слот превью. Длинные коллекции (шаблоны,
   правила подсветки) по умолчанию свёрнуты. Внутри уже свёрнутой секции второй раз не
   сворачиваем (сетка иконок в «Оформление и теги» видна сразу).
@@ -352,7 +352,7 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
 
 ## Верхняя панель
 
-[TopBar.svelte](../src/lib/TopBar.svelte): строка `flex items-center gap-2 border-b border-edge
+[TopBar.svelte](../src/lib/topbar/TopBar.svelte): строка `flex items-center gap-2 border-b border-edge
 bg-panel-alt px-3 py-1.5` — слева соединение (иконка `server` 14, алиас `text-xs font-medium`,
 `·`, `user@host:port` в `text-muted`, всё обрезается), справа кнопки (`ml-auto flex shrink-0
 items-center gap-1`). Какие кнопки и в каком порядке — список пользователя (ADR 0029).
@@ -384,7 +384,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
 
 ## Доки
 
-[Dock.svelte](../src/lib/Dock.svelte) — **один** компонент на три места: левый док, правый и
+[Dock.svelte](../src/lib/layout/Dock.svelte) — **один** компонент на три места: левый док, правый и
 нижний (на всю ширину окна, над статус-баром). В доках лежат панели-инструменты: **Серверы**,
 **SFTP** (SSH → SFTP, локальная вкладка → файлы ОС), **Git**, **ИИ**, **Docker**,
 **Kubernetes**; какая где, в каком порядке, размер и сворачивание — `layout.docks`. По
@@ -426,7 +426,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   `flex-1`); строка контейнера — имя над образом в узком и колонки имя · образ · статус · порты в
   широком; у пода добавляются колонки namespace и node.
 - **Зоны соединения** — область соединения делится на зоны тем же приёмом, что центр на
-  области: между зонами — [SplitDivider](../src/lib/SplitDivider.svelte). Пока у соединения
+  области: между зонами — [SplitDivider](../src/lib/layout/SplitDivider.svelte). Пока у соединения
   открыт хотя бы один файл, у каждой зоны сверху **полоса видов** 28px (`data-testid="view-strip"`,
   `flex items-stretch border-b border-edge bg-panel-alt text-xs`): «Терминал» (иконка
   `terminal` 13, `px-3 py-1`) и файлы (иконка `file` 13, имя `max-w-32 truncate`, точка
@@ -443,7 +443,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   (`data-testid="view-drag-ghost"`: `rounded border border-accent bg-panel-alt px-2 py-1
   text-xs opacity-90 shadow-lg`, иконка 13 и имя `truncate`, не шире `max-w-48`). Метка не
   выходит за область соединения — останавливается вплотную к её краю.
-- **Граница частей панели** ([PanelDivider](../src/lib/PanelDivider.svelte)) — между двумя
+- **Граница частей панели** ([PanelDivider](../src/lib/ui/PanelDivider.svelte)) — между двумя
   частями широкой панели («Изменения | История» в Git, «список | панель рядом» в Docker и
   k8s): та же форма, что у разделителя областей, — линия 1px `bg-edge` (`w-px shrink-0
   self-stretch`) и полоска 5px поверх неё (`-inset-x-0.5 cursor-col-resize hover:bg-accent`,
@@ -452,7 +452,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   стрелки двигают на 24px, `Home`/`End` — до упора, `Enter` и двойной клик — исходное
   деление (Git 40/60, Docker и k8s пополам). Оверлея на время перетаскивания нет — граница
   стоит внутри контейнера панели.
-- **Панель рядом со списком** ([SidePane](../src/lib/SidePane.svelte)) — в широкой панели
+- **Панель рядом со списком** ([SidePane](../src/lib/ui/SidePane.svelte)) — в широкой панели
   логи, inspect/describe/YAML и подробности контейнера или пода открываются справа от списка,
   а не окном; линию между ними рисует граница частей (см. выше), своей рамки у панели нет. Сверху полоса
   `flex items-center gap-1.5 border-b border-edge px-2.5 py-1` с названием (`truncate
@@ -471,7 +471,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   text-muted`) и момент (`w-28 text-right text-caption tabular-nums text-muted`), в узком —
   один возраст (`text-caption text-muted`). Колонки — `hidden @wide:block`, возраст —
   `@wide:hidden`; заголовков у колонок нет.
-- **Подробности коммита** ([GitCommitDetail](../src/lib/GitCommitDetail.svelte)) — в
+- **Подробности коммита** ([GitCommitDetail](../src/lib/git/GitCommitDetail.svelte)) — в
   `SidePane` рядом с историей (название — `короткий хэш · тема`) или полоской под ней
   (`max-h-[55%] border-t border-edge bg-panel/60 px-2 py-1.5`). Сверху файлы: подпись
   `text-meta text-muted` («Файлы · N»), строки дерева `py-0.5 hover:bg-edge/50`, отступ
@@ -493,7 +493,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   Время — абсолютное, `2026-10-07 14:03`, не возраст. Блок действий по наведению в таблице
   фиксированной ширины (`w-16`, и в узком доке тоже), шапка держит под него то же место. В
   узком доке — прежняя строка: имя и размер у правого края, остальное в подсказке.
-- **Название колонки, по которой сортируют** ([SortTitle](../src/lib/SortTitle.svelte)) —
+- **Название колонки, по которой сортируют** ([SortTitle](../src/lib/ui/SortTitle.svelte)) —
   в шапке таблицы файлов вместо простого названия: кнопка без рамки и фона (`flex w-full
   min-w-0 items-center gap-0.5 hover:text-text`), у числовых колонок прижата вправо. Колонка,
   по которой идёт порядок, — `text-accent` со стрелкой 11 (`arrowUp` — по возрастанию,
@@ -505,7 +505,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   направления. Пока порядок идёт по колонке, которой в строке нет (права, владелец, время),
   кнопка `text-accent` и перед шевроном стоит стрелка направления (`arrowUp`/`arrowDown`
   11); подсказка — «Порядок: <колонка>, <направление>».
-- **Окно импорта бэкапа** ([BackupImportDialog](../src/lib/BackupImportDialog.svelte)) —
+- **Окно импорта бэкапа** ([BackupImportDialog](../src/lib/servers/BackupImportDialog.svelte)) —
   `Modal` `w-[36rem]`: имя файла (`text-xs text-muted`), микро-метки разделов, флажки частей
   бэкапа с серым счётом, выбор «Добавить к моим» / «Заменить мои» — карточками-радио, как в
   окне многострочной вставки, — и таблицы замены: значение (путь — `font-mono`), под ним
@@ -520,7 +520,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   частей (исходное деление 62/38). Нет ни поиска, ни переносов — нет и колонки: список
   занимает всю ширину. В узкой панели поиск стоит под строкой пути
   (`border-b border-edge px-2 py-1.5`), переносы — в подвале.
-- **Результаты поиска по содержимому** ([GrepResults](../src/lib/GrepResults.svelte)) —
+- **Результаты поиска по содержимому** ([GrepResults](../src/lib/files/GrepResults.svelte)) —
   `text-meta`. Сверху итог `text-muted` («Совпадений: N · файлов: M»); под ним, когда есть
   что сказать, строки с иконкой `alert` 12: `text-warn` — ответ обрезан на пределе или
   часть файлов не прочитана, `text-bad` — поиск не выполнился (вместо списка). Список —
@@ -537,7 +537,7 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   `border-edge` в шапке, `border-edge/40` в строках; строка там `items-stretch` без своего
   вертикального отступа, отступ несут ячейки — поэтому линия идёт на всю высоту строки.
   Текстовые колонки меняют ширину перетаскиванием границы — **в любой строке**, не только у
-  заголовка: ручка ([ColumnGrip](../src/lib/ColumnGrip.svelte)) живёт в ячейке шапки, но тянется
+  заголовка: ручка ([ColumnGrip](../src/lib/ui/ColumnGrip.svelte)) живёт в ячейке шапки, но тянется
   вниз на видимую высоту списка (`--list-h`). Зона захвата 8 px (`w-2 -right-1
   cursor-col-resize`), видимая линия 2 px `bg-accent` по наведению и при перетаскивании; двойной
   клик возвращает ширину по умолчанию. Поэтому ячейка шапки сама не обрезается — обрезается её
@@ -554,14 +554,14 @@ items-center gap-1`). Какие кнопки и в каком порядке �
   `text-caption text-muted` и `InfoHint` с оговоркой, насколько виду можно верить. Выбор
   запоминается по сессии, как подвкладка. Третьего вида и отдельной подвкладки под него не
   заводим.
-- **Цепочка колонками** (маршрут k8s, [K8sRouteView](../src/lib/K8sRouteView.svelte)) — строка
+- **Цепочка колонками** (маршрут k8s, [K8sRouteView](../src/lib/k8s/K8sRouteView.svelte)) — строка
   на сервис: правило ingress · сервис · эндпоинты. В широком контейнере это три колонки под
   шапкой списка-таблицы (`@wide:grid-cols-[…]`, линии `border-edge/40`), в узком — те же ячейки
   друг под другом, эндпоинты с отступом под имя сервиса; пустая ячейка ingress в узком не
   рисуется. Точка состояния стоит у сервиса (тон всей цепочки), у эндпоинта — своя, 6 px;
   подпись состояния есть только у неготового (`text-bad`) и завершающегося (`text-warn`).
   Неизвестное — `text-warn` с причиной в подсказке, не красное: это не поломка, а непрочитанное.
-- **Двудольный граф** (сети Docker, [DockerNetGraph](../src/lib/DockerNetGraph.svelte)) — две
+- **Двудольный граф** (сети Docker, [DockerNetGraph](../src/lib/docker/DockerNetGraph.svelte)) — две
   колонки строк фиксированной высоты (кнопки: слева сеть со счётчиком и иконкой, справа
   контейнер с точкой состояния) и один SVG под ними, как у графа Git. Ось x у SVG — в процентах
   ширины (`preserveAspectRatio="none"`, у линий `vector-effect="non-scaling-stroke"`), поэтому

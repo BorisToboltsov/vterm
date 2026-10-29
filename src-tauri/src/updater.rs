@@ -1,4 +1,5 @@
 //! Explicit GitHub update requests. No polling and no WebView network access.
+use crate::locks::Locked;
 use crate::{
     error::{AppError, AppResult},
     update_helper::{self, Plan},
@@ -169,11 +170,10 @@ fn result_path(app: &AppHandle) -> AppResult<PathBuf> {
 
 #[tauri::command]
 pub fn update_snapshot(state: State<Updates>) -> Option<Release> {
-    let mut release = state.release.lock().unwrap().clone()?;
+    let mut release = state.release.locked().clone()?;
     release.ready = state
         .prepared
-        .lock()
-        .unwrap()
+        .locked()
         .as_ref()
         .is_some_and(|p| p.plan.version == release.version);
     Some(release)
@@ -205,12 +205,11 @@ pub async fn update_check(state: State<'_, Updates>) -> AppResult<Release> {
         trusted_updates: !protocol::PUBLIC_KEY.trim().is_empty(),
         ready: state
             .prepared
-            .lock()
-            .unwrap()
+            .locked()
             .as_ref()
             .is_some_and(|p| p.plan.version == version),
     };
-    *state.release.lock().unwrap() = Some(result.clone());
+    *state.release.locked() = Some(result.clone());
     Ok(result)
 }
 
@@ -224,8 +223,7 @@ pub async fn update_download(
     let _busy = state.busy.try_lock().map_err(|_| err("update-busy"))?;
     let release = state
         .release
-        .lock()
-        .unwrap()
+        .locked()
         .clone()
         .ok_or_else(|| err("update-check-first"))?;
     if !release.available || release.version != version {
@@ -288,7 +286,7 @@ pub async fn update_download(
             .ok_or_else(|| err("update-process"))?,
         result: result_path(&app)?,
     };
-    *state.prepared.lock().unwrap() = Some(Prepared { directory, plan });
+    *state.prepared.locked() = Some(Prepared { directory, plan });
     Ok(())
 }
 
@@ -299,12 +297,8 @@ pub fn update_window_ready(
     token: String,
     dirty: bool,
 ) {
-    if state.transaction.lock().unwrap().as_ref() == Some(&token) {
-        state
-            .answers
-            .lock()
-            .unwrap()
-            .insert(window.label().into(), dirty);
+    if state.transaction.locked().as_ref() == Some(&token) {
+        state.answers.locked().insert(window.label().into(), dirty);
     }
 }
 
@@ -321,16 +315,15 @@ pub async fn update_install(
     let _busy = state.busy.try_lock().map_err(|_| err("update-busy"))?;
     if state
         .prepared
-        .lock()
-        .unwrap()
+        .locked()
         .as_ref()
         .is_none_or(|p| p.plan.version != version)
     {
         return Err(err("update-download-first"));
     }
     let token = format!("{}-{}", std::process::id(), crate::now_secs());
-    state.answers.lock().unwrap().clear();
-    *state.transaction.lock().unwrap() = Some(token.clone());
+    state.answers.locked().clear();
+    *state.transaction.locked() = Some(token.clone());
     let outcome = async {
         for (label, window) in app.webview_windows() {
             if label != crate::dragghost::LABEL {
@@ -346,7 +339,7 @@ pub async fn update_install(
                 .filter(|s| *s != crate::dragghost::LABEL)
                 .cloned()
                 .collect();
-            let answers = state.answers.lock().unwrap().clone();
+            let answers = state.answers.locked().clone();
             if labels.iter().all(|s| answers.contains_key(s)) {
                 if labels.iter().any(|s| answers[s]) {
                     return Err(err("update-unsaved"));
@@ -360,7 +353,7 @@ pub async fn update_install(
         }
         // Copy this known app, never execute a downloaded helper before verification.
         let (dir, plan) = {
-            let prepared = state.prepared.lock().unwrap();
+            let prepared = state.prepared.locked();
             let p = prepared
                 .as_ref()
                 .ok_or_else(|| err("update-download-first"))?;
@@ -403,7 +396,7 @@ pub async fn update_install(
         }
         fs::write(dir.join("commit"), b"install").map_err(err)?;
         // The helper owns staged files after handoff; keep them through process exit.
-        if let Some(p) = state.prepared.lock().unwrap().take() {
+        if let Some(p) = state.prepared.locked().take() {
             let _ = p.directory.keep();
         }
         crate::appwin::quit_app(app.clone(), app.state());
@@ -411,7 +404,7 @@ pub async fn update_install(
     }
     .await;
     if outcome.is_err() {
-        *state.transaction.lock().unwrap() = None;
+        *state.transaction.locked() = None;
         for (_, window) in app.webview_windows() {
             let _ = window.set_enabled(true);
         }

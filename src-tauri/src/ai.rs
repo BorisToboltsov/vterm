@@ -13,6 +13,7 @@
 //! never logged.
 
 use crate::error::{AppError, AppResult};
+use crate::locks::Locked;
 use crate::secrets;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -321,7 +322,7 @@ pub fn agent_mirror(
 pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     let id = req.stream_id.clone();
     let notify = Arc::new(Notify::new());
-    cancels().lock().unwrap().insert(id.clone(), notify.clone());
+    cancels().locked().insert(id.clone(), notify.clone());
 
     // Race the stream against a cancel signal; cancelling drops `run_chat`, which
     // aborts the underlying HTTP request, and is reported as a graceful stop.
@@ -329,7 +330,7 @@ pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
         r = run_chat(&app, &req) => r,
         _ = notify.notified() => Ok(None),
     };
-    cancels().lock().unwrap().remove(&id);
+    cancels().locked().remove(&id);
 
     match outcome {
         Ok(usage) => {
@@ -350,7 +351,7 @@ pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
 /// stream already finished or never existed.
 #[tauri::command]
 pub fn cancel_ai_chat(stream_id: String) {
-    if let Some(n) = cancels().lock().unwrap().get(&stream_id) {
+    if let Some(n) = cancels().locked().get(&stream_id) {
         n.notify_one();
     }
 }

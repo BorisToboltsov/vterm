@@ -1,6 +1,6 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
-import { COL_MAX, COL_MIN, LIST_COLUMNS } from "../colwidths";
+import { COL_MAX, COL_MIN, LIST_COLUMNS } from "../ui/colwidths";
 import {
   columns,
   columnWidth,

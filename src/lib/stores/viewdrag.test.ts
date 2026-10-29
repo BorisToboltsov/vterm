@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { EditorLang } from "../editorlang";
-import { TERMINAL_VIEW } from "../sessionviews";
-import { paneOf, panes } from "../splitlayout";
+import type { EditorLang } from "../editor/editorlang";
+import { TERMINAL_VIEW } from "../layout/sessionviews";
+import { paneOf, panes } from "../layout/splitlayout";
 import {
   beginViewDrag,
   cancelViewDrag,

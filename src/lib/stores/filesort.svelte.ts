@@ -5,7 +5,7 @@
 // localStorage under `vterm.filesort`; the orders and the sanitizer are pure
 // (`../filesort.ts`).
 
-import { DEFAULT_SORT, nextSort, sameSort, sanitizeSort, type FileSort, type SortKey } from "../filesort";
+import { DEFAULT_SORT, nextSort, sameSort, sanitizeSort, type FileSort, type SortKey } from "../files/filesort";
 
 export const STORAGE_KEY = "vterm.filesort";
 

@@ -3,14 +3,14 @@
 Как устроен и как гоняется тестовый набор. Задача набора — страховочная сеть под
 рефакторинг: чистая логика покрыта на ≥ 90 %, интерфейс — компонентными тестами, контракты
 — гейтами. Перечень гейтов и того, что каждый держит, — в
-[INVARIANTS.md](INVARIANTS.md#гейты); правила процесса — в [../CLAUDE.md](../CLAUDE.md).
+[INVARIANTS.md](INVARIANTS.md#гейты); правила процесса — в [../AGENTS.md](../AGENTS.md).
 
 **Содержание:**
 [Слои](#слои) · [Быстрый старт](#быстрый-старт) · [Что нужно установить](#что-нужно-установить) ·
 [Что чем покрыто](#что-чем-покрыто) · [Гейты-контракты](#гейты-контракты) ·
 [Покрытие](#покрытие) · [Живые SFTP-тесты](#живые-sftp-тесты) ·
 [E2E и тестовый SSH](#e2e-и-тестовый-ssh) · [CI на GitHub](#ci-на-github) ·
-[CI на GitLab](#ci-на-gitlab) · [Фаззинг](#фаззинг-недоверенного-входа) ·
+[Фаззинг](#фаззинг-недоверенного-входа) ·
 [Как добавить тест](#как-добавить-тест)
 
 ---
@@ -22,10 +22,11 @@
 | **Rust unit** | `cargo test` | ~235 тестов | Чистая логика бэкенда: парсеры метрик, кодировки, пути, serde-модели, хранилище, политика host-key | Везде |
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
-| **Гейты-контракты** | Vitest (обычные тесты) | 49 файлов | Инварианты, которые нельзя проверить типами: см. [таблицу](INVARIANTS.md#гейты) | Везде |
-| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly и релиз |
-| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly и релиз (нужен контейнер) |
-| **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → nightly и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
+| **Правила линтера** | ESLint (`pnpm lint`) | 24 правила проекта | Инварианты, видные в одном месте кода: слои импорта, сеть из WebView, сырой `e.key`, LF в PTY, `{@html}` без `use:mdLinks`… — [lint/vterm.js](../lint/vterm.js), кейсы нарушений — `lint.guard.test.ts` | Везде |
+| **Гейты-контракты** | Vitest (обычные тесты) | 52 файла | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
+| **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — глубокие проверки (`deep.yml`) и релиз |
+| **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + глубокие проверки и релиз (нужен контейнер) |
+| **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → глубокие проверки и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
 
 ## Быстрый старт
 
@@ -41,6 +42,7 @@ pnpm test:coverage                                 # то же + гейты по
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 pnpm check
+pnpm lint
 pnpm build
 ```
 
@@ -79,22 +81,41 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 | Состояние и настройки | `settings`, сторы `tabs`/`layout`/`workspaces`/`aichat`/`syncrun`/`transfers` | `store.rs` (атомарность, карантин), `backup.rs` |
 | Оформление | `themes`, `motion`, `idle`, `idlefx`, `icons`, `ctxmenu` | — |
 
-Компонентные тесты живут рядом с компонентом (`ServerTree.test.ts`, `AiChat.test.ts`,
-`MonitoringOverlay.test.ts`, `SettingsPanel.test.ts`, `StatusBar.test.ts`,
-`ServerFormModal.test.ts`, `pathbar.test.ts`, `localdrives.test.ts` и др.) и проверяют
-поведение, а не вёрстку.
+Тест лежит рядом со своим модулем, в папке его подсистемы (ADR 0045). Компонентные тесты
+(`ServerTree.test.ts`, `AiChat.test.ts`, `MonitoringOverlay.test.ts`, `SettingsPanel.test.ts`,
+`StatusBar.test.ts`, `ServerFormModal.test.ts`, `pathbar.test.ts`, `localdrives.test.ts` и др.)
+проверяют поведение, а не вёрстку.
+
+## Правила линтера
+
+Контракт, который виден в одном месте кода — импорт, вызов, строка, атрибут разметки, —
+держит правило ESLint из [lint/vterm.js](../lint/vterm.js), а не тест по тексту исходника:
+правило читает синтаксическое дерево, поэтому ни комментарий, ни строка его не обманут, и
+нарушение видно в редакторе, пока код пишется. `pnpm lint` проходит весь репозиторий
+(~10 с) и идёт в CI шагом джобы `web`. Исключение — комментарий
+`eslint-disable-next-line vterm/<правило> -- причина` у нарушающего места; исключение,
+которому больше нечего подавлять, роняет прогон (`reportUnusedDisableDirectives`). Модули,
+которым по замыслу нужен стор или бэкенд, перечислены в `IMPURE_BY_DESIGN` с причиной, и
+устаревшая запись — тоже ошибка. Правила `owned-imports` и `forbidden-imports` настраиваются
+в eslint.config.js: «этот вызов импортирует только этот модуль — потому что» и «этот модуль
+не знает того» — так проверки «зовёт только X» ушли из крупных гейтов. `lint.guard.test.ts` проверяет, что каждое правило включено
+и ловит своё нарушение, а соблюдающий код и прозу о нарушении — нет.
 
 ## Гейты-контракты
 
-50 файлов `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
+Файлы `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
 живёт в бинарном артефакте — сам артефакт) и падают на
-нарушении инварианта. Полный список «гейт → что держит» — в
-[INVARIANTS.md](INVARIANTS.md#гейты); там же причина, по которой каждый заведён.
+нарушении инварианта, связывающего несколько мест кода. Полный список «гейт → что держит» — в
+[INVARIANTS.md](INVARIANTS.md#гейты), причина каждого — у его правила там же и в шапке файла
+гейта. `docs.guard` требует, чтобы каждый `*.guard.test.ts` был в этом списке, а каждый
+названный там гейт, тест и ADR существовал: новый гейт без строки в INVARIANTS роняет прогон.
+Гейт лежит в папке подсистемы, чей контракт держит; гейты репозитория целиком — документация,
+CI, линтер, версия, релиз, раскладка `src/lib` (`liblayout.guard`) — в `src/lib/repo/`.
 
 Два правила, выведенные из осечек:
 
 - **Проверяй гейт на живом нарушении**, а не только на зелёном коде. Первая версия
-  `mdlink.guard` была файловой и прошла на файле с удалённым экшеном — рядом лежал
+  `mdlink.guard` (теперь правило `vterm/md-links`) была файловой и прошла на файле с удалённым экшеном — рядом лежал
   комментарий, упоминавший `use:mdLinks` словами. Первая регулярка `terminput.guard` молча
   пропускала ровно то нарушение, ради которого писалась.
 - **Проверяй структуру, а не текст.** Гейт вкладок сначала падал на собственном комментарии
@@ -199,7 +220,7 @@ Scratch-коды одноразовые: перед повторным прог�
 пользователем в Dockerfile. Закрепляет: сервер
 действительно не берёт `password`; пароль отвечает на вопрос PAM сам, ничего не спрашивая;
 неверный пароль — отказ без переспроса; код спрашивается, и пароль туда не уходит; отмена
-вопроса завершает вход; неверный код — отказ. Гоняется в `nightly.yml` в джобе `live-sftp`.
+вопроса завершает вход; неверный код — отказ. Гоняется в `deep.yml` в джобе `live-sftp`.
 
 > **Прежде чем считать баг «только на Windows», проверь, воспроизводится ли он локально.**
 > Два дефекта из 39.6 пришли как windows-only и оба воспроизвелись на macOS, стоило завести
@@ -216,7 +237,7 @@ Scratch-коды одноразовые: перед повторным прог�
 
 ```sh
 cd e2e
-pnpm install
+pnpm install --frozen-lockfile   # свой lockfile e2e/pnpm-lock.yaml
 docker compose -f docker-compose.ssh.yml up -d   # SSH на 127.0.0.1:2222, tester/testpass
 pnpm test:e2e
 docker compose -f docker-compose.ssh.yml down
@@ -277,7 +298,7 @@ docker compose -f docker-compose.ssh.yml down
   который грузит `devUrl` (`http://localhost:1420`) вместо встроенного `frontendDist` — в CI
   Vite нет, окно показывает «Could not connect to localhost», ни один `data-testid` не
   появляется. `tauri build` включает фичу сам; собирая через cargo — передаём вручную.
-- **Под WebDriver терминал рендерится DOM-рендерером, а не WebGL** ([Terminal.svelte](../src/lib/Terminal.svelte)
+- **Под WebDriver терминал рендерится DOM-рендерером, а не WebGL** ([Terminal.svelte](../src/lib/terminal/Terminal.svelte)
   гейтит `WebglAddon` по `navigator.webdriver`). Канвас-рендерер рисует глифы в `<canvas>` и
   не оставляет текста в `.xterm-rows` — читать вывод было бы нечем. Это штатный fallback
   xterm: вывод тот же, отличается лишь backend отрисовки. Спек ждёт промпт (`$`) **до** ввода —
@@ -288,7 +309,8 @@ docker compose -f docker-compose.ssh.yml down
 `tauri-driver` для macOS не существует, а код под `cfg(target_os = "linux")` на macOS не
 собирается вовсе (GTK и WebKitGTK). Поэтому Linux-половина проекта живёт в образе
 [e2e/linux/Dockerfile](../e2e/linux/Dockerfile) — то же, что ставит раннер CI: WebKitGTK, его
-WebDriver, X-сервер без экрана, `tauri-driver` (нужен Docker):
+WebDriver, X-сервер без экрана, `tauri-driver`, Rust версии `rust-toolchain.toml`, Node и pnpm
+экшена `setup-web` (сверяет гейт `ci.guard`; нужен Docker):
 
 ```sh
 pnpm e2e:linux                                    # весь E2E-набор
@@ -305,7 +327,9 @@ scripts/linux-box.sh cargo test   --manifest-path src-tauri/Cargo.toml
 копирует его в том: ничего из собранного (`node_modules`, `target/`) не попадает в checkout, и
 macOS-сборка рядом не страдает. Тома держат сборки между прогонами (первая — несколько минут,
 дальше инкрементально); снести их — `docker volume rm vterm-linux-work vterm-linux-cargo
-vterm-linux-pnpm`. Внутри всё идёт от обычного пользователя (`vterm`), как на раннере CI, —
+vterm-linux-pnpm`. Тома держат и прошлый бинарник, поэтому упавшая сборка останавливает
+прогон (`onPrepare` в `wdio.conf.js` выходит с её кодом): иначе набор прогнал бы старый бинарник
+и отчитался о коде, которого уже нет. Внутри всё идёт от обычного пользователя (`vterm`), как на раннере CI, —
 root контейнеру после установки пакетов не нужен. Сценарию `app.e2e.js` нужен тестовый sshd на хосте
 (`docker compose -f e2e/docker-compose.ssh.yml up -d`) — контейнер ходит к нему через
 `host.docker.internal`.
@@ -327,12 +351,12 @@ Wayland, которого там нет вовсе.
   предложить (`outgate.rs`, `appwin.rs`).
 - **Фронтенд** — пакет вкладки туда и обратно на настоящих сторах
   ([tabpacket.test.ts](../src/lib/stores/tabpacket.test.ts)), правила выноса и переноса
-  ([tabhandoff.test.ts](../src/lib/tabhandoff.test.ts)), список других окон и их имена
-  ([appwindow.test.ts](../src/lib/appwindow.test.ts)), бросок за окно и порядок сообщений о
+  ([tabhandoff.test.ts](../src/lib/windows/tabhandoff.test.ts)), список других окон и их имена
+  ([appwindow.test.ts](../src/lib/windows/appwindow.test.ts)), бросок за окно и порядок сообщений о
   вкладке за окном ([tabdrag.test.ts](../src/lib/stores/tabdrag.test.ts)), вкладка другого
   окна над этим ([tabincoming.test.ts](../src/lib/stores/tabincoming.test.ts)), место, куда
   она встаёт, — юнит- и property-тестами модели («что показал предпросмотр, туда она и встала»,
-  [splitlayout.test.ts](../src/lib/splitlayout.test.ts)).
+  [splitlayout.test.ts](../src/lib/layout/splitlayout.test.ts)).
 - **Порядок шагов и правила открытого окна** — `windowhandoff.guard`; откат в бэкенде, запрос
   к ОС и окно-метка — Rust-гейты в `appwin.rs`, `winhit.rs` и `dragghost.rs`.
 - **Вызовы Windows** (`WindowFromPoint`) — компилятором под `x86_64-pc-windows-msvc` в
@@ -369,11 +393,11 @@ macOS и Windows это проверяется в `pnpm tauri dev`.
 Восстановление вкладок (ADR 0019) сквозным автотестом не покрыто: E2E-набор не перезапускает
 приложение. Покрыто по частям:
 
-- **Модель** — [tabrestore.test.ts](../src/lib/tabrestore.test.ts): запись вкладки без
+- **Модель** — [tabrestore.test.ts](../src/lib/tabs/tabrestore.test.ts): запись вкладки без
   секрета, чтение слота из произвольного мусора, слияние слотов окон, и свойство «ни одна
   комбинация режима и фактов не открывает прод, контейнер или сервер, который спросит
   секрет». Дерево областей — `loadLayout` в
-  [splitlayout.test.ts](../src/lib/splitlayout.test.ts): сохранённая раскладка возвращается
+  [splitlayout.test.ts](../src/lib/layout/splitlayout.test.ts): сохранённая раскладка возвращается
   такой же после любых операций, а любой мусор даёт корректную раскладку ровно из
   восстанавливаемых вкладок.
 - **Сторы** — приём восстановленных вкладок ([tabs.test.ts](../src/lib/stores/tabs.test.ts))
@@ -397,9 +421,9 @@ macOS и Windows это проверяется в `pnpm tauri dev`.
 
 ## CI на GitHub
 
-Основной пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
-macOS**, и это главное отличие от GitLab-схемы ниже: `#[cfg(windows)]`-код (`drives.rs`,
-`proccwd.rs`) на Linux-раннере структурно невидим, а windows-раннера под рукой нет.
+Единственный пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
+macOS**: `#[cfg(windows)]`-код (`drives.rs`, `proccwd.rs`) на Linux-раннере структурно невидим,
+а windows-раннера под рукой нет.
 
 **COM-объекты выноса файла** (`dragout/windows.rs`, ADR 0027) раннер только собирает:
 системное перетаскивание в тесте не начать. Поэтому в них нет логики — она вынесена в
@@ -413,16 +437,21 @@ Windows-половины проверяются локально однораз�
 
 | Workflow | Когда | Что делает |
 |----------|-------|------------|
-| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo audit`, `cargo deny`, `pnpm audit` — жёстко |
-| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
-| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
-| [nightly.yml](../.github/workflows/nightly.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Фаззинг на глубине, живые SFTP-тесты, E2E |
-| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `nightly.yml`) → сборка трёх бандлов → `integrity` |
+| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `pnpm lint` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo deny`, `pnpm audit` — жёстко |
+| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL: `javascript-typescript` и `actions` (сами workflow) — везде; `rust` — только push в `main` и ежемесячно (базу строит полная сборка) |
+| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep (TS, JS, Rust), Trivy (секреты, конфиги), zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
+| [deep.yml](../.github/workflows/deep.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Глубокие проверки: фаззинг на глубине, живые SFTP-тесты, E2E |
+| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `deep.yml`) → сборка трёх бандлов → `integrity` |
+
+Общие шаги — экшены [.github/actions/](../.github/actions/): `setup-web` (pnpm, Node,
+зависимости по lockfile), `setup-rust` (Rust версии [rust-toolchain.toml](../rust-toolchain.toml),
+пакеты Tauri на Linux, кэш), `test-sshd` (тестовый sshd). Кэш они включают только по просьбе
+джобы.
 
 Два свойства, которые легко потерять и которые поэтому закреплены гейтами:
 
 - **Тег не может опубликовать релиз из красного дерева.** `release.yml` не копирует шаги
-  CI, а вызывает `ci.yml` и `nightly.yml` через `workflow_call`, и матрица сборки стоит под
+  CI, а вызывает `ci.yml` и `deep.yml` через `workflow_call`, и матрица сборки стоит под
   `needs: [verify, deep]`. Глубокие слои (E2E, live-sftp, фаззинг) по расписанию идут лишь раз
   в месяц, поэтому без `deep` поломка основного сценария доезжала бы до релиза. Держит
   `releaseassets.guard.test.ts`.
@@ -441,17 +470,16 @@ Windows-половины проверяются локально однораз�
 - **Группы Dependabot не прячут рискованный бамп.** Патчи и связанные экосистемы идут одним
   PR, но мажоры, russh и minor Svelte — поштучно, выдержка 7 дней у всех. Держит
   `dependabot.guard.test.ts`.
+- **Общий шаг живёт в одном месте, и версия у инструмента одна.** Workflow не ставят pnpm,
+  Node, Rust, пакеты Tauri и кэш сами — только через `.github/actions/`; Rust — точная версия
+  из `rust-toolchain.toml`, а не «`stable` сегодня» (новый clippy ронял неизменённое дерево),
+  и на ней же собран образ Linux-контейнера; `release.yml` кэша не просит; у каждой заботы один
+  сканер. Держит `ci.guard.test.ts`.
 
 Жёсткое и советующее разделены намеренно: `cargo deny` с расписанными исключениями обязан
 ронять прогон, иначе это не политика; Semgrep с правилами из внешнего реестра ронять чужой
-PR не должен — его находки едут в витрину. `allow_failure` на всём подряд, как в
-GitLab-стадии `security`, приводит к тому, что отчёты не читает никто.
-
-## CI на GitLab
-
-[.gitlab-ci.yml](../.gitlab-ci.yml), стадии **`lint` → `security` → `test` → `build` →
-`release`** — для **self-hosted** раннеров. Роли те же, но `build:*` и `lint:windows`
-стоят `when: manual` + `allow_failure`, пока под них нет зарегистрированных раннеров.
+PR не должен — его находки едут в витрину. `allow_failure` на всём подряд (так стояла
+стадия `security` в снятом с 1.25.5 GitLab CI) приводит к тому, что отчёты не читает никто.
 
 ## Фаззинг недоверенного входа
 
@@ -461,7 +489,7 @@ GitLab-стадии `security`, приводит к тому, что отчёт�
 
 | Файл | Инструмент | Что держит |
 |------|-----------|------------|
-| [untrusted.fuzz.test.ts](../src/lib/untrusted.fuzz.test.ts) | `fast-check` | Рендер markdown не выпускает исполняемого **ни при каком входе**: ни `<script>`/`<iframe>`, ни `on*=`, ни `href` вне allowlist схем, ни `src` кроме `data:image`. Парсеры логов, бейджи и маскирование секретов не бросают |
+| [untrusted.fuzz.test.ts](../src/lib/markdown/untrusted.fuzz.test.ts) | `fast-check` | Рендер markdown не выпускает исполняемого **ни при каком входе**: ни `<script>`/`<iframe>`, ни `on*=`, ни `href` вне allowlist схем, ни `src` кроме `data:image`. Парсеры логов, бейджи и маскирование секретов не бросают |
 | `textenc::props` ([textenc.rs](../src-tauri/src/textenc.rs)) | `proptest` | Декодер не паникует на произвольных байтах; round-trip с BOM точный; **UTF-16 без BOM читается как текст, а не как бинарь** — та самая регрессия, из-за которой «не открывался» `.ini` |
 
 Вывод разбирается **парсером браузера** (`innerHTML` в jsdom), а не регулярками: `on…=`
@@ -472,8 +500,8 @@ GitLab-стадии `security`, приводит к тому, что отчёт�
 прогоном:
 
 ```sh
-pnpm vitest run src/lib/untrusted.fuzz.test.ts                       # ~300 прогонов
-FUZZ_RUNS=150000 pnpm vitest run src/lib/untrusted.fuzz.test.ts      # как в nightly
+pnpm vitest run src/lib/markdown/untrusted.fuzz.test.ts                       # ~300 прогонов
+FUZZ_RUNS=150000 pnpm vitest run src/lib/markdown/untrusted.fuzz.test.ts      # как в deep.yml
 
 cargo test --manifest-path src-tauri/Cargo.toml --lib props          # 256 кейсов
 PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props
@@ -491,6 +519,13 @@ PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props
   `.ts`, а не в `.svelte` — это инвариант, а не совет.
 - **Компонент:** `render(Component, { props })` из `@testing-library/svelte`, нативные API —
   через `vi.mock`. Проверяй поведение, не разметку.
+- **Контроллер страницы** (`src/lib/page/*.svelte.ts`): тест `*.svelte.test.ts` рядом —
+  `.svelte` в имени нужен, чтобы в тесте работали руны. Контроллер создаётся внутри
+  `$effect.root(…)` (его эффекты живут до `cleanup()`), состояние страницы — `$state` теста,
+  отданное геттерами, `flushSync()` прогоняет эффекты. Своё состояние контроллер отдаёт
+  только для чтения (`Readonly<…>`, проверка — `@ts-expect-error` в тесте): правило «меняет
+  только эта функция» держат типы, а тест проверяет поведение — так гейт формы раздела
+  страницы заменяется тестом, а не переписывается.
 - **Жди события, а не времени.** Компонент, который грузит данные через подставной бэкенд,
   закончил, когда закончились его запросы, — а не «через 120 мс». Фиксированная пауза — ставка
   на загрузку машины: в полном прогоне таймер срабатывает позже, цепочка запросов не
@@ -498,12 +533,14 @@ PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props
   Считай запросы в полёте и жди тишины (`idle()` там же) или условие в DOM (`waitFor`,
   `findBy…`). Пауза остаётся только для «и больше ничего не происходит» — там ждать нечего.
   Проверка: замедли ответы заглушки в десять раз — тест обязан пройти.
-- **Новый контракт:** заводи `*.guard.test.ts` **вместе** с правилом в INVARIANTS и проверь
-  его на живом нарушении.
+- **Новый контракт:** заводи правило в `lint/vterm.js` с кейсами в `lint.guard.test.ts`, если
+  нарушение видно в одном месте кода, иначе `*.guard.test.ts` — **вместе** с правилом в
+  INVARIANTS (правило, причина фразой, гейт; разбор — в ADR: INVARIANTS держит бюджет
+  `docs.guard`) — и проверь его на живом нарушении.
 - **E2E:** `*.e2e.js` в `e2e/specs/` + `data-testid` на нужных элементах.
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml && pnpm test && pnpm check
+cargo test --manifest-path src-tauri/Cargo.toml && pnpm test && pnpm check && pnpm lint
 ```
 ## Шрифты
 

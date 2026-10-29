@@ -5,7 +5,7 @@
 // questions queue here, so two transfers started back to back are asked about
 // one after the other, not on top of each other.
 
-import { replaceList, type ReplaceAnswer, type UploadCheck } from "../filebrowser";
+import { replaceList, type ReplaceAnswer, type UploadCheck } from "../files/filebrowser";
 
 export interface ReplaceQuestion {
   /** The folder the files land in. */

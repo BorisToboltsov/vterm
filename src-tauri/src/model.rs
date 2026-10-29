@@ -120,6 +120,27 @@ pub struct ServerProfile {
     pub icon_color: String,
 }
 
+impl ServerProfile {
+    /// Whether this is a production server. The same rule as `isProdServer`
+    /// (aiexec.ts): the explicit flag wins; a profile saved before the flag
+    /// existed (`None`) falls back to an exact `prod`/`production` tag (case-
+    /// insensitive, trimmed) — never a substring, or `non-prod` would count.
+    pub fn is_prod(&self) -> bool {
+        self.prod.unwrap_or_else(|| {
+            self.tags.iter().any(|t| {
+                let t = t.trim();
+                t.eq_ignore_ascii_case("prod") || t.eq_ignore_ascii_case("production")
+            })
+        })
+    }
+
+    /// Whether the assistant's dialog modes may run commands here (`ai_exec`):
+    /// never on a prod server, never on one marked off-limits to the assistant.
+    pub fn ai_exec_allowed(&self) -> bool {
+        !self.no_ai && !self.is_prod()
+    }
+}
+
 /// Payload for creating/updating a profile. The backend assigns the `id`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -271,6 +292,41 @@ mod tests {
         // No flag saved yet — `None`, so the frontend can fall back to the old
         // prod-tag convention instead of silently dropping production safeguards.
         assert_eq!(p.prod, None);
+    }
+
+    fn profile(prod: Option<bool>, tags: &[&str], no_ai: bool) -> ServerProfile {
+        let mut p: ServerProfile =
+            serde_json::from_str(r#"{"id":"1","alias":"a","host":"h","port":22,"username":"u"}"#)
+                .unwrap();
+        p.prod = prod;
+        p.tags = tags.iter().map(|t| t.to_string()).collect();
+        p.no_ai = no_ai;
+        p
+    }
+
+    /// The same cases as `isProdServer` in aiexec.test.ts.
+    #[test]
+    fn prod_is_the_flag_or_for_legacy_profiles_an_exact_tag() {
+        assert!(profile(Some(true), &[], false).is_prod());
+        assert!(!profile(Some(false), &["prod"], false).is_prod()); // the flag wins
+        assert!(profile(None, &["prod"], false).is_prod());
+        assert!(profile(None, &[" Production "], false).is_prod());
+        assert!(profile(None, &["PROD"], false).is_prod());
+        assert!(!profile(
+            None,
+            &["non-prod", "pre-prod", "prod-like", "staging"],
+            false
+        )
+        .is_prod());
+        assert!(!profile(None, &[], false).is_prod());
+    }
+
+    #[test]
+    fn ai_exec_runs_only_off_prod_and_where_the_assistant_is_allowed() {
+        assert!(profile(Some(false), &[], false).ai_exec_allowed());
+        assert!(!profile(Some(true), &[], false).ai_exec_allowed());
+        assert!(!profile(None, &["production"], false).ai_exec_allowed());
+        assert!(!profile(Some(false), &[], true).ai_exec_allowed());
     }
 
     #[test]

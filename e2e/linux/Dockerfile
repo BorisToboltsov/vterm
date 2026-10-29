@@ -4,15 +4,18 @@
 # server without a screen, and tauri-driver.
 #
 # Both bases are official images; nothing is piped from the network into a shell.
+# Their versions are CI's: Node and pnpm of .github/actions/setup-web, Rust of
+# rust-toolchain.toml — the box reads that file from the copied tree and would
+# otherwise download another toolchain (gate: ci.guard.test.ts).
 FROM node:22-bookworm-slim AS node
 
-FROM rust:1-bookworm
+FROM rust:1.99.1-bookworm
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && npm install --global pnpm@11
 
-# The packages of the CI jobs (ci.yml, nightly.yml), plus what a headless X
+# The packages of the CI jobs (.github/actions/setup-rust), plus what a headless X
 # session needs: xvfb and xauth for the server, xdotool to move its pointer,
 # a session bus for WebKit.
 RUN apt-get update \

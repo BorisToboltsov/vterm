@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount, untrack, tick } from "svelte";
-  import { tooltip } from "$lib/actions/tooltip";
+  import { tooltip } from "#lib/actions/tooltip.ts";
   import { fade } from "svelte/transition";
-  import { motion } from "$lib/motion";
+  import { motion } from "#lib/ui/motion.ts";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import {
     connectPlan,
@@ -14,49 +14,22 @@
     moveFolder,
     setServerGroup,
     setServerNotes,
-    setServerPathSync,
-    sftpReadText,
-    sftpWriteText,
-    sftpWriteAccess,
-    sftpCheckSudo,
-    saveEditorCopy,
-    pickSavePath,
-    isBackupFailedError,
-    isFileChangedError,
-    isPermissionError,
-    readLocalText,
-    writeLocalText,
     localCwd,
     takePendingOpens,
     pickOpenFile,
     writeToTerminal,
     serverToolsStatus,
-    nginxConfigFiles,
     takeStoreWarnings,
     OPEN_FILE_EVENT,
     disconnect,
     listenHere,
     transferList,
-    sftpHome,
-    localHome,
-    localKinds,
-    announceCopyTargets,
     TARGETS_EVENT,
     closeWindow,
     reportWindowSummary,
     otherWindowsSummary,
     broadcastSettings,
     announceServersDeleted,
-    detachBegin,
-    detachAbort,
-    detachCommit,
-    takeHandoff,
-    declineHandoff,
-    announceWindow,
-    dragOver,
-    dragDrop,
-    dragEnd,
-    dragOutBegin,
     CATALOG_EVENT,
     DRAG_EVENT,
     HANDOFF_EVENT,
@@ -64,48 +37,28 @@
     SETTINGS_EVENT,
     WINDOW_CLOSE_EVENT,
     WINDOWS_EVENT,
-    type DragAnswer,
-    type DragLook,
     type ServersDeleted,
     type SettingsBroadcast,
-  } from "$lib/api";
+  } from "#lib/api/index.ts";
   import {
     isMainWindow,
-    otherWindows,
     windowLabel,
-    windowTarget,
-    type WindowEntry,
-  } from "$lib/appwindow";
+  } from "#lib/windows/appwindow.ts";
   import {
-    DETACH_BLOCK_MESSAGE,
     WINDOW_ROWS,
-    detachBlocker,
-    detachErrorKey,
-    detachOffered,
     ghostPlace,
-    moveOffered,
     paneDetachOffered,
-    paneMoveBlocker,
     paneMoveOffered,
-    paneMoveOrder,
-    parsePacket,
-    type DetachState,
-    type PaneSeat,
     type TermSnapshot,
-  } from "$lib/tabhandoff";
-  import { packTab, unpackTab } from "$lib/stores/tabpacket";
-  import { restoreSaved, waitReason, waitView, type WaitFacts } from "$lib/tabrestore";
-  import {
-    forgetSavedTabs,
-    startSavingTabs,
-    takeSavedTabs,
-  } from "$lib/stores/tabrestore.svelte";
-  import { chatBusy } from "$lib/aiask";
-  import type { ServerProfile } from "$lib/types";
-  import { storeWarningMessage } from "$lib/storewarn";
-  import { sessionBarParts, showSessionBar } from "$lib/sessionbar";
-  import ViewModeToggle from "$lib/ViewModeToggle.svelte";
-  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "$lib/tree";
+  } from "#lib/windows/tabhandoff.ts";
+  import { waitView } from "#lib/tabs/tabrestore.ts";
+  import { forgetSavedTabs } from "#lib/stores/tabrestore.svelte.ts";
+  import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
+  import type { ServerProfile } from "#lib/types.ts";
+  import { storeWarningMessage } from "#lib/servers/storewarn.ts";
+  import { sessionBarParts, showSessionBar } from "#lib/terminal/sessionbar.ts";
+  import ViewModeToggle from "#lib/ui/ViewModeToggle.svelte";
+  import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "#lib/servers/tree.ts";
   import {
     isPanelHidden,
     layout,
@@ -115,10 +68,10 @@
     setDockCollapsed,
     setPanelHidden,
     toggleDock,
-  } from "$lib/stores/layout.svelte";
-  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "$lib/docklayout";
-  import { glide } from "$lib/actions/drag";
-  import { moveLabel, moveTargets, panelLabel } from "$lib/dockui";
+  } from "#lib/stores/layout.svelte.ts";
+  import { dockOf, isPanelShown, PANEL_IDS, type PanelId } from "#lib/layout/docklayout.ts";
+  import { glide } from "#lib/actions/drag.ts";
+  import { moveLabel, moveTargets, panelLabel } from "#lib/layout/dockui.ts";
   import {
     activateTab,
     clearAdopt,
@@ -136,9 +89,7 @@
     nextTabIndex,
     openTab as openTabStore,
     openLocalTab,
-    openRestored,
     reconnectTab as reconnectTabStore,
-    setWaiting,
     setSplitRatio,
     setTabStatus,
     splitTabOff,
@@ -147,11 +98,9 @@
     untilePanes,
     type NewTabAction,
     type Tab,
-  } from "$lib/stores/tabs.svelte";
+  } from "#lib/stores/tabs.svelte.ts";
   import {
-    arrivalDrop,
     canSplit,
-    findPane,
     gridFit,
     layoutRects,
     neighbourPane,
@@ -163,65 +112,46 @@
     shownTabs,
     type Edge,
     type Pane,
-  } from "$lib/splitlayout";
+  } from "#lib/layout/splitlayout.ts";
   import {
     onScreenSessions,
     pendingAuthSession,
-    recordingPauses,
     confinedGhost,
     rectStyle,
     stripStyle,
-  } from "$lib/centerview";
+  } from "#lib/layout/centerview.ts";
   import {
     beginTabDrag,
     consumeTabDragClick,
-    onTabDraggedOutside,
     tabDrag,
-    type ScreenPoint,
-  } from "$lib/stores/tabdrag.svelte";
+  } from "#lib/stores/tabdrag.svelte.ts";
   import {
     INCOMING_TAB,
     applyDragMessage,
-    describeTab,
     incoming,
     incomingAsTab,
     parseDragMessage,
-    takeIncomingDrop,
-  } from "$lib/stores/tabincoming.svelte";
-  import SplitDivider from "$lib/SplitDivider.svelte";
-  import { handleClipboardShortcut } from "$lib/actions/clipboardKeys";
-  import TerminalView from "$lib/Terminal.svelte";
-  import ConnectingOverlay from "$lib/ConnectingOverlay.svelte";
-  import type { ConnPhase } from "$lib/connphase";
-  import { sshErrorView } from "$lib/ssherror";
-  import { showNoSignal } from "$lib/connlost";
-  import Dock from "$lib/Dock.svelte";
-  import DockPanel from "$lib/DockPanel.svelte";
-  import DockDragGhost from "$lib/DockDragGhost.svelte";
-  import EditorTab from "$lib/EditorTab.svelte";
-  import DiffModal from "$lib/DiffModal.svelte";
-  import ToolInstallDialog from "$lib/ToolInstallDialog.svelte";
-  import type { ToolStatus } from "$lib/servertools";
-  import {
-    editorLangOrPlain,
-    editorLangWithIncludes,
-    editorLangWithDialect,
-    couldBeNginxInclude,
-  } from "$lib/editorlang";
-  import { lineDiffStat } from "$lib/util";
+  } from "#lib/stores/tabincoming.svelte.ts";
+  import SplitDivider from "#lib/layout/SplitDivider.svelte";
+  import { handleClipboardShortcut } from "#lib/actions/clipboardKeys.ts";
+  import TerminalView from "#lib/terminal/Terminal.svelte";
+  import ConnectingOverlay from "#lib/connect/ConnectingOverlay.svelte";
+  import type { ConnPhase } from "#lib/connect/connphase.ts";
+  import { sshErrorView } from "#lib/connect/ssherror.ts";
+  import { showNoSignal } from "#lib/connect/connlost.ts";
+  import Dock from "#lib/layout/Dock.svelte";
+  import DockPanel from "#lib/layout/DockPanel.svelte";
+  import DockDragGhost from "#lib/layout/DockDragGhost.svelte";
+  import EditorTab from "#lib/editor/EditorTab.svelte";
+  import DiffModal from "#lib/editor/DiffModal.svelte";
+  import ToolInstallDialog from "#lib/editor/ToolInstallDialog.svelte";
+  import type { ToolStatus } from "#lib/editor/servertools.ts";
+  import { editorLangOrPlain } from "#lib/editor/editorlang.ts";
   import {
     getWorkspace,
     workspacesState,
-    addEditor,
     addScratchEditor,
-    fillEditor,
-    closeEditor as closeEditorStore,
-    findEditorByPath,
-    gotoEditorLine,
-    setEditorSudo,
-    setEditorWriteAccess,
     setEditorSaveIssue,
-    markSaved,
     isDirty,
     removeWorkspace,
     hasUnsaved,
@@ -231,183 +161,127 @@
     setSessionZoneRatio,
     showSessionView,
     splitSessionView,
-    type EditorDoc,
-  } from "$lib/stores/workspaces.svelte";
-  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "$lib/sessionviews";
-  import { beginViewDrag, consumeViewDragClick, viewDrag } from "$lib/stores/viewdrag.svelte";
-  import { removeChat, getChat, askAbout, peekChat } from "$lib/stores/aichat.svelte";
-  import {
-    dockCwd,
-    removeDockState,
-    requestFilesDir,
-    setDockCwd,
-  } from "$lib/stores/dockstate.svelte";
-  import { baseName } from "$lib/fspath";
-  import {
-    fileLinkClick,
-    fileLinksAllowed,
-    type FileLinkQuestion,
-    type FileLinkTarget,
-    type NamedPath,
-  } from "$lib/termfiles";
-  import { followUpdates, pollsLocalCwd } from "$lib/followcwd";
-  import { aiReady } from "$lib/ai";
-  import SettingsPanel from "$lib/SettingsPanel.svelte";
-  import UtilitiesPanel from "$lib/UtilitiesPanel.svelte";
-  import ServerFormModal from "$lib/ServerFormModal.svelte";
-  import NotesModal from "$lib/NotesModal.svelte";
-  import { hasNotes, notesTarget } from "$lib/notes";
-  import FolderModals from "$lib/FolderModals.svelte";
-  import SecretPrompt from "$lib/SecretPrompt.svelte";
-  import AuthPromptDialog from "$lib/AuthPromptDialog.svelte";
-  import { authPrompts, clearAuthPrompt, setAuthPrompt } from "$lib/stores/authprompt.svelte";
-  import HelpPanel from "$lib/HelpPanel.svelte";
-  import ThemeOverlay from "$lib/ThemeOverlay.svelte";
-  import IdleOverlay from "$lib/IdleOverlay.svelte";
-  import StatusBar from "$lib/StatusBar.svelte";
-  import MonitoringOverlay from "$lib/MonitoringOverlay.svelte";
-  import TopBar from "$lib/TopBar.svelte";
-  import { allTopbarIds, canUnpin, type SessionAction } from "$lib/topbaractions";
-  import type { SessionActionState } from "$lib/sessionactions";
-  import { actionLabel } from "$lib/topbarui";
-  import { isPinned, pinAction, resetTopbar, unpinAction } from "$lib/stores/topbarpins.svelte";
-  import TitleBar from "$lib/TitleBar.svelte";
-  import { hostEnv } from "$lib/stores/hostenv.svelte";
-  import ServerTree from "$lib/ServerTree.svelte";
-  import Modal from "$lib/Modal.svelte";
-  import PasswordInput from "$lib/PasswordInput.svelte";
-  import ConfirmDialog from "$lib/ConfirmDialog.svelte";
-  import UnsavedCloseDialog from "$lib/UnsavedCloseDialog.svelte";
-  import { activeTabStrip } from "$lib/tabstrip";
-  import { installUpdate, updateWindowReady, updateStartup } from "$lib/api/updater";
-  import { updateError } from "$lib/updates";
-  import QuitDialog from "$lib/QuitDialog.svelte";
-  import { mergeQuitRows, quitRows, type QuitRow } from "$lib/quitsummary";
-  import ContextMenu from "$lib/ContextMenu.svelte";
-  import type { MenuAction, MenuItem, OpenMenu } from "$lib/ctxmenu";
-  import { needsShellSetup, OSC7_SETUP } from "$lib/shellintegration";
-  import PathSyncDialog, { type PathSyncAsk } from "$lib/PathSyncDialog.svelte";
-  import {
-    asksOnEnable,
-    choiceMode,
-    followsOnConnect,
-    pathSyncMode,
-    storedPathSync,
-    type PathSyncChoice,
-    type PathSyncMode,
-  } from "$lib/pathsync";
-  import { cdCommand, type CdShell } from "$lib/cdterminal";
-  import { renderArgv, renderSessionCommand } from "$lib/termcmd";
-  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "$lib/tabattach";
-  import { submitLine } from "$lib/terminput";
+  } from "#lib/stores/workspaces.svelte.ts";
+  import { TERMINAL_VIEW, focusedFile, terminalFocused, terminalShown } from "#lib/layout/sessionviews.ts";
+  import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
+  import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
+  import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
+  import { baseName } from "#lib/files/fspath.ts";
+  import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
+  import { followUpdates, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
+  import { aiReady } from "#lib/ai/ai.ts";
+  import SettingsPanel from "#lib/settings/SettingsPanel.svelte";
+  import UtilitiesPanel from "#lib/utilities/UtilitiesPanel.svelte";
+  import ServerFormModal from "#lib/servers/ServerFormModal.svelte";
+  import NotesModal from "#lib/servers/NotesModal.svelte";
+  import { hasNotes, notesTarget } from "#lib/servers/notes.ts";
+  import FolderModals from "#lib/servers/FolderModals.svelte";
+  import SecretPrompt from "#lib/connect/SecretPrompt.svelte";
+  import AuthPromptDialog from "#lib/connect/AuthPromptDialog.svelte";
+  import { authPrompts, clearAuthPrompt, setAuthPrompt } from "#lib/stores/authprompt.svelte.ts";
+  import HelpPanel from "#lib/app/HelpPanel.svelte";
+  import ThemeOverlay from "#lib/appearance/ThemeOverlay.svelte";
+  import IdleOverlay from "#lib/screensaver/IdleOverlay.svelte";
+  import StatusBar from "#lib/monitoring/StatusBar.svelte";
+  import MonitoringOverlay from "#lib/monitoring/MonitoringOverlay.svelte";
+  import TopBar from "#lib/topbar/TopBar.svelte";
+  import { allTopbarIds, canUnpin, type SessionAction } from "#lib/topbar/topbaractions.ts";
+  import type { SessionActionState } from "#lib/utilities/sessionactions.ts";
+  import { actionLabel } from "#lib/topbar/topbarui.ts";
+  import { isPinned, pinAction, resetTopbar, unpinAction } from "#lib/stores/topbarpins.svelte.ts";
+  import TitleBar from "#lib/windows/TitleBar.svelte";
+  import { hostEnv } from "#lib/stores/hostenv.svelte.ts";
+  import ServerTree from "#lib/servers/ServerTree.svelte";
+  import Modal from "#lib/ui/Modal.svelte";
+  import PasswordInput from "#lib/ui/PasswordInput.svelte";
+  import ConfirmDialog from "#lib/ui/ConfirmDialog.svelte";
+  import UnsavedCloseDialog from "#lib/editor/UnsavedCloseDialog.svelte";
+  import { activeTabStrip } from "#lib/tabs/tabstrip.ts";
+  import { installUpdate, updateWindowReady, updateStartup } from "#lib/api/updater.ts";
+  import { updateError } from "#lib/app/updates.ts";
+  import QuitDialog from "#lib/windows/QuitDialog.svelte";
+  import { mergeQuitRows, quitRows, type QuitRow } from "#lib/windows/quitsummary.ts";
+  import ContextMenu from "#lib/ui/ContextMenu.svelte";
+  import type { MenuAction, MenuItem, OpenMenu } from "#lib/ui/ctxmenu.ts";
+  import PathSyncDialog from "#lib/pathsync/PathSyncDialog.svelte";
+  import { createPathSyncFlow } from "#lib/page/pathsyncflow.svelte.ts";
+  import { cdCommand, type CdShell } from "#lib/pathsync/cdterminal.ts";
+  import { renderArgv, renderSessionCommand } from "#lib/terminal/termcmd.ts";
+  import { attachIcon, attachRows, attachTitle, type AttachTarget } from "#lib/tabs/tabattach.ts";
+  import { submitLine } from "#lib/terminal/terminput.ts";
   import {
     isNewTabChord,
     isPaletteChord,
     isSplitDownChord,
     isSplitRightChord,
     paneStepChord,
-  } from "$lib/appshortcuts";
-  import Icon from "$lib/Icon.svelte";
-  import Toast from "$lib/Toast.svelte";
-  import EmptyState from "$lib/EmptyState.svelte";
-  import CommandPalette from "$lib/CommandPalette.svelte";
-  import RecordingsPanel from "$lib/RecordingsPanel.svelte";
-  import type { CommandItem } from "$lib/command";
-  import { notifyError, notifySuccess, notifyInfo } from "$lib/stores/toasts.svelte";
+  } from "#lib/app/appshortcuts.ts";
+  import Icon from "#lib/ui/Icon.svelte";
+  import Toast from "#lib/ui/Toast.svelte";
+  import EmptyState from "#lib/ui/EmptyState.svelte";
+  import CommandPalette from "#lib/app/CommandPalette.svelte";
+  import RecordingsPanel from "#lib/recording/RecordingsPanel.svelte";
+  import { createRecordingFlow, recordingTitle } from "#lib/page/recordingflow.svelte.ts";
+  import { createCopyFlow } from "#lib/page/copyflow.svelte.ts";
+  import type { CommandItem } from "#lib/app/command.ts";
+  import { notifyError, notifySuccess, notifyInfo } from "#lib/stores/toasts.svelte.ts";
   import {
     applyJob,
     applyProgress,
     dropTransfersOf,
     removeTransfer,
     transfersState,
-  } from "$lib/stores/transfers.svelte";
-  import { jobNotice, jobVisibleInWindow } from "$lib/transfer";
-  import { DISK, startTransfer } from "$lib/transferflow";
+  } from "#lib/stores/transfers.svelte.ts";
+  import { jobNotice, jobVisibleInWindow } from "#lib/files/transfer.ts";
   import {
     fileSelectionOf,
-    pendingCopyRequest,
-    requestMove,
-    setCopyTargets,
     setFileSelection,
-    takeCopyRequest,
-    type CopyRequest,
-  } from "$lib/stores/filecopy.svelte";
-  import {
-    clearGuestFiles,
-    dropGuestFiles,
-    fileDrag,
-    onFileDrag,
-    showGuestFiles,
-    type Spring,
-  } from "$lib/stores/filedrag.svelte";
-  import { dragOutBlocker, dragOutSpec, dragOutTold } from "$lib/dragout";
-  import {
-    describeFiles,
-    desktopFiles,
-    dropMeaning,
-    pagePoint,
-    parseFileDragMessage,
-    type CarriedFiles,
-    type DropMeaning,
-    type FileDragMessage,
-    type FileTarget,
-  } from "$lib/filedrop";
-  import { checkMove } from "$lib/filemove";
-  import { quotePaths } from "$lib/termcmd";
+  } from "#lib/stores/filecopy.svelte.ts";
+  import { fileDrag } from "#lib/stores/filedrag.svelte.ts";
+  import { parseFileDragMessage } from "#lib/files/filedrop.ts";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
-  import FileDragGhost from "$lib/FileDragGhost.svelte";
+  import FileDragGhost from "#lib/files/FileDragGhost.svelte";
   import {
-    copyTargets,
-    defaultDestDir,
     foreignTargets,
-    shareTargets,
-    sideOf,
     targetsFrom,
-    type CopyTarget,
-  } from "$lib/copyto";
-  import CopyToDialog from "$lib/CopyToDialog.svelte";
-  import ReplaceDialog from "$lib/ReplaceDialog.svelte";
-  import LinkOpenDialog from "$lib/LinkOpenDialog.svelte";
-  import FileLinkDialog from "$lib/FileLinkDialog.svelte";
-  import { applySyncProgress } from "$lib/stores/syncrun.svelte";
-  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "$lib/stores/syncjob.svelte";
+  } from "#lib/files/copyto.ts";
+  import CopyToDialog from "#lib/files/CopyToDialog.svelte";
+  import ReplaceDialog from "#lib/files/ReplaceDialog.svelte";
+  import LinkOpenDialog from "#lib/terminal/LinkOpenDialog.svelte";
+  import FileLinkDialog from "#lib/terminal/FileLinkDialog.svelte";
+  import { createFileLinkFlow } from "#lib/page/filelinkflow.svelte.ts";
+  import { createEditorFlow } from "#lib/page/editorflow.svelte.ts";
+  import { createFileDragFlow } from "#lib/page/filedragflow.svelte.ts";
+  import { createWindowFlow } from "#lib/page/windowflow.svelte.ts";
+  import { applySyncProgress } from "#lib/stores/syncrun.svelte.ts";
+  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "#lib/stores/syncjob.svelte.ts";
   import {
     recordingState,
     recordingPaused,
     isRecording,
-    isRecordingPaused,
-    setRecording,
-    setRecordingPausedState,
     clearRecording,
-  } from "$lib/stores/recordings.svelte";
-  import type { SftpProgress, TransferJob } from "$lib/api";
-  import { activeChromePanel, applyImportedSettings, settings } from "$lib/settings.svelte";
-  import { t } from "$lib/i18n";
+  } from "#lib/stores/recordings.svelte.ts";
+  import type { SftpProgress, TransferJob } from "#lib/api/index.ts";
+  import { applyImportedSettings, settings } from "#lib/settings/settings.svelte.ts";
+  import { t } from "#lib/i18n/index.ts";
   import {
     setMenuLanguage,
     armCloseGuard,
     quitApp,
-    startRecording,
-    stopRecording,
-    setRecordingPaused,
-    setRecordingMeta,
-    setBatchLabel,
-    deleteRecording,
     annotateRecording,
     fetchMetrics,
     readRecording,
-  } from "$lib/api";
-  import { extractTranscript } from "$lib/recording";
-  import { DEFAULT_TAIL_LINES, type RawContext } from "$lib/aicontext";
-  import type { PromptVars } from "$lib/aicore";
-  import { isProdServer } from "$lib/aiexec";
-  import type { ProbeSession } from "$lib/probe";
-  import { getVersion } from "@tauri-apps/api/app";
-  import RecordingSaveDialog from "$lib/RecordingSaveDialog.svelte";
-  import { dockConnection, localizedStatus } from "$lib/stores/tabs.svelte";
-  import type { HostServer, HostTab } from "$lib/netroute";
-  import BroadcastBar from "$lib/BroadcastBar.svelte";
-  import BroadcastRoster from "$lib/BroadcastRoster.svelte";
+  } from "#lib/api/index.ts";
+  import { extractTranscript } from "#lib/recording/recording.ts";
+  import { DEFAULT_TAIL_LINES, type RawContext } from "#lib/ai/aicontext.ts";
+  import type { PromptVars } from "#lib/ai/aicore.ts";
+  import { isProdServer } from "#lib/ai/aiexec.ts";
+  import type { ProbeSession } from "#lib/utilities/probe.ts";
+  import RecordingSaveDialog from "#lib/recording/RecordingSaveDialog.svelte";
+  import { dockConnection, localizedStatus } from "#lib/stores/tabs.svelte.ts";
+  import type { HostServer, HostTab } from "#lib/netcheck/netroute.ts";
+  import BroadcastBar from "#lib/terminal/BroadcastBar.svelte";
+  import BroadcastRoster from "#lib/terminal/BroadcastRoster.svelte";
   import {
     broadcastState,
     isBroadcastMember,
@@ -415,14 +289,14 @@
     setBroadcastMembers,
     clearBroadcastMembers,
     removeBroadcastMember,
-  } from "$lib/stores/broadcast.svelte";
+  } from "#lib/stores/broadcast.svelte.ts";
   import {
     eligibleMembers,
     frameCommand,
     groupHasProd,
     gridColumns,
     prodMembers,
-  } from "$lib/broadcast";
+  } from "#lib/terminal/broadcast.ts";
 
   let servers = $state<ServerProfile[]>([]);
   let selectedId = $state<string | null>(null);
@@ -493,8 +367,6 @@
   let showRecordings = $state(false);
   // The server whose notes window is open (snapshot at open time), or null.
   let notesServer = $state<ServerProfile | null>(null);
-  // After stopping a recording: prompt to name/describe or discard it.
-  let saveRec = $state<{ path: string; defaultTitle: string } | null>(null);
 
   // Last-known terminal dimensions per session (for the recording header).
   const termDims = $state<Record<string, { cols: number; rows: number }>>({});
@@ -530,10 +402,9 @@
 
   // Current SSH connection phase per session, driving the connecting overlay.
   const connPhase = $state<Record<string, ConnPhase>>({});
-  // Latest terminal cwd (OSC 7) per session, and whether the file panel should
-  // follow it — both **per tab** (each session keeps its own toggle).
+  // Latest terminal cwd (OSC 7) per session. Whether the dock follows it is the
+  // path-sync flow's, per tab too (page/pathsyncflow).
   const terminalCwd = $state<Record<string, string>>({});
-  const followTerminal = $state<Record<string, boolean>>({});
   // Command (argv) to type into a freshly-opened terminal tab once it connects
   // (Docker/k8s "open shell": `docker exec -it …` on a sibling tab of the same
   // host). Kept as argv and rendered on flush, for the shell the tab really runs.
@@ -568,12 +439,6 @@
   // (Phase 39.4). Keyed per session because a tab keeps the shell it opened with
   // even if the preference changes afterwards.
   const localShellKind = $state<Record<string, CdShell>>({});
-  // Sessions where we've already typed the OSC 7 shell-integration snippet, and the
-  // path-sync question awaiting an answer (PathSyncDialog, v1.23).
-  const shellIntegrated = $state<Record<string, boolean>>({});
-  let pathSyncAsk = $state<PathSyncAsk | null>(null);
-  // The question a file named in terminal output asks when clicked (v1.24).
-  let fileLinkAsk = $state<FileLinkQuestion | null>(null);
 
   // Password / passphrase prompt (owns its own state); opened via its export.
   let secretPrompt: SecretPrompt | undefined = $state();
@@ -854,7 +719,7 @@
   function toggleActiveBroadcast() {
     const id = tabsState.activeId;
     if (id) toggleBroadcastMember(id);
-    void syncBatchRecording();
+    void recFlow.syncBatchRecording();
   }
 
   /** Add every live SSH/local session to the group (keeps existing members). */
@@ -865,83 +730,21 @@
         .filter((tab) => (tab.kind === "ssh" || tab.kind === "local") && isLive(tab.status))
         .map((tab) => tab.sessionId),
     ]);
-    void syncBatchRecording();
+    void recFlow.syncBatchRecording();
   }
 
-  // ── Group recording for broadcast (Phase 22) ───────────────────────────────
-  // While a broadcast group is being recorded, `broadcastBatch` holds the shared
-  // batch id (tags every member's cast → the library bundles them). Recordings are
-  // still per-session under the hood; this just fans start/stop out to the group.
-  let broadcastBatch = $state<string | null>(null);
-  let batchRecMembers = new Set<string>();
-
-  /** Start recording the whole group under a fresh batch id. */
-  async function startGroupRecording() {
-    broadcastBatch = `bcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    batchRecMembers = new Set();
-    await syncBatchRecording();
-  }
-
-  /** Stop every recording started as part of the current batch; returns the batch
-   *  id + saved file paths so the caller can offer to name (or discard) the bundle. */
-  async function stopGroupRecording(): Promise<{ batchId: string; paths: string[] } | null> {
-    const batchId = broadcastBatch;
-    const ids = [...batchRecMembers];
-    broadcastBatch = null;
-    batchRecMembers = new Set();
-    const paths: string[] = [];
-    for (const id of ids) {
-      const path = recordingState[id];
-      if (isRecording(id)) {
-        try {
-          await stopRecording(id);
-        } catch {
-          /* file is flushed regardless */
-        }
-        clearRecording(id);
-      }
-      if (path) paths.push(path);
-    }
-    return batchId ? { batchId, paths } : null;
-  }
-
-  /** Reconcile group recording with the live members: start missing, stop gone. */
-  async function syncBatchRecording() {
-    const batch = broadcastBatch;
-    if (!batch) return;
-    const live = new Set(eligibleMembers(broadcastState.members, orderedTabList));
-    const starts: Promise<void>[] = [];
-    for (const id of live) {
-      if (batchRecMembers.has(id) || isRecording(id)) continue;
-      batchRecMembers.add(id);
-      const tab = findTab(id);
-      if (tab) {
-        starts.push(
-          startSessionRecording(tab, batch).catch(() => {
-            batchRecMembers.delete(id);
-          }),
-        );
-      }
-    }
-    for (const id of [...batchRecMembers]) {
-      if (live.has(id)) continue;
-      batchRecMembers.delete(id);
-      if (isRecording(id)) {
-        try {
-          await stopRecording(id);
-        } catch {
-          /* gone */
-        }
-        clearRecording(id);
-      }
-    }
-    await Promise.all(starts);
-  }
-
-  /** Start the group recording if it isn't running (prod broadcast audit). */
-  async function ensureGroupRecording() {
-    if (!broadcastBatch) await startGroupRecording();
-  }
+  // ── Recording (the flow lives in page/recordingflow.svelte.ts) ─────────────
+  const recFlow = createRecordingFlow({
+    servers: () => servers,
+    findTab,
+    activeTab: () => activeTab,
+    broadcasting: () => bcOn,
+    members: () => broadcastState.members,
+    orderedTabs: () => orderedTabList,
+    onScreen: () => onScreenIds,
+    termSize: (id) => termDims[id],
+    promptLine: (id) => termRefs[id]?.currentPromptLine?.() ?? "",
+  });
 
   // A command awaiting confirmation because the group includes a prod server.
   let pendingBroadcast = $state<{ frame: string; targets: string[]; cmd: string } | null>(null);
@@ -975,7 +778,7 @@
       writeToTerminal(id, bytes).catch(() => {});
       if (isRecording(id)) annotateRecording(id, `broadcast: ${cmd}`).catch(() => {});
       // Input reached this session: its recording is not idle.
-      handleTerminalActivity(id);
+      recFlow.activity(id);
     }
   }
   const topTitle = $derived(activeTab?.alias ?? t("status.notConnected"));
@@ -1001,7 +804,7 @@
   const sessionActions = $derived<SessionActionState>({
     connected: monitorConnected,
     canRecord: bcOn ? bcTargets.length > 0 : !!(activeTab && isLive(activeTab.status)),
-    recording: bcOn ? !!broadcastBatch : !!(activeTab && isRecording(activeTab.sessionId)),
+    recording: bcOn ? !!recFlow.batch : !!(activeTab && isRecording(activeTab.sessionId)),
     canBroadcast: !!tabsState.activeId,
     broadcastActive: bcOn,
     notesFor: notesServerTarget?.alias ?? null,
@@ -1010,7 +813,7 @@
   // run it does not compile.
   const SESSION_RUN: Record<SessionAction, () => void> = {
     monitoring: () => openMonitoring(),
-    record: () => void toggleRecording(),
+    record: () => void recFlow.toggle(bcTargets.length),
     recordings: () => (showRecordings = true),
     broadcast: () => toggleActiveBroadcast(),
     notes: () => (notesServer = notesServerTarget),
@@ -1111,7 +914,7 @@
     if (srv) {
       lines.push(`Host: ${srv.host}:${srv.port}`, `User: ${srv.username}`, `Alias: ${srv.alias}`);
     } else if (tab) {
-      lines.push(`Session: ${recordingTitle(tab)}`);
+      lines.push(`Session: ${recordingTitle(tab, servers)}`);
     }
     try {
       const m = await fetchMetrics(id);
@@ -1120,269 +923,6 @@
       /* metrics probe failed — keep profile-derived fields */
     }
     return lines.join("\n");
-  }
-
-  /** Title for a recording: the tab's server alias (or "Local shell"). */
-  function recordingTitle(tab: Tab): string {
-    if (tab.kind === "local") return t("tab.localShell");
-    return servers.find((s) => s.id === tab.serverId)?.alias ?? tab.serverId;
-  }
-
-  /**
-   * Collect host/session metadata to embed in the recording header (for later
-   * analysis and the export's info block). App version always; for SSH sessions
-   * a one-shot metrics probe adds hostname/ip/user/OS/kernel. Best-effort — never
-   * blocks recording on a failure.
-   */
-  async function recordingEnv(tab: Tab): Promise<string> {
-    const env: Record<string, string | number> = {};
-    try {
-      env.appVersion = await getVersion();
-    } catch {
-      /* version unavailable */
-    }
-    if (tab.kind === "ssh") {
-      const srv = servers.find((s) => s.id === tab.serverId);
-      if (srv) {
-        env.connectedHost = srv.host;
-        env.port = srv.port;
-        if (srv.username) env.username = srv.username;
-      }
-      try {
-        const m = await fetchMetrics(tab.sessionId);
-        if (m.hostname) env.hostname = m.hostname;
-        if (m.ip) env.ip = m.ip;
-        if (m.user) env.username = m.user;
-        if (m.prettyName || m.os) env.os = m.prettyName || m.os;
-        if (m.kernel) env.kernel = m.kernel;
-        if (m.serverTime) env.serverTime = m.serverTime;
-      } catch {
-        /* metrics probe failed — keep profile-derived fields */
-      }
-    }
-    return JSON.stringify(env);
-  }
-
-  /** Start recording a session (no-op if already recording). Used by the manual
-   *  REC toggle and by auto-record on connect. */
-  async function startSessionRecording(tab: Tab, batchId?: string) {
-    const id = tab.sessionId;
-    if (isRecording(id)) return;
-    const dims = termDims[id] ?? { cols: 80, rows: 24 };
-    // Seed the recording with the on-screen prompt so the first command has one.
-    const prompt = termRefs[id]?.currentPromptLine?.() ?? "";
-    let env = await recordingEnv(tab);
-    // Broadcast group recording: tag each member's cast with the batch id so the
-    // library can bundle them (rides in the `vterm` env metadata → header).
-    if (batchId) {
-      try {
-        const obj = JSON.parse(env);
-        obj.batch = batchId;
-        env = JSON.stringify(obj);
-      } catch {
-        /* keep the plain env if it somehow isn't valid JSON */
-      }
-    }
-    const path = await startRecording(
-      id,
-      recordingTitle(tab),
-      dims.cols,
-      dims.rows,
-      prompt,
-      env,
-      settings.recordMaskPasswords,
-      settings.recordMode,
-    );
-    setRecording(id, path);
-  }
-
-  /** Start/stop recording the active session (manual REC button / palette). In
-   *  broadcast mode this records the whole group instead of a single tab. */
-  async function toggleRecording() {
-    if (bcOn) {
-      try {
-        if (broadcastBatch) {
-          const res = await stopGroupRecording();
-          // Offer to name (or discard) the bundle, like the single-recording flow.
-          if (res && res.paths.length > 0) saveBatch = { batchId: res.batchId, paths: res.paths };
-          else notifySuccess(t("recordings.groupStopped"));
-        } else {
-          await startGroupRecording();
-          notifySuccess(t("recordings.groupStarted", { count: bcTargets.length }));
-        }
-      } catch (e) {
-        notifyError(String(e));
-      }
-      return;
-    }
-    const tab = activeTab;
-    if (!tab || !isLive(tab.status)) {
-      notifyError(t("recordings.needsSession"));
-      return;
-    }
-    await toggleRecordingFor(tab);
-  }
-
-  /** Start/stop recording a specific tab (single-session flow, no broadcast). */
-  async function toggleRecordingFor(tab: Tab) {
-    if (!isLive(tab.status)) {
-      notifyError(t("recordings.needsSession"));
-      return;
-    }
-    const id = tab.sessionId;
-    try {
-      if (isRecording(id)) {
-        const path = await stopRecording(id);
-        clearRecording(id);
-        // Prompt to name/describe (or discard) the just-saved recording.
-        if (path) saveRec = { path, defaultTitle: recordingTitle(tab) };
-        else notifySuccess(t("recordings.stopped"));
-      } else {
-        await startSessionRecording(tab);
-        notifySuccess(t("recordings.started"));
-      }
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /**
-   * Auto-record on connect for servers flagged `autoRecord` (e.g. production):
-   * starts a recording the moment an SSH session connects, for an audit trail.
-   */
-  async function maybeAutoRecord(tab: Tab) {
-    if (tab.kind !== "ssh" || isRecording(tab.sessionId)) return;
-    if (!servers.find((s) => s.id === tab.serverId)?.autoRecord) return;
-    try {
-      await startSessionRecording(tab);
-      notifyInfo(t("recordings.autoStarted", { alias: recordingTitle(tab) }));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Finalize a recording when its session closes (stamps end time), then clear. */
-  async function finalizeRecordingOnClose(sessionId: string) {
-    batchRecMembers.delete(sessionId);
-    if (isRecording(sessionId)) {
-      try {
-        await stopRecording(sessionId);
-      } catch {
-        /* session already gone — file is flushed regardless */
-      }
-    }
-    clearRecording(sessionId);
-  }
-
-  // ── Recording pause: skip disk when a recording tab is unwatched or idle ──────
-  // One idle countdown per recording that is on screen.
-  const recordIdleTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  // The on-screen recordings already resumed — guards against clobbering an idle
-  // pause when the effect re-runs for an unrelated reason.
-  let resumedTabs = new Set<string>();
-
-  function clearRecordIdleTimer(sessionId: string) {
-    clearTimeout(recordIdleTimers.get(sessionId));
-    recordIdleTimers.delete(sessionId);
-  }
-
-  /** Pause/resume a recording: update the tab indicator + tell the backend (only on change). */
-  function applyPause(sessionId: string, paused: boolean) {
-    if (isRecordingPaused(sessionId) === paused) return;
-    setRecordingPausedState(sessionId, paused);
-    setRecordingPaused(sessionId, paused).catch(() => {});
-  }
-
-  /** (Re)arm the idle countdown that pauses a recording tab on screen. */
-  function armRecordIdleTimer(sessionId: string) {
-    clearRecordIdleTimer(sessionId);
-    const secs = settings.recordIdlePauseSecs;
-    if (secs <= 0 || !isRecording(sessionId)) return;
-    recordIdleTimers.set(
-      sessionId,
-      setTimeout(() => applyPause(sessionId, true), secs * 1000),
-    );
-  }
-
-  /** Keystroke in a terminal on screen → resume (if idle-paused) and re-arm its idle timer. */
-  function handleTerminalActivity(sessionId: string) {
-    if (!onScreenIds.has(sessionId) || !isRecording(sessionId)) return;
-    applyPause(sessionId, false); // backend also auto-resumes on input
-    armRecordIdleTimer(sessionId);
-  }
-
-  // A recording runs only while its tab is on screen — one tab per pane, every
-  // member of the broadcast grid (centerview.ts). The others are paused; a tab
-  // that comes back on screen resumes with a fresh idle countdown.
-  $effect(() => {
-    const { pause, watch } = recordingPauses(Object.keys(recordingState), [...onScreenIds]);
-    for (const id of pause) applyPause(id, true);
-    for (const id of watch) {
-      if (resumedTabs.has(id)) continue;
-      applyPause(id, false);
-      armRecordIdleTimer(id);
-    }
-    for (const id of [...recordIdleTimers.keys()]) {
-      if (!watch.includes(id)) clearRecordIdleTimer(id);
-    }
-    resumedTabs = new Set(watch);
-  });
-
-  /** Save the title/description entered after stopping a recording. */
-  async function saveRecording(title: string, description: string) {
-    const rec = saveRec;
-    saveRec = null;
-    if (!rec) return;
-    try {
-      await setRecordingMeta(rec.path, title, description);
-      notifySuccess(t("recordings.stopped"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Discard the just-made recording from the save prompt. */
-  async function discardRecording() {
-    const rec = saveRec;
-    saveRec = null;
-    if (!rec) return;
-    try {
-      await deleteRecording(rec.path);
-      notifyInfo(t("recordings.discarded"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  // Naming prompt for a just-stopped broadcast bundle (batch id + member paths).
-  let saveBatch = $state<{ batchId: string; paths: string[] } | null>(null);
-
-  /** Name the broadcast bundle: writes the label into every member recording. */
-  async function saveBatchName(title: string) {
-    const b = saveBatch;
-    saveBatch = null;
-    if (!b) return;
-    try {
-      if (title) await setBatchLabel(b.batchId, title);
-      notifySuccess(t("recordings.groupStopped"));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /** Discard the whole just-made broadcast bundle (delete every member file). */
-  async function discardBatch() {
-    const b = saveBatch;
-    saveBatch = null;
-    if (!b) return;
-    for (const path of b.paths) {
-      try {
-        await deleteRecording(path);
-      } catch {
-        /* keep going; avoid a toast storm on partial failure */
-      }
-    }
-    notifyInfo(t("recordings.discarded"));
   }
 
   // ── Command palette (⌘K) ────────────────────────────────────────────────────
@@ -1469,39 +1009,39 @@
     }
     if (tab && tabId === tab.sessionId && tab.status.startsWith("Connected")) {
       // Another window that is already open — the main one first: the way back.
-      for (const w of windowTargets) {
+      for (const w of windows.targets) {
         out.push({
           id: `window:move:${w.label}`,
-          title: t("palette.moveTabTo", { target: windowTargetName(w) }),
+          title: t("palette.moveTabTo", { target: windows.targetName(w) }),
           icon: "popOut",
           group,
           keywords: "window move return back main окно перенести вернуть обратно главное другое",
-          run: () => void detachTab(tab.sessionId, { window: w.label }),
+          run: () => void windows.detachTab(tab.sessionId, { window: w.label }),
         });
       }
-      if (canOfferDetach) {
+      if (windows.canOfferDetach) {
         out.push({
           id: "window:detach",
           title: t("palette.moveTabToWindow"),
           icon: "popOut",
           group,
           keywords: "window detach pop out tear off monitor окно отдельное вынести второй монитор",
-          run: () => void detachTab(tab.sessionId),
+          run: () => void windows.detachTab(tab.sessionId),
         });
       }
     }
     // The pane in focus as a whole (v1.10) — when it is more than one tab.
-    const paneTabs = paneSessions(center.focus).length;
+    const paneTabs = windows.paneSessions(center.focus).length;
     if (paneMoveOffered(paneTabs)) {
       const focus = center.focus;
-      for (const w of windowTargets) {
+      for (const w of windows.targets) {
         out.push({
           id: `window:pane:move:${w.label}`,
-          title: t("palette.movePaneTo", { target: windowTargetName(w) }),
+          title: t("palette.movePaneTo", { target: windows.targetName(w) }),
           icon: "popOut",
           group,
           keywords: "window pane all tabs group move окно область все вкладки группа перенести",
-          run: () => void movePane(focus, { window: w.label }),
+          run: () => void windows.movePane(focus, { window: w.label }),
         });
       }
       if (paneDetachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length }, paneTabs)) {
@@ -1511,7 +1051,7 @@
           icon: "popOut",
           group,
           keywords: "window pane all tabs group detach monitor окно область все вкладки группа отдельное",
-          run: () => void movePane(focus),
+          run: () => void windows.movePane(focus),
         });
       }
     }
@@ -1526,14 +1066,14 @@
       picked.entries.length === 1
         ? picked.entries[0].name
         : t("sftp.dragCount", { count: picked.entries.length });
-    return targetsFrom(allCopyTargets, from).map((target) => ({
+    return targetsFrom(copyFlow.all, from).map((target) => ({
       id: `copyto:${target.sessionId}`,
       title: t("palette.copyTo", { what, target: target.title }),
       icon: "arrowRight",
       group: t("palette.groupActions"),
       keywords: "copy file transfer server session копировать файл перенести сервер сессия",
       run: () =>
-        void openCopyDialog({
+        void copyFlow.open({
           from,
           local: picked.local,
           to: target.sessionId,
@@ -1542,205 +1082,8 @@
     }));
   });
 
-  // ── Dragging files (v1.13) ───────────────────────────────────────────────────
-  // Out of a file panel onto a folder of another session's panel, a session's
-  // tab or its terminal; in from the desktop; over from another window. The
-  // drag is the store's (`stores/filedrag`); what a drop means is the pure
-  // model's (`filedrop.ts`). Here: what this window's tabs make of it.
-  const dropTabs = $derived(
-    tabsState.list.map((tab) => ({
-      sessionId: tab.sessionId,
-      kind: tab.kind,
-      connected: tab.status.startsWith("Connected"),
-    })),
-  );
-  /** The session whose tab or terminal the files in the air would land on. */
-  const fileOverSession = $derived(
-    fileDrag.files !== null && fileDrag.over?.kind === "session" ? fileDrag.over.session : null,
-  );
+  // ── Dragging files (v1.13–v1.14; the flow lives in page/filedragflow.svelte.ts) ──
   let fileGhost = $state<ReturnType<typeof FileDragGhost>>();
-
-  /** What letting go over `target` would do — null, and it is not offered. */
-  function fileDropMeaning(files: CarriedFiles, target: FileTarget): DropMeaning | null {
-    const meaning = dropMeaning(files, target, dropTabs);
-    // Into the folder they are in, or a folder into itself: no move at all.
-    if (meaning?.kind === "move" && !files.entries.some((e) => checkMove(e.path, meaning.dir).ok)) {
-      return null;
-    }
-    return meaning;
-  }
-
-  /** The files, with which of them are folders — a drop from the desktop only names paths. */
-  async function withKinds(files: CarriedFiles): Promise<CarriedFiles> {
-    if (files.from !== null) return files;
-    let kinds: boolean[] = [];
-    try {
-      kinds = await localKinds(files.entries.map((e) => e.path));
-    } catch {
-      /* unknown: each is sent as a file, and the transfer says what is wrong */
-    }
-    return { ...files, entries: files.entries.map((e, i) => ({ ...e, isDir: kinds[i] ?? false })) };
-  }
-
-  /** Files were let go of over a target: do what it means. */
-  async function dropFiles(files: CarriedFiles, meaning: DropMeaning) {
-    switch (meaning.kind) {
-      case "move":
-        requestMove({
-          session: meaning.session,
-          paths: files.entries.map((e) => e.path),
-          dir: meaning.dir,
-        });
-        return;
-      case "copy": {
-        const carried = await withKinds(files);
-        void openCopyDialog(
-          {
-            from: carried.from,
-            local: carried.local,
-            label: carried.label,
-            to: meaning.to,
-            entries: carried.entries,
-          },
-          meaning.dir,
-        );
-        return;
-      }
-      case "send": {
-        // From the desktop into a folder a panel shows: sent at once, as a
-        // drop always was — a name already there is still asked about.
-        const target = copyTargetsNow.find((x) => x.sessionId === meaning.to);
-        if (!target) return;
-        const carried = await withKinds(files);
-        void startTransfer({
-          src: DISK,
-          dst: sideOf(target),
-          sources: carried.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
-          destDir: meaning.dir,
-        });
-        return;
-      }
-      case "paste": {
-        // Onto a local terminal: the paths are typed into it, quoted for the
-        // shell that runs there. One that cannot be written safely types nothing.
-        const shell = localShellKind[meaning.to] ?? "posix";
-        const text = quotePaths(files.entries.map((e) => e.path), shell);
-        if (text === null) notifyInfo(t("filedrag.cannotPaste"));
-        else termRefs[meaning.to]?.pasteText?.(`${text} `);
-        return;
-      }
-    }
-  }
-
-  /** Files were held over it long enough: open it under them. */
-  function springOpen(what: Spring) {
-    if (what.kind === "files") revealPanel("files");
-    else if (tabsState.activeId !== what.id) activateTab(what.id);
-  }
-
-  /** The files, named after their tab — another window has no other way to know. */
-  function labelled(files: CarriedFiles): CarriedFiles {
-    const from = files.from ? findTab(files.from) : null;
-    return from ? { ...files, label: tabTitle(from) } : files;
-  }
-
-  /**
-   * Files have left the window: hand the drag to the system, if it can carry
-   * them (v1.14) — files of a server whose session is up, on a system that
-   * knows how. Anything else stays the page's own drag, as it always was.
-   */
-  async function handToSystem(files: CarriedFiles): Promise<boolean> {
-    systemDeclined = false;
-    const mine = labelled(files);
-    if (dragOutBlocker(mine, dropTabs, hostEnv.os) !== null) return false;
-    const spec = dragOutSpec(mine);
-    const took = spec ? await dragOutBegin(spec).catch(() => false) : false;
-    // Nothing here stood in the way, and still it would not: a name it cannot
-    // give a file, a folder behind a link, a file the server gives no length.
-    systemDeclined = !took;
-    return took;
-  }
-  /** The system was asked to carry the files of this drag and would not. */
-  let systemDeclined = false;
-
-  /**
-   * Files were let go of over none of the app's windows while the drag was
-   * still the page's: the system was not carrying them. Where it plainly could
-   * have been meant to, say why it was not — a drop that does nothing, with no
-   * word, reads as a drop that was lost.
-   */
-  function tellNotCarried(files: CarriedFiles) {
-    const why = dragOutBlocker(files, dropTabs, hostEnv.os);
-    if (why === null) {
-      if (systemDeclined) notifyInfo(t("dragout.declined"));
-      return;
-    }
-    if (!dragOutTold(why)) return;
-    notifyInfo(t(why === "folders" ? "dragout.foldersNotCarried" : "dragout.sessionDown"));
-  }
-
-  $effect(() => {
-    onFileDrag({
-      meaning: fileDropMeaning,
-      drop: (files, meaning) => void dropFiles(labelled(files), meaning),
-      spring: springOpen,
-      // Outside the window the files are another window's to draw, or the
-      // floating label's — the same relay a tab uses. Inside it, with no other
-      // window that could lie on top, the backend has nothing to add.
-      over: async (files) => {
-        if (!fileDrag.outside && windowTargets.length === 0) return null;
-        return dragOver(describeFiles(labelled(files)), fileGhost?.look() ?? null);
-      },
-      // Let go of out there: asked anew — the release is the gesture. The
-      // window under the pointer does the rest; over none of them, nothing.
-      release: (files) =>
-        void dragDrop(describeFiles(labelled(files)))
-          .catch(() => null)
-          .then((under) => {
-            if (under === null) tellNotCarried(files);
-            return dragEnd().catch(() => {});
-          }),
-      left: () => void dragEnd().catch(() => {}),
-      out: handToSystem,
-    });
-  });
-
-  /** Files of another window, held over this one or let go of here. */
-  function applyFileDragMessage(msg: FileDragMessage) {
-    if (msg.kind === "leave") clearGuestFiles();
-    else if (msg.kind === "over") showGuestFiles(msg.files, msg.x, msg.y);
-    else dropGuestFiles(msg.files, msg.x, msg.y);
-  }
-
-  // Files the system drags in from the desktop. It names them when they enter
-  // and when they are dropped; in between it only says where the pointer is.
-  // A drag that names no files is not one of these — the app's own files,
-  // promised to the system and passing back over a window (v1.14), arrive just
-  // so: this window is told of them through the backend, and what the system
-  // says of them here must not clear what the backend has it draw.
-  let desktopCarried: CarriedFiles | null = null;
-  function hearDesktopDrag(
-    ev:
-      | { type: "enter" | "drop"; paths: string[]; position: { x: number; y: number } }
-      | { type: "over"; position: { x: number; y: number } }
-      | { type: "leave" },
-  ) {
-    const named = desktopCarried !== null;
-    if (ev.type === "leave") {
-      desktopCarried = null;
-      if (named) clearGuestFiles();
-      return;
-    }
-    const at = pagePoint(ev.position, window.devicePixelRatio);
-    if (ev.type === "enter") desktopCarried = ev.paths.length > 0 ? desktopFiles(ev.paths) : null;
-    if (ev.type === "drop") {
-      desktopCarried = null;
-      if (ev.paths.length > 0) dropGuestFiles(desktopFiles(ev.paths), at.x, at.y);
-      else if (named) clearGuestFiles();
-      return;
-    }
-    if (desktopCarried) showGuestFiles(desktopCarried, at.x, at.y);
-  }
 
   const paletteCommands = $derived<CommandItem[]>([
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
@@ -1763,7 +1106,7 @@
     { id: "act:record",
       title: activeTab && isRecording(activeTab.sessionId) ? t("palette.stopRecording") : t("palette.startRecording"),
       icon: "activity", group: t("palette.groupActions"),
-      keywords: "record recording session запись сессия rec asciicast", run: toggleRecording },
+      keywords: "record recording session запись сессия rec asciicast", run: () => void recFlow.toggle(bcTargets.length) },
     { id: "act:recordings", title: t("palette.recordings"), icon: "activity", group: t("palette.groupActions"),
       keywords: "recordings library записи библиотека asciicast", run: () => (showRecordings = true) },
     // Broadcast and the notes had no way in but their top-bar buttons; a button
@@ -1866,7 +1209,7 @@
       ? [{ id: "act:connect-restored", title: t("palette.connectRestored"), icon: "plug",
           group: t("palette.groupActions"),
           keywords: "restore restored tabs connect all previous session восстановить вкладки подключить все прошлый запуск",
-          run: wakeAllWaiting } satisfies CommandItem]
+          run: () => restoreFlow.wakeAll() } satisfies CommandItem]
       : []),
     // Panes of the centre — the twins of dragging a tab to a pane's edge and of
     // the tab's right-click menu. Offered only while they would do something.
@@ -1991,7 +1334,7 @@
     // (ADR 0019) — in the main window; another window starts with the tab it
     // was opened for.
     void refresh().then(() => {
-      if (isMainWindow) restoreSavedTabs();
+      if (isMainWindow) restoreFlow.restore();
     });
     // Resolve the host OS once so the custom window chrome (TitleBar) and the
     // macOS-only native-menu sync below become reactively available.
@@ -2019,7 +1362,7 @@
     }
     listenHere<string>("update://prepare", (e) => {
       updateFreeze = true;
-      void tick().then(() => updateWindowReady(e.payload, dirtyEditors() > 0 || notesServer !== null || showSettings || !!saveRec));
+      void tick().then(() => updateWindowReady(e.payload, dirtyEditors() > 0 || notesServer !== null || showSettings || !!recFlow.saveRec));
     }).then((u) => unlisteners.push(u));
     listenHere("update://resume", () => { updateFreeze = false; }).then((u) => unlisteners.push(u));
     if (isMainWindow) void updateStartup().then((status) => {
@@ -2073,14 +1416,11 @@
     // once both listeners are in place: a window announced earlier would be
     // offered a tab it cannot hear of.
     Promise.all([
-      listen<unknown>(WINDOWS_EVENT, (e) => {
-        appWindows = otherWindows(e.payload, windowLabel);
-        windowsHeard?.();
-      }),
+      listen<unknown>(WINDOWS_EVENT, (e) => windows.heardWindows(e.payload)),
       // What every window offers as a place to copy files to; this window's
       // own list is left out of it.
       listen<unknown>(TARGETS_EVENT, (e) => {
-        otherWindowTargets = foreignTargets(e.payload, windowLabel);
+        copyFlow.heardOthers(foreignTargets(e.payload, windowLabel));
       }),
       // A tab of another window held over this one: it is drawn here.
       listenHere<unknown>(DRAG_EVENT, (e) => {
@@ -2088,13 +1428,13 @@
         if (msg) applyDragMessage(msg);
         // The same relay carries files held over this window from another one.
         const files = parseFileDragMessage(e.payload);
-        if (files) applyFileDragMessage(files);
+        if (files) fileDrags.heardOtherWindow(files);
       }),
-      listenHere(HANDOFF_EVENT, () => void receiveTab()),
+      listenHere(HANDOFF_EVENT, () => void windows.receiveTab()),
     ])
       .then((us) => {
         unlisteners.push(...us);
-        takesTabs = true;
+        windows.listening();
       })
       .catch(() => {});
     if (isMainWindow) {
@@ -2117,14 +1457,14 @@
       );
     } else {
       // This window was opened for a tab: take it over.
-      void adoptHandoff();
+      void windows.adoptHandoff();
     }
     // Files the system drags over the window from the desktop (v1.13). One
     // listener for the window: where they are dropped is read from where the
     // pointer is, not from which panel happens to be mounted.
     try {
       getCurrentWebview()
-        .onDragDropEvent((ev) => hearDesktopDrag(ev.payload))
+        .onDragDropEvent((ev) => fileDrags.heardDesktop(ev.payload))
         .then((u) => unlisteners.push(u))
         .catch(() => {});
     } catch {
@@ -2135,8 +1475,6 @@
     document.addEventListener("keydown", handleClipboardShortcut, true);
     return () => {
       unlisteners.forEach((u) => u());
-      onTabDraggedOutside(null);
-      onFileDrag(null);
       document.removeEventListener("keydown", handleClipboardShortcut, true);
     };
   });
@@ -2207,80 +1545,45 @@
     syncedSettings = JSON.stringify(settings);
   }
 
-  /** The tab being handed to a new window; the page takes no input meanwhile. */
-  let detaching = $state<string | null>(null);
   // The window's size — where the label of a tab dragged out of it is pinned.
   let viewportWidth = $state(0);
   let viewportHeight = $state(0);
 
-  function detachStateOf(tab: Tab): DetachState {
-    const sid = tab.sessionId;
-    const ws = getWorkspace(sid);
-    const chat = peekChat(sid);
-    return {
-      mainWindow: isMainWindow,
-      tabs: tabsState.list.length,
-      connected: tab.status.startsWith("Connected"),
-      syncBusy: isBusy(peekSyncJob(sid)),
-      chatBusy: !!chat && chatBusy(chat),
-      editorBusy: ws.editors.some((ed) => ed.loading || ed.id === savingEditorId),
-    };
-  }
-
-  /** Whether "move to a new window" is offered for tabs here at all. */
-  const canOfferDetach = $derived(
-    detachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length }),
-  );
-
-  // ── Tabs between open windows (ADR 0018) ───────────────────────────────────
-  // The app's other windows that take tabs, as the backend lists them.
-  let appWindows = $state<WindowEntry[]>([]);
-  // This window listens for the offer of a tab (set in onMount, never unset).
-  let takesTabs = $state(false);
-  /** The windows a tab of this one can be moved to right now. */
-  const windowTargets = $derived(
-    moveOffered(appWindows.length) ? appWindows : [],
-  );
-  const windowTargetName = (w: WindowEntry): string => {
-    const name = windowTarget(w);
-    return t(name.key, name.params);
-  };
-  // What the other windows show of this one: the tab its focused pane shows and
-  // how many it has. Told again as either changes — and only then: both are
-  // plain values, so a tab merely changing its status tells nobody anything.
-  const windowTitle = $derived(activeTab ? tabTitle(activeTab) : "");
-  const windowTabs = $derived(tabsState.list.length);
-  $effect(() => {
-    if (!takesTabs) return;
-    void announceWindow(windowTitle, windowTabs).catch(() => {});
+  // ── Tabs and panes between windows (ADR 0017, 0018, 0023) ─────────────────
+  // The trip a tab takes, a pane moving whole, a tab dropped outside, a tab
+  // arriving: page/windowflow.svelte.ts. What stays here is what this window
+  // draws of it.
+  const windows = createWindowFlow({
+    title: tabTitle,
+    alias: tabAlias,
+    editorBusy: (sid) => getWorkspace(sid).editors.some((ed) => ed.loading || ed.id === editors.savingId),
+    snapshot: async (sid, sent) => (await termRefs[sid]?.snapshot?.(sent)) ?? null,
+    carried: (sid) => ({
+      terminalCwd: terminalCwd[sid] ?? null,
+      followTerminal: pathSync.following[sid] ?? false,
+      followSeen: followSeen[sid] ?? null,
+      localShell: localShellKind[sid] ?? null,
+      shellIntegrated: pathSync.integrated(sid),
+    }),
+    arrived: (sid, page) => {
+      if (page.terminalCwd) terminalCwd[sid] = page.terminalCwd;
+      pathSync.adopt(sid, { following: page.followTerminal, integrated: page.shellIntegrated });
+      if (page.followSeen) followSeen[sid] = page.followSeen;
+      if (page.localShell) localShellKind[sid] = page.localShell;
+      // It arrives connected — a later drop of it is a real one (NO SIGNAL).
+      idleWasConnected.add(sid);
+    },
+    teardown: closeTabFully,
+    refreshTransfers: () => void refreshTransfers(),
+    ghostProbe: () => ghostProbe,
+    areaBounds: () => areaBounds,
   });
-
-  // A tab dragged outside the window moves to another one — the third way in,
-  // next to the tab menu and the palette: onto a window of the app, into it;
-  // anywhere else, into a window of its own. Where neither is offered, leaving
-  // the window with a tab is not a drop target at all. While it is held over
-  // another window, that window draws it: this one only says where it is.
-  $effect(() => {
-    onTabDraggedOutside(
-      leavesWindow
-        ? {
-            release: (sessionId, at, outside) => void dropOutside(sessionId, at, outside),
-            // Told of with or without another window to land in: over the
-            // desktop the tab is drawn by the floating label either way.
-            over: tellDragOver,
-            left: () => void dragEnd().catch(() => {}),
-          }
-        : null,
-    );
-  });
-  /** A tab of this window can be carried out of it at all. */
-  const leavesWindow = $derived(canOfferDetach || windowTargets.length > 0);
   // Where the tab over the desktop is drawn by a window of its own (mirror of
   // `dragghost::SUPPORTED`). There the label never stops at this window's edge,
   // so it has nothing to say about what letting go will do.
   const floatsOutside = $derived(hostEnv.os === "macos" || hostEnv.os === "windows");
   /** The tab in the air is over another window of the app, which draws it. */
-  const heldOverWindow = $derived(windowTargets.some((w) => w.label === tabDrag.window));
+  const heldOverWindow = $derived(windows.targets.some((w) => w.label === tabDrag.window));
   // The edge of a pane a drop would make a new pane at: of a tab of this
   // window, or of one held over it from another.
   const dropZone = $derived(tabDrag.zone ?? incoming.zone ?? viewDrag.zone ?? fileDrag.zone);
@@ -2292,288 +1595,6 @@
   // The label of a view dragged inside its connection, as drawn: it stops
   // flush with the edge of the connection's area only when its size is known.
   let viewGhost = $state({ w: 0, h: 0 });
-
-  /** How the floating label looks: like the one this page would draw. */
-  function dragLook(tab: Tab): DragLook | null {
-    const probe = ghostProbe;
-    if (!probe) return null;
-    const box = probe.getBoundingClientRect();
-    const style = getComputedStyle(probe);
-    const dot = probe.querySelector<HTMLElement>('[data-part="dot"]');
-    return {
-      title: tabAlias(tab),
-      bg: style.backgroundColor,
-      fg: style.color,
-      accent: style.borderTopColor,
-      dot: dot ? getComputedStyle(dot).backgroundColor : style.color,
-      w: Math.ceil(box.width),
-      h: Math.ceil(box.height),
-    };
-  }
-
-  /**
-   * A tab of this window is being dragged: say so, and learn where it is — over
-   * another window of the app, or over none of them. A tab that cannot go
-   * anywhere right now is shown to nobody — letting go of it says why.
-   */
-  async function tellDragOver(sessionId: string): Promise<DragAnswer | null> {
-    const tab = findTab(sessionId);
-    if (!tab || detachBlocker(detachStateOf(tab), true)) return null;
-    // Inside this window, with no other one that could lie over it, there is
-    // nothing the backend could add: a tab reordered in its strip asks nobody.
-    if (!tabDrag.outside && windowTargets.length === 0) return null;
-    return dragOver(describeTab(tab), dragLook(tab));
-  }
-
-  /**
-   * A tab was let go of away from this window's panes, at `at` on the screen:
-   * outside the window, or (`outside` false) inside its bounds but over another
-   * window lying on top of it.
-   */
-  async function dropOutside(sessionId: string, at: ScreenPoint, outside: boolean) {
-    const tab = findTab(sessionId);
-    if (!tab) return;
-    // What keeps a tab from every other window keeps it here: said now.
-    const block = detachBlocker(detachStateOf(tab), true);
-    if (block) {
-      void dragEnd().catch(() => {});
-      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));
-      return;
-    }
-    // Asked now, not taken from where the tab was last drawn: the release is
-    // the gesture. The window it was dropped on keeps its place from here on.
-    // Asked even with no other window to land in: this is also what takes the
-    // floating label off the desktop.
-    const under = await dragDrop(describeTab(tab)).catch(() => null);
-    if (under && windowTargets.some((w) => w.label === under)) {
-      // If the tab does not get there after all, that window is told.
-      if (!(await detachTab(sessionId, { window: under }))) void dragEnd().catch(() => {});
-      return;
-    }
-    if (under) void dragEnd().catch(() => {});
-    // Inside this window after all (the other one was gone by the release):
-    // nothing to open a window for.
-    if (outside && canOfferDetach) void detachTab(sessionId, { at });
-  }
-
-  /**
-   * Move a tab to another window: the open one `to.window`, or — without it — a
-   * new one, opened at `to.at` when the tab was dropped there (the menu and the
-   * palette give no place).
-   *
-   * The session's output is held first, so the terminal's snapshot is exact;
-   * the tab leaves this window only once the other has taken it over. Until
-   * then any failure leaves everything as it was. Resolves true when it went.
-   */
-  async function detachTab(
-    sessionId: string,
-    to: { window?: string; at?: ScreenPoint } = {},
-  ): Promise<boolean> {
-    const tab = findTab(sessionId);
-    if (!tab || detaching) return false;
-    const toOpenWindow = to.window !== undefined;
-    const block = detachBlocker(detachStateOf(tab), toOpenWindow);
-    if (block) {
-      notifyInfo(t(DETACH_BLOCK_MESSAGE[block]));
-      return false;
-    }
-    detaching = sessionId;
-    try {
-      await handOver(sessionId, to);
-      return true;
-    } catch (e) {
-      notifyError(t(detachErrorKey(e, toOpenWindow)));
-      return false;
-    } finally {
-      detaching = null;
-    }
-  }
-
-  /**
-   * One tab's trip to another window; resolves the label of the window that
-   * took it and throws what the backend said when none did. `seat` — its place
-   * in the pane it travels with (v1.10). Whether the tab may go at all is the
-   * caller's question: this is the trip, and it says nothing to the user.
-   */
-  async function handOver(
-    sessionId: string,
-    to: { window?: string; at?: ScreenPoint },
-    seat: PaneSeat | null = null,
-  ): Promise<string> {
-    let held = false;
-    try {
-      const sent = await detachBegin(sessionId);
-      held = true;
-      const terminal = (await termRefs[sessionId]?.snapshot?.(sent)) ?? null;
-      const packet =
-        terminal &&
-        packTab(
-          sessionId,
-          terminal,
-          {
-            terminalCwd: terminalCwd[sessionId] ?? null,
-            followTerminal: followTerminal[sessionId] ?? false,
-            followSeen: followSeen[sessionId] ?? null,
-            localShell: localShellKind[sessionId] ?? null,
-            shellIntegrated: shellIntegrated[sessionId] ?? false,
-          },
-          seat,
-        );
-      if (!packet) throw new Error("handoff-failed: no snapshot");
-      const taken = await detachCommit(sessionId, packet, {
-        ...to.at,
-        target: to.window,
-        background: activeChromePanel(),
-      });
-      held = false;
-      // The other window owns the session now: drop the tab here, keep the
-      // session. (A secondary window left with no tab closes behind it.)
-      closeTabFully(sessionId, true);
-      return taken;
-    } catch (e) {
-      // Give the held output back (a no-op if the backend already rolled back).
-      if (held) await detachAbort(sessionId).catch(() => {});
-      throw e;
-    }
-  }
-
-  // ── A whole pane to another window (v1.10) ─────────────────────────────────
-  /** The session tabs of a pane, in strip order: what moves when the pane does. */
-  const paneSessions = (paneId: string): Tab[] =>
-    (findPane(center, paneId)?.tabs ?? []).flatMap((id) => tabById.get(id) ?? []);
-
-  // A window opened for a pane's first tab takes the rest once it says that it
-  // takes tabs — heard here as the list of windows changes.
-  let windowsHeard: (() => void) | null = null;
-  function windowListed(label: string, timeoutMs = 5000): Promise<boolean> {
-    const listed = () => appWindows.some((w) => w.label === label);
-    if (listed()) return Promise.resolve(true);
-    return new Promise((resolve) => {
-      const giveUp = setTimeout(() => {
-        windowsHeard = null;
-        resolve(false);
-      }, timeoutMs);
-      windowsHeard = () => {
-        if (!listed()) return;
-        clearTimeout(giveUp);
-        windowsHeard = null;
-        resolve(true);
-      };
-    });
-  }
-
-  /**
-   * Move a pane — every session tab in it, each with its files — to another
-   * window: the open one `to.window`, or a new one. It is one handoff per tab,
-   * in the order that rebuilds the pane there (`paneMoveOrder`): the tab the
-   * pane shows goes first and opens the pane, the others take their seats
-   * around it.
-   *
-   * The pane goes whole or not at all — judged before the first tab leaves.
-   * What can still stop it midway is a handoff that fails; the tabs that went
-   * stay where they went, the rest stay here, and that is what is said.
-   */
-  async function movePane(paneId: string, to: { window?: string } = {}): Promise<void> {
-    const pane = findPane(center, paneId);
-    const tabs = paneSessions(paneId);
-    if (!pane || tabs.length === 0 || detaching) return;
-    const toOpenWindow = to.window !== undefined;
-    const held = paneMoveBlocker(tabs.map(detachStateOf), toOpenWindow);
-    if (held) {
-      const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
-      notifyInfo(
-        held.block === "lastTab"
-          ? reason
-          : t("window.paneBlocked", { tab: tabTitle(tabs[held.at]), reason }),
-      );
-      return;
-    }
-    const steps = paneMoveOrder(
-      tabs.map((tab) => tab.sessionId),
-      pane.active,
-    );
-    let target = to.window;
-    let moved = 0;
-    try {
-      for (const step of steps) {
-        detaching = step.tab;
-        // A new window was opened for the first tab: the rest go once it listens.
-        if (moved > 0 && !(target && (await windowListed(target)))) {
-          throw new Error("handoff-not-taken");
-        }
-        // Asked again at each tab's turn: its session may have ended meanwhile.
-        const tab = findTab(step.tab);
-        if (!tab || detachBlocker(detachStateOf(tab), true)) throw new Error("handoff-not-taken");
-        target = await handOver(step.tab, moved === 0 ? to : { window: target }, step.seat);
-        moved += 1;
-      }
-    } catch (e) {
-      notifyError(
-        moved === 0
-          ? t(detachErrorKey(e, toOpenWindow))
-          : t("window.paneMovedPartly", { moved, total: steps.length }),
-      );
-    } finally {
-      detaching = null;
-    }
-  }
-
-  /** A secondary window, on load: take over the tab it was opened for. */
-  async function adoptHandoff() {
-    // Nothing to show (the handoff was rolled back): a window with no tab goes.
-    if (!(await takeTab())) void closeWindow().catch(() => {});
-  }
-
-  /**
-   * A window that is already open, offered a tab: take it — or say at once that
-   * it cannot, so the window giving the tab up is not left to its timeout.
-   * Nothing here closes this window: it has tabs of its own.
-   */
-  async function receiveTab() {
-    if (!(await takeTab())) void declineHandoff().catch(() => {});
-  }
-
-  /**
-   * A tab this window was taking did not arrive: it stays with the window that
-   * was giving it up, which is told so now. This window's copy of its state
-   * goes without ending the session — it was never ours.
-   */
-  function adoptFailed(sessionId: string) {
-    void declineHandoff(sessionId).catch(() => {});
-    closeTabFully(sessionId, true);
-    // A window opened for this tab has nothing else to show and goes. One that
-    // was already open keeps its tabs — closing it would end their sessions.
-    if (!isMainWindow && tabsState.list.length === 0) void closeWindow().catch(() => {});
-  }
-
-  /**
-   * Put the tab being handed to this window into its stores; false when there
-   * is none to take. Its terminal then replays the snapshot and takes the
-   * session over (`Terminal.svelte`, `adopt`).
-   */
-  async function takeTab(): Promise<boolean> {
-    const packet = parsePacket(await takeHandoff().catch(() => null));
-    if (!packet) return false;
-    const sid = packet.tab.sessionId;
-    const page = packet.page;
-    if (page.terminalCwd) terminalCwd[sid] = page.terminalCwd;
-    if (page.followTerminal) followTerminal[sid] = true;
-    if (page.followSeen) followSeen[sid] = page.followSeen;
-    if (page.localShell) localShellKind[sid] = page.localShell;
-    if (page.shellIntegrated) shellIntegrated[sid] = true;
-    // It arrives connected — a later drop of it is a real one (NO SIGNAL).
-    idleWasConnected.add(sid);
-    // Dropped here, it takes the place this window kept for it; sent by a
-    // command, it goes where a new tab goes — and the first tab of a pane that
-    // moves whole (v1.10) opens a pane of its own, where there is room for one.
-    const leadsPane = packet.seat !== null && packet.seat.lead === null;
-    const drop = takeIncomingDrop() ?? (leadsPane ? arrivalDrop(center, placement.panes) : null);
-    unpackTab(packet, drop);
-    // A transfer under way came with the session: its events arrive here from
-    // now on, and what it has done so far is asked for once.
-    void refreshTransfers();
-    return true;
-  }
 
   async function refresh() {
     [servers, folders] = await Promise.all([listServers(), listFolders()]);
@@ -2654,93 +1675,42 @@
     }
   }
 
-  // ── Copy to another session (v1.12) ─────────────────────────────────────────
-  // The tabs a file can be copied to, for the file panels' menu.
-  const copyTargetsNow = $derived(
-    copyTargets(
-      tabsState.list,
-      (tab) => tabTitle(tab as Tab),
-      (sessionId) => prodTabIds.has(sessionId),
-    ),
-  );
-  // What the other windows offer (v1.13): a file is copied to a session
-  // whichever window shows its tab — the transfer is the backend's.
-  let otherWindowTargets = $state<CopyTarget[]>([]);
-  /** Every session a file can be copied to: this window's, then the others'. */
-  const allCopyTargets = $derived([...copyTargetsNow, ...otherWindowTargets]);
-  $effect(() => {
-    setCopyTargets(allCopyTargets);
+  // ── Copy to another session (page/copyflow.svelte.ts) ─────────────────────
+  const pathSync = createPathSyncFlow({
+    findTab,
+    servers: () => servers,
+    serverSaved: (updated) => (servers = servers.map((s) => (s.id === updated.id ? updated : s))),
+    isProd: (id) => prodTabIds.has(id),
+    terminalCwd: (id) => terminalCwd[id] ?? null,
+    forgetCwd: (id) => delete terminalCwd[id],
+    promptDelayMs: LOGIN_PROMPT_DELAY_MS,
   });
-  // This window's are told to the others — when they change, not on every
-  // change of a tab that leaves them as they were.
-  let targetsTold = "";
-  $effect(() => {
-    const mine = shareTargets(copyTargetsNow);
-    const said = JSON.stringify(mine);
-    if (said === targetsTold) return;
-    targetsTold = said;
-    void announceCopyTargets(mine).catch(() => {});
+  // Files named in terminal output (v1.24, ADR 0035): a file opens the way the
+  // file panel opens one, a folder in the file panel itself.
+  const fileLinks = createFileLinkFlow({
+    findTab,
+    servers: () => servers,
+    isProd: (id) => prodTabIds.has(id),
+    following: (id) => !!pathSync.following[id],
+    enablePathSync: (id) => pathSync.enable(id),
+    openFile: (id, path, opts) => void editors.openFile(id, path, baseName(path), opts),
+    openLocalFile: (id, path, opts) => void editors.openLocal(id, path, opts),
   });
-
-  // The copy being set up: what, from which tab, to which — and where there.
-  let copyAsk = $state<{ request: CopyRequest; target: CopyTarget } | null>(null);
-  let copyDir = $state("");
-
-  /**
-   * Open the dialog for a request: the destination folder comes prefilled —
-   * with `dir` when the files were dropped on a folder, else with where that
-   * tab is.
-   */
-  async function openCopyDialog(request: CopyRequest, dir: string | null = null) {
-    const target = allCopyTargets.find((x) => x.sessionId === request.to);
-    if (!target) return;
-    copyDir =
-      dir ??
-      defaultDestDir(dockCwd(target.sessionId), terminalCwd[target.sessionId] ?? null, null) ??
-      "";
-    copyAsk = { request, target };
-    if (copyDir) return;
-    // Nothing known of that tab's folders yet: ask the session for its home.
-    try {
-      const home = await (target.local ? localHome() : sftpHome(target.sessionId));
-      if (copyAsk?.request === request && !copyDir) copyDir = home;
-    } catch {
-      /* the field stays empty — the user types the folder */
-    }
-  }
-
-  // A file panel filed a request (its row menu): show it.
-  $effect(() => {
-    if (!pendingCopyRequest()) return;
-    untrack(() => {
-      const request = takeCopyRequest();
-      if (request) void openCopyDialog(request);
-    });
+  const fileDrags = createFileDragFlow({
+    title: tabTitle,
+    copy: { open: (request, into) => copyFlow.open(request, into), get mine() { return copyFlow.mine; } },
+    localShell: (id) => localShellKind[id] ?? "posix",
+    paste: (id, text) => termRefs[id]?.pasteText?.(text),
+    otherWindows: () => windows.targets.length > 0,
+    ghostLook: () => fileGhost?.look() ?? null,
   });
-
-  /** The dialog's "Copy": start the job (asking first about names taken there). */
-  function confirmCopy(destDir: string) {
-    const ask = copyAsk;
-    copyAsk = null;
-    if (!ask) return;
-    const { request } = ask;
-    const from = request.from ? findTab(request.from) : null;
-    void startTransfer({
-      // From the desktop the files belong to no tab; from another window the
-      // tab is not this window's, and says what it is called itself.
-      src:
-        request.from === null
-          ? DISK
-          : sideOf({
-              sessionId: request.from,
-              local: request.local,
-              title: from ? tabTitle(from) : (request.label ?? ""),
-            }),
-      dst: sideOf(ask.target),
-      sources: ask.request.entries.map((e) => ({ path: e.path, isDir: e.isDir })),
-      destDir,
-    });
-  }
+  const copyFlow = createCopyFlow({
+    tabs: () => tabsState.list,
+    findTab,
+    title: tabTitle,
+    isProd: (sessionId) => prodTabIds.has(sessionId),
+    terminalCwd: (sessionId) => terminalCwd[sessionId] ?? null,
+  });
 
   function tabAlias(tab: Tab): string {
     if (tab.kind === "local") return t("tab.localShell");
@@ -2763,100 +1733,13 @@
   }
 
   // ── Tabs of the previous launch (ADR 0019) ─────────────────────────────────
-  // A session cannot be restored; its tab can. The tabs come back where they
-  // stood and wait (`Tab.waiting`) — which of them open their session by
-  // themselves is the pure `waitReason`, never a decision made here.
-
-  /** What `waitReason` is asked about a tab. */
-  function waitFactsOf(
-    tab: Pick<Tab, "kind" | "serverId"> & { attach?: unknown },
-    needsSecret: boolean | null,
-  ): WaitFacts {
-    return {
-      kind: tab.kind,
-      attach: !!tab.attach,
-      prod: isProdServer(servers.find((s) => s.id === tab.serverId)),
-      needsSecret,
-    };
-  }
-
-  /** Bring the saved tabs back — the main window, once, with the catalog loaded. */
-  function restoreSavedTabs() {
-    try {
-      const slots = takeSavedTabs();
-      if (!slots) return;
-      const restored = restoreSaved(slots.main, slots.others, (id) =>
-        servers.some((s) => s.id === id),
-      );
-      if (restored.missing > 0) notifyInfo(t("restore.serversGone", { n: restored.missing }));
-      const mode = settings.restoreTabs;
-      openRestored(restored.tabs, restored.layout, (tab) =>
-        waitReason(mode, waitFactsOf(tab, null)),
-      );
-      for (const tab of tabsState.list) {
-        if (tab.waiting === "checking") void settleWaiting(tab.sessionId);
-      }
-    } finally {
-      // Only now may this window write its slot: before, "no tabs yet" would
-      // have replaced the tabs it had.
-      startSavingTabs();
-    }
-  }
-
-  /**
-   * A waiting tab that may connect unless its server stops to ask for a secret:
-   * find out, then connect it or leave it waiting with the reason.
-   */
-  async function settleWaiting(sessionId: string) {
-    const asked = findTab(sessionId);
-    if (asked?.waiting !== "checking") return;
-    const plan = await connectPlan(asked.serverId).catch(() => null);
-    // Closed, or opened by its button, while the keychain was being asked.
-    const tab = findTab(sessionId);
-    if (tab?.waiting !== "checking") return;
-    const reason = plan ? waitReason("connect", waitFactsOf(tab, plan.needsSecret)) : "manual";
-    if (reason === null) reconnectTabStore(sessionId);
-    else setWaiting(sessionId, reason);
-  }
-
-  /** The button of a waiting tab: open its session, asking for the secret if it takes one. */
-  async function wakeTab(sessionId: string) {
-    const tab = findTab(sessionId);
-    if (!tab?.waiting || tab.waiting === "checking") return;
-    if (tab.kind === "local") {
-      reconnectTabStore(sessionId);
-      return;
-    }
-    try {
-      const plan = await connectPlan(tab.serverId);
-      const server = servers.find((s) => s.id === tab.serverId);
-      if (plan.needsSecret && server) {
-        secretPrompt?.prompt(server, plan.secretLabel, "", undefined, sessionId);
-        return;
-      }
-      reconnectTabStore(sessionId);
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
-
-  /**
-   * ⌘K: open every waiting tab that may open without a question. The others
-   * keep their place and now say why — a production server and a container are
-   * entered by their own button, one at a time.
-   */
-  function wakeAllWaiting() {
-    for (const tab of tabsState.list) {
-      if (!tab.waiting || tab.waiting === "checking") continue;
-      const reason = waitReason("connect", waitFactsOf(tab, null));
-      if (reason === null) {
-        reconnectTabStore(tab.sessionId);
-      } else {
-        setWaiting(tab.sessionId, reason);
-        if (reason === "checking") void settleWaiting(tab.sessionId);
-      }
-    }
-  }
+  // A session cannot be restored; its tab can: they come back and wait, and
+  // which of them open their session by themselves is the restore flow's
+  // policy (page/restoreflow) — a waiting tab otherwise opens by its button.
+  const restoreFlow = createRestoreFlow({
+    servers: () => servers,
+    askSecret: (server, label, sessionId) => secretPrompt?.prompt(server, label, "", undefined, sessionId),
+  });
 
   // ── Connection / tabs ──────────────────────────────────────────────────────
   async function connectServer(server: ServerProfile, place?: (sessionId: string) => void) {
@@ -2930,7 +1813,7 @@
    *
    * Every close path routes here (close button, bulk close, server deletion,
    * failed re-auth); `closeTabStore` is called nowhere else, enforced by
-   * [tabteardown.guard.test.ts](../lib/tabteardown.guard.test.ts). Adding
+   * [tabteardown.guard.test.ts](../lib/tabs/tabteardown.guard.test.ts). Adding
    * per-session state anywhere means adding its cleanup here.
    */
   function closeTabFully(sessionId: string, keepSession = false) {
@@ -2942,7 +1825,7 @@
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
     removeDockState(sessionId);
-    if (fileLinkAsk?.sessionId === sessionId) fileLinkAsk = null;
+    fileLinks.forget(sessionId);
     // Its transfers are the backend's: a closed session's are stopped there, a
     // handed-over one's go on and are told to the window that has the tab now.
     // Here only their rows go — but a copy to a tab still in this window stays.
@@ -2952,18 +1835,16 @@
     // Flags only — a recording handed over with its tab keeps running; left set,
     // this window would go on pausing it as "not on screen here".
     clearRecording(sessionId);
-    clearRecordIdleTimer(sessionId);
-    batchRecMembers.delete(sessionId);
+    recFlow.forget(sessionId);
     delete followSeen[sessionId];
-    delete followTerminal[sessionId];
+    pathSync.forget(sessionId);
     delete terminalCwd[sessionId];
     delete localShellKind[sessionId];
-    delete shellIntegrated[sessionId];
     delete pendingCommand[sessionId];
     delete connPhase[sessionId];
     delete termDims[sessionId];
     idleWasConnected.delete(sessionId);
-    nginxConfigCache.delete(sessionId);
+    editors.forget(sessionId);
     delete termStructured[sessionId];
     delete termSelection[sessionId];
     clearAuthPrompt(sessionId);
@@ -3001,18 +1882,18 @@
    * move. Why it cannot go right now is said when it is asked for, as for a tab.
    */
   function paneWindowActions(paneId: string): MenuAction[] {
-    const count = paneSessions(paneId).length;
+    const count = windows.paneSessions(paneId).length;
     if (!paneMoveOffered(count)) return [];
-    const out: MenuAction[] = windowTargets.map((w) => ({
+    const out: MenuAction[] = windows.targets.map((w) => ({
       icon: "popOut",
-      label: windowTargetName(w),
-      onSelect: () => void movePane(paneId, { window: w.label }),
+      label: windows.targetName(w),
+      onSelect: () => void windows.movePane(paneId, { window: w.label }),
     }));
     if (paneDetachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length }, count)) {
       out.push({
         icon: "popOut",
         label: t("ctx.moveToWindow"),
-        onSelect: () => void movePane(paneId),
+        onSelect: () => void windows.movePane(paneId),
       });
     }
     return out;
@@ -3077,11 +1958,11 @@
     // said when it is asked for; a tab that is not connected has no session to
     // take along.
     const connected = tab.status.startsWith("Connected");
-    const toWindows: MenuAction[] = windowTargets.map((w) => ({
+    const toWindows: MenuAction[] = windows.targets.map((w) => ({
       icon: "popOut",
-      label: windowTargetName(w),
+      label: windows.targetName(w),
       disabled: !connected,
-      onSelect: () => void detachTab(tab.sessionId, { window: w.label }),
+      onSelect: () => void windows.detachTab(tab.sessionId, { window: w.label }),
     }));
     if (toWindows.length > WINDOW_ROWS) {
       items.push({
@@ -3094,12 +1975,12 @@
     } else {
       items.push(...toWindows);
     }
-    if (canOfferDetach) {
+    if (windows.canOfferDetach) {
       items.push({
         icon: "popOut",
         label: t("ctx.moveToWindow"),
         disabled: !connected,
-        onSelect: () => void detachTab(tab.sessionId),
+        onSelect: () => void windows.detachTab(tab.sessionId),
       });
     }
     // The pane as a whole (v1.10): the same windows, every tab of the pane.
@@ -3121,7 +2002,7 @@
       const action = waitView(tab.waiting, tab).action;
       if (action) {
         items.push({ kind: "separator" });
-        items.push({ icon: "plug", label: t(action), onSelect: () => void wakeTab(tab.sessionId) });
+        items.push({ icon: "plug", label: t(action), onSelect: () => void restoreFlow.wake(tab.sessionId) });
       }
     } else if (tab.kind === "ssh") {
       items.push({ kind: "separator" });
@@ -3137,242 +2018,32 @@
       items.push({
         icon: rec ? "stop" : "activity",
         label: rec ? t("ctx.stopRecording") : t("ctx.startRecording"),
-        onSelect: () => void toggleRecordingFor(tab),
+        onSelect: () => void recFlow.toggleRecordingFor(tab),
       });
     }
     tabCtxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
-  // ── Config editor (Phase 12) ────────────────────────────────────────────────
-  let savingEditorId = $state<string | null>(null);
-  let closeEditorConfirm = $state<{ sid: string; doc: EditorDoc } | null>(null);
-  // Pre-save diff confirmation (settings-gated) and conflict resolution.
-  // `closeAfter`: the save came from the close-with-changes dialog — close the
-  // file once the write lands (and only then: a failed save keeps it open).
-  let diffSave = $state<{ sid: string; doc: EditorDoc; closeAfter?: boolean } | null>(null);
-  let conflict = $state<{ sid: string; doc: EditorDoc; serverText: string } | null>(null);
-
-  /** Configured editor open-size limit, in bytes. */
-  const editorMaxBytes = () => settings.sftp.maxOpenMb * 1024 * 1024;
-
-  // Sudo prompt: reopen, check access ahead of editing, or retry a save.
-  let sudoPrompt = $state<
-    | { kind: "open"; sid: string; path: string; name: string; gotoLine?: number }
-    | { kind: "save" | "check"; sid: string; doc: EditorDoc }
-    | null
-  >(null);
-  let sudoPasswordInput = $state("");
+  // ── Config editor (Phase 12; the flow lives in page/editorflow.svelte.ts) ──
+  const editors = createEditorFlow({ findTab });
+  // What the sudo prompt says: reopen, check access ahead of editing, or save.
   const sudoPromptPath = $derived(
-    sudoPrompt?.kind === "open"
-      ? sudoPrompt.path
-      : sudoPrompt
-        ? sudoPrompt.doc.path
-        : "",
+    editors.sudo?.kind === "open" ? editors.sudo.path : editors.sudo ? editors.sudo.doc.path : "",
   );
   const sudoPromptTitle = $derived(
-    sudoPrompt?.kind === "save"
+    editors.sudo?.kind === "save"
       ? t("editor.sudoSaveTitle")
-      : sudoPrompt?.kind === "check"
+      : editors.sudo?.kind === "check"
         ? t("editor.checkSudo")
         : t("editor.sudoTitle"),
   );
   const sudoPromptConfirm = $derived(
-    sudoPrompt?.kind === "save"
+    editors.sudo?.kind === "save"
       ? t("editor.save")
-      : sudoPrompt?.kind === "check"
+      : editors.sudo?.kind === "check"
         ? t("editor.checkSudo")
         : t("editor.sudoOpen"),
   );
-
-  // Per-session cache of the paths nginx actually loads (`nginx -T`), so files that
-  // include-outside `/etc/nginx/` still get nginx highlighting + lint. Fetched lazily
-  // once per session, best-effort (empty set on error). Cleared in closeTabFully.
-  const nginxConfigCache = new Map<
-    string,
-    { promise: Promise<ReadonlySet<string>>; sudo: boolean }
-  >();
-  async function ensureNginxConfigs(
-    sid: string,
-    sudoPassword?: string,
-  ): Promise<ReadonlySet<string>> {
-    const cached = nginxConfigCache.get(sid);
-    if (cached) {
-      const set = await cached.promise;
-      // Reuse the cached result, except retry with sudo when a plain fetch came back
-      // empty and we now hold a password (an open-as-root can read a config tree the
-      // plain user can't) — this is silent, no fresh prompt.
-      if (!(set.size === 0 && sudoPassword && !cached.sudo)) return set;
-    }
-    const promise = nginxConfigFiles(sid, sudoPassword)
-      .then((list) => new Set(list) as ReadonlySet<string>)
-      .catch(() => new Set<string>() as ReadonlySet<string>);
-    nginxConfigCache.set(sid, { promise, sudo: !!sudoPassword });
-    return promise;
-  }
-
-  /** Open a remote file of session `sid` in the in-app editor (from its SFTP panel). */
-  async function openFileInEditor(
-    sid: string,
-    path: string,
-    name: string,
-    opts: { gotoLine?: number; sudo?: boolean; sudoPassword?: string; gitBase?: string } = {},
-  ) {
-    // Any file opens in the editor; unknown/extensionless types fall back to plain
-    // text (binary/oversize files are still rejected by the backend read below).
-    // Pass the full path so custom nginx configs (conf.d, sites-available…) are
-    // detected by directory, not just `nginx.conf` by name.
-    let lang = editorLangOrPlain(path);
-    const existing = findEditorByPath(sid, path);
-    if (existing) {
-      showSessionView(sid, existing.id);
-      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
-      return;
-    }
-    // For a config-shaped file not already recognised as nginx, also consult the set
-    // of configs nginx actually loads (nginx -T) — catches includes outside the
-    // `/etc/nginx/` tree. Fetched in parallel with the read; resolved just before open.
-    const nginxSetP =
-      lang.kind !== "nginx" && couldBeNginxInclude(path)
-        ? ensureNginxConfigs(sid, opts.sudoPassword)
-        : null;
-    // Read first, so binary/too-large files just toast instead of opening a tab.
-    let file;
-    try {
-      file = await sftpReadText(sid, path, editorMaxBytes(), opts.sudo, opts.sudoPassword);
-    } catch (e) {
-      // No read access on a non-sudo read → offer to reopen as root.
-      if (!opts.sudo && isPermissionError(e)) {
-        sudoPasswordInput = "";
-        sudoPrompt = { kind: "open", sid, path, name, gotoLine: opts.gotoLine };
-        return;
-      }
-      notifyError(String(e));
-      return;
-    }
-    if (nginxSetP) lang = editorLangWithIncludes(path, await nginxSetP);
-    // Content-based YAML dialects (k8s/Ansible) have no distinguishing name — upgrade
-    // once the buffer is read so kubeconform/ansible-lint can run (no-op for non-YAML).
-    lang = editorLangWithDialect(lang, file.content);
-    const id = addEditor(sid, path, name, lang, "sftp", {
-      gotoLine: opts.gotoLine,
-      sudo: opts.sudo,
-      sudoPassword: opts.sudoPassword,
-      gitBase: opts.gitBase,
-    });
-    fillEditor(sid, id, file);
-    if (!opts.sudo) {
-      void sftpWriteAccess(sid, path)
-        .then((access) => {
-          if (findEditorByPath(sid, path)?.id === id) setEditorWriteAccess(sid, id, access);
-        })
-        .catch(() => {
-          if (findEditorByPath(sid, path)?.id === id) setEditorWriteAccess(sid, id, "unknown");
-        });
-    }
-  }
-
-  function promptEditorSudo(sid: string, doc: EditorDoc, kind: "check" | "save") {
-    sudoPasswordInput = "";
-    sudoPrompt = { kind, sid, doc };
-  }
-
-  /** Confirm sudo credentials before retaining them for this editor. */
-  async function confirmSudo() {
-    const p = sudoPrompt;
-    const pw = sudoPasswordInput;
-    sudoPrompt = null;
-    sudoPasswordInput = "";
-    if (!p) return;
-    if (p.kind === "open") {
-      void openFileInEditor(p.sid, p.path, p.name, {
-        gotoLine: p.gotoLine,
-        sudo: true,
-        sudoPassword: pw,
-      });
-    } else {
-      let usable: boolean;
-      try {
-        usable = await sftpCheckSudo(p.sid, pw);
-      } catch {
-        usable = false;
-      }
-      if (!usable) {
-        const updated = findEditorByPath(p.sid, p.doc.path);
-        if (p.kind === "check" && updated && isDirty(updated)) {
-          setEditorSaveIssue(p.sid, updated.id, "sudo");
-        } else {
-          notifyError(t("editor.sudoUnavailable"));
-        }
-        return;
-      }
-      setEditorSudo(p.sid, p.doc.id, pw);
-      const updated = findEditorByPath(p.sid, p.doc.path);
-      if (p.kind === "save" && updated) void doWriteEditor(p.sid, updated, updated.baseSha256);
-    }
-  }
-
-  /** Open a LOCAL file in a given workspace's editor (from "Open with vterm"). */
-  async function openLocalFileInEditor(
-    sid: string,
-    path: string,
-    opts: { gitBase?: string; gotoLine?: number } = {},
-  ) {
-    const name = path.split(/[\\/]/).pop() ?? path;
-    const existing = findEditorByPath(sid, path);
-    if (existing) {
-      showSessionView(sid, existing.id);
-      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
-      return;
-    }
-    let file;
-    try {
-      file = await readLocalText(path, editorMaxBytes());
-    } catch (e) {
-      notifyError(String(e));
-      return;
-    }
-    const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
-      gitBase: opts.gitBase,
-      gotoLine: opts.gotoLine,
-    });
-    fillEditor(sid, id, file);
-  }
-
-  /** Open a git-changed file as an editable inline diff (from the git panel). */
-  function openGitDiff(sid: string, absPath: string, gitBase: string) {
-    if (findTab(sid)?.kind === "ssh") {
-      void openFileInEditor(sid, absPath, absPath.split("/").pop() ?? absPath, { gitBase });
-    } else {
-      void openLocalFileInEditor(sid, absPath, { gitBase });
-    }
-  }
-
-  /** Append a pattern to the repo's .gitignore (git panel "Ignore" action). */
-  async function appendGitignore(sid: string, gitignorePath: string, pattern: string) {
-    const ssh = findTab(sid)?.kind === "ssh";
-    let current = "";
-    try {
-      const f = ssh
-        ? await sftpReadText(sid, gitignorePath, editorMaxBytes())
-        : await readLocalText(gitignorePath, editorMaxBytes());
-      current = f.content;
-    } catch {
-      current = ""; // no .gitignore yet → create it
-    }
-    if (current.split(/\r?\n/).some((l) => l.trim() === pattern)) {
-      notifyInfo(t("git.alreadyIgnored"));
-      return;
-    }
-    const sep = current && !current.endsWith("\n") ? "\n" : "";
-    const next = `${current}${sep}${pattern}\n`;
-    try {
-      if (ssh) await sftpWriteText(sid, gitignorePath, next, "lf", null);
-      else await writeLocalText(gitignorePath, next, "lf", null);
-      notifySuccess(t("git.ignored", { pattern }));
-    } catch (e) {
-      notifyError(String(e));
-    }
-  }
 
   /**
    * Open an AI-generated script (17.6) as a scratch editor in the active
@@ -3423,125 +2094,6 @@
     }
   }
 
-  /**
-   * Toggle "follow terminal" for a session. Turning it off is immediate; turning
-   * it on goes through `enablePathSync`.
-   */
-  function toggleFollowTerminal(id: string) {
-    if (followTerminal[id]) {
-      followTerminal[id] = false;
-      return;
-    }
-    enablePathSync(id);
-  }
-
-  /** How path sync starts for a tab (pathsync.ts): the server's own answer from
-   *  its profile; a local tab has no profile, so its answer lives in settings. */
-  function tabPathSyncMode(tab: Tab): PathSyncMode {
-    if (tab.kind === "local") return settings.localPathSync;
-    return pathSyncMode(servers.find((s) => s.id === tab.serverId)?.pathSync);
-  }
-
-  /** Whether this session's shell still needs the OSC 7 snippet — never a local
-   *  tab, whose cwd comes from the OS (Phase 39.3). See needsShellSetup. */
-  function shellNeedsSetup(id: string): boolean {
-    return needsShellSetup(findTab(id)?.kind, !!terminalCwd[id], !!shellIntegrated[id]);
-  }
-
-  /**
-   * Turn path sync on for a session — the one dock-wide switch, whether
-   * it was flipped in SFTP, in Git's toolbar or by Git's "Enable path sync" button
-   * (one label, one action: a file panel connected afterwards opens in the
-   * terminal's folder, already following). A server without an answer asks
-   * first (v1.23); one that has answered — "always" or "by hand" — starts at once.
-   */
-  function enablePathSync(id: string) {
-    if (followTerminal[id]) return;
-    const tab = findTab(id);
-    if (!tab) return;
-    if (!asksOnEnable(tabPathSyncMode(tab))) {
-      startFollowing(id, shellNeedsSetup(id));
-      return;
-    }
-    pathSyncAsk = {
-      sessionId: id,
-      kind: tab.kind,
-      target:
-        tab.kind === "local"
-          ? null
-          : (servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias),
-      prod: prodTabIds.has(id),
-      needsSetup: shellNeedsSetup(id),
-    };
-  }
-
-  /**
-   * The one place following starts: by hand, from the question, or on connect.
-   * `typeSetup` types the OSC 7 snippet into the shell first — session-only,
-   * nothing is saved on the server.
-   */
-  function startFollowing(id: string, typeSetup: boolean) {
-    if (typeSetup) {
-      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
-      shellIntegrated[id] = true;
-    }
-    followTerminal[id] = true;
-  }
-
-  /** The question's answer: following starts either way; a lasting answer is
-   *  saved where this tab reads it — the server's profile, or settings. */
-  async function answerPathSync(choice: PathSyncChoice) {
-    const ask = pathSyncAsk;
-    pathSyncAsk = null;
-    const tab = ask ? findTab(ask.sessionId) : undefined;
-    if (!ask || !tab) return;
-    startFollowing(ask.sessionId, shellNeedsSetup(ask.sessionId));
-    const mode = choiceMode(choice);
-    if (!mode) return;
-    if (tab.kind === "local") {
-      settings.localPathSync = mode;
-      return;
-    }
-    try {
-      const updated = await setServerPathSync(tab.serverId, storedPathSync(mode));
-      servers = servers.map((s) => (s.id === updated.id ? updated : s));
-    } catch (e) {
-      notifyError(t("pathSync.saveFailed", { error: String(e) }));
-    }
-  }
-
-  /**
-   * A session just connected: a server set to "always" starts following by
-   * itself — typing the snippet into a fresh SSH shell, which has reported no
-   * folder yet and knows nothing typed into the last one. Not in a shell running a
-   * program of its own (container/pod, `port-forward`): the line would land there.
-   * Typed after the same pause as a pending command, once the prompt is up.
-   */
-  function pathSyncOnConnect(tab: Tab, runs: { attach: boolean; pendingCommand: boolean }) {
-    const id = tab.sessionId;
-    if (followTerminal[id] || !followsOnConnect(tabPathSyncMode(tab), runs)) return;
-    const typeSetup = needsShellSetup(tab.kind, false, false);
-    if (!typeSetup) {
-      startFollowing(id, false);
-      return;
-    }
-    setTimeout(() => {
-      const now = findTab(id);
-      if (now && dockConnection(now.status) === "connected" && !followTerminal[id]) {
-        startFollowing(id, true);
-      }
-    }, LOGIN_PROMPT_DELAY_MS);
-  }
-
-  /** A session ended: its shell — and any snippet typed into it — is gone, so
-   *  following stops; a reconnect starts it again only under "always". */
-  function stopFollowingOnClose(id: string) {
-    followTerminal[id] = false;
-    delete shellIntegrated[id];
-    delete terminalCwd[id];
-    if (pathSyncAsk?.sessionId === id) pathSyncAsk = null;
-  }
-
   // Poll the OS for a local shell's cwd while following is on (Phase 39.3). This
   // is what makes the feature work with a stock zsh on macOS or PowerShell on
   // Windows, neither of which emits OSC 7: no shell setup, no injected snippet.
@@ -3554,7 +2106,7 @@
     if (!id) return;
     const gitShown = isPanelShown(layout.docks, "git", true, settings.hiddenPanels);
     // SSH has no local pid to inspect.
-    if (!pollsLocalCwd(findTab(id)?.kind, !!followTerminal[id], gitShown)) return;
+    if (!pollsLocalCwd(findTab(id)?.kind, !!pathSync.following[id], gitShown)) return;
     let stopped = false;
     const tick = async () => {
       const path = await localCwd(id).catch(() => null);
@@ -3576,67 +2128,9 @@
   // reads. When a cwd is written is pure logic — see followcwd.ts.
   const followSeen: Record<string, string | undefined> = {};
   $effect(() => {
-    const writes = followUpdates(followTerminal, terminalCwd, followSeen);
+    const writes = followUpdates(pathSync.following, terminalCwd, followSeen);
     untrack(() => writes.forEach(([id, cwd]) => setDockCwd(id, cwd)));
   });
-
-  // ── Files named in terminal output (v1.24, ADR 0035) ─────────────────────────
-  // What a click does is `fileLinkClick`; the question is FileLinkDialog; a file
-  // opens the way the file panel opens one, a folder in the file panel itself.
-
-  /** The server a tab runs on, by name; null for a local tab — this computer. */
-  function tabWhere(tab: Tab): string | null {
-    return tab.kind === "local" ? null : (servers.find((s) => s.id === tab.serverId)?.alias ?? tab.alias);
-  }
-
-  function onFileLink(id: string, target: FileLinkTarget) {
-    const tab = findTab(id);
-    if (!tab) return;
-    const action = fileLinkClick(settings.terminalFileLinks, target);
-    if (action.kind === "open") {
-      openFileLink(id, action.target);
-    } else if (action.kind === "ask") {
-      fileLinkAsk = {
-        kind: "open",
-        sessionId: id,
-        target: action.target,
-        where: tabWhere(tab),
-        prod: prodTabIds.has(id),
-      };
-    } else if (action.kind === "offerSync") {
-      fileLinkAsk = { kind: "sync", sessionId: id, where: tabWhere(tab), following: !!followTerminal[id] };
-    }
-  }
-
-  /** Open what a file link names: a file in the session's editor, a folder in its file panel. */
-  function openFileLink(id: string, target: NamedPath) {
-    const tab = findTab(id);
-    if (!tab) return;
-    if (tabsState.activeId !== id) activateTab(id);
-    if (target.kind === "dir") {
-      requestFilesDir(id, target.path);
-      revealPanel("files");
-    } else if (tab.kind === "ssh") {
-      void openFileInEditor(id, target.path, baseName(target.path), { gotoLine: target.line });
-    } else {
-      void openLocalFileInEditor(id, target.path, { gotoLine: target.line });
-    }
-  }
-
-  function answerFileLink(answer: "open" | "sync" | "cancel", silence: boolean) {
-    const ask = fileLinkAsk;
-    fileLinkAsk = null;
-    if (!ask || answer === "cancel" || !findTab(ask.sessionId)) return;
-    if (ask.kind === "open" && answer === "open") {
-      if (silence) settings.terminalFileLinks = "direct";
-      openFileLink(ask.sessionId, ask.target);
-    } else if (ask.kind === "sync" && answer === "sync") {
-      // The server's own answer decides whether this asks first (v1.23); once
-      // following is on, the next command reports its folder.
-      enablePathSync(ask.sessionId);
-      if (followTerminal[ask.sessionId]) notifyInfo(t("filelink.syncThen"));
-    }
-  }
 
   /**
    * Two-way OSC 7 sync: when the user navigates in the SFTP panel (follow-terminal
@@ -3721,134 +2215,7 @@
     } else {
       activateTab(sid);
     }
-    void openLocalFileInEditor(sid, path);
-  }
-
-  /** Save trigger: nothing to do if unchanged; show the diff first when enabled. */
-  function saveEditor(sid: string, doc: EditorDoc) {
-    if (doc.readOnly || savingEditorId || doc.content === doc.baseContent) return;
-    if (settings.editor.diffBeforeSave) {
-      diffSave = { sid, doc };
-      return;
-    }
-    void doWriteEditor(sid, doc, doc.baseSha256);
-  }
-
-  async function exportEditorCopy(doc: EditorDoc) {
-    const path = await pickSavePath(doc.name);
-    if (!path) return;
-    try {
-      await saveEditorCopy(path, doc.content, doc.eol, doc.encoding);
-      notifySuccess(t("editor.copySaved", { name: path.split(/[\\/]/).pop() ?? path }));
-    } catch (e) {
-      notifyError(String(e).includes("dest-exists") ? t("editor.copyExists") : String(e));
-    }
-  }
-
-  /**
-   * Actually write to the server. `expectedSha` null = force overwrite (conflict).
-   * Resolves `true` only when the file was written.
-   */
-  async function doWriteEditor(
-    sid: string,
-    doc: EditorDoc,
-    expectedSha: string | null,
-  ): Promise<boolean> {
-    if (savingEditorId) return false;
-    savingEditorId = doc.id;
-    try {
-      const before = doc.baseContent;
-      const res =
-        doc.source === "local"
-          ? await writeLocalText(doc.path, doc.content, doc.eol, expectedSha, doc.encoding)
-          : await sftpWriteText(sid, doc.path, doc.content, doc.eol, expectedSha, {
-              sudo: doc.sudo,
-              sudoPassword: doc.sudoPassword,
-              backup: settings.editor.backupOnSave,
-              // Write the file back in the encoding it was opened in (textenc.rs).
-              encoding: doc.encoding,
-            });
-      const stat = lineDiffStat(before, doc.content);
-      markSaved(sid, doc.id, res);
-      notifySuccess(t("editor.saved", { name: doc.name }));
-      // Audit trail (Phase 11 tie-in): record the edit if the session is recording.
-      if (isRecording(sid)) {
-        void annotateRecording(
-          sid,
-          t("editor.auditEdit", { path: doc.path, added: stat.added, removed: stat.removed }),
-        );
-      }
-      return true;
-    } catch (e) {
-      if (isFileChangedError(e)) {
-        // Fetch the current on-disk text and let the user resolve the conflict.
-        try {
-          const cur =
-            doc.source === "local"
-              ? await readLocalText(doc.path, editorMaxBytes())
-              : await sftpReadText(sid, doc.path, editorMaxBytes(), doc.sudo, doc.sudoPassword);
-          conflict = { sid, doc, serverText: cur.content };
-        } catch {
-          notifyError(t("editor.conflict", { name: doc.name }));
-        }
-      } else if (!doc.sudo && doc.source === "sftp" && isPermissionError(e)) {
-        // Keep the buffer and offer explicit recovery next to Save.
-        setEditorSaveIssue(sid, doc.id, "permission");
-      } else if (isBackupFailedError(e)) {
-        // The save was abandoned with the file untouched — say that plainly, or
-        // the user reads it as "save failed" and cannot tell what state the
-        // server is in. The cause is carried along; the way out is in the hint.
-        notifyError(t("editor.backupFailed", { name: doc.name, detail: String(e) }));
-        setEditorSaveIssue(sid, doc.id, "other");
-      } else {
-        notifyError(String(e));
-        setEditorSaveIssue(sid, doc.id, "other");
-      }
-      return false;
-    } finally {
-      savingEditorId = null;
-    }
-  }
-
-  async function confirmDiffSave() {
-    const s = diffSave;
-    diffSave = null;
-    if (!s) return;
-    const ok = await doWriteEditor(s.sid, s.doc, s.doc.baseSha256);
-    if (ok && s.closeAfter) closeEditorStore(s.sid, s.doc.id);
-  }
-
-  /** "Save" in the close-with-changes dialog: write, then close on success. */
-  async function saveAndCloseEditor() {
-    const c = closeEditorConfirm;
-    closeEditorConfirm = null;
-    if (!c) return;
-    if (settings.editor.diffBeforeSave) {
-      diffSave = { sid: c.sid, doc: c.doc, closeAfter: true };
-      return;
-    }
-    if (await doWriteEditor(c.sid, c.doc, c.doc.baseSha256)) closeEditorStore(c.sid, c.doc.id);
-  }
-
-  /** Conflict: overwrite the server's newer version with mine (skip the hash check). */
-  function overwriteConflict() {
-    const c = conflict;
-    conflict = null;
-    if (c) void doWriteEditor(c.sid, c.doc, null);
-  }
-
-  /** Conflict: discard my changes and reopen the file fresh from the server. */
-  function reopenConflict() {
-    const c = conflict;
-    conflict = null;
-    if (!c) return;
-    closeEditorStore(c.sid, c.doc.id);
-    if (c.doc.source === "local") void openLocalFileInEditor(c.sid, c.doc.path);
-    else
-      void openFileInEditor(c.sid, c.doc.path, c.doc.name, {
-        sudo: c.doc.sudo,
-        sudoPassword: c.doc.sudoPassword,
-      });
+    void editors.openLocal(sid, path);
   }
 
   /**
@@ -3869,7 +2236,7 @@
       items.push({
         icon: "close",
         label: t("common.close"),
-        onSelect: () => requestCloseEditor(sessionId, doc),
+        onSelect: () => editors.requestClose(sessionId, doc),
       });
       items.push({ kind: "separator" });
     }
@@ -3898,12 +2265,6 @@
       });
     }
     tabCtxMenu = { x: e.clientX, y: e.clientY, items };
-  }
-
-  /** Close an editor sub-tab, confirming first when it has unsaved changes. */
-  function requestCloseEditor(sid: string, doc: EditorDoc) {
-    if (isDirty(doc)) closeEditorConfirm = { sid, doc };
-    else closeEditorStore(sid, doc.id);
   }
 
   // Roving keyboard navigation across the tabs of one strip (a11y): arrows/Home/End
@@ -4034,25 +2395,18 @@
         connection={dockConnection(tab.status)}
         terminalCwd={terminalCwd[tab.sessionId] ?? null}
         promptVars={aiPromptVarsFor(tab)}
-        followTerminal={followTerminal[tab.sessionId] ?? false}
-        onToggleFollowTerminal={() => toggleFollowTerminal(tab.sessionId)}
-        onEnablePathSync={needsShellSetup(
-          tab.kind,
-          !!terminalCwd[tab.sessionId],
-          !!shellIntegrated[tab.sessionId],
-        )
-          ? () => enablePathSync(tab.sessionId)
-          : undefined}
+        followTerminal={pathSync.following[tab.sessionId] ?? false}
+        onToggleFollowTerminal={() => pathSync.toggle(tab.sessionId)}
+        onEnablePathSync={pathSync.needsSetup(tab.sessionId) ? () => pathSync.enable(tab.sessionId) : undefined}
         getAiContext={() => gatherAiContext(tab.sessionId)}
         aiSelectionLines={termSelection[tab.sessionId] ?? 0}
         aiRecording={!!recordingState[tab.sessionId]}
         aiProd={isProdServer(srv)}
         aiNoAi={srv?.noAi === true}
-        onOpenFile={(path, name, gotoLine) =>
-          openFileInEditor(tab.sessionId, path, name, { gotoLine })}
-        onOpenLocalFile={(path) => openLocalFileInEditor(tab.sessionId, path)}
-        onOpenGitDiff={(absPath, gitBase) => openGitDiff(tab.sessionId, absPath, gitBase)}
-        onIgnoreGitignore={(path, pattern) => appendGitignore(tab.sessionId, path, pattern)}
+        onOpenFile={(path, name, gotoLine) => editors.openFile(tab.sessionId, path, name, { gotoLine })}
+        onOpenLocalFile={(path) => editors.openLocal(tab.sessionId, path)}
+        onOpenGitDiff={(absPath, gitBase) => editors.openGitDiff(tab.sessionId, absPath, gitBase)}
+        onIgnoreGitignore={(path, pattern) => editors.appendGitignore(tab.sessionId, path, pattern)}
         onSftpNavigate={(path) => cdTerminalTo(tab.sessionId, path)}
         onOpenContainerShell={(argv, target) => openContainerShell(tab.sessionId, argv, target)}
         onAskAi={aiOn
@@ -4148,10 +2502,10 @@
         ? `bg-panel text-text ${activeTabStrip(prodTabIds.has(tab.sessionId), 2)}`
         : shownId === tab.sessionId
           ? 'bg-panel text-text'
-          : 'text-muted hover:bg-edge'} {fileOverSession === tab.sessionId
+          : 'text-muted hover:bg-edge'} {fileDrags.overSession === tab.sessionId
         ? 'ring-1 ring-inset ring-accent'
         : ''}"
-      data-file-over={fileOverSession === tab.sessionId || undefined}
+      data-file-over={fileDrags.overSession === tab.sessionId || undefined}
       title={tab.attach ? undefined : localizedStatus(tab.status)}
       use:tooltip={attachTooltip(tab)}
     >
@@ -4386,7 +2740,7 @@
                   class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
                   onclick={() => {
                     if (tabsState.activeId) removeBroadcastMember(tabsState.activeId);
-                    void syncBatchRecording();
+                    void recFlow.syncBatchRecording();
                   }}
                   use:tooltip={t("broadcast.exit")}
                   aria-label={t("broadcast.exit")}
@@ -4407,7 +2761,6 @@
                    them: they follow in one flat list and are placed over the pane
                    that holds them, under its strip. -->
               {#each paneList as pane (pane.id)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   data-pane={pane.id}
                   data-testid="pane"
@@ -4541,7 +2894,7 @@
                                 data-close
                                 class="rounded px-1.5 py-1 opacity-60 hover:text-danger hover:opacity-100"
                                 aria-label={t("common.close")}
-                                onclick={() => requestCloseEditor(tab.sessionId, ed)}
+                                onclick={() => editors.requestClose(tab.sessionId, ed)}
                               >
                                 <Icon name="close" size={12} />
                               </button>
@@ -4563,7 +2916,6 @@
                   {/each}
                 {/if}
                 <!-- The terminal, over the zone that holds it. -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   class="absolute flex flex-col {terminalShown(views) ? '' : 'invisible'}"
                   style={rectStyle(termZone ? vp.panes[termZone.id] : undefined, vb, hasFiles ? VIEW_STRIP : 0)}
@@ -4599,7 +2951,7 @@
                         <button
                           class="rounded bg-accent px-3 py-1 text-sm text-panel-alt hover:bg-accent-hover"
                           data-testid="tab-wake"
-                          onclick={() => wakeTab(tab.sessionId)}
+                          onclick={() => restoreFlow.wake(tab.sessionId)}
                         >
                           {t(wait.action)}
                         </button>
@@ -4700,9 +3052,9 @@
                       clearAdopt(tab.sessionId);
                       windowHasHadTab = true;
                     }}
-                    onadoptfailed={() => adoptFailed(tab.sessionId)}
+                    onadoptfailed={() => windows.adoptFailed(tab.sessionId)}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
-                    onactivity={() => handleTerminalActivity(tab.sessionId)}
+                    onactivity={() => recFlow.activity(tab.sessionId)}
                     onoutput={() => idleOutputTick++}
                     oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
                     onExplain={aiOn && servers.find((s) => s.id === tab.serverId)?.noAi !== true
@@ -4712,7 +3064,7 @@
                     onlocalshell={(kind) => (localShellKind[tab.sessionId] = kind)}
                     onviewmode={(on) => (termStructured[tab.sessionId] = on)}
                     onfilelink={fileLinksAllowed(tab)
-                      ? (target) => onFileLink(tab.sessionId, target)
+                      ? (target) => fileLinks.clicked(tab.sessionId, target)
                       : undefined}
                     filelinkDirs={!isPanelHidden("files")}
                     onphase={(p) => (connPhase[tab.sessionId] = p)}
@@ -4753,8 +3105,8 @@
                       if (st === "connecting" && noSignalSession === tab.sessionId)
                         noSignalSession = null;
                       if (st === "closed") {
-                        finalizeRecordingOnClose(tab.sessionId);
-                        stopFollowingOnClose(tab.sessionId);
+                        recFlow.finalizeOnClose(tab.sessionId);
+                        pathSync.closed(tab.sessionId);
                         // Unexpected drop of a connected session (tab survives) →
                         // NO SIGNAL, unless auto-reconnect will bring it back.
                         const was = idleWasConnected.delete(tab.sessionId);
@@ -4770,8 +3122,8 @@
                           noSignalSession = tab.sessionId;
                         }
                       }
-                      if (st === "connected") maybeAutoRecord(tab);
-                      if (st === "connected") pathSyncOnConnect(tab, runs);
+                      if (st === "connected") recFlow.maybeAutoRecord(tab);
+                      if (st === "connected") pathSync.connected(tab, runs);
                       // Auth failures now keep the tab and show the error overlay
                       // (the user re-enters the secret via its button), so we no
                       // longer auto-close/re-prompt here.
@@ -4793,7 +3145,6 @@
                      makes a new terminal, not new editors. -->
                 {#each ws.editors as ed (ed.id)}
                   {@const zone = paneOf(views, ed.id)}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="absolute flex flex-col {zone?.active === ed.id ? '' : 'invisible'}"
                     style={rectStyle(zone ? vp.panes[zone.id] : undefined, vb, VIEW_STRIP)}
@@ -4815,11 +3166,11 @@
                           <EditorTab
                             sessionId={tab.sessionId}
                             doc={ed}
-                            saving={savingEditorId === ed.id}
-                            onsave={() => saveEditor(tab.sessionId, ed)}
-                            onCheckSudo={() => promptEditorSudo(tab.sessionId, ed, "check")}
-                            onSaveWithSudo={() => promptEditorSudo(tab.sessionId, ed, "save")}
-                            onSaveCopy={() => void exportEditorCopy(ed)}
+                            saving={editors.savingId === ed.id}
+                            onsave={() => editors.save(tab.sessionId, ed)}
+                            onCheckSudo={() => editors.askSudo(tab.sessionId, ed, "check")}
+                            onSaveWithSudo={() => editors.askSudo(tab.sessionId, ed, "save")}
+                            onSaveCopy={() => void editors.saveCopy(ed)}
                             onDismissSaveIssue={() => setEditorSaveIssue(tab.sessionId, ed.id, "none")}
                             onLintMissing={offerLintInstall}
                           />
@@ -4858,7 +3209,7 @@
                   onfocus={activateTab}
                   onremove={(id) => {
                     removeBroadcastMember(id);
-                    void syncBatchRecording();
+                    void recFlow.syncBatchRecording();
                   }}
                 />
               {/if}
@@ -4952,7 +3303,7 @@
 <!-- Drag ghost for a terminal tab being moved: one of this window's — or one
      held over this window from another (ADR 0018), which keeps the pointer
      while this window draws it. -->
-{#if draggingTab && leavesWindow}
+{#if draggingTab && windows.leavesWindow}
   <!-- The label as it is drawn next to the pointer, unseen — its size and
        colours are what the floating label over the desktop is given. -->
   <div
@@ -4996,7 +3347,7 @@
   >
     <span class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
     <span class="truncate">{tabAlias(draggingTab)}</span>
-    {#if tabDrag.outside && canOfferDetach && !floatsOutside}
+    {#if tabDrag.outside && windows.canOfferDetach && !floatsOutside}
       <Icon name="popOut" size={13} class="shrink-0 text-accent" />
       <span class="min-w-0 truncate text-meta text-muted" data-testid="tab-drag-outside">
         {t("ctx.moveToWindow")}
@@ -5023,7 +3374,7 @@
 
 <!-- A tab is on its way to a new window: nothing here may be clicked until it
      has settled — closing the tab now would end the session being handed over. -->
-{#if detaching}
+{#if windows.detaching}
   <div class="fixed inset-0 z-[60] cursor-progress" data-testid="detach-shield"></div>
 {/if}
 
@@ -5082,17 +3433,17 @@
 <!-- Transfers (v1.12): where a copy to another session lands, and — for every
      way a transfer starts — the question about names already taken there. -->
 <CopyToDialog
-  open={!!copyAsk}
-  target={copyAsk?.target ?? null}
-  names={copyAsk?.request.entries.map((e) => e.name) ?? []}
-  bind:dir={copyDir}
-  throughApp={!!copyAsk && !copyAsk.request.local && !copyAsk.target.local}
-  onconfirm={confirmCopy}
-  oncancel={() => (copyAsk = null)}
+  open={!!copyFlow.ask}
+  target={copyFlow.ask?.target ?? null}
+  names={copyFlow.ask?.request.entries.map((e) => e.name) ?? []}
+  bind:dir={copyFlow.dir}
+  throughApp={!!copyFlow.ask && !copyFlow.ask.request.local && !copyFlow.ask.target.local}
+  onconfirm={copyFlow.confirm}
+  oncancel={copyFlow.cancel}
 />
 <ReplaceDialog />
 <LinkOpenDialog />
-<FileLinkDialog ask={fileLinkAsk} onanswer={answerFileLink} />
+<FileLinkDialog ask={fileLinks.ask} onanswer={fileLinks.answer} />
 
 <QuitDialog
   open={showQuit}
@@ -5152,7 +3503,7 @@
     pendingBroadcast = null;
     if (!pb) return;
     // Prod broadcast → auto-record the whole group first (audit trail), then send.
-    await ensureGroupRecording();
+    await recFlow.ensureGroupRecording();
     doBroadcast(pb.frame, pb.targets, pb.cmd);
   }}
   oncancel={() => (pendingBroadcast = null)}
@@ -5168,7 +3519,7 @@
 
 <!-- Path sync's question where it has no answer yet (v1.23) — shows the OSC 7
      setup command whenever the answer lets the app type it -->
-<PathSyncDialog ask={pathSyncAsk} onanswer={answerPathSync} oncancel={() => (pathSyncAsk = null)} />
+<PathSyncDialog ask={pathSync.ask} onanswer={pathSync.answer} oncancel={pathSync.cancel} />
 
 <!-- Tab close confirmation -->
 <ConfirmDialog
@@ -5196,23 +3547,20 @@
 
 <!-- Save / Don't save / Cancel when closing an edited file -->
 <UnsavedCloseDialog
-  open={!!closeEditorConfirm}
-  name={closeEditorConfirm?.doc.name ?? ""}
-  canSave={!closeEditorConfirm?.doc.readOnly}
-  onsave={() => void saveAndCloseEditor()}
-  ondiscard={() => {
-    if (closeEditorConfirm) closeEditorStore(closeEditorConfirm.sid, closeEditorConfirm.doc.id);
-    closeEditorConfirm = null;
-  }}
-  oncancel={() => (closeEditorConfirm = null)}
+  open={!!editors.closeAsk}
+  name={editors.closeAsk?.doc.name ?? ""}
+  canSave={!editors.closeAsk?.doc.readOnly}
+  onsave={() => void editors.saveAndClose()}
+  ondiscard={() => editors.discardAndClose()}
+  oncancel={() => editors.cancelClose()}
 />
 
 <!-- Sudo prompt: reopen (or re-save) a permission-denied file as root -->
-<Modal open={!!sudoPrompt} title={sudoPromptTitle} onclose={() => (sudoPrompt = null)}>
+<Modal open={!!editors.sudo} title={sudoPromptTitle} onclose={() => editors.cancelSudo()}>
   <form
     onsubmit={(e) => {
       e.preventDefault();
-      confirmSudo();
+      void editors.confirmSudo();
     }}
   >
     <p class="mb-2 break-all text-xs text-muted">{sudoPromptPath}</p>
@@ -5220,13 +3568,13 @@
       testid="sudo-password"
       autofocus
       placeholder={t("editor.sudoPassword")}
-      bind:value={sudoPasswordInput}
+      bind:value={editors.sudoPassword}
     />
     <div class="mt-4 flex justify-end gap-2">
       <button
         type="button"
         class="rounded px-3 py-1 text-sm text-muted hover:text-text"
-        onclick={() => (sudoPrompt = null)}>{t("common.cancel")}</button
+        onclick={() => editors.cancelSudo()}>{t("common.cancel")}</button
       >
       <button
         type="submit"
@@ -5239,65 +3587,65 @@
 
 <!-- Pre-save diff: server version ⇄ what we'll write (settings-gated) -->
 <DiffModal
-  open={!!diffSave}
-  title={diffSave ? t("editor.diffSaveTitle", { name: diffSave.doc.name }) : ""}
-  original={diffSave?.doc.baseContent ?? ""}
-  modified={diffSave?.doc.content ?? ""}
+  open={!!editors.diffSave}
+  title={editors.diffSave ? t("editor.diffSaveTitle", { name: editors.diffSave.doc.name }) : ""}
+  original={editors.diffSave?.doc.baseContent ?? ""}
+  modified={editors.diffSave?.doc.content ?? ""}
   originalLabel={t("editor.serverVersion")}
   modifiedLabel={t("editor.yourVersion")}
-  onclose={() => (diffSave = null)}
+  onclose={() => editors.cancelDiffSave()}
 >
   <button
     class="rounded px-3 py-1 text-sm text-muted hover:text-text"
-    onclick={() => (diffSave = null)}>{t("common.cancel")}</button
+    onclick={() => editors.cancelDiffSave()}>{t("common.cancel")}</button
   >
   <button
     class="rounded bg-green-600 px-3 py-1 text-sm font-medium text-white hover:bg-green-500"
-    onclick={confirmDiffSave}>{t("editor.save")}</button
+    onclick={() => editors.confirmDiffSave()}>{t("editor.save")}</button
   >
 </DiffModal>
 
 <!-- Conflict: the file changed on the server since it was opened -->
 <DiffModal
-  open={!!conflict}
-  title={conflict ? t("editor.conflictTitle", { name: conflict.doc.name }) : ""}
-  original={conflict?.serverText ?? ""}
-  modified={conflict?.doc.content ?? ""}
+  open={!!editors.conflict}
+  title={editors.conflict ? t("editor.conflictTitle", { name: editors.conflict.doc.name }) : ""}
+  original={editors.conflict?.serverText ?? ""}
+  modified={editors.conflict?.doc.content ?? ""}
   originalLabel={t("editor.serverNow")}
   modifiedLabel={t("editor.yourVersion")}
-  onclose={() => (conflict = null)}
+  onclose={() => editors.cancelConflict()}
 >
   <button
     class="rounded px-3 py-1 text-sm text-muted hover:text-text"
-    onclick={() => (conflict = null)}>{t("common.cancel")}</button
+    onclick={() => editors.cancelConflict()}>{t("common.cancel")}</button
   >
   <button
     class="rounded bg-edge px-3 py-1 text-sm hover:bg-accent hover:text-panel-alt"
-    onclick={reopenConflict}>{t("editor.reopen")}</button
+    onclick={() => editors.reopenConflict()}>{t("editor.reopen")}</button
   >
   <button
     class="rounded bg-danger px-3 py-1 text-sm text-panel-alt hover:opacity-90"
-    onclick={overwriteConflict}>{t("editor.overwrite")}</button
+    onclick={() => editors.overwriteConflict()}>{t("editor.overwrite")}</button
   >
 </DiffModal>
 
 <!-- Name/describe (or discard) a recording right after stopping it -->
 <RecordingSaveDialog
-  open={saveRec !== null}
+  open={recFlow.saveRec !== null}
   heading={t("recordings.saveTitle")}
-  defaultTitle={saveRec?.defaultTitle ?? ""}
-  onsave={saveRecording}
-  ondelete={discardRecording}
-  onclose={() => (saveRec = null)}
+  defaultTitle={recFlow.saveRec?.defaultTitle ?? ""}
+  onsave={recFlow.saveRecording}
+  ondelete={recFlow.discardRecording}
+  onclose={recFlow.closeSavePrompt}
 />
 
 <!-- Name (or discard) a just-stopped broadcast bundle. -->
 <RecordingSaveDialog
-  open={saveBatch !== null}
+  open={recFlow.saveBatch !== null}
   heading={t("recordings.saveBroadcastTitle")}
-  onsave={(title) => saveBatchName(title)}
-  ondelete={discardBatch}
-  onclose={() => (saveBatch = null)}
+  onsave={(title) => recFlow.saveBatchName(title)}
+  ondelete={recFlow.discardBatch}
+  onclose={recFlow.closeBatchPrompt}
 />
 
 <!-- Password / passphrase prompt (owns its own state; Phase 18.4.4) -->

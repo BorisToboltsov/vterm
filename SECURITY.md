@@ -42,12 +42,12 @@ vterm — локальный SSH/SFTP-клиент. Он **офлайн по у�
 
 | Проверка | Инструмент | Что ищет |
 |----------|-----------|----------|
-| Rust advisories | `cargo audit` | RUSTSEC (известные уязвимости в зависимостях) |
-| Rust политика | `cargo deny check` | advisories + лицензии + дубликаты + источники |
+| Rust advisories и политика | `cargo deny check` | RUSTSEC (уязвимости, unmaintained, yanked) + лицензии + дубликаты + источники |
 | JS advisories | `pnpm audit` | уязвимости npm-зависимостей |
 
-Принятые advisory расписаны с причинами в [deny.toml](src-tauri/deny.toml) и зеркалятся
-в `.cargo/audit.toml`. Для npm аналогичного списка пока нет — база чистая; появится
+Принятые advisory расписаны с причинами в [deny.toml](src-tauri/deny.toml) — это единственный
+их список: `cargo audit` читал ту же базу RustSec, но держал второй список исключений и не умел
+падать на устаревшем, поэтому с 1.25.5 его нет. Для npm аналогичного списка пока нет — база чистая; появится
 advisory без апстрим-фикса, исключение заводится через `auditConfig.ignoreCves` в
 [pnpm-workspace.yaml](pnpm-workspace.yaml), с причиной рядом. Снимать блокировку молча
 нельзя.
@@ -57,12 +57,16 @@ advisory без апстрим-фикса, исключение заводитс
 
 | Проверка | Инструмент | Что ищет |
 |----------|-----------|----------|
-| SAST — весь код | **CodeQL** (`javascript-typescript`, `rust`) | поток данных, инъекции, небезопасные API |
+| SAST — весь код | **CodeQL** (`javascript-typescript`; `rust` — на `main` и ежемесячно, базу строит полная сборка) | поток данных, инъекции, небезопасные API |
 | SAST — сами workflow | **CodeQL** (`actions`) + **zizmor** | подстановка `${{ }}` в `run:`, незапиненные экшены, лишние права токена |
-| SAST (JS/TS) | **Semgrep** (`p/typescript`, `p/javascript`, `p/secrets`) | анти-паттерны, секреты |
-| Бандл/ФС | **Trivy** (`fs`: vuln/secret/misconfig) | уязвимости, секреты, misconfig |
+| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust`) | анти-паттерны фронтенда и бэкенда |
+| ФС | **Trivy** (`fs`: secret/misconfig) | секреты, misconfig |
 
-**Фаззинг недоверенного входа** — [nightly.yml](.github/workflows/nightly.yml). У vterm
+У каждой заботы один сканер: уязвимости зависимостей — только `cargo deny` и `pnpm audit`
+(Trivy `vuln` читал те же lockfile без их исключений), секреты — только Trivy (`p/secrets`
+Semgrep давал вторую копию находки). Держит гейт `ci.guard.test.ts`.
+
+**Фаззинг недоверенного входа** — [deep.yml](.github/workflows/deep.yml). У vterm
 нет ни одного HTTP-порта, поэтому DAST здесь нечего сканировать; динамическая поверхность
 — это парсеры, которым подают чужие байты (markdown из ответа LLM, `.md` по SFTP, вывод
 скомпрометированного хоста, кодировки файлов). Проверяются свойствами на произвольном
@@ -84,7 +88,7 @@ advisory без апстрим-фикса, исключение заводитс
     версию из комментария, — и это законно ловит zizmor (`ref-version-mismatch`). Правильный
     SHA — `git ls-remote --tags <repo> | awk '$2==\"refs/tags/<ver>^{}\"'`.
   - **Комментарий версии обязан совпадать с тем, куда тег указывает СЕЙЧАС.** У плавающего
-    тега (`dtolnay/rust-toolchain@v1`) SHA из старого PR Dependabot остаётся на линии тега, но
+    тега (так было с `dtolnay/rust-toolchain@v1`, пока Rust ставил он) SHA из старого PR Dependabot остаётся на линии тега, но
     `# v1` рядом с ним уже ложь — zizmor (`ref-version-mismatch`) это ловит. Перепиннивая, бери
     текущий SHA тега, а не SHA из PR.
 - **Свои workflow и экшены — через `$/…`, а не `./…`** (синтаксис self-repository, GitHub с
@@ -99,7 +103,13 @@ advisory без апстрим-фикса, исключение заводитс
 - **В публикующем `release.yml` нет кэша**: кэш в workflow, который публикует, — вектор
   отравления (недоверенный PR пишет в кэш-ключ, релизная сборка его восстанавливает; zizmor
   `cache-poisoning`). Релиз редок и собирается из чистого состояния — те байты мы подписываем
-  provenance. Кэш остаётся в `ci.yml`/`nightly.yml`, где публикации нет.
+  provenance. Кэш остаётся в `ci.yml`/`deep.yml`, где публикации нет; общие экшены
+  `.github/actions/` кэшируют только по просьбе джобы, и `release.yml` не просит
+  (`ci.guard.test.ts`).
+- **Общие шаги — один экшен на всех, версия Rust — одна.** pnpm, Node, Rust, пакеты Tauri и кэш
+  ставят только `setup-web`/`setup-rust` в `.github/actions/`: пин, поднятый в одной копии шага
+  и забытый в другой, больше негде оставить. Rust — версия из `rust-toolchain.toml`, а не
+  «`stable` сегодня»: сборка релиза воспроизводима тем же компилятором, что прошёл гейты.
 - **Имя тега уезжает в шаг через `env`**, а не подстановкой `${{ github.ref_name }}` прямо
   в `run:`: подстановка происходит **до** запуска шелла, то есть значение становится кодом.
   Создать тег может только тот, у кого есть push, но класс уязвимости от этого не меняется.
@@ -134,12 +144,14 @@ exe, а имя каталога версии разбирается строго
 Конфигурации без DOM-зависимостей дополнительно защищены **юнит-гейтами** (падают
 в обычном `pnpm test`):
 
-- `src/lib/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
-- `src/lib/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
+- `src/lib/ai/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
+- `src/lib/repo/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
   минимально необходимые, opener ограничен `https://`;
-- `src/lib/mdlink.guard.test.ts` — каждый показ markdown защищён обеими половинами
-  ссылочной защиты (см. «Недоверенный markdown» ниже);
-- `src/lib/releaseassets.guard.test.ts` — цепочка поставки CI: пиннинг экшенов по SHA,
+- правило линтера `vterm/md-links` ([lint/vterm.js](lint/vterm.js)) — каждый показ markdown
+  защищён обеими половинами ссылочной защиты (см. «Недоверенный markdown» ниже);
+- правило линтера `vterm/no-network` — из WebView нет `fetch`/`XMLHttpRequest`/`WebSocket`/
+  `EventSource`/`sendBeacon`, `vterm/invoke-in-api` — бэкенд зовут только обёртки `src/lib/api`;
+- `src/lib/repo/releaseassets.guard.test.ts` — цепочка поставки CI: пиннинг экшенов по SHA,
   релиз под гейтом, материал целостности в ассетах, opt-in VirusTotal.
 
 ### Триаж внешнего SCA/SAST-скана (2026-08)
@@ -178,7 +190,7 @@ exe, а имя каталога версии разбирается строго
   а путь собран из **литеральных** констант; ни путь, ни содержимое не управляются извне.
   CWE-117 (log injection, ×2) — это `console.error`/`console.log` CLI-утилиты, а не запись в
   лог-файл; сообщение собрано из уже-валидированного semver.
-- `src/lib/util.ts` — CWE-400 на `setTimeout` в стандартном trailing-debounce; интервал
+- `src/lib/ui/util.ts` — CWE-400 на `setTimeout` в стандартном trailing-debounce; интервал
   задаётся внутренними вызовами (debounce ResizeObserver/resize), не входом извне.
 
 ## Hardening (что сделано)
@@ -186,12 +198,28 @@ exe, а имя каталога версии разбирается строго
 - **CSP.** В `tauri.conf.json` задан строгий `csp` (и `devCsp` для Vite HMR):
   `default-src 'self'`, `connect-src 'self' ipc:` (никаких удалённых соединений),
   `object-src 'none'`. Удалённые источники скриптов/стилей/картинок запрещены.
-  `'unsafe-inline'` для скриптов оставлен только под inline-бутстрап SvelteKit;
-  все удалённые origin'ы заблокированы.
-- **Capabilities (наименьшие привилегии).** `capabilities/default.json` выдаёт
-  только `core:default`, `dialog:allow-open`, `dialog:allow-save` и
-  `opener:allow-open-url` **со scope `https://*`** (без открытия путей/`reveal`,
-  без message/ask/confirm-диалогов, без `fs`). Нет `dangerous*`-флагов.
+  `script-src 'self'` без `'unsafe-inline'` (v1.25.1): inline-бутстрап SvelteKit и скрипт
+  первого кадра темы проходят по sha256, которые сборка Tauri вписывает в `script-src` сама;
+  `'unsafe-inline'` при хэше браузер всё равно игнорировал. В `img-src` только `'self' data:`.
+- **Capabilities (наименьшие привилегии), поимённо.** `capabilities/default.json` не выдаёт ни
+  одного набора `*:default` — с v1.25.1 и `core:default`, который открывал странице меню, трей,
+  пути, картинки и все геттеры окна. Выдано: события (`listen`/`unlisten`/`emit`), имя и
+  версии приложения (справка), кнопки окна безрамочного заголовка, `dialog:allow-open`/
+  `allow-save` и `opener:allow-open-url` **со scope `https://*`** (без открытия путей/`reveal`,
+  без message/ask/confirm-диалогов, без `fs`). Нет `dangerous*`-флагов. Список держит гейт.
+- **WebView — граница доверия** (v1.25.1, [ADR 0036](docs/adr/0036-webview-trust-boundary.md)).
+  Страница называет argv, бэкенд его проверяет: у каждого драйвера своя политика в Rust на
+  обоих транспортах — git только подкоманды панели и ни одной опции, запускающей программу или
+  пишущей файл (`--upload-pack`, `--receive-pack`, `--exec`, `--output`, `--config-env` и их
+  сокращения); docker — программа `docker` и команды панели (без `run`/`exec`/`cp`/плагинов,
+  `compose` без `-f`); kubectl — `kubectl`/обёртки и глаголы панели (без `exec`/`run`/плагинов,
+  `--kubeconfig`, `--server`, учётных данных). `ai_exec` сам отказывает прод- и
+  `noAi`-серверам по текущему профилю. **Остаточный риск — по замыслу продукта:** страница
+  печатает в терминал пользователя и пишет файлы через SFTP и локальную панель, поэтому
+  скомпрометированный WebView может набрать команду в открытой вкладке или переписать
+  `~/.bashrc`. Граница закрывает тихое исполнение программы мимо терминала. На SSH
+  `probe_run` передаёт `sh -c '<конвейер>'` (TLS-инспектор) — это сервер пользователя, как и
+  его терминал.
 - **Несколько окон** (v1.3, ADR 0017). Вкладку можно вынести в отдельное окно ОС — второй
   WebView. Новой поверхности снаружи это не добавляет, но внутри появляется обмен между
   окнами, и он устроен так:
@@ -429,23 +457,36 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
 
 ## Принятые исключения (advisories)
 
-Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml) и
-зеркалятся в `.cargo/audit.toml`. Их нужно периодически пересматривать.
+Исключения задокументированы в [src-tauri/deny.toml](src-tauri/deny.toml). Исключение,
+которому больше нечего исключать (advisory закрыт обновлением или отозван), и разрешённая
+лицензия, которой никто не пользуется, роняют `cargo deny`
+(`unused-ignored-advisory`/`unused-allowed-license`) — гейт `tauri-security.guard.test.ts`. Lockfile освежается `cargo update`
+перед выпуском: Dependabot двигает только прямые зависимости, а исправления транзитивных
+приходят именно так.
 
 - **RUSTSEC-2023-0071 (`rsa`, Marvin timing side-channel).** Фикса вверх по
   течению **нет**. Доходит до нас только через поддержку RSA в `russh`.
   **Снижение риска:** используйте ключи **ed25519/ecdsa** (vterm их поддерживает) —
   тогда RSA-путь не задействуется. Снять исключение, когда выйдет патч `rsa`.
-- **gtk-rs / glib (RUSTSEC-2024-0411…0420, 0429).** Unmaintained/unsound; это
-  Linux-стек WebKitGTK самого Tauri, не используется в коде vterm и не обновляется
-  нами.
-- **proc-macro-error, unic-\* (RUSTSEC-2024-0370, 2025-0075/0080/0081/0098/0100).**
-  Транзитивные unmaintained build/utility-крейты.
+- **proc-macro-error (RUSTSEC-2024-0370)** — unmaintained, приходит через `glib-macros`
+  gtk-rs 0.18: Linux-стек WebKitGTK самого Tauri, нами не обновляется. **glib
+  (RUSTSEC-2024-0429)** — `unsound` из того же стека: оба инструмента показывают его
+  предупреждением и не падают, поэтому в исключения он не внесён; `VariantStrIter` мы не
+  вызываем. gtk-rs-advisory RUSTSEC-2024-0411…0420 RustSec отозвал 2026-08-14, `unic-*`
+  (RUSTSEC-2025-0075/0080/0081/0098/0100) ушли из дерева с Tauri 2.12 (`urlpattern` 0.6) —
+  оба набора исключений сняты в v1.25.0.
 - **zvariant, zbus_names, zvariant_derive (RUSTSEC-2026-0370…0372).** Unmaintained, потому
   что влиты в `zbus` 6.0; это смена статуса, а не уязвимость, исправленных версий не будет.
   Linux-only: `zbus` 5 под `keyring` (Secret Service) и плагинами Tauri `opener` и
-  `single-instance`. Снять исключение, когда они перейдут на `zbus` 6 — стабильной такой
-  версии пока нет.
+  `single-instance`. Снять исключение, когда они перейдут на `zbus` 6: сам `zbus` 6 уже
+  стабилен, но `secret-service` 5.2 и плагины 2.x на 2026-10-28 ещё на `zbus` 5.
+- **npm, уровень low (не блокируют CI: `pnpm audit --audit-level moderate`).** `deepmerge`
+  ≤ 4.3.1 (GHSA-gcqx-w48m-w2h4, загрязнение прототипа в `mergeObject()`) — сборочная
+  зависимость `@sveltejs/vite-plugin-svelte`, в бандл не попадает; исправленной версии нет
+  (последняя — 4.3.1), override поставить не на что. Два advisory `@sveltejs/kit` < 3
+  (GHSA-pfhg-q3qv-9q6r — редирект через enhanced form, GHSA-27mw-82g8-phjj — XSS через
+  `cache-control` пререндеренной страницы) закрыты переходом на SvelteKit 3 в v1.25.7; с ним
+  снят и override `cookie` `^0.7` — Kit 3 сам зависит от исправленного `cookie` 2.
 - **`zip` (RUSTSEC-2026-0367…0369)** — не исключение: закрыты обновлением до `zip` 9. vterm
   `extract()` не вызывал — записи бэкапа читаются по одной, имя проверяет
   `safe_recording_name`.
@@ -459,10 +500,6 @@ prod/noAi-гейт + согласие (consent) + маскирование (reda
   E2E-набор — и выходит с её кодом: он ничего не обслуживает, и проверять у него нечего.
   Исключение — там же, с `paths` на этот файл. Работает он от обычного пользователя, не от
   root: исключения для DS-0002 у него нет.
-
-## Не покрыто этой фазой
-
-CodeQL (опционально) — можно добавить в GitHub-зеркало; локально не запускается.
 
 ## Канал обновлений
 

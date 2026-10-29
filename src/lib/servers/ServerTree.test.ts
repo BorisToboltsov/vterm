@@ -1,0 +1,465 @@
+import { fireEvent, render, screen } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import ServerTree from "./ServerTree.svelte";
+import { DRAGGING_CLASS } from "../actions/drag";
+import type { ServerProfile } from "../types";
+
+function srv(p: Partial<ServerProfile> & { id: string; alias: string }): ServerProfile {
+  return {
+    host: "h",
+    port: 22,
+    username: "root",
+    authMethod: "password",
+    keyPath: null,
+    hasSavedPassword: false,
+    group: null,
+    tags: [],
+    prod: null,
+    autoRecord: false,
+    noAi: false,
+    chatPromptId: null,
+    execMode: null,
+    proxy: null,
+    notes: "",
+    icon: "",
+    iconColor: "",
+    ...p,
+  };
+}
+
+const noop = () => {};
+const baseProps = () => ({
+  servers: [] as ServerProfile[],
+  folders: [] as string[],
+  selectedId: null as string | null,
+  selectedFolder: null as string | null,
+  connections: {} as Record<string, string[]>,
+  onSelect: noop,
+  onSelectFolder: noop,
+  onConnect: noop,
+  onAddServer: noop,
+  onEditServer: noop,
+  onDuplicateServer: noop,
+  onDeleteServer: noop,
+  onNewFolder: noop,
+  onRenameFolder: noop,
+  onDeleteFolder: noop,
+  onMoveServer: noop,
+  onMoveFolder: noop,
+});
+
+beforeEach(() => {
+  localStorage.clear();
+});
+
+describe("ServerTree — row actions on a narrow sidebar", () => {
+  const props = () => ({ ...baseProps(), servers: [srv({ id: "a", alias: "prod-oel-db-master-01" })] });
+
+  it("collapses to one «⋯» button below the container breakpoint and shows the three icons above it", () => {
+    render(ServerTree, { props: props() });
+    const compact = screen.getByTestId("server-actions-compact");
+    const full = screen.getByTestId("server-actions-full");
+    // The row is the query container; exactly one of the two blocks is laid out.
+    expect(compact.closest('[data-testid="server-row"]')?.className).toContain("@container");
+    expect(compact.className).toMatch(/(^|\s)flex(\s|$)/);
+    expect(compact.className).toContain("@min-[12rem]:hidden");
+    expect(full.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(full.className).toContain("@min-[12rem]:flex");
+    // Both stay `invisible` until hover, so the row never jumps (reserved, not removed).
+    for (const el of [compact, full]) expect(el.className).toContain("group-hover:visible");
+  });
+
+  it("draws the «⋯» heavier than the default line icons, so it reads at a glance", () => {
+    render(ServerTree, { props: props() });
+    const svg = screen.getByTestId("server-actions-compact").querySelector("svg");
+    expect(svg?.getAttribute("stroke-width")).toBe("3");
+    expect(svg?.getAttribute("width")).toBe("16");
+  });
+
+  it("reserves room for the three icons on the alias line when the row is wide", () => {
+    render(ServerTree, { props: props() });
+    const alias = screen.getByText("prod-oel-db-master-01");
+    expect(alias.parentElement?.className).toContain("@min-[12rem]:pr-10");
+  });
+
+  it("the «⋯» button opens the server menu (edit / duplicate / delete) without selecting-and-connecting", async () => {
+    const onEditServer = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, { props: { ...props(), onEditServer, onConnect } });
+    await fireEvent.click(screen.getByRole("button", { name: "Server actions" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: /Edit server/ }));
+    expect(onEditServer).toHaveBeenCalledWith(expect.objectContaining({ id: "a" }));
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerTree", () => {
+  it("renders an onboarding empty state with an add-server CTA", async () => {
+    const onAddServer = vi.fn();
+    render(ServerTree, { props: { ...baseProps(), onAddServer } });
+    expect(screen.getByText("No servers yet")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("empty-add-server"));
+    expect(onAddServer).toHaveBeenCalledOnce();
+  });
+
+  it("renders folders and servers and reports selection", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        onSelect,
+      },
+    });
+    expect(screen.getByText("Prod")).toBeInTheDocument();
+    const row = screen.getByTestId("server-row");
+    expect(row).toHaveAttribute("data-server-alias", "Web");
+    await userEvent.click(row);
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("double-click on a server connects", async () => {
+    const onConnect = vi.fn();
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], onConnect },
+    });
+    await userEvent.dblClick(screen.getByTestId("server-row"));
+    expect(onConnect).toHaveBeenCalled();
+  });
+
+  it("collapsing a folder hides its servers", async () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+      },
+    });
+    expect(screen.getByTestId("server-row")).toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText("Toggle folder"));
+    expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("filters by search query", async () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Alpha" }), srv({ id: "2", alias: "Beta" })],
+      },
+    });
+    await userEvent.type(screen.getByTestId("server-search"), "alpha");
+    const rows = screen.getAllByTestId("server-row");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toHaveAttribute("data-server-alias", "Alpha");
+  });
+
+  it("is content-only: the dock owns the header, the width and the collapse", () => {
+    // v1.1: the tree is a tool panel that can sit in any dock, so it draws no
+    // chrome of its own — its tab, collapse button and width are Dock.svelte's.
+    render(ServerTree, { props: baseProps() });
+    expect(screen.queryByText("Saved servers")).toBeNull();
+    const root = screen.getByTestId("server-tree");
+    expect(root.tagName).toBe("DIV");
+    expect(root.getAttribute("style")).toBeNull();
+    expect(root).toHaveClass("h-full");
+  });
+
+  it("the new-folder button requests a root folder", async () => {
+    const onNewFolder = vi.fn();
+    render(ServerTree, { props: { ...baseProps(), onNewFolder } });
+    await userEvent.click(screen.getByLabelText("New folder"));
+    expect(onNewFolder).toHaveBeenCalledWith("");
+  });
+
+  it("the toolbar add-server button (next to new-folder) requests a new server", async () => {
+    const onAddServer = vi.fn();
+    render(ServerTree, { props: { ...baseProps(), onAddServer } });
+    await userEvent.click(screen.getByTestId("add-server"));
+    expect(onAddServer).toHaveBeenCalledOnce();
+  });
+
+  it("shows a connection dot per open SSH tab of a server", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" }), srv({ id: "2", alias: "Db" })],
+        connections: { "1": ["Connected", "Connecting…"] },
+      },
+    });
+    const dots = screen.getByTestId("conn-dots");
+    // Two tabs → two dots (green + yellow); the connecting one pulses.
+    const circles = dots.querySelectorAll("span.rounded-full");
+    expect(circles).toHaveLength(2);
+    expect(dots.querySelectorAll("span.pulse-dot")).toHaveLength(1);
+    expect(dots.textContent).not.toContain("+"); // no overflow badge
+  });
+
+  it("caps the dots at 3 and shows a +N overflow badge", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        connections: { "1": ["Connected", "Connected", "Connected", "Connected", "Connected"] },
+      },
+    });
+    const dots = screen.getByTestId("conn-dots");
+    expect(dots.querySelectorAll("span.rounded-full")).toHaveLength(3);
+    expect(dots.textContent).toContain("+2");
+  });
+
+  it("renders no dots for a server with no open tabs", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], connections: {} },
+    });
+    expect(screen.queryByTestId("conn-dots")).toBeNull();
+  });
+
+  it("clicking a folder row reports it as the selected folder", async () => {
+    const onSelectFolder = vi.fn();
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod"], onSelectFolder },
+    });
+    await userEvent.click(screen.getByTestId("folder-row"));
+    expect(onSelectFolder).toHaveBeenCalledWith("Prod");
+  });
+
+  it("highlights the selected folder (aria-selected)", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod", "Dev"], selectedFolder: "Prod" },
+    });
+    const rows = screen.getAllByTestId("folder-row");
+    const prod = rows.find((r) => r.getAttribute("data-folder-path") === "Prod")!;
+    const dev = rows.find((r) => r.getAttribute("data-folder-path") === "Dev")!;
+    expect(prod).toHaveAttribute("aria-selected", "true");
+    expect(prod.className).toContain("border-accent");
+    expect(dev).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("the folder toggle does not select the folder (stops propagation)", async () => {
+    const onSelectFolder = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        onSelectFolder,
+      },
+    });
+    await userEvent.click(screen.getByLabelText("Toggle folder"));
+    expect(onSelectFolder).not.toHaveBeenCalled();
+    // …and it still collapsed the folder.
+    expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("the row duplicate button requests a copy of that server (without selecting it via bubbling)", async () => {
+    const onDuplicateServer = vi.fn();
+    const onSelect = vi.fn();
+    const server = srv({ id: "1", alias: "Web" });
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [server], onDuplicateServer, onSelect },
+    });
+    await userEvent.click(screen.getByLabelText("Duplicate server"));
+    expect(onDuplicateServer).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("nothing is selected from the press on a row until its release", async () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })] },
+    });
+    const list = screen.getByRole("tree");
+    const held = () => document.documentElement.classList.contains(DRAGGING_CLASS);
+    /** Whether a selection starting now would be refused. */
+    const refused = () => {
+      const e = new Event("selectstart", { bubbles: true, cancelable: true });
+      list.dispatchEvent(e);
+      return e.defaultPrevented;
+    };
+    expect(held()).toBe(false);
+    expect(refused()).toBe(false);
+
+    // Press on a server row → the drag that may follow selects nothing, in the
+    // tree or anywhere the pointer goes (the shared hold, not a class on the list).
+    await fireEvent.pointerDown(screen.getByTestId("server-row"));
+    expect(held()).toBe(true);
+    expect(refused()).toBe(true);
+
+    // Releasing restores normal selection.
+    await fireEvent.pointerUp(list);
+    expect(held()).toBe(false);
+    expect(refused()).toBe(false);
+  });
+
+  it("folder action buttons do not also select the folder", async () => {
+    const onSelectFolder = vi.fn();
+    const onRenameFolder = vi.fn();
+    render(ServerTree, {
+      props: { ...baseProps(), folders: ["Prod"], onSelectFolder, onRenameFolder },
+    });
+    await userEvent.click(screen.getByLabelText("Rename folder"));
+    expect(onRenameFolder).toHaveBeenCalledWith("Prod");
+    expect(onSelectFolder).not.toHaveBeenCalled();
+  });
+
+  // ── Keyboard navigation (arrows move a frame-cursor; Enter/Delete act) ──────
+  it("ArrowDown from no selection moves the frame to the first row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("ArrowDown moves the frame to the next row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        selectedId: "1",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("2");
+  });
+
+  it("ArrowUp moves the frame to the previous row", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "A" }), srv({ id: "2", alias: "B" })],
+        selectedId: "2",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowUp" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("ArrowDown steps from a folder row into its first server", async () => {
+    const onSelect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+        onSelect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "ArrowDown" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+  });
+
+  it("Enter on a server row connects it", async () => {
+    const onSelect = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onSelect,
+        onConnect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter" });
+    expect(onSelect).toHaveBeenCalledWith("1");
+    expect(onConnect).toHaveBeenCalled();
+  });
+
+  it("Enter on a folder row toggles its collapse", async () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web", group: "Prod" })],
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+      },
+    });
+    expect(screen.getByTestId("server-row")).toBeInTheDocument();
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Enter" });
+    expect(screen.queryByTestId("server-row")).toBeNull();
+  });
+
+  it("Delete on a server row requests its deletion", async () => {
+    const onDeleteServer = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onDeleteServer,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Delete" });
+    expect(onDeleteServer).toHaveBeenCalledWith(expect.objectContaining({ id: "1" }));
+  });
+
+  it("Delete on a folder row requests its deletion", async () => {
+    const onDeleteFolder = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        folders: ["Prod"],
+        selectedFolder: "Prod",
+        onDeleteFolder,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: "Delete" });
+    expect(onDeleteFolder).toHaveBeenCalledWith("Prod");
+  });
+
+  it("Space does not change the selection (no space-select)", async () => {
+    const onSelect = vi.fn();
+    const onConnect = vi.fn();
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [srv({ id: "1", alias: "Web" })],
+        selectedId: "1",
+        onSelect,
+        onConnect,
+      },
+    });
+    await fireEvent.keyDown(screen.getByRole("tree"), { key: " " });
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onConnect).not.toHaveBeenCalled();
+  });
+
+  it("draws an accent frame around the selected row", () => {
+    render(ServerTree, {
+      props: { ...baseProps(), servers: [srv({ id: "1", alias: "Web" })], selectedId: "1" },
+    });
+    expect(screen.getByTestId("server-row").className).toContain("outline-accent/70");
+  });
+});
+
+describe("ServerTree — production badge", () => {
+  it("shows a red prod badge for a flagged server, none for others", () => {
+    render(ServerTree, {
+      props: {
+        ...baseProps(),
+        servers: [
+          srv({ id: "p", alias: "db", prod: true, tags: ["eu"] }),
+          srv({ id: "n", alias: "web", prod: false, tags: ["prod"] }),
+        ],
+      },
+    });
+    const badges = screen.getAllByTestId("server-prod-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].className).toContain("text-bad");
+    // An explicitly non-prod server keeps "prod" as a plain, muted tag.
+    const plain = screen.getAllByText("prod").find((el) => el !== badges[0]);
+    expect(plain?.className).toContain("text-muted");
+  });
+});

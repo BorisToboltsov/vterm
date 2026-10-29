@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TransferJob } from "../api";
-import type { TransferRow } from "../transfer";
+import type { TransferRow } from "../files/transfer";
 import { dirRevision, resetDockState } from "./dockstate.svelte";
 import {
   aggregateTransfers,

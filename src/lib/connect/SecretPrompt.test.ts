@@ -1,0 +1,158 @@
+import { render, screen } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tick } from "svelte";
+import SecretPrompt from "./SecretPrompt.svelte";
+import type { ServerProfile } from "../types";
+
+// The prompt hands the typed secret straight to the tab store; stub it so we can
+// assert what it was told without opening a real session.
+const openTab = vi.fn();
+const connectTabWith = vi.fn();
+vi.mock("../stores/tabs.svelte", () => ({
+  openTab: (...args: unknown[]) => openTab(...args),
+  connectTabWith: (...args: unknown[]) => connectTabWith(...args),
+}));
+
+const server: ServerProfile = {
+  id: "s1",
+  alias: "Prod",
+  host: "10.0.0.1",
+  port: 22,
+  username: "root",
+  authMethod: "password",
+  keyPath: null,
+  hasSavedPassword: false,
+  group: null,
+  tags: [],
+  prod: null,
+  autoRecord: false,
+  noAi: false,
+  chatPromptId: null,
+  execMode: null,
+  proxy: null,
+  notes: "",
+  icon: "",
+  iconColor: "",
+};
+
+function renderPrompt() {
+  const result = render(SecretPrompt);
+  const comp = result.component as unknown as {
+    prompt: (
+      s: ServerProfile,
+      label: string,
+      error?: string,
+      onopened?: (sessionId: string) => void,
+      forTab?: string,
+    ) => void;
+  };
+  return { ...result, comp };
+}
+
+const rememberBox = () => screen.getByRole("checkbox") as HTMLInputElement;
+
+describe("SecretPrompt", () => {
+  beforeEach(() => {
+    openTab.mockReset();
+    connectTabWith.mockReset();
+  });
+
+  it("offers to save the secret by default", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password");
+    await tick();
+    expect(rememberBox().checked).toBe(true);
+  });
+
+  it("keeps the default when re-prompting after a rejected secret", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password", "Authentication rejected");
+    await tick();
+    expect(screen.getByText("Authentication rejected")).toBeInTheDocument();
+    expect(rememberBox().checked).toBe(true);
+  });
+
+  it("passes the typed secret and the checkbox state to the tab", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true);
+  });
+
+  it("honours the box being unchecked — the default is an offer, not a decision", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.click(rememberBox());
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", false);
+  });
+
+  it("tells the caller which tab it opened — and nothing if the prompt is cancelled", async () => {
+    // ⌘D on a server that asks for a password: the new tab goes into a new pane
+    // only once it exists. A cancelled prompt must not leave the request armed
+    // for whatever connects next.
+    const { comp } = renderPrompt();
+    const placed = vi.fn();
+    openTab.mockReturnValue("sess-1");
+    comp.prompt(server, "Password", "", placed);
+    await tick();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(placed).not.toHaveBeenCalled();
+
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(placed).not.toHaveBeenCalled();
+
+    comp.prompt(server, "Password", "", placed);
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(placed).toHaveBeenCalledExactlyOnceWith("sess-1");
+  });
+
+  it("connects the tab that waits for the secret, in place — and opens no other", async () => {
+    // A tab restored from the previous launch (ADR 0019) stands in its pane; a
+    // new tab opened for it would land wherever the focus is.
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Passphrase", "", undefined, "sess-waiting");
+    await tick();
+    await userEvent.click(rememberBox());
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(connectTabWith).toHaveBeenCalledExactlyOnceWith("sess-waiting", "hunter2", false);
+    expect(openTab).not.toHaveBeenCalled();
+  });
+
+  it("a cancelled prompt for a waiting tab leaves the next connect an ordinary one", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password", "", undefined, "sess-waiting");
+    await tick();
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.type(screen.getByTestId("secret-input"), "hunter2");
+    await userEvent.click(screen.getByTestId("secret-connect"));
+    expect(connectTabWith).not.toHaveBeenCalled();
+    expect(openTab).toHaveBeenCalledWith("s1", "Prod", "hunter2", true);
+  });
+
+  it("re-arms the default for the next server instead of remembering the last choice", async () => {
+    const { comp } = renderPrompt();
+    comp.prompt(server, "Password");
+    await tick();
+    await userEvent.click(rememberBox()); // opt out for this one server
+    expect(rememberBox().checked).toBe(false);
+
+    comp.prompt({ ...server, id: "s2", alias: "Staging" }, "Password");
+    await tick();
+    expect(rememberBox().checked).toBe(true);
+  });
+});

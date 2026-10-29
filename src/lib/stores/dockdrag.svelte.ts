@@ -27,8 +27,8 @@ import {
   sameTarget,
   type DropTarget,
   type PanelId,
-} from "../docklayout";
-import { MOTION_FAST, motion } from "../motion";
+} from "../layout/docklayout";
+import { MOTION_FAST, motion } from "../ui/motion";
 import { layout, movePanel } from "./layout.svelte";
 
 export const dockDrag = $state<{

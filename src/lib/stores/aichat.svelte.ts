@@ -11,14 +11,14 @@
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { aiChat, cancelAiChat, aiExec, writeToTerminal, annotateRecording } from "../api";
-import { buildChatRequest, type AiSettings, type AiExecMode, type AiUsage } from "../ai";
-import { withContext, type ContextTiers } from "../aicontext";
-import { settings } from "../settings.svelte";
-import { toTerminalInput, auditLabel } from "../aiexec";
-import { nextCommand, buildFeedback, isDangerousCommand } from "../aidialog";
+import { buildChatRequest, type AiSettings, type AiExecMode, type AiUsage } from "../ai/ai";
+import { withContext, type ContextTiers } from "../ai/aicontext";
+import { settings } from "../settings/settings.svelte";
+import { toTerminalInput, auditLabel } from "../ai/aiexec";
+import { nextCommand, buildFeedback, isDangerousCommand } from "../ai/aidialog";
 import { notifySuccess } from "./toasts.svelte";
-import { describeAiError } from "../aierror";
-import { chatBusy, type AskSource } from "../aiask";
+import { describeAiError } from "../ai/aierror";
+import { chatBusy, type AskSource } from "../ai/aiask";
 import { t } from "../i18n";
 
 /** Dialog-loop guards (17.8). Configurable defaults land in 17.8.5. */

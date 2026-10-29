@@ -301,13 +301,15 @@ mod tests {
     #[test]
     fn every_local_cli_spawn_hides_the_console_window() {
         // Guard (bug fixed v1.0.10): each module that spawns a console CLI locally
-        // (git/docker/kubectl, the access check's probe tools) must route EVERY
-        // spawn through `no_console_window`,
+        // (the drivers' common runner for git/docker/kubectl/probes since v1.25.1,
+        // the access check's probe tools) must route EVERY spawn through
+        // `no_console_window`,
         // or a console window flashes on Windows each time the driver panel polls.
         // Counted by source so a newly-added spawn can't silently reintroduce the
         // flash. localenv's own login-shell probe is excluded — it's `#[cfg(unix)]`
         // only, so it never runs (and never opens a window) on Windows.
         for (name, src) in [
+            ("exec.rs", include_str!("exec.rs")),
             ("git.rs", include_str!("git.rs")),
             ("container.rs", include_str!("container.rs")),
             ("kube.rs", include_str!("kube.rs")),
@@ -321,6 +323,13 @@ mod tests {
                  a console window will flash on Windows"
             );
         }
+        // The drivers spawn in one place (`exec::run_local`), and it is counted.
+        assert_eq!(
+            include_str!("exec.rs")
+                .matches("tokio::process::Command::new")
+                .count(),
+            1
+        );
         // Синхронные спавны (встроенный WebView2 до старта tokio) — тем же правилом.
         let src = include_str!("webview2.rs");
         let spawns = src.matches("Command::new(").count();

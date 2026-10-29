@@ -10,29 +10,10 @@
 // counterpart of the access check (ADR 0012): only the programs allowed below,
 // only to the address the user typed, never through a shell. The app itself
 // still opens no socket for it (the socket gate in netcheck.rs holds).
-
-use crate::git::shell_quote;
-use serde::Serialize;
-
-/// Captured result of one probe invocation (mirror of [`crate::git::GitOutput`]).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProbeOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
-
-/// Build the shell command run on the remote: every argv token is single-quoted
-/// (via [`shell_quote`]) so a hostname/URL/header can't break out into a second
-/// command. Pipeline tools (openssl/curl chains) pass their whole pipeline as a
-/// single `sh -c '<pipeline>'` token, which the remote shell then interprets.
-pub fn probe_command(args: &[String]) -> String {
-    args.iter()
-        .map(|a| shell_quote(a))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
+//
+// Execution and the result shape are the drivers' common ones (`exec`). On SSH a
+// pipeline tool (openssl/curl chains) passes its whole pipeline as a single
+// `sh -c '<pipeline>'` token, which the remote shell then interprets.
 
 /// The programs a local tab may spawn for the Utilities' network tools: the
 /// user's own `curl` (HTTP client) and `openssl` (TLS inspector), by bare name
@@ -139,28 +120,5 @@ mod tests {
         ] {
             assert!(!local_program_allowed(bad), "{bad}");
         }
-    }
-
-    #[test]
-    fn probe_command_quotes_each_token() {
-        let cmd = probe_command(&["dig".into(), "+short".into(), "example.com".into()]);
-        assert_eq!(cmd, "'dig' '+short' 'example.com'");
-    }
-
-    #[test]
-    fn probe_command_neutralizes_injection() {
-        // A host trying to inject a second command stays a single quoted arg.
-        let cmd = probe_command(&["ping".into(), "-c".into(), "1".into(), "x; rm -rf /".into()]);
-        assert_eq!(cmd, "'ping' '-c' '1' 'x; rm -rf /'");
-    }
-
-    #[test]
-    fn probe_command_preserves_pipeline_token() {
-        let pipeline = "echo | openssl s_client -connect 'h':443 | openssl x509 -noout -dates";
-        let cmd = probe_command(&["sh".into(), "-c".into(), pipeline.into()]);
-        assert_eq!(
-            cmd,
-            "'sh' '-c' 'echo | openssl s_client -connect '\\''h'\\'':443 | openssl x509 -noout -dates'"
-        );
     }
 }

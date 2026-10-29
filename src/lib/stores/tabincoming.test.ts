@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { panes } from "../splitlayout";
+import { panes } from "../layout/splitlayout";
 import {
   INCOMING_TAB,
   LANDING_TIMEOUT_MS,

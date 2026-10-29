@@ -47,8 +47,8 @@ import {
   type PaneZone,
   type Rect,
   type TabDrop,
-} from "../splitlayout";
-import { releasedOutside } from "../tabhandoff";
+} from "../layout/splitlayout";
+import { releasedOutside } from "../windows/tabhandoff";
 import { dropTab, tabsState } from "./tabs.svelte";
 
 export const tabDrag = $state<{

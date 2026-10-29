@@ -1,191 +1,209 @@
-// Docker panel backend (Phase 35). A single thin executor runs one `docker`
-// command and captures stdout/stderr/exit code — nothing more. All argument
-// building and output parsing lives on the frontend (`src/lib/docker.ts`),
-// keeping this side dumb and testable-in-TS per the "pure logic in .ts" invariant.
-//
-// Two transports, one contract (like the terminal and `git_run`): SSH tabs run
-// the command on a dedicated exec channel (`SshSession::exec_captured`, remote
-// `docker`), local shell tabs spawn `docker` here via `tokio::process`. The
-// command surface is the same either way — an argument vector whose first token
-// is the program (`docker`). Unlike `probe_run` (SSH-only), the Docker panel
-// works on local tabs too, so both transports exist here.
+// Docker panel backend (Phase 35). `container_run` runs one `docker` command over
+// the session's transport (see `exec`): SSH tabs on a dedicated exec channel,
+// local shell tabs by spawning `docker` here. All argument building and output
+// parsing lives on the frontend (`src/lib/docker/docker.ts`).
 //
 // Offline invariant intact: the Docker daemon is reached over the user's own
 // session (remote host or local machine); the app/WebView never opens a socket.
+//
+// The WebView is a trust boundary (v1.25.1): the argv it sends must be one of
+// the commands the panel runs (`check_args`). `docker run -v /:/host …`,
+// `docker exec`, `docker cp` or a CLI plugin would each run code of the caller's
+// choosing — on the host, as whoever can reach the daemon. The interactive shell
+// into a container is typed into a terminal tab, not run here.
 
-use crate::error::AppResult;
-use serde::Serialize;
-use std::time::Duration;
+/// The commands the Docker panel runs (docker.ts), as the words after `docker`.
+/// `compose` is checked on its own (`check_compose`).
+const COMMANDS: &[&[&str]] = &[
+    &["version"],
+    &["ps"],
+    &["images"],
+    &["stats"],
+    &["logs"],
+    &["inspect"],
+    &["start"],
+    &["stop"],
+    &["restart"],
+    &["rm"],
+    &["rmi"],
+    &["logout"],
+    &["network", "ls"],
+    &["network", "rm"],
+    &["network", "prune"],
+    &["volume", "ls"],
+    &["volume", "rm"],
+    &["volume", "prune"],
+    &["container", "prune"],
+    &["image", "prune"],
+    &["system", "prune"],
+];
 
-/// Captured result of one `docker` invocation (mirror of [`crate::git::GitOutput`]).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ContainerOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
-}
+/// What `docker compose` may do: the project-scoped actions the panel offers.
+const COMPOSE_ACTIONS: &[&str] = &["logs", "up", "down", "restart"];
 
-/// Build the shell command run on the remote for an SSH tab: every argv token is
-/// single-quoted (via [`crate::git::shell_quote`]) so a container id / image name
-/// / label can't break out into a second command. The first token is the program
-/// (`docker`), the rest its arguments — the remote login shell runs the string.
-pub fn container_command(args: &[String]) -> String {
-    args.iter()
-        .map(|a| crate::git::shell_quote(a))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// Run the command locally (`args[0]` is the program, e.g. `docker`), bounded by
-/// `timeout_secs`. No shell is involved — args are passed verbatim, so no quoting
-/// is needed. A timeout collapses into a non-zero exit + stderr note so the
-/// frontend sees a uniform [`ContainerOutput`].
-pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<ContainerOutput> {
-    let (prog, rest) = args
-        .split_first()
-        .ok_or_else(|| "container: no arguments".to_string())?;
-    // Reconstruct the user's PATH (a packaged macOS `.app` inherits only a minimal
-    // one, so `docker` — in /usr/local/bin or /opt/homebrew/bin — isn't found). See
-    // `localenv`. The command is still spawned without a shell (args verbatim).
-    let (resolved, path) = crate::localenv::resolved_local(prog).await;
-    let mut command = tokio::process::Command::new(&resolved);
-    command
-        .args(rest)
-        .env("PATH", &path)
-        .stdin(std::process::Stdio::null())
-        // Terminate the child if we abandon it on timeout, so a stuck `docker`
-        // (e.g. a daemon that stops responding) can't linger.
-        .kill_on_drop(true);
-    // No flashing console window on Windows (the panel polls every few seconds).
-    crate::localenv::no_console_window(&mut command);
-
-    let fut = command.output();
-    let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {
-        Ok(Ok(out)) => out,
-        // Spawn failed (e.g. ENOENT: the binary isn't on the reconstructed PATH).
-        // Surface it as a captured non-zero result so the frontend's
-        // `parseAvailability` classifies it ("Docker not installed") instead of a
-        // hard Err shown as the generic "check failed".
-        Ok(Err(e)) => {
-            return Ok(ContainerOutput {
-                stdout: String::new(),
-                stderr: format!("{prog}: {e}"),
-                exit_code: 127,
-            })
-        }
-        Err(_) => {
-            return Ok(ContainerOutput {
-                stdout: String::new(),
-                stderr: format!("{prog} timed out after {timeout_secs}s"),
-                exit_code: -1,
-            })
-        }
-    };
-
-    Ok(ContainerOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
-}
-
-/// Run the command locally feeding `stdin` to the child (Phase 36): used for
-/// `docker login --password-stdin` on a local tab so the registry password never
-/// lands on the command line. Mirrors [`run_local`] but pipes stdin and closes it.
-pub async fn run_local_stdin(
-    args: &[String],
-    stdin: &[u8],
-    timeout_secs: u64,
-) -> AppResult<ContainerOutput> {
-    use tokio::io::AsyncWriteExt;
-    let (prog, rest) = args
-        .split_first()
-        .ok_or_else(|| "container: no arguments".to_string())?;
-    // Same PATH reconstruction as `run_local` so `docker login` finds the CLI in a
-    // packaged macOS `.app` (see `localenv`); still no shell wraps the command.
-    let (resolved, path) = crate::localenv::resolved_local(prog).await;
-    let mut command = tokio::process::Command::new(&resolved);
-    command
-        .args(rest)
-        .env("PATH", &path)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    // No flashing console window on Windows (docker login runs in the background).
-    crate::localenv::no_console_window(&mut command);
-    let mut child = command
-        .spawn()
-        .map_err(|e| format!("{prog} failed to run: {e}"))?;
-
-    if let Some(mut sink) = child.stdin.take() {
-        let _ = sink.write_all(stdin).await;
-        let _ = sink.shutdown().await; // EOF so `--password-stdin` proceeds
+/// Whether the WebView may run this argv through `container_run`. The program is
+/// `docker` by name (resolved on PATH, never a path the caller chose) and the
+/// words after it name one of [`COMMANDS`] — a global option (`-H`, `--config`,
+/// `--context`) never stands in their place.
+pub fn check_args(args: &[String]) -> Result<(), String> {
+    match args.first().map(String::as_str) {
+        Some("docker") => {}
+        Some(other) => return Err(format!("docker: `{other}` is not the docker CLI")),
+        None => return Err("docker: no arguments".into()),
     }
-
-    let fut = child.wait_with_output();
-    let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {
-        Ok(res) => res.map_err(|e| format!("{prog} failed to run: {e}"))?,
-        Err(_) => {
-            return Ok(ContainerOutput {
-                stdout: String::new(),
-                stderr: format!("{prog} timed out after {timeout_secs}s"),
-                exit_code: -1,
-            })
-        }
-    };
-    Ok(ContainerOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
+    let rest = &args[1..];
+    if rest.first().map(String::as_str) == Some("compose") {
+        return check_compose(&rest[1..]);
+    }
+    let allowed = COMMANDS
+        .iter()
+        .any(|cmd| rest.len() >= cmd.len() && cmd.iter().zip(rest).all(|(w, a)| *w == a.as_str()));
+    if allowed {
+        Ok(())
+    } else {
+        Err(format!(
+            "docker: `{}` is not a command the Docker panel runs",
+            rest.first().map(String::as_str).unwrap_or("")
+        ))
+    }
 }
 
-/// Render a mutating docker-panel op for the session recording (audit): a magenta
-/// `[docker] $ <command>` header, the combined output, and a `[docker] exit N`
-/// footer. Mirrors [`crate::git::git_mirror`] — recorded ONLY, never emitted to
-/// the live terminal. Registry login is never passed here (it carries a secret).
-pub fn container_mirror(command: &str, stdout: &str, stderr: &str, exit_code: i32) -> String {
-    let body = format!("{stdout}{stderr}").replace('\n', "\r\n");
-    format!(
-        "\r\n\u{1b}[35m[docker] $ {command}\u{1b}[0m\r\n{body}\r\n\u{1b}[35m[docker] exit {exit_code}\u{1b}[0m\r\n"
-    )
+/// `docker compose [-p <project>] [--project-directory <dir>] <action> …`: the
+/// project comes from the containers' labels, the action from the panel. Any
+/// other option before the action — `-f`/`--file`, `--env-file`, `--profile` —
+/// would point compose at a definition of the caller's choosing.
+fn check_compose(rest: &[String]) -> Result<(), String> {
+    let mut tokens = rest.iter();
+    while let Some(token) = tokens.next() {
+        match token.as_str() {
+            "-p" | "--project-directory" => {
+                tokens.next();
+            }
+            action if COMPOSE_ACTIONS.contains(&action) => return Ok(()),
+            other => return Err(format!("docker compose: `{other}` is not allowed")),
+        }
+    }
+    Err("docker compose: no action".into())
+}
+
+/// Whether the argv is a registry login (`docker_login`): `docker login …`, and
+/// nothing else rides on the secret fed to its stdin.
+pub fn check_login_args(args: &[String]) -> Result<(), String> {
+    match (args.first(), args.get(1)) {
+        (Some(p), Some(c)) if p == "docker" && c == "login" => Ok(()),
+        _ => Err("docker login: the argv must be `docker login …`".into()),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn argv(s: &[&str]) -> Vec<String> {
+        s.iter().map(|t| t.to_string()).collect()
+    }
+
+    /// The argv shapes docker.ts builds — every one must pass.
     #[test]
-    fn container_mirror_wraps_command_output_and_exit() {
-        let m = container_mirror("docker rm abc", "abc\n", "", 0);
-        assert!(m.contains("[docker] $ docker rm abc"));
-        assert!(m.contains("abc\r\n"));
-        assert!(m.contains("[docker] exit 0"));
+    fn what_the_docker_panel_runs_is_allowed() {
+        for ok in [
+            &["docker", "version", "--format", "{{.Server.Version}}"][..],
+            &["docker", "ps", "-a", "--format", "{{json .}}"],
+            &["docker", "images", "--format", "x"],
+            &["docker", "network", "ls", "--format", "x"],
+            &["docker", "volume", "ls", "--format", "x"],
+            &["docker", "stats", "--no-stream", "--format", "x"],
+            &["docker", "logs", "--tail", "200", "--timestamps", "abc"],
+            &[
+                "docker",
+                "compose",
+                "-p",
+                "web",
+                "logs",
+                "--tail",
+                "200",
+                "--timestamps",
+                "--no-color",
+            ],
+            &["docker", "inspect", "abc"],
+            &["docker", "inspect", "--format", "{{.Id}}", "a", "b"],
+            &["docker", "start", "a"],
+            &["docker", "stop", "a"],
+            &["docker", "restart", "a"],
+            &["docker", "rm", "-f", "a"],
+            &["docker", "rmi", "-f", "a"],
+            &["docker", "volume", "rm", "v"],
+            &["docker", "network", "rm", "n"],
+            &["docker", "container", "prune", "-f"],
+            &["docker", "image", "prune", "-f"],
+            &["docker", "volume", "prune", "-f"],
+            &["docker", "network", "prune", "-f"],
+            &["docker", "system", "prune", "-f"],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "up",
+                "-d",
+            ],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "down",
+            ],
+            &["docker", "compose", "-p", "web", "restart"],
+            &["docker", "logout", "registry.example.com"],
+        ] {
+            assert_eq!(check_args(&argv(ok)), Ok(()), "{ok:?}");
+        }
     }
 
     #[test]
-    fn container_command_quotes_each_token() {
-        let cmd = container_command(&["docker".into(), "ps".into(), "-a".into()]);
-        assert_eq!(cmd, "'docker' 'ps' '-a'");
+    fn what_runs_code_of_the_callers_choosing_is_refused() {
+        for bad in [
+            &[][..],
+            &["docker"],
+            &["sh", "-c", "id"],
+            &["/usr/bin/docker", "ps"],
+            &["docker", "run", "-v", "/:/h", "alpine"],
+            &["docker", "exec", "abc", "id"],
+            &["docker", "cp", "x", "abc:/"],
+            &["docker", "build", "."],
+            &["docker", "-H", "tcp://evil:2375", "ps"],
+            &["docker", "--config", "/tmp/x", "ps"],
+            &["docker", "network", "create", "n"],
+            &["docker", "compose", "-f", "/tmp/evil.yml", "up"],
+            &["docker", "compose", "--file=/tmp/evil.yml", "up"],
+            &["docker", "compose", "-p", "web", "run", "svc", "sh"],
+            &["docker", "compose", "-p", "web"],
+            &["docker", "login", "-u", "x"],
+        ] {
+            assert!(check_args(&argv(bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]
-    fn container_command_neutralizes_injection() {
-        // A container id trying to inject a second command stays a single arg.
-        let cmd = container_command(&["docker".into(), "rm".into(), "x; rm -rf /".into()]);
-        assert_eq!(cmd, "'docker' 'rm' 'x; rm -rf /'");
-    }
-
-    #[tokio::test]
-    async fn run_local_reports_missing_program() {
-        // A program that does not exist surfaces as a captured exit 127 (so the
-        // frontend classifies "not installed"), not an Err or a panic.
-        let res = run_local(&["definitely-not-a-real-binary-xyz".into()], 5)
-            .await
-            .unwrap();
-        assert_eq!(res.exit_code, 127);
-        assert!(res.stderr.contains("definitely-not-a-real-binary-xyz"));
+    fn a_registry_login_is_only_docker_login() {
+        assert_eq!(
+            check_login_args(&argv(&[
+                "docker",
+                "login",
+                "-u",
+                "me",
+                "--password-stdin",
+                "r.io"
+            ])),
+            Ok(())
+        );
+        for bad in [&["docker", "ps"][..], &["sh", "login"], &["docker"]] {
+            assert!(check_login_args(&argv(bad)).is_err(), "{bad:?}");
+        }
     }
 }

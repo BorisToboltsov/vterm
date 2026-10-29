@@ -23,7 +23,7 @@ pub fn home() -> AppResult<String> {
 }
 
 /// The synthetic "list every drive" level above a Windows drive root (Explorer's
-/// "This PC"). Mirrors `DRIVES_ROOT` in `src/lib/fspath.ts`; `:` cannot appear in
+/// "This PC"). Mirrors `DRIVES_ROOT` in `src/lib/files/fspath.ts`; `:` cannot appear in
 /// a real path except as the drive separator, so this can never collide with one.
 pub const DRIVES_ROOT: &str = "::drives";
 

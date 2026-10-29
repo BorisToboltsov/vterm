@@ -7,12 +7,13 @@ use tauri::State;
 use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
+use crate::locks::Locked;
 use crate::model::{AuthMethod, NewServerProfile, ServerProfile};
 use crate::{secrets, store, uuid_like, AppState};
 
 #[tauri::command]
 pub fn list_servers(state: State<AppState>) -> Vec<ServerProfile> {
-    state.servers.lock().unwrap().clone()
+    state.servers.locked().clone()
 }
 
 /// A rejected disk write must not leave a server visible only in this process.
@@ -52,7 +53,7 @@ pub fn add_server(profile: NewServerProfile, state: State<AppState>) -> AppResul
         icon: profile.icon,
         icon_color: profile.icon_color,
     };
-    let mut servers = state.servers.lock().unwrap();
+    let mut servers = state.servers.locked();
     add_persisted(&mut servers, created, store::save_servers)
 }
 

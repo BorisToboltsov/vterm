@@ -24,7 +24,7 @@ docker compose -f docker-compose.ssh.yml up -d   # 127.0.0.1:2222, tester/testpa
 ## Run
 
 ```sh
-pnpm install          # inside this e2e/ folder (separate from the app deps)
+pnpm install --frozen-lockfile   # inside this e2e/ folder: its own deps and lockfile
 pnpm test:e2e
 ```
 

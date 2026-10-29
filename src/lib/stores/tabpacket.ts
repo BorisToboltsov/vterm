@@ -15,7 +15,7 @@ import {
   type PaneSeat,
   type TabPacket,
   type TermSnapshot,
-} from "../tabhandoff";
+} from "../windows/tabhandoff";
 import { adoptChat, peekChat } from "./aichat.svelte";
 import { adoptDockState, peekDockState } from "./dockstate.svelte";
 import {
@@ -24,7 +24,7 @@ import {
   setRecording,
   setRecordingPausedState,
 } from "./recordings.svelte";
-import type { TabDrop } from "../splitlayout";
+import type { TabDrop } from "../layout/splitlayout";
 import { adoptSyncJob, peekSyncJob } from "./syncjob.svelte";
 import { adoptTab, findTab } from "./tabs.svelte";
 import { adoptWorkspace, peekWorkspace } from "./workspaces.svelte";

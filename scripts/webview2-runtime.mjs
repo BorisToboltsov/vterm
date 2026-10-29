@@ -15,7 +15,7 @@
 // WEBVIEW2_VERSION (если страница сменит разметку, релиз можно собрать руками).
 //
 // Формат хвоста обязан совпадать с src-tauri/src/webview2.rs (гейт
-// src/lib/webview2runtime.test.ts):
+// src/lib/repo/webview2runtime.test.ts):
 //   версия (16, ASCII, NUL-добивка) · sha256 .cab (32) · длина .cab (8, LE) · "VTWV2RT1"
 
 import { createHash } from "node:crypto";

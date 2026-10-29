@@ -3,9 +3,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry, TextFile, WriteResult } from "../types";
-import type { HashTree, SyncAction, SyncStats, GrepOutcome } from "../sync";
-import type { ToolsStatus } from "../servertools";
-import type { RemoteLintResult } from "../remotelint";
+import type { HashTree, SyncAction, SyncStats, GrepOutcome } from "../sync/sync";
+import type { ToolsStatus } from "../editor/servertools";
+import type { RemoteLintResult } from "../editor/remotelint";
 
 // ── SFTP ──────────────────────────────────────────────────────────────────────
 

@@ -42,9 +42,9 @@ import {
   type CarriedFiles,
   type DropMeaning,
   type FileTarget,
-} from "../filedrop";
-import { sameRect, type Rect } from "../splitlayout";
-import { releasedOutside } from "../tabhandoff";
+} from "../files/filedrop";
+import { sameRect, type Rect } from "../layout/splitlayout";
+import { releasedOutside } from "../windows/tabhandoff";
 
 export const fileDrag = $state<{
   /** What is in the air; null while nothing is — a press is not a drag yet. */

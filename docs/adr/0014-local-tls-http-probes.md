@@ -30,8 +30,8 @@ TLS-инспектор и HTTP-клиент (Фаза 34) на SSH-вкладк�
 ADR 0012:
 
 - `probe_run` выбирает транспорт по сессии (принцип 3): SSH — exec на сервере, локальная
-  вкладка — `container::run_local` (`localenv`, `no_console_window`, без шелла, аргументы
-  verbatim);
+  вкладка — общий запуск драйверов `exec::run_local` (до v1.25.1 — `container::run_local`;
+  `localenv`, `no_console_window`, без шелла, аргументы verbatim);
 - локально запускаются **только** `curl` и `openssl` (`netprobe::local_program_allowed`,
   по имени программы, с `.exe` и путём); `sh`/`cmd`/`powershell` отклоняются — иначе
   команда превратилась бы в произвольный локальный процесс;

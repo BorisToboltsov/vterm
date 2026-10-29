@@ -1,15 +1,15 @@
 // Clipboard keyboard shortcuts for text fields: Cmd/Ctrl + V / C / X / A.
 //
 // The app ships without a native Edit menu on purpose (so the terminal keeps
-// ⌘C/⌘V for itself — see build_app_menu in src-tauri/src/lib.rs). The side effect
+// ⌘C/⌘V for itself — see build_app_menu in src-tauri/src/commands/chrome.rs). The side effect
 // is that WKWebView on macOS provides no Paste/Copy accelerators for ordinary
 // HTML inputs, so ⌘V etc. do nothing in any <input>/<textarea>. Rather than wire
 // every field individually (and forget new ones), a single global handler —
 // installed once on the document — covers them all. Reads go through the native
 // backend clipboard, so no WebKit "Paste" permission prompt appears (clipboard.ts).
 
-import { chordLetter } from "../appshortcuts";
-import { readClipboard, writeClipboard } from "../clipboard";
+import { chordLetter } from "../app/appshortcuts";
+import { readClipboard, writeClipboard } from "../app/clipboard";
 
 type Editable = HTMLInputElement | HTMLTextAreaElement;
 

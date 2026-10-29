@@ -1,6 +1,6 @@
 // Network access check, local transport (v1.0.36). The Utilities "access check"
 // asks "can THIS host reach those ports?". On an SSH tab the question is answered
-// by a script run on the server (built in `src/lib/netcheck.ts`, executed by the
+// by a script run on the server (built in `src/lib/netcheck/netcheck.ts`, executed by the
 // `netcheck_run` bridge). On a local tab THIS host is the user's machine, so the
 // connects are made here, natively — no second script dialect for macOS
 // (no GNU `timeout`) and Windows (no `sh`), and exact refused/timeout verdicts
@@ -834,7 +834,7 @@ mod tests {
         let lib = code(lib);
         let run = body_of(&lib, "netcheck_run");
         let exec = body_of(&lib, "netcheck_exec");
-        let local = &exec[exec.find("local_ptys").unwrap_or(0)..];
+        let local = &exec[exec.find("local_pty(").unwrap_or(0)..];
         spawns == 2
             && scheme.contains("Command::new(program)")
             && scheme.contains(".arg(\"-V\")")
@@ -853,7 +853,8 @@ mod tests {
         // an argv could run anything on this machine. The page names the tool;
         // what runs is decided here.
         let nc = include_str!("netcheck.rs");
-        let lib = include_str!("lib.rs");
+        let bridge = crate::commands::bridge_source();
+        let lib = bridge.as_str();
         assert!(tools_take_only_their_name(nc, lib));
         // Planted: the check's argv comes from somewhere else.
         let planted = nc.replacen(

@@ -9,9 +9,11 @@ version: 2
 # и правит комментарий с версией.
 
 updates:
-  # ── Сами workflow ──────────────────────────────────────────────────────────
+  # ── Сами workflow и общие экшены ───────────────────────────────────────────
   - package-ecosystem: github-actions
-    directory: "/"
+    # "/" — это .github/workflows; экшены в .github/actions/ Dependabot видит,
+    # только если назвать их каталоги: иначе их SHA застыли бы навсегда.
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: monthly
     open-pull-requests-limit: 5
@@ -37,7 +39,8 @@ updates:
 
   # ── npm-зависимости фронтенда ──────────────────────────────────────────────
   - package-ecosystem: npm
-    directory: "/"
+    # Корень приложения и отдельный пакет E2E (у него свой lockfile).
+    directories: ["/", "/e2e"]
     schedule:
       interval: monthly
     open-pull-requests-limit: 10
@@ -61,13 +64,24 @@ updates:
         patterns: ["vitest", "@vitest/*", "@testing-library/*", "jsdom"]
         update-types: ["minor", "patch"]
       # Сборочный инструментарий ходит связкой: vite и его плагины, тайпчекер, типы.
+      # typescript-eslint — здесь, а не в `lint`: его peer-диапазон ограничивает
+      # версию TypeScript сверху, и бамп одного без другого ломает линтер.
       build-tooling:
-        patterns: ["vite", "@sveltejs/vite-plugin-svelte", "@tailwindcss/*", "tailwindcss", "svelte-check", "typescript", "@types/*"]
+        patterns: ["vite", "@sveltejs/vite-plugin-svelte", "@tailwindcss/*", "tailwindcss", "svelte-check", "typescript", "typescript-eslint", "@types/*"]
+        update-types: ["minor", "patch"]
+      # ESLint и его плагин для Svelte ходят связкой (правила проекта — lint/vterm.js).
+      lint:
+        patterns: ["eslint", "@eslint/*", "eslint-plugin-svelte", "svelte-eslint-parser"]
         update-types: ["minor", "patch"]
       # JS-половина плагинов Tauri — зеркало группы `tauri` в cargo ниже: плагин
       # обновляется парой (Rust + JS), и поштучные PR разводили версии сторон.
       tauri:
         patterns: ["@tauri-apps/*"]
+        update-types: ["minor", "patch"]
+      # WebdriverIO пакета e2e/ ходит связкой: cli, раннер, фреймворк и репортёр
+      # одной версии.
+      e2e:
+        patterns: ["@wdio/*"]
         update-types: ["minor", "patch"]
       # Патчи всего остального — одним PR. Группа ПОСЛЕДНЯЯ: Dependabot кладёт
       # пакет в первую подходящую группу, и те, что выше, забирают своё.

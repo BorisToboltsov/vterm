@@ -1,0 +1,191 @@
+name: Глубокие проверки
+
+# Слои, которым не место на PR: они либо долгие, либо требуют живого окружения.
+# Главный прогон — перед каждым релизом: release.yml вызывает этот workflow через
+# `workflow_call`, и тег не соберёт бандлы, пока фаззинг, live-sftp и E2E не
+# зелёные. По расписанию — раз в месяц, вручную — workflow_dispatch.
+#
+#   fuzz      — те же property-тесты, что на PR, но на два порядка глубже;
+#   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция (и
+#               вход через keyboard-interactive — live_kbdint);
+#   e2e       — реальное нативное окно через tauri-driver.
+#
+# Не на PR: полтора-два часа раннера против задержки каждого мерджа. Раз в месяц
+# по расписанию — чтобы дрейф окружения (tauri-driver, образ sshd, пакеты
+# раннера) всплывал сам, а не на теге. До 1.25.5 файл звался nightly.yml, хотя
+# ночью не шёл никогда.
+
+on:
+  schedule:
+    - cron: "23 2 1 * *"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  # По ref: плановый прогон на main и вызов из release.yml на теге не должны
+  # вытеснять друг друга из очереди (у группы только один ожидающий слот).
+  group: deep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Фаззинг парсеров недоверенного входа ────────────────────────────────────
+  # Аналог DAST для приложения без единого HTTP-порта: сканировать нечего, но
+  # поверхность есть — markdown из ответа LLM, `.md` с чужого сервера, вывод
+  # скомпрометированного хоста, строки логов, чужие байты в редакторе.
+  fuzz:
+    name: Фаззинг недоверенного входа
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
+
+      - name: Фронтенд-окружение
+        uses: $/.github/actions/setup-web
+        with:
+          cache: "true"
+
+      # `svelte-kit sync` до тестов ОБЯЗАТЕЛЕН: он генерирует `$app/tsconfig`
+      # (`node_modules/$app/tsconfig.json`), который наследует корневой
+      # tsconfig.json (`extends`). Без него dep-оптимизатор rolldown падает на
+      # старте `pnpm test:coverage` — «Tsconfig not found» → `Could not resolve
+      # 'node:module' in \0rolldown/runtime.js`. В ci.yml этот файл молча создаёт
+      # предшествующий `pnpm check`; здесь `check` не гоняется, поэтому sync нужен
+      # явным шагом (postinstall-хука нет).
+      - name: Синхронизация SvelteKit
+        run: pnpm exec svelte-kit sync
+
+      # Те же свойства, что гоняются на PR (~300 прогонов), здесь — 150 000
+      # (глубину читает только untrusted.fuzz.test.ts; таймаут теста выведен из
+      # этого числа, остальные тесты FUZZ_RUNS игнорируют). Гоняем через
+      # `pnpm test:coverage` — тот же зелёный путь, что в ci.yml; отличается лишь
+      # глубина через FUZZ_RUNS.
+      - name: Свойства фронтенда (fast-check)
+        env:
+          FUZZ_RUNS: 150000
+        run: pnpm test:coverage
+
+      - name: Rust-окружение
+        uses: $/.github/actions/setup-rust
+        with:
+          cache-key: deep
+
+      # Кодировки — вход, форму которого мы не выбираем: это байты чужого файла.
+      - name: Свойства бэкенда (proptest)
+        env:
+          PROPTEST_CASES: 20000
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib props
+
+  # ── Живые SFTP-тесты против настоящего sshd ─────────────────────────────────
+  # Слой существует потому, что весь набор чистых тестов sftp.rs был зелёным,
+  # пока редактор уничтожал каждый сохранённый файл: дефект был не в вычисленном
+  # значении, а в том, ЧТО МЫ ПОПРОСИЛИ СДЕЛАТЬ СЕРВЕР. Такое ловится только
+  # разговором с сервером.
+  #
+  # Поднимаем тем же docker compose, что описан в docs/TESTS.md, а не service-
+  # контейнером: пусть CI исполняет ровно ту команду, которую читает человек.
+  live-sftp:
+    name: Живые SFTP-тесты
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
+
+      - name: Rust-окружение
+        uses: $/.github/actions/setup-rust
+        with:
+          cache-key: deep
+
+      - name: Тестовый sshd
+        uses: $/.github/actions/test-sshd
+
+      # Параметры по умолчанию (127.0.0.1:2222, tester/testpass) совпадают с
+      # compose-файлом, поэтому VTERM_TEST_SSH_* задавать не нужно.
+      - name: Прогон
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_sftp -- --ignored
+
+      # Вход через keyboard-interactive (v1.0.38): PAM-sshd с выключенным методом
+      # `password`, как у консолей UniFi, плюс второй вопрос (код). Логику
+      # покрывают юнит-тесты; что сервер реально спрашивает и принимает — только здесь.
+      - name: Тестовый sshd (keyboard-interactive)
+        run: |
+          # --wait ждёт HEALTHCHECK образа (sshd отвечает внутри контейнера), а не
+          # просто открытый порт: docker-proxy принимает соединения раньше sshd.
+          docker compose -f e2e/docker-compose.kbdint.yml up -d --build --wait --wait-timeout 90 \
+            || { docker compose -f e2e/docker-compose.kbdint.yml logs; exit 1; }
+
+      - name: Прогон (keyboard-interactive)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
+
+      - name: Погасить sshd
+        if: always()
+        run: |
+          docker compose -f e2e/docker-compose.ssh.yml down
+          docker compose -f e2e/docker-compose.kbdint.yml down
+
+  # ── E2E: реальное окно ──────────────────────────────────────────────────────
+  # tauri-driver не поддерживает macOS, поэтому локально на этой машине E2E не
+  # гоняется вовсе — единственное место, где он вообще исполняется, это CI.
+  e2e:
+    name: E2E (tauri-driver)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
+          # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
+          persist-credentials: false
+
+      # webkit2gtk-driver — WebDriver для WebKitGTK, без него tauri-driver
+      # не к чему подключаться; xvfb — окно на безголовом раннере.
+      - name: Rust-окружение и WebDriver
+        uses: $/.github/actions/setup-rust
+        with:
+          extra-packages: webkit2gtk-driver xvfb
+          cache-key: deep-e2e
+
+      - name: Фронтенд-окружение
+        uses: $/.github/actions/setup-web
+        with:
+          cache: "true"
+
+      - name: tauri-driver
+        uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
+        with:
+          tool: tauri-driver
+
+      - name: Зависимости E2E
+        run: |
+          # Запуск ИЗ e2e берёт ближайший вверх pnpm-workspace.yaml —
+          # e2e/pnpm-workspace.yaml затеняет корневой, поэтому pnpm ставит
+          # зависимости e2e (без него видел бы только корень → `wdio: not found`)
+          # и читает его allowBuilds (иначе падал бы на ERR_PNPM_IGNORED_BUILDS).
+          # Lockfile у e2e свой и закоммичен: E2E идёт и в релизной цепочке
+          # (release → deep), а установка без него берёт то, что реестр отдаёт
+          # сегодня (гейт releaseassets.guard.test.ts).
+          cd e2e
+          pnpm install --frozen-lockfile
+
+      # Фронт собирается ДО cargo build: tauri-build вшивает в бинарь
+      # frontendDist (../build), и без него собирать нечего.
+      - name: Сборка фронта
+        run: pnpm build
+
+      - name: Тестовый sshd
+        uses: $/.github/actions/test-sshd
+
+      - name: Прогон
+        working-directory: e2e
+        run: xvfb-run --auto-servernum pnpm test:e2e
+
+      - name: Погасить sshd
+        if: always()
+        run: docker compose -f e2e/docker-compose.ssh.yml down

@@ -15,8 +15,8 @@
 // pixel for programs that have nothing to do with the drag — and would have to
 // be undone if the tab went elsewhere.
 
-import { sameDrop, sameRect, type Rect, type TabDrop } from "../splitlayout";
-import type { AttachTarget } from "../tabattach";
+import { sameDrop, sameRect, type Rect, type TabDrop } from "../layout/splitlayout";
+import type { AttachTarget } from "../tabs/tabattach";
 import { tabDropAt } from "./tabdrag.svelte";
 import type { Tab } from "./tabs.svelte";
 

@@ -4,8 +4,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { DragOutSpec } from "../dragout";
-import type { QuitRow } from "../quitsummary";
+import type { DragOutSpec } from "../files/dragout";
+import type { QuitRow } from "../windows/quitsummary";
 
 /**
  * Listen for an event addressed to THIS window (and for app-wide ones).

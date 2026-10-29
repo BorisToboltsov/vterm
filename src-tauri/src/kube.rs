@@ -1,159 +1,217 @@
-// Kubernetes panel backend (Phase 37). A single thin executor runs one `kubectl`
-// command and captures stdout/stderr/exit code — nothing more. All argument
-// building and output parsing lives on the frontend (`src/lib/k8s.ts`), keeping
-// this side dumb and testable-in-TS per the "pure logic in .ts" invariant. This
-// is a distinct orchestration driver (its own view), not folded into the Docker
-// panel — see INVARIANTS ("k8s — отдельный драйвер").
+// Kubernetes panel backend (Phase 37). `kubectl_run` runs one `kubectl` command
+// over the session's transport (see `exec`): SSH tabs on a dedicated exec
+// channel, local shell tabs by spawning it here. All argument building and output
+// parsing lives on the frontend (`src/lib/k8s/k8s.ts`). This is a distinct
+// orchestration driver (its own view), not folded into the Docker panel — see
+// INVARIANTS «Панели-драйверы» (the k8s row of the driver table).
 //
-// Two transports, one contract (like the terminal, `git_run` and `container_run`):
-// SSH tabs run the command on a dedicated exec channel (`SshSession::exec_captured`,
-// remote `kubectl`), local shell tabs spawn `kubectl` here via `tokio::process`.
-// The command surface is the same either way — an argument vector whose leading
-// token(s) are the program (`kubectl`, or e.g. `k3s kubectl`), the rest its
-// arguments.
+// The leading token(s) of the argv are the program — `kubectl`, a path to it, or
+// a configured wrapper like `k3s kubectl` (`settings.kubectlPath`) — and the
+// `--context`/`--namespace`/`-A` scope is baked in by the frontend (`k8s.ts
+// withScope`); kubeconfig is NEVER mutated here (no `config use-context`).
+// Offline invariant intact: the cluster's API server is reached over the user's
+// own session; the app/WebView never opens a socket.
 //
-// The `--context`/`--namespace`/`-A` scope is baked into every argv by the
-// frontend (`k8s.ts withScope`); kubeconfig is NEVER mutated here (no
-// `config use-context`). Offline invariant intact: the cluster's API server is
-// reached over the user's own session (remote host or local machine); the
-// app/WebView never opens a socket.
+// The WebView is a trust boundary (v1.25.1): `check_args` lets through only the
+// verbs the panel runs. `kubectl exec`/`run`/`debug`/`cp` and plugins
+// (`kubectl foo` runs `kubectl-foo` from PATH) would run code of the caller's
+// choosing; `--kubeconfig` would load exec credential plugins from a file of its
+// choosing, `--server` would hand the context's token to another address.
 
-use crate::error::AppResult;
-use serde::Serialize;
-use std::time::Duration;
+/// The verbs the Kubernetes panel runs through `kubectl_run` (k8s.ts). Shells
+/// and port-forwards are typed into a terminal tab instead.
+const VERBS: &[&str] = &[
+    "version", "config", "get", "describe", "logs", "delete", "rollout", "scale", "top", "cordon",
+    "uncordon", "drain",
+];
 
-/// Captured result of one `kubectl` invocation (mirror of
-/// [`crate::container::ContainerOutput`]).
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct KubeOutput {
-    pub stdout: String,
-    pub stderr: String,
-    pub exit_code: i32,
+/// Long options refused wherever they stand: credentials and endpoints other
+/// than the context's own, files kubectl would write, impersonation.
+const DANGEROUS_OPTIONS: &[&str] = &[
+    "--kubeconfig",
+    "--server",
+    "--cluster",
+    "--user",
+    "--token",
+    "--username",
+    "--password",
+    "--certificate-authority",
+    "--client-certificate",
+    "--client-key",
+    "--insecure-skip-tls-verify",
+    "--tls-server-name",
+    "--as",
+    "--as-group",
+    "--as-uid",
+    "--cache-dir",
+    "--log-file",
+    "--log-dir",
+    "--profile-output",
+];
+
+/// Shorthand options the panel uses. Any other single-dash token is refused —
+/// `-s` is `--server`, and shorthands bundle (`-As <url>`).
+const SHORTHANDS: &[&str] = &["-A", "-o", "-c", "-n"];
+
+/// Where the verb starts: after `kubectl` (bare or a path to it, `.exe` on
+/// Windows), after the snap alias `microk8s.kubectl`, or after a `k3s`/`microk8s`
+/// wrapper followed by `kubectl`.
+fn verb_index(args: &[String]) -> Result<usize, String> {
+    let first = args.first().ok_or("kubectl: no arguments")?;
+    let base = first.rsplit(['/', '\\']).next().unwrap_or(first);
+    let base = base.strip_suffix(".exe").unwrap_or(base);
+    match base {
+        "kubectl" | "microk8s.kubectl" => Ok(1),
+        "k3s" | "microk8s" if args.get(1).map(String::as_str) == Some("kubectl") => Ok(2),
+        _ => Err(format!(
+            "kubectl: `{first}` is not kubectl or a kubectl wrapper"
+        )),
+    }
 }
 
-/// Build the shell command run on the remote for an SSH tab: every argv token is
-/// single-quoted (via [`crate::git::shell_quote`]) so a pod name / namespace /
-/// label can't break out into a second command. The leading token(s) are the
-/// program (`kubectl`, or `k3s kubectl` when the user configured a wrapper), the
-/// rest its arguments — the remote login shell runs the string.
-pub fn kube_command(args: &[String]) -> String {
-    args.iter()
-        .map(|a| crate::git::shell_quote(a))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// Run the command locally (`args[0]` is the program, e.g. `kubectl`), bounded by
-/// `timeout_secs`. No shell is involved — args are passed verbatim, so no quoting
-/// is needed. A timeout collapses into a non-zero exit + stderr note so the
-/// frontend sees a uniform [`KubeOutput`].
-pub async fn run_local(args: &[String], timeout_secs: u64) -> AppResult<KubeOutput> {
-    let (prog, rest) = args
-        .split_first()
-        .ok_or_else(|| "kube: no arguments".to_string())?;
-    // Reconstruct the user's PATH (a packaged macOS `.app` inherits only a minimal
-    // one, so `kubectl` — in /usr/local/bin, /opt/homebrew/bin, etc. — isn't
-    // found). See `localenv`. The command is still spawned without a shell (args
-    // verbatim), exactly like the Docker/git panels.
-    let (resolved, path) = crate::localenv::resolved_local(prog).await;
-    let mut command = tokio::process::Command::new(&resolved);
-    command
-        .args(rest)
-        .env("PATH", &path)
-        .stdin(std::process::Stdio::null())
-        // Terminate the child if we abandon it on timeout, so a stuck `kubectl`
-        // (e.g. an unreachable API server) can't linger.
-        .kill_on_drop(true);
-    // No flashing console window on Windows (the panel polls every few seconds).
-    crate::localenv::no_console_window(&mut command);
-
-    let fut = command.output();
-    let output = match tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), fut).await {
-        Ok(Ok(out)) => out,
-        // Spawn failed (e.g. ENOENT: the binary isn't on the reconstructed PATH).
-        // Surface it as a captured non-zero result so the frontend's
-        // `parseAvailability` classifies it ("kubectl not installed") instead of a
-        // hard Err shown as the generic "check failed".
-        Ok(Err(e)) => {
-            return Ok(KubeOutput {
-                stdout: String::new(),
-                stderr: format!("{prog}: {e}"),
-                exit_code: 127,
-            })
+/// Whether the WebView may run this argv through `kubectl_run`.
+pub fn check_args(args: &[String]) -> Result<(), String> {
+    let at = verb_index(args)?;
+    let verb = args.get(at).map(String::as_str).unwrap_or("");
+    if !VERBS.contains(&verb) {
+        return Err(format!("kubectl: `{verb}` is not a command the panel runs"));
+    }
+    let next = args.get(at + 1).map(String::as_str);
+    match verb {
+        "config" if !matches!(next, Some("get-contexts" | "current-context")) => {
+            return Err("kubectl: only `config get-contexts` and `config current-context` read the kubeconfig here".into());
         }
-        Err(_) => {
-            return Ok(KubeOutput {
-                stdout: String::new(),
-                stderr: format!("{prog} timed out after {timeout_secs}s"),
-                exit_code: -1,
-            })
+        "rollout" if next != Some("restart") => {
+            return Err("kubectl: only `rollout restart` is allowed".into());
         }
-    };
-
-    Ok(KubeOutput {
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-        exit_code: output.status.code().unwrap_or(-1),
-    })
-}
-
-/// Render a mutating k8s-panel op for the session recording (audit): a magenta
-/// `[k8s] $ <command>` header, the combined output, and a `[k8s] exit N` footer.
-/// Mirrors [`crate::container::container_mirror`] — recorded ONLY, never emitted
-/// to the live terminal.
-pub fn kube_mirror(command: &str, stdout: &str, stderr: &str, exit_code: i32) -> String {
-    let body = format!("{stdout}{stderr}").replace('\n', "\r\n");
-    format!(
-        "\r\n\u{1b}[35m[k8s] $ {command}\u{1b}[0m\r\n{body}\r\n\u{1b}[35m[k8s] exit {exit_code}\u{1b}[0m\r\n"
-    )
+        _ => {}
+    }
+    for token in &args[at + 1..] {
+        if let Some(long) = token.strip_prefix("--") {
+            let name = long.split('=').next().unwrap_or(long);
+            if DANGEROUS_OPTIONS
+                .iter()
+                .any(|o| o.trim_start_matches('-') == name)
+            {
+                return Err(format!("kubectl: option `--{name}` is not allowed"));
+            }
+        } else if token.starts_with('-') && !SHORTHANDS.contains(&token.as_str()) {
+            return Err(format!("kubectl: option `{token}` is not allowed"));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn argv(s: &[&str]) -> Vec<String> {
+        s.iter().map(|t| t.to_string()).collect()
+    }
+
+    /// The argv shapes k8s.ts builds (with each program form and the scope
+    /// `withScope` adds) — every one must pass.
     #[test]
-    fn kube_mirror_wraps_command_output_and_exit() {
-        let m = kube_mirror("kubectl delete pod abc", "pod \"abc\" deleted\n", "", 0);
-        assert!(m.contains("[k8s] $ kubectl delete pod abc"));
-        assert!(m.contains("pod \"abc\" deleted\r\n"));
-        assert!(m.contains("[k8s] exit 0"));
+    fn what_the_k8s_panel_runs_is_allowed() {
+        for ok in [
+            &["kubectl", "version", "-o", "json", "--request-timeout=5s"][..],
+            &["kubectl", "config", "get-contexts", "-o", "name"],
+            &["kubectl", "config", "current-context"],
+            &[
+                "kubectl",
+                "get",
+                "namespaces",
+                "-o",
+                "json",
+                "--context",
+                "prod",
+            ],
+            &[
+                "kubectl",
+                "get",
+                "pods",
+                "-o",
+                "json",
+                "--context",
+                "c",
+                "-A",
+            ],
+            &[
+                "kubectl",
+                "get",
+                "deployments,statefulsets,daemonsets,cronjobs",
+                "-o",
+                "json",
+            ],
+            &[
+                "kubectl",
+                "top",
+                "pods",
+                "--no-headers",
+                "--namespace",
+                "web",
+            ],
+            &[
+                "kubectl",
+                "logs",
+                "p",
+                "--tail",
+                "200",
+                "--timestamps",
+                "-c",
+                "app",
+            ],
+            &["kubectl", "describe", "pod", "p"],
+            &["kubectl", "get", "pod", "p", "-o", "yaml"],
+            &["kubectl", "delete", "pod", "p", "--namespace", "web"],
+            &["kubectl", "scale", "deployment", "d", "--replicas", "3"],
+            &["kubectl", "rollout", "restart", "deployment/d"],
+            &["kubectl", "get", "events", "-o", "json"],
+            &["kubectl", "cordon", "n1"],
+            &["kubectl", "uncordon", "n1"],
+            &[
+                "kubectl",
+                "drain",
+                "n1",
+                "--ignore-daemonsets",
+                "--delete-emptydir-data",
+            ],
+            &["k3s", "kubectl", "get", "nodes", "-o", "json"],
+            &["microk8s", "kubectl", "get", "pods", "-o", "json"],
+            &["microk8s.kubectl", "get", "pods"],
+            &["/usr/local/bin/kubectl", "get", "pods"],
+            &["C:\\tools\\kubectl.exe", "get", "pods"],
+        ] {
+            assert_eq!(check_args(&argv(ok)), Ok(()), "{ok:?}");
+        }
     }
 
     #[test]
-    fn kube_command_quotes_each_token() {
-        let cmd = kube_command(&["kubectl".into(), "get".into(), "pods".into()]);
-        assert_eq!(cmd, "'kubectl' 'get' 'pods'");
-    }
-
-    #[test]
-    fn kube_command_quotes_wrapper_program() {
-        // `k3s kubectl …` — the wrapper's tokens are quoted individually too.
-        let cmd = kube_command(&["k3s".into(), "kubectl".into(), "get".into(), "nodes".into()]);
-        assert_eq!(cmd, "'k3s' 'kubectl' 'get' 'nodes'");
-    }
-
-    #[test]
-    fn kube_command_neutralizes_injection() {
-        // A pod name trying to inject a second command stays a single arg.
-        let cmd = kube_command(&[
-            "kubectl".into(),
-            "delete".into(),
-            "pod".into(),
-            "x; rm -rf /".into(),
-        ]);
-        assert_eq!(cmd, "'kubectl' 'delete' 'pod' 'x; rm -rf /'");
-    }
-
-    #[tokio::test]
-    async fn run_local_reports_missing_program() {
-        // A program that does not exist surfaces as a captured exit 127 (so the
-        // frontend classifies "not installed"), not an Err or a panic.
-        let res = run_local(&["definitely-not-a-real-binary-xyz".into()], 5)
-            .await
-            .unwrap();
-        assert_eq!(res.exit_code, 127);
-        assert!(res.stderr.contains("definitely-not-a-real-binary-xyz"));
+    fn what_runs_code_or_moves_credentials_is_refused() {
+        for bad in [
+            &[][..],
+            &["sh", "-c", "id"],
+            &["k3s", "server"],
+            &["kubectl"],
+            &["kubectl", "exec", "p", "--", "id"],
+            &["kubectl", "run", "x", "--image", "alpine"],
+            &["kubectl", "debug", "node/n1", "-it", "--image", "alpine"],
+            &["kubectl", "cp", "p:/etc/passwd", "/tmp/x"],
+            &["kubectl", "apply", "-f", "/tmp/x.yml"],
+            &["kubectl", "evil-plugin"],
+            &["kubectl", "config", "use-context", "prod"],
+            &["kubectl", "config", "view", "--raw"],
+            &["kubectl", "rollout", "undo", "deployment/d"],
+            &["kubectl", "get", "pods", "--kubeconfig=/tmp/k"],
+            &["kubectl", "get", "pods", "--server", "https://evil"],
+            &["kubectl", "get", "pods", "-s", "https://evil"],
+            &["kubectl", "get", "pods", "-As", "https://evil"],
+            &["kubectl", "get", "pods", "--log-file=/home/u/.bashrc"],
+            &["kubectl", "get", "secrets", "--as", "system:admin"],
+            &["kubectl", "get", "pods", "--token=x"],
+        ] {
+            assert!(check_args(&argv(bad)).is_err(), "{bad:?}");
+        }
     }
 }

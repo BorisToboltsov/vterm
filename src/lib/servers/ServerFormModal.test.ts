@@ -1,0 +1,814 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tick } from "svelte";
+import ServerFormModal from "./ServerFormModal.svelte";
+import type { ServerProfile } from "../types";
+
+// The form persists through `./api`; stub it so no real backend is touched and we
+// can assert whether a save was actually attempted.
+const addServer = vi.fn();
+const updateServer = vi.fn();
+const saveProxySecret = vi.fn();
+const saveServerSecret = vi.fn();
+vi.mock("../api", () => ({
+  addServer: (...args: unknown[]) => addServer(...args),
+  updateServer: (...args: unknown[]) => updateServer(...args),
+  forgetSecrets: vi.fn(),
+  pickKeyFile: vi.fn(),
+  saveServerSecret: (...args: unknown[]) => saveServerSecret(...args),
+  saveProxySecret: (...args: unknown[]) => saveProxySecret(...args),
+}));
+
+function renderForm() {
+  const onsaved = vi.fn();
+  const onforgotten = vi.fn();
+  const result = render(ServerFormModal, { props: { onsaved, onforgotten } });
+  // Exported functions live on the component instance in Svelte 5 runes mode.
+  const comp = result.component as unknown as {
+    openAdd: (g?: string) => void;
+    openEdit: (s: ServerProfile) => void;
+    openDuplicate: (s: ServerProfile) => void;
+  };
+  return { ...result, comp, onsaved, onforgotten };
+}
+
+function server(p: Partial<ServerProfile> & { id: string; alias: string }): ServerProfile {
+  return {
+    host: "10.0.0.1",
+    port: 2222,
+    username: "root",
+    authMethod: "password",
+    keyPath: null,
+    hasSavedPassword: true,
+    group: "Prod",
+    tags: ["web", "eu"],
+    prod: null,
+    autoRecord: true,
+    noAi: true,
+    chatPromptId: null,
+    execMode: null,
+    proxy: null,
+    notes: "",
+    icon: "",
+    iconColor: "",
+    ...p,
+  };
+}
+
+describe("ServerFormModal validation", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
+    saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
+  });
+
+  it("highlights empty required fields on submit instead of silently doing nothing", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    // Nothing invalid is shown before the first submit attempt.
+    expect(screen.queryByText("This field is required")).toBeNull();
+
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    // Both required fields (alias/host) light up, plus a summary. The login is
+    // optional — empty means `root` — so it is never flagged.
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
+    expect(screen.getByText("Fill in the required fields")).toBeInTheDocument();
+    expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByTestId("field-username")).not.toHaveAttribute("aria-invalid");
+    // No save was attempted.
+    expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("clears a field's error as soon as it is filled", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    // Alias error clears; host still flagged.
+    expect(screen.getAllByText("This field is required")).toHaveLength(1);
+    expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "false");
+  });
+
+  it("whitespace-only values do not satisfy a required field", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "   ");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByTestId("field-alias")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("saves `root` when the login is left empty", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ username: "root" }));
+  });
+
+  it("carries the chosen pictogram and colour into the payload", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "db");
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    // Appearance is a folded section; the glyph grid shows as soon as it opens.
+    await userEvent.click(screen.getByTestId("server-section-appearance"));
+    await userEvent.click(screen.getByTestId("server-icon-database"));
+    await userEvent.click(screen.getByTestId("server-color-green"));
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({ icon: "database", iconColor: "green" }),
+    );
+  });
+
+  it("rejects a malformed host/IP with a distinct message", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "256.300.1.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByText("Enter a valid host name or IP address")).toBeInTheDocument();
+    expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+
+    // Fixing it to a valid host clears the error and lets the save through.
+    await userEvent.clear(screen.getByTestId("field-host"));
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    expect(screen.queryByText("Enter a valid host name or IP address")).toBeNull();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ host: "example.com" }));
+  });
+
+  it("shows the required message (not the invalid one) when host is left empty", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByTestId("field-host")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Enter a valid host name or IP address")).toBeNull();
+    // Alias/host/username all empty-required → 2 remain empty (alias & username
+    // are filled here, so only host); assert host shows the required copy.
+    expect(screen.getAllByText("This field is required").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("blocks save when the port is cleared (would send null to a u16 backend)", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.clear(screen.getByTestId("field-port"));
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByText("Port must be between 1 and 65535")).toBeInTheDocument();
+    expect(screen.getByTestId("field-port")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+
+    // Re-typing a valid port clears the error and lets the save through.
+    await userEvent.type(screen.getByTestId("field-port"), "2222");
+    expect(screen.queryByText("Port must be between 1 and 65535")).toBeNull();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ port: 2222 }));
+  });
+
+  it("rejects an out-of-range port", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.clear(screen.getByTestId("field-port"));
+    await userEvent.type(screen.getByTestId("field-port"), "99999");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    expect(screen.getByTestId("field-port")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("submits and saves once all required fields are valid", async () => {
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({ alias: "Prod", host: "10.0.0.1", username: "root" }),
+    );
+    expect(onsaved).toHaveBeenCalledWith(expect.anything(), "add");
+    expect(screen.queryByText("This field is required")).toBeNull();
+  });
+
+  it("re-opening the form starts without stale validation errors", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getAllByText("This field is required")).toHaveLength(2);
+
+    comp.openAdd();
+    await tick();
+    expect(screen.queryByText("This field is required")).toBeNull();
+  });
+
+  it("folds optional settings into sections and hints into info tooltips", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+
+    // Connection is always shown; the optional groups are folded section headers.
+    expect(screen.getByText("Connection")).toBeInTheDocument();
+    expect(screen.getByText("Recording & AI")).toBeInTheDocument();
+    expect(screen.queryByTestId("server-ai-prompt")).toBeNull();
+    expect(screen.queryByTestId("server-use-proxy")).toBeNull();
+    expect(screen.queryByTestId("field-tags")).toBeNull();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
+
+    // The auto-record hint is no longer a paragraph — it's a focusable info button
+    // whose accessible name carries the text, with a live tooltip on hover/focus.
+    const hint = "Start recording automatically when connecting (e.g. production servers).";
+    expect(screen.queryByText(hint)).toBeNull();
+    const trigger = screen.getByRole("button", { name: hint });
+    expect(screen.queryByRole("tooltip")).toBeNull();
+    await fireEvent.focus(trigger);
+    expect(screen.getByRole("tooltip")).toHaveTextContent(hint);
+    await fireEvent.blur(trigger);
+    expect(screen.queryByRole("tooltip")).toBeNull();
+  });
+
+  it("always shows the AI chat prompt selector, even with only the default prompt", async () => {
+    // Regression (v0.22.12): the selector used to be gated behind `prompts > 1`,
+    // which hid it — and the ⓘ deep-link to create prompts — in the default setup.
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
+    expect(screen.getByTestId("server-ai-prompt")).toBeInTheDocument();
+  });
+
+  it("the AI-prompt ⓘ deep-links to Settings via onOpenAiPrompts", async () => {
+    const onsaved = vi.fn();
+    const onforgotten = vi.fn();
+    const onOpenAiPrompts = vi.fn();
+    const result = render(ServerFormModal, { props: { onsaved, onforgotten, onOpenAiPrompts } });
+    (result.component as unknown as { openAdd: () => void }).openAdd();
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-recording"));
+
+    const hint =
+      "Use a specific chat prompt when the assistant works on this server. Click to open Settings → AI assistant → System prompts.";
+    await fireEvent.click(screen.getByRole("button", { name: hint }));
+    expect(onOpenAiPrompts).toHaveBeenCalledOnce();
+    // The form closes so the settings panel underneath is reachable.
+    expect(screen.queryByTestId("field-alias")).toBeNull();
+  });
+});
+
+describe("ServerFormModal proxy", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod" });
+    saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
+  });
+
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+  }
+
+  async function enableProxy() {
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    await userEvent.click(screen.getByTestId("server-use-proxy"));
+  }
+
+  it("gives an empty jump-host login the same `root` default", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({ kind: "jump", username: "root" }),
+      }),
+    );
+  });
+
+  it("leaves an empty SOCKS login empty — its auth is optional", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
+    await userEvent.type(screen.getByTestId("proxy-host"), "10.0.0.2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({ kind: "socks5", username: "" }),
+      }),
+    );
+  });
+
+  it("is a direct connection by default — no proxy fields, no proxy in payload", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    expect(screen.queryByTestId("proxy-host")).toBeNull();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ proxy: null }));
+  });
+
+  it("sends the jump-host proxy and stores its secret in the keychain", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    await userEvent.type(screen.getByTestId("proxy-host"), "bastion.corp");
+    await userEvent.type(screen.getByTestId("proxy-username"), "jump");
+    await userEvent.type(screen.getByTestId("proxy-secret"), "s3cret");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({
+          kind: "jump",
+          host: "bastion.corp",
+          username: "jump",
+          authMethod: "password",
+          hasSavedPassword: true,
+        }),
+      }),
+    );
+    // The typed secret is persisted separately to the keychain (never on the profile).
+    expect(saveProxySecret).toHaveBeenCalledWith("s1", "s3cret");
+  });
+
+  it("sends a SOCKS5 proxy with optional basic auth and no SSH-only fields", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    await userEvent.selectOptions(screen.getByTestId("proxy-kind"), "socks5");
+    // SOCKS5 shows optional basic auth (hint), not the SSH auth-method radios.
+    expect(
+      screen.getByRole("button", {
+        name: "Optional — only if the proxy requires authentication.",
+      }),
+    ).toBeInTheDocument();
+    await userEvent.type(screen.getByTestId("proxy-host"), "socks.corp");
+    await userEvent.clear(screen.getByTestId("proxy-port"));
+    await userEvent.type(screen.getByTestId("proxy-port"), "1080");
+    await userEvent.type(screen.getByTestId("proxy-username"), "u");
+    await userEvent.type(screen.getByTestId("proxy-secret"), "p");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        proxy: expect.objectContaining({
+          kind: "socks5",
+          host: "socks.corp",
+          port: 1080,
+          username: "u",
+          hasSavedPassword: true,
+        }),
+      }),
+    );
+    expect(saveProxySecret).toHaveBeenCalledWith("s1", "p");
+  });
+
+  it("shows the proxy fields up front, disabled until the checkbox turns it on", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    // Visible without ticking anything, but dimmed and not editable.
+    const fields = screen.getByTestId("proxy-fields");
+    expect(fields).toBeDisabled();
+    expect(fields.className).toContain("opacity-50");
+    expect(screen.getByTestId("proxy-host")).toBeDisabled();
+    // Off → nothing is saved, and the (empty) proxy host does not block the save.
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ proxy: null }));
+  });
+
+  it("enables the proxy fields when the checkbox is ticked", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await enableProxy();
+    expect(screen.getByTestId("proxy-fields")).not.toBeDisabled();
+    expect(screen.getByTestId("proxy-fields").className).not.toContain("opacity-50");
+    expect(screen.getByTestId("proxy-host")).not.toBeDisabled();
+  });
+
+  it("blocks save when the proxy is enabled but its host is invalid", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    // Leave proxy host empty and username empty → validation blocks the save.
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getByTestId("proxy-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+  });
+
+  it("unfolds the proxy section when its error would otherwise be hidden", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await enableProxy();
+    // Fold it back: the invalid (empty) host is now out of sight.
+    await userEvent.click(screen.getByTestId("server-section-proxy"));
+    expect(screen.queryByTestId("proxy-host")).toBeNull();
+    await userEvent.click(screen.getByTestId("save-server"));
+    expect(screen.getByTestId("proxy-host")).toHaveAttribute("aria-invalid", "true");
+    expect(addServer).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerFormModal folded-section previews", () => {
+  it("previews tags, proxy and recording while folded", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(
+      server({
+        id: "s1",
+        alias: "Web",
+        tags: ["prod", "web"],
+        autoRecord: true,
+        noAi: true,
+        proxy: {
+          kind: "jump",
+          host: "bastion.corp",
+          port: 22,
+          username: "root",
+          authMethod: "password",
+          keyPath: null,
+          hasSavedPassword: false,
+        },
+      }),
+    );
+    await tick();
+
+    const appearance = screen.getByTestId("server-section-appearance");
+    expect(appearance).toHaveAttribute("aria-expanded", "false");
+    // Tags are plain labels now — none is painted as production.
+    expect(within(appearance).getByText("prod").className).not.toContain("text-bad");
+    expect(within(appearance).getByText("web")).toBeInTheDocument();
+    expect(screen.getByTestId("server-section-proxy")).toHaveTextContent(
+      "SSH jump host · bastion.corp:22",
+    );
+    expect(screen.getByTestId("server-section-recording")).toHaveTextContent(
+      "auto-record · no AI",
+    );
+  });
+
+  it("explains what tags are for with an info hint", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-appearance"));
+    expect(
+      screen.getByRole("button", { name: "Labels for search and filtering in the server list." }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("server-section-proxy")).toHaveTextContent("none");
+    expect(screen.getByTestId("server-section-recording")).toHaveTextContent("defaults");
+  });
+});
+
+describe("ServerFormModal production flag", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "db" });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Web" });
+  });
+
+  it("is a checkbox in the always-visible section, off by default, with an info hint", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    const box = screen.getByTestId("server-prod");
+    expect(box).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /production safeguards/ })).toBeInTheDocument();
+  });
+
+  it("sends an explicit prod flag, independent of tags", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await userEvent.type(screen.getByTestId("field-alias"), "db");
+    await userEvent.type(screen.getByTestId("field-host"), "example.com");
+    await userEvent.click(screen.getByTestId("server-prod"));
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(
+      expect.objectContaining({ prod: true, tags: [], autoRecord: false, noAi: false }),
+    );
+  });
+
+  it("opens a legacy prod-tagged profile checked, so saving keeps its safeguards", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", tags: ["Production"], prod: null }));
+    await tick();
+    expect(screen.getByTestId("server-prod")).toBeChecked();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    expect(updateServer).toHaveBeenCalledWith(
+      "s1",
+      expect.objectContaining({ prod: true, tags: ["Production"] }),
+    );
+  });
+
+  it("an explicit flag wins over a leftover prod tag", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", tags: ["prod"], prod: false }));
+    await tick();
+    expect(screen.getByTestId("server-prod")).not.toBeChecked();
+  });
+});
+
+describe("ServerFormModal duplicate", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s2", alias: "Web (copy)" });
+  });
+
+  it("opens pre-filled from the source with a '(copy)' alias and adds a new server", async () => {
+    const { comp, onsaved } = renderForm();
+    comp.openDuplicate(server({ id: "orig", alias: "Web" }));
+    await tick();
+
+    // Fields carried over from the source; alias gets the copy suffix.
+    expect(screen.getByTestId("field-alias")).toHaveValue("Web (copy)");
+    expect(screen.getByTestId("field-host")).toHaveValue("10.0.0.1");
+    expect(screen.getByTestId("field-username")).toHaveValue("root");
+    expect(screen.getByTestId("field-port")).toHaveValue(2222);
+
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    // It's an add (new id), not an update — and the copied secret is NOT sent.
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(updateServer).not.toHaveBeenCalled();
+    const payload = addServer.mock.calls[0][0];
+    expect(payload).toMatchObject({
+      alias: "Web (copy)",
+      host: "10.0.0.1",
+      port: 2222,
+      username: "root",
+      group: "Prod",
+      tags: ["web", "eu"],
+      autoRecord: true,
+      noAi: true,
+    });
+    expect(payload).not.toHaveProperty("hasSavedPassword");
+    expect(onsaved).toHaveBeenCalledWith(expect.anything(), "add");
+  });
+});
+
+describe("ServerFormModal server secret", () => {
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    saveProxySecret.mockReset();
+    saveServerSecret.mockReset();
+    addServer.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: false });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: false });
+    saveProxySecret.mockResolvedValue(undefined);
+    saveServerSecret.mockResolvedValue({ id: "s1", alias: "Prod", hasSavedPassword: true });
+  });
+
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Prod");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+    await userEvent.type(screen.getByTestId("field-username"), "root");
+  }
+
+  it("stores a typed password in the keychain, never on the profile", async () => {
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    // The secret is not part of the profile payload — it only ever goes to the keychain.
+    expect(JSON.stringify(addServer.mock.calls[0][0])).not.toContain("hunter2");
+    expect(saveServerSecret).toHaveBeenCalledWith("s1", "hunter2");
+    // The parent gets the profile the backend returned, so the list shows the hint.
+    expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ hasSavedPassword: true }),
+      "edit",
+    );
+  });
+
+  it("closes once the server is saved even while the keychain is still waiting", async () => {
+    let finishSecret!: (profile: ServerProfile) => void;
+    saveServerSecret.mockImplementation(
+      () => new Promise<ServerProfile>((resolve) => { finishSecret = resolve; }),
+    );
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(saveServerSecret).toHaveBeenCalledWith("s1", "hunter2"));
+    expect(onsaved).toHaveBeenCalledWith(expect.objectContaining({ id: "s1" }), "add");
+    await waitFor(() => expect(screen.queryByTestId("field-alias")).toBeNull());
+    finishSecret(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await waitFor(() => expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ hasSavedPassword: true }), "edit",
+    ));
+  });
+
+  it("leaves the keychain alone when the field is untouched", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(saveServerSecret).not.toHaveBeenCalled();
+  });
+
+  it("labels the field by auth method and never pre-fills a stored secret", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await tick();
+
+    const field = screen.getByTestId("server-secret") as HTMLInputElement;
+    // Saved secrets show as a placeholder; the value stays empty (PasswordInput invariant).
+    expect(field.value).toBe("");
+    expect(field.placeholder).toBe("Leave blank to keep the saved secret");
+    // "Password" also names the auth-method radio, so read the field's own label.
+    expect(field.closest("label")?.textContent).toContain("Password");
+
+    // Switching to key auth relabels the same field as the passphrase.
+    await userEvent.click(screen.getByRole("radio", { name: "SSH key" }));
+    expect(
+      (screen.getByTestId("server-secret") as HTMLInputElement).closest("label")?.textContent,
+    ).toContain("Passphrase");
+  });
+
+  it("does not carry the saved-secret hint into a duplicate (new id, new keychain entry)", async () => {
+    const { comp } = renderForm();
+    comp.openDuplicate(server({ id: "s1", alias: "Prod", hasSavedPassword: true }));
+    await tick();
+    expect((screen.getByTestId("server-secret") as HTMLInputElement).placeholder).toBe("");
+  });
+
+  it("reports a keychain failure but still saves the server", async () => {
+    saveServerSecret.mockRejectedValue("keychain write failed");
+    const { comp, onsaved } = renderForm();
+    comp.openAdd();
+    await tick();
+    await fillRequired();
+    await userEvent.type(screen.getByTestId("server-secret"), "hunter2");
+    await userEvent.click(screen.getByTestId("save-server"));
+
+    // The profile exists backend-side, so the parent must still learn about it.
+    await waitFor(() => expect(onsaved).toHaveBeenCalledOnce());
+    expect(onsaved).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "s1", hasSavedPassword: false }),
+      "add",
+    );
+    await waitFor(() => expect(screen.queryByTestId("field-alias")).toBeNull());
+  });
+});
+
+describe("ServerFormModal path sync", () => {
+  async function fillRequired() {
+    await userEvent.type(screen.getByTestId("field-alias"), "Web");
+    await userEvent.type(screen.getByTestId("field-host"), "10.0.0.1");
+  }
+
+  beforeEach(() => {
+    addServer.mockReset();
+    updateServer.mockReset();
+    addServer.mockResolvedValue({ id: "s2", alias: "Web (copy)" });
+    updateServer.mockResolvedValue({ id: "s1", alias: "Web" });
+  });
+
+  it("is “ask” on a new server and stores no value for it", async () => {
+    const { comp } = renderForm();
+    comp.openAdd();
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Ask");
+    await fillRequired();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: null }));
+  });
+
+  it("opens with the server's own answer and saves the one chosen", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", pathSync: "manual" }));
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Manually");
+    await userEvent.click(screen.getByTestId("server-section-terminal"));
+    const group = screen.getByTestId("server-path-sync");
+    expect(within(group).getByRole("radio", { name: "Manually" })).toBeChecked();
+    await userEvent.click(within(group).getByRole("radio", { name: "Always" }));
+    expect(screen.getByText(/On at every connect/)).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(updateServer).toHaveBeenCalledOnce());
+    expect(updateServer).toHaveBeenCalledWith("s1", expect.objectContaining({ pathSync: "auto" }));
+  });
+
+  it("reads a value it does not know as “ask”", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", pathSync: "sometimes" }));
+    await tick();
+    expect(screen.getByTestId("server-section-terminal")).toHaveTextContent("Path sync: Ask");
+  });
+
+  it("warns on a prod server set to “Always”", async () => {
+    const { comp } = renderForm();
+    comp.openEdit(server({ id: "s1", alias: "Web", prod: true, pathSync: "auto" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("server-section-terminal"));
+    expect(screen.getByTestId("server-path-sync-prod")).toBeInTheDocument();
+    await userEvent.click(screen.getByTestId("server-prod"));
+    expect(screen.queryByTestId("server-path-sync-prod")).toBeNull();
+  });
+
+  it("a copy keeps the source's answer", async () => {
+    const { comp } = renderForm();
+    comp.openDuplicate(server({ id: "s1", alias: "Web", pathSync: "auto" }));
+    await tick();
+    await userEvent.click(screen.getByTestId("save-server"));
+    await waitFor(() => expect(addServer).toHaveBeenCalledOnce());
+    expect(addServer).toHaveBeenCalledWith(expect.objectContaining({ pathSync: "auto" }));
+  });
+});

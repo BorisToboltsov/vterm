@@ -2,7 +2,7 @@
 // threshold and the reason a panel would measure itself rather than use a
 // container query are in `../panelwide.ts`.
 
-import { isWide } from "../panelwide";
+import { isWide } from "../layout/panelwide";
 
 /** Px to the rem: container queries resolve `rem` against the root font size. */
 function rootRem(): number {

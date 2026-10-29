@@ -5,7 +5,7 @@
 #   # ... run tests against 127.0.0.1:2222 (tester / testpass) ...
 #   docker compose -f e2e/docker-compose.ssh.yml down
 #
-# In CI this is provided as a service instead (see .gitlab-ci.yml, e2e job).
+# CI brings it up with the same command (.github/actions/test-sshd, used by deep.yml).
 
 services:
   ssh:

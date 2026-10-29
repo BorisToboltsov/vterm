@@ -43,10 +43,10 @@ import {
   type Edge,
   type Beside,
   type TabDrop,
-} from "../splitlayout";
-import type { TabAttach } from "../tabattach";
-import type { TermSnapshot } from "../tabhandoff";
-import type { SavedTab, WaitReason } from "../tabrestore";
+} from "../layout/splitlayout";
+import type { TabAttach } from "../tabs/tabattach";
+import type { TermSnapshot } from "../windows/tabhandoff";
+import type { SavedTab, WaitReason } from "../tabs/tabrestore";
 
 export interface Tab {
   sessionId: string;

@@ -621,7 +621,7 @@ async fn ensure_remote_dirs(sftp: &SftpSession, remote_file: &str) {
 /// event's `name` field can't do that job: it is the base name, so two files called
 /// `config.yml` in different folders are indistinguishable.
 ///
-/// Mirrored by `syncTransferId` in [`sync.ts`](../../src/lib/sync.ts) — the two must
+/// Mirrored by `syncTransferId` in [`sync.ts`](../../src/lib/sync/sync.ts) — the two must
 /// agree byte for byte or every row stays stuck at "queued".
 pub fn sync_transfer_id(path: &str) -> String {
     format!("sync:{path}")

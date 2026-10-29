@@ -114,8 +114,9 @@ gh attestation verify vterm_1.0.0_universal.dmg --repo BorisToboltsov/vterm
 
 ## Требования
 
-Нужны только для сборки из исходников. На всех ОС: **Node.js 20+**, **pnpm**
-и **Rust stable** ([rustup](https://rustup.rs/)).
+Нужны только для сборки из исходников. На всех ОС: **Node.js 22.17+**, **pnpm** 11
+и **Rust** через [rustup](https://rustup.rs/): версию из `rust-toolchain.toml` он поставит сам
+при первом `cargo`.
 
 | ОС | Дополнительно |
 |----|---------------|
@@ -281,11 +282,6 @@ Linux-job намеренно собирается на **ubuntu-22.04**, а не
 с glibc сборочного хоста, поэтому его версия — пол совместимости артефакта. 22.04 (glibc 2.35)
 покрывает и Debian 12, и Ubuntu 22.04/24.04+; сборка на 24.04/26.04 этот охват сужает.
 
-**GitLab CI** — [.gitlab-ci.yml](../.gitlab-ci.yml) (`lint → security → test → build → release`) для
-**self-hosted** раннеров: теги `macos` / `windows` / `linux` в конфиге замените на теги
-своих раннеров (*Settings → CI/CD → Runners*). Пуш и MR дают артефакты пайплайна, тег
-`v1.2.3` — GitLab Release. Rust и pnpm CI ставит сам.
-
 ---
 
 ## Как выкатить релиз
@@ -296,7 +292,7 @@ Linux-job намеренно собирается на **ubuntu-22.04**, а не
 
 Версия живёт **только** в [package.json](../package.json); `tauri.conf.json` берёт её
 оттуда ссылкой, а `Cargo.toml`/`Cargo.lock` синхронизирует скрипт. Схема и правила — в
-[CLAUDE.md](../CLAUDE.md).
+[AGENTS.md](../AGENTS.md).
 
 ```bash
 pnpm version:set 1.0.1
@@ -317,6 +313,7 @@ cargo fmt    --manifest-path src-tauri/Cargo.toml --all --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test   --manifest-path src-tauri/Cargo.toml
 pnpm check
+pnpm lint
 pnpm test:coverage
 pnpm build
 ```
@@ -394,7 +391,7 @@ write`, но настройка репозитория — потолок над
 
 ### Что закреплено тестами
 
-[releaseassets.guard.test.ts](../src/lib/releaseassets.guard.test.ts) читает workflow и
+[releaseassets.guard.test.ts](../src/lib/repo/releaseassets.guard.test.ts) читает workflow и
 падает, если: пропал шаг заливки `open-on-mac.sh`, portable-`.exe` или portable с WebView2
 (или из него пропала проверка подписи `.cab`); `node-version` не
 перекрывает пол запиненного мажора pnpm (pnpm 11 требует Node ≥ 22.13 и умирает первым же
@@ -413,6 +410,7 @@ write`, но настройка репозитория — потолок над
 | `pnpm tauri:build:mac` | То же + `open-on-mac.sh` рядом с `.dmg` |
 | `pnpm dev` · `pnpm build` | Только фронтенд: Vite dev-сервер · production-сборка |
 | `pnpm check` | Типы и a11y (`svelte-check`) |
+| `pnpm lint` | ESLint: рекомендованные правила и правила проекта ([lint/vterm.js](../lint/vterm.js)) |
 | `pnpm test` · `pnpm test:coverage` | Vitest: юнит и компонентные · с покрытием и гейтами |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust-юнит-тесты |
 
@@ -447,8 +445,7 @@ gh secret set VTERM_UPDATE_PRIVATE_KEY --repo BorisToboltsov/vterm < .update-key
 Секрет CI должен соответствовать встроенному открытому ключу — скрипт проверяет это.
 Apple Developer ID, нотаризация и Windows Authenticode для этого ключа не нужны.
 
-GitLab остаётся альтернативной сборкой дистрибутивов; канал обновлений данного приложения —
-GitHub. Публикация одного GitLab-релиза не меняет GitHub Latest.
+Канал обновлений — релизы GitHub: другой сборки дистрибутивов, кроме `release.yml`, нет.
 
 Помощник запускается из копии текущей программы. Portable/AppImage сохраняют путь и имя;
 macOS обновляет весь `.app`. В каталоге назначения нужна запись. MSI/NSIS запускаются через

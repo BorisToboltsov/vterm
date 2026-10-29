@@ -1,8 +1,8 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
-import { defaultDocks, DOCK_BOUNDS, LAYOUT_VERSION } from "../docklayout";
-import { LIST_COLUMNS } from "../colwidths";
-import { resetSettings, settings } from "../settings.svelte";
+import { defaultDocks, DOCK_BOUNDS, LAYOUT_VERSION } from "../layout/docklayout";
+import { LIST_COLUMNS } from "../ui/colwidths";
+import { resetSettings, settings } from "../settings/settings.svelte";
 import { columnWidth, setColumnWidth } from "./colwidths.svelte";
 import {
   activatePanel,

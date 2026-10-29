@@ -1,0 +1,285 @@
+// @vitest-environment node
+//
+// vterm's own lint rules (lint/vterm.js) hold the invariants that used to be
+// text gates. `pnpm lint` runs them over the tree; this file proves each one is
+// switched on and still catches the violation it exists for — and stays quiet on
+// the compliant shape and on prose that merely names the anti-pattern. An
+// exception that no longer suppresses anything fails the run, as a stale
+// exemption failed the gates.
+
+import { ESLint, type Linter } from "eslint";
+import { describe, expect, it } from "vitest";
+
+const eslint = new ESLint({ cwd: process.cwd() });
+
+async function lint(filePath: string, code: string): Promise<Linter.LintMessage[]> {
+  const [result] = await eslint.lintText(code, { filePath });
+  return result.messages;
+}
+
+/** The vterm rules (and unused-directive reports) the snippet trips. */
+async function tripped(filePath: string, code: string): Promise<string[]> {
+  const messages = await lint(filePath, code);
+  const fatal = messages.find((m) => m.fatal);
+  if (fatal) throw new Error(`${filePath}: ${fatal.message}`);
+  return messages
+    .map((m) => m.ruleId ?? (/Unused eslint-disable/.test(m.message) ? "unused-directive" : null))
+    .filter((id): id is string => id !== null && (id.startsWith("vterm/") || id === "unused-directive"));
+}
+
+const svelte = (script: string, markup = "") => `<script lang="ts">\n${script}\n</script>\n${markup}\n`;
+
+/** For each rule: shapes it must catch, and shapes it must leave alone. */
+const CASES: Record<string, { bad: [string, string][]; good: [string, string][] }> = {
+  layers: {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `import { tabsState } from "../stores/tabs.svelte";\nexport const x = tabsState;`],
+      ["src/lib/ui/zz_probe.ts", `import { settings } from "../settings/settings.svelte";\nexport const x = settings;`],
+      ["src/lib/ui/zz_probe.ts", `import { listen } from "@tauri-apps/api/event";\nexport const x = listen;`],
+      ["src/lib/ui/zz_probe.ts", `import { hostOs } from "../api";\nexport const x = hostOs;`],
+      // The one module at the root (types.ts) is as pure as a subsystem's.
+      ["src/lib/zz_probe.ts", `import { tabsState } from "./stores/tabs.svelte";\nexport const x = tabsState;`],
+      ["src/lib/api/zz_probe.ts", `import { settings } from "../settings/settings.svelte";\nexport const x = settings;`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import Modal from "../ui/Modal.svelte";\nexport const x = Modal;`],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import Page from "../../routes/+page.svelte";`, "<Page />")],
+      // The `#lib/…` subpath import (with its extension) is the same file as the relative path.
+      ["src/lib/ui/zz_probe.ts", `import { tabsState } from "#lib/stores/tabs.svelte.ts";\nexport const x = tabsState;`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import Modal from "#lib/ui/Modal.svelte";\nexport const x = Modal;`],
+      // An exception whose module imports nothing impure any more.
+      ["src/lib/windows/appwindow.ts", `export const x = 1;`],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.ts", `import type { Tab } from "../stores/tabs.svelte";\nexport type X = Tab;`],
+      ["src/lib/ui/zz_probe.ts", `import { t } from "../i18n";\nimport { joinPath } from "../files/fspath";\nexport const x = [t, joinPath];`],
+      ["src/lib/ui/zz_probe.ts", `import { joinPath } from "#lib/files/fspath.ts";\nexport const x = joinPath;`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import { settings } from "../settings/settings.svelte";\nexport const x = settings;`],
+      // A layer folder is not a subsystem: its .ts is not held to purity.
+      ["src/lib/actions/zz_probe.ts", `import { tabsState } from "../stores/tabs.svelte";\nexport const x = tabsState;`],
+    ],
+  },
+  "invoke-in-api": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { invoke } from "@tauri-apps/api/core";\nvoid invoke;`)]],
+    good: [["src/lib/api/zz_probe.ts", `import { invoke } from "@tauri-apps/api/core";\nexport const x = invoke;`]],
+  },
+  "opener-on-click": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { openUrl } from "@tauri-apps/plugin-opener";\nvoid openUrl;`)]],
+    good: [["src/lib/stores/linkopen.svelte.ts", `import { openUrl } from "@tauri-apps/plugin-opener";\nexport const x = openUrl;`]],
+  },
+  "no-network": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const x = () => fetch("https://example.com");`],
+      ["src/lib/ui/zz_probe.ts", `export const x = () => window.fetch("https://example.com");`],
+      ["src/lib/ui/zz_probe.ts", `export const x = () => new WebSocket("wss://example.com");`],
+      ["src/lib/ui/zz_probe.ts", `export const x = () => navigator.sendBeacon("https://example.com");`],
+    ],
+    good: [["src/lib/ui/zz_probe.ts", `function fetch(n: number) { return n; }\nexport const x = fetch(1);`]],
+  },
+  "no-scratch-path": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const p = "/tmp/vterm-realtest.conf";`],
+      ["src/lib/ui/zz_probe.ts", "export const p = (n: string) => `/tmp/vterm-${n}.json`;"],
+    ],
+    good: [["src/lib/ui/zz_probe.ts", `// a diagnostic once read /tmp/vterm-realtest.conf\nexport const p = "C:\\\\Temp";`]],
+  },
+  "password-input": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="password" bind:value={v} />`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="text" bind:value={v} />`)]],
+  },
+  "hotkey-letter": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `export const f = (e: KeyboardEvent) => e.ctrlKey && e.key === "r";`],
+      ["src/lib/ui/zz_probe.ts", `export const f = (e: KeyboardEvent) => e.key.toLowerCase() === "k";`],
+      ["src/lib/ui/zz_probe.ts", `export function f(e: KeyboardEvent) { switch (e.key) { case "a": return 1; } return 0; }`],
+    ],
+    good: [["src/lib/ui/zz_probe.ts", `// e.key === "r" used to be here\nexport const f = (e: KeyboardEvent) => e.key === "Enter";`]],
+  },
+  "submit-with-cr": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", "const enc = new TextEncoder();\nexport const f = (a: string[]) => enc.encode(`git ${a.join(\" \")}\\n`);"],
+      ["src/lib/ui/zz_probe.ts", `const enc = new TextEncoder();\nexport const f = () => enc.encode("ls\\n");`],
+    ],
+    good: [["src/lib/ui/zz_probe.ts", `const enc = new TextEncoder();\nexport const f = () => enc.encode("ls\\r");`]],
+  },
+  "terminal-write": {
+    bad: [["src/lib/ui/zz_probe.ts", `declare const invoke: (c: string) => void;\nexport const f = () => invoke("write_to_terminal");`]],
+    good: [["src/lib/ui/zz_probe.ts", `// "write_to_terminal" goes through api/session.ts\nexport const f = 1;`]],
+  },
+  "overlay-z-index": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte("", `<div class="fixed inset-0 bg-black/50"></div>`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<div class="fixed inset-0 z-40 bg-black/50"></div>`)]],
+  },
+  "type-scale": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="text-[13px] text-muted">x</span>`)],
+      ["src/lib/ui/zz_probe.ts", `export const cls = "text-[0.8rem] text-muted";`],
+    ],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="text-meta text-muted">x</span>`)]],
+  },
+  "micro-label": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)]],
+  },
+  "motion-duration": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { slide } from "svelte/transition";`, `<div transition:slide>x</div>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { fade } from "svelte/transition";`, `<div in:fade={{ duration: 200 }}>x</div>`)],
+    ],
+    good: [
+      [
+        "src/lib/ui/ZzProbe.svelte",
+        svelte(`import { slide } from "svelte/transition";\nimport { motion } from "./motion";`, `<div transition:slide={motion({ duration: 200 })}>x</div>`),
+      ],
+    ],
+  },
+  "locale-binding": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`import { settings } from "../settings/settings.svelte";`, `<select bind:value={settings.language}></select>`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte(`import { settings } from "../settings/settings.svelte";`, `<select value={settings.language}></select>`)]],
+  },
+  "md-links": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`let html = $state("");`, `<!-- use:mdLinks is not on this element -->\n<div>{@html html}</div>`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte(`import { mdLinks } from "../actions/mdlinks";\nlet html = $state("");`, `<div use:mdLinks>{@html html}</div>`)]],
+  },
+  "backdrop-no-close": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`let open = $state(true);`, `<button class="absolute inset-0 bg-black/50" aria-label="x" onclick={() => (open = false)}></button>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`const close = () => {};`, `<div class="absolute inset-0 bg-black/50" role="none" onclick={close}></div>`)],
+    ],
+    good: [
+      [
+        "src/lib/ui/ZzProbe.svelte",
+        svelte("", `<!-- <button class="inset-0 bg-black/50"> -->\n<div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>`),
+      ],
+    ],
+  },
+  "owned-imports": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { setServerPathSync } from "../api";\nvoid setServerPathSync;`)],
+      ["src/lib/files/SftpPanel.svelte", svelte(`import { transferStart } from "../api";\nvoid transferStart;`)],
+      // Under an alias, and through a namespace.
+      ["src/lib/ui/zz_probe.ts", `import { closeTab as drop } from "../stores/tabs.svelte";\nexport const x = drop;`],
+      ["src/lib/ui/zz_probe.ts", `import * as api from "../api";\nexport const x = () => api.importBackup("/b", null, true);`],
+      ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
+      ["src/routes/+page.svelte", svelte(`import { openRestored } from "#lib/stores/tabs.svelte.ts";\nvoid openRestored;`)],
+    ],
+    good: [
+      ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
+      ["src/lib/files/transferflow.ts", `import { transferStart } from "../api";\nexport const x = transferStart;`],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { setServerNotes } from "../api";\nvoid setServerNotes;`)],
+    ],
+  },
+  "owned-writes": {
+    bad: [
+      ["src/lib/terminal/Terminal.svelte", svelte(`import { settings } from "../settings/settings.svelte";\nsettings.terminalLinks = "direct";`)],
+      ["src/routes/+page.svelte", svelte(`import { settings } from "#lib/settings/settings.svelte.ts";\nconst silence = () => (settings.terminalFileLinks = "direct");\nvoid silence;`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { settings } from "../settings/settings.svelte";`, `<select bind:value={settings.terminalLinks}></select>`)],
+    ],
+    good: [
+      ["src/lib/page/filelinkflow.svelte.ts", `import { settings } from "../settings/settings.svelte";\nexport const f = () => (settings.terminalFileLinks = "direct");`],
+      ["src/lib/settings/SettingsPanel.svelte", svelte(`import { settings } from "./settings.svelte";`, `<select bind:value={settings.terminalLinks}></select>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { settings } from "../settings/settings.svelte";\nconst on = $derived(settings.terminalLinks !== "off");\nvoid on;`)],
+    ],
+  },
+  "theme-colors": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="text-amber-400">M</span>`)],
+      // The helper as it was until v1.15: a class returned from a script lands in markup.
+      ["src/lib/ui/zz_probe.ts", `export const color = (s: string) => (s === "M" ? "text-amber-400" : "text-muted");`],
+      // The pinned button's class is no licence in a script (the connection dots, until v1.15).
+      ["src/lib/ui/zz_probe.ts", `export const dot = "bg-green-500";`],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="rounded bg-accent/10 text-white">x</span>`)],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<button class="bg-green-600 text-white">Save</button>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<button class="bg-danger text-white">Delete</button>`)],
+      ["src/lib/ui/zz_probe.ts", `// was \`text-amber-400\` — a smudge on a cream panel\nexport const c = "text-warn"; // not text-green-400`],
+    ],
+  },
+  "virtual-scroll": {
+    bad: [
+      [
+        "src/lib/ui/ZzProbe.svelte",
+        svelte(`import { windowRange } from "./virtuallist";\nconst w = windowRange(0, 1, 1, 1);`, `<!-- overflow-anchor: none -->\n<div class="overflow-auto">{w}</div>`),
+      ],
+    ],
+    good: [
+      [
+        "src/lib/ui/ZzProbe.svelte",
+        svelte(`import { windowRange } from "./virtuallist";\nconst w = windowRange(0, 1, 1, 1);`, `<div class="overflow-auto [overflow-anchor:none]">{w}</div>`),
+      ],
+    ],
+  },
+  "paste-caret": {
+    bad: [
+      // cmPaste in EditorTab as it was: CRLF text lands shorter, the anchor past the end.
+      [
+        "src/lib/ui/zz_probe.ts",
+        `declare const view: { dispatch(t: unknown): void };\nexport const paste = (from: number, text: string) =>\n  view.dispatch({ changes: { from, to: from, insert: text }, selection: { anchor: from + text.length } });`,
+      ],
+      ["src/lib/ui/zz_probe.ts", `let caret = 0;\nexport const f = (a: number, pasted: string) => (caret = a + pasted.length);\nvoid caret;`],
+    ],
+    good: [
+      [
+        "src/lib/ui/zz_probe.ts",
+        `declare const view: { dispatch(t: unknown): void; state: { replaceSelection(t: string): unknown } };\nexport const paste = (text: string) => view.dispatch(view.state.replaceSelection(text));`,
+      ],
+    ],
+  },
+  "forbidden-imports": {
+    bad: [
+      ["src/lib/stores/tabs.svelte.ts", `import { getWorkspace } from "./workspaces.svelte";\nexport const x = getWorkspace;`],
+      ["src/lib/stores/tabs.svelte.ts", `import type { SessionChat } from "./aichat.svelte";\nexport type X = SessionChat;`],
+      ["src/lib/stores/tabincoming.svelte.ts", `import { dropTab, type Tab } from "./tabs.svelte";\nexport const x: [unknown, Tab?] = [dropTab];`],
+    ],
+    good: [
+      ["src/lib/stores/tabincoming.svelte.ts", `import type { Tab } from "./tabs.svelte";\nexport type X = Tab;`],
+      // Prose in a comment is not a dependency.
+      ["src/lib/stores/tabs.svelte.ts", `// a connection's files live in ./workspaces.svelte\nexport const x = 1;`],
+    ],
+  },
+  "path-sync-mode": {
+    bad: [
+      ["src/lib/ui/zz_probe.ts", `declare const srv: { pathSync?: string } | undefined;\nexport const auto = srv?.pathSync === "auto";`],
+      ["src/lib/ui/zz_probe.ts", `declare const srv: { pathSync?: string };\nexport const raw = String(srv.pathSync);`],
+    ],
+    good: [
+      [
+        "src/lib/ui/zz_probe.ts",
+        `import { pathSyncMode } from "../pathsync/pathsync";\ndeclare const list: { pathSync?: string }[];\nexport const m = pathSyncMode(list.find(Boolean)?.pathSync);`,
+      ],
+    ],
+  },
+  "each-as-t": {
+    bad: [["src/lib/ui/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as t}<span>{t}</span>{/each}`)]],
+    good: [["src/lib/ui/ZzProbe.svelte", svelte(`const tags = ["a"];`, `{#each tags as tag}<span>{tag}</span>{/each}`)]],
+  },
+};
+
+describe("vterm lint rules", () => {
+  it("every rule of the plugin is switched on and has its cases here", async () => {
+    const config = await eslint.calculateConfigForFile("src/lib/ui/zz_probe.ts");
+    const plugin = (config.plugins as Record<string, { rules: Record<string, unknown> }>).vterm;
+    expect(Object.keys(plugin.rules).sort()).toEqual(Object.keys(CASES).sort());
+  });
+
+  for (const [name, { bad, good }] of Object.entries(CASES)) {
+    it(`${name}: catches the shapes it exists for, and leaves the compliant ones alone`, async () => {
+      for (const [file, code] of bad) {
+        expect(await tripped(file, code), `${file}:\n${code}`).toContain(`vterm/${name}`);
+      }
+      for (const [file, code] of good) {
+        expect(await tripped(file, code), `${file}:\n${code}`).toEqual([]);
+      }
+    });
+  }
+
+  it("leaves tests alone: fixtures name the violations on purpose", async () => {
+    expect(await tripped("src/lib/zz_probe.test.ts", `export const p = "/tmp/vterm-x";`)).toEqual([]);
+  });
+
+  it("fails an exception that no longer suppresses anything", async () => {
+    const stale = `// eslint-disable-next-line vterm/no-scratch-path -- was a diagnostic path\nexport const p = "/var/x";`;
+    expect(await tripped("src/lib/ui/zz_probe.ts", stale)).toEqual(["unused-directive"]);
+    const live = `// eslint-disable-next-line vterm/no-scratch-path -- a fixture path\nexport const p = "/tmp/x";`;
+    expect(await tripped("src/lib/ui/zz_probe.ts", live)).toEqual([]);
+  });
+});

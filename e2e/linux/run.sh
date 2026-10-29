@@ -17,7 +17,7 @@ export VTERM_TEST_SSH_HOST="${VTERM_TEST_SSH_HOST:-host.docker.internal}"
 pnpm install --frozen-lockfile
 pnpm build
 cd e2e
-pnpm install --no-frozen-lockfile
+pnpm install --frozen-lockfile
 # WebKit talks to a session bus; a container has none until one is started.
 # VTERM_E2E_WM names a window manager to start on the X server first (the image
 # has openbox); without it the server is bare, as on CI's runner.

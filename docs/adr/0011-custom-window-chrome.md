@@ -34,7 +34,7 @@
   рамки), затем `show()` на всех платформах. macOS не трогает декорации в рантайме.
 - `build_app_menu` на non-macOS возвращает **пустое** нативное меню — OS-строки меню
   больше нет. macOS-ветка (app-меню «vterm» + Help) без изменений.
-- Рамку рисует [TitleBar.svelte](../../src/lib/TitleBar.svelte): логотип, заголовок,
+- Рамку рисует [TitleBar.svelte](../../src/lib/windows/TitleBar.svelte): логотип, заголовок,
   HTML-меню Файл/Справка (переиспользует общий `ContextMenu`), кнопки
   свернуть/развернуть/закрыть. Сам бар — drag-регион (`data-tauri-drag-region`),
   двойной клик разворачивает окно средствами Tauri.
@@ -42,7 +42,7 @@
   минимальный набор `core:window:allow-*` в capabilities. Декорации снимаются в Rust,
   поэтому `set-decorations` в WebView-права не входит.
 - Ресайз безрамочного окна восстановлен своими грип-полосами по краям/углам
-  (`startResizeDragging`); геометрия — чистый [windowchrome.ts](../../src/lib/windowchrome.ts)
+  (`startResizeDragging`); геометрия — чистый [windowchrome.ts](../../src/lib/windows/windowchrome.ts)
   (тест `windowchrome.test.ts`).
 - Монтирование `TitleBar` и macOS-синк нативного меню гейтятся хостовой ОС через стор
   `hostenv` — на macOS кастомный бар не появляется, на Windows/Linux нативное меню не

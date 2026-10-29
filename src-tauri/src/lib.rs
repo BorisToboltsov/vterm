@@ -1,11 +1,13 @@
 mod ai;
 mod appwin;
 mod backup;
+mod commands;
 mod container;
 mod dragghost;
 mod dragout;
 mod drives;
 mod error;
+mod exec;
 mod folders;
 mod git;
 mod kbdauth;
@@ -13,6 +15,7 @@ mod keygen;
 mod kube;
 mod localenv;
 mod localfile;
+mod locks;
 mod metrics;
 mod model;
 mod netcheck;
@@ -39,15 +42,12 @@ mod winhit;
 use error::{AppError, AppResult};
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use model::{AuthMethod, ProxyKind, ServerProfile};
-use russh_sftp::client::SftpSession;
-use serde::{Deserialize, Serialize};
-use sftp::FileEntry;
-use ssh::{ConnectOptions, Credential, HostKeyPolicy, Proxy, ProxyJump, ProxyTcpAuth, SshSession};
-use std::time::Duration;
+use crate::locks::Locked;
+use model::ServerProfile;
+use ssh::SshSession;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 /// Application state: persisted server profiles + the registry of live SSH sessions.
@@ -75,6 +75,27 @@ pub(crate) struct AppState {
     /// Per-session uid→name / gid→name maps (fetched once from passwd/group), so
     /// the SFTP listing can show owner names like `ls -l`.
     id_names: Mutex<HashMap<String, IdNames>>,
+    /// The server each SSH session was opened for (session id → server id): the
+    /// backend's own answer to "is this a prod / AI-disabled server" (`ai_exec`),
+    /// read against the current profile, not the flags the tab was opened with.
+    session_servers: Mutex<HashMap<String, String>>,
+}
+
+impl AppState {
+    /// The local shell PTY registered under `session_id`, if this is a local tab.
+    pub(crate) fn local_pty(&self, session_id: &str) -> Option<Arc<pty::LocalPty>> {
+        self.local_ptys.locked().get(session_id).cloned()
+    }
+
+    /// The current profile of the server an SSH session was opened for.
+    fn session_server(&self, session_id: &str) -> Option<ServerProfile> {
+        let server_id = self.session_servers.locked().get(session_id).cloned()?;
+        self.servers
+            .locked()
+            .iter()
+            .find(|s| s.id == server_id)
+            .cloned()
+    }
 }
 
 /// (uid→name, gid→name) maps resolved from passwd/group for one session.
@@ -89,7 +110,7 @@ pub(crate) async fn session_gate(
     if let Some(session) = state.sessions.lock().await.get(session_id) {
         return Some(session.gate().clone());
     }
-    let local = state.local_ptys.lock().unwrap();
+    let local = state.local_ptys.locked();
     local.get(session_id).map(|pty| pty.gate().clone())
 }
 
@@ -106,9 +127,10 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     app.state::<transfers::Jobs>().cancel_session(session_id);
     state.sessions.lock().await.remove(session_id);
     // Removing the LocalPty drops it, which kills the child shell.
-    state.local_ptys.lock().unwrap().remove(session_id);
+    state.local_ptys.locked().remove(session_id);
     state.metrics_samples.clear_session(session_id);
-    state.id_names.lock().unwrap().remove(session_id);
+    state.id_names.locked().remove(session_id);
+    state.session_servers.locked().remove(session_id);
 }
 
 /// [`session_arc`] for code that has the app's handle, not a command's state.
@@ -134,21 +156,7 @@ pub(crate) async fn session_arc(
         .ok_or(AppError::NoSession)
 }
 
-// ── AI-endpoint keychain commands ─────────────────────────────────────────────
-
-/// Store an AI endpoint's API key in the keychain (Phase 17). Never logged.
-#[tauri::command]
-fn set_ai_key(endpoint_id: String, key: String) -> AppResult<()> {
-    secrets::set_ai_key(&endpoint_id, &key)
-}
-
-/// Forget an AI endpoint's API key (on key clear or endpoint removal).
-#[tauri::command]
-fn forget_ai_key(endpoint_id: String) -> AppResult<()> {
-    secrets::delete_ai_key(&endpoint_id)
-}
-
-// ── Backup (export/import) ─────────────────────────────────────────────────────
+// ── Shared helpers of the bridge layer ──────────────────────────────────────
 
 /// Current unix time in seconds (0 if the clock predates the epoch).
 fn now_secs() -> u64 {
@@ -159,2111 +167,12 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-/// Write a backup `.zip` archive to `path`. `kind` chooses which sections go in
-/// ("servers" / "settings" / "recordings" / "all"); the archive always carries a
-/// `manifest.json` identifying its contents. Secrets are never included (they
-/// live in the keychain). `settings` is the frontend's opaque settings snapshot.
-#[tauri::command]
-fn export_backup(
-    path: String,
-    kind: String,
-    settings: Option<serde_json::Value>,
-    state: State<AppState>,
-) -> AppResult<()> {
-    use std::io::Write;
-    let exported_at = now_secs();
-    let manifest = backup::build_manifest(&kind, exported_at);
-
-    let file = std::fs::File::create(&path)
-        .map_err(|e| AppError::Message(format!("create {path}: {e}")))?;
-    let mut zip = zip::ZipWriter::new(file);
-    let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    let zip_err =
-        |e: zip::result::ZipError| AppError::Message(format!("write backup archive: {e}"));
-
-    // Identification document first.
-    zip.start_file(backup::MANIFEST_NAME, opts)
-        .map_err(zip_err)?;
-    zip.write_all(backup::encode_manifest(&manifest)?.as_bytes())
-        .map_err(|e| AppError::Message(format!("write manifest: {e}")))?;
-
-    // servers/folders + settings travel in an inner backup.json (only the
-    // selected sections are populated — a settings-only backup carries no servers).
-    if manifest.has(backup::SECTION_SERVERS) || manifest.has(backup::SECTION_SETTINGS) {
-        let servers = if manifest.has(backup::SECTION_SERVERS) {
-            state.servers.lock().unwrap().clone()
-        } else {
-            Vec::new()
-        };
-        let folders = if manifest.has(backup::SECTION_SERVERS) {
-            backup::normalize_folders(state.folders.lock().unwrap().clone())
-        } else {
-            Vec::new()
-        };
-        let settings = if manifest.has(backup::SECTION_SETTINGS) {
-            settings
-        } else {
-            None
-        };
-        let doc = backup::build(servers, folders, settings, exported_at);
-        zip.start_file(backup::BACKUP_NAME, opts).map_err(zip_err)?;
-        zip.write_all(backup::encode(&doc)?.as_bytes())
-            .map_err(|e| AppError::Message(format!("write backup.json: {e}")))?;
-    }
-
-    // Recordings are copied verbatim under recordings/.
-    if manifest.has(backup::SECTION_RECORDINGS) {
-        if let Some(dir) = recording::recordings_dir() {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.extension().is_none_or(|e| e != "cast") {
-                        continue;
-                    }
-                    let Some(name) = p.file_name().and_then(|n| n.to_str()) else {
-                        continue;
-                    };
-                    let data = std::fs::read(&p)
-                        .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
-                    zip.start_file(format!("{}{}", backup::RECORDINGS_PREFIX, name), opts)
-                        .map_err(zip_err)?;
-                    zip.write_all(&data)
-                        .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
-                }
-            }
-        }
-    }
-
-    zip.finish().map_err(zip_err)?;
-    Ok(())
-}
-
-/// Result of importing a backup. `servers`/`folders` count the catalog written
-/// (`None` when none was), `recordings` the recordings extracted (`None` when
-/// they were not asked for or the backup has none). `settings` is the backup's
-/// UI snapshot — the frontend applies it only if it was chosen.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ImportResult {
-    /// The backup's declared kind ("servers" / "settings" / "recordings" / "all").
-    kind: String,
-    servers: Option<usize>,
-    folders: Option<usize>,
-    recordings: Option<usize>,
-    settings: Option<serde_json::Value>,
-}
-
-/// The server catalog an import writes (v1.20): the backup's profiles with
-/// logins and key paths changed as the user asked, on their own or added to
-/// the current ones — assembled by the frontend (`backupimport.ts`) from what
-/// `read_backup` showed.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ImportCatalog {
-    servers: Vec<ServerProfile>,
-    folders: Vec<String>,
-}
-
-/// Restore a backup from `path` (a `.zip` archive or a legacy JSON document):
-/// write `catalog` when given — the archive's own server list is not written
-/// as is — and extract the recordings when `recordings` is set. Settings are
-/// returned, not applied. Nothing is written before the catalog is checked.
-#[tauri::command]
-fn import_backup(
-    path: String,
-    catalog: Option<ImportCatalog>,
-    recordings: bool,
-    state: State<AppState>,
-) -> AppResult<ImportResult> {
-    let bytes = std::fs::read(&path).map_err(|e| AppError::Message(format!("read {path}: {e}")))?;
-    if let Some(c) = &catalog {
-        backup::check_catalog(&c.servers)?;
-    }
-    let (kind, settings, mut archive) = if bytes.starts_with(b"PK") {
-        let (zip, manifest, doc) = backup::open_archive(bytes)?;
-        let settings = if manifest.has(backup::SECTION_SETTINGS) {
-            doc.and_then(|d| d.settings)
-        } else {
-            None
-        };
-        let zip = (recordings && manifest.has(backup::SECTION_RECORDINGS)).then_some(zip);
-        (manifest.kind, settings, zip)
-    } else {
-        (
-            backup::KIND_ALL.to_string(),
-            backup::decode(&bytes)?.settings,
-            None,
-        )
-    };
-
-    let mut result = ImportResult {
-        kind,
-        servers: None,
-        folders: None,
-        recordings: None,
-        settings,
-    };
-
-    if let Some(c) = catalog {
-        let folders = backup::normalize_folders(c.folders);
-        store::save_servers(&c.servers)?;
-        store::save_folders(&folders)?;
-        result.servers = Some(c.servers.len());
-        result.folders = Some(folders.len());
-        *state.servers.lock().unwrap() = c.servers;
-        *state.folders.lock().unwrap() = folders;
-    }
-
-    // Recordings: each recordings/*.cast goes into the recordings directory
-    // under a collision-safe name (never overwrites an existing recording).
-    if let Some(zip) = archive.as_mut() {
-        result.recordings = Some(import_recordings(zip)?);
-    }
-    Ok(result)
-}
-
-/// Extract an archive's recordings; the number extracted.
-fn import_recordings(zip: &mut backup::Archive) -> AppResult<usize> {
-    use std::io::Read;
-    let Some(dir) = recording::recordings_dir() else {
-        return Ok(0);
-    };
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| AppError::Message(format!("create recordings dir: {e}")))?;
-    let mut count = 0usize;
-    for (index, safe) in backup::recording_entries(zip)? {
-        let mut f = zip
-            .by_index(index)
-            .map_err(|e| AppError::Message(format!("read archive entry: {e}")))?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf)
-            .map_err(|e| AppError::Message(format!("read recording: {e}")))?;
-        let dest = unique_recording_path(&dir, &safe);
-        std::fs::write(&dest, &buf)
-            .map_err(|e| AppError::Message(format!("write recording: {e}")))?;
-        count += 1;
-    }
-    Ok(count)
-}
-
-// ── SSH session commands ──────────────────────────────────────────────────────
-
-/// Tells the frontend whether it must prompt for a secret before connecting.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConnectPlan {
-    needs_secret: bool,
-    secret_label: String,
-}
-
-#[tauri::command]
-fn connect_plan(id: String, state: State<AppState>) -> AppResult<ConnectPlan> {
-    let profile = state
-        .servers
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|s| s.id == id)
-        .cloned()
-        .ok_or(AppError::UnknownServer)?;
-
-    let plan = match profile.auth_method {
-        AuthMethod::Password => ConnectPlan {
-            needs_secret: secrets::get_password(&id).is_none(),
-            secret_label: "Password".to_string(),
-        },
-        AuthMethod::Key => {
-            // Resolve the same way connect_session will (explicit path, else a
-            // default in ~/.ssh) so we prompt for a passphrase iff that key needs one.
-            let needs = match ssh::resolve_key_path(profile.key_path.as_deref()) {
-                Some(path) => {
-                    ssh::key_is_encrypted(&path) && secrets::get_passphrase(&id).is_none()
-                }
-                None => false,
-            };
-            ConnectPlan {
-                needs_secret: needs,
-                secret_label: "Passphrase".to_string(),
-            }
-        }
-    };
-    Ok(plan)
-}
-
-/// What happened besides the connection itself. The session is up either way.
-#[derive(Serialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct ConnectOutcome {
-    /// Why "remember" did not persist the secret, if it did not.
-    remember_failed: Option<String>,
-}
-
-/// A secret save after login is advisory: its failure becomes a reason to show,
-/// not an error that would tear down the live session.
-fn remember_failure(saved: AppResult<()>) -> Option<String> {
-    saved.err().map(|e| e.to_string())
-}
-
-/// Open an SSH session for `server_id`, registered under the per-tab `session_id`.
-/// `secret` is the password or key passphrase if the user just typed it; when
-/// absent it is read from the keychain. `remember` stores `secret` in the keychain.
-#[tauri::command]
-// Tauri command: params arrive by name from JS (`invoke`), so they must stay as
-// individual arguments — grouping them into a struct would change the wire
-// contract with the frontend. (Terminal/host tunables are regrouped into
-// `ssh::ConnectOptions` before hitting the backend.)
-#[allow(clippy::too_many_arguments)]
-async fn connect_session(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    windows: State<'_, appwin::Windows>,
-    session_id: String,
-    server_id: String,
-    secret: Option<String>,
-    remember: bool,
-    cols: u32,
-    rows: u32,
-    term_type: Option<String>,
-    connect_timeout: Option<u64>,
-    keepalive_interval: Option<u64>,
-    host_key_policy: Option<String>,
-) -> AppResult<ConnectOutcome> {
-    let profile = {
-        let servers = state.servers.lock().unwrap();
-        servers.iter().find(|s| s.id == server_id).cloned()
-    }
-    .ok_or(AppError::UnknownServer)?;
-
-    // Wrap the just-typed secret so vterm's own in-memory copy is wiped on drop.
-    let secret = secret.map(zeroize::Zeroizing::new);
-
-    let cred = match profile.auth_method {
-        AuthMethod::Password => {
-            let password = secret
-                .clone()
-                .or_else(|| secrets::get_password(&server_id))
-                .ok_or_else(|| "password required".to_string())?;
-            Credential::Password(password)
-        }
-        AuthMethod::Key => {
-            // No explicit key path → fall back to a default key in ~/.ssh/.
-            let path = ssh::resolve_key_path(profile.key_path.as_deref()).ok_or_else(|| {
-                "no SSH key set and none found in ~/.ssh — pick a private key file".to_string()
-            })?;
-            let passphrase = secret
-                .clone()
-                .or_else(|| secrets::get_passphrase(&server_id));
-            Credential::Key { path, passphrase }
-        }
-    };
-
-    // Resolve an optional proxy to reach the server through. The jump host uses
-    // SSH credentials (password/passphrase in the keychain under the proxy-scoped
-    // id); SOCKS5/HTTP use optional basic auth (a username on the profile + an
-    // optional password in the keychain, same proxy-scoped id).
-    let proxy = match &profile.proxy {
-        None => None,
-        Some(px) => Some(match px.kind {
-            ProxyKind::Jump => {
-                let cred = match px.auth_method {
-                    AuthMethod::Password => {
-                        let password =
-                            secrets::get_proxy_password(&server_id).ok_or_else(|| {
-                                "proxy password required — set it in the server form".to_string()
-                            })?;
-                        Credential::Password(password)
-                    }
-                    AuthMethod::Key => {
-                        let path = ssh::resolve_key_path(px.key_path.as_deref()).ok_or_else(|| {
-                            "no proxy SSH key set and none found in ~/.ssh — pick a private key file"
-                                .to_string()
-                        })?;
-                        let passphrase = secrets::get_proxy_passphrase(&server_id);
-                        Credential::Key { path, passphrase }
-                    }
-                };
-                Proxy::Jump(ProxyJump {
-                    host: px.host.clone(),
-                    port: px.port,
-                    username: px.username.clone(),
-                    cred,
-                })
-            }
-            ProxyKind::Socks5 | ProxyKind::Http => {
-                // Basic auth is optional: only send a username (and read its
-                // password from the keychain) when the profile carries one.
-                let username = Some(px.username.trim())
-                    .filter(|u| !u.is_empty())
-                    .map(str::to_string);
-                let password = if username.is_some() {
-                    secrets::get_proxy_password(&server_id)
-                } else {
-                    None
-                };
-                let auth = ProxyTcpAuth { username, password };
-                let (host, port) = (px.host.clone(), px.port);
-                if matches!(px.kind, ProxyKind::Socks5) {
-                    Proxy::Socks5 { host, port, auth }
-                } else {
-                    Proxy::Http { host, port, auth }
-                }
-            }
-        }),
-    };
-
-    // Replace any existing session with the same session id — and release a
-    // previous attempt still waiting on login questions for it. The tab is this
-    // window's from here on.
-    end_session(&app, &session_id).await;
-    windows.claim(&session_id, window.label());
-
-    let opts = ConnectOptions {
-        term_type: term_type.unwrap_or_else(|| "xterm-256color".to_string()),
-        connect_timeout: Duration::from_secs(connect_timeout.unwrap_or(10).max(1)),
-        keepalive_interval: Duration::from_secs(keepalive_interval.unwrap_or(15).max(1)),
-        host_key_policy: host_key_policy
-            .as_deref()
-            .map(HostKeyPolicy::from_str)
-            .unwrap_or(HostKeyPolicy::TofuReject),
-        cols,
-        rows,
-        proxy,
-    };
-
-    let session = ssh::connect(
-        app,
-        session_id.clone(),
-        &profile.host,
-        profile.port,
-        &profile.username,
-        cred,
-        opts,
-    )
-    .await?;
-
-    // Persist the secret only after authentication succeeded (so a wrong typed
-    // secret is never written to the keychain). By now the session is live, so a
-    // failed save is reported, never returned as an error: `?` here dropped an
-    // authenticated connection whenever the keychain was unavailable (Linux
-    // without a Secret Service), and the user could not connect at all.
-    let mut outcome = ConnectOutcome::default();
-    if remember {
-        if let Some(s) = &secret {
-            let saved = match profile.auth_method {
-                AuthMethod::Password => secrets::set_password(&server_id, s).and_then(|()| {
-                    let snapshot = {
-                        let mut servers = state.servers.lock().unwrap();
-                        if let Some(p) = servers.iter_mut().find(|p| p.id == server_id) {
-                            p.has_saved_password = true;
-                        }
-                        servers.clone()
-                    };
-                    store::save_servers(&snapshot)
-                }),
-                AuthMethod::Key => secrets::set_passphrase(&server_id, s),
-            };
-            outcome.remember_failed = remember_failure(saved);
-        }
-    }
-
-    // The tab was closed while we were logging in: nobody would ever end this
-    // session, so it ends here instead of being registered.
-    if !windows.owns(&session_id, window.label()) {
-        drop(session);
-        return Err(AppError::NoSession);
-    }
-    state
-        .sessions
-        .lock()
-        .await
-        .insert(session_id, Arc::new(session));
-    Ok(outcome)
-}
-
-/// Open a local-shell terminal (PTY on the machine running vterm) under the
-/// per-tab `session_id`. Output/close events reuse the `term://…` channels, so
-/// the frontend terminal widget drives it exactly like an SSH session.
-#[tauri::command]
-// Same as `connect_session`: the params are the wire contract with the frontend.
-#[allow(clippy::too_many_arguments)]
-async fn open_local_terminal(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    windows: State<'_, appwin::Windows>,
-    session_id: String,
-    cols: u32,
-    rows: u32,
-    shell: Option<String>,
-) -> AppResult<()> {
-    // Replace any existing session registered under this id; the tab is this
-    // window's from here on.
-    end_session(&app, &session_id).await;
-    windows.claim(&session_id, window.label());
-
-    let local = pty::open_local(app, session_id.clone(), cols, rows, shell)?;
-    state
-        .local_ptys
-        .lock()
-        .unwrap()
-        .insert(session_id, Arc::new(local));
-    Ok(())
-}
-
-/// The host OS the app is running on (`std::env::consts::OS`: "windows"/"macos"/
-/// "linux"/…). Lets the frontend gate OS-specific settings — e.g. the Windows
-/// local-shell picker — without pulling a runtime OS plugin into the WebView.
-#[tauri::command]
-fn host_os() -> &'static str {
-    std::env::consts::OS
-}
-
-/// Whether `program` resolves to an executable — used by the local-shell picker to
-/// gray out pwsh when PowerShell 7 isn't installed and to validate a custom shell
-/// path. A path (containing a separator) is checked directly; a bare name is
-/// looked up across `PATH` (honouring `PATHEXT` on Windows). Never spawns.
-#[tauri::command]
-fn shell_exists(program: String) -> bool {
-    program_on_path(program.trim())
-}
-
-/// True when `prog` names an existing executable file: an explicit path is
-/// checked as-is, a bare name is searched on each `PATH` entry (with `PATHEXT`
-/// fallbacks on Windows).
-fn program_on_path(prog: &str) -> bool {
-    if prog.is_empty() {
-        return false;
-    }
-    let path = std::path::Path::new(prog);
-    if path.is_absolute() || path.components().count() > 1 {
-        return executable_candidate(path);
-    }
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&paths).any(|dir| executable_candidate(&dir.join(prog)))
-}
-
-/// Whether `path` (or, on Windows, a `PATHEXT` variant of it) is an existing file.
-fn executable_candidate(path: &std::path::Path) -> bool {
-    if path.is_file() {
-        return true;
-    }
-    #[cfg(windows)]
-    if path.extension().is_none() {
-        if let Some(exts) = std::env::var_os("PATHEXT") {
-            return std::env::split_paths(&exts).any(|ext| {
-                let ext = ext.to_string_lossy();
-                let ext = ext.trim().trim_start_matches('.');
-                !ext.is_empty() && path.with_extension(ext).is_file()
-            });
-        }
-    }
-    false
-}
-
-#[tauri::command]
-async fn write_to_terminal(
-    state: State<'_, AppState>,
-    session_id: String,
-    data: Vec<u8>,
-) -> AppResult<()> {
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        return session.write_input(data).await;
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    match local {
-        Some(pty) => pty.write_input(data),
-        None => Err(AppError::NoSession),
-    }
-}
-
-/// POSIX-sh one-liner that prints the interactive shell's history file (zsh
-/// preferred, then bash), bounded to the most recent lines. Wrapped in `sh -c` so
-/// it parses the same way regardless of the login shell (fish, etc.). Runs on a
-/// one-shot exec channel for the Ctrl+R history overlay (Phase 23).
-const HISTORY_CMD: &str = "sh -c 'case \"$SHELL\" in *zsh*) F=\"$HOME/.zsh_history\";; *) F=\"$HOME/.bash_history\";; esac; [ -f \"$F\" ] || F=\"$HOME/.zsh_history\"; [ -f \"$F\" ] || F=\"$HOME/.bash_history\"; tail -n 5000 \"$F\" 2>/dev/null'";
-
-/// Read the current session's shell history file (raw text) for the Ctrl+R
-/// command-history overlay. SSH sessions run [`HISTORY_CMD`] on a dedicated exec
-/// channel (not disturbing the interactive shell); local shell tabs read the
-/// on-disk history directly. Parsing happens on the frontend (`history.ts`).
-#[tauri::command]
-async fn read_shell_history(state: State<'_, AppState>, session_id: String) -> AppResult<String> {
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        return session.run_command(HISTORY_CMD).await;
-    }
-    if state.local_ptys.lock().unwrap().contains_key(&session_id) {
-        return localfile::read_shell_history(5000).await;
-    }
-    Err(AppError::NoSession)
-}
-
-#[tauri::command]
-async fn resize_pty(
-    state: State<'_, AppState>,
-    session_id: String,
-    cols: u32,
-    rows: u32,
-) -> AppResult<()> {
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        session.resize(cols, rows).await?;
-        return Ok(());
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
-        pty.resize(cols, rows)?;
-    }
-    Ok(())
-}
-
-/// End the session of a tab this window is closing. A window that gave the tab
-/// away to another one no longer owns the session and cannot end it (ADR 0017).
-#[tauri::command]
-async fn disconnect(
-    app: AppHandle,
-    window: tauri::WebviewWindow,
-    windows: State<'_, appwin::Windows>,
-    session_id: String,
-) -> AppResult<()> {
-    if windows.release(&session_id, window.label()) {
-        end_session(&app, &session_id).await;
-    }
-    Ok(())
-}
-
-/// Per-session uid→name / gid→name maps (fetched once from passwd/group and
-/// cached) so the SFTP listing can show owner names. Returns empty maps if the
-/// lookup fails (the frontend then falls back to numeric uid/gid).
-async fn ensure_id_names(state: &State<'_, AppState>, session_id: &str) -> IdNames {
-    if let Some(cached) = state.id_names.lock().unwrap().get(session_id) {
-        return cached.clone();
-    }
-    let maps = match session_arc(state, session_id).await {
-        Ok(session) => {
-            let out = session
-                .run_command(
-                    "getent passwd 2>/dev/null || cat /etc/passwd 2>/dev/null; \
-                     echo '@@VTERM@@'; \
-                     getent group 2>/dev/null || cat /etc/group 2>/dev/null",
-                )
-                .await
-                .unwrap_or_default();
-            let (p, g) = out.split_once("@@VTERM@@").unwrap_or((out.as_str(), ""));
-            (sftp::parse_id_names(p), sftp::parse_id_names(g))
-        }
-        Err(_) => (HashMap::new(), HashMap::new()),
-    };
-    state
-        .id_names
-        .lock()
-        .unwrap()
-        .insert(session_id.to_string(), maps.clone());
-    maps
-}
-
-// ── Session recording (asciicast v2) ───────────────────────────────────────────
-
-/// Metadata about a stored recording, read from its asciicast header + file stat.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RecordingMeta {
-    path: String,
-    title: String,
-    description: String,
-    server: String,
-    width: u32,
-    height: u32,
-    timestamp: u64,
-    size: u64,
-    /// Broadcast batch id (group recording) — set only for recordings made as
-    /// part of a synchronous-input group; absent for ordinary recordings.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_id: Option<String>,
-    /// User-given name of the broadcast bundle, written to every member on stop.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    batch_label: Option<String>,
-}
-
-/// Read the broadcast batch id from an asciicast header's `vterm.batch` (a plain
-/// string written by the frontend's recording env). Pure → unit-tested.
-fn batch_id_from_header(header: &serde_json::Value) -> Option<String> {
-    header["vterm"]["batch"].as_str().map(str::to_owned)
-}
-
-/// Read the broadcast bundle name from `vterm.batchLabel` (set when the user
-/// names the group recording after stopping it).
-fn batch_label_from_header(header: &serde_json::Value) -> Option<String> {
-    header["vterm"]["batchLabel"].as_str().map(str::to_owned)
-}
-
-/// True if `path` is a `.cast` file directly inside the recordings directory
-/// (guards `read`/`delete` against arbitrary filesystem access).
-fn is_recording_path(path: &std::path::Path) -> bool {
-    let Some(dir) = recording::recordings_dir() else {
-        return false;
-    };
-    path.extension().is_some_and(|e| e == "cast") && path.parent() == Some(dir.as_path())
-}
-
-/// A free `.cast` path for `name` inside `dir`: returns `dir/name`, or appends
-/// `-1`, `-2`, … before the extension if a file with that name already exists.
-/// Used by both backup restore and the "upload recording" import so neither ever
-/// clobbers an existing recording.
-fn unique_recording_path(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
-    let first = dir.join(name);
-    if !first.exists() {
-        return first;
-    }
-    let stem = name.strip_suffix(".cast").unwrap_or(name);
-    for n in 1.. {
-        let candidate = dir.join(format!("{stem}-{n}.cast"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    unreachable!("ran out of recording name suffixes")
-}
-
-/// Read a stored recording's metadata (asciicast header + file size) at `path`.
-fn meta_for_path(path: &std::path::Path) -> RecordingMeta {
-    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    let header = std::fs::read_to_string(path)
-        .ok()
-        .and_then(|c| c.lines().next().map(str::to_owned))
-        .and_then(|l| serde_json::from_str::<serde_json::Value>(&l).ok())
-        .unwrap_or(serde_json::Value::Null);
-    let title = header["title"].as_str().unwrap_or("").to_owned();
-    RecordingMeta {
-        path: path.to_string_lossy().into_owned(),
-        // Older recordings have no `server` field → fall back to the title.
-        server: header["server"].as_str().unwrap_or(&title).to_owned(),
-        title,
-        description: header["description"].as_str().unwrap_or("").to_owned(),
-        width: header["width"].as_u64().unwrap_or(80) as u32,
-        height: header["height"].as_u64().unwrap_or(24) as u32,
-        timestamp: header["timestamp"].as_u64().unwrap_or(0),
-        size,
-        batch_id: batch_id_from_header(&header),
-        batch_label: batch_label_from_header(&header),
-    }
-}
-
-/// Start recording the given session to a new asciicast file; returns its path.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)] // Tauri command params arrive by name from JS
-async fn start_recording(
-    state: State<'_, AppState>,
-    session_id: String,
-    title: String,
-    cols: u32,
-    rows: u32,
-    prompt: String,
-    env: String,
-    mask_passwords: bool,
-    mode: String,
-) -> AppResult<String> {
-    let dir = recording::recordings_dir().ok_or_else(|| "no recordings directory".to_string())?;
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let path = dir.join(format!(
-        "{}-{}.cast",
-        recording::sanitize_title(&title),
-        millis
-    ));
-
-    let is_ssh = session_arc(&state, &session_id).await.is_ok();
-    let local = if is_ssh {
-        None
-    } else {
-        state.local_ptys.lock().unwrap().get(&session_id).cloned()
-    };
-    if !is_ssh && local.is_none() {
-        return Err(AppError::NoSession);
-    }
-
-    let rec = recording::Recorder::start(recording::RecorderConfig {
-        path: path.clone(),
-        cols,
-        rows,
-        title: &title,
-        prompt: &prompt,
-        env_json: &env,
-        mask_enabled: mask_passwords,
-        mode: recording::RecordMode::parse(&mode),
-    })?;
-    if is_ssh {
-        session_arc(&state, &session_id).await?.begin_recording(rec);
-    } else if let Some(pty) = local {
-        pty.begin_recording(rec);
-    }
-    Ok(path.to_string_lossy().into_owned())
-}
-
-/// Stop recording the given session; returns the file path if one was active.
-#[tauri::command]
-async fn stop_recording(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> AppResult<Option<String>> {
-    let path = if let Ok(session) = session_arc(&state, &session_id).await {
-        session.end_recording()
-    } else {
-        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-        local.and_then(|p| p.end_recording())
-    };
-    // Stamp the wall-clock end time into the header now that recording has stopped.
-    if let Some(p) = &path {
-        if let Ok(content) = std::fs::read_to_string(p) {
-            let ended = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            if let Some(updated) = recording::with_ended_at(&content, ended) {
-                let _ = std::fs::write(p, updated);
-            }
-        }
-    }
-    Ok(path.map(|p| p.to_string_lossy().into_owned()))
-}
-
-/// Pause or resume the active recording on a session (tab switched away / idle).
-#[tauri::command]
-async fn set_recording_paused(
-    state: State<'_, AppState>,
-    session_id: String,
-    paused: bool,
-) -> AppResult<()> {
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        session.set_recording_paused(paused);
-    } else {
-        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-        if let Some(pty) = local {
-            pty.set_recording_paused(paused);
-        }
-    }
-    Ok(())
-}
-
-/// Write an audit annotation (e.g. "edited /etc/nginx.conf") into the session's
-/// active recording. No-op if the session isn't recording.
-#[tauri::command]
-async fn annotate_recording(
-    state: State<'_, AppState>,
-    session_id: String,
-    text: String,
-) -> AppResult<()> {
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        session.annotate_recording(&text);
-    } else {
-        let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-        if let Some(pty) = local {
-            pty.annotate_recording(&text);
-        }
-    }
-    Ok(())
-}
-
-/// Record a network utility's run into the session's active recording as a
-/// `[util] $ <op> … [util] exit N` block — the record-only shape of the sftp/git
-/// mirrors (`netprobe::audit_block`). The frontend builds `op`/`body` from the
-/// parsed result with secrets masked (tls.ts/http.ts/netcheck.ts), because only
-/// it knows which tokens are header values and which output is a response body.
-/// Like the other mirrors it goes through `record_output`, so a paused recording
-/// drops it. No-op without a session or a recording.
-#[tauri::command]
-async fn record_audit(
-    state: State<'_, AppState>,
-    session_id: String,
-    op: String,
-    body: String,
-    exit_code: i32,
-) -> AppResult<()> {
-    let block = netprobe::audit_block(&op, &body, exit_code);
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        session.record_output(block.as_bytes());
-    } else if let Some(pty) = state.local_ptys.lock().unwrap().get(&session_id).cloned() {
-        pty.record_output(block.as_bytes());
-    }
-    Ok(())
-}
-
-/// Result of an AI agent command execution (17.8), returned to the dialog loop.
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AiExecResult {
-    stdout: String,
-    stderr: String,
-    exit_code: i32,
-    timed_out: bool,
-}
-
-/// Execute a single command for the AI dialog/agent loop (17.8) on a dedicated
-/// exec channel, capturing stdout/stderr/exit code. The step is mirrored into the
-/// live terminal (`term://out`) and the active recording so the agent's actions
-/// stay visible and audited. SSH sessions only; the frontend gates this by mode
-/// and bars it on prod/`noAi` servers.
-#[tauri::command]
-async fn ai_exec(
-    state: State<'_, AppState>,
-    session_id: String,
-    command: String,
-    timeout_secs: u64,
-) -> AppResult<AiExecResult> {
-    let session = session_arc(&state, &session_id).await?;
-    let outcome = session.exec_captured(&command, timeout_secs).await?;
-
-    // Mirror the step into the live terminal + recording so it stays visible + audited.
-    let mirror = ai::agent_mirror(
-        &command,
-        &outcome.stdout,
-        &outcome.stderr,
-        outcome.exit_code,
-        outcome.timed_out,
-        timeout_secs,
-    );
-    session.gate().output(mirror.clone().into_bytes());
-    session.record_output(mirror.as_bytes());
-
-    Ok(AiExecResult {
-        stdout: outcome.stdout,
-        stderr: outcome.stderr,
-        exit_code: outcome.exit_code,
-        timed_out: outcome.timed_out,
-    })
-}
-
-/// Run one `git` command in `cwd` for the Git panel (Phase 29). Dispatches by
-/// session kind exactly like [`read_shell_history`]: SSH tabs execute remotely
-/// on a dedicated exec channel, local shell tabs spawn `git` locally. Argument
-/// building and output parsing are pure frontend logic (`git.ts`); this only
-/// executes and captures. `timed_out` from the SSH path collapses into a
-/// non-zero exit + stderr note so the frontend sees a uniform `GitOutput`.
-/// `mirror` (mutating ops only) audits the command into the active session
-/// recording as `[git] $ …` output — never emitted to the live terminal, so the
-/// GUI stays clean while the recording keeps a complete audit trail.
-#[tauri::command]
-async fn git_run(
-    state: State<'_, AppState>,
-    session_id: String,
-    cwd: String,
-    args: Vec<String>,
-    timeout_secs: u64,
-    mirror: bool,
-) -> AppResult<git::GitOutput> {
-    if args.is_empty() {
-        return Err(AppError::Message("git: no arguments".into()));
-    }
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        let outcome = session
-            .exec_captured(&git::ssh_command(&cwd, &args), timeout_secs.max(1))
-            .await?;
-        let (stderr, exit_code) = if outcome.timed_out {
-            (format!("git timed out after {}s", timeout_secs.max(1)), -1)
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        if mirror {
-            let cmd = format!("git {}", args.join(" "));
-            session.record_output(
-                git::git_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
-            );
-        }
-        return Ok(git::GitOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
-        let out = git::run_local(&cwd, &args, timeout_secs).await?;
-        if mirror {
-            let cmd = format!("git {}", args.join(" "));
-            pty.record_output(
-                git::git_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
-            );
-        }
-        return Ok(out);
-    }
-    Err(AppError::NoSession)
-}
-
-/// Network access check for the Utilities panel (v1.0.36): "can this host reach
-/// those ports?". Transport by session presence (principle 3): an SSH tab runs
-/// the frontend-built script (`args`, see netcheck.ts) on the server; a local
-/// tab answers natively (`netcheck::run_native`) — the one narrow, click-only
-/// exception to the offline invariant. Both reply in the same line protocol, so
-/// the frontend parses one format. `targets` is what the local side connects to;
-/// on SSH the script already embeds them. Not mirrored here: the raw protocol
-/// says nothing to a reader — the frontend records the parsed report through
-/// [`record_audit`]. `cancel_id` registers the run in the shared cancel map, so
-/// `sftp_cancel(cancel_id)` stops it (ADR 0032): the server's script is
-/// signalled and its channel closed, a local run starts no further connect.
-/// A stopped run answers [`AppError::Cancelled`]. `local_tool` names one of the
-/// user's probe tools for a local tab (ADR 0033) — only the name: the argv is
-/// `netcheck::LocalTool`'s, never `args`; none means the native connect.
-#[tauri::command]
-#[allow(clippy::too_many_arguments)]
-async fn netcheck_run(
-    state: State<'_, AppState>,
-    session_id: String,
-    args: Vec<String>,
-    targets: Vec<netcheck::NetTarget>,
-    connect_timeout_secs: u64,
-    timeout_secs: u64,
-    cancel_id: String,
-    local_tool: Option<String>,
-) -> AppResult<netprobe::ProbeOutput> {
-    netcheck::validate(&targets).map_err(AppError::Message)?;
-    let tool =
-        match local_tool.as_deref() {
-            None => None,
-            Some(name) => Some(netcheck::LocalTool::parse(name).ok_or_else(|| {
-                AppError::Message(format!("netcheck: {name} is not a probe tool"))
-            })?),
-        };
-    let cancel = register_cancel(&state, &cancel_id);
-    let res = netcheck_exec(
-        &state,
-        &session_id,
-        &args,
-        &targets,
-        connect_timeout_secs,
-        timeout_secs,
-        &cancel,
-        tool,
-    )
-    .await;
-    state.cancels.lock().unwrap().remove(&cancel_id);
-    res
-}
-
-/// The body of [`netcheck_run`], between registering its stop flag and removing it.
-#[allow(clippy::too_many_arguments)]
-async fn netcheck_exec(
-    state: &State<'_, AppState>,
-    session_id: &str,
-    args: &[String],
-    targets: &[netcheck::NetTarget],
-    connect_timeout_secs: u64,
-    timeout_secs: u64,
-    cancel: &AtomicBool,
-    tool: Option<netcheck::LocalTool>,
-) -> AppResult<netprobe::ProbeOutput> {
-    if let Ok(session) = session_arc(state, session_id).await {
-        if args.is_empty() {
-            return Err(AppError::Message("netcheck: no arguments".into()));
-        }
-        let cmd = netprobe::probe_command(args);
-        let outcome = session
-            .exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))
-            .await?;
-        let (stderr, exit_code) = if outcome.timed_out {
-            (
-                format!("netcheck timed out after {}s", timeout_secs.max(1)),
-                -1,
-            )
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        return Ok(netprobe::ProbeOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(session_id).cloned();
-    if local.is_some() {
-        let timeout = std::time::Duration::from_secs(connect_timeout_secs.clamp(1, 30));
-        // Dropping the run on a stop drops its connects in flight as well — and
-        // kills a tool's children (`kill_on_drop`).
-        let run = async {
-            Ok(match tool {
-                Some(tool) => netcheck::run_tool(targets, timeout, cancel, tool).await,
-                None => netcheck::run_native(targets, timeout, cancel).await,
-            })
-        };
-        let stdout = sync::until_cancelled(run, cancel).await?;
-        if cancel.load(Ordering::Relaxed) {
-            return Err(AppError::Cancelled);
-        }
-        return Ok(netprobe::ProbeOutput {
-            stdout,
-            stderr: String::new(),
-            exit_code: 0,
-        });
-    }
-    Err(AppError::NoSession)
-}
-
-/// Run one network-diagnostic command for the Utilities panel (Phase 34).
-/// Transport by session (INVARIANTS principle 3): on an SSH tab the probe runs
-/// on the user's server via a dedicated exec channel, so the traffic originates
-/// from that server. On a local tab (ADR 0014) the user's own `curl`/`openssl`
-/// is spawned on this machine — only those two programs (`netprobe::
-/// local_program_allowed`), only on the user's click, never through a shell.
-/// `stdin` feeds the child (closing it), which lets a two-step probe pipe one
-/// tool into the next without `sh -c` (Windows has no `sh`). Argument building
-/// and output parsing are pure frontend logic; this only executes and captures.
-/// A timeout collapses into a non-zero exit + stderr note so the frontend sees a
-/// uniform `ProbeOutput`. Not mirrored here: the argv carries header values and
-/// request bodies, the output whole responses — the frontend records a masked
-/// summary of the parsed result through [`record_audit`].
-#[tauri::command]
-async fn probe_run(
-    state: State<'_, AppState>,
-    session_id: String,
-    args: Vec<String>,
-    timeout_secs: u64,
-    stdin: Option<String>,
-) -> AppResult<netprobe::ProbeOutput> {
-    if args.is_empty() {
-        return Err(AppError::Message("probe: no arguments".into()));
-    }
-    let timeout = timeout_secs.max(1);
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        let cmd = netprobe::probe_command(&args);
-        let outcome = match &stdin {
-            Some(input) => {
-                session
-                    .exec_captured_stdin(&cmd, input.as_bytes(), timeout)
-                    .await?
-            }
-            None => session.exec_captured(&cmd, timeout).await?,
-        };
-        let (stderr, exit_code) = if outcome.timed_out {
-            (format!("probe timed out after {timeout}s"), -1)
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        return Ok(netprobe::ProbeOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if local.is_some() {
-        if !netprobe::local_program_allowed(&args[0]) {
-            return Err(AppError::Message(format!(
-                "probe: {} is not a local probe tool",
-                args[0]
-            )));
-        }
-        let out = match &stdin {
-            Some(input) => container::run_local_stdin(&args, input.as_bytes(), timeout).await?,
-            None => container::run_local(&args, timeout).await?,
-        };
-        return Ok(netprobe::ProbeOutput {
-            stdout: out.stdout,
-            stderr: out.stderr,
-            exit_code: out.exit_code,
-        });
-    }
-    Err(AppError::NoSession)
-}
-
-/// Run one `docker` command for the Docker panel (Phase 35). Dispatches by
-/// session kind exactly like [`git_run`]: SSH tabs execute remotely on a
-/// dedicated exec channel, local shell tabs spawn `docker` locally. `args[0]` is
-/// the program (`docker`), the rest its arguments; argument building and output
-/// parsing are pure frontend logic (`docker.ts`), this only executes and
-/// captures. A timeout collapses into a non-zero exit + stderr note so the
-/// frontend sees a uniform `ContainerOutput`. `mirror` (mutating ops only, set by
-/// the frontend) audits the command into the active session recording as
-/// `[docker] $ …` output — never emitted to the live terminal, exactly like
-/// `git_run`. Reads/polls pass `mirror = false`; registry login goes through the
-/// dedicated `docker_login` (secret on stdin) and is never mirrored.
-#[tauri::command]
-async fn container_run(
-    state: State<'_, AppState>,
-    session_id: String,
-    args: Vec<String>,
-    timeout_secs: u64,
-    mirror: bool,
-) -> AppResult<container::ContainerOutput> {
-    if args.is_empty() {
-        return Err(AppError::Message("container: no arguments".into()));
-    }
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        let outcome = session
-            .exec_captured(&container::container_command(&args), timeout_secs.max(1))
-            .await?;
-        let (stderr, exit_code) = if outcome.timed_out {
-            (
-                format!("docker timed out after {}s", timeout_secs.max(1)),
-                -1,
-            )
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        if mirror {
-            let cmd = args.join(" ");
-            session.record_output(
-                container::container_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
-            );
-        }
-        return Ok(container::ContainerOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
-        let out = container::run_local(&args, timeout_secs).await?;
-        if mirror {
-            let cmd = args.join(" ");
-            pty.record_output(
-                container::container_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code)
-                    .as_bytes(),
-            );
-        }
-        return Ok(out);
-    }
-    Err(AppError::NoSession)
-}
-
-/// Store a Docker registry password in the OS keychain, keyed by registry url
-/// (Phase 36). The non-secret half (url + username) lives in frontend settings;
-/// the password is only ever here and fed to `docker login --password-stdin`.
-#[tauri::command]
-fn set_registry_secret(url: String, secret: String) -> AppResult<()> {
-    let secret = zeroize::Zeroizing::new(secret);
-    secrets::set_registry_password(&url, &secret)
-}
-
-/// Forget a stored Docker registry password (Phase 36).
-#[tauri::command]
-fn delete_registry_secret(url: String) -> AppResult<()> {
-    secrets::delete_registry_password(&url)
-}
-
-/// Log the session's docker into a registry (Phase 36). Reads the password from
-/// the keychain (never crossing the JS boundary at login time) and feeds it to
-/// `docker login --password-stdin` so it never appears on a command line, in
-/// `ps`, or in the recording. Dispatches by session kind like `container_run`;
-/// the network call originates from the user's host, keeping the offline
-/// invariant intact. `args` is built by the frontend (`docker.ts loginArgs`).
-#[tauri::command]
-async fn docker_login(
-    state: State<'_, AppState>,
-    session_id: String,
-    url: String,
-    args: Vec<String>,
-) -> AppResult<container::ContainerOutput> {
-    if args.is_empty() {
-        return Err(AppError::Message("docker login: no arguments".into()));
-    }
-    let Some(secret) = secrets::get_registry_password(&url) else {
-        return Err(AppError::Message(
-            "no saved password for this registry".into(),
-        ));
-    };
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        let outcome = session
-            .exec_captured_stdin(&container::container_command(&args), secret.as_bytes(), 30)
-            .await?;
-        let (stderr, exit_code) = if outcome.timed_out {
-            ("docker login timed out after 30s".to_string(), -1)
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        return Ok(container::ContainerOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if local.is_some() {
-        return container::run_local_stdin(&args, secret.as_bytes(), 30).await;
-    }
-    Err(AppError::NoSession)
-}
-
-/// Run one `kubectl` command for the Kubernetes panel (Phase 37). Dispatches by
-/// session kind exactly like [`container_run`]: SSH tabs execute remotely on a
-/// dedicated exec channel, local shell tabs spawn `kubectl` locally. `args` is a
-/// full argv whose leading token(s) are the program (`kubectl`, or a configured
-/// wrapper like `k3s kubectl`) with the `--context`/`--namespace`/`-A` scope
-/// already baked in by the frontend (`k8s.ts`); argument building and output
-/// parsing are pure frontend logic, this only executes and captures. A timeout
-/// collapses into a non-zero exit + stderr note so the frontend sees a uniform
-/// `KubeOutput`. `mirror` (mutating ops only, set by the frontend) audits the
-/// command into the active session recording as `[k8s] $ …` output — never
-/// emitted to the live terminal, exactly like `container_run`. Reads/polls pass
-/// `mirror = false`.
-#[tauri::command]
-async fn kubectl_run(
-    state: State<'_, AppState>,
-    session_id: String,
-    args: Vec<String>,
-    timeout_secs: u64,
-    mirror: bool,
-) -> AppResult<kube::KubeOutput> {
-    if args.is_empty() {
-        return Err(AppError::Message("kube: no arguments".into()));
-    }
-    if let Ok(session) = session_arc(&state, &session_id).await {
-        let outcome = session
-            .exec_captured(&kube::kube_command(&args), timeout_secs.max(1))
-            .await?;
-        let (stderr, exit_code) = if outcome.timed_out {
-            (
-                format!("kubectl timed out after {}s", timeout_secs.max(1)),
-                -1,
-            )
-        } else {
-            (outcome.stderr, outcome.exit_code)
-        };
-        if mirror {
-            let cmd = args.join(" ");
-            session.record_output(
-                kube::kube_mirror(&cmd, &outcome.stdout, &stderr, exit_code).as_bytes(),
-            );
-        }
-        return Ok(kube::KubeOutput {
-            stdout: outcome.stdout,
-            stderr,
-            exit_code,
-        });
-    }
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    if let Some(pty) = local {
-        let out = kube::run_local(&args, timeout_secs).await?;
-        if mirror {
-            let cmd = args.join(" ");
-            pty.record_output(
-                kube::kube_mirror(&cmd, &out.stdout, &out.stderr, out.exit_code).as_bytes(),
-            );
-        }
-        return Ok(out);
-    }
-    Err(AppError::NoSession)
-}
-
-/// List stored recordings (newest first), reading metadata from each header.
-#[tauri::command]
-fn list_recordings() -> AppResult<Vec<RecordingMeta>> {
-    let Some(dir) = recording::recordings_dir() else {
-        return Ok(vec![]);
-    };
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(vec![]); // dir not created yet
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_none_or(|e| e != "cast") {
-            continue;
-        }
-        out.push(meta_for_path(&path));
-    }
-    out.sort_by_key(|r| std::cmp::Reverse(r.timestamp));
-    Ok(out)
-}
-
-/// Import (upload) an external recording into the library by copying it into the
-/// recordings directory under a collision-safe name. Validates that the file is
-/// an **asciicast v2** recording (a JSON header line with `version: 2`) so the
-/// player — which expects the full raw `.cast` stream — can replay it. Returns
-/// the new recording's metadata so the frontend can refresh its list.
-#[tauri::command]
-fn import_recording(src_path: String) -> AppResult<RecordingMeta> {
-    let dir = recording::recordings_dir().ok_or_else(|| "no recordings directory".to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("create recordings dir: {e}"))?;
-
-    let content =
-        std::fs::read_to_string(&src_path).map_err(|e| format!("read {src_path}: {e}"))?;
-    // The first line must be a valid asciicast v2 header object.
-    let first = content.lines().next().unwrap_or("").trim();
-    let header: serde_json::Value = serde_json::from_str(first)
-        .map_err(|_| AppError::Message("not an asciicast recording (bad header)".into()))?;
-    if header.get("version").and_then(serde_json::Value::as_u64) != Some(2) {
-        return Err(AppError::Message(
-            "unsupported recording — expected an asciicast v2 (.cast) file".into(),
-        ));
-    }
-
-    let base = std::path::Path::new(&src_path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("imported.cast");
-    let name = if base.ends_with(".cast") {
-        base.to_string()
-    } else {
-        format!("{base}.cast")
-    };
-    let dest = unique_recording_path(&dir, &name);
-    std::fs::write(&dest, content.as_bytes()).map_err(|e| format!("write recording: {e}"))?;
-    Ok(meta_for_path(&dest))
-}
-
-/// Delete a stored recording (only within the recordings directory).
-#[tauri::command]
-fn delete_recording(path: String) -> AppResult<()> {
-    let p = std::path::PathBuf::from(&path);
-    if !is_recording_path(&p) {
-        return Err(AppError::Message("not a recording".into()));
-    }
-    std::fs::remove_file(&p).map_err(|e| format!("delete recording: {e}"))?;
-    Ok(())
-}
-
-/// Set a recording's title and description (rewrites the asciicast header in
-/// place). Used by the "name this recording" prompt shown after stopping.
-#[tauri::command]
-fn set_recording_meta(path: String, title: String, description: String) -> AppResult<()> {
-    let p = std::path::PathBuf::from(&path);
-    if !is_recording_path(&p) {
-        return Err(AppError::Message("not a recording".into()));
-    }
-    let content = std::fs::read_to_string(&p).map_err(|e| format!("read recording: {e}"))?;
-    let updated = recording::with_updated_meta(&content, &title, &description)
-        .ok_or_else(|| AppError::Message("invalid recording header".into()))?;
-    std::fs::write(&p, updated).map_err(|e| format!("write recording: {e}"))?;
-    Ok(())
-}
-
-/// Name a broadcast bundle: write `label` into `vterm.batchLabel` of every
-/// recording that shares `batch_id`. Used by the "name this broadcast" prompt
-/// after stopping a group recording.
-#[tauri::command]
-fn set_batch_label(batch_id: String, label: String) -> AppResult<()> {
-    let Some(dir) = recording::recordings_dir() else {
-        return Ok(());
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Ok(());
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.extension().is_none_or(|e| e != "cast") {
-            continue;
-        }
-        let Ok(content) = std::fs::read_to_string(&p) else {
-            continue;
-        };
-        let matches = content
-            .lines()
-            .next()
-            .and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-            .and_then(|h| batch_id_from_header(&h))
-            .is_some_and(|id| id == batch_id);
-        if !matches {
-            continue;
-        }
-        if let Some(updated) = recording::with_batch_label(&content, &label) {
-            let _ = std::fs::write(&p, updated);
-        }
-    }
-    Ok(())
-}
-
-/// Read a recording's raw asciicast content (for the AI transcript export / player).
-#[tauri::command]
-fn read_recording(path: String) -> AppResult<String> {
-    let p = std::path::PathBuf::from(&path);
-    if !is_recording_path(&p) {
-        return Err(AppError::Message("not a recording".into()));
-    }
-    std::fs::read_to_string(&p).map_err(|e| format!("read recording: {e}").into())
-}
-
-/// Write exported text (a transcript or a copied .cast) to a user-chosen path.
-/// The destination comes from a native save dialog, so the user intends it.
-#[tauri::command]
-fn export_recording(path: String, content: String) -> AppResult<()> {
-    std::fs::write(&path, content).map_err(|e| format!("export recording: {e}").into())
-}
-
-// ── SFTP commands ─────────────────────────────────────────────────────────────
-
-/// Fetch (opening on first use) the SFTP session for a tab, then release the lock
-/// so long transfers don't block other sessions.
-async fn get_sftp(state: &State<'_, AppState>, session_id: &str) -> AppResult<Arc<SftpSession>> {
-    let session = session_arc(state, session_id).await?;
-    session.sftp().await
-}
-
-/// Audit a mutating SFTP op into the session recording (like `container_run`'s
-/// mirror): `op` is a shell-like description with paths quoted; a successful
-/// outcome records `[sftp] $ … / [sftp] exit 0`, a failure adds the error text and
-/// `exit 1`. Record-only — never emitted to the live terminal. Reads (list/read/
-/// grep/hash) are NOT audited. Generic over the outcome type so it covers both the
-/// `()` ops and `write_text`'s `WriteResult`.
-fn record_sftp<T>(session: &SshSession, op: &str, res: &AppResult<T>) {
-    let (code, detail) = match res {
-        Ok(_) => (0, String::new()),
-        // A user stop, not a failure — the same `exit 130` a stopped sync records.
-        Err(e @ AppError::Cancelled) => (130, e.to_string()),
-        Err(e) => (1, e.to_string()),
-    };
-    session.record_output(sftp::sftp_mirror(op, code, &detail).as_bytes());
-}
-
-#[tauri::command]
-async fn sftp_home(state: State<'_, AppState>, session_id: String) -> AppResult<String> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::home(&sftp).await
-}
-
-#[tauri::command]
-async fn sftp_list(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-) -> AppResult<Vec<FileEntry>> {
-    let sftp = get_sftp(&state, &session_id).await?;
-    let mut entries = sftp::list(&sftp, &path).await?;
-    // Fill owner names from a cached passwd/group map (SFTP attrs rarely carry them).
-    let (users, groups) = ensure_id_names(&state, &session_id).await;
-    for e in &mut entries {
-        if e.user.is_none() {
-            e.user = e.uid.and_then(|u| users.get(&u).cloned());
-        }
-        if e.group.is_none() {
-            e.group = e.gid.and_then(|g| groups.get(&g).cloned());
-        }
-    }
-    Ok(entries)
-}
-
-#[tauri::command]
-async fn sftp_mkdir(state: State<'_, AppState>, session_id: String, path: String) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = sftp::mkdir(&sftp, &path).await;
-    record_sftp(
-        &session,
-        &format!("mkdir {}", git::shell_quote(&path)),
-        &res,
-    );
-    res
-}
-
-#[tauri::command]
-async fn sftp_create_file(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = sftp::create_file(&sftp, &path).await;
-    record_sftp(
-        &session,
-        &format!("touch {}", git::shell_quote(&path)),
-        &res,
-    );
-    res
-}
-
-/// Open a remote file as text in the in-app editor (rejects large/binary files).
-/// `max_bytes` is the configurable open-size limit; clamped to a hard ceiling so a
-/// bad setting can't slurp a huge file into memory.
-#[tauri::command]
-async fn sftp_read_text(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-    max_bytes: Option<u64>,
-    sudo: Option<bool>,
-    sudo_password: Option<String>,
-) -> AppResult<sftp::TextFile> {
-    let limit = max_bytes
-        .unwrap_or(sftp::MAX_EDIT_SIZE)
-        .clamp(1, sftp::HARD_MAX_EDIT_SIZE);
-    if sudo == Some(true) {
-        let session = session_arc(&state, &session_id).await?;
-        return sync::sudo_read(
-            &session,
-            &path,
-            limit,
-            sudo_password.as_deref().unwrap_or(""),
-        )
-        .await;
-    }
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::read_text(&sftp, &path, limit).await
-}
-
-/// Advisory access to the directory used by the editor's staged SFTP save.
-#[tauri::command]
-async fn sftp_write_access(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-) -> AppResult<String> {
-    let session = session_arc(&state, &session_id).await?;
-    let outcome = session
-        .exec_captured(&sftp::write_access_command(&path), 5)
-        .await?;
-    if outcome.timed_out || outcome.exit_code != 0 {
-        return Ok("unknown".into());
-    }
-    match outcome.stdout.as_str() {
-        "writable" | "restricted" => Ok(outcome.stdout),
-        _ => Ok("unknown".into()),
-    }
-}
-
-/// Check sudo credentials before editing, without touching the target file.
-#[tauri::command]
-async fn sftp_check_sudo(
-    state: State<'_, AppState>,
-    session_id: String,
-    password: String,
-) -> AppResult<bool> {
-    let session = session_arc(&state, &session_id).await?;
-    sync::check_sudo(&session, &password).await
-}
-
-/// Read a remote file as base64 bytes for the markdown preview's inline images
-/// (Phase 44.4). `max_bytes` is clamped to a hard ceiling that is deliberately far
-/// below the editor's: this path exists to show a screenshot next to a README, not
-/// to move files — that is what the SFTP panel's download is for.
-#[tauri::command]
-async fn sftp_read_bytes(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-    max_bytes: Option<u64>,
-) -> AppResult<String> {
-    let limit = max_bytes
-        .unwrap_or(sftp::MAX_INLINE_IMAGE)
-        .clamp(1, sftp::MAX_INLINE_IMAGE);
-    let sftp = get_sftp(&state, &session_id).await?;
-    sftp::read_bytes(&sftp, &path, limit).await
-}
-
-/// Save editor text back to a remote file (atomic temp+rename, conflict-checked).
-/// `sudo` writes root-owned files via `sudo cp`; `backup` keeps a `.bak` copy.
-#[tauri::command]
-// Tauri command: args arrive by name from JS (`invoke`), so they must stay as
-// individual parameters — grouping them into one struct would change the wire
-// contract with the frontend. The cohesive write payload is regrouped internally
-// into `sftp::TextWrite` before hitting the backend helpers.
-#[allow(clippy::too_many_arguments)]
-async fn sftp_write_text(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-    content: String,
-    eol: String,
-    encoding: Option<String>,
-    expected_sha256: Option<String>,
-    sudo: Option<bool>,
-    sudo_password: Option<String>,
-    backup: Option<bool>,
-) -> AppResult<sftp::WriteResult> {
-    // The editor echoes back the encoding `read_text` reported, so the file is
-    // rewritten in the encoding it arrived in. An older/absent value means UTF-8.
-    let encoding = encoding.unwrap_or_else(|| textenc::default_encoding().into());
-    let req = sftp::TextWrite {
-        path: &path,
-        content: &content,
-        eol: &eol,
-        encoding: &encoding,
-        expected_sha256: expected_sha256.as_deref(),
-        backup: backup.unwrap_or(false),
-    };
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = if sudo == Some(true) {
-        sync::sudo_write(
-            &session,
-            &sftp,
-            &req,
-            sudo_password.as_deref().unwrap_or(""),
-        )
-        .await
-    } else {
-        sftp::write_text(&sftp, &req).await
-    };
-    // Audit the edit as a byte-sized save (the content itself is never recorded).
-    record_sftp(
-        &session,
-        &format!("save {} ({} B)", git::shell_quote(&path), content.len()),
-        &res,
-    );
-    res
-}
-
-/// The working directory of a LOCAL shell, read from the OS (Phase 39.3).
-///
-/// This is the transport-appropriate half of "follow the terminal": a local tab
-/// has a pid we can inspect, so following works with any shell and no setup at
-/// all. SSH tabs have no local pid and still depend on the remote shell emitting
-/// OSC 7 / OSC 9;9. `None` means "couldn't tell" (unknown session, or the OS
-/// declined) — the caller leaves the panel where it is rather than guessing.
-#[tauri::command]
-fn local_cwd(state: State<AppState>, session_id: String) -> Option<String> {
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    local?.cwd()
-}
-
-/// Start or stop noting the folder each line typed into a LOCAL shell runs in
-/// (v1.24, ADR 0035) — on while the tab's terminal shows file links. False
-/// when there is no such session (yet).
-#[tauri::command]
-fn watch_local_submits(state: State<AppState>, session_id: String, on: bool) -> bool {
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    local.map(|pty| pty.watch_submits(on)).is_some()
-}
-
-/// The folder the last line typed into a LOCAL shell ran in, noted as it was
-/// sent: `None` when the shell was running a program then (`ssh`, a REPL) —
-/// the line was that program's — or the OS would not say.
-#[tauri::command]
-fn local_submitted_cwd(state: State<AppState>, session_id: String) -> Option<String> {
-    let local = state.local_ptys.lock().unwrap().get(&session_id).cloned();
-    local?.submitted_cwd()
-}
-
-/// Take and clear the queue of files vterm was asked to open (CLI args at launch
-/// and macOS `Opened` events), so the frontend can open them on startup.
-#[tauri::command]
-fn take_pending_opens(state: State<AppState>) -> Vec<String> {
-    std::mem::take(&mut state.pending_opens.lock().unwrap())
-}
-
-// ── Directory sync (Phase 12.5) ────────────────────────────────────────────────
-
-/// Hash every file under a remote directory via `sha256sum` over the SSH exec
-/// channel (no download). Returns `/`-relative path → sha256.
-#[tauri::command]
-async fn sftp_hash_tree(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-    excludes: Vec<String>,
-    cancel_id: String,
-) -> AppResult<sync::HashTree> {
-    let session = session_arc(&state, &session_id).await?;
-    let cancel = register_cancel(&state, &cancel_id);
-    let win = appwin::WindowSink::of(&window);
-    let cmd = sync::remote_hash_command(&path, &sync::ExcludeSet::new(&excludes));
-    // Count output lines as they stream in: one per file hashed (or unreadable).
-    let mut out: Vec<u8> = Vec::new();
-    let mut lines = 0u64;
-    let mut last = std::time::Instant::now();
-    let run = session.run_command_streaming(&cmd, |chunk| {
-        out.extend_from_slice(chunk);
-        lines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
-        if last.elapsed() >= std::time::Duration::from_millis(150) {
-            last = std::time::Instant::now();
-            sync::emit_scan(&win, &cancel_id, lines);
-        }
-    });
-    let res = sync::until_cancelled(run, &cancel).await;
-    state.cancels.lock().unwrap().remove(&cancel_id);
-    res?;
-    sync::parse_hash_output(&path, &String::from_utf8_lossy(&out))
-}
-
 /// Put a fresh stop flag for `id` into the shared cancel map (`sftp_cancel` sets it).
 /// The caller removes it when the operation ends.
 fn register_cancel(state: &AppState, id: &str) -> Arc<AtomicBool> {
     let flag = Arc::new(AtomicBool::new(false));
-    state
-        .cancels
-        .lock()
-        .unwrap()
-        .insert(id.to_string(), flag.clone());
+    state.cancels.locked().insert(id.to_string(), flag.clone());
     flag
-}
-
-/// Hash every file under a local directory (the local side of sync).
-#[tauri::command]
-async fn local_hash_tree(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    path: String,
-    excludes: Vec<String>,
-    cancel_id: String,
-) -> AppResult<sync::HashTree> {
-    use std::sync::atomic::AtomicU64;
-    let cancel = register_cancel(&state, &cancel_id);
-    let progress = Arc::new(AtomicU64::new(0));
-    // Report the count every 200 ms until the walk ends.
-    let ticker = {
-        let win = appwin::WindowSink::of(&window);
-        let (id, progress) = (cancel_id.clone(), progress.clone());
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                sync::emit_scan(&win, &id, progress.load(Ordering::Relaxed));
-            }
-        })
-    };
-    let res = localfile::hash_tree(&path, sync::ExcludeSet::new(&excludes), cancel, progress).await;
-    ticker.abort();
-    state.cancels.lock().unwrap().remove(&cancel_id);
-    res
-}
-
-/// List every config file nginx actually loads on the server, via `nginx -T` (it
-/// resolves `include` globs/recursion itself). Used by the editor to recognise nginx
-/// configs that live outside the `/etc/nginx/` tree. Best-effort: empty list when
-/// nginx is absent or its config isn't readable. When a `sudo_password` is supplied
-/// (reused from an open-as-root, never a fresh prompt) the dump runs under sudo, so a
-/// root-only config tree is still resolved; otherwise the caller falls back to path
-/// detection without interrupting the user.
-#[tauri::command]
-async fn nginx_config_files(
-    state: State<'_, AppState>,
-    session_id: String,
-    sudo_password: Option<String>,
-) -> AppResult<Vec<String>> {
-    let session = session_arc(&state, &session_id).await?;
-    if let Some(pw) = sudo_password.filter(|p| !p.is_empty()) {
-        return sync::nginx_config_files_sudo(&session, &pw).await;
-    }
-    let out = session
-        .run_command(sync::nginx_config_dump_command())
-        .await
-        .unwrap_or_default();
-    Ok(sync::parse_nginx_config_files(&out))
-}
-
-/// Lint the editor buffer with a real tool on the server (Phase 12.7): stage the
-/// content to a temp file, run the language's linter, return its output. `found`
-/// is false when no linter maps to the language or the tool isn't installed.
-#[tauri::command]
-async fn lint_remote(
-    state: State<'_, AppState>,
-    session_id: String,
-    content: String,
-    kind: String,
-    name: Option<String>,
-    sudo_password: Option<String>,
-) -> AppResult<sync::LintResult> {
-    let Some(tool) = sync::lint_tool(&kind) else {
-        return Ok(sync::LintResult::default());
-    };
-    let session = session_arc(&state, &session_id).await?;
-    // Is the tool installed? (sbin is on PATH for daemon validators.)
-    let chk = session
-        .run_command(&sync::lint_check_command(&tool))
-        .await
-        .unwrap_or_default();
-    if !chk.contains("__VTERM_OK__") {
-        return Ok(sync::LintResult {
-            tool: tool.bin.to_string(),
-            found: false,
-            format: tool.format.to_string(),
-            ..Default::default()
-        });
-    }
-    // Stage the buffer to a temp file in the user's home, lint it, then remove it.
-    // Suffix-sensitive tools (systemd-analyze) keep the source file's unit extension.
-    let sftp = session.sftp().await?;
-    let home = sftp
-        .canonicalize(".")
-        .await
-        .map_err(|e| format!("home dir: {e}"))?;
-    let mut tmp = format!("{}/.vterm-lint-{}", home.trim_end_matches('/'), uuid_like());
-    if tool.suffix {
-        tmp = format!(
-            "{tmp}.{}",
-            sync::lint_tmp_ext(name.as_deref().unwrap_or(""))
-        );
-    }
-    sftp::write_bytes(&sftp, &tmp, content.as_bytes()).await?;
-    let out = sync::run_lint(&session, &tool, &tmp, sudo_password.as_deref()).await;
-    let _ = sftp.remove_file(tmp.clone()).await;
-    // Replace both the full temp path and its basename with `FILE`, since validators
-    // vary in which they print.
-    let base = tmp.rsplit('/').next().unwrap_or(&tmp).to_string();
-    let output = out.replace(&tmp, "FILE").replace(&base, "FILE");
-    Ok(sync::LintResult {
-        tool: tool.bin.to_string(),
-        found: true,
-        output,
-        format: tool.format.to_string(),
-    })
-}
-
-/// Detect the server's package manager and which optional tools are installed
-/// (Phase 12.8). One round-trip; resolves the install command per tool/distro.
-#[tauri::command]
-async fn server_tools_status(
-    state: State<'_, AppState>,
-    session_id: String,
-) -> AppResult<servertools::ToolsStatus> {
-    let session = session_arc(&state, &session_id).await?;
-    let raw = session.run_command(&servertools::status_command()).await?;
-    let (manager, have) = servertools::parse_status(&raw);
-    Ok(servertools::build_status(&manager, &have))
-}
-
-/// Run an install command on the server (one-click path). A leading `sudo` is fed
-/// the password via stdin; non-sudo commands (pip/brew) run as-is. Streams output
-/// live over `install://out/{id}` (Phase 20.14) so the dialog console fills in as the
-/// install runs, and also returns the full output so the one-shot contract holds.
-#[tauri::command]
-async fn run_tool_install(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    session_id: String,
-    command: String,
-    sudo_password: Option<String>,
-) -> AppResult<String> {
-    let session = session_arc(&state, &session_id).await?;
-    let cmd = format!("{} 2>&1", servertools::sudoize(&command));
-    let mut pw = sudo_password.unwrap_or_default().into_bytes();
-    pw.push(b'\n');
-    let event = ssh::install_output_event(&session_id);
-    session
-        .run_command_stdin_streaming(&cmd, &pw, |chunk| {
-            let _ = app.emit(&event, String::from_utf8_lossy(chunk).into_owned());
-        })
-        .await
-}
-
-/// Apply a computed sync plan: upload/download changed files, delete extraneous.
-///
-/// `run_id` registers the run in the shared cancel map, so `sftp_cancel` stops it
-/// the same way it stops a folder download — no second cancellation mechanism.
-/// The run lands in the session recording as ONE `[sftp] $ sync …` entry (audit
-/// contract, Phase 37.2), not one per file; `exit 130` marks a user stop.
-#[tauri::command]
-async fn sftp_sync_apply(
-    window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
-    session_id: String,
-    run_id: String,
-    local_root: String,
-    remote_root: String,
-    actions: Vec<sync::SyncAction>,
-) -> AppResult<sync::SyncStats> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    // One run at a time, app-wide; the slot is freed however this command ends.
-    let _slot = SyncRunSlot::take(&state.sync_run, &run_id)?;
-    let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
-    let body = sync::sync_mirror_body(&actions);
-
-    let cancel = Arc::new(AtomicBool::new(false));
-    state
-        .cancels
-        .lock()
-        .unwrap()
-        .insert(run_id.clone(), cancel.clone());
-    let win = appwin::WindowSink::of(&window);
-    let res = sync::apply(&win, &sftp, &local_root, &remote_root, actions, cancel).await;
-    state.cancels.lock().unwrap().remove(&run_id);
-
-    let (code, detail) = match &res {
-        Ok(stats) if stats.stopped => (130, format!("{body}\nstopped by user")),
-        Ok(_) => (0, body),
-        Err(e) => (1, format!("{body}\n{e}")),
-    };
-    session.record_output(sftp::sftp_mirror(&op, code, &detail).as_bytes());
-    res
-}
-
-/// The app-wide "a sync run is applying" slot, held for the length of one run.
-struct SyncRunSlot<'a>(&'a Mutex<Option<String>>);
-
-impl<'a> SyncRunSlot<'a> {
-    /// Take the slot for `run_id`, or refuse while another run holds it.
-    fn take(slot: &'a Mutex<Option<String>>, run_id: &str) -> AppResult<Self> {
-        let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
-        if current.is_some() {
-            return Err(AppError::SyncBusy);
-        }
-        *current = Some(run_id.to_string());
-        Ok(Self(slot))
-    }
-}
-
-impl Drop for SyncRunSlot<'_> {
-    fn drop(&mut self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-}
-
-/// Content search under a remote directory via `grep -rn` over SSH (Phase 12.6).
-#[tauri::command]
-async fn sftp_grep(
-    state: State<'_, AppState>,
-    session_id: String,
-    dir: String,
-    query: String,
-    case_insensitive: bool,
-    fixed: bool,
-) -> AppResult<sync::GrepOutcome> {
-    if query.trim().is_empty() {
-        return Ok(sync::GrepOutcome {
-            matches: vec![],
-            truncated: false,
-            failed: false,
-        });
-    }
-    let session = session_arc(&state, &session_id).await?;
-    let out = session
-        .run_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
-        .await?;
-    Ok(sync::parse_grep_outcome(&out))
-}
-
-#[tauri::command]
-async fn sftp_delete(
-    state: State<'_, AppState>,
-    session_id: String,
-    path: String,
-    is_dir: bool,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = sftp::remove(&sftp, &path, is_dir).await;
-    let op = if is_dir {
-        format!("rm -r {}", git::shell_quote(&path))
-    } else {
-        format!("rm {}", git::shell_quote(&path))
-    };
-    record_sftp(&session, &op, &res);
-    res
-}
-
-/// Move a remote file/folder to a new path (drag-to-move within the SFTP panel).
-/// Refuses if `to` already exists; both paths are on the same session.
-#[tauri::command]
-async fn sftp_rename(
-    state: State<'_, AppState>,
-    session_id: String,
-    from: String,
-    to: String,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = sftp::rename(&sftp, &from, &to).await;
-    record_sftp(
-        &session,
-        &format!("mv {} {}", git::shell_quote(&from), git::shell_quote(&to)),
-        &res,
-    );
-    res
-}
-
-/// Copy a remote file/folder to a new path (paste after copy in the SFTP panel).
-/// Refuses if `to` already exists; both paths are on the same session.
-#[tauri::command]
-async fn sftp_copy(
-    state: State<'_, AppState>,
-    session_id: String,
-    from: String,
-    to: String,
-) -> AppResult<()> {
-    let session = session_arc(&state, &session_id).await?;
-    let sftp = session.sftp().await?;
-    let res = sftp::copy(&sftp, &from, &to).await;
-    record_sftp(
-        &session,
-        &format!("cp {} {}", git::shell_quote(&from), git::shell_quote(&to)),
-        &res,
-    );
-    res
-}
-
-/// One side of a transfer, resolved: this machine, or a session's SFTP — with
-/// the session itself, whose recording is told what was done.
-async fn transfer_party(
-    state: &State<'_, AppState>,
-    side: &transfers::Side,
-) -> AppResult<transfers::Party> {
-    if side.local {
-        return Ok(transfers::Party {
-            end: transfers::End::Local,
-            ssh: None,
-        });
-    }
-    let id = side.session.as_deref().ok_or(AppError::NoSession)?;
-    let session = session_arc(state, id).await?;
-    let sftp = session.sftp().await?;
-    Ok(transfers::Party {
-        end: transfers::End::Remote(sftp),
-        ssh: Some(session),
-    })
-}
-
-/// Take a job into the registry and carry it out in the background. Resolves
-/// at once with a receiver of how it ended — which the command drops (a window
-/// awaits no transfer) and a promise made to the system keeps (`dragout`).
-pub(crate) async fn launch_transfer(
-    app: &AppHandle,
-    origin: &str,
-    spec: transfers::Spec,
-) -> AppResult<tokio::sync::oneshot::Receiver<transfers::JobView>> {
-    if spec.items.is_empty() {
-        return Err("nothing to transfer".into());
-    }
-    let state = app.state::<AppState>();
-    let src = transfer_party(&state, &spec.src).await?;
-    let dst = transfer_party(&state, &spec.dst).await?;
-    let id = spec.id.clone();
-    let cancel = Arc::new(AtomicBool::new(false));
-    let jobs = app.state::<transfers::Jobs>();
-    if !jobs.add(transfers::JobView::start(&spec), cancel.clone(), origin) {
-        return Err("a transfer with this id is already running".into());
-    }
-    // The shared cancel map, for the life of the job: `sftp_cancel` stops it as
-    // it stops a sync run or a tree hash — a second way to cancel is not added.
-    state
-        .cancels
-        .lock()
-        .unwrap()
-        .insert(id.clone(), cancel.clone());
-    let (ended, wait) = tokio::sync::oneshot::channel();
-    let (app, origin) = (app.clone(), origin.to_string());
-    tokio::spawn(async move {
-        let done = transfers::run(&app, spec, src, dst, cancel, origin).await;
-        app.state::<AppState>().cancels.lock().unwrap().remove(&id);
-        let _ = ended.send(done);
-    });
-    Ok(wait)
-}
-
-/// Start a transfer the backend owns (v1.12, ADR 0025) and return at once: an
-/// upload, a download, a copy between two sessions or a local copy, by what the
-/// two sides are. Its state travels in `sftp://job` to whichever window shows
-/// the tab of each session it touches; `sftp_cancel` with its id stops it. The
-/// window that asked awaits nothing — it may give the tab away meanwhile.
-#[tauri::command]
-async fn transfer_start(
-    window: tauri::WebviewWindow,
-    app: AppHandle,
-    spec: transfers::Spec,
-) -> AppResult<String> {
-    let id = spec.id.clone();
-    launch_transfer(&app, window.label(), spec).await?;
-    Ok(id)
-}
-
-/// The transfers this window shows right now — asked when a window opens, and
-/// when it takes a tab over: the job came with the session, its events from
-/// now on come here.
-#[tauri::command]
-fn transfer_list(window: tauri::WebviewWindow, app: AppHandle) -> Vec<transfers::JobView> {
-    let windows = app.state::<appwin::Windows>();
-    app.state::<transfers::Jobs>()
-        .shown_in(window.label(), |session| windows.owner_of(session))
-}
-
-#[tauri::command]
-fn sftp_cancel(state: State<AppState>, transfer_id: String) {
-    if let Some(flag) = state.cancels.lock().unwrap().get(&transfer_id) {
-        flag.store(true, Ordering::Relaxed);
-    }
 }
 
 /// Tiny unique-id helper so we don't pull in the `uuid` crate yet.
@@ -2274,166 +183,6 @@ pub(crate) fn uuid_like() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("srv-{nanos:x}")
-}
-
-/// Read UTF-8 text from the OS clipboard in the Rust process.
-///
-/// The frontend deliberately avoids `navigator.clipboard.readText()`: in
-/// WKWebView (macOS) it pops WebKit's "Paste" permission button, and the app
-/// ships without a native Edit menu (so the terminal keeps ⌘C/⌘V). Reading the
-/// pasteboard here — the same thing `tauri-plugin-clipboard-manager` would do —
-/// never touches the webview, so no prompt appears. Returns the empty string for
-/// an empty/non-text clipboard; errors on platforms without a native reader so
-/// the caller can fall back to the web API.
-#[tauri::command]
-fn read_clipboard_text() -> AppResult<String> {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
-        // SAFETY: reading the general pasteboard via AppKit. NSPasteboard reads
-        // are thread-safe, so this is fine off the main thread (Tauri command
-        // pool). We only borrow the returned string to copy it into a Rust String.
-        let text =
-            unsafe { NSPasteboard::generalPasteboard().stringForType(NSPasteboardTypeString) };
-        Ok(text.map(|s| s.to_string()).unwrap_or_default())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Err(AppError::Message(
-            "native clipboard read is only implemented on macOS".into(),
-        ))
-    }
-}
-
-/// Localized labels for the native menu. Sourced from the frontend i18n
-/// dictionaries (`src/lib/i18n`) so the native menu follows the same language as
-/// the rest of the UI. Defaults are the canonical English used for the very
-/// first build, before the WebView pushes the user's language.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-// Windows/Linux no longer host a native menu bar (custom in-window chrome —
-// TitleBar.svelte — replaces it), so none of these labels are read there; macOS
-// still builds its app/Help menu from them. Kept as a field so the frontend
-// contract stays stable across platforms.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-struct MenuLabels {
-    // The File-menu label is only meaningful for an in-window menu bar; macOS uses
-    // the standard "vterm" app menu instead, so it goes unread there.
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    file_menu: String,
-    help_menu: String,
-    settings: String,
-    about: String,
-    help: String,
-    manual: String,
-    changelog: String,
-    updates: String,
-    monitoring: String,
-    #[serde(default = "default_quit_label")]
-    quit: String,
-}
-
-fn default_quit_label() -> String {
-    "Quit vterm".into()
-}
-
-impl Default for MenuLabels {
-    fn default() -> Self {
-        Self {
-            file_menu: "File".into(),
-            help_menu: "Help".into(),
-            settings: "Settings…".into(),
-            about: "About vterm".into(),
-            help: "Help".into(),
-            manual: "Manual".into(),
-            changelog: "Changelog".into(),
-            updates: "Check for updates…".into(),
-            monitoring: "Monitoring".into(),
-            quit: default_quit_label(),
-        }
-    }
-}
-
-/// Build the native application menu from localized `labels`. On macOS the items
-/// live in the standard "vterm" app menu (Settings with ⌘,) and a Help menu, in
-/// the system menu bar. Windows/Linux draw their own in-window chrome
-/// (TitleBar.svelte) with an HTML File/Help menu, so there the native menu is
-/// empty — no OS-drawn menu bar to keep light against a dark theme.
-/// Item ids are stable across languages, so the `on_menu_event` routing keeps
-/// working after a rebuild (see `set_menu_language`).
-fn build_app_menu<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    labels: &MenuLabels,
-) -> tauri::Result<tauri::menu::Menu<R>> {
-    use tauri::menu::MenuBuilder;
-
-    // Windows/Linux: the in-window TitleBar owns the menu, so attach an empty
-    // native menu (removing the OS menu bar entirely). `labels` is unused here.
-    // The two cfg blocks are mutually exclusive, so exactly one survives per
-    // platform and is the function's tail expression — no `return` (needless on
-    // the platform where this block is the tail; clippy -D warnings catches it).
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = labels;
-        MenuBuilder::new(app).build()
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        use tauri::menu::{MenuItemBuilder, SubmenuBuilder};
-
-        let settings = MenuItemBuilder::with_id("settings", &labels.settings)
-            .accelerator("CmdOrCtrl+,")
-            .build(app)?;
-        let about = MenuItemBuilder::with_id("about", &labels.about).build(app)?;
-        let help = MenuItemBuilder::with_id("help", &labels.help).build(app)?;
-        let manual = MenuItemBuilder::with_id("manual", &labels.manual).build(app)?;
-        let changelog = MenuItemBuilder::with_id("changelog", &labels.changelog).build(app)?;
-        let updates = MenuItemBuilder::with_id("updates", &labels.updates).build(app)?;
-        let monitoring = MenuItemBuilder::with_id("monitoring", &labels.monitoring)
-            .accelerator("CmdOrCtrl+Shift+M")
-            .build(app)?;
-        // Our own item, not the predefined `quit()`: that one terminates the app
-        // natively, past the confirmation `request_quit` routes through.
-        let quit = MenuItemBuilder::with_id("quit", &labels.quit)
-            .accelerator("CmdOrCtrl+Q")
-            .build(app)?;
-
-        // No Edit menu on purpose: the terminal handles ⌘C/⌘V itself, and a
-        // native Edit menu would steal those accelerators before xterm sees them.
-        let app_menu = SubmenuBuilder::new(app, "vterm")
-            .item(&about)
-            .separator()
-            .item(&settings)
-            .item(&monitoring)
-            .separator()
-            .hide()
-            .hide_others()
-            .show_all()
-            .separator()
-            .item(&quit)
-            .build()?;
-        let help_menu = SubmenuBuilder::new(app, &labels.help_menu)
-            .item(&help)
-            .item(&manual)
-            .item(&changelog)
-            .separator()
-            .item(&updates)
-            .build()?;
-        MenuBuilder::new(app)
-            .item(&app_menu)
-            .item(&help_menu)
-            .build()
-    }
-}
-
-/// Rebuild the native menu in the language chosen on the frontend. Called by the
-/// WebView on startup and whenever the user switches language in Settings.
-#[tauri::command]
-fn set_menu_language(app: AppHandle, labels: MenuLabels) -> Result<(), String> {
-    let menu = build_app_menu(&app, &labels).map_err(|e| e.to_string())?;
-    app.set_menu(menu).map_err(|e| e.to_string())?;
-    Ok(())
 }
 
 /// Treat non-flag CLI arguments as file paths to open in the editor.
@@ -2473,6 +222,7 @@ pub fn run() {
         metrics_samples: metrics::MetricsSamples::default(),
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
+        session_servers: Mutex::new(HashMap::new()),
     };
 
     let app = tauri::Builder::default()
@@ -2510,7 +260,7 @@ pub fn run() {
             });
             Ok(())
         })
-        .menu(|app| build_app_menu(app, &MenuLabels::default()))
+        .menu(|app| commands::chrome::build_app_menu(app, &commands::chrome::MenuLabels::default()))
         .on_menu_event(|app, event| {
             // A menu command is for the window the user is in; quitting is asked
             // in the main one, which lists every window's sessions.
@@ -2558,39 +308,39 @@ pub fn run() {
             folders::move_folder,
             folders::rename_folder,
             folders::set_server_group,
-            export_backup,
-            import_backup,
+            commands::backup::export_backup,
+            commands::backup::import_backup,
             backup::read_backup,
-            connect_plan,
-            connect_session,
-            open_local_terminal,
-            host_os,
-            shell_exists,
-            write_to_terminal,
-            read_shell_history,
-            resize_pty,
-            disconnect,
+            commands::session::connect_plan,
+            commands::session::connect_session,
+            commands::session::open_local_terminal,
+            commands::session::host_os,
+            commands::session::shell_exists,
+            commands::session::write_to_terminal,
+            commands::session::read_shell_history,
+            commands::session::resize_pty,
+            commands::session::disconnect,
             metrics::fetch_metrics,
             metrics::fetch_metrics_detail,
             metrics::fetch_pending_updates,
             metrics::fetch_extras,
-            sftp_home,
-            sftp_list,
-            sftp_mkdir,
-            sftp_create_file,
-            sftp_read_text,
-            sftp_write_access,
-            sftp_check_sudo,
-            sftp_read_bytes,
+            commands::sftp::sftp_home,
+            commands::sftp::sftp_list,
+            commands::sftp::sftp_mkdir,
+            commands::sftp::sftp_create_file,
+            commands::sftp::sftp_read_text,
+            commands::sftp::sftp_write_access,
+            commands::sftp::sftp_check_sudo,
+            commands::sftp::sftp_read_bytes,
             localfile::read_local_bytes,
-            sftp_write_text,
+            commands::sftp::sftp_write_text,
             localfile::read_local_text,
             localfile::write_local_text,
             localfile::save_editor_copy,
-            local_cwd,
-            watch_local_submits,
-            local_submitted_cwd,
-            take_pending_opens,
+            commands::session::local_cwd,
+            commands::session::watch_local_submits,
+            commands::session::local_submitted_cwd,
+            commands::chrome::take_pending_opens,
             keygen::generate_ssh_key,
             keygen::key_path_exists,
             keygen::save_public_key,
@@ -2605,48 +355,48 @@ pub fn run() {
             localfile::local_delete,
             localfile::local_rename,
             localfile::local_copy,
-            sftp_hash_tree,
-            local_hash_tree,
-            sftp_sync_apply,
-            sftp_grep,
-            lint_remote,
-            nginx_config_files,
-            server_tools_status,
-            run_tool_install,
-            sftp_delete,
-            sftp_rename,
-            sftp_copy,
-            transfer_start,
-            transfer_list,
-            sftp_cancel,
-            read_clipboard_text,
-            set_menu_language,
-            start_recording,
-            stop_recording,
-            set_recording_paused,
-            annotate_recording,
-            record_audit,
-            list_recordings,
-            delete_recording,
-            set_recording_meta,
-            set_batch_label,
-            read_recording,
-            export_recording,
-            import_recording,
+            commands::sftp::sftp_hash_tree,
+            commands::sftp::local_hash_tree,
+            commands::sftp::sftp_sync_apply,
+            commands::sftp::sftp_grep,
+            commands::sftp::lint_remote,
+            commands::sftp::nginx_config_files,
+            commands::sftp::server_tools_status,
+            commands::sftp::run_tool_install,
+            commands::sftp::sftp_delete,
+            commands::sftp::sftp_rename,
+            commands::sftp::sftp_copy,
+            commands::sftp::transfer_start,
+            commands::sftp::transfer_list,
+            commands::sftp::sftp_cancel,
+            commands::chrome::read_clipboard_text,
+            commands::chrome::set_menu_language,
+            commands::recording::start_recording,
+            commands::recording::stop_recording,
+            commands::recording::set_recording_paused,
+            commands::recording::annotate_recording,
+            commands::recording::record_audit,
+            commands::recording::list_recordings,
+            commands::recording::delete_recording,
+            commands::recording::set_recording_meta,
+            commands::recording::set_batch_label,
+            commands::recording::read_recording,
+            commands::recording::export_recording,
+            commands::recording::import_recording,
             ai::ai_chat,
             ai::cancel_ai_chat,
             ai::ai_models,
-            ai_exec,
-            git_run,
-            probe_run,
-            netcheck_run,
-            container_run,
-            kubectl_run,
-            docker_login,
-            set_registry_secret,
-            delete_registry_secret,
-            set_ai_key,
-            forget_ai_key,
+            commands::ai::ai_exec,
+            commands::drivers::git_run,
+            commands::drivers::probe_run,
+            commands::drivers::netcheck_run,
+            commands::drivers::container_run,
+            commands::drivers::kubectl_run,
+            commands::drivers::docker_login,
+            commands::drivers::set_registry_secret,
+            commands::drivers::delete_registry_secret,
+            commands::ai::set_ai_key,
+            commands::ai::forget_ai_key,
             appwin::arm_close_guard,
             appwin::quit_app,
             updater::update_check,
@@ -2700,11 +450,7 @@ pub fn run() {
                 .collect();
             if !paths.is_empty() {
                 if let Some(state) = app_handle.try_state::<AppState>() {
-                    state
-                        .pending_opens
-                        .lock()
-                        .unwrap()
-                        .extend(paths.iter().cloned());
+                    state.pending_opens.locked().extend(paths.iter().cloned());
                 }
                 for p in paths {
                     let _ = app_handle.emit_to(appwin::MAIN, "vterm://open-file", p);
@@ -2722,26 +468,15 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    // ── connect_session: remembering a secret ─────────────────────────────────
-    #[test]
-    fn remember_failure_reports_the_reason_and_nothing_on_success() {
-        assert_eq!(remember_failure(Ok(())), None);
-        let err: AppError = "keychain write failed: No default store".to_string().into();
-        assert_eq!(
-            remember_failure(Err(err)).as_deref(),
-            Some("keychain write failed: No default store")
-        );
-    }
-
     #[test]
     fn nothing_after_login_can_fail_the_connection() {
-        // Guard (nightly E2E, v1.0.31): once `ssh::connect` succeeded the session is
+        // Guard (deep-check E2E, v1.0.31): once `ssh::connect` succeeded the session is
         // live, and an early return drops it. A keychain `set_password(..)?` did
         // exactly that on Linux without a Secret Service — the user authenticated
         // and got an error instead of a shell. Scans the code (comments stripped)
         // between the login and the end of the command for any `?`.
         // A Windows checkout carries CRLF (core.autocrlf); the markers below are LF.
-        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        let src = crate::commands::bridge_source();
         let body = &src[src
             .find("async fn connect_session(")
             .expect("connect_session")..];
@@ -2780,7 +515,7 @@ mod tests {
         // password, the response body and its `Set-Cookie`. The frontend records a
         // masked summary of the PARSED result through `record_audit` instead; the
         // executors themselves must not write to the recording at all.
-        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        let src = crate::commands::bridge_source();
         for name in ["probe_run", "netcheck_run", "netcheck_exec"] {
             let code = command_code(&src, name);
             for banned in ["record_output", "annotate_recording", "audit_block"] {
@@ -2790,6 +525,9 @@ mod tests {
                 );
             }
         }
+        // The probe goes through the drivers' dispatcher, which audits a call only
+        // when asked to — and the probe never asks.
+        assert!(command_code(&src, "probe_run").contains("audit: None,"));
         // …and the one recording path stays the formatted, sanitized block.
         assert!(command_code(&src, "record_audit").contains("netprobe::audit_block("));
     }
@@ -2801,8 +539,9 @@ mod tests {
         let run = command_code(src, "netcheck_run");
         let exec = command_code(src, "netcheck_exec");
         run.contains("register_cancel(&state, &cancel_id)")
-            && run.contains("state.cancels.lock().unwrap().remove(&cancel_id)")
-            && exec.contains("exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))")
+            && run.contains("state.cancels.locked().remove(&cancel_id)")
+            && exec
+                .contains("exec_captured_until(&exec::remote_command(args), timeout, Some(cancel))")
             && exec.contains("sync::until_cancelled(run, cancel)")
             && !exec.contains(".exec_captured(")
     }
@@ -2811,12 +550,12 @@ mod tests {
     fn a_netcheck_run_can_always_be_stopped() {
         // Guard (v1.21, ADR 0032): "Stop" on a subnet sweep must reach whatever
         // runs it — on the server and on this machine alike.
-        let src = include_str!("lib.rs").replace("\r\n", "\n");
+        let src = crate::commands::bridge_source();
         assert!(netcheck_is_stoppable(&src));
         // Planted: the SSH path forgets the flag, the local one runs unguarded.
         let planted = src.replacen(
-            "exec_captured_until(&cmd, timeout_secs.max(1), Some(cancel))",
-            "exec_captured_until(&cmd, timeout_secs.max(1), None)",
+            "exec_captured_until(&exec::remote_command(args), timeout, Some(cancel))",
+            "exec_captured_until(&exec::remote_command(args), timeout, None)",
             1,
         );
         assert!(!netcheck_is_stoppable(&planted));
@@ -2827,7 +566,7 @@ mod tests {
     /// Everything before the tests, line comments stripped.
     fn code_of(src: &str) -> String {
         let src = src.replace("\r\n", "\n");
-        src[..src.find("#[cfg(test)]").expect("tests")]
+        src[..src.find("#[cfg(test)]").unwrap_or(src.len())]
             .lines()
             .map(|l| l.split("//").next().unwrap_or(""))
             .collect::<Vec<_>>()
@@ -2840,7 +579,7 @@ mod tests {
         // natively, past `request_quit` — ⌘Q would silently drop every session the
         // quit dialog exists to list. And a close request must be the one the
         // guard can veto (`prevent_close`), not left to close the window.
-        let code = code_of(include_str!("lib.rs"));
+        let code = code_of(&crate::commands::bridge_source());
         let windows = code_of(include_str!("appwin.rs"));
         assert!(
             !code.contains(".quit()") && !windows.contains(".quit()"),
@@ -2871,10 +610,10 @@ mod tests {
         // the `disconnect` a window sends reaches it only past the owner check —
         // otherwise the window that gave a tab away would end the session behind
         // the new owner's back with its ordinary teardown.
-        let code = code_of(include_str!("lib.rs"));
+        let code = code_of(&crate::commands::bridge_source());
         for removal in [
             "sessions.lock().await.remove(",
-            "local_ptys.lock().unwrap().remove(",
+            "local_ptys.locked().remove(",
         ] {
             assert_eq!(
                 code.matches(removal).count(),
@@ -2884,7 +623,7 @@ mod tests {
         }
         let end = command_code(&code, "end_session");
         assert!(end.contains("sessions.lock().await.remove(session_id)"));
-        assert!(end.contains("local_ptys.lock().unwrap().remove(session_id)"));
+        assert!(end.contains("local_ptys.locked().remove(session_id)"));
         let disconnect = command_code(&code, "disconnect");
         let check = disconnect
             .find("windows.release(&session_id, window.label())")
@@ -2899,19 +638,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_one_sync_run_applies_at_a_time() {
-        let slot = Mutex::new(None);
-        let first = SyncRunSlot::take(&slot, "run-1").expect("free slot");
-        assert!(matches!(
-            SyncRunSlot::take(&slot, "run-2"),
-            Err(AppError::SyncBusy)
-        ));
-        // However the run ends, the slot is free again.
-        drop(first);
-        assert!(SyncRunSlot::take(&slot, "run-2").is_ok());
-    }
-
     // ── uuid_like ─────────────────────────────────────────────────────────────
     #[test]
     fn uuid_like_has_prefix_and_is_unique() {
@@ -2921,53 +647,5 @@ mod tests {
         assert!(a["srv-".len()..].chars().all(|c| c.is_ascii_hexdigit()));
         let b = uuid_like();
         assert_ne!(a, b);
-    }
-
-    // ── program_on_path ───────────────────────────────────────────────────────
-    #[test]
-    fn program_on_path_finds_current_exe_by_absolute_path() {
-        let exe = std::env::current_exe().unwrap();
-        assert!(program_on_path(exe.to_str().unwrap()));
-    }
-
-    #[test]
-    fn program_on_path_rejects_empty_and_missing() {
-        assert!(!program_on_path(""));
-        assert!(!program_on_path("   "));
-        assert!(!program_on_path("vterm-definitely-not-a-real-program-xyz"));
-        // An explicit path that does not exist is not resolved.
-        assert!(!program_on_path("/no/such/dir/nope-shell"));
-    }
-
-    // ── batch_id_from_header ──────────────────────────────────────────────────
-    #[test]
-    fn batch_id_read_from_vterm() {
-        let h = serde_json::json!({ "vterm": { "batch": "bcast-42" } });
-        assert_eq!(batch_id_from_header(&h), Some("bcast-42".to_owned()));
-    }
-
-    #[test]
-    fn batch_id_absent_for_ordinary_recordings() {
-        assert_eq!(
-            batch_id_from_header(&serde_json::json!({ "vterm": {} })),
-            None
-        );
-        assert_eq!(batch_id_from_header(&serde_json::json!({})), None);
-        // A non-string batch is ignored, not coerced.
-        let h = serde_json::json!({ "vterm": { "batch": 5 } });
-        assert_eq!(batch_id_from_header(&h), None);
-    }
-
-    #[test]
-    fn batch_label_read_from_vterm() {
-        let h = serde_json::json!({ "vterm": { "batchLabel": "Nightly deploy" } });
-        assert_eq!(
-            batch_label_from_header(&h),
-            Some("Nightly deploy".to_owned())
-        );
-        assert_eq!(
-            batch_label_from_header(&serde_json::json!({ "vterm": {} })),
-            None
-        );
     }
 }

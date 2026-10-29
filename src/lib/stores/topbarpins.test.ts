@@ -1,7 +1,7 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
-import { resetSettings, settings } from "../settings.svelte";
-import { DEFAULT_TOPBAR } from "../topbaractions";
+import { resetSettings, settings } from "../settings/settings.svelte";
+import { DEFAULT_TOPBAR } from "../topbar/topbaractions";
 import { isPinned, moveAction, pinAction, resetTopbar, unpinAction } from "./topbarpins.svelte";
 
 beforeEach(() => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AiChatRequest, AiSettings } from "../ai";
+import type { AiChatRequest, AiSettings } from "../ai/ai";
 
 // Mock the backend + event bus so startChat/runCommand can be driven in tests.
 const aiChat = vi.fn<(req: AiChatRequest) => Promise<void>>();
@@ -41,8 +41,8 @@ import {
   KEY_NONE,
   type StartChatOpts,
 } from "./aichat.svelte";
-import { defaultAiSettings } from "../ai";
-import { settings } from "../settings.svelte";
+import { defaultAiSettings } from "../ai/ai";
+import { settings } from "../settings/settings.svelte";
 
 function readySettings(over: Partial<AiSettings> = {}): AiSettings {
   return {

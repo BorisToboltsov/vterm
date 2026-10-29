@@ -1,8 +1,8 @@
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
-import { addTab, emptyLayout, type CenterLayout } from "../splitlayout";
-import { resetSettings, settings } from "../settings.svelte";
-import { parseSavedWindow, slotKey } from "../tabrestore";
+import { addTab, emptyLayout, type CenterLayout } from "../layout/splitlayout";
+import { resetSettings, settings } from "../settings/settings.svelte";
+import { parseSavedWindow, slotKey } from "../tabs/tabrestore";
 import { closeTab, openLocalTab, openTab, resetTabs, tabsState, type Tab } from "./tabs.svelte";
 import { startSavingTabs, tabKeeper, takeSavedTabs } from "./tabrestore.svelte";
 

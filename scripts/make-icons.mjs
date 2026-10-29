@@ -17,7 +17,7 @@
 // исходника нет намеренно — геометрия знака не должна разъехаться между
 // платформами; расходится только рамка кадрирования.
 //
-// Контракт закреплён гейтом src/lib/appicon.guard.test.ts.
+// Контракт закреплён гейтом src/lib/appearance/appicon.guard.test.ts.
 
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

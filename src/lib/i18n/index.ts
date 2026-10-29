@@ -2,10 +2,10 @@
 // rune), so any `{t("…")}` in markup re-renders automatically when the user
 // switches language in Settings — no per-component subscription needed.
 //
-// Components import from here: `import { t } from "$lib/i18n";` (or "./i18n").
+// Components import from here: `import { t } from "../i18n";` (the page: "#lib/i18n/index.ts").
 
-import { settings } from "../settings.svelte";
-import { reseedBuiltinPrompts } from "../ai";
+import { settings } from "../settings/settings.svelte";
+import { reseedBuiltinPrompts } from "../ai/ai";
 import { resolve } from "./translate";
 import type { MessageKey, MessageParams } from "./messages";
 import {

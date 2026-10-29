@@ -1,0 +1,416 @@
+// Release-assets guard: locks in the two files that the Tauri bundler does NOT
+// produce but that the release page must carry anyway — the macOS Gatekeeper
+// helper (open-on-mac.sh, next to the .dmg) and the Windows portable .exe.
+//
+// Why a guard and not just a workflow: tauri-action uploads exactly the bundles
+// it built, so both files silently vanish from GitHub Releases the moment their
+// extra steps are dropped or renamed — and nothing fails, the release just comes
+// out incomplete.
+//
+// Comments are stripped before matching: a file-level text match would happily
+// pass on a workflow whose step was deleted but whose comment still describes it
+// (the same trap the markdown-link gate hit in Phase 44.3).
+
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it } from "vitest";
+
+const ROOT = process.cwd();
+const WORKFLOW = ".github/workflows/release.yml";
+const CI_WORKFLOW = ".github/workflows/ci.yml";
+const DEEP_WORKFLOW = ".github/workflows/deep.yml";
+
+/** Файл workflow без строк-комментариев (см. преамбулу — комментарий лгал бы). */
+const codeOf = (rel: string): string =>
+  readFileSync(join(ROOT, rel), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+const code = codeOf(WORKFLOW);
+
+/** Step blocks of the single `release` job (list items at 6-space indent). */
+const steps = code.split(/^ {6}- /m).slice(1);
+
+const stepWith = (needle: string): string | undefined =>
+  steps.find((s) => s.includes(needle));
+
+/**
+ * The step that actually uploads `needle`. Narrowed to `run:` steps carrying
+ * `gh release upload`, because the release body names both files too — matching
+ * on the name alone finds the prose that describes the asset, not the step that
+ * produces it.
+ */
+const uploadStepWith = (needle: string): string | undefined =>
+  steps.find(
+    (s) =>
+      /\n\s*run:/.test(s) && s.includes("gh release upload") && s.includes(needle),
+  );
+
+describe("release workflow builds the bundles", () => {
+  it("runs tauri-action against the pushed tag", () => {
+    const build = stepWith("tauri-apps/tauri-action");
+    expect(build).toBeDefined();
+    expect(build).toContain("${{ github.ref_name }}");
+  });
+});
+
+// The release body must do two things at once and both can regress silently: it
+// keeps the launch / anti-Gatekeeper instructions (without them the page is a bare
+// asset list), and it prepends a short "what's new" drawn from CHANGELOG.md — the
+// curated, per-version source. Dropping the extraction step, or the env reference,
+// or the instructions, all pass a build with no failure, so all three are pinned.
+describe("release body carries a changelog summary and the instructions", () => {
+  it("derives release notes from CHANGELOG.md into an env var", () => {
+    const step = stepWith("CHANGELOG.md");
+    expect(step, "no step reads CHANGELOG.md").toBeDefined();
+    expect(step).toContain("RELEASE_NOTES");
+    expect(step).toContain("GITHUB_ENV");
+    expect(step).toContain("shell: bash"); // Windows runner would use PowerShell otherwise
+    // The tag reaches the script through env, never string-substituted into the
+    // shell line — the same injection class the gh steps below avoid.
+    expect(step).toMatch(/TAG:\s*\$\{\{\s*github\.ref_name\s*\}\}/);
+  });
+
+  it("puts the changelog summary into the release body", () => {
+    const build = stepWith("tauri-apps/tauri-action");
+    expect(build).toMatch(/releaseBody:/);
+    expect(build).toContain("${{ env.RELEASE_NOTES }}");
+  });
+
+  it("keeps the launch + anti-Gatekeeper instructions in the body", () => {
+    const build = stepWith("tauri-apps/tauri-action") ?? "";
+    expect(build).toContain("Assets");
+    expect(build).toContain("docs/INSTALL.md");
+    expect(build).toContain("open-on-mac.sh");
+  });
+});
+
+// A tag must not be able to publish a release built from a red tree. Before this
+// gate, release.yml ran zero tests: `git push origin v1.0.1` produced three
+// signed-off bundles even with clippy red, coverage under threshold and
+// `pnpm build` broken. Nothing failed — the release just shipped.
+//
+// The dependency is the whole point, so it is what gets asserted: dropping
+// `needs` (or quietly pointing `verify` at something else) is exactly the change
+// that would look like a harmless speed-up in review.
+describe("release runs behind the quality gates", () => {
+  const jobsBlock = code.slice(code.indexOf("\njobs:"));
+  /** Job blocks are the 2-space-indented keys under `jobs:`. */
+  const jobs = new Map(
+    jobsBlock
+      .split(/^ {2}(?=\S)/m)
+      .slice(1)
+      .map((block) => [block.slice(0, block.indexOf(":")), block] as const),
+  );
+
+  it("has a verify job that reuses ci.yml rather than copying its steps", () => {
+    const verify = jobs.get("verify");
+    expect(verify, "job `verify` not found in release.yml").toBeDefined();
+    expect(verify).toMatch(/uses:\s*\$\/\.github\/workflows\/ci\.yml/);
+  });
+
+  // The deep layers (E2E in a real window, live SFTP against a real sshd, deep
+  // fuzzing) never run on a PR and are scheduled only monthly — so without this
+  // job a broken happy path merged into main would ship on the next tag.
+  it("has a deep job that reuses deep.yml", () => {
+    const deep = jobs.get("deep");
+    expect(deep, "job `deep` not found in release.yml").toBeDefined();
+    expect(deep).toMatch(/uses:\s*\$\/\.github\/workflows\/deep\.yml/);
+  });
+
+  it("blocks the build matrix on both jobs", () => {
+    const release = jobs.get("release");
+    expect(release, "job `release` not found in release.yml").toBeDefined();
+    expect(release).toMatch(/needs:\s*(verify\b|\[[^\]]*\bverify\b)/);
+    expect(release).toMatch(/needs:\s*\[[^\]]*\bdeep\b/);
+  });
+
+  // The release is named by the tag, the files inside it by package.json. A
+  // mistyped tag (`v1.1.11` for 1.11.1) published the build under another
+  // version's name, with no notes — CHANGELOG has no section by that name — and
+  // nothing failed. The check is a job of its own, first, so a wrong tag costs
+  // seconds and not a full run of the gates.
+  it("refuses a tag that does not name the version in package.json", () => {
+    const tag = jobs.get("tag");
+    expect(tag, "job `tag` not found in release.yml").toBeDefined();
+    expect(tag).toContain("TAG: ${{ github.ref_name }}");
+    expect(tag).toMatch(/version="\$\(jq -r \.version package\.json\)"/);
+    expect(tag).toMatch(/if \[ "\$TAG" != "v\$version" \]; then[\s\S]*?exit 1/);
+    // Nothing is built, tested or published from a tag that failed it.
+    for (const name of ["verify", "deep", "release"]) {
+      expect(jobs.get(name), `job \`${name}\` runs without the tag check`).toMatch(
+        /needs:\s*(tag\b|\[[^\]]*\btag\b)/,
+      );
+    }
+  });
+
+  it("the reused workflows are actually callable", () => {
+    // `workflow_call` is what makes them reusable; without it the `uses:` above
+    // fails at dispatch time, i.e. only ever on a real tag push.
+    expect(codeOf(CI_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
+    expect(codeOf(DEEP_WORKFLOW)).toMatch(/^\s*workflow_call:/m);
+  });
+
+  it("the reused deep workflow runs the deep layers", () => {
+    const deep = codeOf(DEEP_WORKFLOW);
+    for (const job of ["fuzz:", "live-sftp:", "e2e:"]) {
+      expect(deep, `deep.yml lost job \`${job}\``).toMatch(new RegExp(`^ {2}${job}`, "m"));
+    }
+  });
+
+  it("the reused workflow runs the gates the DoD names", () => {
+    const ci = codeOf(CI_WORKFLOW);
+    for (const cmd of [
+      "pnpm check",
+      "pnpm test:coverage",
+      "pnpm build",
+      "cargo fmt",
+      "cargo clippy",
+      "cargo test",
+    ]) {
+      expect(ci, `CI does not run \`${cmd}\``).toContain(cmd);
+    }
+  });
+});
+
+// The builds are unsigned, and the release page actively teaches the recipient to
+// strip Gatekeeper quarantine (open-on-mac.sh). Teaching someone to bypass the
+// OS check while giving them no way to verify what they downloaded is the part
+// that must not silently regress — INSTALL.md documents both commands.
+describe("release ships integrity material", () => {
+  const jobsBlock = code.slice(code.indexOf("\njobs:"));
+  const integrity =
+    jobsBlock.split(/^ {2}(?=\S)/m).find((b) => b.startsWith("integrity:")) ?? "";
+
+  it("has an integrity job that runs after every bundle is built", () => {
+    expect(integrity, "job `integrity` not found").not.toBe("");
+    expect(integrity).toMatch(/needs:\s*(release\b|\[[^\]]*\brelease\b)/);
+  });
+
+  it("publishes SHA256SUMS covering the release assets", () => {
+    expect(integrity).toContain("sha256sum");
+    expect(integrity).toMatch(/gh release upload[^\n]*SHA256SUMS/);
+  });
+
+  it("attests provenance for the bundles", () => {
+    // The one origin proof available to an unsigned app; it answers a different
+    // question than code signing, so it is not a substitute — losing it silently
+    // would still leave the download unverifiable.
+    expect(integrity).toContain("actions/attest-build-provenance");
+    expect(integrity).toMatch(/id-token:\s*write/);
+  });
+
+  it("publishes an SBOM", () => {
+    expect(integrity).toMatch(/gh release upload[^\n]*sbom/i);
+  });
+
+  it("keeps the VirusTotal upload opt-in", () => {
+    // Sending release assets to a third party must stay conditional on the owner
+    // having added the secret — never on by default. See SECURITY.md.
+    expect(integrity).toMatch(/if:\s*env\.VT_API_KEY != ''/);
+  });
+});
+
+// Supply chain: a mutable tag is a promise the upstream owner can rewrite at any
+// time, and these workflows hand `tauri-action` a token with `contents: write`.
+// Whoever controls that tag controls what lands in the published release.
+//
+// Applies to every workflow and every shared action, not just the two above — a
+// scanner job that runs on `main`, or the action every job sets itself up with,
+// is as good a foothold as the release job.
+const CI_FILES = [
+  ...readdirSync(join(ROOT, ".github/workflows"))
+    .filter((f) => /\.ya?ml$/.test(f))
+    .map((f) => join(".github/workflows", f)),
+  ...readdirSync(join(ROOT, ".github/actions")).map((d) => join(".github/actions", d, "action.yml")),
+];
+
+describe("third-party actions are pinned by commit SHA", () => {
+  const files = CI_FILES;
+
+  it("there are workflows and shared actions to check", () => {
+    expect(files.some((f) => f.includes("workflows"))).toBe(true);
+    expect(files.some((f) => f.includes("actions/"))).toBe(true);
+  });
+
+  it.each(files)("%s pins every action it uses", (file) => {
+    const uses = [...codeOf(file).matchAll(/^\s*(?:- )?uses:\s*(\S+)/gm)]
+      .map((m) => m[1])
+      // In-repo references (`$/…`) are versioned by this repo's own history.
+      .filter((ref) => !ref.startsWith("$/"));
+
+    for (const ref of uses) {
+      expect(
+        ref,
+        `${file}: \`${ref}\` is not pinned to a 40-char commit SHA`,
+      ).toMatch(/@[0-9a-f]{40}$/);
+    }
+  });
+
+  it.each(files)("%s references in-repo actions as $/…, not ./…", (file) => {
+    // `./…` resolves against the runner's workspace at run time, so a step that
+    // cloned something there could swap the action; `$/…` is fixed to this
+    // commit and counts as pinned for GitHub's own "fully pinned" policy
+    // (zizmor self-repository, code scanning #60).
+    const relative = [...codeOf(file).matchAll(/^\s*(?:- )?uses:\s*(\.\/\S*)/gm)].map(
+      (m) => m[1],
+    );
+    expect(relative, `${file}: workspace-relative uses:`).toEqual([]);
+  });
+
+  it.each(files)("%s says which version each SHA is", (file) => {
+    // Without the comment the pin is unreviewable and Dependabot has nothing to
+    // bump against.
+    for (const line of codeOf(file).split("\n")) {
+      if (/^\s*(?:- )?uses:\s*\S+@[0-9a-f]{40}/.test(line)) {
+        expect(line, `${file}: pin without a version comment`).toMatch(
+          /@[0-9a-f]{40} # v?\d/,
+        );
+      }
+    }
+  });
+});
+
+// Supply chain, the npm half (v1.25.0): an install that may rewrite the lockfile
+// resolves whatever the registry serves that day. The E2E job did exactly that —
+// `e2e/` had no lockfile, so `pnpm install --no-frozen-lockfile` — and the E2E
+// job runs inside the release pipeline (release → deep). Every
+// `pnpm install` a workflow or a CI script runs insists on the committed
+// lockfile, and every package in the repo has one.
+
+/** Command lines (comments dropped) that run `pnpm install` without `--frozen-lockfile`. */
+const unfrozenInstalls = (text: string): string[] =>
+  text
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .filter((line) => /\bpnpm (?:install|i)\b/.test(line))
+    .filter((line) => !/(?:^|\s)--frozen-lockfile(?:\s|$)/.test(line))
+    .map((line) => line.trim());
+
+/** Directories (relative to the repo) holding a package.json, outside dependency/build trees. */
+const packageDirs = (dir = "", acc: string[] = []): string[] => {
+  const skip = new Set(["node_modules", ".git", "target", "build", "coverage", ".svelte-kit", ".claude"]);
+  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+    if (entry.isDirectory() && !skip.has(entry.name)) packageDirs(join(dir, entry.name), acc);
+    else if (entry.isFile() && entry.name === "package.json") acc.push(dir);
+  }
+  return acc;
+};
+
+describe("dependencies install from a committed lockfile", () => {
+  const scripts = [...CI_FILES, "e2e/linux/run.sh"];
+
+  it.each(scripts)("%s never installs without --frozen-lockfile", (rel) => {
+    expect(unfrozenInstalls(readFileSync(join(ROOT, rel), "utf8"))).toEqual([]);
+  });
+
+  it("every package in the repo has its lockfile", () => {
+    const dirs = packageDirs();
+    expect(dirs).toContain("e2e");
+    expect(dirs.filter((d) => !existsSync(join(ROOT, d, "pnpm-lock.yaml")))).toEqual([]);
+  });
+
+  it("catches its own violations", () => {
+    expect(unfrozenInstalls("  cd e2e && pnpm install --no-frozen-lockfile")).toHaveLength(1);
+    expect(unfrozenInstalls("run: pnpm i")).toHaveLength(1);
+    expect(unfrozenInstalls("# pnpm install\nrun: pnpm install --frozen-lockfile")).toEqual([]);
+  });
+});
+
+describe("macOS: open-on-mac.sh ships next to the .dmg", () => {
+  const step = uploadStepWith("scripts/open-on-mac.sh");
+
+  it("has a step that uploads the helper to the release", () => {
+    expect(step).toBeDefined();
+    expect(step).toMatch(/gh release upload[^\n]*scripts\/open-on-mac\.sh/);
+    expect(step).toContain("${{ github.ref_name }}");
+  });
+
+  it("runs only on the macOS runner (the .dmg it belongs to)", () => {
+    expect(step).toMatch(/if:\s*matrix\.platform == 'macos-latest'/);
+  });
+
+  it("has a token to write to the release", () => {
+    expect(step).toContain("GH_TOKEN");
+  });
+
+  it("the helper it uploads actually exists in the repo", () => {
+    const path = join(ROOT, "scripts/open-on-mac.sh");
+    expect(existsSync(path)).toBe(true);
+    expect(readFileSync(path, "utf8").startsWith("#!")).toBe(true);
+  });
+});
+
+describe("Windows: portable .exe ships alongside the installers", () => {
+  const step = uploadStepWith("vterm-portable-");
+
+  it("copies the self-contained binary, not an installer", () => {
+    expect(step).toBeDefined();
+    expect(step).toContain("src-tauri/target/release/vterm.exe");
+  });
+
+  // The version comes from package.json — the single source of truth. Reading it
+  // from tauri.conf.json (as this step used to) now yields the literal string
+  // "../package.json", because that file references the version instead of
+  // holding it. See version.guard.test.ts for the full contract.
+  it("names it from the real app version", () => {
+    expect(step).toContain("package.json");
+    expect(step).not.toContain("tauri.conf.json");
+    expect(step).toMatch(/vterm-portable-\$v-x86_64\.exe/);
+  });
+
+  it("uploads it to the release", () => {
+    expect(step).toMatch(/gh release upload/);
+    expect(step).toContain("${{ github.ref_name }}");
+    expect(step).toContain("GH_TOKEN");
+  });
+
+  it("runs only on the Windows runner", () => {
+    expect(step).toMatch(/if:\s*matrix\.platform == 'windows-latest'/);
+  });
+});
+
+// «Полный» portable (ADR 0013): тот же exe + WebView2 Fixed Version runtime в хвосте.
+// Пропадёт шаг — релиз молча выйдет без единственного варианта для Windows без
+// WebView2 и без сети; пропадёт проверка подписи — в exe поедет что угодно.
+describe("Windows: portable .exe with the bundled WebView2", () => {
+  const step = uploadStepWith("x86_64-webview2.exe");
+
+  it("exists and runs only on the Windows runner", () => {
+    expect(step).toBeDefined();
+    expect(step).toMatch(/if:\s*matrix\.platform == 'windows-latest'/);
+  });
+
+  it("finds the runtime and embeds it with the shared script", () => {
+    expect(step).toContain("node scripts/webview2-runtime.mjs resolve");
+    expect(step).toMatch(/node scripts\/webview2-runtime\.mjs embed \$exe \$cab \$wvVersion \$full/);
+    expect(step).toContain("src-tauri/target/release/vterm.exe");
+  });
+
+  it("refuses a .cab that is not signed by Microsoft", () => {
+    expect(step).toContain("Get-AuthenticodeSignature");
+    expect(step).toContain("'Valid'");
+    expect(step).toContain("O=Microsoft Corporation");
+    expect(step).toContain("throw");
+  });
+
+  it("fails on a failed script instead of uploading a broken file", () => {
+    expect(step!.match(/\$LASTEXITCODE -ne 0/g)?.length).toBe(2);
+  });
+
+  it("names it from the real app version and uploads it", () => {
+    expect(step).toContain("package.json");
+    expect(step).toMatch(/vterm-portable-\$v-x86_64-webview2\.exe/);
+    expect(step).toContain("${{ github.ref_name }}");
+    expect(step).toContain("GH_TOKEN");
+  });
+
+  it("the script it runs actually exists", () => {
+    expect(existsSync(join(ROOT, "scripts/webview2-runtime.mjs"))).toBe(true);
+  });
+
+  it("the release body tells which portable to take", () => {
+    expect(stepWith("releaseBody")).toContain("x86_64-webview2.exe");
+  });
+});

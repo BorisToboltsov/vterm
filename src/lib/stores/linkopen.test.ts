@@ -6,11 +6,11 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: (...a: unknown[]) => openUrl(...a),
 }));
 const writeClipboard = vi.fn().mockResolvedValue(undefined);
-vi.mock("../clipboard", () => ({
+vi.mock("../app/clipboard", () => ({
   writeClipboard: (...a: unknown[]) => writeClipboard(...a),
 }));
 
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import { answerLink, clickLink, currentLinkQuestion, terminalLinkHandler } from "./linkopen.svelte";
 import { clearToasts, toastsState } from "./toasts.svelte";
 

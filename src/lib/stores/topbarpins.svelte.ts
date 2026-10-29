@@ -5,14 +5,14 @@
 // Utilities or Settings, or name a button that does not exist
 // (`topbar.guard.test.ts`).
 
-import { settings } from "../settings.svelte";
+import { settings } from "../settings/settings.svelte";
 import {
   DEFAULT_TOPBAR,
   moveTopbar,
   withPinned,
   withUnpinned,
   type TopbarId,
-} from "../topbaractions";
+} from "../topbar/topbaractions";
 
 /** Whether `id` is on the user's bar (reactive). */
 export const isPinned = (id: TopbarId): boolean => settings.topbar.includes(id);

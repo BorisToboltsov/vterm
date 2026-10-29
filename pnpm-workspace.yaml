@@ -1,15 +1,7 @@
 allowBuilds:
   esbuild: true
 
-# Security: force a patched `cookie` on the 0.7.x line. It comes in transitively
-# via @sveltejs/kit (which declares `^0.6.0`); vterm is an SPA (no SSR cookie
-# handling) so this is safe. Clears advisory GHSA-pxg6-pf52-xh8x (cookie <0.7.0).
-# NOTE: pin to `^0.7.0` (0.7.x), NOT `>=0.7.0` — cookie 1.0/2.0 renamed the named
-# exports (`parse`/`serialize` → `parseCookie`/…), which breaks SvelteKit's
-# `import { parse, serialize } from 'cookie'` at `vite build`. 0.7.x is both
-# patched and API-compatible with SvelteKit.
 overrides:
-  cookie: "^0.7.0"
   # Security: force a patched `nanoid` (>= 3.3.17). The < 3.3.17 infinite-loop DoS
   # (CVE-2026-67213 / GHSA-2v37-7h3g-55p8) only triggers with an attacker-controlled
   # `size`, which vterm never passes; nanoid is a build-time transitive dep via

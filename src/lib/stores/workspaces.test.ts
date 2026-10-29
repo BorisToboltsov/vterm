@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { EditorLang } from "../editorlang";
+import type { EditorLang } from "../editor/editorlang";
 import type { TextFile, WriteResult } from "../types";
 import {
   isDirty,
@@ -30,14 +30,14 @@ import {
   splitSessionView,
   type EditorDoc,
 } from "./workspaces.svelte";
-import { layoutProblems, paneOf, panes } from "../splitlayout";
+import { layoutProblems, paneOf, panes } from "../layout/splitlayout";
 import {
   TERMINAL_VIEW,
   focusedFile,
   terminalFocused,
   terminalOnly,
   terminalShown,
-} from "../sessionviews";
+} from "../layout/sessionviews";
 
 const LANG: EditorLang = { kind: "yaml", label: "YAML" };
 

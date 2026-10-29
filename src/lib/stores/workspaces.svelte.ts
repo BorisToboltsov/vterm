@@ -11,7 +11,7 @@
 // and its view come and go in one step, so a document with no view
 // (unreachable) or a view with no document (an empty zone) cannot exist.
 
-import type { EditorLang } from "../editorlang";
+import type { EditorLang } from "../editor/editorlang";
 import type { TextFile, WriteResult } from "../types";
 import {
   closeView,
@@ -22,7 +22,7 @@ import {
   splitView,
   terminalOnly,
   type ViewLayout,
-} from "../sessionviews";
+} from "../layout/sessionviews";
 import {
   applyDrop,
   focusPane,
@@ -30,7 +30,7 @@ import {
   setRatio,
   type Edge,
   type TabDrop,
-} from "../splitlayout";
+} from "../layout/splitlayout";
 
 /** An open editor document inside a workspace. */
 export interface EditorDoc {

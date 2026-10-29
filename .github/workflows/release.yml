@@ -72,7 +72,7 @@ jobs:
   deep:
     name: Глубокие проверки
     needs: tag
-    uses: $/.github/workflows/nightly.yml
+    uses: $/.github/workflows/deep.yml
     permissions:
       contents: read
 
@@ -108,51 +108,23 @@ jobs:
           # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
           persist-credentials: false
 
-      # Системные зависимости Tauri 2 под Linux (WebKitGTK 4.1, tray, rsvg,
-      # patchelf для AppImage, rpm для .rpm) — те же, что в GitLab build:linux.
-      - name: Системные зависимости Tauri (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
-            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
-
-      # Тот же мажор, что породил pnpm-lock.yaml и понимает pnpm-workspace.yaml
-      # (allowBuilds / minimumReleaseAge). На чужом мажоре `--frozen-lockfile`
-      # падает по несовпадению лок-файла — и только в CI.
-      - name: pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 11
-
-      # Node 22+ обязателен: pnpm 11 требует ≥ 22.13 (тянет `node:sqlite`) и на
-      # Node 20 падает. Пол pnpm держится гейтом releaseassets.guard.test.ts.
-      # Node 20 на раннерах вдобавок deprecated.
+      # Rust из rust-toolchain.toml и системные пакеты Tauri на Linux, затем pnpm,
+      # Node и JS-зависимости — общими экшенами (.github/actions/), что и в ci.yml.
       #
-      # БЕЗ `cache: pnpm` — намеренно: это публикующий workflow, а кэш в нём —
-      # вектор отравления (cache poisoning): недоверенный PR может записать в
-      # кэш-ключ, который потом восстановит релизная сборка (zizmor). Релиз редок
-      # и должен собираться из чистого состояния — те байты мы подписываем
-      # provenance. Кэш остаётся в ci.yml/nightly.yml, где публикации нет.
-      - name: Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      # БЕЗ КЭША — намеренно, и поэтому ни `cache-key`, ни `cache` здесь нет: это
+      # публикующий workflow, а кэш в нём — вектор отравления (cache poisoning):
+      # недоверенный PR может записать в кэш-ключ, который потом восстановит
+      # релизная сборка (zizmor). Релиз редок и должен собираться из чистого
+      # состояния — те байты мы подписываем provenance. Кэш остаётся в
+      # ci.yml/deep.yml, где публикации нет. Держит гейт ci.guard.test.ts.
+      - name: Rust-окружение
+        uses: $/.github/actions/setup-rust
         with:
-          node-version: 22
-
-      # `toolchain` передаётся явно: при пине по SHA имя ссылки больше не
-      # выбирает тулчейн (форма @stable работала именно как «ветка stable»),
-      # а вход у экшена обязательный.
-      - name: Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: stable
           # Для universal-сборки macOS нужны обе цели; на других ОС — по умолчанию.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin x86_64-apple-darwin' || '' }}
 
-      # Кэша Rust здесь тоже нет — по той же причине, что и у Node выше.
-      - name: Установка JS-зависимостей
-        run: pnpm install --frozen-lockfile
+      - name: Фронтенд-окружение
+        uses: $/.github/actions/setup-web
 
       # Краткое «Что нового» для описания релиза: жирные заголовки буллетов из
       # секции CHANGELOG по текущему тегу — без подробностей. Единственный источник
@@ -230,10 +202,10 @@ jobs:
           node scripts/update-release.mjs maczip src-tauri/target/universal-apple-darwin/release/bundle/macos/vterm.app "vterm_${version}_universal_update.zip"
           gh release upload "$TAG" "vterm_${version}_universal_update.zip" --clobber
 
-      # tauri-action заливает только то, что произвёл бандлер Tauri. Два файла из
-      # GitLab CI (build:macos / build:windows) он не знает — добавляем их в тот же
-      # релиз через gh CLI (предустановлен на раннерах; `gh release upload` находит
-      # черновик по тегу). `--clobber` — чтобы перезапуск workflow не падал.
+      # tauri-action заливает только то, что произвёл бандлер Tauri. Хелпер запуска
+      # и portable-файлы он не знает — добавляем их в тот же релиз через gh CLI
+      # (предустановлен на раннерах; `gh release upload` находит черновик по тегу).
+      # `--clobber` — чтобы перезапуск workflow не падал.
 
       # Хелпер запуска неподписанной сборки должен лежать на странице релиза рядом
       # с .dmg: без него получатель упирается в Gatekeeper («программа повреждена»)
@@ -252,7 +224,7 @@ jobs:
       # Portable-вариант (Фаза 39). Bundle-таргета «portable» у Tauri нет, но сам
       # src-tauri/target/release/vterm.exe уже самодостаточен: фронтенд вшит в
       # бинарь, .msi/.exe — только установочные обёртки вокруг него. Кладём его в
-      # релиз под говорящим именем (та же схема, что в GitLab build:windows).
+      # релиз под говорящим именем.
       - name: Portable .exe в ассеты релиза (Windows)
         if: matrix.platform == 'windows-latest'
         env:

@@ -3,7 +3,7 @@
 Спасибо за интерес к проекту! Этот документ описывает, как настроить окружение,
 какие правила соблюдать и как устроена кодовая база.
 
-> Перед началом обязательно прочитайте [CLAUDE.md](CLAUDE.md): правила процесса (DoD,
+> Перед началом обязательно прочитайте [AGENTS.md](AGENTS.md): правила процесса (DoD,
 > гейты, i18n, версии) и **карта документации** — что в какой файл писать и чего туда не
 > писать. Жёсткие контракты кодовой базы — в [docs/INVARIANTS.md](docs/INVARIANTS.md)
 > (канон); как всё устроено — в [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md);
@@ -26,13 +26,14 @@ cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test  --manifest-path src-tauri/Cargo.toml
 pnpm check
+pnpm lint
 pnpm test:coverage
 ```
 
 Плюс `pnpm build` — `vite build` ловит поломки production-сборки, которые `pnpm check`
-(только типы) пропускает. CI (`.gitlab-ci.yml`) гоняет те же гейты:
-`lint → security → test → build → release`; сборка дистрибутивов не стартует, пока тесты не
-зелёные. Подробно о тестах — в [docs/TESTS.md](docs/TESTS.md).
+(только типы) пропускает. CI на GitHub ([ci.yml](.github/workflows/ci.yml)) гоняет те же
+гейты на каждом PR, а релиз по тегу ([release.yml](.github/workflows/release.yml)) не собирает
+дистрибутивы, пока они и глубокие проверки не зелёные. Подробно о тестах — в [docs/TESTS.md](docs/TESTS.md).
 
 ## Структура кода
 
@@ -45,10 +46,12 @@ src-tauri/src/        Rust-бэкенд (вся логика SSH/SFTP/секре
   ssh.rs  sftp.rs       russh / russh-sftp     · secrets.rs — keychain
   store.rs              JSON-персистентность   · model.rs — serde camelCase ↔ TS
 src/lib/              Фронтенд (Svelte 5 + TS)
-  *.svelte              компоненты и панели
-  Icon/Modal/ConfirmDialog/ContextMenu/PasswordInput.svelte   примитивы
+  <подсистема>/         terminal · files · docker · k8s · git · ai · … — компоненты,
+                        чистая логика (.ts, без DOM и сети) и тесты рядом
+  ui/                   примитивы: Icon · Modal · ConfirmDialog · ContextMenu · PasswordInput
+  types.ts              зеркало моделей Rust — единственный файл в корне
   stores/*.svelte.ts    runes-сторы состояния (layout, tabs, workspaces, …)
-  *.ts                  чистая логика — тестируется без DOM и сети
+  page/                 контроллеры страницы
   actions/              drag · tooltip · mdlinks · clipboardKeys
   api/                  типизированные обёртки над invoke() (по доменам + barrel)
   i18n/                 locales · messages · translate
@@ -70,7 +73,7 @@ docs/adr/             Architecture Decision Records
 - **Видимый текст — только через `t()`** и сразу на всех языках: частичный перевод не
   компилируется.
 - **Документация — часть работы.** Что в какой файл писать и чего туда не писать —
-  таблица «Карта документации» в [CLAUDE.md](CLAUDE.md). Правило одно: у каждого
+  таблица «Карта документации» в [AGENTS.md](AGENTS.md). Правило одно: у каждого
   документа свой жанр, вместо копии мысли — ссылка.
 
 ## Стиль
@@ -84,4 +87,4 @@ docs/adr/             Architecture Decision Records
 Схема `<major>.<minor>.<patch>`: minor — новая функциональность (patch сбрасывается в 0),
 patch — исправление внутри текущего minor. Версия лежит в `package.json` и меняется одной
 командой — `pnpm version:set 1.1.0`; руками остальные файлы не правьте. Подробности — в
-[CLAUDE.md](CLAUDE.md#версионирование).
+[AGENTS.md](AGENTS.md#версионирование).

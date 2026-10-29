@@ -9,7 +9,7 @@
 //! both `ssh(1)` and vterm's own connect path ([`crate::ssh`]) read back.
 //!
 //! The backend is a dumb executor: which algorithm/name/path the user picked is
-//! decided by the pure frontend logic in `src/lib/sshkeygen.ts`. Passphrase
+//! decided by the pure frontend logic in `src/lib/utilities/sshkeygen.ts`. Passphrase
 //! material is wrapped in [`Zeroizing`] and never logged (security invariant).
 
 use crate::error::{AppError, AppResult};

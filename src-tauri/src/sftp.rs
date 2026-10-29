@@ -95,7 +95,7 @@ pub fn emit_done(win: &WindowSink, id: &str, name: &str, direction: &'static str
 
 /// Render a mutating SFTP-panel op for the session recording (audit): a magenta
 /// `[sftp] $ <op>` header, the error text (only on failure), and a `[sftp] exit N`
-/// footer. Mirrors [`crate::container::container_mirror`]/[`crate::git::git_mirror`]
+/// footer. Mirrors [`crate::exec::mirror`]
 /// — recorded ONLY (never emitted to the live terminal). SFTP ops have no stdout,
 /// so the body carries just the error detail; success leaves it empty. `op` is a
 /// shell-like description with paths already quoted (`git::shell_quote`), e.g.
