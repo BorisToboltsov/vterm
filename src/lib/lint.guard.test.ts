@@ -151,6 +151,7 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/zz_probe.ts", `import { closeTab as drop } from "./stores/tabs.svelte";\nexport const x = drop;`],
       ["src/lib/zz_probe.ts", `import * as api from "./api";\nexport const x = () => api.importBackup("/b", null, true);`],
       ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
+      ["src/routes/+page.svelte", svelte(`import { openRestored } from "$lib/stores/tabs.svelte";\nvoid openRestored;`)],
     ],
     good: [
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],

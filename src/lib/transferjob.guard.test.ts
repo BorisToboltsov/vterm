@@ -19,7 +19,7 @@
 //     keeps no "which session owns this transfer" map; the panel keeps no loop
 //     over the files of a batch.
 //  4. A job in flight does not hold its tab. `DetachState` has no field for
-//     transfers, and the page gives it none.
+//     transfers, and the window flow (page/windowflow) gives it none.
 //  5. The window hears of jobs first and asks what is under way second — both
 //     when it starts and when it takes a tab over. Asked first, a job that ended
 //     in between would stay in the list for good.
@@ -56,6 +56,7 @@ const STORE = "src/lib/stores/transfers.svelte.ts";
 const PANEL = "src/lib/SftpPanel.svelte";
 const HANDOFF = "src/lib/tabhandoff.ts";
 const PAGE = "src/routes/+page.svelte";
+const WINDOWS = "src/lib/page/windowflow.svelte.ts";
 
 // ── 2: leave to replace comes from an answer ────────────────────────────────
 
@@ -102,15 +103,15 @@ export function ownershipViolations(store: string, panel: string): string[] {
 
 // ── 4: a job in flight does not hold its tab ────────────────────────────────
 
-export function detachViolations(handoff: string, page: string): string[] {
+export function detachViolations(handoff: string, flow: string): string[] {
   const out: string[] = [];
   const h = code(handoff);
   const state = /export interface DetachState \{([\s\S]*?)\n\}/.exec(h)?.[1] ?? "";
   if (state === "") out.push("DetachState not found");
   if (/\btransfers?\b/.test(state)) out.push("a transfer in flight keeps its tab in this window");
-  const fn = /function detachStateOf\([\s\S]*?\n  \}\n/.exec(code(page))?.[0] ?? "";
-  if (fn === "") out.push("detachStateOf not found");
-  if (/transfer/i.test(fn)) out.push("the page counts transfers when asked whether a tab may go");
+  const fn = /function stateOf\([\s\S]*?\n  \}\n/.exec(code(flow))?.[0] ?? "";
+  if (fn === "") out.push("stateOf not found");
+  if (/transfer/i.test(fn)) out.push("the window flow counts transfers when asked whether a tab may go");
   return out;
 }
 
@@ -124,8 +125,9 @@ export function listenFirstViolations(page: string): string[] {
   if (!heard.test(c)) {
     out.push("the window asks what is under way before it listens — or does not ask at all");
   }
-  const adopt = /unpackTab\(packet, drop\);([\s\S]{0,200}?)return true;/.exec(c)?.[1] ?? "";
-  if (!/refreshTransfers\(\)/.test(adopt)) {
+  // A tab taken over asks once what came with its session: the window flow
+  // does (its behaviour tests), given the page's own way of asking.
+  if (!/refreshTransfers: \(\) => void refreshTransfers\(\),/.test(c)) {
     out.push("a tab taken over arrives without the transfers that came with its session");
   }
   if ((c.match(/\bapplyJob\(/g) ?? []).length !== 2) {
@@ -156,7 +158,7 @@ describe("transfer-job guard", () => {
   });
 
   it("a job in flight does not hold its tab", () => {
-    expect(detachViolations(read(HANDOFF), read(PAGE))).toEqual([]);
+    expect(detachViolations(read(HANDOFF), read(WINDOWS))).toEqual([]);
   });
 
   it("the window hears of jobs first and asks what is under way second", () => {
@@ -221,16 +223,16 @@ describe("the guard catches", () => {
       "  /** Its sync job is comparing or applying. */",
       "  /** Its transfers still in flight. */\n  transfers: number;\n  /** Its sync job is comparing or applying. */",
     );
-    expect(detachViolations(handoff, read(PAGE))).toEqual([
+    expect(detachViolations(handoff, read(WINDOWS))).toEqual([
       "a transfer in flight keeps its tab in this window",
     ]);
-    const page = mutate(
-      read(PAGE),
+    const flow = mutate(
+      read(WINDOWS),
       "      syncBusy: isBusy(peekSyncJob(sid)),\n      chatBusy",
       "      syncBusy: isBusy(peekSyncJob(sid)) || transfersOf(sid).length > 0,\n      chatBusy",
     );
-    expect(detachViolations(read(HANDOFF), page)).toEqual([
-      "the page counts transfers when asked whether a tab may go",
+    expect(detachViolations(read(HANDOFF), flow)).toEqual([
+      "the window flow counts transfers when asked whether a tab may go",
     ]);
   });
 
@@ -244,7 +246,7 @@ describe("the guard catches", () => {
     expect(listenFirstViolations(early)).toEqual([
       "the window asks what is under way before it listens — or does not ask at all",
     ]);
-    const bare = mutate(page, "    void refreshTransfers();\n    return true;", "    return true;");
+    const bare = mutate(page, "    refreshTransfers: () => void refreshTransfers(),", "    refreshTransfers: () => {},");
     expect(listenFirstViolations(bare)).toEqual([
       "a tab taken over arrives without the transfers that came with its session",
     ]);

@@ -7,9 +7,11 @@
 // holds the page's. Each rule is a way the handing over quietly goes wrong:
 //
 //  1. One door. The command is called from one wrapper, the wrapper from one
-//     function of the page — and only after the pure model said these files
-//     can be handed over at all. A second caller would hand over files of this
-//     machine, or of a session that is down.
+//     function of the file-drag flow (`handToSystem`, page/filedragflow) — and
+//     only after the pure model said these files can be handed over at all. A
+//     second caller would hand over files of this machine, or of a session that
+//     is down. Who imports the wrapper is the lint rule `vterm/owned-imports`;
+//     that the flow asks the model first is its behaviour tests.
 //  2. Asked once, in order. The store asks through `handOver` only, after what
 //     was being said of the files has been heard, and says nothing more of
 //     them while the question is out: a word that arrives after the system
@@ -26,7 +28,8 @@
 //     end it, and the first selection after a drag-out would be swallowed.
 //  5. What the system says of a drag that names no files is not the desktop's
 //     business. The app's own promised files pass back over its windows as
-//     exactly that — and must not clear what the backend has them draw.
+//     exactly that — and must not clear what the backend has them draw. The
+//     file-drag flow's, held by its behaviour tests.
 //  6. The page claims no length. How long a file is, is the server's to say at
 //     the moment the drag begins: a listing is minutes old, and gives a link
 //     the length of its own text.
@@ -73,7 +76,6 @@ function fn(c: string, name: string): string {
 
 const STORE = "src/lib/stores/filedrag.svelte.ts";
 const MODEL = "src/lib/dragout.ts";
-const PAGE = "src/routes/+page.svelte";
 const API = "src/lib/api/window.ts";
 const BACKEND = "src-tauri/src/dragout.rs";
 const GHOST = "src/lib/FileDragGhost.svelte";
@@ -104,27 +106,6 @@ export function doorViolations(files: { rel: string; source: string }[]): string
     if (/["'`]drag_out_begin["'`]/.test(c) && rel !== API) {
       out.push(`${rel} invokes the command itself`);
     }
-    if (/\bdragOutBegin\(/.test(c) && rel !== API && rel !== PAGE) {
-      out.push(`${rel} hands a drag to the system`);
-    }
-  }
-  return out;
-}
-
-export function pageDoorViolations(page: string): string[] {
-  const c = code(page);
-  const out: string[] = [];
-  const calls = c.match(/\bdragOutBegin\(/g)?.length ?? 0;
-  const hand = fn(c, "handToSystem");
-  if (calls !== 1 || !/\bdragOutBegin\(/.test(hand)) {
-    out.push("the page hands a drag over outside `handToSystem`");
-  }
-  const asked = hand.search(/dragOutBlocker\([^)]*\)\s*!==\s*null\)\s*return false/);
-  if (asked < 0 || asked > hand.search(/\bdragOutBegin\(/)) {
-    out.push("the system is asked before the model said these files can be handed over");
-  }
-  if (!/\bout:\s*handToSystem\b/.test(c)) {
-    out.push("the store is not given the page's one way to hand a drag over");
   }
   return out;
 }
@@ -198,22 +179,6 @@ export function takenViolations(store: string): string[] {
   return out;
 }
 
-// ── 5: a drag that names no files is not the desktop's ──────────────────────
-
-export function desktopViolations(page: string): string[] {
-  const body = fn(code(page), "hearDesktopDrag");
-  const out: string[] = [];
-  if (!/desktopCarried = ev\.paths\.length > 0 \? desktopFiles\(ev\.paths\) : null;/.test(body)) {
-    out.push("a drag that names no files is kept as one from the desktop");
-  }
-  const clears = body.match(/clearGuestFiles\(\)/g)?.length ?? 0;
-  const guarded = body.match(/if \(named\) clearGuestFiles\(\)/g)?.length ?? 0;
-  if (clears === 0 || clears !== guarded) {
-    out.push("what the system says of a drag that named no files clears what the backend draws");
-  }
-  return out;
-}
-
 // ── 6: the page claims no length ────────────────────────────────────────────
 
 export function specViolations(model: string): string[] {
@@ -265,38 +230,16 @@ export function pictureViolations(model: string, drop: string, ghost: string): s
 // ── the tree as it is ───────────────────────────────────────────────────────
 
 describe("files are handed to the system by one door", () => {
-  it("the command, its wrapper and the page's one caller", () => {
+  it("the command has one wrapper", () => {
     expect(doorViolations(frontend())).toEqual([]);
-    expect(pageDoorViolations(read(PAGE))).toEqual([]);
   });
 
-  it("catches a second caller, and a caller that does not ask the model", () => {
+  it("catches a second caller of the command", () => {
     expect(
       doorViolations([
         { rel: "src/lib/SftpPanel.svelte", source: `invoke("drag_out_begin", { spec });` },
-        { rel: "src/lib/FileBrowser.svelte", source: `void dragOutBegin(spec);` },
       ]),
-    ).toHaveLength(2);
-    const page = read(PAGE);
-    const unasked = page.replace(
-      /if \(dragOutBlocker\(mine, dropTabs, hostEnv\.os\) !== null\) return false;/,
-      "",
-    );
-    expect(unasked).not.toBe(page);
-    expect(pageDoorViolations(unasked)).toContain(
-      "the system is asked before the model said these files can be handed over",
-    );
-    const second = page.replace(
-      "function tellNotCarried(",
-      "function again(s: never) { return dragOutBegin(s); }\n  function tellNotCarried(",
-    );
-    expect(second).not.toBe(page);
-    expect(pageDoorViolations(second)).toContain("the page hands a drag over outside `handToSystem`");
-    const unwired = page.replace("out: handToSystem,", "");
-    expect(unwired).not.toBe(page);
-    expect(pageDoorViolations(unwired)).toContain(
-      "the store is not given the page's one way to hand a drag over",
-    );
+    ).toHaveLength(1);
   });
 });
 
@@ -384,30 +327,6 @@ describe("files the system took are let go of — not dropped, not taken back", 
     expect(takenViolations(held)).toEqual([
       "the page stays unselectable after the system took the files",
     ]);
-  });
-});
-
-describe("a drag that names no files is not one from the desktop", () => {
-  const page = read(PAGE);
-
-  it("holds for the page", () => {
-    expect(desktopViolations(page)).toEqual([]);
-  });
-
-  it("catches a nameless drag kept, and one that clears what is drawn", () => {
-    const kept = page.replace(
-      "desktopCarried = ev.paths.length > 0 ? desktopFiles(ev.paths) : null;",
-      "desktopCarried = desktopFiles(ev.paths);",
-    );
-    expect(kept).not.toBe(page);
-    expect(desktopViolations(kept)).toContain(
-      "a drag that names no files is kept as one from the desktop",
-    );
-    const clears = page.replace("else if (named) clearGuestFiles();", "else clearGuestFiles();");
-    expect(clears).not.toBe(page);
-    expect(desktopViolations(clears)).toContain(
-      "what the system says of a drag that named no files clears what the backend draws",
-    );
   });
 });
 

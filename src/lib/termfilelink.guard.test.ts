@@ -132,8 +132,8 @@ export function pageViolations(raw: string): string[] {
     out.push("a terminal gets file links without asking whether its output is its session's files");
   }
   if (
-    !/openFile: \(id, path, opts\) => void openFileInEditor\(id, path, baseName\(path\), opts\),/.test(src) ||
-    !/openLocalFile: \(id, path, opts\) => void openLocalFileInEditor\(id, path, opts\),/.test(src)
+    !/openFile: \(id, path, opts\) => void editors\.openFile\(id, path, baseName\(path\), opts\),/.test(src) ||
+    !/openLocalFile: \(id, path, opts\) => void editors\.openLocal\(id, path, opts\),/.test(src)
   ) {
     out.push("a file link opens other than through the editor's own path, on its line");
   }
@@ -249,14 +249,14 @@ describe("terminal file link guard — catches what it exists for", () => {
   it("a file opened past the editor's own path, or without its line", () => {
     const past = swap(
       read(PAGE),
-      "openLocalFile: (id, path, opts) => void openLocalFileInEditor(id, path, opts),",
+      "openLocalFile: (id, path, opts) => void editors.openLocal(id, path, opts),",
       'openLocalFile: (id, path) => addEditor(id, path, baseName(path), editorLangOrPlain(path), "local"),',
     );
     expect(pageViolations(past)).toContain("a file link opens other than through the editor's own path, on its line");
     const lineless = swap(
       read(PAGE),
-      "openFile: (id, path, opts) => void openFileInEditor(id, path, baseName(path), opts),",
-      "openFile: (id, path) => void openFileInEditor(id, path, baseName(path)),",
+      "openFile: (id, path, opts) => void editors.openFile(id, path, baseName(path), opts),",
+      "openFile: (id, path) => void editors.openFile(id, path, baseName(path)),",
     );
     expect(pageViolations(lineless)).toContain("a file link opens other than through the editor's own path, on its line");
   });

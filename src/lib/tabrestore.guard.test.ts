@@ -18,6 +18,9 @@
 //     production server, a container and a server that asks for a password
 //     from being connected to at launch; a `reconnect` that does not ask it
 //     turns "restore the tabs" into "dial every server I had open".
+//     How the restore flow (page/restoreflow) keeps 3–5 is its behaviour
+//     tests; that nobody else takes the slots or opens the restored tabs is the
+//     lint rule `vterm/owned-imports`. Checked here: how the page wires it.
 //  6. A window closed on purpose forgets its tabs: its sessions end with it,
 //     and what the user closed must not come back at the next launch.
 //
@@ -147,50 +150,21 @@ export function pageViolations(page: string, terminal: string): string[] {
   const markup = c.slice(at);
   const out: string[] = [];
 
-  // 4 — the main window, once.
-  const restore = fn(script, "restoreSavedTabs", "  ");
-  if (restore === "") out.push("restoreSavedTabs is gone");
-  if (
-    count(script, /\brestoreSavedTabs\(\)/g) !== 2 ||
-    !/if \(isMainWindow\) restoreSavedTabs\(\);/.test(script)
-  ) {
+  // 4 — the main window asks the flow, once.
+  if (count(c, /\brestoreFlow\.restore\(\)/g) !== 1 || !/if \(isMainWindow\) restoreFlow\.restore\(\);/.test(script)) {
     out.push("the saved tabs are restored somewhere other than once, in the main window");
   }
-  for (const call of ["takeSavedTabs", "restoreSaved", "openRestored", "startSavingTabs"]) {
-    const used = count(script, new RegExp(`\\b${call}\\(`, "g"));
-    if (used !== 1 || !new RegExp(`\\b${call}\\(`).test(restore)) {
-      out.push(`${call} is used outside restoreSavedTabs`);
-    }
-  }
-  // 3 — its slot is written from the end of the restore, whatever the restore did.
-  if (!/\} finally \{\s*startSavingTabs\(\);\s*\}/.test(restore)) {
-    out.push("the slot starts being written before, or only when, the restore went through");
-  }
-
-  // 5 — who opens a session.
-  if (!/openRestored\(restored\.tabs, restored\.layout, \(tab\) =>\s*waitReason\(mode, waitFactsOf\(tab, null\)\),?\s*\)/.test(restore)) {
-    out.push("restored tabs are opened without asking waitReason");
-  }
-  if (/\breconnectTabStore\(/.test(restore)) out.push("the restore connects a tab itself");
-  for (const name of ["settleWaiting", "wakeAllWaiting"]) {
-    const body = fn(script, name, "  ");
-    if (body === "") {
-      out.push(`${name} is gone`);
-      continue;
-    }
-    const opens = count(body, /\breconnectTabStore\(/g);
-    const asked = count(body, /if \(reason === null\)\s*\{?\s*reconnectTabStore\(/g);
-    if (opens !== asked || !/const reason = [^;]*waitReason\("connect",/.test(body)) {
-      out.push(`${name} opens a session waitReason did not allow`);
-    }
+  // 5 — ⌘K opens what the policy lets open, and only from the palette.
+  if (count(c, /\brestoreFlow\.wakeAll\(/g) !== 1 || !/run: \(\) => restoreFlow\.wakeAll\(\)/.test(script)) {
+    out.push("waiting tabs are opened all at once from somewhere other than the palette");
   }
   // Its button, and the same action in the tab's menu — a gesture either way.
   const gestures =
-    count(markup, /onclick=\{\(\) => wakeTab\(tab\.sessionId\)\}/g) +
-    count(script, /onSelect: \(\) => void wakeTab\(tab\.sessionId\)/g);
+    count(markup, /onclick=\{\(\) => restoreFlow\.wake\(tab\.sessionId\)\}/g) +
+    count(script, /onSelect: \(\) => void restoreFlow\.wake\(tab\.sessionId\)/g);
   if (
-    count(c, /\bwakeTab\(/g) !== gestures + 1 ||
-    !/onclick=\{\(\) => wakeTab\(tab\.sessionId\)\}/.test(markup)
+    count(c, /\brestoreFlow\.wake\(/g) !== gestures ||
+    !/onclick=\{\(\) => restoreFlow\.wake\(tab\.sessionId\)\}/.test(markup)
   ) {
     out.push("a waiting tab is opened by something other than its own button");
   }
@@ -222,7 +196,7 @@ describe("tab restore guard", () => {
     expect(sources().flatMap((rel) => ownershipViolations(rel, raw(rel)))).toEqual([]);
   });
 
-  it("the main window restores once, and a restored tab connects by the policy or its button", () => {
+  it("the main window restores once, and a restored tab opens by the palette or its button", () => {
     expect(pageViolations(raw(PAGE), raw(TERMINAL))).toEqual([]);
   });
 });
@@ -299,66 +273,27 @@ describe("tab restore guard — catches what it exists for", () => {
 
   it("every window restoring, or the main one restoring twice", () => {
     expect(
-      pageViolations(mutate(page, "if (isMainWindow) restoreSavedTabs();", "restoreSavedTabs();"), terminal),
+      pageViolations(mutate(page, "if (isMainWindow) restoreFlow.restore();", "restoreFlow.restore();"), terminal),
     ).toContain("the saved tabs are restored somewhere other than once, in the main window");
     expect(
       pageViolations(
-        mutate(page, "if (isMainWindow) restoreSavedTabs();", "if (isMainWindow) restoreSavedTabs();\n      restoreSavedTabs();"),
+        mutate(page, "if (isMainWindow) restoreFlow.restore();", "if (isMainWindow) restoreFlow.restore();\n      restoreFlow.restore();"),
         terminal,
       ),
     ).toContain("the saved tabs are restored somewhere other than once, in the main window");
   });
 
-  it("a slot that starts being written only when the restore succeeds", () => {
-    const broken = mutate(
+  it("a waiting tab opened by something other than its button or the palette", () => {
+    const woken = mutate(
       page,
-      "    } finally {\n      // Only now may this window write its slot: before, \"no tabs yet\" would\n      // have replaced the tabs it had.\n      startSavingTabs();\n    }",
-      "      startSavingTabs();\n    } finally {\n    }",
+      "      if (isMainWindow) restoreFlow.restore();",
+      "      if (isMainWindow) restoreFlow.restore();\n      for (const tab of tabsState.list) void restoreFlow.wake(tab.sessionId);",
     );
-    expect(pageViolations(broken, terminal)).toContain(
-      "the slot starts being written before, or only when, the restore went through",
+    expect(pageViolations(woken, terminal)).toContain("a waiting tab is opened by something other than its own button");
+    const all = mutate(page, "      if (isMainWindow) restoreFlow.restore();", "      if (isMainWindow) {\n        restoreFlow.restore();\n        restoreFlow.wakeAll();\n      }");
+    expect(pageViolations(all, terminal)).toContain(
+      "waiting tabs are opened all at once from somewhere other than the palette",
     );
-  });
-
-  it("restored tabs that connect without the policy", () => {
-    expect(
-      pageViolations(
-        mutate(page, "waitReason(mode, waitFactsOf(tab, null)),\n      );", "null,\n      );").replace(
-          "(tab) =>\n        null,",
-          "() => null,",
-        ),
-        terminal,
-      ),
-    ).toContain("restored tabs are opened without asking waitReason");
-    expect(
-      pageViolations(
-        mutate(
-          page,
-          "    if (reason === null) reconnectTabStore(sessionId);\n    else setWaiting(sessionId, reason);",
-          "    reconnectTabStore(sessionId);",
-        ),
-        terminal,
-      ),
-    ).toContain("settleWaiting opens a session waitReason did not allow");
-    expect(
-      pageViolations(
-        mutate(
-          page,
-          "      const reason = waitReason(\"connect\", waitFactsOf(tab, null));\n      if (reason === null) {",
-          "      const reason = null;\n      if (reason === null) {",
-        ),
-        terminal,
-      ),
-    ).toContain("wakeAllWaiting opens a session waitReason did not allow");
-  });
-
-  it("a waiting tab opened by something other than its button", () => {
-    expect(
-      pageViolations(
-        mutate(page, "      startSavingTabs();\n    }\n  }", "      startSavingTabs();\n    }\n    for (const tab of tabsState.list) void wakeTab(tab.sessionId);\n  }"),
-        terminal,
-      ),
-    ).toContain("a waiting tab is opened by something other than its own button");
   });
 
   it("a terminal that connects although its tab waits", () => {

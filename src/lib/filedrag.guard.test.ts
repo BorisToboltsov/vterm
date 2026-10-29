@@ -22,6 +22,12 @@
 //  5. `Esc` cancels every drag of the app, and the key goes no further.
 //  6. Whatever is said to another window about held files is taken back.
 //
+// What the page does with a drop — where a drop from the desktop lands, a move
+// handed to its panel, a copy through the copy dialog, the relay to another
+// window taken back on every way a drag ends — is the file-drag flow's
+// (page/filedragflow), held by its behaviour tests. Checked here: the panel,
+// the store, the model, and the page's two subscriptions.
+//
 // Checked on the source with comments stripped; each check is a function over
 // text, shown to catch its own violation.
 
@@ -102,16 +108,8 @@ export function desktopViolations(files: Record<string, string>): string[] {
   if (hearers.length !== 1 || hearers[0][0] !== PAGE) {
     out.push("files dropped on the window are heard somewhere other than once, by the page");
   }
-  const page = code(files[PAGE] ?? "");
-  const hear = fn(page, "hearDesktopDrag");
-  if (!/pagePoint\(ev\.position, window\.devicePixelRatio\)/.test(hear)) {
-    out.push("a drop from the desktop is not placed where the pointer is");
-  }
-  if (!/dropGuestFiles\(desktopFiles\(ev\.paths\), at\.x, at\.y\)/.test(hear)) {
-    out.push("a drop from the desktop does not go through the target under the pointer");
-  }
-  if (/startTransfer|transferStart|sftpList/.test(hear)) {
-    out.push("a drop from the desktop is sent without asking what it was dropped on");
+  if (!/\.onDragDropEvent\(\(ev\) => fileDrags\.heardDesktop\(ev\.payload\)\)/.test(code(files[PAGE] ?? ""))) {
+    out.push("files dropped on the window are not handed to the file-drag flow");
   }
   return out;
 }
@@ -139,7 +137,7 @@ export function releaseViolations(store: string): string[] {
 
 // ── 4: between two sessions it is a copy ────────────────────────────────────
 
-export function copyViolations(model: string, page: string): string[] {
+export function copyViolations(model: string): string[] {
   const out: string[] = [];
   const m = code(model);
   const meaning = fn(m, "dropMeaning");
@@ -147,14 +145,6 @@ export function copyViolations(model: string, page: string): string[] {
   const own = /if \(files\.from === target\.session\) \{([\s\S]*?)\n  \}/.exec(meaning)?.[1] ?? "";
   if (moves !== 1 || !/kind: "move"/.test(own)) {
     out.push("a drop on another session's panel can mean a move");
-  }
-  const drop = fn(code(page), "dropFiles");
-  const move = /case "move":([\s\S]*?)return;/.exec(drop)?.[1] ?? "";
-  if (!/requestMove\(/.test(move) || /sftpRename|sftpDelete|startTransfer/.test(move)) {
-    out.push("a move inside a panel is done without that panel's question");
-  }
-  if (/sftpRename|sftpDelete|localDelete|localRename/.test(drop)) {
-    out.push("dropped files are moved or deleted by the page");
   }
   return out;
 }
@@ -185,24 +175,8 @@ export function escapeViolations(files: Record<string, string>): string[] {
 export function relayViolations(page: string): string[] {
   const c = code(page);
   const out: string[] = [];
-  const hostAt = c.indexOf("onFileDrag({");
-  const host = hostAt < 0 ? "" : c.slice(hostAt, c.indexOf("\n    });", hostAt));
-  if (!/over: async \(files\) => \{[\s\S]*?return dragOver\(describeFiles\(labelled\(files\)\)/.test(host)) {
-    out.push("files held outside the window are shown to nobody");
-  }
-  // Whatever else the release does once the backend has answered, it ends by
-  // saying the drag is over — on every path through it.
-  const release = /release: \(files\) =>\s*void dragDrop\(describeFiles\(labelled\(files\)\)\)([\s\S]*?)\n      left:/.exec(host)?.[1] ?? "";
-  const then = /\.then\(\(under\) => \{([\s\S]*?)\n          \}\),$/.exec(release)?.[1] ?? "";
-  const returns = then.match(/\breturn\b[^;]*;/g) ?? [];
-  if (returns.length === 0 || !returns.every((r) => /^return dragEnd\(\)/.test(r))) {
-    out.push("files let go of over another window leave it drawing them");
-  }
-  if (!/left: \(\) => void dragEnd\(\)/.test(host)) {
-    out.push("files that came back into their window stay drawn in the other one");
-  }
   const heard = /listenHere<unknown>\(DRAG_EVENT, \(e\) => \{([\s\S]*?)\n      \}\),/.exec(c)?.[1] ?? "";
-  if (!/const files = parseFileDragMessage\(e\.payload\);\s*if \(files\) applyFileDragMessage\(files\);/.test(heard)) {
+  if (!/const files = parseFileDragMessage\(e\.payload\);\s*if \(files\) fileDrags\.heardOtherWindow\(files\);/.test(heard)) {
     out.push("files held over this window from another one are not read");
   }
   return out;
@@ -227,14 +201,14 @@ describe("file-drag guard", () => {
   });
 
   it("between two sessions a drop copies; a move is one panel's own", () => {
-    expect(copyViolations(files[MODEL], files[PAGE])).toEqual([]);
+    expect(copyViolations(files[MODEL])).toEqual([]);
   });
 
   it("Esc cancels every drag of the app, and the key goes no further", () => {
     expect(escapeViolations(files)).toEqual([]);
   });
 
-  it("what is said to another window about held files is taken back", () => {
+  it("files held over this window from another one are read", () => {
     expect(relayViolations(files[PAGE])).toEqual([]);
   });
 });
@@ -273,19 +247,14 @@ describe("the guard catches", () => {
     ]);
   });
 
-  it("a drop from the desktop that ignores where it was dropped", () => {
-    const blind = mutate(
+  it("a drop from the desktop that the page keeps for itself", () => {
+    const kept = mutate(
       page,
-      "      if (ev.paths.length > 0) dropGuestFiles(desktopFiles(ev.paths), at.x, at.y);",
-      "      if (ev.paths.length > 0) void startTransfer({ src: DISK, dst: DISK, sources: [], destDir: \"\" });",
+      ".onDragDropEvent((ev) => fileDrags.heardDesktop(ev.payload))",
+      ".onDragDropEvent(() => {})",
     );
-    expect(desktopViolations({ [PAGE]: blind })).toEqual([
-      "a drop from the desktop does not go through the target under the pointer",
-      "a drop from the desktop is sent without asking what it was dropped on",
-    ]);
-    const unscaled = mutate(page, "pagePoint(ev.position, window.devicePixelRatio)", "ev.position");
-    expect(desktopViolations({ [PAGE]: unscaled })).toEqual([
-      "a drop from the desktop is not placed where the pointer is",
+    expect(desktopViolations({ [PAGE]: kept })).toEqual([
+      "files dropped on the window are not handed to the file-drag flow",
     ]);
   });
 
@@ -312,16 +281,7 @@ describe("the guard catches", () => {
       "    dir: target.kind === \"folder\" ? target.dir : null,\n  };",
       "    dir: target.kind === \"folder\" ? target.dir : null,\n  } as never as { kind: \"move\"; session: string; dir: string };",
     );
-    expect(copyViolations(moving, page)).toEqual(["a drop on another session's panel can mean a move"]);
-    const direct = mutate(
-      page,
-      "        requestMove({\n          session: meaning.session,",
-      "        await sftpRename(meaning.session, files.entries[0].path, meaning.dir);\n        requestMove({\n          session: meaning.session,",
-    );
-    expect(copyViolations(model, direct)).toEqual([
-      "a move inside a panel is done without that panel's question",
-      "dropped files are moved or deleted by the page",
-    ]);
+    expect(copyViolations(moving)).toEqual(["a drop on another session's panel can mean a move"]);
   });
 
   it("a drag Esc does not cancel", () => {
@@ -337,29 +297,8 @@ describe("the guard catches", () => {
     expect(escapeViolations(through)).toEqual(["the Esc that cancels a drag goes on to the terminal"]);
   });
 
-  it("a window left drawing files that are not coming", () => {
-    const kept = mutate(
-      page,
-      "            return dragEnd().catch(() => {});\n          }),\n      left:",
-      "            return undefined;\n          }),\n      left:",
-    );
-    expect(relayViolations(kept)).toEqual(["files let go of over another window leave it drawing them"]);
-    // A path through the release that says nothing is the same hole.
-    const early = mutate(
-      page,
-      "            if (under === null) tellNotCarried(files);\n",
-      "            if (under === null) return tellNotCarried(files);\n",
-    );
-    expect(relayViolations(early)).toEqual(["files let go of over another window leave it drawing them"]);
-    const stuck = mutate(
-      page,
-      "      left: () => void dragEnd().catch(() => {}),\n      out: handToSystem,\n    });",
-      "      left: undefined,\n      out: handToSystem,\n    });",
-    );
-    expect(relayViolations(stuck)).toEqual([
-      "files that came back into their window stay drawn in the other one",
-    ]);
-    const unread = mutate(page, "        if (files) applyFileDragMessage(files);\n", "");
+  it("files from another window that this one does not read", () => {
+    const unread = mutate(page, "        if (files) fileDrags.heardOtherWindow(files);\n", "");
     expect(relayViolations(unread)).toEqual([
       "files held over this window from another one are not read",
     ]);

@@ -126,10 +126,34 @@ export default defineConfig(
             owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/UtilNetCheck.svelte"],
             why: "a check runs from the store, with a stop handle; the tool only asks a server who it is",
           },
+          dragOutBegin: {
+            owners: ["src/lib/page/filedragflow.svelte.ts"],
+            why: "files leave the app only through handToSystem, after dragOutBlocker said they can (ADR 0027)",
+          },
+          // A tab between windows (ADR 0017, 0018): the trip and the offer are one flow's.
+          ...Object.fromEntries(
+            ["detachBegin", "detachCommit", "detachAbort", "takeHandoff", "declineHandoff", "announceWindow"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/page/windowflow.svelte.ts"],
+                why: "a tab is held, snapshotted, handed over and let go in one order, and a window takes tabs only once it listens",
+              },
+            ]),
+          ),
           closeTab: {
             owners: ["src/routes/+page.svelte"],
             why: "a tab closes through closeTabFully, which drops everything kept by its session id",
           },
+          // The tabs of the previous launch: taken once, opened by the policy (ADR 0019).
+          ...Object.fromEntries(
+            ["takeSavedTabs", "startSavingTabs", "restoreSaved", "openRestored"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/page/restoreflow.svelte.ts"],
+                why: "the restore flow takes the slots once, writes the slot only after, and opens restored tabs only as waitReason allows",
+              },
+            ]),
+          ),
         },
       ],
       // A setting one place decides: the Settings panel, and the question it silences.
