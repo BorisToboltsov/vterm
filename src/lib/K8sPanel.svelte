@@ -718,7 +718,6 @@
             groups={podGroups}
             {metricsByKey}
             {cpuHistory}
-            {busy}
             {run}
             {openShell}
             onViewDetails={openDetails}
@@ -741,7 +740,6 @@
           servicesError={netErrors.services}
           ingressError={netErrors.ingress}
           slicesError={netErrors.slices}
-          {busy}
           {run}
           onDescribe={describeObj}
           onYaml={yamlObj}

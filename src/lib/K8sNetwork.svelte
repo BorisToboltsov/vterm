@@ -28,7 +28,6 @@
     servicesError = null,
     ingressError = null,
     slicesError = null,
-    busy = false,
     run,
     onDescribe,
     onYaml,
@@ -46,7 +45,6 @@
     servicesError?: string | null;
     ingressError?: string | null;
     slicesError?: string | null;
-    busy?: boolean;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
     onDescribe: (kind: string, name: string, namespace: string) => void;
     onYaml: (kind: string, name: string, namespace: string) => void;

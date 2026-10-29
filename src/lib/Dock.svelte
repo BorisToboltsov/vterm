@@ -445,6 +445,7 @@
                    uses (Phase 44): this is an interactive tab label, not a caption, and
                    it is set vertically — rotated glyphs at 10px are markedly harder to
                    read. Deliberate exception; don't "unify" it away. -->
+              <!-- eslint-disable-next-line vterm/micro-label -- a vertical tab label, see above -->
               <button
                 data-testid={`dock-vtab-${id}`}
                 data-dock-tab={panelIndex(id)}

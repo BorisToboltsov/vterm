@@ -62,8 +62,14 @@ updates:
         patterns: ["vitest", "@vitest/*", "@testing-library/*", "jsdom"]
         update-types: ["minor", "patch"]
       # Сборочный инструментарий ходит связкой: vite и его плагины, тайпчекер, типы.
+      # typescript-eslint — здесь, а не в `lint`: его peer-диапазон ограничивает
+      # версию TypeScript сверху, и бамп одного без другого ломает линтер.
       build-tooling:
-        patterns: ["vite", "@sveltejs/vite-plugin-svelte", "@tailwindcss/*", "tailwindcss", "svelte-check", "typescript", "@types/*"]
+        patterns: ["vite", "@sveltejs/vite-plugin-svelte", "@tailwindcss/*", "tailwindcss", "svelte-check", "typescript", "typescript-eslint", "@types/*"]
+        update-types: ["minor", "patch"]
+      # ESLint и его плагин для Svelte ходят связкой (правила проекта — lint/vterm.js).
+      lint:
+        patterns: ["eslint", "@eslint/*", "eslint-plugin-svelte", "svelte-eslint-parser"]
         update-types: ["minor", "patch"]
       # JS-половина плагинов Tauri — зеркало группы `tauri` в cargo ниже: плагин
       # обновляется парой (Rust + JS), и поштучные PR разводили версии сторон.

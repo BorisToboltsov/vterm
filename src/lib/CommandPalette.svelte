@@ -57,6 +57,7 @@
 
 {#if open}
   <div class="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]">
+    <!-- eslint-disable-next-line vterm/backdrop-no-close -- a transient popup that holds nothing worth losing dismisses on an outside click -->
     <button
       class="absolute inset-0 bg-black/50"
       aria-label={t("palette.closeAria")}

@@ -49,7 +49,6 @@ describe("mdLinks", () => {
   });
 
   it("refuses a non-http scheme: no open, no navigation", () => {
-    // eslint-disable-next-line no-script-url
     const el = mount('<a href="javascript:alert(1)" data-md-link>x</a>');
     const ev = clickFirstAnchor(el);
     expect(ev.defaultPrevented).toBe(true);

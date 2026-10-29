@@ -15,7 +15,7 @@
 // duration even for a user who had asked the OS for no motion — silently, because
 // the guard *looks* like it covers everything. The fix is to make the duration
 // itself reduce-motion-aware and route every transition directive through here;
-// `motion.guard.test.ts` keeps that true for transitions added later.
+// the lint rule `vterm/motion-duration` keeps that true for transitions added later.
 
 /** Short transition (row states, dialog entry) — mirrors `--motion-fast` in app.css. */
 export const MOTION_FAST = 120;

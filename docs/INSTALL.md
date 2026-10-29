@@ -317,6 +317,7 @@ cargo fmt    --manifest-path src-tauri/Cargo.toml --all --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 cargo test   --manifest-path src-tauri/Cargo.toml
 pnpm check
+pnpm lint
 pnpm test:coverage
 pnpm build
 ```
@@ -413,6 +414,7 @@ write`, но настройка репозитория — потолок над
 | `pnpm tauri:build:mac` | То же + `open-on-mac.sh` рядом с `.dmg` |
 | `pnpm dev` · `pnpm build` | Только фронтенд: Vite dev-сервер · production-сборка |
 | `pnpm check` | Типы и a11y (`svelte-check`) |
+| `pnpm lint` | ESLint: рекомендованные правила и правила проекта ([lint/vterm.js](../lint/vterm.js)) |
 | `pnpm test` · `pnpm test:coverage` | Vitest: юнит и компонентные · с покрытием и гейтами |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Rust-юнит-тесты |
 

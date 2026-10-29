@@ -7,6 +7,26 @@ import { onSessionSubmit, writeToTerminal } from "./session";
 
 const bytes = (s: string) => new TextEncoder().encode(s);
 
+describe("writeToTerminal", () => {
+  beforeEach(() => invoke.mockReset());
+
+  it("keeps one write of a session in flight and sends what was typed meanwhile as one, in order", async () => {
+    // Tauri runs async commands as independent tasks: two writes in flight reach
+    // the PTY in any order ("echo vterm" ran as "echo vtemr").
+    let release!: () => void;
+    invoke.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    invoke.mockResolvedValue(undefined);
+    const typed = [writeToTerminal("o1", bytes("e")), writeToTerminal("o1", bytes("ch")), writeToTerminal("o1", bytes("o"))];
+    expect(invoke).toHaveBeenCalledTimes(1);
+    release();
+    await Promise.all(typed);
+    expect(invoke.mock.calls).toEqual([
+      ["write_to_terminal", { sessionId: "o1", data: Array.from(bytes("e")) }],
+      ["write_to_terminal", { sessionId: "o1", data: Array.from(bytes("cho")) }],
+    ]);
+  });
+});
+
 describe("onSessionSubmit", () => {
   beforeEach(() => {
     invoke.mockReset();

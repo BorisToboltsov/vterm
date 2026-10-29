@@ -227,8 +227,8 @@
 
   // Keep pinned to the newest content as a reply streams in (while mounted).
   $effect(() => {
-    messages.length;
-    messages[messages.length - 1]?.content;
+    void messages.length;
+    void messages[messages.length - 1]?.content;
     scrollToBottom();
   });
 

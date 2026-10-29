@@ -101,7 +101,7 @@
     <!-- The backdrop only dims — it does not close. Coming back from another app
          to copy a password, the first click easily lands outside the card, and a
          half-filled form vanished with it. Closing is the buttons, ×, or Escape
-         (gate `backdrop.guard`). -->
+         (lint rule `vterm/backdrop-no-close`). -->
     <div class="absolute inset-0 bg-black/50" aria-hidden="true" in:fade={motion()}></div>
     <!-- Wrapper shrink-wraps the card so the close button (a sibling of the
          scrolling card, not a child) stays pinned to the corner and never

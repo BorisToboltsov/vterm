@@ -123,7 +123,6 @@
   let cwd = $derived(gitCwd(followTerminal, dockCwd(sessionId), terminalCwd));
   let repoRoot = $state<string | null>(null);
   let isRepo = $state<boolean | null>(null); // null = unknown/not loaded yet
-  let loading = $state(false);
   let busy = $state(false);
 
   let status = $state<GitStatus | null>(null);
@@ -350,7 +349,6 @@
   /** Load repo state for the current cwd (all local/cheap — no network). */
   async function loadAll() {
     if (!cwd || (!sessionReady && isRepo === null)) return;
-    loading = true;
     try {
       const root = await gitRun(sessionId, cwd, repoRootArgs());
       if (root.exitCode !== 0) {
@@ -376,8 +374,6 @@
       stashes = parseStashes(stash.stdout);
     } catch (e) {
       notifyError(String(e));
-    } finally {
-      loading = false;
     }
   }
 

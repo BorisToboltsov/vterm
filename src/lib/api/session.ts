@@ -79,7 +79,7 @@ export function writeToTerminal(
 ): Promise<void> {
   const written = orderedWrite(sessionId, data);
   // A line was sent — typed, pasted, broadcast, run by the assistant: every
-  // way input reaches a session passes here (termwrite.guard).
+  // way input reaches a session passes here (lint rule `vterm/terminal-write`).
   if (data.includes(CR)) submitListeners.get(sessionId)?.forEach((cb) => cb(written));
   return written;
 }

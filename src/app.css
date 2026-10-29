@@ -29,7 +29,7 @@
      hand-written `text-[10px]`/`text-[11px]` literals, so the choice between them
      stops being a coin-flip at every new label. Together with Tailwind's built-in
      `text-xs` (12px, panel body) and `text-sm` (14px, dialog titles) this is the
-     whole scale; `typography.guard.test.ts` keeps arbitrary sizes out.
+     whole scale; the lint rule `vterm/type-scale` keeps arbitrary sizes out.
 
      NO `--text-caption--line-height` / `--text-meta--line-height` companions, and
      that is deliberate: when a font-size token has one, Tailwind's utility emits
@@ -128,8 +128,8 @@ summary:focus-visible,
 /* Motion tokens (Phase 7). Keep UI animations short and consistent; use these
    durations with Tailwind's `duration-[…]` or in component styles.
    NOTE: these cover CSS animations only. Svelte transitions run on the Web
-   Animations API and take their duration from motion.ts — see the guard in
-   motion.guard.test.ts. */
+   Animations API and take their duration from motion.ts — see the lint rule
+   `vterm/motion-duration`. */
 :root {
   --motion-fast: 120ms;
   --motion-base: 200ms;

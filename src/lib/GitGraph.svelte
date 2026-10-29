@@ -157,7 +157,7 @@
     detailFailed = false;
     closedDirs = new Set();
     loadingDetail = true;
-    let answer: CommitDetail | null = null;
+    let answer: CommitDetail | null;
     try {
       answer = await readDetail(commit);
     } catch {

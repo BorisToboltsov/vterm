@@ -46,7 +46,7 @@ const RULES: Rule[] = [
   // Authorization / bearer-style tokens: keep the scheme, mask the credential.
   { re: /\b(Bearer|Basic|Token)\s+([A-Za-z0-9._\-+/=]{8,})/gi, groups: [2] },
   // Credentials embedded in a URL: scheme://user:password@host → mask password.
-  { re: /\b([a-z][a-z0-9+.\-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi, groups: [2] },
+  { re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s:@/]+)(@)/gi, groups: [2] },
   // AWS access key IDs are self-identifying.
   { re: /\bAKIA[0-9A-Z]{16}\b/g, groups: [0] },
   // PEM private-key blocks: keep the BEGIN/END fence, mask the body.

@@ -55,7 +55,7 @@ export function curlProgram(shell: CdShell): string {
 // Characters safe to leave unquoted when a builder embeds a token in a POSIX
 // pipeline (the TLS `sh -c` string, the access-check script). Anything else gets
 // single-quoted.
-const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,.\/-]+$/;
+const SAFE_TOKEN = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
 /** Single-quote a token for a shell command (POSIX), escaping embedded quotes. */
 export function shellQuote(token: string): string {

@@ -3,8 +3,8 @@
 // Lifted out of HelpPanel, where it guarded the one caller whose input was already
 // trusted, while the four callers rendering untrusted markdown (AiChat,
 // RecordingsPanel, EditorTab, NotesModal) had no interception at all. Any surface
-// that mounts rendered markdown MUST apply this action — enforced by
-// mdlink.guard.test.ts.
+// that mounts rendered markdown MUST apply this action — enforced by the lint
+// rule `vterm/md-links`.
 //
 // Two things must never happen when a link inside rendered markdown is clicked:
 //   * the WebView navigating anywhere. The window has no URL bar, so a page loaded

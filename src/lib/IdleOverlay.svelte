@@ -768,9 +768,7 @@
   // Apply an alpha to a #rrggbb (or #rgb) theme colour; falls back opaque.
   function hexAlpha(hex: string, a: number): string {
     const h = hex?.replace("#", "") ?? "";
-    let r = 255,
-      g = 255,
-      b = 255;
+    let r: number, g: number, b: number;
     if (h.length === 6) {
       r = parseInt(h.slice(0, 2), 16);
       g = parseInt(h.slice(2, 4), 16);

@@ -184,7 +184,6 @@
   let planText = $state("");
   let planStreaming = $state(false);
   let planError = $state<string | null>(null);
-  let genKind = $state<GenKind>("plan");
   let planUnlisten: UnlistenFn[] = [];
 
   // Recording generators use the active prompt of the matching kind (plan→runbook).
@@ -230,7 +229,6 @@
     planText = "";
     planError = null;
     planStreaming = true;
-    genKind = kind;
     planOpen = true;
     const streamId = crypto.randomUUID();
     const req = buildChatRequest(

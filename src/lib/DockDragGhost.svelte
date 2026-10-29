@@ -15,6 +15,7 @@
 
 <!-- pointer-events-none so the hit test still sees the dock underneath. -->
 {#if dockDrag.panel}
+  <!-- eslint-disable-next-line vterm/micro-label -- carries the vertical dock tab's own label (Dock.svelte) -->
   <div
     in:fade={motion()}
     data-testid="dock-drag-ghost"

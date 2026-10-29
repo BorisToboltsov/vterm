@@ -8,7 +8,6 @@
   // filebrowser.ts for the contract and why this exists.
   import { onDestroy, onMount, tick, untrack, type Snippet } from "svelte";
   import { tooltip } from "./actions/tooltip";
-  import { pickUploadFiles } from "./api";
   import { writeClipboard } from "./clipboard";
   import { beginFileDrag, consumeFileDragClick, fileDrag } from "./stores/filedrag.svelte";
   import { chordLetter } from "./appshortcuts";

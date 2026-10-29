@@ -24,7 +24,7 @@ export function parseShellHistory(text: string): string[] {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
+    const line = lines[i];
     const zsh = ZSH_EXTENDED.exec(line);
     let cmd = zsh ? zsh[1] : line;
     if (!zsh && BASH_TIMESTAMP.test(line)) continue;

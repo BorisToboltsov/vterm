@@ -10,7 +10,7 @@
 //
 // Comments are stripped before matching: a file-level text match would happily
 // pass on a workflow whose step was deleted but whose comment still describes it
-// (the same trap mdlink.guard.test.ts hit in Phase 44.3).
+// (the same trap the markdown-link gate hit in Phase 44.3).
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";

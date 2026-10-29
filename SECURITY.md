@@ -137,8 +137,10 @@ exe, а имя каталога версии разбирается строго
 - `src/lib/autonomy.guard.test.ts` — нет runtime-обращений в сеть;
 - `src/lib/tauri-security.guard.test.ts` — CSP задан и строгий, capabilities —
   минимально необходимые, opener ограничен `https://`;
-- `src/lib/mdlink.guard.test.ts` — каждый показ markdown защищён обеими половинами
-  ссылочной защиты (см. «Недоверенный markdown» ниже);
+- правило линтера `vterm/md-links` ([lint/vterm.js](lint/vterm.js)) — каждый показ markdown
+  защищён обеими половинами ссылочной защиты (см. «Недоверенный markdown» ниже);
+- правило линтера `vterm/no-network` — из WebView нет `fetch`/`XMLHttpRequest`/`WebSocket`/
+  `EventSource`/`sendBeacon`, `vterm/invoke-in-api` — бэкенд зовут только обёртки `src/lib/api`;
 - `src/lib/releaseassets.guard.test.ts` — цепочка поставки CI: пиннинг экшенов по SHA,
   релиз под гейтом, материал целостности в ассетах, opt-in VirusTotal.
 

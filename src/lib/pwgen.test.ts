@@ -78,7 +78,7 @@ describe("generatePassword", () => {
         expect(r.password).toMatch(/[a-z]/);
         expect(r.password).toMatch(/[A-Z]/);
         expect(r.password).toMatch(/[0-9]/);
-        expect(r.password).toMatch(/[!@#$%^&*()\-_=+\[\]{};:,.?/]/);
+        expect(r.password).toMatch(/[!@#$%^&*()\-_=+[\]{};:,.?/]/);
       }
     }
   });

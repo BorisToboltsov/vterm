@@ -22,7 +22,8 @@
 | **Rust unit** | `cargo test` | ~235 тестов | Чистая логика бэкенда: парсеры метрик, кодировки, пути, serde-модели, хранилище, политика host-key | Везде |
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
-| **Гейты-контракты** | Vitest (обычные тесты) | 49 файлов | Инварианты, которые нельзя проверить типами: см. [таблицу](INVARIANTS.md#гейты) | Везде |
+| **Правила линтера** | ESLint (`pnpm lint`) | 17 правил проекта | Инварианты, видные в одном месте кода: слои импорта, сеть из WebView, сырой `e.key`, LF в PTY, `{@html}` без `use:mdLinks`… — [lint/vterm.js](../lint/vterm.js), кейсы нарушений — `lint.guard.test.ts` | Везде |
+| **Гейты-контракты** | Vitest (обычные тесты) | 51 файл | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
 | **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — nightly и релиз |
 | **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + nightly и релиз (нужен контейнер) |
 | **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → nightly и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
@@ -41,6 +42,7 @@ pnpm test:coverage                                 # то же + гейты по
 cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 pnpm check
+pnpm lint
 pnpm build
 ```
 
@@ -84,17 +86,30 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 `ServerFormModal.test.ts`, `pathbar.test.ts`, `localdrives.test.ts` и др.) и проверяют
 поведение, а не вёрстку.
 
+## Правила линтера
+
+Контракт, который виден в одном месте кода — импорт, вызов, строка, атрибут разметки, —
+держит правило ESLint из [lint/vterm.js](../lint/vterm.js), а не тест по тексту исходника:
+правило читает синтаксическое дерево, поэтому ни комментарий, ни строка его не обманут, и
+нарушение видно в редакторе, пока код пишется. `pnpm lint` проходит весь репозиторий
+(~10 с) и идёт в CI шагом джобы `web`. Исключение — комментарий
+`eslint-disable-next-line vterm/<правило> -- причина` у нарушающего места; исключение,
+которому больше нечего подавлять, роняет прогон (`reportUnusedDisableDirectives`). Модули,
+которым по замыслу нужен стор или бэкенд, перечислены в `IMPURE_BY_DESIGN` с причиной, и
+устаревшая запись — тоже ошибка. `lint.guard.test.ts` проверяет, что каждое правило включено
+и ловит своё нарушение, а соблюдающий код и прозу о нарушении — нет.
+
 ## Гейты-контракты
 
 Файлы `*.guard.test.ts` — обычные vitest-тесты, которые читают **исходники** (а где контракт
 живёт в бинарном артефакте — сам артефакт) и падают на
-нарушении инварианта. Полный список «гейт → что держит» — в
+нарушении инварианта, связывающего несколько мест кода. Полный список «гейт → что держит» — в
 [INVARIANTS.md](INVARIANTS.md#гейты); там же причина, по которой каждый заведён.
 
 Два правила, выведенные из осечек:
 
 - **Проверяй гейт на живом нарушении**, а не только на зелёном коде. Первая версия
-  `mdlink.guard` была файловой и прошла на файле с удалённым экшеном — рядом лежал
+  `mdlink.guard` (теперь правило `vterm/md-links`) была файловой и прошла на файле с удалённым экшеном — рядом лежал
   комментарий, упоминавший `use:mdLinks` словами. Первая регулярка `terminput.guard` молча
   пропускала ровно то нарушение, ради которого писалась.
 - **Проверяй структуру, а не текст.** Гейт вкладок сначала падал на собственном комментарии
@@ -415,7 +430,7 @@ Windows-половины проверяются локально однораз�
 
 | Workflow | Когда | Что делает |
 |----------|-------|------------|
-| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo audit`, `cargo deny`, `pnpm audit` — жёстко |
+| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `pnpm lint` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo audit`, `cargo deny`, `pnpm audit` — жёстко |
 | [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL по трём языкам: `javascript-typescript`, `rust`, `actions` (сами workflow) |
 | [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep, Trivy, zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
 | [nightly.yml](../.github/workflows/nightly.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Фаззинг на глубине, живые SFTP-тесты, E2E |
@@ -504,12 +519,13 @@ PROPTEST_CASES=20000 cargo test --manifest-path src-tauri/Cargo.toml --lib props
   Считай запросы в полёте и жди тишины (`idle()` там же) или условие в DOM (`waitFor`,
   `findBy…`). Пауза остаётся только для «и больше ничего не происходит» — там ждать нечего.
   Проверка: замедли ответы заглушки в десять раз — тест обязан пройти.
-- **Новый контракт:** заводи `*.guard.test.ts` **вместе** с правилом в INVARIANTS и проверь
-  его на живом нарушении.
+- **Новый контракт:** заводи правило в `lint/vterm.js` с кейсами в `lint.guard.test.ts`, если
+  нарушение видно в одном месте кода, иначе `*.guard.test.ts` — **вместе** с правилом в
+  INVARIANTS — и проверь его на живом нарушении.
 - **E2E:** `*.e2e.js` в `e2e/specs/` + `data-testid` на нужных элементах.
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml && pnpm test && pnpm check
+cargo test --manifest-path src-tauri/Cargo.toml && pnpm test && pnpm check && pnpm lint
 ```
 ## Шрифты
 

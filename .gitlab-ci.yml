@@ -49,6 +49,7 @@ lint:
     - cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
     - cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
     - pnpm check
+    - pnpm lint
 
 # ── Windows-only clippy (cfg-зависимый код) ───────────────────────────────────
 # Джоба lint выше идёт на Linux, то есть под cfg(unix): код внутри #[cfg(windows)]

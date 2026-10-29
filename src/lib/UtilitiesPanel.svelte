@@ -139,7 +139,7 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center" data-testid="utilities-panel">
-    <!-- Dims only; closing is the × or Escape (gate `backdrop.guard`). -->
+    <!-- Dims only; closing is the × or Escape (lint rule `vterm/backdrop-no-close`). -->
     <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div class="relative flex max-h-[85vh] w-[52rem] flex-col rounded-lg border border-edge bg-panel-alt">
       <div class="flex items-center justify-between border-b border-edge px-4 py-3">

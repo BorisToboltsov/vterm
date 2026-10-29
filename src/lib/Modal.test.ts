@@ -24,7 +24,7 @@ describe("Modal", () => {
 
   it("does not close when the backdrop is clicked", async () => {
     // Returning from another app, the first click often lands outside the card;
-    // a half-filled form must survive it (backdrop.guard).
+    // a half-filled form must survive it (vterm/backdrop-no-close).
     const onclose = vi.fn();
     const { container } = render(Modal, { props: { open: true, onclose, children: text("body") } });
     const backdrop = container.querySelector(".bg-black\\/50") as HTMLElement;

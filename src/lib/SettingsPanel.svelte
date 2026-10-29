@@ -126,7 +126,7 @@
   }
   function onNavKey(e: KeyboardEvent, idx: number) {
     const n = SETTINGS_GROUPS.length;
-    let next = -1;
+    let next: number;
     if (e.key === "ArrowDown") next = (idx + 1) % n;
     else if (e.key === "ArrowUp") next = (idx - 1 + n) % n;
     else if (e.key === "Home") next = 0;
@@ -141,7 +141,7 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
-    <!-- Dims only; closing is the × or Escape (gate `backdrop.guard`). -->
+    <!-- Dims only; closing is the × or Escape (lint rule `vterm/backdrop-no-close`). -->
     <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div
       class="relative flex max-h-[85vh] w-[46rem] flex-col rounded-lg border border-edge bg-panel-alt"
@@ -224,7 +224,7 @@
             {t("settings.languageLabel")}
             <!-- Goes through `setLocale`, not `bind:value`: switching the language
                  also re-seeds the AI prompts the user never edited (Phase 41), and
-                 a plain binding skips that. Guarded by settings.guard.test.ts. -->
+                 a plain binding skips that. Held by the lint rule `vterm/locale-binding`. -->
             <select
               data-testid="language-select"
               class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"

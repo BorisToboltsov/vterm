@@ -26,8 +26,8 @@
 //      `href` of an anchor we built ourselves.
 //   2. Callers MUST mount the rendered HTML under `use:mdLinks`
 //      (actions/mdlinks.ts), which intercepts clicks and routes http(s) to the
-//      system browser instead of navigating the WebView. Enforced by
-//      mdlink.guard.test.ts.
+//      system browser instead of navigating the WebView. Enforced by the
+//      lint rule `vterm/md-links`.
 //
 // Raw HTML (Phase 44.6) does NOT relax rule 1: with `opts.html` a caller admits a
 // fixed, sanitised subset of tags (htmlsan.ts) — everything is still escaped first,

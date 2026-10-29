@@ -35,7 +35,6 @@
   aria-hidden={title ? undefined : "true"}
 >
   {#if title}<title>{title}</title>{/if}
-  <!-- Static, trusted markup from the ICONS registry — never user input, so this
-       is the one {@html} sink that needs no link interception (mdlink.guard). -->
+  <!-- eslint-disable-next-line vterm/md-links -- static markup from the ICONS registry, never user input -->
   {@html ICONS[name]}
 </svg>

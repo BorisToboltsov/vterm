@@ -108,7 +108,7 @@
 
 {#if open}
   <div class="fixed inset-0 z-40 flex items-center justify-center">
-    <!-- Dims only; closing is the × or Escape (gate `backdrop.guard`). -->
+    <!-- Dims only; closing is the × or Escape (lint rule `vterm/backdrop-no-close`). -->
     <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div
       class="relative flex max-h-[80vh] w-[90vw] flex-col rounded-lg border border-edge bg-panel-alt {tab ===

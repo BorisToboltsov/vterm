@@ -595,7 +595,7 @@ export type K8sAvailability =
  * otherwise the error text decides the reason. Drives the panel's empty/error
  * state.
  */
-export function parseAvailability(stdout: string, stderr: string, exitCode: number): K8sAvailability {
+export function parseAvailability(stdout: string, stderr: string, _exitCode: number): K8sAvailability {
   let clientVersion = "";
   let serverVersion = "";
   try {
@@ -1091,13 +1091,13 @@ export function listFailure(stdout: string, stderr: string, exitCode: number): s
     } catch {
       // A truncated/foreign JSON response starts with punctuation, whose first
       // line used to be shown literally as "{". It carries no useful detail.
-      if (/^[{\[]/u.test(body)) return "";
+      if (/^[{[]/u.test(body)) return "";
     }
     return (
       body
         .split("\n")
         .map((line) => line.trim())
-        .find((line) => line && !/^[{}\[\],:]+$/u.test(line)) ?? ""
+        .find((line) => line && !/^[{}[\],:]+$/u.test(line)) ?? ""
     );
   };
   return detail(stderr) || detail(stdout) || `exit ${exitCode}`;

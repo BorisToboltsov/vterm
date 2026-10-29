@@ -32,7 +32,6 @@
     groups,
     metricsByKey,
     cpuHistory = {},
-    busy = false,
     run,
     openShell,
     onViewDetails,
@@ -43,7 +42,6 @@
     metricsByKey: Map<string, K8sPodMetrics>;
     /** Rolling CPU history (millicores) keyed by {@link metricsKey} (Phase 42). */
     cpuHistory?: LoadHistory;
-    busy?: boolean;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
     openShell: (pod: K8sPod, container: string | null) => void;
     onViewDetails: (pod: K8sPod) => void;

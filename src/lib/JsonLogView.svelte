@@ -121,7 +121,7 @@
   // Tail behaviour: keep the view pinned to the newest row while the user hasn't
   // scrolled up. Re-runs whenever the filtered set grows.
   $effect(() => {
-    filtered.length;
+    void filtered.length;
     if (stick && scroller) scroller.scrollTop = scroller.scrollHeight;
   });
 </script>

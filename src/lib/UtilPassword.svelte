@@ -50,7 +50,7 @@
   // Regenerate whenever the options, mode or seed change. snapshot() reads every
   // field (so all are tracked) and hands pwgen a plain object.
   $effect(() => {
-    seed;
+    void seed;
     if (mode === "password") {
       result = generatePassword($state.snapshot(opts));
     } else {

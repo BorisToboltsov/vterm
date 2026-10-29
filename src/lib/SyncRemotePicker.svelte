@@ -141,7 +141,6 @@
       {/if}
     </div>
 
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <!-- Roving selection: the tree container holds focus, keys move `selected`. -->
     <div
       bind:this={treeEl}

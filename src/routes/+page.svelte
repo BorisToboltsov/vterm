@@ -373,8 +373,6 @@
     setMenuLanguage,
     armCloseGuard,
     quitApp,
-    startRecording,
-    stopRecording,
     annotateRecording,
     fetchMetrics,
     readRecording,
@@ -2924,7 +2922,7 @@
   /** Append a pattern to the repo's .gitignore (git panel "Ignore" action). */
   async function appendGitignore(sid: string, gitignorePath: string, pattern: string) {
     const ssh = findTab(sid)?.kind === "ssh";
-    let current = "";
+    let current: string;
     try {
       const f = ssh
         ? await sftpReadText(sid, gitignorePath, editorMaxBytes())
@@ -3981,7 +3979,6 @@
                    them: they follow in one flat list and are placed over the pane
                    that holds them, under its strip. -->
               {#each paneList as pane (pane.id)}
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   data-pane={pane.id}
                   data-testid="pane"
@@ -4137,7 +4134,6 @@
                   {/each}
                 {/if}
                 <!-- The terminal, over the zone that holds it. -->
-                <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
                   class="absolute flex flex-col {terminalShown(views) ? '' : 'invisible'}"
                   style={rectStyle(termZone ? vp.panes[termZone.id] : undefined, vb, hasFiles ? VIEW_STRIP : 0)}
@@ -4367,7 +4363,6 @@
                      makes a new terminal, not new editors. -->
                 {#each ws.editors as ed (ed.id)}
                   {@const zone = paneOf(views, ed.id)}
-                  <!-- svelte-ignore a11y_no_static_element_interactions -->
                   <div
                     class="absolute flex flex-col {zone?.active === ed.id ? '' : 'invisible'}"
                     style={rectStyle(zone ? vp.panes[zone.id] : undefined, vb, VIEW_STRIP)}
