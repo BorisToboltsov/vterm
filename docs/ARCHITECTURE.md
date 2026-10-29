@@ -241,7 +241,7 @@ vterm/
 ├── e2e/                        # WebdriverIO + tauri-driver (CI; на macOS — в Linux-контейнере:
 │                               # linux/Dockerfile, `pnpm e2e:linux`); specs/ · support/
 ├── docs/                       # GUIDE · INSTALL · TROUBLESHOOTING · INVARIANTS ·
-│                               # ARCHITECTURE · DESIGN · ROADMAP · TESTS · adr/
+│                               # ARCHITECTURE · DESIGN · ROADMAP · REFACTORING · TESTS · adr/
 ├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons ·
 │                               # linux-box (команда в Linux-контейнере)
 ├── vite.config.js              # SvelteKit: адаптер, препроцессор, опрос версии (ADR 0046)

@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.25.7-blue)
+![version](https://img.shields.io/badge/version-1.25.8-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -116,6 +116,7 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 | Как это выглядит: токены, кнопки, отступы? | [docs/DESIGN.md](docs/DESIGN.md) |
 | Что уже сделано и что дальше? | [docs/ROADMAP.md](docs/ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md) |
 | Как гоняются тесты? | [docs/TESTS.md](docs/TESTS.md) |
+| Как проводится рефакторинг? | [docs/REFACTORING.md](docs/REFACTORING.md) — этапы по порядку |
 | Как это защищено? | [SECURITY.md](SECURITY.md) |
 | Хочу поучаствовать | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
