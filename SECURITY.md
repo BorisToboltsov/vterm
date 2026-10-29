@@ -59,7 +59,7 @@ advisory без апстрим-фикса, исключение заводитс
 |----------|-----------|----------|
 | SAST — весь код | **CodeQL** (`javascript-typescript`; `rust` — на `main` и ежемесячно, базу строит полная сборка) | поток данных, инъекции, небезопасные API |
 | SAST — сами workflow | **CodeQL** (`actions`) + **zizmor** | подстановка `${{ }}` в `run:`, незапиненные экшены, лишние права токена |
-| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust` без `unsafe-usage`) | анти-паттерны фронтенда и бэкенда; находка, разобранная на месте, — `// nosemgrep` с причиной над ней |
+| SAST — анти-паттерны | **Semgrep** (`p/typescript`, `p/javascript`, `p/rust` без `unsafe-usage`) | анти-паттерны фронтенда и бэкенда; находка, разобранная на месте, — `// nosemgrep` с причиной над ней и в Security tab не едет: GitHub подавленный результат SARIF держит открытым |
 | ФС | **Trivy** (`fs`: secret/misconfig) | секреты, misconfig |
 
 У каждой заботы один сканер: уязвимости зависимостей — только `cargo deny` и `pnpm audit`

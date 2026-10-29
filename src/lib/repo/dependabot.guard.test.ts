@@ -8,6 +8,8 @@
 //     majors get a group of their own, majors only, so the major is the subject of
 //     the PR — split, `@wdio/*` 9 → 10 came as four PRs that each mixed two majors;
 //   - russh, the SSH stack, is never grouped at all;
+//   - windows-core never moves on its own: its minors and majors are ignored, it
+//     follows `windows` by hand (its 0.100 came out while `windows` was on 0.62);
 //   - Svelte/SvelteKit minors arrive as their own PR — only patches may group;
 //   - a catch-all `*` group is last, because Dependabot assigns a package to the
 //     FIRST matching group and a leading catch-all would swallow the rest;
@@ -27,7 +29,8 @@ type Group = {
   exclude: string[];
   updateTypes: string[] | null;
 };
-type Ecosystem = { name: string; cooldownDays: number | null; groups: Group[] };
+type Ignore = { name: string; updateTypes: string[] | null };
+type Ecosystem = { name: string; cooldownDays: number | null; groups: Group[]; ignores: Ignore[] };
 
 const flowArray = (raw: string): string[] => {
   const m = raw.trim().match(/^\[(.*)\]$/);
@@ -48,7 +51,7 @@ export function parseDependabot(src: string): Ecosystem[] {
     const code = line.replace(/\s+#.*$/, "");
     const start = code.match(/^ {2}- package-ecosystem:\s*(\S+)/);
     if (start) {
-      eco = { name: start[1], cooldownDays: null, groups: [] };
+      eco = { name: start[1], cooldownDays: null, groups: [], ignores: [] };
       out.push(eco);
       section = null;
       group = null;
@@ -64,6 +67,15 @@ export function parseDependabot(src: string): Ecosystem[] {
     if (section === "cooldown") {
       const d = code.match(/^ {6}default-days:\s*(\d+)/);
       if (d) eco.cooldownDays = Number(d[1]);
+      continue;
+    }
+    if (section === "ignore") {
+      const dep = code.match(/^ {6}- dependency-name:\s*"?([^"\s]+)"?\s*$/);
+      const types = code.match(/^ {8}update-types:\s*(.+)$/);
+      const last = eco.ignores[eco.ignores.length - 1];
+      if (dep) eco.ignores.push({ name: dep[1], updateTypes: null });
+      else if (types && last) last.updateTypes = flowArray(types[1]);
+      else throw new Error(`unrecognised line in ignore: ${line}`);
       continue;
     }
     if (section !== "groups") continue;
@@ -95,6 +107,19 @@ export const groupFor = (eco: Ecosystem, dep: string): Group | undefined =>
   eco.groups.find(
     (g) => g.patterns.some((p) => globMatch(p, dep)) && !g.exclude.some((p) => globMatch(p, dep)),
   );
+
+/**
+ * What lets `windows-core` move apart from `windows` (empty: nothing). Its own releases
+ * run ahead (0.100 while `windows` sat at 0.62), and any version but the one `windows`
+ * requires puts a second copy in the build, where `#[implement]` types stop matching.
+ */
+export function windowsCoreProblems(eco: Ecosystem): string[] {
+  const types = eco.ignores.find((i) => i.name === "windows-core")?.updateTypes;
+  if (types === undefined) return ["windows-core bumps arrive on their own"];
+  if (types === null) return [];
+  const missing = ["version-update:semver-minor", "version-update:semver-major"].filter((t) => !types.includes(t));
+  return missing.map((t) => `windows-core ${t.split(":")[1]} bumps arrive on their own`);
+}
 
 /** Families whose majors may group: one PR moves the whole family and nothing else. */
 export const LOCKSTEP_MAJORS = new Set(["npm/e2e-major"]);
@@ -166,6 +191,22 @@ describe("dependabot groups", () => {
     expect(groupFor(eco("cargo"), "tauri-plugin-dialog")?.name).toBe("tauri");
     expect(groupFor(eco("npm"), "@tauri-apps/plugin-dialog")?.name).toBe("tauri");
   });
+
+  it("cargo moves windows-core only together with windows", () => {
+    expect(windowsCoreProblems(eco("cargo"))).toEqual([]);
+  });
+
+  it("catches windows-core let loose", () => {
+    const cargo = (ignore: string[]) =>
+      parseDependabot(["  - package-ecosystem: cargo", ...ignore].join("\n"))[0];
+    expect(windowsCoreProblems(cargo([]))).toEqual(["windows-core bumps arrive on their own"]);
+    expect(
+      windowsCoreProblems(
+        cargo(["    ignore:", '      - dependency-name: "windows-core"', '        update-types: ["version-update:semver-major"]']),
+      ),
+    ).toEqual(["windows-core semver-minor bumps arrive on their own"]);
+    expect(windowsCoreProblems(cargo(["    ignore:", '      - dependency-name: "windows-core"']))).toEqual([]);
+  });
 });
 
 describe("dependabot.yml reader", () => {
@@ -186,5 +227,7 @@ describe("dependabot.yml reader", () => {
       '          - "*"',
     ].join("\n");
     expect(() => parseDependabot(src)).toThrow();
+    const ignore = ["  - package-ecosystem: cargo", "    ignore:", '      - dependency-name: "x"', '        versions: ["1.x"]'];
+    expect(() => parseDependabot(ignore.join("\n"))).toThrow();
   });
 });

@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "1.25.9"
+version = "1.25.10"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -130,7 +130,8 @@ windows-sys = { version = "0.61", features = [
 # COM-объектов не реализует; `windows-core` нужен макросу `#[implement]` прямой
 # зависимостью. Оба крейта уже в дереве через tao/wry и держатся их версии: другая
 # — вторая копия `windows-core`, на которой типы `#[implement]` не сходятся.
-# Поднимаются вместе — группа `windows` в dependabot.yml.
+# `windows-core` — версии, которую требует `windows`: Dependabot его не поднимает
+# (ignore в dependabot.yml), он идёт руками в одном PR с `windows`.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

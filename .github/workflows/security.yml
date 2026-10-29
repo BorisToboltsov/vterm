@@ -66,11 +66,20 @@ jobs:
             --sarif --output semgrep.sarif \
             src/ src-tauri/src/
 
-      - name: Результаты в Security tab
+      # Находку под `nosemgrep` Semgrep пишет в SARIF с `suppressions`, а GitHub
+      # такой алерт оставляет открытым: разобранная на месте находка висела бы в
+      # витрине вечно. В витрину едет только то, что не подавлено в коде.
+      - name: Без подавленного в коде
         if: always() && hashFiles('semgrep.sarif') != ''
+        run: |
+          jq '.runs |= map(.results |= ((. // []) | map(select((.suppressions // []) | length == 0))))' \
+            semgrep.sarif > semgrep-open.sarif
+
+      - name: Результаты в Security tab
+        if: always() && hashFiles('semgrep-open.sarif') != ''
         uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
-          sarif_file: semgrep.sarif
+          sarif_file: semgrep-open.sarif
           category: semgrep
 
   # ── Trivy: секреты и misconfig по дереву репозитория ───────────────────────
