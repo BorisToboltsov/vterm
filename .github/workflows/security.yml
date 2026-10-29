@@ -50,11 +50,19 @@ jobs:
       # Правила тянутся из реестра — это сетевой вызов, и он иногда флейкает.
       # Флейк не должен ронять чужой PR, поэтому шаг продолжается при ошибке;
       # результат при этом всё равно уезжает в витрину шагом ниже.
+      #
+      # `unsafe-usage` снят: он помечает каждый `unsafe`, с обоснованием или без, а
+      # `unsafe` проверяет clippy (`undocumented_unsafe_blocks` в Cargo.toml — у
+      # каждого блока `// SAFETY:`), снятие держит гейт ci.guard. Находки остальных
+      # правил p/rust разбираются на месте: строка `// nosemgrep: <правило>` перед
+      # находкой и причина комментарием над ней — после `nosemgrep:` Semgrep читает
+      # список правил, и причина в той же строке стала бы ещё одним «правилом».
       - name: Скан
         continue-on-error: true
         run: |
           semgrep scan \
             --config p/typescript --config p/javascript --config p/rust \
+            --exclude-rule rust.lang.security.unsafe-usage.unsafe-usage \
             --sarif --output semgrep.sarif \
             src/ src-tauri/src/
 

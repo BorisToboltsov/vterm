@@ -111,6 +111,9 @@ async fn metadata(url: &str) -> AppResult<Vec<u8>> {
 
 fn installed() -> AppResult<(Option<Kind>, PathBuf, PathBuf, String)> {
     use tauri::utils::{config::BundleType, platform::bundle_type};
+    // Where we run from only picks the package format to offer. Trust comes from
+    // the Ed25519-signed manifest and the size/SHA-256 of the file, never the path.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
     let exe = std::env::current_exe().map_err(err)?;
     if cfg!(debug_assertions) {
         return Ok((None, exe.clone(), exe, std::env::consts::ARCH.into()));
@@ -367,6 +370,9 @@ pub async fn update_install(
         let source = if plan.kind == Kind::Appimage {
             plan.target.clone()
         } else {
+            // The helper is a copy of this binary; it re-checks the signed plan
+            // itself after we exit, so the path grants it nothing.
+            // nosemgrep: rust.lang.security.current-exe.current-exe
             std::env::current_exe().map_err(err)?
         };
         fs::copy(source, &helper).map_err(err)?;

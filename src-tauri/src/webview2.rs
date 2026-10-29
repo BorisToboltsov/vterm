@@ -390,6 +390,9 @@ pub fn prepare() {
     if env_set || win::system_runtime_installed() {
         return;
     }
+    // Своё же exe — только источник хвоста: кто может подменить этот файл, уже
+    // подменил и читающий его код. sha256 из хвоста ловит повреждённую копию.
+    // nosemgrep: rust.lang.security.current-exe.current-exe
     let bundle = std::env::current_exe()
         .and_then(fs::File::open)
         .ok()

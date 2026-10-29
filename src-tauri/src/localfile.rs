@@ -935,8 +935,8 @@ mod tests {
     // and a `data:` URL is held in memory whole, twice.
     #[tokio::test]
     async fn read_bytes_encodes_and_enforces_the_ceiling() {
-        let dir = std::env::temp_dir().join(format!("vterm-img-{}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
         let path = dir.join("a.png");
         tokio::fs::write(&path, b"hello").await.unwrap();
         let p = path.to_str().unwrap();
@@ -946,8 +946,6 @@ mod tests {
         assert!(read_bytes(p, 3).await.is_err());
         // A directory must not read as an image.
         assert!(read_bytes(dir.to_str().unwrap(), 1024).await.is_err());
-
-        tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 
     #[test]

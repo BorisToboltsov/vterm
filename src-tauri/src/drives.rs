@@ -168,6 +168,9 @@ mod windows_impl {
     /// Volume label for a drive, or empty when it has none / is unreadable.
     fn volume_label(root: &[u16]) -> String {
         let mut name = [0u16; 261]; // MAX_PATH + 1
+
+        // SAFETY: `root` is NUL-terminated (`root_wide`), `name` is passed with its
+        // real length, and every other out-buffer is null, which the API allows.
         let ok = unsafe {
             GetVolumeInformationW(
                 root.as_ptr(),
@@ -193,6 +196,8 @@ mod windows_impl {
     fn free_space(root: &[u16]) -> Option<(u64, u64)> {
         let mut avail = 0u64;
         let mut total = 0u64;
+        // SAFETY: `root` is NUL-terminated, `avail` and `total` are live `u64`s for
+        // the call, and the optional total-free out-pointer is null.
         let ok = unsafe {
             GetDiskFreeSpaceExW(root.as_ptr(), &mut avail, &mut total, std::ptr::null_mut())
         };
@@ -204,12 +209,15 @@ mod windows_impl {
         // card-reader bay would otherwise pop up during enrichment. Restored below
         // so the setting doesn't leak into the rest of the process.
         let mut prev = 0u32;
+        // SAFETY: `prev` is a live `u32` the call writes the old mode into.
         let changed = unsafe { SetThreadErrorMode(SEM_FAILCRITICALERRORS, &mut prev) } != 0;
 
+        // SAFETY: `GetLogicalDrives` takes no arguments and only reads a bitmask.
         let entries = drive_letters(unsafe { GetLogicalDrives() })
             .into_iter()
             .map(|letter| {
                 let root = root_wide(letter);
+                // SAFETY: `root` is NUL-terminated and outlives the call.
                 let kind = drive_kind(unsafe { GetDriveTypeW(root.as_ptr()) });
                 // Network/optical drives are listed but never probed — see the
                 // module docs on why this is a hang, not a cosmetic, concern.
@@ -235,6 +243,8 @@ mod windows_impl {
             .collect();
 
         if changed {
+            // SAFETY: restores the mode read above; the old-mode out-pointer is
+            // optional and null.
             unsafe { SetThreadErrorMode(prev, std::ptr::null_mut()) };
         }
         entries

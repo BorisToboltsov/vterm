@@ -101,7 +101,13 @@ export function inputDefault(action: string, name: string): string | undefined {
 }
 
 /** Where two scanners cover one concern, or a concern lost its scanner. */
-export function scannerOverlaps(files: { ci: string[]; security: string; codeql: string; auditToml: boolean }): string[] {
+export function scannerOverlaps(files: {
+  ci: string[];
+  security: string;
+  codeql: string;
+  auditToml: boolean;
+  cargo: string;
+}): string[] {
   const problems: string[] = [];
   for (const text of files.ci)
     if (/\bcargo[ -]audit\b/.test(codeOf(text))) problems.push("cargo audit runs beside cargo deny");
@@ -113,6 +119,12 @@ export function scannerOverlaps(files: { ci: string[]; security: string; codeql:
   if (/--config p\/secrets\b/.test(security)) problems.push("Semgrep scans secrets beside Trivy");
   if (!/--config p\/rust\b/.test(security) || !/\bsrc-tauri\/src\//.test(security))
     problems.push("Semgrep must read the Rust backend");
+  // `unsafe` is clippy's: every block carries a `// SAFETY:` reason, CI denies
+  // warnings on all three OSes. Semgrep's rule flags every block, reason or not.
+  if (!/--exclude-rule\s+rust\.lang\.security\.unsafe-usage\.unsafe-usage\b/.test(security))
+    problems.push("Semgrep flags every unsafe block beside clippy");
+  if (!/^undocumented_unsafe_blocks\s*=\s*"(?:warn|deny)"/m.test(files.cargo))
+    problems.push("clippy must ask every unsafe block for its SAFETY reason");
   const codeql = codeOf(files.codeql);
   const matrix = /language:\s*\[([^\]]*)\]/.exec(codeql)?.[1] ?? "";
   if (/\brust\b/.test(matrix)) problems.push("CodeQL builds Rust on every pull request");
@@ -196,6 +208,7 @@ describe("each concern has one scanner", () => {
     security: read(".github/workflows/security.yml"),
     codeql: read(".github/workflows/codeql.yml"),
     auditToml: existsSync(join(ROOT, "src-tauri/.cargo/audit.toml")),
+    cargo: read("src-tauri/Cargo.toml"),
   };
 
   it("no two scanners cover one concern, and none is left without one", () => {
@@ -209,6 +222,12 @@ describe("each concern has one scanner", () => {
     expect(scannerOverlaps({ ...files, security: files.security.replace("--config p/rust", "--config p/secrets") })).toHaveLength(2);
     expect(scannerOverlaps({ ...files, codeql: files.codeql.replace("[javascript-typescript, actions]", "[javascript-typescript, rust, actions]") })).toHaveLength(1);
     expect(scannerOverlaps({ ...files, codeql: files.codeql.replace("if: github.event_name != 'pull_request'", "") })).toHaveLength(1);
+    expect(scannerOverlaps({ ...files, security: files.security.replace(/--exclude-rule\s+rust\.lang\.security\.unsafe-usage\.unsafe-usage/, "") })).toEqual([
+      "Semgrep flags every unsafe block beside clippy",
+    ]);
+    expect(scannerOverlaps({ ...files, cargo: files.cargo.replace(/^undocumented_unsafe_blocks.*$/m, "") })).toEqual([
+      "clippy must ask every unsafe block for its SAFETY reason",
+    ]);
   });
 });
 

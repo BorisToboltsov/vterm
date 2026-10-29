@@ -12,6 +12,7 @@ use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 /// Marker appended to a sudo command to confirm it succeeded (exit status isn't
 /// captured over the exec channel, so a wrong password / failure is detected by
@@ -196,7 +197,7 @@ pub async fn run_lint(
 ) -> String {
     let core = lint_command(tool, tmp);
     let res = match (tool.sudo, password) {
-        (true, Some(pw)) if !pw.is_empty() => sudo_run(session, &core, pw).await,
+        (true, Some(pw)) if !pw.is_empty() => sudo_run(session, &core, Some(pw)).await,
         _ => {
             session
                 .run_command(&format!("PATH=\"{LINT_PATH}\" {core}"))
@@ -259,7 +260,7 @@ pub async fn nginx_config_files_sudo(
     session: &SshSession,
     password: &str,
 ) -> AppResult<Vec<String>> {
-    let out = sudo_run(session, NGINX_DUMP_PIPE, password)
+    let out = sudo_run(session, NGINX_DUMP_PIPE, Some(password))
         .await
         .unwrap_or_default();
     Ok(parse_nginx_config_files(&out))
@@ -730,13 +731,23 @@ pub async fn apply(
 
 // ── sudo edit (Phase 12.6) ─────────────────────────────────────────────────────
 
+/// What `sudo -S -p ''` reads on stdin: the password and its Enter, in memory wiped
+/// on drop. No password is the bare Enter — NOPASSWD sudo never reads it, and one
+/// that wants a password refuses. Sized up front, so no reallocation leaves a copy.
+pub fn sudo_stdin(password: Option<&str>) -> Zeroizing<Vec<u8>> {
+    let mut line = Zeroizing::new(Vec::with_capacity(password.map_or(0, str::len) + 1));
+    if let Some(pw) = password {
+        line.extend_from_slice(pw.as_bytes());
+    }
+    line.push(b'\n');
+    line
+}
+
 /// Run `inner` under `sudo -S`, feeding `password` on stdin (kept out of the
 /// process list). Returns stdout.
-async fn sudo_run(session: &SshSession, inner: &str, password: &str) -> AppResult<String> {
+async fn sudo_run(session: &SshSession, inner: &str, password: Option<&str>) -> AppResult<String> {
     let cmd = format!("sudo -S -p '' {inner}");
-    let mut pw = password.as_bytes().to_vec();
-    pw.push(b'\n');
-    session.run_command_stdin(&cmd, &pw).await
+    session.run_command_stdin(&cmd, &sudo_stdin(password)).await
 }
 
 /// Shell snippet that copies `path` to `<path>.bak` as root, preserving mode,
@@ -758,7 +769,7 @@ pub fn sudo_backup_command(path: &str) -> String {
 }
 
 /// Run `inner` under sudo and confirm success via [`OK_MARKER`].
-async fn sudo_ok(session: &SshSession, inner: &str, password: &str) -> AppResult<bool> {
+async fn sudo_ok(session: &SshSession, inner: &str, password: Option<&str>) -> AppResult<bool> {
     let out = sudo_run(session, &format!("{inner} && printf {OK_MARKER}"), password).await?;
     Ok(out.contains(OK_MARKER))
 }
@@ -766,7 +777,7 @@ async fn sudo_ok(session: &SshSession, inner: &str, password: &str) -> AppResult
 /// Validate sudo authentication early. Command-specific sudoers rules may still
 /// reject the later copy; the editor keeps the buffer if that happens.
 pub async fn check_sudo(session: &SshSession, password: &str) -> AppResult<bool> {
-    sudo_ok(session, "true", password).await
+    sudo_ok(session, "true", Some(password)).await
 }
 
 /// Read a root-owned file as text via `sudo cat` (Phase 12.6 "edit as root").
@@ -774,7 +785,7 @@ pub async fn sudo_read(
     session: &SshSession,
     path: &str,
     max_bytes: u64,
-    password: &str,
+    password: Option<&str>,
 ) -> AppResult<TextFile> {
     if !sudo_ok(session, "true", password).await? {
         return Err(AppError::Message("sudo authentication failed".into()));
@@ -810,7 +821,7 @@ pub async fn sudo_write(
     session: &SshSession,
     sftp: &SftpSession,
     req: &sftp::TextWrite<'_>,
-    password: &str,
+    password: Option<&str>,
 ) -> AppResult<WriteResult> {
     let sftp::TextWrite {
         path,
@@ -895,6 +906,15 @@ mod tests {
             path: path.into(),
             op: op.into(),
         }
+    }
+
+    #[test]
+    fn sudo_stdin_is_the_password_and_its_enter_or_a_bare_enter() {
+        assert_eq!(&sudo_stdin(Some("s3cret"))[..], b"s3cret\n");
+        assert_eq!(&sudo_stdin(Some(""))[..], b"\n");
+        // No password: NOPASSWD sudo never reads the line; one that wants a
+        // password refuses — the same as an empty one, never a stand-in.
+        assert_eq!(&sudo_stdin(None)[..], b"\n");
     }
 
     #[test]
@@ -1364,7 +1384,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_search_command_runs_in_a_real_shell() {
-        let dir = std::env::temp_dir().join(format!("vterm-grep-{}", std::process::id()));
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
         std::fs::create_dir_all(dir.join("conf.d")).unwrap();
         std::fs::write(
             dir.join("conf.d/api.conf"),
@@ -1418,8 +1439,6 @@ mod tests {
         // A folder that is not there.
         let gone = run("upstream", true, &dir.join("nope"));
         assert!(gone.matches.is_empty() && gone.failed);
-
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

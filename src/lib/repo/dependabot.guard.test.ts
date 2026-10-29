@@ -2,8 +2,11 @@
 //
 // Grouping trades review granularity for fewer PRs, and the trade is only safe
 // where a bump cannot hide something that deserves its own look:
-//   - a major never rides in a group (a grouped PR once slipped tauri-action
-//     v0.6 → v1.0 in among routine SHA bumps — see the dependabot.yml preamble);
+//   - a major never rides along in a group (a grouped PR once slipped tauri-action
+//     v0.6 → v1.0 in among routine SHA bumps — see the dependabot.yml preamble).
+//     The one exception is a family that must move together (LOCKSTEP_MAJORS): its
+//     majors get a group of their own, majors only, so the major is the subject of
+//     the PR — split, `@wdio/*` 9 → 10 came as four PRs that each mixed two majors;
 //   - russh, the SSH stack, is never grouped at all;
 //   - Svelte/SvelteKit minors arrive as their own PR — only patches may group;
 //   - a catch-all `*` group is last, because Dependabot assigns a package to the
@@ -93,6 +96,20 @@ export const groupFor = (eco: Ecosystem, dep: string): Group | undefined =>
     (g) => g.patterns.some((p) => globMatch(p, dep)) && !g.exclude.some((p) => globMatch(p, dep)),
   );
 
+/** Families whose majors may group: one PR moves the whole family and nothing else. */
+export const LOCKSTEP_MAJORS = new Set(["npm/e2e-major"]);
+
+/** What lets a major hide in group `id` (empty: nothing). */
+export function majorProblems(id: string, g: Group): string[] {
+  if (!g.updateTypes) return ["a group without update-types admits majors"];
+  if (!g.updateTypes.includes("major")) return [];
+  const problems: string[] = [];
+  if (!LOCKSTEP_MAJORS.has(id)) problems.push("groups majors outside a lockstep family");
+  if (g.updateTypes.length > 1) problems.push("mixes majors with minors or patches");
+  if (g.patterns.includes("*")) problems.push("groups the majors of everything");
+  return problems;
+}
+
 const config = parseDependabot(readFileSync(join(process.cwd(), ".github/dependabot.yml"), "utf8"));
 const eco = (name: string): Ecosystem => {
   const e = config.find((c) => c.name === name);
@@ -110,9 +127,25 @@ describe("dependabot groups", () => {
   });
 
   const groups = config.flatMap((c) => c.groups.map((g) => [`${c.name}/${g.name}`, g] as const));
-  it.each(groups)("%s never bundles a major", (_n, g) => {
-    expect(g.updateTypes, "a group without update-types admits majors").not.toBeNull();
-    for (const t of g.updateTypes ?? []) expect(["minor", "patch"]).toContain(t);
+  it.each(groups)("%s lets no major ride along", (id, g) => {
+    for (const t of g.updateTypes ?? []) expect(["major", "minor", "patch"]).toContain(t);
+    expect(majorProblems(id, g)).toEqual([]);
+  });
+
+  it("names only lockstep families that exist", () => {
+    expect([...LOCKSTEP_MAJORS].filter((id) => !groups.some(([n]) => n === id))).toEqual([]);
+  });
+
+  it("catches a major that rides along", () => {
+    const g = (patterns: string[], updateTypes: string[] | null): Group => ({ name: "x", patterns, exclude: [], updateTypes });
+    expect(majorProblems("npm/x", g(["@wdio/*"], null))).toEqual(["a group without update-types admits majors"]);
+    expect(majorProblems("github-actions/actions", g(["*"], ["minor", "major"]))).toEqual([
+      "groups majors outside a lockstep family",
+      "mixes majors with minors or patches",
+      "groups the majors of everything",
+    ]);
+    expect(majorProblems("npm/e2e-major", g(["@wdio/*"], ["major"]))).toEqual([]);
+    expect(majorProblems("npm/e2e", g(["@wdio/*"], ["minor", "patch"]))).toEqual([]);
   });
 
   it.each(config.map((c) => [c.name, c] as const))("%s puts a catch-all group last", (_n, c) => {

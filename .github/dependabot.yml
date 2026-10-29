@@ -83,6 +83,13 @@ updates:
       e2e:
         patterns: ["@wdio/*"]
         update-types: ["minor", "patch"]
+      # Мажор WebdriverIO — тоже связкой, но своим PR, где больше ничего нет:
+      # поштучно e2e/ стоял бы на смеси двух мажоров, а CI на PR E2E не гоняет
+      # и такую смесь не заметит. Мажор здесь — предмет PR, а не попутчик
+      # (группа мажоров — только у семейств из LOCKSTEP_MAJORS в dependabot.guard).
+      e2e-major:
+        patterns: ["@wdio/*"]
+        update-types: ["major"]
       # Патчи всего остального — одним PR. Группа ПОСЛЕДНЯЯ: Dependabot кладёт
       # пакет в первую подходящую группу, и те, что выше, забирают своё.
       # Svelte и SvelteKit попадают сюда только патчами: их minor бывает ломающим
@@ -104,6 +111,12 @@ updates:
     groups:
       tauri:
         patterns: ["tauri", "tauri-*"]
+        update-types: ["minor", "patch"]
+      # windows-rs ходит связкой: `windows` без `windows-core` той же версии — две
+      # копии `windows-core` в сборке, и COM-типы `#[implement]` не сходятся
+      # (dragout/windows.rs). Для 0.x Dependabot считает 0.61 → 0.62 минором.
+      windows:
+        patterns: ["windows", "windows-*"]
         update-types: ["minor", "patch"]
       # Патчи остального — одним PR. Только patch: у крейтов 0.x минор ломающий
       # (base64 0.22 → 0.23), а Dependabot не отличает 0.x от 1.x.

@@ -1,6 +1,6 @@
 [package]
 name = "vterm"
-version = "1.25.8"
+version = "1.25.9"
 description = "Кроссплатформенный инструмент для работы системных администраторов, devops, sre"
 authors = ["Тобольцов Борис Олегович"]
 edition = "2021"
@@ -14,6 +14,14 @@ license = "MIT"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "vterm_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# `unsafe` — только FFI к ОС (COM перетаскивания, диски, окна, AppKit), и у каждого
+# блока `// SAFETY:` — почему вызов здесь корректен. CI гоняет clippy с `-D warnings`
+# на трёх ОС, так что блок под любым `cfg` без обоснования роняет прогон. Это и
+# есть проверка `unsafe`: правило Semgrep `unsafe-usage` помечало каждый блок
+# подряд, с обоснованием или без, и снято (security.yml).
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -120,8 +128,10 @@ windows-sys = { version = "0.61", features = [
 # Вынос файла в Проводник (dragout/windows.rs, ADR 0027): COM-объекты перетаскивания —
 # объект данных с FILEDESCRIPTOR/FILECONTENTS, поток файла, источник. `windows-sys`
 # COM-объектов не реализует; `windows-core` нужен макросу `#[implement]` прямой
-# зависимостью. Оба крейта уже в дереве через tao/wry — версии те же.
-windows = { version = "0.61", features = [
+# зависимостью. Оба крейта уже в дереве через tao/wry и держатся их версии: другая
+# — вторая копия `windows-core`, на которой типы `#[implement]` не сходятся.
+# Поднимаются вместе — группа `windows` в dependabot.yml.
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",
@@ -135,7 +145,7 @@ windows = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
-windows-core = "0.61"
+windows-core = "0.62"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # «Окно под указателем» на X11 (winhit.rs, ADR 0018): GDK спрашивает X-сервер, GTK
