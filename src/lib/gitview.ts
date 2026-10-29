@@ -10,7 +10,7 @@ import { formatModified } from "./lscolors";
 /**
  * Text-color class for a git status letter (name-status or porcelain). Theme
  * tokens, not palette classes: a fixed amber on a cream panel is a smudge, and
- * `statuscolor.guard` reads the classes a `.ts` file hands out as well.
+ * the lint rule `vterm/theme-colors` reads the classes a `.ts` file hands out as well.
  */
 export function fileStatusColor(status: string): string {
   switch (status[0]) {

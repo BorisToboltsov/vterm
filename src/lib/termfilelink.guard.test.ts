@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -22,10 +22,13 @@ import { describe, expect, it } from "vitest";
 //  - the backend notes that folder before the bytes reach the shell, and only
 //    while the shell itself holds the terminal (a line typed into `ssh` or a
 //    REPL is that program's);
-//  - the page opens a link only as `fileLinkClick` decided or as the question
-//    was answered, a file through the editor's own path — on the line the
-//    output named, if it named one — and a folder through the file panel;
-//    "don't ask again" is the only writer of the setting.
+//  - a link opens only as `fileLinkClick` decided or as the question was
+//    answered, a file through the editor's own path — on the line the output
+//    named, if it named one — and a folder through the file panel: the file-link
+//    flow (page/filelinkflow), held by its behaviour tests, opens past nothing
+//    else. What stays here is how the page wires it: the flow gets the editor's
+//    own ways in, the line passed through. "Don't ask again" is the only writer
+//    of the setting — the lint rule `vterm/owned-writes`.
 // Each check is a function over source text, run against a planted violation
 // too. Checked without comments.
 
@@ -121,50 +124,20 @@ export function providerViolations(raw: string): string[] {
   return out;
 }
 
-/** Violations in the page. */
+/** Violations in the page: what it gives the terminal and the file-link flow. */
 export function pageViolations(raw: string): string[] {
   const src = strip(raw);
   const out: string[] = [];
-  if (!/onfilelink=\{fileLinksAllowed\(tab\)\s*\?\s*\(target\) => onFileLink\(tab\.sessionId, target\)\s*:\s*undefined\}/.test(src)) {
+  if (!/onfilelink=\{fileLinksAllowed\(tab\)\s*\?\s*\(target\) => fileLinks\.clicked\(tab\.sessionId, target\)\s*:\s*undefined\}/.test(src)) {
     out.push("a terminal gets file links without asking whether its output is its session's files");
   }
-  const onLink = block(src, "function onFileLink(");
-  if (!/const action = fileLinkClick\(settings\.terminalFileLinks, target\);\s*if \(action\.kind === "open"\) \{\s*openFileLink\(id, action\.target\);/.test(onLink)) {
-    out.push("a click opens other than as fileLinkClick decided");
-  }
-  const answer = block(src, "function answerFileLink(");
-  const opens = count(src, /\bopenFileLink\(/g) - 1;
-  if (opens !== count(onLink, /\bopenFileLink\(/g) + count(answer, /\bopenFileLink\(/g) || opens !== 2) {
-    out.push("a file link is opened past the decision or the question");
-  }
-  if (!/if \(ask\.kind === "open" && answer === "open"\) \{\s*if \(silence\) settings\.terminalFileLinks = "direct";\s*openFileLink\(ask\.sessionId, ask\.target\);/.test(answer)) {
-    out.push("an answer opens what it was not asked about, or silences it unasked");
-  }
-  const open = block(src, "function openFileLink(");
   if (
-    !/if \(target\.kind === "dir"\) \{\s*requestFilesDir\(id, target\.path\);\s*revealPanel\("files"\);/.test(open) ||
-    !/openFileInEditor\(id, target\.path/.test(open) ||
-    !/openLocalFileInEditor\(id, target\.path/.test(open) ||
-    /addEditor\(/.test(open)
+    !/openFile: \(id, path, opts\) => void openFileInEditor\(id, path, baseName\(path\), opts\),/.test(src) ||
+    !/openLocalFile: \(id, path, opts\) => void openLocalFileInEditor\(id, path, opts\),/.test(src)
   ) {
-    out.push("a file link opens other than through the editor's and the file panel's own paths");
-  }
-  if (
-    !/openFileInEditor\(id, target\.path, baseName\(target\.path\), \{ gotoLine: target\.line \}\)/.test(open) ||
-    !/openLocalFileInEditor\(id, target\.path, \{ gotoLine: target\.line \}\)/.test(open)
-  ) {
-    out.push("a place in a file (`x.c:42`) opens at the top of the file");
+    out.push("a file link opens other than through the editor's own path, on its line");
   }
   return out;
-}
-
-/** Files other than the page and settings that assign `settings.terminalFileLinks`. */
-export function settingWriters(files: { rel: string; src: string }[]): string[] {
-  const allowed = new Set([join("routes", "+page.svelte"), join("lib", "settings.svelte.ts")]);
-  return files
-    .filter(({ rel }) => !allowed.has(rel))
-    .filter(({ src }) => /settings\.terminalFileLinks\s*=(?!=)/.test(strip(src)))
-    .map(({ rel }) => rel);
 }
 
 /** Violations in the backend's note of the folder a line runs in. */
@@ -186,18 +159,6 @@ export function backendViolations(raw: string): string[] {
   return out;
 }
 
-function sourceFiles(dir: string, acc: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, acc);
-    else if (/\.(svelte|ts)$/.test(entry) && !/\.test\.ts$/.test(entry)) acc.push(full);
-  }
-  return acc;
-}
-
-const allFiles = () =>
-  sourceFiles(SRC).map((f) => ({ rel: f.slice(SRC.length + 1), src: readFileSync(f, "utf8") }));
-
 const TERMINAL = "lib/Terminal.svelte";
 const PROVIDER = "lib/filelinkprovider.ts";
 const PAGE = "routes/+page.svelte";
@@ -211,12 +172,8 @@ describe("terminal file link guard", () => {
     expect(providerViolations(read(PROVIDER))).toEqual([]);
   });
 
-  it("the page opens a link only as decided or answered, through the editor and the file panel", () => {
+  it("the page wires the terminal and the editor's own ways in to the file-link flow", () => {
     expect(pageViolations(read(PAGE))).toEqual([]);
-  });
-
-  it("nothing else switches the file link mode", () => {
-    expect(settingWriters(allFiles())).toEqual([]);
   });
 
   it("the backend notes the folder before the line, and only at the shell's prompt", () => {
@@ -281,49 +238,27 @@ describe("terminal file link guard — catches what it exists for", () => {
   it("a container shell with file links", () => {
     const src = swap(
       read(PAGE),
-      "onfilelink={fileLinksAllowed(tab)\n                      ? (target) => onFileLink(tab.sessionId, target)\n                      : undefined}",
-      "onfilelink={(target) => onFileLink(tab.sessionId, target)}",
+      "onfilelink={fileLinksAllowed(tab)\n                      ? (target) => fileLinks.clicked(tab.sessionId, target)\n                      : undefined}",
+      "onfilelink={(target) => fileLinks.clicked(tab.sessionId, target)}",
     );
     expect(pageViolations(src)).toContain(
       "a terminal gets file links without asking whether its output is its session's files",
     );
   });
 
-  it("a click that opens without asking", () => {
-    const src = swap(
+  it("a file opened past the editor's own path, or without its line", () => {
+    const past = swap(
       read(PAGE),
-      'if (silence) settings.terminalFileLinks = "direct";',
-      'settings.terminalFileLinks = "direct";',
+      "openLocalFile: (id, path, opts) => void openLocalFileInEditor(id, path, opts),",
+      'openLocalFile: (id, path) => addEditor(id, path, baseName(path), editorLangOrPlain(path), "local"),',
     );
-    expect(pageViolations(src)).toContain(
-      "an answer opens what it was not asked about, or silences it unasked",
-    );
-  });
-
-  it("a file opened past the editor's own path", () => {
-    const src = swap(
+    expect(pageViolations(past)).toContain("a file link opens other than through the editor's own path, on its line");
+    const lineless = swap(
       read(PAGE),
-      "void openLocalFileInEditor(id, target.path, { gotoLine: target.line });",
-      'addEditor(id, target.path, baseName(target.path), editorLangOrPlain(target.path), "local");',
+      "openFile: (id, path, opts) => void openFileInEditor(id, path, baseName(path), opts),",
+      "openFile: (id, path) => void openFileInEditor(id, path, baseName(path)),",
     );
-    expect(pageViolations(src)).toContain(
-      "a file link opens other than through the editor's and the file panel's own paths",
-    );
-  });
-
-  it("a place in a file that loses its line", () => {
-    const src = swap(
-      read(PAGE),
-      "void openFileInEditor(id, target.path, baseName(target.path), { gotoLine: target.line });",
-      "void openFileInEditor(id, target.path, baseName(target.path));",
-    );
-    expect(pageViolations(src)).toContain("a place in a file (`x.c:42`) opens at the top of the file");
-  });
-
-  it("another writer of the mode", () => {
-    expect(
-      settingWriters([{ rel: "lib/Terminal.svelte", src: 'settings.terminalFileLinks = "direct";' }]),
-    ).toEqual(["lib/Terminal.svelte"]);
+    expect(pageViolations(lineless)).toContain("a file link opens other than through the editor's own path, on its line");
   });
 
   it("a folder noted after the line went out", () => {

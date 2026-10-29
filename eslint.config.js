@@ -95,6 +95,9 @@ export default defineConfig(
   own("backdrop-no-close", MARKUP),
   own("each-as-t", MARKUP),
   own("path-sync-mode", SOURCE),
+  own("theme-colors", SOURCE),
+  own("virtual-scroll", MARKUP),
+  own("paste-caret", SOURCE),
   {
     files: SOURCE,
     ignores: TESTS,
@@ -126,6 +129,20 @@ export default defineConfig(
           closeTab: {
             owners: ["src/routes/+page.svelte"],
             why: "a tab closes through closeTabFully, which drops everything kept by its session id",
+          },
+        },
+      ],
+      // A setting one place decides: the Settings panel, and the question it silences.
+      "vterm/owned-writes": [
+        "error",
+        {
+          "settings.terminalLinks": {
+            owners: ["src/lib/SettingsPanel.svelte", "src/lib/stores/linkopen.svelte.ts"],
+            why: "\"don't ask again\" is offered only where canSilence allows it — never for a link whose text names another site",
+          },
+          "settings.terminalFileLinks": {
+            owners: ["src/lib/SettingsPanel.svelte", "src/lib/page/filelinkflow.svelte.ts"],
+            why: "only the answer to the file-link question silences it",
           },
         },
       ],

@@ -310,8 +310,8 @@
   // so CRLF text (every multi-line paste from a Windows app) lands SHORTER in the
   // document than the string it came from; a cursor computed from the raw string
   // then points past the end and `state.update` throws before applying anything —
-  // a silent, total paste failure that only reproduces off macOS. See
-  // clipboardpaste.guard.test.ts.
+  // a silent, total paste failure that only reproduces off macOS. Held by the
+  // lint rule `vterm/paste-caret`.
   function cmPaste(v: EditorView): boolean {
     if (doc.readOnly) return true;
     void readClipboard().then((text) => {

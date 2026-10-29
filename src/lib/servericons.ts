@@ -78,6 +78,7 @@ export interface ServerColorDef {
 
 // Categorical palette (fixed hues so they read on any terminal theme, like the
 // connection-status dots). Empty `iconColor` → muted (`text-muted`).
+/* eslint-disable vterm/theme-colors -- the colour a user gives a server is a label picked from a fixed set, not a state */
 export const SERVER_COLORS: ServerColorDef[] = [
   { key: "blue", text: "text-sky-400", swatch: "bg-sky-400", labelKey: "serverColor.blue" },
   { key: "green", text: "text-emerald-400", swatch: "bg-emerald-400", labelKey: "serverColor.green" },
@@ -87,6 +88,7 @@ export const SERVER_COLORS: ServerColorDef[] = [
   { key: "teal", text: "text-teal-400", swatch: "bg-teal-400", labelKey: "serverColor.teal" },
   { key: "slate", text: "text-slate-400", swatch: "bg-slate-400", labelKey: "serverColor.slate" },
 ];
+/* eslint-enable vterm/theme-colors */
 
 const COLOR_BY_KEY = new Map(SERVER_COLORS.map((c) => [c.key, c]));
 

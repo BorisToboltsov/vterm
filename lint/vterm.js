@@ -197,6 +197,13 @@ const ARBITRARY_SIZE = /\btext-\[[0-9.]+(?:px|rem|em|pt)\]/;
 const MICRO_LABEL = /\btext-(caption|meta) uppercase tracking-(wider|wide)\b/;
 const MICRO_LABEL_ONE = "text-caption uppercase tracking-wider";
 const TRANSITIONS = new Set(["fade", "slide", "scale", "fly", "blur", "draw", "flip", "glide"]);
+const HUES =
+  "green|amber|red|sky|blue|emerald|rose|yellow|orange|violet|purple|cyan|teal|indigo|pink|lime|fuchsia|slate|zinc|neutral|stone|gray";
+const RAW_PALETTE = new RegExp(`\\b(?:bg|text|border|ring|fill|stroke)-(?:${HUES})-\\d{2,3}\\b`, "g");
+const PRIMARY_BUTTON = /^bg-green-[56]00$/;
+const RAW_WHITE_BLACK = /\btext-(?:white|black)(?:\/\d+)?\b/;
+/** A solid saturated background that supplies its own contrast; a tint (`bg-accent/10`) is as pale as the panel. */
+const SOLID_BUTTON = /\bbg-green-[56]00\b|\bbg-danger\b(?!\/)|\bbg-accent\b(?!\/)/;
 
 /**
  * Reports each string (in script or markup) whose text `test` rejects. In markup
@@ -463,6 +470,46 @@ const rules = {
     },
   },
 
+  "owned-writes": {
+    meta: {
+      type: "problem",
+      docs: { description: "A value that one module decides is written only there" },
+      schema: [
+        {
+          type: "object",
+          additionalProperties: {
+            type: "object",
+            properties: { owners: { type: "array", items: { type: "string" } }, why: { type: "string" } },
+            required: ["owners", "why"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      messages: { bad: "{{name}} is written in {{owners}} alone: {{why}}" },
+    },
+    create(context) {
+      const owned = context.options[0] ?? {};
+      const rel = path.relative(ROOT, context.filename).split(path.sep).join("/");
+      /** `settings.terminalLinks` for a plain `object.property`, else null. */
+      const nameOf = (n) =>
+        n?.type === "MemberExpression" && !n.computed && n.object.type === "Identifier" && n.property.type === "Identifier"
+          ? `${n.object.name}.${n.property.name}`
+          : null;
+      const check = (node, target) => {
+        const name = nameOf(target);
+        const entry = name && Object.hasOwn(owned, name) ? owned[name] : null;
+        if (!entry || entry.owners.includes(rel)) return;
+        context.report({ node, messageId: "bad", data: { name, owners: entry.owners.join(", "), why: entry.why } });
+      };
+      return {
+        AssignmentExpression: (node) => check(node, node.left),
+        UpdateExpression: (node) => check(node, node.argument),
+        // `bind:value={settings.x}` writes it too.
+        SvelteDirective: (node) => node.kind === "Binding" && check(node, node.expression),
+      };
+    },
+  },
+
   "forbidden-imports": {
     meta: {
       type: "problem",
@@ -532,6 +579,66 @@ const rules = {
         report(node);
       },
     }),
+  ),
+
+  "theme-colors": rule(
+    "Semantic colour comes from the theme tokens",
+    "Use the theme tokens (ok/warn/bad/accent/danger/muted, text-text): a fixed Tailwind colour cannot be legible on both a near-black and a cream panel. White text only on a solid saturated button.",
+    (context, report) => {
+      const markup = context.filename.endsWith(".svelte");
+      return classStrings(context, report, (s) => {
+        // The pinned primary-action button (DESIGN.md) is the one fixed colour, and only in markup.
+        for (const m of s.matchAll(RAW_PALETTE)) if (!(markup && PRIMARY_BUTTON.test(m[0]))) return true;
+        return markup && RAW_WHITE_BLACK.test(s) && !SOLID_BUTTON.test(s);
+      });
+    },
+  ),
+
+  "virtual-scroll": rule(
+    "A windowed list turns scroll anchoring off",
+    "A list on windowRange() needs [overflow-anchor:none] on its scroller: Chromium (WebView2) re-anchors scrollTop as the window swaps rows, and trackpad scrolling jerks on Windows.",
+    (context, report) => {
+      let call = null;
+      let anchorOff = false;
+      const scan = (text) => {
+        anchorOff ||= /overflow-anchor:\s*none/.test(text);
+      };
+      return {
+        CallExpression(node) {
+          if (node.callee.type === "Identifier" && node.callee.name === "windowRange") call ??= node;
+        },
+        SvelteAttribute: (node) => scan(context.sourceCode.getText(node)),
+        SvelteStyleElement: (node) => scan(context.sourceCode.getText(node)),
+        Literal: (node) => scan(stringOf(node) ?? ""),
+        TemplateElement: (node) => scan(stringOf(node) ?? ""),
+        "Program:exit"() {
+          if (call && !anchorOff) report(call);
+        },
+      };
+    },
+  ),
+
+  "paste-caret": rule(
+    "A caret is not placed from the raw length of pasted text",
+    "Don't place the caret from the clipboard string's length: CodeMirror and <textarea> store CRLF shorter, the caret lands past the end and the paste fails silently on Windows. Use view.state.replaceSelection(text) or the value the DOM stored.",
+    (context, report) => {
+      const CLIP = /^(text|clip|clipboard|pasted|paste)$/i;
+      const fromClip = (n) =>
+        some(context, n, (x) => isMember(x, "length") && x.object.type === "Identifier" && CLIP.test(x.object.name));
+      const caret = (name) => /^(anchor|head|caret)$/i.test(name ?? "");
+      return {
+        Property(node) {
+          if (!node.computed && caret(node.key.name ?? node.key.value) && fromClip(node.value)) report(node);
+        },
+        AssignmentExpression(node) {
+          const name = node.left.type === "Identifier" ? node.left.name : node.left.property?.name;
+          if (caret(name) && fromClip(node.right)) report(node);
+        },
+        VariableDeclarator(node) {
+          if (node.id.type === "Identifier" && caret(node.id.name) && node.init && fromClip(node.init)) report(node);
+        },
+      };
+    },
   ),
 
   "each-as-t": rule(

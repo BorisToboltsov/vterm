@@ -56,6 +56,9 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+const allFiles = () =>
+  sourceFiles(SRC).map((f) => ({ rel: f.slice(SRC.length + 1), src: readFileSync(f, "utf8") }));
+
 const read = (rel: string) => readFileSync(join(SRC, rel), "utf8");
 
 /** The text of `new Terminal({ … })` calls, balanced on braces. */
@@ -120,17 +123,6 @@ export function storeViolations(raw: string): string[] {
   return out;
 }
 
-/** Files other than the store and settings that assign `settings.terminalLinks`. */
-export function settingWriters(files: { rel: string; src: string }[]): string[] {
-  return files
-    .filter(({ rel }) => rel !== join("lib", "stores", "linkopen.svelte.ts") && rel !== join("lib", "settings.svelte.ts"))
-    .filter(({ src }) => /settings\.terminalLinks\s*=(?!=)/.test(strip(src)))
-    .map(({ rel }) => rel);
-}
-
-const allFiles = () =>
-  sourceFiles(SRC).map((f) => ({ rel: f.slice(SRC.length + 1), src: readFileSync(f, "utf8") }));
-
 describe("terminal link guard", () => {
   it("every component that creates an xterm routes its links through clickLink", () => {
     const creators = allFiles().filter(({ src }) => /new Terminal\(/.test(strip(src)));
@@ -144,9 +136,7 @@ describe("terminal link guard", () => {
     expect(storeViolations(read("lib/stores/linkopen.svelte.ts"))).toEqual([]);
   });
 
-  it("nothing else switches the link mode", () => {
-    expect(settingWriters(allFiles())).toEqual([]);
-  });
+  // Nothing else switches the link mode: the lint rule `vterm/owned-writes`.
 
   it("catches an xterm without the handler", () => {
     const src = read("lib/RecordingPlayer.svelte").replace(
@@ -194,11 +184,5 @@ describe("terminal link guard", () => {
     expect(storeViolations(src)).toContain(
       "open() is called with something linkClick did not decide",
     );
-  });
-
-  it("catches another writer of the link mode", () => {
-    expect(
-      settingWriters([{ rel: "lib/Terminal.svelte", src: 'settings.terminalLinks = "direct";' }]),
-    ).toEqual(["lib/Terminal.svelte"]);
   });
 });

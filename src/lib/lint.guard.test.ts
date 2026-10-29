@@ -158,6 +158,63 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/ZzProbe.svelte", svelte(`import { setServerNotes } from "./api";\nvoid setServerNotes;`)],
     ],
   },
+  "owned-writes": {
+    bad: [
+      ["src/lib/Terminal.svelte", svelte(`import { settings } from "./settings.svelte";\nsettings.terminalLinks = "direct";`)],
+      ["src/routes/+page.svelte", svelte(`import { settings } from "$lib/settings.svelte";\nconst silence = () => (settings.terminalFileLinks = "direct");\nvoid silence;`)],
+      ["src/lib/ZzProbe.svelte", svelte(`import { settings } from "./settings.svelte";`, `<select bind:value={settings.terminalLinks}></select>`)],
+    ],
+    good: [
+      ["src/lib/page/filelinkflow.svelte.ts", `import { settings } from "../settings.svelte";\nexport const f = () => (settings.terminalFileLinks = "direct");`],
+      ["src/lib/SettingsPanel.svelte", svelte(`import { settings } from "./settings.svelte";`, `<select bind:value={settings.terminalLinks}></select>`)],
+      ["src/lib/ZzProbe.svelte", svelte(`import { settings } from "./settings.svelte";\nconst on = $derived(settings.terminalLinks !== "off");\nvoid on;`)],
+    ],
+  },
+  "theme-colors": {
+    bad: [
+      ["src/lib/ZzProbe.svelte", svelte("", `<span class="text-amber-400">M</span>`)],
+      // The helper as it was until v1.15: a class returned from a script lands in markup.
+      ["src/lib/zz_probe.ts", `export const color = (s: string) => (s === "M" ? "text-amber-400" : "text-muted");`],
+      // The pinned button's class is no licence in a script (the connection dots, until v1.15).
+      ["src/lib/zz_probe.ts", `export const dot = "bg-green-500";`],
+      ["src/lib/ZzProbe.svelte", svelte("", `<span class="rounded bg-accent/10 text-white">x</span>`)],
+    ],
+    good: [
+      ["src/lib/ZzProbe.svelte", svelte("", `<button class="bg-green-600 text-white">Save</button>`)],
+      ["src/lib/ZzProbe.svelte", svelte("", `<button class="bg-danger text-white">Delete</button>`)],
+      ["src/lib/zz_probe.ts", `// was \`text-amber-400\` — a smudge on a cream panel\nexport const c = "text-warn"; // not text-green-400`],
+    ],
+  },
+  "virtual-scroll": {
+    bad: [
+      [
+        "src/lib/ZzProbe.svelte",
+        svelte(`import { windowRange } from "./virtuallist";\nconst w = windowRange(0, 1, 1, 1);`, `<!-- overflow-anchor: none -->\n<div class="overflow-auto">{w}</div>`),
+      ],
+    ],
+    good: [
+      [
+        "src/lib/ZzProbe.svelte",
+        svelte(`import { windowRange } from "./virtuallist";\nconst w = windowRange(0, 1, 1, 1);`, `<div class="overflow-auto [overflow-anchor:none]">{w}</div>`),
+      ],
+    ],
+  },
+  "paste-caret": {
+    bad: [
+      // cmPaste in EditorTab as it was: CRLF text lands shorter, the anchor past the end.
+      [
+        "src/lib/zz_probe.ts",
+        `declare const view: { dispatch(t: unknown): void };\nexport const paste = (from: number, text: string) =>\n  view.dispatch({ changes: { from, to: from, insert: text }, selection: { anchor: from + text.length } });`,
+      ],
+      ["src/lib/zz_probe.ts", `let caret = 0;\nexport const f = (a: number, pasted: string) => (caret = a + pasted.length);\nvoid caret;`],
+    ],
+    good: [
+      [
+        "src/lib/zz_probe.ts",
+        `declare const view: { dispatch(t: unknown): void; state: { replaceSelection(t: string): unknown } };\nexport const paste = (text: string) => view.dispatch(view.state.replaceSelection(text));`,
+      ],
+    ],
+  },
   "forbidden-imports": {
     bad: [
       ["src/lib/stores/tabs.svelte.ts", `import { getWorkspace } from "./workspaces.svelte";\nexport const x = getWorkspace;`],
