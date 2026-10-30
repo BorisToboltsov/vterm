@@ -242,8 +242,9 @@ vterm/
 ├── e2e/                        # WebdriverIO + tauri-driver (CI; на macOS — в Linux-контейнере:
 │                               # linux/Dockerfile, `pnpm e2e:linux`); specs/ · support/
 ├── docs/                       # GUIDE · INSTALL · TROUBLESHOOTING · INVARIANTS ·
-│                               # ARCHITECTURE · DESIGN · ROADMAP · REFACTORING · TESTS · adr/
-├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons ·
+│                               # ARCHITECTURE · DESIGN · ROADMAP · REFACTORING · TESTS · CI · adr/ ·
+│                               # diagrams/ (схемы CI, собирает `pnpm ci:diagrams`)
+├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons · ci-diagrams ·
 │                               # linux-box (команда в Linux-контейнере)
 ├── vite.config.js              # SvelteKit: адаптер, препроцессор, опрос версии (ADR 0046)
 ├── lint/vterm.js               # правила ESLint проекта: слои импорта и инварианты одного места

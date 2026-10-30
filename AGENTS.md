@@ -24,7 +24,8 @@
 | [docs/TESTS.md](docs/TESTS.md) | Как устроен и гоняется набор | Новый слой, гейт, особый способ запуска | Перечень отдельных тестов — он в самих файлах |
 | [docs/GUIDE.md](docs/GUIDE.md) | Руководство пользователя (открывается **в приложении**) | Видимая пользователю возможность, горячая клавиша | Внутреннее устройство |
 | [README.md](README.md) | Витрина репозитория | Возможности крупными мазками, установка, ссылки вглубь | Подробности — на них ссылаемся |
-| [docs/INSTALL.md](docs/INSTALL.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Установка и сборка · разбор ошибок | Требование, шаг сборки, релизный механизм · симптом → причина → что делать | Инструкции в TROUBLESHOOTING, разбор ошибок в INSTALL |
+| [docs/CI.md](docs/CI.md) | Пайплайны и выпуск релиза: что запускается, зачем, что значит красное | Новый workflow или джоба, шаг выпуска; схемы — только `pnpm ci:diagrams` | Как устроены и гоняются тесты (→ TESTS), модель угроз (→ SECURITY), контракты (→ INVARIANTS) |
+| [docs/INSTALL.md](docs/INSTALL.md) · [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Установка и сборка · разбор ошибок | Требование, шаг сборки · симптом → причина → что делать | Инструкции в TROUBLESHOOTING, разбор ошибок в INSTALL |
 | [SECURITY.md](SECURITY.md) | Модель угроз, аудит, остаточные риски | Новая поверхность атаки, принятый риск | Правила (→ INVARIANTS) |
 | **AGENTS.md** (этот файл) · [CLAUDE.md](CLAUDE.md) | Правила процесса; `CLAUDE.md` — только импорт этого файла для Claude Code | DoD, гейты, i18n, версии, toolchain | Контракты кода (→ INVARIANTS); в `CLAUDE.md` — ничего, кроме импорта |
 
@@ -172,17 +173,18 @@ shields.io, ничем не резолвится). `tauri.conf.json` ничег�
 Каждая версия даёт три дистрибутива — macOS, Windows, Linux. Единый кросс-ОС файл невозможен,
 кросс-компиляция Tauri между ОС нерабочая, поэтому собирает CI:
 [release.yml](.github/workflows/release.yml) на раннерах GitHub по тегу `v*`. Локально доступна
-сборка только под текущую ОС. Подробности — [docs/INSTALL.md](docs/INSTALL.md).
+сборка только под текущую ОС. Подробности — [docs/CI.md](docs/CI.md).
 
 **Тег не собирает релиз из красного дерева:** `release.yml` первой джобой сверяет тег с
 версией из `package.json` (чужой тег не собирает ничего), затем вызывает
 [ci.yml](.github/workflows/ci.yml) целиком, матрица стоит под `needs`. Раскладка всех
-workflow — [docs/TESTS.md](docs/TESTS.md#ci-на-github); свойства цепочки поставки —
+workflow — [docs/CI.md](docs/CI.md); свойства цепочки поставки —
 [SECURITY.md](SECURITY.md). Правя workflow, помни: экшены пинятся **по коммит-SHA** с
 комментарием версии, а `${{ … }}` в `run:` не подставляется (только через `env`) — оба
 правила держит гейт. Общие шаги — pnpm, Node, Rust, пакеты Tauri, кэш — только экшены
 [.github/actions/](.github/actions/), в workflow их не копируют; у публикующего `release.yml`
-кэша нет (гейт `ci.guard`).
+кэша нет (гейт `ci.guard`). Изменил workflow — пересобери схемы (`pnpm ci:diagrams`) и опиши новую
+джобу в [docs/CI.md](docs/CI.md): гейт `cidoc.guard`.
 
 ## Toolchain (нестандартный на этой машине)
 

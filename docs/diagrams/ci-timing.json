@@ -1,0 +1,99 @@
+{
+  "tag": "v1.25.10",
+  "date": "2026-10-30",
+  "run": 41049624632,
+  "total": 21.4,
+  "rows": [
+    {
+      "job": "tag",
+      "label": "Тег = версия",
+      "group": null,
+      "start": 0,
+      "dur": 0.1
+    },
+    {
+      "job": "web",
+      "label": "Фронтенд",
+      "group": "verify",
+      "start": 0.1,
+      "dur": 2.8
+    },
+    {
+      "job": "rust",
+      "label": "Rust Linux",
+      "group": "verify",
+      "start": 0.1,
+      "dur": 1.8
+    },
+    {
+      "job": "rust",
+      "label": "Rust Windows",
+      "group": "verify",
+      "start": 0.1,
+      "dur": 2.4
+    },
+    {
+      "job": "rust",
+      "label": "Rust macOS",
+      "group": "verify",
+      "start": 0.1,
+      "dur": 1.7
+    },
+    {
+      "job": "deps",
+      "label": "Зависимости",
+      "group": "verify",
+      "start": 0.1,
+      "dur": 0.6
+    },
+    {
+      "job": "fuzz",
+      "label": "Фаззинг",
+      "group": "deep",
+      "start": 0.1,
+      "dur": 9
+    },
+    {
+      "job": "e2e",
+      "label": "E2E",
+      "group": "deep",
+      "start": 0.1,
+      "dur": 5.2
+    },
+    {
+      "job": "live-sftp",
+      "label": "Живой sshd",
+      "group": "deep",
+      "start": 0.1,
+      "dur": 4.1
+    },
+    {
+      "job": "release",
+      "label": "macOS",
+      "group": "build",
+      "start": 9.2,
+      "dur": 11.1
+    },
+    {
+      "job": "release",
+      "label": "Windows",
+      "group": "build",
+      "start": 9.2,
+      "dur": 11.4
+    },
+    {
+      "job": "release",
+      "label": "Linux",
+      "group": "build",
+      "start": 9.2,
+      "dur": 5.4
+    },
+    {
+      "job": "integrity",
+      "label": "Целостность",
+      "group": "tail",
+      "start": 20.7,
+      "dur": 0.8
+    }
+  ]
+}

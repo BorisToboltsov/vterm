@@ -1064,6 +1064,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `cspnonce.test.ts` · `editorlangs.test.ts` | Каждый `EditorView` отдаёт nonce; грамматики — по требованию |
 | `tauri-security.guard` · `deny.toml` | Строгий CSP, права поимённо, окна создаёт только Rust; исключение advisory без цели роняет прогон |
 | `releaseassets.guard` · `dependabot.guard` | Релиз — по тегу версии и после всех гейтов, экшены по SHA, `--frozen-lockfile`; группы Dependabot с выдержкой, `windows-core` — только вместе с `windows` |
+| `cidoc.guard` | Схемы CI — то, что выдаёт `scripts/ci-diagrams.mjs` из самих workflow, а `docs/CI.md` называет каждый workflow и каждую джобу |
 | `ci.guard` | Общие шаги CI — только экшены `.github/actions/`; Rust, Node и pnpm одни у CI и Linux-контейнера (`rust-toolchain.toml`); релиз без кэша; у каждой заботы один сканер, `unsafe` — у clippy; подавленное `nosemgrep` в Security не едет |
 | `untrusted.fuzz.test.ts` · `textenc::props` | Свойства недоверенного входа на произвольных данных: markdown не даёт исполняемого, декодер не паникует |
 | `version.guard` · `webview2runtime.test.ts` · `updater.guard` | Версия только в `package.json`; формат хвоста WebView2 один в Rust и CI; границы обновления |

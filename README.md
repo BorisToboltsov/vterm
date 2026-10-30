@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.26.1-blue)
+![version](https://img.shields.io/badge/version-1.26.2-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -108,7 +108,8 @@ pnpm tauri dev    # dev-режим (первая Rust-сборка ~1–2 мин
 | Вопрос | Документ |
 |--------|----------|
 | Что программа умеет и какие горячие клавиши? | [docs/GUIDE.md](docs/GUIDE.md) — то же руководство открывается **внутри приложения** |
-| Как поставить, собрать, выпустить релиз? | [docs/INSTALL.md](docs/INSTALL.md) |
+| Как поставить и собрать? | [docs/INSTALL.md](docs/INSTALL.md) |
+| Что запускается в CI и как выпустить релиз? | [docs/CI.md](docs/CI.md) — схемы пайплайнов и шаги выпуска |
 | Не запускается, не собирается, ошибка при старте | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
 | Из чего это собрано и как связано? | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — стек, граница фронт/бэк, каналы, подсистемы |
 | Что здесь нельзя делать и почему? | [docs/INVARIANTS.md](docs/INVARIANTS.md) — контракты кодовой базы |
