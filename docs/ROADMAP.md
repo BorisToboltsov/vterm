@@ -155,6 +155,8 @@ PR в `main`. Patch 1.25.9: находки Security и PR Dependabot после 
     PR Dependabot `windows`/`windows-core` и `@wdio/*` поштучно: см. CHANGELOG.
   - **✅ Остаток находок (1.25.10).** Подавленное `nosemgrep` не грузится в Security;
     `windows-core` 0.100 без `windows` — в ignore Dependabot.
+  - **✅ Имена из вывода после включения синхронизации пути (1.25.11).** Открываются вторым
+    кликом, без повторного `ls`: см. CHANGELOG.
   - **⬜ WebdriverIO 10** (PR Dependabot `e2e-major`). На PR E2E не идёт: слияние — после
     `pnpm e2e:linux` на его ветке.
   - **⬜ TypeScript 7.** У TS 7.0 нет JS API (обещан в 7.1), а на API TS 6 стоят

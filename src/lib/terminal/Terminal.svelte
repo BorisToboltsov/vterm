@@ -856,7 +856,7 @@
 
     // Every line sent to the session — typed, pasted, broadcast — starts a
     // block of output whose folder the file links read names in (v1.24).
-    unlisten.push(onSessionSubmit(sessionId, (written) => fileLinks?.noteSubmit(written)));
+    unlisten.push(onSessionSubmit(sessionId, (written, setup) => fileLinks?.noteSubmit(written, setup)));
 
     // Stream output and close events BEFORE connecting (don't miss the banner).
     unlisten.push(

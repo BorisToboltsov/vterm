@@ -115,6 +115,17 @@ describe("file link flow: a click", () => {
     expect(flow.ask).toEqual({ kind: "sync", sessionId: "a", where: "a", following: false });
     cleanup();
   });
+
+  it("a name its folder turned out not to have says so, and asks nothing", () => {
+    settings.terminalFileLinks = "confirm";
+    const { flow, openFile, cleanup } = harness([tab("a")]);
+    flow.clicked("a", { kind: "missing", name: "gone.txt" });
+    expect(stores.notifyInfo).toHaveBeenCalledTimes(1);
+    expect(stores.notifyInfo.mock.calls[0][0]).toContain("gone.txt");
+    expect(flow.ask).toBeNull();
+    expect(openFile).not.toHaveBeenCalled();
+    cleanup();
+  });
 });
 
 describe("file link flow: the answer", () => {

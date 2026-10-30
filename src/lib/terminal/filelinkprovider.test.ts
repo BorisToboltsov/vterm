@@ -280,6 +280,144 @@ describe("file links over SSH", () => {
   });
 });
 
+describe("path sync's setup line over SSH", () => {
+  // ⌘-click: opens at once, so a test does not wait out the double-click.
+  const ssh = () => setup({ local: false, click: () => "modifier" }, HOME);
+  const cmdClick = () => click(1, { metaKey: true });
+  const typeSetup = (s: Setup) => {
+    s.term.print("u@h:~$  __vtcwd(){ ...");
+    s.links.noteSubmit(Promise.resolve(), true);
+  };
+  /** The link of `name` on 1-based line `n`, as xterm would hold it. */
+  const linkOf = async (s: Setup, n: number, name: string) => {
+    const link = (await linksAt(s, n))!.find((l) => l.text === name);
+    expect(link, `no link ${name}`).toBeDefined();
+    return link!;
+  };
+  /** What a click on `link` opened, once it has. */
+  const clicked = async (s: Setup, link: ILink) => {
+    const before = s.opened.length;
+    link.activate(cmdClick(), link.text);
+    await vi.waitFor(() => expect(s.opened.length).toBe(before + 1));
+    return s.opened.at(-1);
+  };
+
+  it("the shell's answer to it places the command before it: its names open", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt  1.5K");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "unplaced" });
+    typeSetup(s);
+    s.links.noteCwd("/home/u");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "file", path: "/home/u/a.txt" });
+  });
+
+  it("a link xterm still holds from before reads the line again when clicked", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt  My Notes.txt  gone.txt");
+    const stale = (await linksAt(s, 2))!;
+    typeSetup(s);
+    s.links.noteCwd("/home/u");
+    const byName = (name: string) => stale.find((l) => l.text === name)!;
+    expect(await clicked(s, byName("a.txt"))).toEqual({ kind: "file", path: "/home/u/a.txt" });
+    // Offered word by word; the folder's listing knows the whole name.
+    expect(await clicked(s, byName("Notes.txt"))).toEqual({ kind: "file", path: "/home/u/My Notes.txt" });
+    expect(await clicked(s, byName("gone.txt"))).toEqual({ kind: "missing", name: "gone.txt" });
+  });
+
+  it("a held link still offers path sync while the shell has not answered", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    const link = await linkOf(s, 2, "a.txt");
+    typeSetup(s);
+    expect(await clicked(s, link)).toEqual({ kind: "unplaced" });
+  });
+
+  it("a held link whose row holds another line by now opens nothing of it", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    const link = await linkOf(s, 2, "a.txt");
+    typeSetup(s);
+    s.links.noteCwd("/home/u");
+    s.term.lines[1].text = "notes.txt";
+    expect(await clicked(s, link)).toEqual({ kind: "missing", name: "a.txt" });
+  });
+
+  it("a held link does not open over a selection", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    const link = await linkOf(s, 2, "a.txt");
+    typeSetup(s);
+    s.links.noteCwd("/home/u");
+    s.term.selection = true;
+    link.activate(cmdClick(), "a.txt");
+    await new Promise((r) => setTimeout(r));
+    expect(s.opened).toEqual([]);
+  });
+
+  it("places that one command only: an earlier one may have run before a cd", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    await run(s, "cd /etc");
+    typeSetup(s);
+    s.links.noteCwd("/etc");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "unplaced" });
+  });
+
+  it("a report with no setup line places nothing: the line may have gone to another program", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    s.links.noteCwd("/home/u");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "unplaced" });
+  });
+
+  it("a line sent before the shell answered ends the wait", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    typeSetup(s);
+    await run(s, "cat notes.txt");
+    s.links.noteCwd("/etc");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "unplaced" });
+  });
+
+  it("a setup line typed into a full-screen program places nothing", async () => {
+    const s = ssh();
+    await run(s, "ls");
+    s.term.print("a.txt");
+    s.term.type = "alternate";
+    s.links.noteSubmit(Promise.resolve(), true);
+    s.term.type = "normal";
+    s.links.noteCwd("/home/u");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "unplaced" });
+  });
+
+  it("never rewrites a folder already known", async () => {
+    const s = ssh();
+    s.links.noteCwd("/home/u");
+    await run(s, "ls");
+    s.term.print("a.txt");
+    typeSetup(s);
+    s.links.noteCwd("/etc");
+    expect(await clicked(s, await linkOf(s, 2, "a.txt"))).toEqual({ kind: "file", path: "/home/u/a.txt" });
+  });
+
+  it("the next command reads where the shell reported, as any other", async () => {
+    const s = ssh();
+    typeSetup(s);
+    s.links.noteCwd("/home/u");
+    await run(s, "ls");
+    s.term.print("a.txt");
+    expect(await clicked(s, await linkOf(s, 3, "a.txt"))).toEqual({ kind: "file", path: "/home/u/a.txt" });
+  });
+});
+
 describe("the click", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

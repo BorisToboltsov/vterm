@@ -2,7 +2,7 @@ import { flushSync } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
-  writeToTerminal: vi.fn(async (_id: string, _data: Uint8Array) => {}),
+  writeToTerminal: vi.fn(async (_id: string, _data: Uint8Array, _setup?: boolean) => {}),
   setServerPathSync: vi.fn(async (id: string, mode: string | null) => ({ id, pathSync: mode }) as unknown),
 }));
 vi.mock("../api", () => api);
@@ -99,6 +99,8 @@ describe("path sync flow: turning it on", () => {
     expect([flow.following.a, flow.following.b]).toEqual([true, true]);
     // b's shell already reports its folder: nothing to type there.
     expect(typed()).toEqual([["a", SETUP]]);
+    // Said to be the setup line: what the shell answers places the command before it.
+    expect(api.writeToTerminal.mock.calls[0][2]).toBe(true);
     expect(flow.integrated("a")).toBe(true);
     cleanup();
   });

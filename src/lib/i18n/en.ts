@@ -150,10 +150,10 @@ export const en = {
   "filelink.dirHint": "It opens in the file panel. The name was looked up in the folder the command ran in — check the path.",
   "filelink.prod": "A production server: what you change here changes there.",
   "filelink.syncTitle": "Which folder was this?",
-  "filelink.syncBody": "This server does not report which folder a command runs in, so vterm cannot tell which file this name is. Path sync makes the shell report it: the names in the output of the commands after it will open.",
-  "filelink.syncOnBody": "Path sync is on, but the server reported no folder for this command — it may have run inside another program, such as ssh. Run it again at the prompt: the names in its new output will open.",
+  "filelink.syncBody": "This server does not report which folder a command runs in, so vterm cannot tell which file this name is. Path sync makes the shell report it: the names in the output of the last command and those after it will open.",
+  "filelink.syncOnBody": "Path sync is on, but this command's folder is unknown: it ran before the shell started reporting it, or inside another program, such as ssh. Run it again at the prompt: the names in its new output will open.",
   "filelink.syncEnable": "Turn on path sync",
-  "filelink.syncThen": "Path sync is on. Run the command again — the names in its new output will open.",
+  "filelink.syncThen": "Path sync is on. Click the name again — if its folder is still unknown, run the command again.",
   "filelink.notFound": "“{name}” is no file or folder where the command ran",
 
   // ── Broadcast (synchronous multi-server input) ──

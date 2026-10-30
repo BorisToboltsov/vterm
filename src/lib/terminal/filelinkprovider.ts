@@ -10,7 +10,11 @@
 //     program's). Over SSH — and in PowerShell, whose process folder does not
 //     follow `cd` — the folder is the one the shell reported (OSC 7/9;9)
 //     since the last command, and unknown when it reported none: a line sent
-//     before the next report went to whatever the last command started;
+//     before the next report went to whatever the last command started. Path
+//     sync's setup line (`setup`) is the one exception: it was typed at the
+//     prompt of the command before it, so what the shell reports for it is
+//     where that one command ran — and only that one, an earlier one may have
+//     run before a `cd`;
 //   * links — for a hovered line, the names its folder's listing confirms
 //     (listings are cached briefly and dropped on every command, which may
 //     have changed them);
@@ -65,8 +69,9 @@ export type LinkTerminal = Pick<Terminal, "buffer" | "cols" | "modes" | "registe
 
 export interface FileLinks {
   provider: ILinkProvider;
-  /** A line carrying Enter was sent to the session; `written` settles once it got there. */
-  noteSubmit(written: Promise<void>): void;
+  /** A line carrying Enter was sent to the session; `written` settles once it
+   *  got there. `setup`: it is path sync's setup command, not the user's. */
+  noteSubmit(written: Promise<void>, setup?: boolean): void;
   /** The shell reported its folder (OSC 7 / OSC 9;9). */
   noteCwd(path: string): void;
   /** What a selection on buffer row `row` (0-based) names, for the menu. */
@@ -96,6 +101,8 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
   // The shell reported its folder after the last line it was sent: it stands
   // at its prompt, and the next line runs there.
   let armed = false;
+  // The command before path sync's setup line, until the shell answers it.
+  let beforeSetup: Block | null = null;
   const listings = new Map<string, { at: number; listing: Promise<Listing | undefined> }>();
   let pending: ReturnType<typeof setTimeout> | undefined;
 
@@ -190,6 +197,25 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     }, DOUBLE_CLICK_MS);
   }
 
+  /**
+   * A click on a name offered before its folder was known. xterm keeps a line's
+   * links while the pointer comes back to the same row, and the folder may have
+   * come since — path sync is turned on from this very link — so the click reads
+   * the line again rather than trust what the link was built with.
+   */
+  async function clickUnplaced(event: MouseEvent, text: string, first: number, word: { from: number; to: number }) {
+    const { style, dir, fallback } = place(first);
+    if (dir === null) {
+      activate(event, { kind: "unplaced" });
+      return;
+    }
+    // The row may hold another line by now: its folder would not be this name's.
+    const same = lineText(logical(first).rows, term.cols).text === text;
+    const spans = same ? await confirmed(text, dir, fallback, style) : [];
+    const hit = spans.find((s) => s.from < word.to && word.from < s.to);
+    activate(event, hit?.target ?? { kind: "missing", name: text.slice(word.from, word.to) });
+  }
+
   const provider: ILinkProvider = {
     provideLinks(bufferLineNumber, callback) {
       const buf = term.buffer.active;
@@ -226,7 +252,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
               links.push({
                 range: spanRange(line, n.from, n.to, cols, first),
                 text: line.text.slice(n.from, n.to),
-                activate: (event) => activate(event, { kind: "unplaced" }),
+                activate: (event) => void clickUnplaced(event, line.text, first, n),
               });
             }
           }
@@ -239,12 +265,15 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
 
   return {
     provider,
-    noteSubmit(written) {
+    noteSubmit(written, setup = false) {
       listings.clear();
       const fromReport = armed ? reported : null;
       armed = false;
+      // Any later line ends the wait: the shell's next report would be about it.
+      beforeSetup = null;
       // Enter inside vim or less is no command of the shell's.
       if (term.buffer.active.type !== "normal") return;
+      if (setup) beforeSetup = live().at(-1) ?? null;
       const marker = term.registerMarker(0);
       if (!marker) return;
       const block: Block = { marker, cwd: undefined };
@@ -262,6 +291,8 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     noteCwd(path) {
       reported = path;
       armed = true;
+      if (beforeSetup?.cwd === null) beforeSetup.cwd = path;
+      beforeSetup = null;
     },
     async targetOf(text, row) {
       const name = text.trim();

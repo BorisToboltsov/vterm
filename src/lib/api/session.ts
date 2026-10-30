@@ -72,29 +72,34 @@ export function openLocalTerminal(
   return invoke<void>("open_local_terminal", { sessionId, cols, rows, shell });
 }
 
-/** Send user keystrokes (UTF-8 bytes) to the remote shell. */
+/**
+ * Send user keystrokes (UTF-8 bytes) to the remote shell. `setup`: the line is
+ * path sync's own setup command, not one of the user's.
+ */
 export function writeToTerminal(
   sessionId: string,
   data: Uint8Array,
+  setup = false,
 ): Promise<void> {
   const written = orderedWrite(sessionId, data);
   // A line was sent — typed, pasted, broadcast, run by the assistant: every
   // way input reaches a session passes here (lint rule `vterm/terminal-write`).
-  if (data.includes(CR)) submitListeners.get(sessionId)?.forEach((cb) => cb(written));
+  if (data.includes(CR)) submitListeners.get(sessionId)?.forEach((cb) => cb(written, setup));
   return written;
 }
 
 const CR = 0x0d;
-const submitListeners = new Map<string, Set<(written: Promise<void>) => void>>();
+const submitListeners = new Map<string, Set<(written: Promise<void>, setup: boolean) => void>>();
 
 /**
  * Call `cb` whenever input carrying Enter (CR) is sent to the session — with
- * the write, which settles once the bytes reached it. Where a command ran is
- * noted from here (v1.24, file links in output). Returns the unsubscribe.
+ * the write, which settles once the bytes reached it, and whether the line is
+ * path sync's setup command. Where a command ran is noted from here (v1.24,
+ * file links in output). Returns the unsubscribe.
  */
 export function onSessionSubmit(
   sessionId: string,
-  cb: (written: Promise<void>) => void,
+  cb: (written: Promise<void>, setup: boolean) => void,
 ): () => void {
   let set = submitListeners.get(sessionId);
   if (!set) submitListeners.set(sessionId, (set = new Set()));
