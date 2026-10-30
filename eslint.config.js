@@ -122,6 +122,10 @@ export default defineConfig(
             owners: ["src/lib/ai/AiChat.svelte"],
             why: "one AI turn at a time: the composer checks the chat first, and a raised question becomes a chip, never a send",
           },
+          sftpOpenAs: {
+            owners: ["src/lib/files/FileUserDialog.svelte"],
+            why: "taking on another user is a question first: what the panel creates then belongs to them (ADR 0047)",
+          },
           netcheckRun: {
             owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/netcheck/UtilNetCheck.svelte"],
             why: "a check runs from the store, with a stop handle; the tool only asks a server who it is",

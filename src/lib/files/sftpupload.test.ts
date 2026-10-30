@@ -23,6 +23,8 @@ const pickUploadFiles = vi.fn();
 const pickSavePath = vi.fn();
 const pickSaveDir = vi.fn();
 vi.mock("../api", () => ({
+  shellUser: vi.fn(async () => null),
+  onSessionSubmit: vi.fn(() => () => {}),
   sftpHome: vi.fn(async () => "/home/u"),
   sftpList: (...a: unknown[]) => sftpList(...a),
   localList: vi.fn(async () => []),

@@ -7,6 +7,8 @@ const sftpHome = vi.fn();
 sftpList.mockResolvedValue([]);
 sftpHome.mockResolvedValue("/home/me");
 vi.mock("../api", () => ({
+  shellUser: vi.fn(async () => null),
+  onSessionSubmit: vi.fn(() => () => {}),
   sftpList: (...a: unknown[]) => sftpList(...a),
   sftpHome: (...a: unknown[]) => sftpHome(...a),
   sftpConnect: vi.fn(async () => {}),

@@ -6,8 +6,8 @@ use crate::locks::Locked;
 use crate::sftp::FileEntry;
 use crate::ssh::SshSession;
 use crate::{
-    appwin, git, localfile, register_cancel, servertools, session_arc, sftp, ssh, sync, transfers,
-    uuid_like, AppState, IdNames,
+    appwin, fileuser, git, localfile, register_cancel, servertools, session_arc, sftp, ssh, sync,
+    transfers, uuid_like, AppState, IdNames,
 };
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
@@ -76,6 +76,39 @@ fn record_sftp<T>(session: &SshSession, op: &str, res: &AppResult<T>) {
         Err(e) => (1, e.to_string()),
     };
     session.record_output(sftp::sftp_mirror(op, code, &detail).as_bytes());
+}
+
+/// Who the terminal is now and whom the file panel works as (ADR 0047). Reads only.
+#[tauri::command]
+pub async fn shell_user(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<fileuser::ShellUser> {
+    session_arc(&state, &session_id).await?.shell_user().await
+}
+
+/// The file panel works as `user` from now on, through `sudo`: the user's explicit
+/// choice, in the session's record. Refused, it stays as it was.
+#[tauri::command]
+pub async fn sftp_open_as(
+    state: State<'_, AppState>,
+    session_id: String,
+    user: String,
+    password: Option<String>,
+) -> AppResult<()> {
+    let session = session_arc(&state, &session_id).await?;
+    let res = session.sftp_as(&user, sudo_secret(password)).await;
+    record_sftp(&session, &format!("as {}", git::shell_quote(&user)), &res);
+    res
+}
+
+/// The file panel works as the login user again.
+#[tauri::command]
+pub async fn sftp_open_own(state: State<'_, AppState>, session_id: String) -> AppResult<()> {
+    let session = session_arc(&state, &session_id).await?;
+    session.sftp_as_login_user().await;
+    record_sftp(&session, "as login user", &Ok(()));
+    Ok(())
 }
 
 #[tauri::command]
@@ -172,7 +205,7 @@ pub async fn sftp_write_access(
 ) -> AppResult<String> {
     let session = session_arc(&state, &session_id).await?;
     let outcome = session
-        .exec_captured(&sftp::write_access_command(&path), 5)
+        .exec_file_captured(&sftp::write_access_command(&path), 5)
         .await?;
     if outcome.timed_out || outcome.exit_code != 0 {
         return Ok("unknown".into());
@@ -280,7 +313,7 @@ pub async fn sftp_hash_tree(
     let mut out: Vec<u8> = Vec::new();
     let mut lines = 0u64;
     let mut last = std::time::Instant::now();
-    let run = session.run_command_streaming(&cmd, |chunk| {
+    let run = session.run_file_command_streaming(&cmd, |chunk| {
         out.extend_from_slice(chunk);
         lines += chunk.iter().filter(|&&b| b == b'\n').count() as u64;
         if last.elapsed() >= std::time::Duration::from_millis(150) {
@@ -523,7 +556,7 @@ pub async fn sftp_grep(
     }
     let session = session_arc(&state, &session_id).await?;
     let out = session
-        .run_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
+        .run_file_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
         .await?;
     Ok(sync::parse_grep_outcome(&out))
 }

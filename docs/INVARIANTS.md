@@ -657,6 +657,18 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   (`checkUpload`/`uploadItems`, `ReplaceDialog` с очередью
   [replaceask](../src/lib/stores/replaceask.svelte.ts)); непрочитанная папка — другой вопрос. Без
   вопроса `replace` получают только согласие системного диалога (`agreed`) и план синхронизации.
+- **Панель файлов работает под пользователем терминала только по кнопке** (ADR 0047). SFTP —
+  отдельный канал под пользователем соединения; `su` в терминале его не меняет.
+  - Кто в терминале — зонд `TREE_PROBE`, решает чистая `who`
+    ([fileuser.rs](../src-tauri/src/fileuser.rs)): передний план спрашивается у каждого процесса
+    про его tty (`sudo` с `use_pty` заводит свой), ответ — самый вложенный шелл, а не программа.
+    Неизвестно — молчим; скрыто (`hidepid`) — так и говорим. Что сказать — `fileUserRow`.
+  - Панель спрашивает, только пока видима; сама никого не берёт: файлы, созданные под root,
+    останутся root'овыми. Импорт `sftpOpenAs` — только в диалоге (`vterm/owned-imports`).
+  - Под другим пользователем — `sftp-server` через sudo; то, что идёт не через SFTP (поиск,
+    хэши, проверка записи), — через `run_file_command*`/`exec_file_captured`.
+  - Отказ не меняет ничего; пароль — только через stdin, с `-k`: билет оставил бы его на входе
+    `sftp-server`. Гейт `fileuser.guard`, живые тесты `live_fileuser`.
 - **Список после переноса обновляет стор, а не начавшая панель** (`applyJob` → `touchDir`,
   `dirRev`); листинг принимает только последний ответ (`loadSeq`).
 - **Аудит SFTP — тот же record-only, тег `[sftp]`** (`sftp::sftp_mirror`): `rm`, `mv`, `cp`,
@@ -1001,7 +1013,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `startChat`, `netcheckRun`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret`.
@@ -1030,6 +1042,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `pathsync.guard` | Хук статуса сессии читает `runs` до расхода `pendingCommand` и сообщает контроллеру о подключении и конце |
 | `netcheck.guard` | Прогон «Проверки доступа» несёт ручку остановки, запускается через `go`, правила — по хосту вкладки, пределы одни во фронте и бэкенде |
 | `filetoolbar.guard` | Узкий тулбар SFTP оставляет `upload` отдельной кнопкой |
+| `fileuser.guard` | Команды панели идут под её пользователем; отказ sudo ничего не меняет; пароль — только через stdin; панель сама никого не берёт |
 | `editoraccess.guard` | Рядом с «Сохранить» — предупреждение о правах и пути восстановления; локальная копия — `create_new` |
 | `transferjob.guard` | Перенос запускает только `startTransfer`, право заменить — только из согласия; окно сперва слушает `sftp://job`, потом спрашивает список |
 | `filedrag.guard` | Перетаскиванием файла владеет стор, бросок исполняется в одном месте, каждое перетаскивание взводит `cancelOnEscape` |

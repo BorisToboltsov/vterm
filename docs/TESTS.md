@@ -200,6 +200,23 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_exec -- --ignored
 docker compose -f e2e/docker-compose.ssh.yml down
 ```
 
+### Живой su и sudo
+
+Модуль `live_fileuser` в [fileuser.rs](../src-tauri/src/fileuser.rs) проверяет на настоящих `su`
+и `sudo`, что видно в дереве процессов и что `sftp-server` через sudo говорит на протоколе: 4 МБ
+всех значений байта туда и обратно, с паролем на том же stdin. Образ —
+[e2e/sudo](../e2e/sudo/Dockerfile), база меняется аргументом `BASE`:
+
+```sh
+docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
+docker compose -f e2e/docker-compose.sudo.yml down
+```
+
+`hidepid` требует привилегированного контейнера и в compose не входит: запустите образ с
+`--privileged`, выполните в нём `mount -o remount,hidepid=2 /proc` и назовите порт в
+`VTERM_TEST_SUDO_HIDEPID_PORT`.
+
 ### Живой вход через keyboard-interactive
 
 Модуль `live_kbdint` в [ssh.rs](../src-tauri/src/ssh.rs) логинится в PAM-sshd, где метод

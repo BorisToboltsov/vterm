@@ -159,11 +159,13 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/ui/zz_probe.ts", `import { closeTab as drop } from "../stores/tabs.svelte";\nexport const x = drop;`],
       ["src/lib/ui/zz_probe.ts", `import * as api from "../api";\nexport const x = () => api.importBackup("/b", null, true);`],
       ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
+      ["src/lib/files/SftpPanel.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/routes/+page.svelte", svelte(`import { openRestored } from "#lib/stores/tabs.svelte.ts";\nvoid openRestored;`)],
     ],
     good: [
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
       ["src/lib/files/transferflow.ts", `import { transferStart } from "../api";\nexport const x = transferStart;`],
+      ["src/lib/files/FileUserDialog.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/lib/ui/ZzProbe.svelte", svelte(`import { setServerNotes } from "../api";\nvoid setServerNotes;`)],
     ],
   },

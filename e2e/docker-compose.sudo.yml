@@ -1,0 +1,12 @@
+# Disposable sshd with real `su` and `sudo` (see e2e/sudo/Dockerfile).
+#
+#   docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait
+#   cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
+#   docker compose -f e2e/docker-compose.sudo.yml down
+
+services:
+  sudo:
+    build: ./sudo
+    container_name: vterm-test-sudo
+    ports:
+      - "2224:2222"

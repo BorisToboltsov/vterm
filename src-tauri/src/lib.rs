@@ -8,6 +8,7 @@ mod dragout;
 mod drives;
 mod error;
 mod exec;
+mod fileuser;
 mod folders;
 mod git;
 mod kbdauth;
@@ -326,6 +327,9 @@ pub fn run() {
             metrics::fetch_metrics_detail,
             metrics::fetch_pending_updates,
             metrics::fetch_extras,
+            commands::sftp::shell_user,
+            commands::sftp::sftp_open_as,
+            commands::sftp::sftp_open_own,
             commands::sftp::sftp_home,
             commands::sftp::sftp_list,
             commands::sftp::sftp_mkdir,

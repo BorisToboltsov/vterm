@@ -115,6 +115,8 @@
     onSync,
     /** A sync compare/run for this session is going on (possibly in the background). */
     syncActive = false,
+    /** A row above the listing, while connected: whom the SFTP files are under. */
+    banner,
     /** Extra footer content, e.g. the SFTP transfers list. */
     footer,
     footerCount = 0,
@@ -145,6 +147,7 @@
     sessionKey?: string | null;
     onSync?: () => void;
     syncActive?: boolean;
+    banner?: Snippet;
     footer?: Snippet;
     /**
      * How many things the footer lists right now (transfers). Zero — the footer
@@ -1332,6 +1335,7 @@
           {/if}
         </div>
       {:else}
+        {@render banner?.()}
         <!-- The listing's column and — in a wide panel — the column beside it. -->
         <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth} data-testid="{testPrefix}-row">
         <div

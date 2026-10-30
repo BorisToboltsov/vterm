@@ -106,6 +106,7 @@
       {terminalCwd}
       {followTerminal}
       {visible}
+      prod={aiProd}
       {onToggleFollowTerminal}
       {onOpenFile}
       onUserNavigate={onSftpNavigate}
