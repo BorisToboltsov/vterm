@@ -7,6 +7,7 @@
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
 import {
+  applyRailPalette,
   applyUiPalette,
   DEFAULT_THEME_ID,
   getTheme,
@@ -34,6 +35,7 @@ import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/t
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
 import { sanitizeHiddenPanels, type PanelId } from "../layout/docklayout";
 import { DEFAULT_TOPBAR, sanitizeTopbar, type TopbarId } from "../topbar/topbaractions";
+import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
   clampIdleTimeout,
@@ -226,6 +228,12 @@ export interface Settings {
   // Docker panel (Phase 35) — how often the live view (list + logs + stats)
   // re-polls the daemon while the panel is open, in seconds. See docker.ts.
   dockerRefreshSec: number;
+  // Git panel (v1.27): the branches starred in its tree, by name, for every
+  // repository; whether a history row shows tags; whether the commits of the
+  // current branch stand out from the rest.
+  gitFavoriteBranches: string[];
+  gitShowTags: boolean;
+  gitHighlightCurrent: boolean;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -380,6 +388,9 @@ const DEFAULTS: Settings = {
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
   dockerRefreshSec: 3,
   dockerRegistries: [],
+  gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
+  gitShowTags: true,
+  gitHighlightCurrent: true,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   k8sRefreshSec: 5,
@@ -508,6 +519,11 @@ function load(): Settings {
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
+      gitFavoriteBranches: "gitFavoriteBranches" in raw
+        ? sanitizeFavoriteBranches(raw.gitFavoriteBranches)
+        : [...DEFAULT_FAVORITE_BRANCHES],
+      gitShowTags: raw.gitShowTags !== false,
+      gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
@@ -529,6 +545,7 @@ function load(): Settings {
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
       dockerRegistries: [],
+      gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
       prodTint: { ...DEFAULT_PROD_TINT },
@@ -568,6 +585,7 @@ export function resetSettings(): void {
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
     dockerRegistries: [],
+    gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
   });
@@ -594,6 +612,7 @@ export function applyImportedSettings(raw: unknown): void {
     sftp: { ...DEFAULTS.sftp },
     ai: defaultAiSettings(),
     dockerRegistries: [],
+    gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
   };
@@ -708,6 +727,7 @@ export function applyActiveTheme(): void {
   if (settings.theme !== "custom") {
     const theme = getTheme(settings.theme);
     applyUiPalette(theme.ui, theme.group === "light");
+    applyRailPalette(theme.terminal, theme.ui);
   }
   const panel = activeChromePanel();
   if (typeof document !== "undefined") {

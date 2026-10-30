@@ -42,6 +42,7 @@
     onOpenInEditor,
     onOpenReadonlyDiff,
     onIgnore,
+    onFileHistory,
     absPath,
     runQuery,
   }: {
@@ -54,6 +55,8 @@
     onOpenReadonlyDiff: (path: string, staged: boolean) => void;
     /** Append a pattern to the repo's .gitignore. */
     onIgnore: (pattern: string) => void;
+    /** Show the history of one file (repo-relative path). */
+    onFileHistory?: (path: string) => void;
     /** Absolute path of a repo-relative file (for "copy absolute path"). */
     absPath: (path: string) => string;
     /** Read-only git query — used to fetch the staged diff for the AI drafter. */
@@ -199,6 +202,9 @@
         label: t("git.openDiff"),
         onSelect: () => onOpenReadonlyDiff(file.path, isStaged),
       },
+      ...(onFileHistory && !untracked
+        ? [{ icon: "history" as const, label: t("git.fileHistory"), onSelect: () => onFileHistory(file.path) }]
+        : []),
       { kind: "separator" },
     ];
     if (!isStaged) {
@@ -284,7 +290,7 @@
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, true))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
@@ -365,7 +371,7 @@
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
           <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, false))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>

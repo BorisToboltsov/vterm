@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  clockTime,
+  commitDay,
   commitMoment,
   commitTooltip,
   commitTree,
+  commitTreeDirs,
   committerLine,
   fileStatusColor,
   gitAge,
+  isLogWide,
+  LOG_WIDE_REM,
 } from "./gitview";
 import { compactAge } from "../ui/age";
 import type { CommitFile } from "./git";
@@ -14,7 +19,7 @@ describe("fileStatusColor", () => {
   it("maps status letters to the theme's status tokens", () => {
     expect(fileStatusColor("A")).toBe("text-ok");
     expect(fileStatusColor("?")).toBe("text-ok");
-    expect(fileStatusColor("M")).toBe("text-warn");
+    expect(fileStatusColor("M")).toBe("text-accent");
     expect(fileStatusColor("D")).toBe("text-bad");
     expect(fileStatusColor("U")).toBe("text-bad");
     expect(fileStatusColor("R")).toBe("text-accent");
@@ -29,6 +34,42 @@ describe("fileStatusColor", () => {
     for (const s of ["A", "?", "M", "D", "U", "R", "C", ".", "", "X"]) {
       expect(fileStatusColor(s)).not.toMatch(/-\d{2,3}$/);
     }
+  });
+});
+
+describe("commitDay", () => {
+  const noon = new Date(2026, 9, 31, 12, 0).getTime();
+  const at = (y: number, m: number, d: number, h = 0) => new Date(y, m, d, h).getTime() / 1000;
+  it("names today and yesterday by the calendar, not by 24 hours", () => {
+    expect(commitDay(at(2026, 9, 31, 0), noon)).toBe("today");
+    expect(commitDay(at(2026, 9, 30, 23), noon)).toBe("yesterday");
+    expect(commitDay(at(2026, 9, 30, 0), noon)).toBe("yesterday");
+    expect(commitDay(at(2026, 9, 29, 23), noon)).toBeNull();
+  });
+  it("does not call a moment from the future today's", () => {
+    expect(commitDay(at(2026, 10, 1, 1), noon)).toBeNull();
+  });
+});
+
+describe("clockTime", () => {
+  it("is the time of day of the same moment", () => {
+    const ts = new Date(2026, 9, 7, 14, 3).getTime() / 1000;
+    expect(clockTime(ts)).toBe("14:03");
+    expect(commitMoment(ts)).toBe("2026-10-07 14:03");
+  });
+});
+
+describe("isLogWide", () => {
+  it("has a threshold of its own, under the panel's", () => {
+    expect(LOG_WIDE_REM).toBeLessThan(48);
+    expect(isLogWide(575)).toBe(false);
+    expect(isLogWide(576)).toBe(true);
+    expect(isLogWide(720, 20)).toBe(true);
+  });
+  it("is narrow for a width it cannot read", () => {
+    expect(isLogWide(Number.NaN)).toBe(false);
+    expect(isLogWide(0)).toBe(false);
+    expect(isLogWide(1000, 0)).toBe(false);
   });
 });
 
@@ -186,5 +227,17 @@ describe("commitTree", () => {
 
   it("does not trip on doubled or trailing slashes", () => {
     expect(drawn([f("a//b.ts"), f("dir/")])).toEqual(["a/ (1)", "  b.ts [M]", "dir [M]"]);
+  });
+});
+
+describe("commitTreeDirs", () => {
+  it("names every directory, folded chains under their full path", () => {
+    const files: CommitFile[] = [
+      { path: "a/b/c.ts", status: "M" },
+      { path: "a/d/e.ts", status: "A" },
+      { path: "x/y/z/f.ts", status: "D" },
+      { path: "top.ts", status: "M" },
+    ];
+    expect([...commitTreeDirs(files)].sort()).toEqual(["a", "a/b", "a/d", "x/y/z"]);
   });
 });

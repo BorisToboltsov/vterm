@@ -51,8 +51,20 @@ import {
   parseStatus,
   parseLog,
   parseBranches,
+  parseContains,
+  parseDecoration,
+  parseTags,
   parseStashes,
   parseDiff,
+  LOG_PAGE,
+  LOG_SINCE,
+  NO_FILTER,
+  isFiltered,
+  looksLikeHash,
+  hashLookupArgs,
+  updateBranchArgs,
+  commitDiffArgs,
+  type LogFilter,
   parseCommitFiles,
   stagedFiles,
   unstagedFiles,
@@ -61,10 +73,6 @@ import {
   isUncommittedChangesError,
   isRemoteConnectionError,
   parseSyncResult,
-  buildGraph,
-  railColor,
-  RAIL_COLORS,
-  type GitCommit,
   stagedDiffArgs,
 } from "./git";
 import * as git from "./git";
@@ -285,14 +293,19 @@ describe("parseLog", () => {
     const US = "\x1f";
     // NUL-separated records (-z); the body carries newlines safely.
     const raw =
-      ["h1", "h1s", "p1 p2", "Ann", "1700000000", "HEAD -> main, tag: v1, origin/main", "merge branches", "Body one.\nBody two."].join(US) +
+      ["h1", "h1s", "p1 p2", "Ann", "1700000000", "GitHub", "HEAD -> refs/heads/main, tag: refs/tags/v1, refs/remotes/origin/main", "merge branches", "Body one.\nBody two."].join(US) +
       "\0" +
-      ["p1", "p1s", "", "Bob", "1699999999", "", "root", ""].join(US);
+      ["p1", "p1s", "", "Bob", "1699999999", "Bob", "", "root", ""].join(US);
     const commits = parseLog(raw);
     expect(commits).toHaveLength(2);
     expect(commits[0].hash).toBe("h1");
     expect(commits[0].parents).toEqual(["p1", "p2"]);
-    expect(commits[0].refs).toEqual(["main", "v1", "origin/main"]);
+    expect(commits[0].committer).toBe("GitHub");
+    expect(commits[0].refs).toEqual([
+      { kind: "head", name: "main" },
+      { kind: "tag", name: "v1" },
+      { kind: "remote", name: "origin/main" },
+    ]);
     expect(commits[0].head).toBe(true);
     expect(commits[0].subject).toBe("merge branches");
     expect(commits[0].body).toBe("Body one.\nBody two.");
@@ -300,6 +313,162 @@ describe("parseLog", () => {
     expect(commits[1].refs).toEqual([]);
     expect(commits[1].head).toBe(false);
     expect(commits[1].body).toBe("");
+  });
+
+  it("drops a record cut short rather than shift its fields", () => {
+    expect(parseLog(["h", "s", "", "Ann", "1"].join("\x1f"))).toEqual([]);
+  });
+});
+
+describe("parseDecoration", () => {
+  it("tells a branch, a remote branch and a tag apart by what git calls them", () => {
+    expect(parseDecoration("refs/heads/fix/x, refs/remotes/origin/fix/x, tag: refs/tags/v1.2").refs).toEqual([
+      { kind: "local", name: "fix/x" },
+      { kind: "remote", name: "origin/fix/x" },
+      { kind: "tag", name: "v1.2" },
+    ]);
+  });
+  it("says HEAD only of HEAD: origin/HEAD is not this checkout", () => {
+    expect(parseDecoration("refs/remotes/origin/HEAD, refs/remotes/origin/main")).toEqual({
+      refs: [{ kind: "remote", name: "origin/main" }],
+      head: false,
+    });
+  });
+  it("marks a detached HEAD without a label for it", () => {
+    expect(parseDecoration("HEAD")).toEqual({ refs: [], head: true });
+    expect(parseDecoration("HEAD -> refs/heads/main")).toEqual({
+      refs: [{ kind: "head", name: "main" }],
+      head: true,
+    });
+  });
+  it("leaves out what is neither a branch nor a tag", () => {
+    expect(parseDecoration("refs/stash").refs).toEqual([]);
+  });
+  it("reads a short name as a local branch, a short tag as a tag", () => {
+    expect(parseDecoration("main, tag: v1").refs).toEqual([
+      { kind: "local", name: "main" },
+      { kind: "tag", name: "v1" },
+    ]);
+  });
+});
+
+describe("logArgs", () => {
+  it("asks for full ref names, the whole history, a page at a time", () => {
+    const args = logArgs();
+    expect(args).toContain("--decorate=full");
+    expect(args).toContain("--all");
+    expect(args[args.indexOf("-n") + 1]).toBe(String(LOG_PAGE));
+    expect(args.some((a) => a.startsWith("--skip"))).toBe(false);
+  });
+  it("goes on from where it stopped", () => {
+    expect(logArgs(200, 400)).toContain("--skip=400");
+  });
+  const tail = (filter: Partial<LogFilter>) => {
+    const args = logArgs(10, 0, { ...NO_FILTER, ...filter });
+    return args.slice(args.indexOf("10") + 1);
+  };
+  it("searches messages literally and without case unless told otherwise", () => {
+    expect(tail({ text: "a.b" })).toEqual(["--grep=a.b", "-F", "-i", "--all"]);
+    expect(tail({ text: "a.b", regex: true, matchCase: true })).toEqual(["--grep=a.b", "-E", "--all"]);
+  });
+  it("takes an author's name as a name, also beside a regular expression", () => {
+    expect(tail({ author: "dependabot[bot]" })).toEqual(["--author=dependabot[bot]", "-F", "--all"]);
+    expect(tail({ text: "x", regex: true, author: "dependabot[bot]" })).toEqual([
+      "--grep=x",
+      "-E",
+      "-i",
+      "--author=dependabot\\[bot\\]",
+      "--all",
+    ]);
+  });
+  it("narrows to one ref, a period and a path, the path last", () => {
+    expect(tail({ branch: "refs/heads/x", since: "week", path: "a b.ts" })).toEqual([
+      "--since=7.days.ago",
+      "refs/heads/x",
+      "--",
+      "a b.ts",
+    ]);
+    for (const since of LOG_SINCE) expect(tail({ since }).join(" ")).toContain("--since=");
+  });
+  it("follows one file through its renames, and only a file", () => {
+    expect(tail({ path: "a.ts", follow: true })).toEqual(["--follow", "--all", "--", "a.ts"]);
+    expect(tail({ follow: true })).toEqual(["--all"]);
+  });
+  it("never lets a search value be read as an option of its own", () => {
+    for (const a of logArgs(10, 0, { ...NO_FILTER, text: "--output=/tmp/x" })) {
+      expect(a.startsWith("--output")).toBe(false);
+    }
+  });
+});
+
+describe("isFiltered", () => {
+  it("is about what narrows the history, not how a search is read", () => {
+    expect(isFiltered(NO_FILTER)).toBe(false);
+    expect(isFiltered({ ...NO_FILTER, regex: true, matchCase: true })).toBe(false);
+    for (const f of [{ text: "x" }, { branch: "refs/heads/x" }, { author: "a" }, { since: "week" as const }, { path: "p" }]) {
+      expect(isFiltered({ ...NO_FILTER, ...f })).toBe(true);
+    }
+  });
+});
+
+describe("looksLikeHash and hashLookupArgs", () => {
+  it("takes hex of a commit's length, and nothing an option could start with", () => {
+    expect(looksLikeHash("1591790")).toBe(true);
+    expect(looksLikeHash("ABCD")).toBe(true);
+    expect(looksLikeHash("abc")).toBe(false);
+    expect(looksLikeHash("fix: x")).toBe(false);
+    expect(looksLikeHash("--all")).toBe(false);
+    expect(looksLikeHash("a".repeat(41))).toBe(false);
+  });
+  it("asks for that one commit, closing the revisions so it is never read as a path", () => {
+    const args = hashLookupArgs("abcd");
+    expect(args.slice(-4)).toEqual(["-n", "1", "abcd", "--"]);
+    expect(args).not.toContain("--all");
+  });
+});
+
+describe("branchesArgs", () => {
+  it("asks where a branch is checked out, or does not, for a git too old to know", () => {
+    expect(branchesArgs().at(-1)).toContain("%(worktreepath)");
+    expect(branchesArgs(false).at(-1)).not.toContain("worktreepath");
+  });
+  it("reads the upstream's state in both forms", () => {
+    expect(branchesArgs().at(-1)).toContain("%(upstream:trackshort)%00%(upstream:track,nobracket)");
+  });
+});
+
+describe("updateBranchArgs", () => {
+  it("fast-forwards from the upstream; no + in the refspec, so a diverged branch is refused", () => {
+    expect(updateBranchArgs({ name: "main", upstream: "origin/main" })).toEqual(["fetch", "origin", "main:main"]);
+    expect(updateBranchArgs({ name: "x", upstream: "fork/feat/x" })).toEqual(["fetch", "fork", "feat/x:x"]);
+  });
+  it("has nothing to do for a branch without one", () => {
+    expect(updateBranchArgs({ name: "x", upstream: null })).toBeNull();
+    expect(updateBranchArgs({ name: "x", upstream: "local" })).toBeNull();
+  });
+});
+
+describe("commitDiffArgs", () => {
+  it("shows a commit, and a merge against its first parent as its file list does", () => {
+    expect(commitDiffArgs("h", false)).toEqual(["show", "--no-color", "--format=", "h"]);
+    expect(commitDiffArgs("h", true)).toEqual(["diff", "--no-color", "h^1", "h"]);
+  });
+});
+
+describe("parseTags", () => {
+  it("takes the commit of an annotated tag, the object of a lightweight one", () => {
+    expect(parseTags("v2\0aaa\0bbb\nv1\0ccc\0\n")).toEqual([
+      { name: "v2", short: "bbb" },
+      { name: "v1", short: "ccc" },
+    ]);
+  });
+});
+
+describe("parseContains", () => {
+  it("names local branches first and leaves out origin/HEAD and a detached line", () => {
+    expect(
+      parseContains("refs/remotes/origin/main\nrefs/heads/x\nrefs/remotes/origin/HEAD\n(HEAD detached at abc)\n"),
+    ).toEqual(["x", "origin/main"]);
   });
 });
 
@@ -319,6 +488,26 @@ describe("parseBranches", () => {
     expect(main.remote).toBe(false);
     const remote = br.find((b) => b.remote)!;
     expect(remote.name).toBe("origin/main");
+  });
+
+  it("reads the upstream's state whatever language the host's git speaks", () => {
+    const row = (short: string, track: string) =>
+      ["*", "refs/heads/a", "abc", "origin/a", "s", short, track, "100", ""].join("\0");
+    const track = (short: string, text: string) => parseBranches(row(short, text))[0].track;
+    expect(track(">", "voraus 3")).toEqual({ ahead: 3, behind: 0, gone: false });
+    expect(track("<", "позади 2")).toEqual({ ahead: 0, behind: 2, gone: false });
+    expect(track("<>", "ahead 3, behind 2")).toEqual({ ahead: 3, behind: 2, gone: false });
+    expect(track("=", "")).toEqual({ ahead: 0, behind: 0, gone: false });
+    expect(track("", "gone")).toEqual({ ahead: 0, behind: 0, gone: true });
+    expect(track("", "")).toBeNull();
+  });
+
+  it("takes the date and the worktree when the host's git gave them", () => {
+    const [b] = parseBranches([" ", "refs/heads/a", "abc", "", "s", "", "", "1700000000", "/repo/wt"].join("\0"));
+    expect(b.date).toBe(1700000000);
+    expect(b.worktree).toBe("/repo/wt");
+    const [old] = parseBranches(" \0refs/heads/a\0abc\0\0s");
+    expect(old).toMatchObject({ date: 0, worktree: null, track: null });
   });
 });
 
@@ -535,50 +724,6 @@ describe("needsConfirm", () => {
       expect(isDestructive(args)).toBe(true);
       expect(needsConfirm(args)).toBe(true);
     }
-  });
-});
-
-describe("buildGraph", () => {
-  const c = (hash: string, parents: string[]): GitCommit => ({
-    hash,
-    short: hash,
-    parents,
-    author: "a",
-    timestamp: 0,
-    refs: [],
-    subject: hash,
-    body: "",
-    head: false,
-  });
-
-  it("places a linear history in a single lane", () => {
-    const rows = buildGraph([c("c", ["b"]), c("b", ["a"]), c("a", [])]);
-    expect(rows.map((r) => r.col)).toEqual([0, 0, 0]);
-    expect(rows.every((r) => r.lanes >= 1)).toBe(true);
-    // Last (root) commit has no parents → no outgoing 'out' segment.
-    expect(rows[2].segments.some((s) => s.kind === "out")).toBe(false);
-  });
-
-  it("assigns a merge commit two outgoing segments", () => {
-    const rows = buildGraph([c("m", ["a", "b"]), c("b", ["a"]), c("a", [])]);
-    const merge = rows[0];
-    expect(merge.segments.filter((s) => s.kind === "out")).toHaveLength(2);
-    // A second lane must appear for the second parent.
-    expect(Math.max(...rows.map((r) => r.lanes))).toBeGreaterThanOrEqual(2);
-  });
-
-  it("draws a merge-in when a lane converges into a later commit", () => {
-    const rows = buildGraph([c("m", ["a", "b"]), c("b", ["a"]), c("a", [])]);
-    // Commit 'a' is reached from two lanes → an 'in' convergence segment exists.
-    const a = rows[2];
-    expect(a.segments.some((s) => s.kind === "in")).toBe(true);
-  });
-});
-
-describe("railColor", () => {
-  it("cycles and handles wrap", () => {
-    expect(railColor(0)).toBe(RAIL_COLORS[0]);
-    expect(railColor(RAIL_COLORS.length)).toBe(RAIL_COLORS[0]);
   });
 });
 

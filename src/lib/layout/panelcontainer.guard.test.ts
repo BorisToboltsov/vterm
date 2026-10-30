@@ -312,8 +312,9 @@ describe("panel container guard", () => {
 
   it("a commit's details stand beside the history only where the row holds both", () => {
     expect(commitPaneViolations(all["lib/git/GitGraph.svelte"])).toEqual([]);
-    // The list is a container of its own, and holds nothing fixed.
-    expect(containerSubtrees(markupOf(all["lib/git/GitGraph.svelte"]))).toHaveLength(1);
+    // The list measures itself: how tall a row is depends on its width, and the
+    // SVG beside the rows has to read the same number.
+    expect(containerSubtrees(markupOf(all["lib/git/GitGraph.svelte"]))).toHaveLength(0);
     expect(containerViolations("lib/git/GitGraph.svelte", all)).toEqual([]);
   });
 

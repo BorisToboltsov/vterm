@@ -328,7 +328,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Внутри контейнера нет `fixed`-элементов — ни своих, ни компонента (`Modal`/`ConfirmDialog`/
     `ContextMenu`, по цепочке импортов): в части WebView `container-type` делает элемент
     containing block для `fixed`. Гейт `panelcontainer.guard`.
-  - Порог один: `--container-wide` = `WIDE_REM` в [panelwide.ts](../src/lib/layout/panelwide.ts); JS
+  - Порог один (кроме строк истории Git, `LOG_WIDE_REM`): `--container-wide` = `WIDE_REM` в [panelwide.ts](../src/lib/layout/panelwide.ts); JS
     читает его через `wideWhen` — для поведения и для панелей, чьи диалоги в подкомпонентах
     (Git, чат ИИ, корень файловой панели).
   - Рядом со списком — содержимое, а не диалог: `SidePane` с `DockerDetail`/`K8sDetail`/
@@ -374,12 +374,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 | Драйвер | Команда · тег | Чистая логика | Обязательное |
 |---------|---------------|---------------|--------------|
-| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
+| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
 | **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). CVE-скана нет — нет офлайн-способа |
 | **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. Бинарь — `settings.kubectlPath` |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
 
+- **Линия истории Git держит полосу и цвет** (ADR 0048): `buildGraph` оставляет первого родителя на полосе коммита, соседние полосы не двигает; main — левая полоса; цвет — от имени ветки (`colorSeed`), никогда от номера полосы, иначе все ветки одной полосы одного цвета; ребро — от центра строки до центра следующей, поворот один (`edgePath`). Цвета — `--color-rail-*` из темы (`railPalette`, не ниже 3:1 на обеих панелях): константы не читались на светлых темах. Гейты `gitlanes.guard`, `gitlanes.test.ts`, `themes.test.ts`.
+- **Историю ищет git, а не фильтр по загруженному** (`LogFilter` → `logArgs`): иначе старый коммит «не найден». Обрыв называется, а не молчит: подпись и «Загрузить ещё» до `LOG_CAP`, ответ на устаревший запрос отбрасывается (`logSeq`), отказ git — текстом, а не пустым списком. Новый репозиторий сбрасывает фильтр. Строки — окном (`windowRange`): их высота зависит от ширины, поэтому список мерит себя сам, без `@container`, и у него свой порог колонок `LOG_WIDE_REM`.
+- **Клик по ветке выбирает, двойной — переключает:** выбор поднимает коммит в истории; ветка старше загруженного сужает историю до себя (`revealRef`), а не молчит. Значки дерева — полосой сбоку в широкой панели, рядом сверху в узкой. Счётчики ↑↓ разбираются по `%(upstream:trackshort)`: слова `track` переводит локаль хоста.
 - **Возраст в строке списка — один формат** (`compactAge`, [age.ts](../src/lib/ui/age.ts): не
   длиннее пяти знаков, без перевода; `k8sAge`/`dockerAge`/`gitAge`); фраза инструмента («3 weeks
   ago») не берётся; полная дата — в подсказке, нераспознанное — «—». Время файла и коммита, где
@@ -1039,6 +1042,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `windowmin.guard` | Минимальная ширина окна одна в модели, `tauri.conf.json` и `appwin.rs`; доки рисуются по `sideDockWidths` |
 | `K8sPanel.test.ts` · `k8sroute.guard` | Одно монтирование k8s — по вызову каждой команды; маршрут читается из EndpointSlice, непрочитанное — `null` |
 | `gitcwd.guard` | Git читает каталог через `gitCwd`; кнопка Git включает общее следование |
+| `gitlanes.guard` | Цвет линии истории — из темы и не от номера полосы; форма — `edgePath` |
 | `pathsync.guard` | Хук статуса сессии читает `runs` до расхода `pendingCommand` и сообщает контроллеру о подключении и конце |
 | `netcheck.guard` | Прогон «Проверки доступа» несёт ручку остановки, запускается через `go`, правила — по хосту вкладки, пределы одни во фронте и бэкенде |
 | `filetoolbar.guard` | Узкий тулбар SFTP оставляет `upload` отдельной кнопкой |

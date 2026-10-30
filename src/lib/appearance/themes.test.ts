@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { contrastRatio } from "./colormix";
+import { colorDistance, contrastRatio } from "./colormix";
 import {
+  applyRailPalette,
   applyUiPalette,
+  railPalette,
   statusPalette,
   STATUS_DARK,
   STATUS_LIGHT,
@@ -328,5 +330,55 @@ describe("statusPalette", () => {
       const s = statusPalette(t.ui, true);
       expect(s.ok, t.id).not.toBe(STATUS_DARK.ok);
     }
+  });
+});
+
+describe("the Git history's line colours", () => {
+  it("read on both panel colours of every theme", () => {
+    for (const theme of THEMES) {
+      for (const color of railPalette(theme.terminal, theme.ui)) {
+        for (const panel of [theme.ui.panel, theme.ui.panelAlt]) {
+          expect(contrastRatio(color, panel), `${theme.id}: ${color} on ${panel}`).toBeGreaterThanOrEqual(3);
+        }
+      }
+    }
+  });
+
+  it("start from the accent, and stay colours of the theme where they already read", () => {
+    const theme = getTheme(DEFAULT_THEME_ID);
+    const rails = railPalette(theme.terminal, theme.ui);
+    expect(rails[0]).toBe(theme.ui.accent);
+    expect(rails).toContain(theme.terminal.green);
+    expect(rails).toContain(theme.terminal.red);
+  });
+
+  // Schemes of one hue by design: there is nothing to tell their lines apart with.
+  const ONE_HUE = ["fallout", "amber", "ibm-3270"];
+
+  it("are seven in every theme, and can be told apart where the scheme has the colours", () => {
+    for (const theme of THEMES) {
+      const rails = railPalette(theme.terminal, theme.ui);
+      expect(rails, theme.id).toHaveLength(7);
+      if (ONE_HUE.includes(theme.id)) continue;
+      rails.forEach((a, i) =>
+        rails.slice(i + 1).forEach((b) => {
+          expect(colorDistance(a, b), `${theme.id}: ${a} and ${b}`).toBeGreaterThan(15);
+        }),
+      );
+    }
+  });
+
+  it("have seven colours, as the first paint declares them", () => {
+    const theme = getTheme(DEFAULT_THEME_ID);
+    const css = readFileSync(join(process.cwd(), "src", "app.css"), "utf8");
+    railPalette(theme.terminal, theme.ui).forEach((color, i) => {
+      expect(css, `--color-rail-${i}`).toMatch(new RegExp(`--color-rail-${i}:\\s*${color};`));
+    });
+  });
+
+  it("go onto the document", () => {
+    const theme = getTheme(DEFAULT_THEME_ID);
+    applyRailPalette(theme.terminal, theme.ui);
+    expect(document.documentElement.style.getPropertyValue("--color-rail-1")).toBe(theme.terminal.green);
   });
 });

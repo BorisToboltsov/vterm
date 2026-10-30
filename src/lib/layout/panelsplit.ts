@@ -6,10 +6,10 @@
 
 /** The panels that split in two, and the share of the row the first part starts with. */
 export const PANEL_SPLITS = {
-  // Changes (or branches) beside the history: the history is the wider one.
-  git: 0.4,
-  // The history beside the commit opened from it: the list keeps a little more.
-  gitCommit: 0.55,
+  // Branches (or changes) beside the history: the history is by far the wider one.
+  git: 0.22,
+  // The history beside the commit shown next to it: the list keeps about two thirds.
+  gitCommit: 0.65,
   // The file listing beside the search results and the transfers: the listing
   // is the table, so it keeps the larger part.
   files: 0.62,

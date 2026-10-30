@@ -24,6 +24,16 @@
   --color-bad: #f2707a;
   --color-muted: #8a97ad;
   --color-text: #cdd6e6;
+  /* The lines of the Git history: 0 is the main line, the rest go to other branches
+     by name. `applyRailPalette` overrides them per theme from its ANSI colours;
+     these are Deep Well's, for the first paint. */
+  --color-rail-0: #7db3ff;
+  --color-rail-1: #5fd39a;
+  --color-rail-2: #b79cff;
+  --color-rail-3: #e6b866;
+  --color-rail-4: #67d5e0;
+  --color-rail-5: #f2707a;
+  --color-rail-6: #d586bd;
 
   /* Type scale (Phase 44). Names the two sizes the UI was already using as 328
      hand-written `text-[10px]`/`text-[11px]` literals, so the choice between them

@@ -70,7 +70,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 | Область | Чистая логика (основное покрытие) | Rust |
 |---------|-----------------------------------|------|
 | Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termpaste`, `broadcast`, `osc`; компонентный `TerminalPasteDialog`; гейты `termpaste.guard`, `taboverflow.guard` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
-| Драйверы панелей | `git`, `gitview`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
+| Драйверы панелей | `git`, `gitview`, `gitlanes` (связность и постоянство линий на случайных историях), `gitrefs`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
 | Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives`, `filedrop`, `dragout` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки), `dragout.rs` + `dragout/feed.rs` (вынос файла: что обещается, поток для Проводника, раскладка описателя) |
 | Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce`, `workspaces`, `editoraccess.guard` | `textenc.rs`, `sftp.rs` (путь проверки прав), `localfile.rs` (локальная копия), `servertools.rs` |
 | Мониторинг | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` | `metrics/mod.rs` (30 тестов — парсеры проб), `metrics/local.rs` |

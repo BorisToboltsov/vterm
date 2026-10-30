@@ -33,6 +33,14 @@ export function mixHex(a: string, b: string, percent: number): string {
   );
 }
 
+/** How far apart two hex colours are, straight through RGB (0 … 441); non-hex is far from all. */
+export function colorDistance(a: string, b: string): number {
+  const x = rgb(a);
+  const y = rgb(b);
+  if (!x || !y) return Infinity;
+  return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+}
+
 /** WCAG relative luminance of a hex colour (0 black … 1 white), or null. */
 function luminance(hex: string): number | null {
   const c = rgb(hex);
