@@ -10,6 +10,7 @@ const file = (p: Partial<Extract<FileLinkQuestion, { kind: "open" }>> = {}): Fil
   target: { kind: "file", path: "/etc/nginx/nginx.conf" },
   where: "web-01",
   prod: false,
+  following: false,
   ...p,
 });
 
@@ -20,6 +21,15 @@ function open(ask: FileLinkQuestion | null) {
 }
 
 describe("FileLinkDialog", () => {
+  it("says a folder moves the terminal too, only while path sync is on", () => {
+    const dir = { kind: "dir" as const, path: "/var/log" };
+    const { unmount } = render(FileLinkDialog, { props: { ask: file({ target: dir, following: true }), onanswer: vi.fn() } });
+    expect(screen.getByTestId("filelink-hint").textContent).toContain("terminal moves there too");
+    unmount();
+    open(file({ target: dir }));
+    expect(screen.getByTestId("filelink-hint").textContent).not.toContain("terminal moves");
+  });
+
   it("renders nothing without a question", () => {
     open(null);
     expect(screen.queryByTestId("filelink-path")).toBeNull();

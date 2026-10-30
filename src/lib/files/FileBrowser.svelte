@@ -416,25 +416,28 @@
   /**
    * Open `path` because something outside asked (a folder clicked in terminal
    * output). An SFTP panel not connected yet connects straight to it — the
-   * click is the user's go-ahead, as the Connect button would be.
+   * click is the user's go-ahead, as the Connect button would be. It is a user's
+   * move like any other, so the terminal goes there too — once the folder opened:
+   * a `cd` typed into a shell over a folder that refused would be a stray line.
    */
   async function openDir(path: string) {
     if (isConnected) {
       await load(path);
-      return;
+    } else {
+      connecting = true;
+      error = "";
+      await load(path);
+      connecting = false;
+      connected = error === "";
+      persist();
+      if (connected && !homePath) {
+        adapter
+          .home()
+          .then((home) => (homePath = home))
+          .catch(() => {});
+      }
     }
-    connecting = true;
-    error = "";
-    await load(path);
-    connecting = false;
-    connected = error === "";
-    persist();
-    if (connected && !homePath) {
-      adapter
-        .home()
-        .then((home) => (homePath = home))
-        .catch(() => {});
-    }
+    if (cwd === path && error === "") syncTerminalCwd(path);
   }
 
   // Re-list when the pane comes back into view. It stayed mounted while hidden, so

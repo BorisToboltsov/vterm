@@ -161,6 +161,7 @@ export const en = {
   "filelink.path": "Path",
   "filelink.fileHint": "It opens in the editor of this connection. The name was looked up in the folder the command ran in — check the path.",
   "filelink.fileLineHint": "It opens in the editor of this connection, at line {line}. The name was looked up in the folder the command ran in — check the path.",
+  "filelink.dirHintFollow": "It opens in the file panel, and the terminal moves there too: path sync is on. The name was looked up in the folder the command ran in — check the path.",
   "filelink.dirHint": "It opens in the file panel. The name was looked up in the folder the command ran in — check the path.",
   "filelink.prod": "A production server: what you change here changes there.",
   "filelink.syncTitle": "Which folder was this?",

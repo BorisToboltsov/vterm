@@ -89,10 +89,19 @@ describe("file link flow: a click", () => {
       target: file("/etc/nginx/nginx.conf"),
       where: "db-01",
       prod: true,
+      following: false,
     });
     expect(openFile).not.toHaveBeenCalled();
     flow.clicked("l", file("/tmp/x"));
     expect(flow.ask).toMatchObject({ sessionId: "l", where: null, prod: false });
+    cleanup();
+  });
+
+  it("the question knows path sync is on: a folder would move the terminal too", () => {
+    settings.terminalFileLinks = "confirm";
+    const { flow, cleanup } = harness([tab("a")], { a: true });
+    flow.clicked("a", { kind: "dir", path: "/var/log" });
+    expect(flow.ask).toMatchObject({ kind: "open", following: true });
     cleanup();
   });
 

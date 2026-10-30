@@ -67,7 +67,14 @@ export function createFileLinkFlow(deps: FileLinkDeps) {
       if (action.kind === "open") {
         open(id, action.target);
       } else if (action.kind === "ask") {
-        ask = { kind: "open", sessionId: id, target: action.target, where: where(tab), prod: deps.isProd(id) };
+        ask = {
+          kind: "open",
+          sessionId: id,
+          target: action.target,
+          where: where(tab),
+          prod: deps.isProd(id),
+          following: deps.following(id),
+        };
       } else if (action.kind === "offerSync") {
         ask = { kind: "sync", sessionId: id, where: where(tab), following: deps.following(id) };
       } else if (action.kind === "notFound") {

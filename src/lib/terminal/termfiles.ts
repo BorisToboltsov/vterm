@@ -112,7 +112,7 @@ export function fileLinksAllowed(tab: { attach?: unknown }): boolean {
 /** What the window asks about a clicked file link. `where` is the server's
  *  name; null — this computer. */
 export type FileLinkQuestion =
-  | { kind: "open"; sessionId: string; target: NamedPath; where: string | null; prod: boolean }
+  | { kind: "open"; sessionId: string; target: NamedPath; where: string | null; prod: boolean; following: boolean }
   | { kind: "sync"; sessionId: string; where: string | null; following: boolean };
 
 /** A click on a file link that `clickOpens` let through. */
