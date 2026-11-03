@@ -358,7 +358,7 @@
             onSelectFolder(row.path);
             listEl?.focus();
           }}
-          class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
+          class="group @container relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
           row.path
             ? 'border-accent outline outline-1 -outline-offset-1 outline-accent/70'
             : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
@@ -384,8 +384,30 @@
           <Icon name="folder" size={15} class="text-muted" />
           <span class="truncate font-medium">{row.name}</span>
           <span class="shrink-0 text-caption text-muted">{row.count}</span>
+          <!-- Same switch as a server row: narrow — one «⋯» opening the
+               right-click menu, wide — the three icons. The breakpoint is the
+               server's 12rem plus the difference of right paddings (pr-7 vs
+               pr-2), so a folder and a server at one depth switch at one dock
+               width. -->
           <div
-            class="invisible ml-auto flex shrink-0 items-center gap-1 group-hover:visible"
+            class="invisible ml-auto flex shrink-0 items-center group-hover:visible @min-[13.25rem]:hidden"
+            data-testid="folder-actions-compact"
+          >
+            <button
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.folderActions")}
+              aria-label={t("tree.folderActions")}
+              onclick={(e) => {
+                e.stopPropagation();
+                openFolderMenu(e, row.path);
+              }}
+            >
+              <Icon name="dots" size={16} strokeWidth={3} />
+            </button>
+          </div>
+          <div
+            class="invisible ml-auto hidden shrink-0 items-center gap-1 group-hover:visible @min-[13.25rem]:flex"
+            data-testid="folder-actions-full"
           >
             <button
               class="rounded p-0.5 text-muted hover:text-accent"

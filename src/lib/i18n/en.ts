@@ -302,6 +302,7 @@ export const en = {
   "tree.renameFolder": "Rename folder",
   "tree.newSubfolder": "New subfolder",
   "tree.deleteFolder": "Delete folder",
+  "tree.folderActions": "Folder actions",
   "tree.editServer": "Edit server",
   "tree.serverActions": "Server actions",
   "tree.duplicateServer": "Duplicate server",

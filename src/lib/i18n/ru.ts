@@ -300,6 +300,7 @@ export const ru: Record<MessageKey, string> = {
   "tree.renameFolder": "Переименовать папку",
   "tree.newSubfolder": "Новая подпапка",
   "tree.deleteFolder": "Удалить папку",
+  "tree.folderActions": "Действия с папкой",
   "tree.editServer": "Редактировать сервер",
   "tree.serverActions": "Действия с сервером",
   "tree.duplicateServer": "Дублировать сервер",
