@@ -1,7 +1,8 @@
 import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import DockerContainers from "./DockerContainers.svelte";
-import type { ComposeGroup, DockerContainer, DockerStat } from "./docker";
+import type { DockerContainer, DockerStat } from "./docker";
+import type { ListGroup } from "../ui/listview";
 
 function container(over: Partial<DockerContainer> = {}): DockerContainer {
   return {
@@ -22,7 +23,7 @@ function container(over: Partial<DockerContainer> = {}): DockerContainer {
 }
 
 function props(over: Record<string, unknown> = {}) {
-  const groups: ComposeGroup[] = [{ project: "", workdir: null, containers: [container()] }];
+  const groups: ListGroup<DockerContainer>[] = [{ key: "", label: "", rest: true, items: [container()] }];
   return {
     groups,
     statsById: new Map<string, DockerStat>(),
@@ -160,8 +161,8 @@ describe("DockerContainers — columns of the wide layout", () => {
   });
 
   it("drops the compose indent in the table, where every row must start at the same x", () => {
-    const groups: ComposeGroup[] = [
-      { project: "edge", workdir: "/srv/edge", containers: [container({ project: "edge" })] },
+    const groups: ListGroup<DockerContainer>[] = [
+      { key: "edge", label: "edge", rest: false, items: [container({ project: "edge", workdir: "/srv/edge" })] },
     ];
     render(DockerContainers, { props: props({ groups }) });
     const row = screen.getByRole("listitem");

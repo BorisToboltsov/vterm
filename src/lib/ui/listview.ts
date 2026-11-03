@@ -129,16 +129,19 @@ export function isFiltered(filter: ListFilter): boolean {
   return terms(filter.text).length > 0 || activeFacets(filter).length > 0;
 }
 
-/** The items the filter keeps; `except` — a facet left out (its own menu counts without it). */
-export function filterItems<T>(items: readonly T[], schema: ListSchema<T>, filter: ListFilter, except?: string): T[] {
-  const facets = (schema.facets ?? []).filter((f) => f.id !== except && picked(filter, f.id).length > 0);
-  const text = terms(filter.text).length > 0;
-  if (!text && facets.length === 0) return [...items];
-  return items.filter(
-    (item) =>
-      (!text || matchesText(schema.text(item), filter.text)) &&
-      facets.every((f) => picked(filter, f.id).includes(f.value(item))),
+/** The filter keeps the item; `except` — a facet left out (its own menu counts without it). */
+export function keeps<T>(item: T, schema: ListSchema<T>, filter: ListFilter, except?: string): boolean {
+  return (
+    matchesText(schema.text(item), filter.text) &&
+    (schema.facets ?? []).every(
+      (f) => f.id === except || picked(filter, f.id).length === 0 || picked(filter, f.id).includes(f.value(item)),
+    )
   );
+}
+
+/** The items the filter keeps, in their order. */
+export function filterItems<T>(items: readonly T[], schema: ListSchema<T>, filter: ListFilter, except?: string): T[] {
+  return items.filter((item) => keeps(item, schema, filter, except));
 }
 
 /** `items` in `sort`'s order — a new array. An unknown key keeps the tie alone. */

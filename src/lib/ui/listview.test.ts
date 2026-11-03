@@ -11,6 +11,7 @@ import {
   filterSummary,
   groupItems,
   isFiltered,
+  keeps,
   matchesText,
   NO_FILTER,
   NO_GROUPS,
@@ -114,6 +115,12 @@ describe("facets", () => {
   it("a single facet keeps one value, a multi one several", () => {
     expect(names(filterItems(BOXES, SCHEMA, filter("", { state: ["exited"] })))).toEqual(["db"]);
     expect(names(filterItems(BOXES, SCHEMA, filter("", { stack: ["mon", ""] })))).toEqual(["grafana", "redis"]);
+  });
+
+  it("tells of one item whether the filter keeps it", () => {
+    expect(keeps(BOXES[0], SCHEMA, filter("nginx", { state: ["running"] }))).toBe(true);
+    expect(keeps(BOXES[0], SCHEMA, filter("nginx", { state: ["exited"] }))).toBe(false);
+    expect(keeps(BOXES[0], SCHEMA, filter("nginx", { state: ["exited"] }), "state")).toBe(true);
   });
 
   it("field and facets narrow together", () => {

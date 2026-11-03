@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyView, facetValues, filterItems, NO_FILTER, type ListFilter } from "../ui/listview";
 import {
   type DockerStat,
   type DockerContainer,
@@ -37,7 +38,14 @@ import {
   parseNetworks,
   parseVolumes,
   parseStats,
-  groupByCompose,
+  containerSchema,
+  containerState,
+  CONTAINER_ORDER,
+  IMAGE_ORDER,
+  IMAGE_SCHEMA,
+  NET_SCHEMA,
+  STANDALONE,
+  type DockerImage,
   parseAvailability,
   isDestructive,
   needsConfirm,
@@ -202,26 +210,102 @@ describe("parsers", () => {
   });
 });
 
-describe("groupByCompose", () => {
-  it("groups by project, standalone bucket last, workdir from first", () => {
-    const cs = parsePs(
-      [
-        psRow({ 0: "1", 1: "solo", 3: "running" }),
-        psRow({ 0: "2", 1: "web-1", 3: "running", 6: "web", 8: "/srv/web" }),
-        psRow({ 0: "3", 1: "web-2", 3: "running", 6: "web" }),
-        psRow({ 0: "4", 1: "api-1", 3: "running", 6: "api", 8: "/srv/api" }),
-      ].join("\n"),
-    );
-    const groups = groupByCompose(cs);
-    expect(groups.map((g) => g.project)).toEqual(["api", "web", ""]);
-    const web = groups.find((g) => g.project === "web")!;
-    expect(web.containers).toHaveLength(2);
-    expect(web.workdir).toBe("/srv/web");
-    expect(groups[groups.length - 1].project).toBe("");
+describe("container list", () => {
+  const cs = parsePs(
+    [
+      psRow({ 0: "1", 1: "solo", 3: "running" }),
+      psRow({ 0: "2", 1: "web-2", 3: "running", 4: "Up 3 days (unhealthy)", 6: "web", 8: "/srv/web" }),
+      psRow({ 0: "3", 1: "web-1", 3: "exited", 6: "web" }),
+      psRow({ 0: "4", 1: "api-1", 3: "running", 6: "api", 8: "/srv/api" }),
+    ].join("\n"),
+  );
+  const cpu: Record<string, number | null> = { "1": 5, "2": 40, "3": null, "4": 12 };
+  const schema = containerSchema((c) => ({ cpu: cpu[c.id], mem: null }));
+
+  it("lies as it did: compose stacks by name, the standalone last, containers by name", () => {
+    const view = applyView(cs, schema, NO_FILTER, CONTAINER_ORDER);
+    expect(view.groups.map((g) => [g.key, g.rest, g.items.map((c) => c.name)])).toEqual([
+      ["api", false, ["api-1"]],
+      ["web", false, ["web-1", "web-2"]],
+      ["", true, ["solo"]],
+    ]);
   });
 
-  it("empty input yields no groups", () => {
-    expect(groupByCompose([])).toEqual([]);
+  it("orders by live CPU, a container without a figure last", () => {
+    const view = applyView(cs, schema, NO_FILTER, { sort: { key: "cpu", dir: "desc" }, group: "none" });
+    expect(view.groups[0].items.map((c) => c.name)).toEqual(["web-2", "api-1", "solo", "web-1"]);
+  });
+
+  it("tells a failing health check from running, and groups by state in lifecycle order", () => {
+    expect(cs.map(containerState)).toEqual(["running", "unhealthy", "exited", "running"]);
+    const view = applyView(cs, schema, NO_FILTER, { sort: { key: "name", dir: "asc" }, group: "state" });
+    expect(view.groups.map((g) => g.key)).toEqual(["running", "unhealthy", "exited"]);
+  });
+
+  it("narrows by state and by project, the standalone included", () => {
+    expect(facetValues(cs, schema, NO_FILTER, "compose")).toEqual([
+      { value: "web", count: 2 },
+      { value: "api", count: 1 },
+      { value: STANDALONE, count: 1 },
+    ]);
+    const solo = applyView(cs, schema, { text: "", facets: { compose: [STANDALONE] } }, CONTAINER_ORDER);
+    expect(solo.groups.flatMap((g) => g.items.map((c) => c.name))).toEqual(["solo"]);
+    const sick = applyView(cs, schema, { text: "", facets: { state: ["unhealthy"] } }, CONTAINER_ORDER);
+    expect(sick.shown).toBe(1);
+  });
+});
+
+describe("image list", () => {
+  const img = (repository: string, tag: string, size: string, created: string, id = repository + tag): DockerImage => ({
+    id,
+    repository,
+    tag,
+    size,
+    created,
+  });
+  const images = [
+    img("postgres", "16", "432MB", "2026-10-20 10:00:00 +0000 UTC"),
+    img("<none>", "<none>", "12MB", "2026-09-01 10:00:00 +0000 UTC"),
+    img("nginx", "1.27", "190MB", "2026-11-01 10:00:00 +0000 UTC"),
+    img("postgres", "15", "412MB", "?"),
+  ];
+
+  it("orders by size and by time, an unknown time last", () => {
+    const bySize = applyView(images, IMAGE_SCHEMA, NO_FILTER, { sort: { key: "size", dir: "desc" }, group: "none" });
+    expect(bySize.groups[0].items.map((i) => `${i.repository}:${i.tag}`)).toEqual([
+      "postgres:16",
+      "postgres:15",
+      "nginx:1.27",
+      "<none>:<none>",
+    ]);
+    const byTime = applyView(images, IMAGE_SCHEMA, NO_FILTER, { sort: { key: "created", dir: "desc" }, group: "none" });
+    expect(byTime.groups[0].items.map((i) => i.tag).at(-1)).toBe("15");
+  });
+
+  it("groups by repository, the dangling ones as the rest; the facet tells them apart", () => {
+    const view = applyView(images, IMAGE_SCHEMA, NO_FILTER, { ...IMAGE_ORDER, group: "repo" });
+    expect(view.groups.map((g) => [g.key, g.items.length])).toEqual([
+      ["nginx", 1],
+      ["postgres", 2],
+      ["", 1],
+    ]);
+    expect(facetValues(images, IMAGE_SCHEMA, NO_FILTER, "kind")).toEqual([
+      { value: "tagged", count: 3 },
+      { value: "dangling", count: 1 },
+    ]);
+  });
+});
+
+describe("networks sub-tab filter", () => {
+  it("narrows by name; a picked driver leaves the ports out", () => {
+    const items = [
+      { kind: "port" as const, name: "web-1" },
+      { kind: "network" as const, name: "web_default", driver: "bridge" },
+      { kind: "volume" as const, name: "pgdata", driver: "local" },
+    ];
+    const names = (f: ListFilter) => filterItems(items, NET_SCHEMA, f).map((i) => i.name);
+    expect(names({ text: "web", facets: {} })).toEqual(["web-1", "web_default"]);
+    expect(names({ text: "", facets: { driver: ["bridge"] } })).toEqual(["web_default"]);
   });
 });
 

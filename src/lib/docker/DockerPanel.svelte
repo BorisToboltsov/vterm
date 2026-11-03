@@ -25,6 +25,11 @@
   import DockerDetail from "./DockerDetail.svelte";
   import DockerText from "./DockerText.svelte";
   import SidePane from "../ui/SidePane.svelte";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import { listMenuText, type ListLabels } from "../ui/listtext";
+  import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
+  import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
@@ -55,10 +60,15 @@
     parseLimits,
     type DockerLimits,
     DOCKER_GROUP_ADD_CMD,
-    groupByCompose,
     needsConfirm,
+    containerSchema,
+    parseMemUsed,
+    pruneImagesArgs,
+    CONTAINER_ORDER,
+    IMAGE_ORDER,
+    IMAGE_SCHEMA,
+    STANDALONE,
     type DockerAvailability,
-    type ComposeGroup,
     type DockerImage,
     type DockerNetwork,
     type DockerVolume,
@@ -68,7 +78,14 @@
     type DockerRegistry,
   } from "./docker";
   import { parsePercent, pushSamples, type LoadHistory } from "../monitoring/loadhistory";
-  import { rememberSub, storedSub } from "../stores/dockstate.svelte";
+  import {
+    collapsedGroups,
+    listFilter,
+    rememberSub,
+    setGroupsCollapsed,
+    setListFilter,
+    storedSub,
+  } from "../stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { untrack } from "svelte";
   import { t, type MessageKey } from "../i18n";
@@ -112,7 +129,6 @@
   // skeleton so the panel never flashes "No containers" before the first `ps`.
   let firstLoadDone = $state(false);
 
-  let groups = $state<ComposeGroup[]>([]);
   let statsById = $state<Map<string, DockerStat>>(new Map());
   // CPU history per container id, fed by the poll that already runs (Phase 42).
   let cpuHistory = $state<LoadHistory>({});
@@ -134,6 +150,48 @@
     netView = view;
     rememberSub(sessionId, "dockerNet", view);
   }
+
+  // The filter rows of the three sub-tabs (v1.29, ADR 0050): what each list is
+  // narrowed to and which of its groups are folded are this session's
+  // (`dockstate`); how it is ordered and grouped is the app's, per list.
+  const filterOf = (list: ListId): ListFilter => listFilter(sessionId, list);
+  const setFilter = (list: ListId) => (next: ListFilter) => setListFilter(sessionId, list, next);
+  const foldOf = (list: ListId) => collapsedGroups(sessionId, list);
+  const toggleFold = (list: ListId) => (key: string) =>
+    setGroupsCollapsed(sessionId, list, [key], !collapsedGroups(sessionId, list).includes(key));
+
+  function statOf(c: DockerContainer): DockerStat | undefined {
+    return statsById.get(c.id) ?? statsById.get(c.id.slice(0, 12));
+  }
+  // The schema reads the live snapshot when it compares: ordering by CPU follows the poll.
+  const CONTAINERS = containerSchema((c) => ({ cpu: parsePercent(statOf(c)?.cpu), mem: parseMemUsed(statOf(c)?.mem) }));
+  const SORT_LABEL: Record<string, MessageKey> = {
+    name: "docker.name",
+    image: "docker.image",
+    state: "docker.status",
+    cpu: "docker.cpu",
+    mem: "docker.mem",
+    size: "docker.size",
+    created: "docker.created",
+  };
+  const CONTAINER_LABELS: ListLabels = {
+    group: (id) => t(id === "compose" ? "docker.compose" : "docker.status"),
+    sort: (id) => t(SORT_LABEL[id]),
+    facet: (id) => t(id === "compose" ? "docker.compose" : "docker.status"),
+    value: (facet, v) => (facet === "compose" && v === STANDALONE ? t("docker.standalone") : v),
+  };
+  const IMAGE_LABELS: ListLabels = {
+    group: () => t("docker.repository"),
+    sort: (id) => t(SORT_LABEL[id]),
+    facet: () => t("docker.imageKind"),
+    value: (_f, v) => t(v === "dangling" ? "docker.imageDangling" : "docker.imageTagged"),
+  };
+  const containerFilter = $derived(filterOf("docker.containers"));
+  const containerOrder = $derived(listOrder("docker.containers", CONTAINERS, CONTAINER_ORDER));
+  const containerView = $derived(applyView(containers, CONTAINERS, containerFilter, containerOrder));
+  const imageFilter = $derived(filterOf("docker.images"));
+  const imageOrder = $derived(listOrder("docker.images", IMAGE_SCHEMA, IMAGE_ORDER));
+  const imageView = $derived(applyView(images, IMAGE_SCHEMA, imageFilter, imageOrder));
 
   // The wide layout (v1.7): the panel is laid out by its container query, but
   // whether details open beside the list or as a dialog is behaviour, not layout
@@ -165,11 +223,7 @@
   // Overview/stats update live); close it if the container disappears.
   const liveDetail = $derived.by(() => {
     if (!detailContainer) return null;
-    for (const g of groups) {
-      const found = g.containers.find((c) => c.id === detailContainer!.id);
-      if (found) return found;
-    }
-    return null;
+    return containers.find((c) => c.id === detailContainer!.id) ?? null;
   });
   const detailStat = $derived.by(() => {
     const c = liveDetail;
@@ -302,13 +356,12 @@
       if (activeSub === "containers") {
         const [ps, st] = await Promise.all([runQuery(psArgs()), runQuery(statsArgs())]);
         containers = parsePs(ps.stdout);
-        groups = groupByCompose(containers);
         const map = new Map<string, DockerStat>();
         for (const s of parseStats(st.stdout)) map.set(s.id, s);
         statsById = map;
         // Fold this snapshot into the rolling history. Keyed off the `ps` list so
         // a container that vanished between the two commands drops its history.
-        const live = groups.flatMap((g) => g.containers.map((c) => c.id));
+        const live = containers.map((c) => c.id);
         const cpu = new Map<string, number>();
         for (const id of live) {
           const pct = parsePercent((map.get(id) ?? map.get(id.slice(0, 12)))?.cpu);
@@ -562,11 +615,41 @@
           {/each}
         </div>
       {:else if activeSub === "containers"}
-        {#if groups.length === 0}
+        {#if containers.length === 0}
           <EmptyState icon="container" title={t("docker.noContainers")} hint={t("docker.noContainersHint")} />
         {:else}
+          <div class="flex h-full min-h-0 flex-col">
+          <ListHeader
+            items={containers}
+            schema={CONTAINERS}
+            filter={containerFilter}
+            onfilter={setFilter("docker.containers")}
+            order={containerOrder}
+            onorder={(o) => setListOrder("docker.containers", o)}
+            shown={containerView.shown}
+            total={containerView.total}
+            labels={CONTAINER_LABELS}
+            placeholder={t("docker.filterContainers")}
+            {wide}
+            onmenu={(m) => (menu = m)}
+            fold={(c) => setGroupsCollapsed(sessionId, "docker.containers", containerView.groups.map((g) => g.key), c)}
+            testid="docker-list-header"
+          />
+          <div class="min-h-0 flex-1">
+          {#if containerView.shown === 0}
+            <FilteredEmpty
+              summary={filterSummary(CONTAINERS, containerFilter, listMenuText(CONTAINER_LABELS))}
+              onreset={() => setListFilter(sessionId, "docker.containers", NO_FILTER)}
+            />
+          {:else}
           <DockerContainers
-            {groups}
+            groups={containerView.groups}
+            grouped={containerView.grouped}
+            grouping={containerOrder.group}
+            collapsed={foldOf("docker.containers")}
+            ontoggle={toggleFold("docker.containers")}
+            sort={containerOrder.sort}
+            onsort={(key) => setListOrder("docker.containers", { ...containerOrder, sort: nextSort(CONTAINERS, containerOrder.sort, key) })}
             {statsById}
             {cpuHistory}
             {limitsById}
@@ -579,11 +662,77 @@
             onViewDetails={openDetails}
             {showMenu}
           />
+          {/if}
+          </div>
+          </div>
         {/if}
       {:else if activeSub === "images"}
-        <DockerImages {images} {busy} {run} onInspect={openImageInspect} {showMenu} />
+        {#if images.length === 0}
+          <EmptyState icon="container" title={t("docker.noImages")} />
+        {:else}
+          <div class="flex h-full min-h-0 flex-col">
+            <ListHeader
+              items={images}
+              schema={IMAGE_SCHEMA}
+              filter={imageFilter}
+              onfilter={setFilter("docker.images")}
+              order={imageOrder}
+              onorder={(o) => setListOrder("docker.images", o)}
+              shown={imageView.shown}
+              total={imageView.total}
+              labels={IMAGE_LABELS}
+              placeholder={t("docker.filterImages")}
+              {wide}
+              onmenu={(m) => (menu = m)}
+              fold={(c) => setGroupsCollapsed(sessionId, "docker.images", imageView.groups.map((g) => g.key), c)}
+              testid="docker-images-header"
+            >
+              <button
+                class="flex shrink-0 items-center gap-1 rounded px-1.5 py-0.5 hover:bg-edge hover:text-text disabled:opacity-40"
+                disabled={busy}
+                onclick={() => run(pruneImagesArgs(), { destructive: true, successKey: "docker.pruned" })}
+              >
+                <Icon name="trash" size={12} />
+                {t("docker.pruneImages")}
+              </button>
+            </ListHeader>
+            <div class="min-h-0 flex-1">
+              {#if imageView.shown === 0}
+                <FilteredEmpty
+                  summary={filterSummary(IMAGE_SCHEMA, imageFilter, listMenuText(IMAGE_LABELS))}
+                  onreset={() => setListFilter(sessionId, "docker.images", NO_FILTER)}
+                />
+              {:else}
+                <DockerImages
+                  groups={imageView.groups}
+                  grouped={imageView.grouped}
+                  collapsed={foldOf("docker.images")}
+                  ontoggle={toggleFold("docker.images")}
+                  {busy}
+                  {run}
+                  onInspect={openImageInspect}
+                  {showMenu}
+                />
+              {/if}
+            </div>
+          </div>
+        {/if}
       {:else}
-        <DockerNetworks {networks} {volumes} {containers} view={netView} onView={pickNetView} {busy} {run} />
+        <DockerNetworks
+          {networks}
+          {volumes}
+          {containers}
+          view={netView}
+          onView={pickNetView}
+          {busy}
+          {run}
+          {wide}
+          filter={filterOf("docker.networks")}
+          onfilter={setFilter("docker.networks")}
+          collapsed={foldOf("docker.networks")}
+          ontoggle={toggleFold("docker.networks")}
+          onmenu={(m) => (menu = m)}
+        />
       {/if}
     </div>
     {#if sideOpen}
