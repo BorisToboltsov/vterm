@@ -83,6 +83,7 @@ export default defineConfig(
   own("no-network", SOURCE),
   own("no-scratch-path", SOURCE),
   own("password-input", MARKUP, ["src/lib/ui/PasswordInput.svelte"]),
+  own("filter-field", MARKUP, ["src/lib/ui/FilterField.svelte"]),
   own("hotkey-letter", SOURCE, ["src/lib/app/appshortcuts.ts"]),
   own("submit-with-cr", SOURCE, ["src/lib/terminal/terminput.ts"]),
   own("terminal-write", SOURCE, ["src/lib/api/session.ts"]),

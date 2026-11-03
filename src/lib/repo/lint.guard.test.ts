@@ -85,6 +85,17 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     bad: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="password" bind:value={v} />`)]],
     good: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="text" bind:value={v} />`)]],
   },
+  "filter-field": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input placeholder={t("tree.searchPlaceholder")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input aria-label={t("jsonlog.filter")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<input type="search" />`)],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input placeholder={t("tree.newFolderName")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<input type="text" />`)],
+    ],
+  },
   "hotkey-letter": {
     bad: [
       ["src/lib/ui/zz_probe.ts", `export const f = (e: KeyboardEvent) => e.ctrlKey && e.key === "r";`],

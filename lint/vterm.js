@@ -212,6 +212,8 @@ const ARBITRARY_SIZE = /\btext-\[[0-9.]+(?:px|rem|em|pt)\]/;
 // A size in px in a class, past a hairline: `h-[22px]`, `pl-[25px]`, `-top-[7px]`.
 const PX_SIZE =
   /(?:^|[\s:-])(?:h|w|size|min-h|min-w|max-h|max-w|gap(?:-[xy])?|p[xytblr]?|m[xytblr]?|top|left|right|bottom|inset(?:-[xy])?|leading)-\[-?(?:[3-9]|[1-9][0-9]+)(?:\.[0-9]+)?px\]/;
+/** A message key that names a search or a filter: `t("tree.searchPlaceholder")`, `t("jsonlog.filter")`. */
+const SEARCH_KEY = /\bt\(\s*["'`][^"'`]*(?:search|filter)[^"'`]*["'`]/i;
 const MICRO_LABEL_ONE = "text-caption uppercase tracking-wider";
 
 /**
@@ -287,6 +289,24 @@ const rules = {
             (v.type === "SvelteMustacheTag" && v.expression.type === "Literal" && v.expression.value === "password"),
         );
         if (password) report(node);
+      },
+    }),
+  ),
+
+  "filter-field": rule(
+    "A list's filter field is a <FilterField>, never a raw search input",
+    "Use <FilterField> (ADR 0050): the glass, «N of M», the cross and Esc are one element in every list. A search that is not a list's filter says so in an eslint-disable comment.",
+    (context, report) => ({
+      SvelteElement(node) {
+        if (node.kind !== "html" || node.name.name !== "input") return;
+        const searchy = node.startTag.attributes.some((a) => {
+          const name = attributeName(a);
+          const text = context.sourceCode.getText(a);
+          if (name === "type") return /^type=(?:"search"|\{\s*["']search["']\s*\})$/.test(text);
+          if (name === "placeholder" || name === "aria-label") return SEARCH_KEY.test(text);
+          return false;
+        });
+        if (searchy) report(node);
       },
     }),
   ),

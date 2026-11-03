@@ -911,6 +911,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `editorlangs.test.ts`.
 - **Имена в каталоге не различаются только регистром — и имена их тестов тоже:** компонент не
   называется как его модель. Гейт `filecase.guard`.
+- **Фильтр, группы и порядок списка — один набор** (ADR 0050): строка — `ListHeader` (поле;
+  фасеты — кнопками в широкой панели, воронкой в узкой; «Вид» — группы и один ключ порядка), поле
+  без строки — `FilterField`, группа — `GroupHeader`, модель — `listview.ts`. Порядок — на
+  приложение по списку (`stores/listview`), фильтр — по сессии (`dockstate`). Меню шапка отдаёт
+  панели: `fixed` в контейнере встал бы не там. Сырой поисковый `<input>` — только с причиной
+  (`vterm/filter-field`); сегменты плана синхронизации — исключение. Гейт `listview.guard`.
 - **Переиспользуй примитивы:** `Modal`/`ConfirmDialog` — всегда с явным `z-index`
   (`vterm/overlay-z-index`); любое меню ПКМ — [ContextMenu](../src/lib/ui/ContextMenu.svelte) с
   `MenuItem[]` ([ctxmenu.ts](../src/lib/ui/ctxmenu.ts)), native-меню подавлено; в терминале ПКМ —
@@ -1018,7 +1024,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 чистый модуль — `.ts` подсистемы или `types.ts` — ни стора, ни бэкенда, ни Tauri, кроме
 `IMPURE_BY_DESIGN` с причиной) ·
 `invoke-in-api` (`@tauri-apps/api/core` — только в `src/lib/api`) · `opener-on-click` · `no-network`
-· `password-input` · `no-scratch-path` · `hotkey-letter` · `submit-with-cr` · `terminal-write` ·
+· `password-input` · `filter-field` · `no-scratch-path` · `hotkey-letter` · `submit-with-cr` · `terminal-write` ·
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
@@ -1052,6 +1058,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `pathsync.guard` | Хук статуса сессии читает `runs` до расхода `pendingCommand` и сообщает контроллеру о подключении и конце |
 | `netcheck.guard` | Прогон «Проверки доступа» несёт ручку остановки, запускается через `go`, правила — по хосту вкладки, пределы одни во фронте и бэкенде |
 | `filetoolbar.guard` | Узкий тулбар SFTP оставляет `upload` отдельной кнопкой |
+| `listview.guard` | Списки ADR 0050 рисуют общую строку фильтра и `GroupHeader`, фильтруют через `listview.ts` |
 | `fileuser.guard` | Команды панели идут под её пользователем; отказ sudo ничего не меняет; пароль — только через stdin; панель сама никого не берёт |
 | `editoraccess.guard` | Рядом с «Сохранить» — предупреждение о правах и пути восстановления; локальная копия — `create_new` |
 | `transferjob.guard` | Перенос запускает только `startTransfer`, право заменить — только из согласия; окно сперва слушает `sftp://job`, потом спрашивает список |

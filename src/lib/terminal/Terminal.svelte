@@ -1190,6 +1190,7 @@
     >
       <div class="flex min-w-0 flex-[1_1_9rem] items-center gap-1">
         <Icon name="search" size={14} class="shrink-0 text-muted" />
+        <!-- eslint-disable-next-line vterm/filter-field -- the terminal's search in the scrollback (Cmd+F), not a filter of a list -->
         <input
           bind:this={searchInput}
           bind:value={search.query}

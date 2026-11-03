@@ -1116,6 +1116,7 @@
         runSearch();
       }}
     >
+      <!-- eslint-disable-next-line vterm/filter-field -- a search of the files' contents (grep on the host), not a filter of the listing -->
       <input
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
         placeholder={t("search.contentPlaceholder")}

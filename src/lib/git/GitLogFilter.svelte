@@ -265,6 +265,7 @@
 
 <Modal open={pathOpen} title={t("git.filterPathTitle")} onclose={() => (pathOpen = false)}>
   <!-- svelte-ignore a11y_autofocus -->
+  <!-- eslint-disable-next-line vterm/filter-field -- the path of the history's path filter, typed in its dialog, not a search field -->
   <input
     bind:value={pathDraft}
     autofocus
