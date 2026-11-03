@@ -10,6 +10,7 @@
   // The toolbar is a strip beside the tree in a wide panel, where height is short, and
   // a row above it in a narrow one, where width is.
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import Modal from "../ui/Modal.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -114,6 +115,11 @@
   const rows = $derived(
     refRows({ branches, tags, favorites: settings.gitFavoriteBranches, query, isOpen }),
   );
+  // «N of M» in the field while it narrows the tree — by the rule `refRows` matches by.
+  const refsShown = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    return q ? [...branches, ...tags].filter((r) => r.name.toLowerCase().includes(q)).length : null;
+  });
 
   function toggleFolder(row: { key: string; open: boolean }) {
     const nextOpened = new Set(opened);
@@ -528,18 +534,13 @@
 
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
     <div class="shrink-0 border-b border-edge px-2 py-1">
-      <label class="flex h-[1.375rem] min-w-0 items-center gap-1 rounded border border-edge bg-panel px-1.5 text-meta text-muted focus-within:border-accent">
-        <Icon name="search" size={12} class="shrink-0" />
-        <input
-          bind:value={query}
-          placeholder={t("git.searchRefs")}
-          aria-label={t("git.searchRefs")}
-          spellcheck="false"
-          class="min-w-0 flex-1 bg-transparent text-text placeholder:text-muted focus:outline-none"
-          data-testid="git-tree-search"
-          onkeydown={(e) => { if (e.key === "Escape") query = ""; }}
-        />
-      </label>
+      <FilterField
+        bind:value={query}
+        placeholder={t("git.searchRefs")}
+        shown={refsShown}
+        total={refsShown === null ? null : branches.length + tags.length}
+        testid="git-tree-search"
+      />
     </div>
     {#if creating}
       <div class="shrink-0 border-b border-edge px-2 py-1">

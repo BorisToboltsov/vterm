@@ -6,6 +6,7 @@
   // file only).
   import { onMount } from "svelte";
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
@@ -37,12 +38,14 @@
 
 <div class="space-y-3 text-xs text-muted">
   <div class="flex items-center gap-2">
-    <input
-      data-testid="knownhosts-search"
-      type="search"
-      placeholder={t("util.knownHosts.search")}
-      class="flex-1 rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+    <FilterField
       bind:value={search}
+      placeholder={t("util.knownHosts.search")}
+      size="window"
+      shown={search.trim() ? hosts.length : null}
+      total={search.trim() ? entries.length : null}
+      class="flex-1"
+      testid="knownhosts-search"
     />
     <button
       type="button"

@@ -8,6 +8,8 @@
 // build falls back to its default and loses nothing else.
 //
 // What a list is narrowed to is not here: a filter is per session (`dockstate`).
+// The file panels' order lived under `vterm.filesort` until 1.29 and moves here
+// on the first load.
 
 import { sanitizeOrder, type ListOrder, type ListSchema } from "../ui/listview";
 
@@ -23,16 +25,27 @@ export type ListId =
   | "k8s.events"
   | "files"
   | "git.changes"
-  | "recordings"
-  | "jsonlog";
+  | "recordings";
+
+/** Where the file panels kept their order before 1.29 — read once, then dropped. */
+export const LEGACY_FILES_KEY = "vterm.filesort";
 
 function load(): Record<string, unknown> {
+  let stored: Record<string, unknown> = {};
   try {
     const raw: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    return typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) stored = raw as Record<string, unknown>;
   } catch {
-    return {};
+    /* unreadable — every list starts at its default */
   }
+  try {
+    const legacy: unknown = JSON.parse(localStorage.getItem(LEGACY_FILES_KEY) ?? "null");
+    if (!("files" in stored) && legacy !== null) stored = { ...stored, files: { sort: legacy, group: "none" } };
+    localStorage.removeItem(LEGACY_FILES_KEY);
+  } catch {
+    /* storage unavailable or the old entry unreadable — the default order then */
+  }
+  return stored;
 }
 
 export const listOrders = $state<{ stored: Record<string, unknown> }>({ stored: load() });

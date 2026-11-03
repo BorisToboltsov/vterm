@@ -2,6 +2,7 @@
   // The search and filters over the history. Git applies them (`logArgs`), so a
   // search reaches commits that were never loaded. With room for it each filter is
   // a button of its own; in a narrow list all of them stand behind one.
+  import FilterField from "../ui/FilterField.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import Icon from "../ui/Icon.svelte";
   import Modal from "../ui/Modal.svelte";
@@ -184,26 +185,20 @@
 </script>
 
 <div class="flex min-w-0 shrink-0 items-center gap-1 border-b border-edge px-2 py-1 text-meta text-muted" data-testid="git-log-filter">
-  <label class="flex h-[1.375rem] min-w-0 flex-1 items-center gap-1 rounded border border-edge bg-panel px-1.5 focus-within:border-accent {full ? 'max-w-72' : ''}">
-    <Icon name="search" size={12} class="shrink-0" />
-    <input
-      bind:value={draft}
-      oninput={typed}
-      onkeydown={(e) => {
-        if (e.key === "Enter") commitText();
-        if (e.key === "Escape") clearText();
-      }}
-      placeholder={t("git.search")}
-      aria-label={t("git.search")}
-      spellcheck="false"
-      class="min-w-0 flex-1 bg-transparent text-text placeholder:text-muted focus:outline-none"
-      data-testid="git-search"
-    />
-    {#if draft}
-      <button type="button" class="flex shrink-0 rounded hover:text-text" aria-label={t("git.searchClear")} use:tooltip={t("git.searchClear")} onclick={clearText}>
-        <Icon name="close" size={11} />
-      </button>
-    {/if}
+  <FilterField
+    value={draft}
+    oninput={(v) => {
+      draft = v;
+      if (v === "") clearText();
+      else typed();
+    }}
+    onkeydown={(e) => {
+      if (e.key === "Enter") commitText();
+    }}
+    placeholder={t("git.search")}
+    class="flex-1 {full ? 'max-w-72' : ''}"
+    testid="git-search"
+  >
     {#if full}
       <button
         type="button"
@@ -222,7 +217,7 @@
         onclick={() => onfilter({ ...filter, matchCase: !filter.matchCase })}
       >Aa</button>
     {/if}
-  </label>
+  </FilterField>
 
   {#if full}
     {#each FILTERS as which (which)}

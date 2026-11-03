@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { facetValues, filterItems, NO_FILTER } from "../ui/listview";
 import {
+  CHANGE_SCHEMA,
+  changeStatus,
   clockTime,
   commitDay,
   commitMoment,
@@ -239,5 +242,29 @@ describe("commitTreeDirs", () => {
       { path: "top.ts", status: "M" },
     ];
     expect([...commitTreeDirs(files)].sort()).toEqual(["a", "a/b", "a/d", "x/y/z"]);
+  });
+});
+
+describe("the changes' filter row (CHANGE_SCHEMA)", () => {
+  const items = [
+    { file: { path: "src/a.ts", index: "M", work: "." }, staged: true },
+    { file: { path: "src/b.ts", index: ".", work: "M" }, staged: false },
+    { file: { path: "docs/new.md", index: "?", work: "?" }, staged: false },
+  ];
+
+  it("a file's letter in its stage; untracked reads U", () => {
+    expect(changeStatus(items[0].file, true)).toBe("M");
+    expect(changeStatus(items[2].file, false)).toBe("U");
+  });
+
+  it("narrows both stages by path and by status", () => {
+    const paths = (text: string, status: string[] = []) =>
+      filterItems(items, CHANGE_SCHEMA, { text, facets: status.length ? { status } : {} }).map((i) => i.file.path);
+    expect(paths("src")).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(paths("", ["U"])).toEqual(["docs/new.md"]);
+    expect(facetValues(items, CHANGE_SCHEMA, NO_FILTER, "status")).toEqual([
+      { value: "M", count: 2 },
+      { value: "U", count: 1 },
+    ]);
   });
 });

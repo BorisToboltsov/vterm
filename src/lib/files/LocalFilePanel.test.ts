@@ -3,7 +3,11 @@ import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LocalFilePanel from "./LocalFilePanel.svelte";
 import type { FileEntry } from "../types";
-import { fileSort, resetFileSort, setFileSort } from "../stores/filesort.svelte";
+import { listOrder, resetListOrders, setListOrder, STORAGE_KEY } from "../stores/listview.svelte";
+import { FILE_ORDER, FILE_SCHEMA } from "./filesort";
+
+const fileSort = { get sort() { return listOrder("files", FILE_SCHEMA, FILE_ORDER).sort; } };
+const setFileSort = (sort: { key: string; dir: "asc" | "desc" }) => setListOrder("files", { sort, group: "none" });
 
 // The file listing as a table (v1.7). `FileBrowser.svelte` has no test file of
 // its own (its name collides with `filebrowser.ts` on a case-insensitive volume —
@@ -49,7 +53,7 @@ beforeEach(() => {
   api.localList.mockReset();
   api.localHome.mockReset();
   localStorage.clear();
-  resetFileSort();
+  resetListOrders();
   flushSync();
 });
 
@@ -211,7 +215,7 @@ describe("the order of the file listing", () => {
   it("the order is the app's: it is kept, and a panel opened later comes in it", async () => {
     setFileSort({ key: "size", dir: "asc" });
     flushSync();
-    expect(JSON.parse(localStorage.getItem("vterm.filesort") ?? "null")).toEqual({ key: "size", dir: "asc" });
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null").files).toEqual({ sort: { key: "size", dir: "asc" }, group: "none" });
     await renderPanel(LISTING);
     expect(shown().slice(2)).toEqual(["upstreams.conf", "nginx.conf", "mime.types"]);
   });
@@ -230,18 +234,16 @@ describe("the order of the file listing", () => {
     expect(fileSort.sort).toEqual({ key: "size", dir: "asc" });
     await fireEvent.click(name);
     expect(fileSort.sort).toEqual({ key: "name", dir: "asc" });
-    // The order the menu stands for is not lit while a title shows it.
-    expect(screen.getByTestId("localfiles-sort").className).not.toContain("text-accent");
+    // No word on an order the titles already show.
+    expect(screen.queryByTestId("localfiles-sort")).toBeNull();
   });
 
-  it("the columns a list does not show are in the header's menu", async () => {
+  it("the columns a list does not show are in «View» (v1.29), and the header says the order", async () => {
     await renderPanel(LISTING);
-    // Narrow: the menu button is there, plain while the order is by a shown column.
-    const button = screen.getByTestId("localfiles-sort");
-    expect(button.className).not.toContain("text-accent");
-    await fireEvent.click(button);
-    const menu = screen.getByRole("menu");
-    const row = (label: string) => within(menu).getByText(label).closest("button")!;
+    expect(screen.queryByTestId("localfiles-sort")).toBeNull();
+    await fireEvent.click(within(screen.getByTestId("localfiles-header")).getByRole("button", { name: "View" }));
+    await fireEvent.click(within(screen.getByRole("menu")).getByText("Order: Name").closest("button")!);
+    const row = (label: string) => within(screen.getByRole("menu")).getByText(label).closest("button")!;
     expect(row("Name")).toHaveAttribute("aria-checked", "true");
     expect(row("Ascending")).toHaveAttribute("aria-checked", "true");
     expect(row("Modified")).toHaveAttribute("aria-checked", "false");
@@ -249,22 +251,41 @@ describe("the order of the file listing", () => {
     await fireEvent.click(row("Modified"));
     expect(fileSort.sort).toEqual({ key: "modified", dir: "desc" });
     await waitFor(() => expect(shown()).toEqual(["conf.d", "sites", "nginx.conf", "upstreams.conf", "mime.types"]));
-    // A listing by a column the list does not show says so on the button.
-    expect(screen.getByTestId("localfiles-sort").className).toContain("text-accent");
+    // A listing by a column the list does not show says so over the actions.
+    expect(screen.getByTestId("localfiles-sort")).toHaveClass("text-accent");
+    expect(screen.getByTestId("localfiles-sort")).toHaveTextContent("Modified");
 
-    await fireEvent.click(screen.getByTestId("localfiles-sort"));
+    await fireEvent.click(within(screen.getByTestId("localfiles-header")).getByRole("button", { name: "View" }));
     await fireEvent.click(within(screen.getByRole("menu")).getByText("Ascending").closest("button")!);
     expect(fileSort.sort).toEqual({ key: "modified", dir: "asc" });
   });
 
-  it("the order is chosen in the header, not the toolbar — and the menu steps aside in a table", async () => {
+  it("the order is changed in the filter row, not the toolbar — its word steps aside in a table", async () => {
+    setFileSort({ key: "owner", dir: "asc" });
+    flushSync();
     await renderPanel(LISTING);
     const header = screen.getByTestId("localfiles-columns");
-    const button = screen.getByTestId("localfiles-sort");
-    expect(header.contains(button)).toBe(true);
-    expect(button.parentElement!.className).toContain("@wide:hidden");
-    expect(within(screen.getByTestId("localfiles-toolbar")).queryByRole("button", { name: "Order" })).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Order" })).toEqual([button]);
+    const word = screen.getByTestId("localfiles-sort");
+    expect(header.contains(word)).toBe(true);
+    expect(word.parentElement!.className).toContain("@wide:hidden");
+    expect(within(screen.getByTestId("localfiles-toolbar")).queryByRole("button", { name: "View" })).toBeNull();
+    expect(within(screen.getByTestId("localfiles-header")).getByRole("button", { name: "View" })).toBeInTheDocument();
+  });
+
+  it("the field narrows the folder by name; a new folder starts unfiltered", async () => {
+    await renderPanel(LISTING);
+    const field = () => screen.getByRole("textbox", { name: "Name in this folder" });
+    await fireEvent.input(field(), { target: { value: ".conf" } });
+    await waitFor(() => expect(shown()).toEqual(["nginx.conf", "upstreams.conf"]));
+    expect(screen.getByTestId("localfiles-header-field-count")).toHaveTextContent("2 of 5");
+    await fireEvent.input(field(), { target: { value: "zzz" } });
+    expect(await screen.findByTestId("localfiles-filtered-empty")).toBeInTheDocument();
+    // Into a folder: what narrowed the last one does not narrow this one.
+    await fireEvent.input(field(), { target: { value: "conf" } });
+    const folder = await screen.findByText("conf.d");
+    await fireEvent.dblClick(folder.closest('[role="treeitem"]')!);
+    await waitFor(() => expect(field()).toHaveValue(""));
+    expect(shown()).toHaveLength(5);
   });
 
   it("the row under the keyboard cursor stays under it when the order changes", async () => {

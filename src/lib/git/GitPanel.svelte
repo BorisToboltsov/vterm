@@ -62,7 +62,7 @@
   } from "./git";
   import { buildGraph, primaryFor, type GraphRow } from "./gitlanes";
   import { findByShort } from "./gitrefs";
-  import { dockCwd, rememberSub, storedSub } from "../stores/dockstate.svelte";
+  import { collapsedGroups, dockCwd, listFilter, rememberSub, setGroupsCollapsed, setListFilter, storedSub } from "../stores/dockstate.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
@@ -667,6 +667,12 @@
                 onFileHistory={showFileHistory}
                 {absPath}
                 {runQuery}
+                {wide}
+                filter={listFilter(sessionId, "git.changes")}
+                onfilter={(next) => setListFilter(sessionId, "git.changes", next)}
+                collapsed={collapsedGroups(sessionId, "git.changes")}
+                ontoggle={(key) =>
+                  setGroupsCollapsed(sessionId, "git.changes", [key], !collapsedGroups(sessionId, "git.changes").includes(key))}
               />
             {/if}
           {:else}

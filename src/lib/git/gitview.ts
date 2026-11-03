@@ -4,7 +4,8 @@
 // canonical keys/letters only where noted).
 
 import { compactAge } from "../ui/age";
-import type { CommitFile } from "./git";
+import type { CommitFile, GitFile } from "./git";
+import type { ListSchema } from "../ui/listview";
 import { formatModified } from "../files/lscolors";
 
 /**
@@ -193,3 +194,26 @@ export function commitTree(
   walk(root, "", 0);
   return rows;
 }
+
+/** A file's letter in one stage — untracked (`?`) reads `U`, as the list has always shown it. */
+export function changeStatus(f: GitFile, staged: boolean): string {
+  const c = staged ? f.index : f.work;
+  return c === "?" ? "U" : c;
+}
+
+/** A row of the working-tree sub-tab: a changed file in one of the two stages. */
+export interface ChangeItem {
+  file: GitFile;
+  staged: boolean;
+}
+
+/**
+ * What the changes' filter row reads (v1.29, ADR 0050): the path, and the
+ * status letter as the facet. The two stages stay the sections they are.
+ */
+export const CHANGE_SCHEMA: ListSchema<ChangeItem> = {
+  text: (i) => i.file.path,
+  sorts: [],
+  facets: [{ id: "status", value: (i) => changeStatus(i.file, i.staged) }],
+  tie: (a, b) => a.file.path.localeCompare(b.file.path),
+};

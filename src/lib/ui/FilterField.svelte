@@ -12,6 +12,7 @@
   let {
     value = $bindable(""),
     placeholder,
+    label = undefined,
     size = "dock",
     shown = null,
     total = null,
@@ -23,6 +24,8 @@
   }: {
     value?: string;
     placeholder: string;
+    /** The field's accessible name, when it is not the placeholder. */
+    label?: string;
     size?: "dock" | "window";
     /** How many items the narrowed list shows, of how many; null — no figure. */
     shown?: number | null;
@@ -63,7 +66,7 @@
     oninput={(e) => set(e.currentTarget.value)}
     onkeydown={keydown}
     {placeholder}
-    aria-label={placeholder}
+    aria-label={label ?? placeholder}
     spellcheck="false"
     class="min-w-0 flex-1 bg-transparent text-text placeholder:text-muted focus:outline-none"
     data-testid={testid}

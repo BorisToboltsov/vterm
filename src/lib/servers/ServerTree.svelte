@@ -19,6 +19,7 @@
   import { nextCursor } from "../files/filekeys";
   import { serverDots } from "../stores/tabs.svelte";
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import { resolveServerIcon, resolveServerColorClass } from "./servericons";
   import { fade } from "svelte/transition";
   import { motion } from "../ui/motion";
@@ -296,11 +297,13 @@
 
 <div class="flex h-full min-h-0 flex-col" data-testid="server-tree">
   <div class="flex items-center gap-1 p-2">
-    <input
-      data-testid="server-search"
-      class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
-      placeholder={t("tree.searchPlaceholder")}
+    <FilterField
       bind:value={serverSearch}
+      placeholder={t("tree.searchPlaceholder")}
+      shown={serverSearch.trim() ? treeRows.length : null}
+      total={serverSearch.trim() ? servers.length : null}
+      class="flex-1"
+      testid="server-search"
     />
     <button
       class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"

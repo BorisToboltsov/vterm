@@ -11,6 +11,7 @@
   // run from here, and put back with the same pin a tool has.
   import { untrack } from "svelte";
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import { t } from "../i18n";
   import {
     UTILITIES,
@@ -159,12 +160,11 @@
         <!-- Tool nav (searchable) -->
         <nav class="flex w-52 shrink-0 flex-col border-r border-edge" aria-label={t("util.title")}>
           <div class="border-b border-edge p-2">
-            <input
-              data-testid="utilities-search"
-              type="search"
-              placeholder={t("util.searchPlaceholder")}
-              class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+            <FilterField
               bind:value={search}
+              placeholder={t("util.searchPlaceholder")}
+              size="window"
+              testid="utilities-search"
             />
           </div>
           <div class="min-h-0 flex-1 overflow-y-auto p-2">

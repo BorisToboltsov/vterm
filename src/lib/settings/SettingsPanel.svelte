@@ -6,6 +6,7 @@
     MAX_OPEN_MB_LIMIT,
   } from "./settings.svelte";
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import AiSettingsSection from "../ai/AiSettingsSection.svelte";
@@ -158,13 +159,12 @@
       </div>
 
       <div class="border-b border-edge px-4 py-2">
-        <input
-          data-testid="settings-search"
-          type="search"
-          placeholder={t("settings.searchPlaceholder")}
-          aria-label={t("settings.searchAria")}
-          class="w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
+        <FilterField
           bind:value={search}
+          placeholder={t("settings.searchPlaceholder")}
+          label={t("settings.searchAria")}
+          size="window"
+          testid="settings-search"
         />
       </div>
 
