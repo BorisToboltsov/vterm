@@ -1218,18 +1218,6 @@
               <Icon name="refresh" size={14} />
             </button>
             <button
-              data-testid="{testPrefix}-toggle-hidden"
-              class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
-                ? 'bg-edge text-accent'
-                : 'text-muted hover:bg-edge hover:text-text'}"
-              use:tooltip={t("sftp.hiddenFiles")}
-              aria-label={t("sftp.hiddenFiles")}
-              aria-pressed={settings.sftp.showHiddenFiles}
-              onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
-            >
-              <Icon name="eye" size={14} />
-            </button>
-            <button
               data-testid="{testPrefix}-follow-terminal"
               class="flex items-center rounded p-1.5 {followTerminal
                 ? 'bg-edge text-accent'
@@ -1346,7 +1334,8 @@
         {@render banner?.()}
         {#if mutable}
           <!-- The filter row (v1.29): the name in this folder, «View» with the
-               order and the hidden files. -->
+               order and the hidden files — their only switch since the toolbar's
+               eye went: two eyes side by side meant two different things. -->
           <ListHeader
             items={visibleEntries}
             schema={FILE_SCHEMA}

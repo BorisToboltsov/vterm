@@ -5,6 +5,7 @@ import LocalFilePanel from "./LocalFilePanel.svelte";
 import type { FileEntry } from "../types";
 import { listOrder, resetListOrders, setListOrder, STORAGE_KEY } from "../stores/listview.svelte";
 import { FILE_ORDER, FILE_SCHEMA } from "./filesort";
+import { settings } from "../settings/settings.svelte";
 
 const fileSort = { get sort() { return listOrder("files", FILE_SCHEMA, FILE_ORDER).sort; } };
 const setFileSort = (sort: { key: string; dir: "asc" | "desc" }) => setListOrder("files", { sort, group: "none" });
@@ -270,6 +271,23 @@ describe("the order of the file listing", () => {
     expect(word.parentElement!.className).toContain("@wide:hidden");
     expect(within(screen.getByTestId("localfiles-toolbar")).queryByRole("button", { name: "View" })).toBeNull();
     expect(within(screen.getByTestId("localfiles-header")).getByRole("button", { name: "View" })).toBeInTheDocument();
+  });
+
+  it("hidden files are switched in «View», and only there — the toolbar has no second eye", async () => {
+    settings.sftp.showHiddenFiles = true;
+    try {
+      await renderPanel([...LISTING, entry(".env")]);
+      expect(shown()).toContain(".env");
+      expect(within(screen.getByTestId("localfiles-toolbar")).queryByRole("button", { name: "Hidden files" })).toBeNull();
+      await fireEvent.click(within(screen.getByTestId("localfiles-header")).getByRole("button", { name: "View" }));
+      const row = within(screen.getByRole("menu")).getByText("Hidden files").closest("button")!;
+      expect(row).toHaveAttribute("aria-checked", "true");
+      await fireEvent.click(row);
+      expect(settings.sftp.showHiddenFiles).toBe(false);
+      await waitFor(() => expect(shown()).not.toContain(".env"));
+    } finally {
+      settings.sftp.showHiddenFiles = false;
+    }
   });
 
   it("the field narrows the folder by name; a new folder starts unfiltered", async () => {
