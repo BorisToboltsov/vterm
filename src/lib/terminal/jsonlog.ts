@@ -7,6 +7,8 @@
 // for the dynamic columns), so the same table renders all of them. The Terminal
 // feeds it complete output lines; JsonLogView renders the result.
 
+import type { ListSchema } from "../ui/listview";
+
 /** Which structured format a line was recognised as. */
 export type LogFormat = "json" | "logfmt" | "syslog" | "nginx" | "dmesg";
 
@@ -295,33 +297,16 @@ function formatDate(d: Date): string {
 }
 
 /**
- * Case-insensitive substring filter over an entry's timestamp, level, message
- * and full raw JSON. Empty query returns everything.
+ * What the filter row of the structured view reads (v1.29, ADR 0050): the
+ * field matches an entry's timestamp, level, message and full raw JSON, the
+ * «Level» facet keeps the categories picked — none picked, every one.
  */
-export function filterEntries(entries: JsonLogEntry[], query: string): JsonLogEntry[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return entries;
-  return entries.filter((e) => {
-    const hay = `${e.ts ?? ""} ${e.level ?? ""} ${e.message ?? ""} ${JSON.stringify(e.raw)}`;
-    return hay.toLowerCase().includes(q);
-  });
-}
-
-/**
- * Combined text + level-category filter. `levels` is the set of enabled
- * categories; when it's empty or covers every category, no level filtering is
- * applied (so the default "all chips on" — and "all chips off" — shows everything).
- */
-export function applyFilters(
-  entries: JsonLogEntry[],
-  query: string,
-  levels: LevelCat[],
-): JsonLogEntry[] {
-  const byText = filterEntries(entries, query);
-  const set = new Set(levels);
-  if (set.size === 0 || LEVEL_CATS.every((c) => set.has(c))) return byText;
-  return byText.filter((e) => set.has(levelCategory(e.level)));
-}
+export const LOG_SCHEMA: ListSchema<JsonLogEntry> = {
+  text: (e) => `${e.ts ?? ""} ${e.level ?? ""} ${e.message ?? ""} ${JSON.stringify(e.raw)}`,
+  sorts: [],
+  facets: [{ id: "level", value: (e) => levelCategory(e.level), multi: true, order: LEVEL_CATS }],
+  tie: (a, b) => a.seq - b.seq,
+};
 
 // --- Column sizing (structured view) ---------------------------------------
 // The structured table uses a fixed layout so columns can be drag-resized. Pure

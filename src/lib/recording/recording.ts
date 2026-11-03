@@ -8,7 +8,6 @@
 // return redraws collapsed, so it reads like the session the user saw.
 
 import { stripAnsi } from "../terminal/jsonlog";
-import type { RecordingMeta } from "../types";
 
 /** vterm-specific session metadata stored in the asciicast header's `vterm` key. */
 export interface VtermMeta {
@@ -396,65 +395,6 @@ export function formatTime(seconds: number): string {
 /** ISO `YYYY-MM-DD` (UTC) of a recording's start time, or "" when absent. */
 export function recordingDateISO(timestamp: number): string {
   return timestamp ? new Date(timestamp * 1000).toISOString().slice(0, 10) : "";
-}
-
-/**
- * Case-insensitive filter over a recording's title, description, server, filename
- * and ISO date — so users can search by name, note, server, file or `2026-06-24`.
- * Empty query returns everything.
- */
-export function filterRecordings(items: RecordingMeta[], query: string): RecordingMeta[] {
-  const q = query.trim().toLowerCase();
-  if (!q) return items;
-  return items.filter((r) =>
-    `${r.title} ${r.description} ${r.server} ${r.path} ${recordingDateISO(r.timestamp)}`
-      .toLowerCase()
-      .includes(q),
-  );
-}
-
-export type RecordingSortKey = "date" | "name" | "size";
-export type SortDir = "asc" | "desc";
-
-/** One level of a multi-key sort. */
-export interface SortCriterion {
-  key: RecordingSortKey;
-  dir: SortDir;
-}
-
-/** Compare two recordings on a single key (ascending). */
-function compareBy(a: RecordingMeta, b: RecordingMeta, key: RecordingSortKey): number {
-  if (key === "size") return a.size - b.size;
-  if (key === "name") return a.title.localeCompare(b.title);
-  return a.timestamp - b.timestamp;
-}
-
-/**
- * Multi-key sort: criteria are applied in order (first = primary), so you can
- * sort by e.g. server then date then size at once. Empty criteria → original
- * order (a fresh copy). Does not mutate the input.
- */
-export function sortRecordingsBy(
-  items: RecordingMeta[],
-  criteria: SortCriterion[],
-): RecordingMeta[] {
-  if (criteria.length === 0) return [...items];
-  return [...items].sort((a, b) => {
-    for (const { key, dir } of criteria) {
-      const c = compareBy(a, b, key);
-      if (c !== 0) return dir === "desc" ? -c : c;
-    }
-    return 0;
-  });
-}
-
-/** Single-key sort (convenience over `sortRecordingsBy`). */
-export function sortRecordings(
-  items: RecordingMeta[],
-  key: RecordingSortKey,
-  dir: SortDir,
-): RecordingMeta[] {
-  return sortRecordingsBy(items, [{ key, dir }]);
 }
 
 /**

@@ -1,11 +1,12 @@
 <script lang="ts">
   // Structured view of JSON (NDJSON) log lines: a filterable table with
   // timestamp / level / message columns plus user-chosen extra columns pulled
-  // from the JSON fields, level-filter chips and tail-style auto-scroll. Parsing
-  // lives in jsonlog.ts; this component is presentational. Shown as an overlay
-  // over the terminal when the raw↔structured toggle is on (Terminal.svelte).
+  // from the JSON fields, and tail-style auto-scroll. The filter row is the
+  // lists' one (v1.29, ADR 0050): the field, the «Level» facet (a button with its
+  // values in a wide view, a funnel in a narrow one). Parsing lives in
+  // jsonlog.ts; this component is presentational. Shown as an overlay over the
+  // terminal when the raw↔structured toggle is on (Terminal.svelte).
   import {
-    applyFilters,
     availableFields,
     fieldValue,
     levelClass,
@@ -14,10 +15,14 @@
     resizedWidth,
     COL_WIDTHS,
     COL_EXTRA_DEFAULT,
-    LEVEL_CATS,
+    LOG_SCHEMA,
     type JsonLogEntry,
-    type LevelCat,
   } from "./jsonlog";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import ContextMenu from "../ui/ContextMenu.svelte";
+  import { filterItems, NO_FILTER, type ListFilter } from "../ui/listview";
+  import type { OpenMenu } from "../ui/ctxmenu";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import { uiPx } from "../settings/settings.svelte";
   import { tooltip } from "../actions/tooltip";
   import ColumnGrip from "../ui/ColumnGrip.svelte";
@@ -33,12 +38,13 @@
     onClear,
   }: { entries: JsonLogEntry[]; onClear?: () => void } = $props();
 
-  let query = $state("");
-  let activeLevels = $state<LevelCat[]>([...LEVEL_CATS]);
+  let filter = $state<ListFilter>(NO_FILTER);
   let extraColumns = $state<string[]>([]);
   let showColumns = $state(false);
-  // Narrow toolbars collapse the level chips behind this funnel popover.
-  let showLevels = $state(false);
+  // The view's width against the panels' one threshold: the level facet is a
+  // button that says its values when wide, a funnel when narrow.
+  let wide = $state(false);
+  let menu = $state<OpenMenu | null>(null);
   let confirmClear = $state(false);
   let expanded = $state(new Set<number>());
   let scroller = $state<HTMLDivElement>();
@@ -74,16 +80,10 @@
       extraColumns.reduce((s, c) => s + colWidth(colWidths, `x:${c}`, COL_EXTRA_DEFAULT), 0),
   );
 
-  const filtered = $derived(applyFilters(entries, query, activeLevels));
+  const filtered = $derived(filterItems(entries, LOG_SCHEMA, filter));
   // Field list for the column picker — only computed while the picker is open
   // (avoids scanning every entry on each new line during a live tail).
   const fields = $derived(showColumns ? availableFields(entries) : []);
-
-  function toggleLevel(cat: LevelCat) {
-    activeLevels = activeLevels.includes(cat)
-      ? activeLevels.filter((c) => c !== cat)
-      : [...activeLevels, cat];
-  }
 
   function toggleColumn(field: string) {
     extraColumns = extraColumns.includes(field)
@@ -97,7 +97,7 @@
   function doClear() {
     confirmClear = false;
     extraColumns = [];
-    query = "";
+    filter = NO_FILTER;
     showColumns = false;
     onClear?.();
   }
@@ -127,71 +127,31 @@
   });
 </script>
 
-<div class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view">
-  <!-- Toolbar: the view toggle is pinned to the top-right and never wraps. As a
-       `@container`, its own width (not the viewport) drives the narrow-mode
-       collapses below — level chips fold into a funnel, the toggle drops its
-       labels — and anything still too wide reflows onto a second row. -->
-  {#snippet levelChip(cat: LevelCat)}
-    <button
-      type="button"
-      onclick={() => toggleLevel(cat)}
-      aria-pressed={activeLevels.includes(cat)}
-      aria-label={t("jsonlog.toggleLevel", { level: cat })}
-      use:tooltip={t("jsonlog.toggleLevel", { level: cat })}
-      class="rounded px-1.5 py-0.5 text-meta font-medium {activeLevels.includes(cat)
-        ? `bg-edge ${levelClass(cat)}`
-        : 'text-muted/50 hover:text-muted'}">{cat}</button
-    >
-  {/snippet}
-  <div class="@container flex items-start gap-2 border-b border-edge bg-panel-alt px-2 py-1.5">
-    <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-      <Icon name="search" size={14} class="shrink-0 text-muted" />
-      <input
-        bind:value={query}
-        type="text"
-        spellcheck="false"
-        placeholder={t("jsonlog.filter")}
-        aria-label={t("jsonlog.filter")}
-        class="min-w-16 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
-      />
+<div class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view" use:wideWhen={(w) => (wide = w)}>
+  <!-- The filter row: the field and the level facet; «Clear» and the column
+       picker stand in it as the list's own buttons. -->
+  <ListHeader
+    items={entries}
+    schema={LOG_SCHEMA}
+    {filter}
+    onfilter={(next) => (filter = next)}
+    shown={filtered.length}
+    total={entries.length}
+    labels={{ facet: () => t("jsonlog.colLevel") }}
+    placeholder={t("jsonlog.filter")}
+    {wide}
+    onmenu={(m) => (menu = m)}
+    testid="jsonlog-header"
+  >
       <!-- Clear accumulated rows (confirmed) — e.g. before viewing a different log -->
       <button
         type="button"
         onclick={() => (confirmClear = true)}
-        class="shrink-0 rounded px-2 py-0.5 text-xs font-medium text-muted hover:text-danger"
+        class="shrink-0 rounded px-2 py-0.5 font-medium hover:text-danger"
         use:tooltip={t("jsonlog.clearHint")}
       >
         {t("jsonlog.clear")}
       </button>
-      <span class="h-4 w-px shrink-0 bg-edge"></span>
-      <!-- Level filter: inline chips when wide, a funnel popover when narrow.
-           The chips collapse with enough slack that the row never wraps while
-           they're still inline — only the already-compact row (funnel + icon
-           toggle) may wrap, one item at a time, at extreme narrow widths. -->
-      <div class="hidden shrink-0 items-center gap-1 @min-[680px]:flex">
-        {#each LEVEL_CATS as cat}{@render levelChip(cat)}{/each}
-      </div>
-      <div class="relative shrink-0 @min-[680px]:hidden">
-        <button
-          type="button"
-          onclick={() => (showLevels = !showLevels)}
-          aria-expanded={showLevels}
-          use:tooltip={t("jsonlog.levels")}
-          aria-label={t("jsonlog.levels")}
-          class="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-muted hover:text-accent"
-        >
-          <Icon name="filter" size={13} />
-          <span class="text-meta tabular-nums">{activeLevels.length}</span>
-        </button>
-        {#if showLevels}
-          <div
-            class="absolute left-0 top-7 z-20 flex w-max items-center gap-1 rounded border border-edge bg-panel-alt p-1.5 shadow-lg"
-          >
-            {#each LEVEL_CATS as cat}{@render levelChip(cat)}{/each}
-          </div>
-        {/if}
-      </div>
       <!-- Column picker -->
       <div class="relative shrink-0">
         <button
@@ -225,9 +185,7 @@
           </div>
         {/if}
       </div>
-      <span class="shrink-0 text-xs tabular-nums text-muted">{filtered.length}</span>
-    </div>
-  </div>
+  </ListHeader>
 
   {#if entries.length === 0}
     <div class="flex flex-1 items-center justify-center p-4">
@@ -340,6 +298,8 @@
     </div>
   {/if}
 </div>
+
+<ContextMenu {menu} onclose={() => (menu = null)} />
 
 <ConfirmDialog
   open={confirmClear}
