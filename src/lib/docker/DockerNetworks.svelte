@@ -119,7 +119,7 @@
       {/if}
       {#each ports as p (p.container.id)}
         <div class="flex items-start gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" role="listitem" data-testid="docker-ports-row">
-          <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(p.container.state)]}" use:tooltip={p.container.state}></span>
+          <span class="mt-1 h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[stateTone(p.container.state)]}" use:tooltip={p.container.state}></span>
           <span class="w-2/5 min-w-0 shrink-0 truncate font-medium text-text/90 @wide:w-64" use:tooltip={p.container.name}>{p.container.name}</span>
           <div class="min-w-0 flex-1">
             {#each p.rows as row}
@@ -162,19 +162,19 @@
             </button>
           </div>
           {#if note}
-            <div class="pl-[22px] text-caption text-muted">{note}</div>
+            <div class="pl-[1.375rem] text-caption text-muted">{note}</div>
           {/if}
           {#if inside.length > 0}
-            <div class="flex flex-wrap gap-x-3 gap-y-0.5 pl-[22px] pt-0.5">
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5 pl-[1.375rem] pt-0.5">
               {#each inside as c (c.id)}
                 <span class="flex min-w-0 items-center gap-1 text-caption text-text/80" data-testid="docker-network-member">
-                  <span class="h-[6px] w-[6px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+                  <span class="h-[0.375rem] w-[0.375rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
                   <span class="truncate">{c.name}</span>
                 </span>
               {/each}
             </div>
           {:else if isSharedNetwork(n.name)}
-            <div class="pl-[22px] text-caption text-muted">{t("docker.netEmpty")}</div>
+            <div class="pl-[1.375rem] text-caption text-muted">{t("docker.netEmpty")}</div>
           {/if}
         </div>
       {/each}

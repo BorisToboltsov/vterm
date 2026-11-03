@@ -164,7 +164,7 @@ describe("K8sPods — columns of the wide layout", () => {
     render(K8sPods, { props: props([a, b, c], [...withMetrics(a), ...withMetrics(c)]) });
     const head = [...screen.getByTestId("k8s-columns").children].map(size);
     expect(head).toEqual([
-      "w-[7px]", // state dot
+      "w-[0.4375rem]", // state dot
       "w-[var(--c-name)]",
       "w-[var(--c-ns)]",
       "w-[var(--c-node)]",
@@ -191,11 +191,11 @@ describe("K8sPods — columns of the wide layout", () => {
   it("feeds the widths to the list as CSS variables — the user's, or the defaults", () => {
     render(K8sPods, { props: props() });
     const list = screen.getByTestId("k8s-columns").parentElement!;
-    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["k8s.name"]}px`);
+    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["k8s.name"] / 16}rem`);
     setColumnWidth("k8s.node", 240);
     flushSync();
-    expect(list.style.getPropertyValue("--c-node")).toBe("240px");
-    expect(list.style.getPropertyValue("--c-ns")).toBe(`${LIST_COLUMNS["k8s.namespace"]}px`);
+    expect(list.style.getPropertyValue("--c-node")).toBe("15rem");
+    expect(list.style.getPropertyValue("--c-ns")).toBe(`${LIST_COLUMNS["k8s.namespace"] / 16}rem`);
   });
 
   it("rules the columns: text cells on the right, figures on the left, full row height", () => {

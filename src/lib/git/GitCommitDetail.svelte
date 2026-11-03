@@ -16,6 +16,7 @@
   import { COMMIT_FILES_SHOWN, commitTree, committerLine, fileStatusColor, gitAge } from "./gitview";
   import { whenLabel } from "./gitui";
   import { t } from "../i18n";
+  import { REM_PX } from "../appearance/uiscale";
 
   let {
     commit,
@@ -73,7 +74,7 @@
   /** Branches named in the row; the rest are counted. */
   const CONTAINED_SHOWN = 3;
   /** Left padding of a tree row, px: one step a level. */
-  const indent = (depth: number): string => `${4 + depth * 12}px`;
+  const indent = (depth: number): string => `${(4 + depth * 12) / REM_PX}rem`;
 </script>
 
 <!-- The files first, where the strip under the history always had them; the

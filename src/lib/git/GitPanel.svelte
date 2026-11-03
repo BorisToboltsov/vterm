@@ -63,7 +63,7 @@
   import { buildGraph, primaryFor, type GraphRow } from "./gitlanes";
   import { findByShort } from "./gitrefs";
   import { dockCwd, rememberSub, storedSub } from "../stores/dockstate.svelte";
-  import { wideWhen } from "../actions/panelwide";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { gitCwd } from "../pathsync/followcwd";

@@ -115,6 +115,16 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     ],
     good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="text-meta text-muted">x</span>`)]],
   },
+  "rem-sizes": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<label class="flex h-[22px] items-center">x</label>`)],
+      ["src/lib/ui/zz_probe.ts", `export const cls = "@wide:w-[104px] truncate";`],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<label class="flex h-[1.375rem] items-center">x</label>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<div class="rounded-[2px] w-[2px]">x</div>`)],
+    ],
+  },
   "micro-label": {
     bad: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)]],
     good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)]],

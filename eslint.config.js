@@ -88,6 +88,7 @@ export default defineConfig(
   own("terminal-write", SOURCE, ["src/lib/api/session.ts"]),
   own("overlay-z-index", MARKUP),
   own("type-scale", SOURCE),
+  own("rem-sizes", SOURCE),
   own("micro-label", SOURCE),
   own("motion-duration", MARKUP),
   own("locale-binding", MARKUP),

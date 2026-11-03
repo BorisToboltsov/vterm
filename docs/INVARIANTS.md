@@ -934,6 +934,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Размер шрифта — из шкалы** (`text-caption`/`text-meta`/`text-xs`/…), без line-height
   companion-ов; у прописных микро-меток одно оформление. Правила `vterm/type-scale`,
   `vterm/micro-label`, гейт `typography.guard`.
+- **Масштаб интерфейса — корневой размер шрифта** (ADR 0049): `settings.uiScale`, только
+  `UI_SCALE_STOPS`; применяет `applyUiScale`, первый кадр — `app.html`. Шрифт, отступ, значок —
+  в `rem`; число, которым компонент рисует или считает (строка виртуального списка, рельс дока), —
+  `uiPx`, модель считает в единицах 100 %. Терминал — `activeFontSize()`, поле настроек — база.
+  Ширины доков, `PANE_LIMITS`, `PART_MIN` — в настоящих px, иначе терминал теряет колонки. Значение
+  шкалы берётся при отпускании. Правило `vterm/rem-sizes`, гейт `uiscale.guard`.
 - **Шрифт терминала и записей — через `activeFontFamily()`:** ручной выбор не зависит от темы.
   Гейт `fonts.guard`.
 - **Темы** ([themes.ts](../src/lib/appearance/themes.ts)): фирменные (`group: "signature"`) — плотные панели
@@ -1013,7 +1019,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `IMPURE_BY_DESIGN` с причиной) ·
 `invoke-in-api` (`@tauri-apps/api/core` — только в `src/lib/api`) · `opener-on-click` · `no-network`
 · `password-input` · `no-scratch-path` · `hotkey-letter` · `submit-with-cr` · `terminal-write` ·
-`overlay-z-index` · `type-scale` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
+`overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
 `importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
@@ -1061,6 +1067,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `backupimport.guard` · `servercreation.guard` | Импорт пишет каталог предпросмотра; профиль публикуется после записи |
 | `quitguard.guard` | Защита закрытия взводится только после подписки на свой вопрос |
 | `themes.test.ts` · `typography.guard` · `fonts.guard` · `appicon.guard` | Контраст `muted` во всех темах; шкала шрифтов без companion-ов; шрифт через `activeFontFamily()`; кадрирование иконки — по пикселям |
+| `uiscale.guard` | Шкала шрифтов и значки в `rem`, первый кадр берёт масштаб, строки и рельсы — через `uiPx`, терминал — `activeFontSize()` |
 | `clipboardpaste.guard` | Поведение CodeMirror, ради которого стоит `vterm/paste-caret` |
 | `filecase.guard` | Нет путей и тестов, различающихся только регистром |
 | `liblayout.guard` | В корне `src/lib` — только папки и `types.ts`; папки — те, что в дереве ARCHITECTURE; слои линтера существуют |

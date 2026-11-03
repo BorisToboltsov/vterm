@@ -41,13 +41,13 @@
     type SortKey,
   } from "./filesort";
   import { fileSort, setFileSort } from "../stores/filesort.svelte";
-  import { wideWhen } from "../actions/panelwide";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import { columnVars } from "../ui/colwidths";
   import { columns } from "../stores/colwidths.svelte";
   import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
   import { windowRange } from "../ui/virtuallist";
   import { filterHiddenFiles } from "../ui/util";
-  import { activeTerminalTheme, settings } from "../settings/settings.svelte";
+  import { activeTerminalTheme, settings, uiPx } from "../settings/settings.svelte";
   import Icon from "../ui/Icon.svelte";
   import Skeleton from "../ui/Skeleton.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
@@ -214,7 +214,7 @@
   // Virtualized listing (Phase 18.7): only the visible window of fixed-height
   // (`h-7`, 28px) rows is rendered so huge directories don't freeze the UI. Item 0
   // is the ".." parent-nav when not at the top.
-  const ROW_H = 28;
+  const ROW_H = $derived(uiPx(28));
   let listScrollTop = $state(0);
   // True while the list is moving (and ~150 ms after). Rows stop taking the
   // pointer meanwhile: WebView2 (Chromium) re-evaluates hover only once a scroll
@@ -1152,7 +1152,7 @@
 {/snippet}
 
 <div
-  style={embedded ? "" : `width: ${collapsed ? COLLAPSED_W : width}px`}
+  style={embedded ? "" : `width: ${collapsed ? uiPx(COLLAPSED_W) : width}px`}
   class="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-panel-alt {embedded
     ? ''
     : 'border-l border-edge'} {!embedded && animateWidth

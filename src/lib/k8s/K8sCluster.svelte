@@ -88,7 +88,7 @@
         oncontextmenu={(e) => showMenu(e, nodeMenu(n))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[nodeStatusTone(n.status)]}" use:tooltip={n.status}></span>
+        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[nodeStatusTone(n.status)]}" use:tooltip={n.status}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-text/90">{n.name}</span>
@@ -137,7 +137,7 @@
   {:else}
     {#each shownEvents as e, idx (idx)}
       <div class="flex items-start gap-2 border-b border-edge/60 py-1.5 pr-2 pl-2.5">
-        <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[eventTone(e.type)]}" use:tooltip={e.type}></span>
+        <span class="mt-1 h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[eventTone(e.type)]}" use:tooltip={e.type}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="shrink-0 font-medium text-text/90">{e.reason}</span>

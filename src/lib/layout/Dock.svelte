@@ -34,7 +34,7 @@
   } from "./docklayout";
   import { panelLabel, tabMenuItems } from "./dockui";
   import { motion } from "../ui/motion";
-  import { settings } from "../settings/settings.svelte";
+  import { settings, uiPx } from "../settings/settings.svelte";
   import {
     activatePanel,
     layout,
@@ -92,7 +92,8 @@
    * top border — the height of the status bar under it, so the two read as one
    * footer rather than as a thick bar on a thin one.
    */
-  const BOTTOM_STRIP = 25;
+  const BOTTOM_STRIP = $derived(uiPx(24) + 1);
+  const rail = $derived(uiPx(COLLAPSED_RAIL));
 
   const BORDER: Record<DockSide, string> = {
     left: "border-r",
@@ -140,7 +141,7 @@
     if (availablePanels(d, hasSession, hidden).length === 0) return null;
     return d.collapsed ? "rail" : d.size;
   };
-  const sides = $derived(sideDockWidths(sideState("left"), sideState("right"), innerWidth));
+  const sides = $derived(sideDockWidths(sideState("left"), sideState("right"), innerWidth, rail));
   const size = $derived(
     side === "bottom" ? effectiveSize(side, dock.size, innerHeight) : sides[side],
   );
@@ -420,7 +421,7 @@
         ? 'transition-[width] duration-200 ease-out'
         : 'transition-[height] duration-200 ease-out'}"
     style={vertical
-      ? `width: ${collapsed ? COLLAPSED_RAIL : size}px`
+      ? `width: ${collapsed ? rail : size}px`
       : `height: ${collapsed ? BOTTOM_STRIP : size}px`}
   >
     <div

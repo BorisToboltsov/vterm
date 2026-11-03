@@ -122,8 +122,8 @@ describe("DockerContainers — columns of the wide layout", () => {
     const row = screen.getByRole("listitem");
     // Outer structure: state-dot slot · cells · metrics box.
     expect([...header.children].map(width)).toEqual([...row.children].map(width));
-    expect(width(header.firstElementChild!)).toBe("w-[7px]");
-    expect(width(header.lastElementChild!)).toBe("w-[104px]");
+    expect(width(header.firstElementChild!)).toBe("w-[0.4375rem]");
+    expect(width(header.lastElementChild!)).toBe("w-[6.5rem]");
     // The cells, one for one.
     const headCells = [...header.children[1].children];
     const rowCells = [...row.children[1].children];
@@ -150,12 +150,12 @@ describe("DockerContainers — columns of the wide layout", () => {
     resetColumnWidths();
     render(DockerContainers, { props: props() });
     const list = screen.getByTestId("docker-columns").parentElement!;
-    expect(list.style.getPropertyValue("--c-image")).toBe(`${LIST_COLUMNS["docker.image"]}px`);
+    expect(list.style.getPropertyValue("--c-image")).toBe(`${LIST_COLUMNS["docker.image"] / 16}rem`);
     setColumnWidth("docker.image", 420);
     flushSync();
     // One style write on the list re-sizes the header and every row.
-    expect(list.style.getPropertyValue("--c-image")).toBe("420px");
-    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["docker.name"]}px`);
+    expect(list.style.getPropertyValue("--c-image")).toBe("26.25rem");
+    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["docker.name"] / 16}rem`);
     resetColumnWidths();
   });
 

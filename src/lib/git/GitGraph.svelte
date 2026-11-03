@@ -61,12 +61,13 @@
   import { rowTooltip, whenLabel } from "./gitui";
   import { fitsBeside } from "../layout/panelsplit";
   import { partWidth } from "../stores/panelsplit.svelte";
-  import { settings } from "../settings/settings.svelte";
+  import { settings, uiPx } from "../settings/settings.svelte";
   import { windowRange } from "../ui/virtuallist";
   import { writeClipboard } from "../app/clipboard";
   import { notifySuccess, notifyError } from "../stores/toasts.svelte";
   import { untrack } from "svelte";
   import { t } from "../i18n";
+  import { REM_PX } from "../appearance/uiscale";
 
   let {
     rows,
@@ -124,9 +125,13 @@
   let listWidth = $state(0);
   let viewH = $state(0);
   let scrollTop = $state(0);
-  const oneLine = $derived(isLogWide(listWidth));
+  const oneLine = $derived(isLogWide(listWidth, uiPx(REM_PX)));
+  // The constants above are at 100 %, and so is everything the rails are drawn from:
+  // their SVG scales as a whole through its viewBox. Only the rows themselves and
+  // the room they leave for it are sized by the interface scale.
   const H = $derived(oneLine ? ONE_LINE_H : TWO_LINE_H);
-  const win = $derived(windowRange(scrollTop, viewH, H, rows.length));
+  const rowPx = $derived(uiPx(H));
+  const win = $derived(windowRange(scrollTop, viewH, rowPx, rows.length));
   const shown = $derived(rows.slice(win.start, win.end));
   // Rows stop taking the pointer while the list moves: see `listScrolling` in FileBrowser.
   let scrolling = $state(false);
@@ -202,7 +207,7 @@
       if (at < 0) return;
       picked = true;
       if (selected !== ask.hash) void open(ask.hash);
-      const top = Math.max(0, at * H - viewH / 2 + H / 2);
+      const top = Math.max(0, at * rowPx - viewH / 2 + rowPx / 2);
       scrollTop = top;
       if (listEl) listEl.scrollTop = top;
     });
@@ -445,8 +450,9 @@
           <!-- Continuous rail overlay — one SVG for the whole column, drawn near the view. -->
           <svg
             class="pointer-events-none absolute left-0 top-0"
-            width={graphW}
+            width={uiPx(graphW)}
             height={win.totalHeight}
+            viewBox="0 0 {graphW} {rows.length * H}"
             aria-hidden="true"
             data-testid="git-rails"
           >
@@ -485,8 +491,8 @@
               {@const labels = refLabels(c.refs, settings.gitShowTags)}
               <button
                 type="button"
-                style:height={`${H}px`}
-                style:padding-left={`${graphW}px`}
+                style:height={`${rowPx}px`}
+                style:padding-left={`${uiPx(graphW)}px`}
                 class="flex w-full items-center gap-1.5 pr-2 text-left {selected === c.hash
                   ? 'bg-edge/60'
                   : onHead.has(c.hash)

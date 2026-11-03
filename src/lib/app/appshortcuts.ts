@@ -110,6 +110,26 @@ export function paneStepChord(e: KeyChord): 1 | -1 | null {
   return bracket(e) || null;
 }
 
+/**
+ * ⌘+ / ⌘− / ⌘0 (macOS) or Ctrl+Shift+= / − / 0 (Windows/Linux) — the interface
+ * scale one stop up (`1`), down (`-1`), or back to 100 % (`0`); null for any other
+ * chord. Shift is free on macOS: `+` is Shift+= on most layouts. By the physical key
+ * first, like `bracket`: with Shift held the layout reports `_` and `)`.
+ */
+export function uiScaleChord(e: KeyChord): 1 | -1 | 0 | null {
+  const mac = e.metaKey && !e.ctrlKey && !e.altKey;
+  const other = e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey;
+  if (!mac && !other) return null;
+  if (e.code === "Equal" || e.code === "NumpadAdd") return 1;
+  if (e.code === "Minus" || e.code === "NumpadSubtract") return -1;
+  if (e.code === "Digit0" || e.code === "Numpad0") return 0;
+  if (e.code) return null;
+  if (e.key === "=" || e.key === "+") return 1;
+  if (e.key === "-" || e.key === "_") return -1;
+  if (e.key === "0" || e.key === ")") return 0;
+  return null;
+}
+
 /** Any of the pane chords: split right, split down, focus the next/previous pane. */
 export function isPaneChord(e: KeyChord): boolean {
   return isSplitRightChord(e) || isSplitDownChord(e) || paneStepChord(e) !== null;
@@ -121,7 +141,7 @@ export function isPaneChord(e: KeyChord): boolean {
  * Ctrl+K — those belong to the shell.
  */
 export function isAppShortcut(e: KeyChord): boolean {
-  return isPaletteChord(e) || isNewTabChord(e) || isPaneChord(e);
+  return isPaletteChord(e) || isNewTabChord(e) || isPaneChord(e) || uiScaleChord(e) !== null;
 }
 
 /** ⌘F (macOS) or Ctrl+Shift+F (Windows/Linux) — full-buffer terminal search.

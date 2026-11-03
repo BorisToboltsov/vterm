@@ -18,6 +18,7 @@
     type JsonLogEntry,
     type LevelCat,
   } from "./jsonlog";
+  import { uiPx } from "../settings/settings.svelte";
   import { tooltip } from "../actions/tooltip";
   import ColumnGrip from "../ui/ColumnGrip.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -57,7 +58,7 @@
     resizeStartW = colWidth(colWidths, key, fallback);
   }
   function onColResize(key: string, dx: number) {
-    colWidths = { ...colWidths, [key]: resizedWidth(resizeStartW, dx) };
+    colWidths = { ...colWidths, [key]: resizedWidth(resizeStartW, dx / uiPx(1)) };
   }
   /** Double click on a border: the column goes back to its default width. */
   function resetColWidth(key: string) {
@@ -250,14 +251,14 @@
       class="min-h-0 flex-1 overflow-auto"
       style={listHeight > 0 ? `--list-h: ${listHeight}px` : undefined}
     >
-      <table class="table-fixed border-collapse text-xs" style="width:{totalWidth}px">
+      <table class="table-fixed border-collapse text-xs" style="width:{uiPx(totalWidth)}px">
         <colgroup>
-          <col style="width:{EXPAND_W}px" />
-          <col style="width:{colWidth(colWidths, 'time', COL_WIDTHS.time)}px" />
-          <col style="width:{colWidth(colWidths, 'level', COL_WIDTHS.level)}px" />
-          <col style="width:{colWidth(colWidths, 'message', COL_WIDTHS.message)}px" />
+          <col style="width:{uiPx(EXPAND_W)}px" />
+          <col style="width:{uiPx(colWidth(colWidths, 'time', COL_WIDTHS.time))}px" />
+          <col style="width:{uiPx(colWidth(colWidths, 'level', COL_WIDTHS.level))}px" />
+          <col style="width:{uiPx(colWidth(colWidths, 'message', COL_WIDTHS.message))}px" />
           {#each extraColumns as col}
-            <col style="width:{colWidth(colWidths, `x:${col}`, COL_EXTRA_DEFAULT)}px" />
+            <col style="width:{uiPx(colWidth(colWidths, `x:${col}`, COL_EXTRA_DEFAULT))}px" />
           {/each}
         </colgroup>
         <thead class="sticky top-0 z-10 bg-panel-alt text-muted">

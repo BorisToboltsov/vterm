@@ -1,7 +1,9 @@
 <script lang="ts">
   // Renders a line-icon from the central registry (src/lib/ui/icons.ts).
-  // Inherits colour via `currentColor`; size and extra classes are props.
+  // Inherits colour via `currentColor`; size and extra classes are props. `size` is
+  // px at 100 %: drawn in rem, so a glyph grows with the text next to it (ADR 0049).
   import { ICONS, type IconName } from "./icons";
+  import { REM_PX } from "../appearance/uiscale";
 
   let {
     name,
@@ -23,6 +25,8 @@
 <svg
   width={size}
   height={size}
+  style:width="{size / REM_PX}rem"
+  style:height="{size / REM_PX}rem"
   viewBox="0 0 24 24"
   fill="none"
   stroke="currentColor"

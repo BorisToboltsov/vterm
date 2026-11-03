@@ -23,8 +23,9 @@ const APP_CSS = join(process.cwd(), "src", "app.css");
 describe("type scale guard", () => {
   it("defines the scale steps the codebase actually uses", () => {
     const css = readFileSync(APP_CSS, "utf8");
-    expect(css).toMatch(/--text-caption:\s*10px/);
-    expect(css).toMatch(/--text-meta:\s*11px/);
+    // In rem, or the interface scale (the root font size, ADR 0049) leaves them behind.
+    expect(css).toMatch(/--text-caption:\s*0\.625rem/);
+    expect(css).toMatch(/--text-meta:\s*0\.6875rem/);
   });
 
   it("keeps the scale free of line-height companions (the pure-rename property)", () => {

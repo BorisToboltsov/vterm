@@ -336,7 +336,7 @@
       {#each Array.from({ length: depth }) as _, i (i)}
         <span
           class="pointer-events-none absolute bottom-0 top-0 border-l border-muted/30"
-          style="left: {i * 16 + 8}px"
+          style="left: {i + 0.5}rem"
         ></span>
       {/each}
     {/snippet}
@@ -351,7 +351,7 @@
           role="treeitem"
           aria-selected={selectedFolder === row.path}
           tabindex="-1"
-          style="padding-left: {row.depth * 16}px"
+          style="padding-left: {row.depth}rem"
           onpointerdown={(e) => folderPointerDown(e, row.path)}
           oncontextmenu={(e) => openFolderMenu(e, row.path)}
           onclick={() => {
@@ -432,7 +432,7 @@
           data-server-alias={row.server.alias}
           role="button"
           tabindex="-1"
-          style="padding-left: {row.depth * 16}px"
+          style="padding-left: {row.depth}rem"
           class="group @container relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
           row.server.id
             ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'

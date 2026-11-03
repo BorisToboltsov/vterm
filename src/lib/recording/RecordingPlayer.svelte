@@ -11,7 +11,7 @@
   import "@xterm/xterm/css/xterm.css";
   import Icon from "../ui/Icon.svelte";
   import { t } from "../i18n";
-  import { settings, activeTerminalTheme, activeFontFamily } from "../settings/settings.svelte";
+  import { settings, activeTerminalTheme, activeFontFamily, activeFontSize } from "../settings/settings.svelte";
   import {
     parseCast,
     outputUpTo,
@@ -137,7 +137,7 @@
       cols: Math.max(1, width),
       rows: Math.max(1, height),
       fontFamily: activeFontFamily(),
-      fontSize: settings.fontSize,
+      fontSize: activeFontSize(),
       lineHeight: settings.lineHeight,
       // Keep history so the viewport can follow new output and scroll back.
       scrollback: 5000,

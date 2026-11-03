@@ -27,7 +27,7 @@
   import SidePane from "../ui/SidePane.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
-  import { wideWhen } from "../actions/panelwide";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import { tooltip } from "../actions/tooltip";
   import { containerRun, dockerLogin } from "../api";
   import { settings } from "../settings/settings.svelte";

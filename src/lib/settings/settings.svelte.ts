@@ -7,6 +7,14 @@
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
 import {
+  DEFAULT_UI_SCALE,
+  rootFontSize,
+  sanitizeUiScale,
+  scaledPx,
+  terminalFontPx,
+  UI_SCALE_KEY,
+} from "../appearance/uiscale";
+import {
   applyRailPalette,
   applyUiPalette,
   DEFAULT_THEME_ID,
@@ -155,8 +163,11 @@ export interface Settings {
   // Appearance
   theme: string; // preset id, or "custom"
   customTheme: TerminalTheme;
+  /** The interface scale, percent — one of `UI_SCALE_STOPS` (ADR 0049). */
+  uiScale: number;
   fontFamily: string;
   fontMode: FontMode;
+  /** The terminal's font at 100 %; on screen it is `activeFontSize()`. */
   fontSize: number;
   lineHeight: number;
   // Cursor
@@ -310,6 +321,7 @@ const DEFAULTS: Settings = {
   language: detectOsLocale(),
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
+  uiScale: DEFAULT_UI_SCALE,
   fontFamily: DEFAULT_FONT,
   fontMode: "theme",
   fontSize: 13,
@@ -475,6 +487,7 @@ function load(): Settings {
       ...DEFAULTS,
       ...raw,
       ...migrateFont(raw),
+      uiScale: sanitizeUiScale(raw.uiScale),
       language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
       windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
         ? raw.windowsShell
@@ -559,6 +572,20 @@ export function activeFontFamily(): string {
   return settings.fontMode === "theme" ? themeFont(settings.theme) : settings.fontFamily;
 }
 
+/** The terminal's font on screen: the size in the settings, at the interface scale. */
+export function activeFontSize(): number {
+  return terminalFontPx(settings.fontSize, settings.uiScale);
+}
+
+/**
+ * A size given at 100 %, at the current interface scale (reactive). For a number
+ * the markup does not derive by itself: what a virtual list counts rows with, a
+ * width a model adds up. `uiPx(1)` is the factor, for going the other way.
+ */
+export function uiPx(px: number): number {
+  return scaledPx(px, settings.uiScale);
+}
+
 export function selectFont(font: string): void {
   settings.fontFamily = font;
   settings.fontMode = "user";
@@ -637,6 +664,7 @@ export function applyImportedSettings(raw: unknown): void {
       sink[key] = r[key];
     }
   }
+  next.uiScale = sanitizeUiScale(next.uiScale);
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
@@ -745,6 +773,21 @@ export function applyActiveTheme(): void {
   }
 }
 
+/**
+ * Put the interface scale on the document (ADR 0049) and keep it where the boot
+ * script in `app.html` reads it, so the next launch's first frame has the size too.
+ */
+export function applyUiScale(): void {
+  if (typeof document !== "undefined") {
+    document.documentElement.style.fontSize = rootFontSize(settings.uiScale);
+  }
+  try {
+    localStorage.setItem(UI_SCALE_KEY, String(settings.uiScale));
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
 // Persist on any change and keep the UI chrome in sync with the chosen theme.
 // `$effect.root` lives for the whole app session (never torn down).
 $effect.root(() => {
@@ -758,5 +801,9 @@ $effect.root(() => {
 
   $effect(() => {
     applyActiveTheme();
+  });
+
+  $effect(() => {
+    applyUiScale();
   });
 });

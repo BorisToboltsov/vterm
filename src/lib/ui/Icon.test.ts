@@ -12,6 +12,13 @@ describe("Icon", () => {
     expect(svg.getAttribute("height")).toBe("20");
   });
 
+  it("draws in rem, so it grows with the interface scale", () => {
+    const { container } = render(Icon, { props: { name: "folder", size: 20 } });
+    const svg = container.querySelector("svg")!;
+    expect(svg.style.width).toBe("1.25rem");
+    expect(svg.style.height).toBe("1.25rem");
+  });
+
   it("inlines the registry markup for the icon", () => {
     const { container } = render(Icon, { props: { name: "trash" } });
     // trash has three <path> segments.

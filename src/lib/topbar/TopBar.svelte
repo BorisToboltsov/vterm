@@ -20,7 +20,7 @@
   import { tooltip } from "../actions/tooltip";
   import { glide } from "../actions/drag";
   import { motion } from "../ui/motion";
-  import { settings } from "../settings/settings.svelte";
+  import { settings, uiPx } from "../settings/settings.svelte";
   import {
     actionUtility,
     fitTopbar,
@@ -94,7 +94,8 @@
   const fit = $derived(
     fitTopbar(
       all.map((a) => a.id),
-      topbarRoom(barWidth),
+      // `TOPBAR_SIZES` is the bar at 100 %, so the room is counted at 100 % too.
+      topbarRoom(barWidth / uiPx(1)),
       (id) => mustShow(id, barState),
     ),
   );

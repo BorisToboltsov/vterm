@@ -45,6 +45,7 @@
   import { notifySuccess, notifyError } from "../stores/toasts.svelte";
   import { fileStatusColor } from "./gitview";
   import { t } from "../i18n";
+  import { REM_PX } from "../appearance/uiscale";
 
   let {
     branches,
@@ -139,7 +140,7 @@
     tags: () => t("git.tags"),
   };
   /** Left padding of a tree row, px: one step a level. */
-  const indent = (depth: number): string => `${6 + depth * 12}px`;
+  const indent = (depth: number): string => `${(6 + depth * 12) / REM_PX}rem`;
 
   // ── The selected row, and what the toolbar does to it ─────────────────────
   let selectedRef = $state<string | null>(null);
@@ -527,7 +528,7 @@
 
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
     <div class="shrink-0 border-b border-edge px-2 py-1">
-      <label class="flex h-[22px] min-w-0 items-center gap-1 rounded border border-edge bg-panel px-1.5 text-meta text-muted focus-within:border-accent">
+      <label class="flex h-[1.375rem] min-w-0 items-center gap-1 rounded border border-edge bg-panel px-1.5 text-meta text-muted focus-within:border-accent">
         <Icon name="search" size={12} class="shrink-0" />
         <input
           bind:value={query}

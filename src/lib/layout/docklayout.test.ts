@@ -98,6 +98,8 @@ describe("guards and bounds", () => {
   it("draws side docks at their stored widths while the centre has room", () => {
     expect(sideDockWidths(256, 384, 1100)).toEqual({ left: 256, right: 384 });
     expect(sideDockWidths(null, "rail", 500)).toEqual({ left: 0, right: COLLAPSED_RAIL });
+    // A rail at another interface scale takes what it is told; an open dock keeps its px.
+    expect(sideDockWidths(256, "rail", 1100, 54)).toEqual({ left: 256, right: 54 });
     // Unknown viewport (0 before the first measure) — the stored widths.
     expect(sideDockWidths(256, 384, 0)).toEqual({ left: 256, right: 384 });
   });

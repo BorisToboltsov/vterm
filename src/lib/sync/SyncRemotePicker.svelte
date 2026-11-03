@@ -157,7 +157,7 @@
           aria-selected={selected === row.path}
           aria-expanded={row.leaf ? undefined : row.expanded}
           tabindex="-1"
-          style="padding-left: {row.depth * 16}px"
+          style="padding-left: {row.depth}rem"
           class="relative flex h-7 cursor-pointer items-center gap-1 border-l-2 pr-2 text-sm transition duration-150 {selected ===
           row.path
             ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'
@@ -171,7 +171,7 @@
           {#each Array.from({ length: row.depth }) as _, i (i)}
             <span
               class="pointer-events-none absolute bottom-0 top-0 border-l border-muted/30"
-              style="left: {i * 16 + 8}px"
+              style="left: {i + 0.5}rem"
             ></span>
           {/each}
           {#if row.leaf}

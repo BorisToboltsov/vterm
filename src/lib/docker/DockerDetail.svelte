@@ -178,7 +178,7 @@
   {@const c = container}
   <!-- Header: state + image + actions -->
   <div class="mb-2 flex items-center gap-2">
-    <span class="h-[8px] w-[8px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+    <span class="h-[0.5rem] w-[0.5rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
     <div class="min-w-0 flex-1 truncate text-meta text-muted">{c.image}</div>
     <div class="flex shrink-0 items-center gap-0.5 text-muted">
       {#if isRunning(c)}

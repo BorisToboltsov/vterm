@@ -88,12 +88,13 @@
   }
 
   const gitMergeTheme = EditorView.theme({
+    ".cm-chunkButtons .cm-gitMergeBtn svg": { width: "0.875rem", height: "0.875rem" },
     ".cm-chunkButtons .cm-gitMergeBtn": {
       display: "inline-flex",
       alignItems: "center",
       justifyContent: "center",
-      width: "22px",
-      height: "22px",
+      width: "1.375rem",
+      height: "1.375rem",
       padding: "0",
       margin: "0 2px",
       border: "1px solid transparent",

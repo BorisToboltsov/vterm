@@ -215,7 +215,9 @@
     isSplitDownChord,
     isSplitRightChord,
     paneStepChord,
+    uiScaleChord,
   } from "#lib/app/appshortcuts.ts";
+  import { createUiScaleFlow } from "#lib/page/uiscaleflow.svelte.ts";
   import Icon from "#lib/ui/Icon.svelte";
   import Toast from "#lib/ui/Toast.svelte";
   import EmptyState from "#lib/ui/EmptyState.svelte";
@@ -262,7 +264,7 @@
     clearRecording,
   } from "#lib/stores/recordings.svelte.ts";
   import type { SftpProgress, TransferJob } from "#lib/api/index.ts";
-  import { applyImportedSettings, settings } from "#lib/settings/settings.svelte.ts";
+  import { applyImportedSettings, settings, uiPx } from "#lib/settings/settings.svelte.ts";
   import { t } from "#lib/i18n/index.ts";
   import {
     setMenuLanguage,
@@ -633,7 +635,7 @@
 
   /** Give a pane the focus and put the keyboard in the terminal it shows. */
   /** Height of the strip of views a zone of a connection carries, px. */
-  const VIEW_STRIP = 28;
+  const VIEW_STRIP = $derived(uiPx(28));
 
   // ── A connection's own zones (v1.11, ADR 0024) ────────────────────────────
   // A connection's area — its pane, less the pane's strip — is divided between
@@ -1085,7 +1087,16 @@
   // ── Dragging files (v1.13–v1.14; the flow lives in page/filedragflow.svelte.ts) ──
   let fileGhost = $state<ReturnType<typeof FileDragGhost>>();
 
+  const uiScale = createUiScaleFlow();
+  const UI_SCALE_KEYWORDS =
+    "scale zoom interface font bigger smaller масштаб интерфейс шрифт увеличить уменьшить";
   const paletteCommands = $derived<CommandItem[]>([
+    { id: "scale:up", title: t("palette.uiScaleUp"), icon: "plus", group: t("palette.groupActions"),
+      keywords: UI_SCALE_KEYWORDS, run: () => uiScale.step(1) },
+    { id: "scale:down", title: t("palette.uiScaleDown"), icon: "minus", group: t("palette.groupActions"),
+      keywords: UI_SCALE_KEYWORDS, run: () => uiScale.step(-1) },
+    { id: "scale:reset", title: t("palette.uiScaleReset"), icon: "refresh", group: t("palette.groupActions"),
+      keywords: UI_SCALE_KEYWORDS, run: () => uiScale.step(0) },
     { id: "act:add", title: t("palette.addServer"), icon: "plus", group: t("palette.groupActions"),
       keywords: "add server new сервер добавить", run: () => serverForm?.openAdd(selectedFolder ?? "") },
     // Duplicate acts on the currently selected server; hidden when none is selected.
@@ -1276,6 +1287,13 @@
     if (isNewTabChord(e)) {
       e.preventDefault();
       openNewTab(newTabAction(activeTab));
+      return;
+    }
+    // ⌘+ / ⌘− / ⌘0 (Ctrl+Shift+ on Windows/Linux) — the interface scale.
+    const scaleStep = uiScaleChord(e);
+    if (scaleStep !== null) {
+      e.preventDefault();
+      uiScale.step(scaleStep);
       return;
     }
     onPaneKey(e);

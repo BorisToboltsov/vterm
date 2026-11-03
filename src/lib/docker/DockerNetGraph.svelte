@@ -14,6 +14,7 @@
   import { stateTone, type DockerContainer, type DockerNetwork } from "./docker";
   import { buildNetGraph, graphFocus, type GraphEdge, type GraphPick } from "./dockernet";
   import { t } from "../i18n";
+  import { uiPx } from "../settings/settings.svelte";
 
   let {
     networks,
@@ -23,8 +24,8 @@
     containers: DockerContainer[];
   } = $props();
 
-  const H = 26; // fixed row height — the SVG is laid out in the same units
-  const PAD = 4; // breathing room above the first and below the last row
+  const H = $derived(uiPx(26)); // fixed row height — the SVG is laid out in the same units
+  const PAD = $derived(uiPx(4)); // breathing room above the first and below the last row
   // The SVG's x axis is in percent of the width (it stretches; strokes do not),
   // so the edges need no measured width: they run between the two label columns.
   const LEFT = 38;
@@ -127,7 +128,7 @@
           data-testid="docker-net-container"
           onclick={() => toggle({ kind: "container", id: c.id })}
         >
-          <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(c.state)]}"></span>
+          <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}"></span>
           <span class="min-w-0 truncate text-text/90">{c.name}</span>
           {#if c.mode}
             <!-- `host` / `none`: a mode, not a network two containers meet on — no edge. -->

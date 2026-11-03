@@ -22,7 +22,7 @@ export interface SettingsGroup {
 // render order in the right pane.
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
-  { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер прод фон подкраска" },
+  { id: "appearance", keywords: "Appearance theme font color size scale zoom interface bigger smaller line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер масштаб интерфейс увеличить уменьшить прод фон подкраска" },
   { id: "panels", keywords: "Panels dock docks layout hide show sidebar bottom panel docker kubernetes k8s git sftp ai columns reset панели панель док доки раскладка скрыть показать нижняя боковая колонки сбросить" },
   { id: "topbar", keywords: "Top bar toolbar buttons quick actions pin unpin order utilities tools rec broadcast monitoring верхняя панель кнопки быстрые действия закрепить убрать порядок утилиты инструменты запись мониторинг" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },

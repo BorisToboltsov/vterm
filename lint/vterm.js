@@ -209,6 +209,9 @@ function onlyIn(pkg, description, message) {
 const OVERLAY = /fixed\s+inset-0|inset-0\s+fixed/;
 const HAS_Z = /\bz-(\d|\[)/;
 const ARBITRARY_SIZE = /\btext-\[[0-9.]+(?:px|rem|em|pt)\]/;
+// A size in px in a class, past a hairline: `h-[22px]`, `pl-[25px]`, `-top-[7px]`.
+const PX_SIZE =
+  /(?:^|[\s:-])(?:h|w|size|min-h|min-w|max-h|max-w|gap(?:-[xy])?|p[xytblr]?|m[xytblr]?|top|left|right|bottom|inset(?:-[xy])?|leading)-\[-?(?:[3-9]|[1-9][0-9]+)(?:\.[0-9]+)?px\]/;
 const MICRO_LABEL = /\btext-(caption|meta) uppercase tracking-(wider|wide)\b/;
 const MICRO_LABEL_ONE = "text-caption uppercase tracking-wider";
 const TRANSITIONS = new Set(["fade", "slide", "scale", "fly", "blur", "draw", "flip", "glide"]);
@@ -366,6 +369,12 @@ const rules = {
     "Font sizes come from the type scale",
     "Use the scale: text-caption (10px) · text-meta (11px) · text-xs (12px) · text-sm (14px), not an arbitrary text-[N].",
     (context, report) => classStrings(context, report, (s) => ARBITRARY_SIZE.test(s)),
+  ),
+
+  "rem-sizes": rule(
+    "A size in a class follows the interface scale",
+    "Give it in rem (h-[1.375rem], not h-[22px]): the interface scale is the root font size (ADR 0049), and a size in px stays behind the text next to it.",
+    (context, report) => classStrings(context, report, (s) => PX_SIZE.test(s)),
   ),
 
   "micro-label": rule(

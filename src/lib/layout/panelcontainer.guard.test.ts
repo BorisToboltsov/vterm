@@ -16,7 +16,7 @@
 // dialog in it (`DockerDetail`, not `DockerDetailModal`), in a `SidePane`.
 //
 // A panel whose sub-components own dialogs cannot be a container at all; it
-// measures itself instead (`actions/panelwide.ts`, the Git panel).
+// measures itself instead (`actions/panelwide.svelte.ts`, the Git panel).
 //
 // What a panel opens beside its list goes there by the one rule there is — the
 // panel is wide and the row holds two parts (`fitsBeside`) — never by a width

@@ -130,7 +130,7 @@
     class="sticky top-0 z-10 hidden items-stretch border-b border-edge bg-panel-alt pl-2.5 pr-2 text-meta font-medium text-muted @wide:flex"
     data-testid="k8s-columns"
   >
-    <span class="mr-2 w-[7px] shrink-0"></span>
+    <span class="mr-2 w-[0.4375rem] shrink-0"></span>
     <ColumnHead col="k8s.name" label={t("k8s.name")} class="w-[var(--c-name)] pr-2" />
     <ColumnHead col="k8s.namespace" label={t("k8s.namespace")} class="w-[var(--c-ns)] px-2" />
     <ColumnHead col="k8s.node" label={t("k8s.node")} class="w-[var(--c-node)] px-2" />
@@ -169,7 +169,7 @@
         oncontextmenu={(e) => showMenu(e, menuItems(p))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full @wide:mr-2 @wide:self-center {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
+        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:mr-2 @wide:self-center {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
         <div class="min-w-0 flex-1 @wide:w-[var(--c-name)] @wide:flex-initial @wide:pr-2 {TEXT}">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-text/90">{p.name}</span>

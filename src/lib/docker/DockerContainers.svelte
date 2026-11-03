@@ -184,14 +184,14 @@
     class="sticky top-0 z-10 hidden items-stretch gap-2 border-b border-edge bg-panel-alt pl-2.5 pr-2 text-meta font-medium text-muted @wide:flex"
     data-testid="docker-columns"
   >
-    <span class="w-[7px] shrink-0"></span>
+    <span class="w-[0.4375rem] shrink-0"></span>
     <div class="flex min-w-0 flex-1 items-stretch">
       <ColumnHead col="docker.name" label={t("docker.name")} class="w-[var(--c-name)] pr-2" />
       <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2" />
       <ColumnHead col="docker.status" label={t("docker.status")} class="w-[var(--c-status)] px-2" />
       <ColumnHead col="docker.ports" label={t("docker.ports")} class="w-[var(--c-ports)] px-2" />
     </div>
-    <span class="w-[104px] shrink-0 self-center truncate text-right">{t("docker.cpu")}</span>
+    <span class="w-[6.5rem] shrink-0 self-center truncate text-right">{t("docker.cpu")}</span>
   </div>
   {#each groups as g (g.project)}
     {#if g.project}
@@ -238,7 +238,7 @@
         oncontextmenu={(e) => showMenu(e, menuItems(c))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
         <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
              two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
              left the image as "ghcr.io/vc…" — the half that says *what is actually
@@ -260,7 +260,7 @@
              cross-faded. Swapping them with `hidden`/`flex` would resize the row
              under the pointer — the design system's no-reflow rule for hover
              actions. Both layers are absolute, so the reserved width is fixed. -->
-        <div class="relative h-5 w-[104px] shrink-0 @wide:self-center">
+        <div class="relative h-5 w-[6.5rem] shrink-0 @wide:self-center">
           {#if history.length > 0}
             <div
               class="absolute inset-0 flex items-center justify-end gap-1.5 transition-opacity duration-150 group-hover:opacity-0"

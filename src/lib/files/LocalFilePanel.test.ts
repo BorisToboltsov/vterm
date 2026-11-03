@@ -119,11 +119,11 @@ describe("the file listing as a table (wide layout)", () => {
     resetColumnWidths();
     await renderPanel([entry("deploy.sh")]);
     const list = screen.getByTestId("localfiles-list");
-    expect(list.style.getPropertyValue("--c-name")).toBe("320px");
-    expect(list.style.getPropertyValue("--c-owner")).toBe("150px");
+    expect(list.style.getPropertyValue("--c-name")).toBe("20rem");
+    expect(list.style.getPropertyValue("--c-owner")).toBe("9.375rem");
     setColumnWidth("files.name", 410);
     flushSync();
-    expect(list.style.getPropertyValue("--c-name")).toBe("410px");
+    expect(list.style.getPropertyValue("--c-name")).toBe("25.625rem");
     resetColumnWidths();
   });
 

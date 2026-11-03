@@ -184,7 +184,7 @@
 </script>
 
 <div class="flex min-w-0 shrink-0 items-center gap-1 border-b border-edge px-2 py-1 text-meta text-muted" data-testid="git-log-filter">
-  <label class="flex h-[22px] min-w-0 flex-1 items-center gap-1 rounded border border-edge bg-panel px-1.5 focus-within:border-accent {full ? 'max-w-72' : ''}">
+  <label class="flex h-[1.375rem] min-w-0 flex-1 items-center gap-1 rounded border border-edge bg-panel px-1.5 focus-within:border-accent {full ? 'max-w-72' : ''}">
     <Icon name="search" size={12} class="shrink-0" />
     <input
       bind:value={draft}

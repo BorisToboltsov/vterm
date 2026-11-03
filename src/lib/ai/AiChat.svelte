@@ -8,7 +8,7 @@
   // dialog before anything is sent.
   import { tick } from "svelte";
   import { tooltip } from "../actions/tooltip";
-  import { wideWhen } from "../actions/panelwide";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import { settings } from "../settings/settings.svelte";
   import {
     aiReady,

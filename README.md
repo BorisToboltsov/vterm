@@ -8,7 +8,7 @@
 терминал, плюс передача файлов по SFTP, встроенный редактор конфигов, мониторинг и
 запись сессий. Написан на **Rust** поверх **Tauri 2** и **SvelteKit**.
 
-![version](https://img.shields.io/badge/version-1.27.0-blue)
+![version](https://img.shields.io/badge/version-1.28.0-blue)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 ![platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey)
 ![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB)
@@ -70,7 +70,7 @@ HTTP-клиент — на хосте активной сессии.
 После перезапуска вкладки возвращаются на свои места; к прод-серверам и контейнерам vterm сам не подключается.
 
 #### 🎨 Оформление и приватность
-Темы терминала и UI (включая фирменные с объёмным фоном), i18n (EN / RU), доступность.
+Темы терминала и UI (включая фирменные с объёмным фоном), масштаб всего интерфейса, i18n (EN / RU), доступность.
 Секреты — в системном keychain. **Офлайн по умолчанию** (кроме SSH и опц. ИИ).
 
 📖 **Полное описание возможностей и горячих клавиш — в [docs/GUIDE.md](docs/GUIDE.md)**

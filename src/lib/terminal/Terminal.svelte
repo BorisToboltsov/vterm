@@ -59,7 +59,7 @@
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "../pathsync/cdterminal";
   import { hostEnv } from "../stores/hostenv.svelte";
-  import { settings, activeTerminalTheme, activeFontFamily } from "../settings/settings.svelte";
+  import { settings, activeTerminalTheme, activeFontFamily, activeFontSize } from "../settings/settings.svelte";
   import { terminalBackground, type ProdTint } from "../appearance/prodtint";
   import { readClipboard, writeClipboard } from "../app/clipboard";
   import { textLines } from "../ai/aicontext";
@@ -701,7 +701,7 @@
       // replaced the clipboard right before the paste read it.
       rightClickSelectsWord: false,
       fontFamily: activeFontFamily(),
-      fontSize: settings.fontSize,
+      fontSize: activeFontSize(),
       lineHeight: settings.lineHeight,
       cursorBlink: settings.cursorBlink,
       cursorStyle: settings.cursorStyle,
@@ -1036,7 +1036,7 @@
     if (!term) return;
     const t = paintedTheme();
     const fontFamily = activeFontFamily();
-    const fontSize = settings.fontSize;
+    const fontSize = activeFontSize();
     term.options.theme = t;
     term.options.fontFamily = fontFamily;
     term.options.fontSize = fontSize;

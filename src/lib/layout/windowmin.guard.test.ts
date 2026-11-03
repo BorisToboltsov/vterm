@@ -45,7 +45,7 @@ export function builderViolations(appwin: string, expected: number): string[] {
 export function dockViolations(dock: string): string[] {
   const src = stripJs(dock);
   const out: string[] = [];
-  if (!/sideDockWidths\(sideState\("left"\), sideState\("right"\), innerWidth\)/.test(src)) {
+  if (!/sideDockWidths\(sideState\("left"\), sideState\("right"\), innerWidth, rail\)/.test(src)) {
     out.push("the side docks are not fitted to the window");
   }
   if (!/side === "bottom" \? effectiveSize\(side, dock\.size, innerHeight\) : sides\[side\]/.test(src)) {

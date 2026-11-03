@@ -2,6 +2,10 @@
 // draws the table — the structured log view keeps its own (columns come and go
 // with the log's fields), the dock lists share the persisted store in
 // `stores/colwidths.svelte.ts` — but the arithmetic is one and lives here (ADR 0003).
+// Widths are px at 100 %: a column holds text, so it grows with the interface scale
+// (ADR 0049), and a drag divides the pointer's move by the scale before it gets here.
+
+import { REM_PX } from "../appearance/uiscale";
 
 /** Smallest a column may be dragged to. */
 export const COL_MIN = 56;
@@ -73,12 +77,12 @@ export function listColumnWidth(widths: ListWidths, col: ListColumn): number {
 }
 
 /**
- * CSS custom properties for a list's columns — `{ "--c-name": "200px", … }` as a
+ * CSS custom properties for a list's columns — `{ "--c-name": "12.5rem", … }` as a
  * `style` string. The rows and the header read the same variables, so a drag
  * re-sizes every row through one style write instead of one per row.
  */
 export function columnVars(widths: ListWidths, vars: Record<string, ListColumn>): string {
   return Object.entries(vars)
-    .map(([name, col]) => `${name}: ${listColumnWidth(widths, col)}px`)
+    .map(([name, col]) => `${name}: ${listColumnWidth(widths, col) / REM_PX}rem`)
     .join("; ");
 }
