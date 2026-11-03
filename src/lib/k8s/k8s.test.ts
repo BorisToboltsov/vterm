@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { applyView, facetValues, NO_FILTER } from "../ui/listview";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import {
   parseCpuMillis,
@@ -32,7 +33,14 @@ import {
   parseContexts,
   parseTopPods,
   metricsKey,
-  groupByOwner,
+  podSchema,
+  POD_ORDER,
+  WORKLOAD_SCHEMA,
+  WORKLOAD_ORDER,
+  EVENT_SCHEMA,
+  EVENT_ORDER,
+  type K8sEvent,
+  type K8sWorkload,
   parseAvailability,
   podPhaseTone,
   isDestructive,
@@ -408,8 +416,8 @@ describe("parseTopPods", () => {
   });
 });
 
-describe("groupByOwner", () => {
-  const pod = (name: string, ownerKind: string, ownerName: string): K8sPod => ({
+describe("pod list", () => {
+  const pod = (name: string, ownerKind: string, ownerName: string, over: Partial<K8sPod> = {}): K8sPod => ({
     name,
     namespace: "web",
     phase: "Running",
@@ -424,17 +432,89 @@ describe("groupByOwner", () => {
     containers: ["app"],
     ownerKind,
     ownerName,
+    ...over,
   });
-  it("buckets by owner and sorts standalone last", () => {
-    const groups = groupByOwner([
-      pod("api-1", "Deployment", "api"),
-      pod("loose", "", ""),
-      pod("api-2", "Deployment", "api"),
-      pod("db-0", "StatefulSet", "db"),
+  const pods = [
+    pod("api-2", "Deployment", "api", { restarts: 9, status: "CrashLoopBackOff", created: 3000 }),
+    pod("loose", "", "", { node: "n2", created: 1000 }),
+    pod("api-1", "Deployment", "api", { created: 2000 }),
+    pod("db-0", "StatefulSet", "db", { node: "n2" }),
+  ];
+  const cpu: Record<string, number | null> = { "api-2": 300, loose: null, "api-1": 20, "db-0": 90 };
+  const schema = podSchema((p) => ({ cpu: cpu[p.name], mem: null }));
+  const names = (v: ReturnType<typeof applyView<K8sPod>>) => v.groups.map((g) => [g.key, g.items.map((p) => p.name)]);
+
+  it("lies as it did: owners by kind then name, standalone last, pods by name", () => {
+    expect(names(applyView(pods, schema, NO_FILTER, POD_ORDER))).toEqual([
+      ["Deployment/api", ["api-1", "api-2"]],
+      ["StatefulSet/db", ["db-0"]],
+      ["", ["loose"]],
     ]);
-    expect(groups.map((g) => `${g.kind}/${g.name}`)).toEqual(["Deployment/api", "StatefulSet/db", "/"]);
-    expect(groups[0].pods.map((p) => p.name)).toEqual(["api-1", "api-2"]);
-    expect(groups[2].name).toBe("");
+  });
+
+  it("orders by restarts, CPU and age — the oldest first, an unknown age last", () => {
+    const by = (key: string) =>
+      applyView(pods, schema, NO_FILTER, { sort: { key, dir: "desc" }, group: "none" }).groups[0].items.map((p) => p.name);
+    expect(by("restarts")[0]).toBe("api-2");
+    expect(by("cpu")).toEqual(["api-2", "db-0", "api-1", "loose"]);
+    expect(by("age")).toEqual(["loose", "api-1", "api-2", "db-0"]);
+  });
+
+  it("groups by node and narrows by status and node", () => {
+    expect(names(applyView(pods, schema, NO_FILTER, { ...POD_ORDER, group: "node" })).map(([k]) => k)).toEqual(["n1", "n2"]);
+    const crashing = applyView(pods, schema, { text: "", facets: { status: ["CrashLoopBackOff"] } }, POD_ORDER);
+    expect(crashing.shown).toBe(1);
+    expect(facetValues(pods, schema, NO_FILTER, "node")).toEqual([
+      { value: "n1", count: 2 },
+      { value: "n2", count: 2 },
+    ]);
+  });
+});
+
+describe("workload and event lists", () => {
+  const w = (kind: K8sWorkload["kind"], name: string): K8sWorkload => ({
+    kind,
+    name,
+    namespace: "web",
+    ready: "",
+    replicas: null,
+    schedule: "",
+    suspended: false,
+    age: "1d",
+    scalable: false,
+  });
+
+  it("workloads by kind in the order the panel always had, the facet lists every kind", () => {
+    const list = [w("CronJob", "nightly"), w("Deployment", "api"), w("DaemonSet", "agent")];
+    expect(applyView(list, WORKLOAD_SCHEMA, NO_FILTER, WORKLOAD_ORDER).groups.map((g) => g.key)).toEqual([
+      "Deployment",
+      "DaemonSet",
+      "CronJob",
+    ]);
+    expect(facetValues(list, WORKLOAD_SCHEMA, NO_FILTER, "kind").map((v) => [v.value, v.count])).toEqual([
+      ["Deployment", 1],
+      ["StatefulSet", 0],
+      ["DaemonSet", 1],
+      ["CronJob", 1],
+    ]);
+  });
+
+  it("events: the latest first, Warning and Normal as the type facet", () => {
+    const e = (type: string, reason: string, ts: number): K8sEvent => ({
+      type,
+      reason,
+      object: "Pod/x",
+      namespace: "web",
+      message: "",
+      count: 1,
+      age: "",
+      ts,
+    });
+    const events = [e("Normal", "Pulled", 1), e("Warning", "BackOff", 3), e("Normal", "Started", 2)];
+    const view = applyView(events, EVENT_SCHEMA, NO_FILTER, EVENT_ORDER);
+    expect(view.groups[0].items.map((x) => x.reason)).toEqual(["BackOff", "Started", "Pulled"]);
+    const warn = applyView(events, EVENT_SCHEMA, { text: "", facets: { type: ["Warning"] } }, EVENT_ORDER);
+    expect(warn.shown).toBe(1);
   });
 });
 

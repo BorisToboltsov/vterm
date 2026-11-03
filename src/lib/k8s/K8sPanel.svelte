@@ -27,6 +27,11 @@
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
   import SidePane from "../ui/SidePane.svelte";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import { listMenuText, type ListLabels } from "../ui/listtext";
+  import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
+  import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
@@ -67,12 +72,17 @@
     listFailure,
     metricsKey,
     parseCpuMillis,
-    groupByOwner,
+    parseMemMiB,
+    podSchema,
+    POD_ORDER,
+    WORKLOAD_SCHEMA,
+    WORKLOAD_ORDER,
+    EVENT_ORDER,
+    EVENT_SCHEMA,
     parseAvailability,
     needsConfirm,
     type K8sScope,
     type K8sAvailability,
-    type PodGroup,
     type K8sWorkload,
     type K8sPod,
     type K8sPodMetrics,
@@ -85,7 +95,15 @@
   } from "./k8s";
   import { buildRoutes } from "./k8sroute";
   import { pushSamples, type LoadHistory } from "../monitoring/loadhistory";
-  import { dockState, rememberSub, storedSub } from "../stores/dockstate.svelte";
+  import {
+    collapsedGroups,
+    dockState,
+    listFilter,
+    rememberSub,
+    setGroupsCollapsed,
+    setListFilter,
+    storedSub,
+  } from "../stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { untrack } from "svelte";
   import { t, type MessageKey } from "../i18n";
@@ -142,7 +160,7 @@
   // skeleton so the panel never flashes "No pods" before the first `get`.
   let firstLoadDone = $state(false);
 
-  let podGroups = $state<PodGroup[]>([]);
+  let podList = $state<K8sPod[]>([]);
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
   // CPU history (millicores) per pod, fed by the `top pods` poll already running.
   let cpuHistory = $state<LoadHistory>({});
@@ -170,6 +188,48 @@
   let events = $state<K8sEvent[]>([]);
 
   let menu = $state<OpenMenu | null>(null);
+
+  // The filter rows of the lists (v1.29, ADR 0050): what each is narrowed to and
+  // which groups are folded are this session's (`dockstate`); how it is ordered
+  // and grouped is the app's, per list. The namespace and the context stay the
+  // scope above: they are part of the command, not a filter of its answer.
+  const setFilter = (list: ListId) => (next: ListFilter) => setListFilter(sessionId, list, next);
+  const foldOf = (list: ListId) => collapsedGroups(sessionId, list);
+  const toggleFold = (list: ListId) => (key: string) =>
+    setGroupsCollapsed(sessionId, list, [key], !collapsedGroups(sessionId, list).includes(key));
+  const podMetrics = (p: K8sPod) =>
+    metricsByKey.get(metricsKey(p.namespace, p.name)) ?? metricsByKey.get(metricsKey("", p.name));
+  // The schema reads the live snapshot when it compares: ordering by CPU follows the poll.
+  const PODS = podSchema((p) => ({ cpu: parseCpuMillis(podMetrics(p)?.cpu), mem: parseMemMiB(podMetrics(p)?.mem) }));
+  const SORT_LABEL: Record<string, MessageKey> = {
+    name: "k8s.name",
+    restarts: "k8s.restarts",
+    cpu: "k8s.cpu",
+    mem: "k8s.mem",
+    age: "k8s.age",
+  };
+  const GROUP_LABEL: Record<string, MessageKey> = {
+    owner: "k8s.owner",
+    node: "k8s.node",
+    namespace: "k8s.namespace",
+    kind: "k8s.kind",
+  };
+  const POD_LABELS: ListLabels = {
+    group: (id) => t(GROUP_LABEL[id]),
+    sort: (id) => t(SORT_LABEL[id]),
+    facet: (id) => t(id === "node" ? "k8s.node" : "k8s.status"),
+  };
+  const WORKLOAD_LABELS: ListLabels = {
+    group: (id) => t(GROUP_LABEL[id]),
+    sort: (id) => t(SORT_LABEL[id]),
+    facet: () => t("k8s.kind"),
+  };
+  const podFilter = $derived(listFilter(sessionId, "k8s.pods"));
+  const podOrder = $derived(listOrder("k8s.pods", PODS, POD_ORDER));
+  const podView = $derived(applyView(podList, PODS, podFilter, podOrder));
+  const workloadFilter = $derived(listFilter(sessionId, "k8s.workloads"));
+  const workloadOrder = $derived(listOrder("k8s.workloads", WORKLOAD_SCHEMA, WORKLOAD_ORDER));
+  const workloadView = $derived(applyView(workloads, WORKLOAD_SCHEMA, workloadFilter, workloadOrder));
 
   // The wide layout (v1.7): the panel is laid out by its container query, but
   // whether details open beside the list or as a dialog is behaviour, not layout
@@ -336,13 +396,13 @@
           kubectlRun(sessionId, viewArgs(podsArgs()), 20, false),
           kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
         ]);
-        podGroups = groupByOwner(parsePods(pods.stdout));
+        podList = parsePods(pods.stdout);
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
         metricsByKey = map;
         // Fold this snapshot into the rolling CPU history (Phase 42). Keyed off the
         // pod list, so a pod that was rescheduled between the two commands is dropped.
-        const live = podGroups.flatMap((g) => g.pods.map((p) => metricsKey(p.namespace, p.name)));
+        const live = podList.map((p) => metricsKey(p.namespace, p.name));
         const cpu = new Map<string, number>();
         for (const key of live) {
           const millis = parseCpuMillis(map.get(key)?.cpu);
@@ -497,11 +557,7 @@
   }
   const liveDetailPod = $derived.by(() => {
     if (!detailPod) return null;
-    for (const g of podGroups) {
-      const f = g.pods.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name);
-      if (f) return f;
-    }
-    return null;
+    return podList.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name) ?? null;
   });
   const detailMetrics = $derived.by(() => {
     const p = liveDetailPod;
@@ -711,24 +767,95 @@
           {/each}
         </div>
       {:else if activeSub === "pods"}
-        {#if podGroups.length === 0}
+        {#if podList.length === 0}
           <EmptyState icon="container" title={t("k8s.noPods")} hint={t("k8s.noPodsHint")} />
         {:else}
-          <K8sPods
-            groups={podGroups}
-            {metricsByKey}
-            {cpuHistory}
-            {run}
-            {openShell}
-            onViewDetails={openDetails}
-            {showMenu}
-          />
+          <div class="flex h-full min-h-0 flex-col">
+            <ListHeader
+              items={podList}
+              schema={PODS}
+              filter={podFilter}
+              onfilter={setFilter("k8s.pods")}
+              order={podOrder}
+              onorder={(o) => setListOrder("k8s.pods", o)}
+              shown={podView.shown}
+              total={podView.total}
+              labels={POD_LABELS}
+              placeholder={t("k8s.filterPods")}
+              {wide}
+              onmenu={(m) => (menu = m)}
+              fold={(c) => setGroupsCollapsed(sessionId, "k8s.pods", podView.groups.map((g) => g.key), c)}
+              testid="k8s-pods-header"
+            />
+            <div class="min-h-0 flex-1">
+              {#if podView.shown === 0}
+                <FilteredEmpty
+                  summary={filterSummary(PODS, podFilter, listMenuText(POD_LABELS))}
+                  onreset={() => setListFilter(sessionId, "k8s.pods", NO_FILTER)}
+                />
+              {:else}
+                <K8sPods
+                  groups={podView.groups}
+                  grouped={podView.grouped}
+                  grouping={podOrder.group}
+                  collapsed={foldOf("k8s.pods")}
+                  ontoggle={toggleFold("k8s.pods")}
+                  sort={podOrder.sort}
+                  onsort={(key) => setListOrder("k8s.pods", { ...podOrder, sort: nextSort(PODS, podOrder.sort, key) })}
+                  {metricsByKey}
+                  {cpuHistory}
+                  {run}
+                  {openShell}
+                  onViewDetails={openDetails}
+                  {showMenu}
+                />
+              {/if}
+            </div>
+          </div>
         {/if}
       {:else if activeSub === "workloads"}
         {#if workloads.length === 0}
           <EmptyState icon="rocket" title={t("k8s.noWorkloads")} hint={t("k8s.noWorkloadsHint")} />
         {:else}
-          <K8sWorkloads {workloads} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
+          <div class="flex h-full min-h-0 flex-col">
+            <ListHeader
+              items={workloads}
+              schema={WORKLOAD_SCHEMA}
+              filter={workloadFilter}
+              onfilter={setFilter("k8s.workloads")}
+              order={workloadOrder}
+              onorder={(o) => setListOrder("k8s.workloads", o)}
+              shown={workloadView.shown}
+              total={workloadView.total}
+              labels={WORKLOAD_LABELS}
+              placeholder={t("k8s.name")}
+              {wide}
+              onmenu={(m) => (menu = m)}
+              fold={(c) => setGroupsCollapsed(sessionId, "k8s.workloads", workloadView.groups.map((g) => g.key), c)}
+              testid="k8s-workloads-header"
+            />
+            <div class="min-h-0 flex-1">
+              {#if workloadView.shown === 0}
+                <FilteredEmpty
+                  summary={filterSummary(WORKLOAD_SCHEMA, workloadFilter, listMenuText(WORKLOAD_LABELS))}
+                  onreset={() => setListFilter(sessionId, "k8s.workloads", NO_FILTER)}
+                />
+              {:else}
+                <K8sWorkloads
+                  groups={workloadView.groups}
+                  grouped={workloadView.grouped}
+                  grouping={workloadOrder.group}
+                  collapsed={foldOf("k8s.workloads")}
+                  ontoggle={toggleFold("k8s.workloads")}
+                  {busy}
+                  {run}
+                  onDescribe={describeObj}
+                  onYaml={yamlObj}
+                  {showMenu}
+                />
+              {/if}
+            </div>
+          </div>
         {/if}
       {:else if activeSub === "network"}
         <K8sNetwork
@@ -749,7 +876,23 @@
       {:else if nodes.length === 0 && events.length === 0}
         <EmptyState icon="server" title={t("k8s.noNodes")} hint={t("k8s.noNodesHint")} />
       {:else}
-        <K8sCluster {nodes} {events} {busy} {run} onDescribe={describeObj} onYaml={yamlObj} {showMenu} />
+        <K8sCluster
+          {nodes}
+          {events}
+          {busy}
+          {run}
+          onDescribe={describeObj}
+          onYaml={yamlObj}
+          {showMenu}
+          {wide}
+          eventFilter={listFilter(sessionId, "k8s.events")}
+          oneventfilter={setFilter("k8s.events")}
+          eventOrder={listOrder("k8s.events", EVENT_SCHEMA, EVENT_ORDER)}
+          oneventorder={(o) => setListOrder("k8s.events", o)}
+          collapsed={foldOf("k8s.events")}
+          ontoggle={toggleFold("k8s.events")}
+          onmenu={(m) => (menu = m)}
+        />
       {/if}
     </div>
     {#if sideOpen}

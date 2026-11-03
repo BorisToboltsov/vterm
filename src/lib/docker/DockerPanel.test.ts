@@ -209,3 +209,35 @@ describe("DockerPanel — where a container's details open", () => {
     expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
   });
 });
+
+describe("DockerPanel — the list's filter row (v1.29)", () => {
+  it("the field narrows the containers, and an empty result says why and drops the filter", async () => {
+    await mount("d-filter");
+    const field = screen.getByRole("textbox", { name: "Name, image, port" });
+    await fireEvent.input(field, { target: { value: "nothing-like-it" } });
+    expect(await screen.findByText("Nothing matches the filter")).toBeInTheDocument();
+    expect(screen.getByText("«nothing-like-it»")).toBeInTheDocument();
+    expect(screen.queryByText("edge-proxy")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Reset filters" }));
+    expect(await screen.findByText("edge-proxy")).toBeInTheDocument();
+  });
+
+  it("the filter is the session's: another session's panel starts unfiltered", async () => {
+    await mount("d-one");
+    await fireEvent.input(screen.getByRole("textbox", { name: "Name, image, port" }), { target: { value: "zzz" } });
+    expect(await screen.findByText("Nothing matches the filter")).toBeInTheDocument();
+    document.body.innerHTML = "";
+    await mount("d-two");
+    expect(screen.getByRole("textbox", { name: "Name, image, port" })).toHaveValue("");
+  });
+
+  it("a group folds by its header", async () => {
+    await mount("d-fold");
+    const toggle = within(screen.getByTestId("docker-group")).getByTestId("docker-group-toggle");
+    await fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("edge-proxy")).toBeNull();
+    await fireEvent.click(toggle);
+    expect(await screen.findByText("edge-proxy")).toBeInTheDocument();
+  });
+});

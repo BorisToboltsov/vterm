@@ -13,6 +13,7 @@
 
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
+import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
 
 // ── Program resolution ───────────────────────────────────────────────────────
 
@@ -220,6 +221,8 @@ export interface K8sPod {
   memLimit: number | null;
   /** QoS class (`Guaranteed`/`Burstable`/`BestEffort`), "" when absent. */
   qos: string;
+  /** When it was created, epoch ms — what «age» orders by (v1.29); null — not reported. */
+  created?: number | null;
 }
 
 export interface K8sWorkload {
@@ -237,6 +240,8 @@ export interface K8sWorkload {
   age: string;
   /** Deployment/StatefulSet support `scale`. */
   scalable: boolean;
+  /** When it was created, epoch ms (v1.29); null — not reported. */
+  created?: number | null;
 }
 
 export interface K8sPodMetrics {
@@ -247,12 +252,6 @@ export interface K8sPodMetrics {
 }
 
 /** A group of pods sharing one owning workload ("" name === standalone bucket). */
-export interface PodGroup {
-  kind: string;
-  name: string;
-  pods: K8sPod[];
-}
-
 // ── Age formatting ───────────────────────────────────────────────────────────
 
 /**
@@ -346,6 +345,12 @@ function str(v: unknown): string {
 }
 function num(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** `metadata.creationTimestamp` as epoch ms, or null when absent or unreadable. */
+function createdAt(it: Record<string, unknown>): number | null {
+  const ms = Date.parse(str(dig(it, "metadata", "creationTimestamp")));
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /**
@@ -457,6 +462,7 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
       cpuLimit: sumLimit(specArr, "cpu", parseCpuMillis),
       memLimit: sumLimit(specArr, "memory", parseMemMiB),
       qos: str(dig(it, "status", "qosClass")),
+      created: createdAt(it),
     };
   });
 }
@@ -468,6 +474,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
     const name = str(dig(it, "metadata", "name"));
     const namespace = str(dig(it, "metadata", "namespace"));
     const age = k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs);
+    const created = createdAt(it);
     if (kind === "Deployment" || kind === "StatefulSet") {
       const desired = num(dig(it, "spec", "replicas"));
       const ready = num(dig(it, "status", "readyReplicas"));
@@ -480,6 +487,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         schedule: "",
         suspended: false,
         age,
+        created,
         scalable: true,
       });
     } else if (kind === "DaemonSet") {
@@ -494,6 +502,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         schedule: "",
         suspended: false,
         age,
+        created,
         scalable: false,
       });
     } else if (kind === "CronJob") {
@@ -506,6 +515,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         schedule: str(dig(it, "spec", "schedule")),
         suspended: dig(it, "spec", "suspend") === true,
         age,
+        created,
         scalable: false,
       });
     }
@@ -551,29 +561,6 @@ export function parseTopPods(raw: string): K8sPodMetrics[] {
 /** Map key aligning a pod with its metrics row (namespace-qualified when known). */
 export function metricsKey(namespace: string, name: string): string {
   return namespace ? `${namespace}/${name}` : name;
-}
-
-/**
- * Group pods by owning workload. Standalone pods (no controller) collect under a
- * synthetic group with `name === ""`, sorted last; real groups sort by
- * kind then name. Within a group pods keep kubectl's order.
- */
-export function groupByOwner(pods: K8sPod[]): PodGroup[] {
-  const byKey = new Map<string, PodGroup>();
-  for (const p of pods) {
-    const key = `${p.ownerKind}/${p.ownerName}`;
-    let g = byKey.get(key);
-    if (!g) {
-      g = { kind: p.ownerKind, name: p.ownerName, pods: [] };
-      byKey.set(key, g);
-    }
-    g.pods.push(p);
-  }
-  return [...byKey.values()].sort((a, b) => {
-    if (a.name === "") return 1;
-    if (b.name === "") return -1;
-    return a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name);
-  });
 }
 
 // ── Availability ─────────────────────────────────────────────────────────────
@@ -1183,3 +1170,92 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
 
 /** The views of a pod's details (`K8sDetail`). */
 export type K8sDetailTab = "overview" | "logs" | "describe" | "yaml";
+
+// ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
+//
+// What the filter rows of the pods, workloads and events read. The model is
+// `ui/listview.ts`; here is only what a pod, a workload, an event is ordered,
+// grouped and narrowed by.
+
+const byText = (a: string, b: string): number => a.localeCompare(b);
+
+/** Older first is "the biggest age": a later creation compares lower. */
+const byAge = <T extends { created?: number | null }>(a: T, b: T): number => (b.created ?? 0) - (a.created ?? 0);
+const noAge = (x: { created?: number | null }): boolean => x.created == null;
+
+/** The live figures a pod is ordered by; null — `kubectl top` has none for it. */
+export interface PodUsage {
+  cpu: number | null;
+  mem: number | null;
+}
+
+/** The workload kinds in the order the panel has always listed them. */
+export const WORKLOAD_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "CronJob"];
+const kindRank = (kind: string): number => {
+  const i = WORKLOAD_KINDS.indexOf(kind);
+  return i === -1 ? WORKLOAD_KINDS.length : i;
+};
+
+export function podSchema(usage: (p: K8sPod) => PodUsage): ListSchema<K8sPod> {
+  const figure = (key: keyof PodUsage) => ({
+    compare: (a: K8sPod, b: K8sPod) => (usage(a)[key] ?? 0) - (usage(b)[key] ?? 0),
+    missing: (p: K8sPod) => usage(p)[key] === null,
+  });
+  return {
+    text: (p) => `${p.name} ${p.namespace} ${p.node} ${p.status}`,
+    sorts: [
+      { id: "name", firstDir: "asc", compare: (a, b) => byText(a.name, b.name) },
+      { id: "restarts", firstDir: "desc", compare: (a, b) => a.restarts - b.restarts },
+      { id: "cpu", firstDir: "desc", ...figure("cpu") },
+      { id: "mem", firstDir: "desc", ...figure("mem") },
+      { id: "age", firstDir: "desc", compare: byAge, missing: noAge },
+    ],
+    groups: [
+      // By owning workload, kind then name; pods without a controller are the rest.
+      {
+        id: "owner",
+        of: (p) => (p.ownerName ? { key: `${p.ownerKind}/${p.ownerName}`, label: p.ownerName } : { key: "", label: "" }),
+        compare: (a, b) => byText(a.key, b.key),
+      },
+      { id: "node", of: (p) => ({ key: p.node, label: p.node }), compare: (a, b) => byText(a.label, b.label) },
+      { id: "namespace", of: (p) => ({ key: p.namespace, label: p.namespace }), compare: (a, b) => byText(a.label, b.label) },
+    ],
+    facets: [
+      { id: "status", value: (p) => p.status },
+      { id: "node", value: (p) => p.node },
+    ],
+    tie: (a, b) => byText(a.name, b.name) || byText(a.namespace, b.namespace),
+  };
+}
+
+/** Owners, pods by name — how the list lay before it had a choice. */
+export const POD_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "owner" };
+
+export const WORKLOAD_SCHEMA: ListSchema<K8sWorkload> = {
+  text: (w) => `${w.name} ${w.namespace} ${w.kind}`,
+  sorts: [
+    { id: "name", firstDir: "asc", compare: (a, b) => byText(a.name, b.name) },
+    { id: "age", firstDir: "desc", compare: byAge, missing: noAge },
+  ],
+  groups: [
+    { id: "kind", of: (w) => ({ key: w.kind, label: w.kind }), compare: (a, b) => kindRank(a.key) - kindRank(b.key) },
+    { id: "namespace", of: (w) => ({ key: w.namespace, label: w.namespace }), compare: (a, b) => byText(a.label, b.label) },
+  ],
+  facets: [{ id: "kind", value: (w) => w.kind, order: WORKLOAD_KINDS }],
+  tie: (a, b) => byText(a.name, b.name) || byText(a.namespace, b.namespace),
+};
+
+export const WORKLOAD_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "kind" };
+
+export const EVENT_SCHEMA: ListSchema<K8sEvent> = {
+  text: (e) => `${e.reason} ${e.object} ${e.namespace} ${e.message}`,
+  sorts: [
+    { id: "time", firstDir: "desc", compare: (a, b) => a.ts - b.ts, missing: (e) => e.ts === 0 },
+    { id: "count", firstDir: "desc", compare: (a, b) => a.count - b.count },
+  ],
+  facets: [{ id: "type", value: (e) => e.type, order: ["Warning", "Normal"] }],
+  tie: (a, b) => byText(a.object, b.object) || byText(a.reason, b.reason),
+};
+
+/** The latest first, as `parseEvents` lists them. */
+export const EVENT_ORDER: ListOrder = { sort: { key: "time", dir: "desc" }, group: NO_GROUPS };

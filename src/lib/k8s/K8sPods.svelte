@@ -17,19 +17,27 @@
     parseMemMiB,
     limitRatio,
     limitTone,
-    type PodGroup,
     type K8sPod,
     type K8sPodMetrics,
   } from "./k8s";
   import type { IconName } from "../ui/icons";
   import type { MenuItem } from "../ui/ctxmenu";
   import ColumnHead from "../ui/ColumnHead.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import SortTitle from "../ui/SortTitle.svelte";
+  import type { ListGroup, ListSort } from "../ui/listview";
   import { columnVars } from "../ui/colwidths";
   import { columns } from "../stores/colwidths.svelte";
   import { t } from "../i18n";
 
   let {
     groups,
+    grouped = true,
+    grouping = "owner",
+    collapsed = [],
+    ontoggle = () => {},
+    sort = null,
+    onsort = undefined,
     metricsByKey,
     cpuHistory = {},
     run,
@@ -37,7 +45,16 @@
     onViewDetails,
     showMenu,
   }: {
-    groups: PodGroup[];
+    /** The list as `listview.ts` lays it out; one group without a header when not grouped. */
+    groups: ListGroup<K8sPod>[];
+    grouped?: boolean;
+    /** What the groups are — an owner gets its kind's icon and name. */
+    grouping?: string;
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
+    /** The list's order, for the column titles; null — the titles do not order. */
+    sort?: ListSort | null;
+    onsort?: (key: string) => void;
     /** Live `kubectl top pods` snapshot keyed by {@link metricsKey}. */
     metricsByKey: Map<string, K8sPodMetrics>;
     /** Rolling CPU history (millicores) keyed by {@link metricsKey} (Phase 42). */
@@ -91,6 +108,11 @@
     return metricsByKey.get(metricsKey(p.namespace, p.name)) ?? metricsByKey.get(metricsKey("", p.name));
   }
 
+  /** The direction a column orders the list in now, or null. */
+  function sortedBy(key: string): "asc" | "desc" | null {
+    return sort?.key === key ? sort.dir : null;
+  }
+
   function copyName(p: K8sPod) {
     void navigator.clipboard?.writeText(p.name);
   }
@@ -131,7 +153,7 @@
     data-testid="k8s-columns"
   >
     <span class="mr-2 w-[0.4375rem] shrink-0"></span>
-    <ColumnHead col="k8s.name" label={t("k8s.name")} class="w-[var(--c-name)] pr-2" />
+    <ColumnHead col="k8s.name" label={t("k8s.name")} class="w-[var(--c-name)] pr-2" sorted={sortedBy("name")} onsort={onsort ? () => onsort("name") : undefined} />
     <ColumnHead col="k8s.namespace" label={t("k8s.namespace")} class="w-[var(--c-ns)] px-2" />
     <ColumnHead col="k8s.node" label={t("k8s.node")} class="w-[var(--c-node)] px-2" />
     <span class="flex-1"></span>
@@ -139,24 +161,47 @@
     <span class="{HEAD} w-12 text-right" use:tooltip={t("k8s.restarts")}>↻</span>
     <!-- CPU is two cells in a row — the shape, then the figure — under one title. -->
     <span class="w-[3.25rem] shrink-0 border-l border-edge"></span>
-    <span class="w-20 shrink-0 truncate px-2 py-1 text-right">{t("k8s.cpu")}</span>
-    <span class="{HEAD} w-20 text-right">{t("k8s.mem")}</span>
+    <span class="w-20 shrink-0 truncate px-2 py-1 text-right">
+      {#if onsort}
+        <SortTitle label={t("k8s.cpu")} sorted={sortedBy("cpu")} onsort={() => onsort("cpu")} testid="column-sort-k8s.cpu" align="right" />
+      {:else}
+        {t("k8s.cpu")}
+      {/if}
+    </span>
+    <span class="{HEAD} w-20 text-right">
+      {#if onsort}
+        <SortTitle label={t("k8s.mem")} sorted={sortedBy("mem")} onsort={() => onsort("mem")} testid="column-sort-k8s.mem" align="right" />
+      {:else}
+        {t("k8s.mem")}
+      {/if}
+    </span>
     <span class="{HEAD} w-28">{t("k8s.limits")}</span>
-    <span class="{HEAD} w-18 text-right">{t("k8s.age")}</span>
+    <span class="{HEAD} w-18 text-right">
+      {#if onsort}
+        <SortTitle label={t("k8s.age")} sorted={sortedBy("age")} onsort={() => onsort("age")} testid="column-sort-k8s.age" align="right" />
+      {:else}
+        {t("k8s.age")}
+      {/if}
+    </span>
     <span class="w-14 shrink-0 border-l border-edge"></span>
   </div>
-  {#each groups as g (`${g.kind}/${g.name}`)}
-    <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
-      {#if g.name}
-        <Icon name={KIND_ICON[g.kind] ?? "cloud"} size={13} class="text-accent" />
-        <span class="min-w-0 flex-1 truncate font-medium text-text/85">{g.name}</span>
-        <span class="shrink-0 text-caption uppercase tracking-wider text-muted">{g.kind}</span>
-      {:else}
-        <span class="text-caption uppercase tracking-wider text-muted">{t("k8s.standalone")}</span>
-      {/if}
-    </div>
+  {#each groups as g (g.key)}
+    {@const folded = grouped && collapsed.includes(g.key)}
+    {@const kind = grouping === "owner" && !g.rest ? g.items[0].ownerKind : undefined}
+    {#if grouped}
+      <GroupHeader
+        label={g.rest ? t("k8s.standalone") : g.label}
+        count={g.items.length}
+        collapsed={folded}
+        ontoggle={() => ontoggle(g.key)}
+        icon={kind ? (KIND_ICON[kind] ?? "cloud") : undefined}
+        rest={g.rest}
+        {kind}
+        testid="k8s-group"
+      />
+    {/if}
 
-    {#each g.pods as p (`${p.namespace}/${p.name}`)}
+    {#each folded ? [] : g.items as p (`${p.namespace}/${p.name}`)}
       {@const m = metrics(p)}
       {@const history = cpuHistory[metricsKey(p.namespace, p.name)] ?? []}
       <!-- One markup, two layouts. Narrow: a flex row — name, then a ragged
@@ -165,7 +210,7 @@
            width, a rule and a title above it; cells a pod has nothing for are
            still there, so every row has the same columns. -->
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 pl-5 hover:bg-edge/30 @wide:items-stretch @wide:gap-0 @wide:py-0 @wide:pl-2.5"
+        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:gap-0 @wide:py-0 @wide:pl-2.5 {grouped ? 'pl-5' : 'pl-2.5'}"
         oncontextmenu={(e) => showMenu(e, menuItems(p))}
         role="listitem"
       >

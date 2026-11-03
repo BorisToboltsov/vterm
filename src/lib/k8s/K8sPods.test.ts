@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import K8sPods from "./K8sPods.svelte";
 import { LIST_COLUMNS } from "../ui/colwidths";
 import { resetColumnWidths, setColumnWidth } from "../stores/colwidths.svelte";
-import type { K8sPod, K8sPodMetrics, PodGroup } from "./k8s";
+import type { K8sPod, K8sPodMetrics } from "./k8s";
+import type { ListGroup } from "../ui/listview";
 
 function pod(over: Partial<K8sPod> = {}): K8sPod {
   return {
@@ -27,7 +28,7 @@ function pod(over: Partial<K8sPod> = {}): K8sPod {
 }
 
 function props(pods: K8sPod[] = [pod()], metrics: [string, K8sPodMetrics][] = []) {
-  const groups: PodGroup[] = [{ kind: "Deployment", name: "checkout", pods }];
+  const groups: ListGroup<K8sPod>[] = [{ key: "Deployment/checkout", label: "checkout", rest: false, items: pods }];
   return {
     groups,
     metricsByKey: new Map<string, K8sPodMetrics>(metrics),
