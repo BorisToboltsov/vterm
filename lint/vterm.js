@@ -212,8 +212,21 @@ const ARBITRARY_SIZE = /\btext-\[[0-9.]+(?:px|rem|em|pt)\]/;
 // A size in px in a class, past a hairline: `h-[22px]`, `pl-[25px]`, `-top-[7px]`.
 const PX_SIZE =
   /(?:^|[\s:-])(?:h|w|size|min-h|min-w|max-h|max-w|gap(?:-[xy])?|p[xytblr]?|m[xytblr]?|top|left|right|bottom|inset(?:-[xy])?|leading)-\[-?(?:[3-9]|[1-9][0-9]+)(?:\.[0-9]+)?px\]/;
-const MICRO_LABEL = /\btext-(caption|meta) uppercase tracking-(wider|wide)\b/;
 const MICRO_LABEL_ONE = "text-caption uppercase tracking-wider";
+
+/**
+ * An uppercase micro-label drawn some other way than MICRO_LABEL_ONE — read as a
+ * set of classes, not as a run of text: `text-meta font-medium uppercase
+ * tracking-wide` hid from a pattern that wanted the three side by side (v1.29).
+ */
+function microLabelDrift(s) {
+  const classes = new Set(s.split(/[\s"'`{}():?]+/));
+  if (!classes.has("uppercase")) return false;
+  const size = ["text-caption", "text-meta"].filter((c) => classes.has(c));
+  const tracking = ["tracking-wide", "tracking-wider"].filter((c) => classes.has(c));
+  if (size.length === 0 || tracking.length === 0) return false;
+  return size.join() !== "text-caption" || tracking.join() !== "tracking-wider";
+}
 const TRANSITIONS = new Set(["fade", "slide", "scale", "fly", "blur", "draw", "flip", "glide"]);
 const HUES =
   "green|amber|red|sky|blue|emerald|rose|yellow|orange|violet|purple|cyan|teal|indigo|pink|lime|fuchsia|slate|zinc|neutral|stone|gray";
@@ -381,10 +394,7 @@ const rules = {
     "Uppercase micro-labels have one treatment",
     `An uppercase micro-label is "${MICRO_LABEL_ONE}" — 10px against 11px drifted between adjacent panels.`,
     (context, report) =>
-      classStrings(context, report, (s) => {
-        const m = s.match(MICRO_LABEL);
-        return m !== null && m[0] !== MICRO_LABEL_ONE;
-      }),
+      classStrings(context, report, microLabelDrift),
   ),
 
   "motion-duration": rule(

@@ -126,8 +126,16 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     ],
   },
   "micro-label": {
-    bad: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)]],
-    good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)]],
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)],
+      // Classes between them do not hide it (the recordings' section header did).
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="truncate text-meta font-medium uppercase tracking-wide">x</h3>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="uppercase text-caption tracking-wide">x</h3>`)],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="truncate text-caption font-medium uppercase tracking-wider">x</h3>`)],
+    ],
   },
   "motion-duration": {
     bad: [

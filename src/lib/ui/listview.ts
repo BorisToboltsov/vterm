@@ -393,6 +393,15 @@ export function facetLabel<T>(schema: ListSchema<T>, filter: ListFilter, facet: 
   return `${text.facet(facet)}: ${now.map((v) => text.value(facet, v)).join(", ")}`;
 }
 
+/** What narrows the list, for the empty result: «text» · facet: values · … */
+export function filterSummary<T>(schema: ListSchema<T>, filter: ListFilter, text: ListMenuText): string {
+  const parts = filter.text.trim() ? [`«${filter.text.trim()}»`] : [];
+  for (const f of schema.facets ?? []) {
+    if (picked(filter, f.id).length > 0) parts.push(facetLabel(schema, filter, f.id, text));
+  }
+  return parts.join(" · ");
+}
+
 /**
  * The funnel's menu of a narrow panel: each facet a submenu that says what it is
  * set to, then — while anything is picked — the reset.

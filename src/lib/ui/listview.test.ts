@@ -8,6 +8,7 @@ import {
   facetValueMenu,
   facetValues,
   filterItems,
+  filterSummary,
   groupItems,
   isFiltered,
   matchesText,
@@ -322,6 +323,13 @@ describe("the facet menus", () => {
     expect(facetLabel(SCHEMA, NO_FILTER, "stack", TEXT)).toBe("f:stack");
     expect(facetLabel(SCHEMA, filter("", { stack: ["shop", "mon"] }), "stack", TEXT)).toBe("f:stack: stack=shop, stack=mon");
     expect(facetLabel(SCHEMA, filter("", { gone: ["x"] }), "gone", TEXT)).toBe("f:gone");
+  });
+
+  it("sums up what narrows the list, for the empty result", () => {
+    expect(filterSummary(SCHEMA, filter(" oom ", { state: ["exited"], gone: ["x"] }), TEXT)).toBe(
+      "«oom» · f:state: state=exited",
+    );
+    expect(filterSummary(SCHEMA, NO_FILTER, TEXT)).toBe("");
   });
 
   it("the funnel: a submenu per facet that says its value, the reset while anything is picked", () => {

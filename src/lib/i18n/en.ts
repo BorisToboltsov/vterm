@@ -38,6 +38,21 @@ export const en = {
   "quit.rowEditors": "Unsaved documents",
   "updates.updated": "vterm was updated successfully.",
 
+  // ── Lists: filter row, facets, «View» menu (v1.29) ──
+  "list.shownOf": "{shown} of {total}",
+  "list.clear": "Clear the filter",
+  "list.filters": "Filters",
+  "list.view": "View",
+  "list.groups": "Groups",
+  "list.order": "Order",
+  "list.asc": "Ascending",
+  "list.desc": "Descending",
+  "list.collapseAll": "Collapse all",
+  "list.expandAll": "Expand all",
+  "list.all": "All",
+  "list.reset": "Reset filters",
+  "list.noGroups": "No groups",
+  "list.emptyTitle": "Nothing matches the filter",
   // ── Common / shared ──
   "common.cancel": "Cancel",
   "common.save": "Save",

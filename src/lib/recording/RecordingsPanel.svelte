@@ -685,7 +685,7 @@
               class="shrink-0 text-muted"
             />
             <span
-              class="truncate text-meta font-medium uppercase tracking-wide text-muted"
+              class="truncate text-caption font-medium uppercase tracking-wider text-muted"
               title={sectionLabel(section.bucket, section.label)}
             >
               {sectionLabel(section.bucket, section.label)}
