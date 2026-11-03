@@ -12,14 +12,19 @@ import {
   pendingFilesDir,
   requestFilesDir,
   takeFilesDir,
+  listFilter,
+  setListFilter,
+  collapsedGroups,
+  setGroupsCollapsed,
 } from "./dockstate.svelte";
+import { NO_FILTER } from "../ui/listview";
 
 describe("dock state store", () => {
   beforeEach(resetDockState);
 
   it("starts a session empty rather than undefined", () => {
     // Panels read this on mount and must not have to null-check the session itself.
-    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {}, lists: {} });
   });
 
   it("returns the same object for a session, so writes are seen by the next reader", () => {
@@ -62,7 +67,7 @@ describe("dock state store", () => {
     rememberSub("s1", "docker", "images");
     setDockCwd("s1", "/repo");
     removeDockState("s1");
-    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} });
+    expect(dockState("s1")).toEqual({ files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {}, lists: {} });
   });
 
   it("bumps a folder's revision once for each transfer that ended in it", () => {
@@ -103,6 +108,27 @@ describe("dock state store", () => {
     expect(pendingFilesDir("s1")).toBeNull();
     resetDockState();
     expect(pendingFilesDir("s2")).toBeNull();
+  });
+
+  it("keeps a list's filter per session, and reads it without creating the session", () => {
+    expect(listFilter("s1", "docker.containers")).toBe(NO_FILTER);
+    setListFilter("s1", "docker.containers", { text: "nginx", facets: { state: ["running"] } });
+    expect(listFilter("s1", "docker.containers")).toEqual({ text: "nginx", facets: { state: ["running"] } });
+    expect(listFilter("s2", "docker.containers")).toBe(NO_FILTER);
+    expect(listFilter("s1", "k8s.pods")).toBe(NO_FILTER);
+    removeDockState("s1");
+    expect(listFilter("s1", "docker.containers")).toBe(NO_FILTER);
+  });
+
+  it("folds and unfolds groups of a list, one or several at once", () => {
+    expect(collapsedGroups("s1", "recordings")).toEqual([]);
+    setGroupsCollapsed("s1", "recordings", ["today"], true);
+    setGroupsCollapsed("s1", "recordings", ["today", "week"], true);
+    expect(collapsedGroups("s1", "recordings")).toEqual(["today", "week"]);
+    setGroupsCollapsed("s1", "recordings", ["today"], false);
+    expect(collapsedGroups("s1", "recordings")).toEqual(["week"]);
+    // The filter of the same list is not touched by folding.
+    expect(listFilter("s1", "recordings")).toEqual(NO_FILTER);
   });
 
   it("removing an unknown session is a no-op", () => {

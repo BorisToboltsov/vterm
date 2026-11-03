@@ -19,6 +19,8 @@
 // Keyed by `sessionId`, so it is one of the stores `closeTabFully` has to drop —
 // `tabteardown.guard.test.ts` enforces that.
 
+import { NO_FILTER, type ListFilter } from "../ui/listview";
+
 /** Where a file panel (SFTP or local) was left off. */
 export interface FilesDockState {
   /** SFTP transport was open. Always true for the local panel, which needs no connect. */
@@ -43,6 +45,16 @@ export interface K8sScopeState {
  */
 export type SubTabPanel = "git" | "docker" | "k8s" | "k8sNet" | "dockerNet";
 
+/**
+ * What a list of the session is narrowed to and which of its groups are folded
+ * (v1.29, ADR 0050). Per session, unlike the list's order: the containers looked
+ * for on one server are not the ones looked for on the next.
+ */
+export interface ListSessionState {
+  filter: ListFilter;
+  collapsed: string[];
+}
+
 export interface DockSessionState {
   files: FilesDockState | null;
   /**
@@ -66,12 +78,14 @@ export interface DockSessionState {
    * a hidden one re-lists when it comes back into view anyway.
    */
   dirRev: Record<string, number>;
+  /** Per list (`ListId` of `stores/listview`), its filter and folded groups. */
+  lists: Record<string, ListSessionState>;
 }
 
 const sessions = $state<Record<string, DockSessionState>>({});
 
 function empty(): DockSessionState {
-  return { files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {} };
+  return { files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {}, lists: {} };
 }
 
 /**
@@ -158,6 +172,33 @@ export function takeFilesDir(sessionId: string): string | null {
 export function removeDockState(sessionId: string): void {
   delete sessions[sessionId];
   delete openDirs[sessionId];
+}
+
+function listState(sessionId: string, list: string): ListSessionState {
+  const s = dockState(sessionId);
+  if (!s.lists[list]) s.lists[list] = { filter: NO_FILTER, collapsed: [] };
+  return s.lists[list];
+}
+
+/** What the session's list is narrowed to, read-only (safe inside `$derived`). */
+export function listFilter(sessionId: string, list: string): ListFilter {
+  return sessions[sessionId]?.lists[list]?.filter ?? NO_FILTER;
+}
+
+export function setListFilter(sessionId: string, list: string, filter: ListFilter): void {
+  listState(sessionId, list).filter = filter;
+}
+
+/** The keys of the session's folded groups of the list, read-only. */
+export function collapsedGroups(sessionId: string, list: string): readonly string[] {
+  return sessions[sessionId]?.lists[list]?.collapsed ?? [];
+}
+
+/** Fold or unfold one group — or, given several keys, those (the «View» menu's fold all). */
+export function setGroupsCollapsed(sessionId: string, list: string, keys: readonly string[], collapsed: boolean): void {
+  const state = listState(sessionId, list);
+  const rest = state.collapsed.filter((k) => !keys.includes(k));
+  state.collapsed = collapsed ? [...rest, ...keys] : rest;
 }
 
 /** Read the stored sub-tab, or `fallback` when this session has none yet. */
