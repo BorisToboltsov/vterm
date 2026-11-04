@@ -22,7 +22,8 @@ import {
 //  - what lies in `docs/diagrams/` is exactly what the script gives for today's
 //    workflows: a changed workflow or a hand edit is red until the pictures are rebuilt;
 //  - the script refuses what its pictures would lie about: a workflow it does not
-//    draw, a schedule that is no longer the 1st, a release that is no longer a draft;
+//    draw, a schedule that is neither the 1st nor weekly, a train off the schedule,
+//    a release that is no longer a draft;
 //  - `docs/CI.md` links every workflow, names every job and shows every picture —
 //    a job can't be added without a word about it;
 //  - the timing chart has a row for every job of a release, and no row for a job that
@@ -146,9 +147,10 @@ describe("cidoc guard — what the script reads", () => {
   });
 
   it("triggers and calls, in the real files", () => {
-    expect(triggersOf(WORKFLOWS["ci.yml"])).toEqual({ pr: true, main: true, tag: false, month: false, manual: false });
-    expect(triggersOf(WORKFLOWS["deep.yml"])).toEqual({ pr: false, main: false, tag: false, month: true, manual: true });
-    expect(triggersOf(WORKFLOWS["release.yml"])).toEqual({ pr: false, main: false, tag: true, month: false, manual: false });
+    expect(triggersOf(WORKFLOWS["ci.yml"])).toEqual({ pr: true, main: true, tag: false, month: false, weekday: null, manual: false });
+    expect(triggersOf(WORKFLOWS["deep.yml"])).toEqual({ pr: false, main: false, tag: false, month: true, weekday: null, manual: true });
+    expect(triggersOf(WORKFLOWS["release.yml"])).toEqual({ pr: false, main: false, tag: true, month: false, weekday: null, manual: false });
+    expect(triggersOf(WORKFLOWS["train.yml"])).toEqual({ pr: false, main: true, tag: false, month: false, weekday: 1, manual: true });
     expect(callsOf(WORKFLOWS["release.yml"])).toEqual(["ci.yml", "deep.yml"]);
     expect(callsOf("uses: ./.github/workflows/ci.yml")).toEqual(["ci.yml"]);
   });
@@ -209,6 +211,18 @@ describe("cidoc guard — catches what it exists for", () => {
   it("a schedule that is no longer the 1st: the pictures say it is", () => {
     const workflows = withWorkflow("deep.yml", (y) => swap(y, /cron: "(\S+ \S+) 1 \* \*"/, 'cron: "$1 15 * *"'));
     expect(() => renderAll({ workflows, timing: TIMING })).toThrow(/1-го числа/);
+  });
+
+  it("the train's day is read from train.yml, and a train off the schedule is refused", () => {
+    expect(RENDERED["ci-map.svg"]).toContain("по понедельникам");
+    expect(RENDERED["ci-journey.svg"]).toContain("по понедельникам");
+    const friday = renderAll({ workflows: withWorkflow("train.yml", (y) => swap(y, 'cron: "0 6 * * 1"', 'cron: "0 6 * * 5"')), timing: TIMING });
+    expect(friday["ci-journey.svg"]).toContain("по пятницам");
+    expect(stalePictures(friday, picturesOnDisk())).toEqual(["ci-journey.svg", "ci-map.svg"]);
+    const unscheduled = withWorkflow("train.yml", (y) => swap(y, /^ {2}schedule:\n {4}- cron: "0 6 \* \* 1".*\n/m, ""));
+    expect(() => renderAll({ workflows: unscheduled, timing: TIMING })).toThrow(/по расписанию/);
+    const daily = withWorkflow("train.yml", (y) => swap(y, 'cron: "0 6 * * 1"', 'cron: "0 6 * * *"'));
+    expect(() => renderAll({ workflows: daily, timing: TIMING })).toThrow(/раз в неделю/);
   });
 
   it("a release that calls a workflow the map does not draw", () => {

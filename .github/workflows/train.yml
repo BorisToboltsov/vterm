@@ -1,0 +1,184 @@
+name: Train
+
+# Плановый выпуск — «поезд» (ADR 0051). Изменения копятся в main: каждый PR пишет в секцию
+# CHANGELOG «## Готовится» (подсекции «Новое» / «Исправлено») и версию не трогает — это
+# держит шаг «Версию меняет только выпуск» в ci.yml.
+#
+#   • Раз в неделю (и по кнопке «Run workflow») `plan` спрашивает
+#     scripts/release-train.mjs, что выпускать: есть «Новое» — следующий minor, только
+#     «Исправлено» — patch, пусто — ничего. `cut` поднимает версию, даёт секции номер и дату
+#     и открывает PR выпуска release/vX.Y.Z с автослиянием: тот проходит обычный CI.
+#   • Слитый PR выпуска — push в main: `check` видит, что коммит поднял версию, а тега нет,
+#     и `push-tag` ставит тег. Тег запускает release.yml — гейты, сборка, черновик релиза.
+#     Публикует черновик человек.
+#
+# Хотфикс идёт мимо поезда: ветка hotfix/* от тега, тег руками (docs/CI.md).
+#
+# Токен — GitHub App выпуска, а не GITHUB_TOKEN: события от GITHUB_TOKEN не запускают
+# других workflow, то есть PR выпуска остался бы без CI (ruleset main его не пустит), а тег —
+# без сборки. Ключ App лежит в окружении `release` и достаётся только джобам `cut` и
+# `push-tag`, причём только после того, как `plan`/`check` решили, что он нужен. В джобах с
+# ключом не ставится ни одной зависимости: скрипты — на Node раннера и встроенных модулях.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # понедельник, 06:00 UTC (09:00 МСК)
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Нарезка — одна за раз: две подряд открыли бы два PR одной версии. Прогоны по push не
+# группируются (у каждого свой коммит): ожидающий прогон в группе заменяется новым, и тег
+# слитого выпуска потерялся бы за следующим слиянием.
+concurrency:
+  group: train-${{ github.event_name == 'push' && github.sha || 'cut' }}
+  cancel-in-progress: false
+
+jobs:
+  # ── Что выпускать ─────────────────────────────────────────────────────────────
+  plan:
+    name: Что выпускать
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      kind: ${{ steps.plan.outputs.kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Теги нужны целиком: следующая версия не должна совпасть с уже выпущенной.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Прошлый PR выпуска ещё открыт — значит, его CI красный или он ждёт ответа. Второй
+      # PR рядом с ним только запутал бы: падаем, чтобы это увидел человек.
+      - name: Прошлый выпуск слит
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          open="$(gh pr list --state open --json headRefName,url \
+            --jq '.[] | select(.headRefName | startswith("release/")) | .url')"
+          if [ -n "$open" ]; then
+            echo "::error::Прошлый PR выпуска не слит: $open"
+            exit 1
+          fi
+
+      - name: Версия по содержимому «Готовится»
+        id: plan
+        run: node scripts/release-train.mjs plan >> "$GITHUB_OUTPUT"
+
+  # ── PR выпуска ────────────────────────────────────────────────────────────────
+  cut:
+    name: PR выпуска
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Токен GitHub App выпуска
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Токен App в .git/config не оседает: пушит один шаг, заголовком на одну команду.
+          persist-credentials: false
+
+      - name: Версия, секция CHANGELOG и PR выпуска
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          VERSION: ${{ needs.plan.outputs.version }}
+          KIND: ${{ needs.plan.outputs.kind }}
+        run: |
+          branch="release/v$VERSION"
+          node scripts/set-version.mjs "$VERSION"
+          node scripts/release-train.mjs cut "$VERSION" "$(date -u +%F)"
+          node scripts/release-train.mjs notes "v$VERSION" > "$RUNNER_TEMP/notes.md"
+
+          bot_id="$(gh api "/users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "release: v$VERSION"
+
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force origin "HEAD:refs/heads/$branch"
+
+          {
+            echo "Плановый выпуск ($KIND). После слияния train.yml поставит тег v$VERSION, а release.yml соберёт черновик релиза."
+            echo
+            cat "$RUNNER_TEMP/notes.md"
+          } > "$RUNNER_TEMP/pr.md"
+          gh pr create --base main --head "$branch" --title "release: v$VERSION" --body-file "$RUNNER_TEMP/pr.md"
+          # Слияние — когда пройдут обязательные проверки ruleset main.
+          gh pr merge "$branch" --auto --squash
+
+  # ── Тег на слитый выпуск ──────────────────────────────────────────────────────
+  check:
+    name: Коммит выпуска?
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Родитель нужен: тег ставится только на коммит, который сам поднял версию.
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Нужен ли тег
+        id: tag
+        run: node scripts/release-train.mjs tag >> "$GITHUB_OUTPUT"
+
+  push-tag:
+    name: Тег выпуска
+    needs: check
+    if: needs.check.outputs.tag != ''
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+    steps:
+      - name: Токен GitHub App выпуска
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Тег — на тот коммит, который проверил `check`, а не на сегодняшний main.
+      - name: Тег запускает release.yml
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          git tag "$TAG" "$SHA"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push origin "refs/tags/$TAG"

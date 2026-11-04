@@ -245,11 +245,12 @@ vterm/
 │                               # ARCHITECTURE · DESIGN · ROADMAP · REFACTORING · TESTS · CI · adr/ ·
 │                               # diagrams/ (схемы CI, собирает `pnpm ci:diagrams`)
 ├── scripts/                    # open-on-mac · place-opener · clean-launchservices · make-icons · ci-diagrams ·
-│                               # linux-box (команда в Linux-контейнере)
+│                               # release-train (выпуск по расписанию) · linux-box (команда в Linux-контейнере)
 ├── vite.config.js              # SvelteKit: адаптер, препроцессор, опрос версии (ADR 0046)
 ├── lint/vterm.js               # правила ESLint проекта: слои импорта и инварианты одного места
 ├── eslint.config.js            # рекомендованные наборы JS/TS/Svelte + правила проекта
-├── .github/workflows/          # ci · codeql · security · deep (глубокие проверки) · release (три ОС по тегу)
+├── .github/workflows/          # ci · codeql · security · deep (глубокие проверки) · train (поезд выпусков) ·
+│                               # release (три ОС по тегу)
 ├── .github/actions/            # общие шаги CI: setup-web · setup-rust · test-sshd
 └── rust-toolchain.toml         # версия Rust — одна на CI, машину и Linux-контейнер
 ```

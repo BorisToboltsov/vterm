@@ -57,32 +57,42 @@ describe("release workflow builds the bundles", () => {
 
 // The release body must do two things at once and both can regress silently: it
 // keeps the launch / anti-Gatekeeper instructions (without them the page is a bare
-// asset list), and it prepends a short "what's new" drawn from CHANGELOG.md — the
-// curated, per-version source. Dropping the extraction step, or the env reference,
-// or the instructions, all pass a build with no failure, so all three are pinned.
-describe("release body carries a changelog summary and the instructions", () => {
-  it("derives release notes from CHANGELOG.md into an env var", () => {
-    const step = stepWith("CHANGELOG.md");
-    expect(step, "no step reads CHANGELOG.md").toBeDefined();
-    expect(step).toContain("RELEASE_NOTES");
-    expect(step).toContain("GITHUB_ENV");
-    expect(step).toContain("shell: bash"); // Windows runner would use PowerShell otherwise
+// asset list), and it starts with "what's new" drawn from CHANGELOG.md — the curated,
+// per-version source, which the in-app update check shows too. It is written once, by
+// the `integrity` job (1.32): the matrix used to pass it through an env var, and the
+// summary extraction had silently found nothing since the entries lost their bold
+// headings. What the body says is tested with the script (releasetrain.guard).
+describe("release body carries what's new and the instructions", () => {
+  const integrity =
+    code.slice(code.indexOf("\njobs:")).split(/^ {2}(?=\S)/m).find((b) => b.startsWith("integrity:")) ?? "";
+  const bodyStep = integrity.split(/^ {6}- /m).find((s) => s.includes("release-train.mjs body")) ?? "";
+
+  it("the integrity job writes the body from CHANGELOG.md with the shared script", () => {
+    expect(bodyStep, "no step writes the release body").not.toBe("");
+    expect(bodyStep).toMatch(/node scripts\/release-train\.mjs body "\$TAG" "\$since"/);
+    expect(bodyStep).toMatch(/gh release edit "\$TAG" --notes-file/);
     // The tag reaches the script through env, never string-substituted into the
     // shell line — the same injection class the gh steps below avoid.
-    expect(step).toMatch(/TAG:\s*\$\{\{\s*github\.ref_name\s*\}\}/);
+    expect(bodyStep).toMatch(/TAG:\s*\$\{\{\s*github\.ref_name\s*\}\}/);
+    expect(bodyStep).toContain("GH_TOKEN");
   });
 
-  it("puts the changelog summary into the release body", () => {
-    const build = stepWith("tauri-apps/tauri-action");
-    expect(build).toMatch(/releaseBody:/);
-    expect(build).toContain("${{ env.RELEASE_NOTES }}");
+  it("what's new runs from the last published release, not the last tag", () => {
+    // `gh release view` with no tag is GitHub's Latest: drafts and prereleases are not.
+    expect(bodyStep).toMatch(/since="\$\(gh release view --json tagName --jq \.tagName/);
+  });
+
+  it("the matrix no longer writes a body of its own", () => {
+    expect(stepWith("tauri-apps/tauri-action")).not.toMatch(/releaseBody:/);
+    expect(code).not.toContain("RELEASE_NOTES");
   });
 
   it("keeps the launch + anti-Gatekeeper instructions in the body", () => {
-    const build = stepWith("tauri-apps/tauri-action") ?? "";
-    expect(build).toContain("Assets");
-    expect(build).toContain("docs/INSTALL.md");
-    expect(build).toContain("open-on-mac.sh");
+    const script = readFileSync(join(ROOT, "scripts/release-train.mjs"), "utf8");
+    const instructions = script.slice(script.indexOf("export function instructions"));
+    expect(instructions).toContain("Assets");
+    expect(instructions).toContain("docs/INSTALL.md");
+    expect(instructions).toContain("open-on-mac.sh");
   });
 });
 
@@ -411,6 +421,7 @@ describe("Windows: portable .exe with the bundled WebView2", () => {
   });
 
   it("the release body tells which portable to take", () => {
-    expect(stepWith("releaseBody")).toContain("x86_64-webview2.exe");
+    const script = readFileSync(join(ROOT, "scripts/release-train.mjs"), "utf8");
+    expect(script.slice(script.indexOf("export function instructions"))).toContain("x86_64-webview2.exe");
   });
 });
