@@ -130,6 +130,11 @@ export interface TransferRow extends Omit<SftpProgress, "direction"> {
   /** Files finished, of `fileCount` — only when the job has more than one. */
   fileIndex?: number;
   fileCount?: number;
+  /** The folder the job writes into; absent for a file of a sync run. */
+  destDir?: string;
+  /** What the user calls the tabs at each end — only when the backend named one. */
+  srcLabel?: string;
+  dstLabel?: string;
 }
 
 /** Up to a server, down from one — or a copy, when both sides are alike. */
@@ -164,6 +169,9 @@ export function jobRow(job: TransferJob): TransferRow {
     done: job.state !== "running",
     sessions: jobSessions(job),
     ...(job.fileCount > 1 ? { fileIndex: job.fileIndex, fileCount: job.fileCount } : {}),
+    destDir: job.destDir,
+    ...(job.src.label ? { srcLabel: job.src.label } : {}),
+    ...(job.dst.label ? { dstLabel: job.dst.label } : {}),
   };
 }
 

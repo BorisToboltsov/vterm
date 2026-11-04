@@ -2623,6 +2623,7 @@
     bufferText={() => termRefs[tabsState.activeId ?? ""]?.bufferText?.() ?? ""}
     outputTick={idleOutputTick}
     noSignal={noSignalSession !== null}
+    prod={!!activeTab && prodTabIds.has(activeTab.sessionId)}
     targetEl={terminalArea ?? mainArea ?? null}
     onnosignaldismiss={() => (noSignalSession = null)}
   />

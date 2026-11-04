@@ -140,6 +140,24 @@ describe("defaults", () => {
   });
 });
 
+describe("shift against burn-in (v1.31)", () => {
+  it("is off by default and after a reset", () => {
+    expect(settings.idleShiftEverySec).toBeNull();
+    settings.idleShiftEverySec = 60;
+    resetSettings();
+    expect(settings.idleShiftEverySec).toBeNull();
+  });
+
+  it("takes only an offered interval from a backup", () => {
+    applyImportedSettings({ idleShiftEverySec: 120 });
+    expect(settings.idleShiftEverySec).toBe(120);
+    applyImportedSettings({ idleShiftEverySec: 42 });
+    expect(settings.idleShiftEverySec).toBeNull();
+    applyImportedSettings({ idleShiftEverySec: "60" });
+    expect(settings.idleShiftEverySec).toBeNull();
+  });
+});
+
 describe("persistence", () => {
   it("writes settings to localStorage on change", () => {
     settings.fontSize = 18;

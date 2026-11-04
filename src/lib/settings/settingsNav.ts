@@ -38,7 +38,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "behavior", keywords: "Behavior confirm close tab auto reconnect restore tabs session startup launch layout splits поведение подтверждение вкладка переподключение восстановление вкладки сессии запуск раскладка сплиты" },
   { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
   { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
-  { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана" },
+  { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal burn-in burn in OLED drift shift pixel заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана выгорание сдвиг пиксели OLED" },
   { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
   { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
   { id: "ai", keywords: "AI assistant LLM chat model endpoint api key qwen ollama vllm claude anthropic openai prod ИИ ассистент чат модель эндпоинт ключ помощник нейросеть" },

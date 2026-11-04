@@ -206,8 +206,12 @@ describe("a job, as the list and the toasts read it", () => {
       total: 100,
       done: false,
       sessions: ["s1"],
+      destDir: "/srv",
     });
     expect(jobRow(job({ fileCount: 3, fileIndex: 2 }))).toMatchObject({ fileIndex: 2, fileCount: 3 });
+    // The tabs at each end are named only when the backend named them.
+    const named = jobRow(job({ src: { session: null, local: true, label: "MacBook" }, dst: { session: "s1", local: false, label: "web-1" } }));
+    expect(named).toMatchObject({ srcLabel: "MacBook", dstLabel: "web-1", destDir: "/srv" });
     for (const state of ["done", "failed", "cancelled"] as const) {
       expect(jobRow(job({ state })).done).toBe(true);
     }

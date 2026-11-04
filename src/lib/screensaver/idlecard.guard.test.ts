@@ -25,6 +25,12 @@ import { describe, expect, it } from "vitest";
 // header. `drawCard` asks `cardTier` and draws the card itself only where it
 // fits; the smaller layouts carry no "press any key" hint — it has nowhere to
 // stand in them.
+//
+// And it need not hold its pixels still (v1.31). The standby screen fills a
+// large area and may stay up for hours: every layout is drawn moved by the
+// shift the user set (`shiftOffset` over `settings.idleShiftEverySec`, off by
+// default), and the prod frame — the edge of the area — is drawn after, in place. The history of the time away does not draw a line through a poll
+// that failed: that moment is a gap.
 // Checked on the source with comments stripped.
 
 function stripHtmlComments(text: string): string {
@@ -98,12 +104,46 @@ export function cardLayoutViolations(overlay: string): string[] {
   if (calls !== 1 || guarded !== 1) {
     out.push("the card itself is drawn outside the layout that fits it");
   }
+  const standby = o.match(/\bdrawStandby\(ctx,/g)?.length ?? 0;
+  const standbyGuarded =
+    o.match(/if \(tier === "standby" \|\| tier === "compact"\) drawStandby\(ctx,/g)?.length ?? 0;
+  if (standby !== 1 || standbyGuarded !== 1) {
+    out.push("the standby screen is drawn outside the layouts that fit it");
+  }
   for (const small of ["drawCardWide", "drawCardStack", "drawCardSmall"]) {
     const body = bodyOf(o, small);
     if (!body) out.push(`${small} is gone`);
     else if (/\bhint\(/.test(body)) out.push(`${small} draws the hint it has no room for`);
   }
   return out;
+}
+
+/**
+ * What holds the card's pixels still, or moves the prod frame with it — in the
+ * overlay's own source. Empty when the rule holds.
+ */
+export function driftViolations(overlay: string): string[] {
+  const body = bodyOf(bare(overlay), "drawCard");
+  const out: string[] = [];
+  const offset = body.indexOf("const { dx, dy } = shiftOffset(now, settings.idleShiftEverySec);");
+  const moved = body.indexOf("ctx.translate(dx, dy);");
+  const first = body.search(/drawStandby\(ctx,|drawCardFull\(ctx,/);
+  if (offset < 0 || moved < offset || first < 0 || moved > first) out.push("the card is drawn without drifting");
+  const restore = body.lastIndexOf("ctx.restore();");
+  const frame = body.indexOf("prodFrame(ctx,");
+  if (frame < 0) out.push("a production session's card has no red frame");
+  else if (restore < 0 || frame < restore) out.push("the prod frame drifts with the card");
+  return out;
+}
+
+/**
+ * What lets the history of the time away draw a line through a poll that
+ * failed — in the overlay's own source. Empty when the rule holds.
+ */
+export function gapViolations(overlay: string): string[] {
+  const body = bodyOf(bare(overlay), "pollMetrics");
+  const caught = /\bcatch\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
+  return /\baway = awayPush\(away, gapReading\(/.test(caught) ? [] : ["a failed poll leaves no gap in the history"];
 }
 
 /** Body of `function name(…) { … }`, up to the next top-level function. */
@@ -131,11 +171,24 @@ describe("idle card guard", () => {
 
   it("forgets the previous activation's numbers before the first sample", () => {
     const body = fn("activate");
-    for (const v of ["cpu", "mem", "uptimeSecs", "load1", "cpuCount"]) {
+    for (const v of [
+      "cpu",
+      "mem",
+      "uptimeSecs",
+      "load1",
+      "cpuCount",
+      "load5",
+      "memUsed",
+      "diskUsed",
+      "cpuTemp",
+      "offsetMin",
+    ]) {
       expect(body, `${v} is reset on activation`).toMatch(
         new RegExp(`\\b${v}\\s*=[^;]*\\bnull\\s*;`),
       );
     }
+    // …and the previous time away: its history and its events.
+    expect(body).toMatch(/\baway = emptyAway\(\);/);
   });
 
   it("never starts in a window with no tab, and does not outlive the last one", () => {
@@ -212,6 +265,57 @@ describe("idle card guard", () => {
     expect(cardLayoutViolations(hinted)).toEqual([
       "drawCardWide draws the hint it has no room for",
     ]);
+  });
+
+  it("draws the standby screen only where it fits", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    const loose = overlay.replace(
+      'if (tier === "standby" || tier === "compact") drawStandby(ctx,',
+      'if (tier !== "line") drawStandby(ctx,',
+    );
+    expect(loose).not.toBe(overlay);
+    expect(cardLayoutViolations(loose)).toEqual(["the standby screen is drawn outside the layouts that fit it"]);
+  });
+
+  it("drifts every layout against burn-in, and keeps the prod frame in place", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(driftViolations(overlay)).toEqual([]);
+    // The check catches its own violations: a shift that ignores the setting…
+    const unasked = overlay.replace(
+      "const { dx, dy } = shiftOffset(now, settings.idleShiftEverySec);",
+      "const { dx, dy } = shiftOffset(now, 0);",
+    );
+    expect(unasked).not.toBe(overlay);
+    expect(driftViolations(unasked)).toEqual(["the card is drawn without drifting"]);
+    // …a card that never moves…
+    const still = overlay.replace("    ctx.translate(dx, dy);\n", "");
+    expect(still).not.toBe(overlay);
+    expect(driftViolations(still)).toEqual(["the card is drawn without drifting"]);
+    // …one that moves only after the layout is drawn…
+    const late = overlay
+      .replace("    ctx.translate(dx, dy);\n", "")
+      .replace("    ctx.restore();\n    if (prod", "    ctx.translate(dx, dy);\n    ctx.restore();\n    if (prod");
+    expect(late).not.toBe(still);
+    expect(driftViolations(late)).toEqual(["the card is drawn without drifting"]);
+    // …a frame drawn inside the moved layout…
+    const moving = overlay
+      .replace("    if (prod && sessionId) prodFrame(ctx, W, H, p);\n", "")
+      .replace("    ctx.translate(dx, dy);\n", "    ctx.translate(dx, dy);\n    if (prod && sessionId) prodFrame(ctx, W, H, p);\n");
+    expect(moving).not.toBe(overlay);
+    expect(driftViolations(moving)).toEqual(["the prod frame drifts with the card"]);
+    // …and no frame at all.
+    const frameless = overlay.replace("    if (prod && sessionId) prodFrame(ctx, W, H, p);\n", "");
+    expect(frameless).not.toBe(overlay);
+    expect(driftViolations(frameless)).toEqual(["a production session's card has no red frame"]);
+  });
+
+  it("leaves a gap in the history where a poll failed", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(gapViolations(overlay)).toEqual([]);
+    // The check catches its own violation: a failure that only keeps the numbers.
+    const silent = overlay.replace("      away = awayPush(away, gapReading(Date.now()), awayThresholds());\n", "");
+    expect(silent).not.toBe(overlay);
+    expect(gapViolations(silent)).toEqual(["a failed poll leaves no gap in the history"]);
   });
 
   it("leaves the pointer visible over the screensaver", () => {

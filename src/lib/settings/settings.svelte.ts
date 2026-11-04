@@ -47,9 +47,12 @@ import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitr
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
   clampIdleTimeout,
+  DEFAULT_IDLE_SHIFT,
   DEFAULT_IDLE_EFFECT,
   DEFAULT_IDLE_TIMEOUT,
   isIdleSetting,
+  sanitizeShiftInterval,
+  type IdleShiftInterval,
   type IdleSetting,
 } from "../screensaver/idle";
 
@@ -236,6 +239,8 @@ export interface Settings {
   // after how many seconds. "off" disables it. See idle.ts.
   idleEffect: IdleSetting;
   idleTimeoutSec: number;
+  /** How often, s, the card shifts a couple of pixels against burn-in; null — it never does. */
+  idleShiftEverySec: IdleShiftInterval;
   // Docker panel (Phase 35) — how often the live view (list + logs + stats)
   // re-polls the daemon while the panel is open, in seconds. See docker.ts.
   dockerRefreshSec: number;
@@ -398,6 +403,7 @@ const DEFAULTS: Settings = {
   ai: defaultAiSettings(),
   idleEffect: DEFAULT_IDLE_EFFECT,
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
+  idleShiftEverySec: DEFAULT_IDLE_SHIFT,
   dockerRefreshSec: 3,
   dockerRegistries: [],
   gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
@@ -530,6 +536,7 @@ function load(): Settings {
       ai: sanitizeAiSettings(raw.ai),
       idleEffect: isIdleSetting(raw.idleEffect) ? raw.idleEffect : DEFAULTS.idleEffect,
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
+      idleShiftEverySec: sanitizeShiftInterval(raw.idleShiftEverySec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
       gitFavoriteBranches: "gitFavoriteBranches" in raw
@@ -679,6 +686,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
+  next.idleShiftEverySec = sanitizeShiftInterval(next.idleShiftEverySec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);

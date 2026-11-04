@@ -137,6 +137,10 @@ export function seriesRuns(
 
 /**
  * How the card lays itself out:
+ * - `standby` — a large area (v1.31): the server's clock, four rings, the
+ *   history of the whole time away and a transfer under way, each with room
+ *   for its details (standby.ts);
+ * - `compact` — the same screen for a middling area, in short form;
  * - `full`  — the card: header, three large numbers, the chart under them;
  * - `wide`  — low and wide: one header line carrying the numbers, the chart on
  *   everything below it;
@@ -145,10 +149,16 @@ export function seriesRuns(
  * - `mini`  — no room for a chart: the host and the three numbers;
  * - `line`  — only the host fits.
  */
-export type CardTier = "full" | "wide" | "row" | "stack" | "mini" | "line";
+export type CardTier = "standby" | "compact" | "full" | "wide" | "row" | "stack" | "mini" | "line";
 
 /** The room each layout needs, px. */
 export const CARD_ROOM = {
+  /** The clock, four rings with their details, the history and a transfer at full size. */
+  standbyW: 1100,
+  standbyH: 780,
+  /** The same in short form: the clock beside the host and rings, the history under them. */
+  compactW: 600,
+  compactH: 400,
   /** Below this width the numbers no longer stand in one row with the host. */
   wideW: 480,
   /** The card's own header, numbers and a chart worth looking at. */
@@ -170,6 +180,8 @@ export const CARD_ROOM = {
 export function cardTier(w: number, h: number): CardTier {
   if (!(w > 0) || !(h > 0)) return "line";
   const R = CARD_ROOM;
+  if (w >= R.standbyW && h >= R.standbyH) return "standby";
+  if (w >= R.compactW && h >= R.compactH) return "compact";
   if (w >= R.wideW) return h >= R.fullH ? "full" : h >= R.wideH ? "wide" : "row";
   if (w >= R.stackW && h >= R.stackH) return "stack";
   if (w >= R.miniW && h >= R.miniH) return "mini";
