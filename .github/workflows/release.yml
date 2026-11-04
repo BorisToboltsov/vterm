@@ -126,51 +126,9 @@ jobs:
       - name: Фронтенд-окружение
         uses: $/.github/actions/setup-web
 
-      # Краткое «Что нового» для описания релиза: жирные заголовки буллетов из
-      # секции CHANGELOG по текущему тегу — без подробностей. Единственный источник
-      # изменений — CHANGELOG.md (ведётся по DoD), тег пуша совпадает с заголовком
-      # секции `## vX.Y.Z — …`. Инструкция запуска остаётся ниже неизменной.
-      #
-      # shell: bash — иначе на Windows-раннере матрицы шаг ушёл бы в PowerShell.
-      # Тег едет через env, а не подстановкой в строку: `${{…}}` в `run:`
-      # раскрывается ДО шелла, то есть содержимое стало бы кодом (инвариант, тот же,
-      # что у gh-шагов ниже). Заголовок секции матчим сравнением подстрок, а не
-      # регуляркой — точки версии не должны толковаться как метасимволы. Секции по
-      # тегу нет (тег без записи в CHANGELOG) → ссылка на CHANGELOG, релиз не рушим.
-      - name: Заметки релиза из CHANGELOG
-        shell: bash
-        env:
-          TAG: ${{ github.ref_name }}
-        run: |
-          notes="$(awk -v tag="$TAG" '
-            BEGIN { pfx = "## " tag }
-            {
-              if (!insec && substr($0, 1, length(pfx)) == pfx) {
-                rest = substr($0, length(pfx) + 1)
-                if (rest == "" || substr(rest, 1, 1) == " ") { insec = 1; next }
-              }
-            }
-            insec && substr($0, 1, 3) == "## " { exit }
-            insec && $0 ~ /^---[[:space:]]*$/ { exit }
-            insec && substr($0, 1, 4) == "- **" {
-              line = substr($0, 5)
-              p = index(line, "**")
-              if (p > 0) line = substr(line, 1, p - 1)
-              print "- " line
-            }
-          ' CHANGELOG.md)"
-          {
-            echo "RELEASE_NOTES<<RELEASE_NOTES_EOF"
-            if [ -n "$notes" ]; then
-              printf '## Что нового в %s\n\n%s\n' "$TAG" "$notes"
-            else
-              echo "Список изменений — в [CHANGELOG.md](https://github.com/BorisToboltsov/vterm/blob/main/CHANGELOG.md)."
-            fi
-            echo "RELEASE_NOTES_EOF"
-          } >> "$GITHUB_ENV"
-
       # Собирает фронт (beforeBuildCommand: pnpm build), компилирует Rust в release,
-      # упаковывает нативные дистрибутивы и прикрепляет их к релизу тега.
+      # упаковывает нативные дистрибутивы и прикрепляет их к релизу тега. Описание
+      # релиза пишет джоба `integrity` — один раз, когда все сборки легли.
       - name: Сборка и публикация релиза
         uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env:
@@ -178,16 +136,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "vterm ${{ github.ref_name }}"
-          releaseBody: |
-            ${{ env.RELEASE_NOTES }}
-
-            Готовые сборки vterm ${{ github.ref_name }}. Скачайте файл под свою ОС из списка **Assets** ниже.
-
-            - **macOS** — `.dmg`; рядом лежит `open-on-mac.sh` — хелпер запуска неподписанной сборки (снимает карантин Gatekeeper): `chmod +x open-on-mac.sh && ./open-on-mac.sh`.
-            - **Windows** — `-setup.exe` (NSIS) / `.msi` (установщики) и `vterm-portable-*-x86_64.exe` — **portable**, один файл без установки (нужен системный WebView2 Runtime); `vterm-portable-*-x86_64-webview2.exe` — тот же portable со встроенным WebView2 для Windows без него и без сети (LTSC).
-            - **Linux** — `.deb` / `.rpm` / AppImage (x86_64).
-
-            Сборки не подписаны — при первом запуске ОС может показать предупреждение; как снять, см. [docs/INSTALL.md](https://github.com/BorisToboltsov/vterm/blob/main/docs/INSTALL.md).
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
@@ -304,6 +252,20 @@ jobs:
           # Не оставлять GITHUB_TOKEN в .git/config: ни один шаг не пушит через git
           # (релизы идут через API tauri-action / gh), поэтому креды не нужны (zizmor artipacked).
           persist-credentials: false
+
+      # Описание релиза — «Что нового» из CHANGELOG и как запустить. Пишется здесь, один
+      # раз, а не в матрице: «Что нового» собирает секции от последнего ОПУБЛИКОВАННОГО
+      # релиза (пропущенный черновик не теряет свои изменения), и такой текст не влез бы в
+      # переменную окружения Windows-раннера (32 767 символов). Его же показывает
+      # встроенная проверка обновлений. Логика — scripts/release-train.mjs (`body`).
+      - name: Описание релиза из CHANGELOG
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          since="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          node scripts/release-train.mjs body "$TAG" "$since" > "$RUNNER_TEMP/body.md"
+          gh release edit "$TAG" --notes-file "$RUNNER_TEMP/body.md"
 
       # Черновик релиза уже содержит всё, что положили три матричные джобы.
       - name: Забрать ассеты релиза

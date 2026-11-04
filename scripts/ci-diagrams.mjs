@@ -62,16 +62,25 @@ export function jobsOf(yaml) {
   return jobs;
 }
 
-/** Что запускает workflow. Расписание называется на схеме «1-го числа» — и обязано им быть. */
+/** Дни недели в подписи «по …»: индекс — как в cron. */
+const WEEKDAYS = ["воскресеньям", "понедельникам", "вторникам", "средам", "четвергам", "пятницам", "субботам"];
+
+/**
+ * Что запускает workflow. Расписание на схеме — «1-го числа» или «по <день недели>», и
+ * обязано им быть: другое расписание схема не нарисует, а соврёт.
+ */
 export function triggersOf(yaml) {
   const on = topBlock(yaml, "on").join("\n");
-  const cron = /cron:\s*["']?(\S+ \S+ (\S+) \S+ \S+)["']?/.exec(on);
-  if (cron && cron[2] !== "1") throw new Error(`расписание «${cron[1]}» — уже не 1-го числа: поправьте схемы`);
+  const cron = /cron:\s*["']?(\S+ \S+ (\S+) (\S+) ([^\s"']+))["']?/.exec(on);
+  const monthly = !!cron && cron[2] === "1" && cron[3] === "*" && cron[4] === "*";
+  const weekly = !!cron && cron[2] === "*" && cron[3] === "*" && /^[0-6]$/.test(cron[4]);
+  if (cron && !monthly && !weekly) throw new Error(`расписание «${cron[1]}» — ни 1-го числа, ни раз в неделю: поправьте схемы`);
   return {
     pr: /^\s+pull_request:/m.test(on),
     main: /^\s+push:\s*\n\s+branches:/m.test(on),
     tag: /^\s+tags:/m.test(on),
-    month: !!cron,
+    month: monthly,
+    weekday: weekly ? Number(cron[4]) : null,
     manual: /^\s+workflow_dispatch:/m.test(on),
   };
 }
@@ -141,21 +150,24 @@ const FLOWS = [
   { file: "security.yml", title: "Security scan", col: "amber" },
   { file: "codeql.yml", title: "CodeQL", col: "amber" },
   { file: "deep.yml", title: "Глубокие проверки", col: "violet" },
+  { file: "train.yml", title: "Плановый выпуск", col: "green" },
   { file: "release.yml", title: "Release", col: "green" },
 ];
 
 function renderMap(workflows) {
-  const W = 960, H = 452;
+  const W = 1000, H = 534;
   const fx = 272, fw = 318, fh = 66, fgap = 16, fy0 = 28;
   const rx = fx + fw;
   const cy = (i) => fy0 + i * (fh + fgap) + fh / 2;
   const flows = FLOWS.map((f, i) => ({ ...f, i, ...triggersOf(workflows[f.file]), jobs: jobsOf(workflows[f.file]), calls: callsOf(workflows[f.file]) }));
   const hit = (test) => flows.filter(test).map((f) => f.i);
+  const weekly = flows.find((f) => f.weekday !== null);
   const events = [
     { label: "PR и push в main", y: (cy(0) + cy(2)) / 2 - 16, to: hit((f) => f.pr || f.main) },
     { label: "1-го числа", y: cy(2) + 16, to: hit((f) => f.month) },
-    { label: "вручную", y: cy(3) + 22, to: hit((f) => f.manual) },
-    { label: "тег v*", y: cy(4), to: hit((f) => f.tag) },
+    { label: "вручную", y: cy(3) + 30, to: hit((f) => f.manual) },
+    { label: `по ${WEEKDAYS[weekly?.weekday ?? 1]}`, y: cy(4) + 12, to: hit((f) => f.weekday !== null) },
+    { label: "тег v*", y: cy(5), to: hit((f) => f.tag) },
   ];
   let b = "";
   const ex = 24, ew = 158;
@@ -184,10 +196,10 @@ function renderMap(workflows) {
       b += `<path d="M${rx} ${fromY} C${rx + bulge} ${fromY} ${rx + bulge} ${toY} ${rx + 7} ${toY}" fill="none" stroke="${c("green")}" stroke-width="1.8" stroke-dasharray="5 4"/><polygon points="${rx},${toY} ${rx + 7},${toY - 4.5} ${rx + 7},${toY + 4.5}" fill="${c("green")}"/>`;
     });
   }
-  b += text(rx + 72, cy(3) - 2, "вызывает", { size: 12.5, weight: 600, fill: c("green") });
-  b += text(rx + 72, cy(3) + 14, "целиком", { size: 12.5, weight: 600, fill: c("green") });
+  b += text(rx + 96, cy(3) - 2, "вызывает", { size: 12.5, weight: 600, fill: c("green") });
+  b += text(rx + 96, cy(3) + 14, "целиком", { size: 12.5, weight: 600, fill: c("green") });
 
-  const ox = 730, ow = 206;
+  const ox = 770, ow = 206;
   const out = (y, title, sub, col) => {
     b += rect(ox, y - 31, ow, 62, { r: 11, fill: tint(col), stroke: "none" });
     b += text(ox + ow / 2, y - 5, title, { size: 14.5, weight: 700, fill: c(col), anchor: "middle" });
@@ -196,17 +208,19 @@ function renderMap(workflows) {
   const line = (y, col) => {
     b += `<line x1="${rx}" y1="${y}" x2="${ox - 6}" y2="${y}" stroke="${c(col)}" stroke-width="1.8"/><polygon points="${ox},${y} ${ox - 6},${y - 4} ${ox - 6},${y + 4}" fill="${c(col)}"/>`;
   };
-  const o1 = cy(0) - 12, o2 = (cy(1) + cy(2)) / 2, o3 = cy(4) + 10;
+  const o1 = cy(0) - 12, o2 = (cy(1) + cy(2)) / 2, o3 = cy(4), o4 = cy(5) + 10;
   line(o1, "blue");
   b += curve(rx, cy(1), ox, o2 - 8, c("amber"));
   b += curve(rx, cy(2), ox, o2 + 8, c("amber"));
   line(o3, "green");
+  line(o4, "green");
   out(o1, "Можно слить в main", "требует ruleset main", "blue");
   out(o2, "Находки в Security tab", "советуют, не останавливают", "amber");
-  out(o3, "Черновик релиза", "публикует человек", "green");
+  out(o3, "PR выпуска, затем тег", "если есть что выпускать", "green");
+  out(o4, "Черновик релиза", "публикует человек", "green");
 
   const desc = flows.map((f) => `${f.title} (${f.file}): ${f.jobs.map((j) => j.id).join(", ")}`).join("; ");
-  return doc(W, H, b, "Карта пайплайнов vterm", `Что запускает пять workflow и чем они кончаются. ${desc}.`);
+  return doc(W, H, b, "Карта пайплайнов vterm", `Что запускает каждый workflow и чем он кончается. ${desc}.`);
 }
 
 // ── Путь изменения: где его могут остановить ────────────────────────────────────
@@ -227,7 +241,6 @@ function renderJourney(workflows) {
   b += seg(x.branch, x.main, "blue");
   b += `<line x1="${x.main}" y1="${y}" x2="${x.tag}" y2="${y}" stroke="${c("muted")}" stroke-width="3" stroke-dasharray="3 8" stroke-linecap="round"/>`;
   b += seg(x.tag, x.release, "green");
-  b += text((x.main + x.tag) / 2, y - 12, "решили выпускать", { size: 12, fill: c("muted"), anchor: "middle" });
 
   const label = (cx, title, sub, col) => {
     b += text(cx, y - 56, title, { size: 14, weight: 700, fill: c(col), anchor: "middle" });
@@ -244,6 +257,11 @@ function renderJourney(workflows) {
   };
   stop((x.pr + x.main) / 2, "CI", checksLabel(requiredChecks(workflows["ci.yml"])));
   stop((x.tag + x.draft) / 2, "Гейты релиза", "CI, глубокие, сборка");
+  // Между main и тегом — расписание, а не решение человека: день берётся из train.yml.
+  const weekday = triggersOf(workflows["train.yml"]).weekday;
+  if (weekday === null) throw new Error("train.yml больше не по расписанию: схема пути изменения говорит, что выпуск режется сам");
+  label((x.main + x.tag) / 2, "Поезд", `по ${WEEKDAYS[weekday]}`, "green");
+  b += text((x.main + x.tag) / 2, y - 12, "хотфикс — вручную", { size: 12, fill: c("muted"), anchor: "middle" });
 
   const hx = (x.draft + x.release) / 2;
   b += `<circle cx="${hx}" cy="${y}" r="17" fill="${c("green")}"/><circle cx="${hx}" cy="${y - 5}" r="5" fill="${c("bg")}"/><path d="M${hx - 9} ${y + 10} a9 8 0 0 1 18 0 z" fill="${c("bg")}"/>`;
@@ -262,7 +280,7 @@ function renderJourney(workflows) {
   b += rect(28, my, W - 56, 40, { fill: tint("violet"), stroke: "none" });
   b += text(W / 2, my + 25, "1-го числа, без всяких изменений: глубокие проверки и сканеры ловят дрейф окружения", { size: 13, weight: 600, fill: c("violet"), anchor: "middle" });
 
-  return doc(W, H, b, "Путь изменения от ветки до релиза", "Ветка, PR, main, тег, черновик, релиз. Останавливают CI перед main и гейты релиза перед черновиком; публикует человек. Сканеры не останавливают; раз в месяц проверки идут сами.");
+  return doc(W, H, b, "Путь изменения от ветки до релиза", `Ветка, PR, main, тег, черновик, релиз. Останавливают CI перед main и гейты релиза перед черновиком; от main до тега — поезд по ${WEEKDAYS[weekday]} или хотфикс вручную; публикует человек. Сканеры не останавливают; раз в месяц проверки идут сами.`);
 }
 
 // ── Время: настоящий прогон релиза ──────────────────────────────────────────────

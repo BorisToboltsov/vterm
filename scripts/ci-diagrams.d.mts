@@ -24,7 +24,7 @@ export interface GhJob {
 }
 
 export function jobsOf(yaml: string): WorkflowJob[];
-export function triggersOf(yaml: string): { pr: boolean; main: boolean; tag: boolean; month: boolean; manual: boolean };
+export function triggersOf(yaml: string): { pr: boolean; main: boolean; tag: boolean; month: boolean; weekday: number | null; manual: boolean };
 export function callsOf(yaml: string): string[];
 export function requiredChecks(ciYaml: string): number;
 export function readWorkflows(): Record<string, string>;

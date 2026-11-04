@@ -23,8 +23,11 @@ const ROOT = process.cwd();
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 const SELF = "docs.guard.test.ts";
 
-/** Characters, not bytes: Cyrillic is two bytes a character in UTF-8. */
-export const INVARIANTS_BUDGET = 90_000;
+/**
+ * Characters, not bytes: Cyrillic is two bytes a character in UTF-8. 90 000 until 1.32,
+ * when the release contracts (the train, hotfixes) joined the canon.
+ */
+export const INVARIANTS_BUDGET = 100_000;
 
 function walk(dir: string, keep: (name: string) => boolean): string[] {
   const out: string[] = [];
