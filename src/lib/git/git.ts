@@ -22,30 +22,138 @@ export function statusArgs(): string[] {
   return ["status", "--porcelain=v2", "--branch", "-z"];
 }
 
+/** Commits one load of the history asks for, and how far "load more" may go. */
+export const LOG_PAGE = 200;
+export const LOG_CAP = 1000;
+
+/** What the history is narrowed to. Each field is git's to apply, not a filter over loaded rows. */
+export interface LogFilter {
+  text: string;
+  /** `text` is an extended regular expression, not a literal string. */
+  regex: boolean;
+  matchCase: boolean;
+  /** A full ref (`refs/heads/x`); null is every ref. */
+  branch: string | null;
+  author: string | null;
+  since: LogSince | null;
+  path: string | null;
+  /** Follow `path` through renames: the history of one file. */
+  follow: boolean;
+}
+
+export type LogSince = "today" | "week" | "month" | "year";
+export const LOG_SINCE: readonly LogSince[] = ["today", "week", "month", "year"];
+// git's own date words, the same whatever the host's locale.
+const SINCE_ARG: Record<LogSince, string> = {
+  today: "midnight",
+  week: "7.days.ago",
+  month: "30.days.ago",
+  year: "365.days.ago",
+};
+
+export const NO_FILTER: LogFilter = {
+  text: "",
+  regex: false,
+  matchCase: false,
+  branch: null,
+  author: null,
+  since: null,
+  path: null,
+  follow: false,
+};
+
+export const isFiltered = (f: LogFilter): boolean =>
+  !!(f.text || f.branch || f.author || f.since || f.path);
+
+const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function filterArgs(f: LogFilter): string[] {
+  const out: string[] = [];
+  if (f.text) {
+    out.push(`--grep=${f.text}`, f.regex ? "-E" : "-F");
+    if (!f.matchCase) out.push("-i");
+  }
+  if (f.author) {
+    // One pattern language per command: under `-E` a name like `bot[x]` is escaped.
+    out.push(`--author=${f.text && f.regex ? escapeRegex(f.author) : f.author}`);
+    if (!f.text) out.push("-F");
+  }
+  if (f.since) out.push(`--since=${SINCE_ARG[f.since]}`);
+  if (f.path && f.follow) out.push("--follow");
+  out.push(f.branch ?? "--all");
+  if (f.path) out.push("--", f.path);
+  return out;
+}
+
+// NUL-separated records (`-z`), so the body (`%b`) can carry newlines safely;
+// fields within a record are US-separated. `--decorate=full` names a ref in full:
+// a branch, a remote branch and a tag are told apart by git, not by guessing.
+const LOG_HEAD = [
+  "log",
+  "--no-color",
+  "-z",
+  "--decorate=full",
+  `--pretty=format:%H${US}%h${US}%P${US}%an${US}%at${US}%cn${US}%D${US}%s${US}%b`,
+];
+
+/** Commit log for the graph: `limit` commits after the first `skip`, narrowed by `filter`. */
+export function logArgs(limit = LOG_PAGE, skip = 0, filter: LogFilter = NO_FILTER): string[] {
+  const args = [...LOG_HEAD, "-n", String(limit)];
+  if (skip > 0) args.push(`--skip=${skip}`);
+  return [...args, ...filterArgs(filter)];
+}
+
+/** Whether a search could also name a commit: `--grep` reads messages, never hashes. */
+export const looksLikeHash = (text: string): boolean => /^[0-9a-f]{4,40}$/i.test(text);
+
+/** The one commit a hash-shaped search names; a non-zero exit means it names none. */
+export function hashLookupArgs(hash: string): string[] {
+  return [...LOG_HEAD, "-n", "1", hash, "--"];
+}
+
 /**
- * Commit log for the graph. NUL-separated records (`-z`) so the body (`%b`) can
- * carry newlines safely; fields within a record are US-separated.
+ * Branch list (local + remote) with metadata; fields NUL-separated. `worktree`
+ * asks where each branch is checked out — a field git learned in 2.23: on an older
+ * host the whole command fails, and the panel asks again without it.
  */
-export function logArgs(limit = 200): string[] {
+export function branchesArgs(worktree = true): string[] {
+  const fields = [
+    "%(HEAD)",
+    "%(refname)",
+    "%(objectname:short)",
+    "%(upstream:short)",
+    "%(contents:subject)",
+    "%(upstream:trackshort)",
+    "%(upstream:track,nobracket)",
+    "%(committerdate:unix)",
+  ];
+  if (worktree) fields.push("%(worktreepath)");
+  return ["branch", "-a", "--no-color", `--format=${fields.join("%00")}`];
+}
+
+/** Tags, newest first. `%(*objectname)` is the commit an annotated tag points at. */
+export function tagsArgs(): string[] {
   return [
-    "log",
-    "--no-color",
-    "-z",
-    `--pretty=format:%H${US}%h${US}%P${US}%an${US}%at${US}%D${US}%s${US}%b`,
-    "-n",
-    String(limit),
-    "--all",
+    "tag",
+    "--list",
+    "--sort=-creatordate",
+    "--format=%(refname:short)%00%(objectname:short)%00%(*objectname:short)",
   ];
 }
 
-/** Branch list (local + remote) with metadata; fields NUL-separated. */
-export function branchesArgs(): string[] {
-  return [
-    "branch",
-    "-a",
-    "--no-color",
-    "--format=%(HEAD)%00%(refname)%00%(objectname:short)%00%(upstream:short)%00%(contents:subject)",
-  ];
+/** The branches a commit is on (full refs: a branch is never mistaken for a tag). */
+export function branchContainsArgs(hash: string): string[] {
+  return ["branch", "-a", "--no-color", "--contains", hash, "--format=%(refname)"];
+}
+
+/**
+ * Fast-forward a branch that is not checked out from its upstream, or null when it
+ * has none. No `+` in the refspec: a branch that diverged is refused, not moved.
+ */
+export function updateBranchArgs(branch: Pick<GitBranch, "name" | "upstream">): string[] | null {
+  const at = branch.upstream?.indexOf("/") ?? -1;
+  if (!branch.upstream || at <= 0) return null;
+  return ["fetch", branch.upstream.slice(0, at), `${branch.upstream.slice(at + 1)}:${branch.name}`];
 }
 
 export function stageArgs(paths: string[]): string[] {
@@ -238,6 +346,13 @@ export function showFileArgs(hash: string, path: string): string[] {
   return ["show", "--no-color", "--format=", hash, "--", path];
 }
 
+/** The whole diff of a commit; a merge's is against its first parent, as its file list is. */
+export function commitDiffArgs(hash: string, merge: boolean): string[] {
+  return merge
+    ? ["diff", "--no-color", `${hash}^1`, hash]
+    : ["show", "--no-color", "--format=", hash];
+}
+
 /**
  * The full content of a file at a revision (`git show <ref>:<path>`). Used as the
  * diff base for the editable inline diff in the editor; a non-zero exit (file
@@ -307,14 +422,25 @@ export interface GitStatus {
   files: GitFile[];
 }
 
+/** What a ref on a commit is: `head` is the branch checked out, HEAD's target. */
+export type GitRefKind = "head" | "local" | "remote" | "tag";
+
+export interface GitRef {
+  kind: GitRefKind;
+  /** `main`, `origin/main`, `v1.2` — short, as the rest of the panel shows it. */
+  name: string;
+}
+
 export interface GitCommit {
   hash: string;
   short: string;
   parents: string[];
   author: string;
+  /** Who applied it: someone else after a rebase, a cherry-pick, a merge on a forge. */
+  committer: string;
   timestamp: number;
-  /** Decoration ref names (HEAD, branch, tag, origin/…). */
-  refs: string[];
+  /** The branches and tags on it, as git names them. */
+  refs: GitRef[];
   subject: string;
   /** Commit message body (everything after the subject), trimmed; may be empty. */
   body: string;
@@ -331,6 +457,25 @@ export interface GitBranch {
   upstream: string | null;
   subject: string;
   remote: boolean;
+  /** Against the upstream; null when there is none or git did not say. */
+  track: BranchTrack | null;
+  /** Its last commit, unix seconds; 0 when git did not say. */
+  date: number;
+  /** Where it is checked out, when it is; null also on a git too old to say. */
+  worktree: string | null;
+}
+
+/** A branch against its upstream. `gone`: the upstream is configured and no longer exists. */
+export interface BranchTrack {
+  ahead: number;
+  behind: number;
+  gone: boolean;
+}
+
+export interface GitTag {
+  name: string;
+  /** The commit it points at (the tag's own object for a lightweight one is that commit). */
+  short: string;
 }
 
 export interface GitStashEntry {
@@ -410,29 +555,50 @@ export function unstagedFiles(files: GitFile[]): GitFile[] {
   return files.filter((f) => f.work !== ".");
 }
 
+/**
+ * The refs of one `%D` decoration (`--decorate=full`). A ref that is neither a
+ * branch nor a tag (`refs/stash`) is not a label, and neither is `origin/HEAD`.
+ * A short name — no `refs/` at all — is read as a local branch.
+ */
+export function parseDecoration(decoration: string): { refs: GitRef[]; head: boolean } {
+  const refs: GitRef[] = [];
+  let head = false;
+  for (const raw of decoration.split(",").map((r) => r.trim()).filter(Boolean)) {
+    if (raw === "HEAD") {
+      head = true;
+      continue;
+    }
+    const isHead = raw.startsWith("HEAD -> ");
+    head ||= isHead;
+    const ref = raw.replace(/^HEAD -> /, "").replace(/^tag: /, "");
+    if (ref.startsWith("refs/tags/") || raw.startsWith("tag: ")) {
+      refs.push({ kind: "tag", name: ref.replace(/^refs\/tags\//, "") });
+    } else if (ref.startsWith("refs/remotes/")) {
+      if (!ref.endsWith("/HEAD")) refs.push({ kind: "remote", name: ref.slice("refs/remotes/".length) });
+    } else if (ref.startsWith("refs/heads/") || !ref.startsWith("refs/")) {
+      refs.push({ kind: isHead ? "head" : "local", name: ref.replace(/^refs\/heads\//, "") });
+    }
+  }
+  return { refs, head };
+}
+
 /** Parse the machine-readable `git log` output from {@link logArgs}. */
 export function parseLog(raw: string): GitCommit[] {
   const out: GitCommit[] = [];
   for (const line of raw.split("\0")) {
     if (!line) continue;
     const f = line.split(US);
-    if (f.length < 7) continue;
-    const decoration = f[5] ?? "";
+    if (f.length < 8) continue;
     out.push({
       hash: f[0],
       short: f[1],
       parents: f[2] ? f[2].split(" ").filter(Boolean) : [],
       author: f[3],
       timestamp: Number(f[4]) || 0,
-      refs: decoration
-        ? decoration
-            .split(",")
-            .map((r) => r.trim().replace(/^HEAD -> /, "").replace(/^tag: /, ""))
-            .filter((r) => r && r !== "HEAD")
-        : [],
-      subject: f[6],
-      body: (f.slice(7).join(US) ?? "").trim(),
-      head: /\bHEAD\b/.test(decoration),
+      committer: f[5],
+      ...parseDecoration(f[6] ?? ""),
+      subject: f[7],
+      body: (f.slice(8).join(US) ?? "").trim(),
     });
   }
   return out;
@@ -443,7 +609,7 @@ export function parseBranches(raw: string): GitBranch[] {
   const out: GitBranch[] = [];
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
-    const [head, fullRef, short, upstream, subject] = line.split("\0");
+    const [head, fullRef, short, upstream, subject, trackShort, track, date, worktree] = line.split("\0");
     if (!fullRef) continue;
     // Skip the `origin/HEAD -> origin/main` symbolic pointer.
     if (short === "" && fullRef.endsWith("/HEAD")) continue;
@@ -458,9 +624,47 @@ export function parseBranches(raw: string): GitBranch[] {
       upstream: upstream || null,
       subject: subject ?? "",
       remote,
+      track: parseTrack(trackShort ?? "", track ?? ""),
+      date: Number(date) || 0,
+      worktree: worktree || null,
     });
   }
   return out;
+}
+
+/**
+ * `%(upstream:trackshort)` and `%(upstream:track,nobracket)` read together: the
+ * words of the long form are translated by the host's locale, so only its numbers
+ * are taken, and the short form says which is which.
+ */
+function parseTrack(short: string, track: string): BranchTrack | null {
+  const n = (track.match(/\d+/g) ?? []).map(Number);
+  if (short === ">") return { ahead: n[0] ?? 0, behind: 0, gone: false };
+  if (short === "<") return { ahead: 0, behind: n[0] ?? 0, gone: false };
+  if (short === "<>") return { ahead: n[0] ?? 0, behind: n[1] ?? 0, gone: false };
+  if (short === "=") return { ahead: 0, behind: 0, gone: false };
+  return track.trim() ? { ahead: 0, behind: 0, gone: true } : null;
+}
+
+/** Parse {@link tagsArgs}: the commit of an annotated tag wins over the tag's object. */
+export function parseTags(raw: string): GitTag[] {
+  const out: GitTag[] = [];
+  for (const line of raw.split("\n")) {
+    const [name, object, target] = line.split("\0");
+    if (name) out.push({ name, short: target || object || "" });
+  }
+  return out;
+}
+
+/** Parse {@link branchContainsArgs}: short names, local before remote, no `origin/HEAD`. */
+export function parseContains(raw: string): string[] {
+  const local: string[] = [];
+  const remote: string[] = [];
+  for (const ref of raw.split("\n").map((l) => l.trim())) {
+    if (ref.startsWith("refs/heads/")) local.push(ref.slice("refs/heads/".length));
+    else if (ref.startsWith("refs/remotes/") && !ref.endsWith("/HEAD")) remote.push(ref.slice("refs/remotes/".length));
+  }
+  return [...local, ...remote];
 }
 
 /** Parse `git stash list --format=%gd␟%s`. */
@@ -757,110 +961,4 @@ export interface GitRunOpts {
 export function formatGitCommand(args: string[]): string {
   const q = (a: string) => (a === "" || /[\s"'\\]/.test(a) ? JSON.stringify(a) : a);
   return ["git", ...args.map(q)].join(" ");
-}
-
-// ── Graph layout ─────────────────────────────────────────────────────────────
-
-export interface GraphSegment {
-  /** Lane index at the top edge of the row band. */
-  from: number;
-  /** Lane index at the bottom edge (or at the node for merge-ins). */
-  to: number;
-  color: string;
-  /** 'through' full-height · 'out' node→parent (lower half) · 'in' lane→node (upper half). */
-  kind: "through" | "out" | "in";
-}
-
-export interface GraphRow {
-  commit: GitCommit;
-  /** Node lane index within this row. */
-  col: number;
-  color: string;
-  /** Max lane count spanning this row (for width). */
-  lanes: number;
-  segments: GraphSegment[];
-}
-
-/** Distinct, dark-mode-friendly rail colors, cycled by lane index. */
-export const RAIL_COLORS = [
-  "#4aa3ff",
-  "#3ecf8e",
-  "#e8a13a",
-  "#c678dd",
-  "#e06c9a",
-  "#56b6c2",
-  "#d19a66",
-  "#98c379",
-];
-
-export function railColor(col: number): string {
-  return RAIL_COLORS[((col % RAIL_COLORS.length) + RAIL_COLORS.length) % RAIL_COLORS.length];
-}
-
-/**
- * Assign each commit to a lane and emit per-row rail segments, producing a
- * GitKraken-style multi-lane graph. Commits must be in log order (newest first).
- *
- * The frontier is a compact array of "hash expected next" per lane. For each
- * commit we find its lane (or open a fresh one), route passing lanes forward,
- * fold converging lanes into the node, and open lanes for the commit's parents.
- */
-export function buildGraph(commits: GitCommit[]): GraphRow[] {
-  const rows: GraphRow[] = [];
-  let frontier: string[] = [];
-
-  for (const commit of commits) {
-    let myCol = frontier.indexOf(commit.hash);
-    const existed = myCol !== -1;
-    if (!existed) {
-      myCol = frontier.length;
-      frontier = [...frontier, commit.hash];
-    }
-    const inLanes = frontier.slice();
-    const out: string[] = [];
-    const segments: GraphSegment[] = [];
-
-    // Not a fresh tip → a child above feeds this node: draw the upper-half stub
-    // so the node connects to the rail arriving from the previous row.
-    if (existed) {
-      segments.push({ from: myCol, to: myCol, color: railColor(myCol), kind: "in" });
-    }
-
-    // Route every incoming lane except the node's own lane.
-    for (let k = 0; k < inLanes.length; k++) {
-      if (k === myCol) continue;
-      if (inLanes[k] === commit.hash) {
-        // A branch merging back into this commit — draw into the node.
-        segments.push({ from: k, to: myCol, color: railColor(k), kind: "in" });
-        continue;
-      }
-      let oi = out.indexOf(inLanes[k]);
-      if (oi === -1) {
-        oi = out.length;
-        out.push(inLanes[k]);
-      }
-      segments.push({ from: k, to: oi, color: railColor(oi), kind: "through" });
-    }
-
-    // Open lanes for this commit's parents and draw node→parent segments.
-    for (const p of commit.parents) {
-      let oi = out.indexOf(p);
-      if (oi === -1) {
-        oi = out.length;
-        out.push(p);
-      }
-      segments.push({ from: myCol, to: oi, color: railColor(oi), kind: "out" });
-    }
-
-    rows.push({
-      commit,
-      col: myCol,
-      color: railColor(myCol),
-      lanes: Math.max(inLanes.length, out.length),
-      segments,
-    });
-    frontier = out;
-  }
-
-  return rows;
 }

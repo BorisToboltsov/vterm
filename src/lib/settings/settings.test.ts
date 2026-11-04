@@ -2,6 +2,7 @@ import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   activeChromePanel,
+  activeFontSize,
   activeTerminalTheme,
   applyActiveTheme,
   applyImportedSettings,
@@ -11,7 +12,9 @@ import {
   clampK8sRefresh,
   resetSettings,
   settings,
+  uiPx,
 } from "./settings.svelte";
+import { UI_SCALE_KEY } from "../appearance/uiscale";
 import { DEFAULT_THEME_ID, getTheme } from "../appearance/themes";
 
 const STORAGE_KEY = "vterm.settings";
@@ -20,6 +23,43 @@ beforeEach(() => {
   localStorage.clear();
   resetSettings();
   flushSync();
+});
+
+describe("interface scale", () => {
+  it("starts at 100 %", () => {
+    expect(settings.uiScale).toBe(100);
+    expect(activeFontSize()).toBe(settings.fontSize);
+    expect(uiPx(28)).toBe(28);
+  });
+
+  it("reaches the root font and the key the first frame reads", () => {
+    settings.uiScale = 125;
+    flushSync();
+    expect(document.documentElement.style.fontSize).toBe("125%");
+    expect(localStorage.getItem(UI_SCALE_KEY)).toBe("125");
+  });
+
+  it("scales the terminal's font from its base, which stays what it was", () => {
+    settings.fontSize = 13;
+    settings.uiScale = 150;
+    expect(activeFontSize()).toBe(20);
+    expect(settings.fontSize).toBe(13);
+  });
+
+  it("scales a size given at 100 %", () => {
+    settings.uiScale = 150;
+    expect(uiPx(28)).toBe(42);
+    expect(uiPx(1)).toBe(1.5);
+  });
+
+  it("takes only a stop from a backup", () => {
+    applyImportedSettings({ uiScale: 150 });
+    expect(settings.uiScale).toBe(150);
+    applyImportedSettings({ uiScale: 9000 });
+    expect(settings.uiScale).toBe(100);
+    applyImportedSettings({});
+    expect(settings.uiScale).toBe(100);
+  });
 });
 
 describe("applyActiveTheme", () => {
@@ -97,6 +137,24 @@ describe("defaults", () => {
     expect(settings.recordIdlePauseSecs).toBe(20);
     // The custom theme seeds from the default preset's terminal palette.
     expect(settings.customTheme).toEqual(getTheme(DEFAULT_THEME_ID).terminal);
+  });
+});
+
+describe("shift against burn-in (v1.31)", () => {
+  it("is off by default and after a reset", () => {
+    expect(settings.idleShiftEverySec).toBeNull();
+    settings.idleShiftEverySec = 60;
+    resetSettings();
+    expect(settings.idleShiftEverySec).toBeNull();
+  });
+
+  it("takes only an offered interval from a backup", () => {
+    applyImportedSettings({ idleShiftEverySec: 120 });
+    expect(settings.idleShiftEverySec).toBe(120);
+    applyImportedSettings({ idleShiftEverySec: 42 });
+    expect(settings.idleShiftEverySec).toBeNull();
+    applyImportedSettings({ idleShiftEverySec: "60" });
+    expect(settings.idleShiftEverySec).toBeNull();
   });
 });
 

@@ -18,11 +18,13 @@
     extractCommands,
     extractMarkdown,
     metadataComment,
-    filterRecordings,
-    sortRecordingsBy,
-    type RecordingSortKey,
-    type SortCriterion,
   } from "./recording";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import { listMenuText, type ListLabels } from "../ui/listtext";
+  import { filterItems, filterSummary, NO_FILTER, sortItems, type ListFilter } from "../ui/listview";
+  import { listOrder, setListOrder } from "../stores/listview.svelte";
   import {
     listRecordings,
     deleteRecording,
@@ -58,6 +60,10 @@
   import {
     groupRecordings,
     sectionRecordings,
+    recordingSchema,
+    isRestSection,
+    NO_SERVER,
+    RECORDING_ORDER,
     type RecGroupEntry,
     type RecEntry,
     type RecGroupBy,
@@ -79,37 +85,35 @@
   let playing = $state<{ content: string; title: string; width: number; height: number } | null>(
     null,
   );
-  let query = $state("");
+  // What the library is narrowed to — while the window is open (ADR 0050).
+  let recFilter = $state<ListFilter>(NO_FILTER);
   // When set, a delete-confirmation dialog is shown for this recording.
   let confirmDelete = $state<RecordingMeta | null>(null);
   // When set, the title/description edit dialog is shown for this recording.
   let editRec = $state<RecordingMeta | null>(null);
-  // Ordered sort criteria (first = primary). Each column cycles asc → desc → off.
-  let criteria = $state<SortCriterion[]>([{ key: "date", dir: "desc" }]);
-
-  const SORT_KEYS: RecordingSortKey[] = ["date", "name", "size"];
-  const sortLabel: Record<RecordingSortKey, string> = {
-    date: t("recordings.sortDate"),
-    name: t("recordings.sortName"),
-    size: t("recordings.sortSize"),
+  // The filter row (v1.29, ADR 0050): the field, the «Server» and «Date» facets,
+  // the order and the grouping in «View» — one key, kept for the app. The
+  // date buckets are counted from when the list was loaded.
+  let now = $state(Date.now() / 1000);
+  const RECS = $derived(recordingSchema(now));
+  const recOrder = $derived(listOrder("recordings", RECS, RECORDING_ORDER));
+  const RECORDING_LABELS: ListLabels = {
+    group: (id) => t(id === "server" ? "recordings.groupServer" : "recordings.groupDate"),
+    sort: (id) => t(id === "date" ? "recordings.sortDate" : id === "server" ? "recordings.sortServer" : "recordings.sortSize"),
+    facet: (id) => t(id === "server" ? "recordings.groupServer" : "recordings.groupDate"),
+    value: (facet, v) =>
+      facet === "server" ? (v === NO_SERVER ? t("recordings.groupNoServer") : v) : sectionLabel(v as RecSectionBucket, ""),
   };
 
-  const view = $derived(sortRecordingsBy(filterRecordings(items, query), criteria));
+  const view = $derived(sortItems(filterItems(items, RECS, recFilter), RECS, recOrder.sort));
   // Collapse broadcast (group-recording) bundles into one expandable entry.
   const entries = $derived(groupRecordings(view));
   // Outer "group by" layer over the bundle-collapsed entries (none/server/date).
-  let groupBy = $state<RecGroupBy>("none");
-  const sections = $derived(sectionRecordings(entries, groupBy, Date.now() / 1000));
+  const sections = $derived(sectionRecordings(entries, recOrder.group as RecGroupBy, now));
   let expandedBatches = $state<Set<string>>(new Set());
   // Section keys the user has collapsed (default: all expanded).
   let collapsedSections = $state<Set<string>>(new Set());
   let confirmDeleteGroup = $state<RecGroupEntry | null>(null);
-
-  const GROUP_BY: { mode: RecGroupBy; label: () => string }[] = [
-    { mode: "none", label: () => t("recordings.groupNone") },
-    { mode: "server", label: () => t("recordings.groupServer") },
-    { mode: "date", label: () => t("recordings.groupDate") },
-  ];
 
   // Localized header for a section (server sections use their literal name).
   function sectionLabel(bucket: RecSectionBucket, label: string): string {
@@ -278,24 +282,11 @@
 
   onDestroy(cleanupPlan);
 
-  /** Click a column: add (asc) → flip to desc → remove, preserving priority order. */
-  function cycleSort(key: RecordingSortKey) {
-    const i = criteria.findIndex((c) => c.key === key);
-    if (i === -1) criteria = [...criteria, { key, dir: "asc" }];
-    else if (criteria[i].dir === "asc")
-      criteria = criteria.map((c, j) => (j === i ? { key, dir: "desc" } : c));
-    else criteria = criteria.filter((_, j) => j !== i);
-  }
-
-  function sortState(key: RecordingSortKey): { index: number; dir: "asc" | "desc" } | null {
-    const i = criteria.findIndex((c) => c.key === key);
-    return i === -1 ? null : { index: i, dir: criteria[i].dir };
-  }
-
   async function refresh() {
     loading = true;
     try {
       items = await listRecordings();
+      now = Date.now() / 1000;
     } catch (e) {
       notifyError(String(e));
     } finally {
@@ -472,71 +463,24 @@
   {#if !playing && !loading && items.length === 0}
     <EmptyState icon="activity" title={t("recordings.emptyTitle")} hint={t("recordings.emptyHint")} />
   {:else if !playing && !loading}
-    <!-- Search -->
-    <div class="mb-2 flex min-w-0 items-center gap-1.5 rounded border border-edge bg-panel px-2 py-1">
-      <Icon name="search" size={14} class="shrink-0 text-muted" />
-      <input
-        bind:value={query}
-        type="text"
-        spellcheck="false"
-        placeholder={t("recordings.search")}
-        aria-label={t("recordings.search")}
-        class="min-w-0 flex-1 bg-transparent text-xs text-text outline-none placeholder:text-muted"
-      />
-    </div>
+    <ListHeader
+      {items}
+      schema={RECS}
+      filter={recFilter}
+      onfilter={(next) => (recFilter = next)}
+      order={recOrder}
+      onorder={(o) => setListOrder("recordings", o)}
+      shown={view.length}
+      total={items.length}
+      labels={RECORDING_LABELS}
+      placeholder={t("recordings.search")}
+      wide
+      onmenu={(m) => (ctxMenu = m)}
+      fold={(c) => (collapsedSections = c ? new Set(sections.map((x) => x.key)) : new Set())}
+      testid="rec-header"
+    />
 
-    <!-- Multi-key sort: each column cycles asc → desc → off; a badge shows priority.
-         The indicator slot has a fixed width so toggling a column doesn't resize
-         the button or reflow the row. -->
-    <div class="mb-2 flex flex-nowrap items-center gap-1.5">
-      <span class="shrink-0 text-meta text-muted">{t("recordings.sortBy")}:</span>
-      {#each SORT_KEYS as key}
-        {@const st = sortState(key)}
-        <button
-          type="button"
-          onclick={() => cycleSort(key)}
-          aria-pressed={!!st}
-          class="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs {st
-            ? 'border-accent text-accent'
-            : 'border-edge text-muted hover:text-text'}"
-        >
-          {sortLabel[key]}
-          <span class="inline-flex w-6 items-center justify-center gap-0.5">
-            {#if st}
-              <Icon name={st.dir === "asc" ? "chevronUp" : "chevronDown"} size={12} />
-              {#if criteria.length > 1}
-                <span class="text-caption tabular-nums opacity-70">{st.index + 1}</span>
-              {/if}
-            {/if}
-          </span>
-        </button>
-      {/each}
-    </div>
 
-    <!-- Group by: partition the list into collapsible server / date sections
-         (single-select). "None" is the flat list. Bundles stay collapsed under
-         either mode; when grouping by server they land in a broadcast section. -->
-    <div class="mb-2 flex flex-nowrap items-center gap-1.5">
-      <span class="shrink-0 text-meta text-muted">{t("recordings.groupBy")}:</span>
-      {#each GROUP_BY as opt}
-        <button
-          type="button"
-          data-testid="rec-groupby-{opt.mode}"
-          onclick={() => (groupBy = opt.mode)}
-          aria-pressed={groupBy === opt.mode}
-          class="flex shrink-0 items-center gap-1 rounded border px-2 py-0.5 text-xs {groupBy ===
-          opt.mode
-            ? 'border-accent text-accent'
-            : 'border-edge text-muted hover:text-text'}"
-        >
-          {opt.label()}
-        </button>
-      {/each}
-    </div>
-
-    {#if view.length === 0}
-      <p class="px-3 py-6 text-center text-xs text-muted">{t("recordings.noMatches")}</p>
-    {/if}
     {#snippet recRow(rec: RecordingMeta)}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
@@ -663,37 +607,35 @@
       {/if}
     {/snippet}
 
-    <div class="max-h-[60vh] space-y-1.5 overflow-auto">
+    {#if view.length === 0}
+      <FilteredEmpty
+        summary={filterSummary(RECS, recFilter, listMenuText(RECORDING_LABELS))}
+        onreset={() => (recFilter = NO_FILTER)}
+        testid="rec-filtered-empty"
+      />
+    {:else}
+    <div class="max-h-[60vh] overflow-auto">
       {#each sections as section (section.key)}
         {#if section.bucket === "all"}
-          {#each section.entries as entry (entryKey(entry))}
-            {@render entryRow(entry)}
-          {/each}
+          <div class="space-y-1.5 pt-1.5">
+            {#each section.entries as entry (entryKey(entry))}
+              {@render entryRow(entry)}
+            {/each}
+          </div>
         {:else}
           {@const collapsed = collapsedSections.has(section.key)}
-          <!-- Collapsible section header (server name / date bucket) with a count. -->
-          <button
-            type="button"
-            data-testid="rec-section"
-            onclick={() => toggleSection(section.key)}
-            aria-expanded={!collapsed}
-            class="flex w-full items-center gap-1.5 px-1 pt-1 text-left"
-          >
-            <Icon
-              name={collapsed ? "chevronRight" : "chevronDown"}
-              size={13}
-              class="shrink-0 text-muted"
-            />
-            <span
-              class="truncate text-meta font-medium uppercase tracking-wide text-muted"
-              title={sectionLabel(section.bucket, section.label)}
-            >
-              {sectionLabel(section.bucket, section.label)}
-            </span>
-            <span class="shrink-0 text-meta tabular-nums text-muted opacity-70">{section.count}</span>
-          </button>
+          <!-- Section header: the server or the date bucket, with how many it holds. -->
+          <GroupHeader
+            label={sectionLabel(section.bucket, section.label)}
+            count={section.count}
+            {collapsed}
+            ontoggle={() => toggleSection(section.key)}
+            icon={section.bucket === "broadcast" ? "broadcast" : section.bucket === "server" ? "server" : undefined}
+            rest={isRestSection(section.bucket)}
+            testid="rec-section"
+          />
           {#if !collapsed}
-            <div class="space-y-1.5">
+            <div class="space-y-1.5 py-1.5">
               {#each section.entries as entry (entryKey(entry))}
                 {@render entryRow(entry)}
               {/each}
@@ -702,6 +644,7 @@
         {/if}
       {/each}
     </div>
+    {/if}
   {/if}
 </Modal>
 

@@ -209,8 +209,26 @@ function onlyIn(pkg, description, message) {
 const OVERLAY = /fixed\s+inset-0|inset-0\s+fixed/;
 const HAS_Z = /\bz-(\d|\[)/;
 const ARBITRARY_SIZE = /\btext-\[[0-9.]+(?:px|rem|em|pt)\]/;
-const MICRO_LABEL = /\btext-(caption|meta) uppercase tracking-(wider|wide)\b/;
+// A size in px in a class, past a hairline: `h-[22px]`, `pl-[25px]`, `-top-[7px]`.
+const PX_SIZE =
+  /(?:^|[\s:-])(?:h|w|size|min-h|min-w|max-h|max-w|gap(?:-[xy])?|p[xytblr]?|m[xytblr]?|top|left|right|bottom|inset(?:-[xy])?|leading)-\[-?(?:[3-9]|[1-9][0-9]+)(?:\.[0-9]+)?px\]/;
+/** A message key that names a search or a filter: `t("tree.searchPlaceholder")`, `t("jsonlog.filter")`. */
+const SEARCH_KEY = /\bt\(\s*["'`][^"'`]*(?:search|filter)[^"'`]*["'`]/i;
 const MICRO_LABEL_ONE = "text-caption uppercase tracking-wider";
+
+/**
+ * An uppercase micro-label drawn some other way than MICRO_LABEL_ONE — read as a
+ * set of classes, not as a run of text: `text-meta font-medium uppercase
+ * tracking-wide` hid from a pattern that wanted the three side by side (v1.29).
+ */
+function microLabelDrift(s) {
+  const classes = new Set(s.split(/[\s"'`{}():?]+/));
+  if (!classes.has("uppercase")) return false;
+  const size = ["text-caption", "text-meta"].filter((c) => classes.has(c));
+  const tracking = ["tracking-wide", "tracking-wider"].filter((c) => classes.has(c));
+  if (size.length === 0 || tracking.length === 0) return false;
+  return size.join() !== "text-caption" || tracking.join() !== "tracking-wider";
+}
 const TRANSITIONS = new Set(["fade", "slide", "scale", "fly", "blur", "draw", "flip", "glide"]);
 const HUES =
   "green|amber|red|sky|blue|emerald|rose|yellow|orange|violet|purple|cyan|teal|indigo|pink|lime|fuchsia|slate|zinc|neutral|stone|gray";
@@ -271,6 +289,24 @@ const rules = {
             (v.type === "SvelteMustacheTag" && v.expression.type === "Literal" && v.expression.value === "password"),
         );
         if (password) report(node);
+      },
+    }),
+  ),
+
+  "filter-field": rule(
+    "A list's filter field is a <FilterField>, never a raw search input",
+    "Use <FilterField> (ADR 0050): the glass, «N of M», the cross and Esc are one element in every list. A search that is not a list's filter says so in an eslint-disable comment.",
+    (context, report) => ({
+      SvelteElement(node) {
+        if (node.kind !== "html" || node.name.name !== "input") return;
+        const searchy = node.startTag.attributes.some((a) => {
+          const name = attributeName(a);
+          const text = context.sourceCode.getText(a);
+          if (name === "type") return /^type=(?:"search"|\{\s*["']search["']\s*\})$/.test(text);
+          if (name === "placeholder" || name === "aria-label") return SEARCH_KEY.test(text);
+          return false;
+        });
+        if (searchy) report(node);
       },
     }),
   ),
@@ -368,14 +404,17 @@ const rules = {
     (context, report) => classStrings(context, report, (s) => ARBITRARY_SIZE.test(s)),
   ),
 
+  "rem-sizes": rule(
+    "A size in a class follows the interface scale",
+    "Give it in rem (h-[1.375rem], not h-[22px]): the interface scale is the root font size (ADR 0049), and a size in px stays behind the text next to it.",
+    (context, report) => classStrings(context, report, (s) => PX_SIZE.test(s)),
+  ),
+
   "micro-label": rule(
     "Uppercase micro-labels have one treatment",
     `An uppercase micro-label is "${MICRO_LABEL_ONE}" — 10px against 11px drifted between adjacent panels.`,
     (context, report) =>
-      classStrings(context, report, (s) => {
-        const m = s.match(MICRO_LABEL);
-        return m !== null && m[0] !== MICRO_LABEL_ONE;
-      }),
+      classStrings(context, report, microLabelDrift),
   ),
 
   "motion-duration": rule(

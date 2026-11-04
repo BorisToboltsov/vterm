@@ -190,7 +190,7 @@ export function shownTopbar(list: readonly TopbarId[], state: TopbarState): Show
 }
 
 /**
- * Sizes of the bar, px — what the classes in `TopBar.svelte` come to: an icon
+ * Sizes of the bar, px at 100 % — what the classes in `TopBar.svelte` come to: an icon
  * button (`p-1.5` around a 15 px icon), the REC button, the gap between
  * buttons, the room the breadcrumb keeps, and the bar's own padding and the
  * gap between the breadcrumb and the buttons.

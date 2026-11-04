@@ -6,9 +6,6 @@ import {
   extractTranscript,
   castDuration,
   recordingDateISO,
-  filterRecordings,
-  sortRecordings,
-  sortRecordingsBy,
   outputUpTo,
   formatTime,
   extractCommands,
@@ -18,7 +15,6 @@ import {
   playbackSpeeds,
   activityBuckets,
 } from "./recording";
-import type { RecordingMeta } from "../types";
 
 const ESC = "\\u001b";
 const header = '{"version":2,"width":80,"height":24,"timestamp":1700000000,"title":"web"}';
@@ -254,97 +250,10 @@ describe("castDuration", () => {
   });
 });
 
-const rec = (over: Partial<RecordingMeta>): RecordingMeta => ({
-  path: "/r/web-1.cast",
-  title: "web",
-  description: "",
-  server: "web",
-  width: 80,
-  height: 24,
-  timestamp: 1_700_000_000,
-  size: 100,
-  ...over,
-});
-
 describe("recordingDateISO", () => {
   it("formats the UTC date, empty for 0", () => {
     expect(recordingDateISO(1_700_000_000)).toBe("2023-11-14");
     expect(recordingDateISO(0)).toBe("");
-  });
-});
-
-describe("filterRecordings", () => {
-  const items = [
-    rec({ title: "web-prod", path: "/r/web-prod-1.cast", timestamp: 1_700_000_000, server: "web-prod" }),
-    rec({ title: "db-eu", path: "/r/db-eu-2.cast", timestamp: 1_705_000_000, server: "db-eu" }),
-  ];
-
-  it("returns all on empty query", () => {
-    expect(filterRecordings(items, "  ")).toHaveLength(2);
-  });
-
-  it("matches server name, filename and ISO date", () => {
-    expect(filterRecordings(items, "WEB").map((r) => r.title)).toEqual(["web-prod"]);
-    expect(filterRecordings(items, "db-eu-2").map((r) => r.title)).toEqual(["db-eu"]);
-    expect(filterRecordings(items, "2023-11").map((r) => r.title)).toEqual(["web-prod"]);
-  });
-
-  it("matches the description and the server (even after a title rename)", () => {
-    const recs = [
-      rec({ title: "my notes", path: "/r/a.cast", description: "nginx restart", server: "db-eu" }),
-      rec({ title: "b", path: "/r/b.cast", description: "", server: "web-us" }),
-    ];
-    expect(filterRecordings(recs, "nginx").map((r) => r.title)).toEqual(["my notes"]);
-    expect(filterRecordings(recs, "db-eu").map((r) => r.title)).toEqual(["my notes"]);
-    expect(filterRecordings(recs, "web-us").map((r) => r.title)).toEqual(["b"]);
-  });
-});
-
-describe("sortRecordings", () => {
-  const items = [
-    rec({ title: "beta", timestamp: 200, size: 50 }),
-    rec({ title: "alpha", timestamp: 100, size: 90 }),
-  ];
-
-  it("sorts by date", () => {
-    expect(sortRecordings(items, "date", "asc").map((r) => r.timestamp)).toEqual([100, 200]);
-    expect(sortRecordings(items, "date", "desc").map((r) => r.timestamp)).toEqual([200, 100]);
-  });
-
-  it("sorts by name and size", () => {
-    expect(sortRecordings(items, "name", "asc").map((r) => r.title)).toEqual(["alpha", "beta"]);
-    expect(sortRecordings(items, "size", "desc").map((r) => r.size)).toEqual([90, 50]);
-  });
-
-  it("does not mutate the input", () => {
-    const before = items.map((r) => r.title);
-    sortRecordings(items, "name", "asc");
-    expect(items.map((r) => r.title)).toEqual(before);
-  });
-});
-
-describe("sortRecordingsBy (multi-key)", () => {
-  const items = [
-    rec({ title: "web", timestamp: 200, size: 10 }),
-    rec({ title: "web", timestamp: 100, size: 30 }),
-    rec({ title: "db", timestamp: 150, size: 20 }),
-  ];
-
-  it("applies criteria in priority order (server then date)", () => {
-    const out = sortRecordingsBy(items, [
-      { key: "name", dir: "asc" },
-      { key: "date", dir: "asc" },
-    ]);
-    expect(out.map((r) => [r.title, r.timestamp])).toEqual([
-      ["db", 150],
-      ["web", 100],
-      ["web", 200],
-    ]);
-  });
-
-  it("empty criteria keeps original order (copy)", () => {
-    expect(sortRecordingsBy(items, [])).toEqual(items);
-    expect(sortRecordingsBy(items, [])).not.toBe(items);
   });
 });
 

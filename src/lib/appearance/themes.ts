@@ -2,6 +2,8 @@
 // (background/foreground/cursor + 16 ANSI colors) and a small UI palette that
 // drives the surrounding chrome via CSS custom properties (see app.css @theme).
 
+import { colorDistance, mixHex, readableOn } from "./colormix";
+
 export interface TerminalTheme {
   background: string;
   foreground: string;
@@ -867,6 +869,52 @@ export function statusPalette(
 ): { ok: string; warn: string; bad: string } {
   const base = light ? STATUS_LIGHT : STATUS_DARK;
   return { ok: ui.ok ?? base.ok, warn: ui.warn ?? base.warn, bad: ui.bad ?? base.bad };
+}
+
+/** Colours for the Git history's other branches, beside the main line's. */
+const RAIL_SIDE_COLORS = 6;
+/** How far apart two lines' colours should be; a muted theme relaxes it rather than repeat one. */
+const RAIL_DISTANCES = [48, 32, 24];
+
+/**
+ * The colours of the Git history's lines (`--color-rail-*`), from the theme's own
+ * ANSI colours. The first is the main line's: the accent. A colour the accent or
+ * an earlier one already nearly is gives way to the next. A line must read on the
+ * panel it is drawn on, so each is moved toward the text colour just far enough for
+ * 3:1 — the minimum for a graphic — on both panel colours.
+ */
+export function railPalette(terminal: TerminalTheme, ui: UiPalette): string[] {
+  const candidates = [
+    terminal.green,
+    terminal.magenta,
+    terminal.yellow,
+    terminal.cyan,
+    terminal.red,
+    terminal.blue,
+    mixHex(terminal.magenta, terminal.red, 50),
+    mixHex(terminal.yellow, terminal.red, 50),
+    mixHex(terminal.green, terminal.cyan, 50),
+    terminal.brightMagenta,
+    terminal.brightCyan,
+    terminal.brightYellow,
+  ];
+  const picked = [ui.accent];
+  for (const distance of RAIL_DISTANCES) {
+    for (const c of candidates) {
+      if (picked.length > RAIL_SIDE_COLORS) break;
+      if (picked.every((p) => colorDistance(c, p) >= distance)) picked.push(c);
+    }
+  }
+  // A one-hue scheme has no more to give: its lines repeat, by design of the theme.
+  for (let i = 0; picked.length <= RAIL_SIDE_COLORS; i++) picked.push(picked[i]);
+  return picked.map((c) => readableOn(readableOn(c, ui.panelAlt, ui.text, 3), ui.panel, ui.text, 3));
+}
+
+/** Put a theme's line colours on the document (see `railPalette`). */
+export function applyRailPalette(terminal: TerminalTheme, ui: UiPalette): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement.style;
+  railPalette(terminal, ui).forEach((c, i) => root.setProperty(`--color-rail-${i}`, c));
 }
 
 /**

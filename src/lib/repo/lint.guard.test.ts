@@ -85,6 +85,17 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     bad: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="password" bind:value={v} />`)]],
     good: [["src/lib/ui/ZzProbe.svelte", svelte(`let v = $state("");`, `<input type="text" bind:value={v} />`)]],
   },
+  "filter-field": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input placeholder={t("tree.searchPlaceholder")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input aria-label={t("jsonlog.filter")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<input type="search" />`)],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte(`import { t } from "../i18n";`, `<input placeholder={t("tree.newFolderName")} />`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<input type="text" />`)],
+    ],
+  },
   "hotkey-letter": {
     bad: [
       ["src/lib/ui/zz_probe.ts", `export const f = (e: KeyboardEvent) => e.ctrlKey && e.key === "r";`],
@@ -115,9 +126,27 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
     ],
     good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<span class="text-meta text-muted">x</span>`)]],
   },
+  "rem-sizes": {
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<label class="flex h-[22px] items-center">x</label>`)],
+      ["src/lib/ui/zz_probe.ts", `export const cls = "@wide:w-[104px] truncate";`],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<label class="flex h-[1.375rem] items-center">x</label>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<div class="rounded-[2px] w-[2px]">x</div>`)],
+    ],
+  },
   "micro-label": {
-    bad: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)]],
-    good: [["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)]],
+    bad: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-meta uppercase tracking-wide">x</h3>`)],
+      // Classes between them do not hide it (the recordings' section header did).
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="truncate text-meta font-medium uppercase tracking-wide">x</h3>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="uppercase text-caption tracking-wide">x</h3>`)],
+    ],
+    good: [
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="text-caption uppercase tracking-wider">x</h3>`)],
+      ["src/lib/ui/ZzProbe.svelte", svelte("", `<h3 class="truncate text-caption font-medium uppercase tracking-wider">x</h3>`)],
+    ],
   },
   "motion-duration": {
     bad: [
@@ -159,11 +188,13 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/ui/zz_probe.ts", `import { closeTab as drop } from "../stores/tabs.svelte";\nexport const x = drop;`],
       ["src/lib/ui/zz_probe.ts", `import * as api from "../api";\nexport const x = () => api.importBackup("/b", null, true);`],
       ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
+      ["src/lib/files/SftpPanel.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/routes/+page.svelte", svelte(`import { openRestored } from "#lib/stores/tabs.svelte.ts";\nvoid openRestored;`)],
     ],
     good: [
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
       ["src/lib/files/transferflow.ts", `import { transferStart } from "../api";\nexport const x = transferStart;`],
+      ["src/lib/files/FileUserDialog.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/lib/ui/ZzProbe.svelte", svelte(`import { setServerNotes } from "../api";\nvoid setServerNotes;`)],
     ],
   },

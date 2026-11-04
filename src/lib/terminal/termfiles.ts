@@ -86,17 +86,19 @@ export interface NamedPath {
 }
 
 /**
- * What a link leads to: a confirmed file or folder, or — on an SSH tab that
- * does not report its folder — a name in a listing nobody can place. The
- * last one offers path sync instead of opening anything.
+ * What a link leads to: a confirmed file or folder; on an SSH tab that does
+ * not report its folder, a name in a listing nobody can place, which offers
+ * path sync instead of opening anything; or a name offered that way whose
+ * folder is known by now and has no such entry.
  */
-export type FileLinkTarget = NamedPath | { kind: "unplaced" };
+export type FileLinkTarget = NamedPath | { kind: "unplaced" } | { kind: "missing"; name: string };
 
 export type FileLinkAction =
   | { kind: "ignore" }
   | { kind: "open"; target: NamedPath }
   | { kind: "ask"; target: NamedPath }
-  | { kind: "offerSync" };
+  | { kind: "offerSync" }
+  | { kind: "notFound"; name: string };
 
 /**
  * Whether a tab's output names files of its own session. A shell inside a
@@ -110,7 +112,7 @@ export function fileLinksAllowed(tab: { attach?: unknown }): boolean {
 /** What the window asks about a clicked file link. `where` is the server's
  *  name; null — this computer. */
 export type FileLinkQuestion =
-  | { kind: "open"; sessionId: string; target: NamedPath; where: string | null; prod: boolean }
+  | { kind: "open"; sessionId: string; target: NamedPath; where: string | null; prod: boolean; following: boolean }
   | { kind: "sync"; sessionId: string; where: string | null; following: boolean };
 
 /** A click on a file link that `clickOpens` let through. */
@@ -118,6 +120,7 @@ export function fileLinkClick(mode: FileLinkMode, target: FileLinkTarget): FileL
   if (mode === "off") return { kind: "ignore" };
   // Not a question about a file: in any mode, the folder is what is missing.
   if (target.kind === "unplaced") return { kind: "offerSync" };
+  if (target.kind === "missing") return { kind: "notFound", name: target.name };
   return mode === "direct" ? { kind: "open", target } : { kind: "ask", target };
 }
 

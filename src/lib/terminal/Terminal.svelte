@@ -59,7 +59,7 @@
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "../pathsync/cdterminal";
   import { hostEnv } from "../stores/hostenv.svelte";
-  import { settings, activeTerminalTheme, activeFontFamily } from "../settings/settings.svelte";
+  import { settings, activeTerminalTheme, activeFontFamily, activeFontSize } from "../settings/settings.svelte";
   import { terminalBackground, type ProdTint } from "../appearance/prodtint";
   import { readClipboard, writeClipboard } from "../app/clipboard";
   import { textLines } from "../ai/aicontext";
@@ -701,7 +701,7 @@
       // replaced the clipboard right before the paste read it.
       rightClickSelectsWord: false,
       fontFamily: activeFontFamily(),
-      fontSize: settings.fontSize,
+      fontSize: activeFontSize(),
       lineHeight: settings.lineHeight,
       cursorBlink: settings.cursorBlink,
       cursorStyle: settings.cursorStyle,
@@ -856,7 +856,7 @@
 
     // Every line sent to the session — typed, pasted, broadcast — starts a
     // block of output whose folder the file links read names in (v1.24).
-    unlisten.push(onSessionSubmit(sessionId, (written) => fileLinks?.noteSubmit(written)));
+    unlisten.push(onSessionSubmit(sessionId, (written, setup) => fileLinks?.noteSubmit(written, setup)));
 
     // Stream output and close events BEFORE connecting (don't miss the banner).
     unlisten.push(
@@ -1036,7 +1036,7 @@
     if (!term) return;
     const t = paintedTheme();
     const fontFamily = activeFontFamily();
-    const fontSize = settings.fontSize;
+    const fontSize = activeFontSize();
     term.options.theme = t;
     term.options.fontFamily = fontFamily;
     term.options.fontSize = fontSize;
@@ -1190,6 +1190,7 @@
     >
       <div class="flex min-w-0 flex-[1_1_9rem] items-center gap-1">
         <Icon name="search" size={14} class="shrink-0 text-muted" />
+        <!-- eslint-disable-next-line vterm/filter-field -- the terminal's search in the scrollback (Cmd+F), not a filter of a list -->
         <input
           bind:this={searchInput}
           bind:value={search.query}

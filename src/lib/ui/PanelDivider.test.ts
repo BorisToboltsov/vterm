@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PanelDivider from "./PanelDivider.svelte";
-import { PANEL_SPLITS } from "../layout/panelsplit";
+import { clampShare, PANEL_SPLITS } from "../layout/panelsplit";
 import { panelSplits, resetPanelShares, setPanelShare } from "../stores/panelsplit.svelte";
 
 function setup(split: "git" | "docker" | "k8s" = "docker", width = 1000) {
@@ -94,6 +94,6 @@ describe("PanelDivider", () => {
     await fireEvent.dblClick(el);
     expect(panelSplits.shares.git).toBeUndefined();
     flushSync();
-    expect(el).toHaveAttribute("aria-valuenow", String(Math.round(PANEL_SPLITS.git * 100)));
+    expect(el).toHaveAttribute("aria-valuenow", String(Math.round(clampShare(PANEL_SPLITS.git, 1000) * 100)));
   });
 });

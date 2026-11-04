@@ -4,7 +4,8 @@
 // canonical keys/letters only where noted).
 
 import { compactAge } from "../ui/age";
-import type { CommitFile } from "./git";
+import type { CommitFile, GitFile } from "./git";
+import type { ListSchema } from "../ui/listview";
 import { formatModified } from "../files/lscolors";
 
 /**
@@ -18,13 +19,12 @@ export function fileStatusColor(status: string): string {
     case "?":
       return "text-ok";
     case "M":
-      return "text-warn";
-    case "D":
-    case "U":
-      return "text-bad";
     case "R":
     case "C":
       return "text-accent";
+    case "D":
+    case "U":
+      return "text-bad";
     default:
       return "text-muted";
   }
@@ -45,6 +45,34 @@ export function gitAge(tsSec: number, now: number = Date.now()): string {
  * a deploy, an incident, the clock on the wall; "3w" does not answer that.
  */
 export const commitMoment = (tsSec: number): string => formatModified(tsSec || null);
+
+/**
+ * Which day a commit was made, for a moment worth saying in words: today and
+ * yesterday read at a glance, an older one by its date. `now` is injectable.
+ */
+export function commitDay(tsSec: number, now: number = Date.now()): "today" | "yesterday" | null {
+  const midnight = (ms: number): number => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const days = Math.round((midnight(now) - midnight(tsSec * 1000)) / 86_400_000);
+  return days === 0 ? "today" : days === 1 ? "yesterday" : null;
+}
+
+/** The time of day of a moment: `14:03`, local. */
+export const clockTime = (tsSec: number): string => commitMoment(tsSec).slice(-5);
+
+/** The history lists its author and moment in columns from this width of its own, rem. */
+export const LOG_WIDE_REM = 36;
+
+/**
+ * Whether the history's rows are one line with columns, or two lines. The list has
+ * a threshold of its own: beside the branches and the details it stands in less
+ * than a panel's wide layout (`WIDE_REM`) while holding its columns well.
+ */
+export function isLogWide(widthPx: number, remPx = 16): boolean {
+  return Number.isFinite(widthPx) && remPx > 0 && widthPx >= LOG_WIDE_REM * remPx;
+}
 
 /**
  * Compose the hover tooltip for a commit: full subject, then the body (if any),
@@ -78,6 +106,12 @@ export function committerLine(
   const sameWhen = !detail.committed || detail.committed === commit.timestamp;
   if (sameWho && sameWhen) return null;
   return { who: detail.committer, email: detail.committerEmail, at: detail.committed };
+}
+
+/** Every directory of a commit's file tree: what "collapse all" folds. */
+export function commitTreeDirs(files: readonly CommitFile[]): Set<string> {
+  const dirs = commitTree(files).flatMap((r) => (r.kind === "dir" ? [r.path] : []));
+  return new Set(dirs);
 }
 
 /** Files of one commit the pane draws; the rest are counted, not drawn. */
@@ -160,3 +194,26 @@ export function commitTree(
   walk(root, "", 0);
   return rows;
 }
+
+/** A file's letter in one stage — untracked (`?`) reads `U`, as the list has always shown it. */
+export function changeStatus(f: GitFile, staged: boolean): string {
+  const c = staged ? f.index : f.work;
+  return c === "?" ? "U" : c;
+}
+
+/** A row of the working-tree sub-tab: a changed file in one of the two stages. */
+export interface ChangeItem {
+  file: GitFile;
+  staged: boolean;
+}
+
+/**
+ * What the changes' filter row reads (v1.29, ADR 0050): the path, and the
+ * status letter as the facet. The two stages stay the sections they are.
+ */
+export const CHANGE_SCHEMA: ListSchema<ChangeItem> = {
+  text: (i) => i.file.path,
+  sorts: [],
+  facets: [{ id: "status", value: (i) => changeStatus(i.file, i.staged) }],
+  tie: (a, b) => a.file.path.localeCompare(b.file.path),
+};

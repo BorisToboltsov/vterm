@@ -26,7 +26,12 @@
   } from "./git";
   import { writeClipboard } from "../app/clipboard";
   import { notifySuccess } from "../stores/toasts.svelte";
-  import { fileStatusColor } from "./gitview";
+  import { CHANGE_SCHEMA, changeStatus, fileStatusColor, type ChangeItem } from "./gitview";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import { listMenuText } from "../ui/listtext";
+  import { filterSummary, isFiltered, keeps, NO_FILTER, type ListFilter } from "../ui/listview";
   import { t } from "../i18n";
   import { notifyError } from "../stores/toasts.svelte";
   import { settings } from "../settings/settings.svelte";
@@ -42,8 +47,14 @@
     onOpenInEditor,
     onOpenReadonlyDiff,
     onIgnore,
+    onFileHistory,
     absPath,
     runQuery,
+    wide = false,
+    filter = NO_FILTER,
+    onfilter = () => {},
+    collapsed = [],
+    ontoggle = () => {},
   }: {
     status: GitStatus;
     busy: boolean;
@@ -54,16 +65,35 @@
     onOpenReadonlyDiff: (path: string, staged: boolean) => void;
     /** Append a pattern to the repo's .gitignore. */
     onIgnore: (pattern: string) => void;
+    /** Show the history of one file (repo-relative path). */
+    onFileHistory?: (path: string) => void;
     /** Absolute path of a repo-relative file (for "copy absolute path"). */
     absPath: (path: string) => string;
     /** Read-only git query — used to fetch the staged diff for the AI drafter. */
     runQuery: (args: string[]) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
+    /** The panel's width threshold, for the filter row (v1.29). */
+    wide?: boolean;
+    /** What the two stages are narrowed to — this session's, kept by the panel. */
+    filter?: ListFilter;
+    onfilter?: (next: ListFilter) => void;
+    /** Folded stages: `staged`, `changes`. */
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
   } = $props();
 
   let message = $state("");
 
   const staged = $derived(stagedFiles(status.files));
   const unstaged = $derived(unstagedFiles(status.files));
+  // The filter row (v1.29): one filter over both stages, by path and status.
+  const changeItems = $derived<ChangeItem[]>([
+    ...staged.map((file) => ({ file, staged: true })),
+    ...unstaged.map((file) => ({ file, staged: false })),
+  ]);
+  const shownStaged = $derived(staged.filter((file) => keeps({ file, staged: true }, CHANGE_SCHEMA, filter)));
+  const shownUnstaged = $derived(unstaged.filter((file) => keeps({ file, staged: false }, CHANGE_SCHEMA, filter)));
+  const LABELS = { facet: () => t("git.status") };
+  const folded = (key: string) => collapsed.includes(key);
   // Split for the two header actions: restore tracked changes vs delete untracked.
   const trackedUnstaged = $derived(unstaged.filter((f) => f.work !== "?"));
   const untrackedUnstaged = $derived(unstaged.filter((f) => f.work === "?"));
@@ -127,9 +157,10 @@
   const canCommit = $derived(staged.length > 0 && message.trim().length > 0 && !busy);
 
   // Multi-select over the unstaged list (paths); stale paths drop out of
-  // `selFiles` automatically after a reload.
+  // `selFiles` automatically after a reload, and so do the ones the filter
+  // hides — an action on the selection acts on what is on screen.
   let selected = $state(new Set<string>());
-  const unstagedByPath = $derived(new Map(unstaged.map((f) => [f.path, f])));
+  const unstagedByPath = $derived(new Map(shownUnstaged.map((f) => [f.path, f])));
   const selFiles = $derived(
     [...selected]
       .map((p) => unstagedByPath.get(p))
@@ -143,10 +174,7 @@
     pendingDiscard !== null && pendingDiscard.every((f) => f.work === "?"),
   );
 
-  function statusChar(f: GitFile, isStaged: boolean): string {
-    const c = isStaged ? f.index : f.work;
-    return c === "?" ? "U" : c;
-  }
+  const statusChar = changeStatus;
 
   function toggle(path: string) {
     const next = new Set(selected);
@@ -199,6 +227,9 @@
         label: t("git.openDiff"),
         onSelect: () => onOpenReadonlyDiff(file.path, isStaged),
       },
+      ...(onFileHistory && !untracked
+        ? [{ icon: "history" as const, label: t("git.fileHistory"), onSelect: () => onFileHistory(file.path) }]
+        : []),
       { kind: "separator" },
     ];
     if (!isStaged) {
@@ -262,29 +293,50 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-xs">
+  <ListHeader
+    items={changeItems}
+    schema={CHANGE_SCHEMA}
+    {filter}
+    {onfilter}
+    shown={shownStaged.length + shownUnstaged.length}
+    total={changeItems.length}
+    labels={LABELS}
+    placeholder={t("git.filterPath")}
+    {wide}
+    onmenu={(m) => (ctxMenu = m)}
+    testid="git-changes-header"
+  />
   <div class="min-h-0 flex-1 overflow-auto">
-    <!-- Staged -->
-    <div class="flex items-center justify-between px-2 py-1 text-caption uppercase tracking-wider text-muted">
-      <span>{t("git.staged")} ({staged.length})</span>
-      {#if staged.length}
-        <button
-          class="rounded px-1 hover:bg-edge hover:text-text"
-          use:tooltip={t("git.unstageAll")}
-          aria-label={t("git.unstageAll")}
-          onclick={() => run(unstageAllArgs())}
-        >
-          <Icon name="minus" size={13} />
-        </button>
-      {/if}
-    </div>
-    {#if staged.length === 0}
-      <p class="px-2 pb-1 text-caption text-muted">{t("git.nothingStaged")}</p>
+    {#if isFiltered(filter) && shownStaged.length + shownUnstaged.length === 0}
+      <FilteredEmpty
+        summary={filterSummary(CHANGE_SCHEMA, filter, listMenuText(LABELS))}
+        onreset={() => onfilter(NO_FILTER)}
+        testid="git-changes-filtered-empty"
+      />
     {:else}
-      {#each staged as f (f.path)}
+    <!-- Staged -->
+    <GroupHeader label={t("git.staged")} count={shownStaged.length} collapsed={folded("staged")} ontoggle={() => ontoggle("staged")} testid="git-stage">
+      {#snippet actions()}
+        {#if staged.length}
+          <button
+            class="rounded px-1 text-muted hover:bg-edge hover:text-text"
+            use:tooltip={t("git.unstageAll")}
+            aria-label={t("git.unstageAll")}
+            onclick={() => run(unstageAllArgs())}
+          >
+            <Icon name="minus" size={13} />
+          </button>
+        {/if}
+      {/snippet}
+    </GroupHeader>
+    {#if !folded("staged") && staged.length === 0}
+      <p class="px-2 py-1 text-caption text-muted">{t("git.nothingStaged")}</p>
+    {:else if !folded("staged")}
+      {#each shownStaged as f (f.path)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, true))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
@@ -296,50 +348,51 @@
     {/if}
 
     <!-- Unstaged -->
-    <div class="mt-1 flex items-center justify-between border-t border-edge/40 px-2 py-1 text-caption uppercase tracking-wider text-muted">
-      <span>{t("git.changes")} ({unstaged.length})</span>
-      {#if unstaged.length}
-        <div class="flex items-center">
-          {#if trackedUnstaged.length}
+    <GroupHeader label={t("git.changes")} count={shownUnstaged.length} collapsed={folded("changes")} ontoggle={() => ontoggle("changes")} testid="git-stage">
+      {#snippet actions()}
+        {#if unstaged.length}
+          <div class="flex items-center">
+            {#if trackedUnstaged.length}
+              <button
+                class="rounded px-1 text-muted hover:bg-edge hover:text-danger"
+                use:tooltip={t("git.restoreAll")}
+                aria-label={t("git.restoreAll")}
+                onclick={() => askDiscard(trackedUnstaged)}
+              >
+                <Icon name="history" size={13} />
+              </button>
+            {/if}
+            {#if untrackedUnstaged.length}
+              <button
+                class="rounded px-1 text-muted hover:bg-edge hover:text-danger"
+                use:tooltip={t("git.cleanUntracked")}
+                aria-label={t("git.cleanUntracked")}
+                onclick={() => askDiscard(untrackedUnstaged)}
+              >
+                <Icon name="trash" size={12} />
+              </button>
+            {/if}
             <button
-              class="rounded px-1 hover:bg-edge hover:text-danger"
-              use:tooltip={t("git.restoreAll")}
-              aria-label={t("git.restoreAll")}
-              onclick={() => askDiscard(trackedUnstaged)}
+              class="rounded px-1 text-muted hover:bg-edge hover:text-text"
+              use:tooltip={t("git.stageAll")}
+              aria-label={t("git.stageAll")}
+              onclick={() => run(stageAllArgs())}
             >
-              <Icon name="history" size={13} />
+              <Icon name="plus" size={13} />
             </button>
-          {/if}
-          {#if untrackedUnstaged.length}
             <button
-              class="rounded px-1 hover:bg-edge hover:text-danger"
-              use:tooltip={t("git.cleanUntracked")}
-              aria-label={t("git.cleanUntracked")}
-              onclick={() => askDiscard(untrackedUnstaged)}
+              class="rounded px-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+              use:tooltip={t("git.stashSave")}
+              aria-label={t("git.stashSave")}
+              disabled={busy}
+              onclick={() => run(stashSaveArgs(), { successKey: "git.stashed" })}
             >
-              <Icon name="trash" size={12} />
+              <Icon name="stash" size={13} />
             </button>
-          {/if}
-          <button
-            class="rounded px-1 hover:bg-edge hover:text-text"
-            use:tooltip={t("git.stageAll")}
-            aria-label={t("git.stageAll")}
-            onclick={() => run(stageAllArgs())}
-          >
-            <Icon name="plus" size={13} />
-          </button>
-          <button
-            class="rounded px-1 hover:bg-edge hover:text-text disabled:opacity-40"
-            use:tooltip={t("git.stashSave")}
-            aria-label={t("git.stashSave")}
-            disabled={busy}
-            onclick={() => run(stashSaveArgs(), { successKey: "git.stashed" })}
-          >
-            <Icon name="stash" size={13} />
-          </button>
-        </div>
-      {/if}
-    </div>
+          </div>
+        {/if}
+      {/snippet}
+    </GroupHeader>
 
     <!-- Selection action bar -->
     {#if selFiles.length}
@@ -357,15 +410,15 @@
       </div>
     {/if}
 
-    {#if unstaged.length === 0}
-      <p class="px-2 pb-1 text-caption text-muted">{t("git.clean")}</p>
-    {:else}
-      {#each unstaged as f (f.path)}
+    {#if !folded("changes") && unstaged.length === 0}
+      <p class="px-2 py-1 text-caption text-muted">{t("git.clean")}</p>
+    {:else if !folded("changes")}
+      {#each shownUnstaged as f (f.path)}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
           <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
           <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta text-text/80" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
+          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, false))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
           <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
             <Icon name="pencil" size={12} />
           </button>
@@ -377,6 +430,7 @@
           </button>
         </div>
       {/each}
+    {/if}
     {/if}
   </div>
 

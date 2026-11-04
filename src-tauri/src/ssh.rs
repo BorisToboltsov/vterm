@@ -6,6 +6,7 @@
 //! the session registry so commands can send keystrokes and window resizes.
 
 use crate::error::{AppError, AppResult};
+use crate::fileuser::{self, FileUser, ShellUser};
 use crate::kbdauth;
 use crate::locks::Locked;
 use crate::outgate::OutputGate;
@@ -134,6 +135,8 @@ pub struct SshSession {
     reader: JoinHandle<()>,
     /// Lazily-opened SFTP subsystem on the same SSH connection.
     sftp: Mutex<Option<Arc<SftpSession>>>,
+    /// Whom that SFTP works as, when not the login user (`sudo`, ADR 0047).
+    file_user: std::sync::Mutex<Option<FileUser>>,
     /// Active session recorder, if recording (shared with the reader task).
     recorder: Arc<std::sync::Mutex<Option<crate::recording::Recorder>>>,
     /// Where the shell's output goes — the windows, or a handoff's hold (ADR 0017).
@@ -220,6 +223,72 @@ impl SshSession {
         Ok(arc)
     }
 
+    /// Who the terminal is now and whom the file panel works as (ADR 0047).
+    pub async fn shell_user(&self) -> AppResult<ShellUser> {
+        let probe = self.exec_captured(fileuser::TREE_PROBE, 10).await?;
+        let files = self.file_user.locked().as_ref().map(|u| u.user.clone());
+        Ok(fileuser::report(&probe.stdout, files))
+    }
+
+    /// From now on the file panel works as `user`, through `sudo`. Refused, it stays
+    /// as it was; a job already running goes on as whom it started under, holding
+    /// its own session.
+    pub async fn sftp_as(&self, user: &str, password: Option<Zeroizing<String>>) -> AppResult<()> {
+        let mut guard = self.sftp.lock().await;
+        let opened =
+            fileuser::open_as(&self.handle, user, password.as_deref().map(String::as_str)).await?;
+        *self.file_user.locked() = Some(FileUser {
+            user: user.to_string(),
+            password,
+        });
+        *guard = Some(Arc::new(opened));
+        Ok(())
+    }
+
+    /// Back to the login user: the next use opens the `sftp` subsystem again.
+    pub async fn sftp_as_login_user(&self) {
+        let mut guard = self.sftp.lock().await;
+        *self.file_user.locked() = None;
+        *guard = None;
+    }
+
+    /// A file command as whom the file panel works as, and what goes on its stdin.
+    fn file_command(&self, command: &str) -> (String, Zeroizing<Vec<u8>>) {
+        match self.file_user.locked().as_ref() {
+            Some(user) => (user.command(command), user.stdin()),
+            None => (command.to_string(), Zeroizing::new(Vec::new())),
+        }
+    }
+
+    /// [`run_command`](Self::run_command) for what the file panel does as a command
+    /// rather than over SFTP: it must see what the panel sees.
+    pub async fn run_file_command(&self, command: &str) -> AppResult<String> {
+        let (command, stdin) = self.file_command(command);
+        self.run_command_stdin(&command, &stdin).await
+    }
+
+    /// [`run_command_streaming`](Self::run_command_streaming), the same way.
+    pub async fn run_file_command_streaming(
+        &self,
+        command: &str,
+        on_data: impl FnMut(&[u8]),
+    ) -> AppResult<()> {
+        let (command, stdin) = self.file_command(command);
+        self.run_command_stdin_only_stdout(&command, &stdin, on_data)
+            .await
+    }
+
+    /// [`exec_captured`](Self::exec_captured), the same way.
+    pub async fn exec_file_captured(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+    ) -> AppResult<ExecOutcome> {
+        let (command, stdin) = self.file_command(command);
+        self.exec_captured_stdin(&command, &stdin, timeout_secs)
+            .await
+    }
+
     /// Run a one-shot command on a dedicated exec channel and return its stdout.
     /// Used for lightweight metric polling without disturbing the interactive shell.
     pub async fn run_command(&self, command: &str) -> AppResult<String> {
@@ -235,6 +304,18 @@ impl SshSession {
     pub async fn run_command_streaming(
         &self,
         command: &str,
+        on_data: impl FnMut(&[u8]),
+    ) -> AppResult<()> {
+        self.run_command_stdin_only_stdout(command, &[], on_data)
+            .await
+    }
+
+    /// The body of [`run_command_streaming`](Self::run_command_streaming), with
+    /// `stdin` written first (then EOF) when there is any. Only stdout is handed on.
+    async fn run_command_stdin_only_stdout(
+        &self,
+        command: &str,
+        stdin: &[u8],
         mut on_data: impl FnMut(&[u8]),
     ) -> AppResult<()> {
         let mut channel = self
@@ -246,6 +327,13 @@ impl SshSession {
             .exec(true, command.as_bytes())
             .await
             .map_err(|e| format!("exec failed: {e}"))?;
+        if !stdin.is_empty() {
+            channel
+                .data(stdin)
+                .await
+                .map_err(|e| format!("stdin write failed: {e}"))?;
+            let _ = channel.eof().await;
+        }
         loop {
             match channel.wait().await {
                 Some(ChannelMsg::Data { data }) => on_data(&data),
@@ -1100,6 +1188,7 @@ pub async fn connect(
         handle,
         reader,
         sftp: Mutex::new(None),
+        file_user: std::sync::Mutex::new(None),
         recorder,
         gate,
         _proxy_handle: proxy_handle,

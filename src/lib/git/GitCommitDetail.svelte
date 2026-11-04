@@ -10,16 +10,13 @@
   // component stand in both places (`panelcontainer.guard`).
   import Icon from "../ui/Icon.svelte";
   import { tooltip } from "../actions/tooltip";
+  import GitRefChip from "./GitRefChip.svelte";
   import type { CommitDetail, CommitFile, GitCommit } from "./git";
-  import {
-    COMMIT_FILES_SHOWN,
-    commitMoment,
-    commitTree,
-    committerLine,
-    fileStatusColor,
-    gitAge,
-  } from "./gitview";
+  import { refLabels } from "./gitrefs";
+  import { COMMIT_FILES_SHOWN, commitTree, committerLine, fileStatusColor, gitAge } from "./gitview";
+  import { whenLabel } from "./gitui";
   import { t } from "../i18n";
+  import { REM_PX } from "../appearance/uiscale";
 
   let {
     commit,
@@ -29,8 +26,13 @@
     closed = new Set<string>(),
     known = () => false,
     fill = false,
+    color = 0,
+    contained = null,
     ontoggle,
+    onfoldall,
+    ondiff,
     onopenfile,
+    onfilemenu,
     onselect,
     oncopy,
   }: {
@@ -46,8 +48,18 @@
     known?: (hash: string) => boolean;
     /** Take the height of the place it stands in (a pane beside the list) and scroll there. */
     fill?: boolean;
+    /** The commit's line, for its labels (`--color-rail-N`). */
+    color?: number;
+    /** The branches the commit is on; null until answered. */
+    contained?: string[] | null;
     ontoggle?: (dir: string) => void;
+    /** Fold every directory of the file tree, or unfold them all. */
+    onfoldall?: (fold: boolean) => void;
+    /** Show the whole diff of the commit. */
+    ondiff?: () => void;
     onopenfile?: (file: CommitFile) => void;
+    /** Right-click on a file: the menu stands with whoever owns one. */
+    onfilemenu?: (e: MouseEvent, file: CommitFile) => void;
     onselect?: (hash: string) => void;
     oncopy?: (text: string) => void;
   } = $props();
@@ -58,8 +70,11 @@
   const tree = $derived(commitTree(files.slice(0, COMMIT_FILES_SHOWN), closed));
   const hidden = $derived(Math.max(0, files.length - COMMIT_FILES_SHOWN));
   const applied = $derived(detail ? committerLine(commit, detail) : null);
+  const labels = $derived(refLabels(commit.refs));
+  /** Branches named in the row; the rest are counted. */
+  const CONTAINED_SHOWN = 3;
   /** Left padding of a tree row, px: one step a level. */
-  const indent = (depth: number): string => `${4 + depth * 12}px`;
+  const indent = (depth: number): string => `${(4 + depth * 12) / REM_PX}rem`;
 </script>
 
 <!-- The files first, where the strip under the history always had them; the
@@ -71,11 +86,26 @@
   data-commit={commit.hash}
 >
   <div class={fill ? "min-h-0 flex-1 overflow-auto" : ""} data-testid="git-commit-files">
-    <div class="mb-1 flex flex-wrap items-baseline gap-x-2 text-meta text-muted">
-      <span>{detail ? t("git.detailFiles", { n: files.length }) : t("git.detailFilesTitle")}</span>
-      <!-- A merge has no diff of its own: said where the list is, not in a hint. -->
-      {#if merge && detail}
-        <span class="text-caption" data-testid="git-commit-merge-note">{t("git.detailMergeNote")}</span>
+    <div class="mb-1 flex items-center gap-x-2 text-meta text-muted">
+      <span class="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2">
+        <span>{detail ? t("git.detailFiles", { n: files.length }) : t("git.detailFilesTitle")}</span>
+        <!-- A merge has no diff of its own: said where the list is, not in a hint. -->
+        {#if merge && detail}
+          <span class="text-caption" data-testid="git-commit-merge-note">{t("git.detailMergeNote")}</span>
+        {/if}
+      </span>
+      {#if detail && files.length}
+        <span class="flex shrink-0 items-center">
+          <button type="button" class="flex rounded p-0.5 hover:bg-edge hover:text-text" aria-label={t("git.expandAll")} use:tooltip={t("git.expandAll")} data-testid="git-commit-expand" onclick={() => onfoldall?.(false)}>
+            <Icon name="chevronDown" size={13} />
+          </button>
+          <button type="button" class="flex rounded p-0.5 hover:bg-edge hover:text-text" aria-label={t("git.collapseAll")} use:tooltip={t("git.collapseAll")} data-testid="git-commit-collapse" onclick={() => onfoldall?.(true)}>
+            <Icon name="chevronUp" size={13} />
+          </button>
+          <button type="button" class="flex rounded p-0.5 hover:bg-edge hover:text-text" aria-label={t("git.commitDiff")} use:tooltip={t("git.commitDiff")} data-testid="git-commit-diff" onclick={() => ondiff?.()}>
+            <Icon name="code" size={13} />
+          </button>
+        </span>
       {/if}
     </div>
     {#if failed}
@@ -108,9 +138,10 @@
             use:tooltip={row.file.orig ? `${row.file.orig} → ${row.file.path}` : row.file.path}
             data-testid="git-commit-file"
             onclick={() => onopenfile?.(row.file)}
+            oncontextmenu={(e) => onfilemenu?.(e, row.file)}
           >
             <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(row.file.status)}">{row.file.status}</span>
-            <span class="min-w-0 truncate text-meta text-text/80">{row.name}</span>
+            <span class="min-w-0 truncate text-meta {fileStatusColor(row.file.status)}">{row.name}</span>
           </button>
         {/if}
       {/each}
@@ -155,14 +186,14 @@
 
       <dt class="text-muted">{t("git.detailDate")}</dt>
       <dd class="text-text/90">
-        {commitMoment(commit.timestamp)}<span class="text-muted">{` · ${gitAge(commit.timestamp)}`}</span>
+        {whenLabel(commit.timestamp)}<span class="text-muted">{` · ${gitAge(commit.timestamp)}`}</span>
       </dd>
 
       {#if applied}
         <dt class="text-muted">{t("git.detailCommitter")}</dt>
         <dd class="min-w-0 break-words text-text/90" data-testid="git-commit-committer">
           {applied.who}{#if applied.email}{" "}<span class="text-muted">&lt;{applied.email}&gt;</span>{/if}<span
-            class="text-muted">{` · ${commitMoment(applied.at)}`}</span>
+            class="text-muted">{` · ${whenLabel(applied.at)}`}</span>
         </dd>
       {/if}
 
@@ -186,12 +217,19 @@
         </dd>
       {/if}
 
-      {#if commit.refs.length}
+      {#if labels.length}
         <dt class="text-muted">{t("git.detailRefs")}</dt>
         <dd class="flex min-w-0 flex-wrap gap-1">
-          {#each commit.refs as ref (ref)}
-            <span class="rounded-sm bg-accent/20 px-1 text-caption leading-tight text-accent">{ref}</span>
+          {#each labels as label (`${label.kind}:${label.name}`)}
+            <GitRefChip {label} {color} />
           {/each}
+        </dd>
+      {/if}
+
+      {#if contained?.length}
+        <dt class="text-muted">{t("git.detailContains")}</dt>
+        <dd class="min-w-0 break-words text-text/90" data-testid="git-commit-contains">
+          {contained.slice(0, CONTAINED_SHOWN).join(", ")}{#if contained.length > CONTAINED_SHOWN}<span class="text-muted">{` ${t("git.detailContainsMore", { n: contained.length - CONTAINED_SHOWN })}`}</span>{/if}
         </dd>
       {/if}
     </dl>

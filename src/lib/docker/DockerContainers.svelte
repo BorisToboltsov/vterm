@@ -23,7 +23,6 @@
     groupUsage,
     isRunning,
     stateTone,
-    type ComposeGroup,
     type DockerContainer,
     type DockerStat,
     type DockerLimits,
@@ -31,12 +30,21 @@
   } from "./docker";
   import type { MenuItem } from "../ui/ctxmenu";
   import ColumnHead from "../ui/ColumnHead.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import SortTitle from "../ui/SortTitle.svelte";
+  import type { ListGroup, ListSort } from "../ui/listview";
   import { columnVars } from "../ui/colwidths";
   import { columns } from "../stores/colwidths.svelte";
   import { t, currentLocale, type MessageKey } from "../i18n";
 
   let {
     groups,
+    grouped = true,
+    grouping = "compose",
+    collapsed = [],
+    ontoggle = () => {},
+    sort = null,
+    onsort = undefined,
     statsById,
     cpuHistory = {},
     limitsById = new Map(),
@@ -49,7 +57,16 @@
     onViewDetails,
     showMenu,
   }: {
-    groups: ComposeGroup[];
+    /** The list as `listview.ts` lays it out; one group without a header when not grouped. */
+    groups: ListGroup<DockerContainer>[];
+    grouped?: boolean;
+    /** What the groups are — compose stacks get their icon, rollup tooltip and actions. */
+    grouping?: string;
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
+    /** The list's order, for the column titles; null — the titles do not order. */
+    sort?: ListSort | null;
+    onsort?: (key: string) => void;
     /** Live `docker stats` snapshot keyed by (short) container id. */
     statsById: Map<string, DockerStat>;
     /** Rolling CPU-percent history per container id (Phase 42). */
@@ -147,6 +164,17 @@
       .join("\n");
   }
 
+  /** The direction a column orders the list in now, or null. */
+  function sortedBy(key: string): "asc" | "desc" | null {
+    return sort?.key === key ? sort.dir : null;
+  }
+  const orderBy = (key: string) => (onsort ? () => onsort(key) : undefined);
+
+  /** A stack's working directory — of the first of its containers that reports one. */
+  function workdirOf(items: DockerContainer[]): string | null {
+    return items.find((c) => c.workdir)?.workdir ?? null;
+  }
+
   function copyId(c: DockerContainer) {
     void navigator.clipboard?.writeText(c.id);
   }
@@ -184,61 +212,81 @@
     class="sticky top-0 z-10 hidden items-stretch gap-2 border-b border-edge bg-panel-alt pl-2.5 pr-2 text-meta font-medium text-muted @wide:flex"
     data-testid="docker-columns"
   >
-    <span class="w-[7px] shrink-0"></span>
+    <span class="w-[0.4375rem] shrink-0"></span>
     <div class="flex min-w-0 flex-1 items-stretch">
-      <ColumnHead col="docker.name" label={t("docker.name")} class="w-[var(--c-name)] pr-2" />
-      <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2" />
-      <ColumnHead col="docker.status" label={t("docker.status")} class="w-[var(--c-status)] px-2" />
+      <ColumnHead col="docker.name" label={t("docker.name")} class="w-[var(--c-name)] pr-2" sorted={sortedBy("name")} onsort={orderBy("name")} />
+      <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2" sorted={sortedBy("image")} onsort={orderBy("image")} />
+      <ColumnHead col="docker.status" label={t("docker.status")} class="w-[var(--c-status)] px-2" sorted={sortedBy("state")} onsort={orderBy("state")} />
       <ColumnHead col="docker.ports" label={t("docker.ports")} class="w-[var(--c-ports)] px-2" />
     </div>
-    <span class="w-[104px] shrink-0 self-center truncate text-right">{t("docker.cpu")}</span>
+    <span class="w-[6.5rem] shrink-0 self-center truncate text-right">
+      {#if onsort}
+        <SortTitle label={t("docker.cpu")} sorted={sortedBy("cpu")} onsort={() => onsort("cpu")} testid="column-sort-docker.cpu" align="right" />
+      {:else}
+        {t("docker.cpu")}
+      {/if}
+    </span>
   </div>
-  {#each groups as g (g.project)}
-    {#if g.project}
-      <!-- Compose project header + group action bar -->
-      {@const usage = groupUsage(g.containers, statsById, parsePercent)}
-      <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
-        <Icon name="container" size={13} class="text-accent" />
-        <span class="min-w-0 flex-1 truncate font-medium text-text/85" use:tooltip={g.workdir ?? g.project}>{g.project}</span>
-        <!-- Project rollup: what the whole stack costs, summed from the snapshot the
-             panel already holds. The analogue of the k8s owner rollup. -->
-        {#if usage.cpu != null || usage.mem != null}
-          <span class="shrink-0 text-caption tabular-nums text-muted">
-            {t("docker.groupUsage", {
-              cpu: usage.cpu != null ? `${Math.round(usage.cpu)}%` : "—",
-              mem: fmtMem(usage.mem),
-            })}
-          </span>
-        {/if}
-        <div class="flex items-center gap-0.5 text-muted">
-          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.project, g.workdir), { successKey: "docker.started" })}>
-            <Icon name="play" size={13} />
-          </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.project, g.workdir), { destructive: true, successKey: "docker.stopped" })}>
-            <Icon name="stop" size={13} />
-          </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeRestart")} aria-label={t("docker.composeRestart")} onclick={() => run(composeRestartArgs(g.project), { successKey: "docker.restarted" })}>
-            <Icon name="refresh" size={12} />
-          </button>
-          <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.project)}>
-            <Icon name="note" size={12} />
-          </button>
-        </div>
-      </div>
-    {:else}
-      <div class="border-b border-edge px-2.5 py-1 text-caption uppercase tracking-wider text-muted">{t("docker.standalone")}</div>
+  {#each groups as g (g.key)}
+    {@const compose = grouping === "compose" && !g.rest}
+    {@const folded = grouped && collapsed.includes(g.key)}
+    {#if grouped}
+      <!-- Group header: a compose stack carries its rollup — what the whole
+           stack costs, summed from the snapshot the panel already holds, the
+           analogue of the k8s owner rollup — and its actions. -->
+      {@const usage = groupUsage(g.items, statsById, parsePercent)}
+      {@const workdir = workdirOf(g.items)}
+      <GroupHeader
+        label={g.rest ? t("docker.standalone") : g.label}
+        count={g.items.length}
+        collapsed={folded}
+        ontoggle={() => ontoggle(g.key)}
+        icon={compose ? "container" : undefined}
+        rest={g.rest}
+        hint={compose ? (workdir ?? g.label) : undefined}
+        testid="docker-group"
+      >
+        {#snippet summary()}
+          {#if usage.cpu != null || usage.mem != null}
+            <span class="shrink-0 text-caption tabular-nums text-muted">
+              {t("docker.groupUsage", {
+                cpu: usage.cpu != null ? `${Math.round(usage.cpu)}%` : "—",
+                mem: fmtMem(usage.mem),
+              })}
+            </span>
+          {/if}
+        {/snippet}
+        {#snippet actions()}
+          {#if compose}
+            <div class="flex items-center gap-0.5 text-muted">
+              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.key, workdir), { successKey: "docker.started" })}>
+                <Icon name="play" size={13} />
+              </button>
+              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.key, workdir), { destructive: true, successKey: "docker.stopped" })}>
+                <Icon name="stop" size={13} />
+              </button>
+              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeRestart")} aria-label={t("docker.composeRestart")} onclick={() => run(composeRestartArgs(g.key), { successKey: "docker.restarted" })}>
+                <Icon name="refresh" size={12} />
+              </button>
+              <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.key)}>
+                <Icon name="note" size={12} />
+              </button>
+            </div>
+          {/if}
+        {/snippet}
+      </GroupHeader>
     {/if}
 
-    {#each g.containers as c (c.id)}
+    {#each folded ? [] : g.items as c (c.id)}
       {@const history = cpuHistory[c.id] ?? []}
       {@const cpuNow = parsePercent(stat(c)?.cpu)}
       {@const mem = memUsage(c)}
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:py-0 {g.project ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'}"
+        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:py-0 {grouped ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'}"
         oncontextmenu={(e) => showMenu(e, menuItems(c))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
         <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
              two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
              left the image as "ghcr.io/vc…" — the half that says *what is actually
@@ -260,7 +308,7 @@
              cross-faded. Swapping them with `hidden`/`flex` would resize the row
              under the pointer — the design system's no-reflow rule for hover
              actions. Both layers are absolute, so the reserved width is fixed. -->
-        <div class="relative h-5 w-[104px] shrink-0 @wide:self-center">
+        <div class="relative h-5 w-[6.5rem] shrink-0 @wide:self-center">
           {#if history.length > 0}
             <div
               class="absolute inset-0 flex items-center justify-end gap-1.5 transition-opacity duration-150 group-hover:opacity-0"

@@ -9,7 +9,7 @@
 [Слои](#слои) · [Быстрый старт](#быстрый-старт) · [Что нужно установить](#что-нужно-установить) ·
 [Что чем покрыто](#что-чем-покрыто) · [Гейты-контракты](#гейты-контракты) ·
 [Покрытие](#покрытие) · [Живые SFTP-тесты](#живые-sftp-тесты) ·
-[E2E и тестовый SSH](#e2e-и-тестовый-ssh) · [CI на GitHub](#ci-на-github) ·
+[E2E и тестовый SSH](#e2e-и-тестовый-ssh) · [CI на GitHub](CI.md) ·
 [Фаззинг](#фаззинг-недоверенного-входа) ·
 [Как добавить тест](#как-добавить-тест)
 
@@ -22,8 +22,8 @@
 | **Rust unit** | `cargo test` | ~235 тестов | Чистая логика бэкенда: парсеры метрик, кодировки, пути, serde-модели, хранилище, политика host-key | Везде |
 | **Frontend unit** | Vitest + jsdom | ~1760 тестов в 151 файле | Чистые `.ts`-модули: argv-билдеры и парсеры драйверов, пути, форматтеры, темы, настройки, сторы | Везде |
 | **Component** | Vitest + `@testing-library/svelte` | 37 файлов | Рендер и взаимодействие панелей, модалок, форм | Везде |
-| **Правила линтера** | ESLint (`pnpm lint`) | 24 правила проекта | Инварианты, видные в одном месте кода: слои импорта, сеть из WebView, сырой `e.key`, LF в PTY, `{@html}` без `use:mdLinks`… — [lint/vterm.js](../lint/vterm.js), кейсы нарушений — `lint.guard.test.ts` | Везде |
-| **Гейты-контракты** | Vitest (обычные тесты) | 52 файла | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
+| **Правила линтера** | ESLint (`pnpm lint`) | 26 правил проекта | Инварианты, видные в одном месте кода: слои импорта, сеть из WebView, сырой `e.key`, LF в PTY, `{@html}` без `use:mdLinks`… — [lint/vterm.js](../lint/vterm.js), кейсы нарушений — `lint.guard.test.ts` | Везде |
+| **Гейты-контракты** | Vitest (обычные тесты) | 56 файлов | Инварианты, которые связывают несколько мест кода: см. [таблицу](INVARIANTS.md#гейты) | Везде |
 | **Фаззинг** | `fast-check` + `proptest` | 22 свойства | Недоверенный вход: рендер markdown, парсеры логов, кодировки — на **произвольных** данных | Везде; на глубине — глубокие проверки (`deep.yml`) и релиз |
 | **Живые SFTP** | `cargo test -- --ignored` | 6 тестов | Что делает **сервер**, а не что вычислила функция | Локально + глубокие проверки и релиз (нужен контейнер) |
 | **E2E** | WebdriverIO + `tauri-driver` | 4 сценария | Реальное окно против живого SSH; вкладка и область между двумя настоящими окнами; файлы внутри соединения и его зоны; бросок вкладки на окно настоящим указателем (X11) | **Linux/Windows**, не macOS → глубокие проверки и релиз; на macOS — в [Linux-контейнере](#linux-в-контейнере) |
@@ -70,7 +70,7 @@ export PATH="$HOME/Library/pnpm/bin:$PATH"    # standalone pnpm
 | Область | Чистая логика (основное покрытие) | Rust |
 |---------|-----------------------------------|------|
 | Терминал и подключение | `connphase`, `ssherror`, `connlost`, `localshell`, `terminput`, `termpaste`, `broadcast`, `osc`; компонентный `TerminalPasteDialog`; гейты `termpaste.guard`, `taboverflow.guard` | `ssh.rs` (политика host-key, имена событий, шифрованные ключи) |
-| Драйверы панелей | `git`, `gitview`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
+| Драйверы панелей | `git`, `gitview`, `gitlanes` (связность и постоянство линий на случайных историях), `gitrefs`, `docker`, `k8s` (крупнейший набор — 807 строк), `probe`, `tls`, `http` | `git.rs`/`container.rs`/`kube.rs` (квотинг), `localenv.rs` (резолв PATH) |
 | Файлы и пути | `fspath`, `filebrowser`, `filekeys`, `filemove`, `multiselect`, `sync`, `drives`, `filedrop`, `dragout` | `sftp.rs`, `sync.rs`, `localfile.rs`, `drives.rs`, `textenc.rs` (кодировки), `dragout.rs` + `dragout/feed.rs` (вынос файла: что обещается, поток для Проводника, раскладка описателя) |
 | Редактор | `editorlang`, `remotelint`, `nginxmode`, `markdown`, `htmlsan`, `badge`, `mdimage`, `cspnonce`, `workspaces`, `editoraccess.guard` | `textenc.rs`, `sftp.rs` (путь проверки прав), `localfile.rs` (локальная копия), `servertools.rs` |
 | Мониторинг | `thresholds`, `hostcaps`, `monhealth`, `loadhistory`, `format` | `metrics/mod.rs` (30 тестов — парсеры проб), `metrics/local.rs` |
@@ -199,6 +199,23 @@ docker compose -f e2e/docker-compose.ssh.yml up -d
 cargo test --manifest-path src-tauri/Cargo.toml --lib live_exec -- --ignored
 docker compose -f e2e/docker-compose.ssh.yml down
 ```
+
+### Живой su и sudo
+
+Модуль `live_fileuser` в [fileuser.rs](../src-tauri/src/fileuser.rs) проверяет на настоящих `su`
+и `sudo`, что видно в дереве процессов и что `sftp-server` через sudo говорит на протоколе: 4 МБ
+всех значений байта туда и обратно, с паролем на том же stdin. Образ —
+[e2e/sudo](../e2e/sudo/Dockerfile), база меняется аргументом `BASE`:
+
+```sh
+docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
+docker compose -f e2e/docker-compose.sudo.yml down
+```
+
+`hidepid` требует привилегированного контейнера и в compose не входит: запустите образ с
+`--privileged`, выполните в нём `mount -o remount,hidepid=2 /proc` и назовите порт в
+`VTERM_TEST_SUDO_HIDEPID_PORT`.
 
 ### Живой вход через keyboard-interactive
 
@@ -418,72 +435,6 @@ macOS и Windows это проверяется в `pnpm tauri dev`.
 «Войти». Слот второго окна кладётся в `localStorage` руками. Чего так **не** видно —
 настоящего выхода из приложения, сброса `localStorage` WebView на диск и вопросов связки
 ключей: это проверяется в упакованной сборке.
-
-## CI на GitHub
-
-Единственный пайплайн. Раннеры для публичного репозитория бесплатны — включая **Windows и
-macOS**: `#[cfg(windows)]`-код (`drives.rs`, `proccwd.rs`) на Linux-раннере структурно невидим,
-а windows-раннера под рукой нет.
-
-**COM-объекты выноса файла** (`dragout/windows.rs`, ADR 0027) раннер только собирает:
-системное перетаскивание в тесте не начать. Поэтому в них нет логики — она вынесена в
-`dragout/feed.rs`, который собирается и тестируется на любой ОС (поток файла, липкая
-ошибка чтения, раскладка `FILEGROUPDESCRIPTORW` по байтам). Перед пушем типы
-Windows-половины проверяются локально одноразовым крейтом под `x86_64-pc-windows-msvc`
-(`windows` + `windows-core`, заглушка `feed` с теми же сигнатурами): настоящий крейт под
-эту цель с macOS не собирается — `aws-lc-sys` требует Windows SDK. То же для macOS-класса
-источника: тест регистрирует его в рантайме Objective-C и сверяет селекторы и протоколы,
-сам жест проверяет человек.
-
-| Workflow | Когда | Что делает |
-|----------|-------|------------|
-| [ci.yml](../.github/workflows/ci.yml) | push в `main`, PR, **и вызовом из релиза** | `web`: `pnpm check` + `pnpm lint` + `test:coverage` + `pnpm build`. `rust`: `fmt`/`clippy`/`test` на **Linux + Windows + macOS**. `deps`: `cargo deny`, `pnpm audit` — жёстко |
-| [codeql.yml](../.github/workflows/codeql.yml) | push, PR, ежемесячно | CodeQL: `javascript-typescript` и `actions` (сами workflow) — везде; `rust` — только push в `main` и ежемесячно (базу строит полная сборка) |
-| [security.yml](../.github/workflows/security.yml) | push, PR, ежемесячно | Semgrep (TS, JS, Rust), Trivy (секреты, конфиги), zizmor → **SARIF в Security tab**. Советующие, не блокирующие |
-| [deep.yml](../.github/workflows/deep.yml) | ежемесячно, `workflow_dispatch`, **и вызовом из релиза** | Глубокие проверки: фаззинг на глубине, живые SFTP-тесты, E2E |
-| [release.yml](../.github/workflows/release.yml) | тег `v*` | `tag` (тег = версия из `package.json`) → `verify` (вызов `ci.yml`) + `deep` (вызов `deep.yml`) → сборка трёх бандлов → `integrity` |
-
-Общие шаги — экшены [.github/actions/](../.github/actions/): `setup-web` (pnpm, Node,
-зависимости по lockfile), `setup-rust` (Rust версии [rust-toolchain.toml](../rust-toolchain.toml),
-пакеты Tauri на Linux, кэш), `test-sshd` (тестовый sshd). Кэш они включают только по просьбе
-джобы.
-
-Два свойства, которые легко потерять и которые поэтому закреплены гейтами:
-
-- **Тег не может опубликовать релиз из красного дерева.** `release.yml` не копирует шаги
-  CI, а вызывает `ci.yml` и `deep.yml` через `workflow_call`, и матрица сборки стоит под
-  `needs: [verify, deep]`. Глубокие слои (E2E, live-sftp, фаззинг) по расписанию идут лишь раз
-  в месяц, поэтому без `deep` поломка основного сценария доезжала бы до релиза. Держит
-  `releaseassets.guard.test.ts`.
-- **Тег называет версию приложения.** Первая джоба `tag` сравнивает имя тега с `v` + версия
-  из `package.json`; гейты, глубокие проверки и сборка стоят под `needs: tag`. Имя релиза и
-  заметки берутся из тега, имена файлов — из `package.json`, и тег с опечаткой публиковал
-  сборку под чужим именем. Тот же гейт.
-- **Экшены запинены по коммит-SHA** с комментарием версии: изменяемый тег — обещание,
-  которое апстрим может переписать, а `tauri-action` работает с токеном на запись в релизы.
-  Обновляет их Dependabot ([dependabot.yml](../.github/dependabot.yml)), так что пин не
-  консервирует уязвимость. Тоже гейт.
-- **«Полный» portable собирается из проверенного `.cab` и читается тем же форматом.** Шаг
-  релиза вшивает WebView2 только с подписью Microsoft (`releaseassets.guard.test.ts`), а
-  формат хвоста exe один в скрипте CI и в `webview2.rs` (`webview2runtime.test.ts`; сама
-  распаковка — Rust-тесты `webview2::tests`, на любой ОС через подменённый `expand`).
-- **Группы Dependabot не прячут рискованный бамп.** Патчи и связанные экосистемы идут одним
-  PR, но мажоры, russh и minor Svelte — поштучно, выдержка 7 дней у всех. Мажор семейства,
-  которое ходит связкой (`@wdio/*`), — своим PR, где больше ничего нет: поштучно `e2e/`
-  стоял бы на двух мажорах сразу. `windows-core` сам не двигается совсем (minor и major — в
-  `ignore`): его версия — та, что требует `windows`, и идёт в одном PR с ним. Держит
-  `dependabot.guard.test.ts`.
-- **Общий шаг живёт в одном месте, и версия у инструмента одна.** Workflow не ставят pnpm,
-  Node, Rust, пакеты Tauri и кэш сами — только через `.github/actions/`; Rust — точная версия
-  из `rust-toolchain.toml`, а не «`stable` сегодня» (новый clippy ронял неизменённое дерево),
-  и на ней же собран образ Linux-контейнера; `release.yml` кэша не просит; у каждой заботы один
-  сканер — у `unsafe` это clippy `undocumented_unsafe_blocks` (`[lints.clippy]` в Cargo.toml),
-  а не Semgrep. Держит `ci.guard.test.ts`.
-
-Жёсткое и советующее разделены намеренно: `cargo deny` с расписанными исключениями обязан
-ронять прогон, иначе это не политика; Semgrep с правилами из внешнего реестра ронять чужой
-PR не должен — его находки едут в витрину. `allow_failure` на всём подряд (так стояла
-стадия `security` в снятом с 1.25.5 GitLab CI) приводит к тому, что отчёты не читает никто.
 
 ## Фаззинг недоверенного входа
 

@@ -21,6 +21,24 @@ export const DEFAULT_IDLE_TIMEOUT = 300; // 5 minutes
 export const IDLE_TIMEOUT_MIN = 15;
 export const IDLE_TIMEOUT_MAX = 3600;
 
+/**
+ * How often the card shifts against burn-in, s (v1.31): every interval it steps
+ * a couple of pixels along a small path. Off (`null`) by default — a still card
+ * is calmer, and most screens never keep the trace. Once a minute is often
+ * enough for a picture that stays up for hours, and each step is too small to
+ * catch the eye.
+ */
+export const IDLE_SHIFT_INTERVALS = [30, 60, 120, 300, 600] as const;
+export type IdleShiftInterval = (typeof IDLE_SHIFT_INTERVALS)[number] | null;
+export const DEFAULT_IDLE_SHIFT: IdleShiftInterval = null;
+/** The interval the settings recommend. */
+export const RECOMMENDED_IDLE_SHIFT: IdleShiftInterval = 60;
+
+/** A stored shift interval, or off when it is not one of the offered values. */
+export function sanitizeShiftInterval(v: unknown): IdleShiftInterval {
+  return (IDLE_SHIFT_INTERVALS as readonly unknown[]).includes(v) ? (v as IdleShiftInterval) : null;
+}
+
 /** True for any valid persisted idle setting ("off" or a known effect). */
 export function isIdleSetting(v: unknown): v is IdleSetting {
   return v === "off" || (IDLE_EFFECTS as string[]).includes(v as string);

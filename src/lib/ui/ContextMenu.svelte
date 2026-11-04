@@ -49,6 +49,13 @@
   {/if}
 {/snippet}
 
+<!-- The figure at the right of a row (how many items a facet value keeps). -->
+{#snippet hint(action: MenuAction)}
+  {#if action.hint !== undefined}
+    <span class="shrink-0 text-caption tabular-nums text-muted">{action.hint}</span>
+  {/if}
+{/snippet}
+
 {#if menu}
   <button
     type="button"
@@ -94,6 +101,7 @@
             >
               {@render tick(sub)}
               <span class="flex-1 truncate">{sub.label}</span>
+              {@render hint(sub)}
             </button>
           {/each}
         {/if}
@@ -114,6 +122,7 @@
             {@render tick(item)}
           {/if}
           <span class="flex-1 truncate">{item.label}</span>
+          {@render hint(item)}
         </button>
       {/if}
     {/each}

@@ -9,10 +9,13 @@ import {
   sanitizeSort,
   SORT_KEYS,
   sortEntries,
-  sortMenu,
+  FILE_ORDER,
+  FILE_SCHEMA,
   type FileSort,
 } from "./filesort";
 import type { FileEntry } from "../types";
+import { filterItems, viewMenu, type ListMenuText, type ListOrder } from "../ui/listview";
+import type { MenuSubmenu } from "../ui/ctxmenu";
 
 const entry = (name: string, over: Partial<FileEntry> = {}): FileEntry => ({
   name,
@@ -221,45 +224,53 @@ describe("sortEntries", () => {
   });
 });
 
-describe("sortMenu", () => {
-  const labels = { key: (k: string) => `col:${k}`, dir: (d: string) => `dir:${d}` };
-  const rows = (items: ReturnType<typeof sortMenu>) =>
-    items.flatMap((i) => (i.kind === "separator" || i.kind === "submenu" ? [] : [i]));
+describe("the listing in the lists' model (v1.29)", () => {
+  const text: ListMenuText = {
+    groups: "Groups",
+    order: "Order",
+    asc: "dir:asc",
+    desc: "dir:desc",
+    collapseAll: "",
+    expandAll: "",
+    all: "",
+    reset: "",
+    group: (id) => id,
+    sort: (id) => `col:${id}`,
+    facet: (id) => id,
+    value: (_f, v) => v,
+  };
 
-  it("lists the columns, then the two directions, the current ones ticked", () => {
-    const items = sortMenu({ key: "modified", dir: "desc" }, labels, () => {});
-    expect(rows(items).map((r) => r.label)).toEqual([
-      "col:name",
-      "col:size",
-      "col:mode",
-      "col:owner",
-      "col:modified",
-      "dir:asc",
-      "dir:desc",
-    ]);
-    expect(rows(items).filter((r) => r.checked).map((r) => r.label)).toEqual(["col:modified", "dir:desc"]);
-    expect(items[SORT_KEYS.length]).toEqual({ kind: "separator" });
-    // Every row is a switch: the tick column is kept for the unticked ones too.
-    expect(rows(items).every((r) => r.checked !== undefined)).toBe(true);
+  it("the «View» menu: the columns as a submenu that says the current one, then the directions", () => {
+    const menu = viewMenu(FILE_SCHEMA, { sort: { key: "modified", dir: "desc" }, group: "none" }, text, { order: () => {} });
+    const sort = menu[0] as MenuSubmenu;
+    expect(sort.label).toBe("Order: col:modified");
+    expect(sort.items.map((r) => r.label)).toEqual(SORT_KEYS.map((k) => `col:${k}`));
+    expect(sort.items.filter((r) => r.checked).map((r) => r.label)).toEqual(["col:modified"]);
+    // No groupings: a listing is not grouped.
+    expect(menu.some((i) => i.kind === "submenu" && i.key === "group")).toBe(false);
   });
 
-  it("another column starts in its own first direction; the same one changes nothing", () => {
-    const picked: FileSort[] = [];
-    const items = rows(sortMenu({ key: "name", dir: "desc" }, labels, (s) => picked.push(s)));
-    items.find((r) => r.label === "col:size")!.onSelect();
-    items.find((r) => r.label === "col:owner")!.onSelect();
-    items.find((r) => r.label === "col:name")!.onSelect();
-    expect(picked).toEqual([
+  it("another column starts in its own first direction; the same one changes nothing; a direction keeps the column", () => {
+    const picked: ListOrder[] = [];
+    const current: ListOrder = { sort: { key: "name", dir: "desc" }, group: "none" };
+    const menu = viewMenu(FILE_SCHEMA, current, text, { order: (o) => picked.push(o) });
+    const cols = (menu[0] as MenuSubmenu).items;
+    cols.find((r) => r.label === "col:size")!.onSelect();
+    cols.find((r) => r.label === "col:owner")!.onSelect();
+    cols.find((r) => r.label === "col:name")!.onSelect();
+    (menu.find((i) => i.kind !== "separator" && i.kind !== "submenu" && i.label === "dir:asc") as { onSelect: () => void }).onSelect();
+    expect(picked.map((o) => o.sort)).toEqual([
       { key: "size", dir: "desc" },
       { key: "owner", dir: "asc" },
       { key: "name", dir: "desc" },
+      { key: "name", dir: "asc" },
     ]);
   });
 
-  it("a direction keeps the column", () => {
-    const picked: FileSort[] = [];
-    const items = rows(sortMenu({ key: "size", dir: "desc" }, labels, (s) => picked.push(s)));
-    items.find((r) => r.label === "dir:asc")!.onSelect();
-    expect(picked).toEqual([{ key: "size", dir: "asc" }]);
+  it("the field narrows by name, and the stored order starts by name", () => {
+    expect(filterItems([entry("nginx.conf"), entry("mime.types")], FILE_SCHEMA, { text: ".CONF", facets: {} }).map((e) => e.name)).toEqual([
+      "nginx.conf",
+    ]);
+    expect(FILE_ORDER.sort).toEqual({ key: "name", dir: "asc" });
   });
 });

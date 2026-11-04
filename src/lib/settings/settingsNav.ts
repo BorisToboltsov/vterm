@@ -22,7 +22,7 @@ export interface SettingsGroup {
 // render order in the right pane.
 export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "language", keywords: "Language locale язык локаль english русский ru en интерфейс" },
-  { id: "appearance", keywords: "Appearance theme font color size line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер прод фон подкраска" },
+  { id: "appearance", keywords: "Appearance theme font color size scale zoom interface bigger smaller line height light dark preview custom prod tint background внешний вид тема шрифт цвет размер масштаб интерфейс увеличить уменьшить прод фон подкраска" },
   { id: "panels", keywords: "Panels dock docks layout hide show sidebar bottom panel docker kubernetes k8s git sftp ai columns reset панели панель док доки раскладка скрыть показать нижняя боковая колонки сбросить" },
   { id: "topbar", keywords: "Top bar toolbar buttons quick actions pin unpin order utilities tools rec broadcast monitoring верхняя панель кнопки быстрые действия закрепить убрать порядок утилиты инструменты запись мониторинг" },
   { id: "cursor", keywords: "Cursor blink block bar underline курсор мигание блок линия подчёркивание" },
@@ -38,7 +38,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "behavior", keywords: "Behavior confirm close tab auto reconnect restore tabs session startup launch layout splits поведение подтверждение вкладка переподключение восстановление вкладки сессии запуск раскладка сплиты" },
   { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
   { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
-  { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана" },
+  { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal burn-in burn in OLED drift shift pixel заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана выгорание сдвиг пиксели OLED" },
   { id: "security", keywords: "Security host key known_hosts policy strict trust accept безопасность ключ хоста политика" },
   { id: "backup", keywords: "Backup export import json restore резервная копия бэкап экспорт импорт восстановление" },
   { id: "ai", keywords: "AI assistant LLM chat model endpoint api key qwen ollama vllm claude anthropic openai prod ИИ ассистент чат модель эндпоинт ключ помощник нейросеть" },

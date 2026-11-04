@@ -19,6 +19,7 @@
   import { nextCursor } from "../files/filekeys";
   import { serverDots } from "../stores/tabs.svelte";
   import Icon from "../ui/Icon.svelte";
+  import FilterField from "../ui/FilterField.svelte";
   import { resolveServerIcon, resolveServerColorClass } from "./servericons";
   import { fade } from "svelte/transition";
   import { motion } from "../ui/motion";
@@ -296,11 +297,13 @@
 
 <div class="flex h-full min-h-0 flex-col" data-testid="server-tree">
   <div class="flex items-center gap-1 p-2">
-    <input
-      data-testid="server-search"
-      class="min-w-0 flex-1 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
-      placeholder={t("tree.searchPlaceholder")}
+    <FilterField
       bind:value={serverSearch}
+      placeholder={t("tree.searchPlaceholder")}
+      shown={serverSearch.trim() ? treeRows.length : null}
+      total={serverSearch.trim() ? servers.length : null}
+      class="flex-1"
+      testid="server-search"
     />
     <button
       class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
@@ -336,7 +339,7 @@
       {#each Array.from({ length: depth }) as _, i (i)}
         <span
           class="pointer-events-none absolute bottom-0 top-0 border-l border-muted/30"
-          style="left: {i * 16 + 8}px"
+          style="left: {i + 0.5}rem"
         ></span>
       {/each}
     {/snippet}
@@ -351,14 +354,14 @@
           role="treeitem"
           aria-selected={selectedFolder === row.path}
           tabindex="-1"
-          style="padding-left: {row.depth * 16}px"
+          style="padding-left: {row.depth}rem"
           onpointerdown={(e) => folderPointerDown(e, row.path)}
           oncontextmenu={(e) => openFolderMenu(e, row.path)}
           onclick={() => {
             onSelectFolder(row.path);
             listEl?.focus();
           }}
-          class="group relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
+          class="group @container relative flex cursor-grab items-center gap-1 border-l-2 py-1 pr-2 text-sm transition duration-150 {selectedFolder ===
           row.path
             ? 'border-accent outline outline-1 -outline-offset-1 outline-accent/70'
             : 'border-transparent'} {dropTarget === row.path && dropAllowed(row.path)
@@ -384,8 +387,30 @@
           <Icon name="folder" size={15} class="text-muted" />
           <span class="truncate font-medium">{row.name}</span>
           <span class="shrink-0 text-caption text-muted">{row.count}</span>
+          <!-- Same switch as a server row: narrow — one «⋯» opening the
+               right-click menu, wide — the three icons. The breakpoint is the
+               server's 12rem plus the difference of right paddings (pr-7 vs
+               pr-2), so a folder and a server at one depth switch at one dock
+               width. -->
           <div
-            class="invisible ml-auto flex shrink-0 items-center gap-1 group-hover:visible"
+            class="invisible ml-auto flex shrink-0 items-center group-hover:visible @min-[13.25rem]:hidden"
+            data-testid="folder-actions-compact"
+          >
+            <button
+              class="rounded p-0.5 text-muted hover:text-accent"
+              use:tooltip={t("tree.folderActions")}
+              aria-label={t("tree.folderActions")}
+              onclick={(e) => {
+                e.stopPropagation();
+                openFolderMenu(e, row.path);
+              }}
+            >
+              <Icon name="dots" size={16} strokeWidth={3} />
+            </button>
+          </div>
+          <div
+            class="invisible ml-auto hidden shrink-0 items-center gap-1 group-hover:visible @min-[13.25rem]:flex"
+            data-testid="folder-actions-full"
           >
             <button
               class="rounded p-0.5 text-muted hover:text-accent"
@@ -432,7 +457,7 @@
           data-server-alias={row.server.alias}
           role="button"
           tabindex="-1"
-          style="padding-left: {row.depth * 16}px"
+          style="padding-left: {row.depth}rem"
           class="group @container relative flex w-full cursor-pointer items-start gap-1 border-l-2 py-2 pr-7 text-left text-sm transition duration-150 hover:bg-edge {selectedId ===
           row.server.id
             ? 'border-accent bg-edge outline outline-1 -outline-offset-1 outline-accent/70'

@@ -58,7 +58,9 @@
     >{ask.target.path}</p>
     <p class="mt-2 text-xs text-muted" data-testid="filelink-hint">
       {ask.target.kind === "dir"
-        ? t("filelink.dirHint")
+        ? ask.following
+          ? t("filelink.dirHintFollow")
+          : t("filelink.dirHint")
         : ask.target.line
           ? t("filelink.fileLineHint", { line: ask.target.line })
           : t("filelink.fileHint")}

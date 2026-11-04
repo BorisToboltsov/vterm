@@ -7,6 +7,15 @@
 import { DEFAULT_PROD_TINT, sanitizeProdTint, type ProdTint } from "../appearance/prodtint";
 import { DEFAULT_FONT, migrateFont, themeFont, type FontMode } from "../appearance/fonts";
 import {
+  DEFAULT_UI_SCALE,
+  rootFontSize,
+  sanitizeUiScale,
+  scaledPx,
+  terminalFontPx,
+  UI_SCALE_KEY,
+} from "../appearance/uiscale";
+import {
+  applyRailPalette,
   applyUiPalette,
   DEFAULT_THEME_ID,
   getTheme,
@@ -34,12 +43,16 @@ import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/t
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
 import { sanitizeHiddenPanels, type PanelId } from "../layout/docklayout";
 import { DEFAULT_TOPBAR, sanitizeTopbar, type TopbarId } from "../topbar/topbaractions";
+import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
   clampIdleTimeout,
+  DEFAULT_IDLE_SHIFT,
   DEFAULT_IDLE_EFFECT,
   DEFAULT_IDLE_TIMEOUT,
   isIdleSetting,
+  sanitizeShiftInterval,
+  type IdleShiftInterval,
   type IdleSetting,
 } from "../screensaver/idle";
 
@@ -153,8 +166,11 @@ export interface Settings {
   // Appearance
   theme: string; // preset id, or "custom"
   customTheme: TerminalTheme;
+  /** The interface scale, percent — one of `UI_SCALE_STOPS` (ADR 0049). */
+  uiScale: number;
   fontFamily: string;
   fontMode: FontMode;
+  /** The terminal's font at 100 %; on screen it is `activeFontSize()`. */
   fontSize: number;
   lineHeight: number;
   // Cursor
@@ -223,9 +239,17 @@ export interface Settings {
   // after how many seconds. "off" disables it. See idle.ts.
   idleEffect: IdleSetting;
   idleTimeoutSec: number;
+  /** How often, s, the card shifts a couple of pixels against burn-in; null — it never does. */
+  idleShiftEverySec: IdleShiftInterval;
   // Docker panel (Phase 35) — how often the live view (list + logs + stats)
   // re-polls the daemon while the panel is open, in seconds. See docker.ts.
   dockerRefreshSec: number;
+  // Git panel (v1.27): the branches starred in its tree, by name, for every
+  // repository; whether a history row shows tags; whether the commits of the
+  // current branch stand out from the rest.
+  gitFavoriteBranches: string[];
+  gitShowTags: boolean;
+  gitHighlightCurrent: boolean;
   // Docker registry credentials (Phase 36) — non-secret half (url + username);
   // the password lives only in the OS keychain, keyed by url. See docker.ts.
   dockerRegistries: DockerRegistry[];
@@ -302,6 +326,7 @@ const DEFAULTS: Settings = {
   language: detectOsLocale(),
   theme: DEFAULT_THEME_ID,
   customTheme: { ...getTheme(DEFAULT_THEME_ID).terminal },
+  uiScale: DEFAULT_UI_SCALE,
   fontFamily: DEFAULT_FONT,
   fontMode: "theme",
   fontSize: 13,
@@ -378,8 +403,12 @@ const DEFAULTS: Settings = {
   ai: defaultAiSettings(),
   idleEffect: DEFAULT_IDLE_EFFECT,
   idleTimeoutSec: DEFAULT_IDLE_TIMEOUT,
+  idleShiftEverySec: DEFAULT_IDLE_SHIFT,
   dockerRefreshSec: 3,
   dockerRegistries: [],
+  gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
+  gitShowTags: true,
+  gitHighlightCurrent: true,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
   k8sRefreshSec: 5,
@@ -464,6 +493,7 @@ function load(): Settings {
       ...DEFAULTS,
       ...raw,
       ...migrateFont(raw),
+      uiScale: sanitizeUiScale(raw.uiScale),
       language: isLocale(raw.language) ? raw.language : DEFAULTS.language,
       windowsShell: WINDOWS_SHELLS.includes(raw.windowsShell)
         ? raw.windowsShell
@@ -506,8 +536,14 @@ function load(): Settings {
       ai: sanitizeAiSettings(raw.ai),
       idleEffect: isIdleSetting(raw.idleEffect) ? raw.idleEffect : DEFAULTS.idleEffect,
       idleTimeoutSec: clampIdleTimeout(raw.idleTimeoutSec),
+      idleShiftEverySec: sanitizeShiftInterval(raw.idleShiftEverySec),
       dockerRefreshSec: clampDockerRefresh(raw.dockerRefreshSec),
       dockerRegistries: sanitizeDockerRegistries(raw.dockerRegistries),
+      gitFavoriteBranches: "gitFavoriteBranches" in raw
+        ? sanitizeFavoriteBranches(raw.gitFavoriteBranches)
+        : [...DEFAULT_FAVORITE_BRANCHES],
+      gitShowTags: raw.gitShowTags !== false,
+      gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
@@ -529,6 +565,7 @@ function load(): Settings {
       sftp: { ...DEFAULTS.sftp },
       ai: defaultAiSettings(),
       dockerRegistries: [],
+      gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
       prodTint: { ...DEFAULT_PROD_TINT },
@@ -540,6 +577,20 @@ export const settings = $state<Settings>(load());
 
 export function activeFontFamily(): string {
   return settings.fontMode === "theme" ? themeFont(settings.theme) : settings.fontFamily;
+}
+
+/** The terminal's font on screen: the size in the settings, at the interface scale. */
+export function activeFontSize(): number {
+  return terminalFontPx(settings.fontSize, settings.uiScale);
+}
+
+/**
+ * A size given at 100 %, at the current interface scale (reactive). For a number
+ * the markup does not derive by itself: what a virtual list counts rows with, a
+ * width a model adds up. `uiPx(1)` is the factor, for going the other way.
+ */
+export function uiPx(px: number): number {
+  return scaledPx(px, settings.uiScale);
 }
 
 export function selectFont(font: string): void {
@@ -568,6 +619,7 @@ export function resetSettings(): void {
     snippets: defaultSnippets(),
     sftp: { ...DEFAULTS.sftp },
     dockerRegistries: [],
+    gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
   });
@@ -594,6 +646,7 @@ export function applyImportedSettings(raw: unknown): void {
     sftp: { ...DEFAULTS.sftp },
     ai: defaultAiSettings(),
     dockerRegistries: [],
+    gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
   };
@@ -618,6 +671,7 @@ export function applyImportedSettings(raw: unknown): void {
       sink[key] = r[key];
     }
   }
+  next.uiScale = sanitizeUiScale(next.uiScale);
   if (!isLocale(next.language)) next.language = DEFAULTS.language;
   if (!WINDOWS_SHELLS.includes(next.windowsShell)) next.windowsShell = DEFAULTS.windowsShell;
   if (typeof next.localShellPath !== "string") next.localShellPath = DEFAULTS.localShellPath;
@@ -632,6 +686,7 @@ export function applyImportedSettings(raw: unknown): void {
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
+  next.idleShiftEverySec = sanitizeShiftInterval(next.idleShiftEverySec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
@@ -708,6 +763,7 @@ export function applyActiveTheme(): void {
   if (settings.theme !== "custom") {
     const theme = getTheme(settings.theme);
     applyUiPalette(theme.ui, theme.group === "light");
+    applyRailPalette(theme.terminal, theme.ui);
   }
   const panel = activeChromePanel();
   if (typeof document !== "undefined") {
@@ -720,6 +776,21 @@ export function applyActiveTheme(): void {
   }
   try {
     localStorage.setItem(CHROME_PANEL_KEY, panel);
+  } catch {
+    /* storage unavailable — non-fatal */
+  }
+}
+
+/**
+ * Put the interface scale on the document (ADR 0049) and keep it where the boot
+ * script in `app.html` reads it, so the next launch's first frame has the size too.
+ */
+export function applyUiScale(): void {
+  if (typeof document !== "undefined") {
+    document.documentElement.style.fontSize = rootFontSize(settings.uiScale);
+  }
+  try {
+    localStorage.setItem(UI_SCALE_KEY, String(settings.uiScale));
   } catch {
     /* storage unavailable — non-fatal */
   }
@@ -738,5 +809,9 @@ $effect.root(() => {
 
   $effect(() => {
     applyActiveTheme();
+  });
+
+  $effect(() => {
+    applyUiScale();
   });
 });

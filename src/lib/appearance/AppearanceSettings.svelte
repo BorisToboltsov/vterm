@@ -1,9 +1,17 @@
 <script lang="ts">
   // Appearance settings section: terminal theme picker (swatch chips + custom
-  // palette) and font picker (grouped + live preview) plus size/line-height.
+  // palette), the interface scale, and font picker (grouped + live preview) plus
+  // size/line-height.
   // Extracted from SettingsPanel.svelte in Phase 18.5. Reads/writes the settings
   // store directly, like AiSettingsSection.
-  import { activeTerminalTheme, activeFontFamily, selectFont, settings } from "../settings/settings.svelte";
+  import {
+    activeFontSize,
+    activeTerminalTheme,
+    activeFontFamily,
+    selectFont,
+    settings,
+  } from "../settings/settings.svelte";
+  import { DEFAULT_UI_SCALE, UI_SCALE_STOPS } from "./uiscale";
   import { PROD_TINT_MAX, PROD_TINT_MIN, terminalBackground } from "./prodtint";
   import { THEMES, themeSwatches, type TerminalTheme, type ThemeDef } from "./themes";
   import DisclosureRow from "../ui/DisclosureRow.svelte";
@@ -80,6 +88,18 @@
     currentTheme?.name ??
       (settings.theme === "custom" ? t("settings.themeCustomName") : settings.theme),
   );
+
+  // The scale is taken when the thumb is let go; until then only its number follows.
+  // Applied on every move, the panel would grow and carry the slider away from under
+  // the pointer that is dragging it.
+  const LAST_STOP = UI_SCALE_STOPS.length - 1;
+  let heldStop = $state<number | null>(null);
+  const shownScale = $derived(heldStop === null ? settings.uiScale : UI_SCALE_STOPS[heldStop]);
+  const stopOf = (e: Event): number => Number((e.currentTarget as HTMLInputElement).value);
+  function takeStop(stop: number) {
+    settings.uiScale = UI_SCALE_STOPS[stop];
+    heldStop = null;
+  }
 
   // The font picker mirrors the theme one: collapsible, collapsed by default.
   let fontOpen = $state(false);
@@ -174,6 +194,62 @@ print(greet("world"))  # => 12345`;
     {/if}
   </div>
 
+  <div class="mb-2 rounded border border-edge px-3 py-2" data-testid="ui-scale">
+    <div class="flex items-center gap-2 text-xs text-muted">
+      <span class="flex-1">{t("settings.uiScale")}</span>
+      <span class="font-mono text-text" data-testid="ui-scale-value">
+        {t("settings.uiScaleValue", { n: shownScale })}
+      </span>
+      <button
+        type="button"
+        disabled={settings.uiScale === DEFAULT_UI_SCALE}
+        onclick={() => (settings.uiScale = DEFAULT_UI_SCALE)}
+        class="rounded border border-edge px-1.5 py-0.5 text-meta hover:bg-edge disabled:opacity-40 disabled:hover:bg-transparent"
+        data-testid="ui-scale-reset"
+      >
+        {t("settings.uiScaleReset")}
+      </button>
+    </div>
+    <div class="mt-2 flex items-center gap-2 text-muted">
+      <span class="text-caption" aria-hidden="true">A</span>
+      <input
+        type="range"
+        min="0"
+        max={LAST_STOP}
+        step="1"
+        value={UI_SCALE_STOPS.indexOf(shownScale as (typeof UI_SCALE_STOPS)[number])}
+        aria-label={t("settings.uiScale")}
+        aria-valuetext={t("settings.uiScaleValue", { n: shownScale })}
+        oninput={(e) => (heldStop = stopOf(e))}
+        onchange={(e) => takeStop(stopOf(e))}
+        class="w-full accent-accent"
+        data-testid="ui-scale-range"
+      />
+      <span class="text-sm" aria-hidden="true">A</span>
+    </div>
+    <!-- Under the track: the same row with the end letters kept invisible. The thumb's
+         travel is the track less its own 16 px, so that is what the stops divide. -->
+    <div class="flex items-center gap-2 text-caption text-muted">
+      <span class="invisible" aria-hidden="true">A</span>
+      <div class="relative h-4 w-full">
+        {#each UI_SCALE_STOPS as stop, i (stop)}
+          <button
+            type="button"
+            tabindex="-1"
+            onclick={() => takeStop(i)}
+            class="absolute -translate-x-1/2 tabular-nums hover:text-text {stop === shownScale ? 'text-accent' : ''}"
+            style="left: calc(8px + (100% - 16px) * {i / LAST_STOP})"
+            data-testid="ui-scale-stop"
+          >
+            {stop}
+          </button>
+        {/each}
+      </div>
+      <span class="invisible text-sm" aria-hidden="true">A</span>
+    </div>
+    <p class="mt-1 text-meta text-muted">{t("settings.uiScaleHint")}</p>
+  </div>
+
   <div class="mb-2">
     <DisclosureRow variant="list" bind:open={fontOpen} testid="font-toggle" label={t("settings.font")}>
       {#snippet preview()}
@@ -233,6 +309,11 @@ print(greet("world"))  # => 12345`;
         class="mt-1 w-full rounded border border-edge bg-panel px-2 py-1 text-sm text-text outline-none focus:border-accent"
         bind:value={settings.fontSize}
       />
+      {#if settings.uiScale !== DEFAULT_UI_SCALE}
+        <span class="mt-1 block text-meta" data-testid="font-size-on-screen">
+          {t("settings.fontSizeOnScreen", { px: activeFontSize(), base: settings.fontSize, n: settings.uiScale })}
+        </span>
+      {/if}
     </label>
     <label class="block flex-1 text-xs text-muted">
       {t("settings.lineHeight")}

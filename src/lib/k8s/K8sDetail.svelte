@@ -186,7 +186,7 @@
   {@const p = pod}
   <!-- Header: status + namespace + actions -->
   <div class="mb-2 flex items-center gap-2">
-    <span class="h-[8px] w-[8px] shrink-0 rounded-full {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
+    <span class="h-[0.5rem] w-[0.5rem] shrink-0 rounded-full {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
     <div class="min-w-0 flex-1 truncate text-meta text-muted">{p.namespace} · {p.status}</div>
     <div class="flex shrink-0 items-center gap-0.5 text-muted">
       {#if onAsk}

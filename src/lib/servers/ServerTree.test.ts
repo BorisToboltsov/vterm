@@ -94,6 +94,64 @@ describe("ServerTree — row actions on a narrow sidebar", () => {
   });
 });
 
+describe("ServerTree — folder actions on a narrow sidebar", () => {
+  const props = () => ({
+    ...baseProps(),
+    folders: ["Production servers"],
+    servers: [srv({ id: "a", alias: "db-01", group: "Production servers" })],
+  });
+
+  it("collapses to one «⋯» button below the container breakpoint and shows the three icons above it", () => {
+    render(ServerTree, { props: props() });
+    const compact = screen.getByTestId("folder-actions-compact");
+    const full = screen.getByTestId("folder-actions-full");
+    expect(compact.closest('[data-testid="folder-row"]')?.className).toContain("@container");
+    expect(compact.className).toMatch(/(^|\s)flex(\s|$)/);
+    expect(compact.className).toContain("@min-[13.25rem]:hidden");
+    expect(full.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(full.className).toContain("@min-[13.25rem]:flex");
+    for (const el of [compact, full]) expect(el.className).toContain("group-hover:visible");
+  });
+
+  it("switches at the same dock width as a server row of the same depth", () => {
+    render(ServerTree, { props: props() });
+    const serverRow = screen.getByTestId("server-row");
+    const serverCompact = screen.getByTestId("server-actions-compact");
+    const folderRow = screen.getByTestId("folder-row");
+    const folderCompact = screen.getByTestId("folder-actions-compact");
+    const breakpoint = (el: HTMLElement) =>
+      Number(/@min-\[(\d+(?:\.\d+)?)rem\]:hidden/.exec(el.className)?.[1]);
+    // Tailwind spacing: one step is 0.25rem.
+    const rightPad = (el: HTMLElement) => Number(/(?:^|\s)pr-(\d+)(?:\s|$)/.exec(el.className)?.[1]) * 0.25;
+    // The query measures the content box, so a smaller right padding needs a
+    // larger breakpoint by exactly the difference.
+    expect(breakpoint(folderCompact) + rightPad(folderRow)).toBe(
+      breakpoint(serverCompact) + rightPad(serverRow),
+    );
+  });
+
+  it("draws the «⋯» like the server's, heavier than the default line icons", () => {
+    render(ServerTree, { props: props() });
+    const svg = screen.getByTestId("folder-actions-compact").querySelector("svg");
+    expect(svg?.getAttribute("stroke-width")).toBe("3");
+    expect(svg?.getAttribute("width")).toBe("16");
+  });
+
+  it("the «⋯» button opens the folder menu, the same one as right-click", async () => {
+    const onRenameFolder = vi.fn();
+    const onSelectFolder = vi.fn();
+    render(ServerTree, { props: { ...props(), onRenameFolder, onSelectFolder } });
+    await fireEvent.click(screen.getByRole("button", { name: "Folder actions" }));
+    for (const name of [/New subfolder/, /Add server here/, /Delete folder/])
+      expect(await screen.findByRole("menuitem", { name })).toBeInTheDocument();
+    await fireEvent.click(await screen.findByRole("menuitem", { name: /Rename folder/ }));
+    expect(onRenameFolder).toHaveBeenCalledWith("Production servers");
+    // Like right-click it selects the folder it acts on — and only that, once.
+    expect(onSelectFolder).toHaveBeenCalledOnce();
+    expect(onSelectFolder).toHaveBeenCalledWith("Production servers");
+  });
+});
+
 describe("ServerTree", () => {
   it("renders an onboarding empty state with an add-server CTA", async () => {
     const onAddServer = vi.fn();

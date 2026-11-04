@@ -1,3 +1,4 @@
+import { facetValues, filterItems, NO_FILTER } from "../ui/listview";
 import { describe, it, expect } from "vitest";
 import {
   stripAnsi,
@@ -13,8 +14,7 @@ import {
   availableFields,
   fieldValue,
   normalizeTime,
-  filterEntries,
-  applyFilters,
+  LOG_SCHEMA,
   colWidth,
   resizedWidth,
   COL_MIN,
@@ -262,47 +262,41 @@ describe("fieldValue", () => {
   });
 });
 
-describe("filterEntries", () => {
+describe("the structured view's filter (LOG_SCHEMA)", () => {
   const entries: JsonLogEntry[] = [
     { seq: 1, ts: "t1", level: "info", message: "started ok", raw: { a: 1 }, format: "json", source: "" },
     { seq: 2, ts: "t2", level: "error", message: "disk full", raw: { code: "ENOSPC" }, format: "json", source: "" },
+    { seq: 3, ts: "t3", level: "warn", message: "careful", raw: {}, format: "json", source: "" },
   ];
+  const seqs = (text: string, level: string[] = []) =>
+    filterItems(entries, LOG_SCHEMA, { text, facets: level.length ? { level } : {} }).map((e) => e.seq);
 
-  it("returns all on an empty query", () => {
-    expect(filterEntries(entries, "  ")).toHaveLength(2);
+  it("returns all on an empty query and with no level picked", () => {
+    expect(seqs("  ")).toEqual([1, 2, 3]);
   });
 
   it("matches level, message and raw JSON case-insensitively", () => {
-    expect(filterEntries(entries, "ERROR").map((e) => e.seq)).toEqual([2]);
-    expect(filterEntries(entries, "disk").map((e) => e.seq)).toEqual([2]);
-    expect(filterEntries(entries, "enospc").map((e) => e.seq)).toEqual([2]);
-    expect(filterEntries(entries, "started").map((e) => e.seq)).toEqual([1]);
-  });
-});
-
-describe("applyFilters", () => {
-  const entries: JsonLogEntry[] = [
-    { seq: 1, ts: "t1", level: "info", message: "ok", raw: {}, format: "json", source: "" },
-    { seq: 2, ts: "t2", level: "error", message: "boom", raw: {}, format: "json", source: "" },
-    { seq: 3, ts: "t3", level: "warn", message: "careful", raw: {}, format: "json", source: "" },
-  ];
-
-  it("does no level filtering when all categories are enabled", () => {
-    expect(applyFilters(entries, "", ["error", "warn", "info", "debug", "other"])).toHaveLength(3);
+    expect(seqs("ERROR")).toEqual([2]);
+    expect(seqs("disk")).toEqual([2]);
+    expect(seqs("enospc")).toEqual([2]);
+    expect(seqs("started")).toEqual([1]);
   });
 
-  it("treats an empty level set as 'show all'", () => {
-    expect(applyFilters(entries, "", [])).toHaveLength(3);
+  it("keeps the picked categories, together with the text", () => {
+    expect(seqs("", ["error"])).toEqual([2]);
+    expect(seqs("", ["error", "warn"])).toEqual([2, 3]);
+    expect(seqs("careful", ["warn"])).toEqual([3]);
+    expect(seqs("careful", ["error"])).toEqual([]);
   });
 
-  it("keeps only the enabled categories", () => {
-    expect(applyFilters(entries, "", ["error"]).map((e) => e.seq)).toEqual([2]);
-    expect(applyFilters(entries, "", ["error", "warn"]).map((e) => e.seq)).toEqual([2, 3]);
-  });
-
-  it("combines the text query with the level filter", () => {
-    expect(applyFilters(entries, "careful", ["warn"]).map((e) => e.seq)).toEqual([3]);
-    expect(applyFilters(entries, "careful", ["error"])).toHaveLength(0);
+  it("lists every category in display order in the facet", () => {
+    expect(facetValues(entries, LOG_SCHEMA, NO_FILTER, "level").map((v) => [v.value, v.count])).toEqual([
+      ["error", 1],
+      ["warn", 1],
+      ["info", 1],
+      ["debug", 0],
+      ["other", 0],
+    ]);
   });
 });
 

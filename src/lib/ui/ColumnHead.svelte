@@ -10,6 +10,7 @@
   import ColumnGrip from "./ColumnGrip.svelte";
   import SortTitle from "./SortTitle.svelte";
   import { resizedWidth, type ListColumn } from "./colwidths";
+  import { uiPx } from "../settings/settings.svelte";
   import { columnWidth, resetColumnWidth, setColumnWidth } from "../stores/colwidths.svelte";
 
   let {
@@ -47,7 +48,7 @@
   <ColumnGrip
     testid={`column-grip-${col}`}
     onstart={() => (startWidth = columnWidth(col))}
-    onresize={(dx) => setColumnWidth(col, resizedWidth(startWidth, dx))}
+    onresize={(dx) => setColumnWidth(col, resizedWidth(startWidth, dx / uiPx(1)))}
     onreset={() => resetColumnWidth(col)}
   />
 </div>

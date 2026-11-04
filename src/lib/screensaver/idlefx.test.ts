@@ -110,8 +110,20 @@ describe("away card chart", () => {
 });
 
 describe("cardTier", () => {
-  it("keeps the card where it has always fitted", () => {
-    expect(cardTier(1100, 620)).toBe("full");
+  it("fills a large area with the standby screen, a middling one with its short form", () => {
+    // A window maximised on a 27″ monitor, docks open: the card used to sit in
+    // the middle at 560×320, a twelfth of the area (v1.31).
+    expect(cardTier(1920, 1140)).toBe("standby");
+    expect(cardTier(CARD_ROOM.standbyW, CARD_ROOM.standbyH)).toBe("standby");
+    expect(cardTier(CARD_ROOM.standbyW - 1, 1140)).toBe("compact");
+    expect(cardTier(1920, CARD_ROOM.standbyH - 1)).toBe("compact");
+    // The default window with docks (1280×800 → 760×460).
+    expect(cardTier(760, 460)).toBe("compact");
+    expect(cardTier(CARD_ROOM.compactW, CARD_ROOM.compactH)).toBe("compact");
+  });
+  it("keeps the card where the short form does not fit", () => {
+    expect(cardTier(CARD_ROOM.compactW - 1, 620)).toBe("full");
+    expect(cardTier(1100, CARD_ROOM.compactH - 1)).toBe("full");
     expect(cardTier(CARD_ROOM.wideW, CARD_ROOM.fullH)).toBe("full");
   });
   it("gives a low, wide area the header line with the chart under it", () => {
@@ -155,6 +167,8 @@ describe("cardTier", () => {
   });
   it("never gives an area a layout that needs more room than it has", () => {
     const needs = {
+      standby: [CARD_ROOM.standbyW, CARD_ROOM.standbyH],
+      compact: [CARD_ROOM.compactW, CARD_ROOM.compactH],
       full: [CARD_ROOM.wideW, CARD_ROOM.fullH],
       wide: [CARD_ROOM.wideW, CARD_ROOM.wideH],
       row: [CARD_ROOM.wideW, 0],
@@ -162,8 +176,8 @@ describe("cardTier", () => {
       mini: [CARD_ROOM.miniW, CARD_ROOM.miniH],
       line: [0, 0],
     } as const;
-    for (let w = 40; w <= 1400; w += 20) {
-      for (let h = 20; h <= 900; h += 10) {
+    for (let w = 40; w <= 2000; w += 20) {
+      for (let h = 20; h <= 1200; h += 10) {
         const [minW, minH] = needs[cardTier(w, h)];
         expect(w, `${w}×${h} width`).toBeGreaterThanOrEqual(minW);
         expect(h, `${w}×${h} height`).toBeGreaterThanOrEqual(minH);
@@ -172,10 +186,10 @@ describe("cardTier", () => {
   });
   it("only ever grows the layout as the area grows taller", () => {
     // Raising the bottom dock must step the card down, never up and back.
-    const rank = { line: 0, row: 0, mini: 1, wide: 2, stack: 2, full: 3 } as const;
-    for (const w of [180, 210, 300, 479, 480, 900]) {
+    const rank = { line: 0, row: 0, mini: 1, wide: 2, stack: 2, full: 3, compact: 4, standby: 5 } as const;
+    for (const w of [180, 210, 300, 479, 480, 599, 600, 900, 1099, 1100, 1920]) {
       let last = 0;
-      for (let h = 10; h <= 900; h += 5) {
+      for (let h = 10; h <= 1200; h += 5) {
         const r = rank[cardTier(w, h)];
         expect(r, `${w}×${h}`).toBeGreaterThanOrEqual(last);
         last = r;

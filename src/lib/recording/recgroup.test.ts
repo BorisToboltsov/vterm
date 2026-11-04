@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { applyView, facetValues, filterItems, NO_FILTER, sortItems } from "../ui/listview";
 import {
   groupRecordings,
   sectionRecordings,
+  recordingSchema,
+  NO_SERVER,
+  RECORDING_ORDER,
   type RecEntry,
   type RecGroupEntry,
 } from "./recgroup";
@@ -121,9 +125,10 @@ describe("sectionRecordings", () => {
       rec({ path: "b2", batchId: "b", server: "db-01" }),
     ]);
     const out = sectionRecordings(entries, "server", now);
-    expect(out.map((s) => s.bucket)).toEqual(["noServer", "broadcast"]);
+    // The rest (no server) comes last even when it came first (v1.29).
+    expect(out.map((s) => s.bucket)).toEqual(["broadcast", "noServer"]);
     // The whole bundle counts as its two members, never split across servers.
-    expect(out[1].count).toBe(2);
+    expect(out[0].count).toBe(2);
   });
 
   it("buckets entries by relative date", () => {
@@ -156,5 +161,45 @@ describe("sectionRecordings", () => {
     const out = sectionRecordings(entries, "date", now);
     expect(out.map((s) => s.bucket)).toEqual(["today", "older"]);
     expect(out[0].entries.map((e) => (e.kind === "single" ? e.rec.path : ""))).toEqual(["a", "c"]);
+  });
+});
+
+describe("the library's filter row (recordingSchema)", () => {
+  const NOW = 1_705_000_000 + 3600;
+  const schema = recordingSchema(NOW);
+  const titles = (items: RecordingMeta[]) => items.map((r) => r.title);
+  const items = [
+    rec({ title: "web-prod", path: "/r/web-prod-1.cast", timestamp: 1_700_000_000, server: "web-prod", size: 90 }),
+    rec({ title: "db-eu", path: "/r/db-eu-2.cast", timestamp: 1_705_000_000, server: "db-eu", size: 50 }),
+    rec({ title: "shell", path: "/r/local.cast", timestamp: 1_704_999_000, description: "nginx restart", size: 10 }),
+  ];
+
+  it("the field matches title, description, server, file and ISO date", () => {
+    const by = (text: string) => titles(filterItems(items, schema, { text, facets: {} }));
+    expect(by("  ")).toHaveLength(3);
+    expect(by("WEB")).toEqual(["web-prod"]);
+    expect(by("db-eu-2")).toEqual(["db-eu"]);
+    expect(by("2023-11")).toEqual(["web-prod"]);
+    expect(by("nginx")).toEqual(["shell"]);
+  });
+
+  it("narrows by server — a local shell too — and by date bucket", () => {
+    expect(facetValues(items, schema, NO_FILTER, "server").map((v) => v.value)).toContain(NO_SERVER);
+    expect(titles(filterItems(items, schema, { text: "", facets: { server: [NO_SERVER] } }))).toEqual(["shell"]);
+    expect(titles(filterItems(items, schema, { text: "", facets: { date: ["today"] } }))).toEqual(["db-eu", "shell"]);
+    expect(titles(filterItems(items, schema, { text: "", facets: { date: ["today", "older"] } }))).toHaveLength(3);
+  });
+
+  it("orders by date, server or size; the newest first by default", () => {
+    expect(titles(sortItems(items, schema, RECORDING_ORDER.sort))).toEqual(["db-eu", "shell", "web-prod"]);
+    expect(titles(sortItems(items, schema, { key: "size", dir: "desc" }))).toEqual(["web-prod", "db-eu", "shell"]);
+    // By server: what the key says, not the title (before 1.29 «Server» compared titles).
+    expect(titles(sortItems(items, schema, { key: "server", dir: "asc" }))).toEqual(["shell", "db-eu", "web-prod"]);
+    expect(applyView(items, schema, NO_FILTER, RECORDING_ORDER).grouped).toBe(false);
+  });
+
+  it("puts the rest — no server — last when sectioning by server", () => {
+    const sections = sectionRecordings(groupRecordings(sortItems(items, schema, RECORDING_ORDER.sort)), "server", NOW);
+    expect(sections.map((s) => s.bucket)).toEqual(["server", "server", "noServer"]);
   });
 });

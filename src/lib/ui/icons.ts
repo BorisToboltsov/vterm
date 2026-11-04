@@ -198,6 +198,10 @@ export const ICONS = {
     '<circle cx="12" cy="12" r="3.5"/><path d="M3 12h5.5M15.5 12H21"/>',
   gitMerge:
     '<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="14" r="2.5"/><path d="M6 8.5v7M6 9c0 5 3.5 5 9.5 5"/>',
+  // A favourite branch.
+  star: '<path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"/>',
+  // A git tag: the shape of a label, not of a branch.
+  tag: '<path d="M3.5 11.5V4.5a1 1 0 0 1 1-1h7l9 9-8 8z"/><path d="M8 8h.01"/>',
   stash:
     '<path d="M4 8l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 16l8 4 8-4"/>',
   // A key (Lucide "key") — the SSH-key generator utility and its settings section.

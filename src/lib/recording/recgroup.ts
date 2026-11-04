@@ -4,6 +4,8 @@
 // recordings as-is. Pure → unit-tested without the DOM (ADR 0003).
 
 import type { RecordingMeta } from "../types";
+import { recordingDateISO } from "./recording";
+import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
 
 export interface RecGroupEntry {
   kind: "group";
@@ -130,8 +132,9 @@ function serverBucket(entry: RecEntry): { bucket: RecSectionBucket; label: strin
 
 /**
  * Partition already-sorted entries into collapsible sections. Sections appear in
- * first-appearance order (so they respect the caller's sort), and entries keep
- * their input order within each section. `none` returns a single `all` section so
+ * first-appearance order (so they respect the caller's sort), the rest — no
+ * server, no date — last (v1.29), and entries keep their input order within
+ * each section. `none` returns a single `all` section so
  * callers can iterate sections uniformly; the component omits the header for it.
  */
 export function sectionRecordings(
@@ -161,5 +164,48 @@ export function sectionRecordings(
       sections.push(section);
     }
   }
-  return sections;
+  return [...sections.filter((x) => !isRestSection(x.bucket)), ...sections.filter((x) => isRestSection(x.bucket))];
+}
+
+// ── List view (v1.29, ADR 0050) ──────────────────────────────────────────────
+//
+// What the library's filter row reads: the field, the «Server» and «Date»
+// facets, the order. The grouping is the sectioning above — `sectionRecordings`
+// keeps a broadcast bundle whole, which a plain partition of recordings would
+// split — so the schema names the two groupings for the «View» menu and leaves
+// the partition to it.
+
+/** The server facet's value of a recording of a local shell — a name no server has. */
+export const NO_SERVER = "~local";
+
+/** The date facet's buckets, newest first; «no date» follows when there is one. */
+export const DATE_BUCKETS: RecSectionBucket[] = ["today", "yesterday", "week", "month", "older"];
+
+export function recordingSchema(now: number): ListSchema<RecordingMeta> {
+  return {
+    text: (r) => `${r.title} ${r.description} ${r.server} ${r.path} ${recordingDateISO(r.timestamp)}`,
+    sorts: [
+      { id: "date", firstDir: "desc", compare: (a, b) => a.timestamp - b.timestamp },
+      { id: "server", firstDir: "asc", compare: (a, b) => a.server.trim().localeCompare(b.server.trim()) },
+      { id: "size", firstDir: "desc", compare: (a, b) => a.size - b.size },
+    ],
+    groups: [
+      { id: "server", of: (r) => ({ key: r.server.trim(), label: r.server.trim() }) },
+      { id: "date", of: (r) => ({ key: dateBucket(r.timestamp, now), label: "" }) },
+    ],
+    facets: [
+      { id: "server", value: (r) => r.server.trim() || NO_SERVER },
+      { id: "date", value: (r) => dateBucket(r.timestamp, now), multi: true, order: DATE_BUCKETS },
+    ],
+    // The newest first among equals, then by file: the order is total.
+    tie: (a, b) => b.timestamp - a.timestamp || a.path.localeCompare(b.path),
+  };
+}
+
+/** The newest first, not grouped — how the library opened before it had a choice. */
+export const RECORDING_ORDER: ListOrder = { sort: { key: "date", dir: "desc" }, group: NO_GROUPS };
+
+/** A section is the rest — named by a micro-label and drawn last: no server, no date. */
+export function isRestSection(bucket: RecSectionBucket): boolean {
+  return bucket === "noServer" || bucket === "unknownDate";
 }

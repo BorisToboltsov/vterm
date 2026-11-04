@@ -70,11 +70,15 @@ describe("JsonLogView", () => {
     expect(screen.getByText("No matching entries")).toBeInTheDocument();
   });
 
-  it("hides a level when its chip is toggled off", async () => {
+  it("keeps the levels picked in the level facet (v1.29: the funnel of a narrow view)", async () => {
     render(JsonLogView, { props: { entries } });
-    await fireEvent.click(screen.getByRole("button", { name: "Toggle info level" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /Level/ }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: /error/ }));
     expect(screen.queryByText("started ok")).not.toBeInTheDocument();
     expect(screen.getByText("disk full")).toBeInTheDocument();
+    // The field says how many of how many while the view is narrowed.
+    expect(screen.getByTestId("jsonlog-header-field-count")).toHaveTextContent(/1 of \d+/);
   });
 
   it("adds an extra column from the JSON fields picker", async () => {

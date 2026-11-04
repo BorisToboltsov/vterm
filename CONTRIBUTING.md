@@ -33,7 +33,7 @@ pnpm test:coverage
 Плюс `pnpm build` — `vite build` ловит поломки production-сборки, которые `pnpm check`
 (только типы) пропускает. CI на GitHub ([ci.yml](.github/workflows/ci.yml)) гоняет те же
 гейты на каждом PR, а релиз по тегу ([release.yml](.github/workflows/release.yml)) не собирает
-дистрибутивы, пока они и глубокие проверки не зелёные. Подробно о тестах — в [docs/TESTS.md](docs/TESTS.md).
+дистрибутивы, пока они и глубокие проверки не зелёные: схемы и шаги — в [docs/CI.md](docs/CI.md). Подробно о тестах — в [docs/TESTS.md](docs/TESTS.md).
 
 ## Структура кода
 

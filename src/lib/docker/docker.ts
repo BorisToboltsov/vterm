@@ -11,6 +11,7 @@
 
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
+import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
 
 const US = "\x1f";
 
@@ -382,12 +383,6 @@ export interface DockerStat {
 }
 
 /** A compose project (`project` === "" is the synthetic standalone bucket). */
-export interface ComposeGroup {
-  project: string;
-  workdir: string | null;
-  containers: DockerContainer[];
-}
-
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
 /** Split a US-delimited, newline-record blob into non-empty field rows. */
@@ -472,32 +467,6 @@ export function parseStats(raw: string): DockerStat[] {
     blockIo: f[6] ?? "",
     pids: f[7] ?? "",
   }));
-}
-
-/**
- * Group containers by compose project. Standalone containers (no project label)
- * collect under a synthetic group with `project === ""`, sorted last. Within a
- * group, containers keep docker's order (roughly service order). The workdir is
- * taken from the first container in the project that reports one.
- */
-export function groupByCompose(containers: DockerContainer[]): ComposeGroup[] {
-  const byProject = new Map<string, ComposeGroup>();
-  for (const c of containers) {
-    const key = c.project;
-    let g = byProject.get(key);
-    if (!g) {
-      g = { project: key, workdir: null, containers: [] };
-      byProject.set(key, g);
-    }
-    if (!g.workdir && c.workdir) g.workdir = c.workdir;
-    g.containers.push(c);
-  }
-  return [...byProject.values()].sort((a, b) => {
-    // Standalone bucket ("") sorts last; real projects alphabetically.
-    if (a.project === "") return 1;
-    if (b.project === "") return -1;
-    return a.project.localeCompare(b.project);
-  });
 }
 
 export type DockerAvailability =
@@ -676,3 +645,121 @@ export function stateTone(state: string): "ok" | "warn" | "bad" | "idle" {
 
 /** The views of a container's details (`DockerDetail`). */
 export type DockerDetailTab = "overview" | "logs" | "inspect";
+
+// ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
+//
+// What the filter row, the facets and the «View» menu of the three sub-tabs
+// read. The model is `ui/listview.ts`; here is only what a container, an image,
+// a network is ordered, grouped and narrowed by.
+
+/** The compose facet's value of a container in no project — a name compose cannot give one. */
+export const STANDALONE = "~standalone";
+
+/** Lifecycle states in the order a list shows them; `unhealthy` — running, its health check failing. */
+export const CONTAINER_STATES = ["running", "unhealthy", "restarting", "paused", "created", "exited", "dead"];
+
+/** What a container is filtered and grouped by: docker's state, or `unhealthy`. */
+export function containerState(c: DockerContainer): string {
+  const state = normalizeState(c.state);
+  return state === "running" && /\(unhealthy\)/.test(c.status) ? "unhealthy" : state;
+}
+
+const stateRank = (state: string): number => {
+  const i = CONTAINER_STATES.indexOf(state);
+  return i === -1 ? CONTAINER_STATES.length : i;
+};
+const byText = (a: string, b: string): number => a.localeCompare(b);
+
+/** The live figures a container is ordered by; null — `docker stats` has none for it. */
+export interface ContainerUsage {
+  cpu: number | null;
+  mem: number | null;
+}
+
+export function containerSchema(usage: (c: DockerContainer) => ContainerUsage): ListSchema<DockerContainer> {
+  const figure = (key: keyof ContainerUsage) => ({
+    compare: (a: DockerContainer, b: DockerContainer) => (usage(a)[key] ?? 0) - (usage(b)[key] ?? 0),
+    missing: (c: DockerContainer) => usage(c)[key] === null,
+  });
+  return {
+    text: (c) => `${c.name} ${c.image} ${c.ports} ${c.project} ${c.service}`,
+    sorts: [
+      { id: "name", firstDir: "asc", compare: (a, b) => byText(a.name, b.name) },
+      { id: "image", firstDir: "asc", compare: (a, b) => byText(a.image, b.image) },
+      { id: "state", firstDir: "asc", compare: (a, b) => stateRank(containerState(a)) - stateRank(containerState(b)) },
+      { id: "cpu", firstDir: "desc", ...figure("cpu") },
+      { id: "mem", firstDir: "desc", ...figure("mem") },
+    ],
+    groups: [
+      // Projects by name; the standalone containers (no project) are the rest.
+      { id: "compose", of: (c) => ({ key: c.project, label: c.project }), compare: (a, b) => byText(a.label, b.label) },
+      {
+        id: "state",
+        of: (c) => ({ key: containerState(c), label: containerState(c) }),
+        compare: (a, b) => stateRank(a.key) - stateRank(b.key),
+      },
+    ],
+    facets: [
+      { id: "state", value: containerState },
+      { id: "compose", value: (c) => c.project || STANDALONE },
+    ],
+    tie: (a, b) => byText(a.name, b.name) || byText(a.id, b.id),
+  };
+}
+
+/** Compose stacks, containers by name — how the list lay before it had a choice. */
+export const CONTAINER_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "compose" };
+
+/** An image without a name: what `docker image prune` removes. */
+export function isDangling(img: DockerImage): boolean {
+  return img.repository === "<none>";
+}
+
+export const IMAGE_SCHEMA: ListSchema<DockerImage> = {
+  text: (img) => `${img.repository}:${img.tag} ${img.id}`,
+  sorts: [
+    { id: "name", firstDir: "asc", compare: (a, b) => byText(a.repository, b.repository) || byText(a.tag, b.tag) },
+    {
+      id: "size",
+      firstDir: "desc",
+      compare: (a, b) => (parseMemUsed(a.size) ?? 0) - (parseMemUsed(b.size) ?? 0),
+      missing: (img) => parseMemUsed(img.size) === null,
+    },
+    {
+      id: "created",
+      firstDir: "desc",
+      compare: (a, b) => (parseDockerTime(a.created) ?? 0) - (parseDockerTime(b.created) ?? 0),
+      missing: (img) => parseDockerTime(img.created) === null,
+    },
+  ],
+  groups: [
+    // By repository; images without one (dangling) are the rest.
+    {
+      id: "repo",
+      of: (img) => (isDangling(img) ? { key: "", label: "" } : { key: img.repository, label: img.repository }),
+      compare: (a, b) => byText(a.label, b.label),
+    },
+  ],
+  facets: [{ id: "kind", value: (img) => (isDangling(img) ? "dangling" : "tagged"), order: ["tagged", "dangling"] }],
+  tie: (a, b) => byText(a.id, b.id),
+};
+
+export const IMAGE_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: NO_GROUPS };
+
+/** A row of the networks sub-tab: a published port, a network or a volume. */
+export type NetItem =
+  | { kind: "port"; name: string }
+  | { kind: "network"; name: string; driver: string }
+  | { kind: "volume"; name: string; driver: string };
+
+/**
+ * The networks sub-tab narrows its three sections by one filter: the text by
+ * name, the driver facet over networks and volumes (a port has no driver, so a
+ * picked driver leaves the ports out).
+ */
+export const NET_SCHEMA: ListSchema<NetItem> = {
+  text: (item) => item.name,
+  sorts: [],
+  facets: [{ id: "driver", value: (item) => (item.kind === "port" ? "" : item.driver) }],
+  tie: (a, b) => byText(a.name, b.name),
+};

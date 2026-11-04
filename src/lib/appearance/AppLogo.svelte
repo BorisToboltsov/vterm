@@ -8,6 +8,7 @@
   // theme accent so it stays visible on light palettes too.
   import { settings } from "../settings/settings.svelte";
   import { getTheme } from "./themes";
+  import { REM_PX } from "./uiscale";
 
   let { size = 40, label = "vterm" }: { size?: number; label?: string } = $props();
 
@@ -17,6 +18,8 @@
   const bg = $derived(backdrop ?? "var(--color-panel)");
   const primary = $derived(backdrop ? "#ffffff" : "var(--color-accent)");
   const secondary = $derived(backdrop ? "rgba(255,255,255,0.5)" : "var(--color-muted)");
+  // `size` is px at 100 %; in rem it grows with the interface scale, like `Icon`.
+  const box = $derived(`${size / REM_PX}rem`);
 </script>
 
 <div
@@ -24,9 +27,9 @@
   role="img"
   aria-label={label}
   data-testid="app-logo"
-  style="width:{size}px;height:{size}px;border-radius:{size * 0.23}px;background:{bg}"
+  style="width:{box};height:{box};border-radius:{(size * 0.23) / REM_PX}rem;background:{bg}"
 >
-  <svg viewBox="0 0 128 128" width={size} height={size} aria-hidden="true">
+  <svg viewBox="0 0 128 128" width="100%" height="100%" aria-hidden="true">
     <!-- back window (outline) -->
     <rect
       x="28"

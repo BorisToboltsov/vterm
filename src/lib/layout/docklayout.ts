@@ -58,7 +58,9 @@ export const DOCK_BOUNDS: Record<DockSide, { min: number; max: number; initial: 
   bottom: { min: 120, max: 720, initial: 280 },
 };
 
-/** Thickness of a collapsed left/right dock (a `w-9` rail). */
+/** Thickness of a collapsed left/right dock (a `w-9` rail), px at 100 %. The docks'
+ *  own widths are not scaled: they are the user's, and the terminal lives on what
+ *  they leave (ADR 0049). */
 export const COLLAPSED_RAIL = 36;
 
 /**
@@ -114,22 +116,23 @@ export const WINDOW_MIN_WIDTH = DOCK_BOUNDS.left.min + DOCK_BOUNDS.right.min + C
  *  its stored width. */
 export type SideDockState = null | "rail" | number;
 
-const drawnWidth = (s: SideDockState): number =>
-  s === null ? 0 : s === "rail" ? COLLAPSED_RAIL : s;
+const drawnWidth = (s: SideDockState, rail: number): number =>
+  s === null ? 0 : s === "rail" ? rail : s;
 
 /**
  * The widths the side docks are drawn at. Their stored widths, unless that
  * leaves the centre narrower than `CENTRE_MIN_WIDTH`: then the open docks give
  * the difference back, each in proportion to how far it stands above its own
  * minimum, and never below it. Stored sizes are not rewritten — widening the
- * window brings the docks back to them.
+ * window brings the docks back to them. `rail` is what a collapsed dock takes now.
  */
 export function sideDockWidths(
   left: SideDockState,
   right: SideDockState,
   viewport: number,
+  rail: number = COLLAPSED_RAIL,
 ): { left: number; right: number } {
-  const out = { left: drawnWidth(left), right: drawnWidth(right) };
+  const out = { left: drawnWidth(left, rail), right: drawnWidth(right, rail) };
   if (!(viewport > 0)) return out;
   const excess = out.left + out.right + CENTRE_MIN_WIDTH - viewport;
   const slackL = typeof left === "number" ? Math.max(0, left - DOCK_BOUNDS.left.min) : 0;

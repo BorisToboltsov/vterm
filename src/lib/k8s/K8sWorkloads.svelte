@@ -15,17 +15,29 @@
   } from "./k8s";
   import type { IconName } from "../ui/icons";
   import type { MenuItem } from "../ui/ctxmenu";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import type { ListGroup } from "../ui/listview";
   import { t } from "../i18n";
 
   let {
-    workloads,
+    groups,
+    grouped = true,
+    grouping = "kind",
+    collapsed = [],
+    ontoggle = () => {},
     busy = false,
     run,
     onDescribe,
     onYaml,
     showMenu,
   }: {
-    workloads: K8sWorkload[];
+    /** The list as `listview.ts` lays it out (by kind, as it always was, by default). */
+    groups: ListGroup<K8sWorkload>[];
+    grouped?: boolean;
+    /** What the groups are — a kind gets its icon. */
+    grouping?: string;
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
     busy?: boolean;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
     onDescribe: (kind: string, name: string, namespace: string) => void;
@@ -39,17 +51,6 @@
     DaemonSet: "container",
     CronJob: "refresh",
   };
-  const KIND_ORDER = ["Deployment", "StatefulSet", "DaemonSet", "CronJob"];
-
-  const grouped = $derived.by(() => {
-    const by = new Map<string, K8sWorkload[]>();
-    for (const w of workloads) {
-      const list = by.get(w.kind) ?? [];
-      list.push(w);
-      by.set(w.kind, list);
-    }
-    return KIND_ORDER.filter((k) => by.has(k)).map((k) => ({ kind: k, items: by.get(k)! }));
-  });
 
   /** DaemonSets can't scale but can rollout restart; CronJobs do neither. */
   function canRollout(w: K8sWorkload): boolean {
@@ -89,15 +90,22 @@
 </script>
 
 <div class="h-full overflow-auto text-xs">
-  {#each grouped as group (group.kind)}
-    <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
-      <Icon name={KIND_ICON[group.kind] ?? "cloud"} size={13} class="text-accent" />
-      <span class="min-w-0 flex-1 truncate font-medium text-text/85">{group.kind}</span>
-    </div>
+  {#each groups as g (g.key)}
+    {@const folded = grouped && collapsed.includes(g.key)}
+    {#if grouped}
+      <GroupHeader
+        label={g.label}
+        count={g.items.length}
+        collapsed={folded}
+        ontoggle={() => ontoggle(g.key)}
+        icon={grouping === "kind" ? (KIND_ICON[g.key] ?? "cloud") : undefined}
+        testid="k8s-workload-group"
+      />
+    {/if}
 
-    {#each group.items as w (`${w.namespace}/${w.name}`)}
+    {#each folded ? [] : g.items as w (`${w.namespace}/${w.name}`)}
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 pl-5 hover:bg-edge/30"
+        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 {grouped ? 'pl-5' : 'pl-2.5'}"
         oncontextmenu={(e) => showMenu(e, menuItems(w))}
         role="listitem"
       >

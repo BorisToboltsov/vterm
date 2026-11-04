@@ -147,7 +147,7 @@
         role="group"
         aria-label={r.service.name}
       >
-        <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[r.tone]}" data-testid="k8s-route-tone" data-tone={r.tone}></span>
+        <span class="mt-1 h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[r.tone]}" data-testid="k8s-route-tone" data-tone={r.tone}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-text/90">{r.service.name}</span>
@@ -172,7 +172,7 @@
       </div>
 
       <!-- Where the cluster sends its traffic. -->
-      <div class="min-w-0 pb-1.5 pl-[25px] pr-2.5 @wide:py-1.5 @wide:pl-2.5" data-testid="k8s-route-targets">
+      <div class="min-w-0 pb-1.5 pl-[1.5625rem] pr-2.5 @wide:py-1.5 @wide:pl-2.5" data-testid="k8s-route-targets">
         {#if tg.kind === "externalName"}
           <span class="text-caption text-muted">{t("k8s.routeExternalName", { name: tg.name || "—" })}</span>
         {:else if tg.kind === "unknown"}
@@ -193,7 +193,7 @@
           </div>
           {#each list.shown as ep (`${ep.targetKind}/${ep.targetName}|${ep.addresses.join()}`)}
             <div class="flex items-baseline gap-1.5" data-testid="k8s-route-endpoint">
-              <span class="h-[6px] w-[6px] shrink-0 self-center rounded-full {EP_DOT[ep.state]}"></span>
+              <span class="h-[0.375rem] w-[0.375rem] shrink-0 self-center rounded-full {EP_DOT[ep.state]}"></span>
               <span class="shrink-0 font-mono text-caption text-text/85">{ep.addresses.join(", ")}</span>
               <span class="min-w-0 truncate text-caption text-muted" use:tooltip={ep.node || undefined}>{ep.targetName}</span>
               {#if ep.state !== "ready"}
@@ -220,7 +220,7 @@
             : null,
         )}
         {#if d.reason === "resource"}
-          <div class="pl-[19px] text-caption text-muted">{t("k8s.routeResourceBackend", { resource: d.entry.backend.resource })}</div>
+          <div class="pl-[1.1875rem] text-caption text-muted">{t("k8s.routeResourceBackend", { resource: d.entry.backend.resource })}</div>
         {/if}
       </div>
     {/each}

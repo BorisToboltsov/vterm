@@ -12,7 +12,7 @@
 //  - equal values fall back to the name, so the order is total — the same
 //    listing never comes out two ways.
 
-import type { MenuItem } from "../ui/ctxmenu";
+import { NO_GROUPS, sortItems, type ListOrder, type ListSchema } from "../ui/listview";
 import { ownerLabel } from "./lscolors";
 import type { FileEntry } from "../types";
 
@@ -81,57 +81,43 @@ function valueOf(entry: FileEntry, key: Exclude<SortKey, "name">): number | stri
   }
 }
 
+/** The comparison of a column that is not the name: an entry without a value is the schema's `missing`. */
+function compareBy(key: Exclude<SortKey, "name">) {
+  return (a: FileEntry, b: FileEntry): number => {
+    const x = valueOf(a, key);
+    const y = valueOf(b, key);
+    if (x === null || y === null || x === y) return 0;
+    // A number against a string (permission bits against an attribute string)
+    // cannot be told apart by value: keep them grouped, numbers on the near side.
+    if (typeof x !== typeof y) return typeof x === "number" ? -1 : 1;
+    return x < y ? -1 : 1;
+  };
+}
+
+/**
+ * The listing as a list of the lists' model (v1.29, ADR 0050): the name for the
+ * filter field, the columns as the orders of the «View» menu. The three rules
+ * above are the schema's: folders rank first, a missing value goes last, the
+ * name is the tie.
+ */
+export const FILE_SCHEMA: ListSchema<FileEntry> = {
+  text: (e) => e.name,
+  sorts: SORT_KEYS.map((key) =>
+    key === "name"
+      ? { id: key, firstDir: firstDir(key), compare: byName }
+      : { id: key, firstDir: firstDir(key), compare: compareBy(key), missing: (e: FileEntry) => valueOf(e, key) === null },
+  ),
+  rank: (e) => (e.isDir ? 0 : 1),
+  tie: byName,
+};
+
+/** The order as the stored choice of the lists' store, `vterm.listview` → `files`. */
+export const FILE_ORDER: ListOrder = { sort: { ...DEFAULT_SORT }, group: NO_GROUPS };
+
 /**
  * `entries` in the order `sort` asks for — a new array; folders first, unknown
  * values last, ties by name.
  */
 export function sortEntries(entries: readonly FileEntry[], sort: FileSort): FileEntry[] {
-  const sign = sort.dir === "asc" ? 1 : -1;
-  const key = sort.key;
-  return [...entries].sort((a, b) => {
-    if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-    if (key === "name") return sign * byName(a, b);
-    const x = valueOf(a, key);
-    const y = valueOf(b, key);
-    if (x === null || y === null) {
-      if (x === null && y === null) return byName(a, b);
-      return x === null ? 1 : -1;
-    }
-    if (x !== y) {
-      // A number against a string (permission bits against an attribute string)
-      // cannot be told apart by value: keep them grouped, numbers first.
-      if (typeof x !== typeof y) return typeof x === "number" ? -1 : 1;
-      return sign * (x < y ? -1 : 1);
-    }
-    return byName(a, b);
-  });
-}
-
-/**
- * The order as a menu — for a listing too narrow to have column titles to
- * click: the columns as switches, then the two directions. Picking another
- * column starts it in its own first direction, as a click on its title would.
- */
-export function sortMenu(
-  sort: FileSort,
-  labels: { key: (key: SortKey) => string; dir: (dir: SortDir) => string },
-  onpick: (next: FileSort) => void,
-): MenuItem[] {
-  return [
-    ...SORT_KEYS.map(
-      (key): MenuItem => ({
-        checked: sort.key === key,
-        label: labels.key(key),
-        onSelect: () => onpick(sort.key === key ? sort : { key, dir: firstDir(key) }),
-      }),
-    ),
-    { kind: "separator" },
-    ...(["asc", "desc"] as const).map(
-      (dir): MenuItem => ({
-        checked: sort.dir === dir,
-        label: labels.dir(dir),
-        onSelect: () => onpick({ key: sort.key, dir }),
-      }),
-    ),
-  ];
+  return sortItems(entries, FILE_SCHEMA, sort);
 }

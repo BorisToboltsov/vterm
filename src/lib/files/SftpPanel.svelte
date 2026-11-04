@@ -14,9 +14,13 @@
     sftpHome,
     sftpList,
     sftpMkdir,
+    sftpOpenOwn,
     sftpRename,
     sftpCopy,
+    shellUser,
+    onSessionSubmit,
   } from "../api";
+  import { untrack } from "svelte";
   import { parentDir } from "./filemove";
   import { isRoot, joinPath, parentOf } from "./fspath";
   import type { FileBrowserAdapter } from "./filebrowser";
@@ -28,6 +32,9 @@
   import { fmtBytes, fmtRate } from "../monitoring/format";
   import { tooltip } from "../actions/tooltip";
   import FileBrowser from "./FileBrowser.svelte";
+  import FileUserBar from "./FileUserBar.svelte";
+  import FileUserDialog, { type FileUserAsk } from "./FileUserDialog.svelte";
+  import { AFTER_ENTER_MS, fileUserRow, SHELL_USER_POLL_MS, type ShellUserReport } from "./fileuser";
   import SyncModal from "../sync/SyncModal.svelte";
   import { isBusy, peekSyncJob } from "../stores/syncjob.svelte";
   import Icon from "../ui/Icon.svelte";
@@ -44,6 +51,7 @@
     terminalCwd = null,
     followTerminal = false,
     visible = true,
+    prod = false,
     onToggleFollowTerminal,
     onOpenFile,
     onUserNavigate,
@@ -58,6 +66,8 @@
     followTerminal?: boolean;
     /** The dock is showing this tab (false = mounted but hidden behind another). */
     visible?: boolean;
+    /** A production server: taking on another user says so in red. */
+    prod?: boolean;
     onToggleFollowTerminal?: () => void;
     onOpenFile?: (path: string, name: string, gotoLine?: number) => void;
     onUserNavigate?: (path: string) => void;
@@ -134,6 +144,54 @@
   let browser = $state<ReturnType<typeof FileBrowser>>();
   let showSync = $state(false);
 
+  // Who the terminal is, against whom the files are under (ADR 0047). Asked while
+  // the panel is on screen — after an Enter, and now and then for what comes with
+  // none (`exit` by Ctrl+D). The answer lives in the backend, so a tab given to
+  // another window asks again and finds the same.
+  let report = $state<ShellUserReport | null>(null);
+  let askAs = $state<FileUserAsk | null>(null);
+  let shellAsk = 0;
+  const userRow = $derived(fileUserRow(report));
+
+  async function askShellUser() {
+    const mine = ++shellAsk;
+    const answer = await shellUser(sessionId).catch(() => null);
+    if (mine === shellAsk) report = answer;
+  }
+
+  $effect(() => {
+    if (!visible || !sessionReady) return;
+    const id = sessionId;
+    untrack(() => void askShellUser());
+    const poll = setInterval(() => void askShellUser(), SHELL_USER_POLL_MS);
+    let after: ReturnType<typeof setTimeout> | undefined;
+    const stop = onSessionSubmit(id, () => {
+      clearTimeout(after);
+      after = setTimeout(() => void askShellUser(), AFTER_ENTER_MS);
+    });
+    return () => {
+      clearInterval(poll);
+      clearTimeout(after);
+      stop();
+    };
+  });
+
+  /** The panel's user changed: what it says and what it lists are out of date. */
+  function fileUserChanged() {
+    askAs = null;
+    void askShellUser();
+    browser?.refresh();
+  }
+
+  async function backToLogin() {
+    try {
+      await sftpOpenOwn(sessionId);
+      fileUserChanged();
+    } catch (e) {
+      notifyError(String(e));
+    }
+  }
+
   // This session's transfers — and the files of a sync run, which name no session.
   const transferList = $derived(transfersOf(sessionId));
   function pct(tr: TransferRow): number {
@@ -168,9 +226,22 @@
   testPrefix="sftp"
   onSync={() => (showSync = true)}
   syncActive={isBusy(peekSyncJob(sessionId))}
+  banner={userRow ? fileUserBanner : undefined}
   {footer}
   footerCount={transferList.length}
 />
+
+{#snippet fileUserBanner()}
+  {#if userRow}
+    <FileUserBar
+      row={userRow}
+      onopenas={(user) => (askAs = { sessionId, user, login: report?.login ?? null, prod })}
+      onback={() => void backToLogin()}
+    />
+  {/if}
+{/snippet}
+
+<FileUserDialog ask={askAs} onclose={() => (askAs = null)} ondone={fileUserChanged} />
 
 {#snippet footer()}
   {#if transferList.length > 0}

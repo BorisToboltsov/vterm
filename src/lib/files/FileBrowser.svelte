@@ -34,20 +34,25 @@
   import ColumnHead from "../ui/ColumnHead.svelte";
   import SortTitle from "../ui/SortTitle.svelte";
   import {
+    FILE_ORDER,
+    FILE_SCHEMA,
     nextSort,
     sortEntries,
-    sortMenu,
     type FileSort,
     type SortKey,
   } from "./filesort";
-  import { fileSort, setFileSort } from "../stores/filesort.svelte";
-  import { wideWhen } from "../actions/panelwide";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import { listMenuText } from "../ui/listtext";
+  import { filterItems, filterSummary, isFiltered, NO_FILTER, NO_GROUPS, type ListFilter } from "../ui/listview";
+  import { listOrder, setListOrder } from "../stores/listview.svelte";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import { columnVars } from "../ui/colwidths";
   import { columns } from "../stores/colwidths.svelte";
   import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
   import { windowRange } from "../ui/virtuallist";
   import { filterHiddenFiles } from "../ui/util";
-  import { activeTerminalTheme, settings } from "../settings/settings.svelte";
+  import { activeTerminalTheme, settings, uiPx } from "../settings/settings.svelte";
   import Icon from "../ui/Icon.svelte";
   import Skeleton from "../ui/Skeleton.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
@@ -57,6 +62,8 @@
   import {
     dirRevision,
     dockState,
+    listFilter,
+    setListFilter,
     pendingFilesDir,
     setDockCwd,
     takeFilesDir,
@@ -115,6 +122,8 @@
     onSync,
     /** A sync compare/run for this session is going on (possibly in the background). */
     syncActive = false,
+    /** A row above the listing, while connected: whom the SFTP files are under. */
+    banner,
     /** Extra footer content, e.g. the SFTP transfers list. */
     footer,
     footerCount = 0,
@@ -145,6 +154,7 @@
     sessionKey?: string | null;
     onSync?: () => void;
     syncActive?: boolean;
+    banner?: Snippet;
     footer?: Snippet;
     /**
      * How many things the footer lists right now (transfers). Zero — the footer
@@ -211,7 +221,7 @@
   // Virtualized listing (Phase 18.7): only the visible window of fixed-height
   // (`h-7`, 28px) rows is rendered so huge directories don't freeze the UI. Item 0
   // is the ".." parent-nav when not at the top.
-  const ROW_H = 28;
+  const ROW_H = $derived(uiPx(28));
   let listScrollTop = $state(0);
   // True while the list is moving (and ~150 ms after). Rows stop taking the
   // pointer meanwhile: WebView2 (Chromium) re-evaluates hover only once a scroll
@@ -239,17 +249,26 @@
   let headH = $state(0);
   // The order (v1.17): one for the app, by a column of the table. The level of
   // drives is not a folder's listing and keeps the order it came in.
-  const shownEntries = $derived.by(() => {
-    const visible = filterHiddenFiles(entries, settings.sftp.showHiddenFiles);
-    return mutable ? sortEntries(visible, fileSort.sort) : visible;
-  });
+  const fileOrder = $derived(listOrder("files", FILE_SCHEMA, FILE_ORDER));
+  const sortNow = $derived(fileOrder.sort as FileSort);
+  // The name filter of the folder on screen (v1.29, ADR 0050): the session's,
+  // so it survives the dock being rebuilt; a new folder starts unfiltered. The
+  // level of drives has no filter row.
+  let localFilter = $state<ListFilter>(NO_FILTER);
+  const nameFilter = $derived(sessionKey ? listFilter(sessionKey, "files") : localFilter);
+  function setNameFilter(next: ListFilter) {
+    if (sessionKey) setListFilter(sessionKey, "files", next);
+    else localFilter = next;
+  }
+  const visibleEntries = $derived(filterHiddenFiles(entries, settings.sftp.showHiddenFiles));
+  const shownEntries = $derived(
+    mutable ? sortEntries(filterItems(visibleEntries, FILE_SCHEMA, nameFilter), sortNow) : visibleEntries,
+  );
   // A narrow list is ordered from its own header (v1.20): name and size — the
   // two columns it shows — by a click, as in the table, the rest from a menu.
   // The menu is lit while the order is by a column the list does not show, so
   // a listing not by name or size still says it is ordered otherwise.
-  const hiddenSortKey = $derived(
-    fileSort.sort.key === "name" || fileSort.sort.key === "size" ? null : fileSort.sort.key,
-  );
+  const hiddenSortKey = $derived(sortNow.key === "name" || sortNow.key === "size" ? null : sortNow.key);
   // The SFTP toolbar has more actions than a 240px dock can hold. Measure the
   // actual bar (also when embedded) and keep Upload visible in its compact form.
   let toolbarWidth = $state(0);
@@ -267,7 +286,7 @@
     owner: () => t("sftp.colOwner"),
     modified: () => t("sftp.colModified"),
   };
-  const sortedBy = (key: SortKey) => (fileSort.sort.key === key ? fileSort.sort.dir : null);
+  const sortedBy = (key: SortKey) => (sortNow.key === key ? sortNow.dir : null);
   const rowCount = $derived((hasParent ? 1 : 0) + shownEntries.length);
   const win = $derived(windowRange(listScrollTop, listViewportH, ROW_H, rowCount));
   const visibleItems = $derived(buildVisibleItems(win.start, win.end, hasParent, shownEntries));
@@ -413,25 +432,28 @@
   /**
    * Open `path` because something outside asked (a folder clicked in terminal
    * output). An SFTP panel not connected yet connects straight to it — the
-   * click is the user's go-ahead, as the Connect button would be.
+   * click is the user's go-ahead, as the Connect button would be. It is a user's
+   * move like any other, so the terminal goes there too — once the folder opened:
+   * a `cd` typed into a shell over a folder that refused would be a stray line.
    */
   async function openDir(path: string) {
     if (isConnected) {
       await load(path);
-      return;
+    } else {
+      connecting = true;
+      error = "";
+      await load(path);
+      connecting = false;
+      connected = error === "";
+      persist();
+      if (connected && !homePath) {
+        adapter
+          .home()
+          .then((home) => (homePath = home))
+          .catch(() => {});
+      }
     }
-    connecting = true;
-    error = "";
-    await load(path);
-    connecting = false;
-    connected = error === "";
-    persist();
-    if (connected && !homePath) {
-      adapter
-        .home()
-        .then((home) => (homePath = home))
-        .catch(() => {});
-    }
+    if (cwd === path && error === "") syncTerminalCwd(path);
   }
 
   // Re-list when the pane comes back into view. It stayed mounted while hidden, so
@@ -462,6 +484,7 @@
     try {
       const next = await adapter.list(path);
       if (seq !== loadSeq) return;
+      if (path !== cwd && isFiltered(nameFilter)) setNameFilter(NO_FILTER);
       cwd = path;
       entries = next;
       error = "";
@@ -593,27 +616,14 @@
    */
   function orderBy(next: FileSort) {
     const held = cursorEntry?.path ?? null;
-    setFileSort(next);
+    setListOrder("files", { sort: next, group: NO_GROUPS });
     if (held === null) return;
     const at = shownEntries.findIndex((x) => x.path === held);
     if (at >= 0) cursor = (hasParent ? 1 : 0) + at;
   }
   /** A click on a column title: that column, or the same one the other way round. */
   function orderByColumn(key: SortKey) {
-    orderBy(nextSort(fileSort.sort, key));
-  }
-  /** The menu of the narrow list — the same choice as the table's titles. */
-  function openSortMenu(e: MouseEvent) {
-    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    ctxMenu = {
-      x: box.left,
-      y: box.bottom + 2,
-      items: sortMenu(
-        fileSort.sort,
-        { key: (key) => COLUMN_LABEL[key](), dir: (dir) => t(dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc") },
-        orderBy,
-      ),
-    };
+    orderBy(nextSort(sortNow, key));
   }
   function openToolbarMenu(e: MouseEvent) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1106,6 +1116,7 @@
         runSearch();
       }}
     >
+      <!-- eslint-disable-next-line vterm/filter-field -- a search of the files' contents (grep on the host), not a filter of the listing -->
       <input
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
         placeholder={t("search.contentPlaceholder")}
@@ -1146,7 +1157,7 @@
 {/snippet}
 
 <div
-  style={embedded ? "" : `width: ${collapsed ? COLLAPSED_W : width}px`}
+  style={embedded ? "" : `width: ${collapsed ? uiPx(COLLAPSED_W) : width}px`}
   class="relative flex h-full min-h-0 shrink-0 flex-col overflow-hidden bg-panel-alt {embedded
     ? ''
     : 'border-l border-edge'} {!embedded && animateWidth
@@ -1205,18 +1216,6 @@
               onclick={refresh}
             >
               <Icon name="refresh" size={14} />
-            </button>
-            <button
-              data-testid="{testPrefix}-toggle-hidden"
-              class="flex items-center rounded p-1.5 {settings.sftp.showHiddenFiles
-                ? 'bg-edge text-accent'
-                : 'text-muted hover:bg-edge hover:text-text'}"
-              use:tooltip={t("sftp.hiddenFiles")}
-              aria-label={t("sftp.hiddenFiles")}
-              aria-pressed={settings.sftp.showHiddenFiles}
-              onclick={() => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles)}
-            >
-              <Icon name="eye" size={14} />
             </button>
             <button
               data-testid="{testPrefix}-follow-terminal"
@@ -1332,6 +1331,34 @@
           {/if}
         </div>
       {:else}
+        {@render banner?.()}
+        {#if mutable}
+          <!-- The filter row (v1.29): the name in this folder, «View» with the
+               order and the hidden files — their only switch since the toolbar's
+               eye went: two eyes side by side meant two different things. -->
+          <ListHeader
+            items={visibleEntries}
+            schema={FILE_SCHEMA}
+            filter={nameFilter}
+            onfilter={setNameFilter}
+            order={fileOrder}
+            onorder={(o) => orderBy(o.sort as FileSort)}
+            shown={shownEntries.length}
+            total={visibleEntries.length}
+            labels={{ sort: (id) => COLUMN_LABEL[id as SortKey]() }}
+            placeholder={t("sftp.filterName")}
+            {wide}
+            onmenu={(m) => (ctxMenu = m)}
+            extra={[
+              {
+                label: t("sftp.hiddenFiles"),
+                checked: settings.sftp.showHiddenFiles,
+                onSelect: () => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles),
+              },
+            ]}
+            testid="{testPrefix}-header"
+          />
+        {/if}
         <!-- The listing's column and — in a wide panel — the column beside it. -->
         <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth} data-testid="{testPrefix}-row">
         <div
@@ -1504,23 +1531,19 @@
                   />
                 </span>
               </div>
+              <!-- Over the actions box: the order, while it is by a column the
+                   narrow list does not show — the «View» menu changes it. -->
               <div class="flex w-16 shrink-0 items-center justify-end @wide:hidden">
-                <button
-                  type="button"
-                  data-testid="{testPrefix}-sort"
-                  class="flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-edge {hiddenSortKey
-                    ? 'text-accent'
-                    : 'hover:text-text'}"
-                  use:tooltip={`${t("sftp.sort")}: ${COLUMN_LABEL[fileSort.sort.key]()}, ${t(fileSort.sort.dir === "asc" ? "sftp.sortAsc" : "sftp.sortDesc")}`}
-                  aria-label={t("sftp.sort")}
-                  aria-haspopup="menu"
-                  onclick={openSortMenu}
-                >
-                  {#if hiddenSortKey}
-                    <Icon name={fileSort.sort.dir === "asc" ? "arrowUp" : "arrowDown"} size={11} />
-                  {/if}
-                  <Icon name="chevronDown" size={12} />
-                </button>
+                {#if hiddenSortKey}
+                  <span
+                    data-testid="{testPrefix}-sort"
+                    class="flex items-center gap-0.5 px-1 py-0.5 text-accent"
+                    use:tooltip={`${t("sftp.sort")}: ${COLUMN_LABEL[sortNow.key]()}, ${t(sortNow.dir === "asc" ? "list.asc" : "list.desc")}`}
+                  >
+                    <Icon name={sortNow.dir === "asc" ? "arrowUp" : "arrowDown"} size={11} />
+                    <span class="max-w-12 truncate">{COLUMN_LABEL[sortNow.key]()}</span>
+                  </span>
+                {/if}
               </div>
               <div class="hidden min-w-0 flex-1 items-stretch @wide:flex" data-testid="{testPrefix}-tablehead">
                 <ColumnHead
@@ -1736,7 +1759,13 @@
                 {/each}
               </div>
             </div>
-            {#if shownEntries.length === 0}
+            {#if shownEntries.length === 0 && isFiltered(nameFilter)}
+              <FilteredEmpty
+                summary={filterSummary(FILE_SCHEMA, nameFilter, listMenuText({}))}
+                onreset={() => setNameFilter(NO_FILTER)}
+                testid="{testPrefix}-filtered-empty"
+              />
+            {:else if shownEntries.length === 0}
               <div class="px-3 py-4 text-xs text-muted">{t("sftp.emptyDir")}</div>
             {/if}
           {/if}

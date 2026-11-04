@@ -61,7 +61,7 @@ describe("list columns", () => {
   it("renders the widths as CSS variables for the list", () => {
     expect(
       columnVars({ "docker.image": 400 }, { "--c-name": "docker.name", "--c-image": "docker.image" }),
-    ).toBe(`--c-name: ${LIST_COLUMNS["docker.name"]}px; --c-image: 400px`);
+    ).toBe(`--c-name: ${LIST_COLUMNS["docker.name"] / 16}rem; --c-image: 25rem`);
   });
 });
 

@@ -73,7 +73,7 @@ export function createPathSyncFlow(deps: PathSyncDeps) {
    */
   function start(id: string, typeSetup: boolean) {
     if (typeSetup) {
-      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP))).catch(() => {});
+      writeToTerminal(id, new TextEncoder().encode(submitLine(OSC7_SETUP)), true).catch(() => {});
       integrated[id] = true;
     }
     following[id] = true;

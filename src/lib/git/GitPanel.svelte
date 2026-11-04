@@ -22,6 +22,13 @@
     statusArgs,
     logArgs,
     branchesArgs,
+    tagsArgs,
+    hashLookupArgs,
+    looksLikeHash,
+    isFiltered,
+    LOG_CAP,
+    LOG_PAGE,
+    NO_FILTER,
     stashListArgs,
     fetchArgs,
     pullArgs,
@@ -36,7 +43,7 @@
     parseLog,
     parseBranches,
     parseStashes,
-    buildGraph,
+    parseTags,
     isDestructive,
     needsConfirm,
     formatGitCommand,
@@ -45,14 +52,18 @@
     parseSyncResult,
     type GitStatus,
     type GitFile,
-    type GraphRow,
+    type GitCommit,
     type GitBranch,
+    type GitTag,
+    type LogFilter,
     type GitStashEntry,
     type DiffLine,
     type GitRunOpts,
   } from "./git";
-  import { dockCwd, rememberSub, storedSub } from "../stores/dockstate.svelte";
-  import { wideWhen } from "../actions/panelwide";
+  import { buildGraph, primaryFor, type GraphRow } from "./gitlanes";
+  import { findByShort } from "./gitrefs";
+  import { collapsedGroups, dockCwd, listFilter, rememberSub, setGroupsCollapsed, setListFilter, storedSub } from "../stores/dockstate.svelte";
+  import { wideWhen } from "../actions/panelwide.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { gitCwd } from "../pathsync/followcwd";
@@ -102,7 +113,8 @@
   } = $props();
 
   type Sub = "graph" | "changes" | "branches";
-  let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "git", "changes")));
+  // What the user last picked; null until they do. Each layout reads it its own way.
+  let chosen = $state<Sub | null>(untrack(() => storedSub<Sub | "">(sessionId, "git", "") || null));
   let sendToTerminal = $state(false);
   // The wide layout (v1.7): the history stands beside the changes instead of
   // behind a sub-tab. The panel measures itself rather than use a container
@@ -113,9 +125,10 @@
   // them is dragged within.
   let rowWidth = $state(0);
   // What the left column shows when the history has a column of its own: the
-  // changes, unless the branches were asked for. The remembered sub-tab is left
-  // alone — back in a narrow dock the panel shows what it showed there.
-  const leftSub = $derived<Sub>(wide && activeSub === "graph" ? "changes" : activeSub);
+  // branches, unless the changes were asked for. Narrow, one view at a time: the
+  // changes, unless another was asked for. The remembered sub-tab is left alone —
+  // back in a narrow dock the panel shows what it showed there.
+  const leftSub = $derived<Sub>(wide ? (chosen === "changes" ? "changes" : "branches") : (chosen ?? "changes"));
 
   // Following on: the dock's shared directory, which the terminal and the file
   // panel move together. Following off: the terminal's own cwd — git is where the
@@ -126,9 +139,24 @@
   let busy = $state(false);
 
   let status = $state<GitStatus | null>(null);
-  let rows = $state<GraphRow[]>([]);
+  // Raw: a history reaches `LOG_CAP` commits, each read whole on every load.
+  let rows = $state.raw<GraphRow[]>([]);
   let branches = $state<GitBranch[]>([]);
+  let tags = $state<GitTag[]>([]);
   let stashes = $state<GitStashEntry[]>([]);
+
+  // The history as loaded: git narrows it by `filter`, a page at a time.
+  let filter = $state.raw<LogFilter>(NO_FILTER);
+  let commits: GitCommit[] = [];
+  // How many commits came from the log proper; a hash found by a search is not one of them.
+  let logged = 0;
+  let hasMore = $state(false);
+  let loadingMore = $state(false);
+  let searchError = $state<string | null>(null);
+  let logSeq = 0;
+  // A commit for the history to bring up (from the branch tree).
+  let reveal = $state<{ hash: string; seq: number } | null>(null);
+  let revealSeq = 0;
 
   // Network-op (fetch/pull/push) status strip + persistent remote-error badge.
   type SyncKind = "pull" | "push" | "fetch";
@@ -356,25 +384,117 @@
         repoRoot = null;
         status = null;
         rows = [];
+        commits = [];
+        logged = 0;
+        hasMore = false;
         branches = [];
+        tags = [];
         stashes = [];
         return;
       }
       isRepo = true;
-      repoRoot = root.stdout.trim();
-      const [st, log, br, stash] = await Promise.all([
+      const nextRoot = root.stdout.trim();
+      // Another repository: its refs and paths are not this filter's, and what was
+      // loaded of the last one says nothing about how much to ask of this one.
+      if (nextRoot !== repoRoot) {
+        filter = NO_FILTER;
+        logged = 0;
+        searchError = null;
+      }
+      repoRoot = nextRoot;
+      const [st, , br, tg, stash] = await Promise.all([
         gitRun(sessionId, cwd, statusArgs()),
-        gitRun(sessionId, cwd, logArgs()),
-        gitRun(sessionId, cwd, branchesArgs()),
+        loadLog(Math.max(LOG_PAGE, logged)),
+        loadBranches(),
+        gitRun(sessionId, cwd, tagsArgs()),
         gitRun(sessionId, cwd, stashListArgs()),
       ]);
       status = parseStatus(st.stdout);
-      rows = buildGraph(parseLog(log.stdout));
       branches = parseBranches(br.stdout);
+      tags = parseTags(tg.stdout);
       stashes = parseStashes(stash.stdout);
     } catch (e) {
       notifyError(String(e));
     }
+  }
+
+  /** Branches with where each is checked out; a git too old to say is asked without it. */
+  async function loadBranches() {
+    const res = await gitRun(sessionId, cwd!, branchesArgs());
+    return res.exitCode === 0 ? res : gitRun(sessionId, cwd!, branchesArgs(false));
+  }
+
+  /** The first `limit` commits for the current filter. A later load wins over an earlier one. */
+  async function loadLog(limit: number) {
+    const seq = ++logSeq;
+    const asked = filter;
+    const res = await gitRun(sessionId, cwd!, logArgs(limit, 0, asked));
+    // `--grep` reads messages, never hashes: a search shaped like one asks for that commit too.
+    const named = looksLikeHash(asked.text) ? await gitRun(sessionId, cwd!, hashLookupArgs(asked.text)) : null;
+    if (seq !== logSeq) return;
+    const found = res.exitCode === 0 ? parseLog(res.stdout) : [];
+    searchError = res.exitCode !== 0 && isFiltered(asked) ? res.stderr.trim() || t("git.opFailed") : null;
+    const hit = named?.exitCode === 0 ? parseLog(named.stdout) : [];
+    commits = [...hit, ...found.filter((c) => !hit.some((h) => h.hash === c.hash))];
+    logged = found.length;
+    hasMore = found.length >= limit && found.length < LOG_CAP;
+    rows = buildGraph(commits, primaryFor(commits, asked));
+  }
+
+  async function loadMore() {
+    if (!cwd || loadingMore || !hasMore) return;
+    const seq = logSeq;
+    const asked = filter;
+    const limit = Math.min(LOG_PAGE, LOG_CAP - logged);
+    loadingMore = true;
+    try {
+      const res = await gitRun(sessionId, cwd, logArgs(limit, logged, asked));
+      if (seq !== logSeq || res.exitCode !== 0) return;
+      const found = parseLog(res.stdout);
+      const known = new Set(commits.map((c) => c.hash));
+      commits = [...commits, ...found.filter((c) => !known.has(c.hash))];
+      logged += found.length;
+      hasMore = found.length >= limit && logged < LOG_CAP;
+      rows = buildGraph(commits, primaryFor(commits, asked));
+    } catch (e) {
+      notifyError(String(e));
+    } finally {
+      loadingMore = false;
+    }
+  }
+
+  /** Narrow the history; `thenReveal` (a short hash) comes up once it has loaded. */
+  async function setFilter(next: LogFilter, thenReveal?: string) {
+    if (!cwd) return;
+    filter = next;
+    try {
+      await loadLog(LOG_PAGE);
+    } catch (e) {
+      notifyError(String(e));
+      return;
+    }
+    if (thenReveal) revealShort(thenReveal);
+  }
+
+  function revealShort(short: string): boolean {
+    const hit = findByShort(commits, short);
+    if (hit) reveal = { hash: hit.hash, seq: ++revealSeq };
+    return !!hit;
+  }
+
+  /**
+   * Bring a branch's or a tag's commit up in the history. Older than what is loaded,
+   * it is at the top of that ref's own history, so that is what the list narrows to.
+   */
+  function revealRef(short: string, ref: string) {
+    if (!wide) chosen = "graph";
+    if (!revealShort(short)) void setFilter({ ...NO_FILTER, branch: ref }, short);
+  }
+
+  /** The history of one file, through its renames. */
+  function showFileHistory(path: string) {
+    if (!wide) chosen = "graph";
+    void setFilter({ ...NO_FILTER, path, follow: true });
   }
 
   // Reload when the terminal cwd changes, and once when the tab comes back into
@@ -391,8 +511,8 @@
   // Remember the sub-tab for the next mount of this session's panel. Untracked
   // write: creating this session's entry touches the state the call reads.
   $effect(() => {
-    const sub = activeSub;
-    untrack(() => rememberSub(sessionId, "git", sub));
+    const sub = chosen;
+    if (sub) untrack(() => rememberSub(sessionId, "git", sub));
   });
 
   const changeCount = $derived(status ? status.files.length : 0);
@@ -401,8 +521,12 @@
     { id: "changes", label: t("git.changes") },
     { id: "branches", label: t("git.branches") },
   ];
-  // Wide: the history is always on screen, so it is not a tab to switch to.
-  const shownSubs = $derived(wide ? SUBS.filter((s) => s.id !== "graph") : SUBS);
+  // Wide: the history is always on screen, so it is not a tab to switch to, and the
+  // branches beside it come first.
+  const WIDE_SUBS: Sub[] = ["branches", "changes"];
+  const shownSubs = $derived(
+    wide ? WIDE_SUBS.map((id) => SUBS.find((s) => s.id === id)!) : SUBS,
+  );
 </script>
 
 {#snippet subTabs()}
@@ -413,7 +537,7 @@
         ? 'px-4'
         : 'flex-1'} {leftSub === s.id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}"
       aria-current={leftSub === s.id ? "true" : undefined}
-      onclick={() => (activeSub = s.id)}
+      onclick={() => (chosen = s.id)}
     >
       {s.label}
       {#if s.id === "changes" && changeCount}
@@ -540,12 +664,30 @@
                 onOpenInEditor={openInEditor}
                 onOpenReadonlyDiff={openReadonlyDiff}
                 onIgnore={ignoreInRepo}
+                onFileHistory={showFileHistory}
                 {absPath}
                 {runQuery}
+                {wide}
+                filter={listFilter(sessionId, "git.changes")}
+                onfilter={(next) => setListFilter(sessionId, "git.changes", next)}
+                collapsed={collapsedGroups(sessionId, "git.changes")}
+                ontoggle={(key) =>
+                  setGroupsCollapsed(sessionId, "git.changes", [key], !collapsedGroups(sessionId, "git.changes").includes(key))}
               />
             {/if}
           {:else}
-            <GitBranches {branches} {stashes} bind:sendToTerminal {run} {runQuery} {openDiff} />
+            <GitBranches
+              {branches}
+              {tags}
+              {stashes}
+              {wide}
+              bind:sendToTerminal
+              {run}
+              {runQuery}
+              {openDiff}
+              onreveal={revealRef}
+              onlyref={(ref) => { if (!wide) chosen = "graph"; void setFilter({ ...NO_FILTER, branch: ref }); }}
+            />
           {/if}
         </div>
       {/if}
@@ -554,9 +696,24 @@
              other's expense (`PanelDivider`; the share is the store's). -->
         <PanelDivider split="git" width={rowWidth} />
       {/if}
-      {#if wide || activeSub === "graph"}
+      {#if wide || leftSub === "graph"}
         <div class="min-h-0 min-w-0 flex-1" data-testid="git-column-graph">
-          <GitGraph {rows} {wide} {run} {runQuery} {openDiff} />
+          <GitGraph
+            {rows}
+            {wide}
+            {filter}
+            {branches}
+            {hasMore}
+            {loadingMore}
+            {searchError}
+            {reveal}
+            {run}
+            {runQuery}
+            {openDiff}
+            onfilter={(next) => setFilter(next)}
+            onloadmore={loadMore}
+            onfilehistory={showFileHistory}
+          />
         </div>
       {/if}
     </div>

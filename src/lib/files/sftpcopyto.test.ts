@@ -14,6 +14,8 @@ const files: FileEntry[] = ["a.conf", "b.conf"].map((name) => ({
   mode: null, uid: null, gid: null, user: null, group: null,
 }));
 vi.mock("../api", () => ({
+  shellUser: vi.fn(async () => null),
+  onSessionSubmit: vi.fn(() => () => {}),
   sftpHome: vi.fn(async () => "/etc"),
   sftpList: vi.fn(async () => files),
   localHome: vi.fn(async () => "/Users/me"),

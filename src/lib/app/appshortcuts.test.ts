@@ -12,6 +12,7 @@ import {
   isSplitRightChord,
   isTermCopyChord,
   isTermPasteChord,
+  uiScaleChord,
   paneStepChord,
 } from "./appshortcuts";
 
@@ -62,7 +63,51 @@ describe("isPaletteChord", () => {
   });
 });
 
+describe("uiScaleChord", () => {
+  it("reads ⌘= ⌘− ⌘0 on macOS, by the physical key", () => {
+    expect(uiScaleChord(chord("=", { meta: true, code: "Equal" }))).toBe(1);
+    expect(uiScaleChord(chord("-", { meta: true, code: "Minus" }))).toBe(-1);
+    expect(uiScaleChord(chord("0", { meta: true, code: "Digit0" }))).toBe(0);
+  });
+  it("takes ⌘+, which is Shift+= on most layouts", () => {
+    expect(uiScaleChord(chord("+", { meta: true, shift: true, code: "Equal" }))).toBe(1);
+  });
+  it("reads Ctrl+Shift on Windows/Linux, where the layout reports the shifted glyph", () => {
+    expect(uiScaleChord(chord("+", { ctrl: true, shift: true, code: "Equal" }))).toBe(1);
+    expect(uiScaleChord(chord("_", { ctrl: true, shift: true, code: "Minus" }))).toBe(-1);
+    expect(uiScaleChord(chord(")", { ctrl: true, shift: true, code: "Digit0" }))).toBe(0);
+  });
+  it("takes the numeric keypad", () => {
+    expect(uiScaleChord(chord("+", { meta: true, code: "NumpadAdd" }))).toBe(1);
+    expect(uiScaleChord(chord("-", { meta: true, code: "NumpadSubtract" }))).toBe(-1);
+    expect(uiScaleChord(chord("0", { meta: true, code: "Numpad0" }))).toBe(0);
+  });
+  it("falls back to the key when there is no physical one", () => {
+    expect(uiScaleChord(chord("=", { meta: true }))).toBe(1);
+    expect(uiScaleChord(chord("+", { meta: true }))).toBe(1);
+    expect(uiScaleChord(chord("-", { meta: true }))).toBe(-1);
+    expect(uiScaleChord(chord("_", { meta: true }))).toBe(-1);
+    expect(uiScaleChord(chord("0", { meta: true }))).toBe(0);
+    expect(uiScaleChord(chord(")", { meta: true }))).toBe(0);
+    expect(uiScaleChord(chord("x", { meta: true }))).toBeNull();
+  });
+  it("leaves plain Ctrl and bare keys with the shell", () => {
+    expect(uiScaleChord(chord("-", { ctrl: true, code: "Minus" }))).toBeNull();
+    expect(uiScaleChord(chord("=", { code: "Equal" }))).toBeNull();
+    expect(uiScaleChord(chord("-", { shift: true, code: "Minus" }))).toBeNull();
+  });
+  it("is not another chord on the same modifiers, nor one with Alt", () => {
+    expect(uiScaleChord(chord("t", { meta: true, code: "KeyT" }))).toBeNull();
+    expect(uiScaleChord(chord("=", { meta: true, alt: true, code: "Equal" }))).toBeNull();
+    expect(uiScaleChord(chord("=", { ctrl: true, shift: true, alt: true, code: "Equal" }))).toBeNull();
+  });
+});
+
 describe("isAppShortcut", () => {
+  it("releases the scale chords from the terminal", () => {
+    expect(isAppShortcut(chord("=", { meta: true, code: "Equal" }))).toBe(true);
+    expect(isAppShortcut(chord("+", { ctrl: true, shift: true, code: "Equal" }))).toBe(true);
+  });
   it("is true for every app chord the terminal must release", () => {
     expect(isAppShortcut(chord("t", { meta: true }))).toBe(true);
     expect(isAppShortcut(chord("k", { meta: true }))).toBe(true);

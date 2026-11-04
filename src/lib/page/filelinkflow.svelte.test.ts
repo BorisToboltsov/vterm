@@ -89,10 +89,19 @@ describe("file link flow: a click", () => {
       target: file("/etc/nginx/nginx.conf"),
       where: "db-01",
       prod: true,
+      following: false,
     });
     expect(openFile).not.toHaveBeenCalled();
     flow.clicked("l", file("/tmp/x"));
     expect(flow.ask).toMatchObject({ sessionId: "l", where: null, prod: false });
+    cleanup();
+  });
+
+  it("the question knows path sync is on: a folder would move the terminal too", () => {
+    settings.terminalFileLinks = "confirm";
+    const { flow, cleanup } = harness([tab("a")], { a: true });
+    flow.clicked("a", { kind: "dir", path: "/var/log" });
+    expect(flow.ask).toMatchObject({ kind: "open", following: true });
     cleanup();
   });
 
@@ -113,6 +122,17 @@ describe("file link flow: a click", () => {
     const { flow, cleanup } = harness([tab("a")]);
     flow.clicked("a", { kind: "unplaced" });
     expect(flow.ask).toEqual({ kind: "sync", sessionId: "a", where: "a", following: false });
+    cleanup();
+  });
+
+  it("a name its folder turned out not to have says so, and asks nothing", () => {
+    settings.terminalFileLinks = "confirm";
+    const { flow, openFile, cleanup } = harness([tab("a")]);
+    flow.clicked("a", { kind: "missing", name: "gone.txt" });
+    expect(stores.notifyInfo).toHaveBeenCalledTimes(1);
+    expect(stores.notifyInfo.mock.calls[0][0]).toContain("gone.txt");
+    expect(flow.ask).toBeNull();
+    expect(openFile).not.toHaveBeenCalled();
     cleanup();
   });
 });

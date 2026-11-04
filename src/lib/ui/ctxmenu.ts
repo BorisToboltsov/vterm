@@ -19,6 +19,8 @@ export interface MenuAction {
    * is ticked or not, and announces the row as a checkbox.
    */
   checked?: boolean;
+  /** A short figure at the right of the row — how many items a facet value keeps (v1.29). */
+  hint?: string;
   onSelect: () => void;
 }
 

@@ -20,6 +20,8 @@ vi.mock("@tauri-apps/api/webview", () => ({
 const localList = vi.fn();
 const localHome = vi.fn();
 vi.mock("../api", () => ({
+  shellUser: vi.fn(async () => null),
+  onSessionSubmit: vi.fn(() => () => {}),
   localList: (...a: unknown[]) => localList(...a),
   localHome: (...a: unknown[]) => localHome(...a),
   localMkdir: vi.fn(),

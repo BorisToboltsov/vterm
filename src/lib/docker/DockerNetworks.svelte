@@ -12,6 +12,12 @@
   import InfoHint from "../ui/InfoHint.svelte";
   import ViewModeToggle from "../ui/ViewModeToggle.svelte";
   import DockerNetGraph from "./DockerNetGraph.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import ListHeader from "../ui/ListHeader.svelte";
+  import { listMenuText, type ListLabels } from "../ui/listtext";
+  import { filterSummary, isFiltered, keeps, NO_FILTER, type ListFilter } from "../ui/listview";
+  import type { OpenMenu } from "../ui/ctxmenu";
   import { tooltip } from "../actions/tooltip";
   import {
     removeNetworkArgs,
@@ -19,6 +25,8 @@
     pruneNetworksArgs,
     pruneVolumesArgs,
     stateTone,
+    NET_SCHEMA,
+    type NetItem,
     type DockerContainer,
     type DockerNetwork,
     type DockerVolume,
@@ -42,6 +50,12 @@
     onView,
     busy = false,
     run,
+    wide = false,
+    filter = NO_FILTER,
+    onfilter = () => {},
+    collapsed = [],
+    ontoggle = () => {},
+    onmenu = () => {},
   }: {
     networks: DockerNetwork[];
     volumes: DockerVolume[];
@@ -52,12 +66,35 @@
     onView?: (view: "list" | "graph") => void;
     busy?: boolean;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
+    /** The panel's width threshold, for the filter row (v1.29). */
+    wide?: boolean;
+    /** What the three sections are narrowed to — this session's, kept by the panel. */
+    filter?: ListFilter;
+    onfilter?: (next: ListFilter) => void;
+    /** Folded sections: `ports`, `networks`, `volumes`. */
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
+    onmenu?: (menu: OpenMenu) => void;
   } = $props();
 
   const TONE: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", idle: "bg-muted" };
 
   const ports = $derived(containerPorts(containers));
   const members = $derived(membersByNetwork(containers));
+
+  // One filter over the three sections (v1.29): the text by name, the driver
+  // facet over networks and volumes (`NET_SCHEMA`).
+  const portItem = (p: { container: DockerContainer }): NetItem => ({ kind: "port", name: p.container.name });
+  const netItem = (n: DockerNetwork): NetItem => ({ kind: "network", name: n.name, driver: n.driver });
+  const volumeItem = (v: DockerVolume): NetItem => ({ kind: "volume", name: v.name, driver: v.driver });
+  const items = $derived<NetItem[]>([...ports.map(portItem), ...networks.map(netItem), ...volumes.map(volumeItem)]);
+  const shownPorts = $derived(ports.filter((p) => keeps(portItem(p), NET_SCHEMA, filter)));
+  const shownNetworks = $derived(networks.filter((n) => keeps(netItem(n), NET_SCHEMA, filter)));
+  const shownVolumes = $derived(volumes.filter((v) => keeps(volumeItem(v), NET_SCHEMA, filter)));
+  const shown = $derived(shownPorts.length + shownNetworks.length + shownVolumes.length);
+  const narrowed = $derived(isFiltered(filter));
+  const LABELS: ListLabels = { facet: () => t("docker.driver") };
+  const folded = (key: string) => collapsed.includes(key);
 
   /** `8080 → 80/tcp`, a declared-only `7000/tcp`, or docker's own text when unrecognized. */
   function mapping(row: PortRow): string {
@@ -88,12 +125,7 @@
 </script>
 
 <div class="flex h-full min-h-0 flex-col text-xs">
-  <!-- View switch. Over the graph the strip also carries its one caveat. -->
-  <div class="flex shrink-0 items-center gap-1.5 border-b border-edge px-2.5 py-1">
-    {#if view === "graph"}
-      <span class="min-w-0 truncate text-caption text-muted">{t("docker.graphCaption")}</span>
-      <InfoHint text={t("docker.graphHint")} />
-    {/if}
+  {#snippet viewSwitch()}
     <div class="ml-auto shrink-0">
       <ViewModeToggle
         structured={view === "graph"}
@@ -104,7 +136,32 @@
         testid="docker-net-view"
       />
     </div>
-  </div>
+  {/snippet}
+  {#if view === "graph"}
+    <!-- View switch. Over the graph the strip also carries its one caveat. -->
+    <div class="flex shrink-0 items-center gap-1.5 border-b border-edge px-2.5 py-1">
+      <span class="min-w-0 truncate text-caption text-muted">{t("docker.graphCaption")}</span>
+      <InfoHint text={t("docker.graphHint")} />
+      {@render viewSwitch()}
+    </div>
+  {:else}
+    <!-- The list's filter row carries the switch, where the strip had it. -->
+    <ListHeader
+      {items}
+      schema={NET_SCHEMA}
+      {filter}
+      {onfilter}
+      {shown}
+      total={items.length}
+      labels={LABELS}
+      placeholder={t("docker.name")}
+      {wide}
+      {onmenu}
+      testid="docker-net-header"
+    >
+      {@render viewSwitch()}
+    </ListHeader>
+  {/if}
 
   {#if view === "graph"}
     <div class="min-h-0 flex-1">
@@ -112,14 +169,20 @@
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-auto">
+      {#if narrowed && shown === 0}
+        <FilteredEmpty
+          summary={filterSummary(NET_SCHEMA, filter, listMenuText(LABELS))}
+          onreset={() => onfilter(NO_FILTER)}
+        />
+      {:else}
       <!-- Ports: what each one is reachable from -->
-      <div class="border-b border-edge px-2.5 py-1 text-caption uppercase tracking-wider text-muted">{t("docker.ports")}</div>
-      {#if ports.length === 0}
+      <GroupHeader label={t("docker.ports")} count={shownPorts.length} collapsed={folded("ports")} ontoggle={() => ontoggle("ports")} testid="docker-net-section" />
+      {#if ports.length === 0 && !folded("ports")}
         <div class="border-b border-edge/60 px-2.5 py-2 text-meta text-muted" data-testid="docker-ports-empty">{t("docker.noPorts")}</div>
       {/if}
-      {#each ports as p (p.container.id)}
+      {#each folded("ports") ? [] : shownPorts as p (p.container.id)}
         <div class="flex items-start gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" role="listitem" data-testid="docker-ports-row">
-          <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[stateTone(p.container.state)]}" use:tooltip={p.container.state}></span>
+          <span class="mt-1 h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[stateTone(p.container.state)]}" use:tooltip={p.container.state}></span>
           <span class="w-2/5 min-w-0 shrink-0 truncate font-medium text-text/90 @wide:w-64" use:tooltip={p.container.name}>{p.container.name}</span>
           <div class="min-w-0 flex-1">
             {#each p.rows as row}
@@ -143,13 +206,14 @@
       {/each}
 
       <!-- Networks -->
-      <div class="flex items-center justify-between border-b border-edge px-2.5 py-1 text-caption uppercase tracking-wider text-muted">
-        <span>{t("docker.networks")}</span>
-        <button class="flex items-center gap-1 rounded px-1 py-0.5 normal-case hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneNetworksArgs(), { destructive: true, successKey: "docker.pruned" })}>
-          <Icon name="trash" size={11} />{t("docker.prune")}
-        </button>
-      </div>
-      {#each networks as n (n.id)}
+      <GroupHeader label={t("docker.networks")} count={shownNetworks.length} collapsed={folded("networks")} ontoggle={() => ontoggle("networks")} testid="docker-net-section">
+        {#snippet actions()}
+          <button class="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-caption text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneNetworksArgs(), { destructive: true, successKey: "docker.pruned" })}>
+            <Icon name="trash" size={11} />{t("docker.prune")}
+          </button>
+        {/snippet}
+      </GroupHeader>
+      {#each folded("networks") ? [] : shownNetworks as n (n.id)}
         {@const inside = members.get(n.name) ?? []}
         {@const note = networkNote(n)}
         <div class="group border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30" data-testid="docker-network-row">
@@ -162,31 +226,32 @@
             </button>
           </div>
           {#if note}
-            <div class="pl-[22px] text-caption text-muted">{note}</div>
+            <div class="pl-[1.375rem] text-caption text-muted">{note}</div>
           {/if}
           {#if inside.length > 0}
-            <div class="flex flex-wrap gap-x-3 gap-y-0.5 pl-[22px] pt-0.5">
+            <div class="flex flex-wrap gap-x-3 gap-y-0.5 pl-[1.375rem] pt-0.5">
               {#each inside as c (c.id)}
                 <span class="flex min-w-0 items-center gap-1 text-caption text-text/80" data-testid="docker-network-member">
-                  <span class="h-[6px] w-[6px] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+                  <span class="h-[0.375rem] w-[0.375rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
                   <span class="truncate">{c.name}</span>
                 </span>
               {/each}
             </div>
           {:else if isSharedNetwork(n.name)}
-            <div class="pl-[22px] text-caption text-muted">{t("docker.netEmpty")}</div>
+            <div class="pl-[1.375rem] text-caption text-muted">{t("docker.netEmpty")}</div>
           {/if}
         </div>
       {/each}
 
       <!-- Volumes -->
-      <div class="flex items-center justify-between border-b border-edge px-2.5 py-1 text-caption uppercase tracking-wider text-muted">
-        <span>{t("docker.volumes")}</span>
-        <button class="flex items-center gap-1 rounded px-1 py-0.5 normal-case hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneVolumesArgs(), { destructive: true, successKey: "docker.pruned" })}>
-          <Icon name="trash" size={11} />{t("docker.prune")}
-        </button>
-      </div>
-      {#each volumes as v (v.name)}
+      <GroupHeader label={t("docker.volumes")} count={shownVolumes.length} collapsed={folded("volumes")} ontoggle={() => ontoggle("volumes")} testid="docker-net-section">
+        {#snippet actions()}
+          <button class="flex shrink-0 items-center gap-1 rounded px-1 py-0.5 text-caption text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} onclick={() => run(pruneVolumesArgs(), { destructive: true, successKey: "docker.pruned" })}>
+            <Icon name="trash" size={11} />{t("docker.prune")}
+          </button>
+        {/snippet}
+      </GroupHeader>
+      {#each folded("volumes") ? [] : shownVolumes as v (v.name)}
         <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30">
           <Icon name="database" size={14} class="shrink-0 text-accent" />
           <span class="min-w-0 flex-1 truncate text-text/90">{v.name}</span>
@@ -196,6 +261,7 @@
           </button>
         </div>
       {/each}
+      {/if}
     </div>
   {/if}
 </div>

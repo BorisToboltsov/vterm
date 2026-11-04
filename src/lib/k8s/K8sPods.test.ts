@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import K8sPods from "./K8sPods.svelte";
 import { LIST_COLUMNS } from "../ui/colwidths";
 import { resetColumnWidths, setColumnWidth } from "../stores/colwidths.svelte";
-import type { K8sPod, K8sPodMetrics, PodGroup } from "./k8s";
+import type { K8sPod, K8sPodMetrics } from "./k8s";
+import type { ListGroup } from "../ui/listview";
 
 function pod(over: Partial<K8sPod> = {}): K8sPod {
   return {
@@ -27,7 +28,7 @@ function pod(over: Partial<K8sPod> = {}): K8sPod {
 }
 
 function props(pods: K8sPod[] = [pod()], metrics: [string, K8sPodMetrics][] = []) {
-  const groups: PodGroup[] = [{ kind: "Deployment", name: "checkout", pods }];
+  const groups: ListGroup<K8sPod>[] = [{ key: "Deployment/checkout", label: "checkout", rest: false, items: pods }];
   return {
     groups,
     metricsByKey: new Map<string, K8sPodMetrics>(metrics),
@@ -164,7 +165,7 @@ describe("K8sPods — columns of the wide layout", () => {
     render(K8sPods, { props: props([a, b, c], [...withMetrics(a), ...withMetrics(c)]) });
     const head = [...screen.getByTestId("k8s-columns").children].map(size);
     expect(head).toEqual([
-      "w-[7px]", // state dot
+      "w-[0.4375rem]", // state dot
       "w-[var(--c-name)]",
       "w-[var(--c-ns)]",
       "w-[var(--c-node)]",
@@ -191,11 +192,11 @@ describe("K8sPods — columns of the wide layout", () => {
   it("feeds the widths to the list as CSS variables — the user's, or the defaults", () => {
     render(K8sPods, { props: props() });
     const list = screen.getByTestId("k8s-columns").parentElement!;
-    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["k8s.name"]}px`);
+    expect(list.style.getPropertyValue("--c-name")).toBe(`${LIST_COLUMNS["k8s.name"] / 16}rem`);
     setColumnWidth("k8s.node", 240);
     flushSync();
-    expect(list.style.getPropertyValue("--c-node")).toBe("240px");
-    expect(list.style.getPropertyValue("--c-ns")).toBe(`${LIST_COLUMNS["k8s.namespace"]}px`);
+    expect(list.style.getPropertyValue("--c-node")).toBe("15rem");
+    expect(list.style.getPropertyValue("--c-ns")).toBe(`${LIST_COLUMNS["k8s.namespace"] / 16}rem`);
   });
 
   it("rules the columns: text cells on the right, figures on the left, full row height", () => {

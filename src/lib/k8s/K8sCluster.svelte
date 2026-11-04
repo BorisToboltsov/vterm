@@ -5,18 +5,25 @@
   // are read-only with a Warning/Normal filter for diagnostics. Presentational +
   // action wiring; arg building is pure (k8s.ts), the orchestrator's `run` executes.
   import Icon from "../ui/Icon.svelte";
+  import FilteredEmpty from "../ui/FilteredEmpty.svelte";
+  import GroupHeader from "../ui/GroupHeader.svelte";
+  import ListHeader from "../ui/ListHeader.svelte";
   import { tooltip } from "../actions/tooltip";
+  import { listMenuText, type ListLabels } from "../ui/listtext";
+  import { applyView, filterSummary, NO_FILTER, type ListFilter, type ListOrder } from "../ui/listview";
   import {
     cordonArgs,
     uncordonArgs,
     drainArgs,
     nodeStatusTone,
     eventTone,
+    EVENT_ORDER,
+    EVENT_SCHEMA,
     type K8sNode,
     type K8sEvent,
   } from "./k8s";
-  import type { MenuItem } from "../ui/ctxmenu";
-  import { t, type MessageKey } from "../i18n";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
+  import { t } from "../i18n";
 
   let {
     nodes,
@@ -26,6 +33,14 @@
     onDescribe,
     onYaml,
     showMenu,
+    wide = false,
+    eventFilter = NO_FILTER,
+    oneventfilter = () => {},
+    eventOrder = EVENT_ORDER,
+    oneventorder = () => {},
+    collapsed = [],
+    ontoggle = () => {},
+    onmenu = () => {},
   }: {
     nodes: K8sNode[];
     events: K8sEvent[];
@@ -34,6 +49,17 @@
     onDescribe: (kind: string, name: string, namespace: string) => void;
     onYaml: (kind: string, name: string, namespace: string) => void;
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
+    /** The panel's width threshold, for the events' filter row (v1.29). */
+    wide?: boolean;
+    /** What the events are narrowed to — this session's, kept by the panel. */
+    eventFilter?: ListFilter;
+    oneventfilter?: (next: ListFilter) => void;
+    eventOrder?: ListOrder;
+    oneventorder?: (next: ListOrder) => void;
+    /** Folded sections: `nodes`, `events`. */
+    collapsed?: readonly string[];
+    ontoggle?: (key: string) => void;
+    onmenu?: (menu: OpenMenu) => void;
   } = $props();
 
   const TONE: Record<string, string> = {
@@ -43,16 +69,15 @@
     idle: "bg-muted",
   };
 
-  type Filter = "all" | "Warning" | "Normal";
-  let filter = $state<Filter>("all");
-  const FILTERS: { id: Filter; label: MessageKey }[] = [
-    { id: "all", label: "k8s.eventsAll" },
-    { id: "Warning", label: "k8s.eventsWarning" },
-    { id: "Normal", label: "k8s.eventsNormal" },
-  ];
-  const shownEvents = $derived(
-    (filter === "all" ? events : events.filter((e) => e.type === filter)).slice(0, 100),
-  );
+  // The events' filter row (v1.29): the Warning / Normal chips became the «Type»
+  // facet; the list still shows the latest hundred of what is kept.
+  const EVENT_LABELS: ListLabels = {
+    sort: (id) => t(id === "time" ? "k8s.time" : "k8s.count"),
+    facet: () => t("k8s.eventType"),
+  };
+  const eventView = $derived(applyView(events, EVENT_SCHEMA, eventFilter, eventOrder));
+  const shownEvents = $derived(eventView.groups[0].items.slice(0, 100));
+  const folded = (key: string) => collapsed.includes(key);
 
   function copy(text: string) {
     void navigator.clipboard?.writeText(text);
@@ -74,21 +99,17 @@
 
 <div class="h-full overflow-auto text-xs">
   <!-- Nodes -->
-  <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
-    <Icon name="server" size={13} class="text-accent" />
-    <span class="font-medium text-text/85">{t("k8s.nodes")}</span>
-    <span class="text-caption text-muted">{nodes.length}</span>
-  </div>
-  {#if nodes.length === 0}
+  <GroupHeader label={t("k8s.nodes")} count={nodes.length} collapsed={folded("nodes")} ontoggle={() => ontoggle("nodes")} icon="server" testid="k8s-cluster-section" />
+  {#if !folded("nodes") && nodes.length === 0}
     <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noNodes")}</div>
-  {:else}
+  {:else if !folded("nodes")}
     {#each nodes as n (n.name)}
       <div
         class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 pl-2.5 hover:bg-edge/30"
         oncontextmenu={(e) => showMenu(e, nodeMenu(n))}
         role="listitem"
       >
-        <span class="h-[7px] w-[7px] shrink-0 rounded-full {TONE[nodeStatusTone(n.status)]}" use:tooltip={n.status}></span>
+        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[nodeStatusTone(n.status)]}" use:tooltip={n.status}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="truncate font-medium text-text/90">{n.name}</span>
@@ -116,28 +137,36 @@
   {/if}
 
   <!-- Events -->
-  <div class="flex items-center gap-1.5 border-b border-edge bg-panel px-2.5 py-1.5">
-    <Icon name="activity" size={13} class="text-accent" />
-    <span class="flex-1 font-medium text-text/85">{t("k8s.events")}</span>
-    <div class="flex items-center gap-0.5">
-      {#each FILTERS as f (f.id)}
-        <button
-          data-testid={`k8s-event-filter-${f.id}`}
-          class="rounded border px-1.5 py-0.5 text-caption {filter === f.id ? 'border-accent text-accent' : 'border-edge text-muted hover:text-text'}"
-          aria-pressed={filter === f.id}
-          onclick={() => (filter = f.id)}
-        >
-          {t(f.label)}
-        </button>
-      {/each}
-    </div>
-  </div>
-  {#if shownEvents.length === 0}
+  <GroupHeader label={t("k8s.events")} count={eventView.shown} collapsed={folded("events")} ontoggle={() => ontoggle("events")} icon="activity" testid="k8s-cluster-section" />
+  {#if !folded("events")}
+  {#if events.length > 0}
+    <ListHeader
+      items={events}
+      schema={EVENT_SCHEMA}
+      filter={eventFilter}
+      onfilter={oneventfilter}
+      order={eventOrder}
+      onorder={oneventorder}
+      shown={eventView.shown}
+      total={eventView.total}
+      labels={EVENT_LABELS}
+      placeholder={t("k8s.filterEvents")}
+      {wide}
+      {onmenu}
+      testid="k8s-events-header"
+    />
+  {/if}
+  {#if eventView.filtered && eventView.shown === 0}
+    <FilteredEmpty
+      summary={filterSummary(EVENT_SCHEMA, eventFilter, listMenuText(EVENT_LABELS))}
+      onreset={() => oneventfilter(NO_FILTER)}
+    />
+  {:else if shownEvents.length === 0}
     <div class="px-2.5 py-2 text-meta text-muted">{t("k8s.noEvents")}</div>
   {:else}
     {#each shownEvents as e, idx (idx)}
       <div class="flex items-start gap-2 border-b border-edge/60 py-1.5 pr-2 pl-2.5">
-        <span class="mt-1 h-[7px] w-[7px] shrink-0 rounded-full {TONE[eventTone(e.type)]}" use:tooltip={e.type}></span>
+        <span class="mt-1 h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[eventTone(e.type)]}" use:tooltip={e.type}></span>
         <div class="min-w-0 flex-1">
           <div class="flex items-baseline gap-1.5">
             <span class="shrink-0 font-medium text-text/90">{e.reason}</span>
@@ -151,5 +180,6 @@
         </div>
       </div>
     {/each}
+  {/if}
   {/if}
 </div>

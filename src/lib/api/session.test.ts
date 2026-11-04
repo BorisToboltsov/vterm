@@ -44,6 +44,15 @@ describe("onSessionSubmit", () => {
     stop();
   });
 
+  it("tells path sync's setup line from a command", async () => {
+    const heard = vi.fn();
+    const stop = onSessionSubmit("s1", heard);
+    await writeToTerminal("s1", bytes("ls\r"));
+    await writeToTerminal("s1", bytes("setup\r"), true);
+    expect(heard.mock.calls.map((c) => c[1])).toEqual([false, true]);
+    stop();
+  });
+
   it("does not hear keystrokes without Enter, or another session", async () => {
     const heard = vi.fn();
     const stop = onSessionSubmit("s1", heard);

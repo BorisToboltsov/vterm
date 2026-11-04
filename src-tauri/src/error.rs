@@ -95,6 +95,25 @@ pub enum AppError {
     #[error("hash-incomplete: the server's file listing ended early")]
     HashIncomplete,
 
+    /// The file panel was asked to work as another user, and `sudo` wants a
+    /// password that was not given: a question to ask, not a failure (`sudo-password`).
+    #[error("sudo-password: sudo asks for a password")]
+    SudoPasswordRequired,
+
+    /// `sudo` did not take the password it was given (`sudo-rejected`).
+    #[error("sudo-rejected: sudo did not accept the password")]
+    SudoPasswordRejected,
+
+    /// `sudo` will not do it, whatever the password: no rights, no `sudo`, a
+    /// `requiretty`. Carries what it said (`sudo-refused`).
+    #[error("sudo-refused: {0}")]
+    SudoRefused(String),
+
+    /// `sudo` agrees, but the server has no `sftp-server` program to run under it
+    /// (`sftp-server-missing`).
+    #[error("sftp-server-missing: no sftp-server program found on the server")]
+    SftpServerMissing,
+
     /// The user stopped a long operation (e.g. hashing a sync tree). Not a failure:
     /// the frontend matches `cancelled` and shows nothing.
     #[error("cancelled: stopped by the user")]
@@ -165,6 +184,18 @@ mod tests {
     #[test]
     fn markers_are_present_in_display() {
         assert!(AppError::AuthRejected.to_string().contains("auth-rejected"));
+        assert!(AppError::SudoPasswordRequired
+            .to_string()
+            .starts_with("sudo-password:"));
+        assert!(AppError::SudoPasswordRejected
+            .to_string()
+            .starts_with("sudo-rejected:"));
+        assert!(AppError::SudoRefused("no".into())
+            .to_string()
+            .starts_with("sudo-refused:"));
+        assert!(AppError::SftpServerMissing
+            .to_string()
+            .starts_with("sftp-server-missing:"));
         assert!(AppError::HostKeyRejected
             .to_string()
             .contains("host-key-rejected"));

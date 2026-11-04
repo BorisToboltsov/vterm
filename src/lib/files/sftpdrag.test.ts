@@ -19,6 +19,8 @@ const entry = (name: string, isDir = false): FileEntry => ({
 const listing = [entry("backup", true), entry("a.conf"), entry("b.conf")];
 const sftpRename = vi.fn();
 vi.mock("../api", () => ({
+  shellUser: vi.fn(async () => null),
+  onSessionSubmit: vi.fn(() => () => {}),
   sftpHome: vi.fn(async () => "/srv"),
   sftpList: vi.fn(async () => listing),
   sftpMkdir: vi.fn(),

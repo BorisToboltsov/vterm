@@ -7,10 +7,12 @@ name: Глубокие проверки
 #
 #   fuzz      — те же property-тесты, что на PR, но на два порядка глубже;
 #   live-sftp — что делает НАСТОЯЩИЙ sshd, а не что вычислила функция (и
-#               вход через keyboard-interactive — live_kbdint);
+#               вход через keyboard-interactive — live_kbdint;
+#               настоящие su и sudo — live_fileuser);
 #   e2e       — реальное нативное окно через tauri-driver.
 #
-# Не на PR: полтора-два часа раннера против задержки каждого мерджа. Раз в месяц
+# Не на PR: около 18 минут раннера и 9 минут ожидания на каждый пуш (релиз v1.25.10; график —
+# в docs/CI.md). Раз в месяц
 # по расписанию — чтобы дрейф окружения (tauri-driver, образ sshd, пакеты
 # раннера) всплывал сам, а не на теге. До 1.25.5 файл звался nightly.yml, хотя
 # ночью не шёл никогда.
@@ -125,11 +127,22 @@ jobs:
       - name: Прогон (keyboard-interactive)
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_kbdint -- --ignored
 
+      # Панель файлов под пользователем терминала (v1.26): что настоящие su и sudo
+      # показывают в дереве процессов и что sftp-server через sudo говорит на протоколе.
+      - name: Тестовый sshd (su и sudo)
+        run: |
+          docker compose -f e2e/docker-compose.sudo.yml up -d --build --wait --wait-timeout 90 \
+            || { docker compose -f e2e/docker-compose.sudo.yml logs; exit 1; }
+
+      - name: Прогон (su и sudo)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib live_fileuser -- --ignored
+
       - name: Погасить sshd
         if: always()
         run: |
           docker compose -f e2e/docker-compose.ssh.yml down
           docker compose -f e2e/docker-compose.kbdint.yml down
+          docker compose -f e2e/docker-compose.sudo.yml down
 
   # ── E2E: реальное окно ──────────────────────────────────────────────────────
   # tauri-driver не поддерживает macOS, поэтому локально на этой машине E2E не

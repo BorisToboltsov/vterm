@@ -10,7 +10,8 @@
          the Deep Well default panel. The inline script upgrades it to the last-used
          theme's panel colour from localStorage so the first paint matches the active
          theme (see settings.svelte.ts CHROME_PANEL_KEY). Signature-theme depth is a
-         top overlay (ThemeOverlay.svelte), not a first-paint concern. -->
+         top overlay (ThemeOverlay.svelte), not a first-paint concern. It also sets the
+         interface scale (uiscale.ts UI_SCALE_KEY): the layout would jump otherwise. -->
     <style>
       html,
       body {
@@ -25,6 +26,8 @@
           s.backgroundColor = c;
           s.setProperty("--color-panel", c);
         }
+        var u = localStorage.getItem("vterm.uiScale");
+        if (u) document.documentElement.style.fontSize = u + "%";
       } catch (e) {
         /* localStorage unavailable — the static dark background above still applies */
       }

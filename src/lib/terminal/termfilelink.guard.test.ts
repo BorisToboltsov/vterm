@@ -18,7 +18,11 @@ import { describe, expect, it } from "vitest";
 //  - a block of output reads names in the folder taken when its line was sent:
 //    on a local tab the backend's note (`submittedCwd`), never the folder the
 //    shell stands in now (`localCwd`); over SSH the folder the shell reported
-//    since the last line;
+//    since the last line — and what it reports for path sync's setup line goes
+//    to the command before it, so that line has to be said to be one all the way
+//    from the flow that types it;
+//  - a link to a name no folder placed reads the line again when clicked: xterm
+//    keeps a row's links, and the folder may have come since;
 //  - the backend notes that folder before the bytes reach the shell, and only
 //    while the shell itself holds the terminal (a line typed into `ssh` or a
 //    REPL is that program's);
@@ -88,8 +92,18 @@ export function terminalViolations(raw: string): string[] {
   if (count(src, /fileLinks\?\.noteCwd\(path\)/g) !== 2) {
     out.push("a folder the shell reported does not reach the file links");
   }
-  if (!/onSessionSubmit\(sessionId, \(written\) => fileLinks\?\.noteSubmit\(written\)\)/.test(src)) {
-    out.push("the lines sent to the session do not start blocks");
+  if (!/onSessionSubmit\(sessionId, \(written, setup\) => fileLinks\?\.noteSubmit\(written, setup\)\)/.test(src)) {
+    out.push("the lines sent to the session do not start blocks, or the setup line is not told from a command");
+  }
+  return out;
+}
+
+/** Violations in the path-sync flow: the one place that types the setup line. */
+export function flowViolations(raw: string): string[] {
+  const src = strip(raw);
+  const out: string[] = [];
+  if (!/writeToTerminal\(id, new TextEncoder\(\)\.encode\(submitLine\(OSC7_SETUP\)\), true\)/.test(src)) {
+    out.push("the setup line is typed without saying it is one");
   }
   return out;
 }
@@ -114,12 +128,18 @@ export function providerViolations(raw: string): string[] {
   if (!/if \(buf\.type !== "normal" \|\| term\.modes\.mouseTrackingMode !== "none"\) \{\s*callback\(undefined\);/.test(src)) {
     out.push("links are offered over a full-screen program or one that takes the mouse");
   }
-  const submit = block(src, "noteSubmit(written)");
+  const submit = block(src, "noteSubmit(written, setup = false)");
   if (!/const fromReport = armed \? reported : null;\s*armed = false;/.test(submit)) {
     out.push("a block over SSH borrows a folder the shell did not report since the last line");
   }
   if (!/written\.then\(\(\) => host\.submittedCwd\(\)\)/.test(submit)) {
     out.push("a local block does not take the folder noted when its line was sent");
+  }
+  if (!/beforeSetup = null;[^]*if \(setup\) beforeSetup = live\(\)\.at\(-1\) \?\? null;/.test(submit)) {
+    out.push("a report is taken for a command other than the one right before the setup line");
+  }
+  if (/activate: \(event\) => activate\(event, \{ kind: "unplaced" \}\)/.test(src)) {
+    out.push("a click on a name no folder placed trusts what the link was built with");
   }
   return out;
 }
@@ -162,10 +182,15 @@ export function backendViolations(raw: string): string[] {
 const TERMINAL = "lib/terminal/Terminal.svelte";
 const PROVIDER = "lib/terminal/filelinkprovider.ts";
 const PAGE = "routes/+page.svelte";
+const FLOW = "lib/page/pathsyncflow.svelte.ts";
 
 describe("terminal file link guard", () => {
   it("the terminal shows file links only where the page and the setting allow", () => {
     expect(terminalViolations(read(TERMINAL))).toEqual([]);
+  });
+
+  it("the setup line is said to be one", () => {
+    expect(flowViolations(read(FLOW))).toEqual([]);
   });
 
   it("a click opens only without a selection and past a double-click", () => {
@@ -229,9 +254,44 @@ describe("terminal file link guard — catches what it exists for", () => {
   });
 
   it("an SSH block that keeps the last folder after a line went to another program", () => {
-    const src = swap(read(PROVIDER), "armed = false;\n      // Enter", "// Enter");
+    const src = swap(read(PROVIDER), "armed = false;\n      // Any later", "// Any later");
     expect(providerViolations(src)).toContain(
       "a block over SSH borrows a folder the shell did not report since the last line",
+    );
+  });
+
+  it("a setup line typed without saying so", () => {
+    const flow = swap(read(FLOW), "submitLine(OSC7_SETUP)), true)", "submitLine(OSC7_SETUP)))");
+    expect(flowViolations(flow)).toContain("the setup line is typed without saying it is one");
+    const terminal = swap(
+      read(TERMINAL),
+      "(written, setup) => fileLinks?.noteSubmit(written, setup)",
+      "(written) => fileLinks?.noteSubmit(written)",
+    );
+    expect(terminalViolations(terminal)).toContain(
+      "the lines sent to the session do not start blocks, or the setup line is not told from a command",
+    );
+  });
+
+  it("a report taken for a command other than the one before the setup line", () => {
+    const always = swap(read(PROVIDER), "if (setup) beforeSetup = live().at(-1) ?? null;", "beforeSetup = live().at(-1) ?? null;");
+    expect(providerViolations(always)).toContain(
+      "a report is taken for a command other than the one right before the setup line",
+    );
+    const lingers = swap(read(PROVIDER), "beforeSetup = null;\n      // Enter", "// Enter");
+    expect(providerViolations(lingers)).toContain(
+      "a report is taken for a command other than the one right before the setup line",
+    );
+  });
+
+  it("a click on an unplaced name that trusts the link it was built with", () => {
+    const src = swap(
+      read(PROVIDER),
+      "activate: (event) => void clickUnplaced(event, line.text, first, n),",
+      'activate: (event) => activate(event, { kind: "unplaced" }),',
+    );
+    expect(providerViolations(src)).toContain(
+      "a click on a name no folder placed trusts what the link was built with",
     );
   });
 

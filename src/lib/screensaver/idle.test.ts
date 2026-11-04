@@ -3,13 +3,17 @@ import {
   clampIdleTimeout,
   ACTIVITY_EVENTS,
   dismissesScreensaver,
+  DEFAULT_IDLE_SHIFT,
   DEFAULT_IDLE_TIMEOUT,
+  IDLE_SHIFT_INTERVALS,
   IDLE_EFFECTS,
   IDLE_TIMEOUT_MAX,
   IDLE_TIMEOUT_MIN,
   isIdle,
   isIdleSetting,
   msUntilIdle,
+  RECOMMENDED_IDLE_SHIFT,
+  sanitizeShiftInterval,
   screensaverAllowed,
   swallowDismiss,
 } from "./idle";
@@ -100,5 +104,18 @@ describe("what dismisses the screensaver", () => {
     expect(dismissesScreensaver("wheel")).toBe(false);
     // All four still keep it from starting.
     expect([...ACTIVITY_EVENTS].sort()).toEqual(["keydown", "pointerdown", "pointermove", "wheel"]);
+  });
+});
+
+describe("shift against burn-in", () => {
+  it("is off by default, and recommends an interval it offers", () => {
+    expect(DEFAULT_IDLE_SHIFT).toBeNull();
+    expect(IDLE_SHIFT_INTERVALS).toContain(RECOMMENDED_IDLE_SHIFT);
+  });
+  it("keeps only the intervals it offers; anything else is off", () => {
+    for (const d of IDLE_SHIFT_INTERVALS) expect(sanitizeShiftInterval(d)).toBe(d);
+    for (const junk of [null, undefined, 0, 61, -60, "60", NaN, Infinity, {}]) {
+      expect(sanitizeShiftInterval(junk)).toBeNull();
+    }
   });
 });

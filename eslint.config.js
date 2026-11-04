@@ -83,11 +83,13 @@ export default defineConfig(
   own("no-network", SOURCE),
   own("no-scratch-path", SOURCE),
   own("password-input", MARKUP, ["src/lib/ui/PasswordInput.svelte"]),
+  own("filter-field", MARKUP, ["src/lib/ui/FilterField.svelte"]),
   own("hotkey-letter", SOURCE, ["src/lib/app/appshortcuts.ts"]),
   own("submit-with-cr", SOURCE, ["src/lib/terminal/terminput.ts"]),
   own("terminal-write", SOURCE, ["src/lib/api/session.ts"]),
   own("overlay-z-index", MARKUP),
   own("type-scale", SOURCE),
+  own("rem-sizes", SOURCE),
   own("micro-label", SOURCE),
   own("motion-duration", MARKUP),
   own("locale-binding", MARKUP),
@@ -121,6 +123,10 @@ export default defineConfig(
           startChat: {
             owners: ["src/lib/ai/AiChat.svelte"],
             why: "one AI turn at a time: the composer checks the chat first, and a raised question becomes a chip, never a send",
+          },
+          sftpOpenAs: {
+            owners: ["src/lib/files/FileUserDialog.svelte"],
+            why: "taking on another user is a question first: what the panel creates then belongs to them (ADR 0047)",
           },
           netcheckRun: {
             owners: ["src/lib/stores/netcheck.svelte.ts", "src/lib/netcheck/UtilNetCheck.svelte"],

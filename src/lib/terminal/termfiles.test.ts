@@ -122,6 +122,13 @@ describe("fileLinkClick", () => {
     expect(fileLinkClick("direct", { kind: "unplaced" })).toEqual({ kind: "offerSync" });
     expect(fileLinkClick("off", { kind: "unplaced" })).toEqual({ kind: "ignore" });
   });
+
+  it("says a name is not there, in every mode but off", () => {
+    const missing = { kind: "missing" as const, name: "gone.txt" };
+    expect(fileLinkClick("confirm", missing)).toEqual({ kind: "notFound", name: "gone.txt" });
+    expect(fileLinkClick("direct", missing)).toEqual({ kind: "notFound", name: "gone.txt" });
+    expect(fileLinkClick("off", missing)).toEqual({ kind: "ignore" });
+  });
 });
 
 describe("fileLinksAllowed", () => {

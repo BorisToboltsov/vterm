@@ -15,6 +15,7 @@
   import Icon from "../ui/Icon.svelte";
   import type { IconName } from "../ui/icons";
   import { pickSaveDir } from "../api";
+  import { uiPx } from "../settings/settings.svelte";
   import {
     applicable,
     summarize,
@@ -216,12 +217,12 @@
   const folders = $derived(plan ? planFolders(plan) : []);
   const rows = $derived(plan ? filterPlan(plan, filter, folder) : []);
 
-  const ROW_H = 28;
+  const ROW_H = $derived(uiPx(28));
   let scrollTop = $state(0);
   let viewportH = $state(224);
   // `h-56` is 224 px; the fallback covers the first frame (and jsdom) before
   // the element has been measured, where 0 would mean "render everything".
-  const win = $derived(windowRange(scrollTop, viewportH || 224, ROW_H, rows.length));
+  const win = $derived(windowRange(scrollTop, viewportH || uiPx(224), ROW_H, rows.length));
   let listEl = $state<HTMLElement | null>(null);
   // A new filter or plan starts at the top.
   $effect(() => {

@@ -3,11 +3,30 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { FileEntry, TextFile, WriteResult } from "../types";
+import type { ShellUserReport } from "../files/fileuser";
 import type { HashTree, SyncAction, SyncStats, GrepOutcome } from "../sync/sync";
 import type { ToolsStatus } from "../editor/servertools";
 import type { RemoteLintResult } from "../editor/remotelint";
 
 // ── SFTP ──────────────────────────────────────────────────────────────────────
+
+/** Who the terminal is now, and whom the file panel works as (ADR 0047). */
+export function shellUser(sessionId: string): Promise<ShellUserReport> {
+  return invoke<ShellUserReport>("shell_user", { sessionId });
+}
+
+/**
+ * The file panel works as `user` from now on, through `sudo`. Throws with a marker
+ * the panel reads (`fileUserFailure`): no password given, a wrong one, a refusal.
+ */
+export function sftpOpenAs(sessionId: string, user: string, password: string | null): Promise<void> {
+  return invoke<void>("sftp_open_as", { sessionId, user, password });
+}
+
+/** The file panel works as the login user again. */
+export function sftpOpenOwn(sessionId: string): Promise<void> {
+  return invoke<void>("sftp_open_own", { sessionId });
+}
 
 export function sftpHome(sessionId: string): Promise<string> {
   return invoke<string>("sftp_home", { sessionId });
