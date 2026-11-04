@@ -191,7 +191,9 @@ export function inline(text: string, opts?: MarkdownOptions): string {
   // disallowed ones are dropped, and text between them stays raw to be escaped next.
   if (opts?.html) {
     out = protectHtml(out, {
-      safeHref: safeUrl,
+      // Same rule as the markdown targets below: a stashed leaf inside a value means
+      // the value is not a URL.
+      safeHref: (url) => (url.includes(MARK) ? null : safeUrl(url)),
       resolveImg: (src, alt, dims) => imageHtml(splitTarget(src), escapeHtml(alt), opts, dims),
       keep,
     });
@@ -202,14 +204,20 @@ export function inline(text: string, opts?: MarkdownOptions): string {
   // leaves a bracket-free marker, so the link regex (`[^\]]+`) can still match the
   // badge idiom `[![alt](img)](href)`. alt/url are escaped here, so imageHtml gets
   // escaped text — its own re-escape is idempotent on that.
-  out = out.replace(IMAGE, (_m, alt: string, target: string) =>
-    keep(imageHtml(splitTarget(target), alt, opts)),
+  // A target holding a stashed leaf (a code span, a sanitised tag) is not a target:
+  // the whole construct stays literal text. Restore is blind to context, so a leaf
+  // restored inside `href="…"` put its own markup — and its `"` — into the
+  // attribute: `` [x](`" onclick=y `) `` gave `<a href="<code>" onclick=y </code>">`.
+  // CommonMark does not parse code inside a destination either.
+  out = out.replace(IMAGE, (m, alt: string, target: string) =>
+    target.includes(MARK) ? m : keep(imageHtml(splitTarget(target), alt, opts)),
   );
   // Links [label](url) → anchor tagged for the opener-intercepting click handler.
   // A target that fails the scheme allowlist is NOT rendered as an anchor at all:
   // the label stays as plain text. A dead `href="#"` would be worse — it looks
   // clickable, so the reader learns nothing about why it does nothing.
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label, url) => {
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, label, url) => {
+    if (String(url).includes(MARK)) return m;
     const href = safeUrl(splitTarget(String(url)));
     if (href === null) return label;
     return `<a href="${attr(href)}" data-md-link>${label}</a>`;
