@@ -188,7 +188,10 @@
   </ListHeader>
 
   {#if entries.length === 0}
-    <div class="flex flex-1 items-center justify-center p-4">
+    <!-- `min-h-0`: the view is a layer over the terminal that nothing clips, so
+         a wrapper that could not get shorter than its text spilled it over the
+         bottom dock (v1.30). The empty state fits itself to what is left. -->
+    <div class="min-h-0 flex-1">
       <EmptyState icon="table" title={t("jsonlog.emptyTitle")} hint={t("jsonlog.emptyHint")} />
     </div>
   {:else}
