@@ -16,3 +16,13 @@ overrides:
   # app. Every dependent declares a `^1.2.x` range, so `^1.2.2` only raises the
   # floor — no API change.
   source-map-js: "^1.2.2"
+
+auditConfig:
+  ignoreGhsas:
+    # minimatch < 11.0.1 (CVE-2026-118764 / GHSA-g3hv-75wg-m249): DoS через размножение частей
+    # glob-шаблона. У нас minimatch — только сборочная зависимость линтера (eslint,
+    # typescript-eslint) на шаблонах из нашего eslint.config.js: чужой шаблон туда не попадает,
+    # в приложение он не входит. Исправлен только в minimatch 11, где убраны `makeRe()`,
+    # `Minimatch#regexp` и `AST`, а eslint 10.14 и typescript-eslint требуют `^10` — override
+    # на мажор сломал бы линтер. Снять, когда eslint перейдёт на minimatch 11.
+    - GHSA-g3hv-75wg-m249

@@ -13,8 +13,27 @@ import { UI_SCALE_KEY } from "./uiscale";
 
 const ROOT = process.cwd();
 const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
+/**
+ * Drop `<!-- … -->` blocks. A scan rather than a non-greedy regex: one pass of
+ * `/<!--[^]*?-->/` leaves the opener behind on a nested comment (`<!--<!-- -->` →
+ * `<!--`), which CodeQL reports as `js/incomplete-multi-character-sanitization`.
+ */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i + 4);
+      i = end < 0 ? src.length : end + 3;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 const strip = (src: string) =>
-  src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\/\/.*$/gm, "");
+  stripHtmlComments(src.replace(/\/\*[\s\S]*?\*\//g, "")).replace(/^\s*\/\/.*$/gm, "");
 
 /** app.css: no font size in px, neither in the type scale nor in a global class. */
 export function cssViolations(css: string): string[] {

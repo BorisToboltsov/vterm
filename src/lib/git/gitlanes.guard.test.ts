@@ -15,9 +15,27 @@ import { describe, expect, it } from "vitest";
 
 const read = (rel: string): string => readFileSync(join(process.cwd(), "src", rel), "utf8");
 
+/**
+ * Drop `<!-- … -->` blocks. A scan rather than a non-greedy regex: one pass of
+ * `/<!--[^]*?-->/` leaves the opener behind on a nested comment (`<!--<!-- -->` →
+ * `<!--`), which CodeQL reports as `js/incomplete-multi-character-sanitization`.
+ */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i + 4);
+      i = end < 0 ? src.length : end + 3;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 const code = (src: string): string =>
-  src
-    .replace(/<!--[^]*?-->/g, "")
+  stripHtmlComments(src)
     .replace(/\/\*[^]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
 

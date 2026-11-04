@@ -66,7 +66,7 @@ GitLab CI) приводит к тому, что отчёты не читает �
 |-------|------------|--------------|
 | `web` | `pnpm check`, `pnpm lint`, `pnpm test:coverage`, `pnpm build` | То же локально — [полный прогон](../AGENTS.md#полный-прогон) |
 | `rust` | `cargo fmt`, `clippy`, `cargo test` на **Linux, Windows и macOS** | То же локально; код под `cfg` чужой ОС локально не собрать — смотрите лог этой ОС |
-| `deps` | `cargo deny` (advisory, лицензии, запреты, источники), `pnpm audit` | Обновить зависимость или расписать исключение с причиной: [deny.toml](../src-tauri/deny.toml), `auditConfig.ignoreCves` в [pnpm-workspace.yaml](../pnpm-workspace.yaml) |
+| `deps` | `cargo deny` (advisory, лицензии, запреты, источники), `pnpm audit` | Обновить зависимость или расписать исключение с причиной: [deny.toml](../src-tauri/deny.toml), `auditConfig.ignoreGhsas` в [pnpm-workspace.yaml](../pnpm-workspace.yaml) |
 
 Три ОС нужны потому, что `#[cfg(windows)]`-код (`drives.rs`, `proccwd.rs`) на Linux-раннере
 структурно невидим, а windows-раннера под рукой нет.
