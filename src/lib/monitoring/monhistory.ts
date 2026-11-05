@@ -70,7 +70,8 @@ export function keysOf(h: History, prefix: string): string[] {
 const pct = (used: number, total: number) => (total > 0 ? (used / total) * 100 : null);
 
 /**
- * One poll's readings, by series key. Keys: `cpu`, `ram`, `swap`, `load1|5|15`,
+ * One poll's readings, by series key. Keys: `cpu`, `ram`, `swap`, `disk` (the
+ * root, from the basic probe), `load1|5|15`,
  * `netRx|Tx`, `diskR|W`, `psiCpu|Mem|Io`, `brk.<part>`, `mem.used|cache|free`,
  * `swapIn|Out`, `core.<n>`, `if.<name>.rx|tx|bad`, `dev.<name>.r|w|util`,
  * `temp.<label>`, `proc.<pid>.cpu|mem`, `gpu.<n>.util|mem|temp|power`,
@@ -94,6 +95,7 @@ export function readingsOf(
     r.diskR = m.diskReadRate;
     r.diskW = m.diskWriteRate;
     r.cpuTemp = m.cpuTemp;
+    r.disk = m.diskUsed != null && m.diskTotal != null ? pct(m.diskUsed, m.diskTotal) : null;
   }
   if (d) {
     r.psiCpu = d.psiCpu?.avg10 ?? null;

@@ -53,6 +53,8 @@
   } from "#lib/windows/tabhandoff.ts";
   import { waitView } from "#lib/tabs/tabrestore.ts";
   import { forgetSavedTabs } from "#lib/stores/tabrestore.svelte.ts";
+  import { forgetMetrics, readMetrics } from "#lib/stores/metricsfeed.svelte.ts";
+  import type { SectionId } from "#lib/monitoring/monproblems.ts";
   import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
   import type { ServerProfile } from "#lib/types.ts";
   import { storeWarningMessage } from "#lib/servers/storewarn.ts";
@@ -271,7 +273,6 @@
     armCloseGuard,
     quitApp,
     annotateRecording,
-    fetchMetrics,
     readRecording,
   } from "#lib/api/index.ts";
   import { extractTranscript } from "#lib/recording/recording.ts";
@@ -366,6 +367,8 @@
   const showWindowChrome = $derived(hostEnv.os !== "" && hostEnv.os !== "macos");
   let showPalette = $state(false);
   let showMonitoring = $state(false);
+  // The section the monitoring page opens on — the status bar names one (v1.34).
+  let monitoringSection = $state<SectionId>("overview");
   let showRecordings = $state(false);
   // The server whose notes window is open (snapshot at open time), or null.
   let notesServer = $state<ServerProfile | null>(null);
@@ -792,8 +795,9 @@
   // button, the status bar and the idle card (`monitoredSessionId`).
   const monitorConnected = $derived(isMonitorable(activeTab));
   /** Open the detailed monitoring overlay (needs a connected SSH or local session). */
-  function openMonitoring() {
+  function openMonitoring(section: SectionId = "overview") {
     if (monitorConnected) {
+      monitoringSection = section;
       showMonitoring = true;
     } else {
       notifyError(t("page.monitoringNeedsSession"));
@@ -937,7 +941,7 @@
       lines.push(`Session: ${recordingTitle(tab, servers)}`);
     }
     try {
-      const m = await fetchMetrics(id);
+      const m = await readMetrics(id);
       lines.push(`OS: ${m.prettyName || m.os}`, `Hostname: ${m.hostname}`, `Kernel: ${m.kernel}`);
     } catch {
       /* metrics probe failed — keep profile-derived fields */
@@ -1131,7 +1135,7 @@
     { id: "act:utilities", title: t("palette.utilities"), icon: "wrench", group: t("palette.groupActions"),
       keywords: "utilities tools keygen cidr subnet base64 jwt cron password timestamp known hosts tls http утилиты инструменты", run: () => openUtilities() },
     { id: "act:monitoring", title: t("palette.monitoring"), icon: "barChart", group: t("palette.groupActions"),
-      keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: openMonitoring },
+      keywords: "monitoring metrics метрики мониторинг cpu ram disk графики", run: () => openMonitoring() },
     { id: "act:record",
       title: activeTab && isRecording(activeTab.sessionId) ? t("palette.stopRecording") : t("palette.startRecording"),
       icon: "activity", group: t("palette.groupActions"),
@@ -1884,6 +1888,8 @@
     delete termStructured[sessionId];
     delete termSelection[sessionId];
     clearAuthPrompt(sessionId);
+    // Its metrics feed: the loop stops, the history goes (stores/metricsfeed).
+    forgetMetrics(sessionId);
     closeTabStore(sessionId);
   }
 
@@ -2650,7 +2656,7 @@
       onChangelog={() => { helpTab = "changelog"; showHelp = true; }}
       onUpdates={() => { helpTab = "updates"; showHelp = true; }}
       onSettings={() => openSettings()}
-      onMonitoring={openMonitoring}
+      onMonitoring={() => openMonitoring()}
       onAbout={() => {
         helpTab = "about";
         showHelp = true;
@@ -3306,15 +3312,16 @@
   />
 
   {#if settings.showStatusBar && tabsState.activeId && monitorConnected}
-    {#key tabsState.activeId}
-      <StatusBar sessionId={tabsState.activeId} />
-    {/key}
+    <!-- Not keyed by the tab: the bar reads each session's feed, which outlives
+         a switch, so it shows the last reading at once instead of "loading". -->
+    <StatusBar sessionId={tabsState.activeId} onopen={openMonitoring} />
   {/if}
 </div>
 
 {#if tabsState.activeId}
   <MonitoringOverlay
     bind:open={showMonitoring}
+    bind:section={monitoringSection}
     sessionId={tabsState.activeId}
     onInstallTool={openToolInstallByName}
     onAskAi={aiOn ? askAiAboutMetrics : undefined}

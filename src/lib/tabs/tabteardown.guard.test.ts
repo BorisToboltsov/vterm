@@ -94,6 +94,8 @@ describe("tab teardown guard", () => {
       "pathSync.forget",
       "delete localShellKind",
       "clearAuthPrompt",
+      // The session's metrics feed: its poll loop and history (v1.34).
+      "forgetMetrics",
     ]) {
       expect(fn).toContain(cleanup);
     }

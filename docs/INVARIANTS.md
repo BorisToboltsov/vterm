@@ -408,6 +408,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   контейнеров, процесс — по клику (`fetch_process_detail`). Обе команды зовёт один модуль
   (`vterm/owned-imports`). Все процессы уходят на страницу, только пока открыт их раздел
   (`processes`). Дельтовые сэмплы — в `MetricsSamples`, чистятся в `disconnect`.
+- **Базовый зонд сессии — один источник** (ADR 0053): `fetchMetrics` зовёт только стор
+  [metricsfeed](../src/lib/stores/metricsfeed.svelte.ts) (`vterm/owned-imports`) — бэкенд берёт CPU% и
+  скорости от прошлого вызова, второй опросчик читает их за долю секунды. Бар, страница и заставка —
+  наблюдатели `watchMetrics`, детальный зонд страницы — компаньон в том же такте; разовый вопрос —
+  `readMetrics`. Неудачный опрос — разрыв истории и `failedAt`; ленту снимает `closeTabFully`
+  (`forgetMetrics`). Гейт `statusbar.guard`.
 - **CPU процесса — прирост его тиков, а не `%cpu` из `ps`** (`proc_cpu`): на Linux `%cpu` —
   среднее за жизнь процесса. Тот же pid с другим временем старта — другой процесс, без значения;
   первый опрос — без значения, а не ноль. Гейт `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average`.
@@ -884,6 +890,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Виртуальный список выключает scroll anchoring** (`[overflow-anchor:none]`, строки на время
   прокрутки не принимают указатель): иначе прокрутка дёргалась на WebView2.
   Правило `vterm/virtual-scroll`.
+- **Статус-бар — сводка** (ADR 0053, [barmodel.ts](../src/lib/monitoring/barmodel.ts)): вердикт хоста —
+  `monproblems` над базовым зондом; группы — `BAR_ORDER`, не поместившиеся уходят под «⋯» по
+  пикселям (`fitBar`), CPU, память и диск — никогда, ряд не прокручивается. Чип проблем, передачи и
+  переключатель — вне ряда; клик открывает раздел мониторинга (`BAR_SECTION`). Бар не ключуется
+  вкладкой; движение — `STATUS_MS`, без вспышек. Гейт `statusbar.guard`.
 - **Полоса вкладок не растёт за окно:** вкладки — в ограниченном горизонтальном скроллере, «+»
   сразу за последней, показанная вкладка прокручивается в вид. Гейт `taboverflow.guard`.
 - **Перетаскивание — общие правила** для вкладок, видов, панелей, файлов и кнопок верхней
@@ -1079,7 +1090,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret`.
@@ -1120,6 +1131,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `termlink.guard` · `termfilelink.guard` | Ссылка из вывода — только через `clickLink`; файл — по листингу и каталогу на момент отправки, клик не открывает выделяемое |
 | `termpaste.guard` · `termsearch.guard` · `termctxfocus.guard` · `rightclickmenu.guard` | Вставка — через `term.paste()`; строка поиска не шире области; меню ПКМ возвращает фокус в xterm и достижимо при любой настройке |
 | `termfit.guard` | У элемента, который меряет `FitAddon`, нет паддинга |
+| `statusbar.guard` | Бар не ключуется вкладкой; страница мониторинга, заставка и бар — наблюдатели одного источника замеров; движение бара — `STATUS_MS`, без вспышек; ряд укладывается `fitBar`, а не прокручивается |
 | `idlecard.guard` | Заставка без цикла анимации рисует первый кадр, не включается без вкладок, раскладка карточки — `cardTier`; карточка сдвигается по настройке, рамка прода — нет; неудачный опрос — разрыв |
 | `aiturn.guard` · `autonomy.guard` | Один ход на чат; consent, маскирование и прод/`noAi` на исполнении |
 | `backupimport.guard` · `servercreation.guard` | Импорт пишет каталог предпросмотра; профиль публикуется после записи |

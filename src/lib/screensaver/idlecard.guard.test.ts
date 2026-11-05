@@ -156,8 +156,8 @@ export function driftViolations(overlay: string): string[] {
  */
 export function gapViolations(overlay: string): string[] {
   const o = bare(overlay);
-  const body = bodyOf(o, "pollMetrics");
-  const caught = /\bcatch\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
+  const body = bodyOf(o, "onReading");
+  const caught = /\}\s*else\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
   const kept = /\baway = awayPush\(away, r, awayThresholds\(\)\);/.test(bodyOf(o, "remember"));
   return /\bremember\(gapReading\(/.test(caught) && kept ? [] : ["a failed poll leaves no gap in the history"];
 }
@@ -173,7 +173,7 @@ export function smoothViolations(overlay: string): string[] {
   if (/\bfmtPct\((?:cpu|mem|diskPct)\)|\bringFraction\((?:cpu|mem|load1|diskUsed),|\bload1 != null \? load1\.toFixed/.test(drawn)) {
     out.push("a ring or a number jumps to the reading");
   }
-  const poll = bodyOf(o, "pollMetrics");
+  const poll = bodyOf(o, "onReading");
   if (!["cpu", "mem", "load", "disk"].every((k) => new RegExp(`\\b${k}: retarget\\(shownTw\\.${k},`).test(poll))) {
     out.push("what is shown does not follow the readings");
   }
@@ -229,7 +229,7 @@ function fn(name: string): string {
 
 describe("idle card guard", () => {
   it("repaints after every metrics sample when there is no animation loop", () => {
-    expect(fn("pollMetrics")).toMatch(/if\s*\(\s*active\s*&&\s*reduce\s*\)\s*draw\(/);
+    expect(fn("onReading")).toMatch(/if\s*\(\s*active\s*&&\s*reduce\s*\)\s*draw\(/);
   });
 
   it("paints the static frame once the canvas exists", () => {
@@ -386,7 +386,7 @@ describe("idle card guard", () => {
     const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
     expect(gapViolations(overlay)).toEqual([]);
     // The check catches its own violation: a failure that only keeps the numbers.
-    const silent = overlay.replace("      remember(gapReading(Date.now()));\n", "");
+    const silent = overlay.replace("      remember(gapReading(at));\n", "");
     expect(silent).not.toBe(overlay);
     expect(gapViolations(silent)).toEqual(["a failed poll leaves no gap in the history"]);
     // …or one that is passed on to a step that no longer keeps it.

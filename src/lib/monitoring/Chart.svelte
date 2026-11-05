@@ -26,7 +26,7 @@
     type Sample,
   } from "./chartgeom";
   import { fmtAgo } from "./format";
-  import { LINE_MS, retarget, SCALE_MS, still, tweenAt, type Tween } from "../ui/tween";
+  import { LINE_MS, retarget, SCALE_MS, STATUS_MS, still, tweenAt, type Tween } from "../ui/tween";
   import { motionMs, prefersReducedMotion } from "../ui/motion";
   import { t } from "../i18n";
 
@@ -50,6 +50,7 @@
     interval = 5,
     dot = true,
     slots = HISTORY,
+    bar = false,
     class: cls = "",
     testid = undefined,
   }: {
@@ -80,6 +81,8 @@
     interval?: number;
     dot?: boolean;
     slots?: number;
+    /** The status bar's chart: short motion (`STATUS_MS`), tight padding, a small marker. */
+    bar?: boolean;
     class?: string;
     testid?: string;
   } = $props();
@@ -87,8 +90,10 @@
   const uid = $props.id();
   let width = $state(0);
   const reduce = prefersReducedMotion();
-  const lineMs = motionMs(LINE_MS, reduce);
-  const scaleMs = motionMs(SCALE_MS, reduce);
+  // svelte-ignore state_referenced_locally
+  const lineMs = motionMs(bar ? STATUS_MS : LINE_MS, reduce);
+  // svelte-ignore state_referenced_locally
+  const scaleMs = motionMs(bar ? STATUS_MS : SCALE_MS, reduce);
 
   // The ceiling the data asks for, from the samples in the window.
   const target = $derived.by(() => {
@@ -125,9 +130,10 @@
   const GUTTER = 30;
   const MARKS_H = 14;
   const left = $derived(ticks ? GUTTER : 0);
-  const plotW = $derived(Math.max(0, width - left - 5));
-  const top = 4;
-  const plotH = $derived(Math.max(4, height - top - 3 - (marks ? MARKS_H : 0)));
+  // Room on the right for the newest point's marker, above and below the line.
+  const plotW = $derived(Math.max(0, width - left - (bar ? 2.5 : 5)));
+  const top = $derived(bar ? 2 : 4);
+  const plotH = $derived(Math.max(4, height - top - (bar ? 2 : 3) - (marks ? MARKS_H : 0)));
   const axis = $derived(tweenAt(axisTw, now, lineMs));
   const scale = $derived(tweenAt(scaleTw, now, scaleMs) ?? target);
 
@@ -176,7 +182,7 @@
       const ds = rs.map((r) => monotonePath(r));
       return {
         color: l.color,
-        width: l.width ?? 1.6,
+        width: l.width ?? (bar ? 1.3 : 1.6),
         d: ds,
         area: l.fill || mirror ? ds.map((d, k) => areaPath(d, rs[k], base)) : [],
         dot: dot ? edgeDot(rs.at(-1) ?? [], plotW) : null,
@@ -245,10 +251,10 @@
             <circle
               cx={s.dot.x}
               cy={s.dot.y}
-              r="3"
+              r={bar ? 2 : 3}
               style="fill: {stacked ? 'var(--color-text)' : s.color}"
-              class="stroke-panel"
-              stroke-width="2"
+              class={bar ? "stroke-panel-alt" : "stroke-panel"}
+              stroke-width={bar ? 1.2 : 2}
             />
           {/if}
         {/each}

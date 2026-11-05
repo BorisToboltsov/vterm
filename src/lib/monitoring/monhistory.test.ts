@@ -30,7 +30,7 @@ describe("the monitoring history", () => {
   });
 
   it("builds per-item series from the probes that already run", () => {
-    const m = { cpuPct: 34, memUsed: 8, memTotal: 16, swapUsed: 0, swapTotal: 0 } as Metrics;
+    const m = { cpuPct: 34, memUsed: 8, memTotal: 16, swapUsed: 0, swapTotal: 0, diskUsed: 30, diskTotal: 120 } as Metrics;
     const d = {
       perCpu: [10, 90],
       netIfaces: [{ name: "eth0", rxRate: 5, txRate: 6, rxErrs: 1, rxDrop: 2, txErrs: 0, txDrop: 0 }],
@@ -51,6 +51,8 @@ describe("the monitoring history", () => {
     const r = readingsOf(m, d, { gpus: [], docker: [{ name: "api", cpu: 3, mem: "", memUsed: 9, memLimit: null, cpuLimit: null }] });
     expect(r.cpu).toBe(34);
     expect(r.ram).toBe(50);
+    // The root disk from the basic probe — the status bar's tile draws it.
+    expect(r.disk).toBe(25);
     // No swap configured: unknown, not 0 %.
     expect(r.swap).toBeNull();
     expect(r["core.1"]).toBe(90);

@@ -70,7 +70,8 @@
     type Tween,
   } from "../ui/tween";
   import { motionMs } from "../ui/motion";
-  import { fetchMetrics } from "../api";
+  import type { Metrics } from "../api";
+  import { feedOf, watchMetrics } from "../stores/metricsfeed.svelte";
   import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "../monitoring/format";
   import { thresholdLevel, type ThresholdLevel } from "../monitoring/thresholds";
   import { loadHealth } from "../monitoring/monhealth";
@@ -135,7 +136,9 @@
   let uptimeSecs: number | null = null;
   let host = "";
   let hist: IdleSample[] = [];
-  let metricsTimer: ReturnType<typeof setInterval> | undefined;
+  // Stops watching the session's feed (stores/metricsfeed): the card reads the
+  // same polls as the status bar instead of asking on a timer of its own.
+  let unwatch: (() => void) | undefined;
   // What the standby screen adds (v1.31), each null/"" until reported.
   let load5: number | null = null;
   let load15: number | null = null;
@@ -196,11 +199,9 @@
     load: settings.statusBarThresholds.load,
   });
 
-  async function pollMetrics() {
-    if (!sessionId) return;
-    try {
-      const m = await fetchMetrics(sessionId);
-      const at = Date.now();
+  /** One poll of the feed: a reading at `at`, or null — that poll failed. */
+  function onReading(m: Metrics | null, at = Date.now()) {
+    if (m) {
       cpu = m.cpuPct ?? cpu;
       mem = memPct(m.memUsed, m.memTotal) ?? mem;
       load1 = m.load1;
@@ -230,10 +231,10 @@
         memUsed: m.memUsed,
         memTotal: m.memTotal,
       });
-    } catch {
+    } else {
       // The numbers keep their last values, but the history does not pretend
       // to have seen this moment: a gap, not a line drawn through it.
-      remember(gapReading(Date.now()));
+      remember(gapReading(at));
     }
     // What is shown sets off towards the reading from wherever it stands.
     const t = performance.now();
@@ -275,9 +276,11 @@
       histSeq = -1;
       merged = null;
       leftAt = Date.now() - (performance.now() - lastActivity);
-      void pollMetrics();
-      const every = Math.max(2, settings.statusPollInterval) * 1000;
-      metricsTimer = setInterval(pollMetrics, every);
+      // What the feed already read shows at once; then every poll of its beat.
+      const id = sessionId;
+      const f = feedOf(id);
+      if (f.metrics && f.at != null) onReading(f.metrics, f.at);
+      unwatch = watchMetrics(id, { done: (m) => onReading(m) });
     }
     // Grab focus away from the terminal so the dismiss keydown lands on us.
     queueMicrotask(() => canvas?.focus());
@@ -289,8 +292,8 @@
     active = false;
     cancelAnimationFrame(raf);
     raf = 0;
-    clearInterval(metricsTimer);
-    metricsTimer = undefined;
+    unwatch?.();
+    unwatch = undefined;
     clearTimeout(stillTimer);
     pointer = null;
     movedAt = null;
@@ -403,7 +406,7 @@
 
   // Reduced motion has no rAF loop. The canvas mounts only once `active` flips
   // (`loop()` in `activate` runs before it exists), so this effect paints the
-  // static frame; `pollMetrics` repaints it after every sample.
+  // static frame; `onReading` repaints it after every sample.
   $effect(() => {
     if (active && reduce && canvas) draw(performance.now() - started);
   });

@@ -8,10 +8,13 @@
   // after the first paint; GPUs and containers are polled live only while their
   // section is on screen. Every poll's readings go into one history
   // (monhistory.ts), which every chart draws from.
+  //
+  // The basic probe is the session's one feed (stores/metricsfeed, v1.34): the
+  // page rides its beat with the detail probe as a companion, and opens with the
+  // history the feed has kept since the tab connected.
   import {
     fetchExtras,
     fetchLiveExtras,
-    fetchMetrics,
     fetchMetricsDetail,
     fetchPendingUpdates,
     type Extras,
@@ -20,7 +23,7 @@
     type MetricsDetail,
     type PendingUpdates,
   } from "../api";
-  import { isHidden } from "../ui/util";
+  import { feedOf, watchMetrics } from "../stores/metricsfeed.svelte";
   import { settings } from "../settings/settings.svelte";
   import { metricsSnapshot } from "../ai/aimetrics";
   import Modal from "../ui/Modal.svelte";
@@ -54,6 +57,7 @@
 
   let {
     open = $bindable(false),
+    section = $bindable("overview"),
     sessionId,
     onInstallTool,
     onAskAi,
@@ -61,6 +65,8 @@
     onOpenDocker,
   }: {
     open?: boolean;
+    /** The section on screen; set before opening to open the page on it (the status bar does). */
+    section?: SectionId;
     sessionId: string;
     /** Offer to install a server tool (e.g. "sensors") via the Phase 12.8 flow. */
     onInstallTool?: (toolName: string) => void;
@@ -85,32 +91,37 @@
   let hist = $state.raw<History>({});
   let seq = $state(-1);
   let baseline = $state.raw<Baseline | null>(null);
-  let section = $state<SectionId>("overview");
-  let timer: ReturnType<typeof setInterval> | undefined;
-
+  // The beat of the feed while the page rides it with its detail probe.
   const interval = $derived(Math.max(2, settings.statusPollInterval));
 
-  async function poll() {
-    if (isHidden()) return;
+  type Companion = [MetricsDetail, LiveExtras | null];
+  // The detail (and, on the GPU or Containers section, the live probe) fetched in
+  // the feed's tick. The live probe failing alone does not fail the poll.
+  function companion(id: string): Promise<Companion> {
     const liveWanted = wantsLive(section);
-    const withProcesses = section === "processes";
-    try {
-      const [m, d, l] = await Promise.all([
-        fetchMetrics(sessionId),
-        fetchMetricsDetail(sessionId, withProcesses),
-        liveWanted ? fetchLiveExtras(sessionId).catch(() => null) : Promise.resolve(null),
-      ]);
-      metrics = m;
-      detail = d;
-      if (l) live = l;
-      failed = false;
-      baseline ??= baselineOf(d);
-      seq += 1;
-      hist = pushReadings(hist, seq, readingsOf(m, d, l));
-      pollCount += 1;
-    } catch {
+    return Promise.all([
+      fetchMetricsDetail(id, section === "processes"),
+      liveWanted ? fetchLiveExtras(id).catch(() => null) : Promise.resolve(null),
+    ]);
+  }
+
+  /** One tick of the feed: `n` is the poll's number, −1 for the answer fetched on opening. */
+  function onPoll(m: Metrics | null, x: Companion | null, n: number) {
+    if (!m || !x) {
       failed = true;
+      return;
     }
+    const [d, l] = x;
+    metrics = m;
+    detail = d;
+    if (l) live = l;
+    failed = false;
+    baseline ??= baselineOf(d);
+    if (n >= 0) {
+      seq = n;
+      hist = pushReadings(hist, n, readingsOf(m, d, l));
+    }
+    pollCount += 1;
   }
 
   // Pending updates and extras are heavy: once, after the page has painted.
@@ -146,24 +157,28 @@
     section = "overview";
   }
 
-  // Start/stop the poll loop with the page's open state.
+  // Watch the feed while the page is open. It opens with what the feed already
+  // has — the newest reading and the history since the tab connected.
   $effect(() => {
     if (!open) {
-      clearInterval(timer);
       reset();
       return;
     }
-    const everyMs = interval * 1000;
-    void sessionId;
+    const id = sessionId;
     pendingLoading = true;
-    // The poll reads the section it is on (for the live probe) — not a reason to
-    // restart the loop when the section changes.
-    untrack(poll);
+    // The companion reads the section it is on (for the live probe) — not a
+    // reason to watch again when the section changes.
+    const stop = untrack(() => {
+      const f = feedOf(id);
+      metrics = f.metrics;
+      hist = f.hist;
+      seq = f.seq;
+      return watchMetrics<Companion>(id, { companion: () => companion(id), done: onPoll });
+    });
     const pendingTimer = setTimeout(loadPending, 300);
     const extrasTimer = setTimeout(loadExtras, 400);
-    timer = setInterval(poll, everyMs);
     return () => {
-      clearInterval(timer);
+      stop();
       clearTimeout(pendingTimer);
       clearTimeout(extrasTimer);
     };
