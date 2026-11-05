@@ -6,6 +6,7 @@
 import type { Threshold } from "../settings/settings.svelte";
 import { thresholdLevel, type ThresholdLevel } from "../monitoring/thresholds";
 import { loadHealth } from "../monitoring/monhealth";
+import { fmtUptime } from "../monitoring/format";
 import { etaSeconds, transferPct, type TransferRow } from "../files/transfer";
 import { loadFraction, type IdleSample } from "./idlefx";
 
@@ -13,13 +14,29 @@ import { loadFraction, type IdleSample } from "./idlefx";
 // Every sample of the time away is kept, but the chart has a fixed number of
 // points: past `AWAY_POINTS`, neighbours merge pairwise. A merged point is the
 // PEAK of the two — an average would flatten the very spike the events below
-// name, and the chart would contradict its own label. A sample vterm could not
-// take is a gap (`null`), never a guessed value: the line breaks there.
+// name, and the tooltip would contradict the line it points at. A sample vterm
+// could not take is a gap (`null`), never a guessed value: the line breaks there.
+// A point also keeps what the tooltip says about it (v1.33): the load as read,
+// the memory in bytes, the busiest process — each from the reading that gave
+// the point its peak.
 
 /** One point of the chart: each series a fraction 0…1 (null — unknown), at a wall-clock time. */
 export interface AwayPoint extends IdleSample {
   /** Wall-clock milliseconds (`Date.now()`) of the sample, or of the first one merged into it. */
   at: number;
+  /** Wall-clock milliseconds of the last reading merged into the point: `at` for a single one. */
+  until: number;
+  /** Readings merged into the point, failed polls among them. */
+  n: number;
+  /** The load average as read — the line's `load` stops at the cores, this does not. */
+  load1: number | null;
+  /** Logical CPUs when `load1` was read. */
+  cores: number | null;
+  /** Memory in use and in all, bytes, from the reading with the highest memory. */
+  memUsed: number | null;
+  memTotal: number | null;
+  /** The busiest process of the reading with the highest CPU — "" when the host did not say. */
+  top: string;
 }
 
 /** Which metric an event is about: the three lines of the chart. */
@@ -56,6 +73,8 @@ export interface AwayReading {
   load1: number | null;
   cpuCount: number | null;
   topProc: string;
+  memUsed: number | null;
+  memTotal: number | null;
 }
 
 /** The thresholds an event is measured against (the status bar's own). */
@@ -75,7 +94,16 @@ export const emptyAway = (): AwayHistory => ({ points: [], events: [] });
 const peakOf = (a: number | null, b: number | null): number | null =>
   a == null ? b : b == null ? a : Math.max(a, b);
 
-/** Halve `points` by merging neighbours into their peak. An odd last point stays as it is. */
+/** Of two points, the one with the higher `v` (the first on a tie or when neither is known). */
+const higher = (a: AwayPoint, b: AwayPoint, v: (pt: AwayPoint) => number | null): AwayPoint =>
+  (v(b) ?? -Infinity) > (v(a) ?? -Infinity) ? b : a;
+
+/**
+ * Halve `points` by merging neighbours into their peak. An odd last point stays
+ * as it is. What a point says beside its value comes from the reading that
+ * gave it the peak: the process from the higher CPU, the bytes from the higher
+ * memory, the cores from the higher load.
+ */
 export function mergePoints(points: readonly AwayPoint[]): AwayPoint[] {
   const out: AwayPoint[] = [];
   for (let i = 0; i < points.length; i += 2) {
@@ -85,7 +113,21 @@ export function mergePoints(points: readonly AwayPoint[]): AwayPoint[] {
       out.push(a);
       continue;
     }
-    out.push({ at: a.at, cpu: peakOf(a.cpu, b.cpu), mem: peakOf(a.mem, b.mem), load: peakOf(a.load, b.load) });
+    const byLoad = higher(a, b, (pt) => pt.load1);
+    const byMem = higher(a, b, (pt) => pt.mem);
+    out.push({
+      at: a.at,
+      until: b.until,
+      n: a.n + b.n,
+      cpu: peakOf(a.cpu, b.cpu),
+      mem: peakOf(a.mem, b.mem),
+      load: peakOf(a.load, b.load),
+      load1: byLoad.load1,
+      cores: byLoad.cores,
+      memUsed: byMem.memUsed,
+      memTotal: byMem.memTotal,
+      top: higher(a, b, (pt) => pt.cpu).top,
+    });
   }
   return out;
 }
@@ -98,6 +140,8 @@ export const gapReading = (at: number): AwayReading => ({
   load1: null,
   cpuCount: null,
   topProc: "",
+  memUsed: null,
+  memTotal: null,
 });
 
 const fraction = (pct: number | null) => (pct == null || !Number.isFinite(pct) ? null : Math.min(1, Math.max(0, pct / 100)));
@@ -122,10 +166,20 @@ const worse = (a: AwayEvent["level"], b: AwayEvent["level"]) => (RANK[b] > RANK[
  * see is not claimed to have gone on.
  */
 export function awayPush(h: AwayHistory, r: AwayReading, th: AwayThresholds, cap = AWAY_POINTS): AwayHistory {
-  let points = [
-    ...h.points,
-    { at: r.at, cpu: fraction(r.cpuPct), mem: fraction(r.memPct), load: loadFraction(r.load1, r.cpuCount) },
-  ];
+  const point: AwayPoint = {
+    at: r.at,
+    until: r.at,
+    n: 1,
+    cpu: fraction(r.cpuPct),
+    mem: fraction(r.memPct),
+    load: loadFraction(r.load1, r.cpuCount),
+    load1: r.load1 != null && Number.isFinite(r.load1) ? r.load1 : null,
+    cores: r.cpuCount,
+    memUsed: r.memUsed,
+    memTotal: r.memTotal,
+    top: r.cpuPct == null ? "" : r.topProc.trim(),
+  };
+  let points = [...h.points, point];
   while (points.length > Math.max(2, cap)) points = mergePoints(points);
   const levels = readingLevels(r, th);
   const value: Record<AwayKey, number | null> = { cpu: r.cpuPct, mem: r.memPct, load: r.load1 };
@@ -158,7 +212,7 @@ export function awayPush(h: AwayHistory, r: AwayReading, th: AwayThresholds, cap
  * top edge. Split into runs at unknown points, so a gap is drawn as a gap.
  */
 export function timeRuns(
-  points: readonly AwayPoint[],
+  points: readonly Pick<AwayPoint, "at" | keyof IdleSample>[],
   key: keyof IdleSample,
   from: number,
   to: number,
@@ -189,28 +243,72 @@ export function timeX(at: number, from: number, to: number, x0: number, w: numbe
   return to > from ? x0 + ((at - from) / (to - from)) * w : x0;
 }
 
-/**
- * The events worth a label, most telling first: red before amber, then the
- * higher peak against its own scale. At most `max`.
- */
-export function notableEvents(events: readonly AwayEvent[], max: number): AwayEvent[] {
-  const scale = (e: AwayEvent) => (e.key === "load" ? (e.cores ? e.peak / e.cores : 0) : e.peak / 100);
-  return [...events]
-    .sort((a, b) => RANK[b.level] - RANK[a.level] || scale(b) - scale(a) || a.start - b.start)
-    .slice(0, Math.max(0, max));
+// ── Under the pointer ────────────────────────────────────────────────────────
+// The chart carries no marks of its own (v1.33): every event drew a dashed line
+// and a dot, and a busy stretch became a fence nobody could read. What happened
+// at a moment is told by a tooltip over the point under the pointer: its values,
+// that it is the peak of every reading merged into it, the events it is in, or
+// that vterm read nothing there. A pointer that rests stops showing it — a
+// tooltip left up for hours would hold its pixels lit like any other.
+
+/** How far past the chart's sides, px, the pointer still picks the point at the end. */
+export const HOVER_SLACK = 12;
+/** A pointer that has not moved for this long, ms, shows no tooltip. */
+export const HOVER_STILL_MS = 10_000;
+
+/** Whether a pointer last moved at `movedAt` (null — not over the screensaver) still shows a tooltip at `now`. */
+export function hoverShown(movedAt: number | null, now: number): boolean {
+  return movedAt != null && now - movedAt >= 0 && now - movedAt < HOVER_STILL_MS;
 }
 
 /**
- * Which of the labels — each `[left, right]` in px, in the order given — can
- * stand on one line without touching an earlier one (`gap` px apart). Returns
- * the indexes kept: the first label always stands.
+ * The index of the point nearest in time to `x` on a `from…to` axis of width
+ * `gw` starting at `gx`, or -1 — no points, or `x` off the chart by more than
+ * `HOVER_SLACK`. Points are in time order.
  */
-export function placeLabels(spans: readonly [number, number][], gap = 8): number[] {
-  const kept: number[] = [];
-  spans.forEach(([l, r], i) => {
-    if (kept.every((k) => r + gap <= spans[k][0] || l >= spans[k][1] + gap)) kept.push(i);
-  });
-  return kept;
+export function pointAt(points: readonly Pick<AwayPoint, "at">[], x: number, from: number, to: number, gx: number, gw: number): number {
+  if (!points.length || !Number.isFinite(x) || x < gx - HOVER_SLACK || x > gx + gw + HOVER_SLACK) return -1;
+  if (!(to > from) || !(gw > 0)) return points.length - 1;
+  const at = from + ((x - gx) / gw) * (to - from);
+  let lo = 0;
+  let hi = points.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (points[mid].at < at) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo > 0 && at - points[lo - 1].at <= points[lo].at - at ? lo - 1 : lo;
+}
+
+/** A point vterm read nothing for: every series unknown. */
+export const isGapPoint = (pt: IdleSample): boolean => pt.cpu == null && pt.mem == null && pt.load == null;
+
+/**
+ * The run of gap points around index `i` — the indexes of its first and last
+ * point — or null when point `i` was read.
+ */
+export function gapAround(points: readonly AwayPoint[], i: number): { first: number; last: number } | null {
+  if (!points[i] || !isGapPoint(points[i])) return null;
+  let first = i;
+  let last = i;
+  while (first > 0 && isGapPoint(points[first - 1])) first--;
+  while (last < points.length - 1 && isGapPoint(points[last + 1])) last++;
+  return { first, last };
+}
+
+const KEY_ORDER: Record<AwayKey, number> = { cpu: 0, mem: 1, load: 2 };
+
+/** The events whose stretch shares time with the point's own (`at…until`): CPU, then memory, then load. */
+export function eventsAt(events: readonly AwayEvent[], pt: Pick<AwayPoint, "at" | "until">): AwayEvent[] {
+  return events
+    .filter((e) => e.start <= pt.until && e.end >= pt.at)
+    .sort((a, b) => KEY_ORDER[a.key] - KEY_ORDER[b.key] || a.start - b.start);
+}
+
+/** A stretch of time, short: seconds under a minute, else as the uptime reads ("6m", "1h 2m", "2d 3h"). */
+export function spanLabel(ms: number): string {
+  const s = Number.isFinite(ms) ? Math.max(0, Math.round(ms / 1000)) : 0;
+  return s < 60 ? `${s}s` : fmtUptime(s);
 }
 
 // ── The server's clock ───────────────────────────────────────────────────────
