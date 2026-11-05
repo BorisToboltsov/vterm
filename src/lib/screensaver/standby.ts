@@ -209,7 +209,10 @@ export function awayPush(h: AwayHistory, r: AwayReading, th: AwayThresholds, cap
 /**
  * Canvas points of one series across a `w × h` box at (`x0`, `y0`), placed by
  * TIME over `from…to` (merged points are not evenly spaced), fraction 1 at the
- * top edge. Split into runs at unknown points, so a gap is drawn as a gap.
+ * top edge. Split into runs at unknown points, so a gap is drawn as a gap. The
+ * edges of a chart move smoothly to a new reading (v1.33), so the line crosses
+ * them: it is cut at each edge, at the value between the last point inside and
+ * the first outside — never drawn past the box.
  */
 export function timeRuns(
   points: readonly Pick<AwayPoint, "at" | keyof IdleSample>[],
@@ -223,16 +226,33 @@ export function timeRuns(
 ): { x: number; y: number }[][] {
   const span = to - from;
   const xAt = (at: number) => (span > 0 ? x0 + ((at - from) / span) * w : x0);
+  const yAt = (v: number) => y0 + h - Math.min(1, Math.max(0, v)) * h;
+  // The value between two points at time `at` (inside their stretch).
+  const between = (a: { at: number; v: number }, b: { at: number; v: number }, at: number) =>
+    yAt(a.v + ((b.v - a.v) * (at - a.at)) / (b.at - a.at));
   const runs: { x: number; y: number }[][] = [];
   let run: { x: number; y: number }[] = [];
+  let prev: { at: number; v: number } | null = null;
   for (const pt of points) {
     const v = pt[key];
     if (v == null) {
       if (run.length) runs.push(run);
       run = [];
+      prev = null;
       continue;
     }
-    run.push({ x: xAt(pt.at), y: y0 + h - Math.min(1, Math.max(0, v)) * h });
+    const cur = { at: pt.at, v };
+    if (pt.at < from) {
+      prev = cur;
+      continue;
+    }
+    if (prev && prev.at < from && pt.at > from) run.push({ x: x0, y: between(prev, cur, from) });
+    if (pt.at > to) {
+      if (prev && prev.at < to && run.length) run.push({ x: xAt(to), y: between(prev, cur, to) });
+      break;
+    }
+    run.push({ x: xAt(pt.at), y: yAt(v) });
+    prev = cur;
   }
   if (run.length) runs.push(run);
   return runs;
@@ -264,14 +284,17 @@ export function hoverShown(movedAt: number | null, now: number): boolean {
 /**
  * The index of the point nearest in time to `x` on a `from…to` axis of width
  * `gw` starting at `gx`, or -1 — no points, or `x` off the chart by more than
- * `HOVER_SLACK`. Points are in time order.
+ * `HOVER_SLACK`. Points are in time order; one past `to` is not on the chart
+ * yet (the edge is still on its way to it) and is not picked.
  */
 export function pointAt(points: readonly Pick<AwayPoint, "at">[], x: number, from: number, to: number, gx: number, gw: number): number {
-  if (!points.length || !Number.isFinite(x) || x < gx - HOVER_SLACK || x > gx + gw + HOVER_SLACK) return -1;
-  if (!(to > from) || !(gw > 0)) return points.length - 1;
+  let n = points.length;
+  while (n > 1 && points[n - 1].at > to) n--;
+  if (!n || !Number.isFinite(x) || x < gx - HOVER_SLACK || x > gx + gw + HOVER_SLACK) return -1;
+  if (!(to > from) || !(gw > 0)) return n - 1;
   const at = from + ((x - gx) / gw) * (to - from);
   let lo = 0;
-  let hi = points.length - 1;
+  let hi = n - 1;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
     if (points[mid].at < at) lo = mid + 1;

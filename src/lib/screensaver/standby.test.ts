@@ -264,6 +264,9 @@ describe("the point under the pointer", () => {
     expect(pointAt([], 300, T0, T0 + 5 * MIN, 100, 500)).toBe(-1);
     // One point so far: the axis has no span, and that point is the one.
     expect(pointAt(pts.slice(0, 1), 300, T0, T0, 100, 500)).toBe(0);
+    // The edge on its way to the newest point: that point is not on the chart yet.
+    expect(pointAt(pts, 600, T0, T0 + 3 * MIN, 100, 500)).toBe(2);
+    expect(pointAt(pts, 100, T0, T0 + 3 * MIN, 100, 500)).toBe(0);
   });
 
   it("knows the whole stretch vterm read nothing for", () => {
@@ -349,6 +352,48 @@ describe("the chart's time axis", () => {
     expect(timeRuns(pts.slice(0, 1), "cpu", T0, T0, 7, 0, 100, 10)).toEqual([[{ x: 7, y: 10 }]]);
     expect(timeX(T0 + MIN, T0, T0 + 2 * MIN, 0, 200)).toBe(100);
     expect(timeX(T0, T0, T0, 5, 200)).toBe(5);
+  });
+
+  it("cuts the line at an edge on its way, never past the box", () => {
+    const pts = [
+      { at: 0, cpu: 0, mem: null, load: null },
+      { at: 10, cpu: 1, mem: null, load: null },
+      { at: 20, cpu: 0, mem: null, load: null },
+      { at: 30, cpu: 1, mem: null, load: null },
+    ];
+    // The right edge halfway to the newest point: the last stretch drawn to the edge.
+    expect(timeRuns(pts, "cpu", 0, 25, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 100 },
+        { x: 40, y: 0 },
+        { x: 80, y: 100 },
+        { x: 100, y: 50 },
+      ],
+    ]);
+    // The left edge past the oldest point (a small card sliding on): cut there too.
+    expect(timeRuns(pts, "cpu", 5, 30, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 50 },
+        { x: 20, y: 0 },
+        { x: 60, y: 100 },
+        { x: 100, y: 0 },
+      ],
+    ]);
+    // Both edges inside one stretch.
+    expect(timeRuns(pts, "cpu", 12, 18, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 20 },
+        { x: 100, y: 80 },
+      ],
+    ]);
+    // No line is drawn across a gap to reach an edge.
+    const gapped = [
+      { at: 0, cpu: 0.5, mem: null, load: null },
+      { at: 10, cpu: null, mem: null, load: null },
+      { at: 20, cpu: 0.5, mem: null, load: null },
+    ];
+    expect(timeRuns(gapped, "cpu", 5, 15, 0, 0, 100, 100)).toEqual([]);
+    expect(timeRuns(gapped, "cpu", 0, 15, 0, 0, 100, 100)).toEqual([[{ x: 0, y: 50 }]]);
   });
 
   it("ticks at round minutes of the server's clock, no more than asked", () => {

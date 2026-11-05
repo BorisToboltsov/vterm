@@ -22,9 +22,10 @@
     bufferGrid,
     cardTier,
     clipText,
+    HIST_KEEP,
+    HIST_POINTS,
     idleSample,
     pushSample,
-    seriesRuns,
     tokenizeBuffer,
     type IdleSample,
     type WordToken,
@@ -52,9 +53,23 @@
     timeX,
     type AwayHistory,
     type AwayPoint,
+    type AwayReading,
     type AwayThresholds,
     type StandbyTransfer,
   } from "./standby";
+  import {
+    BAR_MS,
+    easeOut,
+    LINE_MS,
+    MERGE_MS,
+    progress,
+    retarget,
+    RING_MS,
+    still,
+    tweenAt,
+    type Tween,
+  } from "./tween";
+  import { motionMs } from "../ui/motion";
   import { fetchMetrics } from "../api";
   import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "../monitoring/format";
   import { thresholdLevel, type ThresholdLevel } from "../monitoring/thresholds";
@@ -139,6 +154,42 @@
   let away: AwayHistory = emptyAway();
   let leftAt = Date.now();
 
+  // ── What the card shows runs to each reading (v1.33) ─────────────────────────
+  // A reading used to land in one frame — rings, numbers and charts jumped every
+  // poll. Each value now eases from where it stands to the reading, and a number
+  // counts on the way (`tween.ts`); the right edge of a chart moves to the newest
+  // point, so the line draws itself on and the rest closes up. Durations go
+  // through `motionMs`: with reduced motion every change is instant, as before.
+  let shownTw: Record<"cpu" | "mem" | "load" | "disk", Tween> = {
+    cpu: still(null),
+    mem: still(null),
+    load: still(null),
+    disk: still(null),
+  };
+  // The history's right edge (wall-clock ms) and the small chart's (sample number).
+  let axisTw: Tween = still(null);
+  let histTw: Tween = still(null);
+  // The number of the newest sample in `hist`.
+  let histSeq = -1;
+  // The history's line before its points merged, fading out under the new one.
+  let merged: { points: AwayPoint[]; at: number } | null = null;
+  // A transfer's bar, per transfer.
+  let bar: { id: string; tw: Tween } = { id: "", tw: still(null) };
+  // The moment the frame being drawn shows (`performance.now()`).
+  let frameAt = 0;
+  const ms = (base: number) => motionMs(base, reduce);
+  const shown = (tw: Tween) => tweenAt(tw, frameAt, ms(RING_MS));
+
+  /** One more reading of the time away; the history's right edge sets off towards its newest point. */
+  function remember(r: AwayReading) {
+    const before = away.points;
+    away = awayPush(away, r, awayThresholds());
+    const t = performance.now();
+    // Merged points draw another line: the old one gives way to it instead of vanishing.
+    if (away.points.length < before.length) merged = { points: before, at: t };
+    axisTw = retarget(axisTw, away.points[away.points.length - 1].at, t, ms(LINE_MS), null);
+  }
+
   const awayThresholds = (): AwayThresholds => ({
     cpu: settings.statusBarThresholds.cpu,
     ram: settings.statusBarThresholds.ram,
@@ -156,7 +207,8 @@
       cpuCount = m.cpuCount ?? cpuCount;
       uptimeSecs = m.uptimeSecs ?? uptimeSecs;
       host = m.hostname || alias || host;
-      hist = pushSample(hist, idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount));
+      hist = pushSample(hist, idleSample(m.cpuPct, memPct(m.memUsed, m.memTotal), load1, cpuCount), HIST_KEEP);
+      histSeq += 1;
       load5 = m.load5;
       load15 = m.load15;
       memUsed = m.memUsed;
@@ -168,25 +220,30 @@
       login = m.user && m.ip ? `${m.user}@${m.ip}` : m.user || m.ip;
       offsetMin = serverOffset(m.serverTime, at);
       zone = serverZone(m.serverTime);
-      away = awayPush(
-        away,
-        {
-          at,
-          cpuPct: m.cpuPct,
-          memPct: memPct(m.memUsed, m.memTotal),
-          load1: m.load1,
-          cpuCount: m.cpuCount,
-          topProc: m.topProc,
-          memUsed: m.memUsed,
-          memTotal: m.memTotal,
-        },
-        awayThresholds(),
-      );
+      remember({
+        at,
+        cpuPct: m.cpuPct,
+        memPct: memPct(m.memUsed, m.memTotal),
+        load1: m.load1,
+        cpuCount: m.cpuCount,
+        topProc: m.topProc,
+        memUsed: m.memUsed,
+        memTotal: m.memTotal,
+      });
     } catch {
       // The numbers keep their last values, but the history does not pretend
       // to have seen this moment: a gap, not a line drawn through it.
-      away = awayPush(away, gapReading(Date.now()), awayThresholds());
+      remember(gapReading(Date.now()));
     }
+    // What is shown sets off towards the reading from wherever it stands.
+    const t = performance.now();
+    shownTw = {
+      cpu: retarget(shownTw.cpu, cpu, t, ms(RING_MS)),
+      mem: retarget(shownTw.mem, mem, t, ms(RING_MS)),
+      load: retarget(shownTw.load, load1, t, ms(RING_MS)),
+      disk: retarget(shownTw.disk, diskUsed != null && diskTotal ? (diskUsed / diskTotal) * 100 : null, t, ms(RING_MS)),
+    };
+    histTw = retarget(histTw, histSeq < 0 ? null : histSeq, t, ms(LINE_MS), null);
     // Reduced motion has no rAF loop: the frame drawn at activation predates
     // the first sample, so without this the chart would never get its lines.
     // (Windows turns reduced motion on with "Animation effects" off — common.)
@@ -213,6 +270,10 @@
       load5 = load15 = memUsed = memTotal = diskUsed = diskTotal = cpuTemp = offsetMin = null;
       osName = login = zone = "";
       away = emptyAway();
+      shownTw = { cpu: still(null), mem: still(null), load: still(null), disk: still(null) };
+      axisTw = histTw = still(null);
+      histSeq = -1;
+      merged = null;
       leftAt = Date.now() - (performance.now() - lastActivity);
       void pollMetrics();
       const every = Math.max(2, settings.statusPollInterval) * 1000;
@@ -378,6 +439,7 @@
   }
 
   function draw(now: number) {
+    frameAt = performance.now();
     const s = setup();
     if (!s) return;
     const { ctx, W, H } = s;
@@ -600,12 +662,14 @@
 
   const MONO = "ui-monospace,Menlo,monospace";
   type CardMetric = [label: string, value: string, color: string, key: keyof IdleSample];
-  // The dot before each label is the legend of its chart line.
+  // The dot before each label is the legend of its chart line. The numbers
+  // count to each reading (`shown`).
   function cardMetrics(p: Pal): CardMetric[] {
+    const load = shown(shownTw.load);
     return [
-      ["CPU", fmtPct(cpu), p.green, "cpu"],
-      ["MEM", fmtPct(mem), p.blue, "mem"],
-      ["LOAD", load1 != null ? load1.toFixed(2) : "—", p.yellow, "load"],
+      ["CPU", fmtPct(shown(shownTw.cpu)), p.green, "cpu"],
+      ["MEM", fmtPct(shown(shownTw.mem)), p.blue, "mem"],
+      ["LOAD", load != null ? load.toFixed(2) : "—", p.yellow, "load"],
     ];
   }
   const cardName = () => host || alias || "vterm";
@@ -657,13 +721,13 @@
     gh: number,
     fill: boolean,
   ) {
-    const runs = seriesRuns(
-      hist.map((sample) => sample[key]),
-      gx,
-      gy,
-      gw,
-      gh,
-    );
+    // Samples are placed by number; the right edge runs to the newest, so a new
+    // sample draws itself on and, once the chart is full, the line slides left.
+    const end = tweenAt(histTw, frameAt, ms(LINE_MS));
+    if (end == null) return;
+    const first = histSeq - (hist.length - 1);
+    const pts = hist.map((sample, i) => ({ ...sample, at: first + i }));
+    const runs = timeRuns(pts, key, Math.max(first, end - (HIST_POINTS - 1)), end, gx, gy, gw, gh);
     for (const run of runs) {
       if (fill && run.length > 1) {
         ctx.beginPath();
@@ -962,40 +1026,44 @@
     const R = big ? Math.min(84, step / 2 - 22) : Math.max(16, Math.min(f * 0.37, step / 2 - 14));
     const ry = P + (big ? 110 : 52) + R;
     const vf = big ? R * 0.4 : R * 0.52;
+    // Each ring and its number run to the reading: the number counts on the way.
     const th = settings.statusBarThresholds;
-    const diskPct = diskUsed != null && diskTotal ? (diskUsed / diskTotal) * 100 : null;
+    const sCpu = shown(shownTw.cpu);
+    const sMem = shown(shownTw.mem);
+    const sLoad = shown(shownTw.load);
+    const sDisk = shown(shownTw.disk);
     const free = diskFree(diskUsed, diskTotal);
     const rings: [number | null, string, string, string, ThresholdLevel, string[]][] = [
       [
-        ringFraction(cpu, 100),
+        ringFraction(sCpu, 100),
         p.green,
-        fmtPct(cpu),
+        fmtPct(sCpu),
         "CPU",
-        thresholdLevel(cpu, th.cpu),
+        thresholdLevel(sCpu, th.cpu),
         [[cpuCount != null ? t("idle.cores", { n: cpuCount }) : "", cpuTemp != null ? `${Math.round(cpuTemp)} °C` : ""].filter(Boolean).join(" · ")],
       ],
       [
-        ringFraction(mem, 100),
+        ringFraction(sMem, 100),
         p.blue,
-        fmtPct(mem),
+        fmtPct(sMem),
         "MEM",
-        thresholdLevel(mem, th.ram),
+        thresholdLevel(sMem, th.ram),
         [memUsed != null && memTotal != null ? `${fmtBytes(memUsed)} / ${fmtBytes(memTotal)}` : ""],
       ],
       [
-        ringFraction(load1, cpuCount),
+        ringFraction(sLoad, cpuCount),
         p.yellow,
-        load1 != null ? load1.toFixed(2) : "—",
+        sLoad != null ? sLoad.toFixed(2) : "—",
         "LOAD",
-        loadHealth(load1, load1 != null && cpuCount ? load1 / cpuCount : null, th.load),
+        loadHealth(sLoad, sLoad != null && cpuCount ? sLoad / cpuCount : null, th.load),
         [load5 != null && load15 != null ? `5m ${load5.toFixed(2)} · 15m ${load15.toFixed(2)}` : ""],
       ],
       [
-        ringFraction(diskUsed, diskTotal),
+        ringFraction(sDisk, 100),
         p.magenta,
-        fmtPct(diskPct),
+        fmtPct(sDisk),
         "DISK",
-        thresholdLevel(diskPct, th.disk),
+        thresholdLevel(sDisk, th.disk),
         [free != null ? t("idle.diskFree", { size: fmtBytes(free) }) : ""],
       ],
     ];
@@ -1160,9 +1228,10 @@
     const pts = away.points;
     if (!pts.length) return null;
     const from = pts[0].at;
-    const to = pts[pts.length - 1].at;
-    const series = (key: keyof IdleSample, color: string, fill: boolean) => {
-      for (const run of timeRuns(pts, key, from, to, gx, gy, gw, gh)) {
+    // The right edge on its way to the newest point: the line draws itself on.
+    const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? pts[pts.length - 1].at;
+    const series = (points: readonly AwayPoint[], key: keyof IdleSample, color: string, fill: boolean) => {
+      for (const run of timeRuns(points, key, from, to, gx, gy, gw, gh)) {
         if (fill && run.length > 1) {
           ctx.beginPath();
           ctx.moveTo(run[0].x, gy + gh);
@@ -1180,9 +1249,20 @@
         ctx.stroke();
       }
     };
-    series("mem", p.blue, false);
-    series("load", p.yellow, false);
-    series("cpu", p.green, true);
+    const lines = (points: readonly AwayPoint[]) => {
+      series(points, "mem", p.blue, false);
+      series(points, "load", p.yellow, false);
+      series(points, "cpu", p.green, true);
+    };
+    // Just after its points merged, the old line fades out as the new one comes in.
+    const k = merged ? easeOut(progress(merged.at, frameAt, ms(MERGE_MS))) : 1;
+    if (merged && k < 1) {
+      ctx.globalAlpha = 1 - k;
+      lines(merged.points);
+      ctx.globalAlpha = k;
+    } else merged = null;
+    lines(pts);
+    ctx.globalAlpha = 1;
     return { from, to };
   }
 
@@ -1521,6 +1601,9 @@
   ) {
     const pad = big ? 22 : 12;
     const r = big ? 14 : 9;
+    // The bar and its percentage run to each progress report; another transfer starts in place.
+    bar = bar.id === tr.row.id ? { id: bar.id, tw: retarget(bar.tw, tr.pct, frameAt, ms(BAR_MS)) } : { id: tr.row.id, tw: still(tr.pct) };
+    const pct = tweenAt(bar.tw, frameAt, ms(BAR_MS)) ?? tr.pct;
     ctx.fillStyle = hexAlpha(p.blue, 0.07);
     roundRect(ctx, x, y, w, h, r);
     ctx.fill();
@@ -1544,7 +1627,7 @@
     ctx.textBaseline = "top";
     ctx.fillStyle = p.foreground;
     ctx.font = `200 ${big ? 30 : 18}px ${MONO}`;
-    ctx.fillText(`${tr.pct}%`, x + w - pad, y + (big ? 14 : 8));
+    ctx.fillText(`${Math.round(pct)}%`, x + w - pad, y + (big ? 14 : 8));
     let rightW = ctx.measureText("100%").width;
     if (big && tr.more > 0) {
       ctx.font = `12px ${MONO}`;
@@ -1587,7 +1670,7 @@
     ctx.fillStyle = hexAlpha(p.blue, 0.12);
     ctx.fillRect(x, y + h - bh, w, bh);
     ctx.fillStyle = p.blue;
-    ctx.fillRect(x, y + h - bh, (w * tr.pct) / 100, bh);
+    ctx.fillRect(x, y + h - bh, (w * pct) / 100, bh);
     ctx.restore();
   }
 
