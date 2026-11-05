@@ -193,8 +193,11 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       // A monitoring section polling GPUs itself, or reading a process in a loop.
       ["src/lib/monitoring/MonGpu.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
       ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
+      // A second poller of the basic metrics — the status bar asking on its own timer.
+      ["src/lib/monitoring/StatusBar.svelte", svelte(`import { fetchMetrics } from "../api";\nvoid fetchMetrics;`)],
     ],
     good: [
+      ["src/lib/stores/metricsfeed.svelte.ts", `import { fetchMetrics } from "../api";\nexport const x = fetchMetrics;`],
       ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
       ["src/lib/monitoring/MonProcesses.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],

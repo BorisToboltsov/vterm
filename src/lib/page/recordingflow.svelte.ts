@@ -10,7 +10,6 @@
 import { getVersion } from "@tauri-apps/api/app";
 import {
   deleteRecording,
-  fetchMetrics,
   setBatchLabel,
   setRecordingMeta,
   setRecordingPaused,
@@ -22,6 +21,7 @@ import { recordingPauses } from "../layout/centerview";
 import { t } from "../i18n";
 import { newBatchId, withBatch } from "../recording/recording";
 import { settings } from "../settings/settings.svelte";
+import { readMetrics } from "../stores/metricsfeed.svelte";
 import {
   clearRecording,
   isRecording,
@@ -100,7 +100,7 @@ export function createRecordingFlow(deps: RecordingDeps) {
         if (srv.username) env.username = srv.username;
       }
       try {
-        const m = await fetchMetrics(tab.sessionId);
+        const m = await readMetrics(tab.sessionId);
         if (m.hostname) env.hostname = m.hostname;
         if (m.ip) env.ip = m.ip;
         if (m.user) env.username = m.user;

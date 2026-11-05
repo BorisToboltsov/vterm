@@ -194,6 +194,7 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
 | Состояния строк, drop-таргет | `transition duration-150` |
 | Drag-«призрак» | `in:fade` 120ms |
 | Замер мониторинга и заставки | значение идёт к замеру по [tween.ts](../src/lib/ui/tween.ts): число и кольцо — `RING_MS` 700, правый край графика — `LINE_MS` 800, шкала — `SCALE_MS` 600, ease-out; кадры — только пока что-то движется. Полосы — CSS `transform` 600 ms (`cubic-bezier(0.22,1,0.36,1)`) |
+| Замер статус-бара | то же, короче — `STATUS_MS` 300 (число, край линии CPU, шкала); цвет порога — `transition-colors` 300 ms; всплесков и пульсаций нет: бар в поле зрения весь день |
 
 Мгновенных скрытий/показов у сворачиваемых блоков не делаем.
 
@@ -295,30 +296,34 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
 
 ## Статус-бар
 
-Ряд **групп** показаний ([StatusBar.svelte](../src/lib/monitoring/StatusBar.svelte)); новый показатель =
-новая запись в `groups`, а не вложение в чужую группу.
+Сводка хоста в одну строку ([StatusBar.svelte](../src/lib/monitoring/StatusBar.svelte), модель —
+[barmodel.ts](../src/lib/monitoring/barmodel.ts), ADR 0053); новый показатель = запись в `BAR_ORDER`,
+`BAR_PRIORITY` и `BAR_SECTION`, а не вложение в чужую группу.
 
-- **Группа:** иконка (`size=14 text-muted`) + значение(я), внутри `gap-2`. Между любыми группами
-  — тонкая черта `divider()` (`h-3 w-px bg-current`) с равным `gap-2` по бокам, её рендерит цикл
-  через `{#if i > 0}`.
-- **Против «прыжка»:** все значения `tabular-nums`, каждое — в `inline-block` с двумя плотными
-  ширинами через `w(compact, expanded)`. Составное значение собирается в один элемент (ОЗУ —
-  `used / total (pct)`, диск — `free / total`), без `&nbsp;`-склеек. Длинные тексты (top process,
-  kernel, ip) — `truncate`, полное значение в `title`.
-- **CPU — мини-график**: `h-3.5 w-10`, `border-edge`, фон `bg-panel`, столбики зелёные `#22c55e`,
-  история `CPU_SAMPLES` с левым паддингом нулями (рост справа). Горизонтальную полосу загрузки не
-  возвращаем.
-- **Режимы:** `settings.statusBarExpanded` (по умолчанию компактный) — иконки и проценты;
-  расширенный добавляет имя ОС, байтовые суммы, sparkline, load average. Бар — `flex
-  items-stretch`: прокручиваемая область метрик (`overflow-x-auto flex-1`) + тоггл и кнопка
-  мониторинга **снаружи** неё (`self-stretch border-l`), чтобы метрики не подъезжали под них.
-- **Показатели** (каждый со своей иконкой): OS, user@host, ip `globe`, uptime `power`, kernel
-  `terminal`, server time `clock`, CPU (%+sparkline), load average `gauge`, CPU temp
-  `thermometer`, top process `activity`, ОЗУ, swap `swap`, диск, disk I/O `diskIo`, сеть
-  `upload`/`download`, connections `plug`, users `users`. Видимость — `settings.statusBarItems`
-  (флаг на показатель); группа рисуется при флаге **и** наличии данных.
-- **Передачи SFTP** — сегмент со стрелкой ↑/↓ и суммарным `%` (в расширенном — N файлов +
-  мини-бар); клик разворачивает панель SFTP.
+- **Ряд:** точка вердикта хоста (`h-2 w-2 rounded-full`, цвет `levelDot`, кнопка `p-1 hover:bg-edge`
+  открывает «Обзор») → группы в порядке «ОС, хост → CPU, память, диск, сеть → load, температура, swap,
+  I/O → процесс, соединения, пользователи, аптайм, IP, ядро, время». Группа — кнопка `-mx-1 px-1
+  rounded hover:bg-edge` с иконкой `size=14` (сеть — `download`/`upload` 13) и значением; перед
+  каждой — черта `divider()` (`h-3 w-px bg-current`), между группами `gap-2`.
+- **Значение:** число `text-text tabular-nums` по правому краю коробки в `ch` (`min-w-[3ch]` у
+  процентов, `min-w-[4ch]` у скоростей), единица отдельно — `ml-0.5 text-meta text-muted`, у скоростей в
+  слоте `w-[1.75rem]`. Порог красит только число (`text-warn`/`text-danger`, `transition-colors`
+  300 ms). Развёрнутый вид добавляет имя ОС, байты (`text-meta tabular-nums`), «N своб.» у диска,
+  load 5/15 и линию CPU — `Chart bar` `w-10`, высота 14, `rounded-sm bg-edge/40`, `--color-rail-1`.
+- **Не поместилось** — младшая группа уходит (`invisible absolute`, чтобы её было чем мерить), в
+  конце ряда «⋯ +N» (`dots` 13, подсказка перечисляет ушедшее, клик — «Обзор»). Ряд
+  `overflow-hidden`, прокрутки нет.
+- **Справа, вне ряда** (`border-l border-edge px-2`): чип проблем — `rounded border px-1.5 text-meta`,
+  `border-warn/50 bg-warn/10 text-warn` или `border-bad/50 bg-bad/10 text-bad`, иконка `alert` 12, текст
+  проблемы или «N крит. · M предупр.», уже `56rem` — только число; передачи — стрелка, в развёрнутом
+  и широком «N файлов» и полоса `h-1.5 w-12` (`scaleX`, 300 ms), `%`; крестик отмены
+  `hover:text-danger`. Дальше переключатель вида `w-9 border-l`.
+- **Плитка по наведению** — плитка «Обзора» над баром: `w-60 rounded-lg border-edge bg-panel shadow-lg`,
+  микро-метка, число `text-xl font-semibold` в цвете порога, подпись `text-meta`, `Chart` 48 px за
+  10 минут с метками времени; сеть и I/O — зеркально. Не выходит за края бара (`tileLeft`).
+- **Состояния:** до первого замера — скелеты тех же мест (`Skeleton` `0.625rem`), хост не ответил —
+  ряд `opacity-50` и `clock` 12 с возрастом замера `text-warn`; ни разу не ответил — «Метрики
+  недоступны».
 
 ## Страница мониторинга
 

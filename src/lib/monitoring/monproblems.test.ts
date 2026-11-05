@@ -124,3 +124,17 @@ describe("what needs attention", () => {
     expect([lv.disks, lv.system, lv.cpu, lv.overview]).toEqual(["warn", "crit", "ok", "crit"]);
   });
 });
+
+describe("problems without the detail probe (the status bar)", () => {
+  it("files the root disk from the basic probe", () => {
+    const ps = problems(input({ detail: null, metrics: metrics({ diskUsed: 96, diskTotal: 100 }) }));
+    expect(ps).toEqual([
+      expect.objectContaining({ id: "disk:/", level: "crit", section: "disks", params: expect.objectContaining({ mount: "/", pct: 96 }) }),
+    ]);
+  });
+
+  it("leaves the disks to the partitions when the detail is there", () => {
+    const ps = problems(input({ metrics: metrics({ diskUsed: 96, diskTotal: 100 }) }));
+    expect(ps.filter((p) => p.section === "disks")).toEqual([]);
+  });
+});

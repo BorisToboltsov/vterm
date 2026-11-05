@@ -136,6 +136,10 @@ export default defineConfig(
             owners: ["src/lib/page/filedragflow.svelte.ts"],
             why: "files leave the app only through handToSystem, after dragOutBlocker said they can (ADR 0027)",
           },
+          fetchMetrics: {
+            owners: ["src/lib/stores/metricsfeed.svelte.ts"],
+            why: "one poll per session: the backend takes CPU% and rates from the previous call, so a second poller reads them over a fraction of a second",
+          },
           fetchLiveExtras: {
             owners: ["src/lib/monitoring/MonitoringOverlay.svelte"],
             why: "GPUs and containers are polled only while their monitoring section is on screen (ADR 0052)",

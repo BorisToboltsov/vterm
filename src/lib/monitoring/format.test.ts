@@ -9,6 +9,7 @@ import {
   fmtMs,
   fmtPct,
   fmtRate,
+  rateParts,
   fmtUptime,
   isUnlimitedLimit,
   memPct,
@@ -40,6 +41,27 @@ describe("fmtRate", () => {
   it("scales to KB/s and MB/s", () => {
     expect(fmtRate(512 * 1024)).toBe("512 KB/s");
     expect(fmtRate(2 * 1024 ** 2)).toBe("2.0 MB/s");
+  });
+  it("tells a value that rounds up to 1024 in the next unit", () => {
+    // Was "1024 KB/s": a four-digit number the bar had no room for.
+    expect(fmtRate(1023.7 * 1024)).toBe("1.0 MB/s");
+    expect(fmtRate(1023.6)).toBe("1.0 KB/s");
+    expect(fmtRate(1023.4)).toBe("1023 B/s");
+    expect(fmtRate(1023 * 1024)).toBe("1023 KB/s");
+    expect(fmtRate(9.96 * 1024)).toBe("10.0 KB/s");
+  });
+});
+
+describe("rateParts", () => {
+  it("gives the number and the unit apart", () => {
+    expect(rateParts(512 * 1024)).toEqual({ num: "512", unit: "KB/s", value: 512 });
+    expect(rateParts(3.5 * 1024 ** 2)).toMatchObject({ num: "3.5", unit: "MB/s" });
+    expect(rateParts(0)).toMatchObject({ num: "0", unit: "B/s" });
+  });
+  it("knows nothing of an unknown or broken value", () => {
+    expect(rateParts(null)).toBeNull();
+    expect(rateParts(Number.NaN)).toBeNull();
+    expect(fmtRate(Number.NaN)).toBe("—");
   });
 });
 

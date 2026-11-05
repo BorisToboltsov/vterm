@@ -14,6 +14,12 @@ export const RING_MS = 700;
 export const LINE_MS = 800;
 /** A transfer's bar and percentage. */
 export const BAR_MS = 300;
+/**
+ * Everything on the status bar (v1.34): a number, the edge of its small chart.
+ * The bar is in view all day, at the edge of sight, where a long count draws
+ * the eye every few seconds — so its changes are short, and nothing flashes.
+ */
+export const STATUS_MS = 300;
 /** A chart's scale moving to a new ceiling. */
 export const SCALE_MS = 600;
 /** The history's line giving way to the one its merged points draw. */

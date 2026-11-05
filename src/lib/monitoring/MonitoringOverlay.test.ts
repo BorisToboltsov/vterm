@@ -19,6 +19,7 @@ vi.mock("../api", () => ({
 
 import MonitoringOverlay from "./MonitoringOverlay.svelte";
 import { resetSettings } from "../settings/settings.svelte";
+import { feedOf, forgetMetrics, watchMetrics } from "../stores/metricsfeed.svelte";
 
 const metrics: Metrics = {
   os: "Linux",
@@ -162,6 +163,8 @@ beforeEach(() => {
   fetchExtras.mockReset().mockResolvedValue(extras);
   fetchLiveExtras.mockReset().mockResolvedValue(live);
   fetchProcessDetail.mockReset();
+  // The session's feed outlives a component: each test starts without one.
+  forgetMetrics("s1");
 });
 
 async function openOn(section?: string, props: Record<string, unknown> = {}) {
@@ -170,6 +173,27 @@ async function openOn(section?: string, props: Record<string, unknown> = {}) {
   if (section) await fireEvent.click(screen.getByTestId(`mon-nav-${section}`));
   return section ? screen.findByTestId(`mon-section-${section}`) : screen.getByTestId("mon-section-overview");
 }
+
+describe("MonitoringOverlay — the session's feed", () => {
+  it("opens on the section it is given", async () => {
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s1", section: "memory" } });
+    expect(await screen.findByTestId("mon-section-memory")).toBeInTheDocument();
+    expect(screen.getByTestId("mon-nav-memory")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("rides the feed the status bar already runs: one basic probe, the history it kept", async () => {
+    // The bar has been watching: its poll is in the feed.
+    const stopBar = watchMetrics("s1");
+    await vi.waitFor(() => expect(feedOf("s1").seq).toBe(0));
+    expect(fetchMetrics).toHaveBeenCalledTimes(1);
+    render(MonitoringOverlay, { props: { open: true, sessionId: "s1" } });
+    await screen.findByTestId("mon-nav");
+    // Opening fetched the detail at once — not a second basic probe.
+    await vi.waitFor(() => expect(fetchMetricsDetail).toHaveBeenCalledTimes(1));
+    expect(fetchMetrics).toHaveBeenCalledTimes(1);
+    stopBar();
+  });
+});
 
 describe("MonitoringOverlay — navigation and overview", () => {
   it("opens on the overview and offers only the sections this host has", async () => {

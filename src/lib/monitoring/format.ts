@@ -25,16 +25,27 @@ export function osIcon(os: string, prettyName: string): IconName {
 
 /** Network rate (bytes/sec) as a short human string: "1.2 MB/s", or "—" for null. */
 export function fmtRate(n: number | null): string {
-  if (n == null) return "—";
-  if (n < 1024) return `${Math.round(n)} B/s`;
-  const units = ["KB/s", "MB/s", "GB/s"];
-  let v = n / 1024;
+  const p = rateParts(n);
+  return p ? `${p.num} ${p.unit}` : "—";
+}
+
+/**
+ * A rate as its number and its unit, apart — the status bar draws the unit
+ * dimmer, in a fixed slot. A value that rounds up to 1024 of a unit is told in
+ * the next one: 1023.7 KB/s is "1.0 MB/s", never "1024 KB/s".
+ */
+export function rateParts(n: number | null): { num: string; unit: string; value: number } | null {
+  if (n == null || !Number.isFinite(n)) return null;
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let v = Math.max(0, n);
   let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
+  const shown = (x: number, at: number) => (at === 0 ? Math.round(x) : Number(x.toFixed(x < 10 ? 1 : 0)));
+  while (i < units.length - 1 && shown(v, i) >= 1024) {
     v /= 1024;
     i++;
   }
-  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+  const num = i === 0 ? String(Math.round(v)) : v.toFixed(v < 10 ? 1 : 0);
+  return { num, unit: units[i], value: v };
 }
 
 /** Uptime seconds → "5d 3h" / "3h 12m" / "12m"; "—" for null. */

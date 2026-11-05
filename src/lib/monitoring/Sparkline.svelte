@@ -1,8 +1,7 @@
 <script lang="ts">
   // Tiny bar sparkline: a fixed-width strip of bars filling from the right.
   // Pure presentational — the parent owns the (already padded) sample array.
-  // Shared by the status-bar CPU chart and the monitoring overlay's history
-  // charts, so the visual language stays identical (Phase «Расширение мониторинга»).
+  // Drawn in the Docker and k8s rows; the status bar draws a `Chart` since v1.34.
   let {
     values,
     max = 100,

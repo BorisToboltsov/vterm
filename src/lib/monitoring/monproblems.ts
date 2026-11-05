@@ -107,7 +107,16 @@ export function problems(i: ProblemInput): Problem[] {
     add("crit", "oom", "memory", "mon.p.oom", { n: x!.oomKills! }, names.slice(-3).join(", "));
   }
 
-  // Disks
+  // Disks. Without the detail probe (the status bar) — the root, from the basic one.
+  if (!d && m?.diskUsed != null && m.diskTotal) {
+    const used = (m.diskUsed / m.diskTotal) * 100;
+    add(thresholdLevel(used, th.disk), "disk:/", "disks", "mon.p.disk", {
+      mount: "/",
+      pct: round(used),
+      used: fmtBytes(m.diskUsed),
+      total: fmtBytes(m.diskTotal),
+    });
+  }
   for (const p of d?.partitions ?? []) {
     if (p.total > 0) {
       const used = (p.used / p.total) * 100;
