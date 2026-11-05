@@ -8,7 +8,6 @@ import {
   idleSample,
   loadFraction,
   pushSample,
-  seriesRuns,
   tokenizeBuffer,
   type IdleSample,
 } from "./idlefx";
@@ -90,22 +89,6 @@ describe("away card chart", () => {
     h = pushSample(h, s(0.2), 2);
     h = pushSample(h, s(0.3), 2);
     expect(h.map((x) => x.cpu)).toEqual([0.2, 0.3]);
-  });
-
-  it("seriesRuns puts 1 at the top edge and 0 at the bottom", () => {
-    const [run] = seriesRuns([0, 1], 10, 100, 200, 50);
-    expect(run).toEqual([
-      { x: 10, y: 150 },
-      { x: 210, y: 100 },
-    ]);
-  });
-
-  it("seriesRuns breaks the line at unknown samples instead of dropping to 0", () => {
-    const runs = seriesRuns([0.5, null, 0.5, 0.5], 0, 0, 30, 10);
-    expect(runs).toHaveLength(2);
-    expect(runs[0]).toHaveLength(1);
-    expect(runs[1].map((p) => p.x)).toEqual([20, 30]);
-    expect(seriesRuns([null, null], 0, 0, 10, 10)).toEqual([]);
   });
 });
 

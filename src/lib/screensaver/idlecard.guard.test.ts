@@ -31,6 +31,20 @@ import { describe, expect, it } from "vitest";
 // shift the user set (`shiftOffset` over `settings.idleShiftEverySec`, off by
 // default), and the prod frame — the edge of the area — is drawn after, in place. The history of the time away does not draw a line through a poll
 // that failed: that moment is a gap.
+//
+// And the history carries no marks of its own (v1.33). A dashed line and a dot
+// per event turned a busy stretch into a fence nobody could read; what happened
+// at a moment is told by a tooltip over the point under the pointer. A move does
+// not dismiss the screensaver, so the tooltip may follow it — read against the
+// burn-in shift the frame was drawn with, and gone once the pointer rests (a
+// tooltip left up for hours would hold its pixels lit), with or without the
+// animation loop.
+//
+// And a reading does not land in one frame (v1.33): rings, numbers and the
+// transfer bar run to it from where they stand, a number counting on the way,
+// and the right edge of each chart moves to the newest point instead of
+// jumping there. Every duration goes through `motionMs`, so reduced motion
+// keeps each change instant.
 // Checked on the source with comments stripped.
 
 function stripHtmlComments(text: string): string {
@@ -141,9 +155,68 @@ export function driftViolations(overlay: string): string[] {
  * failed — in the overlay's own source. Empty when the rule holds.
  */
 export function gapViolations(overlay: string): string[] {
-  const body = bodyOf(bare(overlay), "pollMetrics");
+  const o = bare(overlay);
+  const body = bodyOf(o, "pollMetrics");
   const caught = /\bcatch\s*\{([\s\S]*?)\n {4}\}/.exec(body)?.[1] ?? "";
-  return /\baway = awayPush\(away, gapReading\(/.test(caught) ? [] : ["a failed poll leaves no gap in the history"];
+  const kept = /\baway = awayPush\(away, r, awayThresholds\(\)\);/.test(bodyOf(o, "remember"));
+  return /\bremember\(gapReading\(/.test(caught) && kept ? [] : ["a failed poll leaves no gap in the history"];
+}
+
+/**
+ * What lets a ring, a number or a chart's edge jump to a reading, or move with
+ * reduced motion on — in the overlay's own source. Empty when the rule holds.
+ */
+export function smoothViolations(overlay: string): string[] {
+  const o = bare(overlay);
+  const out: string[] = [];
+  const drawn = bodyOf(o, "cardMetrics") + bodyOf(o, "drawStandby");
+  if (/\bfmtPct\((?:cpu|mem|diskPct)\)|\bringFraction\((?:cpu|mem|load1|diskUsed),|\bload1 != null \? load1\.toFixed/.test(drawn)) {
+    out.push("a ring or a number jumps to the reading");
+  }
+  const poll = bodyOf(o, "pollMetrics");
+  if (!["cpu", "mem", "load", "disk"].every((k) => new RegExp(`\\b${k}: retarget\\(shownTw\\.${k},`).test(poll))) {
+    out.push("what is shown does not follow the readings");
+  }
+  if (!/const to = tweenAt\(axisTw, frameAt, ms\(LINE_MS\)\)/.test(bodyOf(o, "drawAway"))) {
+    out.push("the history's edge jumps to the newest point");
+  }
+  if (!/const end = tweenAt\(histTw, frameAt, ms\(LINE_MS\)\);/.test(bodyOf(o, "drawSeries"))) {
+    out.push("the small chart jumps to the newest sample");
+  }
+  const reduced = /const ms = \(base: number\) => motionMs\(base, reduce\);/.test(o);
+  const raw = /\b(?:tweenAt|retarget|progress)\([^;]*?,\s*(?:RING_MS|LINE_MS|BAR_MS|MERGE_MS)\b/.test(o);
+  if (!reduced || raw) out.push("a change moves with reduced motion on");
+  return out;
+}
+
+/**
+ * What draws marks over the history, lets its tooltip outstay a resting pointer
+ * or miss the point under it, or lets the pointer dismiss the screensaver — in
+ * the overlay's own source. Empty when the rule holds.
+ */
+export function hoverViolations(overlay: string): string[] {
+  const o = bare(overlay);
+  const out: string[] = [];
+  if (/\baway\.events\b/.test(bodyOf(o, "drawAway"))) out.push("the history draws marks for its events");
+  const hovered = bodyOf(o, "hovered");
+  const shown = hovered.indexOf("if (!pointer || !hoverShown(movedAt, performance.now())) return null;");
+  const picks = hovered.indexOf("pointAt(away.points,");
+  if (picks < 0) out.push("the tooltip does not ask which point is under the pointer");
+  else if (shown < 0 || shown > picks) out.push("the tooltip outstays a resting pointer");
+  const shifted =
+    /const x = pointer\.x - drift\.dx;/.test(hovered) &&
+    /const y = pointer\.y - drift\.dy;/.test(hovered) &&
+    /shiftOffset\(now, settings\.idleShiftEverySec\);\s*drift = \{ dx, dy \};/.test(bodyOf(o, "drawCard"));
+  if (!shifted) out.push("the pointer is read without the burn-in shift");
+  const move = bodyOf(o, "onPointerMove");
+  if (!/stillTimer = setTimeout\(\(\) => \{\s*if \(active\) draw\(performance\.now\(\) - started\);\s*\}, HOVER_STILL_MS\b/.test(move)) {
+    out.push("without the animation loop the tooltip stays up for good");
+  }
+  if (/\bdeactivate\(/.test(move + bodyOf(o, "onPointerLeave"))) out.push("the pointer dismisses the screensaver");
+  if (!/onpointermove=\{onPointerMove\}/.test(o) || !/onpointerleave=\{onPointerLeave\}/.test(o)) {
+    out.push("the canvas does not follow the pointer");
+  }
+  return out;
 }
 
 /** Body of `function name(…) { … }`, up to the next top-level function. */
@@ -313,9 +386,86 @@ describe("idle card guard", () => {
     const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
     expect(gapViolations(overlay)).toEqual([]);
     // The check catches its own violation: a failure that only keeps the numbers.
-    const silent = overlay.replace("      away = awayPush(away, gapReading(Date.now()), awayThresholds());\n", "");
+    const silent = overlay.replace("      remember(gapReading(Date.now()));\n", "");
     expect(silent).not.toBe(overlay);
     expect(gapViolations(silent)).toEqual(["a failed poll leaves no gap in the history"]);
+    // …or one that is passed on to a step that no longer keeps it.
+    const dropped = overlay.replace("    away = awayPush(away, r, awayThresholds());\n", "");
+    expect(dropped).not.toBe(overlay);
+    expect(gapViolations(dropped)).toEqual(["a failed poll leaves no gap in the history"]);
+  });
+
+  it("runs rings, numbers and charts to each reading instead of jumping", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(smoothViolations(overlay)).toEqual([]);
+    const caught = (from: string, to: string) => {
+      const changed = overlay.replace(from, to);
+      expect(changed, from).not.toBe(overlay);
+      return smoothViolations(changed);
+    };
+    // The check catches its own violations: a ring drawn from the raw reading…
+    expect(caught("ringFraction(sCpu, 100),", "ringFraction(cpu, 100),")).toEqual(["a ring or a number jumps to the reading"]);
+    // …a small card's number that jumps…
+    expect(caught('["CPU", fmtPct(shown(shownTw.cpu)), p.green, "cpu"],', '["CPU", fmtPct(cpu), p.green, "cpu"],')).toEqual([
+      "a ring or a number jumps to the reading",
+    ]);
+    // …a value that no reading sends on…
+    expect(caught("      cpu: retarget(shownTw.cpu, cpu, t, ms(RING_MS)),\n", "")).toEqual(["what is shown does not follow the readings"]);
+    // …a history whose edge jumps to the newest point…
+    expect(
+      caught("const to = tweenAt(axisTw, frameAt, ms(LINE_MS)) ?? pts[pts.length - 1].at;", "const to = pts[pts.length - 1].at;"),
+    ).toEqual(["the history's edge jumps to the newest point"]);
+    // …a small chart that jumps…
+    expect(caught("const end = tweenAt(histTw, frameAt, ms(LINE_MS));", "const end = histSeq;")).toEqual([
+      "the small chart jumps to the newest sample",
+    ]);
+    // …and movement that ignores reduced motion: a raw duration, or none of the setting.
+    expect(caught("tweenAt(tw, frameAt, ms(RING_MS));", "tweenAt(tw, frameAt, RING_MS);")).toEqual(["a change moves with reduced motion on"]);
+    expect(caught("motionMs(base, reduce);", "motionMs(base, false);")).toEqual(["a change moves with reduced motion on"]);
+  });
+
+  it("tells a moment of the history in a tooltip, not in marks", () => {
+    const overlay = read("lib", "screensaver", "IdleOverlay.svelte");
+    expect(hoverViolations(overlay)).toEqual([]);
+    // The check catches its own violations: the event marks back on the chart…
+    const marked = overlay.replace(
+      "    lines(pts);\n",
+      "    lines(pts);\n    for (const e of away.events) ctx.fillRect(timeX(e.peakAt, from, to, gx, gw), gy, 1, gh);\n",
+    );
+    expect(marked).not.toBe(overlay);
+    expect(hoverViolations(marked)).toEqual(["the history draws marks for its events"]);
+    // …a tooltip that ignores how long the pointer has rested…
+    const resting = overlay.replace(
+      "if (!pointer || !hoverShown(movedAt, performance.now())) return null;",
+      "if (!pointer) return null;",
+    );
+    expect(resting).not.toBe(overlay);
+    expect(hoverViolations(resting)).toEqual(["the tooltip outstays a resting pointer"]);
+    // …a pointer read where the layout stood before it drifted…
+    const unshifted = overlay.replace("const x = pointer.x - drift.dx;", "const x = pointer.x;");
+    expect(unshifted).not.toBe(overlay);
+    expect(hoverViolations(unshifted)).toEqual(["the pointer is read without the burn-in shift"]);
+    const unrecorded = overlay.replace("    drift = { dx, dy };\n", "");
+    expect(unrecorded).not.toBe(overlay);
+    expect(hoverViolations(unrecorded)).toEqual(["the pointer is read without the burn-in shift"]);
+    // …no repaint once the pointer rests, when nothing else repaints…
+    const stuck = overlay.replace(
+      "    stillTimer = setTimeout(() => {\n      if (active) draw(performance.now() - started);\n    }, HOVER_STILL_MS + 50);\n",
+      "",
+    );
+    expect(stuck).not.toBe(overlay);
+    expect(hoverViolations(stuck)).toEqual(["without the animation loop the tooltip stays up for good"]);
+    // …a move that takes the screensaver down…
+    const dismissing = overlay.replace(
+      "    movedAt = performance.now();\n    if (!reduce || !active) return;",
+      "    movedAt = performance.now();\n    deactivate();\n    if (!reduce || !active) return;",
+    );
+    expect(dismissing).not.toBe(overlay);
+    expect(hoverViolations(dismissing)).toEqual(["the pointer dismisses the screensaver"]);
+    // …and a canvas that never hears the pointer.
+    const deaf = overlay.replace("    onpointermove={onPointerMove}\n", "");
+    expect(deaf).not.toBe(overlay);
+    expect(hoverViolations(deaf)).toEqual(["the canvas does not follow the pointer"]);
   });
 
   it("leaves the pointer visible over the screensaver", () => {

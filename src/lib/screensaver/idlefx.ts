@@ -96,36 +96,17 @@ export function idleSample(
   return { cpu: pct(cpuPct), mem: pct(memPct), load: loadFraction(load1, cpuCount) };
 }
 
-/** Append a sample, keeping the newest `cap`. Returns a new array. */
-export function pushSample(hist: IdleSample[], s: IdleSample, cap = 70): IdleSample[] {
-  return [...hist, s].slice(-Math.max(1, cap));
-}
-
+/** Samples a small card's chart spans. */
+export const HIST_POINTS = 70;
 /**
- * Canvas points for one series across a `w × h` box at (`x0`, `y0`), fraction 1
- * at the top edge. Split into runs at unknown samples, so a gap is drawn as a
- * gap instead of a dive to zero. Samples are spread over the full width by index.
+ * Samples it keeps: one more than it spans, so the oldest can slide out past
+ * the left edge while the newest slides in (v1.33).
  */
-export function seriesRuns(
-  values: (number | null)[],
-  x0: number,
-  y0: number,
-  w: number,
-  h: number,
-): { x: number; y: number }[][] {
-  const step = w / Math.max(1, values.length - 1);
-  const runs: { x: number; y: number }[][] = [];
-  let run: { x: number; y: number }[] = [];
-  values.forEach((v, i) => {
-    if (v == null) {
-      if (run.length) runs.push(run);
-      run = [];
-      return;
-    }
-    run.push({ x: x0 + i * step, y: y0 + h - clamp01(v) * h });
-  });
-  if (run.length) runs.push(run);
-  return runs;
+export const HIST_KEEP = HIST_POINTS + 1;
+
+/** Append a sample, keeping the newest `cap`. Returns a new array. */
+export function pushSample(hist: IdleSample[], s: IdleSample, cap = HIST_POINTS): IdleSample[] {
+  return [...hist, s].slice(-Math.max(1, cap));
 }
 
 // ── Away card layout ─────────────────────────────────────────────────────────

@@ -9,10 +9,15 @@ import {
   DRIFT_Y,
   driftOffset,
   emptyAway,
+  eventsAt,
+  gapAround,
   gapReading,
+  HOVER_SLACK,
+  HOVER_STILL_MS,
+  hoverShown,
+  isGapPoint,
   mergePoints,
-  notableEvents,
-  placeLabels,
+  pointAt,
   readingLevels,
   ringFraction,
   serverOffset,
@@ -20,12 +25,14 @@ import {
   shifted,
   SHIFT_PATH_STEP,
   shiftOffset,
+  spanLabel,
   standbyTransfer,
   timeRuns,
   timeTicks,
   timeX,
   type AwayEvent,
   type AwayHistory,
+  type AwayPoint,
   type AwayReading,
   type AwayThresholds,
 } from "./standby";
@@ -40,8 +47,37 @@ const T0 = new Date(2026, 10, 4, 13, 18, 0).getTime();
 const MIN = 60_000;
 
 function reading(over: Partial<AwayReading> = {}): AwayReading {
-  return { at: T0, cpuPct: 20, memPct: 60, load1: 1, cpuCount: 8, topProc: "postgres 12%", ...over };
+  return {
+    at: T0,
+    cpuPct: 20,
+    memPct: 60,
+    load1: 1,
+    cpuCount: 8,
+    topProc: "postgres 12%",
+    memUsed: 6 * 2 ** 30,
+    memTotal: 10 * 2 ** 30,
+    ...over,
+  };
 }
+/** A point of the chart, a single reading at `at` unless told otherwise. */
+function point(over: Partial<AwayPoint> = {}): AwayPoint {
+  const at = over.at ?? T0;
+  return {
+    at,
+    until: at,
+    n: 1,
+    cpu: 0.2,
+    mem: 0.6,
+    load: 0.125,
+    load1: 1,
+    cores: 8,
+    memUsed: 6,
+    memTotal: 10,
+    top: "",
+    ...over,
+  };
+}
+const GAP = { cpu: null, mem: null, load: null, load1: null, cores: null, memUsed: null, memTotal: null, top: "" };
 /** Push `readings` one by one, a minute apart unless they say otherwise. */
 function run(readings: Partial<AwayReading>[], cap?: number): AwayHistory {
   return readings.reduce<AwayHistory>(
@@ -52,15 +88,33 @@ function run(readings: Partial<AwayReading>[], cap?: number): AwayHistory {
 
 describe("history of the time away", () => {
   it("keeps each reading as fractions of its ceiling; load against the cores", () => {
-    const h = run([{ cpuPct: 25, memPct: 50, load1: 4, cpuCount: 8 }]);
-    expect(h.points).toEqual([{ at: T0, cpu: 0.25, mem: 0.5, load: 0.5 }]);
-    // A load above the cores is the top of the chart, not past it.
-    expect(run([{ load1: 20 }]).points[0].load).toBe(1);
+    const h = run([{ cpuPct: 25, memPct: 50, load1: 4, cpuCount: 8, topProc: " make 80% " }]);
+    expect(h.points).toEqual([
+      {
+        at: T0,
+        until: T0,
+        n: 1,
+        cpu: 0.25,
+        mem: 0.5,
+        load: 0.5,
+        load1: 4,
+        cores: 8,
+        memUsed: 6 * 2 ** 30,
+        memTotal: 10 * 2 ** 30,
+        top: "make 80%",
+      },
+    ]);
+    // A load above the cores is the top of the chart, not past it — but the
+    // tooltip still says what it was.
+    expect(run([{ load1: 20 }]).points[0]).toMatchObject({ load: 1, load1: 20 });
+    // No CPU reading — no process to pin on it.
+    expect(run([{ cpuPct: null }]).points[0].top).toBe("");
   });
 
   it("draws what it could not read as a gap, not a value", () => {
     const h = awayPush(emptyAway(), gapReading(T0), TH);
-    expect(h.points).toEqual([{ at: T0, cpu: null, mem: null, load: null }]);
+    expect(h.points).toEqual([{ at: T0, until: T0, n: 1, ...GAP }]);
+    expect(isGapPoint(h.points[0])).toBe(true);
     expect(h.events).toEqual([]);
     // No load average (Windows) or no core count: load is unknown, the rest is not.
     expect(run([{ load1: null }]).points[0]).toMatchObject({ cpu: 0.2, load: null });
@@ -69,17 +123,38 @@ describe("history of the time away", () => {
 
   it("merges neighbours into their peak, so a spike survives the merge", () => {
     const pts = [
-      { at: 1, cpu: 0.1, mem: null, load: 0.2 },
-      { at: 2, cpu: 0.9, mem: 0.5, load: null },
-      { at: 3, cpu: null, mem: null, load: null },
-      { at: 4, cpu: null, mem: null, load: null },
-      { at: 5, cpu: 0.3, mem: 0.3, load: 0.3 },
+      point({ at: 1, cpu: 0.1, mem: null, load: 0.2, load1: 1.6, top: "cron 9%", memUsed: null }),
+      point({ at: 2, cpu: 0.9, mem: 0.5, load: null, load1: null, cores: null, top: "make 90%", memUsed: 5 }),
+      point({ at: 3, ...GAP }),
+      point({ at: 4, ...GAP }),
+      point({ at: 5, cpu: 0.3, mem: 0.3, load: 0.3 }),
     ];
     expect(mergePoints(pts)).toEqual([
-      { at: 1, cpu: 0.9, mem: 0.5, load: 0.2 },
-      { at: 3, cpu: null, mem: null, load: null },
-      { at: 5, cpu: 0.3, mem: 0.3, load: 0.3 },
+      // What it says beside each value comes from the reading that gave the peak.
+      point({ at: 1, until: 2, n: 2, cpu: 0.9, mem: 0.5, load: 0.2, load1: 1.6, cores: 8, memUsed: 5, top: "make 90%" }),
+      point({ at: 3, until: 4, n: 2, ...GAP }),
+      point({ at: 5, cpu: 0.3, mem: 0.3, load: 0.3 }),
     ]);
+    // Merged again, the span and the count keep adding up.
+    expect(mergePoints(mergePoints(pts))[0]).toMatchObject({ at: 1, until: 4, n: 4, cpu: 0.9 });
+  });
+
+  it("keeps the busiest process of the highest CPU, not of the last reading", () => {
+    const h = run(
+      [
+        { cpuPct: 30, topProc: "node 30%" },
+        { cpuPct: 97, topProc: "pg_dump 96%" },
+        { cpuPct: 12, topProc: "sshd 1%" },
+        { cpuPct: 15, topProc: "cron 2%" },
+      ],
+      2,
+    );
+    // Two points at most: the first three readings merge, the fourth stands alone.
+    expect(h.points.map((pt) => [pt.cpu, pt.top, pt.n])).toEqual([
+      [0.97, "pg_dump 96%", 3],
+      [0.15, "cron 2%", 1],
+    ]);
+    expect(h.points[0]).toMatchObject({ at: T0, until: T0 + 2 * MIN });
   });
 
   it("never holds more points than the cap, and keeps the peak", () => {
@@ -164,7 +239,55 @@ describe("events of the time away", () => {
     });
   });
 
-  it("labels the most telling events first, and only those that fit", () => {
+});
+
+describe("the point under the pointer", () => {
+  const pts = [0, 1, 2, 5].map((m) => point({ at: T0 + m * MIN }));
+
+  it("is the nearest in time, and none off the chart", () => {
+    // 0…5 minutes over 500 px from x = 100: a minute is 100 px.
+    const at = (x: number) => pointAt(pts, x, T0, T0 + 5 * MIN, 100, 500);
+    expect(at(100)).toBe(0);
+    expect(at(149)).toBe(0);
+    expect(at(151)).toBe(1);
+    expect(at(250)).toBe(1); // halfway between two points: the earlier one
+    expect(at(449)).toBe(2); // 2 and 5 minutes: halfway is 3½
+    expect(at(451)).toBe(3);
+    expect(at(600)).toBe(3);
+    // A little past either side still picks the point at the end…
+    expect(at(100 - HOVER_SLACK)).toBe(0);
+    expect(at(600 + HOVER_SLACK)).toBe(3);
+    // …further is off the chart.
+    expect(at(100 - HOVER_SLACK - 1)).toBe(-1);
+    expect(at(600 + HOVER_SLACK + 1)).toBe(-1);
+    expect(at(NaN)).toBe(-1);
+    expect(pointAt([], 300, T0, T0 + 5 * MIN, 100, 500)).toBe(-1);
+    // One point so far: the axis has no span, and that point is the one.
+    expect(pointAt(pts.slice(0, 1), 300, T0, T0, 100, 500)).toBe(0);
+    // The edge on its way to the newest point: that point is not on the chart yet.
+    expect(pointAt(pts, 600, T0, T0 + 3 * MIN, 100, 500)).toBe(2);
+    expect(pointAt(pts, 100, T0, T0 + 3 * MIN, 100, 500)).toBe(0);
+  });
+
+  it("knows the whole stretch vterm read nothing for", () => {
+    const line = [
+      point({ at: 1 }),
+      point({ at: 2, ...GAP }),
+      point({ at: 3, ...GAP }),
+      point({ at: 4 }),
+      point({ at: 5, ...GAP }),
+    ];
+    expect(gapAround(line, 1)).toEqual({ first: 1, last: 2 });
+    expect(gapAround(line, 2)).toEqual({ first: 1, last: 2 });
+    expect(gapAround(line, 4)).toEqual({ first: 4, last: 4 });
+    expect(gapAround(line, 0)).toBeNull();
+    expect(gapAround(line, 3)).toBeNull();
+    expect(gapAround(line, 9)).toBeNull();
+    // A host with no load average is not a gap: the rest was read.
+    expect(isGapPoint(point({ load: null, load1: null }))).toBe(false);
+  });
+
+  it("tells the events its stretch shares time with: CPU, then memory, then load", () => {
     const ev = (over: Partial<AwayEvent>): AwayEvent => ({
       key: "cpu",
       level: "warn",
@@ -177,14 +300,35 @@ describe("events of the time away", () => {
       open: false,
       ...over,
     });
-    const a = ev({ peak: 82 });
-    const b = ev({ level: "crit", peak: 96 });
-    const c = ev({ key: "load", level: "crit", peak: 16, cores: 8 });
-    const d = ev({ key: "mem", peak: 88 });
-    expect(notableEvents([a, b, c, d], 3)).toEqual([c, b, d]);
-    expect(notableEvents([a], 0)).toEqual([]);
-    expect(placeLabels([[0, 100], [50, 150], [110, 200], [300, 400]])).toEqual([0, 2, 3]);
-    expect(placeLabels([[0, 100], [104, 150]], 8)).toEqual([0]);
+    const load = ev({ key: "load", start: T0 + MIN, end: T0 + 9 * MIN });
+    const cpu = ev({ start: T0 + 2 * MIN, end: T0 + 3 * MIN });
+    const mem = ev({ key: "mem", start: T0 + 3 * MIN, end: T0 + 4 * MIN });
+    const all = [load, cpu, mem];
+    expect(eventsAt(all, point({ at: T0 + 2 * MIN, until: T0 + 2 * MIN }))).toEqual([cpu, load]);
+    // A merged point covers its whole stretch: the edges count.
+    expect(eventsAt(all, point({ at: T0 + 3 * MIN, until: T0 + 5 * MIN }))).toEqual([cpu, mem, load]);
+    expect(eventsAt(all, point({ at: T0 + 10 * MIN }))).toEqual([]);
+    expect(eventsAt(all, point({ at: T0 - MIN, until: T0 }))).toEqual([]);
+  });
+
+  it("stops showing once the pointer rests", () => {
+    expect(hoverShown(null, 1000)).toBe(false);
+    expect(hoverShown(1000, 1000)).toBe(true);
+    expect(hoverShown(1000, 1000 + HOVER_STILL_MS - 1)).toBe(true);
+    expect(hoverShown(1000, 1000 + HOVER_STILL_MS)).toBe(false);
+    // A clock that went back is no reason to show it.
+    expect(hoverShown(1000, 999)).toBe(false);
+  });
+
+  it("names a stretch short: seconds under a minute, then as the uptime reads", () => {
+    expect(spanLabel(0)).toBe("0s");
+    expect(spanLabel(35_000)).toBe("35s");
+    expect(spanLabel(59_400)).toBe("59s");
+    expect(spanLabel(60_000)).toBe("1m");
+    expect(spanLabel(17 * MIN)).toBe("17m");
+    expect(spanLabel(160 * MIN)).toBe("2h 40m");
+    expect(spanLabel(-5)).toBe("0s");
+    expect(spanLabel(NaN)).toBe("0s");
   });
 });
 
@@ -208,6 +352,48 @@ describe("the chart's time axis", () => {
     expect(timeRuns(pts.slice(0, 1), "cpu", T0, T0, 7, 0, 100, 10)).toEqual([[{ x: 7, y: 10 }]]);
     expect(timeX(T0 + MIN, T0, T0 + 2 * MIN, 0, 200)).toBe(100);
     expect(timeX(T0, T0, T0, 5, 200)).toBe(5);
+  });
+
+  it("cuts the line at an edge on its way, never past the box", () => {
+    const pts = [
+      { at: 0, cpu: 0, mem: null, load: null },
+      { at: 10, cpu: 1, mem: null, load: null },
+      { at: 20, cpu: 0, mem: null, load: null },
+      { at: 30, cpu: 1, mem: null, load: null },
+    ];
+    // The right edge halfway to the newest point: the last stretch drawn to the edge.
+    expect(timeRuns(pts, "cpu", 0, 25, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 100 },
+        { x: 40, y: 0 },
+        { x: 80, y: 100 },
+        { x: 100, y: 50 },
+      ],
+    ]);
+    // The left edge past the oldest point (a small card sliding on): cut there too.
+    expect(timeRuns(pts, "cpu", 5, 30, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 50 },
+        { x: 20, y: 0 },
+        { x: 60, y: 100 },
+        { x: 100, y: 0 },
+      ],
+    ]);
+    // Both edges inside one stretch.
+    expect(timeRuns(pts, "cpu", 12, 18, 0, 0, 100, 100)).toEqual([
+      [
+        { x: 0, y: 20 },
+        { x: 100, y: 80 },
+      ],
+    ]);
+    // No line is drawn across a gap to reach an edge.
+    const gapped = [
+      { at: 0, cpu: 0.5, mem: null, load: null },
+      { at: 10, cpu: null, mem: null, load: null },
+      { at: 20, cpu: 0.5, mem: null, load: null },
+    ];
+    expect(timeRuns(gapped, "cpu", 5, 15, 0, 0, 100, 100)).toEqual([]);
+    expect(timeRuns(gapped, "cpu", 0, 15, 0, 0, 100, 100)).toEqual([[{ x: 0, y: 50 }]]);
   });
 
   it("ticks at round minutes of the server's clock, no more than asked", () => {
