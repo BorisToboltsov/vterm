@@ -25,9 +25,28 @@ import { describe, expect, it } from "vitest";
 
 const read = (...p: string[]) => readFileSync(join(process.cwd(), "src", ...p), "utf8");
 
+/** Drop `<!-- … -->` blocks by scanning, not by a regex replace: a replace can leave an
+ *  `<!--` behind (`<!<!-- x -->--`), and an unclosed comment drops the rest. */
+export function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    const open = src.indexOf("<!--", i);
+    if (open < 0) return out + src.slice(i);
+    out += src.slice(i, open);
+    const close = src.indexOf("-->", open + 4);
+    if (close < 0) return out;
+    i = close + 3;
+  }
+  return out;
+}
+
 /** Source without `<!-- … -->` and `//` line comments: prose may name what code may not do. */
-function bare(src: string): string {
-  return src.replace(/<!--[\s\S]*?-->/g, "").replace(/^\s*\/\/.*$/gm, "");
+export function bare(src: string): string {
+  return stripHtmlComments(src)
+    .split("\n")
+    .filter((l) => !l.trim().startsWith("//"))
+    .join("\n");
 }
 
 /** What rebuilds the status bar on a tab switch — in the page's source. */
@@ -71,6 +90,13 @@ export function barViolations(bar: string): string[] {
 }
 
 describe("status bar guard", () => {
+  it("reads the source without its comments, an unclosed one included", () => {
+    expect(stripHtmlComments("a<!-- x -->b<!-- y -->c")).toBe("abc");
+    expect(stripHtmlComments("a<!--<!-- x -->-->b")).toBe("a-->b");
+    expect(stripHtmlComments("a<!-- open")).toBe("a");
+    expect(bare("x\n  // the bar used {#key}\ny")).toBe("x\ny");
+  });
+
   it("the bar is not rebuilt on a tab switch", () => {
     const page = read("routes", "+page.svelte");
     expect(keyedViolations(page)).toEqual([]);
