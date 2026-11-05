@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   diskFree,
+  fmtAgo,
   fmtBytes,
+  fmtCount,
   fmtLimit,
+  fmtMhz,
+  fmtMs,
   fmtPct,
   fmtRate,
   fmtUptime,
@@ -130,5 +134,29 @@ describe("fmtLimit", () => {
   it("localizes a bounded count and dashes null", () => {
     expect(fmtLimit(1024)).toBe((1024).toLocaleString());
     expect(fmtLimit(null)).toBe("—");
+  });
+});
+
+describe("monitoring page formats (v1.33)", () => {
+  it("formats latency, keeping a decimal below 10 ms", () => {
+    expect(fmtMs(null)).toBe("—");
+    expect(fmtMs(NaN)).toBe("—");
+    expect(fmtMs(0.42)).toBe("0.4 ms");
+    expect(fmtMs(12.6)).toBe("13 ms");
+  });
+
+  it("marks seconds ago under a chart, and never writes 60 seconds", () => {
+    expect(fmtAgo(0)).toBe("");
+    expect(fmtAgo(600)).toBe("−10:00");
+    expect(fmtAgo(200)).toBe("−3:20");
+    expect(fmtAgo(59.6)).toBe("−1:00");
+  });
+
+  it("formats clocks and counts, unknown as a dash", () => {
+    expect(fmtMhz(2400)).toBe("2.40 GHz");
+    expect(fmtMhz(800)).toBe("800 MHz");
+    expect(fmtMhz(null)).toBe("—");
+    expect(fmtCount(null)).toBe("—");
+    expect(fmtCount(1234.4)).toBe((1234).toLocaleString());
   });
 });

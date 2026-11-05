@@ -68,7 +68,7 @@
     still,
     tweenAt,
     type Tween,
-  } from "./tween";
+  } from "../ui/tween";
   import { motionMs } from "../ui/motion";
   import { fetchMetrics } from "../api";
   import { diskFree, fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "../monitoring/format";

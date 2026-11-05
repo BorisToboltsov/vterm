@@ -402,10 +402,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Возможности хоста — по данным, а не по ОС приложения** ([hostcaps.ts](../src/lib/monitoring/hostcaps.ts)
   поверх `Metrics.os` — ОС **хоста сессии**); пустая ОС — блок остаётся. Новый «недоступный
   здесь» показатель — предикатом с тестом.
-- **Метрики опрашиваются на трёх уровнях:** `METRICS_SCRIPT` — на каждом тике (не раздувать),
+- **Метрики опрашиваются по уровням:** `METRICS_SCRIPT` — на каждом тике (не раздувать),
   `DETAIL_SCRIPT` — страница, `EXTRAS_SCRIPT` — один раз при открытии оверлея,
-  `fetch_pending_updates` — лениво. Дельтовые сэмплы — в `MetricsSamples`, чистятся в
-  `disconnect`.
+  `fetch_pending_updates` — лениво, `LIVE_SCRIPT` — только пока на экране раздел GPU или
+  контейнеров, процесс — по клику (`fetch_process_detail`). Обе команды зовёт один модуль
+  (`vterm/owned-imports`). Все процессы уходят на страницу, только пока открыт их раздел
+  (`processes`). Дельтовые сэмплы — в `MetricsSamples`, чистятся в `disconnect`.
+- **CPU процесса — прирост его тиков, а не `%cpu` из `ps`** (`proc_cpu`): на Linux `%cpu` —
+  среднее за жизнь процесса. Тот же pid с другим временем старта — другой процесс, без значения;
+  первый опрос — без значения, а не ноль. Гейт `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average`.
 - **Зонд читает, производные считает Rust:** в `*_SCRIPT` только сырые показания, вычитание — в
   парсере; отсутствующее поле не печатается. «Использовано» RAM — колонка `free` самого хоста
   (`parse_free`, только без неоднозначности), иначе `mem_used` по правилу procps ≥ 3.3.17.
@@ -414,11 +419,18 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **Опрос идёт, только пока на него смотрят:** оверлей гасит петлю на закрытии,
   `showStatusBar=false` размонтирует `StatusBar`; поэтому вход на страницу мониторинга есть и в
   ⌘K, и в нативном меню (`menu://monitoring`).
-- **Пороги и health — единые источники:** уровень значения — [thresholds.ts](../src/lib/monitoring/thresholds.ts)
-  (`settings.statusBarThresholds`, `null` = выкл), уровень блока —
-  [monhealth.ts](../src/lib/monitoring/monhealth.ts) (`worstLevel`); новый показатель = ключ порога +
-  дефолт + поле настроек + строка в `*Health`. Графики — `Chart`/`Sparkline`/`StackedBar`;
-  безлимитный потолок — `∞` (`fmtLimit`).
+- **Пороги и проблемы — единые источники** (ADR 0052): уровень значения —
+  [thresholds.ts](../src/lib/monitoring/thresholds.ts) (`settings.statusBarThresholds`, `null` = выкл);
+  что требует внимания и уровень раздела — один список
+  [monproblems.ts](../src/lib/monitoring/monproblems.ts) (раздел — худшая из своих проблем, так точка и
+  список не расходятся). Счётчик, растущий с загрузки, — проблема, только если вырос при открытой
+  странице (`baselineOf`). Новый показатель = ключ порога + дефолт + поле настроек + правило в
+  `problems`; своих порогов в разделе нет. Нечитаемое — `null`, не ноль (OOM без журнала ядра).
+- **График мониторинга не сжимается и не прыгает** ([chartgeom.ts](../src/lib/monitoring/chartgeom.ts)):
+  место точки — слот от правого края, край и шкала идут к замеру через `ui/tween.ts`; проценты —
+  против 0–100, автошкала — круглая и подписана; кривая монотонная; пропуск — разрыв линии.
+  Цвета серий — `--color-rail-*` (`SERIES`), TCP — по имени состояния. Доля — только против
+  известного потолка (лимит контейнера, crit датчика), безлимитный — `∞` (`fmtLimit`).
 - **Пароль `docker login`** — только в keychain (`vterm:registry`), не в настройках, бэкапе и
   argv: `docker_login` подаёт его через `--password-stdin` и не мирроится. url + username —
   `settings.dockerRegistries`.
@@ -975,7 +987,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   вычетом сдвига), она называет точку максимумом своего промежутка и гаснет через `HOVER_STILL_MS`
   без движения — и без цикла анимации. Замер не прыгает: кольца, числа и полоса переноса доходят
   до него от показанного значения, края графиков — до новой точки
-  ([tween.ts](../src/lib/screensaver/tween.ts), длительности — `motionMs`). Гейт `idlecard.guard`.
+  ([tween.ts](../src/lib/ui/tween.ts), длительности — `motionMs`). Гейт `idlecard.guard`.
 - **Вшитый WebView2 — только когда системного нет** (ADR 0013): системный и
   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` побеждают всегда; распаковка атомарная, со sha256; версия
   хвоста — строго `a.b.c.d`; `.cab` — только с подписью Microsoft; без движка — окно с
@@ -1067,7 +1079,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret`.
@@ -1133,6 +1145,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `a_job_is_told_only_to_the_windows_of_its_sessions` (Rust) | Событие задания уходит одним `send` и только аудитории |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |
 | `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()`; каждый файл `commands/` — в `BRIDGE` |
 | `network_utilities_never_record_raw_argv_or_output` · `a_netcheck_run_can_always_be_stopped` · `a_local_tool_runs_only_its_fixed_argv` (Rust) | Сетевые утилиты пишут итог; проверку доступа можно остановить; локальный инструмент — только со своим argv |
 | `app_originated_sockets_live_only_in_ssh_and_netcheck` (Rust) | Сокеты приложения — только в `ssh.rs` и `netcheck.rs` |

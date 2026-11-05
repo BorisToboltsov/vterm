@@ -25,7 +25,8 @@ export type ListId =
   | "k8s.events"
   | "files"
   | "git.changes"
-  | "recordings";
+  | "recordings"
+  | "mon.processes";
 
 /** Where the file panels kept their order before 1.29 — read once, then dropped. */
 export const LEGACY_FILES_KEY = "vterm.filesort";

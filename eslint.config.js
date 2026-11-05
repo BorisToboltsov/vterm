@@ -136,6 +136,14 @@ export default defineConfig(
             owners: ["src/lib/page/filedragflow.svelte.ts"],
             why: "files leave the app only through handToSystem, after dragOutBlocker said they can (ADR 0027)",
           },
+          fetchLiveExtras: {
+            owners: ["src/lib/monitoring/MonitoringOverlay.svelte"],
+            why: "GPUs and containers are polled only while their monitoring section is on screen (ADR 0052)",
+          },
+          fetchProcessDetail: {
+            owners: ["src/lib/monitoring/MonProcesses.svelte"],
+            why: "one process is read on a click, never in a poll loop (ADR 0052)",
+          },
           // A tab between windows (ADR 0017, 0018): the trip and the offer are one flow's.
           ...Object.fromEntries(
             ["detachBegin", "detachCommit", "detachAbort", "takeHandoff", "declineHandoff", "announceWindow"].map((name) => [

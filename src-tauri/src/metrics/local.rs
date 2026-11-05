@@ -20,11 +20,14 @@
 use std::time::{Duration, Instant};
 
 use sysinfo::{
-    Components, Disks, Networks, ProcessStatus, ProcessesToUpdate, System, Users,
-    MINIMUM_CPU_UPDATE_INTERVAL,
+    Components, Disks, Networks, Pid, ProcessRefreshKind, ProcessStatus, ProcessesToUpdate, System,
+    Users, MINIMUM_CPU_UPDATE_INTERVAL,
 };
 
-use super::{Extras, Hardware, Metrics, MetricsDetail, NetIface, Partition, Proc, Sensor};
+use super::{
+    Extras, Hardware, Metrics, MetricsDetail, NetIface, Partition, Proc, ProcRow, ProcessDetail,
+    Sensor, PROC_CAP,
+};
 
 /// Gap between the two samples. `sysinfo` needs at least [`MINIMUM_CPU_UPDATE_INTERVAL`]
 /// between CPU refreshes for a meaningful percentage; 200 ms is a comfortable floor.
@@ -331,8 +334,36 @@ fn root_disk_from_disks(disks: &Disks) -> Option<(u64, u64)> {
     root_disk(&entries)
 }
 
-/// Detailed monitoring-overlay metrics (heavier; two samples ~200 ms apart).
-pub(super) async fn collect_detail() -> MetricsDetail {
+/// Every local process as a [`ProcRow`] — CPU from sysinfo's own two samples.
+fn all_rows(sys: &System, users: &Users, total_mem: u64) -> Vec<ProcRow> {
+    sys.processes()
+        .values()
+        .map(|p| ProcRow {
+            pid: p.pid().as_u32(),
+            ppid: p.parent().map(|pp| pp.as_u32()),
+            user: p
+                .user_id()
+                .and_then(|uid| users.get_user_by_id(uid))
+                .map(|u| u.name().to_string())
+                .unwrap_or_default(),
+            state: status_key(p.status()).to_string(),
+            elapsed_secs: Some(p.run_time()),
+            threads: p.tasks().map(|t| t.len() as u64),
+            rss: Some(p.memory()),
+            mem: if total_mem > 0 {
+                p.memory() as f64 / total_mem as f64 * 100.0
+            } else {
+                0.0
+            },
+            cpu: Some(f64::from(p.cpu_usage())),
+            comm: p.name().to_string_lossy().into_owned(),
+        })
+        .collect()
+}
+
+/// Detailed monitoring-overlay metrics (heavier; two samples ~200 ms apart). The
+/// full process list only when `processes` — the Processes section is on screen.
+pub(super) async fn collect_detail(processes: bool) -> MetricsDetail {
     let mut sys = System::new();
     sys.refresh_memory();
     sys.refresh_cpu_usage();
@@ -356,6 +387,15 @@ pub(super) async fn collect_detail() -> MetricsDetail {
         .iter()
         .map(|c| f64::from(c.cpu_usage()))
         .collect();
+    // Current frequency per logical CPU; a platform that reports none gives zeros,
+    // which are unknown rather than a measurement.
+    sys.refresh_cpu_frequency();
+    let freqs: Vec<f64> = sys.cpus().iter().map(|c| c.frequency() as f64).collect();
+    let cpu_freq_mhz = if freqs.iter().any(|&f| f > 0.0) {
+        freqs
+    } else {
+        Vec::new()
+    };
 
     rows.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
     let top_procs: Vec<Proc> = rows.iter().take(6).cloned().collect();
@@ -390,8 +430,66 @@ pub(super) async fn collect_detail() -> MetricsDetail {
         sensors_installed,
         net_ifaces: net_ifaces(&nets, secs),
         procs_running: Some(procs_running),
+        cpu_freq_mhz,
+        process_total: Some(sys.processes().len() as u64),
+        processes: if processes {
+            let mut all = all_rows(&sys, &users, total_mem);
+            all.sort_by_key(|r| r.pid);
+            all.truncate(PROC_CAP);
+            all
+        } else {
+            Vec::new()
+        },
         ..Default::default()
     }
+}
+
+/// A [`ProcessStatus`] as one of the [`ProcessDetail::state`] keys.
+fn status_key(status: ProcessStatus) -> &'static str {
+    match status {
+        ProcessStatus::Run => "running",
+        ProcessStatus::Sleep => "sleeping",
+        ProcessStatus::UninterruptibleDiskSleep => "disk",
+        ProcessStatus::Stop | ProcessStatus::Tracing => "stopped",
+        ProcessStatus::Zombie => "zombie",
+        ProcessStatus::Idle => "idle",
+        _ => "other",
+    }
+}
+
+/// One local process's details (on a click); None when it is gone.
+pub(super) async fn collect_process(pid: u32) -> Option<ProcessDetail> {
+    let mut sys = System::new();
+    let id = Pid::from_u32(pid);
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[id]),
+        true,
+        ProcessRefreshKind::everything(),
+    );
+    let p = sys.process(id)?;
+    let users = Users::new_with_refreshed_list();
+    let user = p
+        .user_id()
+        .and_then(|uid| users.get_user_by_id(uid))
+        .map(|u| u.name().to_string())
+        .unwrap_or_default();
+    let cmdline = p
+        .cmd()
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(ProcessDetail {
+        pid,
+        user,
+        state: status_key(p.status()).to_string(),
+        elapsed_secs: Some(p.run_time()),
+        threads: p.tasks().map(|t| t.len() as u64),
+        rss: Some(p.memory()),
+        cmdline,
+        // No cross-OS descriptor count in sysinfo: unknown, not zero.
+        fds: None,
+    })
 }
 
 /// Static machine spec for the overlay's hardware card. GPU/Docker/SMART/OOM are
@@ -495,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_detail_reports_cores_and_memory() {
-        let d = collect_detail().await;
+        let d = collect_detail(false).await;
         assert!(!d.per_cpu.is_empty(), "per-core usage should be populated");
         assert!(d.per_cpu.iter().all(|c| (0.0..=100.0).contains(c)));
         assert!(d.mem_total.unwrap_or(0) > 0, "total memory should be known");

@@ -1,20 +1,24 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Extras, Metrics, MetricsDetail, PendingUpdates } from "../api";
+import type { Extras, LiveExtras, Metrics, MetricsDetail, PendingUpdates, ProcessDetail } from "../api";
 
 const fetchMetrics = vi.fn();
 const fetchMetricsDetail = vi.fn();
 const fetchPendingUpdates = vi.fn();
 const fetchExtras = vi.fn();
+const fetchLiveExtras = vi.fn();
+const fetchProcessDetail = vi.fn();
 vi.mock("../api", () => ({
   fetchMetrics: (...a: unknown[]) => fetchMetrics(...a),
   fetchMetricsDetail: (...a: unknown[]) => fetchMetricsDetail(...a),
   fetchPendingUpdates: (...a: unknown[]) => fetchPendingUpdates(...a),
   fetchExtras: (...a: unknown[]) => fetchExtras(...a),
+  fetchLiveExtras: (...a: unknown[]) => fetchLiveExtras(...a),
+  fetchProcessDetail: (...a: unknown[]) => fetchProcessDetail(...a),
 }));
 
 import MonitoringOverlay from "./MonitoringOverlay.svelte";
-import { resetSettings, settings } from "../settings/settings.svelte";
+import { resetSettings } from "../settings/settings.svelte";
 
 const metrics: Metrics = {
   os: "Linux",
@@ -55,14 +59,8 @@ const detail: MetricsDetail = {
   memCached: 2 * 1024 ** 3,
   topMem: "postgres 12%, node 8%",
   partitions: [
-    {
-      mount: "/",
-      fstype: "ext4",
-      used: 5 * 1024 ** 3,
-      total: 100 * 1024 ** 3,
-      inodesUsed: 123456,
-      inodesTotal: 655360,
-    },
+    { mount: "/", fstype: "ext4", used: 87, total: 100, inodesUsed: 123456, inodesTotal: 655360 },
+    { mount: "/boot", fstype: "vfat", used: 1, total: 10, inodesUsed: null, inodesTotal: null },
   ],
   fileNrUsed: 1536,
   fileNrMax: 9223372036854775807,
@@ -96,26 +94,50 @@ const detail: MetricsDetail = {
   conntrackMax: 65536,
   timeSynced: true,
   netIfaces: [{ name: "eth0", rxRate: 1024, txRate: 2048, rxErrs: 0, rxDrop: 0, txErrs: 0, txDrop: 0 }],
-  diskDevs: [{ name: "sda", readRate: 4096, writeRate: 8192 }],
+  diskDevs: [{ name: "sda", readRate: 4096, writeRate: 8192, utilPct: 42, awaitMs: 3.5 }],
   sessions: [{ user: "root", tty: "pts/0", from: "192.168.1.50", login: "2026-06-29 14:00" }],
   ctxtRate: 5000,
   intrRate: 3000,
   procsRunning: 2,
   procsBlocked: 0,
+  failedUnitNames: ["nginx.service"],
+  swapInRate: null,
+  swapOutRate: null,
+  cpuFreqMhz: [2400, 2400, 1200, 800],
+  throttleCount: 0,
+  listenSockets: [
+    { proto: "tcp", addr: "0.0.0.0", port: 22, process: "sshd", pid: 812 },
+    { proto: "tcp", addr: "::", port: 443, process: null, pid: null },
+  ],
+  processes: [],
+  processTotal: 3,
 };
 
-const pending: PendingUpdates = {
-  manager: "apt",
-  updates: 12,
-  security: 3,
-  rebootRequired: true,
-};
+const row = (pid: number, ppid: number, comm: string, cpu: number | null, user = "root") => ({
+  pid,
+  ppid,
+  user,
+  state: "sleeping" as const,
+  elapsedSecs: 7200,
+  threads: 2,
+  rss: 50 * 1024 ** 2,
+  mem: 1.5,
+  cpu,
+  comm,
+});
+const PROCESSES = [row(1, 0, "systemd", 0.1), row(1234, 1, "nginx", 12.5), row(1300, 1234, "nginx-worker", 3, "www")];
+
+const pending: PendingUpdates = { manager: "apt", updates: 12, security: 3, rebootRequired: true };
+
+const docker = [{ name: "web", cpu: 12.5, mem: "1.2GiB / 3.8GiB", memUsed: 1288490188, memLimit: null, cpuLimit: null }];
 
 const extras: Extras = {
-  gpus: [{ name: "RTX 4090", util: 35, memUsed: 1024, memTotal: 24576, temp: 61 }],
-  docker: [{ name: "web", cpu: 12.5, mem: "1.2GiB / 3.8GiB" }],
-  smart: [{ device: "sda", health: "PASSED", temp: 38, powerOnHours: 12345 }],
+  gpus: [],
+  docker,
+  smart: [{ device: "sda", health: "PASSED", temp: 38, powerOnHours: 12345, wearPct: 3, reallocated: 0 }],
   oomKills: 2,
+  oomVictims: [{ pid: 99, name: "postgres", at: "2026-11-05T09:14:22+0000", bootSecs: null }],
+  logins: [{ user: "deploy", tty: "pts/0", from: "10.0.0.12", at: "2026-11-05T09:14:22+00:00", active: true }],
   hardware: {
     cpuModel: "Intel Xeon E5-2680 v4",
     cpuCores: 8,
@@ -130,219 +152,297 @@ const extras: Extras = {
   },
 };
 
+const live: LiveExtras = { gpus: [], docker };
+
 beforeEach(() => {
   resetSettings();
   fetchMetrics.mockReset().mockResolvedValue(metrics);
   fetchMetricsDetail.mockReset().mockResolvedValue(detail);
   fetchPendingUpdates.mockReset().mockResolvedValue(pending);
   fetchExtras.mockReset().mockResolvedValue(extras);
+  fetchLiveExtras.mockReset().mockResolvedValue(live);
+  fetchProcessDetail.mockReset();
 });
 
-describe("MonitoringOverlay", () => {
-  it("renders the system block and all detail sections from a live poll", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s1" } });
-    expect(await screen.findByTestId("system")).toBeInTheDocument();
-    expect(screen.getByTestId("detail-sections")).toBeInTheDocument();
-    expect(screen.getByTestId("per-core")).toBeInTheDocument();
-    expect(screen.getByTestId("partitions")).toBeInTheDocument();
-    expect(screen.getByTestId("tcp-states")).toBeInTheDocument();
-    // 13.2: memory composition stacked bar from the detail breakdown.
-    expect(screen.getByTestId("mem-composition")).toBeInTheDocument();
-    // 13.4: CPU breakdown bar + top-processes table.
-    expect(screen.getByTestId("cpu-breakdown")).toBeInTheDocument();
-    expect(screen.getByTestId("top-procs")).toBeInTheDocument();
-    expect(screen.getByText("nginx")).toBeInTheDocument();
-    // Memory section: top-by-memory table (mirrors the CPU top-process table).
-    expect(screen.getByTestId("top-mem")).toBeInTheDocument();
-    expect(screen.getByText("redis-server")).toBeInTheDocument();
-    // Load average header carries a health dot like every other section.
-    expect(screen.getByTestId("load-badge")).toBeInTheDocument();
-    // Health summary chips in the System block (all green/ok in the fixture).
-    expect(screen.getByTestId("health-summary")).toBeInTheDocument();
-    // 13.5: per-interface network, per-device disk I/O, sessions.
-    expect(screen.getByTestId("net-ifaces")).toBeInTheDocument();
-    expect(screen.getByTestId("disk-devs")).toBeInTheDocument();
-    expect(screen.getByTestId("sessions")).toBeInTheDocument();
-    expect(screen.getByText("eth0")).toBeInTheDocument();
-    expect(screen.getByText("192.168.1.50")).toBeInTheDocument();
-    // CPU% headline from the metrics poll.
-    expect(screen.getByText("42%")).toBeInTheDocument();
+async function openOn(section?: string, props: Record<string, unknown> = {}) {
+  render(MonitoringOverlay, { props: { open: true, sessionId: "s1", ...props } });
+  await screen.findByTestId("mon-nav");
+  if (section) await fireEvent.click(screen.getByTestId(`mon-nav-${section}`));
+  return section ? screen.findByTestId(`mon-section-${section}`) : screen.getByTestId("mon-section-overview");
+}
+
+describe("MonitoringOverlay — navigation and overview", () => {
+  it("opens on the overview and offers only the sections this host has", async () => {
+    await openOn();
+    const nav = screen.getByTestId("mon-nav");
+    for (const s of ["overview", "cpu", "memory", "disks", "network", "temperature", "processes", "system"]) {
+      expect(within(nav).getByTestId(`mon-nav-${s}`)).toBeInTheDocument();
+    }
+    // No GPU on this host — no GPU section. Containers appear once the extras arrive.
+    expect(within(nav).queryByTestId("mon-nav-gpu")).toBeNull();
+    expect(await within(nav).findByTestId("mon-nav-containers")).toBeInTheDocument();
+    expect(within(nav).getByTestId("mon-nav-cpu")).toHaveTextContent("42%");
   });
 
-  it("truncates a long interface name instead of overflowing the card (Windows NDIS filters)", async () => {
-    // Regression (v1.0.9): Windows exposes NDIS filter adapters with very long
-    // names; without a fixed table layout the name column blew out the numeric
-    // columns and the whole table overflowed the card.
-    const longName = "Ethernet-Kaspersky Lab NDIS 6 Filter-0000";
-    fetchMetricsDetail.mockResolvedValue({
-      ...detail,
-      netIfaces: [
-        { name: longName, rxRate: 2764, txRate: 515, rxErrs: 0, rxDrop: 0, txErrs: 0, txDrop: 0 },
-      ],
-    });
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-iface" } });
-    const wrap = await screen.findByTestId("net-ifaces");
-    // Fixed layout: columns keep their widths, they can't be pushed out.
-    expect(wrap.querySelector("table")).toHaveClass("table-fixed");
-    // The name cell truncates and carries the full value in a title for hover.
-    const cell = screen.getByText(longName);
-    expect(cell).toHaveClass("truncate");
-    expect(cell).toHaveAttribute("title", longName);
+  it("lists what needs attention, the critical first, and colours the navigation by it", async () => {
+    await openOn();
+    // The failed unit (crit) shows at once; the pending and extras problems once they load.
+    const list = await screen.findByTestId("mon-problems");
+    await within(list).findByText("Security updates waiting: 3");
+    const rows = within(list).getAllByTestId("mon-problem");
+    expect(rows[0]).toHaveAttribute("data-level", "crit");
+    expect(within(list).getByText("nginx.service")).toBeInTheDocument();
+    expect(within(list).getByText("/ is 87% full (0 MiB of 0 MiB)")).toBeInTheDocument();
+    expect(screen.getByTestId("mon-nav-system")).toHaveAttribute("data-level", "crit");
+    expect(screen.getByTestId("mon-nav-disks")).toHaveAttribute("data-level", "warn");
+    expect(screen.getByTestId("mon-overall")).toHaveAttribute("data-level", "crit");
   });
 
-  it("surfaces system-health scalars grouped in the system block", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-health" } });
-    const sys = await screen.findByTestId("system");
-    // Logical group headers within the System block.
-    expect(within(sys).getByText("Host")).toBeInTheDocument();
-    expect(within(sys).getByText("synced")).toBeInTheDocument();
-    expect(within(sys).getByText("120 / 65536")).toBeInTheDocument();
-    // The Updates group appears once the lazy pending probe resolves.
-    expect(await within(sys).findByText("Updates")).toBeInTheDocument();
+  it("goes to a problem's section from its row", async () => {
+    await openOn();
+    const list = await screen.findByTestId("mon-problems");
+    const row = within(list).getByText("/ is 87% full (0 MiB of 0 MiB)").closest("li")!;
+    await fireEvent.click(within(row).getByText("Disks"));
+    expect(await screen.findByTestId("mon-section-disks")).toBeInTheDocument();
   });
 
-  it("shows the temperature sensors table with a per-core heatmap", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-temp" } });
-    expect(await screen.findByTestId("sensors-table")).toBeInTheDocument();
-    expect(screen.getByText("Package id 0")).toBeInTheDocument();
-    // ≥2 "Core N" sensors → per-core temp heatmap.
-    expect(screen.getByTestId("core-temps")).toBeInTheDocument();
+  it("says so when nothing needs attention", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, failedUnits: 0, failedUnitNames: [], partitions: [] });
+    fetchPendingUpdates.mockResolvedValue({ ...pending, security: 0, rebootRequired: false });
+    fetchExtras.mockResolvedValue({ ...extras, oomKills: 0 });
+    await openOn();
+    expect(await screen.findByTestId("mon-all-clear")).toBeInTheDocument();
   });
 
-  it("offers to install lm-sensors when the binary is missing", async () => {
-    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
-    const onInstallTool = vi.fn();
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-noterm", onInstallTool } });
-    const card = await screen.findByTestId("sensors-install");
-    expect(card).toBeInTheDocument();
-    await fireEvent.click(within(card).getByRole("button"));
-    expect(onInstallTool).toHaveBeenCalledWith("sensors");
+  it("hands the snapshot, its problems and the question's subject to the assistant, and closes", async () => {
+    const onAskAi = vi.fn();
+    await openOn(undefined, { onAskAi });
+    await screen.findByText("Security updates waiting: 3");
+    await fireEvent.click(screen.getAllByTestId("mon-ask-ai")[0]);
+    const snapshot = onAskAi.mock.calls[0][0] as string;
+    expect(snapshot).toContain("Question about: the overall state of this host");
+    expect(snapshot).toContain("Needs attention:");
+    expect(snapshot).toContain("- [crit] Failed systemd units: 1 (nginx.service)");
+    expect(screen.queryByTestId("mon-nav")).toBeNull();
   });
 
-  it("shows a 'no sensors detected' note (not the install CTA) when lm-sensors is installed but exposes no chips", async () => {
-    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: true });
-    const onInstallTool = vi.fn();
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-nosens", onInstallTool } });
-    expect(await screen.findByTestId("sensors-none")).toBeInTheDocument();
-    expect(screen.queryByTestId("sensors-install")).toBeNull();
-  });
-
-  // Phase 39 (Windows testing): a Windows host reported no sensors, and the card
-  // fell through to "Install lm-sensors" — an apt package, on Windows.
-  it("says temperature is unsupported on Windows instead of offering lm-sensors", async () => {
-    fetchMetrics.mockResolvedValue({ ...metrics, os: "Windows", cpuTemp: null });
-    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-win-temp" } });
-    expect(await screen.findByTestId("sensors-unsupported")).toBeInTheDocument();
-    expect(screen.queryByTestId("sensors-install")).toBeNull();
-  });
-
-  // Windows has no load-average concept at all, so the card is hidden rather
-  // than rendered as "— / — / —".
-  it("hides the load-average card on Windows but keeps it on Linux", async () => {
-    fetchMetrics.mockResolvedValue({
-      ...metrics,
-      os: "Windows",
-      load1: null,
-      load5: null,
-      load15: null,
-    });
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-win-load" } });
-    // Wait for the poll to land (the sections render) before asserting an absence,
-    // otherwise this would pass merely because nothing had rendered yet.
-    expect(await screen.findByTestId("detail-sections")).toBeInTheDocument();
-    expect(screen.queryByTestId("load-badge")).toBeNull();
-    expect(screen.queryByTestId("load-history")).toBeNull();
-  });
-
-  it("shows skeletons for delta metrics until the second poll", async () => {
-    // First real poll has no per-core/breakdown/ctx/per-device data (needs 2 samples).
-    fetchMetricsDetail.mockResolvedValue({
-      ...detail,
-      perCpu: [],
-      cpuBreakdown: null,
-      ctxtRate: null,
-      intrRate: null,
-      diskDevs: [],
-    });
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-delta" } });
-    await screen.findByTestId("system");
-    expect(screen.getByTestId("per-core-skeleton")).toBeInTheDocument();
-    expect(screen.getByTestId("cpu-breakdown-skeleton")).toBeInTheDocument();
-    expect(screen.getByTestId("disk-devs-skeleton")).toBeInTheDocument();
-    // The real per-core bars are not shown yet.
-    expect(screen.queryByTestId("per-core")).toBeNull();
-  });
-
-  it("renders an unlimited file-descriptor ceiling as ∞", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s1c" } });
-    // fileNrMax is i64::MAX in the fixture → ∞, with the percentage suppressed.
-    expect(await screen.findByText(/1,536 \/ ∞ \(—\)/)).toBeInTheDocument();
-  });
-
-  it("lazily loads extras (GPU/Docker/SMART/OOM) after the first paint", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-extras" } });
-    await screen.findByTestId("system");
-    expect(await screen.findByTestId("extras-card")).toBeInTheDocument();
-    expect(screen.getByTestId("gpu-list")).toBeInTheDocument();
-    expect(screen.getByTestId("smart-list")).toBeInTheDocument();
-    expect(screen.getByTestId("docker-list")).toBeInTheDocument();
-    expect(screen.getByText("RTX 4090")).toBeInTheDocument();
-    expect(fetchExtras).toHaveBeenCalledWith("s-extras");
-  });
-
-  it("shows the Hardware group and a virtualization badge from extras (Фаза 20.16)", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-hw" } });
-    const hw = await screen.findByTestId("hardware");
-    expect(within(hw).getByText("Hardware")).toBeInTheDocument();
-    expect(within(hw).getByText("Intel Xeon E5-2680 v4")).toBeInTheDocument();
-    expect(within(hw).getByText("8 / 16")).toBeInTheDocument();
-    expect(within(hw).getByText("3.30 GHz")).toBeInTheDocument();
-    expect(within(hw).getByText("x86_64")).toBeInTheDocument();
-    expect(within(hw).getByText("Dell Inc. PowerEdge R740")).toBeInTheDocument();
-    expect(within(hw).getByText("Dell Inc. 0YWR7D")).toBeInTheDocument();
-    // Guest badge appears in the System header (kvm ≠ bare metal).
-    expect(await screen.findByTestId("virt-badge")).toHaveTextContent("kvm");
-  });
-
-  it("shows an explicit total-RAM row and 'of total' subtitle (Фаза 20.16)", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-ram" } });
-    await screen.findByTestId("system");
-    // memTotal is 8 GiB in the fixture → distinct Total row + subtitle by the %.
-    expect(await screen.findByText("Total")).toBeInTheDocument();
-    expect(screen.getByText(/of 8(\.0)? GiB/)).toBeInTheDocument();
-  });
-
-  it("shows the Updates group header with a skeleton while pending loads", async () => {
-    let resolve: (v: PendingUpdates) => void = () => {};
-    fetchPendingUpdates.mockReturnValue(new Promise<PendingUpdates>((r) => (resolve = r)));
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s-upd" } });
-    const sys = await screen.findByTestId("system");
-    // Header is shown immediately; the body is a skeleton until the probe resolves.
-    expect(await within(sys).findByText("Updates")).toBeInTheDocument();
-    expect(within(sys).getByTestId("updates-skeleton")).toBeInTheDocument();
-    resolve(pending); // let it finish so there are no dangling promises
-  });
-
-  it("lazily loads pending updates after the first paint", async () => {
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s2" } });
-    await screen.findByTestId("system");
-    // Pending fetch is deferred (~300ms); the manager appears once it resolves.
-    expect(await screen.findByText("apt")).toBeInTheDocument();
-    expect(fetchPendingUpdates).toHaveBeenCalledWith("s2");
-  });
-
-  it("colours a partition red when usage exceeds the limit threshold", async () => {
-    settings.statusBarThresholds.disk = { warn: 1, crit: 2 }; // 5% usage → crit
-    render(MonitoringOverlay, { props: { open: true, sessionId: "s3" } });
-    await screen.findByTestId("partitions");
-    const usage = await screen.findByText(/5\.0 GiB \/ 100\.0 GiB \(5%\)/);
-    expect(usage).toHaveClass("text-danger");
+  it("offers no assistant without the callback (AI off or the panel hidden)", async () => {
+    await openOn();
+    expect(screen.queryByTestId("mon-ask-ai")).toBeNull();
   });
 
   it("does not poll while closed", () => {
-    render(MonitoringOverlay, { props: { open: false, sessionId: "s4" } });
+    render(MonitoringOverlay, { props: { open: false, sessionId: "s1" } });
     expect(fetchMetrics).not.toHaveBeenCalled();
     expect(fetchMetricsDetail).not.toHaveBeenCalled();
+    expect(fetchLiveExtras).not.toHaveBeenCalled();
+  });
+});
+
+describe("MonitoringOverlay — sections", () => {
+  it("CPU: history, threads with their frequency, queues, and the heaviest processes", async () => {
+    const sec = await openOn("cpu");
+    expect(within(sec).getByTestId("cpu-history")).toBeInTheDocument();
+    expect(within(sec).getByTestId("load-history")).toBeInTheDocument();
+    expect(within(sec).getByTestId("per-core")).toBeInTheDocument();
+    expect(within(sec).getAllByText("2.40 GHz")).toHaveLength(2);
+    expect(within(sec).getByTestId("top-procs")).toHaveTextContent("nginx");
+  });
+
+  it("CPU: hides the load card on a host with no load average (Windows)", async () => {
+    fetchMetrics.mockResolvedValue({ ...metrics, os: "Windows", load1: null, load5: null, load15: null });
+    const sec = await openOn("cpu");
+    expect(within(sec).queryByTestId("load-history")).toBeNull();
+  });
+
+  it("Memory: composition, OOM victims and the heaviest by memory", async () => {
+    const sec = await openOn("memory");
+    expect(within(sec).getByTestId("mem-composition")).toBeInTheDocument();
+    expect(within(sec).getByTestId("top-mem")).toHaveTextContent("redis-server");
+    expect(await within(sec).findByText("postgres (99)")).toBeInTheDocument();
+  });
+
+  it("Memory: says OOM kills are unknown when the kernel log could not be read", async () => {
+    fetchExtras.mockResolvedValue({ ...extras, oomKills: null, oomVictims: [] });
+    const sec = await openOn("memory");
+    expect(await within(sec).findByText(/OOM kills are unknown/)).toBeInTheDocument();
+  });
+
+  it("Disks: fullest first, coloured by the threshold, with devices and SMART", async () => {
+    const sec = await openOn("disks");
+    const parts = within(sec).getByTestId("partitions");
+    const rows = parts.querySelectorAll("tbody tr");
+    expect(rows[0]).toHaveTextContent("/");
+    expect(within(parts).getByText("87%")).toHaveClass("text-warn");
+    expect(within(sec).getByTestId("disk-devs")).toHaveTextContent("3.5 ms");
+    expect(await within(sec).findByText("PASSED")).toBeInTheDocument();
+  });
+
+  it("Network: a long interface name truncates with a tooltip, TCP and listeners are listed", async () => {
+    const longName = "Ethernet-Kaspersky Lab NDIS 6 Filter-0000";
+    fetchMetricsDetail.mockResolvedValue({
+      ...detail,
+      netIfaces: [{ name: longName, rxRate: 2764, txRate: 515, rxErrs: 0, rxDrop: 0, txErrs: 0, txDrop: 0 }],
+    });
+    const sec = await openOn("network");
+    const wrap = within(sec).getByTestId("net-ifaces");
+    expect(wrap.querySelector("table")).toHaveClass("table-fixed");
+    expect(within(wrap).getByText(longName)).toHaveClass("truncate");
+    expect(within(sec).getByTestId("tcp-states")).toHaveTextContent("ESTAB");
+    const listen = within(sec).getByTestId("listen-sockets");
+    expect(listen).toHaveTextContent("sshd (812)");
+    expect(within(sec).getByTestId("sessions")).toHaveTextContent("192.168.1.50");
+  });
+
+  it("Temperature: a core heat grid and every sensor against its limits", async () => {
+    const sec = await openOn("temperature");
+    expect(within(sec).getByTestId("core-temps")).toBeInTheDocument();
+    expect(within(sec).getByTestId("sensors-table")).toHaveTextContent("Package id 0");
+  });
+
+  it("Temperature: offers to install lm-sensors when it is missing", async () => {
+    const onInstallTool = vi.fn();
+    fetchMetrics.mockResolvedValue({ ...metrics, cpuTemp: null });
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
+    const sec = await openOn("temperature", { onInstallTool });
+    await fireEvent.click(within(within(sec).getByTestId("sensors-install")).getByText("Install lm-sensors"));
+    expect(onInstallTool).toHaveBeenCalledWith("sensors");
+  });
+
+  it("Temperature: a host with lm-sensors but no chips gets a note, not the install offer", async () => {
+    fetchMetrics.mockResolvedValue({ ...metrics, cpuTemp: null });
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: true });
+    const sec = await openOn("temperature");
+    expect(within(sec).getByTestId("sensors-none")).toBeInTheDocument();
+    expect(within(sec).queryByTestId("sensors-install")).toBeNull();
+  });
+
+  it("Temperature: says it is unsupported on Windows", async () => {
+    fetchMetrics.mockResolvedValue({ ...metrics, os: "Windows", cpuTemp: null });
+    fetchMetricsDetail.mockResolvedValue({ ...detail, sensors: [], sensorsInstalled: false });
+    const sec = await openOn("temperature");
+    expect(within(sec).getByTestId("sensors-unsupported")).toBeInTheDocument();
+  });
+
+  it("Processes: asks for every process only while the section is on screen", async () => {
+    fetchMetricsDetail.mockImplementation((_id: string, all?: boolean) =>
+      Promise.resolve({ ...detail, processes: all ? PROCESSES : [] }),
+    );
+    await openOn();
+    expect(fetchMetricsDetail.mock.calls.every((c) => !c[1])).toBe(true);
+    await fireEvent.click(screen.getByTestId("mon-nav-processes"));
+    const sec = await screen.findByTestId("mon-section-processes");
+    expect(fetchMetricsDetail).toHaveBeenCalledWith("s1", true);
+    const rows = await within(sec).findAllByTestId("proc-row");
+    // Busiest first.
+    expect(rows.map((r) => r.textContent?.match(/^\d+/)?.[0])).toEqual(["1234", "1300", "1"]);
+  });
+
+  it("Processes: filters through the lists' row, and draws a tree by parent", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, processes: PROCESSES });
+    const sec = await openOn("processes");
+    await within(sec).findAllByTestId("proc-row");
+    const field = within(within(sec).getByTestId("proc-list-header")).getByRole("textbox");
+    await fireEvent.input(field, { target: { value: "worker" } });
+    expect(within(sec).getAllByTestId("proc-row")).toHaveLength(1);
+    await fireEvent.input(field, { target: { value: "" } });
+    await fireEvent.click(within(sec).getByTestId("proc-list-header-view"));
+    await fireEvent.click(await screen.findByText("As a tree"));
+    const order = within(sec)
+      .getAllByTestId("proc-row")
+      .map((r) => r.textContent?.match(/^\d+/)?.[0]);
+    expect(order).toEqual(["1", "1234", "1300"]);
+  });
+
+  it("Processes: says CPU comes with the second reading and when the list is capped", async () => {
+    fetchMetricsDetail.mockResolvedValue({
+      ...detail,
+      processes: PROCESSES.map((r) => ({ ...r, cpu: null })),
+      processTotal: 5000,
+    });
+    const sec = await openOn("processes");
+    const note = await within(sec).findByTestId("proc-note");
+    expect(note).toHaveTextContent("CPU appears with the second reading");
+    expect(note).toHaveTextContent(`showing the first 3 of ${(5000).toLocaleString()}`);
+  });
+
+  it("Processes: a click reads that process once and shows its command line", async () => {
+    const d: ProcessDetail = {
+      pid: 1234,
+      user: "root",
+      state: "sleeping",
+      elapsedSecs: 7200,
+      threads: 4,
+      rss: 50 * 1024 ** 2,
+      cmdline: "nginx: master process /usr/sbin/nginx",
+      fds: null,
+    };
+    fetchMetricsDetail.mockResolvedValue({ ...detail, processes: PROCESSES });
+    fetchProcessDetail.mockResolvedValue(d);
+    const onRunInTerminal = vi.fn();
+    const sec = await openOn("processes", { onRunInTerminal });
+    await fireEvent.click((await within(sec).findAllByTestId("proc-row"))[0]);
+    const card = await within(sec).findByTestId("proc-detail");
+    expect(await within(card).findByText("nginx: master process /usr/sbin/nginx")).toBeInTheDocument();
+    expect(fetchProcessDetail).toHaveBeenCalledTimes(1);
+    expect(fetchProcessDetail).toHaveBeenCalledWith("s1", 1234);
+    expect(within(card).getByText("sleeping")).toBeInTheDocument();
+    expect(within(card).getByText("hidden from this user")).toBeInTheDocument();
+    await fireEvent.click(within(card).getByText("top -p 1234 in the terminal"));
+    expect(onRunInTerminal).toHaveBeenCalledWith(["top", "-p", "1234"]);
+  });
+
+  it("Processes: a process that has ended says so", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, processes: PROCESSES });
+    fetchProcessDetail.mockResolvedValue(null);
+    const sec = await openOn("processes");
+    await fireEvent.click((await within(sec).findAllByTestId("proc-row"))[0]);
+    expect(await within(sec).findByText("The process has ended.")).toBeInTheDocument();
+  });
+
+  it("Containers: polled live only while on screen, no share without a limit", async () => {
+    const onOpenDocker = vi.fn();
+    await openOn(undefined, { onOpenDocker });
+    await screen.findByTestId("mon-nav-containers");
+    expect(fetchLiveExtras).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByTestId("mon-nav-containers"));
+    const sec = await screen.findByTestId("mon-section-containers");
+    expect(fetchLiveExtras).toHaveBeenCalledWith("s1");
+    expect(within(sec).getByTestId("docker-list")).toHaveTextContent("no limit");
+    await fireEvent.click(within(sec).getByText("Docker panel"));
+    expect(onOpenDocker).toHaveBeenCalled();
+  });
+
+  it("GPU: appears when the host has one", async () => {
+    const gpu = { name: "RTX 4090", util: 35, memUsed: 1024, memTotal: 24576, temp: 61, powerDraw: 120, powerLimit: 450, clockSm: 2100, clockMem: 10500, procs: [{ pid: 7, name: "python3", memMib: 900 }] };
+    fetchExtras.mockResolvedValue({ ...extras, gpus: [gpu] });
+    fetchLiveExtras.mockResolvedValue({ gpus: [gpu], docker });
+    await openOn();
+    await fireEvent.click(await screen.findByTestId("mon-nav-gpu"));
+    const sec = await screen.findByTestId("mon-section-gpu");
+    expect(within(sec).getByTestId("gpu-card")).toHaveTextContent("python3");
+  });
+
+  it("System: failed units by name, a read-only command for them, hardware and logins", async () => {
+    const onRunInTerminal = vi.fn();
+    const sec = await openOn("system", { onRunInTerminal });
+    expect(within(sec).getByTestId("failed-units")).toHaveTextContent("nginx.service");
+    expect(await within(sec).findByText("Intel Xeon E5-2680 v4")).toBeInTheDocument();
+    expect(within(sec).getByTestId("logins")).toHaveTextContent("deploy");
+    // The command goes to the terminal, and the page gets out of its way.
+    await fireEvent.click(within(sec).getByText("systemctl --failed in the terminal"));
+    expect(onRunInTerminal).toHaveBeenCalledWith(["systemctl", "--failed"]);
+    expect(screen.queryByTestId("mon-nav")).toBeNull();
+  });
+
+  it("System: shows an update skeleton while the lazy probe runs, then the manager's list command", async () => {
+    let resolve!: (p: PendingUpdates) => void;
+    fetchPendingUpdates.mockReturnValue(new Promise<PendingUpdates>((r) => (resolve = r)));
+    const onRunInTerminal = vi.fn();
+    const sec = await openOn("system", { onRunInTerminal });
+    expect(await within(sec).findByTestId("updates-skeleton")).toBeInTheDocument();
+    resolve(pending);
+    await fireEvent.click(await within(sec).findByText("apt list --upgradable in the terminal"));
+    expect(onRunInTerminal).toHaveBeenCalledWith(["apt", "list", "--upgradable"]);
   });
 });

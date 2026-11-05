@@ -81,3 +81,27 @@ export function fmtLimit(n: number | null): string {
 /** Convenience wrapper: pick the OS icon straight from a Metrics object. */
 export const osIconFor = (m: Pick<Metrics, "os" | "prettyName">): IconName =>
   osIcon(m.os, m.prettyName);
+
+/** Request latency in ms: "0.4 ms", "12 ms"; "—" for null. */
+export function fmtMs(ms: number | null): string {
+  if (ms == null || !Number.isFinite(ms)) return "—";
+  return `${ms < 10 ? ms.toFixed(1) : Math.round(ms)} ms`;
+}
+
+/** Seconds before now as a time mark under a chart: "−3:20", "−10:00", or "" at now. */
+export function fmtAgo(secs: number): string {
+  const total = Math.round(secs);
+  if (!(total > 0)) return "";
+  return `−${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+/** A clock frequency: "2.40 GHz" from 1 GHz, else "800 MHz"; "—" for null. */
+export function fmtMhz(mhz: number | null | undefined): string {
+  if (mhz == null || !Number.isFinite(mhz)) return "—";
+  return mhz >= 1000 ? `${(mhz / 1000).toFixed(2)} GHz` : `${Math.round(mhz)} MHz`;
+}
+
+/** A count with the locale's grouping, "—" for null. */
+export function fmtCount(n: number | null | undefined): string {
+  return n == null ? "—" : Math.round(n).toLocaleString();
+}

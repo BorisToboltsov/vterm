@@ -1,40 +1,103 @@
 import { render } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Chart from "./Chart.svelte";
+import type { Sample } from "./chartgeom";
+
+const smp = (vals: (number | null)[], from = 0): Sample[] => vals.map((v, i) => ({ s: from + i, v }));
+
+// jsdom lays nothing out: give every element a width, as the window would.
+let restoreWidth: () => void;
+beforeEach(() => {
+  const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+  Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 305 });
+  restoreWidth = () => desc && Object.defineProperty(HTMLElement.prototype, "clientWidth", desc);
+});
+afterEach(() => restoreWidth());
 
 describe("Chart", () => {
-  it("draws a single line path for a series", () => {
+  it("draws nothing before the first sample", () => {
+    const { container } = render(Chart, { props: { lines: [{ samples: [], color: "red" }], seq: -1 } });
+    expect(container.querySelectorAll("path").length).toBe(0);
+  });
+
+  it("draws a line with its newest point at the right edge, not spread over the width", () => {
     const { container } = render(Chart, {
-      props: { series: [{ values: [1, 2, 3], color: "#f00" }] },
+      props: { lines: [{ samples: smp([10, 20, 30]), color: "red" }], seq: 2, max: 100, slots: 11 },
     });
     const paths = container.querySelectorAll("path");
     expect(paths.length).toBe(1);
-    expect(paths[0].getAttribute("d")).toMatch(/^M/);
-    expect(paths[0].getAttribute("stroke")).toBe("#f00");
+    // 305 px wide minus a 5 px margin: the edge is at 300, a step is 30.
+    expect(paths[0].getAttribute("d")).toMatch(/^M240,/);
+    const dot = container.querySelector("circle")!;
+    expect(dot.getAttribute("cx")).toBe("300");
   });
 
-  it("adds an area fill path when fill is set", () => {
+  it("adds an area under a filled line and breaks the line where a value was not read", () => {
     const { container } = render(Chart, {
-      props: { series: [{ values: [1, 2, 3], color: "#0f0", fill: true }] },
+      props: { lines: [{ samples: smp([1, 2, null, 4, 5]), color: "red", fill: true }], seq: 4, max: 10 },
     });
-    // area (fill) + line
-    expect(container.querySelectorAll("path").length).toBe(2);
+    // Two runs, each with its area.
+    expect(container.querySelectorAll("path").length).toBe(4);
   });
 
-  it("renders one line per series for multi-series", () => {
+  it("names an automatic ceiling, rounded", () => {
     const { container } = render(Chart, {
       props: {
-        series: [
-          { values: [1, 2], color: "#1" },
-          { values: [3, 4], color: "#2" },
+        lines: [{ samples: smp([1.2e6, 3.4e6]), color: "red" }],
+        seq: 1,
+        scaleLabel: true,
+        format: (v: number) => `${v / 1e6}M`,
+      },
+    });
+    expect(container.textContent).toContain("5M");
+  });
+
+  it("stacks layers into bands with the total on top", () => {
+    const { container } = render(Chart, {
+      props: {
+        lines: [
+          { samples: smp([10, 20]), color: "red" },
+          { samples: smp([5, 5]), color: "blue" },
         ],
+        seq: 1,
+        max: 100,
+        stacked: true,
+      },
+    });
+    // One band per layer and one total line.
+    expect(container.querySelectorAll("path").length).toBe(3);
+  });
+
+  it("leaves the total line out when the layers always fill the ceiling", () => {
+    const { container } = render(Chart, {
+      props: {
+        lines: [
+          { samples: smp([6, 7]), color: "red" },
+          { samples: smp([10, 9]), color: "blue" },
+        ],
+        seq: 1,
+        max: 16,
+        stacked: true,
+        total: false,
       },
     });
     expect(container.querySelectorAll("path").length).toBe(2);
+    expect(container.querySelector("circle")).toBeNull();
   });
 
-  it("draws nothing for an empty series", () => {
-    const { container } = render(Chart, { props: { series: [{ values: [], color: "#1" }] } });
-    expect(container.querySelectorAll("path").length).toBe(0);
+  it("marks the time under the chart and a threshold on it", () => {
+    const { container } = render(Chart, {
+      props: {
+        lines: [{ samples: smp([10]), color: "red" }],
+        seq: 0,
+        max: 100,
+        marks: true,
+        interval: 5,
+        threshold: 80,
+        thresholdLabel: "80%",
+      },
+    });
+    expect(container.textContent).toContain("−10:00");
+    expect(container.textContent).toContain("80%");
   });
 });
