@@ -327,6 +327,8 @@ pub fn run() {
             metrics::fetch_metrics_detail,
             metrics::fetch_pending_updates,
             metrics::fetch_extras,
+            metrics::fetch_live_extras,
+            metrics::fetch_process_detail,
             commands::sftp::shell_user,
             commands::sftp::sftp_open_as,
             commands::sftp::sftp_open_own,

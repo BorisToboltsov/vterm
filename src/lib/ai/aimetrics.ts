@@ -9,7 +9,10 @@
 // UI follows. A model told "swap: 0" would reason about a host with no swap
 // pressure; a model not told about swap at all will ask.
 
-import type { Metrics, MetricsDetail } from "../api/session";
+import type { Extras, Metrics, MetricsDetail } from "../api/session";
+import { resolve } from "../i18n/translate";
+import type { Problem, SectionId } from "../monitoring/monproblems";
+import type { AskFocus } from "../monitoring/monsections";
 
 function pct(used: number | null, total: number | null): string | null {
   if (used === null || total === null || total <= 0) return null;
@@ -38,8 +41,13 @@ function line(label: string, value: string | null | undefined): string | null {
  * Deliberately not JSON: this rides in the consent preview, where a human has to
  * read it and decide, and the same text is what the model sees.
  */
-export function metricsSnapshot(m: Metrics, d?: MetricsDetail | null): string {
+export function metricsSnapshot(
+  m: Metrics,
+  d?: MetricsDetail | null,
+  more: { extras?: Extras | null; problems?: readonly Problem[]; focus?: AskFocus | null } = {},
+): string {
   const rows: (string | null)[] = [
+    ...focusRows(more.focus ?? null),
     line("Host", m.hostname),
     line("OS", m.prettyName || m.os),
     line("Kernel", m.kernel),
@@ -72,9 +80,60 @@ export function metricsSnapshot(m: Metrics, d?: MetricsDetail | null): string {
 
     const procs = (d.topProcs ?? []).slice(0, 5).map((p) => `${p.comm} ${Math.round(p.cpu)}%`);
     if (procs.length) rows.push(line("Top CPU processes", procs.join(", ")));
+
+    if (d.failedUnitNames?.length) rows.push(line("Failed systemd units", d.failedUnitNames.join(", ")));
+    if (d.swapInRate != null || d.swapOutRate != null) {
+      rows.push(line("Swap traffic (in/out, bytes/s)", `${d.swapInRate ?? "?"} / ${d.swapOutRate ?? "?"}`));
+    }
+  }
+
+  const x = more.extras;
+  if (x?.oomKills != null) {
+    const victims = [...new Set(x.oomVictims.map((v) => v.name).filter(Boolean))];
+    rows.push(line("OOM kills this boot", `${x.oomKills}${victims.length ? ` (${victims.join(", ")})` : ""}`));
+  }
+
+  const ps = more.problems ?? [];
+  if (ps.length) {
+    rows.push("Needs attention:");
+    for (const p of ps) rows.push(`- [${p.level}] ${problemText(p)}`);
   }
 
   return rows.filter((r): r is string => r !== null).join("\n");
+}
+
+/** A problem as the model reads it: English, whatever the interface language. */
+export function problemText(p: Problem): string {
+  return `${resolve("en", p.key, p.params)}${p.note ? ` (${p.note})` : ""}`;
+}
+
+const SECTION_EN: Record<SectionId, string> = {
+  overview: "the overall state of this host",
+  cpu: "CPU",
+  memory: "memory",
+  disks: "disks and filesystems",
+  network: "network",
+  temperature: "temperatures",
+  processes: "processes",
+  containers: "Docker containers",
+  gpu: "GPUs",
+  system: "the system: failed units, updates, logins",
+};
+
+/** What the question is about, first in the snapshot. */
+function focusRows(f: AskFocus | null): (string | null)[] {
+  if (!f) return [];
+  if (f.kind === "section") return [line("Question about", SECTION_EN[f.section])];
+  if (f.kind === "problem") return [line("Question about", problemText(f.problem))];
+  const p = f.detail;
+  return [
+    line("Question about", `process ${f.comm} (pid ${f.pid})`),
+    line("Process command line", p?.cmdline),
+    line("Process state", p?.state),
+    line("Process age", p?.elapsedSecs == null ? null : `${Math.floor(p.elapsedSecs / 60)} min`),
+    line("Process threads", p?.threads == null ? null : String(p.threads)),
+    line("Process resident memory", gib(p?.rss ?? null)),
+  ];
 }
 
 function psi(p: { avg10: number; avg60: number; avg300: number }): string {

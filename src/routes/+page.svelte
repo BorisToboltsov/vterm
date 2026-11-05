@@ -900,6 +900,24 @@
     revealPanel("ai");
   }
 
+  /**
+   * Monitoring page (v1.33): type one of its read-only commands — `systemctl
+   * --failed`, the package manager's update list, `top -p <pid>` — into the
+   * active tab's terminal, quoted for the shell that tab runs. The user sees it
+   * run there; nothing is executed behind the terminal's back.
+   */
+  function runFromMonitoring(argv: string[]) {
+    const id = tabsState.activeId;
+    if (!id) return;
+    const shell = findTab(id)?.kind === "local" ? (localShellKind[id] ?? "posix") : "posix";
+    const cmd = renderArgv(argv, shell);
+    if (!cmd) {
+      notifyError(t("page.commandUnquotable"));
+      return;
+    }
+    void writeToTerminal(id, new TextEncoder().encode(submitLine(cmd))).catch(() => {});
+  }
+
   /** Ask the assistant to read the host's metrics snapshot (Phase 41). */
   function askAiAboutMetrics(snapshot: string) {
     const id = tabsState.activeId;
@@ -3300,6 +3318,8 @@
     sessionId={tabsState.activeId}
     onInstallTool={openToolInstallByName}
     onAskAi={aiOn ? askAiAboutMetrics : undefined}
+    onRunInTerminal={runFromMonitoring}
+    onOpenDocker={settings.hiddenPanels.includes("docker") ? undefined : () => revealPanel("docker")}
   />
 {/if}
 

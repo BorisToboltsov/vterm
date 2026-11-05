@@ -190,8 +190,13 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ["src/lib/stores/zz_probe.svelte.ts", `import { netcheckRun } from "../api";\nexport const x = netcheckRun;`],
       ["src/lib/files/SftpPanel.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],
       ["src/routes/+page.svelte", svelte(`import { openRestored } from "#lib/stores/tabs.svelte.ts";\nvoid openRestored;`)],
+      // A monitoring section polling GPUs itself, or reading a process in a loop.
+      ["src/lib/monitoring/MonGpu.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
+      ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
     ],
     good: [
+      ["src/lib/monitoring/MonitoringOverlay.svelte", svelte(`import { fetchLiveExtras } from "../api";\nvoid fetchLiveExtras;`)],
+      ["src/lib/monitoring/MonProcesses.svelte", svelte(`import { fetchProcessDetail } from "../api";\nvoid fetchProcessDetail;`)],
       ["src/lib/page/pathsyncflow.svelte.ts", `import { setServerPathSync } from "../api";\nexport const x = setServerPathSync;`],
       ["src/lib/files/transferflow.ts", `import { transferStart } from "../api";\nexport const x = transferStart;`],
       ["src/lib/files/FileUserDialog.svelte", svelte(`import { sftpOpenAs } from "../api";\nvoid sftpOpenAs;`)],

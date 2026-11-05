@@ -252,6 +252,19 @@ export interface DiskDev {
   name: string;
   readRate: number;
   writeRate: number;
+  /** Share of wall time the device had I/O in flight, 0–100; null on the first poll. */
+  utilPct: number | null;
+  /** Average time per completed read or write, ms; null when nothing completed. */
+  awaitMs: number | null;
+}
+
+/** A listening TCP/UDP socket (`ss -tulnp`); the owner only when the session may see it. */
+export interface ListenSocket {
+  proto: string;
+  addr: string;
+  port: number;
+  process: string | null;
+  pid: number | null;
 }
 
 /** One logged-in session from `who`. */
@@ -307,11 +320,42 @@ export interface MetricsDetail {
   intrRate: number | null;
   procsRunning: number | null;
   procsBlocked: number | null;
+  /** Names of failed systemd units (at most 20). */
+  failedUnitNames: string[];
+  /** Swap traffic, bytes/s paged in and out; null on the first poll or when unreported. */
+  swapInRate: number | null;
+  swapOutRate: number | null;
+  /** Current MHz of each logical CPU; empty where cpufreq is not exposed. */
+  cpuFreqMhz: number[];
+  /** Thermal-throttling events since boot; null when the kernel does not expose them. */
+  throttleCount: number | null;
+  /** Listening TCP/UDP sockets (at most 200). */
+  listenSockets: ListenSocket[];
+  /** Every process (at most 3000) — only when asked for (`fetchMetricsDetail(id, true)`). */
+  processes: ProcRow[];
+  /** How many processes the host has; may exceed `processes.length`. */
+  processTotal: number | null;
+}
+
+/** One process of the full list. `cpu` — % of one core over the last poll; null on the first. */
+export interface ProcRow {
+  pid: number;
+  ppid: number | null;
+  user: string;
+  state: ProcessDetail["state"];
+  elapsedSecs: number | null;
+  threads: number | null;
+  /** Resident memory, bytes. */
+  rss: number | null;
+  /** Resident memory, % of RAM. */
+  mem: number;
+  cpu: number | null;
+  comm: string;
 }
 
 /** Detailed metrics for the monitoring overlay (heavier than `fetchMetrics`). */
-export function fetchMetricsDetail(sessionId: string): Promise<MetricsDetail> {
-  return invoke<MetricsDetail>("fetch_metrics_detail", { sessionId });
+export function fetchMetricsDetail(sessionId: string, processes = false): Promise<MetricsDetail> {
+  return invoke<MetricsDetail>("fetch_metrics_detail", { sessionId, processes });
 }
 
 /** Pending OS package updates + reboot-required flag. */
@@ -334,13 +378,34 @@ export interface Gpu {
   memUsed: number;
   memTotal: number;
   temp: number;
+  /** Power draw and the board's limit, W; null where the driver reports none. */
+  powerDraw: number | null;
+  powerLimit: number | null;
+  /** Graphics and memory clocks, MHz. */
+  clockSm: number | null;
+  clockMem: number | null;
+  procs: GpuProc[];
+}
+
+/** A process using a GPU (`nvidia-smi --query-compute-apps`). */
+export interface GpuProc {
+  pid: number;
+  name: string;
+  memMib: number | null;
 }
 
 /** A running Docker container's live stats. */
 export interface DockerStat {
   name: string;
+  /** CPU, % of one core (`docker stats`). */
   cpu: number;
   mem: string;
+  /** Memory in use, bytes. */
+  memUsed: number | null;
+  /** Configured memory limit, bytes; null when none is set. */
+  memLimit: number | null;
+  /** Configured CPU limit, cores; null when none is set. */
+  cpuLimit: number | null;
 }
 
 /** One disk's SMART summary (smartctl). */
@@ -349,6 +414,30 @@ export interface SmartDisk {
   health: string;
   temp: number | null;
   powerOnHours: number | null;
+  /** Share of the rated endurance used, %. */
+  wearPct: number | null;
+  /** ATA reallocated sectors; null for NVMe and unreported. */
+  reallocated: number | null;
+}
+
+/** A process the OOM killer ended in this boot. */
+export interface OomVictim {
+  pid: number | null;
+  name: string;
+  /** ISO time from the journal; null when read from `dmesg`. */
+  at: string | null;
+  /** Seconds since boot from `dmesg`; null when read from the journal. */
+  bootSecs: number | null;
+}
+
+/** A recent login (`last`), newest first. */
+export interface Login {
+  user: string;
+  tty: string;
+  from: string;
+  /** ISO time. */
+  at: string;
+  active: boolean;
 }
 
 /** Static machine spec (mirrors metrics.rs `Hardware`); all best-effort/root-free. */
@@ -374,7 +463,11 @@ export interface Extras {
   gpus: Gpu[];
   docker: DockerStat[];
   smart: SmartDisk[];
+  /** OOM events this boot; null when the kernel log could not be read. */
   oomKills: number | null;
+  oomVictims: OomVictim[];
+  /** The last logins; null when `last` is missing or unreadable. */
+  logins: Login[] | null;
   /** Optional on the wire only defensively — the backend always sends it. */
   hardware?: Hardware;
 }
@@ -382,6 +475,35 @@ export interface Extras {
 /** Lazily probe optional extras (heavy/optional — overlay only, deferred). */
 export function fetchExtras(sessionId: string): Promise<Extras> {
   return invoke<Extras>("fetch_extras", { sessionId });
+}
+
+/** The part of the extras that changes by the second (GPUs, containers). */
+export interface LiveExtras {
+  gpus: Gpu[];
+  docker: DockerStat[];
+}
+
+/** Poll GPUs and containers — only while their monitoring section is on screen. */
+export function fetchLiveExtras(sessionId: string): Promise<LiveExtras> {
+  return invoke<LiveExtras>("fetch_live_extras", { sessionId });
+}
+
+/** One process, read on a click. `state` is an English key the page localizes. */
+export interface ProcessDetail {
+  pid: number;
+  user: string;
+  state: "running" | "sleeping" | "disk" | "stopped" | "zombie" | "idle" | "other" | "";
+  elapsedSecs: number | null;
+  threads: number | null;
+  /** Resident memory, bytes. */
+  rss: number | null;
+  cmdline: string;
+  fds: number | null;
+}
+
+/** Read one process's details; null when it is gone. */
+export function fetchProcessDetail(sessionId: string, pid: number): Promise<ProcessDetail | null> {
+  return invoke<ProcessDetail | null>("fetch_process_detail", { sessionId, pid });
 }
 
 /** Event name carrying raw output bytes for a session (mirrors ssh.rs). */

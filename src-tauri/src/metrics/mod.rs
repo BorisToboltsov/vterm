@@ -37,6 +37,14 @@ fn is_local_session(state: &State<'_, AppState>, session_id: &str) -> bool {
 /// per-interface network and per-device disk throughput deltas.
 type DevSampleStore = Mutex<HashMap<String, HashMap<String, (u64, u64, Instant)>>>;
 
+/// Per-session, per-device `/proc/diskstats` operation and time counters + sample
+/// instant, for device utilization and average request latency.
+type DiskTickStore = Mutex<HashMap<String, HashMap<String, (DiskTicks, Instant)>>>;
+
+/// Per-session, per-process (CPU ticks used, start time) + sample instant: the
+/// start time tells a reused pid from the process it was.
+type ProcTickStore = Mutex<HashMap<String, (HashMap<u32, (u64, u64)>, Instant)>>;
+
 /// Per-session sample stores for the metrics probes, grouped so `AppState` holds
 /// one field instead of eight. Each delta metric compares the current probe
 /// against the previous sample kept here.
@@ -57,6 +65,12 @@ pub struct MetricsSamples {
     diskdev_samples: DevSampleStore,
     /// Last cumulative (ctxt, intr) counters + instant per session, for rate deltas.
     ctxintr_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// Last cumulative swap (pages in, pages out) from `/proc/vmstat` per session.
+    vmstat_samples: Mutex<HashMap<String, (u64, u64, Instant)>>,
+    /// Last per-device I/O counters (ops, ticks) per session, for utilization and latency.
+    diskstat_samples: DiskTickStore,
+    /// Last per-process CPU ticks per session, for every process's current CPU%.
+    proc_samples: ProcTickStore,
 }
 
 impl MetricsSamples {
@@ -72,6 +86,9 @@ impl MetricsSamples {
         self.iface_samples.locked().remove(id);
         self.diskdev_samples.locked().remove(id);
         self.ctxintr_samples.locked().remove(id);
+        self.vmstat_samples.locked().remove(id);
+        self.diskstat_samples.locked().remove(id);
+        self.proc_samples.locked().remove(id);
     }
 }
 
@@ -433,10 +450,40 @@ pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> Ap
 
 // ── Detailed metrics (monitoring overlay; fetched only while the page is open) ──
 
+/// Every process (v1.33), read once for the whole detail probe: `ps` gives who,
+/// state, age, threads, size and name (at most `PROC_CAP` rows), `/proc/<pid>/stat`
+/// the CPU ticks each has used and when it started. The current CPU% is the
+/// growth of those ticks between two polls, in Rust — `ps`'s own `%cpu` on Linux
+/// is the process's lifetime average, so a long-running service showed what it
+/// averaged over weeks and a process busy now could miss the top six. Hosts with
+/// no `/proc` (BSD, macOS) fall back to their `ps`, whose `%cpu` there is a recent
+/// decaying average (`procfmt=bsd`). The Linux form runs only where `/proc` is:
+/// macOS `ps` skips the keywords it does not know and prints the rest, shifted.
+macro_rules! procs_snippet {
+    () => {
+        r#"
+printf 'clk=%s\n' "$(getconf CLK_TCK 2>/dev/null)"
+printf 'proctotal=%s\n' "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l | tr -d ' ')"
+printf 'procticks=%s\n' "$(awk '{p=$1; sub(/^.*\) /,""); printf "%s %s %s %s;",p,$12,$13,$20}' /proc/[0-9]*/stat 2>/dev/null)"
+pl=""
+[ -r /proc/self/stat ] && pl=$(ps -eo pid=,ppid=,user:32=,stat=,etimes=,nlwp=,rss=,pmem=,comm= 2>/dev/null | head -3000)
+if [ -n "$pl" ]; then
+  printf 'procfmt=linux\n'
+  printf 'proclist=%s\n' "$(printf '%s\n' "$pl" | awk 'NF>=9{c=$9; for(i=10;i<=NF;i++) c=c " " $i; printf "%s|%s|%s|%s|%s|%s|%s|%s|%s\036",$1,$2,$3,$4,$5,$6,$7,$8,c}')"
+else
+  pl=$(ps -axo pid=,ppid=,user=,stat=,pcpu=,pmem=,rss=,comm= 2>/dev/null | head -3000)
+  [ -n "$pl" ] && printf 'procfmt=bsd\n'
+  printf 'proclist=%s\n' "$(printf '%s\n' "$pl" | awk 'NF>=8{c=$8; for(i=9;i<=NF;i++) c=c " " $i; printf "%s|%s|%s|%s|%s|%s|%s|%s\036",$1,$2,$3,$4,$5,$6,$7,c}')"
+fi
+"#
+    };
+}
+
 /// Richer, heavier probe than the status bar's `METRICS_SCRIPT`. Run only when
 /// the monitoring overlay is open. Lines are `key=value`; multi-record values
 /// (partitions, TCP states) pack records separated by `;`/spaces.
-const DETAIL_SCRIPT: &str = "\
+const DETAIL_SCRIPT: &str = concat!(
+    "\
 printf 'percpu=%s\\n' \"$(awk '/^cpu[0-9]/{idle=$5+$6; tot=0; for(i=2;i<=NF;i++)tot+=$i; printf \"%d,%d \",idle,tot}' /proc/stat 2>/dev/null)\"; \
 printf 'memdetail=%s\\n' \"$(awk '/^MemTotal:/{t=$2}/^MemFree:/{f=$2}/^MemAvailable:/{a=$2}/^Buffers:/{b=$2}/^Cached:/{c=$2}END{printf \"%d %d %d %d %d\",t*1024,f*1024,a*1024,b*1024,c*1024}' /proc/meminfo 2>/dev/null)\"; \
 printf 'topmem=%s\\n' \"$(ps -eo pmem=,comm= 2>/dev/null | sort -rn | head -3 | awk '{printf \"%s %s%%, \",$2,$1}' | sed 's/, $//')\"; \
@@ -451,17 +498,23 @@ printf 'tcp=%s\\n' \"$(ss -tanH 2>/dev/null | awk '{print $1}' | sort | uniq -c 
 printf 'sensors=%s\\n' \"$(sensors -u 2>/dev/null | awk '/^[^ ].*:$/{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}l=$0;sub(/:$/,\"\",l);gsub(/,/,\"\",l);v=\"\";h=\"\";c=\"\";next}/temp[0-9]+_input:/{v=$2+0}/temp[0-9]+_max:/{h=$2+0}/temp[0-9]+_crit:/{c=$2+0}END{if(l!=\"\"&&v!=\"\"){printf \"%s,%s,%s,%s;\",l,v,h,c}}')\"; \
 printf 'sensorsbin=%s\\n' \"$(command -v sensors >/dev/null 2>&1 && echo 1)\"; \
 printf 'cpubreak=%s\\n' \"$(awk '/^cpu /{print $2,$3,$4,$5,$6,$7,$8,$9}' /proc/stat 2>/dev/null)\"; \
-printf 'topcpu=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k3 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
-printf 'topmemp=%s\\n' \"$(ps -eo pid=,user=,pcpu=,pmem=,comm= 2>/dev/null | sort -k4 -rn | head -6 | awk '{printf \"%s|%s|%s|%s|%s;\",$1,$2,$3,$4,$5}')\"; \
 printf 'failed=%s\\n' \"$(command -v systemctl >/dev/null 2>&1 && systemctl --failed --no-legend 2>/dev/null | wc -l | tr -d ' ')\"; \
 printf 'listen=%s\\n' \"$(command -v ss >/dev/null 2>&1 && ss -tlnH 2>/dev/null | wc -l | tr -d ' ')\"; \
 printf 'conntrack=%s %s\\n' \"$(cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null)\" \"$(cat /proc/sys/net/netfilter/nf_conntrack_max 2>/dev/null)\"; \
 printf 'timesync=%s\\n' \"$(command -v timedatectl >/dev/null 2>&1 && timedatectl show -p NTPSynchronized --value 2>/dev/null)\"; \
 printf 'netdev=%s\\n' \"$(awk 'NR>2{sub(/:/,\"\");if($1!=\"lo\")printf \"%s,%s,%s,%s,%s,%s,%s;\",$1,$2,$4,$5,$10,$12,$13}' /proc/net/dev 2>/dev/null)\"; \
-printf 'diskdev=%s\\n' \"$(awk '$3!~/^(loop|ram|dm-|sr)/ && ($6>0||$10>0){printf \"%s,%s,%s;\",$3,$6,$10}' /proc/diskstats 2>/dev/null)\"; \
+printf 'diskdev=%s\\n' \"$(awk '$3!~/^(loop|ram|dm-|sr)/ && ($6>0||$10>0){printf \"%s,%s,%s,%s,%s,%s,%s,%s;\",$3,$6,$10,$4,$8,$7,$11,$13}' /proc/diskstats 2>/dev/null)\"; \
 printf 'sessions=%s\\n' \"$(who 2>/dev/null | awk '{f=\"\";if($NF ~ /^\\(.*\\)$/){f=$NF;gsub(/[()]/,\"\",f)}printf \"%s,%s,%s %s,%s;\",$1,$2,$3,$4,f}')\"; \
 printf 'ctxintr=%s\\n' \"$(awk '/^ctxt /{c=$2}/^intr /{i=$2}END{printf \"%d %d\",c,i}' /proc/stat 2>/dev/null)\"; \
-printf 'procs=%s\\n' \"$(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' /proc/stat 2>/dev/null)\"";
+printf 'procs=%s\\n' \"$(awk '/^procs_running/{r=$2}/^procs_blocked/{b=$2}END{printf \"%d %d\",r,b}' /proc/stat 2>/dev/null)\"; \
+printf 'failednames=%s\\n' \"$(command -v systemctl >/dev/null 2>&1 && systemctl --failed --plain --no-legend --no-pager 2>/dev/null | awk '{print $1}' | head -20 | tr '\\n' ' ')\"; \
+printf 'vmstat=%s\\n' \"$(awk '/^pswpin /{i=$2}/^pswpout /{o=$2}END{if(i!=\"\"&&o!=\"\")printf \"%s %s\",i,o}' /proc/vmstat 2>/dev/null)\"; \
+printf 'pagesize=%s\\n' \"$(getconf PAGESIZE 2>/dev/null)\"; \
+printf 'cpufreq=%s\\n' \"$(awk '{split(FILENAME,a,\"/\"); n=a[6]; sub(/cpu/,\"\",n); printf \"%s:%s \",n,$1}' /sys/devices/system/cpu/cpu[0-9]*/cpufreq/scaling_cur_freq 2>/dev/null)\"; \
+printf 'throttle=%s\\n' \"$(cat /sys/devices/system/cpu/cpu[0-9]*/thermal_throttle/core_throttle_count 2>/dev/null | awk '{s+=$1}END{if(NR)print s}')\"; \
+printf 'listenlist=%s\\n' \"$(command -v ss >/dev/null 2>&1 && ss -tulnpH 2>/dev/null | head -200 | awk '{printf \"%s|%s|%s;\",$1,$5,$7}')\";\n",
+    procs_snippet!()
+);
 
 /// Pressure Stall Information (PSI) `some` averages over 10/60/300 s windows.
 #[derive(Serialize, Default, Clone)]
@@ -542,6 +595,58 @@ pub struct DiskDev {
     name: String,
     read_rate: u64,
     write_rate: u64,
+    /// Share of wall time the device had I/O in flight, 0–100; None on the first poll.
+    util_pct: Option<f64>,
+    /// Average time per completed read or write, ms; None when nothing completed.
+    await_ms: Option<f64>,
+}
+
+/// Cumulative `/proc/diskstats` counters behind a device's utilization and latency:
+/// completed reads and writes, the milliseconds spent on each, and the
+/// milliseconds the device was busy at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct DiskTicks {
+    reads: u64,
+    writes: u64,
+    read_ms: u64,
+    write_ms: u64,
+    busy_ms: u64,
+}
+
+/// One process of the full list (v1.33): who runs it, its state, age, threads,
+/// size and how busy it is now. `cpu` is % of one core over the last poll — None
+/// on the first poll, or where the host gives no reading.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcRow {
+    pid: u32,
+    ppid: Option<u32>,
+    user: String,
+    /// A [`ProcessDetail::state`] key.
+    state: String,
+    elapsed_secs: Option<u64>,
+    threads: Option<u64>,
+    /// Resident memory, bytes.
+    rss: Option<u64>,
+    /// Resident memory as % of RAM.
+    mem: f64,
+    cpu: Option<f64>,
+    comm: String,
+}
+
+/// The most processes a listing carries; the rest are counted (`process_total`).
+const PROC_CAP: usize = 3000;
+
+/// A listening TCP/UDP socket from `ss -tulnp`: protocol, bound address and port,
+/// and — when the session may see it (its own processes, or root) — the owner.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ListenSocket {
+    proto: String,
+    addr: String,
+    port: u16,
+    process: Option<String>,
+    pid: Option<u32>,
 }
 
 /// One logged-in session from `who` (tty, origin, login time).
@@ -603,6 +708,25 @@ pub struct MetricsDetail {
     intr_rate: Option<u64>,
     procs_running: Option<u64>,
     procs_blocked: Option<u64>,
+    /// Names of failed systemd units (at most 20); empty when none or unknown.
+    failed_unit_names: Vec<String>,
+    /// Swap traffic in bytes/s paged in and out (`/proc/vmstat` deltas × page
+    /// size); None on the first poll or when the host does not report it.
+    swap_in_rate: Option<u64>,
+    swap_out_rate: Option<u64>,
+    /// Current frequency of each logical CPU in MHz, by CPU number; empty where
+    /// cpufreq is not exposed (common on virtual machines).
+    cpu_freq_mhz: Vec<f64>,
+    /// Thermal-throttling events since boot, summed over cores; None when the
+    /// kernel does not expose the counter.
+    throttle_count: Option<u64>,
+    /// Listening TCP/UDP sockets (at most 200).
+    listen_sockets: Vec<ListenSocket>,
+    /// Every process (at most `PROC_CAP`) — sent only when the page asks for it
+    /// (the Processes section is on screen); empty otherwise.
+    processes: Vec<ProcRow>,
+    /// How many processes the host has; may exceed `processes.len()`.
+    process_total: Option<u64>,
 }
 
 /// Parse `key=a,b a,b …` per-core jiffies into `(idle, total)` pairs.
@@ -739,28 +863,6 @@ fn cpu_breakdown(prev: &[u64; 8], cur: &[u64; 8]) -> Option<CpuBreakdown> {
     })
 }
 
-/// Parse a `<key>pid|user|cpu|mem|comm;…` process-table line (e.g. `topcpu=` /
-/// `topmemp=`) into process rows.
-fn parse_top_procs(raw: &str, key: &str) -> Vec<Proc> {
-    let line = raw.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("");
-    line.split(';')
-        .filter(|r| !r.is_empty())
-        .filter_map(|rec| {
-            let f: Vec<&str> = rec.split('|').collect();
-            if f.len() != 5 {
-                return None;
-            }
-            Some(Proc {
-                pid: f[0].trim().parse().ok()?,
-                user: f[1].trim().to_string(),
-                cpu: f[2].trim().parse().ok()?,
-                mem: f[3].trim().parse().ok()?,
-                comm: f[4].trim().to_string(),
-            })
-        })
-        .collect()
-}
-
 /// Per-device byte rates: for each `(name, a, b)` cumulative counter, return the
 /// per-second delta against this session's previous sample (updating it). Devices
 /// with no prior sample (first poll) are omitted from the result.
@@ -821,7 +923,7 @@ fn parse_diskdev(raw: &str) -> Vec<(String, u64, u64)> {
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
             let f: Vec<&str> = rec.split(',').collect();
-            if f.len() != 3 {
+            if f.len() != 3 && f.len() != 8 {
                 return None;
             }
             Some((
@@ -829,6 +931,269 @@ fn parse_diskdev(raw: &str) -> Vec<(String, u64, u64)> {
                 f[1].parse::<u64>().ok()? * 512,
                 f[2].parse::<u64>().ok()? * 512,
             ))
+        })
+        .collect()
+}
+
+/// Parse `procticks=pid utime stime start;…` into each process's CPU ticks used
+/// (user + system) and start time.
+fn parse_procticks(raw: &str) -> HashMap<u32, (u64, u64)> {
+    line_of(raw, "procticks=")
+        .unwrap_or("")
+        .split(';')
+        .filter_map(|rec| {
+            let f: Vec<u64> = rec
+                .split_whitespace()
+                .filter_map(|v| v.parse().ok())
+                .collect();
+            (f.len() == 4).then(|| (f[0] as u32, (f[1] + f[2], f[3])))
+        })
+        .collect()
+}
+
+/// Each process's CPU, % of one core, over the `secs` between two samples of
+/// ticks at `clk` per second. A pid whose start time changed is another process:
+/// it has no previous reading.
+fn proc_cpu(
+    prev: &HashMap<u32, (u64, u64)>,
+    cur: &HashMap<u32, (u64, u64)>,
+    secs: f64,
+    clk: f64,
+) -> HashMap<u32, f64> {
+    if secs <= 0.0 || clk <= 0.0 || secs.is_nan() {
+        return HashMap::new();
+    }
+    cur.iter()
+        .filter_map(|(pid, &(ticks, start))| {
+            let &(was, was_start) = prev.get(pid)?;
+            (was_start == start && ticks >= was)
+                .then(|| (*pid, (ticks - was) as f64 / clk / secs * 100.0))
+        })
+        .collect()
+}
+
+/// Current CPU% per process against this session's previous ticks (updating them).
+fn proc_cpu_map(
+    store: &ProcTickStore,
+    session_id: &str,
+    cur: HashMap<u32, (u64, u64)>,
+    clk: Option<f64>,
+) -> HashMap<u32, f64> {
+    let now = Instant::now();
+    let mut guard = store.locked();
+    let out = match (guard.get(session_id), clk) {
+        (Some((prev, at)), Some(clk)) => {
+            proc_cpu(prev, &cur, now.duration_since(*at).as_secs_f64(), clk)
+        }
+        _ => HashMap::new(),
+    };
+    guard.insert(session_id.to_string(), (cur, now));
+    out
+}
+
+/// Parse `proclist=` rows (`\u{1e}`-separated) of either `ps` form. Linux:
+/// `pid|ppid|user|stat|etimes|nlwp|rss|pmem|comm`; BSD (`procfmt=bsd`):
+/// `pid|ppid|user|stat|pcpu|pmem|rss|comm`, whose `%cpu` is taken as the reading.
+fn parse_proclist(raw: &str) -> Vec<ProcRow> {
+    let bsd = line_of(raw, "procfmt=").map(str::trim) == Some("bsd");
+    line_of(raw, "proclist=")
+        .unwrap_or("")
+        .split('\u{1e}')
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+            let n = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
+            let x = |i: usize| f.get(i).and_then(|v| v.parse::<f64>().ok());
+            let row = |pid: u32| ProcRow {
+                pid,
+                ppid: n(1).map(|v| v as u32),
+                user: f[2].to_string(),
+                state: ps_state(f[3]).to_string(),
+                ..Default::default()
+            };
+            if bsd {
+                if f.len() != 8 {
+                    return None;
+                }
+                Some(ProcRow {
+                    cpu: x(4),
+                    mem: x(5).unwrap_or(0.0),
+                    rss: n(6).map(|kib| kib * 1024),
+                    comm: f[7].to_string(),
+                    ..row(f[0].parse().ok()?)
+                })
+            } else {
+                if f.len() != 9 {
+                    return None;
+                }
+                Some(ProcRow {
+                    elapsed_secs: n(4),
+                    threads: n(5),
+                    rss: n(6).map(|kib| kib * 1024),
+                    mem: x(7).unwrap_or(0.0),
+                    comm: f[8].to_string(),
+                    ..row(f[0].parse().ok()?)
+                })
+            }
+        })
+        .take(PROC_CAP)
+        .collect()
+}
+
+/// The six busiest by CPU now (only processes with a reading) and by memory.
+fn top_of(rows: &[ProcRow]) -> (Vec<Proc>, Vec<Proc>) {
+    let as_proc = |r: &ProcRow| Proc {
+        pid: r.pid,
+        user: r.user.clone(),
+        cpu: r.cpu.unwrap_or(0.0),
+        mem: r.mem,
+        comm: r.comm.clone(),
+    };
+    let mut by_cpu: Vec<&ProcRow> = rows.iter().filter(|r| r.cpu.is_some()).collect();
+    by_cpu.sort_by(|a, b| {
+        b.cpu
+            .unwrap_or(0.0)
+            .total_cmp(&a.cpu.unwrap_or(0.0))
+            .then(a.pid.cmp(&b.pid))
+    });
+    let mut by_mem: Vec<&ProcRow> = rows.iter().collect();
+    by_mem.sort_by(|a, b| b.mem.total_cmp(&a.mem).then(a.pid.cmp(&b.pid)));
+    (
+        by_cpu.into_iter().take(6).map(as_proc).collect(),
+        by_mem.into_iter().take(6).map(as_proc).collect(),
+    )
+}
+
+/// The value of the first `prefix…` line of a probe's output.
+fn line_of<'a>(raw: &'a str, prefix: &str) -> Option<&'a str> {
+    raw.lines().find_map(|l| l.strip_prefix(prefix))
+}
+
+/// Parse the operation/time counters of the `diskdev=` records (fields 4–8 of
+/// each; a 3-field record from an older probe has none).
+fn parse_diskticks(raw: &str) -> Vec<(String, DiskTicks)> {
+    line_of(raw, "diskdev=")
+        .unwrap_or("")
+        .split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split(',').collect();
+            if f.len() != 8 {
+                return None;
+            }
+            let n = |i: usize| f[i].parse::<u64>().ok();
+            Some((
+                f[0].to_string(),
+                DiskTicks {
+                    reads: n(3)?,
+                    writes: n(4)?,
+                    read_ms: n(5)?,
+                    write_ms: n(6)?,
+                    busy_ms: n(7)?,
+                },
+            ))
+        })
+        .collect()
+}
+
+/// A device's utilization (% of the `secs` between two samples it had I/O in
+/// flight) and average latency (ms per completed read or write). With no request
+/// completed there is no latency to report — `None`, not a zero.
+fn disk_latency(prev: &DiskTicks, cur: &DiskTicks, secs: f64) -> (Option<f64>, Option<f64>) {
+    if secs <= 0.0 || secs.is_nan() {
+        return (None, None);
+    }
+    let busy = cur.busy_ms.saturating_sub(prev.busy_ms) as f64;
+    let util = (busy / (secs * 1000.0) * 100.0).clamp(0.0, 100.0);
+    let ios = cur.reads.saturating_sub(prev.reads) + cur.writes.saturating_sub(prev.writes);
+    let waited =
+        cur.read_ms.saturating_sub(prev.read_ms) + cur.write_ms.saturating_sub(prev.write_ms);
+    let await_ms = (ios > 0).then(|| waited as f64 / ios as f64);
+    (Some(util), await_ms)
+}
+
+/// Utilization and latency per device against this session's previous counters
+/// (updating them). Devices with no prior sample (first poll) are omitted.
+fn disk_tick_map(
+    store: &DiskTickStore,
+    session_id: &str,
+    cur: &[(String, DiskTicks)],
+) -> HashMap<String, (Option<f64>, Option<f64>)> {
+    let now = Instant::now();
+    let mut guard = store.locked();
+    let prevs = guard.entry(session_id.to_string()).or_default();
+    let mut out = HashMap::new();
+    let mut next = HashMap::new();
+    for (name, ticks) in cur {
+        if let Some((prev, at)) = prevs.get(name) {
+            let secs = now.duration_since(*at).as_secs_f64();
+            out.insert(name.clone(), disk_latency(prev, ticks, secs));
+        }
+        next.insert(name.clone(), (*ticks, now));
+    }
+    *prevs = next;
+    out
+}
+
+/// Parse `failednames=unit unit …` into the failed units' names.
+fn parse_failed_names(raw: &str) -> Vec<String> {
+    line_of(raw, "failednames=")
+        .unwrap_or("")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+/// Parse `cpufreq=N:kHz …` into MHz per logical CPU, ordered by CPU number (the
+/// shell glob lists `cpu10` before `cpu2`).
+fn parse_cpufreq(raw: &str) -> Vec<f64> {
+    let mut cpus: Vec<(u32, f64)> = line_of(raw, "cpufreq=")
+        .unwrap_or("")
+        .split_whitespace()
+        .filter_map(|tok| {
+            let (n, khz) = tok.split_once(':')?;
+            Some((n.parse().ok()?, khz.parse::<f64>().ok()? / 1000.0))
+        })
+        .collect();
+    cpus.sort_by_key(|(n, _)| *n);
+    cpus.into_iter().map(|(_, mhz)| mhz).collect()
+}
+
+/// The first owner in an `ss -p` process column — `users:(("sshd",pid=812,fd=3),…)`
+/// — as a name and pid; both None when the session may not see it.
+fn socket_owner(users: &str) -> (Option<String>, Option<u32>) {
+    let Some((_, rest)) = users.split_once("((\"") else {
+        return (None, None);
+    };
+    let name = rest
+        .split('"')
+        .next()
+        .filter(|n| !n.is_empty())
+        .map(str::to_string);
+    let pid = rest
+        .split_once("pid=")
+        .and_then(|(_, r)| r.split(|c: char| !c.is_ascii_digit()).next())
+        .and_then(|p| p.parse().ok());
+    (name, pid)
+}
+
+/// Parse `listenlist=proto|addr:port|users:((…));…` into listening sockets.
+fn parse_listen(raw: &str) -> Vec<ListenSocket> {
+    line_of(raw, "listenlist=")
+        .unwrap_or("")
+        .split(';')
+        .filter(|r| !r.is_empty())
+        .filter_map(|rec| {
+            let mut f = rec.split('|');
+            let proto = f.next()?.trim();
+            let (addr, port) = f.next()?.trim().rsplit_once(':')?;
+            let (process, pid) = socket_owner(f.next().unwrap_or(""));
+            Some(ListenSocket {
+                proto: proto.to_string(),
+                addr: addr.trim_matches(['[', ']']).to_string(),
+                port: port.parse().ok()?,
+                process,
+                pid,
+            })
         })
         .collect()
 }
@@ -945,8 +1310,6 @@ fn parse_detail(raw: &str) -> MetricsDetail {
         .lines()
         .find_map(|l| l.strip_prefix("sensorsbin="))
         .is_some_and(|s| s.trim() == "1");
-    d.top_procs = parse_top_procs(raw, "topcpu=");
-    d.top_mem_procs = parse_top_procs(raw, "topmemp=");
     d.failed_units = raw
         .lines()
         .find_map(|l| l.strip_prefix("failed="))
@@ -972,6 +1335,10 @@ fn parse_detail(raw: &str) -> MetricsDetail {
         d.procs_running = Some(r);
         d.procs_blocked = Some(b);
     }
+    d.failed_unit_names = parse_failed_names(raw);
+    d.cpu_freq_mhz = parse_cpufreq(raw);
+    d.throttle_count = line_of(raw, "throttle=").and_then(|s| s.trim().parse().ok());
+    d.listen_sockets = parse_listen(raw);
     d
 }
 
@@ -980,10 +1347,14 @@ fn parse_detail(raw: &str) -> MetricsDetail {
 pub async fn fetch_metrics_detail(
     state: State<'_, AppState>,
     session_id: String,
+    processes: Option<bool>,
 ) -> AppResult<MetricsDetail> {
+    let with_processes = processes.unwrap_or(false);
     let session = match state.sessions.lock().await.get(&session_id).cloned() {
         Some(s) => s,
-        None if is_local_session(&state, &session_id) => return Ok(local::collect_detail().await),
+        None if is_local_session(&state, &session_id) => {
+            return Ok(local::collect_detail(with_processes).await)
+        }
         None => return Err(AppError::NoSession),
     };
     let raw = session.run_command(DETAIL_SCRIPT).await?;
@@ -1042,15 +1413,60 @@ pub async fn fetch_metrics_detail(
                     name,
                     read_rate,
                     write_rate,
+                    ..Default::default()
                 })
             })
             .collect();
+    }
+
+    // Device utilization and request latency from operation/time counter deltas.
+    let ticks = parse_diskticks(&raw);
+    let latency = disk_tick_map(&state.metrics_samples.diskstat_samples, &session_id, &ticks);
+    for dev in &mut d.disk_devs {
+        if let Some(&(util, wait)) = latency.get(&dev.name) {
+            dev.util_pct = util;
+            dev.await_ms = wait;
+        }
     }
 
     // Context-switch / interrupt rates (delta of cumulative counters).
     if let Some(ci) = parse_pair(&raw, "ctxintr") {
         (d.ctxt_rate, d.intr_rate) =
             rate_from(&state.metrics_samples.ctxintr_samples, &session_id, ci);
+    }
+
+    // Swap traffic: pages in/out per second, times the host's page size.
+    if let Some(vm) = parse_pair(&raw, "vmstat") {
+        let page = line_of(&raw, "pagesize=").and_then(|s| s.trim().parse::<u64>().ok());
+        let (pin, pout) = rate_from(&state.metrics_samples.vmstat_samples, &session_id, vm);
+        d.swap_in_rate = pin.zip(page).map(|(r, p)| r * p);
+        d.swap_out_rate = pout.zip(page).map(|(r, p)| r * p);
+    }
+
+    // Every process, with its CPU now from the growth of its ticks (not ps's
+    // lifetime average); the six busiest come from the same reading.
+    let mut rows = parse_proclist(&raw);
+    if line_of(&raw, "procfmt=").map(str::trim) == Some("linux") {
+        let clk = line_of(&raw, "clk=")
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|c| *c > 0.0);
+        let cpu = proc_cpu_map(
+            &state.metrics_samples.proc_samples,
+            &session_id,
+            parse_procticks(&raw),
+            clk,
+        );
+        for r in &mut rows {
+            r.cpu = cpu.get(&r.pid).copied();
+        }
+    }
+    d.process_total = line_of(&raw, "proctotal=")
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|n| *n > 0)
+        .or((!rows.is_empty()).then_some(rows.len() as u64));
+    (d.top_procs, d.top_mem_procs) = top_of(&rows);
+    if with_processes {
+        d.processes = rows;
     }
     Ok(d)
 }
@@ -1128,22 +1544,55 @@ pub async fn fetch_pending_updates(
     Ok(parse_pending(&raw))
 }
 
-/// Optional "extras" probed once when the monitoring overlay opens: NVIDIA GPUs,
-/// Docker containers, disk SMART health and the OOM-kill count. Heavy/optional and
-/// best-effort (each guarded by `command -v`; SMART needs root, so it populates for
-/// root sessions and is empty otherwise) — never part of the per-poll detail probe.
-const EXTRAS_SCRIPT: &str = r#"
-gpu=""
+/// NVIDIA GPUs — utilization, memory, temperature, power, clocks — and the
+/// processes using them. Shared by the once-per-open extras and the live poll.
+macro_rules! gpu_snippet {
+    () => {
+        r#"
+gpu=""; gpuapps=""
 if command -v nvidia-smi >/dev/null 2>&1; then
-  gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null | awk -F', *' '{printf "%s|%s|%s|%s|%s;",$1,$2,$3,$4,$5}')
+  gpu=$(nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu,power.draw,power.limit,clocks.sm,clocks.mem,pci.bus_id --format=csv,noheader,nounits 2>/dev/null | awk -F', *' '{printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s;",$1,$2,$3,$4,$5,$6,$7,$8,$9,$10}')
+  gpuapps=$(nvidia-smi --query-compute-apps=gpu_bus_id,pid,process_name,used_memory --format=csv,noheader,nounits 2>/dev/null | awk -F', *' '{printf "%s|%s|%s|%s;",$1,$2,$3,$4}')
 fi
 printf 'gpu=%s\n' "$gpu"
-docker=""
+printf 'gpuapps=%s\n' "$gpuapps"
+"#
+    };
+}
+
+/// Running Docker containers' live stats, plus each one's configured memory and
+/// CPU limits (`HostConfig`: 0 = none) — a share is only drawn against a limit
+/// that was set. Shared by the extras and the live poll.
+macro_rules! docker_snippet {
+    () => {
+        r#"
+docker=""; dockerlim=""
 if command -v docker >/dev/null 2>&1; then
   docker=$(docker stats --no-stream --format '{{.Name}}|{{.CPUPerc}}|{{.MemUsage}}' 2>/dev/null | awk '{gsub(/%/,"");printf "%s;",$0}')
+  dockerlim=$(docker ps -q 2>/dev/null | xargs -r docker inspect --format '{{.Name}}|{{.HostConfig.Memory}}|{{.HostConfig.NanoCpus}}' 2>/dev/null | awk '{printf "%s;",$0}')
 fi
 printf 'docker=%s\n' "$docker"
-printf 'oom=%s\n' "$(dmesg 2>/dev/null | grep -ic 'out of memory')"
+printf 'dockerlim=%s\n' "$dockerlim"
+"#
+    };
+}
+
+/// Optional "extras" probed once when the monitoring overlay opens: NVIDIA GPUs,
+/// Docker containers, disk SMART health, OOM kills and recent logins. Heavy/optional
+/// and best-effort (each guarded by `command -v`; SMART needs root, so it populates
+/// for root sessions and is empty otherwise) — never part of the per-poll detail
+/// probe. The kernel log is read from the journal or `dmesg`; when neither can be
+/// read, `oomsrc` stays empty and the kill count is unknown rather than zero.
+const EXTRAS_SCRIPT: &str = concat!(
+    gpu_snippet!(),
+    docker_snippet!(),
+    r#"
+k=""; oomsrc=""
+if command -v journalctl >/dev/null 2>&1; then k=$(journalctl -k -b -o short-iso --no-pager 2>/dev/null); [ -n "$k" ] && oomsrc=journal; fi
+if [ -z "$k" ]; then k=$(dmesg 2>/dev/null); [ -n "$k" ] && oomsrc=dmesg; fi
+printf 'oomsrc=%s\n' "$oomsrc"
+printf 'oom=%s\n' "$(printf '%s\n' "$k" | grep -ic 'out of memory')"
+printf 'oomkilled=%s\n' "$(printf '%s\n' "$k" | grep -i 'killed process' | tail -10 | tr '\n' '\036')"
 smart=""
 for d in $(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
   o=$(smartctl -H -A /dev/$d 2>/dev/null)
@@ -1151,9 +1600,15 @@ for d in $(lsblk -dn -o NAME,TYPE 2>/dev/null | awk '$2=="disk"{print $1}'); do
   h=$(printf '%s\n' "$o" | awk '/overall-health/{print $NF}')
   t=$(printf '%s\n' "$o" | awk '/Temperature_Celsius/{print $10} /^Temperature:/{print $2}' | head -1)
   p=$(printf '%s\n' "$o" | awk '/Power_On_Hours/{print $10} /Power On Hours/{print $NF}' | head -1)
-  smart="$smart$d|$h|$t|$p;"
+  w=$(printf '%s\n' "$o" | awk '/Percentage Used:/{gsub(/%/,"",$3); print "used:" $3; exit} /Wear_Leveling_Count|Media_Wearout_Indicator/{print "left:" $4; exit}')
+  r=$(printf '%s\n' "$o" | awk '/Reallocated_Sector_Ct/{print $10; exit}')
+  smart="$smart$d|$h|$t|$p|$w|$r;"
 done
 printf 'smart=%s\n' "$smart"
+l=""; loginsok=""
+if command -v last >/dev/null 2>&1 && l=$(last -n 10 -w -i --time-format iso 2>/dev/null); then loginsok=1; fi
+printf 'loginsok=%s\n' "$loginsok"
+printf 'logins=%s\n' "$(printf '%s\n' "$l" | awk 'NF>=4 && $1!="reboot" && $1!="wtmp" {printf "%s|%s|%s|%s|%s;",$1,$2,$3,$4,($0 ~ /still logged in/)?1:0}')"
 printf 'arch=%s\n' "$(uname -m 2>/dev/null)"
 cpumodel=$(awk -F': ' '/^model name/{print $2; exit}' /proc/cpuinfo 2>/dev/null)
 [ -z "$cpumodel" ] && cpumodel=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
@@ -1173,9 +1628,24 @@ printf 'product=%s\n' "$(cat /sys/class/dmi/id/product_name 2>/dev/null)"
 printf 'boardvendor=%s\n' "$(cat /sys/class/dmi/id/board_vendor 2>/dev/null)"
 printf 'boardname=%s\n' "$(cat /sys/class/dmi/id/board_name 2>/dev/null)"
 printf 'bios=%s\n' "$(cat /sys/class/dmi/id/bios_version 2>/dev/null)"
-"#;
+"#
+);
 
-#[derive(Serialize, Default, Clone)]
+/// The part of the extras that changes by the second — GPUs and containers —
+/// polled while the Containers or GPU section is on screen.
+const LIVE_SCRIPT: &str = concat!(gpu_snippet!(), docker_snippet!());
+
+/// A process using a GPU, from `nvidia-smi --query-compute-apps`.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuProc {
+    pid: u32,
+    name: String,
+    /// GPU memory the process holds, MiB.
+    mem_mib: Option<u64>,
+}
+
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Gpu {
     name: String,
@@ -1184,24 +1654,71 @@ pub struct Gpu {
     mem_used: u64,
     mem_total: u64,
     temp: f64,
+    /// Power draw and the board's limit, W; None where the driver says `[N/A]`.
+    power_draw: Option<f64>,
+    power_limit: Option<f64>,
+    /// Graphics (SM) and memory clocks, MHz.
+    clock_sm: Option<f64>,
+    clock_mem: Option<f64>,
+    procs: Vec<GpuProc>,
+    /// PCI bus id — joins `gpuapps` rows to their GPU; not sent to the page.
+    #[serde(skip)]
+    bus_id: String,
 }
 
-#[derive(Serialize, Default, Clone)]
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DockerStat {
     name: String,
     cpu: f64,
     /// Memory usage string, e.g. "1.2GiB / 3.8GiB".
     mem: String,
+    /// Memory in use, bytes (the left half of `mem`).
+    mem_used: Option<u64>,
+    /// Configured memory limit, bytes; None when the container has none
+    /// (`docker stats` then shows the host's memory, which is not a limit).
+    mem_limit: Option<u64>,
+    /// Configured CPU limit in cores (`--cpus`); None when unset.
+    cpu_limit: Option<f64>,
 }
 
-#[derive(Serialize, Default, Clone)]
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SmartDisk {
     device: String,
     health: String,
     temp: Option<f64>,
     power_on_hours: Option<u64>,
+    /// Share of the rated endurance used, %: NVMe "Percentage Used", or 100 minus
+    /// an ATA SSD's normalized wear-levelling value.
+    wear_pct: Option<f64>,
+    /// ATA reallocated sectors (raw count); None for NVMe and unreported.
+    reallocated: Option<u64>,
+}
+
+/// A process the kernel's OOM killer ended, from the kernel log of this boot.
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OomVictim {
+    pid: Option<u32>,
+    name: String,
+    /// When, from the journal (`short-iso`); None when read from `dmesg`.
+    at: Option<String>,
+    /// When, in seconds since boot, from `dmesg`; None when read from the journal.
+    boot_secs: Option<f64>,
+}
+
+/// A recent login from `last` (newest first).
+#[derive(Serialize, Default, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Login {
+    user: String,
+    tty: String,
+    from: String,
+    /// Login time, ISO 8601.
+    at: String,
+    /// Still logged in.
+    active: bool,
 }
 
 /// Static machine spec (Фаза 20.16) — probed once with the extras (never changes),
@@ -1235,8 +1752,22 @@ pub struct Extras {
     gpus: Vec<Gpu>,
     docker: Vec<DockerStat>,
     smart: Vec<SmartDisk>,
+    /// "Out of memory" events in this boot's kernel log; None when the log could
+    /// not be read (no journal access, `dmesg` restricted) — unknown, not zero.
     oom_kills: Option<u64>,
+    /// The last processes the OOM killer ended (at most 10).
+    oom_victims: Vec<OomVictim>,
+    /// The last logins (at most 10); None when `last` is missing or unreadable.
+    logins: Option<Vec<Login>>,
     hardware: Hardware,
+}
+
+/// The live part of the extras: GPUs and containers, polled while on screen.
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveExtras {
+    gpus: Vec<Gpu>,
+    docker: Vec<DockerStat>,
 }
 
 /// Merge a DMI vendor + name pair (system product or baseboard) into one label,
@@ -1253,26 +1784,102 @@ fn combine_machine(vendor: &str, name: &str) -> String {
     }
 }
 
-fn parse_extras(raw: &str) -> Extras {
-    let field = |key: &str| raw.lines().find_map(|l| l.strip_prefix(key)).unwrap_or("");
-    let gpus = field("gpu=")
+/// A `nvidia-smi` number; `[N/A]`, `[Not Supported]` and blanks are unknown.
+fn smi_num(v: &str) -> Option<f64> {
+    v.trim().parse().ok()
+}
+
+/// Parse `gpu=` records (5 fields from an older probe, 10 now) and attach the
+/// `gpuapps=` processes to their GPU by PCI bus id.
+fn parse_gpus(raw: &str) -> Vec<Gpu> {
+    let mut gpus: Vec<Gpu> = line_of(raw, "gpu=")
+        .unwrap_or("")
         .split(';')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
-            let f: Vec<&str> = rec.split('|').collect();
-            if f.len() != 5 {
+            let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+            if f.len() != 5 && f.len() != 10 {
                 return None;
             }
+            let at = |i: usize| f.get(i).copied().unwrap_or("");
             Some(Gpu {
-                name: f[0].trim().to_string(),
-                util: f[1].trim().parse().unwrap_or(0.0),
-                mem_used: f[2].trim().parse().unwrap_or(0),
-                mem_total: f[3].trim().parse().unwrap_or(0),
-                temp: f[4].trim().parse().unwrap_or(0.0),
+                name: f[0].to_string(),
+                util: f[1].parse().unwrap_or(0.0),
+                mem_used: f[2].parse().unwrap_or(0),
+                mem_total: f[3].parse().unwrap_or(0),
+                temp: f[4].parse().unwrap_or(0.0),
+                power_draw: smi_num(at(5)),
+                power_limit: smi_num(at(6)),
+                clock_sm: smi_num(at(7)),
+                clock_mem: smi_num(at(8)),
+                bus_id: at(9).to_string(),
+                procs: Vec::new(),
             })
         })
         .collect();
-    let docker = field("docker=")
+    for rec in line_of(raw, "gpuapps=")
+        .unwrap_or("")
+        .split(';')
+        .filter(|r| !r.is_empty())
+    {
+        let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+        if f.len() != 4 {
+            continue;
+        }
+        let Ok(pid) = f[1].parse() else { continue };
+        let proc_ = GpuProc {
+            pid,
+            name: f[2].to_string(),
+            mem_mib: f[3].parse().ok(),
+        };
+        if let Some(g) = gpus
+            .iter_mut()
+            .find(|g| !g.bus_id.is_empty() && g.bus_id == f[0])
+        {
+            g.procs.push(proc_);
+        }
+    }
+    gpus
+}
+
+/// A size as `docker stats` prints it — "512MiB", "1.94GiB", "12.5kB", "0B" — in bytes.
+fn parse_size(v: &str) -> Option<u64> {
+    let v = v.trim();
+    let split = v.find(|c: char| c.is_ascii_alphabetic())?;
+    let (num, unit) = v.split_at(split);
+    let n: f64 = num.trim().parse().ok()?;
+    let mult = match unit {
+        "B" => 1.0,
+        "kB" | "KB" => 1e3,
+        "MB" => 1e6,
+        "GB" => 1e9,
+        "TB" => 1e12,
+        "KiB" => 1024.0,
+        "MiB" => 1024f64.powi(2),
+        "GiB" => 1024f64.powi(3),
+        "TiB" => 1024f64.powi(4),
+        _ => return None,
+    };
+    Some((n * mult) as u64)
+}
+
+/// Parse `docker=name|cpu|used / limit;…` and join each container's configured
+/// limits from `dockerlim=/name|memoryBytes|nanoCpus;…` (0 = none set).
+fn parse_docker(raw: &str) -> Vec<DockerStat> {
+    let limits: HashMap<String, (u64, u64)> = line_of(raw, "dockerlim=")
+        .unwrap_or("")
+        .split(';')
+        .filter_map(|rec| {
+            let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+            if f.len() != 3 {
+                return None;
+            }
+            let name = f[0].trim_start_matches('/').to_string();
+            Some((name, (f[1].parse().ok()?, f[2].parse().ok()?)))
+        })
+        .collect();
+    line_of(raw, "docker=")
+        .unwrap_or("")
         .split(';')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
@@ -1280,30 +1887,141 @@ fn parse_extras(raw: &str) -> Extras {
             if f.len() != 3 {
                 return None;
             }
+            let name = f[0].trim().to_string();
+            let (mem_limit, cpu_limit) = match limits.get(&name) {
+                Some(&(mem, nano)) => (
+                    (mem > 0).then_some(mem),
+                    (nano > 0).then(|| nano as f64 / 1e9),
+                ),
+                None => (None, None),
+            };
             Some(DockerStat {
-                name: f[0].trim().to_string(),
                 cpu: f[1].trim().parse().unwrap_or(0.0),
                 mem: f[2].trim().to_string(),
+                mem_used: f[2].split('/').next().and_then(parse_size),
+                mem_limit,
+                cpu_limit,
+                name,
             })
         })
-        .collect();
-    let smart = field("smart=")
+        .collect()
+}
+
+/// Parse `smart=dev|health|temp|hours|wear|realloc;…` (4 fields from an older probe).
+fn parse_smart(raw: &str) -> Vec<SmartDisk> {
+    line_of(raw, "smart=")
+        .unwrap_or("")
         .split(';')
         .filter(|r| !r.is_empty())
         .filter_map(|rec| {
-            let f: Vec<&str> = rec.split('|').collect();
-            if f.len() != 4 || f[0].is_empty() {
+            let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+            if (f.len() != 4 && f.len() != 6) || f[0].is_empty() {
                 return None;
             }
+            let at = |i: usize| f.get(i).copied().unwrap_or("");
             Some(SmartDisk {
-                device: f[0].trim().to_string(),
-                health: f[1].trim().to_string(),
-                temp: f[2].trim().parse().ok(),
-                power_on_hours: f[3].trim().parse().ok(),
+                device: f[0].to_string(),
+                health: f[1].to_string(),
+                temp: f[2].parse().ok(),
+                power_on_hours: f[3].parse().ok(),
+                wear_pct: wear_used(at(4)),
+                reallocated: at(5).parse().ok(),
             })
         })
-        .collect();
-    let oom_kills = field("oom=").trim().parse().ok();
+        .collect()
+}
+
+/// `used:N` (NVMe "Percentage Used") as is; `left:N` (an ATA SSD's normalized
+/// wear value, 100 = new) as the share used — the subtraction happens here, not on
+/// the host.
+fn wear_used(v: &str) -> Option<f64> {
+    let (kind, n) = v.split_once(':')?;
+    let n: f64 = n.trim().parse().ok()?;
+    match kind {
+        "used" => Some(n.max(0.0)),
+        "left" => Some((100.0 - n).clamp(0.0, 100.0)),
+        _ => None,
+    }
+}
+
+/// One kernel-log line about an OOM kill → the victim and when. Journal lines
+/// start with an ISO time; `dmesg` lines with `[seconds since boot]`.
+fn parse_oom_line(line: &str) -> Option<OomVictim> {
+    let lower = line.to_ascii_lowercase();
+    let i = lower.find("killed process ")?;
+    let rest = &line[i + "killed process ".len()..];
+    let pid = rest
+        .split(|c: char| !c.is_ascii_digit())
+        .next()
+        .and_then(|p| p.parse().ok());
+    let name = rest
+        .split_once('(')
+        .and_then(|(_, r)| r.split_once(')'))
+        .map(|(n, _)| n.to_string())
+        .unwrap_or_default();
+    let head = line.trim_start();
+    let (at, boot_secs) = if let Some(b) = head.strip_prefix('[') {
+        (
+            None,
+            b.split(']').next().and_then(|v| v.trim().parse().ok()),
+        )
+    } else {
+        let first = head.split_whitespace().next().unwrap_or("");
+        let iso =
+            first.len() >= 19 && first.as_bytes().get(4) == Some(&b'-') && first.contains('T');
+        (iso.then(|| first.to_string()), None)
+    };
+    Some(OomVictim {
+        pid,
+        name,
+        at,
+        boot_secs,
+    })
+}
+
+/// Parse `logins=user|tty|from|iso|active;…` (only when `loginsok=1`).
+fn parse_logins(raw: &str) -> Option<Vec<Login>> {
+    if line_of(raw, "loginsok=").map(str::trim) != Some("1") {
+        return None;
+    }
+    Some(
+        line_of(raw, "logins=")
+            .unwrap_or("")
+            .split(';')
+            .filter(|r| !r.is_empty())
+            .filter_map(|rec| {
+                let f: Vec<&str> = rec.split('|').map(str::trim).collect();
+                if f.len() != 5 || f[0].is_empty() {
+                    return None;
+                }
+                Some(Login {
+                    user: f[0].to_string(),
+                    tty: f[1].to_string(),
+                    from: f[2].to_string(),
+                    at: f[3].to_string(),
+                    active: f[4] == "1",
+                })
+            })
+            .collect(),
+    )
+}
+
+fn parse_extras(raw: &str) -> Extras {
+    let field = |key: &str| line_of(raw, key).unwrap_or("");
+    let oom_read = !field("oomsrc=").trim().is_empty();
+    let oom_kills = if oom_read {
+        field("oom=").trim().parse().ok()
+    } else {
+        None
+    };
+    let oom_victims = if oom_read {
+        field("oomkilled=")
+            .split('\u{1e}')
+            .filter_map(parse_oom_line)
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Collapse repeated whitespace in the CPU brand string (cpuinfo pads it).
     let cpu_model = field("cpumodel=")
         .split_whitespace()
@@ -1322,10 +2040,12 @@ fn parse_extras(raw: &str) -> Extras {
         bios: field("bios=").trim().to_string(),
     };
     Extras {
-        gpus,
-        docker,
-        smart,
+        gpus: parse_gpus(raw),
+        docker: parse_docker(raw),
+        smart: parse_smart(raw),
         oom_kills,
+        oom_victims,
+        logins: parse_logins(raw),
         hardware,
     }
 }
@@ -1342,6 +2062,113 @@ pub async fn fetch_extras(state: State<'_, AppState>, session_id: String) -> App
     };
     let raw = session.run_command(EXTRAS_SCRIPT).await?;
     Ok(parse_extras(&raw))
+}
+
+/// Poll the live extras (GPUs, containers) — only while their section is on screen.
+#[tauri::command]
+pub async fn fetch_live_extras(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> AppResult<LiveExtras> {
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        // Local tabs skip the server-shaped GPU/Docker probes, as `fetch_extras` does.
+        None if is_local_session(&state, &session_id) => return Ok(LiveExtras::default()),
+        None => return Err(AppError::NoSession),
+    };
+    let raw = session.run_command(LIVE_SCRIPT).await?;
+    Ok(LiveExtras {
+        gpus: parse_gpus(&raw),
+        docker: parse_docker(&raw),
+    })
+}
+
+/// One process, read on a click — never polled: its command line, state, age,
+/// threads, resident memory and, where the session may read `/proc/<pid>/fd`,
+/// the number of open descriptors.
+#[derive(Serialize, Default, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessDetail {
+    pid: u32,
+    user: String,
+    /// `running` | `sleeping` | `disk` | `stopped` | `zombie` | `idle` | `other`;
+    /// empty when unknown. English keys: the page localizes them.
+    state: String,
+    elapsed_secs: Option<u64>,
+    threads: Option<u64>,
+    /// Resident memory, bytes.
+    rss: Option<u64>,
+    cmdline: String,
+    fds: Option<u64>,
+}
+
+/// The probe for one process. `pid` is a number, so nothing else reaches the shell.
+fn process_script(pid: u32) -> String {
+    format!(
+        concat!(
+            "p={pid}; ",
+            "[ -d /proc/$p ] && printf 'alive=1\\n'; ",
+            "printf 'ps=%s\\n' \"$(ps -o user=,stat=,etimes=,nlwp=,rss= -p $p 2>/dev/null)\"; ",
+            "printf 'args=%s\\n' \"$(ps -o args= -p $p 2>/dev/null)\"; ",
+            "[ -r /proc/$p/fd ] && printf 'fds=%s\\n' \"$(ls /proc/$p/fd 2>/dev/null | wc -l | tr -d ' ')\"; ",
+            "true"
+        ),
+        pid = pid
+    )
+}
+
+/// A `ps` STAT code (`Ssl`, `R+`, `D`) as one of the [`ProcessDetail::state`] keys.
+fn ps_state(stat: &str) -> &'static str {
+    match stat.chars().next() {
+        Some('R') => "running",
+        Some('S') => "sleeping",
+        Some('D') => "disk",
+        Some('T') | Some('t') => "stopped",
+        Some('Z') => "zombie",
+        Some('I') => "idle",
+        Some(_) => "other",
+        None => "",
+    }
+}
+
+/// Parse the process probe; None when the process is gone (neither `/proc/<pid>`
+/// nor a `ps` row).
+fn parse_process(raw: &str, pid: u32) -> Option<ProcessDetail> {
+    let ps = line_of(raw, "ps=").unwrap_or("").trim();
+    let alive = line_of(raw, "alive=").is_some();
+    if ps.is_empty() && !alive {
+        return None;
+    }
+    let f: Vec<&str> = ps.split_whitespace().collect();
+    let num = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
+    Some(ProcessDetail {
+        pid,
+        user: f.first().map(|v| v.to_string()).unwrap_or_default(),
+        state: f.get(1).map(|v| ps_state(v)).unwrap_or("").to_string(),
+        elapsed_secs: num(2),
+        threads: num(3),
+        rss: num(4).map(|kib| kib * 1024),
+        cmdline: line_of(raw, "args=").unwrap_or("").trim().to_string(),
+        fds: line_of(raw, "fds=").and_then(|v| v.trim().parse().ok()),
+    })
+}
+
+/// Read one process's details for the Processes section (on a click).
+#[tauri::command]
+pub async fn fetch_process_detail(
+    state: State<'_, AppState>,
+    session_id: String,
+    pid: u32,
+) -> AppResult<Option<ProcessDetail>> {
+    let session = match state.sessions.lock().await.get(&session_id).cloned() {
+        Some(s) => s,
+        None if is_local_session(&state, &session_id) => {
+            return Ok(local::collect_process(pid).await)
+        }
+        None => return Err(AppError::NoSession),
+    };
+    let raw = session.run_command(&process_script(pid)).await?;
+    Ok(parse_process(&raw, pid))
 }
 
 #[cfg(test)]
@@ -1606,11 +2433,19 @@ mod tests {
         assert!(!subtracts_operands("$3!~/^(loop|ram|dm-|sr)/{print $3}"));
         assert!(!subtracts_operands("/overall-health/{print $NF}"));
 
-        let offenders: Vec<&str> = [METRICS_SCRIPT, DETAIL_SCRIPT, PENDING_SCRIPT, EXTRAS_SCRIPT]
-            .iter()
-            .flat_map(|s| awk_programs(s))
-            .filter(|p| subtracts_operands(p))
-            .collect();
+        let process = process_script(1);
+        let offenders: Vec<&str> = [
+            METRICS_SCRIPT,
+            DETAIL_SCRIPT,
+            PENDING_SCRIPT,
+            EXTRAS_SCRIPT,
+            LIVE_SCRIPT,
+            process.as_str(),
+        ]
+        .iter()
+        .flat_map(|s| awk_programs(s))
+        .filter(|p| subtracts_operands(p))
+        .collect();
         assert!(
             offenders.is_empty(),
             "probe scripts must report raw readings — a difference computed on the \
@@ -1811,21 +2646,86 @@ mod tests {
     }
 
     #[test]
-    fn parse_top_procs_reads_pipe_records() {
-        let raw = "topcpu=1234|root|12.5|3.1|nginx;5678|www|4.0|1.2|php-fpm;\n\
-                   topmemp=99|postgres|2.0|41.0|postgres;";
-        let p = parse_top_procs(raw, "topcpu=");
-        assert_eq!(p.len(), 2);
-        assert_eq!(p[0].pid, 1234);
-        assert_eq!(p[0].user, "root");
-        assert_eq!(p[0].cpu, 12.5);
-        assert_eq!(p[0].comm, "nginx");
-        // Same parser drives the by-memory table via its own key.
-        let m = parse_top_procs(raw, "topmemp=");
-        assert_eq!(m.len(), 1);
-        assert_eq!(m[0].comm, "postgres");
-        assert_eq!(m[0].mem, 41.0);
-        assert!(parse_top_procs("os=Linux", "topcpu=").is_empty());
+    fn every_process_is_listed_with_its_cpu_now_not_its_lifetime_average() {
+        let raw =
+            "procfmt=linux\nproclist=2841|1|postgres|Ssl|3542400|12|204800|12.4|postgres\u{1e}\
+                   1190|1|app|R|60|8|102400|6.1|tmux: server\u{1e}bad|row\u{1e}\n";
+        let rows = parse_proclist(raw);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows[0],
+            ProcRow {
+                pid: 2841,
+                ppid: Some(1),
+                user: "postgres".into(),
+                state: "sleeping".into(),
+                elapsed_secs: Some(3542400),
+                threads: Some(12),
+                rss: Some(204800 * 1024),
+                mem: 12.4,
+                cpu: None,
+                comm: "postgres".into(),
+            }
+        );
+        // A name with a space is kept whole.
+        assert_eq!(rows[1].comm, "tmux: server");
+        // Ticks: user + system, and the start time that tells a reused pid apart.
+        let t0 = parse_procticks("procticks=2841 1000 500 77;1190 10 0 88;junk;");
+        assert_eq!(t0.get(&2841), Some(&(1500, 77)));
+        let t1 = parse_procticks("procticks=2841 1450 550 77;1190 20 0 99;");
+        // 500 ticks at 100/s over 5 s — one core flat out for the whole poll.
+        let cpu = proc_cpu(&t0, &t1, 5.0, 100.0);
+        assert_eq!(cpu.get(&2841), Some(&100.0));
+        // Same pid, another start time: a new process, no reading yet.
+        assert_eq!(cpu.get(&1190), None);
+        assert!(proc_cpu(&t0, &t1, 0.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn the_busiest_six_come_from_the_current_reading() {
+        let row = |pid: u32, cpu: Option<f64>, mem: f64| ProcRow {
+            pid,
+            cpu,
+            mem,
+            comm: format!("p{pid}"),
+            ..Default::default()
+        };
+        let rows: Vec<ProcRow> = (1..=8)
+            .map(|i| {
+                row(
+                    i,
+                    if i == 8 { None } else { Some(i as f64) },
+                    (10 - i) as f64,
+                )
+            })
+            .collect();
+        let (cpu, mem) = top_of(&rows);
+        assert_eq!(
+            cpu.iter().map(|p| p.pid).collect::<Vec<_>>(),
+            vec![7, 6, 5, 4, 3, 2]
+        );
+        assert_eq!(
+            mem.iter().map(|p| p.pid).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5, 6]
+        );
+        // The first poll has no CPU reading at all: no CPU six rather than a guess.
+        let first: Vec<ProcRow> = rows
+            .iter()
+            .map(|r| ProcRow {
+                cpu: None,
+                ..r.clone()
+            })
+            .collect();
+        assert!(top_of(&first).0.is_empty());
+    }
+
+    #[test]
+    fn a_host_without_proc_lists_its_ps_with_its_recent_cpu() {
+        let raw = "procfmt=bsd\nproclist=501|1|boris|S|3.5|1.2|20480|/Applications/Some App.app/x\u{1e}\n";
+        let rows = parse_proclist(raw);
+        assert_eq!(rows[0].cpu, Some(3.5));
+        assert_eq!(rows[0].comm, "/Applications/Some App.app/x");
+        assert_eq!((rows[0].elapsed_secs, rows[0].threads), (None, None));
     }
 
     #[test]
@@ -1912,8 +2812,10 @@ mod tests {
             "tcp=",
             "sensors=",
             "cpubreak=",
-            "topcpu=",
-            "topmemp=",
+            "clk=",
+            "proctotal=",
+            "procticks=",
+            "proclist=",
             "failed=",
             "listen=",
             "conntrack=",
@@ -1921,6 +2823,12 @@ mod tests {
             "netdev=",
             "diskdev=",
             "sessions=",
+            "failednames=",
+            "vmstat=",
+            "pagesize=",
+            "cpufreq=",
+            "throttle=",
+            "listenlist=",
         ] {
             assert!(text.contains(key), "DETAIL_SCRIPT missing {key}: {text}");
         }
@@ -1951,9 +2859,15 @@ mod tests {
         let text = String::from_utf8_lossy(&out.stdout);
         for key in [
             "gpu=",
+            "gpuapps=",
             "docker=",
+            "dockerlim=",
+            "oomsrc=",
             "oom=",
+            "oomkilled=",
             "smart=",
+            "loginsok=",
+            "logins=",
             "arch=",
             "cpumodel=",
             "cputhreads=",
@@ -1975,6 +2889,7 @@ mod tests {
     fn parse_extras_reads_gpu_docker_smart_oom() {
         let raw = "gpu=GeForce RTX 4090|35|1024|24576|61;\n\
                    docker=web|12.5|1.2GiB / 3.8GiB;db|3.0|512MiB / 2GiB;\n\
+                   oomsrc=journal\n\
                    oom=2\n\
                    smart=sda|PASSED|38|12345;nvme0n1|PASSED||678;";
         let e = parse_extras(raw);
@@ -2145,5 +3060,234 @@ mod tests {
         assert!(s.iface_samples.lock().unwrap().is_empty());
         assert!(s.diskdev_samples.lock().unwrap().is_empty());
         assert!(s.ctxintr_samples.lock().unwrap().is_empty());
+    }
+
+    // ── Sections of the monitoring page (1.33): what the new probes read ──────
+
+    #[test]
+    fn live_script_runs_in_a_shell_and_emits_keys() {
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(LIVE_SCRIPT)
+            .output()
+            .expect("spawn sh");
+        assert!(out.status.success(), "LIVE_SCRIPT exited non-zero");
+        let text = String::from_utf8_lossy(&out.stdout);
+        for key in ["gpu=", "gpuapps=", "docker=", "dockerlim="] {
+            assert!(text.contains(key), "LIVE_SCRIPT missing {key}: {text}");
+        }
+        // The live poll is the changing part only: no SMART, no kernel log.
+        assert!(!LIVE_SCRIPT.contains("smartctl") && !LIVE_SCRIPT.contains("journalctl"));
+    }
+
+    #[test]
+    fn process_script_runs_in_a_shell_and_names_only_the_pid() {
+        let script = process_script(std::process::id());
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("spawn sh");
+        assert!(out.status.success(), "process script exited non-zero");
+        assert!(String::from_utf8_lossy(&out.stdout).contains("ps="));
+        assert!(script.starts_with(&format!("p={}; ", std::process::id())));
+    }
+
+    #[test]
+    fn parse_detail_reads_failed_units_frequencies_throttling_and_listeners() {
+        let raw = "failednames=nginx.service backup.timer \n\
+                   cpufreq=10:1200000 2:2400000 0:800000 \n\
+                   throttle=17\n\
+                   listenlist=tcp|0.0.0.0:22|users:((\"sshd\",pid=812,fd=3));\
+                   tcp|[::]:443|;udp|127.0.0.53%lo:53|users:((\"systemd-resolve\",pid=601,fd=13));";
+        let d = parse_detail(raw);
+        assert_eq!(d.failed_unit_names, vec!["nginx.service", "backup.timer"]);
+        // By CPU number, not by the glob's order (cpu10 before cpu2).
+        assert_eq!(d.cpu_freq_mhz, vec![800.0, 2400.0, 1200.0]);
+        assert_eq!(d.throttle_count, Some(17));
+        assert_eq!(d.listen_sockets.len(), 3);
+        assert_eq!(
+            d.listen_sockets[0],
+            ListenSocket {
+                proto: "tcp".into(),
+                addr: "0.0.0.0".into(),
+                port: 22,
+                process: Some("sshd".into()),
+                pid: Some(812),
+            }
+        );
+        // IPv6 brackets dropped; an owner the session may not see stays unknown.
+        assert_eq!(d.listen_sockets[1].addr, "::");
+        assert_eq!(d.listen_sockets[1].process, None);
+        assert_eq!(d.listen_sockets[2].pid, Some(601));
+        // Nothing reported — nothing invented.
+        let empty = parse_detail("failednames=\ncpufreq=\nthrottle=\nlistenlist=\n");
+        assert!(empty.failed_unit_names.is_empty() && empty.cpu_freq_mhz.is_empty());
+        assert_eq!(empty.throttle_count, None);
+        assert!(empty.listen_sockets.is_empty());
+    }
+
+    #[test]
+    fn disk_counters_give_utilization_and_latency_only_from_completed_requests() {
+        let ticks = parse_diskticks("diskdev=sda,10,20,100,200,300,400,500;sdb,1,2;");
+        assert_eq!(ticks.len(), 1, "a 3-field record carries no counters");
+        let prev = ticks[0].1;
+        assert_eq!(
+            prev,
+            DiskTicks {
+                reads: 100,
+                writes: 200,
+                read_ms: 300,
+                write_ms: 400,
+                busy_ms: 500,
+            }
+        );
+        // 2 s later: busy 1000 ms of 2000 → 50%; 40 requests took 200 ms → 5 ms each.
+        let cur = DiskTicks {
+            reads: 120,
+            writes: 220,
+            read_ms: 380,
+            write_ms: 520,
+            busy_ms: 1500,
+        };
+        assert_eq!(disk_latency(&prev, &cur, 2.0), (Some(50.0), Some(5.0)));
+        // An idle device: 0% busy, and no latency to report rather than "0 ms".
+        assert_eq!(disk_latency(&prev, &prev, 2.0), (Some(0.0), None));
+        // No time between samples — nothing to say.
+        assert_eq!(disk_latency(&prev, &cur, 0.0), (None, None));
+        // The rate parser still reads the bytes of the 8-field record.
+        assert_eq!(
+            parse_diskdev("diskdev=sda,10,20,1,2,3,4,5;"),
+            vec![("sda".into(), 5120, 10240)]
+        );
+    }
+
+    #[test]
+    fn the_oom_count_is_unknown_when_the_kernel_log_could_not_be_read() {
+        // Live violation of the old probe: `dmesg` restricted → grep counted an
+        // empty input → "0 OOM kills", a reading nobody took.
+        let e = parse_extras("oomsrc=\noom=0\noomkilled=\n");
+        assert_eq!(e.oom_kills, None);
+        assert!(e.oom_victims.is_empty());
+        let e = parse_extras(
+            "oomsrc=journal\noom=2\noomkilled=2026-11-05T09:14:22+0000 web kernel: Out of memory: \
+             Killed process 2841 (postgres) total-vm:1kB\u{1e}[ 5123.25] Killed process 77 (node) anon-rss:1kB\u{1e}\n",
+        );
+        assert_eq!(e.oom_kills, Some(2));
+        assert_eq!(
+            e.oom_victims,
+            vec![
+                OomVictim {
+                    pid: Some(2841),
+                    name: "postgres".into(),
+                    at: Some("2026-11-05T09:14:22+0000".into()),
+                    boot_secs: None,
+                },
+                OomVictim {
+                    pid: Some(77),
+                    name: "node".into(),
+                    at: None,
+                    boot_secs: Some(5123.25),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn gpus_carry_power_clocks_and_their_processes() {
+        let raw = "gpu=Tesla T4|41|6200|15360|52|31.5|70.00|1590|5000|00000000:00:1E.0;\
+                   Tesla T4|0|0|15360|30|[N/A]|[N/A]|[N/A]|[N/A]|00000000:00:1F.0;\n\
+                   gpuapps=00000000:00:1E.0|2841|/usr/bin/python3|6100;\
+                   00000000:00:FF.0|9|ghost|1;\n";
+        let g = parse_gpus(raw);
+        assert_eq!(g.len(), 2);
+        assert_eq!(g[0].power_draw, Some(31.5));
+        assert_eq!(g[0].power_limit, Some(70.0));
+        assert_eq!(g[0].clock_sm, Some(1590.0));
+        assert_eq!(
+            g[0].procs,
+            vec![GpuProc {
+                pid: 2841,
+                name: "/usr/bin/python3".into(),
+                mem_mib: Some(6100),
+            }]
+        );
+        // `[N/A]` is unknown, and a process on a bus no GPU listed goes nowhere.
+        assert_eq!(g[1].power_draw, None);
+        assert!(g[1].procs.is_empty());
+        // The older 5-field record still reads.
+        assert_eq!(parse_gpus("gpu=A|1|2|3|4;").len(), 1);
+    }
+
+    #[test]
+    fn containers_show_a_share_only_against_a_limit_that_was_set() {
+        let raw = "docker=api|62.4|1.21GiB / 2GiB;pg|38.0|2.03GiB / 15.6GiB;\n\
+                   dockerlim=/api|2147483648|1500000000;/pg|0|0;\n";
+        let d = parse_docker(raw);
+        assert_eq!(d[0].mem_used, Some((1.21 * 1024f64.powi(3)) as u64));
+        assert_eq!(d[0].mem_limit, Some(2147483648));
+        assert_eq!(d[0].cpu_limit, Some(1.5));
+        // No limit: docker shows the host's memory — that is not a ceiling.
+        assert_eq!(d[1].mem_limit, None);
+        assert_eq!(d[1].cpu_limit, None);
+        assert_eq!(parse_size("512MiB"), Some(512 * 1024 * 1024));
+        assert_eq!(parse_size("12.5kB"), Some(12500));
+        assert_eq!(parse_size("0B"), Some(0));
+        assert_eq!(parse_size("lots"), None);
+    }
+
+    #[test]
+    fn smart_wear_is_the_share_used_whichever_way_the_disk_reports_it() {
+        let s = parse_smart(
+            "smart=nvme0n1|PASSED|41|18220|used:3|;sda|PASSED|34|41007|left:95|12;sdb|PASSED|30|1;",
+        );
+        assert_eq!(s[0].wear_pct, Some(3.0));
+        assert_eq!(s[0].reallocated, None);
+        assert_eq!(s[1].wear_pct, Some(5.0));
+        assert_eq!(s[1].reallocated, Some(12));
+        assert_eq!(s[2].wear_pct, None, "the older 4-field record has no wear");
+        assert_eq!(wear_used("left:120"), Some(0.0));
+        assert_eq!(wear_used("bogus"), None);
+    }
+
+    #[test]
+    fn logins_are_unknown_when_last_could_not_be_read() {
+        assert_eq!(parse_logins("loginsok=\nlogins=\n"), None);
+        let l = parse_logins(
+            "loginsok=1\nlogins=deploy|pts/0|10.0.0.12|2026-11-05T09:14:22+00:00|1;root|pts/1|10.0.0.31|2026-11-04T13:52:01+00:00|0;\n",
+        )
+        .unwrap();
+        assert_eq!(l.len(), 2);
+        assert!(l[0].active && !l[1].active);
+        assert_eq!(l[1].from, "10.0.0.31");
+        assert_eq!(parse_logins("loginsok=1\nlogins=\n"), Some(Vec::new()));
+    }
+
+    #[test]
+    fn a_process_is_read_once_and_gone_means_none() {
+        let raw = "alive=1\nps=postgres Ssl 4521 12 204800\nargs=postgres: checkpointer\nfds=57\n";
+        assert_eq!(
+            parse_process(raw, 2841),
+            Some(ProcessDetail {
+                pid: 2841,
+                user: "postgres".into(),
+                state: "sleeping".into(),
+                elapsed_secs: Some(4521),
+                threads: Some(12),
+                rss: Some(204800 * 1024),
+                cmdline: "postgres: checkpointer".into(),
+                fds: Some(57),
+            })
+        );
+        assert_eq!(parse_process("ps=\nargs=\n", 9), None);
+        // Alive but `ps` could not say (busybox): the fields are unknown, not zero.
+        let p = parse_process("alive=1\nps=\nargs=\n", 9).unwrap();
+        assert_eq!(
+            (p.elapsed_secs, p.threads, p.rss, p.fds),
+            (None, None, None, None)
+        );
+        assert_eq!(ps_state("D+"), "disk");
+        assert_eq!(ps_state("Z"), "zombie");
+        assert_eq!(ps_state(""), "");
     }
 }

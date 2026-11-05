@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { metricsSnapshot } from "./aimetrics";
-import type { Metrics, MetricsDetail } from "../api/session";
+import { metricsSnapshot, problemText } from "./aimetrics";
+import type { Extras, Metrics, MetricsDetail } from "../api/session";
+import type { Problem } from "../monitoring/monproblems";
 
 const GIB = 1024 ** 3;
 
@@ -96,5 +97,43 @@ describe("metricsSnapshot", () => {
     expect(s).not.toMatch(/Top process/);
     expect(s).not.toMatch(/Logged in/);
     expect(s).not.toMatch(/Kernel/);
+  });
+
+  it("leads with what the question is about and lists the problems in English", () => {
+    const disk: Problem = {
+      id: "disk:/",
+      level: "warn",
+      section: "disks",
+      key: "mon.p.disk",
+      params: { mount: "/", pct: 87, used: "418 GiB", total: "480 GiB" },
+    };
+    const failed: Problem = { id: "failed", level: "crit", section: "system", key: "mon.p.failed", params: { n: 1 }, note: "nginx.service" };
+    const s = metricsSnapshot(metrics(), null, { problems: [failed, disk], focus: { kind: "problem", problem: disk } });
+    expect(s.split("\n")[0]).toBe("Question about: / is 87% full (418 GiB of 480 GiB)");
+    expect(s).toContain("Needs attention:\n- [crit] Failed systemd units: 1 (nginx.service)\n- [warn] / is 87% full");
+    expect(problemText(failed)).toBe("Failed systemd units: 1 (nginx.service)");
+  });
+
+  it("carries a process's details when the question is about it", () => {
+    const s = metricsSnapshot(metrics(), null, {
+      focus: {
+        kind: "process",
+        pid: 7,
+        comm: "pg",
+        detail: { pid: 7, user: "pg", state: "disk", elapsedSecs: 600, threads: 3, rss: 2 * GIB, cmdline: "postgres -D /data", fds: null },
+      },
+    });
+    expect(s).toContain("Question about: process pg (pid 7)");
+    expect(s).toContain("Process command line: postgres -D /data");
+    expect(s).toContain("Process age: 10 min");
+    expect(s).toContain("Process resident memory: 2.0 GiB");
+  });
+
+  it("reports OOM kills only when the kernel log was read", () => {
+    const x = (o: Partial<Extras>) => ({ oomKills: null, oomVictims: [], ...o }) as Extras;
+    expect(metricsSnapshot(metrics(), null, { extras: x({}) })).not.toContain("OOM");
+    expect(metricsSnapshot(metrics(), null, { extras: x({ oomKills: 2, oomVictims: [{ pid: 1, name: "java", at: null, bootSecs: 5 }] }) })).toContain(
+      "OOM kills this boot: 2 (java)",
+    );
   });
 });

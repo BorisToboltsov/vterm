@@ -1,12 +1,12 @@
-// Smooth changes on the screensaver (v1.33). A reading used to land in one
-// frame: a ring jumped to its new share, its number to the new value, the
-// history's right edge to the new point — and a screen left up for hours
-// twitched every few seconds. Now what is shown runs to each reading: a value
-// eases from where it stands to where the reading puts it, a number counts on
-// the way and lands on the reading. A reading that comes mid-way starts from
+// Smooth changes of a reading (v1.33): the screensaver and the monitoring page.
+// A reading used to land in one frame: a ring jumped to its new share, its number
+// to the new value, a chart's right edge to the new point — and a screen left up
+// for hours twitched every few seconds. Now what is shown runs to each reading: a
+// value eases from where it stands to where the reading puts it, a number counts
+// on the way and lands on the reading. A reading that comes mid-way starts from
 // where the value stands, never back from the old one. No DOM: IdleOverlay.svelte
-// asks what to draw at a moment; durations go through `motionMs`, so with
-// reduced motion every change is instant, as before.
+// and the monitoring charts ask what to draw at a moment; durations go through
+// `motionMs`, so with reduced motion every change is instant.
 
 /** A ring and the number in it, the big numbers of the small cards. */
 export const RING_MS = 700;
@@ -14,6 +14,8 @@ export const RING_MS = 700;
 export const LINE_MS = 800;
 /** A transfer's bar and percentage. */
 export const BAR_MS = 300;
+/** A chart's scale moving to a new ceiling. */
+export const SCALE_MS = 600;
 /** The history's line giving way to the one its merged points draw. */
 export const MERGE_MS = 600;
 
