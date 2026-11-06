@@ -7,10 +7,24 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+/** `src` without its `<!-- … -->` blocks, by scanning: one regex pass leaves a nested opener behind. */
+function stripHtmlComments(src: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith("<!--", i)) {
+      const end = src.indexOf("-->", i + 4);
+      i = end < 0 ? src.length : end + 3;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 /** Source without comments: a mention in a comment proves nothing. */
 const code = (path: string): string =>
-  readFileSync(path, "utf8")
-    .replace(/<!--[\s\S]*?-->/g, "")
+  stripHtmlComments(readFileSync(path, "utf8"))
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 

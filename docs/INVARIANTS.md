@@ -1111,7 +1111,9 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
-настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret`.
+настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
+`scan-blocks` (гейты и скрипты вырезают блоки разметки сканером, а не регуляркой: CodeQL роняет
+на этом PR; правило действует и в тестах).
 
 **Правило clippy** (`[lints.clippy]` в [Cargo.toml](../src-tauri/Cargo.toml), `-D warnings` на
 трёх ОС): `undocumented_unsafe_blocks` — `unsafe` только для FFI к ОС, и у каждого блока

@@ -100,6 +100,8 @@ export default defineConfig(
   own("theme-colors", SOURCE),
   own("virtual-scroll", MARKUP),
   own("paste-caret", SOURCE),
+  // CodeQL reads tests and scripts too: the gates are where markup is cut from source.
+  { files: [...SOURCE, "scripts/**/*.{js,mjs}", "lint/**/*.js"], rules: { "vterm/scan-blocks": "error" } },
   {
     files: SOURCE,
     ignores: TESTS,
