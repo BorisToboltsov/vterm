@@ -5,8 +5,20 @@ import {
   type DockerContainer,
   groupUsage,
   parseMemUsed,
-  parseLimits,
-  inspectLimitsArgs,
+  parseFacts,
+  inspectFactsArgs,
+  parseInspectTime,
+  staleFacts,
+  factsKey,
+  containerAddress,
+  containerHealth,
+  exitCodeOf,
+  stateSummary,
+  dockerAttention,
+  restartBaseline,
+  followLogsArgv,
+  FACTS_TTL_MS,
+  type DockerFacts,
   versionArgs,
   psArgs,
   imagesArgs,
@@ -433,25 +445,217 @@ describe("view helpers", () => {
   });
 });
 
-describe("inspectLimitsArgs / parseLimits", () => {
+describe("inspectFactsArgs / parseFacts", () => {
   const US = "\x1f";
+  const GS = "\x1d";
+  const RS = "\x1e";
+  const row = (...f: string[]) => f.join(US);
 
-  it("asks for every id in one inspect", () => {
-    const a = inspectLimitsArgs(["aaa", "bbb"]);
-    expect(a[0]).toBe("docker");
-    expect(a[1]).toBe("inspect");
+  it("asks for every id in one inspect, networks as a range", () => {
+    const a = inspectFactsArgs(["aaa", "bbb"]);
+    expect(a.slice(0, 3)).toEqual(["docker", "inspect", "--format"]);
     expect(a.slice(-2)).toEqual(["aaa", "bbb"]);
+    expect(a[3]).toContain("{{range $name, $net := .NetworkSettings.Networks}}");
+    expect(a[3]).toContain("{{.RestartCount}}");
   });
 
-  it("reads cores and bytes, treating docker's 0 as 'no limit'", () => {
-    const raw = [`aaa${US}500000000${US}1073741824`, `bbb${US}0${US}0`].join("\n");
-    const m = parseLimits(raw);
-    expect(m.get("aaa")).toEqual({ cpuCores: 0.5, memBytes: 1073741824 });
-    expect(m.get("bbb")).toEqual({ cpuCores: null, memBytes: null });
+  it("reads ceilings, restarts, the mode, every address and how it exited", () => {
+    const nets = `shop_default${GS}172.20.0.5${GS}${RS}shop_internal${GS}10.9.0.5${GS}fd00::5${RS}`;
+    const raw = [
+      row("aaa", "500000000", "1073741824", "3", "shop_default", nets, "2026-11-06T10:41:02.123456789Z", "0001-01-01T00:00:00Z", "0", "false"),
+      row("bbb", "0", "0", "0", "host", "", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z", "137", "true"),
+    ].join("\n");
+    const m = parseFacts(raw);
+    expect(m.get("aaa")).toEqual({
+      cpuCores: 0.5,
+      memBytes: 1073741824,
+      restarts: 3,
+      networkMode: "shop_default",
+      addresses: [
+        { network: "shop_default", ipv4: "172.20.0.5", ipv6: "" },
+        { network: "shop_internal", ipv4: "10.9.0.5", ipv6: "fd00::5" },
+      ],
+      startedAt: Date.parse("2026-11-06T10:41:02.123Z"),
+      finishedAt: null,
+      exitCode: 0,
+      oomKilled: false,
+    });
+    expect(m.get("bbb")).toMatchObject({ cpuCores: null, memBytes: null, networkMode: "host", addresses: [], exitCode: 137, oomKilled: true });
+  });
+
+  it("says nothing it was not told", () => {
+    const m = parseFacts(row("ccc", "x", "", "", "", "", "", "", "", ""));
+    expect(m.get("ccc")).toMatchObject({ cpuCores: null, memBytes: null, restarts: null, exitCode: null, startedAt: null });
   });
 
   it("skips junk rows instead of producing bogus entries", () => {
-    expect(parseLimits(`\n${US}${US}\n`).size).toBe(0);
+    expect(parseFacts(`\n${US}${US}\n`).size).toBe(0);
+  });
+
+  it("reads docker's nanosecond stamps and its zero time as never", () => {
+    expect(parseInspectTime("2026-11-06T10:41:02.123456789Z")).toBe(Date.parse("2026-11-06T10:41:02.123Z"));
+    expect(parseInspectTime("2026-11-06T10:41:02+03:00")).toBe(Date.parse("2026-11-06T07:41:02Z"));
+    expect(parseInspectTime("0001-01-01T00:00:00Z")).toBeNull();
+    expect(parseInspectTime("junk")).toBeNull();
+    expect(parseInspectTime(undefined)).toBeNull();
+  });
+});
+
+const ctr = (over: Partial<DockerContainer> = {}): DockerContainer => ({
+  id: "aaa",
+  name: "shop-api-1",
+  image: "shop-api:2",
+  state: "running",
+  status: "Up 2 hours",
+  ports: "",
+  project: "shop",
+  service: "api",
+  workdir: null,
+  createdAt: "",
+  runningFor: "",
+  networks: ["shop_default"],
+  ...over,
+});
+const facts = (over: Partial<DockerFacts> = {}): DockerFacts => ({
+  cpuCores: null,
+  memBytes: null,
+  restarts: 0,
+  networkMode: "shop_default",
+  addresses: [{ network: "shop_default", ipv4: "172.20.0.5", ipv6: "" }],
+  startedAt: null,
+  finishedAt: null,
+  exitCode: 0,
+  oomKilled: false,
+  ...over,
+});
+
+describe("staleFacts", () => {
+  const now = 1_000_000;
+  const entry = (c: DockerContainer, at: number) => ({ facts: facts(), key: factsKey(c), at });
+
+  it("asks for what it never asked about", () => {
+    expect(staleFacts([ctr()], new Map(), now)).toEqual(["aaa"]);
+  });
+
+  it("asks again when what ps shows changed — a start, a network", () => {
+    const c = ctr();
+    const cache = new Map([["aaa", entry(c, now)]]);
+    expect(staleFacts([c], cache, now)).toEqual([]);
+    expect(staleFacts([ctr({ state: "exited" })], cache, now)).toEqual(["aaa"]);
+    expect(staleFacts([ctr({ networks: ["shop_default", "x"] })], cache, now)).toEqual(["aaa"]);
+  });
+
+  it("asks a running container again once its answer is old, a stopped one never", () => {
+    const run = ctr();
+    const stop = ctr({ id: "bbb", state: "exited" });
+    const cache = new Map([
+      ["aaa", entry(run, now)],
+      ["bbb", entry(stop, now)],
+    ]);
+    expect(staleFacts([run, stop], cache, now + FACTS_TTL_MS - 1)).toEqual([]);
+    expect(staleFacts([run, stop], cache, now + FACTS_TTL_MS)).toEqual(["aaa"]);
+  });
+});
+
+describe("containerAddress", () => {
+  it("shows the first address and keeps the rest", () => {
+    const f = facts({ addresses: [{ network: "a", ipv4: "", ipv6: "fd00::1" }, { network: "b", ipv4: "10.0.0.2", ipv6: "" }] });
+    expect(containerAddress(ctr(), f)).toEqual({ kind: "ip", first: "fd00::1", all: f.addresses });
+  });
+
+  it("names what has no address of its own", () => {
+    expect(containerAddress(ctr(), facts({ networkMode: "host", addresses: [] }))).toEqual({ kind: "host" });
+    expect(containerAddress(ctr(), facts({ networkMode: "none", addresses: [] }))).toEqual({ kind: "none" });
+    const peer = ctr({ id: "abcdef123456", name: "vpn" });
+    expect(containerAddress(ctr(), facts({ networkMode: "container:abcdef1234567890", addresses: [] }), [peer])).toEqual({ kind: "shared", with: "vpn" });
+    expect(containerAddress(ctr(), facts({ networkMode: "container:0123456789abcdef0", addresses: [] }), [])).toEqual({ kind: "shared", with: "0123456789ab" });
+  });
+
+  it("tells a stopped container from an unknown answer", () => {
+    expect(containerAddress(ctr({ state: "exited" }), facts({ addresses: [] }))).toEqual({ kind: "down" });
+    expect(containerAddress(ctr(), facts({ addresses: [] }))).toEqual({ kind: "unknown" });
+    expect(containerAddress(ctr(), undefined)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("container health, exit and state cell", () => {
+  it("reads the health check and the exit code from ps", () => {
+    expect(containerHealth(ctr({ status: "Up 2 hours (healthy)" }))).toBe("healthy");
+    expect(containerHealth(ctr({ status: "Up 2 hours (unhealthy)" }))).toBe("unhealthy");
+    expect(containerHealth(ctr({ status: "Up 3 seconds (health: starting)" }))).toBe("starting");
+    expect(containerHealth(ctr())).toBeNull();
+    expect(exitCodeOf(ctr({ status: "Exited (1) 2 days ago" }))).toBe(1);
+    expect(exitCodeOf(ctr({ status: "Up 2 hours" }))).toBeNull();
+  });
+
+  it("says the health, the exit or the state, with the time since", () => {
+    const now = Date.parse("2026-11-06T12:00:00Z");
+    const started = Date.parse("2026-11-06T10:00:00Z");
+    expect(stateSummary(ctr({ status: "Up (unhealthy)" }), facts({ startedAt: started }), now)).toEqual({ word: "unhealthy", tone: "warn", age: "2h" });
+    expect(stateSummary(ctr(), facts(), now)).toEqual({ word: "running", tone: "ok", age: null });
+    expect(stateSummary(ctr({ state: "exited", status: "Exited (1) 1 hour ago" }), undefined, now)).toEqual({ word: "exit 1", tone: "bad", age: null });
+    // A stop the user asked for is not an error.
+    expect(stateSummary(ctr({ state: "exited" }), facts({ exitCode: 143 }), now).tone).toBe("idle");
+    expect(stateSummary(ctr({ state: "exited" }), facts({ exitCode: 137, oomKilled: true }), now).word).toBe("OOMKilled");
+    expect(stateSummary(ctr({ state: "paused" }), undefined, now)).toEqual({ word: "paused", tone: "warn", age: null });
+  });
+});
+
+describe("dockerAttention", () => {
+  const f = (id: string, over: Partial<DockerFacts> = {}) => [id, facts(over)] as const;
+
+  it("lists what needs a look, worst first", () => {
+    const list = [
+      ctr({ id: "a", name: "a-unhealthy", status: "Up (unhealthy)" }),
+      ctr({ id: "b", name: "b-dead", state: "dead" }),
+      ctr({ id: "c", name: "c-failed", state: "exited", status: "Exited (2) 1 day ago" }),
+      ctr({ id: "d", name: "d-stopped", state: "exited", status: "Exited (0) 1 day ago" }),
+      ctr({ id: "e", name: "e-oom", state: "exited" }),
+      ctr({ id: "f", name: "f-fine" }),
+    ];
+    const known = new Map([f("e", { exitCode: 137, oomKilled: true })]);
+    const got = dockerAttention(list, known, new Map());
+    expect(got.map((x) => [x.name, x.reason, x.tone])).toEqual([
+      ["b-dead", "dead", "bad"],
+      ["e-oom", "oom", "bad"],
+      ["a-unhealthy", "unhealthy", "warn"],
+      ["c-failed", "exited", "warn"],
+    ]);
+    expect(got.find((x) => x.reason === "exited")?.detail).toBe("exit 2");
+  });
+
+  it("lets an old exit go: a week-old crash is history, an hour-old one is news", () => {
+    const now = Date.parse("2026-11-06T12:00:00Z");
+    const list = [
+      ctr({ id: "old", name: "old", state: "exited" }),
+      ctr({ id: "new", name: "new", state: "exited" }),
+      ctr({ id: "unk", name: "unknown-time", state: "exited", status: "Exited (2) 1 hour ago" }),
+    ];
+    const known = new Map([
+      f("old", { exitCode: 255, finishedAt: now - 8 * 86_400_000 }),
+      f("new", { exitCode: 1, finishedAt: now - 3_600_000 }),
+    ]);
+    expect(dockerAttention(list, known, new Map(), now).map((x) => x.name)).toEqual(["new", "unknown-time"]);
+  });
+
+  it("counts restarts only once they grow while the panel is open", () => {
+    const list = [ctr({ id: "a" })];
+    const seen = restartBaseline(new Map(), new Map([f("a", { restarts: 5 })]), ["a"]);
+    expect(dockerAttention(list, new Map([f("a", { restarts: 5 })]), seen)).toEqual([]);
+    const grown = dockerAttention(list, new Map([f("a", { restarts: 7 })]), seen);
+    expect(grown).toEqual([{ id: "a", name: "shop-api-1", reason: "restarts", tone: "warn", detail: "↻+2" }]);
+  });
+
+  it("keeps the first count it saw and forgets the gone", () => {
+    const first = restartBaseline(new Map(), new Map([f("a", { restarts: 1 }), f("b", { restarts: 0 })]), ["a", "b"]);
+    const next = restartBaseline(first, new Map([f("a", { restarts: 9 })]), ["a"]);
+    expect([...next]).toEqual([["a", 1]]);
+  });
+});
+
+describe("followLogsArgv", () => {
+  it("follows the log from the last lines, in a terminal", () => {
+    expect(followLogsArgv("abc", 500)).toEqual(["docker", "logs", "-f", "--tail", "500", "--timestamps", "abc"]);
   });
 });
 

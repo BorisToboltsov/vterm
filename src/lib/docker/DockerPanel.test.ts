@@ -65,7 +65,8 @@ describe("DockerPanel — where a container's details open", () => {
   it("a narrow dock opens them as a dialog", async () => {
     await mount("d-narrow");
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("docker-detail-overview"));
+    // On the log (v1.33): it is what a container is opened for.
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("docker-log-tools"));
     expect(screen.queryByTestId("docker-side")).toBeNull();
   });
 
@@ -75,7 +76,7 @@ describe("DockerPanel — where a container's details open", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     const side = screen.getByTestId("docker-side");
-    expect(side).toContainElement(screen.getByTestId("docker-detail-overview"));
+    expect(side).toContainElement(screen.getByTestId("docker-log-tools"));
     expect(screen.getByTestId("docker-list-part")).toContainElement(
       screen.getByRole("button", { name: "View details" }),
     );
@@ -145,23 +146,45 @@ describe("DockerPanel — where a container's details open", () => {
     expect(screen.getByTestId("docker-text")).toHaveClass("min-h-0", "flex-1");
   });
 
-  it("inspect asked from the row's menu stands in front of the details, and closing it shows them again", async () => {
+  it("inspect asked from the row's menu is the details' own view, not a second pane (v1.33)", async () => {
     await mount("d-text");
     resize(1200);
-    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     await fireEvent.contextMenu(screen.getByRole("listitem"));
-    // "Inspect" is also a tab of the details; the one asked for is the menu's.
     const menu = await waitFor(() => {
       const el = document.querySelector<HTMLElement>(".fixed.z-50");
       expect(el).not.toBeNull();
       return el!;
     });
     await fireEvent.click(within(menu).getByText("Inspect"));
-    await waitFor(() => expect(screen.getByTestId("docker-side-text")).toBeInTheDocument());
-    expect(screen.queryByTestId("docker-side-detail")).toBeNull();
+    const side = await screen.findByTestId("docker-side-detail");
+    expect(within(side).getByTestId("docker-detail-tab-inspect").className).toContain("text-accent");
+    await waitFor(() => expect(side).toHaveTextContent('"Id":"abc123456789"'));
+    expect(screen.queryByTestId("docker-side-text")).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a click on the row opens its details, and the row says it is the one open", async () => {
+    await mount("d-row");
+    resize(1200);
+    await fireEvent.click(screen.getByText("edge-proxy"));
+    expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("docker-row")).toHaveAttribute("aria-current", "true");
     await fireEvent.click(screen.getByTestId("side-pane-close"));
-    expect(screen.getByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("docker-row")).not.toHaveAttribute("aria-current");
+  });
+
+  it("the list is laid out by its own width, not the panel's", async () => {
+    await mount("d-own");
+    resize(1200);
+    const list = screen.getByTestId("docker-list-part");
+    // A query container of its own: the rows' `@wide:` reads the list.
+    expect(list).toHaveClass("@container");
+    await waitFor(() => expect(document.querySelector("[data-wide]")).toHaveAttribute("data-wide", "true"));
+    // jsdom gives the list no width: as narrow as the details beside it can make it.
+    expect(list).toHaveAttribute("data-list-wide", "false");
+    Object.defineProperty(list, "clientWidth", { configurable: true, value: 1200 });
+    resize(1200);
+    await waitFor(() => expect(list).toHaveAttribute("data-list-wide", "true"));
   });
 
   it("details that are open follow the panel across the threshold", async () => {
@@ -198,15 +221,16 @@ describe("DockerPanel — where a container's details open", () => {
     await waitFor(() => expect(dialog).toHaveTextContent('"Id":"abc123456789"'));
   });
 
-  it("details opened anew start from Overview", async () => {
+  it("details opened anew start from the log", async () => {
     await mount("d-anew");
     resize(1200);
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    await fireEvent.click(screen.getByTestId("docker-detail-tab-logs"));
-    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+    await fireEvent.click(screen.getByTestId("docker-detail-tab-overview"));
+    expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
     await fireEvent.click(screen.getByTestId("side-pane-close"));
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+    expect(screen.getByTestId("docker-log-tools")).toBeInTheDocument();
   });
 });
 

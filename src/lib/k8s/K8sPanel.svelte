@@ -35,6 +35,9 @@
   import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
   import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
+  import AttentionStrip from "../ui/AttentionStrip.svelte";
+  import { hideableFields } from "../ui/colfit";
+  import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -60,6 +63,7 @@
     describeArgs,
     getYamlArgs,
     execShellArgv,
+    followLogsArgv,
     portForwardArgv,
     parsePods,
     parseWorkloads,
@@ -83,6 +87,9 @@
     EVENT_SCHEMA,
     parseAvailability,
     needsConfirm,
+    podAttention,
+    podRestartBaseline,
+    type PodAttentionReason,
     type K8sScope,
     type K8sAvailability,
     type K8sWorkload,
@@ -239,6 +246,12 @@
   let wide = $state(false);
   // Width of that row, px — what the border is dragged within.
   let rowWidth = $state(0);
+  // The list's own layout (v1.33): the panel can be wide while the list, with
+  // details beside it, is not — its filter row and its table follow the list.
+  let listWide = $state(false);
+  let attentionOpen = $state(true);
+  // The restart count each pod had when the panel first saw it (`podAttention`).
+  let restartsSeen = $state<Map<string, number>>(new Map());
   // Pod detail modal.
   let detailOpen = $state(false);
   let detailPod = $state<K8sPod | null>(null);
@@ -246,7 +259,7 @@
   // not the details' own: a dialog (narrow) and the pane beside the list (wide)
   // are two instances, and going across the width threshold must show what was
   // on screen, not Overview again.
-  let detailTab = $state<K8sDetailTab>("overview");
+  let detailTab = $state<K8sDetailTab>("logs");
   let detailContainer = $state<string | null>(null);
 
   // Shared text modal (workload describe / YAML — read-only).
@@ -338,6 +351,16 @@
     });
   }
 
+  /** Follow a pod's log live in a terminal tab (`kubectl logs -f`). */
+  function followLogs(pod: K8sPod, container: string | null, tail: number) {
+    onOpenShell?.(followLogsArgv(prog, pod.name, pod.namespace, container, scope, tail), {
+      kind: "pod",
+      name: pod.name,
+      container: container ?? undefined,
+    });
+    notifySuccess(t("k8s.logsFollowOpened", { name: pod.name }));
+  }
+
   // ── Data loading ───────────────────────────────────────────────────────────
 
   /**
@@ -399,6 +422,7 @@
           kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
         ]);
         podList = parsePods(pods.stdout);
+        restartsSeen = podRestartBaseline(restartsSeen, podList);
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
         metricsByKey = map;
@@ -496,6 +520,7 @@
     // A different cluster can hold a pod with the same namespace/name; carrying
     // the old series over would draw one cluster's load on another's row.
     cpuHistory = {};
+    restartsSeen = new Map();
     void reinit();
   }
   function pickNamespace(v: string) {
@@ -546,17 +571,71 @@
 
   // ── Detail modal live sync ───────────────────────────────────────────────────
 
-  function openDetails(pod: K8sPod) {
-    // Opened anew, or for another pod: from the top. The same pod again keeps
-    // the view it is on (see `detailTab`).
+  function openDetails(pod: K8sPod, tab?: K8sDetailTab) {
+    // Details open on the log (v1.33) and keep the view while another row is
+    // picked: the list beside them is browsed, log after log. Another pod starts
+    // from its default container.
     const same = detailOpen && detailPod?.namespace === pod.namespace && detailPod?.name === pod.name;
-    if (!same) {
-      detailTab = "overview";
-      detailContainer = null;
-    }
+    if (tab) detailTab = tab;
+    else if (!detailOpen) detailTab = "logs";
+    if (!same) detailContainer = null;
+    // A text asked for earlier (describe, YAML) stands in front of the details:
+    // picking a pod asks for the pod.
+    textOpen = false;
     detailPod = pod;
     detailOpen = true;
   }
+
+  const ATTENTION_TEXT: Record<PodAttentionReason, MessageKey> = {
+    failing: "k8s.attnFailing",
+    pending: "k8s.attnPending",
+    notReady: "k8s.attnNotReady",
+    restarts: "k8s.attnRestarts",
+  };
+  const attention = $derived(
+    podAttention(podList, restartsSeen).map((a) => ({
+      key: a.key,
+      name: a.name,
+      tone: a.tone,
+      reason: t(ATTENTION_TEXT[a.reason]),
+      detail: a.detail,
+    })),
+  );
+  function pickAttention(key: string) {
+    const pod = podList.find((p) => metricsKey(p.namespace, p.name) === key);
+    if (pod) openDetails(pod, "logs");
+  }
+
+  // The «View» menu's columns: what the user may take off the table — only where
+  // the list is a table.
+  const COLUMN_LABEL: Record<string, MessageKey> = {
+    namespace: "k8s.namespace",
+    ip: "k8s.podIp",
+    node: "k8s.node",
+    restarts: "k8s.restarts",
+    spark: "k8s.cpuTrend",
+    mem: "k8s.mem",
+    limits: "k8s.limits",
+    age: "k8s.age",
+  };
+  const columnMenu = $derived.by(() => {
+    if (!listWide) return [];
+    const hidden = hiddenFields("k8s.pods");
+    return [
+      { kind: "separator" as const },
+      {
+        kind: "submenu" as const,
+        key: "columns",
+        icon: "table" as const,
+        label: t("list.columns"),
+        items: hideableFields("k8s.pods").map((id) => ({
+          label: t(COLUMN_LABEL[id]),
+          checked: !hidden.includes(id),
+          onSelect: () => toggleField("k8s.pods", id),
+        })),
+      },
+    ];
+  });
   const liveDetailPod = $derived.by(() => {
     if (!detailPod) return null;
     return podList.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name) ?? null;
@@ -582,6 +661,7 @@
     if (sessionReady) {
       // Another cluster's pods are not this one's history.
       cpuHistory = {};
+      restartsSeen = new Map();
       untrack(() => void initAll());
     }
   });
@@ -754,10 +834,15 @@
     <!-- In a wide panel describe/YAML and a pod's details open beside the
          list (below), not over it. -->
     <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <!-- The list is a query container of its own (v1.33): its rows are a table
+         or two-line rows by the list's width, not the panel's — with details
+         beside it, a wide panel's list is a narrow one. -->
     <div
-      class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
+      class="@container min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("k8s", rowWidth) : null}
+      use:wideWhen={(w) => (listWide = w)}
       data-testid="k8s-list-part"
+      data-list-wide={listWide}
       data-morph
     >
       {#if !firstLoadDone}
@@ -774,6 +859,7 @@
           <EmptyState icon="container" title={t("k8s.noPods")} hint={t("k8s.noPodsHint")} />
         {:else}
           <div class="flex h-full min-h-0 flex-col">
+            <AttentionStrip items={attention} bind:open={attentionOpen} onpick={pickAttention} testid="k8s-attention" />
             <ListHeader
               items={podList}
               schema={PODS}
@@ -785,8 +871,9 @@
               total={podView.total}
               labels={POD_LABELS}
               placeholder={t("k8s.filterPods")}
-              {wide}
+              wide={listWide}
               onmenu={(m) => (menu = m)}
+              extra={columnMenu}
               fold={(c) => setGroupsCollapsed(sessionId, "k8s.pods", podView.groups.map((g) => g.key), c)}
               testid="k8s-pods-header"
             />
@@ -807,9 +894,11 @@
                   onsort={(key) => setListOrder("k8s.pods", { ...podOrder, sort: nextSort(PODS, podOrder.sort, key) })}
                   {metricsByKey}
                   {cpuHistory}
+                  allNamespaces={scope.allNamespaces}
+                  selectedKey={detailOpen && liveDetailPod ? metricsKey(liveDetailPod.namespace, liveDetailPod.name) : null}
                   {run}
                   {openShell}
-                  onViewDetails={openDetails}
+                  onViewDetails={(p) => openDetails(p)}
                   {showMenu}
                 />
               {/if}
@@ -832,7 +921,7 @@
               total={workloadView.total}
               labels={WORKLOAD_LABELS}
               placeholder={t("k8s.name")}
-              {wide}
+              wide={listWide}
               onmenu={(m) => (menu = m)}
               fold={(c) => setGroupsCollapsed(sessionId, "k8s.workloads", workloadView.groups.map((g) => g.key), c)}
               testid="k8s-workloads-header"
@@ -887,7 +976,7 @@
           onDescribe={describeObj}
           onYaml={yamlObj}
           {showMenu}
-          {wide}
+          wide={listWide}
           eventFilter={listFilter(sessionId, "k8s.events")}
           oneventfilter={setFilter("k8s.events")}
           eventOrder={listOrder("k8s.events", EVENT_SCHEMA, EVENT_ORDER)}
@@ -927,6 +1016,7 @@
               {run}
               {runQuery}
               {openShell}
+              onFollowLogs={onOpenShell ? followLogs : undefined}
               {onAsk}
               onclose={() => (detailOpen = false)}
             />
@@ -951,6 +1041,7 @@
   {run}
   {runQuery}
   {openShell}
+  onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
 />

@@ -11,6 +11,8 @@
   // it stands inside the panel's query container (`panelcontainer.guard`).
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
+  import LogTail from "../ui/LogTail.svelte";
+  import type { LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import {
     startArgs,
@@ -20,10 +22,13 @@
     logsArgs,
     inspectArgs,
     containerInfoRows,
+    containerAddress,
     dockerDate,
     isRunning,
+    stateSummary,
     stateTone,
     type DockerContainer,
+    type DockerFacts,
     type DockerStat,
     type DockerInfoKey,
     type DockerDetailTab,
@@ -35,14 +40,17 @@
     active = false,
     container = null,
     stat,
+    facts = undefined,
+    containers = [],
     busy = false,
     refreshSec = 3,
     fill = false,
     closeOnAsk = false,
-    tab = $bindable("overview"),
+    tab = $bindable("logs"),
     run,
     runQuery,
     onShell,
+    onFollowLogs = undefined,
     onAsk,
     onclose,
   }: {
@@ -50,6 +58,10 @@
     active?: boolean;
     container?: DockerContainer | null;
     stat?: DockerStat;
+    /** What `inspect` told of it (v1.33): restarts, addresses, times; absent — not asked yet. */
+    facts?: DockerFacts;
+    /** Every container — whose network a `container:` one shares is named from it. */
+    containers?: readonly DockerContainer[];
     busy?: boolean;
     refreshSec?: number;
     /** Take the height of the place it stands in (a pane beside a list); without
@@ -58,7 +70,7 @@
     /** Asking the assistant closes this — set by a dialog, which covers the chat. */
     closeOnAsk?: boolean;
     /**
-     * The view on screen: Overview, Logs or Inspect. Bound by the panel (v1.17):
+     * The view on screen: Logs (where details open, v1.33), Overview or Inspect. Bound by the panel (v1.17):
      * the same details are shown by a dialog in a narrow dock and by the pane
      * beside the list in a wide one — two instances — and a panel that crosses
      * the width threshold must not throw the user from Logs back to Overview.
@@ -68,6 +80,8 @@
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     runQuery: (args: string[], timeout?: number) => Promise<ContainerOutput>;
     onShell: (c: DockerContainer) => void;
+    /** Follow the log live in a terminal tab, from the last `tail` lines. */
+    onFollowLogs?: (c: DockerContainer, tail: number) => void;
     /** Hand this container's state + logs to the assistant (Phase 41). */
     onAsk?: (context: string) => void;
     onclose: () => void;
@@ -95,6 +109,11 @@
 
   let logsText = $state("");
   let inspectText = $state("");
+  // How the log is read: followed (re-asked on every poll) or held still, and how
+  // many last lines are asked for. Kept across containers: picking the next row
+  // in the list is reading the next log the same way.
+  let following = $state(true);
+  let tail = $state<LogTailSize>(200);
 
   const TONE: Record<string, string> = {
     ok: "bg-ok",
@@ -124,22 +143,21 @@
   let shownId: string | null = null;
   let activeId = $state<string | null>(null);
 
-  // Forget what was fetched whenever a different container opens (or this closes),
-  // and go back to Overview when the container changes under an open view. Not for
-  // the first container after a mount: the content may have just moved here from
-  // the other wrapper, and the view it showed there comes with it (`tab`).
+  // Forget what was fetched whenever a different container opens (or this closes).
+  // The view stays (v1.33): with details beside the list, picking the next row
+  // is reading the next container's log — a jump back to Overview on every pick
+  // made the list useless for that.
   $effect(() => {
     const id = active ? (container?.id ?? null) : null;
     if (id === shownId) return;
-    if (shownId !== null && id !== null) tab = "overview";
     shownId = id;
     activeId = id;
     logsText = "";
     inspectText = "";
   });
 
-  async function fetchLogs(id: string) {
-    const res = await runQuery(logsArgs(id), 30);
+  async function fetchLogs(id: string, lines: number) {
+    const res = await runQuery(logsArgs(id, lines), 30);
     logsText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
   async function fetchInspect(id: string) {
@@ -147,12 +165,15 @@
     inspectText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
 
-  // Logs tab re-polls while open (like the panel's live view); inspect once.
+  // Logs tab: fetched on open and on a new tail size, re-polled while followed
+  // (like the panel's live view); a held log stands still. Inspect once.
   $effect(() => {
     const cid = activeId;
+    const lines = tail;
     if (!active || tab !== "logs" || !cid) return;
-    void fetchLogs(cid);
-    const timer = setInterval(() => void fetchLogs(cid), Math.max(1, refreshSec) * 1000);
+    void fetchLogs(cid, lines);
+    if (!following) return;
+    const timer = setInterval(() => void fetchLogs(cid, lines), Math.max(1, refreshSec) * 1000);
     return () => clearInterval(timer);
   });
   $effect(() => {
@@ -168,10 +189,13 @@
   }
 
   const TABS: { id: Tab; label: MessageKey }[] = [
-    { id: "overview", label: "docker.overview" },
     { id: "logs", label: "docker.viewLogs" },
+    { id: "overview", label: "docker.overview" },
     { id: "inspect", label: "docker.inspect" },
   ];
+
+  const summary = $derived(container ? stateSummary(container, facts) : null);
+  const address = $derived(container ? containerAddress(container, facts, containers) : null);
 </script>
 
 {#if container}
@@ -244,19 +268,48 @@
         <dt class="text-muted">{t("docker.project")}</dt>
         <dd class="break-all text-text/85">{c.project}{#if c.service}<span class="text-muted"> · {c.service}</span>{/if}</dd>
       {/if}
+      {#if summary}
+        <dt class="text-muted">{t("docker.state")}</dt>
+        <dd class="break-all text-text/85" data-testid="docker-detail-state">
+          {summary.word}{#if summary.age}<span class="text-muted">{` · ${summary.age}`}</span>{/if}{#if facts?.restarts}<span class="text-warn">{` · ↻${facts.restarts}`}</span>{/if}
+        </dd>
+      {/if}
       {#each rows as row (row.key)}
         <dt class="text-muted">{t(INFO_LABEL[row.key])}</dt>
         <dd class="break-all text-text/85">{row.key === "created" ? dockerDate(row.value, currentLocale()) : row.value}</dd>
       {/each}
+      {#if address}
+        <dt class="text-muted">{t("docker.address")}</dt>
+        <dd class="text-text/85" data-testid="docker-detail-address">
+          {#if address.kind === "ip"}
+            {#each address.all as a (a.network)}
+              <div class="break-all"><span class="font-mono">{[a.ipv4, a.ipv6].filter(Boolean).join(" · ")}</span><span class="text-muted">{` · ${a.network}`}</span></div>
+            {/each}
+            <div class="text-caption text-muted">{t("docker.addressInside")}</div>
+          {:else if address.kind === "host"}
+            {t("docker.addressHost")}
+          {:else if address.kind === "none"}
+            {t("docker.addressNone")}
+          {:else if address.kind === "shared"}
+            {t("docker.addressShared", { name: address.with })}
+          {:else if address.kind === "down"}
+            <span class="text-muted">{t("docker.addressDown")}</span>
+          {:else}
+            <span class="text-muted">—</span>
+          {/if}
+        </dd>
+      {/if}
     </dl>
   {:else if tab === "logs"}
-    <div class="mb-1 flex justify-end">
-      <CopyButton text={logsText} label={t("util.copy")} testid="docker-copy-text" />
-    </div>
-    <pre
-      data-testid="docker-text"
-      class="{fill ? 'min-h-0 flex-1' : 'max-h-[60vh]'} overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
-    >{logsText || t("docker.noLogs")}</pre>
+    <LogTail
+      text={logsText}
+      bind:live={following}
+      bind:tail
+      {fill}
+      empty={t("docker.noLogs")}
+      testid="docker"
+      onterminal={onFollowLogs ? () => onFollowLogs?.(c, tail) : undefined}
+    />
   {:else}
     <div class="mb-1 flex justify-end">
       <CopyButton text={inspectText} label={t("util.copy")} testid="docker-copy-text" />

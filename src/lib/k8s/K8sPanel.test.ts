@@ -287,7 +287,8 @@ describe("K8sPanel — where a pod's details open", () => {
   it("a narrow dock opens them as a dialog", async () => {
     await mountWithPod("k-narrow");
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    // On the log (v1.33): it is what a pod is opened for.
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-log-tools"));
     expect(screen.queryByTestId("k8s-side")).toBeNull();
   });
 
@@ -297,7 +298,7 @@ describe("K8sPanel — where a pod's details open", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     const side = screen.getByTestId("k8s-side");
-    expect(side).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(side).toContainElement(screen.getByTestId("k8s-log-tools"));
     // The list is still there, next to the pane.
     expect(screen.getByTestId("k8s-list-part")).toContainElement(
       screen.getByRole("button", { name: "View details" }),
@@ -347,7 +348,7 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(screen.getByTestId("k8s-side")).toBeInTheDocument();
     resize(400);
     await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-log-tools"));
   });
 
   it("…and keep the view they were on: Describe stays Describe, not Overview again (v1.17)", async () => {
@@ -371,14 +372,26 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(within(again).queryByTestId("k8s-detail-overview")).toBeNull();
   });
 
-  it("details opened anew start from Overview", async () => {
+  it("details opened anew start from the log", async () => {
     await mountWithPod("k-anew");
     resize(1200);
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     await fireEvent.click(screen.getByTestId("k8s-detail-tab-yaml"));
-    expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
+    expect(screen.getByTestId("k8s-detail-tab-yaml").className).toContain("text-accent");
     await fireEvent.click(screen.getByTestId("side-pane-close"));
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByTestId("k8s-detail-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("k8s-log-tools")).toBeInTheDocument();
+  });
+
+  it("a click on the row opens the details, and the list is laid out by its own width", async () => {
+    await mountWithPod("k-row");
+    resize(1200);
+    const list = screen.getByTestId("k8s-list-part");
+    expect(list).toHaveClass("@container");
+    await fireEvent.click(screen.getByText("web-5f7c"));
+    expect(screen.getByTestId("k8s-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("k8s-row")).toHaveAttribute("aria-current", "true");
+    // jsdom gives the list no width of its own: a narrow list in a wide panel.
+    expect(list).toHaveAttribute("data-list-wide", "false");
   });
 });

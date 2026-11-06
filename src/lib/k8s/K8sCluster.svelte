@@ -115,7 +115,11 @@
             <span class="truncate font-medium text-text/90">{n.name}</span>
             <span class="shrink-0 text-caption text-muted">{n.roles}</span>
           </div>
-          <div class="truncate text-caption text-muted">{n.version}{#if n.internalIp} · {n.internalIp}{/if}</div>
+          <!-- Every address the node reports (v1.33): the internal one pods and
+               nodes talk on, the external one it is reached at from outside. -->
+          <div class="truncate text-caption text-muted" data-testid="k8s-node-addresses">
+            {n.version}{#if n.internalIp}{" · "}<span class="font-mono" use:tooltip={t("k8s.internalIp")}>{n.internalIp}</span>{/if}{#if n.externalIp}{" · "}<span class="font-mono text-text/85" use:tooltip={t("k8s.externalIp")}>{n.externalIp}</span>{/if}{#if n.hostname && n.hostname !== n.name}{` · ${n.hostname}`}{/if}
+          </div>
         </div>
         <span class="shrink-0 text-caption text-muted tabular-nums" use:tooltip={t("k8s.age")}>{n.age}</span>
         <div class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100">

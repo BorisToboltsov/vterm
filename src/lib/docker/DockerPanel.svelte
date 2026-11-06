@@ -33,6 +33,10 @@
   import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
   import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
+  import AttentionStrip from "../ui/AttentionStrip.svelte";
+  import type { LogTailSize } from "../ui/loglines";
+  import { hideableFields } from "../ui/colfit";
+  import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -46,8 +50,8 @@
     networksArgs,
     volumesArgs,
     statsArgs,
-    logsArgs,
     composeLogsArgs,
+    followLogsArgv,
     inspectArgs,
     execShellArgv,
     loginArgs,
@@ -58,9 +62,15 @@
     parseVolumes,
     parseStats,
     parseAvailability,
-    inspectLimitsArgs,
-    parseLimits,
-    type DockerLimits,
+    inspectFactsArgs,
+    parseFacts,
+    staleFacts,
+    factsKey,
+    dockerAttention,
+    restartBaseline,
+    type DockerFacts,
+    type FactsEntry,
+    type AttentionReason,
     DOCKER_GROUP_ADD_CMD,
     needsConfirm,
     containerSchema,
@@ -134,10 +144,15 @@
   let statsById = $state<Map<string, DockerStat>>(new Map());
   // CPU history per container id, fed by the poll that already runs (Phase 42).
   let cpuHistory = $state<LoadHistory>({});
-  // Configured ceilings per container id (Phase 43). Fetched once per id, never
-  // polled: `HostConfig` cannot change while a container runs, and `docker stats`
-  // cannot tell a limit from the host total.
-  let limitsById = $state<Map<string, DockerLimits>>(new Map());
+  // What `inspect` tells per container id (v1.33): the ceilings (Phase 43), the
+  // restart count, the addresses, the times. Asked once for the whole batch and
+  // again only for what changed or grew old (`staleFacts`) — a steady panel asks
+  // once in `FACTS_TTL_MS`, not on every poll.
+  let factsCache = $state<Map<string, FactsEntry>>(new Map());
+  const factsById = $derived(new Map<string, DockerFacts>([...factsCache].map(([id, e]) => [id, e.facts])));
+  // The restart count each container had when the panel first saw it: a count
+  // that was there before is history, one that grows is news (`dockerAttention`).
+  let baseline = $state<Map<string, number>>(new Map());
   let images = $state<DockerImage[]>([]);
   let networks = $state<DockerNetwork[]>([]);
   let volumes = $state<DockerVolume[]>([]);
@@ -201,6 +216,10 @@
   let wide = $state(false);
   // Width of that row, px — what the border is dragged within.
   let rowWidth = $state(0);
+  // The list's own layout (v1.33): the panel can be wide while the list, with
+  // details beside it, is not — its filter row and its table follow the list.
+  let listWide = $state(false);
+  let attentionOpen = $state(true);
   // Shared right-click menu (containers + images) and the container detail modal.
   let menu = $state<OpenMenu | null>(null);
   let detailOpen = $state(false);
@@ -214,10 +233,15 @@
   // The view of the open details — the panel's, not the details' own: a dialog
   // (narrow) and the pane beside the list (wide) are two instances, and going
   // across the width threshold must show what was on screen, not Overview again.
-  let detailTab = $state<DockerDetailTab>("overview");
-  function openDetails(c: DockerContainer) {
-    // Opened anew, or for another container: from the top.
-    if (!detailOpen || detailContainer?.id !== c.id) detailTab = "overview";
+  // Details open on the log (v1.33) and keep the view while another row is
+  // picked: the list beside them is browsed, log after log.
+  let detailTab = $state<DockerDetailTab>("logs");
+  function openDetails(c: DockerContainer, tab?: DockerDetailTab) {
+    if (tab) detailTab = tab;
+    else if (!detailOpen) detailTab = "logs";
+    // A text asked for earlier (a stack's log) stands in front of the details:
+    // picking a container asks for the container.
+    if (modalOpen) closeModal();
     detailContainer = c;
     detailOpen = true;
   }
@@ -243,6 +267,10 @@
   let modalText = $state("");
   let modalLive = $state(false);
   let modalArgs = $state<string[] | null>(null);
+  // A stack's log, read like a container's: followed or held, how many lines.
+  let modalProject = $state<string | null>(null);
+  let modalFollowing = $state(true);
+  let modalTail = $state<LogTailSize>(200);
 
   // Prod destructive-confirm (pending resolver pattern, like GitPanel).
   let confirmOpen = $state(false);
@@ -300,34 +328,55 @@
   }
 
   /**
-   * Fetch ceilings for containers we have not inspected yet, and forget the ones
-   * that are gone. One inspect for the whole batch; a steady-state panel makes no
-   * call at all, which is why this can sit inside the poll without adding load.
+   * Ask `inspect` about the containers whose facts are missing, changed or old
+   * (`staleFacts`), in one call, and forget the ones that are gone. A steady
+   * panel makes no call at all on most polls, which is why this can sit inside
+   * the poll without adding load.
    */
-  async function loadLimits(live: readonly string[]) {
-    const missing = live.filter((id) => !limitsById.has(id));
-    const next = new Map([...limitsById].filter(([id]) => live.includes(id)));
-    if (missing.length > 0) {
+  async function loadFacts(list: readonly DockerContainer[]) {
+    const now = Date.now();
+    const live = list.map((c) => c.id);
+    const next = new Map([...factsCache].filter(([id]) => live.includes(id)));
+    const stale = staleFacts(list, next, now);
+    if (stale.length > 0) {
       try {
-        const res = await runQuery(inspectLimitsArgs(missing));
+        const res = await runQuery(inspectFactsArgs(stale));
         // `docker ps` yields short ids, `docker inspect` echoes the full 64-char
         // one, so the two are matched by prefix — keying the cache off the raw
         // inspect id would mean it never hits and we would re-inspect every poll.
-        for (const [fullId, lim] of parseLimits(res.stdout)) {
-          const short = missing.find((id) => fullId.startsWith(id));
-          if (short) next.set(short, lim);
+        const answered = new Set<string>();
+        for (const [fullId, facts] of parseFacts(res.stdout)) {
+          const c = list.find((x) => stale.includes(x.id) && fullId.startsWith(x.id));
+          if (!c) continue;
+          next.set(c.id, { facts, key: factsKey(c), at: now });
+          answered.add(c.id);
         }
-        // Anything the inspect did not answer for is recorded as "no limit" so we
-        // do not re-ask on every single poll for a container docker won't describe.
-        for (const id of missing) {
-          if (!next.has(id)) next.set(id, { cpuCores: null, memBytes: null });
+        // Anything the inspect did not answer for is recorded as "nothing known",
+        // so we do not re-ask on every poll for a container docker won't describe.
+        for (const c of list) {
+          if (stale.includes(c.id) && !answered.has(c.id)) {
+            next.set(c.id, { facts: BLANK_FACTS, key: factsKey(c), at: now });
+          }
         }
       } catch {
-        /* limits are an enrichment — the panel works without them */
+        /* facts are an enrichment — the panel works without them */
       }
     }
-    limitsById = next;
+    factsCache = next;
+    baseline = restartBaseline(baseline, factsById, live);
   }
+
+  const BLANK_FACTS: DockerFacts = {
+    cpuCores: null,
+    memBytes: null,
+    restarts: null,
+    networkMode: "",
+    addresses: [],
+    startedAt: null,
+    finishedAt: null,
+    exitCode: null,
+    oomKilled: false,
+  };
 
   /** Probe whether docker is usable on this host (drives the empty state). */
   async function checkAvailability() {
@@ -370,7 +419,7 @@
           if (pct != null) cpu.set(id, pct);
         }
         cpuHistory = pushSamples(cpuHistory, live, cpu);
-        await loadLimits(live);
+        await loadFacts(containers);
       } else if (activeSub === "images") {
         images = parseImages((await runQuery(imagesArgs())).stdout);
       } else {
@@ -384,7 +433,7 @@
         volumes = parseVolumes(vs.stdout);
         containers = parsePs(ps.stdout);
       }
-      if (modalOpen && modalLive && modalArgs) {
+      if (modalOpen && modalLive && modalFollowing && modalArgs) {
         const res = await runQuery(modalArgs, 30);
         modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
       }
@@ -402,6 +451,12 @@
     notifySuccess(t("docker.shellOpened", { name: c.name }));
   }
 
+  /** Follow a container's log live in a terminal tab (`docker logs -f`). */
+  function followLogs(c: DockerContainer, tail: number) {
+    onOpenShell?.(followLogsArgv(c.id, tail), { kind: "container", name: c.name, image: c.image });
+    notifySuccess(t("docker.logsFollowOpened", { name: c.name }));
+  }
+
   async function openText(title: string, args: string[], live: boolean) {
     modalTitle = title;
     modalArgs = args;
@@ -412,14 +467,18 @@
     modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
 
+  // A container's log and inspect are views of its details (v1.33) — one place
+  // to read a container, whichever way it was asked for.
   function openLogs(c: DockerContainer) {
-    void openText(t("docker.logsTitle", { name: c.name }), logsArgs(c.id), true);
+    openDetails(c, "logs");
   }
   function openComposeLogs(project: string) {
-    void openText(t("docker.logsTitle", { name: project }), composeLogsArgs(project), true);
+    modalProject = project;
+    modalFollowing = true;
+    void openText(t("docker.logsTitle", { name: project }), composeLogsArgs(project, modalTail), true);
   }
   function openInspect(c: DockerContainer) {
-    void openText(t("docker.inspectTitle", { name: c.name }), inspectArgs(c.id), false);
+    openDetails(c, "inspect");
   }
   function openImageInspect(img: DockerImage) {
     const name = `${img.repository}:${img.tag}`;
@@ -429,7 +488,21 @@
     modalOpen = false;
     modalArgs = null;
     modalLive = false;
+    modalProject = null;
   }
+
+  // A new tail size for a stack's log is a new question: ask it now.
+  $effect(() => {
+    const lines = modalTail;
+    const project = untrack(() => modalProject);
+    if (!project) return;
+    untrack(() => {
+      modalArgs = composeLogsArgs(project, lines);
+      void runQuery(modalArgs, 30).then((res) => {
+        if (modalProject === project) modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
+      });
+    });
+  });
 
   // ── Registry login (Phase 36, point 6) ───────────────────────────────────────
 
@@ -475,7 +548,8 @@
       // Another host's containers are not this host's history, and ids collide
       // across hosts often enough (same compose file) to matter.
       cpuHistory = {};
-      limitsById = new Map();
+      factsCache = new Map();
+      baseline = new Map();
       void checkAvailability().then(() => refresh());
     }
   });
@@ -511,6 +585,55 @@
   // Close the detail modal if its container disappears (removed elsewhere / poll).
   $effect(() => {
     if (detailOpen && firstLoadDone && !liveDetail) detailOpen = false;
+  });
+
+  const ATTENTION_TEXT: Record<AttentionReason, MessageKey> = {
+    dead: "docker.attnDead",
+    restarting: "docker.attnRestarting",
+    oom: "docker.attnOom",
+    unhealthy: "docker.attnUnhealthy",
+    restarts: "docker.attnRestarts",
+    exited: "docker.attnExited",
+  };
+  const attention = $derived(
+    dockerAttention(containers, factsById, baseline).map((a) => ({
+      key: a.id,
+      name: a.name,
+      tone: a.tone,
+      reason: t(ATTENTION_TEXT[a.reason]),
+      detail: a.detail,
+    })),
+  );
+  function pickAttention(id: string) {
+    const c = containers.find((x) => x.id === id);
+    if (c) openDetails(c, "logs");
+  }
+
+  // The «View» menu's columns: what the user may take off the table — only where
+  // the list is a table.
+  const COLUMN_LABEL: Record<string, MessageKey> = {
+    image: "docker.image",
+    state: "docker.state",
+    ports: "docker.ports",
+    ip: "docker.address",
+  };
+  const columnMenu = $derived.by(() => {
+    if (!listWide) return [];
+    const hidden = hiddenFields("docker.containers");
+    return [
+      { kind: "separator" as const },
+      {
+        kind: "submenu" as const,
+        key: "columns",
+        icon: "table" as const,
+        label: t("list.columns"),
+        items: hideableFields("docker.containers").map((id) => ({
+          label: t(COLUMN_LABEL[id]),
+          checked: !hidden.includes(id),
+          onSelect: () => toggleField("docker.containers", id),
+        })),
+      },
+    ];
   });
 
   const SUBS: { id: Sub; label: string }[] = [
@@ -600,10 +723,15 @@
     <!-- Active sub-view; in a wide panel logs, inspect and a container's
          details open beside it (below), not over it. -->
     <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <!-- The list is a query container of its own (v1.33): its rows are a table
+         or two-line rows by the list's width, not the panel's — with details
+         beside it, a wide panel's list is a narrow one. -->
     <div
-      class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
+      class="@container min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("docker", rowWidth) : null}
+      use:wideWhen={(w) => (listWide = w)}
       data-testid="docker-list-part"
+      data-list-wide={listWide}
       data-morph
     >
       {#if !firstLoadDone}
@@ -622,6 +750,7 @@
           <EmptyState icon="container" title={t("docker.noContainers")} hint={t("docker.noContainersHint")} />
         {:else}
           <div class="flex h-full min-h-0 flex-col">
+          <AttentionStrip items={attention} bind:open={attentionOpen} onpick={pickAttention} testid="docker-attention" />
           <ListHeader
             items={containers}
             schema={CONTAINERS}
@@ -633,8 +762,9 @@
             total={containerView.total}
             labels={CONTAINER_LABELS}
             placeholder={t("docker.filterContainers")}
-            {wide}
+            wide={listWide}
             onmenu={(m) => (menu = m)}
+            extra={columnMenu}
             fold={(c) => setGroupsCollapsed(sessionId, "docker.containers", containerView.groups.map((g) => g.key), c)}
             testid="docker-list-header"
           />
@@ -655,7 +785,9 @@
             onsort={(key) => setListOrder("docker.containers", { ...containerOrder, sort: nextSort(CONTAINERS, containerOrder.sort, key) })}
             {statsById}
             {cpuHistory}
-            {limitsById}
+            {factsById}
+            all={containers}
+            selectedId={detailOpen ? (liveDetail?.id ?? null) : null}
             {busy}
             {run}
             onShell={openShell}
@@ -685,7 +817,7 @@
               total={imageView.total}
               labels={IMAGE_LABELS}
               placeholder={t("docker.filterImages")}
-              {wide}
+              wide={listWide}
               onmenu={(m) => (menu = m)}
               fold={(c) => setGroupsCollapsed(sessionId, "docker.images", imageView.groups.map((g) => g.key), c)}
               testid="docker-images-header"
@@ -729,7 +861,7 @@
           onView={pickNetView}
           {busy}
           {run}
-          {wide}
+          wide={listWide}
           filter={filterOf("docker.networks")}
           onfilter={setFilter("docker.networks")}
           collapsed={foldOf("docker.networks")}
@@ -747,7 +879,7 @@
       <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side" in:aside={motion(MOTION_BASE)} out:aside={motion(MOTION_BASE)}>
         {#if modalOpen}
           <SidePane title={modalTitle} onclose={closeModal} testid="docker-side-text">
-            <DockerText text={modalText} live={modalLive} fill />
+            <DockerText text={modalText} live={modalLive} bind:following={modalFollowing} bind:tail={modalTail} fill />
           </SidePane>
         {:else}
           <SidePane
@@ -761,11 +893,14 @@
               bind:tab={detailTab}
               container={liveDetail}
               stat={detailStat}
+              facts={liveDetail ? factsById.get(liveDetail.id) : undefined}
+              {containers}
               {busy}
               {refreshSec}
               {run}
               runQuery={(args, timeout) => runQuery(args, timeout)}
               onShell={openShell}
+              onFollowLogs={onOpenShell ? followLogs : undefined}
               {onAsk}
               onclose={() => (detailOpen = false)}
             />
@@ -779,18 +914,29 @@
 
 <!-- The same two as dialogs — where the panel has no room to show them beside
      the list. Outside the root: it is a query container (see INVARIANTS). -->
-<DockerTextModal open={modalOpen && !wide} title={modalTitle} text={modalText} live={modalLive} onclose={closeModal} />
+<DockerTextModal
+  open={modalOpen && !wide}
+  title={modalTitle}
+  text={modalText}
+  live={modalLive}
+  bind:following={modalFollowing}
+  bind:tail={modalTail}
+  onclose={closeModal}
+/>
 
 <DockerDetailModal
   open={detailOpen && !wide}
   bind:tab={detailTab}
   container={liveDetail}
   stat={detailStat}
+  facts={liveDetail ? factsById.get(liveDetail.id) : undefined}
+  {containers}
   {busy}
   {refreshSec}
   {run}
   runQuery={(args, timeout) => runQuery(args, timeout)}
   onShell={openShell}
+  onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
 />

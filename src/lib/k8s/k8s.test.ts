@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { applyView, facetValues, NO_FILTER } from "../ui/listview";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import {
+  followLogsArgv,
+  podAttention,
+  podRestartBaseline,
   parseCpuMillis,
   parseMemMiB,
   sumLimit,
@@ -1126,5 +1129,102 @@ describe("parsePods limits", () => {
   it("keeps the container list working alongside the new fields", () => {
     const [p] = parsePods(podJson([{ name: "a" }, { name: "b" }]));
     expect(p.containers).toEqual(["a", "b"]);
+  });
+});
+
+describe("addresses of pods and nodes (v1.33)", () => {
+  const podJson = (status: Record<string, unknown>, spec: Record<string, unknown> = {}) =>
+    JSON.stringify({ items: [{ metadata: { name: "p", namespace: "ns" }, spec: { containers: [{ name: "c" }], ...spec }, status }] });
+
+  it("reads every pod IP, the node's, and whether it is the node's network", () => {
+    const [dual] = parsePods(podJson({ podIP: "10.42.1.17", podIPs: [{ ip: "10.42.1.17" }, { ip: "fd00::17" }], hostIP: "10.0.1.11" }));
+    expect(dual.podIps).toEqual(["10.42.1.17", "fd00::17"]);
+    expect(dual.hostIp).toBe("10.0.1.11");
+    expect(dual.hostNetwork).toBe(false);
+    const [old] = parsePods(podJson({ podIP: "10.42.2.9" }, { hostNetwork: true }));
+    expect(old.podIps).toEqual(["10.42.2.9"]);
+    expect(old.hostNetwork).toBe(true);
+    const [pending] = parsePods(podJson({ phase: "Pending" }));
+    expect(pending.podIps).toEqual([]);
+    expect(pending.hostIp).toBe("");
+  });
+
+  it("reads a node's internal and external address and its hostname", () => {
+    const raw = JSON.stringify({
+      items: [
+        {
+          metadata: { name: "node-a" },
+          status: {
+            addresses: [
+              { type: "InternalIP", address: "10.0.1.11" },
+              { type: "ExternalIP", address: "203.0.113.21" },
+              { type: "Hostname", address: "node-a.local" },
+            ],
+          },
+        },
+        { metadata: { name: "node-b" }, status: {} },
+      ],
+    });
+    const [a, b] = parseNodes(raw);
+    expect([a.internalIp, a.externalIp, a.hostname]).toEqual(["10.0.1.11", "203.0.113.21", "node-a.local"]);
+    expect([b.internalIp, b.externalIp, b.hostname]).toEqual(["", "", ""]);
+  });
+
+  it("follows a pod's log in a terminal, in its own namespace and context", () => {
+    const scope = { context: "prod", namespace: null, allNamespaces: true };
+    expect(followLogsArgv(["kubectl"], "web-1", "shop", "app", scope, 1000)).toEqual([
+      "kubectl", "logs", "-f", "--tail", "1000", "--timestamps", "--context", "prod", "--namespace", "shop", "web-1", "-c", "app",
+    ]);
+  });
+});
+
+describe("podAttention (v1.33)", () => {
+  const now = Date.parse("2026-11-06T12:00:00Z");
+  const base: K8sPod = {
+    name: "p",
+    namespace: "ns",
+    phase: "Running",
+    status: "Running",
+    ready: "1/1",
+    restarts: 0,
+    node: "n",
+    age: "1h",
+    containers: ["c"],
+    ownerKind: "",
+    ownerName: "",
+    cpuLimit: null,
+    memLimit: null,
+    qos: "",
+    created: now - 3_600_000,
+  };
+  const pod = (over: Partial<K8sPod>): K8sPod => ({ ...base, ...over });
+
+  it("names the failing, the stuck and the not ready — once their grace is over", () => {
+    const pods = [
+      pod({ name: "crash", status: "CrashLoopBackOff", restarts: 7 }),
+      pod({ name: "pending-old", status: "Pending" }),
+      pod({ name: "pending-new", status: "Pending", created: now - 10_000 }),
+      pod({ name: "unready", ready: "0/1" }),
+      pod({ name: "unready-new", ready: "0/1", created: now - 10_000 }),
+      pod({ name: "fine" }),
+      pod({ name: "leaving", status: "Terminating" }),
+    ];
+    const got = podAttention(pods, new Map(), now);
+    expect(got.map((a) => [a.name, a.reason, a.tone, a.detail])).toEqual([
+      ["crash", "failing", "bad", "CrashLoopBackOff · ↻7"],
+      ["pending-old", "pending", "warn", "Pending"],
+      ["unready", "notReady", "warn", "0/1"],
+    ]);
+  });
+
+  it("counts restarts only once they grow while the panel is open", () => {
+    const seen = podRestartBaseline(new Map(), [pod({ restarts: 4 })]);
+    expect(podAttention([pod({ restarts: 4 })], seen, now)).toEqual([]);
+    expect(podAttention([pod({ restarts: 6 })], seen, now)).toEqual([
+      { key: "ns/p", name: "p", namespace: "ns", reason: "restarts", tone: "warn", detail: "↻+2" },
+    ]);
+    // The first count seen is kept; a gone pod is forgotten.
+    expect([...podRestartBaseline(seen, [pod({ restarts: 9 })])]).toEqual([["ns/p", 4]]);
+    expect(podRestartBaseline(seen, []).size).toBe(0);
   });
 });

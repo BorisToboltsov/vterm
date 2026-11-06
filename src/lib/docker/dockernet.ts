@@ -101,6 +101,22 @@ export interface PortRow {
   raw: string;
 }
 
+/**
+ * A port row as a short chip in the container list (v1.33): a published port by
+ * the host port it answers on — `:443` when it answers on every address, the
+ * address in front when it is bound to one (`127.0.0.1:5432`, `[::1]:5432`); an
+ * exposed one by the container's port; anything else as docker wrote it.
+ */
+export function portChip(row: PortRow): string {
+  if (row.kind === "published") {
+    if (row.reach === "all") return `:${row.hostPort}`;
+    const ip = row.hostIps[0] ?? "";
+    return `${ip.includes(":") ? `[${ip}]` : ip}:${row.hostPort}`;
+  }
+  if (row.kind === "exposed") return row.proto ? `${row.containerPort}/${row.proto}` : row.containerPort;
+  return row.raw;
+}
+
 const single = (p: string): number | null => (/^\d+$/.test(p) ? Number(p) : null);
 const lastOf = (p: string): number | null => single(p.split("-").at(-1) ?? "");
 const firstOf = (p: string): string => p.split("-")[0];

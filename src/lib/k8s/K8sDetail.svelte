@@ -10,6 +10,8 @@
   // stands inside the panel's query container (`panelcontainer.guard`).
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
+  import LogTail from "../ui/LogTail.svelte";
+  import type { LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import {
     logsArgs,
@@ -32,11 +34,12 @@
     refreshSec = 5,
     fill = false,
     closeOnAsk = false,
-    tab = $bindable("overview"),
+    tab = $bindable("logs"),
     container = $bindable(null),
     run,
     runQuery,
     openShell,
+    onFollowLogs = undefined,
     onAsk,
     onclose,
   }: {
@@ -67,6 +70,8 @@
     ) => Promise<boolean>;
     runQuery: (bareArgs: string[], namespace: string, timeout?: number) => Promise<KubeOutput>;
     openShell: (pod: K8sPod, container: string | null) => void;
+    /** Follow the log live in a terminal tab, from the last `tail` lines. */
+    onFollowLogs?: (pod: K8sPod, container: string | null, tail: number) => void;
     /** Hand this pod's state + logs to the assistant (Phase 41). */
     onAsk?: (context: string) => void;
     onclose: () => void;
@@ -96,6 +101,10 @@
   let logsText = $state("");
   let describeText = $state("");
   let yamlText = $state("");
+  // How the log is read — followed or held, how many lines — kept across pods:
+  // picking the next row is reading the next log the same way.
+  let following = $state(true);
+  let tail = $state<LogTailSize>(200);
 
   const TONE: Record<string, string> = {
     ok: "bg-ok",
@@ -113,12 +122,12 @@
   let shownKey: string | null = null;
   let target = $state<{ name: string; namespace: string } | null>(null);
 
-  // Forget what was fetched whenever a different pod opens (or this closes). When
-  // the pod changes under an open view: back to Overview, and a default container
-  // (multi-container pods need `-c` for logs/exec — the first). For the first pod
-  // after a mount the view and the container are kept as handed in: the content
-  // may have just moved here from the other wrapper (`tab`, `container`) — only a
-  // container the pod does not have is replaced.
+  // Forget what was fetched whenever a different pod opens (or this closes). The
+  // view stays (v1.33) — with details beside the list, picking the next row is
+  // reading the next pod's log; the container goes back to the default (the
+  // first — multi-container pods need `-c` for logs/exec). For the first pod
+  // after a mount the container is kept as handed in: the content may have just
+  // moved here from the other wrapper — only one the pod does not have is replaced.
   $effect(() => {
     const p = active ? pod : null;
     const key = p ? `${p.namespace}/${p.name}` : null;
@@ -126,7 +135,6 @@
     const switched = shownKey !== null && key !== null;
     shownKey = key;
     target = p ? { name: p.name, namespace: p.namespace } : null;
-    if (switched) tab = "overview";
     logsText = "";
     describeText = "";
     yamlText = "";
@@ -135,8 +143,8 @@
     if (switched || container === null || !p.containers.includes(container)) container = first;
   });
 
-  async function fetchLogs(name: string, ns: string, c: string | null) {
-    const res = await runQuery(logsArgs(name, c), ns, 30);
+  async function fetchLogs(name: string, ns: string, c: string | null, lines: number) {
+    const res = await runQuery(logsArgs(name, c, lines), ns, 30);
     logsText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
   async function fetchDescribe(name: string, ns: string) {
@@ -148,13 +156,16 @@
     yamlText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
 
-  // Logs tab re-polls while open (like the panel's live view); describe/yaml once.
+  // Logs tab: fetched on open, on another container and on a new tail size,
+  // re-polled while followed (like the panel's live view); describe/yaml once.
   $effect(() => {
     const p = target;
     const c = container; // refetch when the container selection changes
+    const lines = tail;
     if (!active || tab !== "logs" || !p) return;
-    void fetchLogs(p.name, p.namespace, c);
-    const id = setInterval(() => void fetchLogs(p.name, p.namespace, c), Math.max(1, refreshSec) * 1000);
+    void fetchLogs(p.name, p.namespace, c, lines);
+    if (!following) return;
+    const id = setInterval(() => void fetchLogs(p.name, p.namespace, c, lines), Math.max(1, refreshSec) * 1000);
     return () => clearInterval(id);
   });
   $effect(() => {
@@ -175,8 +186,8 @@
   }
 
   const TABS: { id: Tab; label: MessageKey }[] = [
-    { id: "overview", label: "k8s.overview" },
     { id: "logs", label: "k8s.viewLogs" },
+    { id: "overview", label: "k8s.overview" },
     { id: "describe", label: "k8s.describe" },
     { id: "yaml", label: "k8s.yaml" },
   ];
@@ -241,9 +252,18 @@
       <dd class="text-text/85">{p.ready}</dd>
       <dt class="text-muted">{t("k8s.restarts")}</dt>
       <dd class="text-text/85">{p.restarts}</dd>
+      <dt class="text-muted">{t("k8s.podIp")}</dt>
+      <dd class="break-all text-text/85" data-testid="k8s-detail-ip">
+        {#if (p.podIps ?? []).length > 0}
+          <span class="font-mono">{(p.podIps ?? []).join(" · ")}</span>
+          {#if p.hostNetwork}<span class="text-muted">{` · ${t("k8s.hostNetworkHint")}`}</span>{/if}
+        {:else}
+          <span class="text-muted">{t("k8s.noIp")}</span>
+        {/if}
+      </dd>
       {#if p.node}
         <dt class="text-muted">{t("k8s.node")}</dt>
-        <dd class="break-all text-text/85">{p.node}</dd>
+        <dd class="break-all text-text/85">{p.node}{#if p.hostIp}<span class="font-mono text-muted">{` · ${p.hostIp}`}</span>{/if}</dd>
       {/if}
       <dt class="text-muted">{t("k8s.age")}</dt>
       <dd class="text-text/85">{p.age}</dd>
@@ -255,28 +275,30 @@
       {/if}
     </dl>
   {:else if tab === "logs"}
-    <div class="mb-1 flex items-center justify-between gap-2">
+    <LogTail
+      text={logsText}
+      bind:live={following}
+      bind:tail
+      {fill}
+      empty={t("k8s.noLogs")}
+      testid="k8s"
+      onterminal={onFollowLogs ? () => onFollowLogs?.(p, container, tail) : undefined}
+    >
       {#if p.containers.length > 1}
-        <label class="flex items-center gap-1 text-meta text-muted">
+        <label class="flex shrink-0 items-center gap-1 text-meta text-muted">
           {t("k8s.container")}
           <select
             class="rounded border border-edge bg-panel px-1.5 py-0.5 text-meta text-text outline-none focus:border-accent"
             bind:value={container}
+            data-testid="k8s-log-container"
           >
             {#each p.containers as c (c)}
               <option value={c}>{c}</option>
             {/each}
           </select>
         </label>
-      {:else}
-        <span></span>
       {/if}
-      <CopyButton text={logsText} label={t("util.copy")} testid="k8s-copy-text" />
-    </div>
-    <pre
-      data-testid="k8s-text"
-      class="{fill ? 'min-h-0 flex-1' : 'max-h-[60vh]'} overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-2 font-mono text-meta leading-relaxed text-text/85 select-text"
-    >{logsText || t("k8s.noLogs")}</pre>
+    </LogTail>
   {:else if tab === "describe"}
     <div class="mb-1 flex justify-end">
       <CopyButton text={describeText} label={t("util.copy")} testid="k8s-copy-text" />

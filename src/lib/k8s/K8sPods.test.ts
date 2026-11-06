@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import K8sPods from "./K8sPods.svelte";
@@ -140,6 +140,7 @@ describe("K8sPods — columns of the wide layout", () => {
     expect(titles).toEqual([
       "Name",
       "Namespace",
+      "Pod IP",
       "Node",
       "Ready",
       "↻",
@@ -150,12 +151,12 @@ describe("K8sPods — columns of the wide layout", () => {
     ]);
   });
 
-  it("lets the three text columns be resized, and only them", () => {
+  it("lets the four text columns be resized, and only them", () => {
     render(K8sPods, { props: props() });
-    for (const c of ["k8s.name", "k8s.namespace", "k8s.node"]) {
+    for (const c of ["k8s.name", "k8s.namespace", "k8s.ip", "k8s.node"]) {
       expect(screen.getByTestId(`column-grip-${c}`)).toHaveClass("cursor-col-resize");
     }
-    expect(document.querySelectorAll('[data-testid^="column-grip-"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[data-testid^="column-grip-"]')).toHaveLength(4);
   });
 
   it("gives every row the header's columns — with metrics, without, with restarts", () => {
@@ -168,6 +169,7 @@ describe("K8sPods — columns of the wide layout", () => {
       "w-[0.4375rem]", // state dot
       "w-[var(--c-name)]",
       "w-[var(--c-ns)]",
+      "w-[var(--c-ip)]",
       "w-[var(--c-node)]",
       "flex-1", // takes whatever the window has left
       "w-16", // ready
@@ -206,5 +208,48 @@ describe("K8sPods — columns of the wide layout", () => {
     expect(row.className).toContain("@wide:py-0");
     expect(screen.getByTestId("k8s-col-namespace").className).toContain("@wide:border-r");
     expect(screen.getByTestId("k8s-col-limits").className).toContain("@wide:border-l");
+  });
+});
+
+// v1.33: where a pod runs and how it is reached, the row as the way into its
+// details, the table fitted to the list.
+describe("K8sPods — addresses and the list beside the details", () => {
+  it("shows the pod's address and the node's beside its name", () => {
+    const a = pod({ name: "api-1", podIps: ["10.42.1.17", "fd00::17"], hostIp: "10.0.1.11", node: "node-a" });
+    const b = pod({ name: "pending-1", podIps: [], hostIp: "", node: "" });
+    render(K8sPods, { props: props([a, b]) });
+    const [ipA, ipB] = screen.getAllByTestId("k8s-col-ip");
+    expect(ipA).toHaveTextContent("10.42.1.17 +1");
+    expect(ipB).toHaveTextContent("—");
+    const [nodeA, nodeB] = screen.getAllByTestId("k8s-col-node");
+    expect(nodeA).toHaveTextContent("node-a · 10.0.1.11");
+    expect(nodeB).toHaveTextContent("—");
+  });
+
+  it("says a hostNetwork pod has the node's address", () => {
+    render(K8sPods, { props: props([pod({ podIps: ["10.0.1.11"], hostNetwork: true })]) });
+    expect(screen.getByTestId("k8s-col-ip")).toHaveTextContent("10.0.1.11host network");
+  });
+
+  it("opens the details on a click on the row and marks the open one", async () => {
+    const p = pod({ name: "api-1" });
+    const base = props([p]);
+    const onViewDetails = vi.fn();
+    render(K8sPods, { props: { ...base, onViewDetails, selectedKey: `${p.namespace}/api-1` } });
+    await fireEvent.click(screen.getByText("api-1"));
+    expect(onViewDetails).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("k8s-row")).toHaveAttribute("aria-current", "true");
+  });
+
+  it("takes a column the user hid off the table, header and rows alike", async () => {
+    const { toggleField, resetColumnWidths } = await import("../stores/colwidths.svelte");
+    resetColumnWidths();
+    render(K8sPods, { props: props() });
+    expect(screen.getByTestId("k8s-col-ip")).toBeInTheDocument();
+    toggleField("k8s.pods", "ip");
+    flushSync();
+    expect(screen.queryByTestId("k8s-col-ip")).toBeNull();
+    expect(screen.queryByTestId("column-k8s.ip")).toBeNull();
+    resetColumnWidths();
   });
 });

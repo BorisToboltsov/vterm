@@ -189,6 +189,27 @@ export function execShellArgv(
   return parts;
 }
 
+/**
+ * A pod's log followed live (`-f`) from the last `tail` lines — typed into a
+ * terminal tab like {@link execShellArgv}, never run by the panel: following is
+ * a stream, and a stream belongs to a terminal (v1.33).
+ */
+export function followLogsArgv(
+  prog: string[],
+  pod: string,
+  namespace: string,
+  container: string | null,
+  scope: K8sScope,
+  tail = 200,
+): string[] {
+  const parts = [...prog, "logs", "-f", "--tail", String(tail), "--timestamps"];
+  if (scope.context) parts.push("--context", scope.context);
+  if (namespace) parts.push("--namespace", namespace);
+  parts.push(pod);
+  if (container) parts.push("-c", container);
+  return parts;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface K8sPod {
@@ -223,6 +244,15 @@ export interface K8sPod {
   qos: string;
   /** When it was created, epoch ms — what «age» orders by (v1.29); null — not reported. */
   created?: number | null;
+  /**
+   * Its addresses (v1.33): `status.podIPs` — two for a dual-stack pod — or the
+   * older single `status.podIP`; empty until the pod is given one.
+   */
+  podIps?: string[];
+  /** The address of the node it runs on (`status.hostIP`); "" until it is scheduled. */
+  hostIp?: string;
+  /** `spec.hostNetwork`: its address is the node's, not one of its own. */
+  hostNetwork?: boolean;
 }
 
 export interface K8sWorkload {
@@ -463,8 +493,20 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
       memLimit: sumLimit(specArr, "memory", parseMemMiB),
       qos: str(dig(it, "status", "qosClass")),
       created: createdAt(it),
+      podIps: podIps(it),
+      hostIp: str(dig(it, "status", "hostIP")),
+      hostNetwork: dig(it, "spec", "hostNetwork") === true,
     };
   });
+}
+
+/** `status.podIPs[].ip`, else the single `status.podIP`, deduplicated. */
+function podIps(it: Record<string, unknown>): string[] {
+  const list = dig(it, "status", "podIPs");
+  const ips = Array.isArray(list) ? (list as Record<string, unknown>[]).map((p) => str(p.ip)).filter(Boolean) : [];
+  const single = str(dig(it, "status", "podIP"));
+  if (single && !ips.includes(single)) ips.unshift(single);
+  return [...new Set(ips)];
 }
 
 export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWorkload[] {
@@ -867,6 +909,10 @@ export interface K8sNode {
   roles: string;
   version: string;
   internalIp: string;
+  /** `ExternalIP` from `status.addresses` (v1.33); "" — the node reports none. */
+  externalIp?: string;
+  /** `Hostname` from `status.addresses`; "" — not reported. */
+  hostname?: string;
   age: string;
 }
 
@@ -1114,9 +1160,9 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
     const unschedulable = dig(it, "spec", "unschedulable") === true;
     const status = `${ready ? "Ready" : "NotReady"}${unschedulable ? ",SchedulingDisabled" : ""}`;
     const addrs = dig(it, "status", "addresses");
-    const internalIp = Array.isArray(addrs)
-      ? str((addrs as Record<string, unknown>[]).find((a) => a.type === "InternalIP")?.address)
-      : "";
+    const address = (type: string): string =>
+      Array.isArray(addrs) ? str((addrs as Record<string, unknown>[]).find((a) => a.type === type)?.address) : "";
+    const internalIp = address("InternalIP");
     return {
       name: str(dig(it, "metadata", "name")),
       status,
@@ -1124,6 +1170,8 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
       roles: nodeRoles(dig(it, "metadata", "labels")),
       version: str(dig(it, "status", "nodeInfo", "kubeletVersion")),
       internalIp,
+      externalIp: address("ExternalIP"),
+      hostname: address("Hostname"),
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
     };
   });
@@ -1168,8 +1216,75 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
   return type === "Warning" ? "warn" : "idle";
 }
 
-/** The views of a pod's details (`K8sDetail`). */
-export type K8sDetailTab = "overview" | "logs" | "describe" | "yaml";
+/** The views of a pod's details (`K8sDetail`); the log first — where details open (v1.33). */
+export type K8sDetailTab = "logs" | "overview" | "describe" | "yaml";
+
+/** Why a pod needs a look (v1.33): the strip above the list. */
+export type PodAttentionReason = "failing" | "pending" | "notReady" | "restarts";
+
+export interface PodAttention {
+  /** {@link metricsKey} of the pod. */
+  key: string;
+  name: string;
+  namespace: string;
+  reason: PodAttentionReason;
+  tone: "warn" | "bad";
+  /** What says it: kubectl's status, ready containers, restarts since the panel opened. */
+  detail: string;
+}
+
+/** A pod may sit in Pending this long while it is scheduled and pulled before it is news. */
+export const PENDING_GRACE_MS = 120_000;
+/** A running pod may be not ready this long while its probes warm up. */
+export const READY_GRACE_MS = 60_000;
+
+const POD_ATTENTION_RANK: Record<PodAttentionReason, number> = { failing: 0, pending: 1, notReady: 2, restarts: 3 };
+
+/** `1/2` → whether every container is ready; an unreadable figure is not a finding. */
+function allReady(ready: string): boolean {
+  const m = /^(\d+)\/(\d+)$/.exec(ready);
+  return !m || +m[1] >= +m[2];
+}
+
+/**
+ * What needs a look, worst first — the same reading as the state dot
+ * (`podPhaseTone`), plus what time makes a problem: a pod that has been Pending
+ * or not ready past its grace. Restarts are history until they grow while the
+ * panel is open (`baseline`, as the Docker panel and the monitoring page read
+ * their counters).
+ */
+export function podAttention(
+  pods: readonly K8sPod[],
+  baseline: ReadonlyMap<string, number>,
+  nowMs: number = Date.now(),
+): PodAttention[] {
+  const out: PodAttention[] = [];
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    const age = p.created == null ? null : nowMs - p.created;
+    const add = (reason: PodAttentionReason, tone: "warn" | "bad", detail: string) =>
+      out.push({ key, name: p.name, namespace: p.namespace, reason, tone, detail });
+    const tone = podPhaseTone(p.status);
+    const seen = baseline.get(key);
+    if (tone === "bad") add("failing", "bad", p.restarts > 0 ? `${p.status} · ↻${p.restarts}` : p.status);
+    else if (tone === "warn" && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS) add("pending", "warn", p.status);
+    else if (p.status === "Running" && !allReady(p.ready) && age != null && age >= READY_GRACE_MS) add("notReady", "warn", p.ready);
+    else if (seen != null && p.restarts > seen) add("restarts", "warn", `↻+${p.restarts - seen}`);
+  }
+  return out.sort(
+    (a, b) => POD_ATTENTION_RANK[a.reason] - POD_ATTENTION_RANK[b.reason] || a.name.localeCompare(b.name),
+  );
+}
+
+/** The restart counts {@link podAttention} compares against: the first seen of each pod, kept. */
+export function podRestartBaseline(prev: ReadonlyMap<string, number>, pods: readonly K8sPod[]): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    next.set(key, prev.get(key) ?? p.restarts);
+  }
+  return next;
+}
 
 // ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
 //

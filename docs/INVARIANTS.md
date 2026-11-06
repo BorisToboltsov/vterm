@@ -291,8 +291,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **argv драйвера проходит политику в Rust на обоих транспортах** (ADR 0036): `git::check_args`,
   `container::check_args` (`docker login` — только `docker_login`), `kube::check_args`, локально
   у проб — `netprobe::local_program_allowed`. Новая подкоманда фронта сперва вносится в
-  политику и в тест `what_the_*_panel_runs_is_allowed`. Shell и `port-forward` идут в терминал,
-  через драйвер — никогда.
+  политику и в тест `what_the_*_panel_runs_is_allowed`. Shell, `logs -f` и `port-forward` идут в
+  терминал, через драйвер — никогда.
 - **Шелл-квотинг на SSH обязателен** — `git::shell_quote`, единственная реализация; пайплайн —
   одним токеном `sh -c '<pipeline>'`.
 - **Локальный спавн — только через [localenv.rs](../src-tauri/src/localenv.rs) и
@@ -344,6 +344,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Граница между частями — в сторе [panelsplit](../src/lib/stores/panelsplit.svelte.ts), что
     можно выставить — [panelsplit.ts](../src/lib/layout/panelsplit.ts) (`PART_MIN`); сохранённое не
     переписывается.
+- **Список дока раскладывается по своей ширине** (ADR 0054): часть со списком — свой `@container`
+  и свой `wideWhen` (`listWide` — строке фильтра), таблица — `fitColumns`
+  ([colfit.ts](../src/lib/ui/colfit.ts)) от ширины списка: колонка уходит в порядке списка, имя —
+  никогда, ушедшее названо «+N». Щелчок по строке открывает подробности — на логе, другая строка вид
+  не меняет. Гейт `listfit.guard`.
 - **Док без доступных панелей не рисуется;** сохранённая вкладка дока не переписывается
   (`shownPanel`); зона сброса невидимого дока — оверлей, а не полоса в раскладке.
 - **Скрытая панель не предлагается нигде** (`settings.hiddenPanels`): не рисуется, не
@@ -380,7 +385,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | Драйвер | Команда · тег | Чистая логика | Обязательное |
 |---------|---------------|---------------|--------------|
 | **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
-| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). CVE-скана нет — нет офлайн-способа |
+| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). Факты `inspect` (лимиты, перезапуски, адреса) — одним вызовом на изменившиеся (`staleFacts`). CVE-скана нет — нет офлайн-способа |
 | **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. Бинарь — `settings.kubectlPath` |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
@@ -1130,6 +1135,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `attachtab.guard` | Вкладка контейнера печатает `renderSessionCommand` и не переподключается сама |
 | `prodmark.guard` | Прод помечен на вкладке и рамкой вокруг соединения; рамка — инертный оверлей |
 | `taboverflow.guard` | Полоса вкладок — ограниченный скроллер, «+» сразу за последней вкладкой |
+| `listfit.guard` | Список дока — свой контейнер ширины, таблица — из `fitColumns`, подробности открываются на логе |
 | `dockpanels.guard` | Панель дока не размонтируется, скрытая не опрашивает хост, `sessionReady` — у вкладки любого вида |
 | `docklayout.guard` | Раскладка доков — через `loadDocks` и модель; панель рисуется одним сниппетом и не знает свой док; скрытые панели — через `setPanelHidden`; перетаскивание — при отпускании |
 | `panelcontainer.guard` · `panelwide.test.ts` | В `@container` нет `fixed`-потомков по цепочке импортов; порог ширины один; «рядом» решает `wide && fitsBeside` |

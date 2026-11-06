@@ -94,6 +94,14 @@ export function logsArgs(id: string, tail = 200): string[] {
   return ["docker", "logs", "--tail", String(tail), "--timestamps", id];
 }
 
+/**
+ * The same log followed live (`-f`) — typed into a terminal tab, never run by the
+ * panel: following is a stream, and a stream belongs to a terminal (v1.33).
+ */
+export function followLogsArgv(id: string, tail = 200): string[] {
+  return ["docker", "logs", "-f", "--tail", String(tail), "--timestamps", id];
+}
+
 /** Aggregated log snapshot for a whole compose project. */
 export function composeLogsArgs(project: string, tail = 200): string[] {
   return ["docker", "compose", "-p", project, "logs", "--tail", String(tail), "--timestamps", "--no-color"];
@@ -104,18 +112,37 @@ export function inspectArgs(id: string): string[] {
   return ["docker", "inspect", id];
 }
 
+/** Between a network's name and its addresses, and between networks, in {@link inspectFactsArgs}. */
+const GS = "\x1d";
+const RS = "\x1e";
+
 /**
- * Per-container resource ceilings for several containers in one call (Phase 43).
+ * What `docker ps` does not say about a container, for several containers in one
+ * call: its resource ceilings (Phase 43), how often it was restarted, its
+ * network mode and its address in each network (v1.33), when it last started or
+ * stopped, how it exited.
  *
  * `docker stats` alone cannot answer "is this container near its limit": for an
  * unlimited container it reports `MemUsage` against the **host's** total and
  * `MemPerc` as a share of host RAM, which reads exactly like a limit but is not
- * one. The ceiling only exists in `HostConfig`, so it takes an inspect — but it
- * is fixed for the life of a container, so it is fetched once per id and cached,
- * not polled.
+ * one. The ceiling only exists in `HostConfig`, and the addresses only in
+ * `NetworkSettings` — so it takes an inspect, asked again only when what `ps`
+ * shows of a container changes or the answer is old ({@link staleFacts}).
  */
-export function inspectLimitsArgs(ids: readonly string[]): string[] {
-  const fmt = ["{{.Id}}", "{{.HostConfig.NanoCpus}}", "{{.HostConfig.Memory}}"].join(US);
+export function inspectFactsArgs(ids: readonly string[]): string[] {
+  const nets = `{{range $name, $net := .NetworkSettings.Networks}}{{$name}}${GS}{{$net.IPAddress}}${GS}{{$net.GlobalIPv6Address}}${RS}{{end}}`;
+  const fmt = [
+    "{{.Id}}",
+    "{{.HostConfig.NanoCpus}}",
+    "{{.HostConfig.Memory}}",
+    "{{.RestartCount}}",
+    "{{.HostConfig.NetworkMode}}",
+    nets,
+    "{{.State.StartedAt}}",
+    "{{.State.FinishedAt}}",
+    "{{.State.ExitCode}}",
+    "{{.State.OOMKilled}}",
+  ].join(US);
   return ["docker", "inspect", "--format", fmt, ...ids];
 }
 
@@ -127,20 +154,296 @@ export interface DockerLimits {
   memBytes: number | null;
 }
 
-/** Parse {@link inspectLimitsArgs} output into a map keyed by full container id. */
-export function parseLimits(raw: string): Map<string, DockerLimits> {
-  const out = new Map<string, DockerLimits>();
+/** A container's address in one of its networks; "" — none of that family. */
+export interface DockerAddress {
+  network: string;
+  ipv4: string;
+  ipv6: string;
+}
+
+/** What {@link inspectFactsArgs} tells about a container. */
+export interface DockerFacts extends DockerLimits {
+  /** How many times docker restarted it (`RestartCount`); null — not reported. */
+  restarts: number | null;
+  /** `HostConfig.NetworkMode`: `bridge`, `host`, `none`, `container:<id>`, a network's name. */
+  networkMode: string;
+  /** Its addresses, one per network, in docker's (name) order. */
+  addresses: DockerAddress[];
+  /** When it last started / stopped, epoch ms; null — never (docker's zero time). */
+  startedAt: number | null;
+  finishedAt: number | null;
+  /** The code it last exited with; null — not reported. */
+  exitCode: number | null;
+  /** The kernel killed it for memory. */
+  oomKilled: boolean;
+}
+
+/**
+ * An RFC 3339 stamp with docker's nanoseconds (`2026-11-06T10:41:02.123456789Z`)
+ * as epoch ms; null for docker's zero time (`0001-01-01…` — "never") or junk.
+ */
+export function parseInspectTime(raw: string | undefined): number | null {
+  const s = (raw ?? "").trim();
+  if (!s || s.startsWith("0001-")) return null;
+  // `Date.parse` reads milliseconds; docker writes up to nine digits.
+  const t = Date.parse(s.replace(/(\.\d{3})\d+/, "$1"));
+  return Number.isFinite(t) ? t : null;
+}
+
+function parseAddresses(raw: string | undefined): DockerAddress[] {
+  return (raw ?? "")
+    .split(RS)
+    .filter((part) => part.trim())
+    .map((part) => {
+      const [network = "", ipv4 = "", ipv6 = ""] = part.split(GS);
+      return { network: network.trim(), ipv4: ipv4.trim(), ipv6: ipv6.trim() };
+    })
+    .filter((a) => a.network);
+}
+
+const count = (raw: string | undefined): number | null => {
+  const n = Number((raw ?? "").trim());
+  return (raw ?? "").trim() !== "" && Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+/** Parse {@link inspectFactsArgs} output into a map keyed by full container id. */
+export function parseFacts(raw: string): Map<string, DockerFacts> {
+  const out = new Map<string, DockerFacts>();
   for (const f of rows(raw)) {
     const id = f[0]?.trim();
     if (!id) continue;
     const nanos = Number(f[1]);
     const mem = Number(f[2]);
+    const exit = Number((f[8] ?? "").trim());
     out.set(id, {
       cpuCores: Number.isFinite(nanos) && nanos > 0 ? nanos / 1e9 : null,
       memBytes: Number.isFinite(mem) && mem > 0 ? mem : null,
+      restarts: count(f[3]),
+      networkMode: (f[4] ?? "").trim(),
+      addresses: parseAddresses(f[5]),
+      startedAt: parseInspectTime(f[6]),
+      finishedAt: parseInspectTime(f[7]),
+      exitCode: (f[8] ?? "").trim() !== "" && Number.isInteger(exit) ? exit : null,
+      oomKilled: (f[9] ?? "").trim() === "true",
     });
   }
   return out;
+}
+
+/** What is known of a container that `ps` cannot say — and when it was asked. */
+export interface FactsEntry {
+  facts: DockerFacts;
+  /** What `ps` showed of it then ({@link factsKey}). */
+  key: string;
+  /** When it was asked, epoch ms. */
+  at: number;
+}
+
+/** How long the facts of a running container stand before they are asked again. */
+export const FACTS_TTL_MS = 30_000;
+
+/**
+ * What of a container, as `ps` shows it, the facts depend on: a start or a stop
+ * gives new addresses and times, a network joined or left changes them too.
+ */
+export function factsKey(c: DockerContainer): string {
+  return `${normalizeState(c.state)}|${c.networks.join(",")}`;
+}
+
+/**
+ * The containers whose facts have to be asked (again): never asked, changed
+ * since ({@link factsKey}), or — while it runs — asked longer than `ttl` ago: a
+ * restart policy can restart it between two polls, and nothing `ps` shows would
+ * say so but the restart count. A stopped container's facts do not change until
+ * it starts, and the start changes its key. One inspect asks for all of them.
+ */
+export function staleFacts(
+  containers: readonly DockerContainer[],
+  cache: ReadonlyMap<string, FactsEntry>,
+  nowMs: number,
+  ttl: number = FACTS_TTL_MS,
+): string[] {
+  return containers
+    .filter((c) => {
+      const e = cache.get(c.id);
+      if (!e || e.key !== factsKey(c)) return true;
+      const live = ["running", "restarting"].includes(normalizeState(c.state));
+      return live && nowMs - e.at >= ttl;
+    })
+    .map((c) => c.id);
+}
+
+/** Where a container can be reached inside docker — what its address cell says. */
+export type AddressView =
+  /** Its addresses; `first` is shown, the rest are in the tooltip. */
+  | { kind: "ip"; first: string; all: DockerAddress[] }
+  /** `--network host`: it has no address of its own — the host's. */
+  | { kind: "host" }
+  /** `--network none`: no network at all. */
+  | { kind: "none" }
+  /** `--network container:X`: X's address — `with` is X's name, or its short id. */
+  | { kind: "shared"; with: string }
+  /** Not running: docker gives a stopped container no address. */
+  | { kind: "down" }
+  /** Not asked yet, or docker did not say. */
+  | { kind: "unknown" };
+
+/**
+ * A container's address cell. The address is docker's own — inside its network;
+ * outside the docker host the container is reached through its published ports,
+ * which the view says in words (the tooltip), not by hiding the address.
+ */
+export function containerAddress(
+  c: DockerContainer,
+  facts: DockerFacts | undefined,
+  containers: readonly DockerContainer[] = [],
+): AddressView {
+  if (!facts) return { kind: "unknown" };
+  const mode = facts.networkMode;
+  if (mode === "host") return { kind: "host" };
+  if (mode === "none") return { kind: "none" };
+  if (mode.startsWith("container:")) {
+    const target = mode.slice("container:".length);
+    const peer = containers.find((o) => o.name === target || (o.id && (target.startsWith(o.id) || o.id.startsWith(target))));
+    return { kind: "shared", with: peer?.name ?? target.slice(0, 12) };
+  }
+  const all = facts.addresses.filter((a) => a.ipv4 || a.ipv6);
+  if (all.length > 0) return { kind: "ip", first: all[0].ipv4 || all[0].ipv6, all };
+  return isRunning(c) ? { kind: "unknown" } : { kind: "down" };
+}
+
+/** What a container's own health check says, from `ps`'s status line; null — it has none. */
+export type ContainerHealth = "healthy" | "unhealthy" | "starting";
+
+export function containerHealth(c: DockerContainer): ContainerHealth | null {
+  if (/\(unhealthy\)/.test(c.status)) return "unhealthy";
+  if (/\(health: starting\)/.test(c.status)) return "starting";
+  if (/\(healthy\)/.test(c.status)) return "healthy";
+  return null;
+}
+
+/** The code in `Exited (1) 2 days ago`; null — not an exit line. */
+export function exitCodeOf(c: DockerContainer): number | null {
+  const m = /^Exited \((-?\d+)\)/.exec(c.status.trim());
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Codes a container stopped *on purpose* exits with: 0, and the signals `docker
+ * stop` and Ctrl+C send (SIGTERM 143, SIGKILL after the grace period 137, SIGINT
+ * 130). A kill for memory exits 137 too — that one is told by `OOMKilled`.
+ */
+const STOPPED_ON_PURPOSE = new Set([0, 130, 137, 143]);
+
+/** A container's state cell: the word, its tone and how long it has been so. */
+export interface StateSummary {
+  /** docker's own vocabulary: `running`, `healthy`, `exit 1`, `paused`… — not translated. */
+  word: string;
+  tone: "ok" | "warn" | "bad" | "idle";
+  /** Since the last start (running) or stop (exited), compact; null — not known. */
+  age: string | null;
+}
+
+export function stateSummary(c: DockerContainer, facts: DockerFacts | undefined, nowMs: number = Date.now()): StateSummary {
+  const state = normalizeState(c.state);
+  const since = (t: number | null | undefined): string | null => (t == null ? null : compactAge(t, nowMs) || null);
+  if (state === "running") {
+    const health = containerHealth(c);
+    const tone = health === "unhealthy" ? "warn" : health === "starting" ? "idle" : "ok";
+    return { word: health ?? "running", tone, age: since(facts?.startedAt) };
+  }
+  if (state === "exited") {
+    const code = facts?.exitCode ?? exitCodeOf(c);
+    if (facts?.oomKilled) return { word: "OOMKilled", tone: "bad", age: since(facts.finishedAt) };
+    const tone = code == null || STOPPED_ON_PURPOSE.has(code) ? "idle" : "bad";
+    return { word: code == null ? "exited" : `exit ${code}`, tone, age: since(facts?.finishedAt) };
+  }
+  return { word: state || "—", tone: stateTone(state), age: null };
+}
+
+/** Why a container needs a look (v1.33): the strip above the list. */
+export type AttentionReason = "dead" | "restarting" | "oom" | "unhealthy" | "restarts" | "exited";
+
+export interface DockerAttention {
+  id: string;
+  name: string;
+  reason: AttentionReason;
+  tone: "warn" | "bad";
+  /** The figure that says it: the exit code, how many restarts since the panel opened. */
+  detail: string;
+}
+
+/**
+ * How long an exit stays news. A container that crashed an hour ago needs a
+ * look; one that has been stopped for a week — a stack nobody started again, a
+ * daemon that was shut down under it (`exit 255`) — is history, still shown by
+ * its state word in the list, not by the strip.
+ */
+export const FRESH_EXIT_MS = 24 * 3_600_000;
+
+const ATTENTION_RANK: Record<AttentionReason, number> = {
+  dead: 0,
+  restarting: 1,
+  oom: 2,
+  unhealthy: 3,
+  restarts: 4,
+  exited: 5,
+};
+
+/**
+ * What needs a look, worst first. A restart count that was already there when
+ * the panel first saw the container is history, not news — it counts only once
+ * it grows while the panel is open (`baseline`, the way the monitoring page
+ * reads its counters). An exit the user asked for (`docker stop`) is not a
+ * problem; any other non-zero one is, while it is fresh ({@link FRESH_EXIT_MS});
+ * one whose time is not known yet counts as fresh rather than vanishing.
+ */
+export function dockerAttention(
+  containers: readonly DockerContainer[],
+  facts: ReadonlyMap<string, DockerFacts>,
+  baseline: ReadonlyMap<string, number>,
+  nowMs: number = Date.now(),
+): DockerAttention[] {
+  const out: DockerAttention[] = [];
+  for (const c of containers) {
+    const f = facts.get(c.id);
+    const state = normalizeState(c.state);
+    const add = (reason: AttentionReason, tone: "warn" | "bad", detail = "") =>
+      out.push({ id: c.id, name: c.name, reason, tone, detail });
+    if (state === "dead") add("dead", "bad");
+    else if (state === "restarting") add("restarting", "bad", f?.restarts ? `↻${f.restarts}` : "");
+    else if (state === "exited") {
+      const code = f?.exitCode ?? exitCodeOf(c);
+      const fresh = f?.finishedAt == null || nowMs - f.finishedAt < FRESH_EXIT_MS;
+      if (!fresh) continue;
+      if (f?.oomKilled) add("oom", "bad", code == null ? "" : `exit ${code}`);
+      else if (code != null && !STOPPED_ON_PURPOSE.has(code)) add("exited", "warn", `exit ${code}`);
+    } else if (state === "running") {
+      const grew = f?.restarts != null && f.restarts > (baseline.get(c.id) ?? f.restarts);
+      if (containerHealth(c) === "unhealthy") add("unhealthy", "warn", f?.restarts ? `↻${f.restarts}` : "");
+      else if (grew) add("restarts", "warn", `↻+${f!.restarts! - baseline.get(c.id)!}`);
+    }
+  }
+  return out.sort((a, b) => ATTENTION_RANK[a.reason] - ATTENTION_RANK[b.reason] || byText(a.name, b.name));
+}
+
+/**
+ * The restart counts the panel compares against: the first one it saw of each
+ * container, kept; gone containers forgotten. Pure — the panel holds the map.
+ */
+export function restartBaseline(
+  prev: ReadonlyMap<string, number>,
+  facts: ReadonlyMap<string, DockerFacts>,
+  live: readonly string[],
+): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const id of live) {
+    const seen = prev.get(id);
+    const now = facts.get(id)?.restarts;
+    if (seen != null) next.set(id, seen);
+    else if (now != null) next.set(id, now);
+  }
+  return next;
 }
 
 /** Byte multipliers docker uses in `MemUsage` (it mixes binary and decimal suffixes). */
@@ -643,8 +946,11 @@ export function stateTone(state: string): "ok" | "warn" | "bad" | "idle" {
   }
 }
 
-/** The views of a container's details (`DockerDetail`). */
-export type DockerDetailTab = "overview" | "logs" | "inspect";
+/**
+ * The views of a container's details (`DockerDetail`). The log comes first and
+ * is where details open (v1.33): it is what a container is opened for.
+ */
+export type DockerDetailTab = "logs" | "overview" | "inspect";
 
 // ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
 //

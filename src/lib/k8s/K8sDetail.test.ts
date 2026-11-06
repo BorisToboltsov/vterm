@@ -43,9 +43,9 @@ describe("K8sDetail", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("is content only: no dialog comes with it", () => {
+  it("is content only: no dialog comes with it — and opens on the log (v1.33)", () => {
     render(K8sDetail, { props: props() });
-    expect(screen.getByTestId("k8s-detail-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("k8s-log-tools")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -92,7 +92,7 @@ describe("K8sDetailModal", () => {
     render(K8sDetailModal, { props: { ...rest, open: true } });
     const dialog = screen.getByRole("dialog");
     expect(dialog).toHaveAttribute("aria-label", "web-5f7c");
-    expect(dialog).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(dialog).toContainElement(screen.getByTestId("k8s-log-tools"));
     await fireEvent.click(screen.getByTestId("k8s-ask-ai"));
     expect(onclose).toHaveBeenCalledOnce();
   });
@@ -102,5 +102,22 @@ describe("K8sDetailModal", () => {
     render(K8sDetailModal, { props: { ...rest, open: false } });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
+  });
+});
+
+describe("K8sDetail — the pod's addresses (v1.33)", () => {
+  it("names the pod's IPs and the node's, and a pod still without one", async () => {
+    const view = render(K8sDetail, {
+      props: props({ tab: "overview", pod: ({ ...pod,  podIps: ["10.42.1.17", "fd00::17"], hostIp: "10.0.1.11", node: "node-a" }) }),
+    });
+    expect(screen.getByTestId("k8s-detail-ip")).toHaveTextContent("10.42.1.17 · fd00::17");
+    expect(screen.getByText("node-a").parentElement).toHaveTextContent("node-a · 10.0.1.11");
+    await view.rerender({ pod: ({ ...pod,  podIps: [], hostIp: "" }) });
+    expect(screen.getByTestId("k8s-detail-ip")).toHaveTextContent("No address yet");
+  });
+
+  it("says a hostNetwork pod's address is the node's", () => {
+    render(K8sDetail, { props: props({ tab: "overview", pod: ({ ...pod,  podIps: ["10.0.1.11"], hostNetwork: true }) }) });
+    expect(screen.getByTestId("k8s-detail-ip")).toHaveTextContent("hostNetwork");
   });
 });

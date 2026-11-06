@@ -53,24 +53,28 @@ describe("K8sDetailModal", () => {
     expect(screen.getByTestId("k8s-text").textContent).toContain("log line");
   });
 
-  it("resets to Overview when a different pod is opened", async () => {
-    const { rerender } = render(K8sDetailModal, { props: props() });
+  it("keeps the view and fetches anew when a different pod is opened (v1.33)", async () => {
+    const p = props();
+    const { rerender } = render(K8sDetailModal, { props: p });
     await fireEvent.click(screen.getByTestId("k8s-detail-tab-yaml"));
     await vi.advanceTimersByTimeAsync(0);
     expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
 
     await rerender({ pod: pod({ name: "api-9d2f" }) });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByTestId("k8s-detail-overview")).toBeTruthy();
+    expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
+    expect(p.runQuery.mock.calls.at(-1)?.[0]).toEqual(["get", "pod", "api-9d2f", "-o", "yaml"]);
   });
 
   it("treats a same-named pod in another namespace as a different pod", async () => {
-    const { rerender } = render(K8sDetailModal, { props: props() });
+    const p = props();
+    const { rerender } = render(K8sDetailModal, { props: p });
     await fireEvent.click(screen.getByTestId("k8s-detail-tab-logs"));
     await vi.advanceTimersByTimeAsync(0);
 
     await rerender({ pod: pod({ namespace: "staging" }) });
     await vi.advanceTimersByTimeAsync(0);
-    expect(screen.getByTestId("k8s-detail-overview")).toBeTruthy();
+    // Another pod: its own log, asked in its own namespace.
+    expect(p.runQuery.mock.calls.at(-1)?.[1]).toBe("staging");
   });
 });
