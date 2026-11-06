@@ -21,6 +21,16 @@ import {
   parseContainerDetail,
   parseDiskUsage,
   parseDiskDetail,
+  eventsArgs,
+  parseEvents,
+  eventsOf,
+  eventWord,
+  eventTone,
+  crashLoop,
+  ioPair,
+  rateOf,
+  resourceReadings,
+  resourceKey,
   imageContainers,
   imageSchema,
   diskUsageArgs,
@@ -938,5 +948,83 @@ describe("disk usage (stage 2)", () => {
     if (!use) throw new Error("the «in use» facet is missing");
     const img = (id: string) => ({ id, repository: "r", tag: "t", size: "1MB", created: "" });
     expect([use.value(img("b3a3978ded91")), use.value(img("5872f763edff")), use.value(img("ffff"))]).toEqual(["used", "unused", ""]);
+  });
+});
+
+// Stage 3: what happened to the containers lately — real Docker 29 events.
+const EV = (ns: string, action: string, id: string, name: string, exit = "", signal = "") =>
+  [ns, action, id, name, exit, signal].join("\x1f");
+const EVENTS = [
+  EV("1794001113669318929", "die", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1", "1"),
+  EV("1794001113755722220", "start", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1"),
+  EV("1794001140383168719", "die", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1", "1"),
+  EV("1794001150000000000", "health_status: unhealthy", "aa11", "web"),
+  EV("1794001160000000000", "kill", "aa11", "web", "", "15"),
+  EV("1794001170000000000", "die", "aa11", "web", "143"),
+  EV("1794001180000000000", "exec_die", "aa11", "web"),
+  "junk",
+].join("\n");
+
+describe("events (stage 3)", () => {
+  it("asks for a snapshot that ends, of what matters, not of every health check", () => {
+    const a = eventsArgs();
+    expect(a.slice(0, 6)).toEqual(["docker", "events", "--since", "10m", "--until", "0s"]);
+    expect(a).toContain("event=die");
+    expect(a).not.toContain("event=exec_die");
+  });
+
+  it("reads events newest first, health as its status, nanoseconds as milliseconds", () => {
+    const ev = parseEvents(EVENTS);
+    expect(ev).toHaveLength(6);
+    expect(ev[0]).toMatchObject({ kind: "die", exitCode: 143, name: "web", at: 1794001170000 });
+    expect(ev.find((e) => e.kind === "health")?.health).toBe("unhealthy");
+    expect(eventsOf(ev, "f9ab1ee05285").map((e) => e.kind)).toEqual(["die", "start", "die"]);
+    expect(eventsOf(ev, "")).toEqual([]);
+  });
+
+  it("says each event in docker's words, with a tone", () => {
+    const ev = parseEvents(EVENTS);
+    const byKind = (k: string) => ev.find((e) => e.kind === k)!;
+    expect(eventWord(ev[0])).toBe("die · exit 143");
+    expect(eventTone(ev[0])).toBe("idle"); // docker stop's SIGTERM
+    expect(eventWord(byKind("kill"))).toBe("kill · 15");
+    expect(eventWord(byKind("health"))).toBe("health · unhealthy");
+    expect(eventTone(byKind("health"))).toBe("warn");
+    expect(eventTone(eventsOf(ev, "f9ab")[0])).toBe("bad");
+  });
+
+  it("sees a crash loop the restart policy hides — two deaths with an error, not one, not a stop", () => {
+    const ev = parseEvents(EVENTS);
+    expect(crashLoop(eventsOf(ev, "f9ab"))).toEqual({ dies: 2, exitCode: 1, ooms: 0, last: 1794001140383 });
+    expect(crashLoop(eventsOf(ev, "aa11"))).toBeNull();
+    const looping = ctr({ id: "f9ab1ee05285", name: "life-e2e-imaging-worker-1", status: "Up 3 seconds" });
+    const got = dockerAttention([looping], new Map(), new Map(), 1794001200000, ev);
+    expect(got).toEqual([{ id: "f9ab1ee05285", name: "life-e2e-imaging-worker-1", reason: "crashing", tone: "bad", detail: "2× · exit 1 · 59s" }]);
+  });
+});
+
+describe("resources over time (stage 3)", () => {
+  it("reads docker's I/O halves and turns counters into rates", () => {
+    expect(ioPair("1.2kB / 3.4MB")).toEqual([1200, 3.4e6]);
+    expect(ioPair("")).toEqual([null, null]);
+    expect(rateOf(1000, 3000, 2)).toBe(1000);
+    expect(rateOf(null, 3000, 2)).toBeNull();
+    // A counter that went back (a restart) is not a negative rate.
+    expect(rateOf(3000, 1000, 2)).toBeNull();
+    expect(rateOf(1000, 3000, 0)).toBeNull();
+  });
+
+  it("gives each running container its readings, rates from the previous poll, and gaps to the stopped", () => {
+    const stat = (id: string, net: string): DockerStat => ({ id, name: id, cpu: "12.5%", mem: "100MiB / 1GiB", memPerc: "", netIo: net, blockIo: "0B / 2kB", pids: "1" });
+    const list = [ctr({ id: "aaa" }), ctr({ id: "bbb", state: "exited" })];
+    const parsePct = (v?: string) => (v ? Number.parseFloat(v) : null);
+    const first = resourceReadings([stat("aaa", "1kB / 2kB")], list, new Map(), 1000, parsePct);
+    expect(first.readings[resourceKey("aaa", "cpu")]).toBe(12.5);
+    expect(first.readings[resourceKey("aaa", "mem")]).toBe(100 * 1024 ** 2);
+    expect(first.readings[resourceKey("aaa", "rx")]).toBeNull(); // no previous poll yet
+    expect(resourceKey("bbb", "cpu") in first.readings).toBe(false);
+    const second = resourceReadings([stat("aaa", "3kB / 2kB")], list, first.totals, 3000, parsePct);
+    expect(second.readings[resourceKey("aaa", "rx")]).toBe(1000);
+    expect(second.readings[resourceKey("aaa", "tx")]).toBe(0);
   });
 });

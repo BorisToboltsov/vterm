@@ -85,6 +85,12 @@
     isRunning,
     diskUsageArgs,
     diskDetailArgs,
+    eventsArgs,
+    parseEvents,
+    eventsOf,
+    resourceReadings,
+    type ContainerEvent,
+    type IoTotals,
     parseDiskUsage,
     parseDiskDetail,
     imageContainers,
@@ -104,6 +110,7 @@
     type DockerRegistry,
   } from "./docker";
   import { parsePercent, pushSamples, type LoadHistory } from "../monitoring/loadhistory";
+  import { pushReadings, type History } from "../monitoring/monhistory";
   import {
     collapsedGroups,
     listFilter,
@@ -233,6 +240,16 @@
   const imageFilter = $derived(filterOf("docker.images"));
   const imageOrder = $derived(listOrder("docker.images", IMAGES, IMAGE_ORDER));
   const imageView = $derived(applyView(images, IMAGES, imageFilter, imageOrder));
+
+  // What happened to the containers in the last minutes (stage 3): a snapshot of
+  // `docker events` with every poll — the deaths a restart policy hides from `ps`.
+  let events = $state.raw<ContainerEvent[]>([]);
+  // The resources view's history (stage 3): CPU, memory and the I/O rates of
+  // every container, one sample per poll, kept by the panel so the view opens
+  // with what was polled while it was closed.
+  let resHistory = $state.raw<History>({});
+  let resSeq = $state(-1);
+  let ioTotals: IoTotals = new Map();
 
   // Containers picked for an action on several at once (stage 2).
   let picked = $state.raw<ReadonlySet<string>>(new Set());
@@ -469,8 +486,14 @@
     if (!sessionReady || !availability?.ok) return;
     try {
       if (activeSub === "containers") {
-        const [ps, st] = await Promise.all([runQuery(psArgs()), runQuery(statsArgs())]);
+        const [ps, st, ev] = await Promise.all([
+          runQuery(psArgs()),
+          runQuery(statsArgs()),
+          runQuery(eventsArgs()).catch(() => null),
+        ]);
         containers = parsePs(ps.stdout);
+        // Events are an enrichment: a docker that refuses them leaves the last answer.
+        if (ev && ev.exitCode === 0) events = parseEvents(ev.stdout);
         picked = keepPresent(picked, containers.map((c) => c.id));
         const map = new Map<string, DockerStat>();
         for (const s of parseStats(st.stdout)) map.set(s.id, s);
@@ -484,6 +507,10 @@
           if (pct != null) cpu.set(id, pct);
         }
         cpuHistory = pushSamples(cpuHistory, live, cpu);
+        const res = resourceReadings([...map.values()], containers, ioTotals, Date.now(), parsePercent);
+        ioTotals = res.totals;
+        resSeq += 1;
+        resHistory = pushReadings(resHistory, resSeq, res.readings);
         await loadFacts(containers);
       } else if (activeSub === "images") {
         images = parseImages((await runQuery(imagesArgs())).stdout);
@@ -618,6 +645,10 @@
       picked = new Set();
       disk = undefined;
       diskDetail = undefined;
+      events = [];
+      resHistory = {};
+      resSeq = -1;
+      ioTotals = new Map();
       void checkAvailability().then(() => refresh());
     }
   });
@@ -660,6 +691,7 @@
   });
 
   const ATTENTION_TEXT: Record<AttentionReason, MessageKey> = {
+    crashing: "docker.attnCrashing",
     dead: "docker.attnDead",
     restarting: "docker.attnRestarting",
     oom: "docker.attnOom",
@@ -668,7 +700,7 @@
     exited: "docker.attnExited",
   };
   const attention = $derived(
-    dockerAttention(containers, factsById, baseline).map((a) => ({
+    dockerAttention(containers, factsById, baseline, Date.now(), events).map((a) => ({
       key: a.id,
       name: a.name,
       tone: a.tone,
@@ -987,6 +1019,9 @@
               container={liveDetail}
               stat={detailStat}
               facts={liveDetail ? factsById.get(liveDetail.id) : undefined}
+              events={liveDetail ? eventsOf(events, liveDetail.id) : []}
+              history={resHistory}
+              seq={resSeq}
               {containers}
               {busy}
               {refreshSec}
@@ -1023,6 +1058,9 @@
   container={liveDetail}
   stat={detailStat}
   facts={liveDetail ? factsById.get(liveDetail.id) : undefined}
+  events={liveDetail ? eventsOf(events, liveDetail.id) : []}
+  history={resHistory}
+  seq={resSeq}
   {containers}
   {busy}
   {refreshSec}

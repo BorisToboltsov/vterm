@@ -90,6 +90,44 @@ export function diskDetailArgs(): string[] {
   return ["docker", "system", "df", "-v", "--format", "{{json .}}"];
 }
 
+/** The window the events snapshot looks back over, minutes. */
+export const EVENTS_WINDOW_MIN = 10;
+
+/** The container events that say what happened to it — not the `exec_*` of every health check. */
+export const EVENT_ACTIONS = ["start", "die", "oom", "restart", "kill", "health_status"] as const;
+
+/**
+ * What happened to the containers in the last {@link EVENTS_WINDOW_MIN} minutes
+ * (v1.33, stage 3): `docker events` with `--until 0s` replays the window and
+ * ends — a snapshot, never the stream `docker events` is by default (the policy
+ * refuses it without `--until`). A container that crashes and is brought back by
+ * its restart policy between two polls looks `running` to every `ps`; its `die`
+ * events are what tell.
+ */
+export function eventsArgs(windowMin: number = EVENTS_WINDOW_MIN): string[] {
+  const fmt = [
+    "{{.TimeNano}}",
+    "{{.Action}}",
+    "{{.Actor.ID}}",
+    '{{index .Actor.Attributes "name"}}',
+    '{{index .Actor.Attributes "exitCode"}}',
+    '{{index .Actor.Attributes "signal"}}',
+  ].join(US);
+  return [
+    "docker",
+    "events",
+    "--since",
+    `${windowMin}m`,
+    "--until",
+    "0s",
+    "--filter",
+    "type=container",
+    ...EVENT_ACTIONS.flatMap((e) => ["--filter", `event=${e}`]),
+    "--format",
+    fmt,
+  ];
+}
+
 /** One-shot resource snapshot for the visible containers (no streaming). */
 export function statsArgs(): string[] {
   const fmt = [
@@ -565,8 +603,157 @@ export function parseContainerDetail(raw: string): ContainerDetail | null {
   return { command, restartPolicy, health, env, mounts, labels };
 }
 
+// ── Events (v1.33, stage 3) ──────────────────────────────────────────────────
+
+export type EventKind = "start" | "die" | "oom" | "restart" | "kill" | "health";
+
+/** One event of a container, as `docker events` reported it. */
+export interface ContainerEvent {
+  /** Epoch ms. */
+  at: number;
+  kind: EventKind;
+  /** For `health`: the status it changed to (`unhealthy`, `healthy`). */
+  health: string;
+  /** Full container id. */
+  id: string;
+  name: string;
+  exitCode: number | null;
+  /** For `kill`: the signal sent (`15`, `SIGTERM`). */
+  signal: string;
+}
+
+/** Parse {@link eventsArgs} output, newest first. Unknown actions and junk rows are left out. */
+export function parseEvents(raw: string): ContainerEvent[] {
+  const out: ContainerEvent[] = [];
+  for (const f of rows(raw)) {
+    const ns = (f[0] ?? "").trim();
+    // Nanoseconds overflow a double's exact range; the milliseconds are the first digits.
+    const at = /^\d{7,}$/.test(ns) ? Number(ns.slice(0, -6)) : NaN;
+    const action = (f[1] ?? "").trim();
+    const health = action.startsWith("health_status:") ? action.slice("health_status:".length).trim() : "";
+    const kind: EventKind | null = health ? "health" : (["start", "die", "oom", "restart", "kill"] as const).find((k) => k === action) ?? null;
+    if (!kind || !Number.isFinite(at)) continue;
+    const exit = Number((f[4] ?? "").trim());
+    out.push({
+      at,
+      kind,
+      health,
+      id: (f[2] ?? "").trim(),
+      name: (f[3] ?? "").trim(),
+      exitCode: (f[4] ?? "").trim() !== "" && Number.isInteger(exit) ? exit : null,
+      signal: (f[5] ?? "").trim(),
+    });
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+/** The events of one container (`ps` gives the short id, events the full one), newest first. */
+export function eventsOf(events: readonly ContainerEvent[], id: string): ContainerEvent[] {
+  return id ? events.filter((e) => e.id.startsWith(id)) : [];
+}
+
+/** How an event reads in the list: docker's word, with its code or status — not translated. */
+export function eventWord(e: ContainerEvent): string {
+  if (e.kind === "die") return e.exitCode == null ? "die" : `die · exit ${e.exitCode}`;
+  if (e.kind === "kill") return e.signal ? `kill · ${e.signal}` : "kill";
+  if (e.kind === "health") return `health · ${e.health}`;
+  return e.kind;
+}
+
+/** A tone for an event: a crash or a kill for memory is bad, a failing check a warning. */
+export function eventTone(e: ContainerEvent): "ok" | "warn" | "bad" | "idle" {
+  if (e.kind === "oom") return "bad";
+  if (e.kind === "die") return e.exitCode != null && !STOPPED_ON_PURPOSE.has(e.exitCode) ? "bad" : "idle";
+  if (e.kind === "health") return e.health === "unhealthy" ? "warn" : e.health === "healthy" ? "ok" : "idle";
+  if (e.kind === "start") return "ok";
+  return "idle";
+}
+
+/** A crash loop seen in the events: how many times it died with an error, the last code, when. */
+export interface CrashLoop {
+  dies: number;
+  exitCode: number | null;
+  ooms: number;
+  last: number;
+}
+
+/**
+ * The crash loop of a container in the window: its deaths with an error code
+ * (not a `docker stop`) and its kills for memory. Null below two — one crash is
+ * the state's to tell (`exit 1`), two in the window are a loop the state hides
+ * when the restart policy brings it back before the next poll.
+ */
+export function crashLoop(events: readonly ContainerEvent[]): CrashLoop | null {
+  const bad = events.filter((e) => (e.kind === "die" && e.exitCode != null && !STOPPED_ON_PURPOSE.has(e.exitCode)) || e.kind === "oom");
+  const dies = bad.filter((e) => e.kind === "die");
+  if (dies.length < 2) return null;
+  return {
+    dies: dies.length,
+    exitCode: dies[0].exitCode,
+    ooms: bad.filter((e) => e.kind === "oom").length,
+    last: bad[0].at,
+  };
+}
+
+// ── Resources over time (v1.33, stage 3) ─────────────────────────────────────
+
+/**
+ * The two halves of docker's `NetIO` / `BlockIO` (`"1.2kB / 3.4MB"`) as bytes,
+ * read · written or received · sent; null for a half docker did not give.
+ */
+export function ioPair(s: string | undefined): [number | null, number | null] {
+  const [a, b] = (s ?? "").split("/");
+  return [parseMemUsed(a), parseMemUsed(b)];
+}
+
+/** A cumulative counter as a rate between two readings, bytes/s; null when it cannot be one. */
+export function rateOf(prev: number | null | undefined, now: number | null, dtSec: number): number | null {
+  if (prev == null || now == null || !(dtSec > 0) || now < prev) return null;
+  return (now - prev) / dtSec;
+}
+
+/** What the resources view keeps of a container, per poll, keyed `<id>.<series>`. */
+export const RESOURCE_SERIES = ["cpu", "mem", "rx", "tx", "read", "write"] as const;
+export type ResourceSeries = (typeof RESOURCE_SERIES)[number];
+export const resourceKey = (id: string, series: ResourceSeries): string => `${id}.${series}`;
+
+/** The totals a poll leaves to compute the next poll's rates. */
+export type IoTotals = ReadonlyMap<string, { at: number; rx: number | null; tx: number | null; read: number | null; write: number | null }>;
+
+/**
+ * One poll's readings for the resources view: CPU %, memory used, and the four
+ * I/O counters as rates against the previous poll. A container without a stats
+ * row (stopped) gets no reading — a gap, not a zero.
+ */
+export function resourceReadings(
+  stats: readonly DockerStat[],
+  containers: readonly DockerContainer[],
+  prev: IoTotals,
+  nowMs: number,
+  parsePct: (s: string | undefined) => number | null,
+): { readings: Record<string, number | null>; totals: IoTotals } {
+  const readings: Record<string, number | null> = {};
+  const totals = new Map<string, { at: number; rx: number | null; tx: number | null; read: number | null; write: number | null }>();
+  for (const c of containers) {
+    const st = stats.find((x) => x.id === c.id || c.id.startsWith(x.id) || x.id.startsWith(c.id));
+    if (!st) continue;
+    const [rx, tx] = ioPair(st.netIo);
+    const [read, write] = ioPair(st.blockIo);
+    const before = prev.get(c.id);
+    const dt = before ? (nowMs - before.at) / 1000 : 0;
+    readings[resourceKey(c.id, "cpu")] = parsePct(st.cpu);
+    readings[resourceKey(c.id, "mem")] = parseMemUsed(st.mem);
+    readings[resourceKey(c.id, "rx")] = rateOf(before?.rx, rx, dt);
+    readings[resourceKey(c.id, "tx")] = rateOf(before?.tx, tx, dt);
+    readings[resourceKey(c.id, "read")] = rateOf(before?.read, read, dt);
+    readings[resourceKey(c.id, "write")] = rateOf(before?.write, write, dt);
+    totals.set(c.id, { at: nowMs, rx, tx, read, write });
+  }
+  return { readings, totals };
+}
+
 /** Why a container needs a look (v1.33): the strip above the list. */
-export type AttentionReason = "dead" | "restarting" | "oom" | "unhealthy" | "restarts" | "exited";
+export type AttentionReason = "crashing" | "dead" | "restarting" | "oom" | "unhealthy" | "restarts" | "exited";
 
 export interface DockerAttention {
   id: string;
@@ -586,6 +773,7 @@ export interface DockerAttention {
 export const FRESH_EXIT_MS = 24 * 3_600_000;
 
 const ATTENTION_RANK: Record<AttentionReason, number> = {
+  crashing: -1,
   dead: 0,
   restarting: 1,
   oom: 2,
@@ -607,6 +795,7 @@ export function dockerAttention(
   facts: ReadonlyMap<string, DockerFacts>,
   baseline: ReadonlyMap<string, number>,
   nowMs: number = Date.now(),
+  events: readonly ContainerEvent[] = [],
 ): DockerAttention[] {
   const out: DockerAttention[] = [];
   for (const c of containers) {
@@ -614,7 +803,12 @@ export function dockerAttention(
     const state = normalizeState(c.state);
     const add = (reason: AttentionReason, tone: "warn" | "bad", detail = "") =>
       out.push({ id: c.id, name: c.name, reason, tone, detail });
-    if (state === "dead") add("dead", "bad");
+    // A loop the restart policy hides: `running` to every poll, dying in between.
+    const loop = state === "running" || state === "restarting" ? crashLoop(eventsOf(events, c.id)) : null;
+    if (loop) {
+      const parts = [`${loop.dies}×`, loop.exitCode == null ? "" : `exit ${loop.exitCode}`, compactAge(loop.last, nowMs)];
+      add("crashing", "bad", parts.filter(Boolean).join(" · "));
+    } else if (state === "dead") add("dead", "bad");
     else if (state === "restarting") add("restarting", "bad", f?.restarts ? `↻${f.restarts}` : "");
     else if (state === "exited") {
       const code = f?.exitCode ?? exitCodeOf(c);
@@ -1154,7 +1348,7 @@ export function stateTone(state: string): "ok" | "warn" | "bad" | "idle" {
  * The views of a container's details (`DockerDetail`). The log comes first and
  * is where details open (v1.33): it is what a container is opened for.
  */
-export type DockerDetailTab = "logs" | "overview" | "inspect";
+export type DockerDetailTab = "logs" | "overview" | "resources" | "inspect";
 
 // ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
 //

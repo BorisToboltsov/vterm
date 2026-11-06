@@ -10,6 +10,8 @@ const PS = [
 ].map((row) => row.join(US));
 
 const calls: string[] = [];
+// Whether the events snapshot reports a crash loop (stage 3) — off but in its own test.
+const crashing = vi.hoisted(() => ({ on: false }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   containerRun: vi.fn(async (_session: string, args: string[]) => {
@@ -20,6 +22,12 @@ vi.mock("../api", async (importOriginal) => ({
     if (args[1] === "ps") return ok(PS.join("\n"));
     if (args[1] === "inspect") return ok('[{"Id":"abc123456789"}]');
     if (args[1] === "logs") return ok("GET /healthz 200");
+    if (args[1] === "events") {
+      if (!crashing.on) return ok("");
+      const now = BigInt(Date.now()) * 1_000_000n;
+      const die = (agoMs: number) => [String(now - BigInt(agoMs) * 1_000_000n), "die", "abc123456789ffff", "edge-proxy", "1", ""].join(US);
+      return ok([die(30_000), die(90_000)].join("\n"));
+    }
     if (args[1] === "system" && args.includes("-v")) return ok(JSON.stringify({ Images: [], Volumes: [], Containers: [], BuildCache: [] }));
     if (args[1] === "system") return ok('{"Active":"0","Reclaimable":"33.34GB (98%)","Size":"33.96GB","TotalCount":"143","Type":"Local Volumes"}');
     return ok("");
@@ -292,5 +300,18 @@ describe("DockerPanel — several containers and the disk (stage 2)", () => {
     await waitFor(() => expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.96GB"));
     expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.34GB (98%) can be freed");
     expect(calls.filter((c) => c === "docker system df --format {{json .}}")).toHaveLength(1);
+  });
+});
+
+describe("DockerPanel — what happened lately (stage 3)", () => {
+  it("a container its restart policy keeps bringing back is named, though every poll sees it running", async () => {
+    crashing.on = true;
+    render(DockerPanel, { props: { sessionId: "d-loop", visible: true, sessionReady: true } });
+    const strip = await screen.findByTestId("docker-attention");
+    expect(strip).toHaveTextContent("Crashing and restarting");
+    expect(strip).toHaveTextContent("2× · exit 1");
+    // A snapshot that ends, asked with the containers' poll.
+    expect(calls.some((c) => c.startsWith("docker events --since 10m --until 0s"))).toBe(true);
+    crashing.on = false;
   });
 });

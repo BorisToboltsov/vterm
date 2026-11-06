@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DockerDetailModal from "./DockerDetailModal.svelte";
-import type { DockerContainer } from "./docker";
+import type { ContainerEvent, DockerContainer } from "./docker";
 
 function container(over: Partial<DockerContainer> = {}): DockerContainer {
   return {
@@ -197,5 +197,59 @@ describe("DockerDetailModal — Overview reads the container (stage 1)", () => {
     const asked = p.runQuery.mock.calls.length;
     await vi.advanceTimersByTimeAsync(3000);
     expect(p.runQuery.mock.calls.length).toBe(asked + 1);
+  });
+});
+
+describe("DockerDetailModal — resources and events (stage 3)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const hist = {
+    "abc123456789.cpu": [{ s: 0, v: 10 }, { s: 1, v: 30 }],
+    "abc123456789.mem": [{ s: 0, v: 200 * 1024 ** 2 }, { s: 1, v: 210 * 1024 ** 2 }],
+  };
+  const facts = (over: Record<string, unknown> = {}) => ({
+    cpuCores: 0.5, memBytes: 1024 ** 3, restarts: 0, networkMode: "bridge", addresses: [], startedAt: null, finishedAt: null, exitCode: null, oomKilled: false, ...over,
+  });
+
+  it("draws CPU and memory against the container's own limits, and says when it has none", async () => {
+    const { rerender } = render(DockerDetailModal, { props: { ...props(), tab: "resources", history: hist, seq: 1, facts: facts() } });
+    const res = screen.getByTestId("docker-detail-resources");
+    expect(res).toHaveTextContent("30.0%");
+    expect(res).toHaveTextContent("limit 0.5 cores");
+    expect(res).toHaveTextContent("of 1.0 GiB");
+    for (const id of ["docker-res-cpu", "docker-res-mem", "docker-res-net", "docker-res-disk"]) expect(screen.getByTestId(id)).toBeInTheDocument();
+    await rerender({ facts: facts({ cpuCores: null, memBytes: null }) });
+    expect(screen.getByTestId("docker-detail-resources")).toHaveTextContent("no limit");
+  });
+
+  it("says a stopped container has no readings", () => {
+    render(DockerDetailModal, { props: { ...props({ container: container({ state: "exited", status: "Exited (0) 1 hour ago" }) }), tab: "resources" } });
+    expect(screen.getByTestId("docker-res-down")).toBeInTheDocument();
+  });
+
+  it("lists what happened to it lately in the Overview, a crash in red", async () => {
+    const events: ContainerEvent[] = [
+      { at: Date.parse("2026-11-07T10:00:05Z"), kind: "die", health: "", id: "abc123456789", name: "web", exitCode: 1, signal: "" },
+      { at: Date.parse("2026-11-07T10:00:00Z"), kind: "start", health: "", id: "abc123456789", name: "web", exitCode: null, signal: "" },
+    ];
+    render(DockerDetailModal, {
+      props: { ...props({ runQuery: vi.fn().mockResolvedValue({ stdout: INSPECT_FIXTURE, stderr: "", exitCode: 0 }) }), tab: "overview", events },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    const list = screen.getByTestId("docker-detail-events");
+    expect(list).toHaveTextContent("Events in 10 min");
+    expect(list).toHaveTextContent("die · exit 1");
+    expect(within(list).getByText("die · exit 1").className).toContain("text-bad");
+  });
+
+  it("still lists them when the container's details could not be read — they come from the panel, not from inspect", async () => {
+    const events: ContainerEvent[] = [{ at: Date.parse("2026-11-07T10:00:05Z"), kind: "oom", health: "", id: "abc123456789", name: "web", exitCode: null, signal: "" }];
+    render(DockerDetailModal, {
+      props: { ...props({ runQuery: vi.fn().mockResolvedValue({ stdout: "Error", stderr: "", exitCode: 1 }) }), tab: "overview", events },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId("docker-detail-unread")).toBeInTheDocument();
+    expect(screen.getByTestId("docker-detail-events")).toHaveTextContent("oom");
   });
 });

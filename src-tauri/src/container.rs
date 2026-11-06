@@ -39,6 +39,9 @@ const COMMANDS: &[&[&str]] = &[
     // How much the images, containers, volumes and build cache take, and which of
     // them are in use (`-v`) — read-only (v1.33).
     &["system", "df"],
+    // What happened to the containers in the last minutes — only as a snapshot
+    // that ends (`--until`, see `check_args`), never as the stream it is by default.
+    &["events"],
 ];
 
 /// What `docker compose` may do: the project-scoped actions the panel offers.
@@ -61,6 +64,9 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
     let allowed = COMMANDS
         .iter()
         .any(|cmd| rest.len() >= cmd.len() && cmd.iter().zip(rest).all(|(w, a)| *w == a.as_str()));
+    if allowed && rest.first().map(String::as_str) == Some("events") && !ends_events(rest) {
+        return Err("docker: `events` runs only as a snapshot with `--until`".into());
+    }
     if allowed {
         Ok(())
     } else {
@@ -69,6 +75,19 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
             rest.first().map(String::as_str).unwrap_or("")
         ))
     }
+}
+
+/// Whether a `docker events` argv ends by itself: `--until <time>` (or
+/// `--until=<time>`) is what turns the stream into a snapshot of the past. Without
+/// it the call would hold a channel open until its timeout killed it.
+fn ends_events(rest: &[String]) -> bool {
+    rest.iter().enumerate().any(|(i, a)| {
+        (a == "--until"
+            && rest
+                .get(i + 1)
+                .is_some_and(|v| !v.is_empty() && !v.starts_with('-')))
+            || a.strip_prefix("--until=").is_some_and(|v| !v.is_empty())
+    })
 }
 
 /// `docker compose [-p <project>] [--project-directory <dir>] <action> …`: the
@@ -146,6 +165,19 @@ mod tests {
             &["docker", "system", "df", "-v", "--format", "{{json .}}"],
             &[
                 "docker",
+                "events",
+                "--since",
+                "10m",
+                "--until",
+                "0s",
+                "--filter",
+                "type=container",
+                "--format",
+                "x",
+            ],
+            &["docker", "events", "--since", "10m", "--until=0s"],
+            &[
+                "docker",
                 "compose",
                 "--project-directory",
                 "/srv/web",
@@ -185,6 +217,11 @@ mod tests {
             &["docker", "--config", "/tmp/x", "ps"],
             &["docker", "network", "create", "n"],
             &["docker", "system", "info"],
+            &["docker", "events"],
+            &["docker", "events", "--since", "10m"],
+            &["docker", "events", "--until"],
+            &["docker", "events", "--until", "--since"],
+            &["docker", "events", "--until="],
             &["docker", "system", "dial-stdio"],
             &["docker", "compose", "-f", "/tmp/evil.yml", "up"],
             &["docker", "compose", "--file=/tmp/evil.yml", "up"],

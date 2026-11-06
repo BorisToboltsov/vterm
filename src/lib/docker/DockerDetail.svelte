@@ -12,6 +12,10 @@
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
   import LogTail from "../ui/LogTail.svelte";
+  import Chart from "../monitoring/Chart.svelte";
+  import { series, latest, type History } from "../monitoring/monhistory";
+  import { SERIES } from "../monitoring/monpalette";
+  import { fmtBytes, fmtRate } from "../monitoring/format";
   import { shortStamp, type LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import {
@@ -29,6 +33,12 @@
     stateTone,
     parseContainerDetail,
     MASKED,
+    eventWord,
+    eventTone,
+    resourceKey,
+    EVENTS_WINDOW_MIN,
+    type ContainerEvent,
+    type ResourceSeries,
     type ContainerDetail,
     type DockerContainer,
     type DockerFacts,
@@ -44,6 +54,9 @@
     container = null,
     stat,
     facts = undefined,
+    events = [],
+    history = {},
+    seq = -1,
     containers = [],
     busy = false,
     refreshSec = 3,
@@ -63,6 +76,11 @@
     stat?: DockerStat;
     /** What `inspect` told of it (v1.33): restarts, addresses, times; absent — not asked yet. */
     facts?: DockerFacts;
+    /** Its events in the last minutes, newest first (stage 3) — from the panel's snapshot. */
+    events?: readonly ContainerEvent[];
+    /** The panel's resources history (`<id>.<series>`) and its newest sample number. */
+    history?: History;
+    seq?: number;
     /** Every container — whose network a `container:` one shares is named from it. */
     containers?: readonly DockerContainer[];
     busy?: boolean;
@@ -233,8 +251,13 @@
   const TABS: { id: Tab; label: MessageKey }[] = [
     { id: "logs", label: "docker.viewLogs" },
     { id: "overview", label: "docker.overview" },
+    { id: "resources", label: "docker.resources" },
     { id: "inspect", label: "docker.inspect" },
   ];
+
+  const sample = (series_: ResourceSeries) => (container ? series(history, resourceKey(container.id, series_)) : []);
+  const now = (series_: ResourceSeries) => (container ? latest(history, resourceKey(container.id, series_)) : null);
+  const EVENT_TEXT: Record<string, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", idle: "text-muted" };
 
   const summary = $derived(container ? stateSummary(container, facts) : null);
   const address = $derived(container ? containerAddress(container, facts, containers) : null);
@@ -350,6 +373,21 @@
       {/if}
     </dl>
 
+    {#if events.length > 0}
+      <!-- What happened to it lately: a crash the restart policy hid is here. -->
+      <section data-testid="docker-detail-events">
+        <h4 class={SECTION}>{t("docker.events", { min: EVENTS_WINDOW_MIN })} <span class="tabular-nums">{events.length}</span></h4>
+        <ul class="max-h-36 space-y-0.5 overflow-auto">
+          {#each events.slice(0, 50) as e, i (i)}
+            <li class="flex items-baseline gap-2 px-1">
+              <span class="shrink-0 font-mono text-caption text-muted">{probeTime(e.at)}</span>
+              <span class="font-mono {EVENT_TEXT[eventTone(e)]}">{eventWord(e)}</span>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
     {#if detail === null}
       <p class="mt-3 text-muted" data-testid="docker-detail-unread">{t("docker.detailUnread")}</p>
     {:else if detail}
@@ -457,6 +495,55 @@
       testid="docker"
       onterminal={onFollowLogs ? () => onFollowLogs?.(c, tail) : undefined}
     />
+  {:else if tab === "resources"}
+    <!-- Every container's history is kept by the panel from its own poll — the
+         view opens with what was polled while it was closed. A share is drawn
+         only against a known ceiling (`--cpus`, `--memory`). -->
+    {@const cores = facts?.cpuCores ?? null}
+    {@const memLimit = facts?.memBytes ?? null}
+    <div class="space-y-3 text-meta {fill ? 'min-h-0 flex-1 overflow-auto' : 'max-h-[60vh] overflow-auto'}" data-testid="docker-detail-resources">
+      <p class="text-caption text-muted">{t("docker.resHint", { sec: refreshSec })}</p>
+      {#if !isRunning(c)}
+        <p class="text-muted" data-testid="docker-res-down">{t("docker.resDown")}</p>
+      {/if}
+      <section>
+        <div class="mb-1 flex items-baseline gap-2">
+          <span class="text-muted">{t("docker.cpu")}</span>
+          <span class="tabular-nums text-text/90">{now("cpu") != null ? `${now("cpu")!.toFixed(1)}%` : "—"}</span>
+          <span class="text-caption text-muted">{cores != null ? t("docker.resCpuLimit", { n: cores }) : t("docker.resNoLimit")}</span>
+        </div>
+        <Chart lines={[{ samples: sample("cpu"), color: SERIES.cpu, fill: true }]} {seq} max={cores != null ? cores * 100 : undefined} floor={10} height={72} ticks scaleLabel={cores == null} format={(v) => `${Math.round(v)}%`} interval={refreshSec} testid="docker-res-cpu" />
+      </section>
+      <section>
+        <div class="mb-1 flex items-baseline gap-2">
+          <span class="text-muted">{t("docker.mem")}</span>
+          <span class="tabular-nums text-text/90">{fmtBytes(now("mem"))}</span>
+          <span class="text-caption text-muted">{memLimit != null ? t("docker.resMemLimit", { size: fmtBytes(memLimit) }) : t("docker.resNoLimit")}</span>
+        </div>
+        <!-- Against its limit — a share, on the same scale as the monitoring page's
+             memory; without one, the bytes on an automatic scale named in the corner
+             (a byte figure does not fit the tick gutter). -->
+        {#if memLimit != null}
+          <Chart lines={[{ samples: sample("mem").map((x) => ({ s: x.s, v: x.v == null ? null : (x.v / memLimit) * 100 })), color: SERIES.ram, fill: true }]} {seq} max={100} height={72} ticks format={(v) => `${Math.round(v)}%`} interval={refreshSec} testid="docker-res-mem" />
+        {:else}
+          <Chart lines={[{ samples: sample("mem"), color: SERIES.ram, fill: true }]} {seq} floor={64 * 1024 ** 2} height={72} scaleLabel format={(v) => fmtBytes(v)} interval={refreshSec} testid="docker-res-mem" />
+        {/if}
+      </section>
+      <section>
+        <div class="mb-1 flex items-baseline gap-2">
+          <span class="text-muted">{t("docker.net")}</span>
+          <span class="tabular-nums text-text/90">↓ {fmtRate(now("rx"))} · ↑ {fmtRate(now("tx"))}</span>
+        </div>
+        <Chart lines={[{ samples: sample("rx"), color: SERIES.rx }, { samples: sample("tx"), color: SERIES.tx }]} {seq} mirror floor={1024} height={64} scaleLabel format={(v) => fmtRate(v)} interval={refreshSec} testid="docker-res-net" />
+      </section>
+      <section>
+        <div class="mb-1 flex items-baseline gap-2">
+          <span class="text-muted">{t("docker.resDisk")}</span>
+          <span class="tabular-nums text-text/90">{t("docker.resRead")} {fmtRate(now("read"))} · {t("docker.resWrite")} {fmtRate(now("write"))}</span>
+        </div>
+        <Chart lines={[{ samples: sample("read"), color: SERIES.read }, { samples: sample("write"), color: SERIES.write }]} {seq} mirror floor={1024} height={64} scaleLabel format={(v) => fmtRate(v)} interval={refreshSec} testid="docker-res-disk" />
+      </section>
+    </div>
   {:else}
     <div class="mb-1 flex justify-end">
       <CopyButton text={inspectText} label={t("util.copy")} testid="docker-copy-text" />

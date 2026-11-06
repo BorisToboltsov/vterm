@@ -168,6 +168,14 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   accent-accent`): по наведению, а пока что-то выбрано — у всех строк; выбранная строка —
   `bg-accent/15`. Над списком — строка `bg-accent/10 border-b border-edge px-2 py-1 text-meta`:
   «Выбрано: N», кнопки с подписью (`play`/`stop`/`refresh`, удалить — `text-danger`), крестик справа.
+- **События контейнера** — секция «Обзора» «События за 10 мин» (та же микро-метка): строки
+  `flex items-baseline gap-2 px-1`, время `font-mono text-caption text-muted`, событие `font-mono`
+  тоном (`text-bad` — падение с ошибкой и OOM, `text-warn` — нездоров, `text-ok` — запуск и здоров,
+  `text-muted` — прочее); список не выше `max-h-36`.
+- **«Ресурсы» контейнера** — общий `Chart` мониторинга: CPU и память с заливкой (`SERIES.cpu`,
+  `SERIES.ram`), сеть и диск — зеркальными парами (`SERIES.rx`/`tx`, `read`/`write`), высота 72 и 64;
+  над графиком — подпись `text-muted`, текущее значение `tabular-nums text-text/90` и потолок
+  `text-caption text-muted` («лимит 0.5 ядер», «из 1.0 GiB» или «без лимита»).
 - **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
   text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
   text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —
