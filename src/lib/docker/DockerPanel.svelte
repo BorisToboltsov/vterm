@@ -25,6 +25,8 @@
   import DockerDetail from "./DockerDetail.svelte";
   import DockerText from "./DockerText.svelte";
   import SidePane from "../ui/SidePane.svelte";
+  import { aside } from "../actions/fluidglide";
+  import { MOTION_BASE, motion } from "../ui/motion";
   import ListHeader from "../ui/ListHeader.svelte";
   import FilteredEmpty from "../ui/FilteredEmpty.svelte";
   import { listMenuText, type ListLabels } from "../ui/listtext";
@@ -597,11 +599,12 @@
 
     <!-- Active sub-view; in a wide panel logs, inspect and a container's
          details open beside it (below), not over it. -->
-    <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
     <div
       class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("docker", rowWidth) : null}
       data-testid="docker-list-part"
+      data-morph
     >
       {#if !firstLoadDone}
         <!-- Skeleton until the first load completes (Phase 36, point 2) — never
@@ -741,7 +744,7 @@
       <!-- The border between the list and what stands beside it is dragged
            (`PanelDivider`); the share is the store's, one for every session. -->
       <PanelDivider split="docker" width={rowWidth} />
-      <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side">
+      <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side" in:aside={motion(MOTION_BASE)} out:aside={motion(MOTION_BASE)}>
         {#if modalOpen}
           <SidePane title={modalTitle} onclose={closeModal} testid="docker-side-text">
             <DockerText text={modalText} live={modalLive} fill />

@@ -1,11 +1,16 @@
 // Tells a panel whether it is in its wide layout, by measuring it (v1.7). The
 // threshold and the reason a panel would measure itself rather than use a
 // container query are in `../layout/panelwide.ts`.
+//
+// Crossing the threshold, the panel takes its other layout at once; it shows up
+// anew and the blocks that are in both layouts (`data-morph`) glide from where
+// they stood (`createPanelMorph`) instead of jumping.
 
 import { untrack } from "svelte";
 import { REM_PX } from "../appearance/uiscale";
 import { isWide } from "../layout/panelwide";
 import { uiPx } from "../settings/settings.svelte";
+import { createPanelMorph } from "./fluidglide";
 
 /**
  * `use:wideWhen={(wide) => …}` — calls back with the panel's layout once at
@@ -15,12 +20,19 @@ import { uiPx } from "../settings/settings.svelte";
 export function wideWhen(node: HTMLElement, onchange: (wide: boolean) => void) {
   let report = onchange;
   let last: boolean | null = null;
+  const morph = createPanelMorph(node);
   const check = (): void => {
     // Container queries resolve `rem` against the root font size, which is this.
     const wide = isWide(node.clientWidth, uiPx(REM_PX));
-    if (wide === last) return;
+    if (wide === last) {
+      morph.record();
+      return;
+    }
+    const crossed = last !== null;
     last = wide;
     untrack(() => report(wide));
+    // The panel's own markup redraws on the next microtask; the glide starts after.
+    queueMicrotask(crossed ? morph.play : morph.record);
   };
   const observer = new ResizeObserver(check);
   observer.observe(node);

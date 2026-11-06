@@ -87,6 +87,7 @@
 <div
   class="flex min-w-0 shrink-0 items-center gap-1 border-b border-edge px-2 py-1 text-meta text-muted"
   data-testid={testid}
+  data-morph
 >
   <FilterField
     value={filter.text}

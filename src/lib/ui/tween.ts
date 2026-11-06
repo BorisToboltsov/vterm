@@ -24,6 +24,8 @@ export const STATUS_MS = 300;
 export const SCALE_MS = 600;
 /** The history's line giving way to the one its merged points draw. */
 export const MERGE_MS = 600;
+/** The idle card's layout giving way to the one its new room takes (a dock opened, the window resized). */
+export const TIER_MS = 400;
 
 /** A value on its way from `from` to `to`, started at `at` (ms). `to` null — unknown, nothing to show. */
 export interface Tween {

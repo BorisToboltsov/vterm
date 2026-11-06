@@ -27,6 +27,7 @@
     idleSample,
     pushSample,
     tokenizeBuffer,
+    type CardTier,
     type IdleSample,
     type WordToken,
   } from "./idlefx";
@@ -63,6 +64,7 @@
     LINE_MS,
     MERGE_MS,
     progress,
+    TIER_MS,
     retarget,
     RING_MS,
     still,
@@ -255,6 +257,7 @@
     if (active) return;
     active = true;
     started = performance.now();
+    tierNow = tierWas = null;
     snapText = "";
     try {
       snapText = bufferText();
@@ -650,17 +653,40 @@
     ctx.fillStyle = p.background;
     ctx.fillRect(0, 0, W, H);
     const tier = cardTier(W, H);
+    // A new room takes another layout: the old one gives way to it (TIER_MS)
+    // rather than vanishing in one frame. The first layout of a showing just shows.
+    if (tier !== tierNow) {
+      tierWas = tierNow;
+      tierNow = tier;
+      tierAt = now;
+    }
+    const k = tierWas ? easeOut(progress(tierAt, now, ms(TIER_MS))) : 1;
+    if (k >= 1) tierWas = null;
     const { dx, dy } = shiftOffset(now, settings.idleShiftEverySec);
     drift = { dx, dy };
     ctx.save();
     ctx.translate(dx, dy);
+    if (tierWas) {
+      ctx.globalAlpha = 1 - k;
+      drawTier(tierWas, ctx, W, H, now, p);
+      ctx.globalAlpha = k;
+    }
+    drawTier(tier, ctx, W, H, now, p);
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    if (prod && sessionId) prodFrame(ctx, W, H, p);
+  }
+
+  // The layout drawn now, the one giving way to it, and when it began to.
+  let tierNow: CardTier | null = null;
+  let tierWas: CardTier | null = null;
+  let tierAt = 0;
+  function drawTier(tier: CardTier, ctx: CanvasRenderingContext2D, W: number, H: number, now: number, p: Pal) {
     if (tier === "standby" || tier === "compact") drawStandby(ctx, W, H, now, p, tier === "standby");
     else if (tier === "full") drawCardFull(ctx, W, H, now, p);
     else if (tier === "wide" || tier === "row") drawCardWide(ctx, W, H, now, p, tier === "wide");
     else if (tier === "stack") drawCardStack(ctx, W, H, now, p);
     else drawCardSmall(ctx, W, H, now, p, tier === "mini");
-    ctx.restore();
-    if (prod && sessionId) prodFrame(ctx, W, H, p);
   }
 
   const MONO = "ui-monospace,Menlo,monospace";
@@ -1257,15 +1283,17 @@
       series(points, "load", p.yellow, false);
       series(points, "cpu", p.green, true);
     };
-    // Just after its points merged, the old line fades out as the new one comes in.
+    // Just after its points merged, the old line fades out as the new one comes in —
+    // within whatever the card itself is drawn at (its layout may be fading too).
+    const base = ctx.globalAlpha;
     const k = merged ? easeOut(progress(merged.at, frameAt, ms(MERGE_MS))) : 1;
     if (merged && k < 1) {
-      ctx.globalAlpha = 1 - k;
+      ctx.globalAlpha = base * (1 - k);
       lines(merged.points);
-      ctx.globalAlpha = k;
+      ctx.globalAlpha = base * k;
     } else merged = null;
     lines(pts);
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = base;
     return { from, to };
   }
 

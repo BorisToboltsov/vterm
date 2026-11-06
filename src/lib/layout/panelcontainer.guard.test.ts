@@ -362,7 +362,7 @@ describe("panel container guard — catches what it exists for", () => {
 
   it("a fixed element written straight into a container", () => {
     const rel = "lib/k8s/K8sPanel.svelte";
-    const broken = mutate(all[rel], '      <div class="min-h-0 min-w-0 flex-1" data-testid="k8s-side">', '      <div class="fixed inset-0 z-40" data-testid="k8s-side">');
+    const broken = mutate(all[rel], '      <div class="min-h-0 min-w-0 flex-1" data-testid="k8s-side"', '      <div class="fixed inset-0 z-40" data-testid="k8s-side"');
     expect(containerViolations(rel, withSource(rel, broken))).toEqual([
       "lib/k8s/K8sPanel.svelte: a fixed element inside a query container",
     ]);
@@ -453,7 +453,7 @@ describe("panel container guard — catches what it exists for", () => {
 
   it("is not fooled by a comment, or by a class that merely contains the word", () => {
     const rel = "lib/docker/DockerPanel.svelte";
-    const commented = mutate(all[rel], '      <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side">', '      <!-- <Modal open /> a fixed overlay would go here -->\n      <div class="min-h-0 min-w-0 flex-1 table-fixed" data-testid="docker-side">');
+    const commented = mutate(all[rel], '      <div class="min-h-0 min-w-0 flex-1" data-testid="docker-side"', '      <!-- <Modal open /> a fixed overlay would go here -->\n      <div class="min-h-0 min-w-0 flex-1 table-fixed" data-testid="docker-side"');
     expect(containerViolations(rel, withSource(rel, commented))).toEqual([]);
   });
 });

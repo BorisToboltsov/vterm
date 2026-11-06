@@ -29,10 +29,13 @@ describe("EmptyState", () => {
     expect(screen.getByRole("button", { name: "Do it" })).toBeInTheDocument();
   });
 
-  describe("fits its room (v1.30)", () => {
-    /** Give the root `room` px; its content needs what the tier it is in needs. */
-    function room(root: HTMLElement, px: number) {
-      const needs: Record<string, number> = { full: 200, medal: 120, line: 70, title: 30 };
+  describe("fits its room", () => {
+    /** Give the root `room` px and its text row `text` px; past the text, its
+     *  content needs what the tier it is in needs. */
+    function room(root: HTMLElement, px: number, text = 60) {
+      const needs: Record<string, number> = { badge: 200, line: 70, title: 30 };
+      const row = root.firstElementChild!.children[1];
+      Object.defineProperty(row, "offsetHeight", { configurable: true, value: text });
       Object.defineProperty(root, "clientHeight", { configurable: true, value: px });
       Object.defineProperty(root, "scrollHeight", {
         configurable: true,
@@ -44,19 +47,34 @@ describe("EmptyState", () => {
       for (const o of observers) o.cb([{ target: root }]);
     }
 
-    it("starts roomiest and steps down to what fits — badge, medallion, row, title", () => {
+    it("starts on the full badge and gives way as the room goes — shrinks, then the row, then the title", () => {
       render(EmptyState, {
         props: { icon: "plug", title: "No connection", hint: "Reconnect.", children: action },
       });
       const root = screen.getByTestId("empty-state");
-      expect(root.dataset.tier).toBe("full");
-      const seen = [400, 150, 90, 20].map((px) => {
+      expect(root.dataset.tier).toBe("badge");
+      expect(root.style.getPropertyValue("--empty-badge")).toBe("3.5rem");
+      const seen = [400, 150, 100, 20].map((px) => {
         room(root, px);
-        return root.dataset.tier;
+        return `${root.dataset.tier}${root.dataset.clamp === undefined ? "" : " clamped"}`;
       });
-      expect(seen).toEqual(["full", "medal", "line", "title"]);
+      expect(seen).toEqual(["badge", "badge clamped", "line", "title"]);
       room(root, 400);
-      expect(root.dataset.tier).toBe("full");
+      expect(root.dataset.tier).toBe("badge");
+      expect(root.dataset.clamp).toBeUndefined();
+    });
+
+    it("draws the badge as one circle, as wide as it is tall, between its lines", () => {
+      render(EmptyState, { props: { icon: "plug", title: "No connection" } });
+      const badge = screen.getByTestId("empty-state-badge");
+      const circle = badge.querySelector('[data-empty-icon="badge"]')!;
+      expect(circle.className).toMatch(/\bsize-\(--empty-badge\)/);
+      expect(circle.className).toMatch(/\bshrink-0\b/);
+      expect([...badge.children].map((c) => /scale-x-\(--empty-lines\)/.test(c.className))).toEqual([
+        true,
+        false,
+        true,
+      ]);
     });
 
     it("keeps one set of actions and the hint, whatever the tier", () => {

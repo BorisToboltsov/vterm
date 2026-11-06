@@ -141,7 +141,9 @@ export function driftViolations(overlay: string): string[] {
   const out: string[] = [];
   const offset = body.indexOf("const { dx, dy } = shiftOffset(now, settings.idleShiftEverySec);");
   const moved = body.indexOf("ctx.translate(dx, dy);");
-  const first = body.search(/drawStandby\(ctx,|drawCardFull\(ctx,/);
+  // The layouts are drawn through `drawTier` — the new one and, while it gives
+  // way, the old one: whichever comes first must come after the shift.
+  const first = body.search(/drawTier\(|drawStandby\(ctx,|drawCardFull\(ctx,/);
   if (offset < 0 || moved < offset || first < 0 || moved > first) out.push("the card is drawn without drifting");
   const restore = body.lastIndexOf("ctx.restore();");
   const frame = body.indexOf("prodFrame(ctx,");

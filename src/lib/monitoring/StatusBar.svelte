@@ -14,6 +14,7 @@
   // history raises its tile — the overview's tile, over the bar.
   import { untrack } from "svelte";
   import { tooltip } from "../actions/tooltip";
+  import { createRowGlide } from "../actions/fluidglide";
   import { sftpCancel, type Metrics } from "../api";
   import { fmtBytes, fmtPct, fmtRate, fmtUptime, memPct, osIconFor, rateParts } from "./format";
   import { settings, uiPx } from "../settings/settings.svelte";
@@ -134,6 +135,18 @@
     const next = fitBar(items, el.clientWidth, sep, more);
     if (next.size !== hidden.size || [...next].some((g) => !hidden.has(g))) hidden = next;
   }
+
+  // What leaves for «⋯» flies into it and what comes back flies out of it; the
+  // rest glide to their places — at the bar's own pace (STATUS_MS), no flash.
+  const rowGlide = createRowGlide(() => groupsEl, { more: "more", base: STATUS_MS });
+  $effect.pre(() => {
+    void hidden;
+    untrack(() => rowGlide.snapshot());
+  });
+  $effect(() => {
+    void hidden;
+    untrack(() => rowGlide.play());
+  });
 
   // Measure again whenever the row, a group or the set of groups changes size.
   $effect(() => {
@@ -441,6 +454,7 @@
             {@const off = hidden.has(g)}
             <span
               data-group={g}
+              data-row-key={g}
               class="flex shrink-0 items-center gap-2 {off ? 'pointer-events-none invisible absolute' : ''}"
               aria-hidden={off || undefined}
             >
@@ -466,6 +480,7 @@
           <button
             type="button"
             data-more
+            data-row-key="more"
             data-testid="bar-more"
             class="flex shrink-0 items-center gap-0.5 rounded px-1 hover:bg-edge hover:text-text {hidden.size
               ? ''

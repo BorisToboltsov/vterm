@@ -19,6 +19,8 @@
   import type { MenuAction, OpenMenu } from "../ui/ctxmenu";
   import { tooltip } from "../actions/tooltip";
   import { glide } from "../actions/drag";
+  import { viaMore } from "../actions/fluidglide";
+  import { scale } from "svelte/transition";
   import { motion } from "../ui/motion";
   import { settings, uiPx } from "../settings/settings.svelte";
   import {
@@ -84,6 +86,20 @@
     hasNotes?: boolean;
     onOpenNotes?: () => void;
   } = $props();
+
+  /** The address after the name fades as the bar cuts it: what shows of it, its opacity. */
+  function fadeAsCut(node: HTMLElement) {
+    const fade = (): void => {
+      // The address itself is what is cut (`truncate`): its scroll width is all of it.
+      const text = node.lastElementChild as HTMLElement | null;
+      const whole = text?.scrollWidth ?? 0;
+      node.style.opacity = text && whole > 0 ? String(Math.min(1, (text.clientWidth / whole) * 1.5)) : "";
+    };
+    const observer = new ResizeObserver(fade);
+    observer.observe(node);
+    fade();
+    return { destroy: () => observer.disconnect() };
+  }
 
   // Width of the whole bar, px: what decides how many buttons fit.
   let barWidth = $state(0);
@@ -257,9 +273,17 @@
 >
   {#if subtitle}
     <Icon name="server" size={14} class="shrink-0 text-muted" />
-    <span class="shrink-0 truncate text-xs font-medium text-text">{title}</span>
-    <span class="shrink-0 text-xs text-muted">·</span>
-    <span class="min-w-0 truncate text-xs text-muted">{subtitle}</span>
+    <!-- The name gives way last: short of room the address goes first, fading as it
+         is cut (`shrink-[0.001]` against the address's `shrink`), then the name. -->
+    <span class="min-w-0 shrink-[0.001] truncate text-xs font-medium text-text">{title}</span>
+    <span
+      class="flex min-w-0 shrink items-baseline gap-2 overflow-hidden whitespace-nowrap text-xs text-muted"
+      data-testid="topbar-crumb-tail"
+      use:fadeAsCut
+    >
+      <span class="shrink-0">·</span>
+      <span class="min-w-0 truncate">{subtitle}</span>
+    </span>
   {:else}
     <span class="truncate text-xs text-muted">{title}</span>
   {/if}
@@ -285,6 +309,8 @@
         data-topbar-pin={a.pinned ? settings.topbar.indexOf(a.id) : undefined}
         data-topbar-own={a.id === topbarDrag.id ? "" : undefined}
         animate:glide={motion()}
+        in:viaMore={{ ...motion(), more: "[data-topbar-more]" }}
+        out:viaMore={{ ...motion(), more: "[data-topbar-more]" }}
         onpointerdown={(e) => a.pinned && beginTopbarDrag(e, a.id)}
         onclickcapture={swallowDragClick}
       >
@@ -297,6 +323,8 @@
         use:tooltip={t("topbar.more")}
         aria-label={t("topbar.more")}
         aria-haspopup="menu"
+        data-topbar-more
+        in:scale={{ ...motion(), start: 0.6 }}
         data-testid="topbar-more"
         onclick={openOverflow}
       >

@@ -14,6 +14,8 @@
   import Modal from "../ui/Modal.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import SidePane from "../ui/SidePane.svelte";
+  import { aside } from "../actions/fluidglide";
+  import { MOTION_BASE, motion } from "../ui/motion";
   import PanelDivider from "../ui/PanelDivider.svelte";
   import GitCommitDetail from "./GitCommitDetail.svelte";
   import GitLogFilter from "./GitLogFilter.svelte";
@@ -421,11 +423,12 @@
 {#if rows.length === 0 && !filtered && !searchError}
   <p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p>
 {:else}
-  <div class="flex h-full min-h-0 text-xs {beside ? '' : 'flex-col'}" bind:clientWidth={rowWidth} data-testid="git-graph-row">
+  <div class="relative flex h-full min-h-0 text-xs {beside ? '' : 'flex-col'}" bind:clientWidth={rowWidth} data-testid="git-graph-row">
     <!-- The list and its search. It holds no dialog of its own: the filter bar's
          stand beside it, and a commit's menu stands at the root. -->
     <div
       class="flex min-h-0 min-w-0 flex-col {beside ? 'shrink-0' : 'flex-1'}"
+      data-morph
       style:width={beside ? partWidth("gitCommit", rowWidth) : null}
       data-testid="git-graph-column"
     >
@@ -574,7 +577,7 @@
     {#if sel}
       {#if beside}
         <PanelDivider split="gitCommit" width={rowWidth} />
-        <div class="min-h-0 min-w-0 flex-1" data-testid="git-commit-side">
+        <div class="min-h-0 min-w-0 flex-1" data-testid="git-commit-side" in:aside={motion(MOTION_BASE)} out:aside={motion(MOTION_BASE)}>
           <SidePane title={`${sel.short} · ${sel.subject}`} testid="git-commit-pane">
             {@render commitDetail(sel, true)}
           </SidePane>
