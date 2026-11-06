@@ -19,6 +19,7 @@
   import ContextMenu from "../ui/ContextMenu.svelte";
   import DockerContainers from "./DockerContainers.svelte";
   import DockerImages from "./DockerImages.svelte";
+  import DockerDiskUsage from "./DockerDiskUsage.svelte";
   import DockerNetworks from "./DockerNetworks.svelte";
   import DockerTextModal from "./DockerTextModal.svelte";
   import DockerDetailModal from "./DockerDetailModal.svelte";
@@ -36,6 +37,7 @@
   import AttentionStrip from "../ui/AttentionStrip.svelte";
   import type { LogTailSize } from "../ui/loglines";
   import { hideableFields } from "../ui/colfit";
+  import { keepPresent } from "../ui/listselect";
   import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
@@ -76,9 +78,21 @@
     containerSchema,
     parseMemUsed,
     pruneImagesArgs,
+    startArgs,
+    stopArgs,
+    restartArgs,
+    removeArgs,
+    isRunning,
+    diskUsageArgs,
+    diskDetailArgs,
+    parseDiskUsage,
+    parseDiskDetail,
+    imageContainers,
+    imageSchema,
+    type DiskRow,
+    type DiskDetail,
     CONTAINER_ORDER,
     IMAGE_ORDER,
-    IMAGE_SCHEMA,
     STANDALONE,
     type DockerAvailability,
     type DockerImage,
@@ -200,15 +214,29 @@
   const IMAGE_LABELS: ListLabels = {
     group: () => t("docker.repository"),
     sort: (id) => t(SORT_LABEL[id]),
-    facet: () => t("docker.imageKind"),
-    value: (_f, v) => t(v === "dangling" ? "docker.imageDangling" : "docker.imageTagged"),
+    facet: (id) => t(id === "use" ? "docker.imageUse" : "docker.imageKind"),
+    value: (f, v) =>
+      f === "use"
+        ? t(v === "used" ? "docker.imageUsed" : "docker.imageUnused")
+        : t(v === "dangling" ? "docker.imageDangling" : "docker.imageTagged"),
   };
   const containerFilter = $derived(filterOf("docker.containers"));
   const containerOrder = $derived(listOrder("docker.containers", CONTAINERS, CONTAINER_ORDER));
   const containerView = $derived(applyView(containers, CONTAINERS, containerFilter, containerOrder));
+  // What docker takes on the disk and who uses what (stage 2): undefined — being
+  // asked, null — the answer could not be read. Asked when the images or the
+  // networks view opens, on «Refresh» and after a removal — never on the poll.
+  let disk = $state<DiskRow[] | null | undefined>(undefined);
+  let diskDetail = $state.raw<DiskDetail | null | undefined>(undefined);
+  // The «in use» facet exists only once docker has said who uses what.
+  const IMAGES = $derived(imageSchema(diskDetail ? (img: DockerImage) => imageContainers(img, diskDetail) : undefined));
   const imageFilter = $derived(filterOf("docker.images"));
-  const imageOrder = $derived(listOrder("docker.images", IMAGE_SCHEMA, IMAGE_ORDER));
-  const imageView = $derived(applyView(images, IMAGE_SCHEMA, imageFilter, imageOrder));
+  const imageOrder = $derived(listOrder("docker.images", IMAGES, IMAGE_ORDER));
+  const imageView = $derived(applyView(images, IMAGES, imageFilter, imageOrder));
+
+  // Containers picked for an action on several at once (stage 2).
+  let picked = $state.raw<ReadonlySet<string>>(new Set());
+  const pickedContainers = $derived(containers.filter((c) => picked.has(c.id)));
 
   // The wide layout (v1.7): the panel is laid out by its container query, but
   // whether details open beside the list or as a dialog is behaviour, not layout
@@ -301,11 +329,12 @@
    */
   async function run(
     args: string[],
-    opts: { destructive?: boolean; successKey?: string } = {},
+    opts: { destructive?: boolean; successKey?: string; label?: string } = {},
   ): Promise<boolean> {
     if (busy) return false;
     if (opts.destructive || needsConfirm(args)) {
-      const ok = await askConfirm(args.join(" "));
+      // An action on several containers names them, not their ids (stage 2).
+      const ok = await askConfirm(opts.label ?? args.join(" "));
       if (!ok) return false;
     }
     busy = true;
@@ -318,6 +347,9 @@
       }
       if (opts.successKey) notifySuccess(t(opts.successKey as MessageKey));
       await refresh();
+      // A removal or a prune changes what the disk holds and who uses what.
+      const removes = ["rm", "rmi", "prune"].some((w) => args.slice(1, 3).includes(w));
+      if (removes && activeSub !== "containers") void loadDisk();
       return true;
     } catch (e) {
       notifyError(String(e));
@@ -378,6 +410,38 @@
     oomKilled: false,
   };
 
+  /** Ask docker what the disk holds and who uses what — two reads, side by side. */
+  async function loadDisk() {
+    if (!sessionReady || !availability?.ok) return;
+    const [sum, det] = await Promise.allSettled([runQuery(diskUsageArgs(), 60), runQuery(diskDetailArgs(), 60)]);
+    disk = sum.status === "fulfilled" && sum.value.exitCode === 0 ? parseDiskUsage(sum.value.stdout) : null;
+    diskDetail = det.status === "fulfilled" && det.value.exitCode === 0 ? parseDiskDetail(det.value.stdout) : null;
+  }
+
+  // ── Several containers at once (stage 2) ──────────────────────────────────
+
+  const namesOf = (list: readonly DockerContainer[]): string => list.map((c) => c.name).join(" ");
+  async function bulk(kind: "start" | "stop" | "restart" | "remove") {
+    const all = pickedContainers;
+    const running = all.filter(isRunning);
+    const stopped = all.filter((c) => !isRunning(c));
+    if (kind === "start" && stopped.length) {
+      await run(startArgs(stopped.map((c) => c.id)), { successKey: "docker.started" });
+    } else if (kind === "stop" && running.length) {
+      await run(stopArgs(running.map((c) => c.id)), { successKey: "docker.stopped", label: `docker stop ${namesOf(running)}` });
+    } else if (kind === "restart" && all.length) {
+      await run(restartArgs(all.map((c) => c.id)), { successKey: "docker.restarted", label: `docker restart ${namesOf(all)}` });
+    } else if (kind === "remove" && all.length) {
+      const force = running.length > 0;
+      const ok = await run(removeArgs(all.map((c) => c.id), force), {
+        destructive: true,
+        successKey: "docker.removed",
+        label: `docker rm${force ? " -f" : ""} ${namesOf(all)}`,
+      });
+      if (ok) picked = new Set();
+    }
+  }
+
   /** Probe whether docker is usable on this host (drives the empty state). */
   async function checkAvailability() {
     try {
@@ -407,6 +471,7 @@
       if (activeSub === "containers") {
         const [ps, st] = await Promise.all([runQuery(psArgs()), runQuery(statsArgs())]);
         containers = parsePs(ps.stdout);
+        picked = keepPresent(picked, containers.map((c) => c.id));
         const map = new Map<string, DockerStat>();
         for (const s of parseStats(st.stdout)) map.set(s.id, s);
         statsById = map;
@@ -550,6 +615,9 @@
       cpuHistory = {};
       factsCache = new Map();
       baseline = new Map();
+      picked = new Set();
+      disk = undefined;
+      diskDetail = undefined;
       void checkAvailability().then(() => refresh());
     }
   });
@@ -560,7 +628,11 @@
   $effect(() => {
     const sub = activeSub;
     untrack(() => rememberSub(sessionId, "docker", sub));
-    if (availability?.ok) void refresh();
+    if (availability?.ok) {
+      void refresh();
+      // What the disk holds is read when its views open, not on every poll.
+      if (sub !== "containers") untrack(() => void loadDisk());
+    }
   });
 
   // Poll the live view while docker is available AND the tab is on screen. A
@@ -700,7 +772,7 @@
             <Icon name="key" size={14} />
           </button>
         {/if}
-        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => refresh()}>
+        <button class="rounded p-1 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.refresh")} aria-label={t("docker.refresh")} onclick={() => { void refresh(); if (activeSub !== "containers") void loadDisk(); }}>
           <Icon name="refresh" size={14} />
         </button>
       </div>
@@ -768,6 +840,18 @@
             fold={(c) => setGroupsCollapsed(sessionId, "docker.containers", containerView.groups.map((g) => g.key), c)}
             testid="docker-list-header"
           />
+          {#if picked.size > 0}
+            {@const running = pickedContainers.filter(isRunning).length}
+            <!-- An action on the picked containers at once; the confirmation names them. -->
+            <div class="flex shrink-0 flex-wrap items-center gap-1 border-b border-edge bg-accent/10 px-2 py-1 text-meta" data-testid="docker-picked-bar">
+              <span class="mr-1 text-text/90">{t("docker.picked", { n: picked.size })}</span>
+              <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy || running === picked.size} data-testid="docker-picked-start" onclick={() => bulk("start")}><Icon name="play" size={12} />{t("docker.start")}</button>
+              <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy || running === 0} data-testid="docker-picked-stop" onclick={() => bulk("stop")}><Icon name="stop" size={12} />{t("docker.stop")}</button>
+              <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} data-testid="docker-picked-restart" onclick={() => bulk("restart")}><Icon name="refresh" size={12} />{t("docker.restart")}</button>
+              <button class="flex items-center gap-1 rounded px-1.5 py-0.5 text-danger hover:bg-edge disabled:opacity-40" disabled={busy} data-testid="docker-picked-remove" onclick={() => bulk("remove")}><Icon name="trash" size={12} />{t("docker.remove")}</button>
+              <button class="ml-auto rounded p-1 text-muted hover:bg-edge hover:text-text" aria-label={t("docker.pickedClear")} use:tooltip={t("docker.pickedClear")} data-testid="docker-picked-clear" onclick={() => (picked = new Set())}><Icon name="close" size={12} /></button>
+            </div>
+          {/if}
           <div class="min-h-0 flex-1">
           {#if containerView.shown === 0}
             <FilteredEmpty
@@ -788,6 +872,8 @@
             {factsById}
             all={containers}
             selectedId={detailOpen ? (liveDetail?.id ?? null) : null}
+            {picked}
+            onpick={(next) => (picked = next)}
             {busy}
             {run}
             onShell={openShell}
@@ -802,13 +888,17 @@
           </div>
         {/if}
       {:else if activeSub === "images"}
+        <!-- What the disk holds stands above the images, with or without any:
+             the build cache and the volumes take room on a host with no images. -->
+        <div class="flex h-full min-h-0 flex-col">
+        <DockerDiskUsage rows={disk} />
         {#if images.length === 0}
-          <EmptyState icon="container" title={t("docker.noImages")} />
+          <div class="min-h-0 flex-1"><EmptyState icon="container" title={t("docker.noImages")} /></div>
         {:else}
-          <div class="flex h-full min-h-0 flex-col">
+          <div class="flex min-h-0 flex-1 flex-col">
             <ListHeader
               items={images}
-              schema={IMAGE_SCHEMA}
+              schema={IMAGES}
               filter={imageFilter}
               onfilter={setFilter("docker.images")}
               order={imageOrder}
@@ -834,7 +924,7 @@
             <div class="min-h-0 flex-1">
               {#if imageView.shown === 0}
                 <FilteredEmpty
-                  summary={filterSummary(IMAGE_SCHEMA, imageFilter, listMenuText(IMAGE_LABELS))}
+                  summary={filterSummary(IMAGES, imageFilter, listMenuText(IMAGE_LABELS))}
                   onreset={() => setListFilter(sessionId, "docker.images", NO_FILTER)}
                 />
               {:else}
@@ -844,6 +934,7 @@
                   collapsed={foldOf("docker.images")}
                   ontoggle={toggleFold("docker.images")}
                   {busy}
+                  detail={diskDetail}
                   {run}
                   onInspect={openImageInspect}
                   {showMenu}
@@ -852,10 +943,12 @@
             </div>
           </div>
         {/if}
+        </div>
       {:else}
         <DockerNetworks
           {networks}
           {volumes}
+          usage={diskDetail}
           {containers}
           view={netView}
           onView={pickNetView}

@@ -110,7 +110,10 @@ export function listViolations(source: string, list: "docker.containers" | "k8s.
   if (!new RegExp(`fitColumns\\(\\s*"${list.replace(".", "\\.")}"`).test(c)) out.push("the table is not drawn from fitColumns");
   if (!/hiddenFields\(/.test(c)) out.push("the columns the user hid are not taken off");
   if (!/fit\.dropped\.length > 0/.test(c)) out.push("what the width took off is not said");
-  if (!/onclick=\{\(e\) => \{\s*if \(!\(e\.target as HTMLElement\)\.closest\("button"\)\) onViewDetails\(/.test(c)) {
+  // A plain click opens the details — with or without picking several rows by
+  // modifier keys (stage 2) in front of it; a click on the row's own buttons does not.
+  const click = /onclick=\{\(e\) => \{([^]*?)\n\s*\}\}/.exec(c)?.[1] ?? "";
+  if (!/closest\("button/.test(click) || !/onViewDetails\(/.test(click)) {
     out.push("a click on the row does not open its details");
   }
   return out;

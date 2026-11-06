@@ -36,6 +36,9 @@ const COMMANDS: &[&[&str]] = &[
     &["container", "prune"],
     &["image", "prune"],
     &["system", "prune"],
+    // How much the images, containers, volumes and build cache take, and which of
+    // them are in use (`-v`) — read-only (v1.33).
+    &["system", "df"],
 ];
 
 /// What `docker compose` may do: the project-scoped actions the panel offers.
@@ -139,6 +142,8 @@ mod tests {
             &["docker", "volume", "prune", "-f"],
             &["docker", "network", "prune", "-f"],
             &["docker", "system", "prune", "-f"],
+            &["docker", "system", "df", "--format", "{{json .}}"],
+            &["docker", "system", "df", "-v", "--format", "{{json .}}"],
             &[
                 "docker",
                 "compose",
@@ -179,6 +184,8 @@ mod tests {
             &["docker", "-H", "tcp://evil:2375", "ps"],
             &["docker", "--config", "/tmp/x", "ps"],
             &["docker", "network", "create", "n"],
+            &["docker", "system", "info"],
+            &["docker", "system", "dial-stdio"],
             &["docker", "compose", "-f", "/tmp/evil.yml", "up"],
             &["docker", "compose", "--file=/tmp/evil.yml", "up"],
             &["docker", "compose", "-p", "web", "run", "svc", "sh"],

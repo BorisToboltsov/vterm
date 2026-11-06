@@ -20,6 +20,8 @@ vi.mock("../api", async (importOriginal) => ({
     if (args[1] === "ps") return ok(PS.join("\n"));
     if (args[1] === "inspect") return ok('[{"Id":"abc123456789"}]');
     if (args[1] === "logs") return ok("GET /healthz 200");
+    if (args[1] === "system" && args.includes("-v")) return ok(JSON.stringify({ Images: [], Volumes: [], Containers: [], BuildCache: [] }));
+    if (args[1] === "system") return ok('{"Active":"0","Reclaimable":"33.34GB (98%)","Size":"33.96GB","TotalCount":"143","Type":"Local Volumes"}');
     return ok("");
   }),
 }));
@@ -263,5 +265,32 @@ describe("DockerPanel — the list's filter row (v1.29)", () => {
     expect(screen.queryByText("edge-proxy")).toBeNull();
     await fireEvent.click(toggle);
     expect(await screen.findByText("edge-proxy")).toBeInTheDocument();
+  });
+});
+
+describe("DockerPanel — several containers and the disk (stage 2)", () => {
+  it("picked containers get one action, and its confirmation names them", async () => {
+    await mount("d-bulk");
+    await fireEvent.click(screen.getByTestId("docker-row-pick"));
+    const bar = screen.getByTestId("docker-picked-bar");
+    expect(bar).toHaveTextContent("Picked: 1");
+    // Running: it can be stopped, not started.
+    expect(screen.getByTestId("docker-picked-start")).toBeDisabled();
+    await fireEvent.click(screen.getByTestId("docker-picked-stop"));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("docker stop edge-proxy");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(calls).toContain("docker stop abc123456789"));
+    await fireEvent.click(screen.getByTestId("docker-picked-clear"));
+    expect(screen.queryByTestId("docker-picked-bar")).toBeNull();
+  });
+
+  it("the images view says what the disk holds — asked when it opens, not on every poll", async () => {
+    await mount("d-disk");
+    expect(calls.some((c) => c.startsWith("docker system df"))).toBe(false);
+    await fireEvent.click(screen.getByTestId("docker-subtab-images"));
+    await waitFor(() => expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.96GB"));
+    expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.34GB (98%) can be freed");
+    expect(calls.filter((c) => c === "docker system df --format {{json .}}")).toHaveLength(1);
   });
 });

@@ -160,6 +160,14 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   border-edge bg-panel px-1 py-0.5`), переключатели `clock`/`wrap` 13 (включён — `text-accent`),
   `terminal` 13, «Копировать». Строка лога — `div`; ошибка `text-bad`, предупреждение `text-warn`;
   время — `mr-2 text-muted`, `ЧЧ:ММ:СС`, полная метка в подсказке.
+- **Сколько занято** ([DockerDiskUsage](../src/lib/docker/DockerDiskUsage.svelte)) — ряд `flex
+  flex-wrap gap-x-4 gap-y-1 border-b border-edge px-2.5 py-1.5 text-meta` над строкой фильтра:
+  подпись `text-muted`, размер `tabular-nums text-text/90`, «N из M» `text-caption text-muted`, «можно
+  освободить» `text-caption text-warn`; цифры — как их печатает docker.
+- **Несколько строк сразу** — чекбокс встаёт на место точки состояния (`absolute h-3 w-3
+  accent-accent`): по наведению, а пока что-то выбрано — у всех строк; выбранная строка —
+  `bg-accent/15`. Над списком — строка `bg-accent/10 border-b border-edge px-2 py-1 text-meta`:
+  «Выбрано: N», кнопки с подписью (`play`/`stop`/`refresh`, удалить — `text-danger`), крестик справа.
 - **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
   text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
   text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —

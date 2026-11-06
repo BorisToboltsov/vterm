@@ -19,6 +19,12 @@ import {
   followLogsArgv,
   FACTS_TTL_MS,
   parseContainerDetail,
+  parseDiskUsage,
+  parseDiskDetail,
+  imageContainers,
+  imageSchema,
+  diskUsageArgs,
+  diskDetailArgs,
   isSensitiveEnv,
   nanosDuration,
   healthTest,
@@ -873,5 +879,64 @@ describe("parseContainerDetail (stage 1)", () => {
     expect(healthTest(["CMD", "sh", "-c", 'echo "$X"'])).toBe(`sh -c 'echo "$X"'`);
     expect(healthTest(["NONE"])).toBe("");
     expect(healthTest(undefined)).toBe("");
+  });
+});
+
+// Stage 2: what docker takes on the disk and who uses what — real Docker 29
+// answers, cut down.
+const DF = [
+  '{"Active":"10","Reclaimable":"2.075GB (22%)","Size":"9.182GB","TotalCount":"45","Type":"Images"}',
+  '{"Active":"11","Reclaimable":"9.62MB (99%)","Size":"9.62MB","TotalCount":"22","Type":"Containers"}',
+  '{"Active":"12","Reclaimable":"33.34GB (98%)","Size":"33.96GB","TotalCount":"143","Type":"Local Volumes"}',
+  '{"Active":"0","Reclaimable":"10.55GB","Size":"13.77GB","TotalCount":"322","Type":"Build Cache"}',
+].join("\n");
+const DF_V = JSON.stringify({
+  Images: [
+    { Containers: "1", ID: "sha256:b3a3978ded91c09e74bf", Repository: "e2e-kbdint", Tag: "latest", UniqueSize: "119MB" },
+    { Containers: "0", ID: "sha256:5872f763edff919d0a6d", Repository: "<none>", Tag: "<none>", UniqueSize: "31.43MB" },
+  ],
+  Containers: [],
+  Volumes: [
+    { Links: "0", Name: "e7691e94d4c1", Size: "67.3MB" },
+    { Links: "2", Name: "life_storage", Size: "1.2GB" },
+  ],
+  BuildCache: [],
+});
+
+describe("disk usage (stage 2)", () => {
+  it("asks docker itself, as JSON lines", () => {
+    expect(diskUsageArgs()).toEqual(["docker", "system", "df", "--format", "{{json .}}"]);
+    expect(diskDetailArgs()).toEqual(["docker", "system", "df", "-v", "--format", "{{json .}}"]);
+  });
+
+  it("reads the four rows as docker counts them, and what a prune would free", () => {
+    const rows = parseDiskUsage(DF);
+    expect(rows.map((r) => r.kind)).toEqual(["images", "containers", "volumes", "cache"]);
+    expect(rows[2]).toEqual({ kind: "volumes", total: 143, active: 12, size: "33.96GB", reclaimable: "33.34GB", reclaimablePct: 98 });
+    expect(rows[3]).toMatchObject({ reclaimable: "10.55GB", reclaimablePct: null });
+    expect(parseDiskUsage("Error response from daemon\n{broken")).toEqual([]);
+    expect(parseDiskUsage('{"Type":"Something new","Size":"1B"}')).toEqual([]);
+  });
+
+  it("reads who uses each image and each volume, by id and by name", () => {
+    const d = parseDiskDetail(DF_V)!;
+    expect(d.imageContainers.get("b3a3978ded91c09e74bf")).toBe(1);
+    expect(d.volumes.get("e7691e94d4c1")).toEqual({ links: 0, size: "67.3MB" });
+    expect(parseDiskDetail("nope")).toBeNull();
+    const img = (id: string) => ({ id, repository: "r", tag: "t", size: "1MB", created: "" });
+    expect(imageContainers(img("b3a3978ded91"), d)).toBe(1);
+    expect(imageContainers(img("5872f763edff"), d)).toBe(0);
+    expect(imageContainers(img("ffffffffffff"), d)).toBeNull();
+    expect(imageContainers(img("b3a3978ded91"), null)).toBeNull();
+  });
+
+  it("offers the «in use» facet only once docker has said who uses what", () => {
+    expect(imageSchema().facets?.map((f) => f.id)).toEqual(["kind"]);
+    const d = parseDiskDetail(DF_V)!;
+    const schema = imageSchema((i) => imageContainers(i, d));
+    const use = (schema.facets ?? []).find((f) => f.id === "use");
+    if (!use) throw new Error("the «in use» facet is missing");
+    const img = (id: string) => ({ id, repository: "r", tag: "t", size: "1MB", created: "" });
+    expect([use.value(img("b3a3978ded91")), use.value(img("5872f763edff")), use.value(img("ffff"))]).toEqual(["used", "unused", ""]);
   });
 });

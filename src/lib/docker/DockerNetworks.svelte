@@ -30,6 +30,7 @@
     type DockerContainer,
     type DockerNetwork,
     type DockerVolume,
+    type DiskDetail,
   } from "./docker";
   import {
     HOST_NETWORK,
@@ -45,6 +46,7 @@
   let {
     networks,
     volumes,
+    usage = undefined,
     containers = [],
     view = "list",
     onView,
@@ -59,6 +61,8 @@
   }: {
     networks: DockerNetwork[];
     volumes: DockerVolume[];
+    /** Who mounts each volume and its size, by docker's count (`system df -v`, v1.33); absent — not known. */
+    usage?: DiskDetail | null;
     /** Every container on the host, for ports and membership. */
     containers?: DockerContainer[];
     /** Which of the two views is on screen. */
@@ -255,6 +259,12 @@
         <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30">
           <Icon name="database" size={14} class="shrink-0 text-accent" />
           <span class="min-w-0 flex-1 truncate text-text/90">{v.name}</span>
+          {#if usage?.volumes.get(v.name)}
+            {@const u = usage.volumes.get(v.name)!}
+            <!-- By docker's own count (`system df -v`): what a prune of unused volumes would delete. -->
+            {#if u.links === 0}<span class="shrink-0 text-caption text-warn" data-testid="docker-volume-unused">{t("docker.volumeUnused")}</span>{/if}
+            {#if u.size && u.size !== "N/A"}<span class="shrink-0 text-caption tabular-nums text-muted">{u.size}</span>{/if}
+          {/if}
           <span class="shrink-0 text-caption text-muted">{v.driver}</span>
           <button class="shrink-0 rounded p-1 text-danger opacity-0 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeVolumeArgs([v.name]), { destructive: true, successKey: "docker.removed" })}>
             <Icon name="trash" size={13} />

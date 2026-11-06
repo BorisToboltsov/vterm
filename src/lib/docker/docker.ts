@@ -75,6 +75,21 @@ export function volumesArgs(): string[] {
   return ["docker", "volume", "ls", "--format", fmt];
 }
 
+/**
+ * What the images, containers, volumes and build cache take, by docker's own
+ * count (v1.33, stage 2): four rows with the total and what a prune would free.
+ * Asked when the images or the networks-and-volumes view opens, on «Refresh»
+ * and after a removal — not on every poll: on a big host it walks every layer.
+ */
+export function diskUsageArgs(): string[] {
+  return ["docker", "system", "df", "--format", "{{json .}}"];
+}
+
+/** The same, item by item (`-v`): how many containers use each image, each volume. */
+export function diskDetailArgs(): string[] {
+  return ["docker", "system", "df", "-v", "--format", "{{json .}}"];
+}
+
 /** One-shot resource snapshot for the visible containers (no streaming). */
 export function statsArgs(): string[] {
   const fmt = [
@@ -1205,9 +1220,141 @@ export function containerSchema(usage: (c: DockerContainer) => ContainerUsage): 
 /** Compose stacks, containers by name — how the list lay before it had a choice. */
 export const CONTAINER_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "compose" };
 
+// ── Disk usage (v1.33, stage 2) ──────────────────────────────────────────────
+
+export type DiskKind = "images" | "containers" | "volumes" | "cache";
+
+/** One row of `docker system df`, as docker counts it. */
+export interface DiskRow {
+  kind: DiskKind;
+  /** How many there are, and how many are in use; null — not reported. */
+  total: number | null;
+  active: number | null;
+  /** docker's own figures, as it prints them (`9.182GB`). */
+  size: string;
+  /** What a prune would free (`2.075GB`). */
+  reclaimable: string;
+  /** Its share of `size`, when docker says it (`22`); null for the build cache. */
+  reclaimablePct: number | null;
+}
+
+const DISK_TYPES: Record<string, DiskKind> = {
+  Images: "images",
+  Containers: "containers",
+  "Local Volumes": "volumes",
+  "Build Cache": "cache",
+};
+export const DISK_ORDER: readonly DiskKind[] = ["images", "containers", "volumes", "cache"];
+
+const jsonLines = (raw: string): Record<string, unknown>[] =>
+  raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("{"))
+    .flatMap((l) => {
+      try {
+        const v = JSON.parse(l) as unknown;
+        return v && typeof v === "object" && !Array.isArray(v) ? [v as Record<string, unknown>] : [];
+      } catch {
+        return [];
+      }
+    });
+
+const countOf = (v: unknown): number | null => {
+  const n = Number(typeof v === "string" ? v.trim() : v);
+  return (typeof v === "string" ? v.trim() !== "" : typeof v === "number") && Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+/** `docker system df --format '{{json .}}'` → rows in {@link DISK_ORDER}; unknown types are left out. */
+export function parseDiskUsage(raw: string): DiskRow[] {
+  const rows: DiskRow[] = [];
+  for (const it of jsonLines(raw)) {
+    const kind = DISK_TYPES[typeof it.Type === "string" ? it.Type : ""];
+    if (!kind) continue;
+    const rec = typeof it.Reclaimable === "string" ? it.Reclaimable.trim() : "";
+    const m = /^(.*?)\s*\((\d+(?:\.\d+)?)%\)$/.exec(rec);
+    rows.push({
+      kind,
+      total: countOf(it.TotalCount),
+      active: countOf(it.Active),
+      size: typeof it.Size === "string" ? it.Size : "",
+      reclaimable: m ? m[1] : rec,
+      reclaimablePct: m ? Math.round(Number(m[2])) : null,
+    });
+  }
+  return rows.sort((a, b) => DISK_ORDER.indexOf(a.kind) - DISK_ORDER.indexOf(b.kind));
+}
+
+/** Who uses what, from `docker system df -v`: by docker's own count, not by matching names. */
+export interface DiskDetail {
+  /** Image id (`sha256:` taken off) → how many containers use it. */
+  imageContainers: Map<string, number>;
+  /** Image id → what removing it would free (`UniqueSize`); "" — not reported. */
+  imageUnique: Map<string, string>;
+  /** Volume name → how many containers mount it, and its size. */
+  volumes: Map<string, { links: number | null; size: string }>;
+}
+
+/** `docker system df -v --format '{{json .}}'` → {@link DiskDetail}; null — not that answer. */
+export function parseDiskDetail(raw: string): DiskDetail | null {
+  const doc = jsonLines(raw)[0];
+  if (!doc || !Array.isArray(doc.Images)) return null;
+  const imageContainers = new Map<string, number>();
+  const imageUnique = new Map<string, string>();
+  for (const img of doc.Images as Record<string, unknown>[]) {
+    const id = (typeof img.ID === "string" ? img.ID : "").replace(/^sha256:/, "");
+    if (!id) continue;
+    const n = countOf(img.Containers);
+    if (n != null) imageContainers.set(id, n);
+    imageUnique.set(id, typeof img.UniqueSize === "string" ? img.UniqueSize : "");
+  }
+  const volumes = new Map<string, { links: number | null; size: string }>();
+  for (const v of Array.isArray(doc.Volumes) ? (doc.Volumes as Record<string, unknown>[]) : []) {
+    const name = typeof v.Name === "string" ? v.Name : "";
+    if (name) volumes.set(name, { links: countOf(v.Links), size: typeof v.Size === "string" ? v.Size : "" });
+  }
+  return { imageContainers, imageUnique, volumes };
+}
+
+/**
+ * How many containers use an image, matched by id — `docker images` prints the
+ * short one, `system df -v` the full one; null — not known (not asked yet, or
+ * docker did not list it).
+ */
+export function imageContainers(img: DockerImage, detail: DiskDetail | null | undefined): number | null {
+  if (!detail || !img.id) return null;
+  const short = img.id.replace(/^sha256:/, "");
+  for (const [id, n] of detail.imageContainers) if (id.startsWith(short)) return n;
+  return null;
+}
+
 /** An image without a name: what `docker image prune` removes. */
 export function isDangling(img: DockerImage): boolean {
   return img.repository === "<none>";
+}
+
+/**
+ * The images' list, with the «in use» facet when docker has said who uses what
+ * (`used` — how many containers use an image; omitted while unknown, so the
+ * facet never offers values it cannot count).
+ */
+export function imageSchema(used?: (img: DockerImage) => number | null): ListSchema<DockerImage> {
+  const base = IMAGE_SCHEMA;
+  if (!used) return base;
+  return {
+    ...base,
+    facets: [
+      ...(base.facets ?? []),
+      {
+        id: "use",
+        value: (img) => {
+          const n = used(img);
+          return n == null ? "" : n > 0 ? "used" : "unused";
+        },
+        order: ["used", "unused"],
+      },
+    ],
+  };
 }
 
 export const IMAGE_SCHEMA: ListSchema<DockerImage> = {

@@ -44,6 +44,7 @@
   import type { ListGroup, ListSort } from "../ui/listview";
   import { columnVars } from "../ui/colwidths";
   import { fitColumns } from "../ui/colfit";
+  import { pick, pickMode, type PickMode } from "../ui/listselect";
   import { columns, hiddenFields } from "../stores/colwidths.svelte";
   import { uiPx } from "../settings/settings.svelte";
   import { t, currentLocale, type MessageKey } from "../i18n";
@@ -61,6 +62,8 @@
     factsById = new Map(),
     all = [],
     selectedId = null,
+    picked = new Set<string>(),
+    onpick = undefined,
     busy = false,
     run,
     onShell,
@@ -90,6 +93,9 @@
     all?: readonly DockerContainer[];
     /** The container whose details are open: its row is marked. */
     selectedId?: string | null;
+    /** The rows picked for an action on several at once (stage 2); absent `onpick` — no picking. */
+    picked?: ReadonlySet<string>;
+    onpick?: (next: Set<string>) => void;
     busy?: boolean;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     onShell: (c: DockerContainer) => void;
@@ -208,6 +214,17 @@
   function workdirOf(items: DockerContainer[]): string | null {
     return items.find((c) => c.workdir)?.workdir ?? null;
   }
+
+  // The rows as shown — what a Shift-click range runs over (a folded group's rows
+  // are not shown and are not taken) — and the last row picked one by one.
+  const shownOrder = $derived(groups.flatMap((g) => (grouped && collapsed.includes(g.key) ? [] : g.items.map((c) => c.id))));
+  let anchor: string | null = null;
+  function pickRow(id: string, mode: PickMode) {
+    if (!onpick) return;
+    onpick(pick(picked, shownOrder, anchor, id, mode));
+    if (mode === "toggle") anchor = id;
+  }
+  const picking = $derived(picked.size > 0);
 
   function copyId(c: DockerContainer) {
     void navigator.clipboard?.writeText(c.id);
@@ -363,16 +380,43 @@
            (the eye) — the row is a list item, not a second button around them. -->
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
       <div
-        class="group flex cursor-default items-center gap-2 border-b border-edge/60 py-1.5 pr-2 @wide:items-stretch @wide:py-0 {grouped ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'} {selectedId === c.id ? 'bg-accent/10' : 'hover:bg-edge/30'}"
+        class="group flex cursor-default items-center gap-2 border-b border-edge/60 py-1.5 pr-2 @wide:items-stretch @wide:py-0 {grouped ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'} {picked.has(c.id) ? 'bg-accent/15' : selectedId === c.id ? 'bg-accent/10' : 'hover:bg-edge/30'}"
         oncontextmenu={(e) => showMenu(e, menuItems(c))}
+        onmousedown={(e) => {
+          // Shift-click takes a run of rows; it must not select their text too.
+          if (e.shiftKey && onpick) e.preventDefault();
+        }}
         onclick={(e) => {
-          if (!(e.target as HTMLElement).closest("button")) onViewDetails(c);
+          if ((e.target as HTMLElement).closest("button, input")) return;
+          const mode = onpick ? pickMode(e) : null;
+          if (mode) pickRow(c.id, mode);
+          else onViewDetails(c);
         }}
         role="listitem"
         aria-current={selectedId === c.id ? "true" : undefined}
         data-testid="docker-row"
       >
-        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <!-- The state dot, and in its place the row's checkbox: on hover, and on
+             every row while some are picked — the table keeps its columns. -->
+        <span class="relative flex h-[0.4375rem] w-[0.4375rem] shrink-0 items-center justify-center @wide:self-center">
+          <span
+            class="h-[0.4375rem] w-[0.4375rem] rounded-full {TONE[stateTone(c.state)]} {onpick ? (picking ? 'opacity-0' : 'group-hover:opacity-0') : ''}"
+            use:tooltip={c.state}
+          ></span>
+          {#if onpick}
+            <input
+              type="checkbox"
+              class="absolute h-3 w-3 cursor-default accent-accent {picking ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
+              checked={picked.has(c.id)}
+              aria-label={t("list.pickRow", { name: c.name })}
+              data-testid="docker-row-pick"
+              onclick={(e) => {
+                e.stopPropagation();
+                pickRow(c.id, e.shiftKey ? "range" : "toggle");
+              }}
+            />
+          {/if}
+        </span>
         <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
              two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
              left the image as "ghcr.io/vc…" — the half that says *what is actually

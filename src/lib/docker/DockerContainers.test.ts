@@ -243,3 +243,47 @@ describe("DockerContainers — the list beside the details", () => {
     resetColumnWidths();
   });
 });
+
+// Stage 2: picking several rows for an action on all of them.
+describe("DockerContainers — picking several rows", () => {
+  const three = () => {
+    const items = ["a", "b", "c"].map((n) => container({ id: `${n}00000000000`, name: `ctr-${n}` }));
+    return [{ key: "", label: "", rest: true, items }] as ListGroup<DockerContainer>[];
+  };
+
+  it("a plain click opens the details; ⌘/Ctrl-click and the checkbox pick instead", async () => {
+    const onViewDetails = vi.fn();
+    const onpick = vi.fn();
+    render(DockerContainers, { props: props({ groups: three(), onViewDetails, onpick }) });
+    await fireEvent.click(screen.getByText("ctr-a"), { metaKey: true });
+    expect(onpick).toHaveBeenLastCalledWith(new Set(["a00000000000"]));
+    expect(onViewDetails).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getAllByTestId("docker-row-pick")[1]);
+    expect(onpick).toHaveBeenLastCalledWith(new Set(["b00000000000"]));
+    expect(onViewDetails).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByText("ctr-c"));
+    expect(onViewDetails).toHaveBeenCalledTimes(1);
+  });
+
+  it("Shift-click takes the run from the last picked row", async () => {
+    const onpick = vi.fn();
+    const { rerender } = render(DockerContainers, { props: props({ groups: three(), onpick }) });
+    await fireEvent.click(screen.getByText("ctr-a"), { ctrlKey: true });
+    await rerender({ picked: new Set(["a00000000000"]) });
+    await fireEvent.click(screen.getByText("ctr-c"), { shiftKey: true });
+    expect(onpick).toHaveBeenLastCalledWith(new Set(["a00000000000", "b00000000000", "c00000000000"]));
+  });
+
+  it("shows every row's checkbox while some are picked, and marks the picked", () => {
+    render(DockerContainers, { props: props({ groups: three(), onpick: vi.fn(), picked: new Set(["b00000000000"]) }) });
+    const boxes = screen.getAllByTestId("docker-row-pick") as HTMLInputElement[];
+    expect(boxes.map((b) => b.checked)).toEqual([false, true, false]);
+    for (const b of boxes) expect(b.className).toContain("opacity-100");
+    expect(screen.getAllByTestId("docker-row")[1].className).toContain("bg-accent/15");
+  });
+
+  it("offers no picking where the panel does not act on several", () => {
+    render(DockerContainers, { props: props({ groups: three() }) });
+    expect(screen.queryByTestId("docker-row-pick")).toBeNull();
+  });
+});
