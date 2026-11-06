@@ -22,10 +22,29 @@ import { describe, expect, it } from "vitest";
 const SRC = join(process.cwd(), "src", "lib");
 const raw = (rel: string): string => readFileSync(join(SRC, ...rel.split("/")), "utf8");
 
+/**
+ * Drop every `open … close` block by scanning. One regex pass is not enough: it
+ * leaves a nested opener behind (`<!--<!-- -->` → `<!--`), and what is left would
+ * be read as markup (CodeQL: `js/incomplete-multi-character-sanitization`). An
+ * opener with no closer takes the rest with it.
+ */
+function stripBlocks(src: string, open: string, close: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith(open, i)) {
+      const end = src.indexOf(close, i + open.length);
+      i = end < 0 ? src.length : end + close.length;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 /** Source with comments removed — markup, block and line (`://` is not a comment). */
 function code(src: string): string {
-  return src
-    .replace(/<!--[^]*?-->/g, "")
+  return stripBlocks(src, "<!--", "-->")
     .replace(/\/\*[^]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
 }

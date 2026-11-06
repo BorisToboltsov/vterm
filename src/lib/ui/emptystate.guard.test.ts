@@ -35,12 +35,37 @@ const SRC = join(process.cwd(), "src");
 const EMPTY = "lib/ui/EmptyState.svelte";
 const FIT = "lib/actions/emptyfit.ts";
 
+/**
+ * Drop every `open … close` block by scanning. One regex pass is not enough: it
+ * leaves a nested opener behind (`<!--<!-- -->` → `<!--`), and what is left would
+ * be read as markup (CodeQL: `js/incomplete-multi-character-sanitization`). An
+ * opener with no closer takes the rest with it.
+ */
+function stripBlocks(src: string, open: string, close: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith(open, i)) {
+      const end = src.indexOf(close, i + open.length);
+      i = end < 0 ? src.length : end + close.length;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
+
 /** Source with comments removed — markup, block and line (`://` is not a comment). */
 function code(src: string): string {
-  return src
-    .replace(/<!--[^]*?-->/g, "")
+  return stripBlocks(src, "<!--", "-->")
     .replace(/\/\*[^]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+/** What follows a component's instance script: its markup and style. */
+function afterScript(src: string): string {
+  const at = src.lastIndexOf("</script>");
+  return at < 0 ? src : src.slice(at + "</script>".length);
 }
 
 const raw = (rel: string): string => readFileSync(join(SRC, ...rel.split("/")), "utf8");
@@ -57,9 +82,7 @@ function components(dir = SRC, acc: string[] = []): string[] {
 
 /** The opening tags of the markup (after the script), in order — `div`s, or every element. */
 const openTags = (source: string, tag = "div"): string[] =>
-  [...code(source.replace(/<script[^]*?<\/script>/, "")).matchAll(new RegExp(`<${tag}\\b[^>]*>`, "g"))].map(
-    (m) => m[0],
-  );
+  [...code(afterScript(source)).matchAll(new RegExp(`<${tag}\\b[^>]*>`, "g"))].map((m) => m[0]);
 
 const classes = (tag: string): string => /\bclass="([^"]*)"/.exec(tag)?.[1] ?? "";
 const has = (cls: string, name: string): boolean => cls.split(/\s+/).includes(name);
