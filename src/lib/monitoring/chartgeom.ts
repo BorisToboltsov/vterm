@@ -60,6 +60,25 @@ export function yOf(v: number, max: number, top: number, height: number): number
   return top + height - k * height;
 }
 
+/** A band of values on a chart: from `from` up to `to` (no `to` — to the top). */
+export interface Zone {
+  from: number;
+  to?: number | null;
+  color: string;
+}
+
+/**
+ * The y span of `z` on a scale of `max`, inside `[top, top + height]`, or null when
+ * none of it is on the scale — a zone above the ceiling is not drawn as a line on
+ * the top edge, and an empty or upside-down one is not drawn at all.
+ */
+export function zoneSpan(z: Zone, max: number, top: number, height: number): { y: number; h: number } | null {
+  const hi = Math.min(z.to ?? max, max);
+  if (!(max > 0) || z.from >= max || hi <= z.from) return null;
+  const y = yOf(hi, max, top, height);
+  return { y, h: yOf(Math.max(0, z.from), max, top, height) - y };
+}
+
 export interface Frame {
   /** The right edge, a (fractional) sample number. */
   axis: number;

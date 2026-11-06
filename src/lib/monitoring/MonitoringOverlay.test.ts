@@ -268,9 +268,58 @@ describe("MonitoringOverlay — sections", () => {
     const sec = await openOn("cpu");
     expect(within(sec).getByTestId("cpu-history")).toBeInTheDocument();
     expect(within(sec).getByTestId("load-history")).toBeInTheDocument();
-    expect(within(sec).getByTestId("per-core")).toBeInTheDocument();
+    // Four threads — one even row of four, not four of eight columns.
+    expect(within(sec).getByTestId("per-core").getAttribute("style")).toContain("repeat(4,");
     expect(within(sec).getAllByText("2.40 GHz")).toHaveLength(2);
+    // Queues and events across the width: seven figures — rows of four and three, not five and two.
+    const queues = within(sec).getByTestId("cpu-queues");
+    expect(queues.querySelectorAll("[data-testid^='fact-']")).toHaveLength(7);
+    expect(queues.querySelector("dl")!.getAttribute("style")).toContain("repeat(4,");
+    expect(within(queues).getByTestId("fact-psi")).toHaveTextContent("1.5 / 0.2 / 0.1");
+    expect(within(queues).getByTestId("fact-freq")).toHaveTextContent("800 MHz – 2.40 GHz");
     expect(within(sec).getByTestId("top-procs")).toHaveTextContent("nginx");
+  });
+
+  it("CPU: names the problem behind its dot under the head and marks where it shows", async () => {
+    // 3.2 on 4 threads — 0.8 per thread, past the 0.7 warning.
+    fetchMetrics.mockResolvedValue({ ...metrics, load1: 3.2 });
+    const sec = await openOn("cpu");
+    expect(screen.getByTestId("mon-nav-cpu")).toHaveAttribute("data-level", "warn");
+    const strip = within(sec).getByTestId("mon-section-problems");
+    expect(within(strip).getAllByTestId("mon-problem")).toHaveLength(1);
+    expect(strip).toHaveTextContent("Load 3.20 has reached 2.8 · threads: 4");
+    expect(within(sec).getByTestId("load-card")).toHaveClass("border-warn/50");
+    expect(within(sec).getByTestId("load-per-thread")).toHaveAttribute("data-level", "warn");
+    expect(within(sec).getByTestId("load-card")).toHaveTextContent("per thread 0.80 threshold 0.7");
+    expect(within(sec).getByTestId("load-legend")).toHaveTextContent("warning from 2.8");
+    expect(within(sec).getByTestId("load-legend")).toHaveTextContent("critical from 4");
+  });
+
+  it("CPU: nothing under the head and nothing marked when CPU is fine", async () => {
+    const sec = await openOn("cpu");
+    expect(screen.getByTestId("mon-nav-cpu")).toHaveAttribute("data-level", "ok");
+    expect(within(sec).queryByTestId("mon-section-problems")).toBeNull();
+    expect(within(sec).getByTestId("load-card")).toHaveClass("border-edge");
+    expect(within(sec).getByTestId("load-card")).not.toHaveTextContent("threshold");
+  });
+
+  it("a section lists its own problems under its head, and the overview none twice", async () => {
+    const disks = await openOn("disks");
+    const strip = within(disks).getByTestId("mon-section-problems");
+    expect(strip).toHaveTextContent("/ is 87% full (0 MiB of 0 MiB)");
+    expect(strip).not.toHaveTextContent("Failed systemd units");
+    await fireEvent.click(screen.getByTestId("mon-nav-overview"));
+    const overview = await screen.findByTestId("mon-section-overview");
+    expect(within(overview).queryByTestId("mon-section-problems")).toBeNull();
+  });
+
+  it("asks the assistant about a problem from a section's strip", async () => {
+    const onAskAi = vi.fn();
+    const sec = await openOn("system", { onAskAi });
+    const strip = within(sec).getByTestId("mon-section-problems");
+    const row = within(strip).getByText("Failed systemd units: 1").closest("li")!;
+    await fireEvent.click(within(row).getByRole("button", { name: "Ask AI" }));
+    expect(onAskAi.mock.calls[0][0]).toContain("Failed systemd units: 1");
   });
 
   it("CPU: hides the load card on a host with no load average (Windows)", async () => {

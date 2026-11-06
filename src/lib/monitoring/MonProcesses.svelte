@@ -125,6 +125,9 @@
 </script>
 
 <MonHeader
+  section="processes"
+  {v}
+  {a}
   title={t("mon.processes")}
   sub={[
     d?.processTotal != null ? t("mon.procsTotal", { n: fmtCount(d.processTotal) }) : "",

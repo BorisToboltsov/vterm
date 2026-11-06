@@ -13,8 +13,8 @@
 import type { Extras, Metrics, MetricsDetail, PendingUpdates } from "../api";
 import type { MessageKey } from "../i18n/messages";
 import type { StatusBarThresholds } from "../settings/settings.svelte";
-import { fmtBytes, isUnlimitedLimit, memPct } from "./format";
-import { loadCoreLevel, sensorLevel, worstLevel } from "./monhealth";
+import { fmtBytes, fmtLoad, isUnlimitedLimit, memPct } from "./format";
+import { loadZones, sensorLevel, worstLevel } from "./monhealth";
 import { thresholdLevel, type ThresholdLevel } from "./thresholds";
 
 /** The sections of the monitoring page, in navigation order. */
@@ -89,9 +89,11 @@ export function problems(i: ProblemInput): Problem[] {
   if (m?.cpuPct != null) add(thresholdLevel(m.cpuPct, th.cpu), "cpu", "cpu", "mon.p.cpu", { pct: round(m.cpuPct) });
   const threads = d?.perCpu.length || m?.cpuCount || 0;
   if (m?.load1 != null && threads > 0) {
-    const perCore = m.load1 / threads;
-    const level = worstLevel([thresholdLevel(m.load1, th.load), loadCoreLevel(perCore)]);
-    add(level, "load", "cpu", "mon.p.load", { load: m.load1.toFixed(2), n: threads });
+    // The bound it crossed is named: "Load 0.75" alone does not say why that is a problem.
+    const zones = loadZones(threads, th.load);
+    const level = thresholdLevel(m.load1, zones);
+    const limit = level === "crit" ? zones.crit : zones.warn;
+    add(level, "load", "cpu", "mon.p.load", { load: m.load1.toFixed(2), n: threads, limit: fmtLoad(limit) });
   }
   if (d?.throttleCount != null && baseline?.throttle != null && d.throttleCount > baseline.throttle) {
     add("warn", "throttle", "cpu", "mon.p.throttle", { n: d.throttleCount - baseline.throttle });

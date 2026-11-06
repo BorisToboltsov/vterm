@@ -20,6 +20,9 @@
 </script>
 
 <MonHeader
+  section="gpu"
+  {v}
+  {a}
   title={t("mon.gpu")}
   sub={t("mon.gpusN", { n: gpus.length })}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "gpu" }) : undefined}

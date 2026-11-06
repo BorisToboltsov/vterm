@@ -33,6 +33,9 @@
 </script>
 
 <MonHeader
+  section="network"
+  {v}
+  {a}
   title={t("mon.network")}
   sub={[m.ip, d ? t("mon.ifacesN", { n: d.netIfaces.length }) : ""].filter(Boolean).join(" · ")}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "network" }) : undefined}

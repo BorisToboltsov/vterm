@@ -100,4 +100,29 @@ describe("Chart", () => {
     expect(container.textContent).toContain("−10:00");
     expect(container.textContent).toContain("80%");
   });
+
+  it("shades zones behind the lines, cut at the ceiling, and none above it", () => {
+    const { container } = render(Chart, {
+      props: {
+        lines: [{ samples: smp([0.4, 1.6]), color: "red" }],
+        seq: 1,
+        zones: [
+          { from: 0.7, to: 1, color: "var(--color-warn)" },
+          { from: 1, color: "var(--color-bad)" },
+          { from: 5, color: "blue" },
+        ],
+      },
+    });
+    const zones = [...container.querySelectorAll("rect[data-zone]")];
+    // The window reaches 1.6 — a ceiling of 2: two zones on it, the third above it.
+    expect(zones.map((z) => z.getAttribute("data-zone"))).toEqual(["0", "1"]);
+    expect(zones[1].getAttribute("style")).toContain("var(--color-bad)");
+  });
+
+  it("dashes a line asked to be dashed", () => {
+    const { container } = render(Chart, {
+      props: { lines: [{ samples: smp([1, 2]), color: "red", dashed: true }], seq: 1, max: 4 },
+    });
+    expect(container.querySelector("path")!.getAttribute("stroke-dasharray")).toBe("3 3");
+  });
 });

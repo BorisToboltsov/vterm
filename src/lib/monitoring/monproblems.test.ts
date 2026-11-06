@@ -111,9 +111,16 @@ describe("what needs attention", () => {
     expect([p.level, p.params.label, p.params.temp]).toEqual(["warn", "Core 3", 86]);
   });
 
-  it("judges load per logical CPU", () => {
+  it("judges load per logical CPU and names the bound it reached", () => {
     const [p] = problems(input({ metrics: metrics({ load1: 9 }) }));
-    expect([p.id, p.level, p.params.n]).toEqual(["load", "crit", 8]);
+    expect([p.id, p.level, p.params.n, p.params.limit]).toEqual(["load", "crit", 8, "8"]);
+    const [w] = problems(input({ metrics: metrics({ load1: 0.75, cpuCount: 1 }), detail: detail({ perCpu: [10] }) }));
+    expect([w.level, w.params.load, w.params.limit]).toEqual(["warn", "0.75", "0.7"]);
+  });
+
+  it("names the user's load threshold when that is the lower bound", () => {
+    const [p] = problems(input({ metrics: metrics({ load1: 3 }), th: { ...th, load: { warn: 2.5, crit: null } } }));
+    expect([p.level, p.params.limit]).toEqual(["warn", "2.5"]);
   });
 
   it("gives every section the worst of its problems and the overview the worst of all", () => {

@@ -30,6 +30,9 @@
 </script>
 
 <MonHeader
+  section="disks"
+  {v}
+  {a}
   title={t("mon.disks")}
   sub={t("mon.disksSub", { fs: parts.length, dev: d?.diskDevs.length ?? 0 })}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "disks" }) : undefined}

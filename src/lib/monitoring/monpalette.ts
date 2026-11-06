@@ -13,6 +13,12 @@ export const SERIES = {
   cpu: rail(1),
   ram: rail(0),
   load: rail(3),
+  // The three averages of the CPU section are told apart from one another and from
+  // the warn/crit zones behind them: never rail 3 or 5, the yellow and red ones of
+  // most themes; 15 minutes is dashed besides.
+  load1: rail(0),
+  load5: rail(1),
+  load15: rail(2),
   rx: rail(4),
   tx: rail(2),
   read: rail(4),
