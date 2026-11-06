@@ -160,6 +160,11 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   border-edge bg-panel px-1 py-0.5`), переключатели `clock`/`wrap` 13 (включён — `text-accent`),
   `terminal` 13, «Копировать». Строка лога — `div`; ошибка `text-bad`, предупреждение `text-warn`;
   время — `mr-2 text-muted`, `ЧЧ:ММ:СС`, полная метка в подсказке.
+- **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
+  text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
+  text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —
+  `pre max-h-48` под ним; переменные и метки — сетка `key | value` в `font-mono`, скрытое значение —
+  `‹redacted›` `text-muted`, «Показать значения» — кнопка справа в метке секции (`normal-case`).
 
 ## Диалоги и обратная связь
 

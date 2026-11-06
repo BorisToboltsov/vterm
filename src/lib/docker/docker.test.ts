@@ -18,6 +18,10 @@ import {
   restartBaseline,
   followLogsArgv,
   FACTS_TTL_MS,
+  parseContainerDetail,
+  isSensitiveEnv,
+  nanosDuration,
+  healthTest,
   type DockerFacts,
   versionArgs,
   psArgs,
@@ -763,5 +767,111 @@ describe("docker creation time", () => {
 
   it("dockerDate hands back an unreadable stamp as docker printed it", () => {
     expect(dockerDate("3 weeks ago", "en", now)).toBe("3 weeks ago");
+  });
+});
+
+// Stage 1: what `docker inspect` says about a container in trouble. The fixture
+// is cut from a real Docker 29 answer, with the values replaced.
+const INSPECT_FIXTURE = JSON.stringify([
+  {
+    Id: "2b504a4d8e00",
+    Path: "uvicorn",
+    Args: ["app.main:app", "--host", "0.0.0.0", "--forwarded-allow-ips", "*"],
+    State: {
+      Status: "running",
+      Health: {
+        Status: "unhealthy",
+        FailingStreak: 1200,
+        Log: [
+          { Start: "2026-11-06T21:13:30.444329969Z", End: "2026-11-06T21:13:30.7Z", ExitCode: 1, Output: "Traceback (most recent call last):\n  ...\nurllib.error.HTTPError: HTTP Error 503: Service Unavailable\n" },
+          { Start: "2026-11-06T21:13:40.739114210Z", End: "2026-11-06T21:13:41Z", ExitCode: 0, Output: "" },
+        ],
+      },
+    },
+    HostConfig: { RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 } },
+    Config: {
+      Cmd: ["uvicorn"],
+      Env: ["PATH=/usr/local/bin", "APP_JWT_SECRET=s3cr3t", "APP_DATABASE_URL=postgres://app:hunter2@db/app", "APP_STORAGE_KEY=k", "PYTHONUNBUFFERED=1"],
+      Healthcheck: {
+        Test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"],
+        Interval: 10_000_000_000,
+        Timeout: 3_000_000_000,
+        Retries: 6,
+      },
+      Labels: { "com.docker.compose.service": "backend", "com.docker.compose.project": "life-e2e" },
+    },
+    Mounts: [
+      { Type: "volume", Name: "life_storage", Source: "/var/lib/docker/volumes/life_storage/_data", Destination: "/data", RW: true },
+      { Type: "bind", Source: "/srv/app/config", Destination: "/etc/app", RW: false },
+    ],
+  },
+]);
+
+describe("parseContainerDetail (stage 1)", () => {
+  it("reads the health check and its last runs, newest first, with what each said last", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.health).toMatchObject({
+      status: "unhealthy",
+      failingStreak: 1200,
+      test: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"`,
+      interval: "10s",
+      timeout: "3s",
+      retries: 6,
+    });
+    expect(d.health!.probes.map((p) => [p.exitCode, p.last])).toEqual([
+      [0, ""],
+      [1, "urllib.error.HTTPError: HTTP Error 503: Service Unavailable"],
+    ]);
+    expect(d.health!.probes[1].start).toBe(Date.parse("2026-11-06T21:13:30.444Z"));
+  });
+
+  it("reads how it is started and restarted, and what is mounted", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.command).toBe('uvicorn app.main:app --host 0.0.0.0 --forwarded-allow-ips "*"');
+    expect(d.restartPolicy).toBe("unless-stopped");
+    expect(d.mounts).toEqual([
+      { type: "volume", source: "life_storage", destination: "/data", readOnly: false },
+      { type: "bind", source: "/srv/app/config", destination: "/etc/app", readOnly: true },
+    ]);
+    expect(d.labels.map((l) => l.key)).toEqual(["com.docker.compose.project", "com.docker.compose.service"]);
+  });
+
+  it("marks what looks like a secret, by name or by value", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.env.map((e) => [e.key, e.sensitive])).toEqual([
+      ["APP_DATABASE_URL", true],
+      ["APP_JWT_SECRET", true],
+      ["APP_STORAGE_KEY", true],
+      ["PATH", false],
+      ["PYTHONUNBUFFERED", false],
+    ]);
+    expect(isSensitiveEnv("GITHUB", "ghp_abcdefghijklmnopqrstuvwxyz0123")).toBe(true);
+    expect(isSensitiveEnv("LOG_LEVEL", "debug")).toBe(false);
+  });
+
+  it("says when there is no health check, and when the answer is not a container", () => {
+    const plain = JSON.parse(INSPECT_FIXTURE);
+    delete plain[0].Config.Healthcheck;
+    delete plain[0].State.Health;
+    plain[0].HostConfig.RestartPolicy = { Name: "on-failure", MaximumRetryCount: 5 };
+    const d = parseContainerDetail(JSON.stringify(plain))!;
+    expect(d.health).toBeNull();
+    expect(d.restartPolicy).toBe("on-failure:5");
+    expect(parseContainerDetail("Error: No such object: x")).toBeNull();
+    expect(parseContainerDetail(JSON.stringify([{ Id: "img", RepoTags: ["a:b"] }]))).toBeNull();
+  });
+
+  it("prints docker's durations and health checks the way they are written", () => {
+    expect(nanosDuration(10e9)).toBe("10s");
+    expect(nanosDuration(90e9)).toBe("1m30s");
+    expect(nanosDuration(120e9)).toBe("2m");
+    expect(nanosDuration(5e8)).toBe("500ms");
+    expect(nanosDuration(0)).toBeNull();
+    expect(nanosDuration("x")).toBeNull();
+    expect(healthTest(["CMD-SHELL", "pg_isready -U app || exit 1"])).toBe("pg_isready -U app || exit 1");
+    expect(healthTest(["CMD", "curl", "-f", "http://localhost/"])).toBe("curl -f http://localhost/");
+    expect(healthTest(["CMD", "sh", "-c", 'echo "$X"'])).toBe(`sh -c 'echo "$X"'`);
+    expect(healthTest(["NONE"])).toBe("");
+    expect(healthTest(undefined)).toBe("");
   });
 });

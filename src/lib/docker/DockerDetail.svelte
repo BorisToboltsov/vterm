@@ -12,7 +12,7 @@
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
   import LogTail from "../ui/LogTail.svelte";
-  import type { LogTailSize } from "../ui/loglines";
+  import { shortStamp, type LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import {
     startArgs,
@@ -27,6 +27,9 @@
     isRunning,
     stateSummary,
     stateTone,
+    parseContainerDetail,
+    MASKED,
+    type ContainerDetail,
     type DockerContainer,
     type DockerFacts,
     type DockerStat,
@@ -99,10 +102,19 @@
       `State: ${c.state}`,
       `Status: ${c.status}`,
       c.ports ? `Ports: ${c.ports}` : "",
+      // The health check's own words, from its latest failing run — what explains
+      // `unhealthy`. The environment is never part of it.
+      healthLine(),
     ]
       .filter(Boolean)
       .join("\n");
     return logsText.trim() ? `${facts}\n\n--- docker logs ---\n${logsText}` : facts;
+  }
+
+  function healthLine(): string {
+    const h = detail?.health;
+    const failed = h?.probes.find((p) => p.exitCode !== 0);
+    return h && failed ? `Health check: ${h.status || "unknown"}, latest failing run said: ${failed.last || "(no output)"}` : "";
   }
 
   type Tab = DockerDetailTab;
@@ -114,6 +126,12 @@
   // in the list is reading the next log the same way.
   let following = $state(true);
   let tail = $state<LogTailSize>(200);
+  // The Overview's own reading of `docker inspect` (stage 1): undefined — not
+  // asked yet, null — the answer could not be read.
+  let detail = $state<ContainerDetail | null | undefined>(undefined);
+  // Secrets in the environment stay masked until asked for, per container.
+  let showSecrets = $state(false);
+  let labelsOpen = $state(false);
 
   const TONE: Record<string, string> = {
     ok: "bg-ok",
@@ -154,6 +172,8 @@
     activeId = id;
     logsText = "";
     inspectText = "";
+    detail = undefined;
+    showSecrets = false;
   });
 
   async function fetchLogs(id: string, lines: number) {
@@ -181,6 +201,28 @@
     if (!active || tab !== "inspect" || !cid) return;
     void fetchInspect(cid);
   });
+
+  // Overview: what `inspect` says, asked on open and again on every poll — a
+  // health check runs on its own clock, and its last runs are the point.
+  async function fetchDetail(id: string) {
+    try {
+      const res = await runQuery(inspectArgs(id), 30);
+      if (activeId === id) detail = parseContainerDetail(res.stdout);
+    } catch {
+      if (activeId === id) detail = null;
+    }
+  }
+  $effect(() => {
+    const cid = activeId;
+    if (!active || tab !== "overview" || !cid) return;
+    void fetchDetail(cid);
+    const timer = setInterval(() => void fetchDetail(cid), Math.max(1, refreshSec) * 1000);
+    return () => clearInterval(timer);
+  });
+
+  const probeTime = (ms: number | null): string => (ms == null ? "—" : shortStamp(new Date(ms).toISOString()));
+  const HEALTH_TEXT: Record<string, string> = { healthy: "text-ok", unhealthy: "text-warn", starting: "text-muted" };
+  const SECTION = "mb-1 mt-3 flex items-center gap-1.5 text-caption uppercase tracking-wider text-muted";
 
   async function act(args: string[], opts?: { destructive?: boolean; successKey?: string }) {
     const ok = await run(args, opts);
@@ -259,14 +301,15 @@
   </div>
 
   {#if tab === "overview"}
-    <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta {fill ? 'min-h-0 content-start overflow-auto' : ''}" data-testid="docker-detail-overview">
+    <div class="text-meta {fill ? 'min-h-0 flex-1 overflow-auto' : 'max-h-[60vh] overflow-auto'}" data-testid="docker-detail-overview">
+    <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5">
       <dt class="text-muted">{t("docker.name")}</dt>
       <dd class="break-all text-text/85">{c.name}</dd>
       <dt class="text-muted">{t("docker.image")}</dt>
       <dd class="break-all text-text/85">{c.image}</dd>
       {#if c.project}
         <dt class="text-muted">{t("docker.project")}</dt>
-        <dd class="break-all text-text/85">{c.project}{#if c.service}<span class="text-muted"> · {c.service}</span>{/if}</dd>
+        <dd class="break-all text-text/85">{c.project}{#if c.service}<span class="text-muted">{` · ${c.service}`}</span>{/if}</dd>
       {/if}
       {#if summary}
         <dt class="text-muted">{t("docker.state")}</dt>
@@ -299,7 +342,111 @@
           {/if}
         </dd>
       {/if}
+      {#if detail}
+        <dt class="text-muted">{t("docker.command")}</dt>
+        <dd class="break-all font-mono text-text/85" data-testid="docker-detail-command">{detail.command || "—"}</dd>
+        <dt class="text-muted">{t("docker.restartPolicy")}</dt>
+        <dd class="text-text/85">{detail.restartPolicy}</dd>
+      {/if}
     </dl>
+
+    {#if detail === null}
+      <p class="mt-3 text-muted" data-testid="docker-detail-unread">{t("docker.detailUnread")}</p>
+    {:else if detail}
+      {#if detail.health}
+        {@const h = detail.health}
+        <!-- What a failing check says is in its output, not in the word «unhealthy». -->
+        <section data-testid="docker-detail-health">
+          <h4 class={SECTION}>{t("docker.healthCheck")}</h4>
+          <div class="flex flex-wrap items-baseline gap-x-2">
+            <span class={HEALTH_TEXT[h.status] ?? "text-text/85"}>{h.status || "—"}</span>
+            {#if h.failingStreak > 0}<span class="text-warn">{t("docker.healthStreak", { n: h.failingStreak })}</span>{/if}
+            <span class="text-caption text-muted">
+              {[h.interval ? t("docker.healthInterval", { v: h.interval }) : "", h.timeout ? t("docker.healthTimeout", { v: h.timeout }) : "", h.retries ? t("docker.healthRetries", { n: h.retries }) : ""].filter(Boolean).join(" · ")}
+            </span>
+          </div>
+          {#if h.test}<div class="mt-0.5 break-all font-mono text-caption text-muted">{h.test}</div>{/if}
+          {#if h.probes.length === 0}
+            <p class="mt-1 text-muted">{t("docker.healthNoRuns")}</p>
+          {:else}
+            <ul class="mt-1 space-y-0.5" data-testid="docker-detail-probes">
+              {#each h.probes as p, i (i)}
+                <li>
+                  <details class="group/probe">
+                    <summary class="flex cursor-default list-none items-baseline gap-2 rounded px-1 hover:bg-edge/30">
+                      <span class="shrink-0 font-mono text-caption text-muted">{probeTime(p.start)}</span>
+                      <span class="w-6 shrink-0 text-right tabular-nums {p.exitCode === 0 ? 'text-ok' : 'text-bad'}">{p.exitCode ?? "—"}</span>
+                      <span class="min-w-0 flex-1 truncate font-mono text-text/85">{p.last || "—"}</span>
+                    </summary>
+                    {#if p.output.trim()}
+                      <pre class="my-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-1.5 font-mono text-caption text-text/85 select-text">{p.output}</pre>
+                    {/if}
+                  </details>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </section>
+      {/if}
+
+      {#if detail.mounts.length > 0}
+        <section data-testid="docker-detail-mounts">
+          <h4 class={SECTION}>{t("docker.mounts")} <span class="tabular-nums">{detail.mounts.length}</span></h4>
+          {#each detail.mounts as m, i (i)}
+            <div class="flex min-w-0 items-baseline gap-1.5 break-all">
+              <span class="shrink-0 text-caption text-muted">{m.type}</span>
+              <span class="font-mono text-text/85">{m.source}</span>
+              <span class="shrink-0 text-muted">→</span>
+              <span class="font-mono text-text/85">{m.destination}</span>
+              {#if m.readOnly}<span class="shrink-0 text-caption text-muted">{t("docker.mountRo")}</span>{/if}
+            </div>
+          {/each}
+        </section>
+      {/if}
+
+      {#if detail.env.length > 0}
+        {@const masked = detail.env.filter((e) => e.sensitive).length}
+        <section data-testid="docker-detail-env">
+          <h4 class={SECTION}>
+            {t("docker.env")} <span class="tabular-nums">{detail.env.length}</span>
+            {#if masked > 0}
+              <button
+                type="button"
+                class="ml-auto rounded px-1 normal-case tracking-normal hover:bg-edge hover:text-text"
+                aria-pressed={showSecrets}
+                data-testid="docker-detail-env-reveal"
+                onclick={() => (showSecrets = !showSecrets)}
+              >{t(showSecrets ? "docker.envHide" : "docker.envShow")}</button>
+            {/if}
+          </h4>
+          <dl class="grid grid-cols-[minmax(0,auto)_1fr] gap-x-2 gap-y-0.5 font-mono">
+            {#each detail.env as e (e.key)}
+              <dt class="truncate text-muted" use:tooltip={e.key}>{e.key}</dt>
+              <dd class="break-all {e.sensitive && !showSecrets ? 'text-muted' : 'text-text/85'}">{e.sensitive && !showSecrets ? MASKED : e.value}</dd>
+            {/each}
+          </dl>
+          {#if masked > 0 && !showSecrets}<p class="mt-0.5 text-caption text-muted">{t("docker.envMaskedHint")}</p>{/if}
+        </section>
+      {/if}
+
+      {#if detail.labels.length > 0}
+        <section data-testid="docker-detail-labels">
+          <button type="button" class="{SECTION} w-full hover:text-text" aria-expanded={labelsOpen} onclick={() => (labelsOpen = !labelsOpen)}>
+            <Icon name={labelsOpen ? "chevronDown" : "chevronRight"} size={10} />
+            {t("docker.labels")} <span class="tabular-nums">{detail.labels.length}</span>
+          </button>
+          {#if labelsOpen}
+            <dl class="grid grid-cols-[minmax(0,auto)_1fr] gap-x-2 gap-y-0.5 font-mono">
+              {#each detail.labels as l (l.key)}
+                <dt class="truncate text-muted" use:tooltip={l.key}>{l.key}</dt>
+                <dd class="break-all text-text/85">{l.value}</dd>
+              {/each}
+            </dl>
+          {/if}
+        </section>
+      {/if}
+    {/if}
+    </div>
   {:else if tab === "logs"}
     <LogTail
       text={logsText}

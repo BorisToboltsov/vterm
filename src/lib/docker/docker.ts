@@ -9,6 +9,7 @@
 // (ports, image names), the same trick `git.ts` uses. `{{json .}}` is avoided
 // because its `Labels`/`Ports` fields are themselves comma-joined and ambiguous.
 
+import { REDACTED, redactSecrets } from "../ai/redact";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
 import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
@@ -359,6 +360,194 @@ export function stateSummary(c: DockerContainer, facts: DockerFacts | undefined,
     return { word: code == null ? "exited" : `exit ${code}`, tone, age: since(facts?.finishedAt) };
   }
   return { word: state || "—", tone: stateTone(state), age: null };
+}
+
+// ── A container's details: what `docker inspect` says (v1.33, stage 1) ───────
+//
+// The Overview of the details reads the full `docker inspect <id>` — the same
+// call the Inspect view makes — and shows what explains a container in trouble:
+// its health check and the last probes with their output, how it is started and
+// restarted, what is mounted into it, its environment and labels.
+
+/** One run of a container's health check. */
+export interface HealthProbe {
+  /** When it started, epoch ms; null — not reported. */
+  start: number | null;
+  exitCode: number | null;
+  /** What the check printed, as docker keeps it (docker keeps the last few). */
+  output: string;
+  /** The last non-empty line of it — what a failing check usually says (`HTTP Error 503`). */
+  last: string;
+}
+
+export interface HealthDetail {
+  /** `healthy` · `unhealthy` · `starting` · `none`; "" — not reported. */
+  status: string;
+  /** How many runs in a row have failed. */
+  failingStreak: number;
+  /** The check as a command (`CMD`/`CMD-SHELL` taken off); "" — none declared. */
+  test: string;
+  /** Between runs and before a run is given up, compact (`10s`); null — docker's default. */
+  interval: string | null;
+  timeout: string | null;
+  retries: number | null;
+  /** Newest first. */
+  probes: HealthProbe[];
+}
+
+export interface EnvVar {
+  key: string;
+  value: string;
+  /** Masked until the user asks to see it: the name or the value looks like a secret. */
+  sensitive: boolean;
+}
+
+export interface MountDetail {
+  /** `bind` · `volume` · `tmpfs` · `npipe`. */
+  type: string;
+  /** Host path or volume name. */
+  source: string;
+  destination: string;
+  readOnly: boolean;
+}
+
+export interface ContainerDetail {
+  /** What runs: the entrypoint and its arguments, as docker records them. */
+  command: string;
+  /** `no` · `always` · `unless-stopped` · `on-failure` (`on-failure:5` with a limit). */
+  restartPolicy: string;
+  /** null — the container declares no health check. */
+  health: HealthDetail | null;
+  env: EnvVar[];
+  mounts: MountDetail[];
+  labels: { key: string; value: string }[];
+}
+
+/**
+ * Names that mark a value as a secret. Broader than the assistant's redaction
+ * on purpose (`KEY`, `AUTH`, `SALT`, `DSN`, `COOKIE`): a value hidden by mistake
+ * costs one click, one shown by mistake is on the screen of a shared call.
+ */
+const SECRET_NAME = /(pass|pwd|secret|token|key|cred|auth|salt|private|cookie|session|signature|dsn)/i;
+
+/** Whether an environment variable is masked until asked for. */
+export function isSensitiveEnv(key: string, value: string): boolean {
+  if (SECRET_NAME.test(key)) return true;
+  return redactSecrets(value).count > 0;
+}
+
+/** A sensitive value as the view prints it while masked: the marker the recordings use. */
+export const MASKED = REDACTED;
+
+/** Nanoseconds (docker's durations) as a compact duration: `10s`, `1m30s`; null for 0 or junk. */
+export function nanosDuration(ns: unknown): string | null {
+  if (typeof ns !== "number" || !Number.isFinite(ns) || ns <= 0) return null;
+  const totalMs = Math.round(ns / 1e6);
+  if (totalMs < 1000) return `${totalMs}ms`;
+  const s = Math.round(totalMs / 1000);
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m === 0) return `${s}s`;
+  return rest === 0 ? `${m}m` : `${m}m${rest}s`;
+}
+
+/** A health check's `Test` as a command: `CMD` args joined, `CMD-SHELL` as written, `NONE` — off. */
+export function healthTest(test: unknown): string {
+  if (!Array.isArray(test) || test.length === 0) return "";
+  const parts = test.map((p) => (typeof p === "string" ? p : ""));
+  if (parts[0] === "NONE") return "";
+  if (parts[0] === "CMD-SHELL") return parts.slice(1).join(" ");
+  if (parts[0] === "CMD") return parts.slice(1).map(shellWord).join(" ");
+  return parts.map(shellWord).join(" ");
+}
+
+/**
+ * A word quoted for reading when it would not survive as one (spaces, quotes):
+ * in double quotes when nothing in it means something there (`"`, `$`, `` ` ``,
+ * `\\`), else in single quotes — a health check's script reads as written.
+ */
+function shellWord(w: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(w)) return w;
+  if (!/["$`\\]/.test(w)) return `"${w}"`;
+  return `'${w.replace(/'/g, `'\\''`)}'`;
+}
+
+const lastLine = (text: string): string =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1) ?? "";
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const int = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+
+/**
+ * A container's details from `docker inspect <id>` (a JSON array of one); null
+ * when the answer is not that — an error, an image, junk.
+ */
+export function parseContainerDetail(raw: string): ContainerDetail | null {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const it = obj(Array.isArray(doc) ? doc[0] : doc);
+  const config = obj(it.Config);
+  const state = obj(it.State);
+  if (!it.Id || !it.State) return null;
+  const host = obj(it.HostConfig);
+  const args = Array.isArray(it.Args) ? it.Args.map(text) : [];
+  const command = [text(it.Path), ...args].filter(Boolean).map(shellWord).join(" ");
+  const policy = obj(host.RestartPolicy);
+  const name = text(policy.Name) || "no";
+  const retries = int(policy.MaximumRetryCount);
+  const restartPolicy = name === "on-failure" && retries ? `on-failure:${retries}` : name;
+  const check = obj(config.Healthcheck);
+  const hstate = obj(state.Health);
+  const test = healthTest(check.Test);
+  const log = Array.isArray(hstate.Log) ? (hstate.Log as unknown[]).map(obj) : [];
+  const health: HealthDetail | null =
+    test || text(hstate.Status)
+      ? {
+          status: text(hstate.Status),
+          failingStreak: int(hstate.FailingStreak) ?? 0,
+          test,
+          interval: nanosDuration(check.Interval),
+          timeout: nanosDuration(check.Timeout),
+          retries: int(check.Retries) || null,
+          probes: log
+            .map((p) => ({
+              start: parseInspectTime(text(p.Start)),
+              exitCode: int(p.ExitCode),
+              output: text(p.Output),
+              last: lastLine(text(p.Output)),
+            }))
+            .reverse(),
+        }
+      : null;
+  const env = (Array.isArray(config.Env) ? config.Env.map(text) : [])
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("=");
+      const key = at < 0 ? line : line.slice(0, at);
+      const value = at < 0 ? "" : line.slice(at + 1);
+      return { key, value, sensitive: isSensitiveEnv(key, value) };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const mounts = (Array.isArray(it.Mounts) ? (it.Mounts as unknown[]).map(obj) : []).map((m) => ({
+    type: text(m.Type),
+    source: text(m.Name) || text(m.Source),
+    destination: text(m.Destination),
+    readOnly: m.RW === false,
+  }));
+  const labels = Object.entries(obj(config.Labels))
+    .map(([key, value]) => ({ key, value: text(value) }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  return { command, restartPolicy, health, env, mounts, labels };
 }
 
 /** Why a container needs a look (v1.33): the strip above the list. */

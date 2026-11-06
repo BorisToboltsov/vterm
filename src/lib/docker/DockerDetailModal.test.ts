@@ -103,3 +103,99 @@ describe("DockerDetailModal", () => {
     expect(p.runQuery.mock.calls.length).toBe(before + 1);
   });
 });
+
+// A real Docker 29 `inspect` answer, cut down, values replaced (the model's own
+// test reads the same shape in docker.test.ts).
+const INSPECT_FIXTURE = JSON.stringify([
+  {
+    Id: "2b504a4d8e00",
+    Path: "uvicorn",
+    Args: ["app.main:app", "--host", "0.0.0.0", "--forwarded-allow-ips", "*"],
+    State: {
+      Status: "running",
+      Health: {
+        Status: "unhealthy",
+        FailingStreak: 1200,
+        Log: [
+          { Start: "2026-11-06T21:13:30.444329969Z", End: "2026-11-06T21:13:30.7Z", ExitCode: 1, Output: "Traceback (most recent call last):\n  ...\nurllib.error.HTTPError: HTTP Error 503: Service Unavailable\n" },
+          { Start: "2026-11-06T21:13:40.739114210Z", End: "2026-11-06T21:13:41Z", ExitCode: 0, Output: "" },
+        ],
+      },
+    },
+    HostConfig: { RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 } },
+    Config: {
+      Cmd: ["uvicorn"],
+      Env: ["PATH=/usr/local/bin", "APP_JWT_SECRET=s3cr3t", "APP_DATABASE_URL=postgres://app:hunter2@db/app", "APP_STORAGE_KEY=k", "PYTHONUNBUFFERED=1"],
+      Healthcheck: {
+        Test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"],
+        Interval: 10_000_000_000,
+        Timeout: 3_000_000_000,
+        Retries: 6,
+      },
+      Labels: { "com.docker.compose.service": "backend", "com.docker.compose.project": "life-e2e" },
+    },
+    Mounts: [
+      { Type: "volume", Name: "life_storage", Source: "/var/lib/docker/volumes/life_storage/_data", Destination: "/data", RW: true },
+      { Type: "bind", Source: "/srv/app/config", Destination: "/etc/app", RW: false },
+    ],
+  },
+]);
+
+describe("DockerDetailModal — Overview reads the container (stage 1)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const withInspect = () =>
+    props({
+      runQuery: vi.fn(async (args: string[]) =>
+        args[1] === "inspect" ? { stdout: INSPECT_FIXTURE, stderr: "", exitCode: 0 } : { stdout: "log line", stderr: "", exitCode: 0 },
+      ),
+    });
+
+  it("shows the failing health check with what its runs said, the command and the mounts", async () => {
+    render(DockerDetailModal, { props: { ...withInspect(), tab: "overview" } });
+    await vi.advanceTimersByTimeAsync(0);
+    const health = screen.getByTestId("docker-detail-health");
+    expect(health).toHaveTextContent("unhealthy");
+    expect(health).toHaveTextContent("failed 1200 times in a row");
+    expect(screen.getByTestId("docker-detail-probes")).toHaveTextContent("HTTP Error 503: Service Unavailable");
+    expect(screen.getByTestId("docker-detail-command")).toHaveTextContent("uvicorn app.main:app");
+    expect(screen.getByTestId("docker-detail-mounts")).toHaveTextContent("read-only");
+  });
+
+  it("masks what looks like a secret until asked, and asks again for the next container", async () => {
+    const p = withInspect();
+    const { rerender } = render(DockerDetailModal, { props: { ...p, tab: "overview" } });
+    await vi.advanceTimersByTimeAsync(0);
+    const env = screen.getByTestId("docker-detail-env");
+    expect(env).not.toHaveTextContent("s3cr3t");
+    expect(env).not.toHaveTextContent("hunter2");
+    expect(env).toHaveTextContent("‹redacted›");
+    expect(env).toHaveTextContent("/usr/local/bin");
+    await fireEvent.click(screen.getByTestId("docker-detail-env-reveal"));
+    expect(env).toHaveTextContent("s3cr3t");
+    await rerender({ container: container({ id: "def987654321", name: "db" }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId("docker-detail-env")).not.toHaveTextContent("s3cr3t");
+  });
+
+  it("tells the assistant what the health check said — and never the environment", async () => {
+    const onAsk = vi.fn();
+    render(DockerDetailModal, { props: { ...withInspect(), tab: "overview", onAsk } });
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTestId("docker-ask-ai"));
+    const context = onAsk.mock.calls[0][0] as string;
+    expect(context).toContain("HTTP Error 503");
+    for (const secret of ["s3cr3t", "hunter2", "APP_JWT_SECRET", "/usr/local/bin"]) expect(context).not.toContain(secret);
+  });
+
+  it("re-reads it on every poll, and says so when the answer cannot be read", async () => {
+    const p = props({ runQuery: vi.fn().mockResolvedValue({ stdout: "Error: No such object", stderr: "", exitCode: 1 }) });
+    render(DockerDetailModal, { props: { ...p, tab: "overview" } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId("docker-detail-unread")).toBeInTheDocument();
+    const asked = p.runQuery.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(p.runQuery.mock.calls.length).toBe(asked + 1);
+  });
+});
