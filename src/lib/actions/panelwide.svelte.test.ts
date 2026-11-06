@@ -46,6 +46,23 @@ describe("wideWhen", () => {
     stop();
   });
 
+  it("shows the panel anew when it crosses the threshold — not at mount, not on a resize that stays", async () => {
+    const node = document.createElement("div");
+    const animate = vi.fn(() => ({ cancel: vi.fn(), onfinish: null, oncancel: null }) as unknown as Animation);
+    Object.defineProperty(node, "animate", { value: animate, configurable: true });
+    const { action, stop } = mount(node, () => {});
+    await Promise.resolve();
+    resize(node, 600);
+    await Promise.resolve();
+    expect(animate).not.toHaveBeenCalled();
+    resize(node, 1000);
+    await Promise.resolve();
+    expect(animate).toHaveBeenCalledOnce();
+    expect((animate.mock.calls[0] as unknown as [Keyframe[]])[0]).toEqual([{ opacity: 0.35 }, { opacity: 1 }]);
+    action.destroy();
+    stop();
+  });
+
   it("stops watching when the panel goes", () => {
     const node = document.createElement("div");
     const { action, stop } = mount(node, () => {});

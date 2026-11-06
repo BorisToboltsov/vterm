@@ -38,6 +38,9 @@
 </script>
 
 <MonHeader
+  section="temperature"
+  {v}
+  {a}
   title={t("mon.temperature")}
   sub={sensors.length ? t("mon.sensorsN", { n: sensors.length }) : ""}
   onask={a.ask && hot ? () => a.ask?.({ kind: "section", section: "temperature" }) : undefined}

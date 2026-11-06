@@ -47,6 +47,8 @@
   import { filterItems, filterSummary, isFiltered, NO_FILTER, NO_GROUPS, type ListFilter } from "../ui/listview";
   import { listOrder, setListOrder } from "../stores/listview.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
+  import { aside, createRowGlide } from "../actions/fluidglide";
+  import { MOTION_BASE, motion } from "../ui/motion";
   import { columnVars } from "../ui/colwidths";
   import { columns } from "../stores/colwidths.svelte";
   import { driveDisplayName, driveIcon, driveKindKey, driveUsage, driveUsedFraction } from "./drives";
@@ -273,12 +275,25 @@
   // actual bar (also when embedded) and keep Upload visible in its compact form.
   let toolbarWidth = $state(0);
   const compactToolbar = $derived(!!adapter.upload && toolbarWidth > 0 && toolbarWidth < 320);
+  let toolbarEl: HTMLElement | null = null;
   function measureToolbar(node: HTMLElement) {
+    toolbarEl = node;
     const observer = new ResizeObserver(() => (toolbarWidth = node.clientWidth));
     observer.observe(node);
     toolbarWidth = node.clientWidth;
     return { destroy: () => observer.disconnect() };
   }
+  // The buttons a compact bar folds away fly into «⋯» and back out of it; the
+  // rest glide to their places.
+  const toolbarGlide = createRowGlide(() => toolbarEl, { more: "more" });
+  $effect.pre(() => {
+    void compactToolbar;
+    untrack(() => toolbarGlide.snapshot());
+  });
+  $effect(() => {
+    void compactToolbar;
+    untrack(() => toolbarGlide.play());
+  });
   const COLUMN_LABEL: Record<SortKey, () => string> = {
     name: () => t("sftp.colName"),
     size: () => t("sftp.colSize"),
@@ -1211,6 +1226,7 @@
           {#if isConnected}
             <button
               class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
+              data-row-key="refresh"
               use:tooltip={t("sftp.refresh")}
               aria-label={t("sftp.refresh")}
               onclick={refresh}
@@ -1218,6 +1234,7 @@
               <Icon name="refresh" size={14} />
             </button>
             <button
+              data-row-key="follow"
               data-testid="{testPrefix}-follow-terminal"
               class="flex items-center rounded p-1.5 {followTerminal
                 ? 'bg-edge text-accent'
@@ -1232,6 +1249,7 @@
             {#if !compactToolbar}
               <button
                 class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+                data-row-key="newFolder"
                 use:tooltip={t("sftp.newFolder")}
                 aria-label={t("sftp.newFolder")}
                 disabled={!mutable}
@@ -1243,6 +1261,7 @@
                 <Icon name="folderPlus" size={14} />
               </button>
               <button
+                data-row-key="newFile"
                 data-testid="{testPrefix}-new-file"
                 class="flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
                 use:tooltip={t("sftp.newFile")}
@@ -1259,6 +1278,7 @@
             {#if adapter.search}
               <button
                 class="ml-auto flex items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
+                data-row-key="search"
                 use:tooltip={t("search.contentSearch")}
                 aria-label={t("search.contentSearch")}
                 onclick={() => (showSearch = !showSearch)}
@@ -1270,6 +1290,7 @@
               <!-- A compare or run going on in the background shows here: the
                    button reopens its dialog. -->
               <button
+                data-row-key="sync"
                 data-testid="{testPrefix}-sync"
                 class="flex items-center rounded p-1.5 hover:text-accent {syncActive
                   ? 'text-accent'
@@ -1284,6 +1305,7 @@
             {#if adapter.upload}
               <button
                 class="flex items-center rounded p-1.5 text-muted hover:text-accent"
+                data-row-key="upload"
                 use:tooltip={t("sftp.upload")}
                 aria-label={t("sftp.upload")}
                 onclick={uploadFiles}
@@ -1293,6 +1315,7 @@
             {/if}
             {#if compactToolbar}
               <button
+                data-row-key="more"
                 data-testid="{testPrefix}-toolbar-more"
                 class="flex shrink-0 items-center rounded p-1.5 text-muted hover:bg-edge hover:text-text"
                 use:tooltip={t("topbar.more")}
@@ -1360,10 +1383,11 @@
           />
         {/if}
         <!-- The listing's column and — in a wide panel — the column beside it. -->
-        <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth} data-testid="{testPrefix}-row">
+        <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth} data-testid="{testPrefix}-row">
         <div
           class="flex min-h-0 min-w-0 flex-col {sideOpen ? 'shrink-0' : 'flex-1'}"
           style:width={sideOpen ? partWidth("files", rowWidth) : null}
+          data-morph
           data-testid="{testPrefix}-main"
         >
         <!-- Current path, click-to-edit (Phase 39.2). A synthetic (non-mutable) cwd
@@ -1777,7 +1801,7 @@
           <!-- The border between the listing and what stands beside it is dragged
                (`PanelDivider`); the share is the store's, one for every session. -->
           <PanelDivider split="files" width={rowWidth} />
-          <div class="flex min-h-0 min-w-0 flex-1 flex-col text-xs" data-testid="{testPrefix}-side">
+          <div class="flex min-h-0 min-w-0 flex-1 flex-col text-xs" data-testid="{testPrefix}-side" in:aside={motion(MOTION_BASE)} out:aside={motion(MOTION_BASE)}>
             {#if searchOpen}
               <div class="min-h-0 flex-1">
                 <SidePane

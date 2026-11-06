@@ -100,4 +100,35 @@ describe("ConnectingOverlay", () => {
     // No SSH "Tunnel" sub-step for a dumb TCP proxy.
     expect(screen.queryByText("Tunnel")).not.toBeInTheDocument();
   });
+
+  it("is fitted to its room: the ring is the column's first block and the fit sizes it", () => {
+    render(ConnectingOverlay, { props: { alias: "prod-db", host: "deploy@10.0.0.5:22" } });
+    const root = screen.getByTestId("connecting-overlay");
+    const ring = root.querySelector("[data-conn-ring]");
+    expect(ring).not.toBeNull();
+    expect(root.firstElementChild?.firstElementChild).toBe(ring);
+    // The action has measured (jsdom gives no room: the ringless layout).
+    expect(root.dataset.mode).toBe("line");
+    expect(root.style.getPropertyValue("--conn-ring")).toMatch(/rem$/);
+  });
+
+  it("names the step under way in the title's row, for when the checklist folds away", () => {
+    const { unmount } = render(ConnectingOverlay, {
+      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "authenticating" },
+    });
+    expect(screen.getByText("· Authentication…").className).toContain("text-accent");
+    unmount();
+
+    render(ConnectingOverlay, {
+      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", phase: "session", failed: true },
+    });
+    expect(screen.getByText("· Session").className).toContain("text-danger");
+  });
+
+  it("names no step when there is no checklist to fold", () => {
+    render(ConnectingOverlay, {
+      props: { alias: "prod-db", host: "deploy@10.0.0.5:22", failed: true, showSteps: false, title: "Connection lost" },
+    });
+    expect(screen.queryByText(/^· /)).not.toBeInTheDocument();
+  });
 });

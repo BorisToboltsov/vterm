@@ -27,6 +27,7 @@
   import { settings } from "../settings/settings.svelte";
   import { metricsSnapshot } from "../ai/aimetrics";
   import Modal from "../ui/Modal.svelte";
+  import { gridGlide } from "../actions/fluidglide";
   import Icon from "../ui/Icon.svelte";
   import Skeleton from "../ui/Skeleton.svelte";
   import MonOverview from "./MonOverview.svelte";
@@ -313,7 +314,9 @@
           </button>
         {/each}
       </nav>
-      <div class="min-h-0 min-w-0 overflow-y-auto pr-1" data-testid="mon-section-{current}">
+      <!-- A section's cards glide to their places when the window changes how many
+           columns its grids have (`gridGlide`). -->
+      <div class="min-h-0 min-w-0 overflow-y-auto pr-1" data-testid="mon-section-{current}" use:gridGlide>
         {#if current === "overview"}
           <MonOverview v={view} a={actions} />
         {:else if current === "cpu"}

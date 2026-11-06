@@ -22,6 +22,9 @@
 </script>
 
 <MonHeader
+  section="containers"
+  {v}
+  {a}
   title={t("mon.containers")}
   sub={t("mon.containersSub", { n: list.length })}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "containers" }) : undefined}

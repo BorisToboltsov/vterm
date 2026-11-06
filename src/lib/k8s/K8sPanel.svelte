@@ -27,6 +27,8 @@
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
   import SidePane from "../ui/SidePane.svelte";
+  import { aside } from "../actions/fluidglide";
+  import { MOTION_BASE, motion } from "../ui/motion";
   import ListHeader from "../ui/ListHeader.svelte";
   import FilteredEmpty from "../ui/FilteredEmpty.svelte";
   import { listMenuText, type ListLabels } from "../ui/listtext";
@@ -751,11 +753,12 @@
     <!-- Active sub-view -->
     <!-- In a wide panel describe/YAML and a pod's details open beside the
          list (below), not over it. -->
-    <div class="flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
     <div
       class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("k8s", rowWidth) : null}
       data-testid="k8s-list-part"
+      data-morph
     >
       {#if !firstLoadDone}
         <div class="space-y-2 p-2.5" data-testid="k8s-skeleton" aria-hidden="true">
@@ -901,7 +904,7 @@
       <!-- The border between the list and what stands beside it is dragged
            (`PanelDivider`); the share is the store's, one for every session. -->
       <PanelDivider split="k8s" width={rowWidth} />
-      <div class="min-h-0 min-w-0 flex-1" data-testid="k8s-side">
+      <div class="min-h-0 min-w-0 flex-1" data-testid="k8s-side" in:aside={motion(MOTION_BASE)} out:aside={motion(MOTION_BASE)}>
         {#if textOpen}
           <SidePane title={textTitle} onclose={() => (textOpen = false)} testid="k8s-side-text">
             <K8sText text={textBody} fill />

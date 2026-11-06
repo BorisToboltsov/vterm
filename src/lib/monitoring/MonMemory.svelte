@@ -36,6 +36,9 @@
 </script>
 
 <MonHeader
+  section="memory"
+  {v}
+  {a}
   title={t("mon.memory")}
   sub={[fmtBytes(m.memTotal), m.swapTotal ? t("mon.swapOf", { size: fmtBytes(m.swapTotal) }) : ""].filter(Boolean).join(" · ")}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "memory" }) : undefined}

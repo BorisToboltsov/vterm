@@ -1,20 +1,24 @@
-// Empty-state guard (v1.30): an empty state fits the room it is given and never
-// leaves it.
+// Empty-state guard: an empty state fits the room it is given and never leaves it.
 //
 // The badge was a flex item of a centred column as tall as its pane. Short of
 // room it was squeezed to the icon's height — a 56×28 oval — and what still did
 // not fit spilled out of the pane both ways: over the dock's tab strip above, and
 // in the structured log view, whose wrapper could not get shorter than its text,
-// over the bottom dock. Now the empty state picks a tier by its own height
-// (`emptytier.ts`, `actions/emptyfit.ts`); this keeps the pieces of that
-// together:
+// over the bottom dock. Now one number sizes the badge, its lines, the gaps and
+// the padding by the empty state's own height, and short of the medallion it
+// gives way to tighter tiers (`emptytier.ts`, `actions/emptyfit.ts`); this keeps
+// the pieces of that together:
 //
 //  1. The root is as tall as its room and clips (`h-full min-h-0
 //     overflow-hidden`), is fitted by `use:emptyFit` and starts in the roomiest
 //     tier; the content is centred by `my-auto` — it gives way at the top when
 //     there is no room — not by `justify-center`, which overflows upward. A
-//     circle never shrinks.
-//  2. The tiers the markup reads are the model's, all of them.
+//     circle never shrinks, and the badge's is as wide as it is tall: one size,
+//     the fit's.
+//  2. The tiers the markup reads are the model's, all of them; the sizes it reads
+//     are the action's; the action moves nothing itself — every glide is
+//     `actions/fluidglide.ts`, which `connfit.guard` keeps to `transform` and
+//     `opacity`.
 //  3. A wrapper around an empty state does not centre it (it centres itself) and,
 //     when it stretches (`flex-1`), can also get shorter (`min-h-0`) — the log
 //     view's wrapper could not.
@@ -24,17 +28,44 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { describe, expect, it } from "vitest";
+import { EMPTY_VARS } from "../actions/emptyfit";
 import { EMPTY_TIERS } from "./emptytier";
 
 const SRC = join(process.cwd(), "src");
 const EMPTY = "lib/ui/EmptyState.svelte";
+const FIT = "lib/actions/emptyfit.ts";
+
+/**
+ * Drop every `open … close` block by scanning. One regex pass is not enough: it
+ * leaves a nested opener behind (`<!--<!-- -->` → `<!--`), and what is left would
+ * be read as markup (CodeQL: `js/incomplete-multi-character-sanitization`). An
+ * opener with no closer takes the rest with it.
+ */
+function stripBlocks(src: string, open: string, close: string): string {
+  let out = "";
+  let i = 0;
+  while (i < src.length) {
+    if (src.startsWith(open, i)) {
+      const end = src.indexOf(close, i + open.length);
+      i = end < 0 ? src.length : end + close.length;
+      continue;
+    }
+    out += src[i++];
+  }
+  return out;
+}
 
 /** Source with comments removed — markup, block and line (`://` is not a comment). */
 function code(src: string): string {
-  return src
-    .replace(/<!--[^]*?-->/g, "")
+  return stripBlocks(src, "<!--", "-->")
     .replace(/\/\*[^]*?\*\//g, "")
     .replace(/(^|[^:])\/\/.*$/gm, "$1");
+}
+
+/** What follows a component's instance script: its markup and style. */
+function afterScript(src: string): string {
+  const at = src.lastIndexOf("</script>");
+  return at < 0 ? src : src.slice(at + "</script>".length);
 }
 
 const raw = (rel: string): string => readFileSync(join(SRC, ...rel.split("/")), "utf8");
@@ -49,11 +80,9 @@ function components(dir = SRC, acc: string[] = []): string[] {
   return acc;
 }
 
-/** The opening tags of the markup (after the script), in order. */
-const openTags = (source: string): string[] =>
-  [...code(source.replace(/<script[^]*?<\/script>/, "")).matchAll(/<div\b[^>]*>/g)].map(
-    (m) => m[0],
-  );
+/** The opening tags of the markup (after the script), in order — `div`s, or every element. */
+const openTags = (source: string, tag = "div"): string[] =>
+  [...code(afterScript(source)).matchAll(new RegExp(`<${tag}\\b[^>]*>`, "g"))].map((m) => m[0]);
 
 const classes = (tag: string): string => /\bclass="([^"]*)"/.exec(tag)?.[1] ?? "";
 const has = (cls: string, name: string): boolean => cls.split(/\s+/).includes(name);
@@ -72,12 +101,28 @@ export function rootViolations(source: string): string[] {
   }
   if (has(rootCls, "justify-center")) out.push("the root centres with `justify-center`");
   if (!has(classes(content), "my-auto")) out.push("the content is not centred by `my-auto`");
-  for (const tag of openTags(source)) {
+  for (const tag of openTags(source, "[a-z]+")) {
     const cls = classes(tag);
     if (has(cls, "rounded-full") && !has(cls, "shrink-0")) {
       out.push(`a circle may shrink: \`${cls}\``);
     }
   }
+  const badge = openTags(source, "[a-z]+").find((tag) => tag.includes('data-empty-icon="badge"'));
+  if (!badge) out.push("no circle is marked `data-empty-icon=\"badge\"`");
+  else if (!has(classes(badge), `size-(${EMPTY_VARS.badge})`)) {
+    out.push(`the badge is not \`size-(${EMPTY_VARS.badge})\` — as wide as it is tall`);
+  }
+  return out;
+}
+
+/** Sizes the markup reads that the action never sets, and animations the action starts itself. */
+export function sizeViolations(markup: string, fit: string): string[] {
+  const known = new Set(Object.values(EMPTY_VARS));
+  const out = [...code(markup).matchAll(/\((--empty-[\w-]+)\)/g)]
+    .map((m) => m[1])
+    .filter((name) => !known.has(name))
+    .map((name) => `the markup reads \`${name}\`, the action never sets it`);
+  if (/\.animate\(/.test(code(fit))) out.push("the action animates by itself, not through `fluidglide`");
   return out;
 }
 
@@ -120,6 +165,10 @@ describe("empty-state guard", () => {
     expect(tierViolations(raw(EMPTY))).toEqual([]);
   });
 
+  it("the markup reads only the action's sizes, and the action glides only through fluidglide", () => {
+    expect(sizeViolations(raw(EMPTY), raw(FIT))).toEqual([]);
+  });
+
   it("no wrapper centres an empty state or keeps it from getting shorter", () => {
     const users = components().filter((rel) => /<(EmptyState|FilteredEmpty)\b/.test(raw(rel)));
     // The log view, the dock's notice and the filter's are among them.
@@ -160,21 +209,33 @@ describe("empty-state guard — catches what it exists for", () => {
     expect(rootViolations(mutate(empty, "use:emptyFit={[title, hint]}", ""))).toEqual([
       "the root is not fitted by `use:emptyFit`",
     ]);
-    expect(rootViolations(mutate(empty, 'data-tier="full"', 'data-tier="line"'))).toEqual([
-      "the root does not start in the roomiest tier (`full`)",
+    expect(rootViolations(mutate(empty, 'data-tier="badge"', 'data-tier="line"'))).toEqual([
+      "the root does not start in the roomiest tier (`badge`)",
     ]);
   });
 
   it("a badge that may become an oval", () => {
-    const broken = mutate(empty, "hidden h-14 w-14 shrink-0", "hidden h-14 w-14");
+    const broken = mutate(empty, "flex size-(--empty-badge) shrink-0", "flex size-(--empty-badge)");
     expect(rootViolations(broken)).toHaveLength(1);
     expect(rootViolations(broken)[0]).toMatch(/^a circle may shrink/);
+    expect(rootViolations(mutate(empty, "flex size-(--empty-badge) shrink-0", "flex h-(--empty-badge) w-14 shrink-0"))).toEqual([
+      "the badge is not `size-(--empty-badge)` — as wide as it is tall",
+    ]);
+  });
+
+  it("a size nobody sets, and an action that animates on its own", () => {
+    expect(sizeViolations(mutate(empty, "gap-(--empty-gap)", "gap-(--empty-space)"), raw(FIT))).toEqual([
+      "the markup reads `--empty-space`, the action never sets it",
+    ]);
+    expect(sizeViolations(empty, `${raw(FIT)}\nnode.animate([{ opacity: 0 }], 200);`)).toEqual([
+      "the action animates by itself, not through `fluidglide`",
+    ]);
   });
 
   it("a tier the model does not have, and one the markup forgot", () => {
-    expect(tierViolations(empty.replaceAll("tier=medal", "tier=medallion"))).toEqual([
-      "the markup reads tier `medallion`, the model has none",
-      "the markup never reads tier `medal`",
+    expect(tierViolations(empty.replaceAll("tier=badge", "tier=medal"))).toEqual([
+      "the markup reads tier `medal`, the model has none",
+      "the markup never reads tier `badge`",
     ]);
   });
 

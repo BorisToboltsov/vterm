@@ -695,6 +695,35 @@ const rules = {
     },
   ),
 
+  "scan-blocks": rule(
+    "Markup blocks are cut by scanning, not by a regex",
+    "{{why}} CodeQL fails the PR on it, tests included. Cut a block by scanning (stripBlocks, as in panelcontainer.guard), slice the markup at lastIndexOf(\"</script>\"), escape a string for RegExp with /[.*+?^${}()|[\\]\\\\]/g.",
+    (context, report) => {
+      const regexOf = (n) => (n?.type === "Literal" && n.regex ? n.regex : null);
+      return {
+        Literal(node) {
+          if (node.regex && node.regex.pattern.toLowerCase().includes("<script")) {
+            report(node, { why: "A regex for <script> misses <SCRIPT> and <script > (js/bad-tag-filter)." });
+          }
+        },
+        CallExpression(node) {
+          const { callee } = node;
+          if (callee.type !== "MemberExpression" || callee.computed) return;
+          if (callee.property.name !== "replace" && callee.property.name !== "replaceAll") return;
+          const [what, by] = node.arguments;
+          const re = regexOf(what);
+          if (!re || by?.type !== "Literal") return;
+          if (by.value === "" && /<!--|<style/i.test(re.pattern)) {
+            report(node, { why: "One regex pass over <!-- … --> or <style> leaves a nested opener behind (js/incomplete-multi-character-sanitization)." });
+          }
+          if (by.value === "\\$&" && /^\[.*\]$/.test(re.pattern) && !re.pattern.includes("\\\\")) {
+            report(node, { why: "An escape that leaves the backslash out lets it through (js/incomplete-sanitization)." });
+          }
+        },
+      };
+    },
+  ),
+
   "each-as-t": rule(
     "An each-block variable is not named t",
     "Don't name the {#each} variable `t`: it shadows the translation function t() for the whole block.",

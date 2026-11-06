@@ -247,6 +247,27 @@ const CASES: Record<string, { bad: [string, string][]; good: [string, string][] 
       ],
     ],
   },
+  "scan-blocks": {
+    bad: [
+      // The gates' helpers as CodeQL failed them — in tests, which it reads too.
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const strip = (s: string) => s.replace(/<!--[^]*?-->/g, "");`],
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const css = (s: string) => s.replace(/<style[^]*?<\\/style>/, "");`],
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const js = (s: string) => s.replace(/<script[^]*?<\\/script>/, "");`],
+      ["src/lib/ui/zz_probe.ts", `export const tag = (s: string) => /<SCRIPT\\b/.exec(s);`],
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const esc = (s: string) => s.replace(/[.[\\]()]/g, "\\\\$&");`],
+      ["scripts/zz_probe.mjs", `export const strip = (s) => s.replace(/<!--[\\s\\S]*?-->/g, "");`],
+    ],
+    good: [
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const markup = (s: string) => s.slice(s.lastIndexOf("</script>") + 9);`],
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const esc = (s: string) => s.replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&");`],
+      // Finding a comment is not cutting it (the markdown reader asks whether a line opens one).
+      ["src/lib/ui/zz_probe.ts", `export const opens = (line: string) => /^\\s*<!--/.test(line);`],
+      // Nor is a mutation that keeps the comment (a gate's self-test).
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const m = (s: string) => s.replace(/(\\s*<!-- Frame)/, "x$1");`],
+      // A string that names the anti-pattern proves nothing.
+      ["src/lib/ui/zz_probe.guard.test.ts", `export const doc = "s.replace(/<!--[^]*?-->/g, '')";`],
+    ],
+  },
   "paste-caret": {
     bad: [
       // cmPaste in EditorTab as it was: CRLF text lands shorter, the anchor past the end.
@@ -313,6 +334,10 @@ describe("vterm lint rules", () => {
 
   it("leaves tests alone: fixtures name the violations on purpose", async () => {
     expect(await tripped("src/lib/zz_probe.test.ts", `export const p = "/tmp/vterm-x";`)).toEqual([]);
+    // All but `scan-blocks`: CodeQL reads the tests, and fails the PR on a gate's regex.
+    expect(await tripped("src/lib/zz_probe.test.ts", `export const s = (x: string) => x.replace(/<!--[^]*?-->/g, "");`)).toEqual([
+      "vterm/scan-blocks",
+    ]);
   });
 
   it("fails an exception that no longer suppresses anything", async () => {
