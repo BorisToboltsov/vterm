@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { loadCoreLevel, loadHealth, sensorLevel, worstLevel } from "./monhealth";
+import { loadCoreLevel, loadHealth, loadZones, sensorLevel, worstLevel } from "./monhealth";
+import { thresholdLevel } from "./thresholds";
 import type { StatusBarThresholds } from "../settings/settings.svelte";
 import type { Sensor } from "../api";
 
@@ -52,4 +53,34 @@ describe("load health", () => {
     expect(loadHealth(0.1, 0.1, th.load)).toBe("ok");
   });
 
+});
+
+describe("loadZones", () => {
+  it("puts the bounds at 0.7 and 1 per thread, as decimals", () => {
+    expect(loadZones(1, th.load)).toEqual({ warn: 0.7, crit: 1 });
+    // 0.7 × 3 is 2.0999…96 in floating point: the bound is the 2.1 it means.
+    expect(loadZones(3, th.load)).toEqual({ warn: 2.1, crit: 3 });
+    expect(loadZones(16, th.load)).toEqual({ warn: 11.2, crit: 16 });
+  });
+
+  it("takes the user's load threshold where it is lower, and nothing without either", () => {
+    expect(loadZones(16, { warn: 4, crit: 8 })).toEqual({ warn: 4, crit: 8 });
+    expect(loadZones(2, { warn: 4, crit: null })).toEqual({ warn: 1.4, crit: 2 });
+    expect(loadZones(0, { warn: 4, crit: null })).toEqual({ warn: 4, crit: null });
+    expect(loadZones(0, th.load)).toEqual({ warn: null, crit: null });
+  });
+
+  it("is the rule `loadHealth` judges by — the chart and the list cannot disagree", () => {
+    const ths = [th.load, { warn: 1.5, crit: 6 }, { warn: null, crit: 2.5 }, { warn: 9, crit: null }];
+    for (const threads of [1, 2, 3, 6, 7, 12, 64]) {
+      for (const lt of ths) {
+        for (let i = 0; i <= 1200; i++) {
+          const load1 = i / 100;
+          expect(thresholdLevel(load1, loadZones(threads, lt)), `${load1} on ${threads}`).toBe(
+            loadHealth(load1, load1 / threads, lt),
+          );
+        }
+      }
+    }
+  });
 });

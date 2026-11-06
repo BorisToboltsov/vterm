@@ -5,6 +5,7 @@ import {
   fmtBytes,
   fmtCount,
   fmtLimit,
+  fmtLoad,
   fmtMhz,
   fmtMs,
   fmtPct,
@@ -180,5 +181,14 @@ describe("monitoring page formats (v1.33)", () => {
     expect(fmtMhz(null)).toBe("—");
     expect(fmtCount(null)).toBe("—");
     expect(fmtCount(1234.4)).toBe((1234).toLocaleString());
+  });
+
+  it("writes a load or its bound without trailing zeros", () => {
+    expect(fmtLoad(0.7)).toBe("0.7");
+    expect(fmtLoad(0.7 * 3)).toBe("2.1");
+    expect(fmtLoad(2)).toBe("2");
+    expect(fmtLoad(0.755)).toBe("0.76");
+    expect(fmtLoad(null)).toBe("—");
+    expect(fmtLoad(NaN)).toBe("—");
   });
 });

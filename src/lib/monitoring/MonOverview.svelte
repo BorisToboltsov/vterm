@@ -8,10 +8,11 @@
   import { SPARK } from "./chartgeom";
   import MonCard from "./MonCard.svelte";
   import MonHeader from "./MonHeader.svelte";
+  import MonProblemRow from "./MonProblemRow.svelte";
   import TweenNumber from "./TweenNumber.svelte";
   import { fmtBytes, fmtPct, fmtRate, fmtUptime, memPct } from "./format";
   import { series } from "./monhistory";
-  import { fullestPartition, SECTION_LABEL, type MonActions, type MonView } from "./monsections";
+  import { fullestPartition, type MonActions, type MonView } from "./monsections";
   import type { DiskDev, NetIface } from "../api";
   import { SERIES } from "./monpalette";
   import { thresholdLevel, levelTextClass } from "./thresholds";
@@ -133,6 +134,9 @@
 </script>
 
 <MonHeader
+  section="overview"
+  {v}
+  {a}
   title={t("mon.sec.overview")}
   {sub}
   primary
@@ -156,31 +160,7 @@
   {:else}
     <ul class="divide-y divide-edge/60">
       {#each v.problems as p (p.id)}
-        <li class="flex items-center gap-2 py-1.5" data-testid="mon-problem" data-level={p.level}>
-          <Icon name="alert" size={15} class="shrink-0 {p.level === 'crit' ? 'text-bad' : 'text-warn'}" />
-          <div class="min-w-0 flex-1">
-            <div class="truncate text-xs text-text">{t(p.key, p.params)}</div>
-            {#if p.note}<div class="truncate font-mono text-meta text-muted">{p.note}</div>{/if}
-          </div>
-          <button
-            type="button"
-            class="flex shrink-0 items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text"
-            onclick={() => a.go(p.section)}
-          >
-            {t(SECTION_LABEL[p.section])}
-            <Icon name="arrowRight" size={11} />
-          </button>
-          {#if a.ask}
-            <button
-              type="button"
-              aria-label={t("ai.ask.button")}
-              class="shrink-0 rounded border border-edge px-1.5 py-0.5 text-muted hover:bg-edge hover:text-text"
-              onclick={() => a.ask?.({ kind: "problem", problem: p })}
-            >
-              <Icon name="aiMark" size={12} />
-            </button>
-          {/if}
-        </li>
+        <MonProblemRow {p} {a} link />
       {/each}
     </ul>
   {/if}

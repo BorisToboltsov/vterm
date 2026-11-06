@@ -18,6 +18,16 @@ export function filterHiddenFiles<T extends { name: string }>(
 }
 
 /**
+ * How many columns a grid of `n` equal cells takes, at most `max` a row, so its
+ * rows come out even — 12 cells at most 8 a row are two rows of 6, not 8 and a
+ * lonely 4. Never fewer than one.
+ */
+export function evenColumns(n: number, max: number): number {
+  if (!(n > 0) || !(max > 0)) return 1;
+  return Math.ceil(n / Math.ceil(n / max));
+}
+
+/**
  * Case-insensitive AND-substring match: every whitespace-separated term in
  * `query` must appear somewhere in `haystack`. An empty query matches anything
  * (used for settings search / list filtering).

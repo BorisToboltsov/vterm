@@ -52,6 +52,9 @@
 {/snippet}
 
 <MonHeader
+  section="system"
+  {v}
+  {a}
   title={t("mon.system")}
   sub={[m.user && m.hostname ? `${m.user}@${m.hostname}` : m.hostname, m.prettyName || m.os].filter(Boolean).join(" · ")}
   onask={a.ask ? () => a.ask?.({ kind: "section", section: "system" }) : undefined}

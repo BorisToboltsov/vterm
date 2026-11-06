@@ -13,6 +13,7 @@ import {
   timeMarks,
   windowMax,
   yOf,
+  zoneSpan,
 } from "./chartgeom";
 
 const smp = (vals: (number | null)[], from = 0) => vals.map((v, i) => ({ s: from + i, v }));
@@ -122,5 +123,27 @@ describe("window and marks", () => {
 
   it("marks the span of the window in seconds ago", () => {
     expect(timeMarks(121, 5).map((m) => m.ago)).toEqual([600, 400, 200, 0]);
+  });
+});
+
+describe("zones behind a chart", () => {
+  // A plot 100 px tall from y = 0 on a scale of 2.
+  const span = (from: number, to?: number | null) => zoneSpan({ from, to, color: "c" }, 2, 0, 100);
+
+  it("spans the band of values, the open one up to the ceiling", () => {
+    expect(span(0.7, 1)).toEqual({ y: 50, h: 15 });
+    expect(span(1)).toEqual({ y: 0, h: 50 });
+  });
+
+  it("cuts a zone at the ceiling and draws none that starts above it", () => {
+    expect(span(1.5, 4)).toEqual({ y: 0, h: 25 });
+    expect(span(2)).toBeNull();
+    expect(span(11.2, 16)).toBeNull();
+  });
+
+  it("draws no empty or upside-down zone, and none on an empty scale", () => {
+    expect(span(1, 1)).toBeNull();
+    expect(span(1.2, 0.8)).toBeNull();
+    expect(zoneSpan({ from: 0, color: "c" }, 0, 0, 100)).toBeNull();
   });
 });

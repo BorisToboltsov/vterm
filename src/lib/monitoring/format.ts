@@ -112,6 +112,11 @@ export function fmtMhz(mhz: number | null | undefined): string {
   return mhz >= 1000 ? `${(mhz / 1000).toFixed(2)} GHz` : `${Math.round(mhz)} MHz`;
 }
 
+/** A load value or a bound on it, without trailing zeros: "0.7", "11.2", "2"; "—" for null. */
+export function fmtLoad(n: number | null | undefined): string {
+  return n == null || !Number.isFinite(n) ? "—" : String(+n.toFixed(2));
+}
+
 /** A count with the locale's grouping, "—" for null. */
 export function fmtCount(n: number | null | undefined): string {
   return n == null ? "—" : Math.round(n).toLocaleString();

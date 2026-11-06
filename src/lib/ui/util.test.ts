@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   debounce,
+  evenColumns,
   filterHiddenFiles,
   isHidden,
   lineDiffStat,
@@ -121,5 +122,25 @@ describe("isHidden", () => {
       configurable: true,
     });
     expect(isHidden()).toBe(false);
+  });
+});
+
+describe("evenColumns", () => {
+  it("fills one row when it fits", () => {
+    expect(evenColumns(4, 8)).toBe(4);
+    expect(evenColumns(8, 8)).toBe(8);
+  });
+
+  it("splits into even rows instead of a full row and a lonely rest", () => {
+    expect(evenColumns(12, 8)).toBe(6);
+    expect(evenColumns(16, 8)).toBe(8);
+    expect(evenColumns(9, 8)).toBe(5);
+    expect(evenColumns(6, 5)).toBe(3);
+    expect(evenColumns(64, 8)).toBe(8);
+  });
+
+  it("is one column for nothing to lay out", () => {
+    expect(evenColumns(0, 8)).toBe(1);
+    expect(evenColumns(3, 0)).toBe(1);
   });
 });

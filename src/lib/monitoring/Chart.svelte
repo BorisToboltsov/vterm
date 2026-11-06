@@ -22,15 +22,17 @@
     stack,
     timeMarks,
     windowMax,
+    zoneSpan,
     type Pt,
     type Sample,
+    type Zone,
   } from "./chartgeom";
   import { fmtAgo } from "./format";
   import { LINE_MS, retarget, SCALE_MS, STATUS_MS, still, tweenAt, type Tween } from "../ui/tween";
   import { motionMs, prefersReducedMotion } from "../ui/motion";
   import { t } from "../i18n";
 
-  type Line = { samples: readonly Sample[]; color: string; fill?: boolean; width?: number };
+  type Line = { samples: readonly Sample[]; color: string; fill?: boolean; width?: number; dashed?: boolean };
 
   let {
     lines,
@@ -46,6 +48,7 @@
     scaleLabel = false,
     threshold = null,
     thresholdLabel = "",
+    zones = [],
     marks = false,
     interval = 5,
     dot = true,
@@ -75,6 +78,8 @@
     scaleLabel?: boolean;
     threshold?: number | null;
     thresholdLabel?: string;
+    /** Bands of values behind the lines — where a level begins, not a line over them. */
+    zones?: readonly Zone[];
     /** Time marks under the chart. */
     marks?: boolean;
     /** Seconds between samples, for the marks. */
@@ -137,7 +142,7 @@
   const axis = $derived(tweenAt(axisTw, now, lineMs));
   const scale = $derived(tweenAt(scaleTw, now, scaleMs) ?? target);
 
-  type Drawn = { color: string; width: number; d: string[]; area: string[]; dot: Pt | null };
+  type Drawn = { color: string; width: number; dashed: boolean; d: string[]; area: string[]; dot: Pt | null };
 
   const drawn = $derived.by((): Drawn[] => {
     if (axis == null || plotW <= 0) return [];
@@ -168,6 +173,7 @@
         return {
           color: lines[i].color,
           width: 1.4,
+          dashed: false,
           d: totals.map(linePath),
           area: bands,
           dot: last && dot ? edgeDot(totals.at(-1) ?? [], plotW) : null,
@@ -183,6 +189,7 @@
       return {
         color: l.color,
         width: l.width ?? (bar ? 1.3 : 1.6),
+        dashed: l.dashed ?? false,
         d: ds,
         area: l.fill || mirror ? ds.map((d, k) => areaPath(d, rs[k], base)) : [],
         dot: dot ? edgeDot(rs.at(-1) ?? [], plotW) : null,
@@ -200,6 +207,13 @@
       <defs>
         <clipPath id="clip-{uid}"><rect x="0" y="0" width={plotW} height={height} /></clipPath>
       </defs>
+      {#each zones as z, i (i)}
+        {@const span = zoneSpan(z, scale, top, plotH)}
+        {#if span}
+          <rect x={left} y={span.y} width={plotW} height={span.h} style="fill: {z.color}" fill-opacity="0.14" data-zone={i} />
+          <line x1={left} x2={left + plotW} y1={span.y + span.h} y2={span.y + span.h} style="stroke: {z.color}" stroke-opacity="0.4" />
+        {/if}
+      {/each}
       {#each tickValues as v, i (i)}
         <line
           x1={left}
@@ -240,6 +254,7 @@
                 fill="none"
                 style="stroke: {stacked ? 'var(--color-text)' : s.color}"
                 stroke-width={s.width}
+                stroke-dasharray={s.dashed ? "3 3" : undefined}
                 stroke-linejoin="round"
                 stroke-linecap="round"
               />
