@@ -211,11 +211,14 @@ export function parseVolumeDetail(raw: string): VolumeDetail | null {
 export type DockerItem =
   | { kind: "image"; id: string; label: string }
   | { kind: "network"; name: string }
-  | { kind: "volume"; name: string };
+  | { kind: "volume"; name: string }
+  /** A compose stack (stage 5), by its project's name. */
+  | { kind: "stack"; project: string };
 
 /** The same item, picked again — the poll hands over new objects every few seconds. */
 export function sameItem(a: DockerItem | null, b: DockerItem | null): boolean {
   if (!a || !b || a.kind !== b.kind) return false;
   if (a.kind === "image" && b.kind === "image") return a.id === b.id;
+  if (a.kind === "stack" && b.kind === "stack") return a.project === b.project;
   return (a as { name: string }).name === (b as { name: string }).name;
 }

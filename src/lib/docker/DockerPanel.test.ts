@@ -12,6 +12,8 @@ const PS = [
 const calls: string[] = [];
 // Whether the events snapshot reports a crash loop (stage 3) — off but in its own test.
 const crashing = vi.hoisted(() => ({ on: false }));
+// Whether `ps` reports a compose stack (stage 5) — off but in its own test.
+const stacked = vi.hoisted(() => ({ on: false }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   containerRun: vi.fn(async (_session: string, args: string[]) => {
@@ -20,6 +22,10 @@ vi.mock("../api", async (importOriginal) => ({
     const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
     if (args[1] === "version") return ok("29.0.1\n");
     if (args[1] === "ps" && args.includes("--filter")) return ok(["abc123456789", "edge-proxy", "running"].join(US));
+    if (args[1] === "compose" && args.includes("ps")) return ok('{"Service":"api","ID":"abc123456789","Name":"shop-api-1","State":"running","Health":"","ExitCode":0}');
+    if (args[1] === "compose" && args.includes("--services")) return ok("api\nworker\n");
+    if (args[1] === "ps" && stacked.on)
+      return ok(["abc123456789", "shop-api-1", "api:1", "running", "Up 2 hours", "", "shop", "api", "/srv/shop", "2026-10-07 10:00:00 +0000 UTC", "2 hours ago", "shop_default", "/srv/shop/compose.yaml", ""].join(US));
     if (args[1] === "ps") return ok(PS.join("\n"));
     if (args[1] === "images") return ok(["img111111111", "nginx", "1.27", "187MB", "2026-10-07 10:00:00 +0000 UTC"].join(US));
     if (args[1] === "history") return ok([`/bin/sh -c #(nop)  CMD ["nginx"]`, "0B", "9 days ago"].join(US) + "\n" + ["/bin/sh -c apt-get install nginx", "60MB", "9 days ago"].join(US));
@@ -336,5 +342,19 @@ describe("DockerPanel — the column of names (stage 4)", () => {
     await fireEvent.click(within(within(side).getByTestId("docker-image-users")).getByText("edge-proxy"));
     expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
     expect(screen.queryByTestId("docker-side-item")).toBeNull();
+  });
+});
+
+describe("DockerPanel — a compose stack's details (stage 5)", () => {
+  it("open from the stack's header — as a dialog where there is no room beside the list", async () => {
+    stacked.on = true;
+    render(DockerPanel, { props: { sessionId: "d-stack", visible: true, sessionReady: true } });
+    await screen.findByText("shop-api-1");
+    await fireEvent.click(screen.getByTestId("docker-stack-open"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByTestId("docker-stack-detail")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getAllByTestId("docker-stack-service")).toHaveLength(2));
+    expect(within(dialog).getAllByTestId("docker-stack-service")[1]).toHaveTextContent("not created");
+    stacked.on = false;
   });
 });

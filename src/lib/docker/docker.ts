@@ -20,6 +20,9 @@ const US = "\x1f";
 const LABEL_PROJECT = "com.docker.compose.project";
 const LABEL_SERVICE = "com.docker.compose.service";
 const LABEL_WORKDIR = "com.docker.compose.project.working_dir";
+/** The files and the env file a stack was brought up with (v1.33, stage 5). */
+const LABEL_FILES = "com.docker.compose.project.config_files";
+const LABEL_ENVFILE = "com.docker.compose.project.environment_file";
 
 // ── Argument builders ────────────────────────────────────────────────────────
 
@@ -51,6 +54,8 @@ export function psArgs(): string[] {
     "{{.CreatedAt}}",
     "{{.RunningFor}}",
     "{{.Networks}}",
+    `{{.Label "${LABEL_FILES}"}}`,
+    `{{.Label "${LABEL_ENVFILE}"}}`,
   ].join(US);
   return ["docker", "ps", "-a", "--format", fmt];
 }
@@ -1049,6 +1054,10 @@ export interface DockerContainer {
    * one's namespace (`--network container:…`) has none at all.
    */
   networks: string[];
+  /** The compose files the stack was brought up with (its label); empty — not a stack, or not said. */
+  configFiles?: string[];
+  /** The env file it was brought up with; "" — none or not said. */
+  envFile?: string;
 }
 
 export interface DockerImage {
@@ -1110,6 +1119,11 @@ export function parsePs(raw: string): DockerContainer[] {
     createdAt: f[9] ?? "",
     runningFor: f[10] ?? "",
     networks: parseNetworkNames(f[11]),
+    configFiles: (f[12] ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+    envFile: (f[13] ?? "").trim(),
   }));
 }
 

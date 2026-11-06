@@ -46,6 +46,7 @@
   import { columnVars } from "../ui/colwidths";
   import { fitColumns } from "../ui/colfit";
   import { pick, pickMode, type PickMode } from "../ui/listselect";
+  import { stackOf, usesOwnFiles } from "./dockerstack";
   import { columns, hiddenFields } from "../stores/colwidths.svelte";
   import { uiPx } from "../settings/settings.svelte";
   import { t, currentLocale, type MessageKey } from "../i18n";
@@ -72,6 +73,7 @@
     onLogs,
     onInspect,
     onComposeLogs,
+    onStackOpen = undefined,
     onViewDetails,
     showMenu,
   }: {
@@ -106,6 +108,8 @@
     onLogs: (c: DockerContainer) => void;
     onInspect: (c: DockerContainer) => void;
     onComposeLogs: (project: string) => void;
+    /** Open a compose stack's details — its services, log, configuration (stage 5). */
+    onStackOpen?: (project: string) => void;
     onViewDetails: (c: DockerContainer) => void;
     /** Open the shared context menu at the event position with these items. */
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
@@ -229,6 +233,12 @@
     if (mode === "toggle") anchor = id;
   }
   const picking = $derived(picked.size > 0);
+
+  /** Whether a stack came up from its own files — then `up` from its directory is not offered. */
+  function ownFiles(items: readonly DockerContainer[], project: string): boolean {
+    const st = stackOf(items, project);
+    return st ? usesOwnFiles(st) : false;
+  }
 
   function copyId(c: DockerContainer) {
     void navigator.clipboard?.writeText(c.id);
@@ -355,7 +365,9 @@
         {#snippet actions()}
           {#if compose}
             <div class="flex items-center gap-0.5 text-muted">
-              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.key, workdir), { successKey: "docker.started" })}>
+              <!-- `up` reads the project's directory: a stack brought up from its own
+                   files would come up as another definition — not offered (stage 5). -->
+              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy || ownFiles(g.items, g.key)} use:tooltip={ownFiles(g.items, g.key) ? t("docker.stackUpOwnFiles") : t("docker.composeUp")} aria-label={t("docker.composeUp")} data-testid="docker-stack-up-all" onclick={() => run(composeUpArgs(g.key, workdir), { successKey: "docker.started" })}>
                 <Icon name="play" size={13} />
               </button>
               <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.key, workdir), { destructive: true, successKey: "docker.stopped" })}>
@@ -367,6 +379,11 @@
               <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.key)}>
                 <Icon name="note" size={12} />
               </button>
+              {#if onStackOpen}
+                <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.stackOpen")} aria-label={t("docker.stackOpen")} data-testid="docker-stack-open" onclick={() => onStackOpen(g.key)}>
+                  <Icon name="info" size={12} />
+                </button>
+              {/if}
             </div>
           {/if}
         {/snippet}

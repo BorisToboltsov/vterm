@@ -110,11 +110,16 @@ describe("argument builders", () => {
     expect(fmt).toContain(US);
   });
 
-  it("psArgs asks for network membership last, after the fields it already had", () => {
-    // Appended, not inserted: every earlier field keeps its position.
+  it("psArgs appends what it learns to ask, after the fields it already had", () => {
+    // Appended, not inserted: every earlier field keeps its position — network
+    // membership (v1.5), then the stack's files and env file (v1.33).
     const fields = psArgs().at(-1)!.split(US);
-    expect(fields.at(-1)).toBe("{{.Networks}}");
-    expect(fields).toHaveLength(12);
+    expect(fields[11]).toBe("{{.Networks}}");
+    expect(fields.slice(12)).toEqual([
+      '{{.Label "com.docker.compose.project.config_files"}}',
+      '{{.Label "com.docker.compose.project.environment_file"}}',
+    ]);
+    expect(fields).toHaveLength(14);
     expect(fields[5]).toBe("{{.Ports}}");
   });
 

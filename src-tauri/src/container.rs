@@ -49,7 +49,15 @@ const COMMANDS: &[&[&str]] = &[
 ];
 
 /// What `docker compose` may do: the project-scoped actions the panel offers.
-const COMPOSE_ACTIONS: &[&str] = &["logs", "up", "down", "restart"];
+const COMPOSE_ACTIONS: &[&str] = &[
+    "logs", "up", "down", "restart", "start", "stop", "ps", "config",
+];
+
+/// The one action that may name the stack's own files (`-f`, `--env-file`): `config`
+/// renders them and runs nothing — reading a file is what the file panels already
+/// do. Every action that starts something takes the definition from the project
+/// alone, never from a file the caller names (v1.33).
+const COMPOSE_READS_FILES: &str = "config";
 
 /// Whether the WebView may run this argv through `container_run`. The program is
 /// `docker` by name (resolved on PATH, never a path the caller chose) and the
@@ -100,12 +108,24 @@ fn ends_events(rest: &[String]) -> bool {
 /// would point compose at a definition of the caller's choosing.
 fn check_compose(rest: &[String]) -> Result<(), String> {
     let mut tokens = rest.iter();
+    let mut names_files = false;
     while let Some(token) = tokens.next() {
         match token.as_str() {
             "-p" | "--project-directory" => {
                 tokens.next();
             }
-            action if COMPOSE_ACTIONS.contains(&action) => return Ok(()),
+            "-f" | "--file" | "--env-file" => {
+                names_files = true;
+                tokens.next();
+            }
+            action if COMPOSE_ACTIONS.contains(&action) => {
+                if names_files && action != COMPOSE_READS_FILES {
+                    return Err(format!(
+                        "docker compose: `{action}` takes the stack from the project, not from a named file"
+                    ));
+                }
+                return Ok(());
+            }
             other => return Err(format!("docker compose: `{other}` is not allowed")),
         }
     }
@@ -181,6 +201,27 @@ mod tests {
             ],
             &["docker", "events", "--since", "10m", "--until=0s"],
             &["docker", "history", "--no-trunc", "--format", "x", "abc"],
+            &[
+                "docker", "compose", "-p", "web", "ps", "-a", "--format", "json",
+            ],
+            &["docker", "compose", "-p", "web", "restart", "api"],
+            &["docker", "compose", "-p", "web", "stop", "api"],
+            &["docker", "compose", "-p", "web", "start", "api"],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "-f",
+                "/srv/web/compose.yaml",
+                "-f",
+                "/srv/web/compose.prod.yaml",
+                "--env-file",
+                "/srv/web/prod.env",
+                "config",
+            ],
             &["docker", "network", "inspect", "web_default"],
             &["docker", "volume", "inspect", "data"],
             &[
@@ -243,6 +284,44 @@ mod tests {
             &["docker", "system", "dial-stdio"],
             &["docker", "compose", "-f", "/tmp/evil.yml", "up"],
             &["docker", "compose", "--file=/tmp/evil.yml", "up"],
+            &[
+                "docker",
+                "compose",
+                "-p",
+                "web",
+                "-f",
+                "/tmp/evil.yml",
+                "up",
+                "-d",
+            ],
+            &[
+                "docker",
+                "compose",
+                "--env-file",
+                "/tmp/x.env",
+                "-p",
+                "web",
+                "up",
+            ],
+            &[
+                "docker",
+                "compose",
+                "-p",
+                "web",
+                "-f",
+                "/tmp/evil.yml",
+                "restart",
+            ],
+            &[
+                "docker",
+                "compose",
+                "-p",
+                "web",
+                "-f",
+                "/tmp/evil.yml",
+                "run",
+                "x",
+            ],
             &["docker", "compose", "-p", "web", "run", "svc", "sh"],
             &["docker", "compose", "-p", "web"],
             &["docker", "login", "-u", "x"],

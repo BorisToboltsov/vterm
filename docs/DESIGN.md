@@ -190,6 +190,12 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   `GroupHeader` на раздел (свёрнут по умолчанию), строки `border-b border-edge/60 py-1 pl-5 pr-2`,
   выбранная — `bg-accent/10`. Подробности образа, сети, тома — та же сетка `grid-cols-[7rem_1fr]` и
   микро-метки секций, что у контейнера; список «Используют» — строки с точкой состояния.
+- **Подробности стека** ([DockerStackDetail](../src/lib/docker/DockerStackDetail.svelte)) — над
+  вкладками каталог и файлы `font-mono text-caption` (файл — `text-text/85`, каталог и env —
+  `text-muted`); вкладки как у контейнера (Сервисы · Логи · Конфигурация). Сервис — строка `py-1
+  border-b border-edge/60`: точка тона, имя `font-medium`, слово состояния тоном, «нет в файлах» —
+  `text-warn`, справа действия `p-1`; его контейнеры — строки `pl-4 text-caption text-muted` с
+  точкой 1.5. Не созданный при своих файлах стека — «поднять вручную» и `CopyButton` вместо кнопки.
 - **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
   text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
   text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —

@@ -287,3 +287,23 @@ describe("DockerContainers — picking several rows", () => {
     expect(screen.queryByTestId("docker-row-pick")).toBeNull();
   });
 });
+
+describe("DockerContainers — a stack's own files (stage 5)", () => {
+  const group = (files: string[], envFile = "") =>
+    [{ key: "shop", label: "shop", rest: false, items: [container({ project: "shop", workdir: "/srv/shop", configFiles: files, envFile })] }] as ListGroup<DockerContainer>[];
+
+  it("does not offer `up` from the directory to a stack that came up from its own files", () => {
+    const { unmount } = render(DockerContainers, { props: props({ groups: group(["/srv/shop/compose.yaml", "/srv/shop/compose.prod.yaml"], "/srv/shop/prod.env") }) });
+    expect(screen.getByTestId("docker-stack-up-all")).toBeDisabled();
+    unmount();
+    render(DockerContainers, { props: props({ groups: group(["/srv/shop/compose.yaml"]) }) });
+    expect(screen.getByTestId("docker-stack-up-all")).not.toBeDisabled();
+  });
+
+  it("opens the stack's details from its header", async () => {
+    const onStackOpen = vi.fn();
+    render(DockerContainers, { props: props({ groups: group(["/srv/shop/compose.yaml"]), onStackOpen }) });
+    await fireEvent.click(screen.getByTestId("docker-stack-open"));
+    expect(onStackOpen).toHaveBeenCalledWith("shop");
+  });
+});

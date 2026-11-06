@@ -24,6 +24,9 @@
   import DockerImageDetail from "./DockerImageDetail.svelte";
   import DockerNetworkDetail from "./DockerNetworkDetail.svelte";
   import DockerVolumeDetail from "./DockerVolumeDetail.svelte";
+  import DockerStackDetail from "./DockerStackDetail.svelte";
+  import DockerItemModal from "./DockerItemModal.svelte";
+  import { stackOf } from "./dockerstack";
   import { networkSubnetsArgs, parseNetworkSubnets, type DockerItem } from "./dockeritems";
   import { isSharedNetwork, type GraphPick } from "./dockernet";
   import DockerNetworks from "./DockerNetworks.svelte";
@@ -295,12 +298,12 @@
     detailOpen = false;
     sideItem = item;
   }
-  /** A node of the topology picked twice: a container's details, or a network's beside the list. */
+  /** A node of the topology picked twice: a container's details, or a network's. */
   function openGraphPick(p: GraphPick) {
     if (p.kind === "container") {
       const c = containers.find((x) => x.id === p.id);
       if (c) openDetails(c);
-    } else if (wide) openItem({ kind: "network", name: p.name });
+    } else openItem({ kind: "network", name: p.name });
   }
   /** Open a container by id — from an image's, a network's or a volume's list of users. */
   function openContainerById(id: string) {
@@ -344,6 +347,10 @@
   let subnetsOf = "";
   const ipsOf = (c: DockerContainer): string[] =>
     (factsById.get(c.id)?.addresses ?? []).map((a) => a.ipv4 || a.ipv6).filter(Boolean);
+  const sideStack = $derived.by(() => {
+    const item = sideItem;
+    return item?.kind === "stack" ? stackOf(containers, item.project) : null;
+  });
   const sideImage = $derived.by(() => {
     const item = sideItem;
     return item?.kind === "image" ? (images.find((i) => i.id === item.id) ?? null) : null;
@@ -1001,6 +1008,7 @@
             onLogs={openLogs}
             onInspect={openInspect}
             onComposeLogs={openComposeLogs}
+            onStackOpen={(project) => openItem({ kind: "stack", project })}
             onViewDetails={openDetails}
             {showMenu}
           />
@@ -1101,9 +1109,11 @@
           </SidePane>
         {:else if sideItem}
           {@const item = sideItem}
-          <SidePane title={item.kind === "image" ? item.label : item.name} onclose={() => (sideItem = null)} testid="docker-side-item">
+          <SidePane title={item.kind === "image" ? item.label : item.kind === "stack" ? item.project : item.name} onclose={() => (sideItem = null)} testid="docker-side-item">
             {#if item.kind === "image"}
               <DockerImageDetail image={sideImage} detail={diskDetail} {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} onclose={() => (sideItem = null)} />
+            {:else if item.kind === "stack"}
+              <DockerStackDetail stack={sideStack} fill {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} />
             {:else if item.kind === "network"}
               <DockerNetworkDetail name={item.name} {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} onclose={() => (sideItem = null)} />
             {:else}
@@ -1174,6 +1184,24 @@
   onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
+/>
+
+<!-- An image's, a network's, a volume's or a stack's details where there is no room beside the list. -->
+<DockerItemModal
+  open={sideItem !== null && !wide}
+  item={sideItem}
+  image={sideImage}
+  stack={sideStack}
+  usage={diskDetail}
+  {busy}
+  {refreshSec}
+  {run}
+  runQuery={(a, tm) => runQuery(a, tm)}
+  onopen={(id) => {
+    sideItem = null;
+    openContainerById(id);
+  }}
+  onclose={() => (sideItem = null)}
 />
 
 <ContextMenu {menu} onclose={() => (menu = null)} />
