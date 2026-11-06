@@ -132,6 +132,133 @@ fn check_compose(rest: &[String]) -> Result<(), String> {
     Err("docker compose: no action".into())
 }
 
+/// What a `docker compose` argv names that has to be the stack's own (v1.33): the
+/// project, the directory compose reads its definition from, the files and env
+/// files. The policy above cannot tell whether a directory is the stack's — a
+/// path is a path — so `container_run` asks docker for the labels the stack's
+/// containers were created with and holds the argv to them ([`check_stack`]):
+/// otherwise `up` with `--project-directory` would read a `compose.yaml` from
+/// any directory the page can write a file into.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct ComposeNames {
+    pub project: Option<String>,
+    pub dir: Option<String>,
+    pub files: Vec<String>,
+    pub env_files: Vec<String>,
+}
+
+impl ComposeNames {
+    /// Whether it names anything compose would read a definition from.
+    pub fn reads_definition(&self) -> bool {
+        self.dir.is_some() || !self.files.is_empty() || !self.env_files.is_empty()
+    }
+}
+
+/// The names of a `docker compose` argv (the options before its action); None
+/// when it is not a compose argv.
+pub fn compose_names(args: &[String]) -> Option<ComposeNames> {
+    if args.first().map(String::as_str) != Some("docker")
+        || args.get(1).map(String::as_str) != Some("compose")
+    {
+        return None;
+    }
+    let mut names = ComposeNames::default();
+    let mut tokens = args[2..].iter();
+    while let Some(token) = tokens.next() {
+        let value = || tokens.clone().next().cloned();
+        match token.as_str() {
+            "-p" => names.project = value(),
+            "--project-directory" => names.dir = value(),
+            "-f" | "--file" => names.files.extend(value()),
+            "--env-file" => names.env_files.extend(value()),
+            _ => break,
+        }
+        tokens.next();
+    }
+    Some(names)
+}
+
+/// Label keys compose writes on every container of a stack.
+const LABEL_PROJECT: &str = "com.docker.compose.project";
+const LABEL_WORKDIR: &str = "com.docker.compose.project.working_dir";
+const LABEL_FILES: &str = "com.docker.compose.project.config_files";
+const LABEL_ENV: &str = "com.docker.compose.project.environment_file";
+
+/// What the stack's containers say they were brought up from: one line per
+/// container, `dir␟files␟env file` (the files comma-joined, as compose writes them).
+pub fn stack_labels_args(project: &str) -> Vec<String> {
+    let fmt = [LABEL_WORKDIR, LABEL_FILES, LABEL_ENV]
+        .map(|k| format!("{{{{.Label \"{k}\"}}}}"))
+        .join("\u{1f}");
+    vec![
+        "docker".into(),
+        "ps".into(),
+        "-a".into(),
+        "--filter".into(),
+        format!("label={LABEL_PROJECT}={project}"),
+        "--format".into(),
+        fmt,
+    ]
+}
+
+/// Whether what a compose argv names is the stack's own, by its containers'
+/// labels (`stack_labels_args`' output): the directory one of them was brought
+/// up from, files and env files among the ones they were brought up with. A
+/// directory or a file named without the project, or for a project no container
+/// belongs to, is refused — there is nothing to hold it to.
+pub fn check_stack(names: &ComposeNames, labels: &str) -> Result<(), String> {
+    if !names.reads_definition() {
+        return Ok(());
+    }
+    let Some(project) = names.project.as_deref().filter(|p| !p.is_empty()) else {
+        return Err("docker compose: a directory or a file is named without the project".into());
+    };
+    let rows: Vec<Vec<&str>> = labels
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.split('\u{1f}').map(str::trim).collect())
+        .collect();
+    if rows.is_empty() {
+        return Err(format!(
+            "docker compose: no container of `{project}` says where it was brought up from"
+        ));
+    }
+    let dirs: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.first().copied())
+        .filter(|d| !d.is_empty())
+        .collect();
+    let files: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get(1))
+        .flat_map(|f| f.split(',').map(str::trim))
+        .filter(|f| !f.is_empty())
+        .collect();
+    let envs: Vec<&str> = rows
+        .iter()
+        .filter_map(|r| r.get(2).copied())
+        .filter(|e| !e.is_empty())
+        .collect();
+    if let Some(dir) = &names.dir {
+        if !dirs.contains(&dir.as_str()) {
+            return Err(format!(
+                "docker compose: `{dir}` is not the directory `{project}` was brought up from"
+            ));
+        }
+    }
+    if let Some(file) = names.files.iter().find(|f| !files.contains(&f.as_str())) {
+        return Err(format!(
+            "docker compose: `{file}` is not a file `{project}` was brought up with"
+        ));
+    }
+    if let Some(env) = names.env_files.iter().find(|e| !envs.contains(&e.as_str())) {
+        return Err(format!(
+            "docker compose: `{env}` is not the env file `{project}` was brought up with"
+        ));
+    }
+    Ok(())
+}
+
 /// Whether the argv is a registry login (`docker_login`): `docker login …`, and
 /// nothing else rides on the secret fed to its stdin.
 pub fn check_login_args(args: &[String]) -> Result<(), String> {
@@ -330,6 +457,194 @@ mod tests {
         }
     }
 
+    const US: &str = "\u{1f}";
+    fn labels(rows: &[[&str; 3]]) -> String {
+        rows.iter()
+            .map(|r| r.join(US))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_compose_argv_names_its_project_directory_files_and_env_files() {
+        let names = compose_names(&argv(&[
+            "docker",
+            "compose",
+            "--project-directory",
+            "/srv/web",
+            "-p",
+            "web",
+            "-f",
+            "/srv/web/a.yaml",
+            "-f",
+            "/srv/web/b.yaml",
+            "--env-file",
+            "/srv/web/prod.env",
+            "config",
+            "-f",
+            "ignored",
+        ]))
+        .unwrap();
+        assert_eq!(
+            names,
+            ComposeNames {
+                project: Some("web".into()),
+                dir: Some("/srv/web".into()),
+                files: vec!["/srv/web/a.yaml".into(), "/srv/web/b.yaml".into()],
+                env_files: vec!["/srv/web/prod.env".into()],
+            }
+        );
+        assert!(compose_names(&argv(&["docker", "ps"])).is_none());
+        assert!(
+            !compose_names(&argv(&["docker", "compose", "-p", "web", "restart", "api"]))
+                .unwrap()
+                .reads_definition()
+        );
+    }
+
+    #[test]
+    fn a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from() {
+        let own = labels(&[
+            [
+                "/srv/web",
+                "/srv/web/a.yaml,/srv/web/b.yaml",
+                "/srv/web/prod.env",
+            ],
+            [
+                "/srv/web",
+                "/srv/web/a.yaml,/srv/web/b.yaml",
+                "/srv/web/prod.env",
+            ],
+        ]);
+        let check = |a: &[&str], l: &str| check_stack(&compose_names(&argv(a)).unwrap(), l);
+        // The stack's own directory, files and env file pass.
+        assert!(check(
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "up",
+                "-d"
+            ],
+            &own
+        )
+        .is_ok());
+        assert!(check(
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "-f",
+                "/srv/web/b.yaml",
+                "--env-file",
+                "/srv/web/prod.env",
+                "config"
+            ],
+            &own,
+        )
+        .is_ok());
+        // Nothing named: nothing to check.
+        assert!(check(&["docker", "compose", "-p", "web", "stop", "api"], "").is_ok());
+        // Another directory, another file, another env file — refused.
+        for bad in [
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/tmp/evil",
+                "-p",
+                "web",
+                "up",
+                "-d",
+            ][..],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "-f",
+                "/tmp/evil.yaml",
+                "config",
+            ],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "--env-file",
+                "/tmp/x.env",
+                "config",
+            ],
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "up",
+                "-d",
+            ],
+        ] {
+            assert!(check(bad, &own).is_err(), "{bad:?}");
+        }
+        // A project no container belongs to: nothing to hold the directory to.
+        assert!(check(
+            &[
+                "docker",
+                "compose",
+                "--project-directory",
+                "/srv/web",
+                "-p",
+                "web",
+                "up"
+            ],
+            ""
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn the_labels_are_asked_of_the_project_by_filter() {
+        let a = stack_labels_args("web");
+        assert_eq!(
+            &a[..5],
+            &argv(&[
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                "label=com.docker.compose.project=web"
+            ])[..]
+        );
+        assert!(check_args(&a).is_ok());
+        assert_eq!(a[6].matches("{{.Label").count(), 3);
+    }
+
+    #[test]
+    fn a_compose_argv_is_held_to_its_stack_before_it_runs() {
+        // The order is the contract: the labels are asked and checked, then the argv runs.
+        let src = include_str!("commands/drivers.rs");
+        let body = &src[src.find("pub async fn container_run(").unwrap()..];
+        let body = &body[..body.find("\n}\n").unwrap()];
+        let checked = body
+            .find("container::check_stack(")
+            .expect("container_run checks the stack");
+        let runs = body
+            .rfind("run_driver(&state, &session_id, call)")
+            .expect("container_run runs the argv");
+        assert!(checked < runs, "the stack is checked before the argv runs");
+        assert!(body.contains("container::compose_names(&args)"));
+    }
+
     #[test]
     fn a_registry_login_is_only_docker_login() {
         assert_eq!(
@@ -346,5 +661,82 @@ mod tests {
         for bad in [&["docker", "ps"][..], &["sh", "login"], &["docker"]] {
             assert!(check_login_args(&argv(bad)).is_err(), "{bad:?}");
         }
+    }
+}
+
+/// Against a real docker (`#[ignore]`, see docs/TESTS.md «Живой стек compose»): a
+/// throwaway stack of `alpine` is brought up from a temp directory, its real
+/// labels are asked the way `container_run` asks them, and the check passes its
+/// own directory and refuses another; the stack is taken down after.
+#[cfg(test)]
+mod live_compose {
+    use super::*;
+    use std::process::Command;
+
+    fn docker(args: &[&str]) -> std::process::Output {
+        Command::new("docker")
+            .args(args)
+            .output()
+            .expect("docker on PATH")
+    }
+
+    #[test]
+    #[ignore]
+    fn a_real_stack_passes_its_own_directory_and_refuses_another() {
+        let project = "vterm-live-compose";
+        let dir = std::env::temp_dir().join(project);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("compose.yaml"),
+            "services:\n  idle:\n    image: alpine:latest\n    command: [\"sleep\", \"300\"]\n",
+        )
+        .unwrap();
+        let dir_s = dir.to_string_lossy().to_string();
+        let up = docker(&[
+            "compose",
+            "--project-directory",
+            &dir_s,
+            "-p",
+            project,
+            "up",
+            "-d",
+        ]);
+        assert!(
+            up.status.success(),
+            "{}",
+            String::from_utf8_lossy(&up.stderr)
+        );
+
+        let query = stack_labels_args(project);
+        let args: Vec<&str> = query[1..].iter().map(String::as_str).collect();
+        let labels = String::from_utf8_lossy(&docker(&args).stdout).to_string();
+        let names = |d: &str| {
+            compose_names(&[
+                "docker".into(),
+                "compose".into(),
+                "--project-directory".into(),
+                d.into(),
+                "-p".into(),
+                project.into(),
+                "up".into(),
+                "-d".into(),
+            ])
+            .unwrap()
+        };
+        let own = check_stack(
+            &names(labels.split('\u{1f}').next().unwrap_or_default().trim()),
+            &labels,
+        );
+        let other = check_stack(&names("/tmp"), &labels);
+
+        let down = docker(&["compose", "-p", project, "down"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(own.is_ok(), "{own:?} — labels: {labels}");
+        assert!(other.is_err());
+        assert!(
+            down.status.success(),
+            "{}",
+            String::from_utf8_lossy(&down.stderr)
+        );
     }
 }

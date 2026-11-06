@@ -156,6 +156,17 @@ Cobertura и JSON-summary для CI.
 инварианта «логика в `.ts`»: если оболочка требует покрытия — в ней завелась логика,
 которой там быть не должно.
 
+## Живой стек compose
+
+Модуль `live_compose` в [container.rs](../src-tauri/src/container.rs) поднимает из временного
+каталога одноразовый стек `alpine` (`vterm-live-compose`), спрашивает его метки так же, как
+`container_run`, проверяет, что свой каталог проходит, а чужой — нет, и снимает стек. Нужен
+запущенный docker и образ `alpine:latest`; помечен `#[ignore]`:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_compose -- --ignored
+```
+
 ## Живые SFTP-тесты
 
 Модуль `live_sftp` в [sftp.rs](../src-tauri/src/sftp.rs) гоняет round-trip сохранения и
