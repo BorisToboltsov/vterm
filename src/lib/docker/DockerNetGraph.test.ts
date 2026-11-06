@@ -140,3 +140,44 @@ describe("DockerNetGraph — topology", () => {
     expect(onpick).toHaveBeenCalledWith({ kind: "container", id: "w" });
   });
 });
+
+describe("DockerNetGraph — boxes (v1.33)", () => {
+  it("frames a container in trouble in the colour of «Needs attention», and dashes an internal network", () => {
+    render(DockerNetGraph, {
+      props: {
+        networks: [network("shop"), network("back")],
+        containers: [container({ id: "a", name: "api", networks: ["shop", "back"] }), container({ id: "w", name: "web", networks: ["shop"] })],
+        trouble: (id: string) => (id === "a" ? ("bad" as const) : null),
+        subnets: new Map([["back", { subnets: ["10.9.0.0/24"], internal: true }]]),
+      },
+    });
+    const boxes = screen.getAllByTestId("docker-net-container");
+    expect(boxes.map((b) => b.dataset.trouble ?? "")).toEqual(["bad", ""]);
+    expect(boxes[0].className).toContain("border-bad");
+    expect(boxes[1].className).toContain("border-edge");
+    const back = screen.getAllByTestId("docker-net-node").find((n) => n.textContent?.includes("back"))!;
+    expect(back.className).toContain("border-dashed");
+    expect(back).toHaveTextContent("10.9.0.0/24 · internal");
+  });
+
+  it("names the colours under the graph — the ports' only when there are ports", () => {
+    const { unmount } = render(DockerNetGraph, { props: { networks: NETWORKS, containers: CONTAINERS } });
+    const legend = screen.getByTestId("docker-net-legend");
+    expect(legend).toHaveTextContent("needs attention");
+    expect(legend).not.toHaveTextContent("open to all");
+    unmount();
+    render(DockerNetGraph, {
+      props: { networks: [network("shop")], containers: [container({ id: "w", name: "web", networks: ["shop"], ports: "0.0.0.0:443->443/tcp" })] },
+    });
+    expect(screen.getByTestId("docker-net-legend")).toHaveTextContent("open to all");
+  });
+
+  it("puts the address on the box's second line, a dash when it is not known", () => {
+    render(DockerNetGraph, {
+      props: { networks: [network("shop")], containers: [container({ id: "w", name: "web", networks: ["shop"] }), container({ id: "a", name: "api", networks: ["shop"] })], ips: (c: DockerContainer) => (c.id === "w" ? ["172.20.0.2", "fd00::2"] : []) },
+    });
+    const [api, web] = screen.getAllByTestId("docker-net-container");
+    expect(web).toHaveTextContent("172.20.0.2 · fd00::2");
+    expect(api).toHaveTextContent("—");
+  });
+});

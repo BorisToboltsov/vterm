@@ -177,10 +177,15 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   над графиком — подпись `text-muted`, текущее значение `tabular-nums text-text/90` и потолок
   `text-caption text-muted` («лимит 0.5 ядер», «из 1.0 GiB» или «без лимита»).
 - **Топология Docker** ([DockerNetGraph](../src/lib/docker/DockerNetGraph.svelte)) — три колонки по
-  процентам ширины (порты 0–22, контейнеры 32–66, сети 76–100; без опубликованных портов — две):
-  порт — `font-mono text-caption`, всем — `text-warn` и ребро `--color-warn`, только с хоста —
-  `text-muted`; у контейнера адрес и у сети подсеть — `font-mono text-caption text-muted` после имени,
-  число участников сети — справа `tabular-nums`. Подсветка и затемнение — как были.
+  процентам ширины (порты 0–22, контейнеры 32–66, сети 76–100; без опубликованных портов — две),
+  строка 40 px, узлы — плашки `rounded border bg-panel-alt px-2`:
+  порт — одна строка 24 px, `font-mono text-caption`, открытый всем — `border-warn text-warn` и ребро
+  `--color-warn`, только с хоста — `border-edge text-muted`; контейнер — две строки 34 px: точка
+  состояния и имя, ниже адреса `font-mono text-caption text-muted` (до двух, `—` — не известны),
+  рамка — `border-edge`, а в беде цветом «Требует внимания» (`border-warn bg-warn/5`,
+  `border-bad bg-bad/5`); сеть — две строки, рамка `border-accent/60`, внутренняя — `border-dashed`,
+  ниже подсеть и «внутренняя», число участников справа. Выбранный узел — `ring-1 ring-accent`.
+  Под графом — легенда `text-caption text-muted` с образцами рамок.
 - **Разделы колонки имён** ([DockerTreeSections](../src/lib/docker/DockerTreeSections.svelte)) —
   `GroupHeader` на раздел (свёрнут по умолчанию), строки `border-b border-edge/60 py-1 pl-5 pr-2`,
   выбранная — `bg-accent/10`. Подробности образа, сети, тома — та же сетка `grid-cols-[7rem_1fr]` и

@@ -50,6 +50,7 @@
     usage = undefined,
     ips = undefined,
     subnets = undefined,
+    trouble = undefined,
     onopen = undefined,
     containers = [],
     view = "list",
@@ -70,6 +71,8 @@
     /** For the topology (v1.33): a container's addresses and each network's subnets. */
     ips?: (c: DockerContainer) => string[];
     subnets?: ReadonlyMap<string, { subnets: string[]; internal: boolean }>;
+    /** What is wrong with a container, by «Needs attention» — the topology frames it in that colour. */
+    trouble?: (id: string) => "warn" | "bad" | null;
     /** Open what a node of the topology is — picked twice — beside the list. */
     onopen?: (pick: GraphPick) => void;
     /** Every container on the host, for ports and membership. */
@@ -178,7 +181,7 @@
 
   {#if view === "graph"}
     <div class="min-h-0 flex-1">
-      <DockerNetGraph {networks} {containers} {ips} {subnets} onpick={onopen} />
+      <DockerNetGraph {networks} {containers} {ips} {subnets} {trouble} onpick={onopen} />
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-auto">

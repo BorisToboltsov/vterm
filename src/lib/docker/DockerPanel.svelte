@@ -788,6 +788,10 @@
       detail: a.detail,
     })),
   );
+  // The topology frames a container in trouble in the strip's colour.
+  const troubleById = $derived(new Map(attention.map((a) => [a.key, a.tone] as const)));
+  const troubleOf = (id: string): "warn" | "bad" | null => troubleById.get(id) ?? null;
+
   function pickAttention(id: string) {
     const c = containers.find((x) => x.id === id);
     if (c) openDetails(c, "logs");
@@ -1068,6 +1072,7 @@
           usage={diskDetail}
           ips={ipsOf}
           {subnets}
+          trouble={troubleOf}
           onopen={openGraphPick}
           {containers}
           view={netView}

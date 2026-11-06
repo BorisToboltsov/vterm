@@ -6,6 +6,11 @@
   // dockernet.ts), so a three-second poll cannot make it jump. Drawn the way
   // GitGraph draws its rails: fixed-height HTML rows under one SVG.
   //
+  // Since v1.33 each node is a box (the first sketch of the topology): a port in
+  // the colour of who can reach it, a container with its address on a second
+  // line and its trouble in the colour of its frame, a network with its subnet,
+  // an internal one dashed. A legend under the graph names the colours.
+  //
   // An edge says "published to this container" or "attached to this network" and
   // nothing more. Picking a node lights what it shares a network with — what it
   // can reach in principle; the caption above the graph (DockerNetworks) says so.
@@ -22,6 +27,7 @@
     containers,
     ips = undefined,
     subnets = undefined,
+    trouble = undefined,
     onpick = undefined,
   }: {
     networks: DockerNetwork[];
@@ -30,16 +36,26 @@
     ips?: (c: DockerContainer) => string[];
     /** Each network's subnets (`network inspect`); absent — not drawn. */
     subnets?: ReadonlyMap<string, { subnets: string[]; internal: boolean }>;
+    /** What is wrong with a container, by the panel's «Needs attention»: its frame's colour. */
+    trouble?: (id: string) => "warn" | "bad" | null;
     /** A node was picked twice in a row — open what it is (the details beside the list). */
     onpick?: (pick: GraphPick) => void;
   } = $props();
 
-  const H = $derived(uiPx(26)); // fixed row height — the SVG is laid out in the same units
+  const H = $derived(uiPx(40)); // fixed row height — the SVG is laid out in the same units
   const PAD = $derived(uiPx(4)); // breathing room above the first and below the last row
+  const BOX = $derived(uiPx(34)); // a two-line box: name, and an address or a subnet
+  const PORT = $derived(uiPx(24)); // a port is one line
 
   const TONE: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", idle: "bg-muted" };
   // Who can reach a port: every address is an exposure, said in the warning colour.
-  const REACH: Record<string, string> = { all: "text-warn", loopback: "text-muted", address: "text-text/85" };
+  const REACH: Record<string, string> = {
+    all: "border-warn text-warn",
+    loopback: "border-edge text-muted",
+    address: "border-edge text-text/85",
+  };
+  // A container in trouble says so by its frame — the same reading as the strip above the list.
+  const FRAME: Record<string, string> = { warn: "border-warn bg-warn/5", bad: "border-bad bg-bad/5" };
 
   const graph = $derived(buildNetGraph(networks, containers, undefined, { ips, subnets }));
   // The SVG's x axis is in percent of the width (it stretches; strokes do not),
@@ -144,8 +160,8 @@
         <!-- A port is the way into its container: picking it is picking the container. -->
         <button
           type="button"
-          class="absolute flex items-center justify-end gap-1.5 pl-2.5 pr-1 font-mono text-caption hover:bg-edge/30 {focus && !portLit(p) ? 'opacity-40' : ''} {REACH[p.reach]}"
-          style="left: 0; width: {width(cols.ports)}; top: {PAD + p.row * H}px; height: {H}px"
+          class="absolute flex items-center justify-end rounded border bg-panel-alt px-2 font-mono text-caption hover:bg-edge/40 {focus && !portLit(p) ? 'opacity-40' : ''} {REACH[p.reach]}"
+          style="left: 0; width: {width(cols.ports)}; top: {PAD + p.row * H + (H - PORT) / 2}px; height: {PORT}px"
           use:tooltip={t(p.reach === "all" ? "docker.reachAll" : p.reach === "loopback" ? "docker.reachLoopback" : "docker.graphPortAddress")}
           data-testid="docker-net-port"
           data-reach={p.reach}
@@ -157,23 +173,25 @@
 
       {#each graph.containers as c (c.id)}
         {@const picked = isPicked({ kind: "container", id: c.id })}
+        {@const wrong = trouble?.(c.id) ?? null}
         <button
           type="button"
-          class="absolute flex items-center gap-1.5 pl-1 pr-2.5 text-left hover:bg-edge/30 {focus && !focus.containers.has(c.id) ? 'opacity-40' : ''} {picked ? 'bg-edge/60' : ''}"
-          style="left: {cols.containers[0]}%; width: {width(cols.containers)}; top: {PAD + c.row * H}px; height: {H}px"
+          class="absolute flex flex-col justify-center rounded border px-2 text-left {wrong ? FRAME[wrong] : 'border-edge bg-panel-alt'} hover:bg-edge/40 {focus && !focus.containers.has(c.id) ? 'opacity-40' : ''} {picked ? 'ring-1 ring-accent' : ''}"
+          style="left: {cols.containers[0]}%; width: {width(cols.containers)}; top: {PAD + c.row * H + (H - BOX) / 2}px; height: {BOX}px"
           aria-pressed={picked}
           use:tooltip={containerTip(c)}
           data-testid="docker-net-container"
+          data-trouble={wrong ?? undefined}
           onclick={() => toggle({ kind: "container", id: c.id })}
         >
-          <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}"></span>
-          <span class="min-w-0 truncate text-text/90">{c.name}</span>
-          {#if c.mode}
-            <!-- `host` / `none`: a mode, not a network two containers meet on — no edge. -->
-            <span class="shrink-0 text-caption text-muted">{c.mode}</span>
-          {:else if c.ips.length > 0}
-            <span class="min-w-0 shrink truncate font-mono text-caption text-muted" data-testid="docker-net-ip">{c.ips[0]}</span>
-          {/if}
+          <span class="flex min-w-0 items-center gap-1.5">
+            <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full {TONE[stateTone(c.state)]}"></span>
+            <span class="min-w-0 truncate text-text/90">{c.name}</span>
+          </span>
+          <!-- `host` / `none`: a mode, not a network two containers meet on — no edge. -->
+          <span class="min-w-0 truncate pl-3 font-mono text-caption text-muted" data-testid={c.mode ? undefined : c.ips.length ? "docker-net-ip" : undefined}>
+            {c.mode ?? (c.ips.length > 0 ? c.ips.slice(0, 2).join(" · ") : "—")}
+          </span>
         </button>
       {/each}
 
@@ -181,21 +199,36 @@
         {@const picked = isPicked({ kind: "network", name: n.name })}
         <button
           type="button"
-          class="absolute flex items-center gap-1.5 pl-1 pr-2.5 text-left hover:bg-edge/30 {focus && !focus.networks.has(n.name) ? 'opacity-40' : ''} {picked ? 'bg-edge/60' : ''}"
-          style="left: {cols.networks[0]}%; width: {width(cols.networks)}; top: {PAD + n.row * H}px; height: {H}px"
+          class="absolute flex flex-col justify-center rounded border bg-panel-alt px-2 text-left hover:bg-edge/40 {n.internal ? 'border-dashed' : ''} border-accent/60 {focus && !focus.networks.has(n.name) ? 'opacity-40' : ''} {picked ? 'ring-1 ring-accent' : ''}"
+          style="left: {cols.networks[0]}%; width: {width(cols.networks)}; top: {PAD + n.row * H + (H - BOX) / 2}px; height: {BOX}px"
           aria-pressed={picked}
           use:tooltip={[n.name, n.subnets.join(", "), n.internal ? t("docker.netInternal") : ""].filter(Boolean).join(" · ")}
           data-testid="docker-net-node"
+          data-internal={n.internal || undefined}
           onclick={() => toggle({ kind: "network", name: n.name })}
         >
-          <Icon name="network" size={13} class="shrink-0 {picked ? 'text-accent' : 'text-muted'}" />
-          <span class="min-w-0 truncate text-text/90">{n.name}</span>
-          {#if n.subnets.length > 0}
-            <span class="min-w-0 shrink truncate font-mono text-caption text-muted" data-testid="docker-net-subnet">{n.subnets[0]}</span>
+          <span class="flex min-w-0 items-center gap-1.5">
+            <Icon name="network" size={12} class="shrink-0 {picked ? 'text-accent' : 'text-muted'}" />
+            <span class="min-w-0 truncate text-text/90">{n.name}</span>
+            <span class="ml-auto shrink-0 text-caption tabular-nums text-muted">{n.members}</span>
+          </span>
+          {#if n.subnets.length > 0 || n.internal}
+            <span class="min-w-0 truncate pl-[1.125rem] font-mono text-caption text-muted" data-testid="docker-net-subnet">
+              {[n.subnets[0] ?? "", n.internal ? t("docker.graphInternal") : ""].filter(Boolean).join(" · ")}
+            </span>
           {/if}
-          <span class="ml-auto shrink-0 text-caption tabular-nums text-muted">{n.members}</span>
         </button>
       {/each}
+    </div>
+
+    <!-- What the colours say: who reaches a port, what is wrong, what stays inside. -->
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-edge/60 px-2.5 py-1.5 text-caption text-muted" data-testid="docker-net-legend">
+      {#if graph.ports.length > 0}
+        <span class="flex items-center gap-1.5"><span class="h-2.5 w-3.5 rounded-sm border border-warn"></span>{t("docker.graphLegendAll")}</span>
+        <span class="flex items-center gap-1.5"><span class="h-2.5 w-3.5 rounded-sm border border-edge"></span>{t("docker.graphLegendLocal")}</span>
+      {/if}
+      <span class="flex items-center gap-1.5"><span class="h-2.5 w-3.5 rounded-sm border border-bad bg-bad/5"></span>{t("docker.graphLegendTrouble")}</span>
+      <span class="flex items-center gap-1.5"><span class="h-2.5 w-3.5 rounded-sm border border-dashed border-accent/60"></span>{t("docker.graphLegendInternal")}</span>
     </div>
 
     {#if graph.hidden > 0}
