@@ -40,6 +40,7 @@
     isSharedNetwork,
     membersByNetwork,
     type PortRow,
+    type GraphPick,
   } from "./dockernet";
   import { t } from "../i18n";
 
@@ -47,6 +48,9 @@
     networks,
     volumes,
     usage = undefined,
+    ips = undefined,
+    subnets = undefined,
+    onopen = undefined,
     containers = [],
     view = "list",
     onView,
@@ -63,6 +67,11 @@
     volumes: DockerVolume[];
     /** Who mounts each volume and its size, by docker's count (`system df -v`, v1.33); absent — not known. */
     usage?: DiskDetail | null;
+    /** For the topology (v1.33): a container's addresses and each network's subnets. */
+    ips?: (c: DockerContainer) => string[];
+    subnets?: ReadonlyMap<string, { subnets: string[]; internal: boolean }>;
+    /** Open what a node of the topology is — picked twice — beside the list. */
+    onopen?: (pick: GraphPick) => void;
     /** Every container on the host, for ports and membership. */
     containers?: DockerContainer[];
     /** Which of the two views is on screen. */
@@ -169,7 +178,7 @@
 
   {#if view === "graph"}
     <div class="min-h-0 flex-1">
-      <DockerNetGraph {networks} {containers} />
+      <DockerNetGraph {networks} {containers} {ips} {subnets} onpick={onopen} />
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-auto">

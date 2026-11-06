@@ -176,6 +176,15 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   `SERIES.ram`), сеть и диск — зеркальными парами (`SERIES.rx`/`tx`, `read`/`write`), высота 72 и 64;
   над графиком — подпись `text-muted`, текущее значение `tabular-nums text-text/90` и потолок
   `text-caption text-muted` («лимит 0.5 ядер», «из 1.0 GiB» или «без лимита»).
+- **Топология Docker** ([DockerNetGraph](../src/lib/docker/DockerNetGraph.svelte)) — три колонки по
+  процентам ширины (порты 0–22, контейнеры 32–66, сети 76–100; без опубликованных портов — две):
+  порт — `font-mono text-caption`, всем — `text-warn` и ребро `--color-warn`, только с хоста —
+  `text-muted`; у контейнера адрес и у сети подсеть — `font-mono text-caption text-muted` после имени,
+  число участников сети — справа `tabular-nums`. Подсветка и затемнение — как были.
+- **Разделы колонки имён** ([DockerTreeSections](../src/lib/docker/DockerTreeSections.svelte)) —
+  `GroupHeader` на раздел (свёрнут по умолчанию), строки `border-b border-edge/60 py-1 pl-5 pr-2`,
+  выбранная — `bg-accent/10`. Подробности образа, сети, тома — та же сетка `grid-cols-[7rem_1fr]` и
+  микро-метки секций, что у контейнера; список «Используют» — строки с точкой состояния.
 - **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
   text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
   text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import DockerNetGraph from "./DockerNetGraph.svelte";
 import type { DockerContainer, DockerNetwork } from "./docker";
 import { GRAPH_MAX_CONTAINERS } from "./dockernet";
@@ -40,9 +40,9 @@ describe("DockerNetGraph", () => {
     render(DockerNetGraph, { props: { networks: NETWORKS, containers: CONTAINERS } });
     // host and none are modes, not networks containers meet on: no node for them.
     expect(screen.getAllByTestId("docker-net-node").map((n) => n.textContent?.replace(/\s+/g, " ").trim())).toEqual([
-      "0 bridge",
-      "2 mon",
-      "2 shop",
+      "bridge 0",
+      "mon 2",
+      "shop 2",
     ]);
     expect(screen.getAllByTestId("docker-net-container")).toHaveLength(4);
     // web is on two networks: one node, two edges — four edges in all.
@@ -89,5 +89,54 @@ describe("DockerNetGraph", () => {
     render(DockerNetGraph, { props: { networks: [network("host", "host")], containers: [] } });
     expect(screen.getByText("No networks or containers to draw")).toBeInTheDocument();
     expect(screen.queryByTestId("docker-net-graph")).toBeNull();
+  });
+});
+
+// v1.33: the topology — ports of the host, containers with their addresses,
+// networks with their subnets.
+describe("DockerNetGraph — topology", () => {
+  const PUBLISHED = [
+    container({ id: "w", name: "web", networks: ["shop"], ports: "0.0.0.0:443->443/tcp, :::443->443/tcp, 127.0.0.1:8080->80/tcp" }),
+    container({ id: "a", name: "api", networks: ["shop"], ports: "8000/tcp" }),
+  ];
+
+  it("puts the published ports on the left, one per mapping, coloured by who can reach them", () => {
+    render(DockerNetGraph, { props: { networks: [network("shop")], containers: PUBLISHED } });
+    const ports = screen.getAllByTestId("docker-net-port");
+    expect(ports.map((p) => [p.textContent?.trim(), p.dataset.reach])).toEqual([
+      [":443", "all"],
+      ["127.0.0.1:8080", "loopback"],
+    ]);
+    expect(ports[0].className).toContain("text-warn");
+    expect(screen.getAllByTestId("docker-net-port-edge")).toHaveLength(2);
+    expect(screen.getByText("Host ports")).toBeInTheDocument();
+  });
+
+  it("has two columns when nothing is published", () => {
+    render(DockerNetGraph, { props: { networks: NETWORKS, containers: CONTAINERS } });
+    expect(screen.queryByTestId("docker-net-port")).toBeNull();
+    expect(screen.queryByText("Host ports")).toBeNull();
+  });
+
+  it("names each container's address and each network's subnet when it knows them", () => {
+    render(DockerNetGraph, {
+      props: {
+        networks: [network("shop")],
+        containers: PUBLISHED,
+        ips: (c: DockerContainer) => (c.id === "w" ? ["172.20.0.2"] : []),
+        subnets: new Map([["shop", { subnets: ["172.20.0.0/16"], internal: false }]]),
+      },
+    });
+    expect(screen.getByTestId("docker-net-ip")).toHaveTextContent("172.20.0.2");
+    expect(screen.getByTestId("docker-net-subnet")).toHaveTextContent("172.20.0.0/16");
+  });
+
+  it("a port lights its container; a node picked twice is opened where the panel can", async () => {
+    const onpick = vi.fn();
+    render(DockerNetGraph, { props: { networks: [network("shop")], containers: PUBLISHED, onpick } });
+    await fireEvent.click(screen.getAllByTestId("docker-net-port")[0]);
+    expect(node("web")).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(node("web"));
+    expect(onpick).toHaveBeenCalledWith({ kind: "container", id: "w" });
   });
 });

@@ -20,6 +20,12 @@
   import DockerContainers from "./DockerContainers.svelte";
   import DockerImages from "./DockerImages.svelte";
   import DockerDiskUsage from "./DockerDiskUsage.svelte";
+  import DockerTreeSections from "./DockerTreeSections.svelte";
+  import DockerImageDetail from "./DockerImageDetail.svelte";
+  import DockerNetworkDetail from "./DockerNetworkDetail.svelte";
+  import DockerVolumeDetail from "./DockerVolumeDetail.svelte";
+  import { networkSubnetsArgs, parseNetworkSubnets, type DockerItem } from "./dockeritems";
+  import { isSharedNetwork, type GraphPick } from "./dockernet";
   import DockerNetworks from "./DockerNetworks.svelte";
   import DockerTextModal from "./DockerTextModal.svelte";
   import DockerDetailModal from "./DockerDetailModal.svelte";
@@ -281,7 +287,29 @@
   // Details open on the log (v1.33) and keep the view while another row is
   // picked: the list beside them is browsed, log after log.
   let detailTab = $state<DockerDetailTab>("logs");
+  // An image, a network or a volume picked in the column of names (stage 4):
+  // its details stand beside the list where a container's do.
+  let sideItem = $state.raw<DockerItem | null>(null);
+  function openItem(item: DockerItem) {
+    if (modalOpen) closeModal();
+    detailOpen = false;
+    sideItem = item;
+  }
+  /** A node of the topology picked twice: a container's details, or a network's beside the list. */
+  function openGraphPick(p: GraphPick) {
+    if (p.kind === "container") {
+      const c = containers.find((x) => x.id === p.id);
+      if (c) openDetails(c);
+    } else if (wide) openItem({ kind: "network", name: p.name });
+  }
+  /** Open a container by id — from an image's, a network's or a volume's list of users. */
+  function openContainerById(id: string) {
+    const c = containers.find((x) => x.id === id || id.startsWith(x.id) || x.id.startsWith(id));
+    if (c) openDetails(c);
+  }
+
   function openDetails(c: DockerContainer, tab?: DockerDetailTab) {
+    sideItem = null;
     if (tab) detailTab = tab;
     else if (!detailOpen) detailTab = "logs";
     // A text asked for earlier (a stack's log) stands in front of the details:
@@ -307,7 +335,19 @@
   let modalOpen = $state(false);
   // Something stands beside the list (logs, inspect, details): the row is
   // two parts with a border the user drags.
-  const sideOpen = $derived(wide && (modalOpen || detailOpen));
+  const sideOpen = $derived(wide && (modalOpen || detailOpen || sideItem !== null));
+  // The column of names goes on with the images, networks and volumes while
+  // something stands beside it (stage 4): one column to pick anything from.
+  const treeShown = $derived(sideOpen && activeSub === "containers");
+  // Each network's subnets, for the topology and the column (`network inspect`, one call for all).
+  let subnets = $state.raw<ReadonlyMap<string, { subnets: string[]; internal: boolean }>>(new Map());
+  let subnetsOf = "";
+  const ipsOf = (c: DockerContainer): string[] =>
+    (factsById.get(c.id)?.addresses ?? []).map((a) => a.ipv4 || a.ipv6).filter(Boolean);
+  const sideImage = $derived.by(() => {
+    const item = sideItem;
+    return item?.kind === "image" ? (images.find((i) => i.id === item.id) ?? null) : null;
+  });
   let modalTitle = $state("");
   let modalText = $state("");
   let modalLive = $state(false);
@@ -367,6 +407,7 @@
       // A removal or a prune changes what the disk holds and who uses what.
       const removes = ["rm", "rmi", "prune"].some((w) => args.slice(1, 3).includes(w));
       if (removes && activeSub !== "containers") void loadDisk();
+      if (removes && treeShown) void loadTree();
       return true;
     } catch (e) {
       notifyError(String(e));
@@ -426,6 +467,37 @@
     exitCode: null,
     oomKilled: false,
   };
+
+  /** The networks' subnets — asked again only when the set of networks changes. */
+  async function loadSubnets() {
+    const names = networks.map((n) => n.name).filter(isSharedNetwork);
+    const key = names.join("\n");
+    if (names.length === 0 || key === subnetsOf) return;
+    try {
+      const res = await runQuery(networkSubnetsArgs(names));
+      if (res.exitCode === 0) {
+        subnets = parseNetworkSubnets(res.stdout);
+        subnetsOf = key;
+      }
+    } catch {
+      /* subnets are an enrichment */
+    }
+  }
+
+  // The column's images, networks and volumes: read when it appears and on
+  // «Refresh» — not on the containers' poll, they change on the user's action.
+  let treeStale = true;
+  async function loadTree() {
+    treeStale = false;
+    const [im, ns, vs] = await Promise.allSettled([runQuery(imagesArgs()), runQuery(networksArgs()), runQuery(volumesArgs())]);
+    if (im.status === "fulfilled") images = parseImages(im.value.stdout);
+    if (ns.status === "fulfilled") networks = parseNetworks(ns.value.stdout);
+    if (vs.status === "fulfilled") volumes = parseVolumes(vs.value.stdout);
+    if (!diskDetail) void loadDisk();
+  }
+  $effect(() => {
+    if (treeShown) untrack(() => void loadTree());
+  });
 
   /** Ask docker what the disk holds and who uses what — two reads, side by side. */
   async function loadDisk() {
@@ -524,7 +596,11 @@
         networks = parseNetworks(ns.stdout);
         volumes = parseVolumes(vs.stdout);
         containers = parsePs(ps.stdout);
+        // The topology draws addresses and subnets: the facts and one `network inspect`.
+        await loadFacts(containers);
+        await loadSubnets();
       }
+      if (treeShown && activeSub === "containers" && treeStale) await loadTree();
       if (modalOpen && modalLive && modalFollowing && modalArgs) {
         const res = await runQuery(modalArgs, 30);
         modalText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
@@ -645,6 +721,10 @@
       picked = new Set();
       disk = undefined;
       diskDetail = undefined;
+      sideItem = null;
+      subnets = new Map();
+      subnetsOf = "";
+      treeStale = true;
       events = [];
       resHistory = {};
       resSeq = -1;
@@ -759,6 +839,10 @@
     return t(key);
   });
 </script>
+
+{#snippet treeAfter()}
+  <DockerTreeSections {images} {networks} {volumes} usage={diskDetail} picked={sideItem} onpick={openItem} />
+{/snippet}
 
 <!-- `@container`: the panel lays itself out by its own width (`@wide:`), so one
      component serves a narrow side dock and the full-width bottom dock. -->
@@ -906,6 +990,7 @@
             selectedId={detailOpen ? (liveDetail?.id ?? null) : null}
             {picked}
             onpick={(next) => (picked = next)}
+            after={treeShown ? treeAfter : undefined}
             {busy}
             {run}
             onShell={openShell}
@@ -981,6 +1066,9 @@
           {networks}
           {volumes}
           usage={diskDetail}
+          ips={ipsOf}
+          {subnets}
+          onopen={openGraphPick}
           {containers}
           view={netView}
           onView={pickNetView}
@@ -1005,6 +1093,17 @@
         {#if modalOpen}
           <SidePane title={modalTitle} onclose={closeModal} testid="docker-side-text">
             <DockerText text={modalText} live={modalLive} bind:following={modalFollowing} bind:tail={modalTail} fill />
+          </SidePane>
+        {:else if sideItem}
+          {@const item = sideItem}
+          <SidePane title={item.kind === "image" ? item.label : item.name} onclose={() => (sideItem = null)} testid="docker-side-item">
+            {#if item.kind === "image"}
+              <DockerImageDetail image={sideImage} detail={diskDetail} {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} onclose={() => (sideItem = null)} />
+            {:else if item.kind === "network"}
+              <DockerNetworkDetail name={item.name} {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} onclose={() => (sideItem = null)} />
+            {:else}
+              <DockerVolumeDetail name={item.name} usage={diskDetail} {busy} {refreshSec} {run} runQuery={(a, tm) => runQuery(a, tm)} onopen={openContainerById} onclose={() => (sideItem = null)} />
+            {/if}
           </SidePane>
         {:else}
           <SidePane

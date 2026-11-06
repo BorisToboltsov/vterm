@@ -19,7 +19,11 @@ vi.mock("../api", async (importOriginal) => ({
     await new Promise((r) => setTimeout(r, 5));
     const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
     if (args[1] === "version") return ok("29.0.1\n");
+    if (args[1] === "ps" && args.includes("--filter")) return ok(["abc123456789", "edge-proxy", "running"].join(US));
     if (args[1] === "ps") return ok(PS.join("\n"));
+    if (args[1] === "images") return ok(["img111111111", "nginx", "1.27", "187MB", "2026-10-07 10:00:00 +0000 UTC"].join(US));
+    if (args[1] === "history") return ok([`/bin/sh -c #(nop)  CMD ["nginx"]`, "0B", "9 days ago"].join(US) + "\n" + ["/bin/sh -c apt-get install nginx", "60MB", "9 days ago"].join(US));
+    if (args[1] === "network" && args[2] === "ls") return ok(["n1", "web_default", "bridge", "local"].join(US));
     if (args[1] === "inspect") return ok('[{"Id":"abc123456789"}]');
     if (args[1] === "logs") return ok("GET /healthz 200");
     if (args[1] === "events") {
@@ -313,5 +317,24 @@ describe("DockerPanel — what happened lately (stage 3)", () => {
     // A snapshot that ends, asked with the containers' poll.
     expect(calls.some((c) => c.startsWith("docker events --since 10m --until 0s"))).toBe(true);
     crashing.on = false;
+  });
+});
+
+describe("DockerPanel — the column of names (stage 4)", () => {
+  it("goes on with images, networks and volumes while details stand beside it, and opens an image's", async () => {
+    await mount("d-tree");
+    expect(screen.queryByTestId("docker-tree-sections")).toBeNull();
+    resize(1200);
+    await fireEvent.click(screen.getByText("edge-proxy"));
+    const sections = await screen.findByTestId("docker-tree-sections");
+    await fireEvent.click(within(screen.getByTestId("docker-tree-images")).getByTestId("docker-tree-images-toggle"));
+    await fireEvent.click(await within(sections).findByTestId("docker-tree-image"));
+    const side = await screen.findByTestId("docker-side-item");
+    await waitFor(() => expect(within(side).getByTestId("docker-image-layers")).toHaveTextContent("apt-get install nginx"));
+    expect(within(side).getByTestId("docker-image-users")).toHaveTextContent("edge-proxy");
+    // A user of the image opens that container's details in its place.
+    await fireEvent.click(within(within(side).getByTestId("docker-image-users")).getByText("edge-proxy"));
+    expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.queryByTestId("docker-side-item")).toBeNull();
   });
 });

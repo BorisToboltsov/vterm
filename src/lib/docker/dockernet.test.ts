@@ -299,7 +299,8 @@ describe("buildNetGraph", () => {
   });
 
   it("is an empty graph for an empty host", () => {
-    expect(buildNetGraph([], [])).toEqual({ networks: [], containers: [], edges: [], rows: 0, hidden: 0 });
+    expect(buildNetGraph([], [])).toEqual({ networks: [], containers: [], edges: [],
+      ports: [], rows: 0, hidden: 0 });
   });
 });
 
@@ -337,5 +338,33 @@ describe("graphFocus", () => {
     expect(graphFocus(g, null)).toBeNull();
     expect(graphFocus(g, { kind: "container", id: "removed" })).toBeNull();
     expect(graphFocus(g, { kind: "network", name: "removed" })).toBeNull();
+  });
+});
+
+describe("buildNetGraph — the topology (v1.33)", () => {
+  it("stands each container's published ports beside it, never above a previous container's", () => {
+    const list = [
+      container({ id: "a", name: "a", networks: ["shop"], ports: "0.0.0.0:443->443/tcp, :::443->443/tcp, 0.0.0.0:80->80/tcp" }),
+      container({ id: "b", name: "b", networks: ["shop"], ports: "127.0.0.1:5432->5432/tcp" }),
+      container({ id: "c", name: "c", networks: ["shop"], ports: "8000/tcp" }),
+    ];
+    const g = buildNetGraph([network("shop")], list);
+    expect(g.ports.map((p) => [p.label, p.reach, p.container, p.row])).toEqual([
+      [":443", "all", "a", 0],
+      [":80", "all", "a", 1],
+      ["127.0.0.1:5432", "loopback", "b", 2],
+    ]);
+    // An exposed port is not on the host: no node for it.
+    expect(g.ports.some((p) => p.container === "c")).toBe(false);
+    expect(g.rows).toBe(3);
+  });
+
+  it("carries the addresses and subnets it is given", () => {
+    const g = buildNetGraph([network("shop")], [container({ id: "a", name: "a", networks: ["shop"] })], undefined, {
+      ips: () => ["172.20.0.2"],
+      subnets: new Map([["shop", { subnets: ["172.20.0.0/16"], internal: true }]]),
+    });
+    expect(g.containers[0].ips).toEqual(["172.20.0.2"]);
+    expect(g.networks[0]).toMatchObject({ subnets: ["172.20.0.0/16"], internal: true });
   });
 });

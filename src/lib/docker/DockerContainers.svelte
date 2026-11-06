@@ -42,6 +42,7 @@
   import GroupHeader from "../ui/GroupHeader.svelte";
   import SortTitle from "../ui/SortTitle.svelte";
   import type { ListGroup, ListSort } from "../ui/listview";
+  import type { Snippet } from "svelte";
   import { columnVars } from "../ui/colwidths";
   import { fitColumns } from "../ui/colfit";
   import { pick, pickMode, type PickMode } from "../ui/listselect";
@@ -64,6 +65,7 @@
     selectedId = null,
     picked = new Set<string>(),
     onpick = undefined,
+    after = undefined,
     busy = false,
     run,
     onShell,
@@ -96,6 +98,8 @@
     /** The rows picked for an action on several at once (stage 2); absent `onpick` — no picking. */
     picked?: ReadonlySet<string>;
     onpick?: (next: Set<string>) => void;
+    /** After the containers, in the same scroll: the rest of the column of names (stage 4). */
+    after?: Snippet;
     busy?: boolean;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     onShell: (c: DockerContainer) => void;
@@ -531,4 +535,5 @@
       </div>
     {/each}
   {/each}
+  {@render after?.()}
 </div>
