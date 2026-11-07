@@ -385,7 +385,7 @@ mod live_kube {
             pods.iter()
                 .any(|p| label(p, "job-name").starts_with(prefix) && p["status"]["phase"] == phase)
         };
-        let checks: [(&'static str, bool); 12] = [
+        let checks: [(&'static str, bool); 13] = [
             (
                 "web is ready",
                 any("web", &|p| {
@@ -442,6 +442,10 @@ mod live_kube {
                 }),
             ),
             ("db runs", any("db", &|p| p["status"]["phase"] == "Running")),
+            (
+                "busy runs its load",
+                any("busy", &|p| p["status"]["phase"] == "Running"),
+            ),
             (
                 "node-agent runs",
                 any("node-agent", &|p| p["status"]["phase"] == "Running"),
@@ -532,8 +536,8 @@ mod live_kube {
         };
         assert_eq!(
             items(&workloads).len(),
-            12,
-            "8 deployments, a statefulset, a daemonset, 2 cronjobs"
+            13,
+            "9 deployments, a statefulset, a daemonset, 2 cronjobs"
         );
 
         // The lists the panel polls.

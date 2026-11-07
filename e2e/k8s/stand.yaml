@@ -259,6 +259,38 @@ spec:
             requests: { cpu: 5m, memory: 8Mi }
             limits: { memory: 16Mi }
 ---
+# Нагрузка против лимитов («Ресурсы»): `cpu` крутит цикл и упирается в свои 100m, `mem` держит
+# 40 МиБ в памяти (emptyDir в RAM считается памятью контейнера) из 64 МиБ лимита.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busy
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: busy } }
+  template:
+    metadata:
+      labels: { app: busy, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: cpu
+          image: busybox:1.37
+          command: ["sh", "-c", "while true; do :; done"]
+          resources:
+            requests: { cpu: 50m, memory: 8Mi }
+            limits: { cpu: 100m, memory: 16Mi }
+        - name: mem
+          image: busybox:1.37
+          command: ["sh", "-c", "dd if=/dev/zero of=/fill/blob bs=1M count=40 && exec sleep 3600"]
+          volumeMounts: [{ name: fill, mountPath: /fill }]
+          resources:
+            requests: { cpu: 5m, memory: 32Mi }
+            limits: { cpu: 50m, memory: 64Mi }
+      volumes:
+        - name: fill
+          emptyDir: { medium: Memory, sizeLimit: 48Mi }
+---
 # Задание, которое закончилось успешно → под Completed.
 apiVersion: batch/v1
 kind: Job

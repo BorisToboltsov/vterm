@@ -172,7 +172,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_compose -- --ignored
 Стенд [e2e/k8s/stand.yaml](../e2e/k8s/stand.yaml) — по объекту на каждую поломку, которую панель
 k8s обязана объяснить (CrashLoop, OOMKilled, упавший init-контейнер, Pending без места, проба
 готовности и живости, нет образа и ProgressDeadlineExceeded, упавший CronJob, ничейные PVC, сервис
-без эндпоинтов, ingress на
+без эндпоинтов, нагрузка у лимита CPU и памяти — `busy`, ingress на
 несуществующий сервис), и здоровый под со всем, что показывает «Обзор». Пространства имён в файле
 нет — его задаёт тот, кто применяет.
 
@@ -188,6 +188,15 @@ k8s обязана объяснить (CrashLoop, OOMKilled, упавший init
 
 ```sh
 cargo test --manifest-path src-tauri/Cargo.toml --lib live_kube -- --ignored
+```
+
+Для «Ресурсов» нужен metrics-server — в Docker Desktop его нет. Ставится официальным манифестом
+выпуска с флагом `--kubelet-insecure-tls` (kubelet в kind подписан сам собой), убирается тем же
+манифестом через `kubectl delete -f`:
+
+```sh
+curl -sSLo components.yaml https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+sed 's|        - --metric-resolution=15s|&\n        - --kubelet-insecure-tls|' components.yaml | kubectl --context docker-desktop apply -f -
 ```
 
 Стенд руками — посмотреть панель на настоящем кластере:

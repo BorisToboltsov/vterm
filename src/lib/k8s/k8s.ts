@@ -262,8 +262,11 @@ export interface K8sPod {
   imagePull?: string;
   /** What the scheduler says while no node takes it ({@link schedulerReason}); "" — it is not refused. */
   unschedulable?: string;
-  /** A running container is not ready and has a readiness probe — the probe is what fails. */
+  /** A running container is not ready and has a readinessProbe — the probe is what fails. */
   readinessFailing?: boolean;
+  /** What its running containers ask for (stage 3): millicores and MiB; null — none asks. */
+  cpuRequest?: number | null;
+  memRequest?: number | null;
 }
 
 const IMAGE_PULL = new Set(["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]);
@@ -585,6 +588,25 @@ export function sumLimit(
   return total;
 }
 
+/**
+ * Sum one resource request across a pod's running containers. A container that
+ * asks for nothing adds nothing — that is how the scheduler counts it (a limit
+ * without a request has the request defaulted to it in the spec we read); null
+ * when none asks at all.
+ */
+export function sumRequest(
+  containers: readonly Record<string, unknown>[],
+  key: "cpu" | "memory",
+  parse: (s: string | undefined) => number | null,
+): number | null {
+  let total: number | null = null;
+  for (const c of containers) {
+    const v = parse(str(dig(c, "resources", "requests", key)));
+    if (v != null) total = (total ?? 0) + v;
+  }
+  return total;
+}
+
 /** Fraction of a limit in use (0…1+), or null when either side is unknown. */
 export function limitRatio(usage: number | null, limit: number | null): number | null {
   if (usage == null || limit == null || !(limit > 0)) return null;
@@ -631,6 +653,8 @@ export function podsOf(list: readonly Record<string, unknown>[], nowMs: number =
       ownerName: owner.name,
       cpuLimit: sumLimit(running, "cpu", parseCpuMillis),
       memLimit: sumLimit(running, "memory", parseMemMiB),
+      cpuRequest: sumRequest(running, "cpu", parseCpuMillis),
+      memRequest: sumRequest(running, "memory", parseMemMiB),
       qos: str(dig(it, "status", "qosClass")),
       created: createdAt(it),
       podIps: podIps(it),
@@ -1455,6 +1479,79 @@ export function podDetailFacts(d: PodDetail): string[] {
   return out;
 }
 
+// ── A pod's resources (ADR 0054, stage 3) ───────────────────────────────────
+//
+// The history of a pod's CPU and memory is the panel's: `top pods` already runs
+// with every poll of the list, so «Resources» opens with what was polled while it
+// was closed. Its containers are asked (`top pod --containers`) only while the
+// view is on screen. The metrics API reports CPU and memory — not network, not
+// disk — and the view says so instead of drawing a zero.
+
+export type PodSeries = "cpu" | "mem";
+
+/** The history key of a pod's series: `<metricsKey>.cpu|mem`. */
+export const podResourceKey = (key: string, s: PodSeries): string => `${key}.${s}`;
+
+/** One poll of `top pods` as readings: millicores and MiB by pod; null — no row for it. */
+export function podReadings(
+  pods: readonly K8sPod[],
+  metrics: ReadonlyMap<string, K8sPodMetrics>,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    const m = metrics.get(key) ?? metrics.get(metricsKey("", p.name));
+    out[podResourceKey(key, "cpu")] = parseCpuMillis(m?.cpu);
+    out[podResourceKey(key, "mem")] = parseMemMiB(m?.mem);
+  }
+  return out;
+}
+
+/** One pod's containers' usage now (stage 3) — asked only while «Resources» is on screen. */
+export function topContainersArgs(pod: string): string[] {
+  return ["top", "pod", pod, "--containers", "--no-headers"];
+}
+
+export interface ContainerUsage {
+  container: string;
+  /** Millicores; null — not reported. */
+  cpu: number | null;
+  /** MiB; null — not reported. */
+  mem: number | null;
+}
+
+/** `top pod <pod> --containers --no-headers` (POD NAME CPU MEMORY) — the rows of `pod`. */
+export function parseTopContainers(raw: string, pod: string): ContainerUsage[] {
+  const out: ContainerUsage[] = [];
+  for (const line of raw.split("\n")) {
+    const cols = line.trim().split(/\s+/).filter(Boolean);
+    if (cols.length < 4 || cols[0] !== pod) continue;
+    out.push({ container: cols[1], cpu: parseCpuMillis(cols[2]), mem: parseMemMiB(cols[3]) });
+  }
+  return out;
+}
+
+/**
+ * Why there are no readings (stage 3), told apart — they mean different things:
+ * the cluster has no metrics-server at all; it has, but has no sample for the pod
+ * yet (it measures every 15–60 s, a pod that does not run has none); another
+ * failure, in its own words. null — `top` answered.
+ */
+export interface MetricsGap {
+  kind: "noServer" | "notYet" | "other";
+  text: string;
+}
+
+export function metricsGap(out: { stdout: string; stderr: string; exitCode: number }): MetricsGap | null {
+  const text = (out.stderr.trim() || out.stdout.trim()).split("\n")[0]?.trim() ?? "";
+  if (out.exitCode === 0) return out.stdout.trim() ? null : { kind: "notYet", text };
+  if (/Metrics API not available/i.test(text)) return { kind: "noServer", text };
+  // A pod with no sample yet is NotFound to the metrics API — `pods "x" not found` on
+  // Docker Desktop's metrics-server 0.9.1, though the pod is there.
+  if (/metrics not available yet|\(NotFound\)/i.test(text)) return { kind: "notYet", text };
+  return { kind: "other", text };
+}
+
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
 /** Resolve a service's external address from LB ingress / externalIPs / type. */
@@ -1747,7 +1844,7 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
 }
 
 /** The views of a pod's details (`K8sDetail`); the log first — where details open (v1.33). */
-export type K8sDetailTab = "logs" | "overview" | "describe" | "yaml";
+export type K8sDetailTab = "logs" | "overview" | "resources" | "describe" | "yaml";
 
 /**
  * Why a pod needs a look (v1.33): the strip above the list. Stage 2 names the cause

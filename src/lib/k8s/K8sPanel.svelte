@@ -69,6 +69,9 @@
     podsOf,
     podItem,
     parsePodDetail,
+    podReadings,
+    metricsGap,
+    type MetricsGap,
     parseWorkloads,
     parseNamespaces,
     parseContexts,
@@ -107,6 +110,7 @@
   } from "./k8s";
   import { buildRoutes } from "./k8sroute";
   import { pushSamples, type LoadHistory } from "../monitoring/loadhistory";
+  import { pushReadings, type History } from "../monitoring/monhistory";
   import {
     collapsedGroups,
     dockState,
@@ -179,6 +183,12 @@
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
   // CPU history (millicores) per pod, fed by the `top pods` poll already running.
   let cpuHistory = $state<LoadHistory>({});
+  // «Resources» (stage 3): CPU and memory of every pod, one sample per poll of the
+  // same `top pods`, so the view opens with what was polled while it was closed;
+  // and why there are no readings, when there are none.
+  let resHistory = $state.raw<History>({});
+  let resSeq = $state(-1);
+  let metricsDown = $state.raw<MetricsGap | null>(null);
   let workloads = $state<K8sWorkload[]>([]);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
@@ -443,6 +453,9 @@
           if (millis != null) cpu.set(key, millis);
         }
         cpuHistory = pushSamples(cpuHistory, live, cpu);
+        metricsDown = metricsGap(top);
+        resSeq += 1;
+        resHistory = pushReadings(resHistory, resSeq, podReadings(podList, map));
       } else if (activeSub === "workloads") {
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
@@ -528,6 +541,7 @@
     // A different cluster can hold a pod with the same namespace/name; carrying
     // the old series over would draw one cluster's load on another's row.
     cpuHistory = {};
+    resHistory = {};
     restartsSeen = new Map();
     void reinit();
   }
@@ -678,6 +692,7 @@
     if (sessionReady) {
       // Another cluster's pods are not this one's history.
       cpuHistory = {};
+      resHistory = {};
       restartsSeen = new Map();
       untrack(() => void initAll());
     }
@@ -1029,6 +1044,9 @@
               pod={liveDetailPod}
               detail={podDetail}
               metrics={detailMetrics}
+              history={resHistory}
+              seq={resSeq}
+              {metricsDown}
               {busy}
               {refreshSec}
               {run}
@@ -1055,6 +1073,9 @@
   pod={liveDetailPod}
   detail={podDetail}
   metrics={detailMetrics}
+  history={resHistory}
+  seq={resSeq}
+  {metricsDown}
   {busy}
   {refreshSec}
   {run}

@@ -15,6 +15,9 @@
   import { tooltip } from "../actions/tooltip";
   import { REDACTED } from "../ai/redact";
   import { compactAge } from "../ui/age";
+  import Chart from "../monitoring/Chart.svelte";
+  import { SERIES } from "../monitoring/monpalette";
+  import { series, latest, type History } from "../monitoring/monhistory";
   import {
     logsArgs,
     describeArgs,
@@ -23,6 +26,17 @@
     podPhaseTone,
     podDetailFacts,
     podEventsArgs,
+    podResourceKey,
+    metricsKey,
+    topContainersArgs,
+    parseTopContainers,
+    metricsGap,
+    limitRatio,
+    limitTone,
+    parseCpuMillis,
+    parseMemMiB,
+    type ContainerUsage,
+    type MetricsGap,
     parseEvents,
     listFailure,
     eventTone,
@@ -44,6 +58,9 @@
     pod = null,
     detail = null,
     metrics,
+    history = {},
+    seq = -1,
+    metricsDown = null,
     busy = false,
     refreshSec = 5,
     fill = false,
@@ -63,6 +80,11 @@
     /** What «Overview» explains (stage 1) — read by the panel from the list it polls. */
     detail?: PodDetail | null;
     metrics?: K8sPodMetrics;
+    /** The panel's resources history (`<metricsKey>.cpu|mem`, stage 3) and its newest sample number. */
+    history?: History;
+    seq?: number;
+    /** Why the panel's `top pods` gave no readings; null — it did. */
+    metricsDown?: MetricsGap | null;
     busy?: boolean;
     refreshSec?: number;
     /** Take the height of the place it stands in (a pane beside a list); without
@@ -108,6 +130,7 @@
       p.node ? `Node: ${p.node}` : "",
       // What does not hold and how each container ended — never its environment.
       ...(detail ? podDetailFacts(detail) : []),
+      usageLine(p),
       // What the cluster said about it lately, warnings only — the cause is there.
       ...(events ?? [])
         .filter((e) => e.type === "Warning")
@@ -120,6 +143,33 @@
   }
 
   type Tab = K8sDetailTab;
+
+  /** Millicores as kubectl writes them. */
+  const fmtCpu = (v: number | null): string => (v == null ? "—" : `${Math.round(v)}m`);
+  /**
+   * MiB as kubectl writes them: Ki for a figure given in Ki, Gi from a thousand. A
+   * zero stays `0Mi` — `kubectl top` rounds to MiB, so it means «under half a MiB»,
+   * not a count of KiB we do not have.
+   */
+  function fmtMi(v: number | null): string {
+    if (v == null) return "—";
+    if (v === 0) return "0Mi";
+    if (v < 1) return `${Math.round(v * 1024)}Ki`;
+    if (v >= 1024) return `${(v / 1024).toFixed(1)}Gi`;
+    return `${Math.round(v)}Mi`;
+  }
+  const BAR: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad" };
+
+  /** What the assistant is told of its load: now, against the ceiling when there is one. */
+  function usageLine(p: K8sPod): string {
+    const key = metricsKey(p.namespace, p.name);
+    const cpu = latest(history, podResourceKey(key, "cpu"));
+    const mem = latest(history, podResourceKey(key, "mem"));
+    if (cpu == null && mem == null) return "";
+    const of = (v: number | null, limit: number | null, f: (x: number | null) => string) =>
+      `${f(v)}${limit != null ? ` of limit ${f(limit)}` : " (no limit)"}`;
+    return `Usage now: cpu ${of(cpu, p.cpuLimit, fmtCpu)}, memory ${of(mem, p.memLimit, fmtMi)}`;
+  }
 
   let logsText = $state("");
   let describeText = $state("");
@@ -138,6 +188,10 @@
   // A string, so the effect below re-runs on another pod, not on every poll.
   const uid = $derived(pod?.uid ?? "");
   const EVENTS_SHOWN = 50;
+  // «Resources» (stage 3): the pod's containers now, asked while the view is on
+  // screen; undefined — not answered yet.
+  let usage = $state<ContainerUsage[] | undefined>(undefined);
+  let usageGap = $state.raw<MetricsGap | null>(null);
   const EVENTS_TO_ASSISTANT = 8;
   let labelsOpen = $state(false);
 
@@ -215,6 +269,8 @@
     yamlText = "";
     events = undefined;
     eventsError = null;
+    usage = undefined;
+    usageGap = null;
     if (switched) {
       showSecrets = false;
       labelsOpen = false;
@@ -255,6 +311,22 @@
     return () => clearInterval(timer);
   });
 
+  async function fetchUsage(name: string, ns: string) {
+    const res = await runQuery(topContainersArgs(name), ns, 20);
+    if (target?.name !== name || target?.namespace !== ns) return; // another pod opened meanwhile
+    usageGap = metricsGap(res);
+    usage = parseTopContainers(res.stdout, name);
+  }
+
+  // Resources: the containers' usage on open and with every poll while on screen.
+  $effect(() => {
+    const p = target;
+    if (!active || tab !== "resources" || !p) return;
+    void fetchUsage(p.name, p.namespace);
+    const timer = setInterval(() => void fetchUsage(p.name, p.namespace), Math.max(1, refreshSec) * 1000);
+    return () => clearInterval(timer);
+  });
+
   // Logs tab: fetched on open, on another container and on a new tail size,
   // re-polled while followed (like the panel's live view); describe/yaml once.
   $effect(() => {
@@ -287,6 +359,7 @@
   const TABS: { id: Tab; label: MessageKey }[] = [
     { id: "logs", label: "k8s.viewLogs" },
     { id: "overview", label: "k8s.overview" },
+    { id: "resources", label: "k8s.resources" },
     { id: "describe", label: "k8s.describe" },
     { id: "yaml", label: "k8s.yaml" },
   ];
@@ -562,6 +635,106 @@
         </section>
       {/if}
     {/if}
+    </div>
+  {:else if tab === "resources"}
+    <!-- The pod's history is the panel's, from the `top pods` of every poll; its
+         containers are asked while this is on screen. A share only against a known
+         ceiling; the request is a mark, not a ceiling — and an automatic scale
+         always holds it, or a pod far under its request would hide the mark. -->
+    {@const key = metricsKey(p.namespace, p.name)}
+    {@const cpuNow = latest(history, podResourceKey(key, "cpu"))}
+    {@const memNow = latest(history, podResourceKey(key, "mem"))}
+    {@const running = detail ? detail.containers.filter((c) => c.role !== "init") : []}
+    <div class="space-y-3 text-meta {fill ? 'min-h-0 flex-1 overflow-auto' : 'max-h-[60vh] overflow-auto'}" data-testid="k8s-detail-resources">
+      {#if metricsDown?.kind === "noServer"}
+        <p class="text-muted" data-testid="k8s-res-noserver">{t("k8s.resNoServer")}</p>
+      {:else}
+        <p class="text-caption text-muted">{t("k8s.resHint", { sec: refreshSec })}</p>
+        {#if metricsDown}
+          <p class="text-muted" data-testid="k8s-res-gap">{metricsDown.kind === "notYet" ? t("k8s.resNotYet") : t("k8s.resUnread", { why: metricsDown.text })}</p>
+        {/if}
+        <section>
+          <div class="mb-1 flex flex-wrap items-baseline gap-x-2">
+            <span class="text-muted">{t("k8s.cpu")}</span>
+            <span class="tabular-nums text-text/90" data-testid="k8s-res-cpu-now">{fmtCpu(cpuNow)}</span>
+            <span class="text-caption text-muted">{p.cpuLimit != null ? t("k8s.limited", { v: fmtCpu(p.cpuLimit) }) : t("k8s.noLimit")}</span>
+            {#if p.cpuRequest != null}<span class="text-caption text-muted">{t("k8s.requested", { v: fmtCpu(p.cpuRequest) })}</span>{/if}
+          </div>
+          <Chart
+            lines={[{ samples: series(history, podResourceKey(key, "cpu")), color: SERIES.cpu, fill: true }]}
+            {seq}
+            max={p.cpuLimit ?? undefined}
+            floor={Math.max(10, p.cpuRequest ?? 0)}
+            height={72}
+            ticks
+            scaleLabel={p.cpuLimit == null}
+            threshold={p.cpuRequest ?? null}
+            thresholdLabel={t("k8s.requestMark")}
+            format={(v) => fmtCpu(v)}
+            interval={refreshSec}
+            testid="k8s-res-cpu"
+          />
+        </section>
+        <section>
+          <div class="mb-1 flex flex-wrap items-baseline gap-x-2">
+            <span class="text-muted">{t("k8s.mem")}</span>
+            <span class="tabular-nums text-text/90" data-testid="k8s-res-mem-now">{fmtMi(memNow)}</span>
+            <span class="text-caption text-muted">{p.memLimit != null ? t("k8s.limited", { v: fmtMi(p.memLimit) }) : t("k8s.noLimit")}</span>
+            {#if p.memRequest != null}<span class="text-caption text-muted">{t("k8s.requested", { v: fmtMi(p.memRequest) })}</span>{/if}
+          </div>
+          <Chart
+            lines={[{ samples: series(history, podResourceKey(key, "mem")), color: SERIES.ram, fill: true }]}
+            {seq}
+            max={p.memLimit ?? undefined}
+            floor={Math.max(16, p.memRequest ?? 0)}
+            height={72}
+            ticks
+            scaleLabel={p.memLimit == null}
+            threshold={p.memRequest ?? null}
+            thresholdLabel={t("k8s.requestMark")}
+            format={(v) => fmtMi(v)}
+            interval={refreshSec}
+            testid="k8s-res-mem"
+          />
+        </section>
+      {/if}
+
+      {#if running.length > 0}
+        <!-- Each container against its own ceiling: one near its memory limit is the
+             one the OOM killer takes, whatever the pod's total says. -->
+        <section data-testid="k8s-res-containers">
+          <h4 class={SECTION}>{t("k8s.resByContainer")}</h4>
+          {#each running as c (`${c.role}/${c.name}`)}
+            {@const u = usage?.find((x) => x.container === c.name)}
+            {@const cpuLimit = parseCpuMillis(c.limits.cpu)}
+            {@const memLimit = parseMemMiB(c.limits.memory)}
+            <div class="mb-1.5" data-testid="k8s-res-container">
+              <div class="flex items-baseline gap-2">
+                <span class="font-mono text-text">{c.name}</span>
+                {#if c.role !== "app"}<span class="text-caption text-muted">{t(ROLE[c.role])}</span>{/if}
+              </div>
+              <div class="grid grid-cols-[4.5rem_1fr] gap-x-2 gap-y-0.5">
+                {#each [{ label: t("k8s.cpu"), now: u?.cpu ?? null, limit: cpuLimit, request: parseCpuMillis(c.requests.cpu), f: fmtCpu }, { label: t("k8s.mem"), now: u?.mem ?? null, limit: memLimit, request: parseMemMiB(c.requests.memory), f: fmtMi }] as row (row.label)}
+                  {@const ratio = limitRatio(row.now, row.limit)}
+                  <span class="text-muted">{row.label}</span>
+                  <div class="flex min-w-0 flex-wrap items-center gap-x-2">
+                    <span class="tabular-nums text-text/90">{row.f(row.now)}</span>
+                    {#if ratio != null}
+                      <span class="h-1 w-16 overflow-hidden rounded-full bg-edge"><span class="block h-full {BAR[limitTone(ratio) ?? 'ok']}" style:width="{Math.min(100, ratio * 100)}%"></span></span>
+                    {/if}
+                    <span class="text-caption text-muted">{row.limit != null ? t("k8s.limited", { v: row.f(row.limit) }) : t("k8s.noLimit")}</span>
+                    {#if row.request != null}<span class="text-caption text-muted">{t("k8s.requested", { v: row.f(row.request) })}</span>{/if}
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/each}
+          {#if usageGap && metricsDown?.kind !== "noServer"}
+            <p class="text-caption text-muted" data-testid="k8s-res-usage-gap">{usageGap.kind === "notYet" ? t("k8s.resNotYet") : t("k8s.resUnread", { why: usageGap.text })}</p>
+          {/if}
+        </section>
+      {/if}
+      <p class="text-caption text-muted">{t("k8s.resNoNetDisk")}</p>
     </div>
   {:else if tab === "logs"}
     <LogTail

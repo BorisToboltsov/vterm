@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import K8sDetail from "./K8sDetail.svelte";
 import K8sDetailModal from "./K8sDetailModal.svelte";
-import { parsePodDetail, type K8sPod } from "./k8s";
+import { parsePodDetail, podResourceKey, type K8sPod } from "./k8s";
+import { pushReadings, type History } from "../monitoring/monhistory";
 
 // A pod's details are one component in two places (v1.7): inside a dialog, and
 // in a pane beside the list of a wide panel. What differs between the two is
@@ -285,5 +286,107 @@ describe("K8sDetail — the pod's events (stage 2)", () => {
     const told = onAsk.mock.calls[0][0] as string;
     expect(told).toContain("Event Unhealthy ×371 (web), 1m ago: Readiness probe failed");
     expect(told).not.toContain("Scheduled");
+  });
+});
+
+// Stage 3 (ADR 0054): «Resources» — the pod against its ceiling, its containers each.
+describe("K8sDetail — Resources (stage 3)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const web = parsePodDetail({
+    metadata: { name: "web-5f7c", namespace: "default" },
+    spec: {
+      containers: [{ name: "httpd", resources: { limits: { cpu: "200m", memory: "64Mi" }, requests: { cpu: "10m", memory: "16Mi" } } }],
+      initContainers: [
+        { name: "prepare" },
+        { name: "log-shipper", restartPolicy: "Always", resources: { limits: { memory: "16Mi" }, requests: { cpu: "5m", memory: "8Mi" } } },
+      ],
+    },
+    status: {},
+  });
+  const bounded = { ...pod, cpuLimit: null, memLimit: 80, cpuRequest: 15, memRequest: 24 };
+  const key = "default/web-5f7c";
+  let history: History = {};
+  for (const [i, [cpu, mem]] of [[3, 20], [12, 30]].entries())
+    history = pushReadings(history, i, { [podResourceKey(key, "cpu")]: cpu, [podResourceKey(key, "mem")]: mem });
+  const top = "web-5f7c   httpd         12m   28Mi\nweb-5f7c   log-shipper   0m    560Ki\n";
+  const topZero = "web-5f7c   httpd   1m   0Mi\nweb-5f7c   log-shipper   1m   0Mi\n";
+
+  it("shows the pod now against its ceiling, the request as a mark, and each container against its own", async () => {
+    const runQuery = vi.fn().mockResolvedValue({ stdout: top, stderr: "", exitCode: 0 });
+    render(K8sDetail, { props: props({ tab: "resources", pod: bounded, detail: web, history, seq: 1, runQuery }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runQuery).toHaveBeenCalledWith(["top", "pod", "web-5f7c", "--containers", "--no-headers"], "default", 20);
+    expect(screen.getByTestId("k8s-res-cpu-now")).toHaveTextContent("12m");
+    expect(screen.getByTestId("k8s-res-mem-now")).toHaveTextContent("30Mi");
+    const resources = screen.getByTestId("k8s-detail-resources");
+    expect(resources).toHaveTextContent("no limit set"); // CPU: the sidecar has none, so the pod has none
+    expect(resources).toHaveTextContent("limit 80Mi");
+    expect(resources).toHaveTextContent("requests 15m");
+    expect(screen.getByTestId("k8s-res-cpu")).toBeInTheDocument();
+    const [httpd, sidecar] = screen.getAllByTestId("k8s-res-container");
+    expect(httpd).toHaveTextContent("httpd");
+    expect(httpd).toHaveTextContent("12m");
+    expect(httpd).toHaveTextContent("limit 200m");
+    expect(httpd).toHaveTextContent("28Mi");
+    expect(sidecar).toHaveTextContent("log-shipper sidecar");
+    expect(sidecar).toHaveTextContent("560Ki");
+    // The init container that ran before is no part of what runs now.
+    expect(resources).not.toHaveTextContent("prepare");
+    expect(resources).toHaveTextContent("does not report a pod's network and disk");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(runQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("without metrics-server says so, asks nothing in vain, and still shows the ceilings from the spec", async () => {
+    const runQuery = vi.fn().mockResolvedValue({ stdout: "", stderr: "error: Metrics API not available", exitCode: 1 });
+    render(K8sDetail, {
+      props: props({ tab: "resources", pod: bounded, detail: web, runQuery, metricsDown: { kind: "noServer", text: "error: Metrics API not available" } }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId("k8s-res-noserver")).toHaveTextContent("no metrics-server");
+    expect(screen.queryByTestId("k8s-res-cpu")).toBeNull();
+    expect(screen.getAllByTestId("k8s-res-container")[0]).toHaveTextContent("limit 200m");
+    expect(screen.queryByTestId("k8s-res-usage-gap")).toBeNull();
+  });
+
+  it("a memory figure kubectl rounded to zero stays 0Mi, and a pod with no sample yet is not «unread»", async () => {
+    const runQuery = vi.fn().mockResolvedValue({ stdout: topZero, stderr: "", exitCode: 0 });
+    const view = render(K8sDetail, { props: props({ tab: "resources", pod: bounded, detail: web, runQuery }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getAllByTestId("k8s-res-container")[0]).toHaveTextContent("0Mi");
+    runQuery.mockResolvedValue({ stdout: "", stderr: 'Error from server (NotFound): pods "web-5f7c" not found', exitCode: 1 });
+    await view.rerender({ metricsDown: null });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(screen.getByTestId("k8s-res-usage-gap")).toHaveTextContent("No readings yet");
+  });
+
+  it("a pod far under its request still shows the request mark: an automatic scale holds it", async () => {
+    // A chart draws once it has a width; jsdom lays nothing out (as Chart.test.ts does).
+    const desc = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 305 });
+    onTestFinished(() => {
+      if (desc) Object.defineProperty(HTMLElement.prototype, "clientWidth", desc);
+    });
+    let idle: History = {};
+    for (const [i, cpu] of [1, 2].entries()) idle = pushReadings(idle, i, { [podResourceKey(key, "cpu")]: cpu });
+    render(K8sDetail, { props: props({ tab: "resources", pod: bounded, detail: web, history: idle, seq: 1 }) });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(screen.getByTestId("k8s-res-cpu")).toHaveTextContent("request");
+  });
+
+  it("asks the containers only while Resources is on screen", async () => {
+    const runQuery = vi.fn().mockResolvedValue({ stdout: top, stderr: "", exitCode: 0 });
+    render(K8sDetail, { props: props({ tab: "describe", pod: bounded, detail: web, runQuery }) });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(runQuery.mock.calls.filter((c) => c[0][0] === "top")).toEqual([]);
+  });
+
+  it("tells the assistant the load now against the ceiling", async () => {
+    const onAsk = vi.fn();
+    render(K8sDetail, { props: props({ tab: "logs", pod: bounded, history, seq: 1, onAsk }) });
+    await fireEvent.click(screen.getByTestId("k8s-ask-ai"));
+    expect(onAsk.mock.calls[0][0]).toContain("Usage now: cpu 12m (no limit), memory 30Mi of limit 80Mi");
   });
 });

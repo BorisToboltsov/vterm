@@ -209,6 +209,10 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   `6rem | 1fr`; значение из Secret/ConfigMap — `← secret имя · ключ` `text-muted`. Событие — строка:
   причина `font-mono` (`text-warn` у Warning), контейнер и `×N` `text-caption text-muted`, возраст
   справа; сообщение под ней `text-caption text-muted`; список `max-h-48`, под ним — подсказка о сроке.
+- **«Ресурсы» пода** — как у контейнера Docker: заголовок графика (метка `text-muted`, значение
+  `tabular-nums`, лимит и запрос `text-caption text-muted`), `Chart` высотой 72 с `threshold` запроса.
+  Контейнер — имя `font-mono`, сетка `4.5rem | 1fr`: значение, полоса доли `h-1 w-16 rounded-full
+  bg-edge` с заливкой тона `limitTone`, лимит и запрос `text-caption text-muted`.
 
 ## Диалоги и обратная связь
 

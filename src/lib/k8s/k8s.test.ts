@@ -70,6 +70,12 @@ import {
   parseNodes,
   parseEvents,
   podEventsArgs,
+  podReadings,
+  podResourceKey,
+  topContainersArgs,
+  parseTopContainers,
+  metricsGap,
+  sumRequest,
   schedulerReason,
   RECENT_OOM_MS,
   nodeRoles,
@@ -1823,5 +1829,80 @@ describe("parsePodDetail — what Overview explains (stage 1)", () => {
     expect(d.finished).toBe(true);
     expect(podDetailFacts(d)).toEqual(["Container migrate: terminated Completed exit 0"]);
     expect(parsePodDetail(oom)!.finished).toBe(false);
+  });
+});
+
+// Stage 3 (ADR 0054): a pod's resources against its ceiling.
+describe("a pod's resources (stage 3)", () => {
+  it("reads one poll of `top pods` into the panel's history: millicores and MiB, by pod", () => {
+    const pods = parsePods(
+      JSON.stringify({
+        items: [
+          { metadata: { name: "web", namespace: "a" }, spec: { containers: [{ name: "c" }] }, status: {} },
+          { metadata: { name: "db", namespace: "a" }, spec: { containers: [{ name: "c" }] }, status: {} },
+        ],
+      }),
+    );
+    const metrics = new Map([[metricsKey("a", "web"), { namespace: "a", name: "web", cpu: "12m", mem: "30Mi" }]]);
+    expect(podReadings(pods, metrics)).toEqual({
+      [podResourceKey("a/web", "cpu")]: 12,
+      [podResourceKey("a/web", "mem")]: 30,
+      [podResourceKey("a/db", "cpu")]: null,
+      [podResourceKey("a/db", "mem")]: null,
+    });
+    // Without -A kubectl prints no namespace column: the row is keyed by name only.
+    const bare = new Map([[metricsKey("", "db"), { namespace: "", name: "db", cpu: "1", mem: "1Gi" }]]);
+    expect(podReadings(pods, bare)[podResourceKey("a/db", "cpu")]).toBe(1000);
+    expect(podReadings(pods, bare)[podResourceKey("a/db", "mem")]).toBe(1024);
+  });
+
+  it("asks one pod's containers, and reads only that pod's rows", () => {
+    expect(topContainersArgs("web-68b5")).toEqual(["top", "pod", "web-68b5", "--containers", "--no-headers"]);
+    const raw = "web-68b5   httpd         1m    2Mi\nweb-68b5   log-shipper   0m    560Ki\nother      x   5m   1Mi\n";
+    // What kubectl prints under a MiB, rounded: zero, not «nothing».
+    expect(parseTopContainers("web-68b5   httpd   1m   0Mi   \n", "web-68b5")).toEqual([{ container: "httpd", cpu: 1, mem: 0 }]);
+    expect(parseTopContainers(raw, "web-68b5")).toEqual([
+      { container: "httpd", cpu: 1, mem: 2 },
+      { container: "log-shipper", cpu: 0, mem: 0.546875 },
+    ]);
+  });
+
+  it("tells a cluster without metrics-server from metrics not there yet, and from another failure", () => {
+    expect(metricsGap({ stdout: "web 1m 2Mi\n", stderr: "", exitCode: 0 })).toBeNull();
+    // Docker Desktop's cluster, as it answered.
+    expect(metricsGap({ stdout: "", stderr: "error: Metrics API not available\n", exitCode: 1 })).toEqual({ kind: "noServer", text: "error: Metrics API not available" });
+    expect(metricsGap({ stdout: "", stderr: "error: metrics not available yet\n", exitCode: 1 })?.kind).toBe("notYet");
+    expect(metricsGap({ stdout: "", stderr: 'Error from server (NotFound): podmetrics.metrics.k8s.io "a/web" not found', exitCode: 1 })?.kind).toBe("notYet");
+    // A Pending pod of the stand, as metrics-server 0.9.1 on Docker Desktop answered: the
+    // pod is there, its sample is not.
+    expect(metricsGap({ stdout: "", stderr: 'Error from server (NotFound): pods "too-big-5968cbf6b9-cwdxs" not found\n', exitCode: 1 })?.kind).toBe("notYet");
+    expect(metricsGap({ stdout: "", stderr: "", exitCode: 0 })?.kind).toBe("notYet");
+    expect(metricsGap({ stdout: "", stderr: 'Error from server (Forbidden): pods.metrics.k8s.io is forbidden', exitCode: 1 })).toEqual({
+      kind: "other",
+      text: "Error from server (Forbidden): pods.metrics.k8s.io is forbidden",
+    });
+  });
+
+  it("sums the requests of what runs — a container without one asks for nothing", () => {
+    const c = (cpu?: string) => ({ resources: cpu ? { requests: { cpu } } : {} });
+    expect(sumRequest([c("10m"), c("5m")], "cpu", parseCpuMillis)).toBe(15);
+    expect(sumRequest([c("10m"), c()], "cpu", parseCpuMillis)).toBe(10);
+    expect(sumRequest([c(), c()], "cpu", parseCpuMillis)).toBeNull();
+    // The pod's own: its app containers and native sidecars, like its limit.
+    const [web] = parsePods(
+      JSON.stringify({
+        items: [
+          {
+            metadata: { name: "web", namespace: "a" },
+            spec: {
+              initContainers: [{ name: "prepare", resources: { requests: { cpu: "100m" } } }, { name: "sidecar", restartPolicy: "Always", resources: { requests: { cpu: "5m", memory: "8Mi" } } }],
+              containers: [{ name: "httpd", resources: { requests: { cpu: "10m", memory: "16Mi" } } }],
+            },
+            status: {},
+          },
+        ],
+      }),
+    );
+    expect([web.cpuRequest, web.memRequest]).toEqual([15, 24]);
   });
 });
