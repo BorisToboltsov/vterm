@@ -92,3 +92,20 @@ export function redactSecrets(text: string): RedactResult {
   }
   return { text: out, count };
 }
+
+/**
+ * Names that mark a value as a secret. Broader than the assistant's redaction
+ * on purpose (`KEY`, `AUTH`, `SALT`, `DSN`, `COOKIE`): a value hidden by mistake
+ * costs one click, one shown by mistake is on the screen of a shared call.
+ */
+const SECRET_NAME = /(pass|pwd|secret|token|key|cred|auth|salt|private|cookie|session|signature|dsn)/i;
+
+/**
+ * Whether an environment variable is masked until asked for — in the details of
+ * a Docker container and of a k8s pod alike: by its name, or by a value
+ * {@link redactSecrets} would mask.
+ */
+export function isSensitiveEnv(key: string, value: string): boolean {
+  if (SECRET_NAME.test(key)) return true;
+  return redactSecrets(value).count > 0;
+}

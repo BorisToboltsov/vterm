@@ -201,6 +201,12 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —
   `pre max-h-48` под ним; переменные и метки — сетка `key | value` в `font-mono`, скрытое значение —
   `‹redacted›` `text-muted`, «Показать значения» — кнопка справа в метке секции (`normal-case`).
+- **«Обзор» пода** — те же секции. Условие — строка: точка 1.5 (`bg-ok`/`bg-bad`, у завершённого пода и
+  Unknown — `bg-muted`), тип, причина `font-mono text-caption text-muted`, возраст справа с моментом в
+  подсказке, сообщение под ней `pl-3.5 text-caption`. Контейнер — строка имени (`font-mono text-text`,
+  роль `text-caption text-muted`, слово состояния тоном, `↻N` `text-warn`), сообщение kubelet
+  `font-mono text-caption text-muted`, «Прошлый раз:» с причиной `text-bad`, ниже — сетка
+  `6rem | 1fr`; значение из Secret/ConfigMap — `← secret имя · ключ` `text-muted`.
 
 ## Диалоги и обратная связь
 

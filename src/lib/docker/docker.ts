@@ -9,7 +9,7 @@
 // (ports, image names), the same trick `git.ts` uses. `{{json .}}` is avoided
 // because its `Labels`/`Ports` fields are themselves comma-joined and ambiguous.
 
-import { REDACTED, redactSecrets } from "../ai/redact";
+import { isSensitiveEnv } from "../ai/redact";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
 import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
@@ -480,22 +480,6 @@ export interface ContainerDetail {
   mounts: MountDetail[];
   labels: { key: string; value: string }[];
 }
-
-/**
- * Names that mark a value as a secret. Broader than the assistant's redaction
- * on purpose (`KEY`, `AUTH`, `SALT`, `DSN`, `COOKIE`): a value hidden by mistake
- * costs one click, one shown by mistake is on the screen of a shared call.
- */
-const SECRET_NAME = /(pass|pwd|secret|token|key|cred|auth|salt|private|cookie|session|signature|dsn)/i;
-
-/** Whether an environment variable is masked until asked for. */
-export function isSensitiveEnv(key: string, value: string): boolean {
-  if (SECRET_NAME.test(key)) return true;
-  return redactSecrets(value).count > 0;
-}
-
-/** A sensitive value as the view prints it while masked: the marker the recordings use. */
-export const MASKED = REDACTED;
 
 /** Nanoseconds (docker's durations) as a compact duration: `10s`, `1m30s`; null for 0 or junk. */
 export function nanosDuration(ns: unknown): string | null {

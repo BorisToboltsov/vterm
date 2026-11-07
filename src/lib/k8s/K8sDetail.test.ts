@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import K8sDetail from "./K8sDetail.svelte";
 import K8sDetailModal from "./K8sDetailModal.svelte";
-import type { K8sPod } from "./k8s";
+import { parsePodDetail, type K8sPod } from "./k8s";
 
 // A pod's details are one component in two places (v1.7): inside a dialog, and
 // in a pane beside the list of a wide panel. What differs between the two is
@@ -119,5 +119,97 @@ describe("K8sDetail — the pod's addresses (v1.33)", () => {
   it("says a hostNetwork pod's address is the node's", () => {
     render(K8sDetail, { props: props({ tab: "overview", pod: ({ ...pod,  podIps: ["10.0.1.11"], hostNetwork: true }) }) });
     expect(screen.getByTestId("k8s-detail-ip")).toHaveTextContent("hostNetwork");
+  });
+});
+
+// Stage 1 (ADR 0054): «Overview» explains the pod from what the panel already polled.
+describe("K8sDetail — Overview explains the pod (stage 1)", () => {
+  const raw = {
+    metadata: { name: "web-5f7c", namespace: "default", labels: { app: "web" } },
+    spec: {
+      serviceAccountName: "web",
+      containers: [
+        {
+          name: "app",
+          image: "busybox:1.37",
+          command: ["sh", "-c", "exec httpd -f -p 8080"],
+          resources: { limits: { memory: "24Mi" }, requests: { cpu: "5m" } },
+          readinessProbe: { httpGet: { path: "/", port: "http", scheme: "HTTP" }, periodSeconds: 5, timeoutSeconds: 1, failureThreshold: 3 },
+          env: [
+            { name: "DB_PASSWORD", value: "stand-password" },
+            { name: "API_TOKEN", valueFrom: { secretKeyRef: { name: "app-secret", key: "token" } } },
+            { name: "GREETING", value: "hello" },
+          ],
+        },
+      ],
+      initContainers: [{ name: "log-shipper", image: "busybox:1.37", restartPolicy: "Always" }],
+    },
+    status: {
+      phase: "Running",
+      conditions: [
+        { type: "Ready", status: "False", reason: "ContainersNotReady", message: "containers with unready status: [app]", lastTransitionTime: "2026-11-07T12:59:57Z" },
+      ],
+      containerStatuses: [
+        {
+          name: "app",
+          ready: false,
+          restartCount: 7,
+          lastState: { terminated: { exitCode: 137, reason: "OOMKilled", finishedAt: "2026-11-07T13:10:45Z" } },
+          state: { waiting: { reason: "CrashLoopBackOff", message: "back-off 5m0s restarting failed container=app" } },
+        },
+      ],
+      initContainerStatuses: [{ name: "log-shipper", ready: true, started: true, state: { running: { startedAt: "2026-11-07T12:59:54Z" } } }],
+    },
+  };
+  const detail = parsePodDetail(raw);
+
+  it("shows the conditions, each container with how it ended last time, what it runs and checks", () => {
+    render(K8sDetail, { props: props({ tab: "overview", detail }) });
+    const condition = screen.getByTestId("k8s-detail-condition");
+    expect(condition).toHaveTextContent("Ready");
+    expect(condition).toHaveTextContent("containers with unready status: [app]");
+    const [app, sidecar] = screen.getAllByTestId("k8s-detail-container");
+    expect(app).toHaveTextContent("CrashLoopBackOff");
+    expect(app).toHaveTextContent("↻7");
+    expect(app).toHaveTextContent("back-off 5m0s restarting failed container=app");
+    expect(screen.getByTestId("k8s-detail-last")).toHaveTextContent("OOMKilled · exit 137");
+    expect(app).toHaveTextContent('sh -c "exec httpd -f -p 8080"');
+    expect(app).toHaveTextContent("requests cpu 5m");
+    expect(app).toHaveTextContent("limit memory 24Mi");
+    expect(screen.getByTestId("k8s-detail-probes")).toHaveTextContent("readiness GET http://:http/ every 5s · timeout 1s · fails after 3");
+    expect(sidecar).toHaveTextContent("log-shipper sidecar Running");
+    expect(sidecar).toHaveTextContent("the image's own");
+    expect(sidecar).toHaveTextContent("none set");
+  });
+
+  it("keeps a secret-looking value masked until asked, and never shows a Secret's value", async () => {
+    const view = render(K8sDetail, { props: props({ tab: "overview", detail }) });
+    const env = screen.getByTestId("k8s-detail-env");
+    expect(env).not.toHaveTextContent("stand-password");
+    expect(env).toHaveTextContent("‹redacted›");
+    expect(env).toHaveTextContent("← secret app-secret · token");
+    expect(env).toHaveTextContent("hello");
+    await fireEvent.click(screen.getByTestId("k8s-detail-env-reveal"));
+    expect(screen.getByTestId("k8s-detail-env")).toHaveTextContent("stand-password");
+    // Another pod starts masked again.
+    await view.rerender({ pod: { ...pod, name: "web-other" }, detail });
+    expect(screen.getByTestId("k8s-detail-env")).not.toHaveTextContent("stand-password");
+  });
+
+  it("tells the assistant how the containers ended — and nothing of the environment", async () => {
+    const onAsk = vi.fn();
+    render(K8sDetail, { props: props({ tab: "overview", detail, onAsk }) });
+    await fireEvent.click(screen.getByTestId("k8s-detail-env-reveal"));
+    await fireEvent.click(screen.getByTestId("k8s-ask-ai"));
+    const told = onAsk.mock.calls[0][0] as string;
+    expect(told).toContain("last time: OOMKilled exit 137");
+    expect(told).toContain("Condition Ready: False (ContainersNotReady)");
+    expect(told).not.toMatch(/stand-password|DB_PASSWORD|API_TOKEN|app-secret|GREETING|hello/);
+  });
+
+  it("without details it is the pod's own facts, as before", () => {
+    render(K8sDetail, { props: props({ tab: "overview" }) });
+    expect(screen.getByTestId("k8s-detail-overview")).toHaveTextContent("web-5f7c");
+    expect(screen.queryByTestId("k8s-detail-containers")).toBeNull();
   });
 });

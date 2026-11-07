@@ -11,6 +11,7 @@
 // than mutating kubeconfig; pods are grouped by `ownerReferences`
 // ({@link groupByOwner}) as the analogue of docker's compose grouping.
 
+import { isSensitiveEnv } from "../ai/redact";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
 import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
@@ -547,8 +548,18 @@ export function limitTone(ratio: number | null): "ok" | "warn" | "bad" | null {
   return "ok";
 }
 
+/** The objects of a `kubectl get … -o json` list, tolerating junk. */
+export function listItems(raw: string): Record<string, unknown>[] {
+  return items(raw);
+}
+
 export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
-  return items(raw).map((it) => {
+  return podsOf(items(raw), nowMs);
+}
+
+/** The pods of a list already parsed ({@link listItems}) — the panel reads the JSON once. */
+export function podsOf(list: readonly Record<string, unknown>[], nowMs: number = Date.now()): K8sPod[] {
+  return list.map((it) => {
     const running = podContainers(it);
     const row = podRow(it);
     const owner = resolveOwner(dig(it, "metadata", "ownerReferences"));
@@ -1023,6 +1034,359 @@ export interface K8sEvent {
   age: string;
   /** Epoch ms of the last occurrence (for sorting), or 0. */
   ts: number;
+}
+
+// ── A pod's details (ADR 0054, stage 1) ──────────────────────────────────────
+//
+// What «Overview» explains, read from the same `get pods -o json` the list polls:
+// no call of its own. The conditions say why a pod waits (PodScheduled carries the
+// scheduler's «0/1 nodes are available: Insufficient memory»), each container
+// what it is doing and how it ended last time, what it checks, asks for and is
+// held to. Secret values are never read — a reference to a secret is its name.
+
+export type PodContainerRole = "app" | "sidecar" | "init";
+
+export interface PodCondition {
+  type: string;
+  /** True / False; null — Unknown. */
+  ok: boolean | null;
+  reason: string;
+  message: string;
+  /** When it last changed, epoch ms; null — not reported. */
+  since: number | null;
+}
+
+export type PodProbeKind = "startup" | "readiness" | "liveness";
+
+export interface PodProbe {
+  kind: PodProbeKind;
+  /** What it does: `GET http://:http/`, `TCP :http`, `exec cat /tmp/ready`, `gRPC :9090`. */
+  action: string;
+  periodSec: number | null;
+  timeoutSec: number | null;
+  /** Failures in a row before it counts as failed. */
+  failureThreshold: number | null;
+  initialDelaySec: number | null;
+}
+
+export interface PodTermination {
+  reason: string;
+  exitCode: number | null;
+  signal: number | null;
+  /** epoch ms; null — not reported. */
+  finishedAt: number | null;
+  /** The termination message the container left (its file, or its log tail on error). */
+  message: string;
+}
+
+export interface PodMount {
+  path: string;
+  /** The pod volume's name. */
+  volume: string;
+  /** What the volume is: `configMap site`, `secret creds`, `pvc data-db-0`, `emptyDir`, `hostPath /var/log`. */
+  source: string;
+  readOnly: boolean;
+  subPath: string;
+}
+
+export interface PodEnvVar {
+  key: string;
+  /** The value written in the spec; "" when it comes from elsewhere. */
+  value: string;
+  /** Where it comes from when not written: `secret app-secret · token`, `configMap app-config · LOG_LEVEL`, `field metadata.name`. */
+  from: string;
+  /** Masked until asked for ({@link isSensitiveEnv}); a value read from a secret is not here at all. */
+  sensitive: boolean;
+}
+
+export interface PodContainer {
+  name: string;
+  role: PodContainerRole;
+  image: string;
+  /** `running` · `waiting` · `terminated`; "" — no status reported yet. */
+  state: "running" | "waiting" | "terminated" | "";
+  /** Why it waits or how it ended: CrashLoopBackOff, ErrImagePull, OOMKilled, Completed. */
+  reason: string;
+  /** What kubelet says about it: `back-off 5m0s restarting failed container…`, the pull error. */
+  message: string;
+  /** Started (running) or finished (terminated), epoch ms. */
+  since: number | null;
+  exitCode: number | null;
+  ready: boolean | null;
+  restarts: number;
+  /** How it ended the time before — what a restart hides. */
+  last: PodTermination | null;
+  /** command + args as written; "" — the image's own. */
+  command: string;
+  requests: { cpu: string; memory: string };
+  limits: { cpu: string; memory: string };
+  /** `http 8080/TCP`, `9090/TCP → host 9090`. */
+  ports: string[];
+  probes: PodProbe[];
+  mounts: PodMount[];
+  env: PodEnvVar[];
+  /** Whole ConfigMaps and Secrets taken as variables: `configMap app-config`, `secret creds · DB_`. */
+  envFrom: string[];
+}
+
+export interface PodDetail {
+  /**
+   * The pod has finished (Succeeded / Failed): its Ready and ContainersReady are
+   * False because it ended — what the end says is in its containers, not there.
+   */
+  finished: boolean;
+  conditions: PodCondition[];
+  /** App containers, then native sidecars, then the init containers that ran before them. */
+  containers: PodContainer[];
+  serviceAccount: string;
+  priorityClass: string;
+  labels: { key: string; value: string }[];
+}
+
+/** The pod `namespace/name` of a parsed list ({@link listItems}); null — not in it. */
+export function podItem(
+  list: readonly Record<string, unknown>[],
+  namespace: string,
+  name: string,
+): Record<string, unknown> | null {
+  return (
+    list.find((it) => str(dig(it, "metadata", "name")) === name && str(dig(it, "metadata", "namespace")) === namespace) ??
+    null
+  );
+}
+
+const CONDITION_ORDER = ["PodScheduled", "PodReadyToStartContainers", "Initialized", "ContainersReady", "Ready"];
+
+const when = (v: unknown): number | null => {
+  const t = Date.parse(str(v));
+  return Number.isFinite(t) ? t : null;
+};
+const intOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+
+/** A word quoted for reading when it would not survive as one (spaces, quotes). */
+function readableWord(w: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(w)) return w;
+  if (!/["$`\\]/.test(w)) return `"${w}"`;
+  return `'${w.replace(/'/g, `'\\''`)}'`;
+}
+
+/** argv as one readable line; "" for none. */
+function argvText(...parts: unknown[]): string {
+  return parts
+    .flatMap((p) => (Array.isArray(p) ? p : []))
+    .map((w) => readableWord(typeof w === "string" ? w : String(w)))
+    .join(" ");
+}
+
+function probeAction(p: Record<string, unknown>): string {
+  const http = dig(p, "httpGet") as Record<string, unknown> | undefined;
+  if (http) {
+    const scheme = (str(http.scheme) || "HTTP").toLowerCase();
+    const host = str(http.host);
+    return `GET ${scheme}://${host}:${portText(http.port)}${str(http.path) || "/"}`;
+  }
+  const tcp = dig(p, "tcpSocket") as Record<string, unknown> | undefined;
+  if (tcp) return `TCP ${str(tcp.host)}:${portText(tcp.port)}`;
+  const grpc = dig(p, "grpc") as Record<string, unknown> | undefined;
+  if (grpc) return `gRPC :${portText(grpc.port)}${str(grpc.service) ? ` ${str(grpc.service)}` : ""}`;
+  const cmd = dig(p, "exec", "command");
+  if (Array.isArray(cmd)) return `exec ${argvText(cmd)}`;
+  return "";
+}
+
+function probesOf(c: Record<string, unknown>): PodProbe[] {
+  const out: PodProbe[] = [];
+  for (const [kind, field] of [
+    ["startup", "startupProbe"],
+    ["readiness", "readinessProbe"],
+    ["liveness", "livenessProbe"],
+  ] as const) {
+    const p = c[field];
+    if (!p || typeof p !== "object") continue;
+    const probe = p as Record<string, unknown>;
+    out.push({
+      kind,
+      action: probeAction(probe),
+      periodSec: intOrNull(probe.periodSeconds),
+      timeoutSec: intOrNull(probe.timeoutSeconds),
+      failureThreshold: intOrNull(probe.failureThreshold),
+      initialDelaySec: intOrNull(probe.initialDelaySeconds) || null,
+    });
+  }
+  return out;
+}
+
+function volumeSource(v: Record<string, unknown> | undefined): string {
+  if (!v) return "";
+  if (v.configMap) return `configMap ${str(dig(v, "configMap", "name"))}`;
+  if (v.secret) return `secret ${str(dig(v, "secret", "secretName"))}`;
+  if (v.persistentVolumeClaim) return `pvc ${str(dig(v, "persistentVolumeClaim", "claimName"))}`;
+  if (v.emptyDir) return str(dig(v, "emptyDir", "medium")) === "Memory" ? "emptyDir · memory" : "emptyDir";
+  if (v.hostPath) return `hostPath ${str(dig(v, "hostPath", "path"))}`;
+  if (v.projected) {
+    const sources = records(dig(v, "projected", "sources"));
+    return sources.some((x) => x.serviceAccountToken) ? "projected · service account token" : "projected";
+  }
+  if (v.downwardAPI) return "downwardAPI";
+  if (v.ephemeral) return "ephemeral";
+  if (v.csi) return `csi ${str(dig(v, "csi", "driver"))}`;
+  if (v.nfs) return `nfs ${str(dig(v, "nfs", "server"))}:${str(dig(v, "nfs", "path"))}`;
+  // Any other kind: its field name, which is what it is.
+  return Object.keys(v).find((k) => k !== "name") ?? "";
+}
+
+function envFromRef(v: Record<string, unknown>): string {
+  const secret = dig(v, "secretKeyRef") as Record<string, unknown> | undefined;
+  if (secret) return `secret ${str(secret.name)} · ${str(secret.key)}`;
+  const cm = dig(v, "configMapKeyRef") as Record<string, unknown> | undefined;
+  if (cm) return `configMap ${str(cm.name)} · ${str(cm.key)}`;
+  const field = str(dig(v, "fieldRef", "fieldPath"));
+  if (field) return `field ${field}`;
+  const res = dig(v, "resourceFieldRef") as Record<string, unknown> | undefined;
+  if (res) return `resource ${str(res.resource)}${str(res.containerName) ? ` · ${str(res.containerName)}` : ""}`;
+  return "?";
+}
+
+function termination(t: unknown): PodTermination | null {
+  if (!t || typeof t !== "object") return null;
+  const r = t as Record<string, unknown>;
+  return {
+    reason: str(r.reason),
+    exitCode: intOrNull(r.exitCode),
+    signal: intOrNull(r.signal) || null,
+    finishedAt: when(r.finishedAt),
+    message: str(r.message).trim(),
+  };
+}
+
+function resources(c: Record<string, unknown>, kind: "requests" | "limits"): { cpu: string; memory: string } {
+  return {
+    cpu: str(dig(c, "resources", kind, "cpu")),
+    memory: str(dig(c, "resources", kind, "memory")),
+  };
+}
+
+function containerOf(
+  spec: Record<string, unknown>,
+  role: PodContainerRole,
+  statuses: readonly Record<string, unknown>[],
+  volumes: ReadonlyMap<string, Record<string, unknown>>,
+): PodContainer {
+  const name = str(spec.name);
+  const st = statuses.find((s) => str(s.name) === name);
+  const running = dig(st, "state", "running") as Record<string, unknown> | undefined;
+  const waiting = dig(st, "state", "waiting") as Record<string, unknown> | undefined;
+  const term = dig(st, "state", "terminated") as Record<string, unknown> | undefined;
+  const state = running ? "running" : waiting ? "waiting" : term ? "terminated" : "";
+  return {
+    name,
+    role,
+    image: str(spec.image),
+    state,
+    reason: str(waiting?.reason) || str(term?.reason),
+    message: (str(waiting?.message) || str(term?.message)).trim(),
+    since: when(running?.startedAt) ?? when(term?.finishedAt),
+    exitCode: intOrNull(term?.exitCode),
+    ready: st && typeof st.ready === "boolean" ? st.ready : null,
+    restarts: num(st?.restartCount),
+    last: termination(dig(st, "lastState", "terminated")),
+    command: argvText(spec.command, spec.args),
+    requests: resources(spec, "requests"),
+    limits: resources(spec, "limits"),
+    ports: records(spec.ports).map((p) => {
+      const port = `${num(p.containerPort)}/${str(p.protocol) || "TCP"}`;
+      const host = num(p.hostPort) ? ` → host ${num(p.hostPort)}` : "";
+      return `${str(p.name) ? `${str(p.name)} ` : ""}${port}${host}`;
+    }),
+    probes: probesOf(spec),
+    mounts: records(spec.volumeMounts).map((m) => ({
+      path: str(m.mountPath),
+      volume: str(m.name),
+      source: volumeSource(volumes.get(str(m.name))),
+      readOnly: m.readOnly === true,
+      subPath: str(m.subPath),
+    })),
+    env: records(spec.env).map((e) => {
+      const key = str(e.name);
+      const from = e.valueFrom && typeof e.valueFrom === "object" ? envFromRef(e.valueFrom as Record<string, unknown>) : "";
+      const value = from ? "" : str(e.value);
+      return { key, value, from, sensitive: !from && isSensitiveEnv(key, value) };
+    }),
+    envFrom: records(spec.envFrom).map((f) => {
+      const cm = str(dig(f, "configMapRef", "name"));
+      const kind = cm ? "configMap" : "secret";
+      const name = cm || str(dig(f, "secretRef", "name"));
+      return `${kind} ${name}${str(f.prefix) ? ` · ${str(f.prefix)}` : ""}`;
+    }),
+  };
+}
+
+/** What «Overview» shows of a pod — see the section above; null for what is not a pod. */
+export function parsePodDetail(item: Record<string, unknown> | null): PodDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const volumes = new Map(records(dig(item, "spec", "volumes")).map((v) => [str(v.name), v] as const));
+  const statuses = records(dig(item, "status", "containerStatuses"));
+  const initStatuses = records(dig(item, "status", "initContainerStatuses"));
+  const initSpec = records(dig(item, "spec", "initContainers"));
+  const containers = [
+    ...records(dig(item, "spec", "containers")).map((c) => containerOf(c, "app", statuses, volumes)),
+    ...initSpec.filter(isSidecar).map((c) => containerOf(c, "sidecar", initStatuses, volumes)),
+    ...initSpec.filter((c) => !isSidecar(c)).map((c) => containerOf(c, "init", initStatuses, volumes)),
+  ];
+  const rank = (type: string) => {
+    const i = CONDITION_ORDER.indexOf(type);
+    return i < 0 ? CONDITION_ORDER.length : i;
+  };
+  const conditions = records(dig(item, "status", "conditions"))
+    .map((c) => ({
+      type: str(c.type),
+      ok: c.status === "True" ? true : c.status === "False" ? false : null,
+      reason: str(c.reason),
+      message: str(c.message).trim(),
+      since: when(c.lastTransitionTime),
+    }))
+    .sort((a, b) => rank(a.type) - rank(b.type));
+  const labels = dig(item, "metadata", "labels");
+  const phase = str(dig(item, "status", "phase"));
+  return {
+    finished: phase === "Succeeded" || phase === "Failed",
+    conditions,
+    containers,
+    serviceAccount: str(dig(item, "spec", "serviceAccountName")),
+    priorityClass: str(dig(item, "spec", "priorityClassName")),
+    labels:
+      labels && typeof labels === "object"
+        ? Object.entries(labels as Record<string, unknown>)
+            .map(([key, value]) => ({ key, value: str(value) }))
+            .sort((a, b) => a.key.localeCompare(b.key))
+        : [],
+  };
+}
+
+/**
+ * What the assistant is told of a pod's details: the conditions that do not hold
+ * with what they say (none of a finished pod — they only repeat that it ended),
+ * each container's state and how it ended last time. Never the environment — not
+ * even its names.
+ */
+export function podDetailFacts(d: PodDetail): string[] {
+  const out: string[] = [];
+  for (const c of d.conditions) {
+    if (c.ok === true || d.finished) continue;
+    out.push(`Condition ${c.type}: ${c.ok === false ? "False" : "Unknown"}${c.reason ? ` (${c.reason})` : ""}${c.message ? ` — ${c.message}` : ""}`);
+  }
+  for (const c of d.containers) {
+    const now = [c.state || "no status", c.reason, c.exitCode != null ? `exit ${c.exitCode}` : ""].filter(Boolean).join(" ");
+    const last = c.last
+      ? `; last time: ${[c.last.reason, c.last.exitCode != null ? `exit ${c.last.exitCode}` : ""].filter(Boolean).join(" ")}`
+      : "";
+    const probes = c.probes.length ? `; probes: ${c.probes.map((p) => `${p.kind} ${p.action}`).join(", ")}` : "";
+    const limits = [c.limits.cpu && `cpu ${c.limits.cpu}`, c.limits.memory && `memory ${c.limits.memory}`].filter(Boolean).join(", ");
+    out.push(
+      `Container ${c.name}${c.role === "app" ? "" : ` (${c.role})`}: ${now}${c.restarts ? `, ${c.restarts} restarts` : ""}${last}${limits ? `; limits ${limits}` : ""}${probes}${c.message ? ` — ${c.message}` : ""}`,
+    );
+  }
+  return out;
 }
 
 // ── Parsers ──────────────────────────────────────────────────────────────────

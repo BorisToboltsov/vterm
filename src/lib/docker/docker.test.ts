@@ -35,7 +35,6 @@ import {
   imageSchema,
   diskUsageArgs,
   diskDetailArgs,
-  isSensitiveEnv,
   nanosDuration,
   healthTest,
   type DockerFacts,
@@ -866,8 +865,6 @@ describe("parseContainerDetail (stage 1)", () => {
       ["PATH", false],
       ["PYTHONUNBUFFERED", false],
     ]);
-    expect(isSensitiveEnv("GITHUB", "ghp_abcdefghijklmnopqrstuvwxyz0123")).toBe(true);
-    expect(isSensitiveEnv("LOG_LEVEL", "debug")).toBe(false);
   });
 
   it("says when there is no health check, and when the answer is not a container", () => {

@@ -18,6 +18,7 @@
   import { fmtBytes, fmtRate } from "../monitoring/format";
   import { shortStamp, type LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
+  import { REDACTED } from "../ai/redact";
   import {
     startArgs,
     stopArgs,
@@ -32,7 +33,6 @@
     stateSummary,
     stateTone,
     parseContainerDetail,
-    MASKED,
     eventWord,
     eventTone,
     resourceKey,
@@ -460,7 +460,7 @@
           <dl class="grid grid-cols-[minmax(0,auto)_1fr] gap-x-2 gap-y-0.5 font-mono">
             {#each detail.env as e (e.key)}
               <dt class="truncate text-muted" use:tooltip={e.key}>{e.key}</dt>
-              <dd class="break-all {e.sensitive && !showSecrets ? 'text-muted' : 'text-text/85'}">{e.sensitive && !showSecrets ? MASKED : e.value}</dd>
+              <dd class="break-all {e.sensitive && !showSecrets ? 'text-muted' : 'text-text/85'}">{e.sensitive && !showSecrets ? REDACTED : e.value}</dd>
             {/each}
           </dl>
           {#if masked > 0 && !showSecrets}<p class="mt-0.5 text-caption text-muted">{t("docker.envMaskedHint")}</p>{/if}

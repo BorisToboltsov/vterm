@@ -65,7 +65,10 @@
     execShellArgv,
     followLogsArgv,
     portForwardArgv,
-    parsePods,
+    listItems,
+    podsOf,
+    podItem,
+    parsePodDetail,
     parseWorkloads,
     parseNamespaces,
     parseContexts,
@@ -170,6 +173,9 @@
   let firstLoadDone = $state(false);
 
   let podList = $state<K8sPod[]>([]);
+  // The objects of the same answer, as kubectl gave them: «Overview» of the pod
+  // whose details are open is read from here (stage 1) — no call of its own.
+  let podObjects = $state.raw<Record<string, unknown>[]>([]);
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
   // CPU history (millicores) per pod, fed by the `top pods` poll already running.
   let cpuHistory = $state<LoadHistory>({});
@@ -421,7 +427,9 @@
           kubectlRun(sessionId, viewArgs(podsArgs()), 20, false),
           kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
         ]);
-        podList = parsePods(pods.stdout);
+        const listed = listItems(pods.stdout);
+        podList = podsOf(listed);
+        podObjects = listed;
         restartsSeen = podRestartBaseline(restartsSeen, podList);
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
@@ -640,6 +648,11 @@
     if (!detailPod) return null;
     return podList.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name) ?? null;
   });
+  const podDetail = $derived(
+    detailOpen && liveDetailPod
+      ? parsePodDetail(podItem(podObjects, liveDetailPod.namespace, liveDetailPod.name))
+      : null,
+  );
   const detailMetrics = $derived.by(() => {
     const p = liveDetailPod;
     if (!p) return undefined;
@@ -1010,6 +1023,7 @@
               bind:tab={detailTab}
               bind:container={detailContainer}
               pod={liveDetailPod}
+              detail={podDetail}
               metrics={detailMetrics}
               {busy}
               {refreshSec}
@@ -1035,6 +1049,7 @@
   bind:tab={detailTab}
   bind:container={detailContainer}
   pod={liveDetailPod}
+  detail={podDetail}
   metrics={detailMetrics}
   {busy}
   {refreshSec}

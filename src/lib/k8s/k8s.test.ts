@@ -31,6 +31,11 @@ import {
   resolveOwner,
   podDisplayStatus,
   podRow,
+  parsePodDetail,
+  podDetailFacts,
+  podItem,
+  listItems,
+  podsOf,
   parsePods,
   parseWorkloads,
   parseNamespaces,
@@ -1399,5 +1404,255 @@ describe("podAttention (v1.33)", () => {
     // The first count seen is kept; a gone pod is forgotten.
     expect([...podRestartBaseline(seen, [pod({ restarts: 9 })])]).toEqual([["ns/p", 4]]);
     expect(podRestartBaseline(seen, []).size).toBe(0);
+  });
+});
+
+// Stage 1 (ADR 0054): what «Overview» explains. The objects are the stand's
+// (e2e/k8s/stand.yaml) as Docker Desktop's k8s 1.31.1 answered `get pods -o json`,
+// trimmed to what the model reads; messages are verbatim.
+describe("parsePodDetail — what Overview explains (stage 1)", () => {
+  const kubeApi = { mountPath: "/var/run/secrets/kubernetes.io/serviceaccount", name: "kube-api-access-t9482", readOnly: true };
+  const web = {
+    metadata: { name: "web-68b586bcf5-b8tg5", namespace: "vterm-stand", labels: { app: "web", "app.kubernetes.io/part-of": "vterm-stand" } },
+    spec: {
+      serviceAccountName: "default",
+      containers: [
+        {
+          name: "httpd",
+          image: "busybox:1.37",
+          command: ["sh", "-c", "cp /config/index.html /www/ && exec httpd -f -v -p 8080 -h /www"],
+          env: [
+            { name: "LOG_LEVEL", valueFrom: { configMapKeyRef: { key: "LOG_LEVEL", name: "app-config" } } },
+            { name: "API_TOKEN", valueFrom: { secretKeyRef: { key: "token", name: "app-secret" } } },
+            { name: "DB_PASSWORD", value: "stand-password" },
+            { name: "GREETING", value: "hello" },
+          ],
+          envFrom: [{ configMapRef: { name: "app-config" } }],
+          ports: [{ containerPort: 8080, name: "http", protocol: "TCP" }],
+          resources: { limits: { cpu: "200m", memory: "64Mi" }, requests: { cpu: "10m", memory: "16Mi" } },
+          startupProbe: { failureThreshold: 15, httpGet: { path: "/", port: "http", scheme: "HTTP" }, periodSeconds: 2, successThreshold: 1, timeoutSeconds: 1 },
+          readinessProbe: { failureThreshold: 3, httpGet: { path: "/", port: "http", scheme: "HTTP" }, periodSeconds: 5, successThreshold: 1, timeoutSeconds: 1 },
+          livenessProbe: { failureThreshold: 3, periodSeconds: 10, successThreshold: 1, tcpSocket: { port: "http" }, timeoutSeconds: 1 },
+          volumeMounts: [{ mountPath: "/config", name: "site" }, { mountPath: "/work", name: "work", readOnly: true }, kubeApi],
+        },
+      ],
+      initContainers: [
+        { name: "prepare", image: "busybox:1.37", command: ["sh", "-c", "echo prepared > /work/ready"], volumeMounts: [{ mountPath: "/work", name: "work" }] },
+        {
+          name: "log-shipper",
+          image: "busybox:1.37",
+          restartPolicy: "Always",
+          command: ["sh", "-c", 'while true; do echo "$(date -Iseconds) shipped 3 lines"; sleep 10; done'],
+          resources: { limits: { memory: "16Mi" }, requests: { cpu: "5m", memory: "8Mi" } },
+        },
+      ],
+      volumes: [
+        { name: "site", configMap: { defaultMode: 420, name: "site" } },
+        { name: "work", emptyDir: {} },
+        { name: "kube-api-access-t9482", projected: { defaultMode: 420, sources: [{ serviceAccountToken: { expirationSeconds: 3607, path: "token" } }] } },
+      ],
+    },
+    status: {
+      phase: "Running",
+      qosClass: "Burstable",
+      conditions: [
+        { lastTransitionTime: "2026-11-07T13:01:40Z", status: "True", type: "Ready" },
+        { lastTransitionTime: "2026-11-07T12:53:39Z", status: "True", type: "PodScheduled" },
+        { lastTransitionTime: "2026-11-07T12:59:55Z", status: "True", type: "Initialized" },
+      ],
+      containerStatuses: [{ name: "httpd", ready: true, restartCount: 0, started: true, state: { running: { startedAt: "2026-11-07T13:01:31Z" } } }],
+      initContainerStatuses: [
+        { name: "prepare", ready: true, restartCount: 0, started: false, state: { terminated: { exitCode: 0, finishedAt: "2026-11-07T12:59:53Z", reason: "Completed" } } },
+        { name: "log-shipper", ready: true, restartCount: 0, started: true, state: { running: { startedAt: "2026-11-07T12:59:54Z" } } },
+      ],
+    },
+  };
+  const oom = {
+    metadata: { name: "oom-66d9b57c4b-fn8v8", namespace: "vterm-stand" },
+    spec: { containers: [{ name: "app", image: "busybox:1.37", resources: { limits: { memory: "24Mi" }, requests: { cpu: "5m", memory: "16Mi" } } }] },
+    status: {
+      phase: "Running",
+      conditions: [{ lastTransitionTime: "2026-11-07T12:59:57Z", message: "containers with unready status: [app]", reason: "ContainersNotReady", status: "False", type: "Ready" }],
+      containerStatuses: [
+        {
+          name: "app",
+          ready: false,
+          restartCount: 7,
+          started: false,
+          lastState: { terminated: { exitCode: 137, finishedAt: "2026-11-07T13:10:45Z", reason: "OOMKilled", startedAt: "2026-11-07T13:10:45Z" } },
+          state: { waiting: { message: "back-off 5m0s restarting failed container=app pod=oom-66d9b57c4b-fn8v8_vterm-stand(7527d695)", reason: "CrashLoopBackOff" } },
+        },
+      ],
+    },
+  };
+  const tooBig = {
+    metadata: { name: "too-big-5968cbf6b9-cwdxs", namespace: "vterm-stand" },
+    spec: { containers: [{ name: "app", image: "busybox:1.37", command: ["sleep", "3600"], resources: { requests: { cpu: "5m", memory: "512Gi" } } }] },
+    status: {
+      phase: "Pending",
+      conditions: [
+        {
+          lastTransitionTime: "2026-11-07T12:53:39Z",
+          message: "0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.",
+          reason: "Unschedulable",
+          status: "False",
+          type: "PodScheduled",
+        },
+      ],
+    },
+  };
+
+  it("reads each container with its role: the app first, then the sidecar, then the init that ran", () => {
+    const d = parsePodDetail(web)!;
+    expect(d.containers.map((c) => [c.name, c.role, c.state, c.reason])).toEqual([
+      ["httpd", "app", "running", ""],
+      ["log-shipper", "sidecar", "running", ""],
+      ["prepare", "init", "terminated", "Completed"],
+    ]);
+    expect(d.serviceAccount).toBe("default");
+    expect(d.labels.map((l) => l.key)).toEqual(["app", "app.kubernetes.io/part-of"]);
+  });
+
+  it("says what each container runs, asks for, is held to, checks and mounts", () => {
+    const [httpd, sidecar] = parsePodDetail(web)!.containers;
+    expect(httpd.command).toBe('sh -c "cp /config/index.html /www/ && exec httpd -f -v -p 8080 -h /www"');
+    expect(httpd.requests).toEqual({ cpu: "10m", memory: "16Mi" });
+    expect(httpd.limits).toEqual({ cpu: "200m", memory: "64Mi" });
+    expect(sidecar.limits).toEqual({ cpu: "", memory: "16Mi" });
+    expect(httpd.ports).toEqual(["http 8080/TCP"]);
+    expect(httpd.probes.map((p) => [p.kind, p.action, p.periodSec, p.failureThreshold])).toEqual([
+      ["startup", "GET http://:http/", 2, 15],
+      ["readiness", "GET http://:http/", 5, 3],
+      ["liveness", "TCP :http", 10, 3],
+    ]);
+    expect(httpd.mounts.map((m) => [m.path, m.source, m.readOnly])).toEqual([
+      ["/config", "configMap site", false],
+      ["/work", "emptyDir", true],
+      ["/var/run/secrets/kubernetes.io/serviceaccount", "projected · service account token", true],
+    ]);
+    expect(httpd.since).toBe(Date.parse("2026-11-07T13:01:31Z"));
+  });
+
+  it("names where a value comes from instead of reading a secret, and masks what looks like one", () => {
+    const [httpd] = parsePodDetail(web)!.containers;
+    expect(httpd.env).toEqual([
+      { key: "LOG_LEVEL", value: "", from: "configMap app-config · LOG_LEVEL", sensitive: false },
+      { key: "API_TOKEN", value: "", from: "secret app-secret · token", sensitive: false },
+      { key: "DB_PASSWORD", value: "stand-password", from: "", sensitive: true },
+      { key: "GREETING", value: "hello", from: "", sensitive: false },
+    ]);
+    expect(httpd.envFrom).toEqual(["configMap app-config"]);
+  });
+
+  it("tells how a container ended the time before — what CrashLoopBackOff hides", () => {
+    const [app] = parsePodDetail(oom)!.containers;
+    expect(app).toMatchObject({ state: "waiting", reason: "CrashLoopBackOff", ready: false, restarts: 7, command: "" });
+    expect(app.message).toMatch(/^back-off 5m0s restarting failed container=app/);
+    expect(app.last).toEqual({ reason: "OOMKilled", exitCode: 137, signal: null, finishedAt: Date.parse("2026-11-07T13:10:45Z"), message: "" });
+  });
+
+  it("orders the conditions as a pod comes up and keeps what the scheduler said", () => {
+    expect(parsePodDetail(web)!.conditions.map((c) => [c.type, c.ok])).toEqual([
+      ["PodScheduled", true],
+      ["Initialized", true],
+      ["Ready", true],
+    ]);
+    const [scheduled] = parsePodDetail(tooBig)!.conditions;
+    expect(scheduled).toMatchObject({ type: "PodScheduled", ok: false, reason: "Unschedulable" });
+    expect(scheduled.message).toMatch(/^0\/1 nodes are available: 1 Insufficient memory\./);
+    // No status yet — not a guessed one.
+    expect(parsePodDetail(tooBig)!.containers[0]).toMatchObject({ state: "", reason: "", ready: null, restarts: 0, since: null });
+  });
+
+  it("reads the other probe and volume kinds as what they are", () => {
+    const d = parsePodDetail({
+      metadata: { name: "p", namespace: "n" },
+      spec: {
+        containers: [
+          {
+            name: "c",
+            ports: [{ containerPort: 9090, hostPort: 19090 }],
+            readinessProbe: { exec: { command: ["cat", "/tmp/ready file"] }, initialDelaySeconds: 5 },
+            livenessProbe: { grpc: { port: 9090 } },
+            startupProbe: { httpGet: { port: 8443, path: "/healthz", scheme: "HTTPS", host: "10.0.0.1" } },
+            volumeMounts: [
+              { name: "data", mountPath: "/data" },
+              { name: "creds", mountPath: "/etc/creds", subPath: "key" },
+              { name: "logs", mountPath: "/var/log" },
+              { name: "scratch", mountPath: "/tmp" },
+              { name: "weird", mountPath: "/w" },
+            ],
+            env: [{ name: "POD", valueFrom: { fieldRef: { fieldPath: "metadata.name" } } }],
+            envFrom: [{ secretRef: { name: "creds" }, prefix: "DB_" }],
+          },
+        ],
+        volumes: [
+          { name: "data", persistentVolumeClaim: { claimName: "data-db-0" } },
+          { name: "creds", secret: { secretName: "creds" } },
+          { name: "logs", hostPath: { path: "/var/log" } },
+          { name: "scratch", emptyDir: { medium: "Memory" } },
+          { name: "weird", flocker: {} },
+        ],
+      },
+      status: {},
+    })!;
+    const [c] = d.containers;
+    expect(c.probes.map((p) => [p.kind, p.action, p.initialDelaySec])).toEqual([
+      ["startup", "GET https://10.0.0.1:8443/healthz", null],
+      ["readiness", "exec cat \"/tmp/ready file\"", 5],
+      ["liveness", "gRPC :9090", null],
+    ]);
+    expect(c.ports).toEqual(["9090/TCP → host 19090"]);
+    expect(c.mounts.map((m) => [m.source, m.subPath])).toEqual([
+      ["pvc data-db-0", ""],
+      ["secret creds", "key"],
+      ["hostPath /var/log", ""],
+      ["emptyDir · memory", ""],
+      ["flocker", ""],
+    ]);
+    expect(c.env).toEqual([{ key: "POD", value: "", from: "field metadata.name", sensitive: false }]);
+    expect(c.envFrom).toEqual(["secret creds · DB_"]);
+  });
+
+  it("is nothing for what is not a pod, and finds a pod of a parsed list by namespace and name", () => {
+    expect(parsePodDetail(null)).toBeNull();
+    expect(parsePodDetail({})).toBeNull();
+    const list = listItems(JSON.stringify({ items: [web, oom] }));
+    expect(podItem(list, "vterm-stand", "oom-66d9b57c4b-fn8v8")).toBe(list[1]);
+    expect(podItem(list, "other", "oom-66d9b57c4b-fn8v8")).toBeNull();
+    expect(podsOf(list).map((p) => [p.name, p.ready])).toEqual([
+      ["web-68b586bcf5-b8tg5", "2/2"],
+      ["oom-66d9b57c4b-fn8v8", "0/1"],
+    ]);
+  });
+
+  it("tells the assistant what does not hold and how containers ended — never the environment", () => {
+    const facts = podDetailFacts(parsePodDetail(oom)!).join("\n");
+    expect(facts).toContain("Condition Ready: False (ContainersNotReady) — containers with unready status: [app]");
+    expect(facts).toContain("Container app: waiting CrashLoopBackOff, 7 restarts; last time: OOMKilled exit 137; limits memory 24Mi");
+    const webFacts = podDetailFacts(parsePodDetail(web)!).join("\n");
+    expect(webFacts).not.toMatch(/stand-password|DB_PASSWORD|API_TOKEN|app-secret|GREETING/);
+    expect(webFacts).toContain("Container log-shipper (sidecar): running");
+    expect(webFacts).not.toContain("Condition");
+  });
+
+  it("a finished pod's False Ready only repeats that it ended — the end is in its container", () => {
+    // The stand's `migrate` Job pod, as Docker Desktop answered.
+    const migrate = {
+      metadata: { name: "migrate-qr4zh", namespace: "vterm-stand" },
+      spec: { containers: [{ name: "migrate", image: "busybox:1.37" }] },
+      status: {
+        phase: "Succeeded",
+        conditions: [
+          { type: "PodReadyToStartContainers", status: "False", lastTransitionTime: "2026-11-07T12:59:56Z" },
+          { type: "Ready", status: "False", reason: "PodCompleted", lastTransitionTime: "2026-11-07T12:59:56Z" },
+        ],
+        containerStatuses: [{ name: "migrate", ready: false, restartCount: 0, state: { terminated: { exitCode: 0, reason: "Completed" } } }],
+      },
+    };
+    const d = parsePodDetail(migrate)!;
+    expect(d.finished).toBe(true);
+    expect(podDetailFacts(d)).toEqual(["Container migrate: terminated Completed exit 0"]);
+    expect(parsePodDetail(oom)!.finished).toBe(false);
   });
 });

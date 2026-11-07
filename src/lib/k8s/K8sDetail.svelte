@@ -13,22 +13,31 @@
   import LogTail from "../ui/LogTail.svelte";
   import type { LogTailSize } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
+  import { REDACTED } from "../ai/redact";
+  import { compactAge } from "../ui/age";
   import {
     logsArgs,
     describeArgs,
     getYamlArgs,
     deleteArgs,
     podPhaseTone,
+    podDetailFacts,
     type K8sPod,
     type K8sPodMetrics,
     type K8sDetailTab,
+    type PodContainer,
+    type PodContainerRole,
+    type PodDetail,
+    type PodProbe,
+    type PodProbeKind,
   } from "./k8s";
   import type { KubeOutput } from "../api";
-  import { t, type MessageKey } from "../i18n";
+  import { currentLocale, t, type MessageKey } from "../i18n";
 
   let {
     active = false,
     pod = null,
+    detail = null,
     metrics,
     busy = false,
     refreshSec = 5,
@@ -46,6 +55,8 @@
     /** On screen right now: fetches and re-polls only then. */
     active?: boolean;
     pod?: K8sPod | null;
+    /** What «Overview» explains (stage 1) — read by the panel from the list it polls. */
+    detail?: PodDetail | null;
     metrics?: K8sPodMetrics;
     busy?: boolean;
     refreshSec?: number;
@@ -90,6 +101,8 @@
       `Ready: ${p.ready}`,
       `Restarts: ${p.restarts}`,
       p.node ? `Node: ${p.node}` : "",
+      // What does not hold and how each container ended — never its environment.
+      ...(detail ? podDetailFacts(detail) : []),
     ]
       .filter(Boolean)
       .join("\n");
@@ -105,6 +118,49 @@
   // picking the next row is reading the next log the same way.
   let following = $state(true);
   let tail = $state<LogTailSize>(200);
+  // Secrets in the environment stay masked until asked for, per pod.
+  let showSecrets = $state(false);
+  let labelsOpen = $state(false);
+
+  const SECTION = "mb-1 mt-3 flex items-center gap-1.5 text-caption uppercase tracking-wider text-muted";
+  const ROLE: Record<Exclude<PodContainerRole, "app">, MessageKey> = { sidecar: "k8s.roleSidecar", init: "k8s.roleInit" };
+  const PROBE: Record<PodProbeKind, MessageKey> = {
+    startup: "k8s.probeStartup",
+    readiness: "k8s.probeReadiness",
+    liveness: "k8s.probeLiveness",
+  };
+  const TEXT_TONE: Record<string, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", idle: "text-muted" };
+
+  const ago = (ms: number): string => compactAge(ms, Date.now());
+  const moment = (ms: number): string => new Date(ms).toLocaleString(currentLocale());
+  const exitWord = (code: number | null, signal: number | null = null): string =>
+    signal ? t("k8s.signal", { n: signal }) : code != null ? t("k8s.exitCode", { code }) : "";
+
+  /** What a container is doing, as the pod's own word for it would be. */
+  function containerWord(c: PodContainer): string {
+    if (!c.state) return t("k8s.noStatus");
+    if (c.state === "running") return "Running";
+    if (c.state === "terminated") return [c.reason || "Terminated", exitWord(c.exitCode)].filter(Boolean).join(" · ");
+    return c.reason || "Waiting";
+  }
+  function containerTone(c: PodContainer): string {
+    if (c.state === "running") return c.ready === false && c.role !== "init" ? "warn" : "ok";
+    if (c.state === "terminated") return c.exitCode === 0 ? "idle" : "bad";
+    if (!c.state) return "idle";
+    return podPhaseTone(c.reason) === "bad" ? "bad" : "warn";
+  }
+  function probeTiming(p: PodProbe): string {
+    return [
+      p.initialDelaySec ? t("k8s.probeDelay", { v: `${p.initialDelaySec}s` }) : "",
+      p.periodSec ? t("k8s.probeEvery", { v: `${p.periodSec}s` }) : "",
+      p.timeoutSec ? t("k8s.probeTimeout", { v: `${p.timeoutSec}s` }) : "",
+      p.failureThreshold ? t("k8s.probeThreshold", { n: p.failureThreshold }) : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
+  const amount = (r: { cpu: string; memory: string }): string =>
+    [r.cpu && `cpu ${r.cpu}`, r.memory && `memory ${r.memory}`].filter(Boolean).join(" · ");
 
   const TONE: Record<string, string> = {
     ok: "bg-ok",
@@ -138,6 +194,10 @@
     logsText = "";
     describeText = "";
     yamlText = "";
+    if (switched) {
+      showSecrets = false;
+      labelsOpen = false;
+    }
     if (!p) return;
     const first = p.containers.length > 1 ? p.containers[0] : null;
     if (switched || container === null || !p.containers.includes(container)) container = first;
@@ -241,7 +301,8 @@
   </div>
 
   {#if tab === "overview"}
-    <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-meta {fill ? 'min-h-0 content-start overflow-auto' : ''}" data-testid="k8s-detail-overview">
+    <div class="text-meta {fill ? 'min-h-0 flex-1 overflow-auto' : 'max-h-[60vh] overflow-auto'}" data-testid="k8s-detail-overview">
+    <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5">
       <dt class="text-muted">{t("k8s.name")}</dt>
       <dd class="break-all text-text/85">{p.name}</dd>
       <dt class="text-muted">{t("k8s.namespace")}</dt>
@@ -273,7 +334,166 @@
         <dt class="text-muted">{t("k8s.mem")}</dt>
         <dd class="text-text/85">{metrics.mem}</dd>
       {/if}
+      {#if p.qos}
+        <dt class="text-muted">{t("k8s.qos")}</dt>
+        <dd class="text-text/85">{p.qos}</dd>
+      {/if}
+      {#if detail?.serviceAccount}
+        <dt class="text-muted">{t("k8s.serviceAccount")}</dt>
+        <dd class="break-all font-mono text-text/85">{detail.serviceAccount}</dd>
+      {/if}
+      {#if detail?.priorityClass}
+        <dt class="text-muted">{t("k8s.priorityClass")}</dt>
+        <dd class="break-all font-mono text-text/85">{detail.priorityClass}</dd>
+      {/if}
     </dl>
+
+    {#if detail}
+      {#if detail.conditions.length > 0}
+        <!-- Why it waits is said here: PodScheduled carries the scheduler's own words. -->
+        <section data-testid="k8s-detail-conditions">
+          <h4 class={SECTION}>{t("k8s.conditions")}</h4>
+          <ul class="space-y-0.5">
+            {#each detail.conditions as c (c.type)}
+              <li class="px-1" data-testid="k8s-detail-condition">
+                <div class="flex items-baseline gap-2">
+                  <span class="h-[0.4rem] w-[0.4rem] shrink-0 rounded-full {c.ok === true ? 'bg-ok' : c.ok === false && !detail.finished ? 'bg-bad' : 'bg-muted'}"></span>
+                  <span class="shrink-0 text-text/85">{c.type}</span>
+                  {#if c.reason}<span class="min-w-0 truncate font-mono text-caption text-muted">{c.reason}</span>{/if}
+                  {#if c.since != null}<span class="ml-auto shrink-0 font-mono text-caption text-muted" use:tooltip={moment(c.since)}>{ago(c.since)}</span>{/if}
+                </div>
+                {#if c.message}<p class="pl-3.5 break-words text-caption {c.ok === false && !detail.finished ? 'text-text/85' : 'text-muted'}">{c.message}</p>{/if}
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
+
+      {#if detail.containers.length > 0}
+        {@const masked = detail.containers.reduce((n, c) => n + c.env.filter((e) => e.sensitive).length, 0)}
+        {@const refs = detail.containers.some((c) => c.env.some((e) => e.from) || c.envFrom.length > 0)}
+        <section data-testid="k8s-detail-containers">
+          <h4 class={SECTION}>
+            {t("k8s.containers")} <span class="tabular-nums">{detail.containers.length}</span>
+            {#if masked > 0}
+              <button
+                type="button"
+                class="ml-auto rounded px-1 normal-case tracking-normal hover:bg-edge hover:text-text"
+                aria-pressed={showSecrets}
+                data-testid="k8s-detail-env-reveal"
+                onclick={() => (showSecrets = !showSecrets)}
+              >{t(showSecrets ? "k8s.envHide" : "k8s.envShow")}</button>
+            {/if}
+          </h4>
+          {#each detail.containers as c (`${c.role}/${c.name}`)}
+            <div class="mb-2.5 last:mb-0" data-testid="k8s-detail-container">
+              <div class="flex flex-wrap items-baseline gap-x-2">
+                <span class="font-mono text-text">{c.name}</span>
+                {#if c.role !== "app"}<span class="text-caption text-muted">{t(ROLE[c.role])}</span>{/if}
+                <span class={TEXT_TONE[containerTone(c)]} data-testid="k8s-detail-container-state">{containerWord(c)}</span>
+                {#if c.state === "running" && c.ready === false && c.role !== "init"}<span class="text-warn">{t("k8s.notReadyWord")}</span>{/if}
+                {#if c.restarts > 0}<span class="tabular-nums text-warn">↻{c.restarts}</span>{/if}
+                {#if c.since != null}<span class="ml-auto font-mono text-caption text-muted" use:tooltip={moment(c.since)}>{ago(c.since)}</span>{/if}
+              </div>
+              {#if c.message}<p class="break-words font-mono text-caption text-muted">{c.message}</p>{/if}
+              {#if c.last}
+                <!-- How it ended the time before — what CrashLoopBackOff and a restart hide. -->
+                <p class="text-caption" data-testid="k8s-detail-last">
+                  <span class="text-muted">{t("k8s.lastTime")}:</span>
+                  <span class={c.last.exitCode === 0 ? "text-muted" : "text-bad"}>{[c.last.reason, exitWord(c.last.exitCode, c.last.signal)].filter(Boolean).join(" · ")}</span>
+                  {#if c.last.finishedAt != null}<span class="font-mono text-muted" use:tooltip={moment(c.last.finishedAt)}>{` · ${ago(c.last.finishedAt)}`}</span>{/if}
+                </p>
+                {#if c.last.message}
+                  <pre class="my-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel p-1.5 font-mono text-caption text-text/85 select-text">{c.last.message}</pre>
+                {/if}
+              {/if}
+              <dl class="mt-1 grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1">
+                <dt class="text-muted">{t("k8s.image")}</dt>
+                <dd class="break-all font-mono text-text/85">{c.image || "—"}</dd>
+                <dt class="text-muted">{t("k8s.command")}</dt>
+                <dd class="break-all font-mono {c.command ? 'text-text/85' : 'text-muted'}" data-testid="k8s-detail-command">{c.command || t("k8s.commandFromImage")}</dd>
+                <dt class="text-muted">{t("k8s.resources")}</dt>
+                <dd class="text-text/85">
+                  {#if amount(c.requests) || amount(c.limits)}
+                    {#if amount(c.requests)}<div class="font-mono">{t("k8s.requested", { v: amount(c.requests) })}</div>{/if}
+                    {#if amount(c.limits)}<div class="font-mono">{t("k8s.limited", { v: amount(c.limits) })}</div>{/if}
+                  {:else}
+                    <span class="text-muted">{t("k8s.noResources")}</span>
+                  {/if}
+                </dd>
+                {#if c.ports.length > 0}
+                  <dt class="text-muted">{t("k8s.ports")}</dt>
+                  <dd class="break-all font-mono text-text/85">{c.ports.join(", ")}</dd>
+                {/if}
+                {#if c.probes.length > 0}
+                  <dt class="text-muted">{t("k8s.probes")}</dt>
+                  <dd data-testid="k8s-detail-probes">
+                    {#each c.probes as pr (pr.kind)}
+                      <div class="flex flex-wrap items-baseline gap-x-1.5">
+                        <span class="text-muted">{t(PROBE[pr.kind])}</span>
+                        <span class="break-all font-mono text-text/85">{pr.action || "—"}</span>
+                        <span class="text-caption text-muted">{probeTiming(pr)}</span>
+                      </div>
+                    {/each}
+                  </dd>
+                {/if}
+                {#if c.mounts.length > 0}
+                  <dt class="text-muted">{t("k8s.mounts")}</dt>
+                  <dd>
+                    {#each c.mounts as m, i (i)}
+                      <div class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 break-all">
+                        <span class="font-mono text-text/85">{m.path}{#if m.subPath}<span class="text-muted">{` (${m.subPath})`}</span>{/if}</span>
+                        <span class="shrink-0 text-muted">←</span>
+                        <span class="font-mono text-muted" use:tooltip={m.volume}>{m.source || m.volume}</span>
+                        {#if m.readOnly}<span class="shrink-0 text-caption text-muted">{t("k8s.mountRo")}</span>{/if}
+                      </div>
+                    {/each}
+                  </dd>
+                {/if}
+                {#if c.env.length > 0 || c.envFrom.length > 0}
+                  <dt class="text-muted">{t("k8s.env")}</dt>
+                  <dd data-testid="k8s-detail-env">
+                    <dl class="grid grid-cols-[minmax(0,auto)_1fr] gap-x-2 gap-y-0.5 font-mono">
+                      {#each c.env as e (e.key)}
+                        <dt class="truncate text-muted" use:tooltip={e.key}>{e.key}</dt>
+                        {#if e.from}
+                          <dd class="break-all text-muted">← {e.from}</dd>
+                        {:else}
+                          <dd class="break-all {e.sensitive && !showSecrets ? 'text-muted' : 'text-text/85'}">{e.sensitive && !showSecrets ? REDACTED : e.value}</dd>
+                        {/if}
+                      {/each}
+                    </dl>
+                    {#each c.envFrom as f (f)}
+                      <div class="break-all font-mono text-muted">← {f}</div>
+                    {/each}
+                  </dd>
+                {/if}
+              </dl>
+            </div>
+          {/each}
+          {#if masked > 0 && !showSecrets}<p class="text-caption text-muted">{t("k8s.envMaskedHint")}</p>{/if}
+          {#if refs}<p class="text-caption text-muted">{t("k8s.envRefHint")}</p>{/if}
+        </section>
+      {/if}
+
+      {#if detail.labels.length > 0}
+        <section data-testid="k8s-detail-labels">
+          <button type="button" class="{SECTION} w-full hover:text-text" aria-expanded={labelsOpen} onclick={() => (labelsOpen = !labelsOpen)}>
+            <Icon name={labelsOpen ? "chevronDown" : "chevronRight"} size={10} />
+            {t("k8s.labels")} <span class="tabular-nums">{detail.labels.length}</span>
+          </button>
+          {#if labelsOpen}
+            <dl class="grid grid-cols-[minmax(0,auto)_1fr] gap-x-2 gap-y-0.5 font-mono">
+              {#each detail.labels as l (l.key)}
+                <dt class="truncate text-muted" use:tooltip={l.key}>{l.key}</dt>
+                <dd class="break-all text-text/85">{l.value}</dd>
+              {/each}
+            </dl>
+          {/if}
+        </section>
+      {/if}
+    {/if}
+    </div>
   {:else if tab === "logs"}
     <LogTail
       text={logsText}
