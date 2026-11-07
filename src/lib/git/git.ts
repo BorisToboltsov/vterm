@@ -369,16 +369,19 @@ export function commitFilesArgs(hash: string): string[] {
 
 /**
  * One commit for the details pane, in one call: who wrote it and who applied
- * it, fenced by RS, then the files it touched. `-z` ends every path with NUL
- * and leaves it as it is — without it git quotes a non-ASCII name into octal
- * escapes (`"\320\267…"`), and a tab or a newline in a name breaks the row.
+ * it, fenced by RS, then the files it touched with their line counts. `-z` ends
+ * every path with NUL and leaves it as it is — without it git quotes a non-ASCII
+ * name into octal escapes (`"\320\267…"`), and a tab or a newline in a name
+ * breaks the row. `--raw` and not `--name-status`: git drops `--numstat` next to
+ * `--name-status`, while the raw records and the counts are printed together.
  */
 export function commitDetailArgs(hash: string): string[] {
   return [
     "show",
     "-z",
     "--no-color",
-    "--name-status",
+    "--raw",
+    "--numstat",
     `--format=${RS}%an${US}%ae${US}%at${US}%cn${US}%ce${US}%ct${RS}`,
     hash,
   ];
@@ -392,7 +395,7 @@ export function commitDetailArgs(hash: string): string[] {
  * same everywhere.
  */
 export function mergeFilesArgs(hash: string): string[] {
-  return ["diff", "-z", "--no-color", "--name-status", `${hash}^1`, hash];
+  return ["diff", "-z", "--no-color", "--raw", "--numstat", `${hash}^1`, hash];
 }
 
 /** One file of that list: what the merge changed in it, against the first parent. */
@@ -706,37 +709,65 @@ export function parseDiff(raw: string): DiffLine[] {
   return out;
 }
 
+/** Lines a commit added to a file and took out of it, as `git --numstat` counts them. */
+export interface LineCounts {
+  added: number;
+  deleted: number;
+}
+
 export interface CommitFile {
   path: string;
   /** name-status letter: A M D R C … */
   status: string;
   /** Where a renamed or copied file came from. */
   orig?: string;
+  /** Its line counts; null for a binary file, which git does not count; absent when not asked. */
+  lines?: LineCounts | null;
 }
 
+const NUMSTAT = /^(-|\d+)\t(-|\d+)\t([\s\S]*)$/;
+
 /**
- * Parse a `-z --name-status` listing: `M\0path\0`, and for a rename or a copy
- * `R100\0from\0to\0`. A listing cut short mid-record drops that record.
+ * Parse a `-z --raw --numstat` listing. The raw records come first —
+ * `:100644 100644 abc def M\0path\0`, a rename or a copy `…R080\0from\0to\0` —
+ * and give the status; then the counts — `2\t1\tpath\0`, a rename
+ * `1\t1\t\0from\0to\0`, a binary file `-\t-\tpath\0` — matched to them by path.
+ * A listing cut short mid-record drops that record; a file git printed no count
+ * for keeps none, rather than a made-up zero.
  */
-export function parseNameStatusZ(raw: string): CommitFile[] {
-  const out: CommitFile[] = [];
+export function parseRawNumstatZ(raw: string): CommitFile[] {
+  const files: CommitFile[] = [];
+  const counts = new Map<string, LineCounts | null>();
   const tokens = raw.split("\0");
   for (let i = 0; i < tokens.length; i++) {
     // The listing follows a header's line break; nothing else starts with one.
-    const code = tokens[i].replace(/^\n+/, "");
-    if (!code) continue;
-    const status = code[0];
-    if (status === "R" || status === "C") {
-      const orig = tokens[i + 1];
-      const path = tokens[i + 2];
-      i += 2;
-      if (orig && path) out.push({ path, status, orig });
-    } else {
-      const path = tokens[++i];
-      if (path) out.push({ path, status });
+    const token = tokens[i].replace(/^\n+/, "");
+    if (!token) continue;
+    if (token.startsWith(":")) {
+      const status = token.slice(token.lastIndexOf(" ") + 1)[0];
+      if (status === "R" || status === "C") {
+        const orig = tokens[i + 1];
+        const path = tokens[i + 2];
+        i += 2;
+        if (orig && path) files.push({ path, status, orig });
+      } else {
+        const path = tokens[++i];
+        if (status && path) files.push({ path, status });
+      }
+      continue;
     }
+    const m = NUMSTAT.exec(token);
+    if (!m) continue;
+    let path = m[3];
+    if (path === "") {
+      // A rename's counts name it by both paths, in tokens of their own.
+      i += 2;
+      path = tokens[i] ?? "";
+    }
+    if (!path) continue;
+    counts.set(path, m[1] === "-" || m[2] === "-" ? null : { added: Number(m[1]), deleted: Number(m[2]) });
   }
-  return out;
+  return files.map((f) => (counts.has(f.path) ? { ...f, lines: counts.get(f.path) ?? null } : f));
 }
 
 /** What the details pane adds to a commit of the log. */
@@ -766,7 +797,7 @@ export function parseCommitDetail(raw: string): CommitDetail | null {
     committer: f[3],
     committerEmail: f[4],
     committed: Number(f[5]) || 0,
-    files: parseNameStatusZ(raw.slice(to + 1)),
+    files: parseRawNumstatZ(raw.slice(to + 1)),
   };
 }
 

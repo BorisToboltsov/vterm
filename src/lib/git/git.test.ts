@@ -39,7 +39,7 @@ import {
   mergeFilesArgs,
   mergeFileDiffArgs,
   parseCommitDetail,
-  parseNameStatusZ,
+  parseRawNumstatZ,
   checkoutCommitArgs,
   resetArgs,
   cherryPickArgs,
@@ -558,24 +558,37 @@ describe("commit details", () => {
   const US = "\x1f";
   const RS = "\x1e";
   // What git 2.54 prints for `commitDetailArgs` — bytes taken from a real repo:
-  // a modified file, an added one with a space and Cyrillic in its name, a rename.
+  // a modified file, an added one with a space and Cyrillic in its name, a
+  // binary file, one with a tab in its name, a rename with an edit.
   const meta = ["Anna Author", "anna@example.com", "1791671525", "Carl Committer", "carl@example.com", "1791671999"];
-  const answer =
-    `${RS}${meta.join(US)}${RS}\0\n` +
-    "M\0AGENTS.md\0A\0docs/заметка с пробелом.md\0R100\0src/old.ts\0src/new.ts\0";
+  const listing =
+    ":100644 100644 4cb29ea ea14db2 M\0AGENTS.md\0" +
+    ":000000 100644 0000000 b77b4eb A\0docs/заметка с пробелом.md\0" +
+    ":100644 100644 8352675 95d586e M\0logo.bin\0" +
+    ":000000 100644 0000000 718f4d2 A\0odd\tname.txt\0" +
+    ":100644 100644 9405325 c2f2e5e R080\0old.ts\0src/new.ts\0" +
+    "2\t1\tAGENTS.md\0" +
+    "2\t0\tdocs/заметка с пробелом.md\0" +
+    "-\t-\tlogo.bin\0" +
+    "1\t0\todd\tname.txt\0" +
+    "1\t1\t\0old.ts\0src/new.ts\0";
+  const answer = `${RS}${meta.join(US)}${RS}\0\n${listing}`;
 
   it("asks for the header and the files in one NUL-terminated call", () => {
     const args = commitDetailArgs("abc123");
     expect(args[0]).toBe("show");
     expect(args).toContain("-z");
-    expect(args).toContain("--name-status");
+    // `--name-status` would silence `--numstat`; the raw records carry the status.
+    expect(args).toContain("--raw");
+    expect(args).toContain("--numstat");
+    expect(args).not.toContain("--name-status");
     expect(args[args.length - 1]).toBe("abc123");
     const format = args.find((a) => a.startsWith("--format="))!;
     expect(format).toBe(`--format=${RS}%an${US}%ae${US}%at${US}%cn${US}%ce${US}%ct${RS}`);
   });
 
   it("asks a merge for its diff against the first parent, by name", () => {
-    expect(mergeFilesArgs("abc123")).toEqual(["diff", "-z", "--no-color", "--name-status", "abc123^1", "abc123"]);
+    expect(mergeFilesArgs("abc123")).toEqual(["diff", "-z", "--no-color", "--raw", "--numstat", "abc123^1", "abc123"]);
     expect(mergeFileDiffArgs("abc123", "src/a b.ts")).toEqual([
       "diff",
       "--no-color",
@@ -593,9 +606,11 @@ describe("commit details", () => {
       committerEmail: "carl@example.com",
       committed: 1791671999,
       files: [
-        { path: "AGENTS.md", status: "M" },
-        { path: "docs/заметка с пробелом.md", status: "A" },
-        { path: "src/new.ts", status: "R", orig: "src/old.ts" },
+        { path: "AGENTS.md", status: "M", lines: { added: 2, deleted: 1 } },
+        { path: "docs/заметка с пробелом.md", status: "A", lines: { added: 2, deleted: 0 } },
+        { path: "logo.bin", status: "M", lines: null },
+        { path: "odd\tname.txt", status: "A", lines: { added: 1, deleted: 0 } },
+        { path: "src/new.ts", status: "R", orig: "old.ts", lines: { added: 1, deleted: 1 } },
       ],
     });
   });
@@ -618,26 +633,44 @@ describe("commit details", () => {
   });
 });
 
-describe("parseNameStatusZ", () => {
-  it("reads the listing of `git diff -z --name-status`", () => {
-    expect(parseNameStatusZ("M\0a.ts\0D\0gone.ts\0C75\0base.ts\0copy.ts\0")).toEqual([
-      { path: "a.ts", status: "M" },
-      { path: "gone.ts", status: "D" },
-      { path: "copy.ts", status: "C", orig: "base.ts" },
+describe("parseRawNumstatZ", () => {
+  it("reads a merge's `git diff -z --raw --numstat`: status from the raw records, counts by path", () => {
+    expect(
+      parseRawNumstatZ(
+        ":100644 100644 a1 b2 M\0a.ts\0:100644 000000 c3 0000000 D\0gone.ts\0:100644 100644 d4 e5 C075\0base.ts\0copy.ts\0" +
+          "3\t0\ta.ts\0" +
+          "0\t12\tgone.ts\0" +
+          "4\t1\t\0base.ts\0copy.ts\0",
+      ),
+    ).toEqual([
+      { path: "a.ts", status: "M", lines: { added: 3, deleted: 0 } },
+      { path: "gone.ts", status: "D", lines: { added: 0, deleted: 12 } },
+      { path: "copy.ts", status: "C", orig: "base.ts", lines: { added: 4, deleted: 1 } },
     ]);
   });
-  it("keeps a name with a tab or a line break whole", () => {
-    expect(parseNameStatusZ("A\0odd\tname\nhere.txt\0")).toEqual([
-      { path: "odd\tname\nhere.txt", status: "A" },
+  it("keeps a name with a tab or a line break whole, in the record and in the count", () => {
+    expect(parseRawNumstatZ(":000000 100644 0 f A\0odd\tname\nhere.txt\x001\t0\todd\tname\nhere.txt\0")).toEqual([
+      { path: "odd\tname\nhere.txt", status: "A", lines: { added: 1, deleted: 0 } },
     ]);
+  });
+  it("gives a file git printed no count for no count, not a zero", () => {
+    expect(parseRawNumstatZ(":100644 100644 a b M\0a.ts\0")).toEqual([{ path: "a.ts", status: "M" }]);
   });
   it("is empty for nothing, and drops a record cut short", () => {
-    expect(parseNameStatusZ("")).toEqual([]);
-    expect(parseNameStatusZ("\0\0")).toEqual([]);
-    expect(parseNameStatusZ("M\0a.ts\0R100\0old.ts")).toEqual([{ path: "a.ts", status: "M" }]);
-    expect(parseNameStatusZ("M\0a.ts\0D")).toEqual([{ path: "a.ts", status: "M" }]);
+    expect(parseRawNumstatZ("")).toEqual([]);
+    expect(parseRawNumstatZ("\0\0")).toEqual([]);
+    expect(parseRawNumstatZ(":100644 100644 a b M\0a.ts\0:100644 100644 c d R100\0old.ts")).toEqual([
+      { path: "a.ts", status: "M" },
+    ]);
+    expect(parseRawNumstatZ(":100644 100644 a b M\0a.ts\0:100644 100644 c d D")).toEqual([
+      { path: "a.ts", status: "M" },
+    ]);
+    expect(parseRawNumstatZ(":100644 100644 a b R100\0old.ts\0new.ts\x001\t1\t\0old.ts")).toEqual([
+      { path: "new.ts", status: "R", orig: "old.ts" },
+    ]);
   });
 });
+
 
 describe("isDestructive", () => {
   it("flags force pushes, hard resets, deletes and discards", () => {

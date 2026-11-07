@@ -160,13 +160,14 @@
   const INFO_LABEL: Record<DockerInfoKey, MessageKey> = {
     status: "docker.status",
     ports: "docker.ports",
+    portsConfigured: "docker.portsConfigured",
     cpu: "docker.cpu",
     mem: "docker.mem",
     net: "docker.net",
     created: "docker.created",
   };
 
-  const rows = $derived(container ? containerInfoRows(container, stat) : []);
+  const rows = $derived(container ? containerInfoRows(container, stat, facts) : []);
 
   // The panel hands us a *fresh* container object on every poll (a new snapshot
   // every `refreshSec`), so the container prop changes identity constantly while

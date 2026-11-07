@@ -5,7 +5,7 @@
 
 import { compactAge } from "../ui/age";
 import type { CommitFile, GitFile } from "./git";
-import type { ListSchema } from "../ui/listview";
+import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
 import { formatModified } from "../files/lscolors";
 
 /**
@@ -207,13 +207,39 @@ export interface ChangeItem {
   staged: boolean;
 }
 
+/** The folder a changed file lies in, repo-relative; "" — the repository's root. */
+export function changeFolder(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash < 0 ? "" : path.slice(0, slash);
+}
+
+/** The name of a changed file without its folder — what a row under its folder's header shows. */
+export function changeName(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
 /**
  * What the changes' filter row reads (v1.29, ADR 0050): the path, and the
- * status letter as the facet. The two stages stay the sections they are.
+ * status letter as the facet. The two stages stay the sections they are; the
+ * «View» menu groups each by folder (v1.33) — the root's files are the rest,
+ * named by the list.
  */
 export const CHANGE_SCHEMA: ListSchema<ChangeItem> = {
   text: (i) => i.file.path,
   sorts: [],
+  groups: [
+    {
+      id: "folder",
+      of: (i) => {
+        const folder = changeFolder(i.file.path);
+        return { key: folder, label: folder };
+      },
+      compare: (a, b) => byText(a.key, b.key),
+    },
+  ],
   facets: [{ id: "status", value: (i) => changeStatus(i.file, i.staged) }],
   tie: (a, b) => a.file.path.localeCompare(b.file.path),
 };
+
+/** The changes lie flat until the «View» menu groups them. */
+export const CHANGE_ORDER: ListOrder = { sort: { key: "", dir: "asc" }, group: NO_GROUPS };

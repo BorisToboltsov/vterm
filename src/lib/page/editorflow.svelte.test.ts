@@ -77,14 +77,14 @@ describe("editor flow: opening", () => {
   it("a file it cannot read as the user is offered as root, not opened half-way", async () => {
     api.sftpReadText.mockRejectedValueOnce(new api.Denied("permission denied"));
     const { flow, cleanup } = harness();
-    await flow.openFile(SID, "/etc/shadow", "shadow", { gotoLine: 3 });
+    await flow.openFile(SID, "/etc/shadow", "shadow", { gotoLine: 3, gotoColumn: 9 });
     expect(doc("/etc/shadow")).toBeNull();
-    expect(flow.sudo).toEqual({ kind: "open", sid: SID, path: "/etc/shadow", name: "shadow", gotoLine: 3 });
+    expect(flow.sudo).toEqual({ kind: "open", sid: SID, path: "/etc/shadow", name: "shadow", gotoLine: 3, gotoColumn: 9 });
     flow.sudoPassword = "pw";
     await flow.confirmSudo();
     await settled();
     expect(api.sftpReadText).toHaveBeenLastCalledWith(SID, "/etc/shadow", expect.any(Number), true, "pw");
-    expect(doc("/etc/shadow")).toMatchObject({ sudo: true, sudoPassword: "pw" });
+    expect(doc("/etc/shadow")).toMatchObject({ sudo: true, sudoPassword: "pw", gotoLine: 3, gotoColumn: 9 });
     // Opened as root: no probe of the user's own access.
     expect(api.sftpWriteAccess).not.toHaveBeenCalled();
     expect(flow.sudoPassword).toBe("");
@@ -94,9 +94,9 @@ describe("editor flow: opening", () => {
   it("an open file is shown again on the line asked, not read twice", async () => {
     const { flow, cleanup } = harness();
     await flow.openFile(SID, "/etc/app.conf", "app.conf");
-    await flow.openFile(SID, "/etc/app.conf", "app.conf", { gotoLine: 12 });
+    await flow.openFile(SID, "/etc/app.conf", "app.conf", { gotoLine: 12, gotoColumn: 4 });
     expect(api.sftpReadText).toHaveBeenCalledTimes(1);
-    expect(doc("/etc/app.conf")?.gotoLine).toBe(12);
+    expect(doc("/etc/app.conf")).toMatchObject({ gotoLine: 12, gotoColumn: 4 });
     cleanup();
   });
 

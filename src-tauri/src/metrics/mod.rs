@@ -71,6 +71,9 @@ pub struct MetricsSamples {
     diskstat_samples: DiskTickStore,
     /// Last per-process CPU ticks per session, for every process's current CPU%.
     proc_samples: ProcTickStore,
+    /// The same, read by the status bar's own probe: kept apart so the two probes
+    /// of one tick do not measure each other over a fraction of a second.
+    top_samples: ProcTickStore,
 }
 
 impl MetricsSamples {
@@ -89,6 +92,7 @@ impl MetricsSamples {
         self.vmstat_samples.locked().remove(id);
         self.diskstat_samples.locked().remove(id);
         self.proc_samples.locked().remove(id);
+        self.top_samples.locked().remove(id);
     }
 }
 
@@ -122,7 +126,10 @@ printf 'swap=%s\\n' \"$(awk '/SwapTotal/{t=$2}/SwapFree/{f=$2}END{if(t>0)printf 
 printf 'diskio=%s\\n' \"$(awk '$3 ~ /^(sd|nvme|vd|xvd|hd)[a-z0-9]*$/ {r+=$6; w+=$10} END{printf \"%d %d\",r*512,w*512}' /proc/diskstats 2>/dev/null)\"; \
 printf 'users=%s\\n' \"$(who 2>/dev/null | awk '{print $1}' | sort -u | tr '\\n' ' ')\"; \
 printf 'ip=%s\\n' \"$(hostname -I 2>/dev/null | awk '{print $1}')\"; \
-printf 'topproc=%s\\n' \"$(ps -eo pcpu=,comm= 2>/dev/null | sort -rn | head -3 | awk '{printf \"%s %d%%, \",$2,$1}' | sed 's/, $//')\"; \
+if [ -r /proc/self/stat ]; then \
+printf 'clk=%s\\n' \"$(getconf CLK_TCK 2>/dev/null)\"; \
+printf 'topticks=%s\\n' \"$(awk '{c=$0; sub(/^[^(]*\\(/,\"\",c); sub(/\\) [^)]*$/,\"\",c); r=$0; sub(/^.*\\) /,\"\",r); split(r,a,\" \"); printf \"%s %s %s %s %s\\036\",$1,a[12],a[13],a[20],c}' /proc/[0-9]*/stat 2>/dev/null)\"; \
+else printf 'topproc=%s\\n' \"$(ps -eo pcpu=,comm= 2>/dev/null | sort -rn | head -3 | awk '{printf \"%s %d%%, \",$2,$1}' | sed 's/, $//')\"; fi; \
 printf 'cputemp=%s\\n' \"$(awk '{printf \"%.0f\",$1/1000}' /sys/class/thermal/thermal_zone0/temp 2>/dev/null)\"; \
 printf 'netconns=%s\\n' \"$(ss -tH state established 2>/dev/null | wc -l | tr -d ' ')\"; \
 printf 'kernel=%s\\n' \"$(uname -r 2>/dev/null)\"; \
@@ -434,6 +441,19 @@ pub async fn fetch_metrics(state: State<'_, AppState>, session_id: String) -> Ap
             }
         }
         samples.insert(session_id.clone(), (idle, total));
+    }
+
+    // The busiest processes now (v1.33): the growth of each one's ticks since the
+    // last poll — on Linux `ps`'s `%cpu` is a lifetime average, and a service
+    // busy for a minute after weeks idle never made the top. The first poll of a
+    // session has no reading and names nobody, rather than a zero.
+    if line_of(&raw, "topticks=").is_some() {
+        let clk = line_of(&raw, "clk=")
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|c| *c > 0.0);
+        let (ticks, names) = parse_topticks(&raw);
+        let cpu = proc_cpu_map(&state.metrics_samples.top_samples, &session_id, ticks, clk);
+        m.top_proc = local::top_procs_label(&named_cpu(&cpu, &names), 3);
     }
 
     // Network + disk I/O rates need two samples and the wall-clock gap between them.
@@ -948,6 +968,43 @@ fn parse_procticks(raw: &str) -> HashMap<u32, (u64, u64)> {
                 .collect();
             (f.len() == 4).then(|| (f[0] as u32, (f[1] + f[2], f[3])))
         })
+        .collect()
+}
+
+/// Parse the status bar's every-process reading (v1.33), `topticks=pid utime
+/// stime start comm\u{1e}…`: each process's ticks used (user + system) and start
+/// time, and its name — last in the record, so a name with spaces stays whole.
+fn parse_topticks(raw: &str) -> (HashMap<u32, (u64, u64)>, HashMap<u32, String>) {
+    let mut ticks = HashMap::new();
+    let mut names = HashMap::new();
+    for rec in line_of(raw, "topticks=").unwrap_or("").split('\u{1e}') {
+        let mut f = rec.splitn(5, ' ');
+        let (Some(pid), Some(user), Some(system), Some(start), Some(comm)) =
+            (f.next(), f.next(), f.next(), f.next(), f.next())
+        else {
+            continue;
+        };
+        let (Ok(pid), Ok(user), Ok(system), Ok(start)) = (
+            pid.trim().parse::<u32>(),
+            user.parse::<u64>(),
+            system.parse::<u64>(),
+            start.parse::<u64>(),
+        ) else {
+            continue;
+        };
+        if comm.is_empty() {
+            continue;
+        }
+        ticks.insert(pid, (user + system, start));
+        names.insert(pid, comm.to_string());
+    }
+    (ticks, names)
+}
+
+/// The processes with a CPU reading, by name, for the status bar's label.
+fn named_cpu(cpu: &HashMap<u32, f64>, names: &HashMap<u32, String>) -> Vec<(String, f64)> {
+    cpu.iter()
+        .filter_map(|(pid, c)| Some((names.get(pid)?.clone(), *c)))
         .collect()
 }
 
@@ -2679,6 +2736,45 @@ mod tests {
         // Same pid, another start time: a new process, no reading yet.
         assert_eq!(cpu.get(&1190), None);
         assert!(proc_cpu(&t0, &t1, 0.0, 100.0).is_empty());
+    }
+
+    #[test]
+    fn the_status_bar_names_the_busiest_processes_by_their_cpu_now() {
+        // Where `/proc` is, the probe ships every process's ticks; `ps`'s `%cpu`
+        // — a lifetime average on Linux — only where it is not.
+        let (linux, other) = METRICS_SCRIPT
+            .split_once("if [ -r /proc/self/stat ]; then")
+            .and_then(|(_, rest)| rest.split_once("else"))
+            .expect("the status bar's process reading branches on /proc");
+        assert!(linux.contains("topticks=") && linux.contains("/proc/[0-9]*/stat"));
+        assert!(
+            !linux.contains("pcpu"),
+            "the Linux branch must not read ps's %cpu"
+        );
+        assert!(other.trim_start().starts_with("printf 'topproc="));
+        assert_eq!(METRICS_SCRIPT.matches("pcpu").count(), 1);
+
+        // What a real host printed (Debian, mawk): a name with a space and a paren
+        // is kept whole; a cut record is dropped.
+        let poll = |a: u64, b: u64| {
+            format!("clk=100\ntopticks=812 {a} 10 4820100 postgres\u{1e}8 {b} 0 4820808 we ird) x\u{1e}9 1 1\u{1e}\n")
+        };
+        let (t0, names) = parse_topticks(&poll(1000, 50));
+        assert_eq!(names.get(&8).map(String::as_str), Some("we ird) x"));
+        assert_eq!(t0.len(), 2);
+        let (t1, _) = parse_topticks(&poll(1450, 100));
+        // Over 5 s at 100 ticks/s: 450 ticks is 90 % of a core, 50 is 10 %.
+        let cpu = proc_cpu(&t0, &t1, 5.0, 100.0);
+        assert_eq!(
+            local::top_procs_label(&named_cpu(&cpu, &names), 3),
+            "postgres 90%, we ird) x 10%"
+        );
+        // The first poll of a session has no reading: nobody is named.
+        assert_eq!(
+            local::top_procs_label(&named_cpu(&HashMap::new(), &names), 3),
+            ""
+        );
+        assert!(parse_topticks("topticks=\n").0.is_empty());
     }
 
     #[test]

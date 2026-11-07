@@ -6,6 +6,7 @@ import {
   groupUsage,
   parseMemUsed,
   parseFacts,
+  shownPorts,
   inspectFactsArgs,
   parseInspectTime,
   staleFacts,
@@ -425,6 +426,15 @@ describe("containerInfoRows (Phase 36 — hover card / detail overview)", () => 
     // A stopped container never gets live stats even if a stale snapshot exists.
     expect(containerInfoRows(stopped, stat).some((r) => r.key === "cpu")).toBe(false);
   });
+  it("gives a stopped container the ports it is set to publish, as such — and a running one what ps printed", () => {
+    const facts = parseFacts(["def", "0", "0", "0", "bridge", "", "", "", "0", "false", `\x1d8080\x1d80/tcp\x1e`].join(US)).get("def");
+    expect(containerInfoRows(stopped, undefined, facts)).toContainEqual({ key: "portsConfigured", value: "0.0.0.0:8080->80/tcp" });
+    expect(shownPorts(stopped, facts)).toEqual({ ports: "0.0.0.0:8080->80/tcp", configured: true });
+    expect(shownPorts(stopped)).toEqual({ ports: "", configured: false });
+    // A running container's ports are docker's own — its configuration is not quoted over them.
+    expect(shownPorts(running, facts)).toEqual({ ports: "0.0.0.0:80->80/tcp", configured: false });
+    expect(containerInfoRows(running, undefined, facts).find((r) => r.key.startsWith("ports"))?.key).toBe("ports");
+  });
 });
 
 describe("registry auth (Phase 36)", () => {
@@ -503,8 +513,24 @@ describe("inspectFactsArgs / parseFacts", () => {
       finishedAt: null,
       exitCode: 0,
       oomKilled: false,
+      ports: "",
     });
     expect(m.get("bbb")).toMatchObject({ cpuCores: null, memBytes: null, networkMode: "host", addresses: [], exitCode: 137, oomKilled: true });
+  });
+
+  // What docker 29 printed for `HostConfig.PortBindings` of a stopped container
+  // run with `-p 8080:80 -p 127.0.0.1:5432:5432 -p [::1]:9000:9000 -p 7000`.
+  it("reads the ports a container is set to publish, in docker ps notation, without the ones docker picks at start", () => {
+    const binds = [
+      `${GS}8080${GS}80/tcp`,
+      `127.0.0.1${GS}5432${GS}5432/tcp`,
+      `::1${GS}9000${GS}9000/tcp`,
+      `${GS}${GS}7000/tcp`,
+      `${GS}8080${GS}80/tcp`,
+    ].join(RS) + RS;
+    const m = parseFacts(row("ddd", "0", "0", "0", "bridge", "", "", "", "0", "false", binds));
+    expect(m.get("ddd")?.ports).toBe("0.0.0.0:8080->80/tcp, 127.0.0.1:5432->5432/tcp, [::1]:9000->9000/tcp");
+    expect(inspectFactsArgs(["x"])[3]).toContain("{{range $port, $to := .HostConfig.PortBindings}}");
   });
 
   it("says nothing it was not told", () => {
@@ -550,6 +576,7 @@ const facts = (over: Partial<DockerFacts> = {}): DockerFacts => ({
   finishedAt: null,
   exitCode: 0,
   oomKilled: false,
+  ports: "",
   ...over,
 });
 

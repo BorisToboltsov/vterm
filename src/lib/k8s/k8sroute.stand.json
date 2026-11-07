@@ -1,0 +1,355 @@
+{
+  "services": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {},
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand"
+          },
+          "name": "notready",
+          "namespace": "vterm-stand",
+          "resourceVersion": "47906",
+          "uid": "07a6abc4-1c9f-4baa-9874-3ee5d09d14cc"
+        },
+        "spec": {
+          "clusterIP": "10.96.85.35",
+          "clusterIPs": [
+            "10.96.85.35"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "port": 80,
+              "protocol": "TCP",
+              "targetPort": 8080
+            }
+          ],
+          "selector": {
+            "app": "notready"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {},
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand"
+          },
+          "name": "orphan",
+          "namespace": "vterm-stand",
+          "resourceVersion": "47901",
+          "uid": "4225a377-427b-443d-8199-85bef7c7feec"
+        },
+        "spec": {
+          "clusterIP": "10.96.97.168",
+          "clusterIPs": [
+            "10.96.97.168"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "port": 80,
+              "protocol": "TCP",
+              "targetPort": 8080
+            }
+          ],
+          "selector": {
+            "app": "nobody"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      },
+      {
+        "apiVersion": "v1",
+        "kind": "Service",
+        "metadata": {
+          "annotations": {},
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand"
+          },
+          "name": "web",
+          "namespace": "vterm-stand",
+          "resourceVersion": "47897",
+          "uid": "a650a0e1-5882-484c-afd9-64a7e0036ab4"
+        },
+        "spec": {
+          "clusterIP": "10.96.222.182",
+          "clusterIPs": [
+            "10.96.222.182"
+          ],
+          "internalTrafficPolicy": "Cluster",
+          "ipFamilies": [
+            "IPv4"
+          ],
+          "ipFamilyPolicy": "SingleStack",
+          "ports": [
+            {
+              "name": "http",
+              "port": 80,
+              "protocol": "TCP",
+              "targetPort": "http"
+            }
+          ],
+          "selector": {
+            "app": "web"
+          },
+          "sessionAffinity": "None",
+          "type": "ClusterIP"
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  },
+  "ingress": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "apiVersion": "networking.k8s.io/v1",
+        "kind": "Ingress",
+        "metadata": {
+          "annotations": {},
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "generation": 1,
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand"
+          },
+          "name": "web",
+          "namespace": "vterm-stand",
+          "resourceVersion": "47914",
+          "uid": "36ab23c2-c111-4498-b4e5-cc119920620f"
+        },
+        "spec": {
+          "ingressClassName": "vterm-none",
+          "rules": [
+            {
+              "host": "web.vterm.test",
+              "http": {
+                "paths": [
+                  {
+                    "backend": {
+                      "service": {
+                        "name": "web",
+                        "port": {
+                          "name": "http"
+                        }
+                      }
+                    },
+                    "path": "/",
+                    "pathType": "Prefix"
+                  },
+                  {
+                    "backend": {
+                      "service": {
+                        "name": "reports",
+                        "port": {
+                          "number": 80
+                        }
+                      }
+                    },
+                    "path": "/reports",
+                    "pathType": "Prefix"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "status": {
+          "loadBalancer": {}
+        }
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  },
+  "endpointslices": {
+    "apiVersion": "v1",
+    "items": [
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": [
+          {
+            "addresses": [
+              "10.244.0.226"
+            ],
+            "conditions": {
+              "ready": false,
+              "serving": false,
+              "terminating": false
+            },
+            "nodeName": "desktop-control-plane",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "notready-798b5ffb79-6zsb5",
+              "namespace": "vterm-stand",
+              "uid": "1755f3da-2467-495e-af54-c8228c6742bd"
+            }
+          }
+        ],
+        "kind": "EndpointSlice",
+        "metadata": {
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "generateName": "notready-",
+          "generation": 2,
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "kubernetes.io/service-name": "notready"
+          },
+          "name": "notready-sh6n8",
+          "namespace": "vterm-stand",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "notready",
+              "uid": "07a6abc4-1c9f-4baa-9874-3ee5d09d14cc"
+            }
+          ],
+          "resourceVersion": "48052",
+          "uid": "7e1fce12-6c80-4ca1-bafb-6c117d8f0d00"
+        },
+        "ports": [
+          {
+            "name": "",
+            "port": 8080,
+            "protocol": "TCP"
+          }
+        ]
+      },
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": null,
+        "kind": "EndpointSlice",
+        "metadata": {
+          "annotations": {
+            "endpoints.kubernetes.io/last-change-trigger-time": "2026-11-07T18:57:36Z"
+          },
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "generateName": "orphan-",
+          "generation": 1,
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "kubernetes.io/service-name": "orphan"
+          },
+          "name": "orphan-vc6vg",
+          "namespace": "vterm-stand",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "orphan",
+              "uid": "4225a377-427b-443d-8199-85bef7c7feec"
+            }
+          ],
+          "resourceVersion": "47903",
+          "uid": "739f13fc-0081-4d84-b4e4-88625028077a"
+        },
+        "ports": null
+      },
+      {
+        "addressType": "IPv4",
+        "apiVersion": "discovery.k8s.io/v1",
+        "endpoints": [
+          {
+            "addresses": [
+              "10.244.0.223"
+            ],
+            "conditions": {
+              "ready": true,
+              "serving": true,
+              "terminating": false
+            },
+            "nodeName": "desktop-control-plane",
+            "targetRef": {
+              "kind": "Pod",
+              "name": "web-5b44858944-lzds9",
+              "namespace": "vterm-stand",
+              "uid": "5d8b6d95-a197-40cc-b7a4-4cd56fff9652"
+            }
+          }
+        ],
+        "kind": "EndpointSlice",
+        "metadata": {
+          "annotations": {
+            "endpoints.kubernetes.io/last-change-trigger-time": "2026-11-07T18:57:40Z"
+          },
+          "creationTimestamp": "2026-11-07T18:57:36Z",
+          "generateName": "web-",
+          "generation": 3,
+          "labels": {
+            "app.kubernetes.io/part-of": "vterm-stand",
+            "endpointslice.kubernetes.io/managed-by": "endpointslice-controller.k8s.io",
+            "kubernetes.io/service-name": "web"
+          },
+          "name": "web-qx47j",
+          "namespace": "vterm-stand",
+          "ownerReferences": [
+            {
+              "apiVersion": "v1",
+              "blockOwnerDeletion": true,
+              "controller": true,
+              "kind": "Service",
+              "name": "web",
+              "uid": "a650a0e1-5882-484c-afd9-64a7e0036ab4"
+            }
+          ],
+          "resourceVersion": "48123",
+          "uid": "5218f0e2-16cd-4faa-b68e-c6ccc9bd82b7"
+        },
+        "ports": [
+          {
+            "name": "http",
+            "port": 8080,
+            "protocol": "TCP"
+          }
+        ]
+      }
+    ],
+    "kind": "List",
+    "metadata": {
+      "resourceVersion": ""
+    }
+  }
+}

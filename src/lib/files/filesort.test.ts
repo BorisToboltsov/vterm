@@ -1,6 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+  naturalCompare,
   DEFAULT_SORT,
   firstDir,
   isSortKey,
@@ -76,7 +77,33 @@ describe("the orders there are", () => {
   });
 });
 
+describe("naturalCompare", () => {
+  const sorted = (names: string[]) => [...names].sort(naturalCompare);
+  it("reads a run of digits as its number", () => {
+    expect(sorted(["file10", "file2", "file1", "file20"])).toEqual(["file1", "file2", "file10", "file20"]);
+    expect(sorted(["v1.10", "v1.9", "v1.9.1", "v2"])).toEqual(["v1.9", "v1.9.1", "v1.10", "v2"]);
+    expect(sorted(["10", "9", "a", "1a"])).toEqual(["1a", "9", "10", "a"]);
+  });
+  it("ignores case, and keeps the order total for names equal but for case or leading zeros", () => {
+    expect(sorted(["b", "A", "a", "B"])).toEqual(["A", "a", "B", "b"]);
+    expect(sorted(["x1", "x01", "x001"])).toEqual(["x001", "x01", "x1"]);
+    expect(naturalCompare("same", "same")).toBe(0);
+  });
+  it("compares long runs by their digits, not as numbers that lose precision", () => {
+    expect(naturalCompare("id-90071992547409931", "id-90071992547409930")).toBe(1);
+    expect(naturalCompare("id-99999999999999999999", "id-100000000000000000000")).toBe(-1);
+  });
+  it("a shorter name that is the start of a longer one comes first", () => {
+    expect(sorted(["log.txt.1", "log.txt", "log"])).toEqual(["log", "log.txt", "log.txt.1"]);
+  });
+});
+
 describe("sortEntries", () => {
+  it("by name names come as people read them: file2 before file10", () => {
+    const list = ["file10.log", "file2.log", "file1.log"].map((name) => entry(name));
+    expect(names(sortEntries(list, DEFAULT_SORT))).toEqual(["file1.log", "file2.log", "file10.log"]);
+  });
+
   it("by name is the order the backend gave: folders first, case-insensitive", () => {
     expect(names(sortEntries(LISTING, DEFAULT_SORT))).toEqual([
       "conf.d",

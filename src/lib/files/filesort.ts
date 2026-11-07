@@ -56,12 +56,48 @@ export function sanitizeSort(raw: unknown): FileSort {
 
 export const sameSort = (a: FileSort, b: FileSort): boolean => a.key === b.key && a.dir === b.dir;
 
-/** Names compare as the backend compares them: case-insensitively. */
-const byName = (a: FileEntry, b: FileEntry): number => {
-  const x = a.name.toLowerCase();
-  const y = b.name.toLowerCase();
-  return x < y ? -1 : x > y ? 1 : a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-};
+const isDigit = (c: number): boolean => c >= 48 && c <= 57;
+
+/**
+ * Names compare as people read them: case-insensitively, and a run of digits by
+ * its number — `file2` before `file10`, `v1.9` before `v1.10`. A run is compared
+ * by its digits, not converted to a number, so a twenty-digit name does not lose
+ * precision. Names equal that way (`01` and `1`, `A` and `a`) fall back to their
+ * characters — the order stays total.
+ */
+export function naturalCompare(a: string, b: string): number {
+  const x = a.toLowerCase();
+  const y = b.toLowerCase();
+  let i = 0;
+  let j = 0;
+  while (i < x.length && j < y.length) {
+    const cx = x.charCodeAt(i);
+    const cy = y.charCodeAt(j);
+    if (isDigit(cx) && isDigit(cy)) {
+      let ei = i;
+      while (ei < x.length && isDigit(x.charCodeAt(ei))) ei++;
+      let ej = j;
+      while (ej < y.length && isDigit(y.charCodeAt(ej))) ej++;
+      const nx = x.slice(i, ei).replace(/^0+/, "");
+      const ny = y.slice(j, ej).replace(/^0+/, "");
+      if (nx.length !== ny.length) return nx.length < ny.length ? -1 : 1;
+      if (nx !== ny) return nx < ny ? -1 : 1;
+      i = ei;
+      j = ej;
+      continue;
+    }
+    if (cx !== cy) return cx < cy ? -1 : 1;
+    i++;
+    j++;
+  }
+  const restX = x.length - i;
+  const restY = y.length - j;
+  if (restX !== restY) return restX < restY ? -1 : 1;
+  return x < y ? -1 : x > y ? 1 : a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** Entries by name, as {@link naturalCompare} reads it (the backend's listing is case-insensitive only). */
+const byName = (a: FileEntry, b: FileEntry): number => naturalCompare(a.name, b.name);
 
 /** The value an entry is ordered by, or null when the listing did not report one. */
 function valueOf(entry: FileEntry, key: Exclude<SortKey, "name">): number | string | null {

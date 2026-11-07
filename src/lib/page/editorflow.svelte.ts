@@ -51,11 +51,13 @@ export interface EditorDeps {
 }
 
 export type SudoAsk =
-  | { kind: "open"; sid: string; path: string; name: string; gotoLine?: number }
+  | { kind: "open"; sid: string; path: string; name: string; gotoLine?: number; gotoColumn?: number }
   | { kind: "save" | "check"; sid: string; doc: EditorDoc };
 
 export interface OpenOptions {
   gotoLine?: number;
+  /** 1-based column on `gotoLine` (`x.c:42:5`); without a line it means nothing. */
+  gotoColumn?: number;
   sudo?: boolean;
   sudoPassword?: string;
   gitBase?: string;
@@ -106,7 +108,7 @@ export function createEditorFlow(deps: EditorDeps) {
     const existing = findEditorByPath(sid, path);
     if (existing) {
       showSessionView(sid, existing.id);
-      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
+      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine, opts.gotoColumn);
       return;
     }
     // For a config-shaped file not already recognised as nginx, also consult the set
@@ -122,7 +124,7 @@ export function createEditorFlow(deps: EditorDeps) {
       // No read access on a non-sudo read → offer to reopen as root.
       if (!opts.sudo && isPermissionError(e)) {
         sudoPassword = "";
-        sudo = { kind: "open", sid, path, name, gotoLine: opts.gotoLine };
+        sudo = { kind: "open", sid, path, name, gotoLine: opts.gotoLine, gotoColumn: opts.gotoColumn };
         return;
       }
       notifyError(String(e));
@@ -134,6 +136,7 @@ export function createEditorFlow(deps: EditorDeps) {
     lang = editorLangWithDialect(lang, file.content);
     const id = addEditor(sid, path, name, lang, "sftp", {
       gotoLine: opts.gotoLine,
+      gotoColumn: opts.gotoColumn,
       sudo: opts.sudo,
       sudoPassword: opts.sudoPassword,
       gitBase: opts.gitBase,
@@ -152,12 +155,16 @@ export function createEditorFlow(deps: EditorDeps) {
   }
 
   /** Open a file on this computer in a session's editor. */
-  async function openLocal(sid: string, path: string, opts: { gitBase?: string; gotoLine?: number } = {}) {
+  async function openLocal(
+    sid: string,
+    path: string,
+    opts: { gitBase?: string; gotoLine?: number; gotoColumn?: number } = {},
+  ) {
     const name = path.split(/[\\/]/).pop() ?? path;
     const existing = findEditorByPath(sid, path);
     if (existing) {
       showSessionView(sid, existing.id);
-      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine);
+      if (opts.gotoLine) gotoEditorLine(sid, existing.id, opts.gotoLine, opts.gotoColumn);
       return;
     }
     let file;
@@ -170,6 +177,7 @@ export function createEditorFlow(deps: EditorDeps) {
     const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
       gitBase: opts.gitBase,
       gotoLine: opts.gotoLine,
+      gotoColumn: opts.gotoColumn,
     });
     fillEditor(sid, id, file);
   }
@@ -342,7 +350,7 @@ export function createEditorFlow(deps: EditorDeps) {
       sudoPassword = "";
       if (!p) return;
       if (p.kind === "open") {
-        void openFile(p.sid, p.path, p.name, { gotoLine: p.gotoLine, sudo: true, sudoPassword: pw });
+        void openFile(p.sid, p.path, p.name, { gotoLine: p.gotoLine, gotoColumn: p.gotoColumn, sudo: true, sudoPassword: pw });
         return;
       }
       let usable: boolean;

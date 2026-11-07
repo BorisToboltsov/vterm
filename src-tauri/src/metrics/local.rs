@@ -75,10 +75,11 @@ fn sum_net(ifaces: &[(String, u64, u64)]) -> (u64, u64) {
         .fold((0, 0), |(r, t), (_, rx, tx)| (r + rx, t + tx))
 }
 
-/// "name NN%, …" for the top `n` CPU consumers (`(name, cpu%)`), skipping idle ones.
-fn top_procs_label(procs: &[(String, f64)], n: usize) -> String {
+/// "name NN%, …" for the top `n` CPU consumers (`(name, cpu%)`), skipping idle
+/// ones; equal readings go by name, so the label does not flicker between polls.
+pub(super) fn top_procs_label(procs: &[(String, f64)], n: usize) -> String {
     let mut ranked: Vec<&(String, f64)> = procs.iter().filter(|(_, cpu)| *cpu > 0.0).collect();
-    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     ranked
         .iter()
         .take(n)

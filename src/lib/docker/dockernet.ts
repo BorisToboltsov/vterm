@@ -9,7 +9,7 @@
 // principle", never as "connected" — the graph knows membership, not whether
 // anything listens.
 
-import { isRunning, type DockerContainer, type DockerNetwork } from "./docker";
+import { isRunning, shownPorts, type DockerContainer, type DockerFacts, type DockerNetwork } from "./docker";
 
 // ── Published ports ──────────────────────────────────────────────────────────
 
@@ -208,11 +208,18 @@ export interface ContainerPorts {
   hostMode: boolean;
 }
 
-/** Containers that have a port to show or sit on the host's network, in the order given. */
-export function containerPorts(containers: readonly DockerContainer[]): ContainerPorts[] {
+/**
+ * Containers that have a port to show or sit on the host's network, in the order
+ * given. A stopped container's ports are those it is set to publish, from its
+ * facts — `ps` prints none — and are not `live`.
+ */
+export function containerPorts(
+  containers: readonly DockerContainer[],
+  facts: ReadonlyMap<string, DockerFacts> = new Map(),
+): ContainerPorts[] {
   const out: ContainerPorts[] = [];
   for (const container of containers) {
-    const rows = portRows(container.ports);
+    const rows = portRows(shownPorts(container, facts.get(container.id)).ports);
     const hostMode = container.networks.includes(HOST_NETWORK);
     if (rows.length > 0 || hostMode) out.push({ container, rows, live: isRunning(container), hostMode });
   }

@@ -26,12 +26,13 @@
   } from "./git";
   import { writeClipboard } from "../app/clipboard";
   import { notifySuccess } from "../stores/toasts.svelte";
-  import { CHANGE_SCHEMA, changeStatus, fileStatusColor, type ChangeItem } from "./gitview";
+  import { CHANGE_ORDER, CHANGE_SCHEMA, changeFolder, changeName, changeStatus, fileStatusColor, type ChangeItem } from "./gitview";
   import ListHeader from "../ui/ListHeader.svelte";
   import GroupHeader from "../ui/GroupHeader.svelte";
   import FilteredEmpty from "../ui/FilteredEmpty.svelte";
   import { listMenuText } from "../ui/listtext";
-  import { filterSummary, isFiltered, keeps, NO_FILTER, type ListFilter } from "../ui/listview";
+  import { filterSummary, groupItems, isFiltered, keeps, NO_FILTER, type ListFilter } from "../ui/listview";
+  import { listOrder, setListOrder } from "../stores/listview.svelte";
   import { t } from "../i18n";
   import { notifyError } from "../stores/toasts.svelte";
   import { settings } from "../settings/settings.svelte";
@@ -55,6 +56,7 @@
     onfilter = () => {},
     collapsed = [],
     ontoggle = () => {},
+    onfold = () => {},
   }: {
     status: GitStatus;
     busy: boolean;
@@ -76,9 +78,11 @@
     /** What the two stages are narrowed to — this session's, kept by the panel. */
     filter?: ListFilter;
     onfilter?: (next: ListFilter) => void;
-    /** Folded stages: `staged`, `changes`. */
+    /** Folded stages — `staged`, `changes` — and folders within them: `staged/src`, `changes/` (the root). */
     collapsed?: readonly string[];
     ontoggle?: (key: string) => void;
+    /** Fold or unfold these groups at once — the «View» menu's fold all. */
+    onfold?: (keys: string[], collapsed: boolean) => void;
   } = $props();
 
   let message = $state("");
@@ -92,7 +96,23 @@
   ]);
   const shownStaged = $derived(staged.filter((file) => keeps({ file, staged: true }, CHANGE_SCHEMA, filter)));
   const shownUnstaged = $derived(unstaged.filter((file) => keeps({ file, staged: false }, CHANGE_SCHEMA, filter)));
-  const LABELS = { facet: () => t("git.status") };
+  const LABELS = { facet: () => t("git.status"), group: (id: string) => (id === "folder" ? t("git.groupFolder") : id) };
+  // How the list lies (v1.33): flat, or each stage by folder — one choice for the app.
+  const order = $derived(listOrder("git.changes", CHANGE_SCHEMA, CHANGE_ORDER));
+  const byFolder = $derived(order.group === "folder");
+  /** A stage's shown files in their folders; one group without a header while the list is flat. */
+  const inFolders = (files: GitFile[], isStaged: boolean) =>
+    groupItems(
+      files.map((file) => ({ file, staged: isStaged })),
+      CHANGE_SCHEMA,
+      order.group,
+    );
+  const folderKey = (stage: "staged" | "changes", folder: string) => `${stage}/${folder}`;
+  /** Every folder group on screen, for the «View» menu's fold all. */
+  const folderKeys = $derived([
+    ...new Set(shownStaged.map((f) => folderKey("staged", changeFolder(f.path)))),
+    ...new Set(shownUnstaged.map((f) => folderKey("changes", changeFolder(f.path)))),
+  ]);
   const folded = (key: string) => collapsed.includes(key);
   // Split for the two header actions: restore tracked changes vs delete untracked.
   const trackedUnstaged = $derived(unstaged.filter((f) => f.work !== "?"));
@@ -301,6 +321,9 @@
     shown={shownStaged.length + shownUnstaged.length}
     total={changeItems.length}
     labels={LABELS}
+    {order}
+    onorder={(next) => setListOrder("git.changes", next)}
+    fold={(fold) => onfold(folderKeys, fold)}
     placeholder={t("git.filterPath")}
     {wide}
     onmenu={(m) => (ctxMenu = m)}
@@ -332,18 +355,25 @@
     {#if !folded("staged") && staged.length === 0}
       <p class="px-2 py-1 text-caption text-muted">{t("git.nothingStaged")}</p>
     {:else if !folded("staged")}
-      {#each shownStaged as f (f.path)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
-          <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, true))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
-            <Icon name="pencil" size={12} />
-          </button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.unstage")} aria-label={t("git.unstage")} onclick={() => run(unstageArgs([f.path]))}>
-            <Icon name="minus" size={13} />
-          </button>
-        </div>
+      {#each inFolders(shownStaged, true) as g (g.key)}
+        {#if byFolder}
+          {@render folderHeader("staged", g.key, g.items.length)}
+        {/if}
+        {#if !byFolder || !folded(folderKey("staged", g.key))}
+          {#each g.items as { file: f } (f.path)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40" oncontextmenu={(e) => openMenu(e, f, true)}>
+              <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, true))}">{statusChar(f, true)}</span>
+              <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, true))}" use:tooltip={byFolder ? f.path : undefined} onclick={() => onOpenInEditor(f.path)}>{byFolder ? changeName(f.path) : f.path}</button>
+              <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
+                <Icon name="pencil" size={12} />
+              </button>
+              <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.unstage")} aria-label={t("git.unstage")} onclick={() => run(unstageArgs([f.path]))}>
+                <Icon name="minus" size={13} />
+              </button>
+            </div>
+          {/each}
+        {/if}
       {/each}
     {/if}
 
@@ -413,26 +443,46 @@
     {#if !folded("changes") && unstaged.length === 0}
       <p class="px-2 py-1 text-caption text-muted">{t("git.clean")}</p>
     {:else if !folded("changes")}
-      {#each shownUnstaged as f (f.path)}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
-          <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
-          <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
-          <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, false))}" onclick={() => onOpenInEditor(f.path)}>{f.path}</button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
-            <Icon name="pencil" size={12} />
-          </button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-danger group-hover:opacity-100" use:tooltip={f.work === "?" ? t("git.deleteFile") : t("git.discard")} aria-label={f.work === "?" ? t("git.deleteFile") : t("git.discard")} onclick={() => discardFiles([f])}>
-            <Icon name={f.work === "?" ? "trash" : "history"} size={f.work === "?" ? 12 : 13} />
-          </button>
-          <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.stage")} aria-label={t("git.stage")} onclick={() => run(stageArgs([f.path]))}>
-            <Icon name="plus" size={13} />
-          </button>
-        </div>
+      {#each inFolders(shownUnstaged, false) as g (g.key)}
+        {#if byFolder}
+          {@render folderHeader("changes", g.key, g.items.length)}
+        {/if}
+        {#if !byFolder || !folded(folderKey("changes", g.key))}
+          {#each g.items as { file: f } (f.path)}
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div class="group flex items-center gap-1.5 px-2 py-0.5 hover:bg-edge/40 {selected.has(f.path) ? 'bg-accent/10' : ''}" oncontextmenu={(e) => openMenu(e, f, false)}>
+              <input type="checkbox" class="shrink-0 accent-accent" checked={selected.has(f.path)} onchange={() => toggle(f.path)} aria-label={t("git.select")} />
+              <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(statusChar(f, false))}">{statusChar(f, false)}</span>
+              <button class="min-w-0 flex-1 truncate text-left text-meta {fileStatusColor(statusChar(f, false))}" use:tooltip={byFolder ? f.path : undefined} onclick={() => onOpenInEditor(f.path)}>{byFolder ? changeName(f.path) : f.path}</button>
+              <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.openFile")} aria-label={t("git.openFile")} onclick={() => onOpenInEditor(f.path)}>
+                <Icon name="pencil" size={12} />
+              </button>
+              <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-danger group-hover:opacity-100" use:tooltip={f.work === "?" ? t("git.deleteFile") : t("git.discard")} aria-label={f.work === "?" ? t("git.deleteFile") : t("git.discard")} onclick={() => discardFiles([f])}>
+                <Icon name={f.work === "?" ? "trash" : "history"} size={f.work === "?" ? 12 : 13} />
+              </button>
+              <button class="shrink-0 rounded px-1 text-muted opacity-0 hover:bg-edge hover:text-text group-hover:opacity-100" use:tooltip={t("git.stage")} aria-label={t("git.stage")} onclick={() => run(stageArgs([f.path]))}>
+                <Icon name="plus" size={13} />
+              </button>
+            </div>
+          {/each}
+        {/if}
       {/each}
     {/if}
     {/if}
   </div>
+
+  <!-- A folder within a stage (v1.33): the root's files come last, named by a micro-label. -->
+  {#snippet folderHeader(stage: "staged" | "changes", folder: string, count: number)}
+    <GroupHeader
+      label={folder || t("git.rootFolder")}
+      rest={folder === ""}
+      icon="folder"
+      {count}
+      collapsed={folded(folderKey(stage, folder))}
+      ontoggle={() => ontoggle(folderKey(stage, folder))}
+      testid="git-folder"
+    />
+  {/snippet}
 
   <!-- Commit box -->
   <div class="border-t border-edge p-2">

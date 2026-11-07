@@ -73,6 +73,8 @@ export interface EditorDoc {
   sudoPassword: string;
   /** 1-based line to scroll to on open (e.g. from a grep hit), or null. */
   gotoLine: number | null;
+  /** 1-based column on that line (`x.c:42:5` in terminal output), or null: the line's start. */
+  gotoColumn?: number | null;
   /** Bumped by `gotoEditorLine`: a jump to `gotoLine` asked for after the
    *  file was open (the same line twice is two jumps). */
   gotoSeq?: number;
@@ -89,6 +91,7 @@ export interface OpenEditorOpts {
   sudo?: boolean;
   sudoPassword?: string;
   gotoLine?: number;
+  gotoColumn?: number;
   gitBase?: string;
 }
 
@@ -192,6 +195,7 @@ export function addEditor(
     sudo: opts.sudo ?? false,
     sudoPassword: opts.sudoPassword ?? "",
     gotoLine: opts.gotoLine ?? null,
+    gotoColumn: opts.gotoLine ? (opts.gotoColumn ?? null) : null,
     gitBase: opts.gitBase,
   };
   const ws = ensure(sessionId);
@@ -279,10 +283,10 @@ export function setEditorContent(sessionId: string, id: string, content: string)
  * output, or a search hit, on a file that is already open — opening it again
  * would only show it where it was.
  */
-export function gotoEditorLine(sessionId: string, id: string, line: number): void {
+export function gotoEditorLine(sessionId: string, id: string, line: number, column?: number): void {
   const doc = workspacesState.map[sessionId]?.editors.find((e) => e.id === id);
   if (!doc || line < 1) return;
-  updateDoc(sessionId, id, { gotoLine: line, gotoSeq: (doc.gotoSeq ?? 0) + 1 });
+  updateDoc(sessionId, id, { gotoLine: line, gotoColumn: column ?? null, gotoSeq: (doc.gotoSeq ?? 0) + 1 });
 }
 
 /** Mark an editor as elevated (sudo) and remember its password for later saves. */

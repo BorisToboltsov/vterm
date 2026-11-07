@@ -209,7 +209,7 @@ describe("DockerDetailModal — resources and events (stage 3)", () => {
     "abc123456789.mem": [{ s: 0, v: 200 * 1024 ** 2 }, { s: 1, v: 210 * 1024 ** 2 }],
   };
   const facts = (over: Record<string, unknown> = {}) => ({
-    cpuCores: 0.5, memBytes: 1024 ** 3, restarts: 0, networkMode: "bridge", addresses: [], startedAt: null, finishedAt: null, exitCode: null, oomKilled: false, ...over,
+    cpuCores: 0.5, memBytes: 1024 ** 3, restarts: 0, networkMode: "bridge", addresses: [], startedAt: null, finishedAt: null, exitCode: null, oomKilled: false, ports: "", ...over,
   });
 
   it("draws CPU and memory against the container's own limits, and says when it has none", async () => {

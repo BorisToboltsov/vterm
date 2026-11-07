@@ -92,6 +92,42 @@ describe("DockerContainers", () => {
   });
 });
 
+describe("DockerContainers — the ports of a stopped container", () => {
+  const facts = (ports: string): DockerFacts => ({
+    cpuCores: null,
+    memBytes: null,
+    restarts: 0,
+    networkMode: "bridge",
+    addresses: [],
+    startedAt: null,
+    finishedAt: null,
+    exitCode: 0,
+    oomKilled: false,
+    ports,
+  });
+  const stopped = container({ state: "exited", status: "Exited (0) 1 hour ago", ports: "" });
+
+  it("shows the ports it will publish, dashed, and says nothing listens — docker ps prints none", () => {
+    const groups: ListGroup<DockerContainer>[] = [{ key: "", label: "", rest: true, items: [stopped] }];
+    render(DockerContainers, {
+      props: props({ groups, factsById: new Map([[stopped.id, facts("127.0.0.1:5432->5432/tcp")]]) }),
+    });
+    const cell = screen.getByTestId("docker-col-ports");
+    expect(cell).toHaveTextContent("127.0.0.1:5432");
+    expect(cell.dataset.configured).toBe("true");
+    expect(cell.querySelector("span")?.className).toContain("border-dashed");
+  });
+
+  it("a running container's chips stay solid — its ports are docker's own", () => {
+    render(DockerContainers, { props: props({ factsById: new Map([[container().id, facts("0.0.0.0:9999->1/tcp")]]) }) });
+    const cell = screen.getByTestId("docker-col-ports");
+    expect(cell).toHaveTextContent(":80");
+    expect(cell).not.toHaveTextContent("9999");
+    expect(cell.dataset.configured).toBeUndefined();
+    expect(cell.querySelector("span")?.className).not.toContain("border-dashed");
+  });
+});
+
 // The wide layout is a table: titled columns, rules between them, and borders
 // the user drags. Width tokens are compared as written — jsdom has no layout —
 // which is exactly the contract: the header and the rows must name the SAME
@@ -190,6 +226,7 @@ describe("DockerContainers — the list beside the details", () => {
     finishedAt: null,
     exitCode: null,
     oomKilled: false,
+    ports: "",
     ...over,
   });
 

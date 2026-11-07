@@ -83,6 +83,8 @@ export interface NamedPath {
   path: string;
   /** The line the output named in the file (`x.c:42`), 1-based; files only. */
   line?: number;
+  /** The column the output named on that line (`x.c:42:5`), 1-based; only with a line. */
+  column?: number;
 }
 
 /**
@@ -257,6 +259,7 @@ export interface Candidate {
   target: Resolved;
   /** The place in the file the output named after the name, if any. */
   line?: number;
+  column?: number;
 }
 
 interface Word {
@@ -284,24 +287,28 @@ interface Reading {
   from: number;
   to: number;
   line?: number;
+  column?: number;
 }
 
 // A place in the file after its name: `x.c:42`, `x.c:42:5`, `x.c:42:5:`
-// (grep -n, gcc, rustc, eslint, nginx -t), `x.ts(17,3)` (tsc). The column is
-// read past, not kept: the editor opens on the line.
-const LOCATION = /(?::(\d+)(?::\d+)?|\((\d+)(?:,\s*\d+)?\)):?$/;
+// (grep -n, gcc, rustc, eslint, nginx -t), `x.ts(17,3)` (tsc). The column goes
+// with the line: the editor puts the cursor on it.
+const LOCATION = /(?::(\d+)(?::(\d+))?|\((\d+)(?:,\s*(\d+))?\)):?$/;
 // Python names the line after the name: `File "/srv/app.py", line 17, in main`.
 const LINE_AFTER = /^["']?,\s*line\s+(\d+)/;
 
 /** Ways to read the characters `text[from..to)` as a name, the plainest first. */
 function readings(text: string, from: number, to: number): Reading[] {
   const out: Reading[] = [];
-  const add = (value: string, a: number, b: number, line?: number) => {
+  const add = (value: string, a: number, b: number, line?: number, column?: number) => {
     if (value === "" || out.some((r) => r.value === value)) return;
     const after = line === undefined ? LINE_AFTER.exec(text.slice(b)) : null;
     const at = line ?? (after ? Number(after[1]) : undefined);
     const r: Reading = { value, from: a, to: b };
-    if (at !== undefined && at >= 1) r.line = at;
+    if (at !== undefined && at >= 1) {
+      r.line = at;
+      if (column !== undefined && column >= 1) r.column = column;
+    }
     out.push(r);
   };
   // The name with the place after it taken off: the link covers both, as the
@@ -310,7 +317,8 @@ function readings(text: string, from: number, to: number): Reading[] {
     const m = LOCATION.exec(value);
     if (!m || m.index === 0) return;
     const end = value.endsWith(":") ? b - 1 : b;
-    add(value.slice(0, m.index), a, end, Number(m[1] ?? m[2]));
+    const column = m[2] ?? m[4];
+    add(value.slice(0, m.index), a, end, Number(m[1] ?? m[3]), column === undefined ? undefined : Number(column));
   };
   const raw = text.slice(from, to);
   // The plain name first: a file really called `notes:12` is that file.
@@ -357,6 +365,7 @@ export function lineCandidates(text: string, lineDir: string | null, style: Path
         if (!target) continue;
         const c: Candidate = { i, j, from: r.from, to: r.to, target };
         if (r.line) c.line = r.line;
+        if (r.column) c.column = r.column;
         out.push(c);
       }
     }
@@ -452,8 +461,11 @@ export function pickLinks(
       const kind = listing(c.target.dir)?.get(nameKey(c.target.base, style));
       if (!kind || (kind === "dir" && !dirs) || (c.target.wantsDir && kind !== "dir")) continue;
       // A line is a place in a file; a folder has none.
-      const target: NamedPath =
-        kind === "file" && c.line ? { kind, path: c.target.path, line: c.line } : { kind, path: c.target.path };
+      const target: NamedPath = { kind, path: c.target.path };
+      if (kind === "file" && c.line) {
+        target.line = c.line;
+        if (c.column) target.column = c.column;
+      }
       out.push({ from: c.from, to: c.to, target });
       i = c.j;
       break;

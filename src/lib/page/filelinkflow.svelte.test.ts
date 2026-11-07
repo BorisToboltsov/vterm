@@ -21,7 +21,7 @@ import type { ServerProfile } from "../types";
 const tab = (sessionId: string, over: Partial<Tab> = {}): Tab =>
   ({ sessionId, kind: "ssh", serverId: `srv-${sessionId}`, alias: sessionId, status: "Connected", gen: 0, ...over }) as Tab;
 
-const file = (path: string, line?: number) => ({ kind: "file" as const, path, line });
+const file = (path: string, line?: number, column?: number) => ({ kind: "file" as const, path, line, column });
 
 function harness(tabs: Tab[], following: Record<string, boolean> = {}) {
   const state = $state({ tabs, following });
@@ -59,10 +59,10 @@ describe("file link flow: a click", () => {
   it("opens at once when told to: a file on its line, through the editor's own way in", () => {
     settings.terminalFileLinks = "direct";
     const { flow, openFile, openLocalFile, cleanup } = harness([tab("a"), tab("l", { kind: "local" })]);
-    flow.clicked("a", file("/etc/app.c", 42));
+    flow.clicked("a", file("/etc/app.c", 42, 5));
     flow.clicked("l", file("C:\\notes.txt"));
-    expect(openFile.mock.calls).toEqual([["a", "/etc/app.c", { gotoLine: 42 }]]);
-    expect(openLocalFile.mock.calls).toEqual([["l", "C:\\notes.txt", { gotoLine: undefined }]]);
+    expect(openFile.mock.calls).toEqual([["a", "/etc/app.c", { gotoLine: 42, gotoColumn: 5 }]]);
+    expect(openLocalFile.mock.calls).toEqual([["l", "C:\\notes.txt", { gotoLine: undefined, gotoColumn: undefined }]]);
     // The tab already on screen stays; the other is brought forward.
     expect(stores.activateTab.mock.calls).toEqual([["l"]]);
     expect(flow.ask).toBeNull();
@@ -143,7 +143,7 @@ describe("file link flow: the answer", () => {
     const { flow, openFile, cleanup } = harness([tab("a")]);
     flow.clicked("a", file("/etc/hosts", 3));
     flow.answer("open", false);
-    expect(openFile.mock.calls).toEqual([["a", "/etc/hosts", { gotoLine: 3 }]]);
+    expect(openFile.mock.calls).toEqual([["a", "/etc/hosts", { gotoLine: 3, gotoColumn: undefined }]]);
     expect(settings.terminalFileLinks).toBe("confirm");
     flow.clicked("a", file("/etc/fstab"));
     flow.answer("open", true);

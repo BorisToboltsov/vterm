@@ -673,6 +673,7 @@
                 collapsed={collapsedGroups(sessionId, "git.changes")}
                 ontoggle={(key) =>
                   setGroupsCollapsed(sessionId, "git.changes", [key], !collapsedGroups(sessionId, "git.changes").includes(key))}
+                onfold={(keys, fold) => setGroupsCollapsed(sessionId, "git.changes", keys, fold)}
               />
             {/if}
           {:else}

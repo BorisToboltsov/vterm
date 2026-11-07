@@ -309,19 +309,19 @@ describe("a place in the file after its name", () => {
       { text: "main.c:42", kind: "file", path: "/srv/app/main.c", line: 42 },
     ]);
     expect(linksOf("main.c:42:5: error: expected ';'", "/srv/app", src)).toEqual([
-      { text: "main.c:42:5", kind: "file", path: "/srv/app/main.c", line: 42 },
+      { text: "main.c:42:5", kind: "file", path: "/srv/app/main.c", line: 42, column: 5 },
     ]);
     expect(linksOf("  --> src/app.ts:7:12", "/srv/app", src)).toEqual([
-      { text: "src/app.ts:7:12", kind: "file", path: "/srv/app/src/app.ts", line: 7 },
+      { text: "src/app.ts:7:12", kind: "file", path: "/srv/app/src/app.ts", line: 7, column: 12 },
     ]);
   });
 
   it("reads tsc's parentheses and a JS stack frame", () => {
     expect(linksOf("src/app.ts(17,3): error TS2304", "/srv/app", src)).toEqual([
-      { text: "src/app.ts(17,3)", kind: "file", path: "/srv/app/src/app.ts", line: 17 },
+      { text: "src/app.ts(17,3)", kind: "file", path: "/srv/app/src/app.ts", line: 17, column: 3 },
     ]);
     expect(linksOf("    at main (/srv/app/src/x.js:12:5)", null, src)).toEqual([
-      { text: "/srv/app/src/x.js:12:5", kind: "file", path: "/srv/app/src/x.js", line: 12 },
+      { text: "/srv/app/src/x.js:12:5", kind: "file", path: "/srv/app/src/x.js", line: 12, column: 5 },
     ]);
   });
 
@@ -338,18 +338,21 @@ describe("a place in the file after its name", () => {
     const listing = { "/x": { "notes:12": "file", notes: "file", d: "dir" } } as const;
     expect(linksOf("notes:12", "/x", listing)).toEqual([{ text: "notes:12", kind: "file", path: "/x/notes:12" }]);
     expect(linksOf("d:4", "/x", listing)).toEqual([{ text: "d:4", kind: "dir", path: "/x/d" }]);
+    expect(linksOf("d:4:2", "/x", listing)).toEqual([{ text: "d:4:2", kind: "dir", path: "/x/d" }]);
   });
 
-  it("reads no line 0 and no place without a name", () => {
+  it("reads no line 0, no column 0 and no place without a name", () => {
     const listing = { "/x": { a: "file" } } as const;
     expect(linksOf("a:0", "/x", listing)).toEqual([{ text: "a:0", kind: "file", path: "/x/a" }]);
+    expect(linksOf("a:0:5", "/x", listing)).toEqual([{ text: "a:0:5", kind: "file", path: "/x/a" }]);
+    expect(linksOf("a:3:0", "/x", listing)).toEqual([{ text: "a:3:0", kind: "file", path: "/x/a", line: 3 }]);
     expect(linksOf(":12", "/x", listing)).toEqual([]);
   });
 
   it("reads a Windows place after the drive's own colon", () => {
     const listing = { "C:\\src": { "Main.cs": "file" } } as const;
     expect(linksOf("C:\\src\\main.cs(10,4): error CS1002", null, listing, { style: "windows" })).toEqual([
-      { text: "C:\\src\\main.cs(10,4)", kind: "file", path: "C:\\src\\main.cs", line: 10 },
+      { text: "C:\\src\\main.cs(10,4)", kind: "file", path: "C:\\src\\main.cs", line: 10, column: 4 },
     ]);
   });
 });

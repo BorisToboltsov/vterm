@@ -266,7 +266,9 @@ describe("GitPanel commit details", () => {
 
   const header = (committer = "Anna Author", email = "anna@example.com", at = AT) =>
     `${RS}${["Anna Author", "anna@example.com", String(AT), committer, email, String(at)].join(US)}${RS}`;
-  const FILES = "M\0AGENTS.md\0A\0docs/operations/заметка.md\0R100\0src/old.ts\0src/new.ts\0";
+  const FILES =
+    ":100644 100644 1 2 M\0AGENTS.md\0:000000 100644 0 3 A\0docs/operations/заметка.md\0:100644 100644 4 5 R100\0src/old.ts\0src/new.ts\0" +
+    "2\t1\tAGENTS.md\x003\t0\tdocs/operations/заметка.md\x000\t0\t\0src/old.ts\0src/new.ts\0";
 
   /** What git answers; a test replaces single answers through `answers`. */
   let answers: Record<string, (args: string[]) => unknown>;
@@ -276,11 +278,11 @@ describe("GitPanel commit details", () => {
       "rev-parse": () => ok("/repo\n"),
       log: () => ok(LOG),
       show: (args) =>
-        args.includes("--name-status")
+        args.includes("--numstat")
           ? ok(`${header()}\0\n${args[args.length - 1] === MERGE.hash ? "" : FILES}`)
           : ok("diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n"),
       diff: (args) =>
-        args.includes("--name-status") ? ok("M\0merged.ts\0") : ok("diff --git a/m b/m\n@@ -1 +1 @@\n-a\n+b\n"),
+        args.includes("--numstat") ? ok(":100644 100644 1 2 M\0merged.ts\x001\t1\tmerged.ts\0") : ok("diff --git a/m b/m\n@@ -1 +1 @@\n-a\n+b\n"),
     };
     gitRun.mockReset().mockImplementation(async (_s: string, _c: string, args: string[]) =>
       (answers[args[0]] ?? (() => ok()))(args),
@@ -316,7 +318,7 @@ describe("GitPanel commit details", () => {
   }
   const commitRow = (c: Row) => within(screen.getByTestId("git-graph")).getByText(c.subject).closest("button")!;
   const logSearches = () => calls("log").filter((a) => a.some((t) => t.startsWith("--grep=")));
-  const detailCalls = () => calls("show").filter((a) => a.includes("--name-status"));
+  const detailCalls = () => calls("show").filter((a) => a.includes("--numstat"));
   const drawnTree = () =>
     [...screen.getByTestId("git-commit-detail").querySelectorAll("[data-testid='git-commit-dir'], [data-testid='git-commit-file']")].map(
       (e) => (e.textContent ?? "").replace(/\s+/g, " ").trim(),
@@ -347,10 +349,11 @@ describe("GitPanel commit details", () => {
     await mountHistory();
     await fireEvent.click(commitRow(FEAT));
     await waitFor(() => expect(drawnTree()).toHaveLength(5));
-    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md", "src 1", "R new.ts", "M AGENTS.md"]);
+    // A rename that changed no line shows no counts — not "+0 −0".
+    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md +3", "src 1", "R new.ts", "M AGENTS.md +2 −1"]);
     // Folding a folder hides what is under it and keeps its count.
     await fireEvent.click(within(screen.getByTestId("git-commit-detail")).getByText("src").closest("button")!);
-    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md", "src 1", "M AGENTS.md"]);
+    expect(drawnTree()).toEqual(["docs/operations 1", "A заметка.md +3", "src 1", "M AGENTS.md +2 −1"]);
   });
 
   it("clicking the selected commit again closes its details", async () => {
@@ -439,9 +442,9 @@ describe("GitPanel commit details", () => {
     await fireEvent.click(commitRow(MERGE));
     const detail = await screen.findByTestId("git-commit-detail");
     await waitFor(() => expect(within(detail).getAllByTestId("git-commit-file")).toHaveLength(1));
-    expect(drawnTree()).toEqual(["M merged.ts"]);
+    expect(drawnTree()).toEqual(["M merged.ts +1 −1"]);
     expect(within(detail).getByTestId("git-commit-merge-note")).toBeInTheDocument();
-    expect(calls("diff")).toEqual([["diff", "-z", "--no-color", "--name-status", `${MERGE.hash}^1`, MERGE.hash]]);
+    expect(calls("diff")).toEqual([["diff", "-z", "--no-color", "--raw", "--numstat", `${MERGE.hash}^1`, MERGE.hash]]);
     // A file of it opens the same diff, for that file.
     await fireEvent.click(within(detail).getByTestId("git-commit-file"));
     await waitFor(() =>
@@ -491,7 +494,7 @@ describe("GitPanel commit details", () => {
     answers.show = (args) =>
       args[args.length - 1] === FEAT.hash
         ? new Promise((resolve) => (releaseFeat = resolve))
-        : ok(`${header()}\0\nA\0only-main.txt\0`);
+        : ok(`${header()}\0\n:000000 100644 0 1 A\0only-main.txt\0`);
     await mountHistory();
     await fireEvent.click(commitRow(FEAT));
     await fireEvent.click(commitRow(MAIN));
@@ -588,7 +591,7 @@ describe("GitPanel commit details", () => {
     await fireEvent.click(commitRow(FEAT));
     await waitFor(() => expect(drawnTree()).toHaveLength(5));
     await fireEvent.click(screen.getByTestId("git-commit-collapse"));
-    expect(drawnTree()).toEqual(["docs/operations 1", "src 1", "M AGENTS.md"]);
+    expect(drawnTree()).toEqual(["docs/operations 1", "src 1", "M AGENTS.md +2 −1"]);
     await fireEvent.click(screen.getByTestId("git-commit-expand"));
     expect(drawnTree()).toHaveLength(5);
     await fireEvent.click(screen.getByTestId("git-commit-diff"));

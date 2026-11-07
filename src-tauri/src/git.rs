@@ -280,11 +280,20 @@ mod tests {
                 "show",
                 "-z",
                 "--no-color",
-                "--name-status",
+                "--raw",
+                "--numstat",
                 "--format=%an",
                 "abc",
             ],
-            &["diff", "-z", "--no-color", "--name-status", "abc^1", "abc"],
+            &[
+                "diff",
+                "-z",
+                "--no-color",
+                "--raw",
+                "--numstat",
+                "abc^1",
+                "abc",
+            ],
         ] {
             assert_eq!(check_args(&argv(ok)), Ok(()), "{ok:?}");
         }
