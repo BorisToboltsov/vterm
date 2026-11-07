@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   copyTargets,
   defaultDestDir,
+  distinctTitles,
   foreignTargets,
   MAX_SHARED_TARGETS,
   shareTargets,
@@ -47,6 +48,24 @@ describe("where a file can be copied to", () => {
     expect(targetsFrom(all, null)).toHaveLength(3);
     // The only live tab is the source: nowhere to copy to.
     expect(targetsFrom(copyTargets([tab("web", "ssh")], title, prod), "web")).toEqual([]);
+  });
+});
+
+describe("targets that are called alike", () => {
+  const target = (sessionId: string, title: string) => ({ sessionId, title, local: false, prod: false });
+
+  it("tell two tabs of one server apart by their place, in the order given", () => {
+    expect(
+      distinctTitles([target("a", "web-1"), target("b", "db"), target("c", "web-1"), target("d", "web-1")]).map((t) => t.title),
+    ).toEqual(["web-1 · 1", "db", "web-1 · 2", "web-1 · 3"]);
+  });
+
+  it("leave a title nobody shares as it is, and change nothing but the title", () => {
+    const list = [target("a", "web-1"), target("b", "db")];
+    expect(distinctTitles(list)).toEqual(list);
+    const [first] = distinctTitles([{ ...target("a", "Local shell"), local: true, window: "win-2" }, target("b", "Local shell")]);
+    expect(first).toEqual({ sessionId: "a", title: "Local shell · 1", local: true, prod: false, window: "win-2" });
+    expect(distinctTitles([])).toEqual([]);
   });
 });
 

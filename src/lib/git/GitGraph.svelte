@@ -42,7 +42,7 @@
     NO_FILTER,
     parseCommitDetail,
     parseContains,
-    parseNameStatusZ,
+    parseRawNumstatZ,
     showFileArgs,
     diffCommitWorkingArgs,
     parseDiff,
@@ -242,7 +242,7 @@
     // `git show` lists nothing for a clean merge: its files are its diff
     // against the first parent, and the pane says that is what they are.
     const diff = await runQuery(mergeFilesArgs(commit.hash));
-    return diff.exitCode === 0 ? { ...parsed, files: parseNameStatusZ(diff.stdout) } : null;
+    return diff.exitCode === 0 ? { ...parsed, files: parseRawNumstatZ(diff.stdout) } : null;
   }
 
   /** A click on a row: another commit opens; the one open closes where it can close. */

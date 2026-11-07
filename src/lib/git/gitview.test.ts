@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { facetValues, filterItems, NO_FILTER } from "../ui/listview";
+import { applyView, facetValues, filterItems, NO_FILTER } from "../ui/listview";
 import {
+  CHANGE_ORDER,
   CHANGE_SCHEMA,
+  changeFolder,
+  changeName,
   changeStatus,
   clockTime,
   commitDay,
@@ -266,5 +269,25 @@ describe("the changes' filter row (CHANGE_SCHEMA)", () => {
       { value: "M", count: 2 },
       { value: "U", count: 1 },
     ]);
+  });
+
+  it("groups by folder in the «View» menu: folders by name, the root's files last", () => {
+    const more = [...items, { file: { path: "README.md", index: ".", work: "M" }, staged: false }];
+    const view = applyView(more, CHANGE_SCHEMA, NO_FILTER, { ...CHANGE_ORDER, group: "folder" });
+    expect(view.grouped).toBe(true);
+    expect(view.groups.map((g) => [g.key, g.rest, g.items.map((i) => i.file.path)])).toEqual([
+      ["docs", false, ["docs/new.md"]],
+      ["src", false, ["src/a.ts", "src/b.ts"]],
+      ["", true, ["README.md"]],
+    ]);
+    // Flat by default.
+    expect(applyView(more, CHANGE_SCHEMA, NO_FILTER, CHANGE_ORDER).grouped).toBe(false);
+  });
+
+  it("a path's folder and name: the root has no folder, a deep path keeps all of it", () => {
+    expect(changeFolder("README.md")).toBe("");
+    expect(changeFolder("src/lib/util.ts")).toBe("src/lib");
+    expect(changeName("src/lib/util.ts")).toBe("util.ts");
+    expect(changeName("README.md")).toBe("README.md");
   });
 });

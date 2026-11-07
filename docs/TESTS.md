@@ -211,6 +211,21 @@ curl -sSLo components.yaml https://github.com/kubernetes-sigs/metrics-server/rel
 sed 's|        - --metric-resolution=15s|&\n        - --kubelet-insecure-tls|' components.yaml | kubectl --context docker-desktop apply -f -
 ```
 
+Маршрут сервисов разбирается по настоящим ответам стенда без кластера:
+[k8sroute.stand.json](../src/lib/k8s/k8sroute.stand.json) — `get services|ingress|endpointslices -o json`
+пространства со стендом (Docker Desktop, k8s 1.31), без `managedFields` и `last-applied`; его читает
+`k8sroute.stand.test.ts` — у сервиса без подов EndpointSlice приходит с `ports: null` и без
+`endpoints`, такого нет в объектах, собранных по схеме. Изменил стенд — сними ответы заново:
+
+```sh
+for k in services ingress endpointslices; do
+  kubectl --context docker-desktop -n vterm-stand get $k -o json \
+    | jq 'del(.items[].metadata.managedFields) | del(.items[].metadata.annotations["kubectl.kubernetes.io/last-applied-configuration"])' > /tmp/stand-$k.json
+done
+jq -n --slurpfile s /tmp/stand-services.json --slurpfile i /tmp/stand-ingress.json --slurpfile e /tmp/stand-endpointslices.json \
+  '{services: $s[0], ingress: $i[0], endpointslices: $e[0]}' > src/lib/k8s/k8sroute.stand.json
+```
+
 Стенд руками — посмотреть панель на настоящем кластере:
 
 ```sh

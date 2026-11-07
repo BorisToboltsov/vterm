@@ -6,7 +6,7 @@
 
 import { untrack } from "svelte";
 import { announceCopyTargets, localHome, sftpHome } from "../api";
-import { copyTargets, defaultDestDir, shareTargets, sideOf, type CopyTarget } from "../files/copyto";
+import { copyTargets, defaultDestDir, distinctTitles, shareTargets, sideOf, type CopyTarget } from "../files/copyto";
 import { dockCwd } from "../stores/dockstate.svelte";
 import {
   pendingCopyRequest,
@@ -34,8 +34,8 @@ export function createCopyFlow(deps: CopyDeps) {
   // What the other windows offer (v1.13): a file is copied to a session
   // whichever window shows its tab — the transfer is the backend's.
   let others = $state<CopyTarget[]>([]);
-  /** Every session a file can be copied to: this window's, then the others'. */
-  const all = $derived([...mine, ...others]);
+  /** Every session a file can be copied to: this window's, then the others' — each told apart by its title. */
+  const all = $derived(distinctTitles([...mine, ...others]));
 
   $effect(() => {
     setCopyTargets(all);

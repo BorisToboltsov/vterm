@@ -64,6 +64,19 @@ describe("copy flow", () => {
     cleanup();
   });
 
+  it("tells apart two tabs called alike — here and in another window — in every list it offers", () => {
+    const { copy, cleanup } = harness([tab("a"), tab("b")]);
+    copy.heardOthers([{ ...other, title: "title-a" }]);
+    flushSync();
+    expect(copy.all.map((x) => [x.sessionId, x.title])).toEqual([
+      ["a", "title-a · 1"],
+      ["b", "title-b"],
+      ["far", "title-a · 2"],
+    ]);
+    expect(copyTargetList().map((x) => x.title)).toEqual(["title-a · 1", "title-b", "title-a · 2"]);
+    cleanup();
+  });
+
   it("tells the other windows only when this window's list changes", () => {
     const { state, cleanup } = harness([tab("a")]);
     expect(api.announceCopyTargets).toHaveBeenCalledTimes(1);

@@ -28,6 +28,7 @@
     NET_SCHEMA,
     type NetItem,
     type DockerContainer,
+    type DockerFacts,
     type DockerNetwork,
     type DockerVolume,
     type DiskDetail,
@@ -53,6 +54,7 @@
     trouble = undefined,
     onopen = undefined,
     containers = [],
+    facts = new Map(),
     view = "list",
     onView,
     busy = false,
@@ -77,6 +79,8 @@
     onopen?: (pick: GraphPick) => void;
     /** Every container on the host, for ports and membership. */
     containers?: DockerContainer[];
+    /** Their inspect facts: a stopped container's ports are the ones it is set to publish. */
+    facts?: ReadonlyMap<string, DockerFacts>;
     /** Which of the two views is on screen. */
     view?: "list" | "graph";
     onView?: (view: "list" | "graph") => void;
@@ -95,7 +99,7 @@
 
   const TONE: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", idle: "bg-muted" };
 
-  const ports = $derived(containerPorts(containers));
+  const ports = $derived(containerPorts(containers, facts));
   const members = $derived(membersByNetwork(containers));
 
   // One filter over the three sections (v1.29): the text by name, the driver

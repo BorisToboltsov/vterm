@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DockerContainer, DockerNetwork } from "./docker";
+import type { DockerContainer, DockerFacts, DockerNetwork } from "./docker";
 import {
   GRAPH_MAX_CONTAINERS,
   buildNetGraph,
@@ -180,6 +180,13 @@ describe("containerPorts", () => {
     // docker 29 prints nothing here; a daemon that does is quoting configuration.
     const [stopped] = containerPorts([container({ state: "exited", ports: "0.0.0.0:80->80/tcp" })]);
     expect(stopped.live).toBe(false);
+  });
+
+  it("lists a stopped container by the ports it is set to publish — ps prints none — as not live", () => {
+    const facts = new Map([["s", { ports: "127.0.0.1:5432->5432/tcp" } as DockerFacts]]);
+    const [stopped] = containerPorts([container({ id: "s", state: "exited", ports: "" })], facts);
+    expect(stopped).toMatchObject({ live: false, rows: [{ kind: "published", hostIps: ["127.0.0.1"], hostPort: "5432" }] });
+    expect(containerPorts([container({ id: "s", state: "exited", ports: "" })])).toEqual([]);
   });
 });
 

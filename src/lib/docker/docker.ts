@@ -179,7 +179,8 @@ const RS = "\x1e";
  * What `docker ps` does not say about a container, for several containers in one
  * call: its resource ceilings (Phase 43), how often it was restarted, its
  * network mode and its address in each network (v1.33), when it last started or
- * stopped, how it exited.
+ * stopped, how it exited, and the ports it is set to publish — `ps` prints a
+ * stopped container's ports as nothing at all.
  *
  * `docker stats` alone cannot answer "is this container near its limit": for an
  * unlimited container it reports `MemUsage` against the **host's** total and
@@ -190,6 +191,7 @@ const RS = "\x1e";
  */
 export function inspectFactsArgs(ids: readonly string[]): string[] {
   const nets = `{{range $name, $net := .NetworkSettings.Networks}}{{$name}}${GS}{{$net.IPAddress}}${GS}{{$net.GlobalIPv6Address}}${RS}{{end}}`;
+  const binds = `{{range $port, $to := .HostConfig.PortBindings}}{{range $to}}{{.HostIp}}${GS}{{.HostPort}}${GS}{{$port}}${RS}{{end}}{{end}}`;
   const fmt = [
     "{{.Id}}",
     "{{.HostConfig.NanoCpus}}",
@@ -201,6 +203,7 @@ export function inspectFactsArgs(ids: readonly string[]): string[] {
     "{{.State.FinishedAt}}",
     "{{.State.ExitCode}}",
     "{{.State.OOMKilled}}",
+    binds,
   ].join(US);
   return ["docker", "inspect", "--format", fmt, ...ids];
 }
@@ -235,6 +238,13 @@ export interface DockerFacts extends DockerLimits {
   exitCode: number | null;
   /** The kernel killed it for memory. */
   oomKilled: boolean;
+  /**
+   * The ports it is set to publish (`HostConfig.PortBindings`), in `docker ps`'s
+   * own notation (`0.0.0.0:8080->80/tcp, 127.0.0.1:5432->5432/tcp`); "" — none.
+   * A binding with no host port — docker picks one at start — is left out: what
+   * port it will be is not known until then.
+   */
+  ports: string;
 }
 
 /**
@@ -258,6 +268,20 @@ function parseAddresses(raw: string | undefined): DockerAddress[] {
       return { network: network.trim(), ipv4: ipv4.trim(), ipv6: ipv6.trim() };
     })
     .filter((a) => a.network);
+}
+
+/** `HostConfig.PortBindings`, as {@link inspectFactsArgs} prints it, in `docker ps` notation. */
+function parseBindings(raw: string | undefined): string {
+  const out: string[] = [];
+  for (const part of (raw ?? "").split(RS)) {
+    const [hostIp = "", hostPort = "", port = ""] = part.split(GS).map((s) => s.trim());
+    if (!hostPort || !port) continue;
+    // No host address is every address — what docker binds it to.
+    const ip = hostIp || "0.0.0.0";
+    const token = `${ip.includes(":") ? `[${ip}]` : ip}:${hostPort}->${port}`;
+    if (!out.includes(token)) out.push(token);
+  }
+  return out.join(", ");
 }
 
 const count = (raw: string | undefined): number | null => {
@@ -284,6 +308,7 @@ export function parseFacts(raw: string): Map<string, DockerFacts> {
       finishedAt: parseInspectTime(f[7]),
       exitCode: (f[8] ?? "").trim() !== "" && Number.isInteger(exit) ? exit : null,
       oomKilled: (f[9] ?? "").trim() === "true",
+      ports: parseBindings(f[10]),
     });
   }
   return out;
@@ -1301,8 +1326,19 @@ export function dockerDate(
   return `${date} · ${compactAge(t, nowMs)}`;
 }
 
+/**
+ * The ports to show for a container: those `docker ps` printed, or — for a
+ * container that is not running, of which `ps` prints none — those it is set to
+ * publish, marked `configured`: nothing listens behind them until it starts.
+ */
+export function shownPorts(c: DockerContainer, facts?: DockerFacts): { ports: string; configured: boolean } {
+  if (c.ports) return { ports: c.ports, configured: false };
+  if (!isRunning(c) && facts?.ports) return { ports: facts.ports, configured: true };
+  return { ports: "", configured: false };
+}
+
 /** One labelled fact about a container, for the hover card / detail overview. */
-export type DockerInfoKey = "status" | "ports" | "cpu" | "mem" | "net" | "created";
+export type DockerInfoKey = "status" | "ports" | "portsConfigured" | "cpu" | "mem" | "net" | "created";
 export interface DockerInfoRow {
   key: DockerInfoKey;
   value: string;
@@ -1314,10 +1350,11 @@ export interface DockerInfoRow {
  * CPU / memory / network I/O, plus the created-at age. Empty fields are dropped so
  * the hover card and the detail Overview render only what's present.
  */
-export function containerInfoRows(c: DockerContainer, stat?: DockerStat): DockerInfoRow[] {
+export function containerInfoRows(c: DockerContainer, stat?: DockerStat, facts?: DockerFacts): DockerInfoRow[] {
   const rows: DockerInfoRow[] = [];
   if (c.status) rows.push({ key: "status", value: c.status });
-  if (c.ports) rows.push({ key: "ports", value: c.ports });
+  const ports = shownPorts(c, facts);
+  if (ports.ports) rows.push({ key: ports.configured ? "portsConfigured" : "ports", value: ports.ports });
   if (stat && isRunning(c)) {
     if (stat.cpu) rows.push({ key: "cpu", value: stat.cpu });
     if (stat.mem) rows.push({ key: "mem", value: stat.mem });

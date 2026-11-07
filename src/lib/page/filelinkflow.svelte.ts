@@ -25,8 +25,8 @@ export interface FileLinkDeps {
   following: (sessionId: string) => boolean;
   enablePathSync: (sessionId: string) => void;
   /** The editor's own ways in: over the session's SFTP, and on this computer. */
-  openFile: (sessionId: string, path: string, opts: { gotoLine?: number }) => void;
-  openLocalFile: (sessionId: string, path: string, opts: { gotoLine?: number }) => void;
+  openFile: (sessionId: string, path: string, opts: { gotoLine?: number; gotoColumn?: number }) => void;
+  openLocalFile: (sessionId: string, path: string, opts: { gotoLine?: number; gotoColumn?: number }) => void;
 }
 
 export function createFileLinkFlow(deps: FileLinkDeps) {
@@ -37,8 +37,8 @@ export function createFileLinkFlow(deps: FileLinkDeps) {
     return tab.kind === "local" ? null : (deps.servers().find((s) => s.id === tab.serverId)?.alias ?? tab.alias);
   }
 
-  /** Open what a link names: a file in the session's editor — on the line the
-   *  output named, if it named one — a folder in its file panel. */
+  /** Open what a link names: a file in the session's editor — on the line and
+   *  column the output named, if it named them — a folder in its file panel. */
   function open(id: string, target: NamedPath) {
     const tab = deps.findTab(id);
     if (!tab) return;
@@ -47,9 +47,9 @@ export function createFileLinkFlow(deps: FileLinkDeps) {
       requestFilesDir(id, target.path);
       revealPanel("files");
     } else if (tab.kind === "ssh") {
-      deps.openFile(id, target.path, { gotoLine: target.line });
+      deps.openFile(id, target.path, { gotoLine: target.line, gotoColumn: target.column });
     } else {
-      deps.openLocalFile(id, target.path, { gotoLine: target.line });
+      deps.openLocalFile(id, target.path, { gotoLine: target.line, gotoColumn: target.column });
     }
   }
 

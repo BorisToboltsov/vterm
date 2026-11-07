@@ -115,11 +115,24 @@ describe("store mutators", () => {
     expect(doc()).toMatchObject({ gotoLine: 40, gotoSeq: 1 });
     gotoEditorLine("s1", id, 40);
     expect(doc().gotoSeq).toBe(2);
+    // The column goes with the line it was asked with, and only with it.
+    gotoEditorLine("s1", id, 41, 7);
+    expect(doc()).toMatchObject({ gotoLine: 41, gotoColumn: 7, gotoSeq: 3 });
+    gotoEditorLine("s1", id, 40);
+    expect(doc()).toMatchObject({ gotoLine: 40, gotoColumn: null, gotoSeq: 4 });
     gotoEditorLine("s1", id, 0);
     gotoEditorLine("s1", "nope", 5);
     gotoEditorLine("s2", id, 5);
-    expect(doc()).toMatchObject({ gotoLine: 40, gotoSeq: 2 });
+    expect(doc()).toMatchObject({ gotoLine: 40, gotoSeq: 4 });
     expect(peekWorkspace("s2")).toBeNull();
+  });
+
+  it("addEditor keeps a column only with the line it belongs to", () => {
+    const placed = addEditor("s1", "/srv/x.c", "x.c", LANG, "sftp", { gotoLine: 42, gotoColumn: 5 });
+    const loose = addEditor("s1", "/srv/y.c", "y.c", LANG, "sftp", { gotoColumn: 5 });
+    const ed = (id: string) => getWorkspace("s1").editors.find((e) => e.id === id)!;
+    expect(ed(placed)).toMatchObject({ gotoLine: 42, gotoColumn: 5 });
+    expect(ed(loose)).toMatchObject({ gotoLine: null, gotoColumn: null });
   });
 
   it("addEditor records a local source when given", () => {

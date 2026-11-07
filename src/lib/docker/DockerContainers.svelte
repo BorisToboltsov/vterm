@@ -25,6 +25,7 @@
     composeRestartArgs,
     containerInfoRows,
     containerAddress,
+    shownPorts,
     dockerDate,
     parseMemUsed,
     groupUsage,
@@ -155,6 +156,7 @@
   const INFO_LABEL: Record<DockerInfoKey, MessageKey> = {
     status: "docker.status",
     ports: "docker.ports",
+    portsConfigured: "docker.portsConfigured",
     cpu: "docker.cpu",
     mem: "docker.mem",
     net: "docker.net",
@@ -207,7 +209,7 @@
 
   /** Multi-line hover card content (label: value per line) — `.vt-tooltip` keeps newlines. */
   function infoTip(c: DockerContainer): string {
-    return containerInfoRows(c, stat(c))
+    return containerInfoRows(c, stat(c), factsById.get(c.id))
       .map((r) => `${t(INFO_LABEL[r.key])}: ${r.key === "created" ? dockerDate(r.value, currentLocale()) : r.value}`)
       .join("\n");
   }
@@ -467,8 +469,10 @@
             </div>
           {/if}
           {#if shows("ports")}
-            <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ports)] @wide:shrink-0 @wide:px-2 {CELL}" data-testid="docker-col-ports" use:tooltip={c.ports}>
-              {#each portRows(c.ports) as row, i (i)}<span class="mr-1 rounded border border-edge px-1 {row.reach === 'all' ? 'text-text/85' : ''}">{portChip(row)}</span>{/each}
+            <!-- A stopped container's ports are those it is set to publish: dashed, nothing listens yet. -->
+            {@const pp = shownPorts(c, factsById.get(c.id))}
+            <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ports)] @wide:shrink-0 @wide:px-2 {CELL}" data-testid="docker-col-ports" data-configured={pp.configured || undefined} use:tooltip={pp.configured ? `${pp.ports}\n${t("docker.portInactive")}` : pp.ports}>
+              {#each portRows(pp.ports) as row, i (i)}<span class="mr-1 rounded border px-1 {pp.configured ? 'border-dashed border-edge' : 'border-edge'} {row.reach === 'all' && !pp.configured ? 'text-text/85' : ''}">{portChip(row)}</span>{/each}
             </div>
           {/if}
           {#if shows("ip")}

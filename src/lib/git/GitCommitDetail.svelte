@@ -142,6 +142,12 @@
           >
             <span class="w-3 shrink-0 text-center font-mono text-caption {fileStatusColor(row.file.status)}">{row.file.status}</span>
             <span class="min-w-0 truncate text-meta {fileStatusColor(row.file.status)}">{row.name}</span>
+            {#if row.file.lines && (row.file.lines.added || row.file.lines.deleted)}
+              <span class="ml-auto flex shrink-0 gap-1 pl-1 font-mono text-caption tabular-nums" data-testid="git-commit-lines">
+                {#if row.file.lines.added}<span class="text-ok">+{row.file.lines.added}</span>{/if}
+                {#if row.file.lines.deleted}<span class="text-bad">−{row.file.lines.deleted}</span>{/if}
+              </span>
+            {/if}
           </button>
         {/if}
       {/each}

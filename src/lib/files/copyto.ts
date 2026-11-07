@@ -50,6 +50,25 @@ export function copyTargets(
     }));
 }
 
+/**
+ * The targets with titles that tell them apart: two tabs of one server — or two
+ * local shells — are called alike on their strips, and a menu of two equal rows
+ * leaves the choice to luck. A title shared by several targets gets their place
+ * among them, in the order given (this window's tabs as on the strip, then the
+ * other windows'): `web-1 · 1`, `web-1 · 2`. A title nobody shares stays as it is.
+ */
+export function distinctTitles<T extends { title: string }>(targets: readonly T[]): T[] {
+  const total = new Map<string, number>();
+  for (const t of targets) total.set(t.title, (total.get(t.title) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return targets.map((t) => {
+    if ((total.get(t.title) ?? 0) < 2) return t;
+    const n = (seen.get(t.title) ?? 0) + 1;
+    seen.set(t.title, n);
+    return { ...t, title: `${t.title} · ${n}` };
+  });
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 

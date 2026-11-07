@@ -473,6 +473,7 @@
     finishedAt: null,
     exitCode: null,
     oomKilled: false,
+    ports: "",
   };
 
   /** The networks' subnets — asked again only when the set of networks changes. */
@@ -1083,6 +1084,7 @@
           trouble={troubleOf}
           onopen={openGraphPick}
           {containers}
+          facts={factsById}
           view={netView}
           onView={pickNetView}
           {busy}
