@@ -217,16 +217,16 @@ export interface K8sPod {
   namespace: string;
   /** Raw pod phase (Running/Pending/Succeeded/Failed/Unknown). */
   phase: string;
-  /** Displayed status — the synthesized reason kubectl shows (CrashLoopBackOff,
-   * ContainerCreating, Terminating, Completed…), falling back to the phase. */
+  /** Displayed status — what kubectl's STATUS column prints (CrashLoopBackOff,
+   * Init:1/2, NotReady, Terminating, Completed…), falling back to the phase ({@link podRow}). */
   status: string;
-  /** Ready containers over total, e.g. "1/1". */
+  /** Ready containers over all of them, native sidecars included, e.g. "2/2". */
   ready: string;
-  /** Summed container restart count. */
+  /** Restarts as kubectl's RESTARTS counts them — sidecars included. */
   restarts: number;
   node: string;
   age: string;
-  /** Container names (for the logs container picker / exec). */
+  /** Container names, app containers then native sidecars (logs container picker / exec). */
   containers: string[];
   /** Owning workload kind (ReplicaSet rolled up to Deployment), "" if standalone. */
   ownerKind: string;
@@ -402,30 +402,112 @@ export function resolveOwner(refs: unknown): { kind: string; name: string } {
   return { kind, name };
 }
 
-/**
- * Synthesize the status kubectl's STATUS column shows: a deleting pod is
- * "Terminating"; a container waiting/terminated with a reason surfaces that
- * (CrashLoopBackOff, ImagePullBackOff, ContainerCreating, Error…); otherwise the
- * pod phase. Pure helper for {@link parsePods}.
- */
-export function podDisplayStatus(item: Record<string, unknown>): string {
-  if (dig(item, "metadata", "deletionTimestamp")) return "Terminating";
-  const cs = dig(item, "status", "containerStatuses");
-  if (Array.isArray(cs)) {
-    for (const c of cs as Record<string, unknown>[]) {
-      const waiting = str(dig(c, "state", "waiting", "reason"));
-      if (waiting) return waiting;
-    }
-    for (const c of cs as Record<string, unknown>[]) {
-      const term = str(dig(c, "state", "terminated", "reason"));
-      if (term && term !== "Completed") return term;
-    }
-  }
-  return str(dig(item, "status", "phase"));
+/** An init container that keeps running beside the app: a native sidecar (k8s ≥ 1.29). */
+function isSidecar(c: Record<string, unknown>): boolean {
+  return c.restartPolicy === "Always";
+}
+
+function records(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? (v as Record<string, unknown>[]).filter((x) => x && typeof x === "object") : [];
+}
+
+function conditionTrue(item: Record<string, unknown>, type: string): boolean {
+  return records(dig(item, "status", "conditions")).some((c) => c.type === type && c.status === "True");
+}
+
+/** A terminated state without a reason, as kubectl prints it: the signal, else the exit code. */
+function bareExit(term: Record<string, unknown>): string {
+  const signal = num(term.signal);
+  return signal ? `Signal:${signal}` : `ExitCode:${num(term.exitCode)}`;
+}
+
+/** What `kubectl get pods` prints for a pod in its STATUS, READY and RESTARTS columns. */
+export interface PodRow {
+  status: string;
+  /** Ready containers over all of them, native sidecars included, e.g. "2/2". */
+  ready: string;
+  restarts: number;
 }
 
 /**
- * Sum one resource limit across a pod's containers.
+ * A pod as kubectl's own printer reads it (`printPod`, pkg/printers/internalversion):
+ * the pod's reason or phase; while it initializes — the init step or the failing init
+ * container's reason (`Init:1/2`, `Init:CrashLoopBackOff`) and their restarts; after —
+ * the first container with a waiting or terminated reason, `NotReady` for a finished
+ * container beside a running one in a pod that is not Ready. A native sidecar is one of
+ * the pod's containers: it counts in READY once started and in RESTARTS. Deletion reads
+ * `Terminating` only for a pod that has not finished. Pure helper for {@link parsePods}.
+ */
+export function podRow(item: Record<string, unknown>): PodRow {
+  const initSpec = records(dig(item, "spec", "initContainers"));
+  const sidecars = new Set(initSpec.filter(isSidecar).map((c) => str(c.name)));
+  const statuses = records(dig(item, "status", "containerStatuses"));
+  const total = records(dig(item, "spec", "containers")).length + sidecars.size || statuses.length;
+  const phase = str(dig(item, "status", "phase"));
+  let reason = str(dig(item, "status", "reason")) || phase;
+  const gated = records(dig(item, "status", "conditions")).some(
+    (c) => c.type === "PodScheduled" && c.reason === "SchedulingGated",
+  );
+  if (gated) reason = "SchedulingGated";
+
+  let ready = 0;
+  let restarts = 0;
+  let sidecarRestarts = 0;
+  let initializing = false;
+  for (const [i, c] of records(dig(item, "status", "initContainerStatuses")).entries()) {
+    const count = num(c.restartCount);
+    const sidecar = sidecars.has(str(c.name));
+    restarts += count;
+    if (sidecar) sidecarRestarts += count;
+    const term = dig(c, "state", "terminated") as Record<string, unknown> | undefined;
+    const waiting = str(dig(c, "state", "waiting", "reason"));
+    if (term && num(term.exitCode) === 0) continue;
+    if (sidecar && c.started === true) {
+      if (c.ready === true) ready++;
+      continue;
+    }
+    if (term) reason = `Init:${str(term.reason) || bareExit(term)}`;
+    else if (waiting && waiting !== "PodInitializing") reason = `Init:${waiting}`;
+    else reason = `Init:${i}/${initSpec.length}`;
+    initializing = true;
+    break;
+  }
+
+  if (!initializing || conditionTrue(item, "Initialized")) {
+    restarts = sidecarRestarts;
+    let hasRunning = false;
+    // Backwards, as kubectl does: the first container with a reason has the last word.
+    for (let i = statuses.length - 1; i >= 0; i--) {
+      const c = statuses[i];
+      restarts += num(c.restartCount);
+      const waiting = str(dig(c, "state", "waiting", "reason"));
+      const term = dig(c, "state", "terminated") as Record<string, unknown> | undefined;
+      if (waiting) reason = waiting;
+      else if (term) reason = str(term.reason) || bareExit(term);
+      else if (c.ready === true && dig(c, "state", "running")) {
+        hasRunning = true;
+        ready++;
+      }
+    }
+    if (reason === "Completed" && hasRunning) reason = conditionTrue(item, "Ready") ? "Running" : "NotReady";
+  }
+
+  if (dig(item, "metadata", "deletionTimestamp")) {
+    if (str(dig(item, "status", "reason")) === "NodeLost") reason = "Unknown";
+    else if (phase !== "Succeeded" && phase !== "Failed") reason = "Terminating";
+  }
+  return { status: reason, ready: `${ready}/${total}`, restarts };
+}
+
+/** The STATUS column alone — see {@link podRow}. */
+export function podDisplayStatus(item: Record<string, unknown>): string {
+  return podRow(item).status;
+}
+
+/**
+ * Sum one resource limit across a pod's running containers — its app containers and
+ * native sidecars ({@link podContainers}); an ordinary init container has finished
+ * before they start and is no part of the ceiling.
  *
  * Returns null when **any** container lacks the limit, because that is what the
  * cluster does: one unbounded container makes the whole pod unbounded, and
@@ -467,30 +549,23 @@ export function limitTone(ratio: number | null): "ok" | "warn" | "bad" | null {
 
 export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
   return items(raw).map((it) => {
-    const cs = dig(it, "status", "containerStatuses");
-    const csArr = Array.isArray(cs) ? (cs as Record<string, unknown>[]) : [];
-    const readyCount = csArr.filter((c) => c.ready === true).length;
-    const restarts = csArr.reduce((sum, c) => sum + num(c.restartCount), 0);
-    const specContainers = dig(it, "spec", "containers");
-    const specArr = Array.isArray(specContainers)
-      ? (specContainers as Record<string, unknown>[])
-      : [];
-    const containers = specArr.map((c) => str(c.name)).filter(Boolean);
+    const running = podContainers(it);
+    const row = podRow(it);
     const owner = resolveOwner(dig(it, "metadata", "ownerReferences"));
     return {
       name: str(dig(it, "metadata", "name")),
       namespace: str(dig(it, "metadata", "namespace")),
       phase: str(dig(it, "status", "phase")),
-      status: podDisplayStatus(it),
-      ready: `${readyCount}/${containers.length || csArr.length}`,
-      restarts,
+      status: row.status,
+      ready: row.ready,
+      restarts: row.restarts,
       node: str(dig(it, "spec", "nodeName")),
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
-      containers,
+      containers: running.map((c) => str(c.name)).filter(Boolean),
       ownerKind: owner.kind,
       ownerName: owner.name,
-      cpuLimit: sumLimit(specArr, "cpu", parseCpuMillis),
-      memLimit: sumLimit(specArr, "memory", parseMemMiB),
+      cpuLimit: sumLimit(running, "cpu", parseCpuMillis),
+      memLimit: sumLimit(running, "memory", parseMemMiB),
       qos: str(dig(it, "status", "qosClass")),
       created: createdAt(it),
       podIps: podIps(it),
@@ -498,6 +573,14 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
       hostNetwork: dig(it, "spec", "hostNetwork") === true,
     };
   });
+}
+
+/**
+ * The containers that run side by side once the pod is up: the app containers, then
+ * the native sidecars — the ones a log, a shell and the ceiling are about.
+ */
+function podContainers(it: Record<string, unknown>): Record<string, unknown>[] {
+  return [...records(dig(it, "spec", "containers")), ...records(dig(it, "spec", "initContainers")).filter(isSidecar)];
 }
 
 /** `status.podIPs[].ip`, else the single `status.podIP`, deduplicated. */
@@ -664,6 +747,12 @@ export function parseAvailability(stdout: string, stderr: string, _exitCode: num
 
 /** A semantic tone for a pod status → the UI maps it to a color token. */
 export function podPhaseTone(status: string): "ok" | "warn" | "bad" | "idle" {
+  // While it initializes: the step is progress, anything else an init container failing.
+  if (status.startsWith("Init:")) {
+    const rest = status.slice(5);
+    return /^\d+\/\d+$/.test(rest) ? "warn" : "bad";
+  }
+  if (/^(ExitCode|Signal):/.test(status)) return "bad";
   switch (status) {
     case "Running":
       return "ok";
@@ -674,11 +763,17 @@ export function podPhaseTone(status: string): "ok" | "warn" | "bad" | "idle" {
     case "ContainerCreating":
     case "PodInitializing":
     case "Terminating":
+    case "NotReady":
+    case "SchedulingGated":
       return "warn";
     case "CrashLoopBackOff":
     case "Error":
     case "ImagePullBackOff":
     case "ErrImagePull":
+    case "InvalidImageName":
+    case "CreateContainerConfigError":
+    case "CreateContainerError":
+    case "ContainerStatusUnknown":
     case "Failed":
     case "OOMKilled":
     case "Evicted":
@@ -1266,9 +1361,10 @@ export function podAttention(
       out.push({ key, name: p.name, namespace: p.namespace, reason, tone, detail });
     const tone = podPhaseTone(p.status);
     const seen = baseline.get(key);
+    const up = p.status === "Running" || p.status === "NotReady";
     if (tone === "bad") add("failing", "bad", p.restarts > 0 ? `${p.status} · ↻${p.restarts}` : p.status);
-    else if (tone === "warn" && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS) add("pending", "warn", p.status);
-    else if (p.status === "Running" && !allReady(p.ready) && age != null && age >= READY_GRACE_MS) add("notReady", "warn", p.ready);
+    else if (up && !allReady(p.ready) && age != null && age >= READY_GRACE_MS) add("notReady", "warn", p.ready);
+    else if (tone === "warn" && !up && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS) add("pending", "warn", p.status);
     else if (seen != null && p.restarts > seen) add("restarts", "warn", `↻+${p.restarts - seen}`);
   }
   return out.sort(

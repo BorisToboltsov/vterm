@@ -261,7 +261,7 @@ describe("K8sPanel — where a pod's details open", () => {
       ownerReferences: [],
     },
     spec: { nodeName: "node-1", containers: [{ name: "web" }] },
-    status: { phase: "Running", containerStatuses: [{ ready: true, restartCount: 0 }] },
+    status: { phase: "Running", containerStatuses: [{ name: "web", state: { running: {} }, ready: true, restartCount: 0 }] },
   };
 
   /** Give the panel a width and let its observer see it (jsdom has no layout). */

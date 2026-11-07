@@ -30,6 +30,7 @@ import {
   k8sAge,
   resolveOwner,
   podDisplayStatus,
+  podRow,
   parsePods,
   parseWorkloads,
   parseNamespaces,
@@ -302,12 +303,145 @@ describe("podDisplayStatus", () => {
       }),
     ).toBe("Error");
   });
-  it("ignores a Completed termination and falls back to the phase", () => {
+  it("prints Completed for a finished pod, as kubectl does", () => {
     expect(
       podDisplayStatus({
         status: { phase: "Succeeded", containerStatuses: [{ state: { terminated: { reason: "Completed" } } }] },
       }),
-    ).toBe("Succeeded");
+    ).toBe("Completed");
+  });
+});
+
+// kubectl's own printer (pkg/printers/internalversion, printPod): the STATUS, READY and
+// RESTARTS of `kubectl get pods`. Each case is one the stand (e2e/k8s/stand.yaml) shows live.
+describe("podRow — a pod as kubectl get pods prints it", () => {
+  const running = { running: { startedAt: "2026-11-07T12:00:00Z" } };
+  const done = { terminated: { exitCode: 0, reason: "Completed" } };
+  const pod = (spec: Record<string, unknown>, status: Record<string, unknown>, metadata: Record<string, unknown> = {}) => ({
+    metadata,
+    spec,
+    status,
+  });
+
+  it("counts a native sidecar as a container: in READY and in RESTARTS", () => {
+    const web = pod(
+      {
+        initContainers: [{ name: "prepare" }, { name: "log-shipper", restartPolicy: "Always" }],
+        containers: [{ name: "httpd" }],
+      },
+      {
+        phase: "Running",
+        conditions: [{ type: "Initialized", status: "True" }, { type: "Ready", status: "True" }],
+        initContainerStatuses: [
+          { name: "prepare", state: done, restartCount: 0 },
+          { name: "log-shipper", state: running, started: true, ready: true, restartCount: 2 },
+        ],
+        containerStatuses: [{ name: "httpd", state: running, ready: true, restartCount: 1 }],
+      },
+    );
+    expect(podRow(web)).toEqual({ status: "Running", ready: "2/2", restarts: 3 });
+  });
+
+  it("a sidecar that is not ready yet holds READY below the total", () => {
+    const web = pod(
+      { initContainers: [{ name: "log-shipper", restartPolicy: "Always" }], containers: [{ name: "httpd" }] },
+      {
+        phase: "Running",
+        conditions: [{ type: "Initialized", status: "True" }],
+        initContainerStatuses: [{ name: "log-shipper", state: running, started: true, ready: false }],
+        containerStatuses: [{ name: "httpd", state: running, ready: true }],
+      },
+    );
+    expect(podRow(web).ready).toBe("1/2");
+  });
+
+  it("names the init step while the pod initializes, and the failing init container's reason", () => {
+    const spec = { initContainers: [{ name: "migrate" }, { name: "seed" }], containers: [{ name: "app" }] };
+    const waiting = { waiting: { reason: "PodInitializing" } };
+    expect(
+      podRow(
+        pod(spec, {
+          phase: "Pending",
+          initContainerStatuses: [
+            { name: "migrate", state: done },
+            { name: "seed", state: running },
+          ],
+          containerStatuses: [{ name: "app", state: waiting }],
+        }),
+      ),
+    ).toEqual({ status: "Init:1/2", ready: "0/1", restarts: 0 });
+    expect(
+      podRow(
+        pod(spec, {
+          phase: "Pending",
+          initContainerStatuses: [
+            { name: "migrate", state: { waiting: { reason: "CrashLoopBackOff" } }, restartCount: 4 },
+            { name: "seed", state: waiting },
+          ],
+          containerStatuses: [{ name: "app", state: waiting }],
+        }),
+      ),
+    ).toEqual({ status: "Init:CrashLoopBackOff", ready: "0/1", restarts: 4 });
+    expect(
+      podRow(
+        pod(spec, {
+          phase: "Failed",
+          initContainerStatuses: [{ name: "migrate", state: { terminated: { exitCode: 3 } } }],
+        }),
+      ).status,
+    ).toBe("Init:ExitCode:3");
+  });
+
+  it("the first container with a reason speaks for the pod", () => {
+    const row = podRow(
+      pod(
+        { containers: [{ name: "a" }, { name: "b" }] },
+        {
+          phase: "Running",
+          containerStatuses: [
+            { name: "a", state: { terminated: { exitCode: 1, reason: "Error" } } },
+            { name: "b", state: { waiting: { reason: "CrashLoopBackOff" } } },
+          ],
+        },
+      ),
+    );
+    expect(row.status).toBe("Error");
+    expect(
+      podRow(
+        pod(
+          { containers: [{ name: "a" }] },
+          { phase: "Running", containerStatuses: [{ name: "a", state: { terminated: { exitCode: 0, signal: 9 } } }] },
+        ),
+      ).status,
+    ).toBe("Signal:9");
+  });
+
+  it("a finished container beside a running one is not «Completed»", () => {
+    const spec = { containers: [{ name: "job" }, { name: "proxy" }] };
+    const status = (ready: string) => ({
+      phase: "Running",
+      conditions: [{ type: "Ready", status: ready }],
+      containerStatuses: [
+        { name: "job", state: done },
+        { name: "proxy", state: running, ready: true },
+      ],
+    });
+    expect(podRow(pod(spec, status("False"))).status).toBe("NotReady");
+    expect(podRow(pod(spec, status("True"))).status).toBe("Running");
+  });
+
+  it("reads the pod's own reason, a scheduling gate, and deletion only of an unfinished pod", () => {
+    expect(podRow(pod({ containers: [{ name: "a" }] }, { phase: "Failed", reason: "Evicted" })).status).toBe("Evicted");
+    expect(
+      podRow(
+        pod({ containers: [{ name: "a" }] }, { phase: "Pending", conditions: [{ type: "PodScheduled", status: "False", reason: "SchedulingGated" }] }),
+      ).status,
+    ).toBe("SchedulingGated");
+    const deleted = { deletionTimestamp: "2026-11-07T12:00:00Z" };
+    const finished = { phase: "Succeeded", containerStatuses: [{ name: "a", state: done }] };
+    expect(podRow(pod({ containers: [{ name: "a" }] }, finished, deleted)).status).toBe("Completed");
+    expect(podRow(pod({ containers: [{ name: "a" }] }, { phase: "Running", reason: "NodeLost" }, deleted)).status).toBe("Unknown");
+    expect(podRow(pod({ containers: [{ name: "a" }] }, { phase: "Running" }, deleted)).status).toBe("Terminating");
   });
 });
 
@@ -327,8 +461,8 @@ describe("parsePods", () => {
         status: {
           phase: "Running",
           containerStatuses: [
-            { ready: true, restartCount: 1 },
-            { ready: false, restartCount: 2 },
+            { name: "api", state: { running: {} }, ready: true, restartCount: 1 },
+            { name: "sidecar", state: { running: {} }, ready: false, restartCount: 2 },
           ],
         },
       },
@@ -572,6 +706,17 @@ describe("podPhaseTone", () => {
     expect(podPhaseTone("CrashLoopBackOff")).toBe("bad");
     expect(podPhaseTone("OOMKilled")).toBe("bad");
     expect(podPhaseTone("Weird")).toBe("idle");
+  });
+  it("reads an init step, a failing init container, NotReady and a bare exit like kubectl prints them", () => {
+    expect(podPhaseTone("Init:1/2")).toBe("warn");
+    expect(podPhaseTone("Init:CrashLoopBackOff")).toBe("bad");
+    expect(podPhaseTone("Init:ExitCode:3")).toBe("bad");
+    expect(podPhaseTone("Init:Weird")).toBe("bad");
+    expect(podPhaseTone("NotReady")).toBe("warn");
+    expect(podPhaseTone("SchedulingGated")).toBe("warn");
+    expect(podPhaseTone("ExitCode:1")).toBe("bad");
+    expect(podPhaseTone("Signal:9")).toBe("bad");
+    expect(podPhaseTone("CreateContainerConfigError")).toBe("bad");
   });
 });
 
@@ -1130,6 +1275,28 @@ describe("parsePods limits", () => {
     const [p] = parsePods(podJson([{ name: "a" }, { name: "b" }]));
     expect(p.containers).toEqual(["a", "b"]);
   });
+
+  it("a native sidecar runs beside the app: its limit counts, and without one the pod has none", () => {
+    const pods = (sidecar: Record<string, unknown>) =>
+      JSON.stringify({
+        items: [
+          {
+            metadata: { name: "web", namespace: "default" },
+            spec: {
+              initContainers: [{ name: "prepare" }, { name: "log-shipper", restartPolicy: "Always", ...sidecar }],
+              containers: [{ name: "httpd", resources: { limits: { cpu: "200m", memory: "64Mi" } } }],
+            },
+            status: { phase: "Running" },
+          },
+        ],
+      });
+    const [unbounded] = parsePods(pods({ resources: { limits: { memory: "16Mi" } } }));
+    expect(unbounded.containers).toEqual(["httpd", "log-shipper"]);
+    expect(unbounded.cpuLimit).toBeNull();
+    expect(unbounded.memLimit).toBe(80);
+    const [bounded] = parsePods(pods({ resources: { limits: { cpu: "50m", memory: "16Mi" } } }));
+    expect(bounded.cpuLimit).toBe(250);
+  });
 });
 
 describe("addresses of pods and nodes (v1.33)", () => {
@@ -1214,6 +1381,12 @@ describe("podAttention (v1.33)", () => {
       ["crash", "failing", "bad", "CrashLoopBackOff · ↻7"],
       ["pending-old", "pending", "warn", "Pending"],
       ["unready", "notReady", "warn", "0/1"],
+    ]);
+  });
+
+  it("a pod kubectl calls NotReady is not ready, not stuck in Pending", () => {
+    expect(podAttention([pod({ name: "half", status: "NotReady", ready: "1/2" })], new Map(), now)).toEqual([
+      { key: "ns/half", name: "half", namespace: "ns", reason: "notReady", tone: "warn", detail: "1/2" },
     ]);
   });
 
