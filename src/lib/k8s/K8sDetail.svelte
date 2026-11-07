@@ -22,6 +22,11 @@
     deleteArgs,
     podPhaseTone,
     podDetailFacts,
+    podEventsArgs,
+    parseEvents,
+    listFailure,
+    eventTone,
+    type K8sEvent,
     type K8sPod,
     type K8sPodMetrics,
     type K8sDetailTab,
@@ -103,6 +108,11 @@
       p.node ? `Node: ${p.node}` : "",
       // What does not hold and how each container ended — never its environment.
       ...(detail ? podDetailFacts(detail) : []),
+      // What the cluster said about it lately, warnings only — the cause is there.
+      ...(events ?? [])
+        .filter((e) => e.type === "Warning")
+        .slice(0, EVENTS_TO_ASSISTANT)
+        .map((e) => `Event ${e.reason}${e.count > 1 ? ` ×${e.count}` : ""}${e.container ? ` (${e.container})` : ""}, ${e.age} ago: ${e.message}`),
     ]
       .filter(Boolean)
       .join("\n");
@@ -120,6 +130,15 @@
   let tail = $state<LogTailSize>(200);
   // Secrets in the environment stay masked until asked for, per pod.
   let showSecrets = $state(false);
+  // The open pod's events (stage 2), asked by its uid while «Overview» is on
+  // screen: undefined — not answered yet; `eventsError` — could not be read,
+  // which is not «no events».
+  let events = $state<K8sEvent[] | undefined>(undefined);
+  let eventsError = $state<string | null>(null);
+  // A string, so the effect below re-runs on another pod, not on every poll.
+  const uid = $derived(pod?.uid ?? "");
+  const EVENTS_SHOWN = 50;
+  const EVENTS_TO_ASSISTANT = 8;
   let labelsOpen = $state(false);
 
   const SECTION = "mb-1 mt-3 flex items-center gap-1.5 text-caption uppercase tracking-wider text-muted";
@@ -194,6 +213,8 @@
     logsText = "";
     describeText = "";
     yamlText = "";
+    events = undefined;
+    eventsError = null;
     if (switched) {
       showSecrets = false;
       labelsOpen = false;
@@ -215,6 +236,24 @@
     const res = await runQuery(getYamlArgs("pod", name), ns, 30);
     yamlText = res.stdout + (res.stderr.trim() ? `\n${res.stderr}` : "");
   }
+
+  async function fetchEvents(id: string, ns: string) {
+    const res = await runQuery(podEventsArgs(id), ns, 20);
+    if (uid !== id) return; // another pod opened while this was on its way
+    const failure = listFailure(res.stdout, res.stderr, res.exitCode);
+    eventsError = failure;
+    events = failure === null ? parseEvents(res.stdout) : undefined;
+  }
+
+  // Overview: the pod's events on open and with every poll while it is on screen.
+  $effect(() => {
+    const p = target;
+    const id = uid;
+    if (!active || tab !== "overview" || !p || !id) return;
+    void fetchEvents(id, p.namespace);
+    const timer = setInterval(() => void fetchEvents(id, p.namespace), Math.max(1, refreshSec) * 1000);
+    return () => clearInterval(timer);
+  });
 
   // Logs tab: fetched on open, on another container and on a new tail size,
   // re-polled while followed (like the panel's live view); describe/yaml once.
@@ -348,8 +387,7 @@
       {/if}
     </dl>
 
-    {#if detail}
-      {#if detail.conditions.length > 0}
+    {#if detail && detail.conditions.length > 0}
         <!-- Why it waits is said here: PodScheduled carries the scheduler's own words. -->
         <section data-testid="k8s-detail-conditions">
           <h4 class={SECTION}>{t("k8s.conditions")}</h4>
@@ -367,8 +405,39 @@
             {/each}
           </ul>
         </section>
+    {/if}
+
+      <!-- What the cluster said about the pod lately: why a probe fails, why no node
+           takes it, what the pull answered. Asked by uid while this is on screen. -->
+      {#if uid}
+      <section data-testid="k8s-detail-events">
+        <h4 class={SECTION}>{t("k8s.podEvents")} {#if events}<span class="tabular-nums">{events.length}</span>{/if}</h4>
+        {#if eventsError !== null}
+          <p class="text-muted" data-testid="k8s-detail-events-unread">{eventsError ? t("k8s.eventsUnreadWhy", { why: eventsError }) : t("k8s.eventsUnread")}</p>
+        {:else if events === undefined}
+          <p class="text-muted">…</p>
+        {:else if events.length === 0}
+          <p class="text-muted" data-testid="k8s-detail-events-none">{t("k8s.eventsNone")}</p>
+        {:else}
+          <ul class="max-h-48 space-y-0.5 overflow-auto">
+            {#each events.slice(0, EVENTS_SHOWN) as e, i (i)}
+              <li class="px-1" data-testid="k8s-detail-event">
+                <div class="flex items-baseline gap-2">
+                  <span class="shrink-0 font-mono {eventTone(e.type) === 'warn' ? 'text-warn' : 'text-text/85'}">{e.reason}</span>
+                  {#if e.container}<span class="shrink-0 font-mono text-caption text-muted">{e.container}</span>{/if}
+                  {#if e.count > 1}<span class="shrink-0 tabular-nums text-caption text-muted" use:tooltip={t("k8s.count")}>×{e.count}</span>{/if}
+                  {#if e.ts}<span class="ml-auto shrink-0 font-mono text-caption text-muted" use:tooltip={moment(e.ts)}>{e.age}</span>{/if}
+                </div>
+                {#if e.message}<p class="break-words text-caption text-muted">{e.message}</p>{/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if eventsError === null && events !== undefined}<p class="mt-0.5 text-caption text-muted">{t("k8s.eventsHint")}</p>{/if}
+      </section>
       {/if}
 
+    {#if detail}
       {#if detail.containers.length > 0}
         {@const masked = detail.containers.reduce((n, c) => n + c.env.filter((e) => e.sensitive).length, 0)}
         {@const refs = detail.containers.some((c) => c.env.some((e) => e.from) || c.envFrom.length > 0)}

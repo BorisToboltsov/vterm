@@ -595,6 +595,10 @@
   }
 
   const ATTENTION_TEXT: Record<PodAttentionReason, MessageKey> = {
+    oom: "k8s.attnOom",
+    imagePull: "k8s.attnImagePull",
+    unschedulable: "k8s.attnUnschedulable",
+    probe: "k8s.attnProbe",
     failing: "k8s.attnFailing",
     pending: "k8s.attnPending",
     notReady: "k8s.attnNotReady",

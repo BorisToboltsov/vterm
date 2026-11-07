@@ -69,6 +69,9 @@ import {
   listFailure,
   parseNodes,
   parseEvents,
+  podEventsArgs,
+  schedulerReason,
+  RECENT_OOM_MS,
   nodeRoles,
   nodeStatusTone,
   eventTone,
@@ -1155,6 +1158,172 @@ describe("parseEvents / eventTone", () => {
     expect(evs[1]).toMatchObject({ type: "Normal", object: "Pod/api-1" });
     expect(eventTone("Warning")).toBe("warn");
     expect(eventTone("Normal")).toBe("idle");
+  });
+
+  it("reads a repeated event by its series: the count and the last time, not the first (stage 2)", () => {
+    // The stand's too-big pod, as Docker Desktop's k8s 1.31.1 answered: the scheduler
+    // reports with `eventTime` and keeps repeats in `series` — no `count`, no `lastTimestamp`.
+    const raw = JSON.stringify({
+      items: [
+        {
+          type: "Warning",
+          reason: "FailedScheduling",
+          involvedObject: { kind: "Pod", name: "too-big-5968cbf6b9-cwdxs", uid: "88e4f2dc" },
+          metadata: { namespace: "vterm-stand", creationTimestamp: "2026-11-07T13:01:40Z" },
+          message: "0/1 nodes are available: 1 Insufficient memory.",
+          eventTime: "2026-11-07T13:01:40.416509Z",
+          firstTimestamp: null,
+          lastTimestamp: null,
+          series: { count: 36, lastObservedTime: "2026-11-07T13:24:02.270815Z" },
+        },
+        {
+          type: "Warning",
+          reason: "Unhealthy",
+          involvedObject: { kind: "Pod", name: "notready-59b4c7b994-8xz62", fieldPath: "spec.containers{app}" },
+          metadata: { namespace: "vterm-stand" },
+          message: "Readiness probe failed: cat: can't open '/tmp/ready': No such file or directory\n",
+          count: 371,
+          lastTimestamp: "2026-11-07T13:28:45Z",
+        },
+        {
+          type: "Warning",
+          reason: "BackOff",
+          involvedObject: { kind: "Pod", name: "init-fail", fieldPath: "spec.initContainers{wait-db}" },
+          metadata: { namespace: "vterm-stand" },
+          message: "Back-off restarting failed container wait-db",
+          count: 3,
+          lastTimestamp: "2026-11-07T13:20:00Z",
+        },
+      ],
+    });
+    const [unhealthy, scheduling, backoff] = parseEvents(raw, Date.parse("2026-11-07T13:30:00Z"));
+    expect(scheduling).toMatchObject({ reason: "FailedScheduling", count: 36, ts: Date.parse("2026-11-07T13:24:02.270815Z"), age: "5m", container: "" });
+    expect(unhealthy).toMatchObject({
+      reason: "Unhealthy",
+      count: 371,
+      container: "app",
+      message: "Readiness probe failed: cat: can't open '/tmp/ready': No such file or directory",
+    });
+    expect(backoff.container).toBe("wait-db");
+  });
+});
+
+describe("podEventsArgs / schedulerReason (stage 2)", () => {
+  it("asks for one pod's events by its uid, in one token the policy reads as an option", () => {
+    expect(podEventsArgs("88e4f2dc-1a6d")).toEqual(["get", "events", "--field-selector=involvedObject.uid=88e4f2dc-1a6d", "-o", "json"]);
+  });
+  it("keeps what the scheduler says about the nodes, without the preemption tail", () => {
+    expect(
+      schedulerReason(
+        "0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.",
+      ),
+    ).toBe("1 Insufficient memory");
+    expect(schedulerReason("0/3 nodes are available: 1 node(s) had untolerated taint {x}, 2 Insufficient cpu.")).toBe(
+      "1 node(s) had untolerated taint {x}, 2 Insufficient cpu",
+    );
+    expect(schedulerReason("pod has unbound immediate PersistentVolumeClaims")).toBe("pod has unbound immediate PersistentVolumeClaims");
+  });
+});
+
+describe("what a pod's own object says needs a look (stage 2)", () => {
+  const now = Date.parse("2026-11-07T13:30:00Z");
+  const list = (...pods: Record<string, unknown>[]) => JSON.stringify({ items: pods });
+  const meta = (name: string) => ({ name, namespace: "vterm-stand", uid: `uid-${name}`, creationTimestamp: "2026-11-07T12:53:39Z" });
+
+  it("reads the uid, a recent OOM kill, an image that cannot be pulled, the scheduler's refusal and a failing readiness probe", () => {
+    const pods = parsePods(
+      list(
+        {
+          metadata: meta("oom"),
+          spec: { containers: [{ name: "app" }] },
+          status: {
+            phase: "Running",
+            containerStatuses: [
+              {
+                name: "app",
+                restartCount: 9,
+                lastState: { terminated: { exitCode: 137, reason: "OOMKilled", finishedAt: "2026-11-07T13:10:45Z" } },
+                state: { waiting: { reason: "CrashLoopBackOff" } },
+              },
+            ],
+          },
+        },
+        {
+          metadata: meta("bad-image"),
+          spec: { containers: [{ name: "app" }] },
+          status: {
+            phase: "Pending",
+            containerStatuses: [
+              { name: "app", state: { waiting: { reason: "ImagePullBackOff", message: 'Back-off pulling image "busybox:vterm-missing-tag"' } } },
+            ],
+          },
+        },
+        {
+          metadata: meta("too-big"),
+          spec: { containers: [{ name: "app" }] },
+          status: {
+            phase: "Pending",
+            conditions: [
+              { type: "PodScheduled", status: "False", reason: "Unschedulable", message: "0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod." },
+            ],
+          },
+        },
+        {
+          metadata: meta("notready"),
+          spec: { containers: [{ name: "app", readinessProbe: { exec: { command: ["cat", "/tmp/ready"] } } }] },
+          status: { phase: "Running", containerStatuses: [{ name: "app", ready: false, started: true, state: { running: {} } }] },
+        },
+      ),
+      now,
+    );
+    expect(pods.map((p) => [p.name, p.uid, p.oomAt, p.imagePull, p.unschedulable, p.readinessFailing])).toEqual([
+      ["oom", "uid-oom", Date.parse("2026-11-07T13:10:45Z"), "", "", false],
+      ["bad-image", "uid-bad-image", null, 'Back-off pulling image "busybox:vterm-missing-tag"', "", false],
+      ["too-big", "uid-too-big", null, "", "1 Insufficient memory", false],
+      ["notready", "uid-notready", null, "", "", true],
+    ]);
+    expect(podAttention(pods, new Map(), now).map((a) => [a.name, a.reason, a.tone, a.detail])).toEqual([
+      ["oom", "oom", "bad", "OOMKilled · ↻9"],
+      ["bad-image", "imagePull", "bad", "ImagePullBackOff"],
+      ["too-big", "unschedulable", "warn", "1 Insufficient memory"],
+      ["notready", "probe", "warn", "0/1"],
+    ]);
+  });
+
+  it("an OOM kill is news for an hour; after that a running pod is just running", () => {
+    const pod = (finishedAt: string) =>
+      parsePods(
+        list({
+          metadata: meta("p"),
+          spec: { containers: [{ name: "app" }] },
+          status: {
+            phase: "Running",
+            containerStatuses: [
+              { name: "app", ready: true, restartCount: 1, state: { running: {} }, lastState: { terminated: { exitCode: 137, reason: "OOMKilled", finishedAt } } },
+            ],
+          },
+        }),
+        now,
+      );
+    const recent = new Date(now - RECENT_OOM_MS + 60_000).toISOString();
+    const old = new Date(now - RECENT_OOM_MS - 60_000).toISOString();
+    expect(podAttention(pod(recent), new Map(), now).map((a) => a.reason)).toEqual(["oom"]);
+    expect(podAttention(pod(old), new Map(), now)).toEqual([]);
+  });
+
+  it("an OOM of an init container or a sidecar counts too", () => {
+    const [p] = parsePods(
+      list({
+        metadata: meta("p"),
+        spec: { initContainers: [{ name: "seed" }], containers: [{ name: "app" }] },
+        status: {
+          phase: "Pending",
+          initContainerStatuses: [{ name: "seed", state: { terminated: { exitCode: 137, reason: "OOMKilled", finishedAt: "2026-11-07T13:29:00Z" } } }],
+        },
+      }),
+      now,
+    );
+    expect(p.oomAt).toBe(Date.parse("2026-11-07T13:29:00Z"));
   });
 });
 

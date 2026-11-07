@@ -254,6 +254,60 @@ export interface K8sPod {
   hostIp?: string;
   /** `spec.hostNetwork`: its address is the node's, not one of its own. */
   hostNetwork?: boolean;
+  /** `metadata.uid` — what its events are asked by (stage 2); "" — not reported. */
+  uid?: string;
+  /** The latest OOM kill of any of its containers, epoch ms; null — none it remembers. */
+  oomAt?: number | null;
+  /** What kubelet says while an image cannot be pulled; "" — none is stuck so. */
+  imagePull?: string;
+  /** What the scheduler says while no node takes it ({@link schedulerReason}); "" — it is not refused. */
+  unschedulable?: string;
+  /** A running container is not ready and has a readiness probe — the probe is what fails. */
+  readinessFailing?: boolean;
+}
+
+const IMAGE_PULL = new Set(["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]);
+
+/**
+ * The scheduler's own words on why no node takes a pod — `1 Insufficient memory`
+ * out of `0/1 nodes are available: 1 Insufficient memory. preemption: …`; another
+ * message as it is.
+ */
+export function schedulerReason(message: string): string {
+  const m = /nodes are available: (.*?)(?:\. preemption:|\.\s*$|$)/.exec(message.trim());
+  return (m ? m[1] : message).trim();
+}
+
+/** What a pod's object says needs a look, for {@link podAttention} — read with the list. */
+function podSigns(it: Record<string, unknown>): Pick<K8sPod, "oomAt" | "imagePull" | "unschedulable" | "readinessFailing"> {
+  const statuses = [
+    ...records(dig(it, "status", "containerStatuses")),
+    ...records(dig(it, "status", "initContainerStatuses")),
+  ];
+  let oomAt: number | null = null;
+  let imagePull = "";
+  for (const c of statuses) {
+    for (const part of ["state", "lastState"]) {
+      const term = dig(c, part, "terminated") as Record<string, unknown> | undefined;
+      if (str(term?.reason) !== "OOMKilled") continue;
+      const at = Date.parse(str(term?.finishedAt));
+      if (Number.isFinite(at) && (oomAt == null || at > oomAt)) oomAt = at;
+    }
+    const waiting = dig(c, "state", "waiting") as Record<string, unknown> | undefined;
+    if (!imagePull && IMAGE_PULL.has(str(waiting?.reason))) imagePull = str(waiting?.message).trim() || str(waiting?.reason);
+  }
+  const scheduled = records(dig(it, "status", "conditions")).find((c) => c.type === "PodScheduled");
+  const unschedulable =
+    scheduled && scheduled.status === "False" && scheduled.reason === "Unschedulable" ? schedulerReason(str(scheduled.message)) : "";
+  const probed = new Set(
+    podContainers(it)
+      .filter((c) => c.readinessProbe && typeof c.readinessProbe === "object")
+      .map((c) => str(c.name)),
+  );
+  const readinessFailing = statuses.some(
+    (c) => probed.has(str(c.name)) && c.ready === false && dig(c, "state", "running") != null,
+  );
+  return { oomAt, imagePull, unschedulable, readinessFailing };
 }
 
 export interface K8sWorkload {
@@ -582,6 +636,8 @@ export function podsOf(list: readonly Record<string, unknown>[], nowMs: number =
       podIps: podIps(it),
       hostIp: str(dig(it, "status", "hostIP")),
       hostNetwork: dig(it, "spec", "hostNetwork") === true,
+      uid: str(dig(it, "metadata", "uid")),
+      ...podSigns(it),
     };
   });
 }
@@ -857,6 +913,14 @@ export function nodesArgs(): string[] {
   return ["get", "nodes", "-o", "json"];
 }
 
+/**
+ * One pod's events (stage 2), by its uid — a pod recreated under the same name
+ * (a StatefulSet's) is another pod. One token, so the policy reads it as an option.
+ */
+export function podEventsArgs(uid: string): string[] {
+  return ["get", "events", `--field-selector=involvedObject.uid=${uid}`, "-o", "json"];
+}
+
 /** Events in scope as JSON (parsed newest-first by {@link parseEvents}). */
 export function eventsArgs(): string[] {
   return ["get", "events", "-o", "json"];
@@ -1034,6 +1098,8 @@ export interface K8sEvent {
   age: string;
   /** Epoch ms of the last occurrence (for sorting), or 0. */
   ts: number;
+  /** The container it is about (`spec.containers{app}`), "" — the pod or another object. */
+  container?: string;
 }
 
 // ── A pod's details (ADR 0054, stage 1) ──────────────────────────────────────
@@ -1638,7 +1704,10 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
 
 export function parseEvents(raw: string, nowMs: number = Date.now()): K8sEvent[] {
   const out = items(raw).map((it) => {
+    // A repeat is kept in `series` by reporters on the newer API (the scheduler):
+    // its count and last time are there, `count` and `lastTimestamp` are not set.
     const when =
+      str(dig(it, "series", "lastObservedTime")) ||
       str(dig(it, "lastTimestamp")) ||
       str(dig(it, "eventTime")) ||
       str(dig(it, "firstTimestamp")) ||
@@ -1651,10 +1720,12 @@ export function parseEvents(raw: string, nowMs: number = Date.now()): K8sEvent[]
       reason: str(dig(it, "reason")),
       object: kind ? `${kind}/${objName}` : objName,
       namespace: str(dig(it, "metadata", "namespace")),
-      message: str(dig(it, "message")),
-      count: Math.max(1, num(dig(it, "count"))),
+      // kubelet ends a probe's output with its newline.
+      message: str(dig(it, "message")).trim(),
+      count: Math.max(1, num(dig(it, "series", "count")) || num(dig(it, "count"))),
       age: k8sAge(when, nowMs),
       ts: Number.isFinite(ts) ? ts : 0,
+      container: /^spec\.(?:initContainers|containers|ephemeralContainers)\{(.+)\}$/.exec(str(dig(it, "involvedObject", "fieldPath")))?.[1] ?? "",
     };
   });
   // Newest first.
@@ -1678,8 +1749,20 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
 /** The views of a pod's details (`K8sDetail`); the log first — where details open (v1.33). */
 export type K8sDetailTab = "logs" | "overview" | "describe" | "yaml";
 
-/** Why a pod needs a look (v1.33): the strip above the list. */
-export type PodAttentionReason = "failing" | "pending" | "notReady" | "restarts";
+/**
+ * Why a pod needs a look (v1.33): the strip above the list. Stage 2 names the cause
+ * where the pod's own object says it: killed for memory, an image that cannot be
+ * pulled, no node that takes it, a readiness probe that fails.
+ */
+export type PodAttentionReason =
+  | "oom"
+  | "imagePull"
+  | "failing"
+  | "unschedulable"
+  | "pending"
+  | "probe"
+  | "notReady"
+  | "restarts";
 
 export interface PodAttention {
   /** {@link metricsKey} of the pod. */
@@ -1696,8 +1779,23 @@ export interface PodAttention {
 export const PENDING_GRACE_MS = 120_000;
 /** A running pod may be not ready this long while its probes warm up. */
 export const READY_GRACE_MS = 60_000;
+/**
+ * An OOM kill is news this long — about as long as the cluster keeps events. Its
+ * container remembers the last kill until the next end, so one long ago would
+ * keep a pod that has run fine since in the strip.
+ */
+export const RECENT_OOM_MS = 3_600_000;
 
-const POD_ATTENTION_RANK: Record<PodAttentionReason, number> = { failing: 0, pending: 1, notReady: 2, restarts: 3 };
+const POD_ATTENTION_RANK: Record<PodAttentionReason, number> = {
+  oom: 0,
+  imagePull: 1,
+  failing: 2,
+  unschedulable: 3,
+  pending: 4,
+  probe: 5,
+  notReady: 6,
+  restarts: 7,
+};
 
 /** `1/2` → whether every container is ready; an unreadable figure is not a finding. */
 function allReady(ready: string): boolean {
@@ -1726,9 +1824,14 @@ export function podAttention(
     const tone = podPhaseTone(p.status);
     const seen = baseline.get(key);
     const up = p.status === "Running" || p.status === "NotReady";
-    if (tone === "bad") add("failing", "bad", p.restarts > 0 ? `${p.status} · ↻${p.restarts}` : p.status);
-    else if (up && !allReady(p.ready) && age != null && age >= READY_GRACE_MS) add("notReady", "warn", p.ready);
-    else if (tone === "warn" && !up && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS) add("pending", "warn", p.status);
+    const restarted = p.restarts > 0 ? ` · ↻${p.restarts}` : "";
+    if (p.oomAt != null && nowMs - p.oomAt <= RECENT_OOM_MS) add("oom", "bad", `OOMKilled${restarted}`);
+    else if (p.imagePull) add("imagePull", "bad", p.status);
+    else if (tone === "bad") add("failing", "bad", `${p.status}${restarted}`);
+    else if (up && !allReady(p.ready) && age != null && age >= READY_GRACE_MS)
+      add(p.readinessFailing ? "probe" : "notReady", "warn", p.ready);
+    else if (tone === "warn" && !up && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS)
+      add(p.unschedulable ? "unschedulable" : "pending", "warn", p.unschedulable || p.status);
     else if (seen != null && p.restarts > seen) add("restarts", "warn", `↻+${p.restarts - seen}`);
   }
   return out.sort(

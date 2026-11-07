@@ -206,7 +206,9 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   подсказке, сообщение под ней `pl-3.5 text-caption`. Контейнер — строка имени (`font-mono text-text`,
   роль `text-caption text-muted`, слово состояния тоном, `↻N` `text-warn`), сообщение kubelet
   `font-mono text-caption text-muted`, «Прошлый раз:» с причиной `text-bad`, ниже — сетка
-  `6rem | 1fr`; значение из Secret/ConfigMap — `← secret имя · ключ` `text-muted`.
+  `6rem | 1fr`; значение из Secret/ConfigMap — `← secret имя · ключ` `text-muted`. Событие — строка:
+  причина `font-mono` (`text-warn` у Warning), контейнер и `×N` `text-caption text-muted`, возраст
+  справа; сообщение под ней `text-caption text-muted`; список `max-h-48`, под ним — подсказка о сроке.
 
 ## Диалоги и обратная связь
 

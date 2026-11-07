@@ -213,3 +213,77 @@ describe("K8sDetail — Overview explains the pod (stage 1)", () => {
     expect(screen.queryByTestId("k8s-detail-containers")).toBeNull();
   });
 });
+
+// Stage 2 (ADR 0054): the open pod's events, by uid, while «Overview» is on screen.
+describe("K8sDetail — the pod's events (stage 2)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const events = JSON.stringify({
+    items: [
+      {
+        type: "Warning",
+        reason: "Unhealthy",
+        involvedObject: { kind: "Pod", name: "web-5f7c", uid: "uid-1", fieldPath: "spec.containers{web}" },
+        metadata: { namespace: "default" },
+        message: "Readiness probe failed: cat: can't open '/tmp/ready': No such file or directory",
+        count: 371,
+        lastTimestamp: new Date(Date.now() - 60_000).toISOString(),
+      },
+      {
+        type: "Normal",
+        reason: "Scheduled",
+        involvedObject: { kind: "Pod", name: "web-5f7c", uid: "uid-1" },
+        metadata: { namespace: "default" },
+        message: "Successfully assigned default/web-5f7c to node-1",
+        lastTimestamp: new Date(Date.now() - 3_600_000).toISOString(),
+      },
+    ],
+  });
+  const withUid = { ...pod, uid: "uid-1" };
+  const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+
+  it("asks for the pod's own events by uid in its namespace, and again with every poll", async () => {
+    const runQuery = vi.fn().mockResolvedValue(ok(events));
+    render(K8sDetail, { props: props({ tab: "overview", pod: withUid, runQuery }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(runQuery).toHaveBeenCalledWith(["get", "events", "--field-selector=involvedObject.uid=uid-1", "-o", "json"], "default", 20);
+    const [unhealthy, scheduled] = screen.getAllByTestId("k8s-detail-event");
+    expect(unhealthy).toHaveTextContent("Unhealthy");
+    expect(unhealthy).toHaveTextContent("web");
+    expect(unhealthy).toHaveTextContent("×371");
+    expect(unhealthy).toHaveTextContent("Readiness probe failed");
+    expect(scheduled).toHaveTextContent("Scheduled");
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(runQuery).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks nothing while another view is on screen or it is not on screen at all", async () => {
+    const runQuery = vi.fn().mockResolvedValue(ok(events));
+    const view = render(K8sDetail, { props: props({ tab: "describe", pod: withUid, runQuery }) });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(runQuery.mock.calls.filter((c) => c[0][1] === "events")).toEqual([]);
+    await view.rerender({ tab: "overview", active: false });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(runQuery.mock.calls.filter((c) => c[0][1] === "events")).toEqual([]);
+  });
+
+  it("says when the events could not be read — that is not «no events»", async () => {
+    const runQuery = vi.fn().mockResolvedValue({ stdout: "", stderr: 'Error from server (Forbidden): events is forbidden: User "dev" cannot list resource "events"', exitCode: 1 });
+    render(K8sDetail, { props: props({ tab: "overview", pod: withUid, runQuery, detail: parsePodDetail({ metadata: { name: "web-5f7c" } }) }) });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.getByTestId("k8s-detail-events-unread")).toHaveTextContent("events is forbidden");
+    expect(screen.queryByTestId("k8s-detail-events-none")).toBeNull();
+  });
+
+  it("tells the assistant the warnings — not the routine", async () => {
+    const onAsk = vi.fn();
+    const runQuery = vi.fn().mockResolvedValue(ok(events));
+    render(K8sDetail, { props: props({ tab: "overview", pod: withUid, runQuery, onAsk }) });
+    await vi.advanceTimersByTimeAsync(0);
+    await fireEvent.click(screen.getByTestId("k8s-ask-ai"));
+    const told = onAsk.mock.calls[0][0] as string;
+    expect(told).toContain("Event Unhealthy ×371 (web), 1m ago: Readiness probe failed");
+    expect(told).not.toContain("Scheduled");
+  });
+});

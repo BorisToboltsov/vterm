@@ -168,6 +168,18 @@ mod tests {
             &["kubectl", "scale", "deployment", "d", "--replicas", "3"],
             &["kubectl", "rollout", "restart", "deployment/d"],
             &["kubectl", "get", "events", "-o", "json"],
+            &[
+                "kubectl",
+                "get",
+                "events",
+                "--field-selector=involvedObject.uid=88e4f2dc-1a6d-4c59-9355-afb2720e846c",
+                "-o",
+                "json",
+                "--context",
+                "c",
+                "--namespace",
+                "web",
+            ],
             &["kubectl", "cordon", "n1"],
             &["kubectl", "uncordon", "n1"],
             &[
