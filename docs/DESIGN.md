@@ -142,6 +142,91 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   иконкой `filter`, «Под фильтр ничего не подходит», что сужает список («nginx» · Статус: running)
   и контурная кнопка «Сбросить фильтры» (`rounded border border-edge px-2.5 py-1 text-xs`).
 - **Исключение** — план синхронизации: слитые сегменты со счётчиками остаются (обзор плана).
+- **Таблица по ширине списка** (Docker, k8s; ADR 0054) — колонки, которым не хватает места,
+  уходят целиком (шапка и строки), а не сжимаются; после последней колонки шапки — счётчик ушедших
+  `ml-1 shrink-0 self-center rounded border border-edge px-1 text-caption` («+2»), подсказка
+  называет их. Колонки, кроме имени, — `shrink-0`; «Вид» → «Колонки» — подменю `table` с галочками.
+- **Выбранная строка** (подробности открыты) — `bg-accent/10` вместо `hover:bg-edge/30`,
+  `aria-current="true"`; щелчок по строке, кроме её кнопок, открывает подробности.
+- **«Требует внимания»** ([AttentionStrip](../src/lib/ui/AttentionStrip.svelte)) — над строкой
+  фильтра, `border-b border-edge`; заголовок — кнопка `px-2 py-1 text-meta` цветом худшего тона
+  (`text-bad`/`text-warn`), шеврон 11 + `alert` 12, «Требует внимания · N»; строки — кнопки
+  `py-0.5 pl-6 pr-2 text-meta hover:bg-edge/30`: точка тона, имя `text-text/90`, причина
+  `text-muted`, число тоном справа; список не выше `7.5rem`, дальше прокрутка. Нечего сказать —
+  не рисуется.
+- **Лог** ([LogTail](../src/lib/ui/LogTail.svelte)) — над текстом ряд `flex flex-wrap gap-1
+  text-meta text-muted`: «Вживую» (пульсирующая точка `bg-ok`) / «Пауза» (`pause` 11), поле
+  фильтра `min-w-32 flex-1`, два нативных `select` уровня и числа строк (`rounded border
+  border-edge bg-panel px-1 py-0.5`), переключатели `clock`/`wrap` 13 (включён — `text-accent`),
+  `terminal` 13, «Копировать». Строка лога — `div`; ошибка `text-bad`, предупреждение `text-warn`;
+  время — `mr-2 text-muted`, `ЧЧ:ММ:СС`, полная метка в подсказке.
+- **Сколько занято** ([DockerDiskUsage](../src/lib/docker/DockerDiskUsage.svelte)) — ряд `flex
+  flex-wrap gap-x-4 gap-y-1 border-b border-edge px-2.5 py-1.5 text-meta` над строкой фильтра:
+  подпись `text-muted`, размер `tabular-nums text-text/90`, «N из M» `text-caption text-muted`, «можно
+  освободить» `text-caption text-warn`; цифры — как их печатает docker.
+- **Несколько строк сразу** — чекбокс встаёт на место точки состояния (`absolute h-3 w-3
+  accent-accent`): по наведению, а пока что-то выбрано — у всех строк; выбранная строка —
+  `bg-accent/15`. Над списком — строка `bg-accent/10 border-b border-edge px-2 py-1 text-meta`:
+  «Выбрано: N», кнопки с подписью (`play`/`stop`/`refresh`, удалить — `text-danger`), крестик справа.
+- **События контейнера** — секция «Обзора» «События за 10 мин» (та же микро-метка): строки
+  `flex items-baseline gap-2 px-1`, время `font-mono text-caption text-muted`, событие `font-mono`
+  тоном (`text-bad` — падение с ошибкой и OOM, `text-warn` — нездоров, `text-ok` — запуск и здоров,
+  `text-muted` — прочее); список не выше `max-h-36`.
+- **«Ресурсы» контейнера** — общий `Chart` мониторинга: CPU и память с заливкой (`SERIES.cpu`,
+  `SERIES.ram`), сеть и диск — зеркальными парами (`SERIES.rx`/`tx`, `read`/`write`), высота 72 и 64;
+  над графиком — подпись `text-muted`, текущее значение `tabular-nums text-text/90` и потолок
+  `text-caption text-muted` («лимит 0.5 ядер», «из 1.0 GiB» или «без лимита»).
+- **Топология Docker** ([DockerNetGraph](../src/lib/docker/DockerNetGraph.svelte)) — три колонки по
+  процентам ширины (порты 0–22, контейнеры 32–66, сети 76–100; без опубликованных портов — две),
+  строка 40 px, узлы — плашки `rounded border bg-panel-alt px-2`:
+  порт — одна строка 24 px, `font-mono text-caption`, открытый всем — `border-warn text-warn` и ребро
+  `--color-warn`, только с хоста — `border-edge text-muted`; контейнер — две строки 34 px: точка
+  состояния и имя, ниже адреса `font-mono text-caption text-muted` (до двух, `—` — не известны),
+  рамка — `border-edge`, а в беде цветом «Требует внимания» (`border-warn bg-warn/5`,
+  `border-bad bg-bad/5`); сеть — две строки, рамка `border-accent/60`, внутренняя — `border-dashed`,
+  ниже подсеть и «внутренняя», число участников справа. Выбранный узел — `ring-1 ring-accent`.
+  Под графом — легенда `text-caption text-muted` с образцами рамок.
+- **Разделы колонки имён** ([DockerTreeSections](../src/lib/docker/DockerTreeSections.svelte)) —
+  `GroupHeader` на раздел (свёрнут по умолчанию), строки `border-b border-edge/60 py-1 pl-5 pr-2`,
+  выбранная — `bg-accent/10`. Подробности образа, сети, тома — та же сетка `grid-cols-[7rem_1fr]` и
+  микро-метки секций, что у контейнера; список «Используют» — строки с точкой состояния.
+- **Подробности стека** ([DockerStackDetail](../src/lib/docker/DockerStackDetail.svelte)) — над
+  вкладками каталог и файлы `font-mono text-caption` (файл — `text-text/85`, каталог и env —
+  `text-muted`); вкладки как у контейнера (Сервисы · Логи · Конфигурация). Сервис — строка `py-1
+  border-b border-edge/60`: точка тона, имя `font-medium`, слово состояния тоном, «нет в файлах» —
+  `text-warn`, справа действия `p-1`; его контейнеры — строки `pl-4 text-caption text-muted` с
+  точкой 1.5. Не созданный при своих файлах стека — «поднять вручную» и `CopyButton` вместо кнопки.
+- **Секции «Обзора» контейнера** — микро-метка `mb-1 mt-3 text-caption uppercase tracking-wider
+  text-muted` со счётом; запуск проверки здоровья — `details`: время `font-mono text-caption
+  text-muted`, код `text-ok`/`text-bad`, последняя строка вывода `font-mono truncate`, весь вывод —
+  `pre max-h-48` под ним; переменные и метки — сетка `key | value` в `font-mono`, скрытое значение —
+  `‹redacted›` `text-muted`, «Показать значения» — кнопка справа в метке секции (`normal-case`).
+- **«Обзор» пода** — те же секции. Условие — строка: точка 1.5 (`bg-ok`/`bg-bad`, у завершённого пода и
+  Unknown — `bg-muted`), тип, причина `font-mono text-caption text-muted`, возраст справа с моментом в
+  подсказке, сообщение под ней `pl-3.5 text-caption`. Контейнер — строка имени (`font-mono text-text`,
+  роль `text-caption text-muted`, слово состояния тоном, `↻N` `text-warn`), сообщение kubelet
+  `font-mono text-caption text-muted`, «Прошлый раз:» с причиной `text-bad`, ниже — сетка
+  `6rem | 1fr`; значение из Secret/ConfigMap — `← secret имя · ключ` `text-muted`. Событие — строка:
+  причина `font-mono` (`text-warn` у Warning), контейнер и `×N` `text-caption text-muted`, возраст
+  справа; сообщение под ней `text-caption text-muted`; список `max-h-48`, под ним — подсказка о сроке.
+- **«Ресурсы» пода** — как у контейнера Docker: заголовок графика (метка `text-muted`, значение
+  `tabular-nums`, лимит и запрос `text-caption text-muted`), `Chart` высотой 72 с `threshold` запроса.
+  Контейнер — имя `font-mono`, сетка `4.5rem | 1fr`: значение, полоса доли `h-1 w-16 rounded-full
+  bg-edge` с заливкой тона `limitTone`, лимит и запрос `text-caption text-muted`.
+- **Подробности нагрузки** — те же секции и сетка `8rem | 1fr`. Строка нагрузки открывает их щелчком
+  (`cursor-default`, выбранная — `bg-accent/10`, клавиатуре — кнопка `eye` в действиях). Ревизия — `#N`
+  `tabular-nums`, «текущая» `text-caption text-accent`, образы `font-mono text-caption`, `готово/нужно`
+  `text-warn`, пока не сошлось. Под и запуск — строка с точкой тона, имя `font-mono`, возраст справа;
+  под — кнопка во всю ширину (`hover:bg-edge/40`).
+- **Подробности ноды** — те же секции; ресурс — сетка `4.5rem | 1fr`: «может дать» `text-caption
+  text-muted`, под ним строки «запрошено / лимиты / занято сейчас» (подпись `w-20 text-caption
+  text-muted`, значение `tabular-nums`, полоса доли `h-1 w-16`, процент — `text-warn` выше 100 %).
+  Давление в строке ноды — `text-caption text-bad`. Заявка на том — строка с точкой тона фазы
+  (Bound `bg-ok`, Pending `bg-warn`, Lost `bg-bad`); почему ждёт — `text-caption`, `text-warn` у Warning;
+  «не монтирует ни один под» — `text-warn`.
+- **Группа «Приложение»** — `GroupHeader` со значком `ship` у релиза Helm и `layoutGrid` у прочих,
+  остальное — «Без приложения»; в подробностях — строка «Приложение» с источником `text-caption
+  text-muted` (`part-of`, «релиз Helm», `instance`, `name`), релиз и чарт `font-mono`.
 
 ## Диалоги и обратная связь
 

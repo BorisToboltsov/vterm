@@ -11,6 +11,7 @@
 // than mutating kubeconfig; pods are grouped by `ownerReferences`
 // ({@link groupByOwner}) as the analogue of docker's compose grouping.
 
+import { isSensitiveEnv } from "../ai/redact";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
 import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
@@ -120,7 +121,14 @@ export function podsArgs(): string[] {
  * {@link parseWorkloads}).
  */
 export function workloadsArgs(): string[] {
-  return ["get", "deployments,statefulsets,daemonsets,cronjobs", "-o", "json"];
+  // The Jobs in the same call (stage 4): a Job of its own is a workload, a
+  // CronJob's runs are its CronJob's — and they are what rolls their pods up.
+  return ["get", "deployments,statefulsets,daemonsets,cronjobs,jobs", "-o", "json"];
+}
+
+/** The Jobs in scope as JSON — for the pods poll, when a pod is a Job's (stage 4). */
+export function jobsArgs(): string[] {
+  return ["get", "jobs", "-o", "json"];
 }
 
 /**
@@ -189,6 +197,27 @@ export function execShellArgv(
   return parts;
 }
 
+/**
+ * A pod's log followed live (`-f`) from the last `tail` lines — typed into a
+ * terminal tab like {@link execShellArgv}, never run by the panel: following is
+ * a stream, and a stream belongs to a terminal (v1.33).
+ */
+export function followLogsArgv(
+  prog: string[],
+  pod: string,
+  namespace: string,
+  container: string | null,
+  scope: K8sScope,
+  tail = 200,
+): string[] {
+  const parts = [...prog, "logs", "-f", "--tail", String(tail), "--timestamps"];
+  if (scope.context) parts.push("--context", scope.context);
+  if (namespace) parts.push("--namespace", namespace);
+  parts.push(pod);
+  if (container) parts.push("-c", container);
+  return parts;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface K8sPod {
@@ -196,16 +225,16 @@ export interface K8sPod {
   namespace: string;
   /** Raw pod phase (Running/Pending/Succeeded/Failed/Unknown). */
   phase: string;
-  /** Displayed status — the synthesized reason kubectl shows (CrashLoopBackOff,
-   * ContainerCreating, Terminating, Completed…), falling back to the phase. */
+  /** Displayed status — what kubectl's STATUS column prints (CrashLoopBackOff,
+   * Init:1/2, NotReady, Terminating, Completed…), falling back to the phase ({@link podRow}). */
   status: string;
-  /** Ready containers over total, e.g. "1/1". */
+  /** Ready containers over all of them, native sidecars included, e.g. "2/2". */
   ready: string;
-  /** Summed container restart count. */
+  /** Restarts as kubectl's RESTARTS counts them — sidecars included. */
   restarts: number;
   node: string;
   age: string;
-  /** Container names (for the logs container picker / exec). */
+  /** Container names, app containers then native sidecars (logs container picker / exec). */
   containers: string[];
   /** Owning workload kind (ReplicaSet rolled up to Deployment), "" if standalone. */
   ownerKind: string;
@@ -223,10 +252,78 @@ export interface K8sPod {
   qos: string;
   /** When it was created, epoch ms — what «age» orders by (v1.29); null — not reported. */
   created?: number | null;
+  /**
+   * Its addresses (v1.33): `status.podIPs` — two for a dual-stack pod — or the
+   * older single `status.podIP`; empty until the pod is given one.
+   */
+  podIps?: string[];
+  /** The address of the node it runs on (`status.hostIP`); "" until it is scheduled. */
+  hostIp?: string;
+  /** `spec.hostNetwork`: its address is the node's, not one of its own. */
+  hostNetwork?: boolean;
+  /** `metadata.uid` — what its events are asked by (stage 2); "" — not reported. */
+  uid?: string;
+  /** The latest OOM kill of any of its containers, epoch ms; null — none it remembers. */
+  oomAt?: number | null;
+  /** What kubelet says while an image cannot be pulled; "" — none is stuck so. */
+  imagePull?: string;
+  /** What the scheduler says while no node takes it ({@link schedulerReason}); "" — it is not refused. */
+  unschedulable?: string;
+  /** A running container is not ready and has a readinessProbe — the probe is what fails. */
+  readinessFailing?: boolean;
+  /** What its running containers ask for (stage 3): millicores and MiB; null — none asks. */
+  cpuRequest?: number | null;
+  memRequest?: number | null;
+  /** The application it is part of ({@link appOf}, stage 6); null — it does not say. */
+  app?: K8sApp | null;
+}
+
+const IMAGE_PULL = new Set(["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]);
+
+/**
+ * The scheduler's own words on why no node takes a pod — `1 Insufficient memory`
+ * out of `0/1 nodes are available: 1 Insufficient memory. preemption: …`; another
+ * message as it is.
+ */
+export function schedulerReason(message: string): string {
+  const m = /nodes are available: (.*?)(?:\. preemption:|\.\s*$|$)/.exec(message.trim());
+  return (m ? m[1] : message).trim();
+}
+
+/** What a pod's object says needs a look, for {@link podAttention} — read with the list. */
+function podSigns(it: Record<string, unknown>): Pick<K8sPod, "oomAt" | "imagePull" | "unschedulable" | "readinessFailing"> {
+  const statuses = [
+    ...records(dig(it, "status", "containerStatuses")),
+    ...records(dig(it, "status", "initContainerStatuses")),
+  ];
+  let oomAt: number | null = null;
+  let imagePull = "";
+  for (const c of statuses) {
+    for (const part of ["state", "lastState"]) {
+      const term = dig(c, part, "terminated") as Record<string, unknown> | undefined;
+      if (str(term?.reason) !== "OOMKilled") continue;
+      const at = Date.parse(str(term?.finishedAt));
+      if (Number.isFinite(at) && (oomAt == null || at > oomAt)) oomAt = at;
+    }
+    const waiting = dig(c, "state", "waiting") as Record<string, unknown> | undefined;
+    if (!imagePull && IMAGE_PULL.has(str(waiting?.reason))) imagePull = str(waiting?.message).trim() || str(waiting?.reason);
+  }
+  const scheduled = records(dig(it, "status", "conditions")).find((c) => c.type === "PodScheduled");
+  const unschedulable =
+    scheduled && scheduled.status === "False" && scheduled.reason === "Unschedulable" ? schedulerReason(str(scheduled.message)) : "";
+  const probed = new Set(
+    podContainers(it)
+      .filter((c) => c.readinessProbe && typeof c.readinessProbe === "object")
+      .map((c) => str(c.name)),
+  );
+  const readinessFailing = statuses.some(
+    (c) => probed.has(str(c.name)) && c.ready === false && dig(c, "state", "running") != null,
+  );
+  return { oomAt, imagePull, unschedulable, readinessFailing };
 }
 
 export interface K8sWorkload {
-  kind: "Deployment" | "StatefulSet" | "DaemonSet" | "CronJob";
+  kind: "Deployment" | "StatefulSet" | "DaemonSet" | "CronJob" | "Job";
   name: string;
   namespace: string;
   /** "ready/desired" for Deploy/STS/DS; "" for CronJob. */
@@ -242,6 +339,12 @@ export interface K8sWorkload {
   scalable: boolean;
   /** When it was created, epoch ms (v1.29); null — not reported. */
   created?: number | null;
+  /** `metadata.uid` — what its ReplicaSets and Jobs name as their owner (stage 4). */
+  uid?: string;
+  /** A Job's state ({@link K8sJob}); "" for the other kinds. */
+  status?: string;
+  /** The application it is part of ({@link appOf}, stage 6); null — it does not say. */
+  app?: K8sApp | null;
 }
 
 export interface K8sPodMetrics {
@@ -372,30 +475,112 @@ export function resolveOwner(refs: unknown): { kind: string; name: string } {
   return { kind, name };
 }
 
-/**
- * Synthesize the status kubectl's STATUS column shows: a deleting pod is
- * "Terminating"; a container waiting/terminated with a reason surfaces that
- * (CrashLoopBackOff, ImagePullBackOff, ContainerCreating, Error…); otherwise the
- * pod phase. Pure helper for {@link parsePods}.
- */
-export function podDisplayStatus(item: Record<string, unknown>): string {
-  if (dig(item, "metadata", "deletionTimestamp")) return "Terminating";
-  const cs = dig(item, "status", "containerStatuses");
-  if (Array.isArray(cs)) {
-    for (const c of cs as Record<string, unknown>[]) {
-      const waiting = str(dig(c, "state", "waiting", "reason"));
-      if (waiting) return waiting;
-    }
-    for (const c of cs as Record<string, unknown>[]) {
-      const term = str(dig(c, "state", "terminated", "reason"));
-      if (term && term !== "Completed") return term;
-    }
-  }
-  return str(dig(item, "status", "phase"));
+/** An init container that keeps running beside the app: a native sidecar (k8s ≥ 1.29). */
+function isSidecar(c: Record<string, unknown>): boolean {
+  return c.restartPolicy === "Always";
+}
+
+function records(v: unknown): Record<string, unknown>[] {
+  return Array.isArray(v) ? (v as Record<string, unknown>[]).filter((x) => x && typeof x === "object") : [];
+}
+
+function conditionTrue(item: Record<string, unknown>, type: string): boolean {
+  return records(dig(item, "status", "conditions")).some((c) => c.type === type && c.status === "True");
+}
+
+/** A terminated state without a reason, as kubectl prints it: the signal, else the exit code. */
+function bareExit(term: Record<string, unknown>): string {
+  const signal = num(term.signal);
+  return signal ? `Signal:${signal}` : `ExitCode:${num(term.exitCode)}`;
+}
+
+/** What `kubectl get pods` prints for a pod in its STATUS, READY and RESTARTS columns. */
+export interface PodRow {
+  status: string;
+  /** Ready containers over all of them, native sidecars included, e.g. "2/2". */
+  ready: string;
+  restarts: number;
 }
 
 /**
- * Sum one resource limit across a pod's containers.
+ * A pod as kubectl's own printer reads it (`printPod`, pkg/printers/internalversion):
+ * the pod's reason or phase; while it initializes — the init step or the failing init
+ * container's reason (`Init:1/2`, `Init:CrashLoopBackOff`) and their restarts; after —
+ * the first container with a waiting or terminated reason, `NotReady` for a finished
+ * container beside a running one in a pod that is not Ready. A native sidecar is one of
+ * the pod's containers: it counts in READY once started and in RESTARTS. Deletion reads
+ * `Terminating` only for a pod that has not finished. Pure helper for {@link parsePods}.
+ */
+export function podRow(item: Record<string, unknown>): PodRow {
+  const initSpec = records(dig(item, "spec", "initContainers"));
+  const sidecars = new Set(initSpec.filter(isSidecar).map((c) => str(c.name)));
+  const statuses = records(dig(item, "status", "containerStatuses"));
+  const total = records(dig(item, "spec", "containers")).length + sidecars.size || statuses.length;
+  const phase = str(dig(item, "status", "phase"));
+  let reason = str(dig(item, "status", "reason")) || phase;
+  const gated = records(dig(item, "status", "conditions")).some(
+    (c) => c.type === "PodScheduled" && c.reason === "SchedulingGated",
+  );
+  if (gated) reason = "SchedulingGated";
+
+  let ready = 0;
+  let restarts = 0;
+  let sidecarRestarts = 0;
+  let initializing = false;
+  for (const [i, c] of records(dig(item, "status", "initContainerStatuses")).entries()) {
+    const count = num(c.restartCount);
+    const sidecar = sidecars.has(str(c.name));
+    restarts += count;
+    if (sidecar) sidecarRestarts += count;
+    const term = dig(c, "state", "terminated") as Record<string, unknown> | undefined;
+    const waiting = str(dig(c, "state", "waiting", "reason"));
+    if (term && num(term.exitCode) === 0) continue;
+    if (sidecar && c.started === true) {
+      if (c.ready === true) ready++;
+      continue;
+    }
+    if (term) reason = `Init:${str(term.reason) || bareExit(term)}`;
+    else if (waiting && waiting !== "PodInitializing") reason = `Init:${waiting}`;
+    else reason = `Init:${i}/${initSpec.length}`;
+    initializing = true;
+    break;
+  }
+
+  if (!initializing || conditionTrue(item, "Initialized")) {
+    restarts = sidecarRestarts;
+    let hasRunning = false;
+    // Backwards, as kubectl does: the first container with a reason has the last word.
+    for (let i = statuses.length - 1; i >= 0; i--) {
+      const c = statuses[i];
+      restarts += num(c.restartCount);
+      const waiting = str(dig(c, "state", "waiting", "reason"));
+      const term = dig(c, "state", "terminated") as Record<string, unknown> | undefined;
+      if (waiting) reason = waiting;
+      else if (term) reason = str(term.reason) || bareExit(term);
+      else if (c.ready === true && dig(c, "state", "running")) {
+        hasRunning = true;
+        ready++;
+      }
+    }
+    if (reason === "Completed" && hasRunning) reason = conditionTrue(item, "Ready") ? "Running" : "NotReady";
+  }
+
+  if (dig(item, "metadata", "deletionTimestamp")) {
+    if (str(dig(item, "status", "reason")) === "NodeLost") reason = "Unknown";
+    else if (phase !== "Succeeded" && phase !== "Failed") reason = "Terminating";
+  }
+  return { status: reason, ready: `${ready}/${total}`, restarts };
+}
+
+/** The STATUS column alone — see {@link podRow}. */
+export function podDisplayStatus(item: Record<string, unknown>): string {
+  return podRow(item).status;
+}
+
+/**
+ * Sum one resource limit across a pod's running containers — its app containers and
+ * native sidecars ({@link podContainers}); an ordinary init container has finished
+ * before they start and is no part of the ceiling.
  *
  * Returns null when **any** container lacks the limit, because that is what the
  * cluster does: one unbounded container makes the whole pod unbounded, and
@@ -418,6 +603,25 @@ export function sumLimit(
   return total;
 }
 
+/**
+ * Sum one resource request across a pod's running containers. A container that
+ * asks for nothing adds nothing — that is how the scheduler counts it (a limit
+ * without a request has the request defaulted to it in the spec we read); null
+ * when none asks at all.
+ */
+export function sumRequest(
+  containers: readonly Record<string, unknown>[],
+  key: "cpu" | "memory",
+  parse: (s: string | undefined) => number | null,
+): number | null {
+  let total: number | null = null;
+  for (const c of containers) {
+    const v = parse(str(dig(c, "resources", "requests", key)));
+    if (v != null) total = (total ?? 0) + v;
+  }
+  return total;
+}
+
 /** Fraction of a limit in use (0…1+), or null when either side is unknown. */
 export function limitRatio(usage: number | null, limit: number | null): number | null {
   if (usage == null || limit == null || !(limit > 0)) return null;
@@ -435,36 +639,75 @@ export function limitTone(ratio: number | null): "ok" | "warn" | "bad" | null {
   return "ok";
 }
 
+/** The objects of a `kubectl get … -o json` list, tolerating junk. */
+export function listItems(raw: string): Record<string, unknown>[] {
+  return items(raw);
+}
+
 export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
-  return items(raw).map((it) => {
-    const cs = dig(it, "status", "containerStatuses");
-    const csArr = Array.isArray(cs) ? (cs as Record<string, unknown>[]) : [];
-    const readyCount = csArr.filter((c) => c.ready === true).length;
-    const restarts = csArr.reduce((sum, c) => sum + num(c.restartCount), 0);
-    const specContainers = dig(it, "spec", "containers");
-    const specArr = Array.isArray(specContainers)
-      ? (specContainers as Record<string, unknown>[])
-      : [];
-    const containers = specArr.map((c) => str(c.name)).filter(Boolean);
-    const owner = resolveOwner(dig(it, "metadata", "ownerReferences"));
+  return podsOf(items(raw), nowMs);
+}
+
+/**
+ * The pods of a list already parsed ({@link listItems}) — the panel reads the JSON
+ * once. `owners` ({@link jobOwners}) rolls a CronJob's run pods up to the CronJob,
+ * as a ReplicaSet's are rolled up to its Deployment; without it a pod's owner is
+ * its own Job — never guessed from the name.
+ */
+export function podsOf(
+  list: readonly Record<string, unknown>[],
+  nowMs: number = Date.now(),
+  owners?: ReadonlyMap<string, { kind: string; name: string }>,
+): K8sPod[] {
+  return list.map((it) => {
+    const running = podContainers(it);
+    const row = podRow(it);
+    const own = resolveOwner(dig(it, "metadata", "ownerReferences"));
+    const owner =
+      own.kind === "Job" ? (owners?.get(`${str(dig(it, "metadata", "namespace"))}/${own.name}`) ?? own) : own;
     return {
       name: str(dig(it, "metadata", "name")),
       namespace: str(dig(it, "metadata", "namespace")),
       phase: str(dig(it, "status", "phase")),
-      status: podDisplayStatus(it),
-      ready: `${readyCount}/${containers.length || csArr.length}`,
-      restarts,
+      status: row.status,
+      ready: row.ready,
+      restarts: row.restarts,
       node: str(dig(it, "spec", "nodeName")),
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
-      containers,
+      containers: running.map((c) => str(c.name)).filter(Boolean),
       ownerKind: owner.kind,
       ownerName: owner.name,
-      cpuLimit: sumLimit(specArr, "cpu", parseCpuMillis),
-      memLimit: sumLimit(specArr, "memory", parseMemMiB),
+      cpuLimit: sumLimit(running, "cpu", parseCpuMillis),
+      memLimit: sumLimit(running, "memory", parseMemMiB),
+      cpuRequest: sumRequest(running, "cpu", parseCpuMillis),
+      memRequest: sumRequest(running, "memory", parseMemMiB),
       qos: str(dig(it, "status", "qosClass")),
       created: createdAt(it),
+      podIps: podIps(it),
+      hostIp: str(dig(it, "status", "hostIP")),
+      hostNetwork: dig(it, "spec", "hostNetwork") === true,
+      uid: str(dig(it, "metadata", "uid")),
+      ...podSigns(it),
+      app: appOf(dig(it, "metadata", "labels"), dig(it, "metadata", "annotations")),
     };
   });
+}
+
+/**
+ * The containers that run side by side once the pod is up: the app containers, then
+ * the native sidecars — the ones a log, a shell and the ceiling are about.
+ */
+function podContainers(it: Record<string, unknown>): Record<string, unknown>[] {
+  return [...records(dig(it, "spec", "containers")), ...records(dig(it, "spec", "initContainers")).filter(isSidecar)];
+}
+
+/** `status.podIPs[].ip`, else the single `status.podIP`, deduplicated. */
+function podIps(it: Record<string, unknown>): string[] {
+  const list = dig(it, "status", "podIPs");
+  const ips = Array.isArray(list) ? (list as Record<string, unknown>[]).map((p) => str(p.ip)).filter(Boolean) : [];
+  const single = str(dig(it, "status", "podIP"));
+  if (single && !ips.includes(single)) ips.unshift(single);
+  return [...new Set(ips)];
 }
 
 export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWorkload[] {
@@ -475,7 +718,28 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
     const namespace = str(dig(it, "metadata", "namespace"));
     const age = k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs);
     const created = createdAt(it);
-    if (kind === "Deployment" || kind === "StatefulSet") {
+    const uid = str(dig(it, "metadata", "uid"));
+    const app = appOf(dig(it, "metadata", "labels"), dig(it, "metadata", "annotations"));
+    if (kind === "Job") {
+      // A CronJob's run is its CronJob's — shown in its details, not as a row.
+      const job = jobOf(it, nowMs);
+      if (job.owner?.kind === "CronJob") continue;
+      out.push({
+        kind: "Job",
+        name,
+        namespace,
+        ready: `${job.succeeded}/${job.completions ?? 1}`,
+        replicas: null,
+        schedule: "",
+        suspended: job.status === "Suspended",
+        age,
+        created,
+        scalable: false,
+        uid,
+        status: job.status,
+        app,
+      });
+    } else if (kind === "Deployment" || kind === "StatefulSet") {
       const desired = num(dig(it, "spec", "replicas"));
       const ready = num(dig(it, "status", "readyReplicas"));
       out.push({
@@ -489,6 +753,8 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: true,
+        uid,
+        app,
       });
     } else if (kind === "DaemonSet") {
       const desired = num(dig(it, "status", "desiredNumberScheduled"));
@@ -504,6 +770,8 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: false,
+        uid,
+        app,
       });
     } else if (kind === "CronJob") {
       out.push({
@@ -517,6 +785,8 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: false,
+        uid,
+        app,
       });
     }
   }
@@ -622,6 +892,12 @@ export function parseAvailability(stdout: string, stderr: string, _exitCode: num
 
 /** A semantic tone for a pod status → the UI maps it to a color token. */
 export function podPhaseTone(status: string): "ok" | "warn" | "bad" | "idle" {
+  // While it initializes: the step is progress, anything else an init container failing.
+  if (status.startsWith("Init:")) {
+    const rest = status.slice(5);
+    return /^\d+\/\d+$/.test(rest) ? "warn" : "bad";
+  }
+  if (/^(ExitCode|Signal):/.test(status)) return "bad";
   switch (status) {
     case "Running":
       return "ok";
@@ -632,11 +908,17 @@ export function podPhaseTone(status: string): "ok" | "warn" | "bad" | "idle" {
     case "ContainerCreating":
     case "PodInitializing":
     case "Terminating":
+    case "NotReady":
+    case "SchedulingGated":
       return "warn";
     case "CrashLoopBackOff":
     case "Error":
     case "ImagePullBackOff":
     case "ErrImagePull":
+    case "InvalidImageName":
+    case "CreateContainerConfigError":
+    case "CreateContainerError":
+    case "ContainerStatusUnknown":
     case "Failed":
     case "OOMKilled":
     case "Evicted":
@@ -707,6 +989,14 @@ export function endpointSlicesArgs(): string[] {
 /** All nodes as JSON (cluster-scoped — call {@link withScope} with `namespaced:false`). */
 export function nodesArgs(): string[] {
   return ["get", "nodes", "-o", "json"];
+}
+
+/**
+ * One pod's events (stage 2), by its uid — a pod recreated under the same name
+ * (a StatefulSet's) is another pod. One token, so the policy reads it as an option.
+ */
+export function podEventsArgs(uid: string): string[] {
+  return ["get", "events", `--field-selector=involvedObject.uid=${uid}`, "-o", "json"];
 }
 
 /** Events in scope as JSON (parsed newest-first by {@link parseEvents}). */
@@ -867,7 +1157,13 @@ export interface K8sNode {
   roles: string;
   version: string;
   internalIp: string;
+  /** `ExternalIP` from `status.addresses` (v1.33); "" — the node reports none. */
+  externalIp?: string;
+  /** `Hostname` from `status.addresses`; "" — not reported. */
+  hostname?: string;
   age: string;
+  /** The pressures it reports now — `MemoryPressure`, `DiskPressure`, `PIDPressure` (stage 5). */
+  pressures?: string[];
 }
 
 export interface K8sEvent {
@@ -882,7 +1178,1069 @@ export interface K8sEvent {
   age: string;
   /** Epoch ms of the last occurrence (for sorting), or 0. */
   ts: number;
+  /** The container it is about (`spec.containers{app}`), "" — the pod or another object. */
+  container?: string;
 }
+
+// ── A pod's details (ADR 0054, stage 1) ──────────────────────────────────────
+//
+// What «Overview» explains, read from the same `get pods -o json` the list polls:
+// no call of its own. The conditions say why a pod waits (PodScheduled carries the
+// scheduler's «0/1 nodes are available: Insufficient memory»), each container
+// what it is doing and how it ended last time, what it checks, asks for and is
+// held to. Secret values are never read — a reference to a secret is its name.
+
+export type PodContainerRole = "app" | "sidecar" | "init";
+
+export interface PodCondition {
+  type: string;
+  /** True / False; null — Unknown. */
+  ok: boolean | null;
+  reason: string;
+  message: string;
+  /** When it last changed, epoch ms; null — not reported. */
+  since: number | null;
+}
+
+export type PodProbeKind = "startup" | "readiness" | "liveness";
+
+export interface PodProbe {
+  kind: PodProbeKind;
+  /** What it does: `GET http://:http/`, `TCP :http`, `exec cat /tmp/ready`, `gRPC :9090`. */
+  action: string;
+  periodSec: number | null;
+  timeoutSec: number | null;
+  /** Failures in a row before it counts as failed. */
+  failureThreshold: number | null;
+  initialDelaySec: number | null;
+}
+
+export interface PodTermination {
+  reason: string;
+  exitCode: number | null;
+  signal: number | null;
+  /** epoch ms; null — not reported. */
+  finishedAt: number | null;
+  /** The termination message the container left (its file, or its log tail on error). */
+  message: string;
+}
+
+export interface PodMount {
+  path: string;
+  /** The pod volume's name. */
+  volume: string;
+  /** What the volume is: `configMap site`, `secret creds`, `pvc data-db-0`, `emptyDir`, `hostPath /var/log`. */
+  source: string;
+  readOnly: boolean;
+  subPath: string;
+}
+
+export interface PodEnvVar {
+  key: string;
+  /** The value written in the spec; "" when it comes from elsewhere. */
+  value: string;
+  /** Where it comes from when not written: `secret app-secret · token`, `configMap app-config · LOG_LEVEL`, `field metadata.name`. */
+  from: string;
+  /** Masked until asked for ({@link isSensitiveEnv}); a value read from a secret is not here at all. */
+  sensitive: boolean;
+}
+
+export interface PodContainer {
+  name: string;
+  role: PodContainerRole;
+  image: string;
+  /** `running` · `waiting` · `terminated`; "" — no status reported yet. */
+  state: "running" | "waiting" | "terminated" | "";
+  /** Why it waits or how it ended: CrashLoopBackOff, ErrImagePull, OOMKilled, Completed. */
+  reason: string;
+  /** What kubelet says about it: `back-off 5m0s restarting failed container…`, the pull error. */
+  message: string;
+  /** Started (running) or finished (terminated), epoch ms. */
+  since: number | null;
+  exitCode: number | null;
+  ready: boolean | null;
+  restarts: number;
+  /** How it ended the time before — what a restart hides. */
+  last: PodTermination | null;
+  /** command + args as written; "" — the image's own. */
+  command: string;
+  requests: { cpu: string; memory: string };
+  limits: { cpu: string; memory: string };
+  /** `http 8080/TCP`, `9090/TCP → host 9090`. */
+  ports: string[];
+  probes: PodProbe[];
+  mounts: PodMount[];
+  env: PodEnvVar[];
+  /** Whole ConfigMaps and Secrets taken as variables: `configMap app-config`, `secret creds · DB_`. */
+  envFrom: string[];
+}
+
+export interface PodDetail {
+  /** The application it is part of (stage 6); null — it does not say. */
+  app: K8sAppInfo | null;
+  /**
+   * The pod has finished (Succeeded / Failed): its Ready and ContainersReady are
+   * False because it ended — what the end says is in its containers, not there.
+   */
+  finished: boolean;
+  conditions: PodCondition[];
+  /** App containers, then native sidecars, then the init containers that ran before them. */
+  containers: PodContainer[];
+  serviceAccount: string;
+  priorityClass: string;
+  labels: { key: string; value: string }[];
+}
+
+/** The pod `namespace/name` of a parsed list ({@link listItems}); null — not in it. */
+export function podItem(
+  list: readonly Record<string, unknown>[],
+  namespace: string,
+  name: string,
+): Record<string, unknown> | null {
+  return (
+    list.find((it) => str(dig(it, "metadata", "name")) === name && str(dig(it, "metadata", "namespace")) === namespace) ??
+    null
+  );
+}
+
+const CONDITION_ORDER = ["PodScheduled", "PodReadyToStartContainers", "Initialized", "ContainersReady", "Ready"];
+
+const when = (v: unknown): number | null => {
+  const t = Date.parse(str(v));
+  return Number.isFinite(t) ? t : null;
+};
+const intOrNull = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+
+/** A word quoted for reading when it would not survive as one (spaces, quotes). */
+function readableWord(w: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(w)) return w;
+  if (!/["$`\\]/.test(w)) return `"${w}"`;
+  return `'${w.replace(/'/g, `'\\''`)}'`;
+}
+
+/** argv as one readable line; "" for none. */
+function argvText(...parts: unknown[]): string {
+  return parts
+    .flatMap((p) => (Array.isArray(p) ? p : []))
+    .map((w) => readableWord(typeof w === "string" ? w : String(w)))
+    .join(" ");
+}
+
+function probeAction(p: Record<string, unknown>): string {
+  const http = dig(p, "httpGet") as Record<string, unknown> | undefined;
+  if (http) {
+    const scheme = (str(http.scheme) || "HTTP").toLowerCase();
+    const host = str(http.host);
+    return `GET ${scheme}://${host}:${portText(http.port)}${str(http.path) || "/"}`;
+  }
+  const tcp = dig(p, "tcpSocket") as Record<string, unknown> | undefined;
+  if (tcp) return `TCP ${str(tcp.host)}:${portText(tcp.port)}`;
+  const grpc = dig(p, "grpc") as Record<string, unknown> | undefined;
+  if (grpc) return `gRPC :${portText(grpc.port)}${str(grpc.service) ? ` ${str(grpc.service)}` : ""}`;
+  const cmd = dig(p, "exec", "command");
+  if (Array.isArray(cmd)) return `exec ${argvText(cmd)}`;
+  return "";
+}
+
+function probesOf(c: Record<string, unknown>): PodProbe[] {
+  const out: PodProbe[] = [];
+  for (const [kind, field] of [
+    ["startup", "startupProbe"],
+    ["readiness", "readinessProbe"],
+    ["liveness", "livenessProbe"],
+  ] as const) {
+    const p = c[field];
+    if (!p || typeof p !== "object") continue;
+    const probe = p as Record<string, unknown>;
+    out.push({
+      kind,
+      action: probeAction(probe),
+      periodSec: intOrNull(probe.periodSeconds),
+      timeoutSec: intOrNull(probe.timeoutSeconds),
+      failureThreshold: intOrNull(probe.failureThreshold),
+      initialDelaySec: intOrNull(probe.initialDelaySeconds) || null,
+    });
+  }
+  return out;
+}
+
+function volumeSource(v: Record<string, unknown> | undefined): string {
+  if (!v) return "";
+  if (v.configMap) return `configMap ${str(dig(v, "configMap", "name"))}`;
+  if (v.secret) return `secret ${str(dig(v, "secret", "secretName"))}`;
+  if (v.persistentVolumeClaim) return `pvc ${str(dig(v, "persistentVolumeClaim", "claimName"))}`;
+  if (v.emptyDir) return str(dig(v, "emptyDir", "medium")) === "Memory" ? "emptyDir · memory" : "emptyDir";
+  if (v.hostPath) return `hostPath ${str(dig(v, "hostPath", "path"))}`;
+  if (v.projected) {
+    const sources = records(dig(v, "projected", "sources"));
+    return sources.some((x) => x.serviceAccountToken) ? "projected · service account token" : "projected";
+  }
+  if (v.downwardAPI) return "downwardAPI";
+  if (v.ephemeral) return "ephemeral";
+  if (v.csi) return `csi ${str(dig(v, "csi", "driver"))}`;
+  if (v.nfs) return `nfs ${str(dig(v, "nfs", "server"))}:${str(dig(v, "nfs", "path"))}`;
+  // Any other kind: its field name, which is what it is.
+  return Object.keys(v).find((k) => k !== "name") ?? "";
+}
+
+function envFromRef(v: Record<string, unknown>): string {
+  const secret = dig(v, "secretKeyRef") as Record<string, unknown> | undefined;
+  if (secret) return `secret ${str(secret.name)} · ${str(secret.key)}`;
+  const cm = dig(v, "configMapKeyRef") as Record<string, unknown> | undefined;
+  if (cm) return `configMap ${str(cm.name)} · ${str(cm.key)}`;
+  const field = str(dig(v, "fieldRef", "fieldPath"));
+  if (field) return `field ${field}`;
+  const res = dig(v, "resourceFieldRef") as Record<string, unknown> | undefined;
+  if (res) return `resource ${str(res.resource)}${str(res.containerName) ? ` · ${str(res.containerName)}` : ""}`;
+  return "?";
+}
+
+function termination(t: unknown): PodTermination | null {
+  if (!t || typeof t !== "object") return null;
+  const r = t as Record<string, unknown>;
+  return {
+    reason: str(r.reason),
+    exitCode: intOrNull(r.exitCode),
+    signal: intOrNull(r.signal) || null,
+    finishedAt: when(r.finishedAt),
+    message: str(r.message).trim(),
+  };
+}
+
+function resources(c: Record<string, unknown>, kind: "requests" | "limits"): { cpu: string; memory: string } {
+  return {
+    cpu: str(dig(c, "resources", kind, "cpu")),
+    memory: str(dig(c, "resources", kind, "memory")),
+  };
+}
+
+function containerOf(
+  spec: Record<string, unknown>,
+  role: PodContainerRole,
+  statuses: readonly Record<string, unknown>[],
+  volumes: ReadonlyMap<string, Record<string, unknown>>,
+): PodContainer {
+  const name = str(spec.name);
+  const st = statuses.find((s) => str(s.name) === name);
+  const running = dig(st, "state", "running") as Record<string, unknown> | undefined;
+  const waiting = dig(st, "state", "waiting") as Record<string, unknown> | undefined;
+  const term = dig(st, "state", "terminated") as Record<string, unknown> | undefined;
+  const state = running ? "running" : waiting ? "waiting" : term ? "terminated" : "";
+  return {
+    name,
+    role,
+    image: str(spec.image),
+    state,
+    reason: str(waiting?.reason) || str(term?.reason),
+    message: (str(waiting?.message) || str(term?.message)).trim(),
+    since: when(running?.startedAt) ?? when(term?.finishedAt),
+    exitCode: intOrNull(term?.exitCode),
+    ready: st && typeof st.ready === "boolean" ? st.ready : null,
+    restarts: num(st?.restartCount),
+    last: termination(dig(st, "lastState", "terminated")),
+    command: argvText(spec.command, spec.args),
+    requests: resources(spec, "requests"),
+    limits: resources(spec, "limits"),
+    ports: records(spec.ports).map((p) => {
+      const port = `${num(p.containerPort)}/${str(p.protocol) || "TCP"}`;
+      const host = num(p.hostPort) ? ` → host ${num(p.hostPort)}` : "";
+      return `${str(p.name) ? `${str(p.name)} ` : ""}${port}${host}`;
+    }),
+    probes: probesOf(spec),
+    mounts: records(spec.volumeMounts).map((m) => ({
+      path: str(m.mountPath),
+      volume: str(m.name),
+      source: volumeSource(volumes.get(str(m.name))),
+      readOnly: m.readOnly === true,
+      subPath: str(m.subPath),
+    })),
+    env: records(spec.env).map((e) => {
+      const key = str(e.name);
+      const from = e.valueFrom && typeof e.valueFrom === "object" ? envFromRef(e.valueFrom as Record<string, unknown>) : "";
+      const value = from ? "" : str(e.value);
+      return { key, value, from, sensitive: !from && isSensitiveEnv(key, value) };
+    }),
+    envFrom: records(spec.envFrom).map((f) => {
+      const cm = str(dig(f, "configMapRef", "name"));
+      const kind = cm ? "configMap" : "secret";
+      const name = cm || str(dig(f, "secretRef", "name"));
+      return `${kind} ${name}${str(f.prefix) ? ` · ${str(f.prefix)}` : ""}`;
+    }),
+  };
+}
+
+/** What «Overview» shows of a pod — see the section above; null for what is not a pod. */
+export function parsePodDetail(item: Record<string, unknown> | null): PodDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const volumes = new Map(records(dig(item, "spec", "volumes")).map((v) => [str(v.name), v] as const));
+  const statuses = records(dig(item, "status", "containerStatuses"));
+  const initStatuses = records(dig(item, "status", "initContainerStatuses"));
+  const initSpec = records(dig(item, "spec", "initContainers"));
+  const containers = [
+    ...records(dig(item, "spec", "containers")).map((c) => containerOf(c, "app", statuses, volumes)),
+    ...initSpec.filter(isSidecar).map((c) => containerOf(c, "sidecar", initStatuses, volumes)),
+    ...initSpec.filter((c) => !isSidecar(c)).map((c) => containerOf(c, "init", initStatuses, volumes)),
+  ];
+  const rank = (type: string) => {
+    const i = CONDITION_ORDER.indexOf(type);
+    return i < 0 ? CONDITION_ORDER.length : i;
+  };
+  const conditions = records(dig(item, "status", "conditions"))
+    .map((c) => ({
+      type: str(c.type),
+      ok: c.status === "True" ? true : c.status === "False" ? false : null,
+      reason: str(c.reason),
+      message: str(c.message).trim(),
+      since: when(c.lastTransitionTime),
+    }))
+    .sort((a, b) => rank(a.type) - rank(b.type));
+  const labels = dig(item, "metadata", "labels");
+  const phase = str(dig(item, "status", "phase"));
+  return {
+    app: appInfo(labels, dig(item, "metadata", "annotations")),
+    finished: phase === "Succeeded" || phase === "Failed",
+    conditions,
+    containers,
+    serviceAccount: str(dig(item, "spec", "serviceAccountName")),
+    priorityClass: str(dig(item, "spec", "priorityClassName")),
+    labels:
+      labels && typeof labels === "object"
+        ? Object.entries(labels as Record<string, unknown>)
+            .map(([key, value]) => ({ key, value: str(value) }))
+            .sort((a, b) => a.key.localeCompare(b.key))
+        : [],
+  };
+}
+
+/**
+ * What the assistant is told of a pod's details: the conditions that do not hold
+ * with what they say (none of a finished pod — they only repeat that it ended),
+ * each container's state and how it ended last time. Never the environment — not
+ * even its names.
+ */
+export function podDetailFacts(d: PodDetail): string[] {
+  const out: string[] = [];
+  for (const c of d.conditions) {
+    if (c.ok === true || d.finished) continue;
+    out.push(`Condition ${c.type}: ${c.ok === false ? "False" : "Unknown"}${c.reason ? ` (${c.reason})` : ""}${c.message ? ` — ${c.message}` : ""}`);
+  }
+  for (const c of d.containers) {
+    const now = [c.state || "no status", c.reason, c.exitCode != null ? `exit ${c.exitCode}` : ""].filter(Boolean).join(" ");
+    const last = c.last
+      ? `; last time: ${[c.last.reason, c.last.exitCode != null ? `exit ${c.last.exitCode}` : ""].filter(Boolean).join(" ")}`
+      : "";
+    const probes = c.probes.length ? `; probes: ${c.probes.map((p) => `${p.kind} ${p.action}`).join(", ")}` : "";
+    const limits = [c.limits.cpu && `cpu ${c.limits.cpu}`, c.limits.memory && `memory ${c.limits.memory}`].filter(Boolean).join(", ");
+    out.push(
+      `Container ${c.name}${c.role === "app" ? "" : ` (${c.role})`}: ${now}${c.restarts ? `, ${c.restarts} restarts` : ""}${last}${limits ? `; limits ${limits}` : ""}${probes}${c.message ? ` — ${c.message}` : ""}`,
+    );
+  }
+  return out;
+}
+
+// ── A pod's resources (ADR 0054, stage 3) ───────────────────────────────────
+//
+// The history of a pod's CPU and memory is the panel's: `top pods` already runs
+// with every poll of the list, so «Resources» opens with what was polled while it
+// was closed. Its containers are asked (`top pod --containers`) only while the
+// view is on screen. The metrics API reports CPU and memory — not network, not
+// disk — and the view says so instead of drawing a zero.
+
+export type PodSeries = "cpu" | "mem";
+
+/** The history key of a pod's series: `<metricsKey>.cpu|mem`. */
+export const podResourceKey = (key: string, s: PodSeries): string => `${key}.${s}`;
+
+/** One poll of `top pods` as readings: millicores and MiB by pod; null — no row for it. */
+export function podReadings(
+  pods: readonly K8sPod[],
+  metrics: ReadonlyMap<string, K8sPodMetrics>,
+): Record<string, number | null> {
+  const out: Record<string, number | null> = {};
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    const m = metrics.get(key) ?? metrics.get(metricsKey("", p.name));
+    out[podResourceKey(key, "cpu")] = parseCpuMillis(m?.cpu);
+    out[podResourceKey(key, "mem")] = parseMemMiB(m?.mem);
+  }
+  return out;
+}
+
+/** One pod's containers' usage now (stage 3) — asked only while «Resources» is on screen. */
+export function topContainersArgs(pod: string): string[] {
+  return ["top", "pod", pod, "--containers", "--no-headers"];
+}
+
+export interface ContainerUsage {
+  container: string;
+  /** Millicores; null — not reported. */
+  cpu: number | null;
+  /** MiB; null — not reported. */
+  mem: number | null;
+}
+
+/** `top pod <pod> --containers --no-headers` (POD NAME CPU MEMORY) — the rows of `pod`. */
+export function parseTopContainers(raw: string, pod: string): ContainerUsage[] {
+  const out: ContainerUsage[] = [];
+  for (const line of raw.split("\n")) {
+    const cols = line.trim().split(/\s+/).filter(Boolean);
+    if (cols.length < 4 || cols[0] !== pod) continue;
+    out.push({ container: cols[1], cpu: parseCpuMillis(cols[2]), mem: parseMemMiB(cols[3]) });
+  }
+  return out;
+}
+
+/**
+ * Why there are no readings (stage 3), told apart — they mean different things:
+ * the cluster has no metrics-server at all; it has, but has no sample for the pod
+ * yet (it measures every 15–60 s, a pod that does not run has none); another
+ * failure, in its own words. null — `top` answered.
+ */
+export interface MetricsGap {
+  kind: "noServer" | "notYet" | "other";
+  text: string;
+}
+
+export function metricsGap(out: { stdout: string; stderr: string; exitCode: number }): MetricsGap | null {
+  const text = (out.stderr.trim() || out.stdout.trim()).split("\n")[0]?.trim() ?? "";
+  if (out.exitCode === 0) return out.stdout.trim() ? null : { kind: "notYet", text };
+  if (/Metrics API not available/i.test(text)) return { kind: "noServer", text };
+  // A pod with no sample yet is NotFound to the metrics API — `pods "x" not found` on
+  // Docker Desktop's metrics-server 0.9.1, though the pod is there.
+  if (/metrics not available yet|\(NotFound\)/i.test(text)) return { kind: "notYet", text };
+  return { kind: "other", text };
+}
+
+// ── A workload's details (ADR 0054, stage 4) ────────────────────────────────
+//
+// What a workload is told (its spec), has (its status) and says (its conditions) —
+// from the workloads poll, no call of its own. What it owns is asked only while
+// its details are on screen: its pods and, for a Deployment, its ReplicaSets — by
+// its selector, then taken by owner, since a selector may match more. A CronJob's
+// Jobs come with the poll.
+
+export type JobStatus = "Complete" | "Failed" | "Suspended" | "Running" | "Pending";
+
+export interface K8sJob {
+  name: string;
+  namespace: string;
+  uid: string;
+  /** The controller that made it — a CronJob for its runs; null — a Job of its own. */
+  owner: { kind: string; name: string; uid: string } | null;
+  status: JobStatus;
+  /** The condition's reason: `BackoffLimitExceeded`, `DeadlineExceeded`, `CompletionsReached`. */
+  reason: string;
+  message: string;
+  succeeded: number;
+  failed: number;
+  active: number;
+  completions: number | null;
+  start: number | null;
+  /** Only a completed Job reports when it ended. */
+  end: number | null;
+  durationSec: number | null;
+  age: string;
+  created: number | null;
+}
+
+const when4 = (v: unknown): number | null => {
+  const t = Date.parse(str(v));
+  return Number.isFinite(t) ? t : null;
+};
+
+function conditionOf(it: unknown, type: string): Record<string, unknown> | undefined {
+  return records(dig(it, "status", "conditions")).find((c) => c.type === type && c.status === "True");
+}
+
+function jobOf(it: Record<string, unknown>, nowMs: number): K8sJob {
+  const ref = records(dig(it, "metadata", "ownerReferences")).find((r) => r.controller === true) ??
+    records(dig(it, "metadata", "ownerReferences"))[0];
+  const complete = conditionOf(it, "Complete") ?? conditionOf(it, "SuccessCriteriaMet");
+  const failed = conditionOf(it, "Failed") ?? conditionOf(it, "FailureTarget");
+  const suspended = conditionOf(it, "Suspended");
+  const active = num(dig(it, "status", "active"));
+  const status: JobStatus = complete ? "Complete" : failed ? "Failed" : suspended ? "Suspended" : active > 0 ? "Running" : "Pending";
+  const said = complete ?? failed ?? suspended;
+  const start = when4(dig(it, "status", "startTime"));
+  const end = when4(dig(it, "status", "completionTime"));
+  const completions = dig(it, "spec", "completions");
+  return {
+    name: str(dig(it, "metadata", "name")),
+    namespace: str(dig(it, "metadata", "namespace")),
+    uid: str(dig(it, "metadata", "uid")),
+    owner: ref ? { kind: str(ref.kind), name: str(ref.name), uid: str(ref.uid) } : null,
+    status,
+    reason: str(said?.reason),
+    message: str(said?.message).trim(),
+    succeeded: num(dig(it, "status", "succeeded")),
+    failed: num(dig(it, "status", "failed")),
+    active,
+    completions: typeof completions === "number" ? completions : null,
+    start,
+    end,
+    durationSec: start != null && end != null ? Math.round((end - start) / 1000) : null,
+    age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    created: createdAt(it),
+  };
+}
+
+/** The Jobs of a `get jobs` list (or of the workloads poll, which carries them). */
+export function parseJobs(raw: string, nowMs: number = Date.now()): K8sJob[] {
+  return items(raw)
+    .filter((it) => str(it.kind || "Job") === "Job")
+    .map((it) => jobOf(it, nowMs));
+}
+
+/** Whose each Job is, by `namespace/name` — what {@link podsOf} rolls a run pod up to. */
+export function jobOwners(jobs: readonly K8sJob[]): Map<string, { kind: string; name: string }> {
+  const out = new Map<string, { kind: string; name: string }>();
+  for (const j of jobs) {
+    if (j.owner?.kind === "CronJob") out.set(`${j.namespace}/${j.name}`, { kind: "CronJob", name: j.owner.name });
+  }
+  return out;
+}
+
+/**
+ * A label selector as kubectl's `--selector` reads it: `k=v`, `k in (a,b)`,
+ * `k notin (a)`, `k`, `!k`. null for an empty one — it selects everything, which is
+ * not a question worth asking.
+ */
+export function selectorArg(selector: unknown): string | null {
+  if (!selector || typeof selector !== "object") return null;
+  const parts: string[] = [];
+  const labels = dig(selector, "matchLabels");
+  if (labels && typeof labels === "object") {
+    for (const [k, v] of Object.entries(labels as Record<string, unknown>)) parts.push(`${k}=${str(v)}`);
+  }
+  for (const e of records(dig(selector, "matchExpressions"))) {
+    const key = str(e.key);
+    const values = Array.isArray(e.values) ? (e.values as unknown[]).map(str).join(",") : "";
+    switch (str(e.operator)) {
+      case "In":
+        parts.push(`${key} in (${values})`);
+        break;
+      case "NotIn":
+        parts.push(`${key} notin (${values})`);
+        break;
+      case "Exists":
+        parts.push(key);
+        break;
+      case "DoesNotExist":
+        parts.push(`!${key}`);
+        break;
+    }
+  }
+  return parts.length ? parts.join(",") : null;
+}
+
+/** The pods a workload's selector picks — taken by owner after ({@link workloadPods}). */
+export function workloadPodsArgs(selector: string): string[] {
+  return ["get", "pods", `--selector=${selector}`, "-o", "json"];
+}
+
+/** A Deployment's ReplicaSets, by its selector — taken by owner after ({@link parseRevisions}). */
+export function replicaSetsArgs(selector: string): string[] {
+  return ["get", "replicasets", `--selector=${selector}`, "-o", "json"];
+}
+
+export interface K8sRevision {
+  revision: number;
+  name: string;
+  images: string[];
+  desired: number;
+  ready: number;
+  age: string;
+  /** The Deployment's own revision — what it rolls out now. */
+  current: boolean;
+}
+
+const templateImages = (spec: unknown): string[] =>
+  records(dig(spec, "template", "spec", "containers")).map((c) => str(c.image)).filter(Boolean);
+
+/** The ReplicaSets the Deployment `ownerUid` owns, as its revisions, newest first. */
+export function parseRevisions(raw: string, ownerUid: string, current: number | null, nowMs: number = Date.now()): K8sRevision[] {
+  return items(raw)
+    .filter((it) => records(dig(it, "metadata", "ownerReferences")).some((r) => str(r.uid) === ownerUid))
+    .map((it) => {
+      const revision = Number.parseInt(str(dig(it, "metadata", "annotations", "deployment.kubernetes.io/revision")), 10);
+      return {
+        revision: Number.isFinite(revision) ? revision : 0,
+        name: str(dig(it, "metadata", "name")),
+        images: templateImages(dig(it, "spec")),
+        desired: num(dig(it, "spec", "replicas")),
+        ready: num(dig(it, "status", "readyReplicas")),
+        age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+        current: current != null && revision === current,
+      };
+    })
+    .sort((a, b) => b.revision - a.revision);
+}
+
+export interface WorkloadReplicas {
+  desired: number;
+  current: number;
+  updated: number;
+  ready: number;
+  available: number;
+  unavailable: number;
+}
+
+export interface WorkloadDetail {
+  kind: K8sWorkload["kind"];
+  /** The application it is part of, with its release, chart and version (stage 6). */
+  app: K8sAppInfo | null;
+  name: string;
+  namespace: string;
+  uid: string;
+  /** What picks its pods (`--selector`); null — none (a CronJob makes Jobs, not pods). */
+  selector: string | null;
+  images: string[];
+  conditions: PodCondition[];
+  replicas: WorkloadReplicas | null;
+  /** How it rolls out: `RollingUpdate · maxSurge 25% · maxUnavailable 25%`, `Recreate`, `OnDelete`. */
+  strategy: string;
+  /** A Deployment's revision now; null — not reported. */
+  revision: number | null;
+  progressDeadlineSec: number | null;
+  paused: boolean;
+  serviceName: string;
+  currentRevision: string;
+  updateRevision: string;
+  claims: { name: string; size: string; storageClass: string }[];
+  misscheduled: number | null;
+  schedule: string;
+  timeZone: string;
+  suspended: boolean;
+  concurrency: string;
+  lastSchedule: number | null;
+  lastSuccess: number | null;
+  activeJobs: number;
+  keep: { succeeded: number | null; failed: number | null } | null;
+  job: K8sJob | null;
+}
+
+const intOr = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+const quantity = (v: unknown): string => (typeof v === "number" ? String(v) : str(v));
+
+function strategyText(s: unknown): string {
+  const type = str(dig(s, "type"));
+  const ru = dig(s, "rollingUpdate");
+  if (type !== "RollingUpdate" || !ru || typeof ru !== "object") return type;
+  const r = ru as Record<string, unknown>;
+  const parts = [type];
+  if ("maxSurge" in r) parts.push(`maxSurge ${quantity(r.maxSurge)}`);
+  if ("maxUnavailable" in r) parts.push(`maxUnavailable ${quantity(r.maxUnavailable)}`);
+  if ("partition" in r) parts.push(`partition ${quantity(r.partition)}`);
+  return parts.join(" · ");
+}
+
+/** What a workload's details show — see the section above; null for what is not one. */
+export function parseWorkloadDetail(item: Record<string, unknown> | null, nowMs: number = Date.now()): WorkloadDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const kind = str(item.kind) as K8sWorkload["kind"];
+  const spec = dig(item, "spec");
+  const st = (k: string) => num(dig(item, "status", k));
+  const conditions = records(dig(item, "status", "conditions")).map((c) => ({
+    type: str(c.type),
+    ok: c.status === "True" ? true : c.status === "False" ? false : null,
+    reason: str(c.reason),
+    message: str(c.message).trim(),
+    since: when4(c.lastTransitionTime),
+  }));
+  let replicas: WorkloadReplicas | null = null;
+  if (kind === "Deployment" || kind === "StatefulSet") {
+    const desired = intOr(dig(spec, "replicas")) ?? 1;
+    replicas = {
+      desired,
+      current: st("replicas"),
+      updated: st("updatedReplicas"),
+      ready: st("readyReplicas"),
+      available: st("availableReplicas"),
+      unavailable: kind === "Deployment" ? st("unavailableReplicas") : Math.max(0, desired - st("availableReplicas")),
+    };
+  } else if (kind === "DaemonSet") {
+    replicas = {
+      desired: st("desiredNumberScheduled"),
+      current: st("currentNumberScheduled"),
+      updated: st("updatedNumberScheduled"),
+      ready: st("numberReady"),
+      available: st("numberAvailable"),
+      unavailable: st("numberUnavailable"),
+    };
+  }
+  const revision = Number.parseInt(str(dig(item, "metadata", "annotations", "deployment.kubernetes.io/revision")), 10);
+  const jobSpec = kind === "CronJob" ? dig(spec, "jobTemplate", "spec") : spec;
+  const keep =
+    kind === "CronJob"
+      ? { succeeded: intOr(dig(spec, "successfulJobsHistoryLimit")), failed: intOr(dig(spec, "failedJobsHistoryLimit")) }
+      : null;
+  return {
+    kind,
+    app: appInfo(dig(item, "metadata", "labels"), dig(item, "metadata", "annotations")),
+    name: str(dig(item, "metadata", "name")),
+    namespace: str(dig(item, "metadata", "namespace")),
+    uid: str(dig(item, "metadata", "uid")),
+    selector: kind === "CronJob" ? null : selectorArg(dig(spec, "selector")),
+    images: templateImages(jobSpec),
+    conditions,
+    replicas,
+    strategy: strategyText(kind === "Deployment" ? dig(spec, "strategy") : dig(spec, "updateStrategy")),
+    revision: kind === "Deployment" && Number.isFinite(revision) ? revision : null,
+    progressDeadlineSec: kind === "Deployment" ? intOr(dig(spec, "progressDeadlineSeconds")) : null,
+    paused: dig(spec, "paused") === true,
+    serviceName: str(dig(spec, "serviceName")),
+    currentRevision: str(dig(item, "status", "currentRevision")),
+    updateRevision: str(dig(item, "status", "updateRevision")),
+    claims: records(dig(spec, "volumeClaimTemplates")).map((c) => ({
+      name: str(dig(c, "metadata", "name")),
+      size: quantity(dig(c, "spec", "resources", "requests", "storage")),
+      storageClass: str(dig(c, "spec", "storageClassName")),
+    })),
+    misscheduled: kind === "DaemonSet" ? st("numberMisscheduled") : null,
+    schedule: str(dig(spec, "schedule")),
+    timeZone: str(dig(spec, "timeZone")),
+    suspended: dig(spec, "suspend") === true,
+    concurrency: str(dig(spec, "concurrencyPolicy")),
+    lastSchedule: when4(dig(item, "status", "lastScheduleTime")),
+    lastSuccess: when4(dig(item, "status", "lastSuccessfulTime")),
+    activeJobs: records(dig(item, "status", "active")).length,
+    keep,
+    job: kind === "Job" ? jobOf(item, nowMs) : null,
+  };
+}
+
+/** The workload `kind namespace/name` of a parsed list ({@link listItems}); null — not in it. */
+export function workloadItem(
+  list: readonly Record<string, unknown>[],
+  kind: string,
+  namespace: string,
+  name: string,
+): Record<string, unknown> | null {
+  return (
+    list.find(
+      (it) =>
+        str(it.kind) === kind && str(dig(it, "metadata", "name")) === name && str(dig(it, "metadata", "namespace")) === namespace,
+    ) ?? null
+  );
+}
+
+/** A workload's own pods, by the owner the list rolls them up to — not by a selector. */
+export function workloadPods(pods: readonly K8sPod[], w: { kind: string; name: string; namespace: string }): K8sPod[] {
+  return pods.filter((p) => p.namespace === w.namespace && p.ownerKind === w.kind && p.ownerName === w.name);
+}
+
+// ── A node and the volume claims (ADR 0054, stage 5) ─────────────────────────
+//
+// What a node has (capacity), can give (allocatable), says (its conditions) and is
+// asked for: the requests of its running pods, summed as the scheduler sums them —
+// the figure `kubectl describe node` calls «Allocated resources». Its pods and its
+// usage now are asked only while its details are on screen. A volume claim says
+// why it waits through its events (already polled with the view), and who mounts
+// it through the pods' own volumes.
+
+export interface NodeCondition extends PodCondition {
+  /**
+   * Whether all is well by it: Ready when True, a pressure (or NetworkUnavailable)
+   * when False; null — Unknown.
+   */
+  healthy: boolean | null;
+}
+
+/** CPU in millicores, memory and storage in MiB, pods as a count; null — not reported. */
+export interface NodeResources {
+  cpu: number | null;
+  memory: number | null;
+  pods: number | null;
+  storage: number | null;
+}
+
+export interface NodeDetail {
+  name: string;
+  conditions: NodeCondition[];
+  capacity: NodeResources;
+  allocatable: NodeResources;
+  /** `key=value:Effect`. */
+  taints: string[];
+  unschedulable: boolean;
+  info: { kubelet: string; runtime: string; os: string; kernel: string; arch: string };
+  addresses: { type: string; address: string }[];
+  labels: { key: string; value: string }[];
+  age: string;
+}
+
+function nodeResources(r: unknown): NodeResources {
+  const count = Number.parseInt(str(dig(r, "pods")), 10);
+  return {
+    cpu: parseCpuMillis(str(dig(r, "cpu")) || undefined),
+    memory: parseMemMiB(str(dig(r, "memory")) || undefined),
+    pods: Number.isFinite(count) ? count : null,
+    storage: parseMemMiB(str(dig(r, "ephemeral-storage")) || undefined),
+  };
+}
+
+/** What a node's details show — see the section above; null for what is not a node. */
+export function parseNodeDetail(item: Record<string, unknown> | null, nowMs: number = Date.now()): NodeDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const conditions = records(dig(item, "status", "conditions")).map((c) => {
+    const status = str(c.status);
+    const ok = status === "True" ? true : status === "False" ? false : null;
+    return {
+      type: str(c.type),
+      ok,
+      healthy: ok == null ? null : c.type === "Ready" ? ok : !ok,
+      reason: str(c.reason),
+      message: str(c.message).trim(),
+      since: Number.isFinite(Date.parse(str(c.lastTransitionTime))) ? Date.parse(str(c.lastTransitionTime)) : null,
+    };
+  });
+  const labels = dig(item, "metadata", "labels");
+  return {
+    name: str(dig(item, "metadata", "name")),
+    conditions: [...conditions.filter((c) => c.type === "Ready"), ...conditions.filter((c) => c.type !== "Ready")],
+    capacity: nodeResources(dig(item, "status", "capacity")),
+    allocatable: nodeResources(dig(item, "status", "allocatable")),
+    taints: records(dig(item, "spec", "taints")).map(
+      (x) => `${str(x.key)}${str(x.value) ? `=${str(x.value)}` : ""}:${str(x.effect)}`,
+    ),
+    unschedulable: dig(item, "spec", "unschedulable") === true,
+    info: {
+      kubelet: str(dig(item, "status", "nodeInfo", "kubeletVersion")),
+      runtime: str(dig(item, "status", "nodeInfo", "containerRuntimeVersion")),
+      os: str(dig(item, "status", "nodeInfo", "osImage")),
+      kernel: str(dig(item, "status", "nodeInfo", "kernelVersion")),
+      arch: str(dig(item, "status", "nodeInfo", "architecture")),
+    },
+    addresses: records(dig(item, "status", "addresses")).map((a) => ({ type: str(a.type), address: str(a.address) })),
+    labels:
+      labels && typeof labels === "object"
+        ? Object.entries(labels as Record<string, unknown>)
+            .map(([key, value]) => ({ key, value: str(value) }))
+            .sort((a, b) => a.key.localeCompare(b.key))
+        : [],
+    age: k8sAge(str(dig(item, "metadata", "creationTimestamp")), nowMs),
+  };
+}
+
+/** A node's pods, every namespace's — asked while its details are on screen. */
+export function nodePodsArgs(node: string): string[] {
+  return ["get", "pods", "-A", `--field-selector=spec.nodeName=${node}`, "-o", "json"];
+}
+
+/** A node's usage now — asked while its details are on screen. */
+export function topNodeArgs(node: string): string[] {
+  return ["top", "node", node, "--no-headers"];
+}
+
+/** `top node <name> --no-headers` (NAME CPU CPU% MEMORY MEMORY%): millicores, MiB; null — no row. */
+export function parseTopNode(
+  raw: string,
+  node: string,
+): { cpu: number | null; cpuPct: number | null; mem: number | null; memPct: number | null } | null {
+  for (const line of raw.split("\n")) {
+    const cols = line.trim().split(/\s+/).filter(Boolean);
+    if (cols.length < 5 || cols[0] !== node) continue;
+    const pct = (v: string) => {
+      const n = Number.parseFloat(v);
+      return v.endsWith("%") && Number.isFinite(n) ? n : null;
+    };
+    return { cpu: parseCpuMillis(cols[1]), cpuPct: pct(cols[2]), mem: parseMemMiB(cols[3]), memPct: pct(cols[4]) };
+  }
+  return null;
+}
+
+/**
+ * What a pod asks of a node, as the scheduler counts it: its app containers and
+ * native sidecars together — or an init container, which runs alone (with the
+ * sidecars started before it), when that asks for more. 0 — it asks for nothing.
+ */
+export function podRequest(item: unknown, key: "cpu" | "memory"): number {
+  const parse = key === "cpu" ? parseCpuMillis : parseMemMiB;
+  const req = (c: Record<string, unknown>) => parse(str(dig(c, "resources", "requests", key)) || undefined) ?? 0;
+  let sidecars = 0;
+  let init = 0;
+  for (const c of records(dig(item, "spec", "initContainers"))) {
+    if (isSidecar(c)) sidecars += req(c);
+    else init = Math.max(init, req(c) + sidecars);
+  }
+  const app = records(dig(item, "spec", "containers")).reduce((sum, c) => sum + req(c), 0) + sidecars;
+  return Math.max(app, init);
+}
+
+export interface NodeAllocated {
+  /** Pods that hold resources on it — not finished ones. */
+  pods: number;
+  requests: { cpu: number; memory: number };
+  /** The limits that are declared; `unbounded` pods hold no ceiling at all on one of the two. */
+  limits: { cpu: number; memory: number };
+  unbounded: number;
+}
+
+/** What a node's running pods ask for and are held to ({@link nodePodsArgs}). */
+export function nodeAllocated(pods: readonly Record<string, unknown>[]): NodeAllocated {
+  const out: NodeAllocated = { pods: 0, requests: { cpu: 0, memory: 0 }, limits: { cpu: 0, memory: 0 }, unbounded: 0 };
+  for (const it of pods) {
+    const phase = str(dig(it, "status", "phase"));
+    if (phase === "Succeeded" || phase === "Failed") continue;
+    out.pods += 1;
+    out.requests.cpu += podRequest(it, "cpu");
+    out.requests.memory += podRequest(it, "memory");
+    let bounded = true;
+    for (const c of podContainers(it)) {
+      const cpu = parseCpuMillis(str(dig(c, "resources", "limits", "cpu")) || undefined);
+      const mem = parseMemMiB(str(dig(c, "resources", "limits", "memory")) || undefined);
+      if (cpu == null || mem == null) bounded = false;
+      out.limits.cpu += cpu ?? 0;
+      out.limits.memory += mem ?? 0;
+    }
+    if (!bounded) out.unbounded += 1;
+  }
+  return out;
+}
+
+/** The volume claims in scope as JSON (stage 5). */
+export function claimsArgs(): string[] {
+  return ["get", "persistentvolumeclaims", "-o", "json"];
+}
+
+export interface K8sClaim {
+  name: string;
+  namespace: string;
+  /** Bound · Pending · Lost. */
+  phase: string;
+  /** What it got (`status.capacity.storage`); "" — not bound yet. */
+  capacity: string;
+  /** What it asked for. */
+  requested: string;
+  storageClass: string;
+  /** `RWO`, `ROX`, `RWX`, `RWOP`, comma-joined. */
+  access: string;
+  volume: string;
+  age: string;
+  created: number | null;
+}
+
+const ACCESS: Record<string, string> = {
+  ReadWriteOnce: "RWO",
+  ReadOnlyMany: "ROX",
+  ReadWriteMany: "RWX",
+  ReadWriteOncePod: "RWOP",
+};
+
+export function parseClaims(raw: string, nowMs: number = Date.now()): K8sClaim[] {
+  return items(raw).map((it) => ({
+    name: str(dig(it, "metadata", "name")),
+    namespace: str(dig(it, "metadata", "namespace")),
+    phase: str(dig(it, "status", "phase")),
+    capacity: str(dig(it, "status", "capacity", "storage")),
+    requested: str(dig(it, "spec", "resources", "requests", "storage")),
+    storageClass: str(dig(it, "spec", "storageClassName")),
+    access: (Array.isArray(dig(it, "spec", "accessModes")) ? (dig(it, "spec", "accessModes") as unknown[]) : [])
+      .map((m) => ACCESS[str(m)] ?? str(m))
+      .join(","),
+    volume: str(dig(it, "spec", "volumeName")),
+    age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    created: createdAt(it),
+  }));
+}
+
+/** Who mounts each claim, by `namespace/claim` — from the pods' own volumes. */
+export function claimUsers(pods: readonly Record<string, unknown>[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const it of pods) {
+    const ns = str(dig(it, "metadata", "namespace"));
+    const name = str(dig(it, "metadata", "name"));
+    for (const v of records(dig(it, "spec", "volumes"))) {
+      const claim = str(dig(v, "persistentVolumeClaim", "claimName"));
+      if (!claim) continue;
+      const key = `${ns}/${claim}`;
+      out.set(key, [...(out.get(key) ?? []), name]);
+    }
+  }
+  return out;
+}
+
+/** What the cluster said last about each claim, by `namespace/claim` — why one waits. */
+export function claimReasons(events: readonly K8sEvent[]): Map<string, { type: string; reason: string; message: string }> {
+  const out = new Map<string, { type: string; reason: string; message: string }>();
+  // `parseEvents` gives the newest first: the first one seen is the latest.
+  for (const e of events) {
+    if (!e.object.startsWith("PersistentVolumeClaim/")) continue;
+    const key = `${e.namespace}/${e.object.slice("PersistentVolumeClaim/".length)}`;
+    if (!out.has(key)) out.set(key, { type: e.type, reason: e.reason, message: e.message });
+  }
+  return out;
+}
+
+// ── An object's application (ADR 0054, stage 6) ─────────────────────────────
+//
+// What application an object is part of, read from Kubernetes' recommended labels
+// and Helm's own annotation — the way a compose stack is read from its labels. An
+// object that does not say is no application's: `app: web` is a selector's label,
+// not a claim about an application, and a name is never parsed for one.
+
+const L_PART_OF = "app.kubernetes.io/part-of";
+const L_INSTANCE = "app.kubernetes.io/instance";
+const L_NAME = "app.kubernetes.io/name";
+const L_MANAGED = "app.kubernetes.io/managed-by";
+const A_RELEASE = "meta.helm.sh/release-name";
+
+export interface K8sApp {
+  name: string;
+  /** What says it: `app.kubernetes.io/part-of`, a Helm release, the instance, the name. */
+  source: "partOf" | "helm" | "instance" | "name";
+  /** It is (part of) a Helm release. */
+  helm: boolean;
+}
+
+const label = (m: unknown, key: string): string => str(dig(m, key)).trim();
+
+/**
+ * The application an object is part of: its `part-of` — the higher-level
+ * application — first; else its Helm release (Helm's annotation on what it
+ * manages, or the instance of a chart `managed-by: Helm`, which is what a pod of
+ * it carries); else its instance; else its name. null — it does not say.
+ */
+export function appOf(labels: unknown, annotations?: unknown): K8sApp | null {
+  const release = label(annotations, A_RELEASE) || (label(labels, L_MANAGED) === "Helm" ? label(labels, L_INSTANCE) : "");
+  const helm = Boolean(release) || label(labels, L_MANAGED) === "Helm";
+  const partOf = label(labels, L_PART_OF);
+  if (partOf) return { name: partOf, source: "partOf", helm };
+  if (release) return { name: release, source: "helm", helm: true };
+  const instance = label(labels, L_INSTANCE);
+  if (instance) return { name: instance, source: "instance", helm };
+  const name = label(labels, L_NAME);
+  if (name) return { name, source: "name", helm };
+  return null;
+}
+
+export interface K8sAppInfo {
+  app: K8sApp;
+  /** The Helm release it belongs to; "" — none. */
+  release: string;
+  /** `helm.sh/chart`: the chart and its version. */
+  chart: string;
+  version: string;
+  component: string;
+  managedBy: string;
+}
+
+/** The whole of what an object says of its application — for its details; null — nothing. */
+export function appInfo(labels: unknown, annotations?: unknown): K8sAppInfo | null {
+  const app = appOf(labels, annotations);
+  if (!app) return null;
+  return {
+    app,
+    release: label(annotations, A_RELEASE) || (label(labels, L_MANAGED) === "Helm" ? label(labels, L_INSTANCE) : ""),
+    chart: label(labels, "helm.sh/chart"),
+    version: label(labels, "app.kubernetes.io/version"),
+    component: label(labels, "app.kubernetes.io/component"),
+    managedBy: label(labels, L_MANAGED),
+  };
+}
+
+/** The list group of an application, by namespace — the same name in two namespaces is two. */
+const appGroup = (x: { namespace: string; app?: K8sApp | null }) =>
+  x.app ? { key: `${x.namespace}/${x.app.name}`, label: x.app.name } : { key: "", label: "" };
 
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
@@ -1114,9 +2472,9 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
     const unschedulable = dig(it, "spec", "unschedulable") === true;
     const status = `${ready ? "Ready" : "NotReady"}${unschedulable ? ",SchedulingDisabled" : ""}`;
     const addrs = dig(it, "status", "addresses");
-    const internalIp = Array.isArray(addrs)
-      ? str((addrs as Record<string, unknown>[]).find((a) => a.type === "InternalIP")?.address)
-      : "";
+    const address = (type: string): string =>
+      Array.isArray(addrs) ? str((addrs as Record<string, unknown>[]).find((a) => a.type === type)?.address) : "";
+    const internalIp = address("InternalIP");
     return {
       name: str(dig(it, "metadata", "name")),
       status,
@@ -1124,14 +2482,22 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
       roles: nodeRoles(dig(it, "metadata", "labels")),
       version: str(dig(it, "status", "nodeInfo", "kubeletVersion")),
       internalIp,
+      externalIp: address("ExternalIP"),
+      hostname: address("Hostname"),
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+      pressures: records(conds)
+        .filter((c) => c.type !== "Ready" && c.status === "True")
+        .map((c) => str(c.type)),
     };
   });
 }
 
 export function parseEvents(raw: string, nowMs: number = Date.now()): K8sEvent[] {
   const out = items(raw).map((it) => {
+    // A repeat is kept in `series` by reporters on the newer API (the scheduler):
+    // its count and last time are there, `count` and `lastTimestamp` are not set.
     const when =
+      str(dig(it, "series", "lastObservedTime")) ||
       str(dig(it, "lastTimestamp")) ||
       str(dig(it, "eventTime")) ||
       str(dig(it, "firstTimestamp")) ||
@@ -1144,10 +2510,12 @@ export function parseEvents(raw: string, nowMs: number = Date.now()): K8sEvent[]
       reason: str(dig(it, "reason")),
       object: kind ? `${kind}/${objName}` : objName,
       namespace: str(dig(it, "metadata", "namespace")),
-      message: str(dig(it, "message")),
-      count: Math.max(1, num(dig(it, "count"))),
+      // kubelet ends a probe's output with its newline.
+      message: str(dig(it, "message")).trim(),
+      count: Math.max(1, num(dig(it, "series", "count")) || num(dig(it, "count"))),
       age: k8sAge(when, nowMs),
       ts: Number.isFinite(ts) ? ts : 0,
+      container: /^spec\.(?:initContainers|containers|ephemeralContainers)\{(.+)\}$/.exec(str(dig(it, "involvedObject", "fieldPath")))?.[1] ?? "",
     };
   });
   // Newest first.
@@ -1168,8 +2536,111 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
   return type === "Warning" ? "warn" : "idle";
 }
 
-/** The views of a pod's details (`K8sDetail`). */
-export type K8sDetailTab = "overview" | "logs" | "describe" | "yaml";
+/** The views of a pod's details (`K8sDetail`); the log first — where details open (v1.33). */
+export type K8sDetailTab = "logs" | "overview" | "resources" | "describe" | "yaml";
+
+/** The views of a workload's details (stage 4). */
+export type K8sWorkloadTab = "overview" | "describe" | "yaml";
+
+/**
+ * Why a pod needs a look (v1.33): the strip above the list. Stage 2 names the cause
+ * where the pod's own object says it: killed for memory, an image that cannot be
+ * pulled, no node that takes it, a readiness probe that fails.
+ */
+export type PodAttentionReason =
+  | "oom"
+  | "imagePull"
+  | "failing"
+  | "unschedulable"
+  | "pending"
+  | "probe"
+  | "notReady"
+  | "restarts";
+
+export interface PodAttention {
+  /** {@link metricsKey} of the pod. */
+  key: string;
+  name: string;
+  namespace: string;
+  reason: PodAttentionReason;
+  tone: "warn" | "bad";
+  /** What says it: kubectl's status, ready containers, restarts since the panel opened. */
+  detail: string;
+}
+
+/** A pod may sit in Pending this long while it is scheduled and pulled before it is news. */
+export const PENDING_GRACE_MS = 120_000;
+/** A running pod may be not ready this long while its probes warm up. */
+export const READY_GRACE_MS = 60_000;
+/**
+ * An OOM kill is news this long — about as long as the cluster keeps events. Its
+ * container remembers the last kill until the next end, so one long ago would
+ * keep a pod that has run fine since in the strip.
+ */
+export const RECENT_OOM_MS = 3_600_000;
+
+const POD_ATTENTION_RANK: Record<PodAttentionReason, number> = {
+  oom: 0,
+  imagePull: 1,
+  failing: 2,
+  unschedulable: 3,
+  pending: 4,
+  probe: 5,
+  notReady: 6,
+  restarts: 7,
+};
+
+/** `1/2` → whether every container is ready; an unreadable figure is not a finding. */
+function allReady(ready: string): boolean {
+  const m = /^(\d+)\/(\d+)$/.exec(ready);
+  return !m || +m[1] >= +m[2];
+}
+
+/**
+ * What needs a look, worst first — the same reading as the state dot
+ * (`podPhaseTone`), plus what time makes a problem: a pod that has been Pending
+ * or not ready past its grace. Restarts are history until they grow while the
+ * panel is open (`baseline`, as the Docker panel and the monitoring page read
+ * their counters).
+ */
+export function podAttention(
+  pods: readonly K8sPod[],
+  baseline: ReadonlyMap<string, number>,
+  nowMs: number = Date.now(),
+): PodAttention[] {
+  const out: PodAttention[] = [];
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    const age = p.created == null ? null : nowMs - p.created;
+    const add = (reason: PodAttentionReason, tone: "warn" | "bad", detail: string) =>
+      out.push({ key, name: p.name, namespace: p.namespace, reason, tone, detail });
+    const tone = podPhaseTone(p.status);
+    const seen = baseline.get(key);
+    const up = p.status === "Running" || p.status === "NotReady";
+    const restarted = p.restarts > 0 ? ` · ↻${p.restarts}` : "";
+    if (p.oomAt != null && nowMs - p.oomAt <= RECENT_OOM_MS) add("oom", "bad", `OOMKilled${restarted}`);
+    else if (p.imagePull) add("imagePull", "bad", p.status);
+    else if (tone === "bad") add("failing", "bad", `${p.status}${restarted}`);
+    else if (up && !allReady(p.ready) && age != null && age >= READY_GRACE_MS)
+      add(p.readinessFailing ? "probe" : "notReady", "warn", p.ready);
+    else if (tone === "warn" && !up && p.status !== "Terminating" && age != null && age >= PENDING_GRACE_MS)
+      add(p.unschedulable ? "unschedulable" : "pending", "warn", p.unschedulable || p.status);
+    else if (seen != null && p.restarts > seen) add("restarts", "warn", `↻+${p.restarts - seen}`);
+  }
+  return out.sort(
+    (a, b) => POD_ATTENTION_RANK[a.reason] - POD_ATTENTION_RANK[b.reason] || a.name.localeCompare(b.name),
+  );
+}
+
+/** The restart counts {@link podAttention} compares against: the first seen of each pod, kept. */
+export function podRestartBaseline(prev: ReadonlyMap<string, number>, pods: readonly K8sPod[]): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const p of pods) {
+    const key = metricsKey(p.namespace, p.name);
+    next.set(key, prev.get(key) ?? p.restarts);
+  }
+  return next;
+}
 
 // ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
 //
@@ -1190,7 +2661,7 @@ export interface PodUsage {
 }
 
 /** The workload kinds in the order the panel has always listed them. */
-export const WORKLOAD_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "CronJob"];
+export const WORKLOAD_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "CronJob", "Job"];
 const kindRank = (kind: string): number => {
   const i = WORKLOAD_KINDS.indexOf(kind);
   return i === -1 ? WORKLOAD_KINDS.length : i;
@@ -1217,6 +2688,8 @@ export function podSchema(usage: (p: K8sPod) => PodUsage): ListSchema<K8sPod> {
         of: (p) => (p.ownerName ? { key: `${p.ownerKind}/${p.ownerName}`, label: p.ownerName } : { key: "", label: "" }),
         compare: (a, b) => byText(a.key, b.key),
       },
+      // By the application its labels name (stage 6); pods that name none are the rest.
+      { id: "app", of: appGroup, compare: (a, b) => byText(a.label, b.label) },
       { id: "node", of: (p) => ({ key: p.node, label: p.node }), compare: (a, b) => byText(a.label, b.label) },
       { id: "namespace", of: (p) => ({ key: p.namespace, label: p.namespace }), compare: (a, b) => byText(a.label, b.label) },
     ],
@@ -1239,6 +2712,7 @@ export const WORKLOAD_SCHEMA: ListSchema<K8sWorkload> = {
   ],
   groups: [
     { id: "kind", of: (w) => ({ key: w.kind, label: w.kind }), compare: (a, b) => kindRank(a.key) - kindRank(b.key) },
+    { id: "app", of: appGroup, compare: (a, b) => byText(a.label, b.label) },
     { id: "namespace", of: (w) => ({ key: w.namespace, label: w.namespace }), compare: (a, b) => byText(a.label, b.label) },
   ],
   facets: [{ id: "kind", value: (w) => w.kind, order: WORKLOAD_KINDS }],

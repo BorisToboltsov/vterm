@@ -156,6 +156,70 @@ Cobertura и JSON-summary для CI.
 инварианта «логика в `.ts`»: если оболочка требует покрытия — в ней завелась логика,
 которой там быть не должно.
 
+## Живой стек compose
+
+Модуль `live_compose` в [container.rs](../src-tauri/src/container.rs) поднимает из временного
+каталога одноразовый стек `alpine` (`vterm-live-compose`), спрашивает его метки так же, как
+`container_run`, проверяет, что свой каталог проходит, а чужой — нет, и снимает стек. Нужен
+запущенный docker и образ `alpine:latest`; помечен `#[ignore]`:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_compose -- --ignored
+```
+
+## Живой кластер k8s
+
+Стенд [e2e/k8s/stand.yaml](../e2e/k8s/stand.yaml) — по объекту на каждую поломку, которую панель
+k8s обязана объяснить (CrashLoop, OOMKilled, упавший init-контейнер, Pending без места, проба
+готовности и живости, нет образа и ProgressDeadlineExceeded, упавший CronJob, ничейные PVC, сервис
+без эндпоинтов, нагрузка у лимита CPU и памяти — `busy`, выкатка, застревающая на полпути, —
+`rollout`, релиз Helm `shop` (метки Helm без самого Helm), ingress на
+несуществующий сервис), и здоровый под со всем, что показывает «Обзор». Пространства имён в файле
+нет — его задаёт тот, кто применяет. Поломки — в том, что контейнеры делают, а не в их правах: каждый
+под — не root, с файловой системой только для чтения, seccomp и лимитами, и Trivy к стенду претензий
+не имеет, кроме пространства имён (`.trivyignore.yaml`). Проверить без сети — локальным образом
+Trivy и, как CI, от корня репозитория: исключения записаны путями от него, а скан одной папки
+называет файл относительно неё, и исключение не срабатывает (`.claude` — локальные worktree):
+
+```sh
+docker run --rm --network none -v "$PWD:/repo:ro" -w /repo aquasec/trivy:0.69.3 \
+  fs --scanners misconfig --skip-check-update --ignorefile .trivyignore.yaml --skip-dirs .claude --exit-code 1 .
+```
+
+Модуль `live_kube` в [kube.rs](../src-tauri/src/kube.rs) создаёт своё пространство
+`vterm-live-<pid>`, применяет стенд и ждёт до 4 минут (первый запуск CronJob — на начале минуты),
+пока проявится каждая поломка, — иначе называет непроявившиеся. Затем застревает выкатку `rollout`
+(`set image` на несуществующий образ) и читает её ReplicaSet'ы и поды по селектору, как подробности;
+поды ноды всех пространств имён, `top node` и заявки на тома (`data-db-0` — Bound, две ждут). Потом гоняет чтения панели и те,
+что понадобятся следующим этапам, через `check_args` и `exec::run_local`, как `kubectl_run` на
+локальной вкладке. Пространство удаляется при любом исходе. Трогает только контекст
+`docker-desktop` или названный в `VTERM_LIVE_KUBE_CONTEXT`. Без metrics-server `top` отвечает
+«Metrics API not available» — тест принимает это как честное «нет замеров». Нужен кластер
+(Kubernetes в Docker Desktop или kind) и место на диске его ВМ: на полном диске etcd падает, и API
+отвечает `EOF`. Помечен `#[ignore]`:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --lib live_kube -- --ignored
+```
+
+Для «Ресурсов» нужен metrics-server — в Docker Desktop его нет. Ставится официальным манифестом
+выпуска с флагом `--kubelet-insecure-tls` (kubelet в kind подписан сам собой), убирается тем же
+манифестом через `kubectl delete -f`:
+
+```sh
+curl -sSLo components.yaml https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+sed 's|        - --metric-resolution=15s|&\n        - --kubelet-insecure-tls|' components.yaml | kubectl --context docker-desktop apply -f -
+```
+
+Стенд руками — посмотреть панель на настоящем кластере:
+
+```sh
+kubectl --context docker-desktop create namespace vterm-stand
+kubectl --context docker-desktop apply -n vterm-stand -f e2e/k8s/stand.yaml
+kubectl --context docker-desktop -n vterm-stand set image deployment/rollout app=busybox:vterm-missing-tag
+kubectl --context docker-desktop delete namespace vterm-stand
+```
+
 ## Живые SFTP-тесты
 
 Модуль `live_sftp` в [sftp.rs](../src-tauri/src/sftp.rs) гоняет round-trip сохранения и

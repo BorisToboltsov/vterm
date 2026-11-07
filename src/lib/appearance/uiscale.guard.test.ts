@@ -78,8 +78,11 @@ const THROUGH_THE_SCALE: Record<string, [RegExp, string][]> = {
   "src/lib/files/FileBrowser.svelte": [[/const ROW_H = \$derived\(uiPx\(28\)\)/, "file rows"]],
   "src/lib/sync/SyncModal.svelte": [[/const ROW_H = \$derived\(uiPx\(28\)\)/, "plan rows"]],
   "src/lib/docker/DockerNetGraph.svelte": [
-    [/const H = \$derived\(uiPx\(26\)\)/, "graph rows"],
-    [/const PAD = \$derived\(uiPx\(4\)\)/, "graph padding"],
+    [/const H = \$derived\(uiPx\(\d+\)\)/, "graph rows"],
+    [/const PAD = \$derived\(uiPx\(\d+\)\)/, "graph padding"],
+    // The boxes of the topology (v1.33) are drawn in the same units as the rows.
+    [/const BOX = \$derived\(uiPx\(\d+\)\)/, "graph boxes"],
+    [/const PORT = \$derived\(uiPx\(\d+\)\)/, "graph port boxes"],
   ],
   "src/lib/git/GitGraph.svelte": [
     [/const rowPx = \$derived\(uiPx\(H\)\)/, "history rows"],

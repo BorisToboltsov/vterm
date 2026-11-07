@@ -25,6 +25,30 @@ struct DriverCall<'a> {
     audit: Option<(&'a str, String)>,
 }
 
+/// A read-only `docker` call the backend makes itself (the stack's labels) —
+/// never audited: it changes nothing.
+fn docker_call<'a>(
+    args: &'a [String],
+    timeout_secs: u64,
+    audit: Option<(&'a str, String)>,
+) -> DriverCall<'a> {
+    DriverCall {
+        label: "docker",
+        remote: exec::remote_command(args),
+        local: exec::Local {
+            program: &args[0],
+            args: &args[1..],
+            env: &[],
+            stdin: None,
+            missing: exec::Missing::Exit127,
+            timeout_hint: "",
+        },
+        timeout_secs,
+        local_refusal: None,
+        audit,
+    }
+}
+
 /// Run a driver command over whichever transport the session has (principle 3):
 /// a dedicated exec channel for an SSH tab, a local spawn for a local shell tab.
 /// The argv was checked by the driver's policy before it got here.
@@ -259,6 +283,25 @@ pub async fn container_run(
     mirror: bool,
 ) -> AppResult<exec::ExecOutput> {
     container::check_args(&args)?;
+    // A compose command that names a directory or files reads a definition from
+    // them: they must be the ones the stack was brought up with, by its
+    // containers' own labels — asked here, over the same transport (v1.33).
+    if let Some(names) = container::compose_names(&args).filter(|n| n.reads_definition()) {
+        let labels = match names.project.as_deref() {
+            Some(project) if !project.is_empty() => {
+                let query = container::stack_labels_args(project);
+                let asked = run_driver(&state, &session_id, docker_call(&query, 20, None)).await?;
+                if asked.exit_code != 0 {
+                    return Err(AppError::Message(format!(
+                        "docker compose: the labels of `{project}` could not be read"
+                    )));
+                }
+                asked.stdout
+            }
+            _ => String::new(),
+        };
+        container::check_stack(&names, &labels).map_err(AppError::Message)?;
+    }
     let call = DriverCall {
         label: "docker",
         remote: exec::remote_command(&args),

@@ -261,7 +261,7 @@ describe("K8sPanel — where a pod's details open", () => {
       ownerReferences: [],
     },
     spec: { nodeName: "node-1", containers: [{ name: "web" }] },
-    status: { phase: "Running", containerStatuses: [{ ready: true, restartCount: 0 }] },
+    status: { phase: "Running", containerStatuses: [{ name: "web", state: { running: {} }, ready: true, restartCount: 0 }] },
   };
 
   /** Give the panel a width and let its observer see it (jsdom has no layout). */
@@ -287,7 +287,8 @@ describe("K8sPanel — where a pod's details open", () => {
   it("a narrow dock opens them as a dialog", async () => {
     await mountWithPod("k-narrow");
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    // On the log (v1.33): it is what a pod is opened for.
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-log-tools"));
     expect(screen.queryByTestId("k8s-side")).toBeNull();
   });
 
@@ -297,7 +298,7 @@ describe("K8sPanel — where a pod's details open", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     const side = screen.getByTestId("k8s-side");
-    expect(side).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(side).toContainElement(screen.getByTestId("k8s-log-tools"));
     // The list is still there, next to the pane.
     expect(screen.getByTestId("k8s-list-part")).toContainElement(
       screen.getByRole("button", { name: "View details" }),
@@ -347,7 +348,7 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(screen.getByTestId("k8s-side")).toBeInTheDocument();
     resize(400);
     await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-detail-overview"));
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("k8s-log-tools"));
   });
 
   it("…and keep the view they were on: Describe stays Describe, not Overview again (v1.17)", async () => {
@@ -371,14 +372,135 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(within(again).queryByTestId("k8s-detail-overview")).toBeNull();
   });
 
-  it("details opened anew start from Overview", async () => {
+  it("details opened anew start from the log", async () => {
     await mountWithPod("k-anew");
     resize(1200);
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     await fireEvent.click(screen.getByTestId("k8s-detail-tab-yaml"));
-    expect(screen.queryByTestId("k8s-detail-overview")).toBeNull();
+    expect(screen.getByTestId("k8s-detail-tab-yaml").className).toContain("text-accent");
     await fireEvent.click(screen.getByTestId("side-pane-close"));
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByTestId("k8s-detail-overview")).toBeInTheDocument();
+    expect(screen.getByTestId("k8s-log-tools")).toBeInTheDocument();
+  });
+
+  it("a click on the row opens the details, and the list is laid out by its own width", async () => {
+    await mountWithPod("k-row");
+    resize(1200);
+    const list = screen.getByTestId("k8s-list-part");
+    expect(list).toHaveClass("@container");
+    await fireEvent.click(screen.getByText("web-5f7c"));
+    expect(screen.getByTestId("k8s-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("k8s-row")).toHaveAttribute("aria-current", "true");
+    // jsdom gives the list no width of its own: a narrow list in a wide panel.
+    expect(list).toHaveAttribute("data-list-wide", "false");
+  });
+});
+
+// Stage 4 (ADR 0054): a workload's details, and a CronJob's run pods under it.
+describe("K8sPanel — workloads (stage 4)", () => {
+  const DEPLOY = {
+    kind: "Deployment",
+    metadata: { name: "rollout", namespace: "shop", uid: "uid-rollout", creationTimestamp: "2026-10-07T10:00:00Z" },
+    spec: { replicas: 2, selector: { matchLabels: { app: "rollout" } }, strategy: { type: "Recreate" } },
+    status: { replicas: 2, readyReplicas: 2, availableReplicas: 2, updatedReplicas: 2 },
+  };
+  const CRON = { kind: "CronJob", metadata: { name: "report", namespace: "shop", uid: "uid-report" }, spec: { schedule: "*/1 * * * *" }, status: {} };
+  const JOB = {
+    kind: "Job",
+    metadata: { name: "report-29901003", namespace: "shop", uid: "uid-job", ownerReferences: [{ kind: "CronJob", name: "report", uid: "uid-report", controller: true }] },
+    spec: { completions: 1 },
+    status: { failed: 1, conditions: [{ type: "Failed", status: "True", reason: "BackoffLimitExceeded" }] },
+  };
+  const RUN_POD = {
+    metadata: { name: "report-29901003-wx9hk", namespace: "shop", creationTimestamp: "2026-10-07T10:00:00Z", ownerReferences: [{ kind: "Job", name: "report-29901003", controller: true }] },
+    spec: { containers: [{ name: "report" }] },
+    status: { phase: "Failed", containerStatuses: [{ name: "report", state: { terminated: { exitCode: 2, reason: "Error" } } }] },
+  };
+  const ok = (items: unknown[]) => ({ stdout: JSON.stringify({ items }), stderr: "", exitCode: 0 });
+
+  it("a CronJob's run pods are grouped under the CronJob, asked of their Jobs", async () => {
+    answer = (args) => {
+      if (args.includes("get") && args.includes("pods")) return ok([RUN_POD]);
+      if (args.includes("get") && args.includes("jobs")) return ok([JOB]);
+      return undefined;
+    };
+    render(K8sPanel, { props: { sessionId: "k-cron-pods", visible: true, sessionReady: true } });
+    await idle();
+    expect(calls.some((c) => c.includes("get jobs -o json"))).toBe(true);
+    const group = screen.getAllByTestId("k8s-group").find((g) => g.textContent?.includes("report"));
+    expect(group).toBeDefined();
+    expect(group!.textContent).not.toContain("report-29901003");
+  });
+
+  it("a click on a workload opens its details; a CronJob's runs are in them", async () => {
+    answer = (args) => (args.includes("deployments,statefulsets,daemonsets,cronjobs,jobs") ? ok([DEPLOY, CRON, JOB]) : undefined);
+    render(K8sPanel, { props: { sessionId: "k-work", visible: true, sessionReady: true } });
+    await idle();
+    await fireEvent.click(screen.getByRole("button", { name: "Workloads" }));
+    await idle();
+    const rows = screen.getAllByTestId("k8s-workload-row");
+    // A CronJob's run is not a row of its own.
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("rollout"), expect.stringContaining("report")]);
+    await fireEvent.click(rows[1]);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByTestId("k8s-work-job")).toHaveTextContent("BackoffLimitExceeded");
+    // Another row, picked while it is open, is shown in the same place.
+    await fireEvent.click(rows[0]);
+    expect(within(screen.getByRole("dialog")).getByTestId("k8s-work-overview")).toHaveTextContent("Recreate");
+  });
+});
+
+// Stage 5 (ADR 0054): a node's details, and the volume claims of the Cluster view.
+describe("K8sPanel — the Cluster view (stage 5)", () => {
+  const ok = (items: unknown[]) => ({ stdout: JSON.stringify({ items }), stderr: "", exitCode: 0 });
+  const NODE = {
+    metadata: { name: "desktop-control-plane", labels: {} },
+    status: { conditions: [{ type: "Ready", status: "True" }, { type: "DiskPressure", status: "True", reason: "KubeletHasDiskPressure" }], nodeInfo: { kubeletVersion: "v1.31.1" } },
+  };
+  const claim = (name: string, phase: string) => ({
+    metadata: { name, namespace: "shop" },
+    spec: { accessModes: ["ReadWriteOnce"], resources: { requests: { storage: "64Mi" } }, storageClassName: "standard" },
+    status: { phase, ...(phase === "Bound" ? { capacity: { storage: "64Mi" } } : {}) },
+  });
+  const DB = { metadata: { name: "db-0", namespace: "shop" }, spec: { volumes: [{ name: "data", persistentVolumeClaim: { claimName: "data-db-0" } }] }, status: {} };
+  const WAIT = {
+    type: "Normal",
+    reason: "WaitForFirstConsumer",
+    involvedObject: { kind: "PersistentVolumeClaim", name: "spare" },
+    metadata: { namespace: "shop" },
+    message: "waiting for first consumer to be created before binding",
+  };
+
+  async function openCluster(id: string, pvcs: unknown[]) {
+    answer = (args) => {
+      if (args.includes("nodes")) return ok([NODE]);
+      if (args.includes("persistentvolumeclaims")) return ok(pvcs);
+      if (args.includes("events")) return ok([WAIT]);
+      if (args.includes("get") && args.includes("pods")) return ok([DB]);
+      return undefined;
+    };
+    render(K8sPanel, { props: { sessionId: id, visible: true, sessionReady: true } });
+    await idle();
+    const before = calls.length;
+    await fireEvent.click(screen.getByRole("button", { name: "Cluster" }));
+    await idle();
+    return calls.slice(before);
+  }
+
+  it("lists the claims with who mounts each and why one waits; the pods are asked only for them", async () => {
+    await openCluster("k-claims", [claim("data-db-0", "Bound"), claim("spare", "Pending")]);
+    const [data, spare] = screen.getAllByTestId("k8s-claim-row");
+    expect(data).toHaveTextContent("mounted by db-0");
+    expect(spare).toHaveTextContent("not mounted by any pod");
+    expect(within(spare).getByTestId("k8s-claim-why")).toHaveTextContent("waiting for first consumer");
+    expect(screen.getByTestId("k8s-node-pressure")).toHaveTextContent("DiskPressure");
+  });
+
+  it("asks no pods when there are no claims, and a click on a node opens its details", async () => {
+    const asked = await openCluster("k-noclaims", []);
+    expect(asked.some((c) => c.includes("persistentvolumeclaims"))).toBe(true);
+    expect(asked.filter((c) => c.includes("get pods -o json"))).toEqual([]);
+    await fireEvent.click(screen.getByTestId("k8s-node-row"));
+    expect(within(screen.getByRole("dialog")).getByTestId("k8s-node-overview")).toHaveTextContent("Ready");
   });
 });

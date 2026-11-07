@@ -14,7 +14,7 @@
   // The view and the chosen container are passed on as bindings, not spread with
   // the rest: the panel owns them, so that they are the same in this dialog and
   // in the pane beside the list.
-  let { open = false, tab = $bindable("overview"), container = $bindable(null), ...rest }: Props = $props();
+  let { open = false, tab = $bindable("logs"), container = $bindable(null), ...rest }: Props = $props();
 </script>
 
 <Modal {open} title={rest.pod?.name ?? ""} width="w-[52rem]" showClose onclose={rest.onclose}>

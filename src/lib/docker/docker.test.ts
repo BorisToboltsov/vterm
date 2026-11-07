@@ -5,8 +5,39 @@ import {
   type DockerContainer,
   groupUsage,
   parseMemUsed,
-  parseLimits,
-  inspectLimitsArgs,
+  parseFacts,
+  inspectFactsArgs,
+  parseInspectTime,
+  staleFacts,
+  factsKey,
+  containerAddress,
+  containerHealth,
+  exitCodeOf,
+  stateSummary,
+  dockerAttention,
+  restartBaseline,
+  followLogsArgv,
+  FACTS_TTL_MS,
+  parseContainerDetail,
+  parseDiskUsage,
+  parseDiskDetail,
+  eventsArgs,
+  parseEvents,
+  eventsOf,
+  eventWord,
+  eventTone,
+  crashLoop,
+  ioPair,
+  rateOf,
+  resourceReadings,
+  resourceKey,
+  imageContainers,
+  imageSchema,
+  diskUsageArgs,
+  diskDetailArgs,
+  nanosDuration,
+  healthTest,
+  type DockerFacts,
   versionArgs,
   psArgs,
   imagesArgs,
@@ -78,11 +109,16 @@ describe("argument builders", () => {
     expect(fmt).toContain(US);
   });
 
-  it("psArgs asks for network membership last, after the fields it already had", () => {
-    // Appended, not inserted: every earlier field keeps its position.
+  it("psArgs appends what it learns to ask, after the fields it already had", () => {
+    // Appended, not inserted: every earlier field keeps its position — network
+    // membership (v1.5), then the stack's files and env file (v1.33).
     const fields = psArgs().at(-1)!.split(US);
-    expect(fields.at(-1)).toBe("{{.Networks}}");
-    expect(fields).toHaveLength(12);
+    expect(fields[11]).toBe("{{.Networks}}");
+    expect(fields.slice(12)).toEqual([
+      '{{.Label "com.docker.compose.project.config_files"}}',
+      '{{.Label "com.docker.compose.project.environment_file"}}',
+    ]);
+    expect(fields).toHaveLength(14);
     expect(fields[5]).toBe("{{.Ports}}");
   });
 
@@ -433,25 +469,217 @@ describe("view helpers", () => {
   });
 });
 
-describe("inspectLimitsArgs / parseLimits", () => {
+describe("inspectFactsArgs / parseFacts", () => {
   const US = "\x1f";
+  const GS = "\x1d";
+  const RS = "\x1e";
+  const row = (...f: string[]) => f.join(US);
 
-  it("asks for every id in one inspect", () => {
-    const a = inspectLimitsArgs(["aaa", "bbb"]);
-    expect(a[0]).toBe("docker");
-    expect(a[1]).toBe("inspect");
+  it("asks for every id in one inspect, networks as a range", () => {
+    const a = inspectFactsArgs(["aaa", "bbb"]);
+    expect(a.slice(0, 3)).toEqual(["docker", "inspect", "--format"]);
     expect(a.slice(-2)).toEqual(["aaa", "bbb"]);
+    expect(a[3]).toContain("{{range $name, $net := .NetworkSettings.Networks}}");
+    expect(a[3]).toContain("{{.RestartCount}}");
   });
 
-  it("reads cores and bytes, treating docker's 0 as 'no limit'", () => {
-    const raw = [`aaa${US}500000000${US}1073741824`, `bbb${US}0${US}0`].join("\n");
-    const m = parseLimits(raw);
-    expect(m.get("aaa")).toEqual({ cpuCores: 0.5, memBytes: 1073741824 });
-    expect(m.get("bbb")).toEqual({ cpuCores: null, memBytes: null });
+  it("reads ceilings, restarts, the mode, every address and how it exited", () => {
+    const nets = `shop_default${GS}172.20.0.5${GS}${RS}shop_internal${GS}10.9.0.5${GS}fd00::5${RS}`;
+    const raw = [
+      row("aaa", "500000000", "1073741824", "3", "shop_default", nets, "2026-11-06T10:41:02.123456789Z", "0001-01-01T00:00:00Z", "0", "false"),
+      row("bbb", "0", "0", "0", "host", "", "2026-11-01T00:00:00Z", "2026-11-02T00:00:00Z", "137", "true"),
+    ].join("\n");
+    const m = parseFacts(raw);
+    expect(m.get("aaa")).toEqual({
+      cpuCores: 0.5,
+      memBytes: 1073741824,
+      restarts: 3,
+      networkMode: "shop_default",
+      addresses: [
+        { network: "shop_default", ipv4: "172.20.0.5", ipv6: "" },
+        { network: "shop_internal", ipv4: "10.9.0.5", ipv6: "fd00::5" },
+      ],
+      startedAt: Date.parse("2026-11-06T10:41:02.123Z"),
+      finishedAt: null,
+      exitCode: 0,
+      oomKilled: false,
+    });
+    expect(m.get("bbb")).toMatchObject({ cpuCores: null, memBytes: null, networkMode: "host", addresses: [], exitCode: 137, oomKilled: true });
+  });
+
+  it("says nothing it was not told", () => {
+    const m = parseFacts(row("ccc", "x", "", "", "", "", "", "", "", ""));
+    expect(m.get("ccc")).toMatchObject({ cpuCores: null, memBytes: null, restarts: null, exitCode: null, startedAt: null });
   });
 
   it("skips junk rows instead of producing bogus entries", () => {
-    expect(parseLimits(`\n${US}${US}\n`).size).toBe(0);
+    expect(parseFacts(`\n${US}${US}\n`).size).toBe(0);
+  });
+
+  it("reads docker's nanosecond stamps and its zero time as never", () => {
+    expect(parseInspectTime("2026-11-06T10:41:02.123456789Z")).toBe(Date.parse("2026-11-06T10:41:02.123Z"));
+    expect(parseInspectTime("2026-11-06T10:41:02+03:00")).toBe(Date.parse("2026-11-06T07:41:02Z"));
+    expect(parseInspectTime("0001-01-01T00:00:00Z")).toBeNull();
+    expect(parseInspectTime("junk")).toBeNull();
+    expect(parseInspectTime(undefined)).toBeNull();
+  });
+});
+
+const ctr = (over: Partial<DockerContainer> = {}): DockerContainer => ({
+  id: "aaa",
+  name: "shop-api-1",
+  image: "shop-api:2",
+  state: "running",
+  status: "Up 2 hours",
+  ports: "",
+  project: "shop",
+  service: "api",
+  workdir: null,
+  createdAt: "",
+  runningFor: "",
+  networks: ["shop_default"],
+  ...over,
+});
+const facts = (over: Partial<DockerFacts> = {}): DockerFacts => ({
+  cpuCores: null,
+  memBytes: null,
+  restarts: 0,
+  networkMode: "shop_default",
+  addresses: [{ network: "shop_default", ipv4: "172.20.0.5", ipv6: "" }],
+  startedAt: null,
+  finishedAt: null,
+  exitCode: 0,
+  oomKilled: false,
+  ...over,
+});
+
+describe("staleFacts", () => {
+  const now = 1_000_000;
+  const entry = (c: DockerContainer, at: number) => ({ facts: facts(), key: factsKey(c), at });
+
+  it("asks for what it never asked about", () => {
+    expect(staleFacts([ctr()], new Map(), now)).toEqual(["aaa"]);
+  });
+
+  it("asks again when what ps shows changed — a start, a network", () => {
+    const c = ctr();
+    const cache = new Map([["aaa", entry(c, now)]]);
+    expect(staleFacts([c], cache, now)).toEqual([]);
+    expect(staleFacts([ctr({ state: "exited" })], cache, now)).toEqual(["aaa"]);
+    expect(staleFacts([ctr({ networks: ["shop_default", "x"] })], cache, now)).toEqual(["aaa"]);
+  });
+
+  it("asks a running container again once its answer is old, a stopped one never", () => {
+    const run = ctr();
+    const stop = ctr({ id: "bbb", state: "exited" });
+    const cache = new Map([
+      ["aaa", entry(run, now)],
+      ["bbb", entry(stop, now)],
+    ]);
+    expect(staleFacts([run, stop], cache, now + FACTS_TTL_MS - 1)).toEqual([]);
+    expect(staleFacts([run, stop], cache, now + FACTS_TTL_MS)).toEqual(["aaa"]);
+  });
+});
+
+describe("containerAddress", () => {
+  it("shows the first address and keeps the rest", () => {
+    const f = facts({ addresses: [{ network: "a", ipv4: "", ipv6: "fd00::1" }, { network: "b", ipv4: "10.0.0.2", ipv6: "" }] });
+    expect(containerAddress(ctr(), f)).toEqual({ kind: "ip", first: "fd00::1", all: f.addresses });
+  });
+
+  it("names what has no address of its own", () => {
+    expect(containerAddress(ctr(), facts({ networkMode: "host", addresses: [] }))).toEqual({ kind: "host" });
+    expect(containerAddress(ctr(), facts({ networkMode: "none", addresses: [] }))).toEqual({ kind: "none" });
+    const peer = ctr({ id: "abcdef123456", name: "vpn" });
+    expect(containerAddress(ctr(), facts({ networkMode: "container:abcdef1234567890", addresses: [] }), [peer])).toEqual({ kind: "shared", with: "vpn" });
+    expect(containerAddress(ctr(), facts({ networkMode: "container:0123456789abcdef0", addresses: [] }), [])).toEqual({ kind: "shared", with: "0123456789ab" });
+  });
+
+  it("tells a stopped container from an unknown answer", () => {
+    expect(containerAddress(ctr({ state: "exited" }), facts({ addresses: [] }))).toEqual({ kind: "down" });
+    expect(containerAddress(ctr(), facts({ addresses: [] }))).toEqual({ kind: "unknown" });
+    expect(containerAddress(ctr(), undefined)).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("container health, exit and state cell", () => {
+  it("reads the health check and the exit code from ps", () => {
+    expect(containerHealth(ctr({ status: "Up 2 hours (healthy)" }))).toBe("healthy");
+    expect(containerHealth(ctr({ status: "Up 2 hours (unhealthy)" }))).toBe("unhealthy");
+    expect(containerHealth(ctr({ status: "Up 3 seconds (health: starting)" }))).toBe("starting");
+    expect(containerHealth(ctr())).toBeNull();
+    expect(exitCodeOf(ctr({ status: "Exited (1) 2 days ago" }))).toBe(1);
+    expect(exitCodeOf(ctr({ status: "Up 2 hours" }))).toBeNull();
+  });
+
+  it("says the health, the exit or the state, with the time since", () => {
+    const now = Date.parse("2026-11-06T12:00:00Z");
+    const started = Date.parse("2026-11-06T10:00:00Z");
+    expect(stateSummary(ctr({ status: "Up (unhealthy)" }), facts({ startedAt: started }), now)).toEqual({ word: "unhealthy", tone: "warn", age: "2h" });
+    expect(stateSummary(ctr(), facts(), now)).toEqual({ word: "running", tone: "ok", age: null });
+    expect(stateSummary(ctr({ state: "exited", status: "Exited (1) 1 hour ago" }), undefined, now)).toEqual({ word: "exit 1", tone: "bad", age: null });
+    // A stop the user asked for is not an error.
+    expect(stateSummary(ctr({ state: "exited" }), facts({ exitCode: 143 }), now).tone).toBe("idle");
+    expect(stateSummary(ctr({ state: "exited" }), facts({ exitCode: 137, oomKilled: true }), now).word).toBe("OOMKilled");
+    expect(stateSummary(ctr({ state: "paused" }), undefined, now)).toEqual({ word: "paused", tone: "warn", age: null });
+  });
+});
+
+describe("dockerAttention", () => {
+  const f = (id: string, over: Partial<DockerFacts> = {}) => [id, facts(over)] as const;
+
+  it("lists what needs a look, worst first", () => {
+    const list = [
+      ctr({ id: "a", name: "a-unhealthy", status: "Up (unhealthy)" }),
+      ctr({ id: "b", name: "b-dead", state: "dead" }),
+      ctr({ id: "c", name: "c-failed", state: "exited", status: "Exited (2) 1 day ago" }),
+      ctr({ id: "d", name: "d-stopped", state: "exited", status: "Exited (0) 1 day ago" }),
+      ctr({ id: "e", name: "e-oom", state: "exited" }),
+      ctr({ id: "f", name: "f-fine" }),
+    ];
+    const known = new Map([f("e", { exitCode: 137, oomKilled: true })]);
+    const got = dockerAttention(list, known, new Map());
+    expect(got.map((x) => [x.name, x.reason, x.tone])).toEqual([
+      ["b-dead", "dead", "bad"],
+      ["e-oom", "oom", "bad"],
+      ["a-unhealthy", "unhealthy", "warn"],
+      ["c-failed", "exited", "warn"],
+    ]);
+    expect(got.find((x) => x.reason === "exited")?.detail).toBe("exit 2");
+  });
+
+  it("lets an old exit go: a week-old crash is history, an hour-old one is news", () => {
+    const now = Date.parse("2026-11-06T12:00:00Z");
+    const list = [
+      ctr({ id: "old", name: "old", state: "exited" }),
+      ctr({ id: "new", name: "new", state: "exited" }),
+      ctr({ id: "unk", name: "unknown-time", state: "exited", status: "Exited (2) 1 hour ago" }),
+    ];
+    const known = new Map([
+      f("old", { exitCode: 255, finishedAt: now - 8 * 86_400_000 }),
+      f("new", { exitCode: 1, finishedAt: now - 3_600_000 }),
+    ]);
+    expect(dockerAttention(list, known, new Map(), now).map((x) => x.name)).toEqual(["new", "unknown-time"]);
+  });
+
+  it("counts restarts only once they grow while the panel is open", () => {
+    const list = [ctr({ id: "a" })];
+    const seen = restartBaseline(new Map(), new Map([f("a", { restarts: 5 })]), ["a"]);
+    expect(dockerAttention(list, new Map([f("a", { restarts: 5 })]), seen)).toEqual([]);
+    const grown = dockerAttention(list, new Map([f("a", { restarts: 7 })]), seen);
+    expect(grown).toEqual([{ id: "a", name: "shop-api-1", reason: "restarts", tone: "warn", detail: "↻+2" }]);
+  });
+
+  it("keeps the first count it saw and forgets the gone", () => {
+    const first = restartBaseline(new Map(), new Map([f("a", { restarts: 1 }), f("b", { restarts: 0 })]), ["a", "b"]);
+    const next = restartBaseline(first, new Map([f("a", { restarts: 9 })]), ["a"]);
+    expect([...next]).toEqual([["a", 1]]);
+  });
+});
+
+describe("followLogsArgv", () => {
+  it("follows the log from the last lines, in a terminal", () => {
+    expect(followLogsArgv("abc", 500)).toEqual(["docker", "logs", "-f", "--tail", "500", "--timestamps", "abc"]);
   });
 });
 
@@ -559,5 +787,246 @@ describe("docker creation time", () => {
 
   it("dockerDate hands back an unreadable stamp as docker printed it", () => {
     expect(dockerDate("3 weeks ago", "en", now)).toBe("3 weeks ago");
+  });
+});
+
+// Stage 1: what `docker inspect` says about a container in trouble. The fixture
+// is cut from a real Docker 29 answer, with the values replaced.
+const INSPECT_FIXTURE = JSON.stringify([
+  {
+    Id: "2b504a4d8e00",
+    Path: "uvicorn",
+    Args: ["app.main:app", "--host", "0.0.0.0", "--forwarded-allow-ips", "*"],
+    State: {
+      Status: "running",
+      Health: {
+        Status: "unhealthy",
+        FailingStreak: 1200,
+        Log: [
+          { Start: "2026-11-06T21:13:30.444329969Z", End: "2026-11-06T21:13:30.7Z", ExitCode: 1, Output: "Traceback (most recent call last):\n  ...\nurllib.error.HTTPError: HTTP Error 503: Service Unavailable\n" },
+          { Start: "2026-11-06T21:13:40.739114210Z", End: "2026-11-06T21:13:41Z", ExitCode: 0, Output: "" },
+        ],
+      },
+    },
+    HostConfig: { RestartPolicy: { Name: "unless-stopped", MaximumRetryCount: 0 } },
+    Config: {
+      Cmd: ["uvicorn"],
+      Env: ["PATH=/usr/local/bin", "APP_JWT_SECRET=s3cr3t", "APP_DATABASE_URL=postgres://app:hunter2@db/app", "APP_STORAGE_KEY=k", "PYTHONUNBUFFERED=1"],
+      Healthcheck: {
+        Test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"],
+        Interval: 10_000_000_000,
+        Timeout: 3_000_000_000,
+        Retries: 6,
+      },
+      Labels: { "com.docker.compose.service": "backend", "com.docker.compose.project": "life-e2e" },
+    },
+    Mounts: [
+      { Type: "volume", Name: "life_storage", Source: "/var/lib/docker/volumes/life_storage/_data", Destination: "/data", RW: true },
+      { Type: "bind", Source: "/srv/app/config", Destination: "/etc/app", RW: false },
+    ],
+  },
+]);
+
+describe("parseContainerDetail (stage 1)", () => {
+  it("reads the health check and its last runs, newest first, with what each said last", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.health).toMatchObject({
+      status: "unhealthy",
+      failingStreak: 1200,
+      test: `python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"`,
+      interval: "10s",
+      timeout: "3s",
+      retries: 6,
+    });
+    expect(d.health!.probes.map((p) => [p.exitCode, p.last])).toEqual([
+      [0, ""],
+      [1, "urllib.error.HTTPError: HTTP Error 503: Service Unavailable"],
+    ]);
+    expect(d.health!.probes[1].start).toBe(Date.parse("2026-11-06T21:13:30.444Z"));
+  });
+
+  it("reads how it is started and restarted, and what is mounted", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.command).toBe('uvicorn app.main:app --host 0.0.0.0 --forwarded-allow-ips "*"');
+    expect(d.restartPolicy).toBe("unless-stopped");
+    expect(d.mounts).toEqual([
+      { type: "volume", source: "life_storage", destination: "/data", readOnly: false },
+      { type: "bind", source: "/srv/app/config", destination: "/etc/app", readOnly: true },
+    ]);
+    expect(d.labels.map((l) => l.key)).toEqual(["com.docker.compose.project", "com.docker.compose.service"]);
+  });
+
+  it("marks what looks like a secret, by name or by value", () => {
+    const d = parseContainerDetail(INSPECT_FIXTURE)!;
+    expect(d.env.map((e) => [e.key, e.sensitive])).toEqual([
+      ["APP_DATABASE_URL", true],
+      ["APP_JWT_SECRET", true],
+      ["APP_STORAGE_KEY", true],
+      ["PATH", false],
+      ["PYTHONUNBUFFERED", false],
+    ]);
+  });
+
+  it("says when there is no health check, and when the answer is not a container", () => {
+    const plain = JSON.parse(INSPECT_FIXTURE);
+    delete plain[0].Config.Healthcheck;
+    delete plain[0].State.Health;
+    plain[0].HostConfig.RestartPolicy = { Name: "on-failure", MaximumRetryCount: 5 };
+    const d = parseContainerDetail(JSON.stringify(plain))!;
+    expect(d.health).toBeNull();
+    expect(d.restartPolicy).toBe("on-failure:5");
+    expect(parseContainerDetail("Error: No such object: x")).toBeNull();
+    expect(parseContainerDetail(JSON.stringify([{ Id: "img", RepoTags: ["a:b"] }]))).toBeNull();
+  });
+
+  it("prints docker's durations and health checks the way they are written", () => {
+    expect(nanosDuration(10e9)).toBe("10s");
+    expect(nanosDuration(90e9)).toBe("1m30s");
+    expect(nanosDuration(120e9)).toBe("2m");
+    expect(nanosDuration(5e8)).toBe("500ms");
+    expect(nanosDuration(0)).toBeNull();
+    expect(nanosDuration("x")).toBeNull();
+    expect(healthTest(["CMD-SHELL", "pg_isready -U app || exit 1"])).toBe("pg_isready -U app || exit 1");
+    expect(healthTest(["CMD", "curl", "-f", "http://localhost/"])).toBe("curl -f http://localhost/");
+    expect(healthTest(["CMD", "sh", "-c", 'echo "$X"'])).toBe(`sh -c 'echo "$X"'`);
+    expect(healthTest(["NONE"])).toBe("");
+    expect(healthTest(undefined)).toBe("");
+  });
+});
+
+// Stage 2: what docker takes on the disk and who uses what — real Docker 29
+// answers, cut down.
+const DF = [
+  '{"Active":"10","Reclaimable":"2.075GB (22%)","Size":"9.182GB","TotalCount":"45","Type":"Images"}',
+  '{"Active":"11","Reclaimable":"9.62MB (99%)","Size":"9.62MB","TotalCount":"22","Type":"Containers"}',
+  '{"Active":"12","Reclaimable":"33.34GB (98%)","Size":"33.96GB","TotalCount":"143","Type":"Local Volumes"}',
+  '{"Active":"0","Reclaimable":"10.55GB","Size":"13.77GB","TotalCount":"322","Type":"Build Cache"}',
+].join("\n");
+const DF_V = JSON.stringify({
+  Images: [
+    { Containers: "1", ID: "sha256:b3a3978ded91c09e74bf", Repository: "e2e-kbdint", Tag: "latest", UniqueSize: "119MB" },
+    { Containers: "0", ID: "sha256:5872f763edff919d0a6d", Repository: "<none>", Tag: "<none>", UniqueSize: "31.43MB" },
+  ],
+  Containers: [],
+  Volumes: [
+    { Links: "0", Name: "e7691e94d4c1", Size: "67.3MB" },
+    { Links: "2", Name: "life_storage", Size: "1.2GB" },
+  ],
+  BuildCache: [],
+});
+
+describe("disk usage (stage 2)", () => {
+  it("asks docker itself, as JSON lines", () => {
+    expect(diskUsageArgs()).toEqual(["docker", "system", "df", "--format", "{{json .}}"]);
+    expect(diskDetailArgs()).toEqual(["docker", "system", "df", "-v", "--format", "{{json .}}"]);
+  });
+
+  it("reads the four rows as docker counts them, and what a prune would free", () => {
+    const rows = parseDiskUsage(DF);
+    expect(rows.map((r) => r.kind)).toEqual(["images", "containers", "volumes", "cache"]);
+    expect(rows[2]).toEqual({ kind: "volumes", total: 143, active: 12, size: "33.96GB", reclaimable: "33.34GB", reclaimablePct: 98 });
+    expect(rows[3]).toMatchObject({ reclaimable: "10.55GB", reclaimablePct: null });
+    expect(parseDiskUsage("Error response from daemon\n{broken")).toEqual([]);
+    expect(parseDiskUsage('{"Type":"Something new","Size":"1B"}')).toEqual([]);
+  });
+
+  it("reads who uses each image and each volume, by id and by name", () => {
+    const d = parseDiskDetail(DF_V)!;
+    expect(d.imageContainers.get("b3a3978ded91c09e74bf")).toBe(1);
+    expect(d.volumes.get("e7691e94d4c1")).toEqual({ links: 0, size: "67.3MB" });
+    expect(parseDiskDetail("nope")).toBeNull();
+    const img = (id: string) => ({ id, repository: "r", tag: "t", size: "1MB", created: "" });
+    expect(imageContainers(img("b3a3978ded91"), d)).toBe(1);
+    expect(imageContainers(img("5872f763edff"), d)).toBe(0);
+    expect(imageContainers(img("ffffffffffff"), d)).toBeNull();
+    expect(imageContainers(img("b3a3978ded91"), null)).toBeNull();
+  });
+
+  it("offers the «in use» facet only once docker has said who uses what", () => {
+    expect(imageSchema().facets?.map((f) => f.id)).toEqual(["kind"]);
+    const d = parseDiskDetail(DF_V)!;
+    const schema = imageSchema((i) => imageContainers(i, d));
+    const use = (schema.facets ?? []).find((f) => f.id === "use");
+    if (!use) throw new Error("the «in use» facet is missing");
+    const img = (id: string) => ({ id, repository: "r", tag: "t", size: "1MB", created: "" });
+    expect([use.value(img("b3a3978ded91")), use.value(img("5872f763edff")), use.value(img("ffff"))]).toEqual(["used", "unused", ""]);
+  });
+});
+
+// Stage 3: what happened to the containers lately — real Docker 29 events.
+const EV = (ns: string, action: string, id: string, name: string, exit = "", signal = "") =>
+  [ns, action, id, name, exit, signal].join("\x1f");
+const EVENTS = [
+  EV("1794001113669318929", "die", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1", "1"),
+  EV("1794001113755722220", "start", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1"),
+  EV("1794001140383168719", "die", "f9ab1ee05285b6af630b", "life-e2e-imaging-worker-1", "1"),
+  EV("1794001150000000000", "health_status: unhealthy", "aa11", "web"),
+  EV("1794001160000000000", "kill", "aa11", "web", "", "15"),
+  EV("1794001170000000000", "die", "aa11", "web", "143"),
+  EV("1794001180000000000", "exec_die", "aa11", "web"),
+  "junk",
+].join("\n");
+
+describe("events (stage 3)", () => {
+  it("asks for a snapshot that ends, of what matters, not of every health check", () => {
+    const a = eventsArgs();
+    expect(a.slice(0, 6)).toEqual(["docker", "events", "--since", "10m", "--until", "0s"]);
+    expect(a).toContain("event=die");
+    expect(a).not.toContain("event=exec_die");
+  });
+
+  it("reads events newest first, health as its status, nanoseconds as milliseconds", () => {
+    const ev = parseEvents(EVENTS);
+    expect(ev).toHaveLength(6);
+    expect(ev[0]).toMatchObject({ kind: "die", exitCode: 143, name: "web", at: 1794001170000 });
+    expect(ev.find((e) => e.kind === "health")?.health).toBe("unhealthy");
+    expect(eventsOf(ev, "f9ab1ee05285").map((e) => e.kind)).toEqual(["die", "start", "die"]);
+    expect(eventsOf(ev, "")).toEqual([]);
+  });
+
+  it("says each event in docker's words, with a tone", () => {
+    const ev = parseEvents(EVENTS);
+    const byKind = (k: string) => ev.find((e) => e.kind === k)!;
+    expect(eventWord(ev[0])).toBe("die · exit 143");
+    expect(eventTone(ev[0])).toBe("idle"); // docker stop's SIGTERM
+    expect(eventWord(byKind("kill"))).toBe("kill · 15");
+    expect(eventWord(byKind("health"))).toBe("health · unhealthy");
+    expect(eventTone(byKind("health"))).toBe("warn");
+    expect(eventTone(eventsOf(ev, "f9ab")[0])).toBe("bad");
+  });
+
+  it("sees a crash loop the restart policy hides — two deaths with an error, not one, not a stop", () => {
+    const ev = parseEvents(EVENTS);
+    expect(crashLoop(eventsOf(ev, "f9ab"))).toEqual({ dies: 2, exitCode: 1, ooms: 0, last: 1794001140383 });
+    expect(crashLoop(eventsOf(ev, "aa11"))).toBeNull();
+    const looping = ctr({ id: "f9ab1ee05285", name: "life-e2e-imaging-worker-1", status: "Up 3 seconds" });
+    const got = dockerAttention([looping], new Map(), new Map(), 1794001200000, ev);
+    expect(got).toEqual([{ id: "f9ab1ee05285", name: "life-e2e-imaging-worker-1", reason: "crashing", tone: "bad", detail: "2× · exit 1 · 59s" }]);
+  });
+});
+
+describe("resources over time (stage 3)", () => {
+  it("reads docker's I/O halves and turns counters into rates", () => {
+    expect(ioPair("1.2kB / 3.4MB")).toEqual([1200, 3.4e6]);
+    expect(ioPair("")).toEqual([null, null]);
+    expect(rateOf(1000, 3000, 2)).toBe(1000);
+    expect(rateOf(null, 3000, 2)).toBeNull();
+    // A counter that went back (a restart) is not a negative rate.
+    expect(rateOf(3000, 1000, 2)).toBeNull();
+    expect(rateOf(1000, 3000, 0)).toBeNull();
+  });
+
+  it("gives each running container its readings, rates from the previous poll, and gaps to the stopped", () => {
+    const stat = (id: string, net: string): DockerStat => ({ id, name: id, cpu: "12.5%", mem: "100MiB / 1GiB", memPerc: "", netIo: net, blockIo: "0B / 2kB", pids: "1" });
+    const list = [ctr({ id: "aaa" }), ctr({ id: "bbb", state: "exited" })];
+    const parsePct = (v?: string) => (v ? Number.parseFloat(v) : null);
+    const first = resourceReadings([stat("aaa", "1kB / 2kB")], list, new Map(), 1000, parsePct);
+    expect(first.readings[resourceKey("aaa", "cpu")]).toBe(12.5);
+    expect(first.readings[resourceKey("aaa", "mem")]).toBe(100 * 1024 ** 2);
+    expect(first.readings[resourceKey("aaa", "rx")]).toBeNull(); // no previous poll yet
+    expect(resourceKey("bbb", "cpu") in first.readings).toBe(false);
+    const second = resourceReadings([stat("aaa", "3kB / 2kB")], list, first.totals, 3000, parsePct);
+    expect(second.readings[resourceKey("aaa", "rx")]).toBe(1000);
+    expect(second.readings[resourceKey("aaa", "tx")]).toBe(0);
   });
 });

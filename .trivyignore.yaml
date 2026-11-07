@@ -23,3 +23,13 @@ misconfigurations:
       The Linux box of scripts/linux-box.sh runs one command — a build or the
       E2E suite — and exits with its status. It serves nothing and has no
       state of health to probe; a HEALTHCHECK would have nothing to ask.
+  - id: KSV-0110
+    paths:
+      - e2e/k8s/stand.yaml
+    statement: >-
+      The k8s stand of the live tests has no namespace on purpose: it is applied
+      with `kubectl apply -n` into a namespace of its own — `vterm-stand` by hand,
+      `vterm-live-<pid>` by live_kube, which deletes it after the run. A namespace
+      written in the file would make it refuse any other. Every other KSV rule
+      holds: non-root, read-only root filesystem, no capabilities, seccomp
+      RuntimeDefault, requests and limits.

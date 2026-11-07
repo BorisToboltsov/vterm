@@ -9,6 +9,7 @@
 // (ports, image names), the same trick `git.ts` uses. `{{json .}}` is avoided
 // because its `Labels`/`Ports` fields are themselves comma-joined and ambiguous.
 
+import { isSensitiveEnv } from "../ai/redact";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import { compactAge } from "../ui/age";
 import { NO_GROUPS, type ListOrder, type ListSchema } from "../ui/listview";
@@ -19,6 +20,9 @@ const US = "\x1f";
 const LABEL_PROJECT = "com.docker.compose.project";
 const LABEL_SERVICE = "com.docker.compose.service";
 const LABEL_WORKDIR = "com.docker.compose.project.working_dir";
+/** The files and the env file a stack was brought up with (v1.33, stage 5). */
+const LABEL_FILES = "com.docker.compose.project.config_files";
+const LABEL_ENVFILE = "com.docker.compose.project.environment_file";
 
 // ── Argument builders ────────────────────────────────────────────────────────
 
@@ -50,6 +54,8 @@ export function psArgs(): string[] {
     "{{.CreatedAt}}",
     "{{.RunningFor}}",
     "{{.Networks}}",
+    `{{.Label "${LABEL_FILES}"}}`,
+    `{{.Label "${LABEL_ENVFILE}"}}`,
   ].join(US);
   return ["docker", "ps", "-a", "--format", fmt];
 }
@@ -74,6 +80,59 @@ export function volumesArgs(): string[] {
   return ["docker", "volume", "ls", "--format", fmt];
 }
 
+/**
+ * What the images, containers, volumes and build cache take, by docker's own
+ * count (v1.33, stage 2): four rows with the total and what a prune would free.
+ * Asked when the images or the networks-and-volumes view opens, on «Refresh»
+ * and after a removal — not on every poll: on a big host it walks every layer.
+ */
+export function diskUsageArgs(): string[] {
+  return ["docker", "system", "df", "--format", "{{json .}}"];
+}
+
+/** The same, item by item (`-v`): how many containers use each image, each volume. */
+export function diskDetailArgs(): string[] {
+  return ["docker", "system", "df", "-v", "--format", "{{json .}}"];
+}
+
+/** The window the events snapshot looks back over, minutes. */
+export const EVENTS_WINDOW_MIN = 10;
+
+/** The container events that say what happened to it — not the `exec_*` of every health check. */
+export const EVENT_ACTIONS = ["start", "die", "oom", "restart", "kill", "health_status"] as const;
+
+/**
+ * What happened to the containers in the last {@link EVENTS_WINDOW_MIN} minutes
+ * (v1.33, stage 3): `docker events` with `--until 0s` replays the window and
+ * ends — a snapshot, never the stream `docker events` is by default (the policy
+ * refuses it without `--until`). A container that crashes and is brought back by
+ * its restart policy between two polls looks `running` to every `ps`; its `die`
+ * events are what tell.
+ */
+export function eventsArgs(windowMin: number = EVENTS_WINDOW_MIN): string[] {
+  const fmt = [
+    "{{.TimeNano}}",
+    "{{.Action}}",
+    "{{.Actor.ID}}",
+    '{{index .Actor.Attributes "name"}}',
+    '{{index .Actor.Attributes "exitCode"}}',
+    '{{index .Actor.Attributes "signal"}}',
+  ].join(US);
+  return [
+    "docker",
+    "events",
+    "--since",
+    `${windowMin}m`,
+    "--until",
+    "0s",
+    "--filter",
+    "type=container",
+    ...EVENT_ACTIONS.flatMap((e) => ["--filter", `event=${e}`]),
+    "--format",
+    fmt,
+  ];
+}
+
 /** One-shot resource snapshot for the visible containers (no streaming). */
 export function statsArgs(): string[] {
   const fmt = [
@@ -94,6 +153,14 @@ export function logsArgs(id: string, tail = 200): string[] {
   return ["docker", "logs", "--tail", String(tail), "--timestamps", id];
 }
 
+/**
+ * The same log followed live (`-f`) — typed into a terminal tab, never run by the
+ * panel: following is a stream, and a stream belongs to a terminal (v1.33).
+ */
+export function followLogsArgv(id: string, tail = 200): string[] {
+  return ["docker", "logs", "-f", "--tail", String(tail), "--timestamps", id];
+}
+
 /** Aggregated log snapshot for a whole compose project. */
 export function composeLogsArgs(project: string, tail = 200): string[] {
   return ["docker", "compose", "-p", project, "logs", "--tail", String(tail), "--timestamps", "--no-color"];
@@ -104,18 +171,37 @@ export function inspectArgs(id: string): string[] {
   return ["docker", "inspect", id];
 }
 
+/** Between a network's name and its addresses, and between networks, in {@link inspectFactsArgs}. */
+const GS = "\x1d";
+const RS = "\x1e";
+
 /**
- * Per-container resource ceilings for several containers in one call (Phase 43).
+ * What `docker ps` does not say about a container, for several containers in one
+ * call: its resource ceilings (Phase 43), how often it was restarted, its
+ * network mode and its address in each network (v1.33), when it last started or
+ * stopped, how it exited.
  *
  * `docker stats` alone cannot answer "is this container near its limit": for an
  * unlimited container it reports `MemUsage` against the **host's** total and
  * `MemPerc` as a share of host RAM, which reads exactly like a limit but is not
- * one. The ceiling only exists in `HostConfig`, so it takes an inspect — but it
- * is fixed for the life of a container, so it is fetched once per id and cached,
- * not polled.
+ * one. The ceiling only exists in `HostConfig`, and the addresses only in
+ * `NetworkSettings` — so it takes an inspect, asked again only when what `ps`
+ * shows of a container changes or the answer is old ({@link staleFacts}).
  */
-export function inspectLimitsArgs(ids: readonly string[]): string[] {
-  const fmt = ["{{.Id}}", "{{.HostConfig.NanoCpus}}", "{{.HostConfig.Memory}}"].join(US);
+export function inspectFactsArgs(ids: readonly string[]): string[] {
+  const nets = `{{range $name, $net := .NetworkSettings.Networks}}{{$name}}${GS}{{$net.IPAddress}}${GS}{{$net.GlobalIPv6Address}}${RS}{{end}}`;
+  const fmt = [
+    "{{.Id}}",
+    "{{.HostConfig.NanoCpus}}",
+    "{{.HostConfig.Memory}}",
+    "{{.RestartCount}}",
+    "{{.HostConfig.NetworkMode}}",
+    nets,
+    "{{.State.StartedAt}}",
+    "{{.State.FinishedAt}}",
+    "{{.State.ExitCode}}",
+    "{{.State.OOMKilled}}",
+  ].join(US);
   return ["docker", "inspect", "--format", fmt, ...ids];
 }
 
@@ -127,20 +213,624 @@ export interface DockerLimits {
   memBytes: number | null;
 }
 
-/** Parse {@link inspectLimitsArgs} output into a map keyed by full container id. */
-export function parseLimits(raw: string): Map<string, DockerLimits> {
-  const out = new Map<string, DockerLimits>();
+/** A container's address in one of its networks; "" — none of that family. */
+export interface DockerAddress {
+  network: string;
+  ipv4: string;
+  ipv6: string;
+}
+
+/** What {@link inspectFactsArgs} tells about a container. */
+export interface DockerFacts extends DockerLimits {
+  /** How many times docker restarted it (`RestartCount`); null — not reported. */
+  restarts: number | null;
+  /** `HostConfig.NetworkMode`: `bridge`, `host`, `none`, `container:<id>`, a network's name. */
+  networkMode: string;
+  /** Its addresses, one per network, in docker's (name) order. */
+  addresses: DockerAddress[];
+  /** When it last started / stopped, epoch ms; null — never (docker's zero time). */
+  startedAt: number | null;
+  finishedAt: number | null;
+  /** The code it last exited with; null — not reported. */
+  exitCode: number | null;
+  /** The kernel killed it for memory. */
+  oomKilled: boolean;
+}
+
+/**
+ * An RFC 3339 stamp with docker's nanoseconds (`2026-11-06T10:41:02.123456789Z`)
+ * as epoch ms; null for docker's zero time (`0001-01-01…` — "never") or junk.
+ */
+export function parseInspectTime(raw: string | undefined): number | null {
+  const s = (raw ?? "").trim();
+  if (!s || s.startsWith("0001-")) return null;
+  // `Date.parse` reads milliseconds; docker writes up to nine digits.
+  const t = Date.parse(s.replace(/(\.\d{3})\d+/, "$1"));
+  return Number.isFinite(t) ? t : null;
+}
+
+function parseAddresses(raw: string | undefined): DockerAddress[] {
+  return (raw ?? "")
+    .split(RS)
+    .filter((part) => part.trim())
+    .map((part) => {
+      const [network = "", ipv4 = "", ipv6 = ""] = part.split(GS);
+      return { network: network.trim(), ipv4: ipv4.trim(), ipv6: ipv6.trim() };
+    })
+    .filter((a) => a.network);
+}
+
+const count = (raw: string | undefined): number | null => {
+  const n = Number((raw ?? "").trim());
+  return (raw ?? "").trim() !== "" && Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+/** Parse {@link inspectFactsArgs} output into a map keyed by full container id. */
+export function parseFacts(raw: string): Map<string, DockerFacts> {
+  const out = new Map<string, DockerFacts>();
   for (const f of rows(raw)) {
     const id = f[0]?.trim();
     if (!id) continue;
     const nanos = Number(f[1]);
     const mem = Number(f[2]);
+    const exit = Number((f[8] ?? "").trim());
     out.set(id, {
       cpuCores: Number.isFinite(nanos) && nanos > 0 ? nanos / 1e9 : null,
       memBytes: Number.isFinite(mem) && mem > 0 ? mem : null,
+      restarts: count(f[3]),
+      networkMode: (f[4] ?? "").trim(),
+      addresses: parseAddresses(f[5]),
+      startedAt: parseInspectTime(f[6]),
+      finishedAt: parseInspectTime(f[7]),
+      exitCode: (f[8] ?? "").trim() !== "" && Number.isInteger(exit) ? exit : null,
+      oomKilled: (f[9] ?? "").trim() === "true",
     });
   }
   return out;
+}
+
+/** What is known of a container that `ps` cannot say — and when it was asked. */
+export interface FactsEntry {
+  facts: DockerFacts;
+  /** What `ps` showed of it then ({@link factsKey}). */
+  key: string;
+  /** When it was asked, epoch ms. */
+  at: number;
+}
+
+/** How long the facts of a running container stand before they are asked again. */
+export const FACTS_TTL_MS = 30_000;
+
+/**
+ * What of a container, as `ps` shows it, the facts depend on: a start or a stop
+ * gives new addresses and times, a network joined or left changes them too.
+ */
+export function factsKey(c: DockerContainer): string {
+  return `${normalizeState(c.state)}|${c.networks.join(",")}`;
+}
+
+/**
+ * The containers whose facts have to be asked (again): never asked, changed
+ * since ({@link factsKey}), or — while it runs — asked longer than `ttl` ago: a
+ * restart policy can restart it between two polls, and nothing `ps` shows would
+ * say so but the restart count. A stopped container's facts do not change until
+ * it starts, and the start changes its key. One inspect asks for all of them.
+ */
+export function staleFacts(
+  containers: readonly DockerContainer[],
+  cache: ReadonlyMap<string, FactsEntry>,
+  nowMs: number,
+  ttl: number = FACTS_TTL_MS,
+): string[] {
+  return containers
+    .filter((c) => {
+      const e = cache.get(c.id);
+      if (!e || e.key !== factsKey(c)) return true;
+      const live = ["running", "restarting"].includes(normalizeState(c.state));
+      return live && nowMs - e.at >= ttl;
+    })
+    .map((c) => c.id);
+}
+
+/** Where a container can be reached inside docker — what its address cell says. */
+export type AddressView =
+  /** Its addresses; `first` is shown, the rest are in the tooltip. */
+  | { kind: "ip"; first: string; all: DockerAddress[] }
+  /** `--network host`: it has no address of its own — the host's. */
+  | { kind: "host" }
+  /** `--network none`: no network at all. */
+  | { kind: "none" }
+  /** `--network container:X`: X's address — `with` is X's name, or its short id. */
+  | { kind: "shared"; with: string }
+  /** Not running: docker gives a stopped container no address. */
+  | { kind: "down" }
+  /** Not asked yet, or docker did not say. */
+  | { kind: "unknown" };
+
+/**
+ * A container's address cell. The address is docker's own — inside its network;
+ * outside the docker host the container is reached through its published ports,
+ * which the view says in words (the tooltip), not by hiding the address.
+ */
+export function containerAddress(
+  c: DockerContainer,
+  facts: DockerFacts | undefined,
+  containers: readonly DockerContainer[] = [],
+): AddressView {
+  if (!facts) return { kind: "unknown" };
+  const mode = facts.networkMode;
+  if (mode === "host") return { kind: "host" };
+  if (mode === "none") return { kind: "none" };
+  if (mode.startsWith("container:")) {
+    const target = mode.slice("container:".length);
+    const peer = containers.find((o) => o.name === target || (o.id && (target.startsWith(o.id) || o.id.startsWith(target))));
+    return { kind: "shared", with: peer?.name ?? target.slice(0, 12) };
+  }
+  const all = facts.addresses.filter((a) => a.ipv4 || a.ipv6);
+  if (all.length > 0) return { kind: "ip", first: all[0].ipv4 || all[0].ipv6, all };
+  return isRunning(c) ? { kind: "unknown" } : { kind: "down" };
+}
+
+/** What a container's own health check says, from `ps`'s status line; null — it has none. */
+export type ContainerHealth = "healthy" | "unhealthy" | "starting";
+
+export function containerHealth(c: DockerContainer): ContainerHealth | null {
+  if (/\(unhealthy\)/.test(c.status)) return "unhealthy";
+  if (/\(health: starting\)/.test(c.status)) return "starting";
+  if (/\(healthy\)/.test(c.status)) return "healthy";
+  return null;
+}
+
+/** The code in `Exited (1) 2 days ago`; null — not an exit line. */
+export function exitCodeOf(c: DockerContainer): number | null {
+  const m = /^Exited \((-?\d+)\)/.exec(c.status.trim());
+  return m ? Number(m[1]) : null;
+}
+
+/**
+ * Codes a container stopped *on purpose* exits with: 0, and the signals `docker
+ * stop` and Ctrl+C send (SIGTERM 143, SIGKILL after the grace period 137, SIGINT
+ * 130). A kill for memory exits 137 too — that one is told by `OOMKilled`.
+ */
+const STOPPED_ON_PURPOSE = new Set([0, 130, 137, 143]);
+
+/** A container's state cell: the word, its tone and how long it has been so. */
+export interface StateSummary {
+  /** docker's own vocabulary: `running`, `healthy`, `exit 1`, `paused`… — not translated. */
+  word: string;
+  tone: "ok" | "warn" | "bad" | "idle";
+  /** Since the last start (running) or stop (exited), compact; null — not known. */
+  age: string | null;
+}
+
+export function stateSummary(c: DockerContainer, facts: DockerFacts | undefined, nowMs: number = Date.now()): StateSummary {
+  const state = normalizeState(c.state);
+  const since = (t: number | null | undefined): string | null => (t == null ? null : compactAge(t, nowMs) || null);
+  if (state === "running") {
+    const health = containerHealth(c);
+    const tone = health === "unhealthy" ? "warn" : health === "starting" ? "idle" : "ok";
+    return { word: health ?? "running", tone, age: since(facts?.startedAt) };
+  }
+  if (state === "exited") {
+    const code = facts?.exitCode ?? exitCodeOf(c);
+    if (facts?.oomKilled) return { word: "OOMKilled", tone: "bad", age: since(facts.finishedAt) };
+    const tone = code == null || STOPPED_ON_PURPOSE.has(code) ? "idle" : "bad";
+    return { word: code == null ? "exited" : `exit ${code}`, tone, age: since(facts?.finishedAt) };
+  }
+  return { word: state || "—", tone: stateTone(state), age: null };
+}
+
+// ── A container's details: what `docker inspect` says (v1.33, stage 1) ───────
+//
+// The Overview of the details reads the full `docker inspect <id>` — the same
+// call the Inspect view makes — and shows what explains a container in trouble:
+// its health check and the last probes with their output, how it is started and
+// restarted, what is mounted into it, its environment and labels.
+
+/** One run of a container's health check. */
+export interface HealthProbe {
+  /** When it started, epoch ms; null — not reported. */
+  start: number | null;
+  exitCode: number | null;
+  /** What the check printed, as docker keeps it (docker keeps the last few). */
+  output: string;
+  /** The last non-empty line of it — what a failing check usually says (`HTTP Error 503`). */
+  last: string;
+}
+
+export interface HealthDetail {
+  /** `healthy` · `unhealthy` · `starting` · `none`; "" — not reported. */
+  status: string;
+  /** How many runs in a row have failed. */
+  failingStreak: number;
+  /** The check as a command (`CMD`/`CMD-SHELL` taken off); "" — none declared. */
+  test: string;
+  /** Between runs and before a run is given up, compact (`10s`); null — docker's default. */
+  interval: string | null;
+  timeout: string | null;
+  retries: number | null;
+  /** Newest first. */
+  probes: HealthProbe[];
+}
+
+export interface EnvVar {
+  key: string;
+  value: string;
+  /** Masked until the user asks to see it: the name or the value looks like a secret. */
+  sensitive: boolean;
+}
+
+export interface MountDetail {
+  /** `bind` · `volume` · `tmpfs` · `npipe`. */
+  type: string;
+  /** Host path or volume name. */
+  source: string;
+  destination: string;
+  readOnly: boolean;
+}
+
+export interface ContainerDetail {
+  /** What runs: the entrypoint and its arguments, as docker records them. */
+  command: string;
+  /** `no` · `always` · `unless-stopped` · `on-failure` (`on-failure:5` with a limit). */
+  restartPolicy: string;
+  /** null — the container declares no health check. */
+  health: HealthDetail | null;
+  env: EnvVar[];
+  mounts: MountDetail[];
+  labels: { key: string; value: string }[];
+}
+
+/** Nanoseconds (docker's durations) as a compact duration: `10s`, `1m30s`; null for 0 or junk. */
+export function nanosDuration(ns: unknown): string | null {
+  if (typeof ns !== "number" || !Number.isFinite(ns) || ns <= 0) return null;
+  const totalMs = Math.round(ns / 1e6);
+  if (totalMs < 1000) return `${totalMs}ms`;
+  const s = Math.round(totalMs / 1000);
+  const m = Math.floor(s / 60);
+  const rest = s % 60;
+  if (m === 0) return `${s}s`;
+  return rest === 0 ? `${m}m` : `${m}m${rest}s`;
+}
+
+/** A health check's `Test` as a command: `CMD` args joined, `CMD-SHELL` as written, `NONE` — off. */
+export function healthTest(test: unknown): string {
+  if (!Array.isArray(test) || test.length === 0) return "";
+  const parts = test.map((p) => (typeof p === "string" ? p : ""));
+  if (parts[0] === "NONE") return "";
+  if (parts[0] === "CMD-SHELL") return parts.slice(1).join(" ");
+  if (parts[0] === "CMD") return parts.slice(1).map(shellWord).join(" ");
+  return parts.map(shellWord).join(" ");
+}
+
+/**
+ * A word quoted for reading when it would not survive as one (spaces, quotes):
+ * in double quotes when nothing in it means something there (`"`, `$`, `` ` ``,
+ * `\\`), else in single quotes — a health check's script reads as written.
+ */
+function shellWord(w: string): string {
+  if (/^[A-Za-z0-9_./:=@%+,-]+$/.test(w)) return w;
+  if (!/["$`\\]/.test(w)) return `"${w}"`;
+  return `'${w.replace(/'/g, `'\\''`)}'`;
+}
+
+const lastLine = (text: string): string =>
+  text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .at(-1) ?? "";
+
+const obj = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const int = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+
+/**
+ * A container's details from `docker inspect <id>` (a JSON array of one); null
+ * when the answer is not that — an error, an image, junk.
+ */
+export function parseContainerDetail(raw: string): ContainerDetail | null {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  const it = obj(Array.isArray(doc) ? doc[0] : doc);
+  const config = obj(it.Config);
+  const state = obj(it.State);
+  if (!it.Id || !it.State) return null;
+  const host = obj(it.HostConfig);
+  const args = Array.isArray(it.Args) ? it.Args.map(text) : [];
+  const command = [text(it.Path), ...args].filter(Boolean).map(shellWord).join(" ");
+  const policy = obj(host.RestartPolicy);
+  const name = text(policy.Name) || "no";
+  const retries = int(policy.MaximumRetryCount);
+  const restartPolicy = name === "on-failure" && retries ? `on-failure:${retries}` : name;
+  const check = obj(config.Healthcheck);
+  const hstate = obj(state.Health);
+  const test = healthTest(check.Test);
+  const log = Array.isArray(hstate.Log) ? (hstate.Log as unknown[]).map(obj) : [];
+  const health: HealthDetail | null =
+    test || text(hstate.Status)
+      ? {
+          status: text(hstate.Status),
+          failingStreak: int(hstate.FailingStreak) ?? 0,
+          test,
+          interval: nanosDuration(check.Interval),
+          timeout: nanosDuration(check.Timeout),
+          retries: int(check.Retries) || null,
+          probes: log
+            .map((p) => ({
+              start: parseInspectTime(text(p.Start)),
+              exitCode: int(p.ExitCode),
+              output: text(p.Output),
+              last: lastLine(text(p.Output)),
+            }))
+            .reverse(),
+        }
+      : null;
+  const env = (Array.isArray(config.Env) ? config.Env.map(text) : [])
+    .filter(Boolean)
+    .map((line) => {
+      const at = line.indexOf("=");
+      const key = at < 0 ? line : line.slice(0, at);
+      const value = at < 0 ? "" : line.slice(at + 1);
+      return { key, value, sensitive: isSensitiveEnv(key, value) };
+    })
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const mounts = (Array.isArray(it.Mounts) ? (it.Mounts as unknown[]).map(obj) : []).map((m) => ({
+    type: text(m.Type),
+    source: text(m.Name) || text(m.Source),
+    destination: text(m.Destination),
+    readOnly: m.RW === false,
+  }));
+  const labels = Object.entries(obj(config.Labels))
+    .map(([key, value]) => ({ key, value: text(value) }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  return { command, restartPolicy, health, env, mounts, labels };
+}
+
+// ── Events (v1.33, stage 3) ──────────────────────────────────────────────────
+
+export type EventKind = "start" | "die" | "oom" | "restart" | "kill" | "health";
+
+/** One event of a container, as `docker events` reported it. */
+export interface ContainerEvent {
+  /** Epoch ms. */
+  at: number;
+  kind: EventKind;
+  /** For `health`: the status it changed to (`unhealthy`, `healthy`). */
+  health: string;
+  /** Full container id. */
+  id: string;
+  name: string;
+  exitCode: number | null;
+  /** For `kill`: the signal sent (`15`, `SIGTERM`). */
+  signal: string;
+}
+
+/** Parse {@link eventsArgs} output, newest first. Unknown actions and junk rows are left out. */
+export function parseEvents(raw: string): ContainerEvent[] {
+  const out: ContainerEvent[] = [];
+  for (const f of rows(raw)) {
+    const ns = (f[0] ?? "").trim();
+    // Nanoseconds overflow a double's exact range; the milliseconds are the first digits.
+    const at = /^\d{7,}$/.test(ns) ? Number(ns.slice(0, -6)) : NaN;
+    const action = (f[1] ?? "").trim();
+    const health = action.startsWith("health_status:") ? action.slice("health_status:".length).trim() : "";
+    const kind: EventKind | null = health ? "health" : (["start", "die", "oom", "restart", "kill"] as const).find((k) => k === action) ?? null;
+    if (!kind || !Number.isFinite(at)) continue;
+    const exit = Number((f[4] ?? "").trim());
+    out.push({
+      at,
+      kind,
+      health,
+      id: (f[2] ?? "").trim(),
+      name: (f[3] ?? "").trim(),
+      exitCode: (f[4] ?? "").trim() !== "" && Number.isInteger(exit) ? exit : null,
+      signal: (f[5] ?? "").trim(),
+    });
+  }
+  return out.sort((a, b) => b.at - a.at);
+}
+
+/** The events of one container (`ps` gives the short id, events the full one), newest first. */
+export function eventsOf(events: readonly ContainerEvent[], id: string): ContainerEvent[] {
+  return id ? events.filter((e) => e.id.startsWith(id)) : [];
+}
+
+/** How an event reads in the list: docker's word, with its code or status — not translated. */
+export function eventWord(e: ContainerEvent): string {
+  if (e.kind === "die") return e.exitCode == null ? "die" : `die · exit ${e.exitCode}`;
+  if (e.kind === "kill") return e.signal ? `kill · ${e.signal}` : "kill";
+  if (e.kind === "health") return `health · ${e.health}`;
+  return e.kind;
+}
+
+/** A tone for an event: a crash or a kill for memory is bad, a failing check a warning. */
+export function eventTone(e: ContainerEvent): "ok" | "warn" | "bad" | "idle" {
+  if (e.kind === "oom") return "bad";
+  if (e.kind === "die") return e.exitCode != null && !STOPPED_ON_PURPOSE.has(e.exitCode) ? "bad" : "idle";
+  if (e.kind === "health") return e.health === "unhealthy" ? "warn" : e.health === "healthy" ? "ok" : "idle";
+  if (e.kind === "start") return "ok";
+  return "idle";
+}
+
+/** A crash loop seen in the events: how many times it died with an error, the last code, when. */
+export interface CrashLoop {
+  dies: number;
+  exitCode: number | null;
+  ooms: number;
+  last: number;
+}
+
+/**
+ * The crash loop of a container in the window: its deaths with an error code
+ * (not a `docker stop`) and its kills for memory. Null below two — one crash is
+ * the state's to tell (`exit 1`), two in the window are a loop the state hides
+ * when the restart policy brings it back before the next poll.
+ */
+export function crashLoop(events: readonly ContainerEvent[]): CrashLoop | null {
+  const bad = events.filter((e) => (e.kind === "die" && e.exitCode != null && !STOPPED_ON_PURPOSE.has(e.exitCode)) || e.kind === "oom");
+  const dies = bad.filter((e) => e.kind === "die");
+  if (dies.length < 2) return null;
+  return {
+    dies: dies.length,
+    exitCode: dies[0].exitCode,
+    ooms: bad.filter((e) => e.kind === "oom").length,
+    last: bad[0].at,
+  };
+}
+
+// ── Resources over time (v1.33, stage 3) ─────────────────────────────────────
+
+/**
+ * The two halves of docker's `NetIO` / `BlockIO` (`"1.2kB / 3.4MB"`) as bytes,
+ * read · written or received · sent; null for a half docker did not give.
+ */
+export function ioPair(s: string | undefined): [number | null, number | null] {
+  const [a, b] = (s ?? "").split("/");
+  return [parseMemUsed(a), parseMemUsed(b)];
+}
+
+/** A cumulative counter as a rate between two readings, bytes/s; null when it cannot be one. */
+export function rateOf(prev: number | null | undefined, now: number | null, dtSec: number): number | null {
+  if (prev == null || now == null || !(dtSec > 0) || now < prev) return null;
+  return (now - prev) / dtSec;
+}
+
+/** What the resources view keeps of a container, per poll, keyed `<id>.<series>`. */
+export const RESOURCE_SERIES = ["cpu", "mem", "rx", "tx", "read", "write"] as const;
+export type ResourceSeries = (typeof RESOURCE_SERIES)[number];
+export const resourceKey = (id: string, series: ResourceSeries): string => `${id}.${series}`;
+
+/** The totals a poll leaves to compute the next poll's rates. */
+export type IoTotals = ReadonlyMap<string, { at: number; rx: number | null; tx: number | null; read: number | null; write: number | null }>;
+
+/**
+ * One poll's readings for the resources view: CPU %, memory used, and the four
+ * I/O counters as rates against the previous poll. A container without a stats
+ * row (stopped) gets no reading — a gap, not a zero.
+ */
+export function resourceReadings(
+  stats: readonly DockerStat[],
+  containers: readonly DockerContainer[],
+  prev: IoTotals,
+  nowMs: number,
+  parsePct: (s: string | undefined) => number | null,
+): { readings: Record<string, number | null>; totals: IoTotals } {
+  const readings: Record<string, number | null> = {};
+  const totals = new Map<string, { at: number; rx: number | null; tx: number | null; read: number | null; write: number | null }>();
+  for (const c of containers) {
+    const st = stats.find((x) => x.id === c.id || c.id.startsWith(x.id) || x.id.startsWith(c.id));
+    if (!st) continue;
+    const [rx, tx] = ioPair(st.netIo);
+    const [read, write] = ioPair(st.blockIo);
+    const before = prev.get(c.id);
+    const dt = before ? (nowMs - before.at) / 1000 : 0;
+    readings[resourceKey(c.id, "cpu")] = parsePct(st.cpu);
+    readings[resourceKey(c.id, "mem")] = parseMemUsed(st.mem);
+    readings[resourceKey(c.id, "rx")] = rateOf(before?.rx, rx, dt);
+    readings[resourceKey(c.id, "tx")] = rateOf(before?.tx, tx, dt);
+    readings[resourceKey(c.id, "read")] = rateOf(before?.read, read, dt);
+    readings[resourceKey(c.id, "write")] = rateOf(before?.write, write, dt);
+    totals.set(c.id, { at: nowMs, rx, tx, read, write });
+  }
+  return { readings, totals };
+}
+
+/** Why a container needs a look (v1.33): the strip above the list. */
+export type AttentionReason = "crashing" | "dead" | "restarting" | "oom" | "unhealthy" | "restarts" | "exited";
+
+export interface DockerAttention {
+  id: string;
+  name: string;
+  reason: AttentionReason;
+  tone: "warn" | "bad";
+  /** The figure that says it: the exit code, how many restarts since the panel opened. */
+  detail: string;
+}
+
+/**
+ * How long an exit stays news. A container that crashed an hour ago needs a
+ * look; one that has been stopped for a week — a stack nobody started again, a
+ * daemon that was shut down under it (`exit 255`) — is history, still shown by
+ * its state word in the list, not by the strip.
+ */
+export const FRESH_EXIT_MS = 24 * 3_600_000;
+
+const ATTENTION_RANK: Record<AttentionReason, number> = {
+  crashing: -1,
+  dead: 0,
+  restarting: 1,
+  oom: 2,
+  unhealthy: 3,
+  restarts: 4,
+  exited: 5,
+};
+
+/**
+ * What needs a look, worst first. A restart count that was already there when
+ * the panel first saw the container is history, not news — it counts only once
+ * it grows while the panel is open (`baseline`, the way the monitoring page
+ * reads its counters). An exit the user asked for (`docker stop`) is not a
+ * problem; any other non-zero one is, while it is fresh ({@link FRESH_EXIT_MS});
+ * one whose time is not known yet counts as fresh rather than vanishing.
+ */
+export function dockerAttention(
+  containers: readonly DockerContainer[],
+  facts: ReadonlyMap<string, DockerFacts>,
+  baseline: ReadonlyMap<string, number>,
+  nowMs: number = Date.now(),
+  events: readonly ContainerEvent[] = [],
+): DockerAttention[] {
+  const out: DockerAttention[] = [];
+  for (const c of containers) {
+    const f = facts.get(c.id);
+    const state = normalizeState(c.state);
+    const add = (reason: AttentionReason, tone: "warn" | "bad", detail = "") =>
+      out.push({ id: c.id, name: c.name, reason, tone, detail });
+    // A loop the restart policy hides: `running` to every poll, dying in between.
+    const loop = state === "running" || state === "restarting" ? crashLoop(eventsOf(events, c.id)) : null;
+    if (loop) {
+      const parts = [`${loop.dies}×`, loop.exitCode == null ? "" : `exit ${loop.exitCode}`, compactAge(loop.last, nowMs)];
+      add("crashing", "bad", parts.filter(Boolean).join(" · "));
+    } else if (state === "dead") add("dead", "bad");
+    else if (state === "restarting") add("restarting", "bad", f?.restarts ? `↻${f.restarts}` : "");
+    else if (state === "exited") {
+      const code = f?.exitCode ?? exitCodeOf(c);
+      const fresh = f?.finishedAt == null || nowMs - f.finishedAt < FRESH_EXIT_MS;
+      if (!fresh) continue;
+      if (f?.oomKilled) add("oom", "bad", code == null ? "" : `exit ${code}`);
+      else if (code != null && !STOPPED_ON_PURPOSE.has(code)) add("exited", "warn", `exit ${code}`);
+    } else if (state === "running") {
+      const grew = f?.restarts != null && f.restarts > (baseline.get(c.id) ?? f.restarts);
+      if (containerHealth(c) === "unhealthy") add("unhealthy", "warn", f?.restarts ? `↻${f.restarts}` : "");
+      else if (grew) add("restarts", "warn", `↻+${f!.restarts! - baseline.get(c.id)!}`);
+    }
+  }
+  return out.sort((a, b) => ATTENTION_RANK[a.reason] - ATTENTION_RANK[b.reason] || byText(a.name, b.name));
+}
+
+/**
+ * The restart counts the panel compares against: the first one it saw of each
+ * container, kept; gone containers forgotten. Pure — the panel holds the map.
+ */
+export function restartBaseline(
+  prev: ReadonlyMap<string, number>,
+  facts: ReadonlyMap<string, DockerFacts>,
+  live: readonly string[],
+): Map<string, number> {
+  const next = new Map<string, number>();
+  for (const id of live) {
+    const seen = prev.get(id);
+    const now = facts.get(id)?.restarts;
+    if (seen != null) next.set(id, seen);
+    else if (now != null) next.set(id, now);
+  }
+  return next;
 }
 
 /** Byte multipliers docker uses in `MemUsage` (it mixes binary and decimal suffixes). */
@@ -348,6 +1038,10 @@ export interface DockerContainer {
    * one's namespace (`--network container:…`) has none at all.
    */
   networks: string[];
+  /** The compose files the stack was brought up with (its label); empty — not a stack, or not said. */
+  configFiles?: string[];
+  /** The env file it was brought up with; "" — none or not said. */
+  envFile?: string;
 }
 
 export interface DockerImage {
@@ -409,6 +1103,11 @@ export function parsePs(raw: string): DockerContainer[] {
     createdAt: f[9] ?? "",
     runningFor: f[10] ?? "",
     networks: parseNetworkNames(f[11]),
+    configFiles: (f[12] ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+    envFile: (f[13] ?? "").trim(),
   }));
 }
 
@@ -643,8 +1342,11 @@ export function stateTone(state: string): "ok" | "warn" | "bad" | "idle" {
   }
 }
 
-/** The views of a container's details (`DockerDetail`). */
-export type DockerDetailTab = "overview" | "logs" | "inspect";
+/**
+ * The views of a container's details (`DockerDetail`). The log comes first and
+ * is where details open (v1.33): it is what a container is opened for.
+ */
+export type DockerDetailTab = "logs" | "overview" | "resources" | "inspect";
 
 // ── List views (v1.29, ADR 0050) ─────────────────────────────────────────────
 //
@@ -710,9 +1412,141 @@ export function containerSchema(usage: (c: DockerContainer) => ContainerUsage): 
 /** Compose stacks, containers by name — how the list lay before it had a choice. */
 export const CONTAINER_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "compose" };
 
+// ── Disk usage (v1.33, stage 2) ──────────────────────────────────────────────
+
+export type DiskKind = "images" | "containers" | "volumes" | "cache";
+
+/** One row of `docker system df`, as docker counts it. */
+export interface DiskRow {
+  kind: DiskKind;
+  /** How many there are, and how many are in use; null — not reported. */
+  total: number | null;
+  active: number | null;
+  /** docker's own figures, as it prints them (`9.182GB`). */
+  size: string;
+  /** What a prune would free (`2.075GB`). */
+  reclaimable: string;
+  /** Its share of `size`, when docker says it (`22`); null for the build cache. */
+  reclaimablePct: number | null;
+}
+
+const DISK_TYPES: Record<string, DiskKind> = {
+  Images: "images",
+  Containers: "containers",
+  "Local Volumes": "volumes",
+  "Build Cache": "cache",
+};
+export const DISK_ORDER: readonly DiskKind[] = ["images", "containers", "volumes", "cache"];
+
+const jsonLines = (raw: string): Record<string, unknown>[] =>
+  raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.startsWith("{"))
+    .flatMap((l) => {
+      try {
+        const v = JSON.parse(l) as unknown;
+        return v && typeof v === "object" && !Array.isArray(v) ? [v as Record<string, unknown>] : [];
+      } catch {
+        return [];
+      }
+    });
+
+const countOf = (v: unknown): number | null => {
+  const n = Number(typeof v === "string" ? v.trim() : v);
+  return (typeof v === "string" ? v.trim() !== "" : typeof v === "number") && Number.isInteger(n) && n >= 0 ? n : null;
+};
+
+/** `docker system df --format '{{json .}}'` → rows in {@link DISK_ORDER}; unknown types are left out. */
+export function parseDiskUsage(raw: string): DiskRow[] {
+  const rows: DiskRow[] = [];
+  for (const it of jsonLines(raw)) {
+    const kind = DISK_TYPES[typeof it.Type === "string" ? it.Type : ""];
+    if (!kind) continue;
+    const rec = typeof it.Reclaimable === "string" ? it.Reclaimable.trim() : "";
+    const m = /^(.*?)\s*\((\d+(?:\.\d+)?)%\)$/.exec(rec);
+    rows.push({
+      kind,
+      total: countOf(it.TotalCount),
+      active: countOf(it.Active),
+      size: typeof it.Size === "string" ? it.Size : "",
+      reclaimable: m ? m[1] : rec,
+      reclaimablePct: m ? Math.round(Number(m[2])) : null,
+    });
+  }
+  return rows.sort((a, b) => DISK_ORDER.indexOf(a.kind) - DISK_ORDER.indexOf(b.kind));
+}
+
+/** Who uses what, from `docker system df -v`: by docker's own count, not by matching names. */
+export interface DiskDetail {
+  /** Image id (`sha256:` taken off) → how many containers use it. */
+  imageContainers: Map<string, number>;
+  /** Image id → what removing it would free (`UniqueSize`); "" — not reported. */
+  imageUnique: Map<string, string>;
+  /** Volume name → how many containers mount it, and its size. */
+  volumes: Map<string, { links: number | null; size: string }>;
+}
+
+/** `docker system df -v --format '{{json .}}'` → {@link DiskDetail}; null — not that answer. */
+export function parseDiskDetail(raw: string): DiskDetail | null {
+  const doc = jsonLines(raw)[0];
+  if (!doc || !Array.isArray(doc.Images)) return null;
+  const imageContainers = new Map<string, number>();
+  const imageUnique = new Map<string, string>();
+  for (const img of doc.Images as Record<string, unknown>[]) {
+    const id = (typeof img.ID === "string" ? img.ID : "").replace(/^sha256:/, "");
+    if (!id) continue;
+    const n = countOf(img.Containers);
+    if (n != null) imageContainers.set(id, n);
+    imageUnique.set(id, typeof img.UniqueSize === "string" ? img.UniqueSize : "");
+  }
+  const volumes = new Map<string, { links: number | null; size: string }>();
+  for (const v of Array.isArray(doc.Volumes) ? (doc.Volumes as Record<string, unknown>[]) : []) {
+    const name = typeof v.Name === "string" ? v.Name : "";
+    if (name) volumes.set(name, { links: countOf(v.Links), size: typeof v.Size === "string" ? v.Size : "" });
+  }
+  return { imageContainers, imageUnique, volumes };
+}
+
+/**
+ * How many containers use an image, matched by id — `docker images` prints the
+ * short one, `system df -v` the full one; null — not known (not asked yet, or
+ * docker did not list it).
+ */
+export function imageContainers(img: DockerImage, detail: DiskDetail | null | undefined): number | null {
+  if (!detail || !img.id) return null;
+  const short = img.id.replace(/^sha256:/, "");
+  for (const [id, n] of detail.imageContainers) if (id.startsWith(short)) return n;
+  return null;
+}
+
 /** An image without a name: what `docker image prune` removes. */
 export function isDangling(img: DockerImage): boolean {
   return img.repository === "<none>";
+}
+
+/**
+ * The images' list, with the «in use» facet when docker has said who uses what
+ * (`used` — how many containers use an image; omitted while unknown, so the
+ * facet never offers values it cannot count).
+ */
+export function imageSchema(used?: (img: DockerImage) => number | null): ListSchema<DockerImage> {
+  const base = IMAGE_SCHEMA;
+  if (!used) return base;
+  return {
+    ...base,
+    facets: [
+      ...(base.facets ?? []),
+      {
+        id: "use",
+        value: (img) => {
+          const n = used(img);
+          return n == null ? "" : n > 0 ? "used" : "unused";
+        },
+        order: ["used", "unused"],
+      },
+    ],
+  };
 }
 
 export const IMAGE_SCHEMA: ListSchema<DockerImage> = {

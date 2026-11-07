@@ -101,6 +101,22 @@ export interface PortRow {
   raw: string;
 }
 
+/**
+ * A port row as a short chip in the container list (v1.33): a published port by
+ * the host port it answers on — `:443` when it answers on every address, the
+ * address in front when it is bound to one (`127.0.0.1:5432`, `[::1]:5432`); an
+ * exposed one by the container's port; anything else as docker wrote it.
+ */
+export function portChip(row: PortRow): string {
+  if (row.kind === "published") {
+    if (row.reach === "all") return `:${row.hostPort}`;
+    const ip = row.hostIps[0] ?? "";
+    return `${ip.includes(":") ? `[${ip}]` : ip}:${row.hostPort}`;
+  }
+  if (row.kind === "exposed") return row.proto ? `${row.containerPort}/${row.proto}` : row.containerPort;
+  return row.raw;
+}
+
 const single = (p: string): number | null => (/^\d+$/.test(p) ? Number(p) : null);
 const lastOf = (p: string): number | null => single(p.split("-").at(-1) ?? "");
 const firstOf = (p: string): string => p.split("-")[0];
@@ -251,10 +267,14 @@ export const GRAPH_MAX_CONTAINERS = 40;
 
 export interface GraphNetwork {
   name: string;
-  /** Row of the left column this network sits on. */
+  /** Row of its column this network sits on. */
   row: number;
   /** Containers attached to it — all of them, drawn or not. */
   members: number;
+  /** Its address ranges (v1.33, topology); empty — not asked or none. */
+  subnets: string[];
+  /** `--internal`: no way out of the docker host. */
+  internal: boolean;
 }
 
 export interface GraphContainer {
@@ -267,6 +287,19 @@ export interface GraphContainer {
   networks: string[];
   /** `host` / `none` when the container runs in that mode instead of a network. */
   mode: typeof HOST_NETWORK | typeof NONE_NETWORK | null;
+  /** Its addresses (v1.33, topology), first shown; empty — not known. */
+  ips: string[];
+}
+
+/** A published port of the docker host (v1.33, topology): the left column. */
+export interface GraphPort {
+  /** `:443`, `127.0.0.1:5432` — {@link portChip}. */
+  label: string;
+  /** Who can reach it: every address, this host only, one address. */
+  reach: PortReach;
+  /** The container it leads into, and the row it sits on. */
+  container: string;
+  row: number;
 }
 
 export interface GraphEdge {
@@ -276,11 +309,17 @@ export interface GraphEdge {
   toRow: number;
 }
 
-/** A bipartite membership graph: networks on the left, containers on the right. */
+/**
+ * The topology of the host's containers: published ports on the left, the
+ * containers in the middle, the networks on the right — an edge per port and
+ * per membership.
+ */
 export interface NetGraph {
   networks: GraphNetwork[];
   containers: GraphContainer[];
   edges: GraphEdge[];
+  /** Published ports; empty — none, and the graph has two columns. */
+  ports: GraphPort[];
   /** Height of the taller column, in rows. */
   rows: number;
   /** Containers left out by the cap. */
@@ -301,6 +340,12 @@ export function buildNetGraph(
   networks: readonly DockerNetwork[],
   containers: readonly DockerContainer[],
   max: number = GRAPH_MAX_CONTAINERS,
+  extra: {
+    /** A container's addresses, first shown (from its facts). */
+    ips?: (c: DockerContainer) => string[];
+    /** Each network's subnets (`network inspect`). */
+    subnets?: ReadonlyMap<string, { subnets: string[]; internal: boolean }>;
+  } = {},
 ): NetGraph {
   const members = membersByNetwork(containers);
   const names = new Set<string>();
@@ -335,6 +380,7 @@ export function buildNetGraph(
       : c.networks.includes(NONE_NETWORK)
         ? NONE_NETWORK
         : null,
+    ips: extra.ips?.(c) ?? [],
   }));
 
   // Each network sits at the middle of the containers that name it first; one
@@ -355,8 +401,26 @@ export function buildNetGraph(
     const wanted = rows ? Math.floor((rows[0] + rows[rows.length - 1]) / 2) : free;
     const row = Math.max(wanted, free);
     free = row + 1;
-    graphNetworks.push({ name, row, members: members.get(name)?.length ?? 0 });
+    const info = extra.subnets?.get(name);
+    graphNetworks.push({ name, row, members: members.get(name)?.length ?? 0, subnets: info?.subnets ?? [], internal: info?.internal ?? false });
   });
+
+  // Each container's published ports stand beside it, one row each, never
+  // above the row a previous container's ports reached — so a port's edge runs
+  // flat or down to its own container, and none crosses another's.
+  const graphPorts: GraphPort[] = [];
+  let portRow = 0;
+  for (const c of graphContainers) {
+    const own = drawn.find((d) => d.id === c.id);
+    const published = portRows(own?.ports ?? "").filter((r) => r.kind === "published");
+    if (published.length === 0) continue;
+    let row = Math.max(portRow, c.row - Math.floor((published.length - 1) / 2));
+    for (const p of published) {
+      graphPorts.push({ label: portChip(p), reach: p.reach ?? "address", container: c.id, row });
+      row += 1;
+    }
+    portRow = row;
+  }
 
   const rowOf = new Map(graphNetworks.map((n) => [n.name, n.row]));
   const edges: GraphEdge[] = [];
@@ -370,7 +434,8 @@ export function buildNetGraph(
     networks: graphNetworks,
     containers: graphContainers,
     edges,
-    rows: Math.max(graphContainers.length, free),
+    ports: graphPorts,
+    rows: Math.max(graphContainers.length, free, portRow),
     hidden: ordered.length - drawn.length,
   };
 }
