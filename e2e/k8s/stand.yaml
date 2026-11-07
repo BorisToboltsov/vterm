@@ -2,7 +2,11 @@
 # и один здоровый под со всем, что показывает «Обзор». Пространства имён в файле нет —
 # его задаёт тот, кто применяет: стенд руками (`vterm-stand`, docs/TESTS.md) и живой
 # тест `live_kube` (src-tauri/src/kube.rs) берут этот же файл. Один образ на всё —
-# busybox; ресурсы крошечные, кроме нарочно невместимого `too-big`.
+# busybox; ресурсы крошечные, кроме нарочно невместимого `too-big`. Поломки — в том, что
+# контейнеры делают, а не в их правах: каждый под — не root (UID/GID 10001), seccomp
+# RuntimeDefault, файловая система только для чтения (пишут лишь в свои тома), без
+# возможностей и повышения привилегий, с запросами и лимитами — правила Trivy (KSV),
+# кроме пространства имён (`.trivyignore.yaml`).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -44,21 +48,28 @@ spec:
     metadata:
       labels: { app: web, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: prepare
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo prepared > /work/ready"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 50m, memory: 16Mi }
           volumeMounts: [{ name: work, mountPath: /work }]
         - name: log-shipper
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           restartPolicy: Always
           command: ["sh", "-c", "while true; do echo \"$(date -Iseconds) shipped 3 lines\"; sleep 10; done"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
       containers:
         - name: httpd
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "cp /config/index.html /www/ && exec httpd -f -v -p 8080 -h /www"]
           ports: [{ name: http, containerPort: 8080 }]
           env:
@@ -110,13 +121,15 @@ spec:
     metadata:
       labels: { app: crashloop, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo 'connecting to db:5432'; sleep 3; echo 'fatal: db unreachable' >&2; exit 1"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Удваивает строку в шелле, пока не упрётся в limit → OOMKilled, код 137.
 apiVersion: apps/v1
@@ -131,13 +144,15 @@ spec:
     metadata:
       labels: { app: oom, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo 'loading cache'; x=a; while true; do x=\"$x$x\"; done"]
           resources:
             requests: { cpu: 5m, memory: 16Mi }
-            limits: { memory: 24Mi }
+            limits: { cpu: 50m, memory: 24Mi }
 ---
 # Не помещается ни на одну ноду → Pending, FailedScheduling «Insufficient memory».
 apiVersion: apps/v1
@@ -152,12 +167,15 @@ spec:
     metadata:
       labels: { app: too-big, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 512Gi }
+            limits: { cpu: 50m, memory: 512Gi }
 ---
 # Работает, но проба готовности не проходит никогда → Running 0/1, события Unhealthy.
 apiVersion: apps/v1
@@ -172,16 +190,18 @@ spec:
     metadata:
       labels: { app: notready, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           readinessProbe:
             exec: { command: ["cat", "/tmp/ready"] }
             periodSeconds: 5
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Проба живости проваливается → kubelet убивает контейнер (Error, код 137) и перезапускает:
 # с виду то же, что падение, но причина — проба, а не программа.
@@ -197,9 +217,11 @@ spec:
     metadata:
       labels: { app: liveness-fail, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           livenessProbe:
             exec: { command: ["cat", "/tmp/alive"] }
@@ -208,7 +230,7 @@ spec:
             failureThreshold: 1
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Init-контейнер падает → под не доходит до своих контейнеров: Init:Error, затем
 # Init:CrashLoopBackOff; RESTARTS — перезапуски init-контейнера.
@@ -224,17 +246,23 @@ spec:
     metadata:
       labels: { app: init-fail, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       initContainers:
         - name: wait-db
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo 'waiting for db:5432'; sleep 2; echo 'db did not answer' >&2; exit 1"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 50m, memory: 16Mi }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Тега нет → ErrImagePull/ImagePullBackOff; выкатка за 30 с не продвинулась →
 # Progressing=False, ProgressDeadlineExceeded.
@@ -251,13 +279,15 @@ spec:
     metadata:
       labels: { app: bad-image, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:vterm-missing-tag
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Нагрузка против лимитов («Ресурсы»): `cpu` крутит цикл и упирается в свои 100m, `mem` держит
 # 40 МиБ в памяти (emptyDir в RAM считается памятью контейнера) из 64 МиБ лимита.
@@ -273,15 +303,18 @@ spec:
     metadata:
       labels: { app: busy, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: cpu
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "while true; do :; done"]
           resources:
             requests: { cpu: 50m, memory: 8Mi }
             limits: { cpu: 100m, memory: 16Mi }
         - name: mem
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "dd if=/dev/zero of=/fill/blob bs=1M count=40 && exec sleep 3600"]
           volumeMounts: [{ name: fill, mountPath: /fill }]
           resources:
@@ -310,13 +343,15 @@ spec:
     metadata:
       labels: { app: rollout, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: app
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Релиз Helm «shop» (приложения): метки и аннотация такие, какие ставит Helm на то, чем управляет, —
 # без `part-of`, поэтому панель собирает их по релизу. Сам Helm для стенда не нужен.
@@ -347,13 +382,15 @@ spec:
         app.kubernetes.io/managed-by: Helm
         helm.sh/chart: shop-1.2.0
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: api
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -382,13 +419,15 @@ spec:
         app.kubernetes.io/managed-by: Helm
         helm.sh/chart: shop-1.2.0
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: worker
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Задание, которое закончилось успешно → под Completed.
 apiVersion: batch/v1
@@ -402,11 +441,16 @@ spec:
     metadata:
       labels: { app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       restartPolicy: Never
       containers:
         - name: migrate
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo 'applying 3 migrations'; sleep 1; echo done"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Расписание каждую минуту, каждый запуск падает → Job'ы с Failed, BackoffLimitExceeded.
 apiVersion: batch/v1
@@ -426,11 +470,16 @@ spec:
         metadata:
           labels: { app.kubernetes.io/part-of: vterm-stand }
         spec:
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
           restartPolicy: Never
           containers:
             - name: report
               image: busybox:1.37
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
               command: ["sh", "-c", "echo 'building report'; echo 'error: no data for today' >&2; exit 2"]
+              resources:
+                requests: { cpu: 5m, memory: 8Mi }
+                limits: { cpu: 50m, memory: 16Mi }
 ---
 # Приостановленное расписание: ни одного запуска.
 apiVersion: batch/v1
@@ -445,11 +494,16 @@ spec:
     spec:
       template:
         spec:
+          securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
           restartPolicy: Never
           containers:
             - name: cleanup
               image: busybox:1.37
+              securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
               command: ["sh", "-c", "echo cleaned"]
+              resources:
+                requests: { cpu: 5m, memory: 8Mi }
+                limits: { cpu: 50m, memory: 16Mi }
 ---
 # StatefulSet с томом из шаблона → PVC data-db-0 в Bound.
 apiVersion: apps/v1
@@ -465,14 +519,16 @@ spec:
     metadata:
       labels: { app: db, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: db
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sh", "-c", "echo ready > /data/state; exec sleep 3600"]
           volumeMounts: [{ name: data, mountPath: /data }]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -492,13 +548,15 @@ spec:
     metadata:
       labels: { app: node-agent, app.kubernetes.io/part-of: vterm-stand }
     spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
       containers:
         - name: agent
           image: busybox:1.37
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
           command: ["sleep", "3600"]
           resources:
             requests: { cpu: 5m, memory: 8Mi }
-            limits: { memory: 16Mi }
+            limits: { cpu: 50m, memory: 16Mi }
 ---
 # Заявка, которой никто не пользуется: при WaitForFirstConsumer так и стоит Pending.
 apiVersion: v1
