@@ -1152,6 +1152,8 @@ export interface K8sNode {
   /** `Hostname` from `status.addresses`; "" — not reported. */
   hostname?: string;
   age: string;
+  /** The pressures it reports now — `MemoryPressure`, `DiskPressure`, `PIDPressure` (stage 5). */
+  pressures?: string[];
 }
 
 export interface K8sEvent {
@@ -1911,6 +1913,248 @@ export function workloadPods(pods: readonly K8sPod[], w: { kind: string; name: s
   return pods.filter((p) => p.namespace === w.namespace && p.ownerKind === w.kind && p.ownerName === w.name);
 }
 
+// ── A node and the volume claims (ADR 0054, stage 5) ─────────────────────────
+//
+// What a node has (capacity), can give (allocatable), says (its conditions) and is
+// asked for: the requests of its running pods, summed as the scheduler sums them —
+// the figure `kubectl describe node` calls «Allocated resources». Its pods and its
+// usage now are asked only while its details are on screen. A volume claim says
+// why it waits through its events (already polled with the view), and who mounts
+// it through the pods' own volumes.
+
+export interface NodeCondition extends PodCondition {
+  /**
+   * Whether all is well by it: Ready when True, a pressure (or NetworkUnavailable)
+   * when False; null — Unknown.
+   */
+  healthy: boolean | null;
+}
+
+/** CPU in millicores, memory and storage in MiB, pods as a count; null — not reported. */
+export interface NodeResources {
+  cpu: number | null;
+  memory: number | null;
+  pods: number | null;
+  storage: number | null;
+}
+
+export interface NodeDetail {
+  name: string;
+  conditions: NodeCondition[];
+  capacity: NodeResources;
+  allocatable: NodeResources;
+  /** `key=value:Effect`. */
+  taints: string[];
+  unschedulable: boolean;
+  info: { kubelet: string; runtime: string; os: string; kernel: string; arch: string };
+  addresses: { type: string; address: string }[];
+  labels: { key: string; value: string }[];
+  age: string;
+}
+
+function nodeResources(r: unknown): NodeResources {
+  const count = Number.parseInt(str(dig(r, "pods")), 10);
+  return {
+    cpu: parseCpuMillis(str(dig(r, "cpu")) || undefined),
+    memory: parseMemMiB(str(dig(r, "memory")) || undefined),
+    pods: Number.isFinite(count) ? count : null,
+    storage: parseMemMiB(str(dig(r, "ephemeral-storage")) || undefined),
+  };
+}
+
+/** What a node's details show — see the section above; null for what is not a node. */
+export function parseNodeDetail(item: Record<string, unknown> | null, nowMs: number = Date.now()): NodeDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const conditions = records(dig(item, "status", "conditions")).map((c) => {
+    const status = str(c.status);
+    const ok = status === "True" ? true : status === "False" ? false : null;
+    return {
+      type: str(c.type),
+      ok,
+      healthy: ok == null ? null : c.type === "Ready" ? ok : !ok,
+      reason: str(c.reason),
+      message: str(c.message).trim(),
+      since: Number.isFinite(Date.parse(str(c.lastTransitionTime))) ? Date.parse(str(c.lastTransitionTime)) : null,
+    };
+  });
+  const labels = dig(item, "metadata", "labels");
+  return {
+    name: str(dig(item, "metadata", "name")),
+    conditions: [...conditions.filter((c) => c.type === "Ready"), ...conditions.filter((c) => c.type !== "Ready")],
+    capacity: nodeResources(dig(item, "status", "capacity")),
+    allocatable: nodeResources(dig(item, "status", "allocatable")),
+    taints: records(dig(item, "spec", "taints")).map(
+      (x) => `${str(x.key)}${str(x.value) ? `=${str(x.value)}` : ""}:${str(x.effect)}`,
+    ),
+    unschedulable: dig(item, "spec", "unschedulable") === true,
+    info: {
+      kubelet: str(dig(item, "status", "nodeInfo", "kubeletVersion")),
+      runtime: str(dig(item, "status", "nodeInfo", "containerRuntimeVersion")),
+      os: str(dig(item, "status", "nodeInfo", "osImage")),
+      kernel: str(dig(item, "status", "nodeInfo", "kernelVersion")),
+      arch: str(dig(item, "status", "nodeInfo", "architecture")),
+    },
+    addresses: records(dig(item, "status", "addresses")).map((a) => ({ type: str(a.type), address: str(a.address) })),
+    labels:
+      labels && typeof labels === "object"
+        ? Object.entries(labels as Record<string, unknown>)
+            .map(([key, value]) => ({ key, value: str(value) }))
+            .sort((a, b) => a.key.localeCompare(b.key))
+        : [],
+    age: k8sAge(str(dig(item, "metadata", "creationTimestamp")), nowMs),
+  };
+}
+
+/** A node's pods, every namespace's — asked while its details are on screen. */
+export function nodePodsArgs(node: string): string[] {
+  return ["get", "pods", "-A", `--field-selector=spec.nodeName=${node}`, "-o", "json"];
+}
+
+/** A node's usage now — asked while its details are on screen. */
+export function topNodeArgs(node: string): string[] {
+  return ["top", "node", node, "--no-headers"];
+}
+
+/** `top node <name> --no-headers` (NAME CPU CPU% MEMORY MEMORY%): millicores, MiB; null — no row. */
+export function parseTopNode(
+  raw: string,
+  node: string,
+): { cpu: number | null; cpuPct: number | null; mem: number | null; memPct: number | null } | null {
+  for (const line of raw.split("\n")) {
+    const cols = line.trim().split(/\s+/).filter(Boolean);
+    if (cols.length < 5 || cols[0] !== node) continue;
+    const pct = (v: string) => {
+      const n = Number.parseFloat(v);
+      return v.endsWith("%") && Number.isFinite(n) ? n : null;
+    };
+    return { cpu: parseCpuMillis(cols[1]), cpuPct: pct(cols[2]), mem: parseMemMiB(cols[3]), memPct: pct(cols[4]) };
+  }
+  return null;
+}
+
+/**
+ * What a pod asks of a node, as the scheduler counts it: its app containers and
+ * native sidecars together — or an init container, which runs alone (with the
+ * sidecars started before it), when that asks for more. 0 — it asks for nothing.
+ */
+export function podRequest(item: unknown, key: "cpu" | "memory"): number {
+  const parse = key === "cpu" ? parseCpuMillis : parseMemMiB;
+  const req = (c: Record<string, unknown>) => parse(str(dig(c, "resources", "requests", key)) || undefined) ?? 0;
+  let sidecars = 0;
+  let init = 0;
+  for (const c of records(dig(item, "spec", "initContainers"))) {
+    if (isSidecar(c)) sidecars += req(c);
+    else init = Math.max(init, req(c) + sidecars);
+  }
+  const app = records(dig(item, "spec", "containers")).reduce((sum, c) => sum + req(c), 0) + sidecars;
+  return Math.max(app, init);
+}
+
+export interface NodeAllocated {
+  /** Pods that hold resources on it — not finished ones. */
+  pods: number;
+  requests: { cpu: number; memory: number };
+  /** The limits that are declared; `unbounded` pods hold no ceiling at all on one of the two. */
+  limits: { cpu: number; memory: number };
+  unbounded: number;
+}
+
+/** What a node's running pods ask for and are held to ({@link nodePodsArgs}). */
+export function nodeAllocated(pods: readonly Record<string, unknown>[]): NodeAllocated {
+  const out: NodeAllocated = { pods: 0, requests: { cpu: 0, memory: 0 }, limits: { cpu: 0, memory: 0 }, unbounded: 0 };
+  for (const it of pods) {
+    const phase = str(dig(it, "status", "phase"));
+    if (phase === "Succeeded" || phase === "Failed") continue;
+    out.pods += 1;
+    out.requests.cpu += podRequest(it, "cpu");
+    out.requests.memory += podRequest(it, "memory");
+    let bounded = true;
+    for (const c of podContainers(it)) {
+      const cpu = parseCpuMillis(str(dig(c, "resources", "limits", "cpu")) || undefined);
+      const mem = parseMemMiB(str(dig(c, "resources", "limits", "memory")) || undefined);
+      if (cpu == null || mem == null) bounded = false;
+      out.limits.cpu += cpu ?? 0;
+      out.limits.memory += mem ?? 0;
+    }
+    if (!bounded) out.unbounded += 1;
+  }
+  return out;
+}
+
+/** The volume claims in scope as JSON (stage 5). */
+export function claimsArgs(): string[] {
+  return ["get", "persistentvolumeclaims", "-o", "json"];
+}
+
+export interface K8sClaim {
+  name: string;
+  namespace: string;
+  /** Bound · Pending · Lost. */
+  phase: string;
+  /** What it got (`status.capacity.storage`); "" — not bound yet. */
+  capacity: string;
+  /** What it asked for. */
+  requested: string;
+  storageClass: string;
+  /** `RWO`, `ROX`, `RWX`, `RWOP`, comma-joined. */
+  access: string;
+  volume: string;
+  age: string;
+  created: number | null;
+}
+
+const ACCESS: Record<string, string> = {
+  ReadWriteOnce: "RWO",
+  ReadOnlyMany: "ROX",
+  ReadWriteMany: "RWX",
+  ReadWriteOncePod: "RWOP",
+};
+
+export function parseClaims(raw: string, nowMs: number = Date.now()): K8sClaim[] {
+  return items(raw).map((it) => ({
+    name: str(dig(it, "metadata", "name")),
+    namespace: str(dig(it, "metadata", "namespace")),
+    phase: str(dig(it, "status", "phase")),
+    capacity: str(dig(it, "status", "capacity", "storage")),
+    requested: str(dig(it, "spec", "resources", "requests", "storage")),
+    storageClass: str(dig(it, "spec", "storageClassName")),
+    access: (Array.isArray(dig(it, "spec", "accessModes")) ? (dig(it, "spec", "accessModes") as unknown[]) : [])
+      .map((m) => ACCESS[str(m)] ?? str(m))
+      .join(","),
+    volume: str(dig(it, "spec", "volumeName")),
+    age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    created: createdAt(it),
+  }));
+}
+
+/** Who mounts each claim, by `namespace/claim` — from the pods' own volumes. */
+export function claimUsers(pods: readonly Record<string, unknown>[]): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const it of pods) {
+    const ns = str(dig(it, "metadata", "namespace"));
+    const name = str(dig(it, "metadata", "name"));
+    for (const v of records(dig(it, "spec", "volumes"))) {
+      const claim = str(dig(v, "persistentVolumeClaim", "claimName"));
+      if (!claim) continue;
+      const key = `${ns}/${claim}`;
+      out.set(key, [...(out.get(key) ?? []), name]);
+    }
+  }
+  return out;
+}
+
+/** What the cluster said last about each claim, by `namespace/claim` — why one waits. */
+export function claimReasons(events: readonly K8sEvent[]): Map<string, { type: string; reason: string; message: string }> {
+  const out = new Map<string, { type: string; reason: string; message: string }>();
+  // `parseEvents` gives the newest first: the first one seen is the latest.
+  for (const e of events) {
+    if (!e.object.startsWith("PersistentVolumeClaim/")) continue;
+    const key = `${e.namespace}/${e.object.slice("PersistentVolumeClaim/".length)}`;
+    if (!out.has(key)) out.set(key, { type: e.type, reason: e.reason, message: e.message });
+  }
+  return out;
+}
+
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
 /** Resolve a service's external address from LB ingress / externalIPs / type. */
@@ -2154,6 +2398,9 @@ export function parseNodes(raw: string, nowMs: number = Date.now()): K8sNode[] {
       externalIp: address("ExternalIP"),
       hostname: address("Hostname"),
       age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+      pressures: records(conds)
+        .filter((c) => c.type !== "Ready" && c.status === "True")
+        .map((c) => str(c.type)),
     };
   });
 }

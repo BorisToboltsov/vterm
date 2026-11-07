@@ -218,6 +218,12 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   `tabular-nums`, «текущая» `text-caption text-accent`, образы `font-mono text-caption`, `готово/нужно`
   `text-warn`, пока не сошлось. Под и запуск — строка с точкой тона, имя `font-mono`, возраст справа;
   под — кнопка во всю ширину (`hover:bg-edge/40`).
+- **Подробности ноды** — те же секции; ресурс — сетка `4.5rem | 1fr`: «может дать» `text-caption
+  text-muted`, под ним строки «запрошено / лимиты / занято сейчас» (подпись `w-20 text-caption
+  text-muted`, значение `tabular-nums`, полоса доли `h-1 w-16`, процент — `text-warn` выше 100 %).
+  Давление в строке ноды — `text-caption text-bad`. Заявка на том — строка с точкой тона фазы
+  (Bound `bg-ok`, Pending `bg-warn`, Lost `bg-bad`); почему ждёт — `text-caption`, `text-warn` у Warning;
+  «не монтирует ни один под» — `text-warn`.
 
 ## Диалоги и обратная связь
 

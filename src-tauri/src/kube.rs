@@ -173,6 +173,27 @@ mod tests {
                 "kubectl",
                 "get",
                 "pods",
+                "-A",
+                "--field-selector=spec.nodeName=desktop-control-plane",
+                "-o",
+                "json",
+                "--context",
+                "c",
+            ],
+            &["kubectl", "top", "node", "n1", "--no-headers"],
+            &[
+                "kubectl",
+                "get",
+                "persistentvolumeclaims",
+                "-o",
+                "json",
+                "--namespace",
+                "web",
+            ],
+            &[
+                "kubectl",
+                "get",
+                "pods",
                 "--selector=app=rollout,env in (prod,stage),!canary",
                 "-o",
                 "json",
@@ -633,6 +654,34 @@ mod live_kube {
             items(&mine).len() >= 3,
             "two old pods serving and the new one stuck"
         );
+
+        // A node's details and the volume claims (stage 5): the node's pods across
+        // namespaces, its usage now, the claims — `data-db-0` bound, two waiting.
+        let nodes = json(&cluster(&["get", "nodes", "-o", "json"])).await;
+        let node = text(&items(&nodes)[0], &["metadata", "name"]).to_string();
+        let on_node = format!("--field-selector=spec.nodeName={node}");
+        let there = json(&cluster(&["get", "pods", "-A", &on_node, "-o", "json"])).await;
+        assert!(
+            items(&there)
+                .iter()
+                .any(|p| text(p, &["metadata", "namespace"]) == ns.name),
+            "the stand's pods run on {node}"
+        );
+        metrics_or_absent(
+            &read(&cluster(&["top", "node", &node, "--no-headers"])).await,
+            "top node",
+        );
+        let claims = json(&scoped(&["get", "persistentvolumeclaims", "-o", "json"])).await;
+        let phase = |name: &str| {
+            items(&claims)
+                .iter()
+                .find(|c| text(c, &["metadata", "name"]) == name)
+                .map(|c| text(c, &["status", "phase"]).to_string())
+                .unwrap_or_default()
+        };
+        assert_eq!(phase("data-db-0"), "Bound");
+        assert_eq!(phase("spare"), "Pending");
+        assert_eq!(phase("orphan-claim"), "Pending");
 
         // The lists the panel polls.
         ok(&cluster(&["version", "-o", "json", "--request-timeout=5s"])).await;

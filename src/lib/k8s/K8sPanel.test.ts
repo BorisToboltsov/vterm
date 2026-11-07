@@ -449,3 +449,58 @@ describe("K8sPanel — workloads (stage 4)", () => {
     expect(within(screen.getByRole("dialog")).getByTestId("k8s-work-overview")).toHaveTextContent("Recreate");
   });
 });
+
+// Stage 5 (ADR 0054): a node's details, and the volume claims of the Cluster view.
+describe("K8sPanel — the Cluster view (stage 5)", () => {
+  const ok = (items: unknown[]) => ({ stdout: JSON.stringify({ items }), stderr: "", exitCode: 0 });
+  const NODE = {
+    metadata: { name: "desktop-control-plane", labels: {} },
+    status: { conditions: [{ type: "Ready", status: "True" }, { type: "DiskPressure", status: "True", reason: "KubeletHasDiskPressure" }], nodeInfo: { kubeletVersion: "v1.31.1" } },
+  };
+  const claim = (name: string, phase: string) => ({
+    metadata: { name, namespace: "shop" },
+    spec: { accessModes: ["ReadWriteOnce"], resources: { requests: { storage: "64Mi" } }, storageClassName: "standard" },
+    status: { phase, ...(phase === "Bound" ? { capacity: { storage: "64Mi" } } : {}) },
+  });
+  const DB = { metadata: { name: "db-0", namespace: "shop" }, spec: { volumes: [{ name: "data", persistentVolumeClaim: { claimName: "data-db-0" } }] }, status: {} };
+  const WAIT = {
+    type: "Normal",
+    reason: "WaitForFirstConsumer",
+    involvedObject: { kind: "PersistentVolumeClaim", name: "spare" },
+    metadata: { namespace: "shop" },
+    message: "waiting for first consumer to be created before binding",
+  };
+
+  async function openCluster(id: string, pvcs: unknown[]) {
+    answer = (args) => {
+      if (args.includes("nodes")) return ok([NODE]);
+      if (args.includes("persistentvolumeclaims")) return ok(pvcs);
+      if (args.includes("events")) return ok([WAIT]);
+      if (args.includes("get") && args.includes("pods")) return ok([DB]);
+      return undefined;
+    };
+    render(K8sPanel, { props: { sessionId: id, visible: true, sessionReady: true } });
+    await idle();
+    const before = calls.length;
+    await fireEvent.click(screen.getByRole("button", { name: "Cluster" }));
+    await idle();
+    return calls.slice(before);
+  }
+
+  it("lists the claims with who mounts each and why one waits; the pods are asked only for them", async () => {
+    await openCluster("k-claims", [claim("data-db-0", "Bound"), claim("spare", "Pending")]);
+    const [data, spare] = screen.getAllByTestId("k8s-claim-row");
+    expect(data).toHaveTextContent("mounted by db-0");
+    expect(spare).toHaveTextContent("not mounted by any pod");
+    expect(within(spare).getByTestId("k8s-claim-why")).toHaveTextContent("waiting for first consumer");
+    expect(screen.getByTestId("k8s-node-pressure")).toHaveTextContent("DiskPressure");
+  });
+
+  it("asks no pods when there are no claims, and a click on a node opens its details", async () => {
+    const asked = await openCluster("k-noclaims", []);
+    expect(asked.some((c) => c.includes("persistentvolumeclaims"))).toBe(true);
+    expect(asked.filter((c) => c.includes("get pods -o json"))).toEqual([]);
+    await fireEvent.click(screen.getByTestId("k8s-node-row"));
+    expect(within(screen.getByRole("dialog")).getByTestId("k8s-node-overview")).toHaveTextContent("Ready");
+  });
+});

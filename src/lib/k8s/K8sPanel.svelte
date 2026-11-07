@@ -25,6 +25,8 @@
   import K8sDetailModal from "./K8sDetailModal.svelte";
   import K8sWorkloadDetail from "./K8sWorkloadDetail.svelte";
   import K8sWorkloadModal from "./K8sWorkloadModal.svelte";
+  import K8sNodeDetail from "./K8sNodeDetail.svelte";
+  import K8sNodeModal from "./K8sNodeModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
@@ -76,6 +78,11 @@
     jobOwners,
     parseWorkloadDetail,
     workloadItem,
+    parseNodeDetail,
+    claimsArgs,
+    parseClaims,
+    claimUsers as usersOfClaims,
+    type K8sClaim,
     type K8sJob,
     type K8sWorkloadTab,
     podReadings,
@@ -203,6 +210,11 @@
   // read from here; a CronJob's runs are its Jobs.
   let workloadObjects = $state.raw<Record<string, unknown>[]>([]);
   let jobs = $state.raw<K8sJob[]>([]);
+  // The Cluster view's objects (stage 5): the nodes as kubectl gave them (a node's
+  // details are read from here), the volume claims and who mounts each.
+  let nodeObjects = $state.raw<Record<string, unknown>[]>([]);
+  let claims = $state.raw<K8sClaim[]>([]);
+  let claimUsers = $state.raw<Map<string, string[]> | null>(null);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
   // The Network sub-tab has two views of the same lists (v1.5). The route needs
@@ -296,12 +308,16 @@
   let workOpen = $state(false);
   let workTarget = $state<{ kind: K8sWorkload["kind"]; name: string; namespace: string } | null>(null);
   let workTab = $state<K8sWorkloadTab>("overview");
+  // A node's details (stage 5), the same way.
+  let nodeOpen = $state(false);
+  let nodeName = $state<string | null>(null);
+  let nodeTab = $state<K8sWorkloadTab>("overview");
 
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
   // Something stands beside the list (describe, YAML, a pod's or a workload's
   // details): the row is two parts with a border the user drags.
-  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen));
+  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen || nodeOpen));
   let textTitle = $state("");
   let textBody = $state("");
 
@@ -509,12 +525,21 @@
         if (current) slices = eps && slicesError === null ? parseEndpointSlices(eps.stdout) : null;
       } else {
         // Cluster: nodes are cluster-scoped (no namespace flag); events respect scope.
-        const [nd, ev] = await Promise.all([
+        const [nd, ev, pvc] = await Promise.all([
           kubectlRun(sessionId, viewArgs(nodesArgs(), { namespaced: false }), 20, false),
           kubectlRun(sessionId, viewArgs(eventsArgs()), 20, false),
+          kubectlRun(sessionId, viewArgs(claimsArgs()), 20, false),
         ]);
         nodes = parseNodes(nd.stdout);
+        nodeObjects = listItems(nd.stdout);
         events = parseEvents(ev.stdout);
+        claims = parseClaims(pvc.stdout);
+        // Who mounts a claim is in the pods' own volumes — asked only when there
+        // are claims to answer for (stage 5).
+        if (claims.length > 0) {
+          const pods = await kubectlRun(sessionId, viewArgs(podsArgs()), 20, false);
+          claimUsers = pods.exitCode === 0 ? usersOfClaims(listItems(pods.stdout)) : null;
+        } else claimUsers = null;
       }
     } catch (e) {
       notifyError(String(e));
@@ -633,15 +658,32 @@
     // picking a pod asks for the pod.
     textOpen = false;
     workOpen = false;
+    nodeOpen = false;
     detailPod = pod;
     detailOpen = true;
   }
+
+  function openNode(n: K8sNode) {
+    if (!nodeOpen) nodeTab = "overview";
+    textOpen = false;
+    detailOpen = false;
+    workOpen = false;
+    nodeName = n.name;
+    nodeOpen = true;
+  }
+  const liveNode = $derived(nodeName ? (nodes.find((x) => x.name === nodeName) ?? null) : null);
+  const nodeDetail = $derived(
+    nodeOpen && nodeName
+      ? parseNodeDetail(nodeObjects.find((it) => (it.metadata as { name?: string } | undefined)?.name === nodeName) ?? null)
+      : null,
+  );
 
   function openWorkload(w: K8sWorkload) {
     const same = workOpen && workTarget?.kind === w.kind && workTarget.namespace === w.namespace && workTarget.name === w.name;
     if (!same && !workOpen) workTab = "overview";
     textOpen = false;
     detailOpen = false;
+    nodeOpen = false;
     workTarget = { kind: w.kind, name: w.name, namespace: w.namespace };
     workOpen = true;
   }
@@ -1079,6 +1121,10 @@
           collapsed={foldOf("k8s.events")}
           ontoggle={toggleFold("k8s.events")}
           onmenu={(m) => (menu = m)}
+          onOpenNode={openNode}
+          selectedNode={nodeOpen ? nodeName : null}
+          {claims}
+          {claimUsers}
         />
       {/if}
     </div>
@@ -1092,6 +1138,10 @@
         {#if textOpen}
           <SidePane title={textTitle} onclose={() => (textOpen = false)} testid="k8s-side-text">
             <K8sText text={textBody} fill />
+          </SidePane>
+        {:else if nodeOpen}
+          <SidePane title={nodeName ?? ""} onclose={() => (nodeOpen = false)} testid="k8s-side-node">
+            <K8sNodeDetail active fill bind:tab={nodeTab} node={liveNode} detail={nodeDetail} {refreshSec} {runQuery} />
           </SidePane>
         {:else if workOpen}
           <SidePane title={liveWork?.name ?? workTarget?.name ?? ""} onclose={() => (workOpen = false)} testid="k8s-side-workload">
@@ -1161,6 +1211,16 @@
   onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
+/>
+
+<K8sNodeModal
+  open={nodeOpen && !wide}
+  bind:tab={nodeTab}
+  node={liveNode}
+  detail={nodeDetail}
+  {refreshSec}
+  {runQuery}
+  onclose={() => (nodeOpen = false)}
 />
 
 <K8sWorkloadModal

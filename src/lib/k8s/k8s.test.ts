@@ -71,6 +71,16 @@ import {
   parseEvents,
   podEventsArgs,
   podReadings,
+  parseNodeDetail,
+  nodePodsArgs,
+  podRequest,
+  nodeAllocated,
+  topNodeArgs,
+  parseTopNode,
+  claimsArgs,
+  parseClaims,
+  claimUsers,
+  claimReasons,
   jobsArgs,
   parseJobs,
   jobOwners,
@@ -2125,5 +2135,141 @@ describe("a workload's details (stage 4)", () => {
     );
     expect(workloadPods(pods, { kind: "Deployment", name: "rollout", namespace: "vterm-stand" }).map((p) => p.name)).toEqual(["rollout-7f9c-a"]);
     expect(workloadPods(pods, { kind: "StatefulSet", name: "db", namespace: "vterm-stand" }).map((p) => p.name)).toEqual(["db-0"]);
+  });
+});
+
+// Stage 5 (ADR 0054): a node and the volume claims. The objects are the stand's as
+// Docker Desktop's k8s 1.31.1 answered, trimmed to what the model reads.
+describe("a node's details (stage 5)", () => {
+  const now = Date.parse("2026-11-07T14:30:00Z");
+  const NODE = {
+    metadata: { name: "desktop-control-plane", creationTimestamp: "2026-11-07T12:49:00Z", labels: { "node-role.kubernetes.io/control-plane": "", "kubernetes.io/arch": "arm64" } },
+    spec: { taints: [{ key: "node.kubernetes.io/disk-pressure", effect: "NoSchedule" }, { key: "dedicated", value: "db", effect: "NoExecute" }] },
+    status: {
+      capacity: { cpu: "8", memory: "12235532Ki", pods: "110", "ephemeral-storage": "61202244Ki" },
+      allocatable: { cpu: "7800m", memory: "11Gi", pods: "110", "ephemeral-storage": "56Gi" },
+      conditions: [
+        { type: "MemoryPressure", status: "False", reason: "KubeletHasSufficientMemory", message: "kubelet has sufficient memory available" },
+        { type: "DiskPressure", status: "True", reason: "KubeletHasDiskPressure", message: "kubelet has disk pressure", lastTransitionTime: "2026-11-07T14:20:00Z" },
+        { type: "PIDPressure", status: "False", reason: "KubeletHasSufficientPID" },
+        { type: "Ready", status: "True", reason: "KubeletReady", message: "kubelet is posting ready status" },
+      ],
+      addresses: [{ type: "InternalIP", address: "172.23.0.2" }, { type: "Hostname", address: "desktop-control-plane" }],
+      nodeInfo: { kubeletVersion: "v1.31.1", containerRuntimeVersion: "containerd://1.7.18", osImage: "Debian GNU/Linux 12 (bookworm)", kernelVersion: "6.12.67-linuxkit", architecture: "arm64" },
+    },
+  };
+
+  it("reads what a node has, what it can give, what it says and how it is tainted", () => {
+    const d = parseNodeDetail(NODE, now)!;
+    expect(d.name).toBe("desktop-control-plane");
+    expect(d.capacity).toEqual({ cpu: 8000, memory: 11948.76171875, pods: 110, storage: 59767.81640625 });
+    expect(d.allocatable).toEqual({ cpu: 7800, memory: 11264, pods: 110, storage: 57344 });
+    // A pressure is healthy when it is False; Ready — when it is True.
+    expect(d.conditions.map((c) => [c.type, c.healthy])).toEqual([
+      ["Ready", true],
+      ["MemoryPressure", true],
+      ["DiskPressure", false],
+      ["PIDPressure", true],
+    ]);
+    expect(d.conditions[2].message).toBe("kubelet has disk pressure");
+    expect(d.taints).toEqual(["node.kubernetes.io/disk-pressure:NoSchedule", "dedicated=db:NoExecute"]);
+    expect(d.info).toEqual({ kubelet: "v1.31.1", runtime: "containerd://1.7.18", os: "Debian GNU/Linux 12 (bookworm)", kernel: "6.12.67-linuxkit", arch: "arm64" });
+    expect(d.addresses).toEqual([
+      { type: "InternalIP", address: "172.23.0.2" },
+      { type: "Hostname", address: "desktop-control-plane" },
+    ]);
+    expect(parseNodeDetail(null, now)).toBeNull();
+  });
+
+  it("names the pressures in the list's row too", () => {
+    const [n] = parseNodes(JSON.stringify({ items: [NODE] }), now);
+    expect(n.pressures).toEqual(["DiskPressure"]);
+  });
+
+  it("asks the node's pods across namespaces, and its usage now", () => {
+    expect(nodePodsArgs("desktop-control-plane")).toEqual(["get", "pods", "-A", "--field-selector=spec.nodeName=desktop-control-plane", "-o", "json"]);
+    expect(topNodeArgs("desktop-control-plane")).toEqual(["top", "node", "desktop-control-plane", "--no-headers"]);
+    expect(parseTopNode("desktop-control-plane   252m   3%    957Mi   8%    \n", "desktop-control-plane")).toEqual({ cpu: 252, cpuPct: 3, mem: 957, memPct: 8 });
+    expect(parseTopNode("", "desktop-control-plane")).toBeNull();
+  });
+
+  it("counts a pod's request as the scheduler does: an init container may ask for more than the rest", () => {
+    const pod = (init: Record<string, unknown>[], containers: Record<string, unknown>[]) => ({ spec: { initContainers: init, containers } });
+    const req = (cpu?: string) => ({ resources: cpu ? { requests: { cpu } } : {} });
+    expect(podRequest(pod([], [req("100m"), req("50m")]), "cpu")).toBe(150);
+    // An init container runs alone: the pod asks for the larger of it and the rest.
+    expect(podRequest(pod([req("500m")], [req("100m")]), "cpu")).toBe(500);
+    // A native sidecar keeps running: it adds to the app, and to every init after it.
+    expect(podRequest(pod([{ ...req("50m"), restartPolicy: "Always" }, req("400m")], [req("100m")]), "cpu")).toBe(450);
+    expect(podRequest(pod([], [req(), req()]), "cpu")).toBe(0);
+  });
+
+  it("sums what the node's running pods ask for and are held to — finished pods hold nothing", () => {
+    const pod = (phase: string, cpu: string, mem: string, limits?: { cpu?: string; memory?: string }) => ({
+      metadata: { name: `p-${phase}-${cpu}`, namespace: "a" },
+      spec: { containers: [{ name: "c", resources: { requests: { cpu, memory: mem }, ...(limits ? { limits } : {}) } }] },
+      status: { phase },
+    });
+    const a = nodeAllocated(
+      listItems(JSON.stringify({ items: [pod("Running", "100m", "64Mi", { cpu: "200m", memory: "128Mi" }), pod("Pending", "50m", "32Mi"), pod("Succeeded", "1", "1Gi")] })),
+    );
+    expect(a).toEqual({ pods: 2, requests: { cpu: 150, memory: 96 }, limits: { cpu: 200, memory: 128 }, unbounded: 1 });
+  });
+});
+
+describe("volume claims (stage 5)", () => {
+  const now = Date.parse("2026-11-07T14:30:00Z");
+  const pvc = (name: string, phase: string, spec: Record<string, unknown>, status: Record<string, unknown> = {}) => ({
+    metadata: { name, namespace: "vterm-stand", creationTimestamp: "2026-11-07T13:02:00Z" },
+    spec: { accessModes: ["ReadWriteOnce"], resources: { requests: { storage: "64Mi" } }, ...spec },
+    status: { phase, ...status },
+  });
+  const RAW = JSON.stringify({
+    items: [
+      pvc("data-db-0", "Bound", { storageClassName: "standard", volumeName: "pvc-62f55cec" }, { capacity: { storage: "64Mi" } }),
+      pvc("orphan-claim", "Pending", { storageClassName: "vterm-none" }),
+      pvc("spare", "Pending", { storageClassName: "standard" }),
+    ],
+  });
+
+  it("asks for the claims and reads each: its state, size, class, access and volume", () => {
+    expect(claimsArgs()).toEqual(["get", "persistentvolumeclaims", "-o", "json"]);
+    expect(parseClaims(RAW, now).map((c) => [c.name, c.phase, c.capacity, c.requested, c.storageClass, c.access, c.volume])).toEqual([
+      ["data-db-0", "Bound", "64Mi", "64Mi", "standard", "RWO", "pvc-62f55cec"],
+      ["orphan-claim", "Pending", "", "64Mi", "vterm-none", "RWO", ""],
+      ["spare", "Pending", "", "64Mi", "standard", "RWO", ""],
+    ]);
+  });
+
+  it("says who mounts each claim, from the pods' own volumes", () => {
+    const pods = listItems(
+      JSON.stringify({
+        items: [
+          { metadata: { name: "db-0", namespace: "vterm-stand" }, spec: { volumes: [{ name: "data", persistentVolumeClaim: { claimName: "data-db-0" } }, { name: "tmp", emptyDir: {} }] } },
+          { metadata: { name: "other", namespace: "elsewhere" }, spec: { volumes: [{ name: "data", persistentVolumeClaim: { claimName: "spare" } }] } },
+        ],
+      }),
+    );
+    const users = claimUsers(pods);
+    expect(users.get("vterm-stand/data-db-0")).toEqual(["db-0"]);
+    // A claim is its namespace's: a pod elsewhere does not mount this one.
+    expect(users.get("vterm-stand/spare")).toBeUndefined();
+  });
+
+  it("says why a claim waits, from the latest event about it", () => {
+    const events = parseEvents(
+      JSON.stringify({
+        items: [
+          { type: "Warning", reason: "ProvisioningFailed", involvedObject: { kind: "PersistentVolumeClaim", name: "orphan-claim" }, metadata: { namespace: "vterm-stand" }, message: 'storageclass.storage.k8s.io "vterm-none" not found', count: 321, lastTimestamp: "2026-11-07T14:29:00Z" },
+          { type: "Normal", reason: "WaitForFirstConsumer", involvedObject: { kind: "PersistentVolumeClaim", name: "spare" }, metadata: { namespace: "vterm-stand" }, message: "waiting for first consumer to be created before binding", count: 322, lastTimestamp: "2026-11-07T14:29:30Z" },
+          { type: "Normal", reason: "Scheduled", involvedObject: { kind: "Pod", name: "spare" }, metadata: { namespace: "vterm-stand" }, message: "not a claim", lastTimestamp: "2026-11-07T14:29:59Z" },
+        ],
+      }),
+      now,
+    );
+    const why = claimReasons(events);
+    expect(why.get("vterm-stand/orphan-claim")).toEqual({ type: "Warning", reason: "ProvisioningFailed", message: 'storageclass.storage.k8s.io "vterm-none" not found' });
+    expect(why.get("vterm-stand/spare")?.reason).toBe("WaitForFirstConsumer");
+    expect(why.size).toBe(2);
   });
 });
