@@ -632,7 +632,8 @@ mod tests {
     #[test]
     fn a_compose_argv_is_held_to_its_stack_before_it_runs() {
         // The order is the contract: the labels are asked and checked, then the argv runs.
-        let src = include_str!("commands/drivers.rs");
+        // A Windows checkout ends lines with CRLF: the function's end is sought in LF.
+        let src = include_str!("commands/drivers.rs").replace("\r\n", "\n");
         let body = &src[src.find("pub async fn container_run(").unwrap()..];
         let body = &body[..body.find("\n}\n").unwrap()];
         let checked = body
