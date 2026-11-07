@@ -121,7 +121,14 @@ export function podsArgs(): string[] {
  * {@link parseWorkloads}).
  */
 export function workloadsArgs(): string[] {
-  return ["get", "deployments,statefulsets,daemonsets,cronjobs", "-o", "json"];
+  // The Jobs in the same call (stage 4): a Job of its own is a workload, a
+  // CronJob's runs are its CronJob's — and they are what rolls their pods up.
+  return ["get", "deployments,statefulsets,daemonsets,cronjobs,jobs", "-o", "json"];
+}
+
+/** The Jobs in scope as JSON — for the pods poll, when a pod is a Job's (stage 4). */
+export function jobsArgs(): string[] {
+  return ["get", "jobs", "-o", "json"];
 }
 
 /**
@@ -314,7 +321,7 @@ function podSigns(it: Record<string, unknown>): Pick<K8sPod, "oomAt" | "imagePul
 }
 
 export interface K8sWorkload {
-  kind: "Deployment" | "StatefulSet" | "DaemonSet" | "CronJob";
+  kind: "Deployment" | "StatefulSet" | "DaemonSet" | "CronJob" | "Job";
   name: string;
   namespace: string;
   /** "ready/desired" for Deploy/STS/DS; "" for CronJob. */
@@ -330,6 +337,10 @@ export interface K8sWorkload {
   scalable: boolean;
   /** When it was created, epoch ms (v1.29); null — not reported. */
   created?: number | null;
+  /** `metadata.uid` — what its ReplicaSets and Jobs name as their owner (stage 4). */
+  uid?: string;
+  /** A Job's state ({@link K8sJob}); "" for the other kinds. */
+  status?: string;
 }
 
 export interface K8sPodMetrics {
@@ -633,12 +644,23 @@ export function parsePods(raw: string, nowMs: number = Date.now()): K8sPod[] {
   return podsOf(items(raw), nowMs);
 }
 
-/** The pods of a list already parsed ({@link listItems}) — the panel reads the JSON once. */
-export function podsOf(list: readonly Record<string, unknown>[], nowMs: number = Date.now()): K8sPod[] {
+/**
+ * The pods of a list already parsed ({@link listItems}) — the panel reads the JSON
+ * once. `owners` ({@link jobOwners}) rolls a CronJob's run pods up to the CronJob,
+ * as a ReplicaSet's are rolled up to its Deployment; without it a pod's owner is
+ * its own Job — never guessed from the name.
+ */
+export function podsOf(
+  list: readonly Record<string, unknown>[],
+  nowMs: number = Date.now(),
+  owners?: ReadonlyMap<string, { kind: string; name: string }>,
+): K8sPod[] {
   return list.map((it) => {
     const running = podContainers(it);
     const row = podRow(it);
-    const owner = resolveOwner(dig(it, "metadata", "ownerReferences"));
+    const own = resolveOwner(dig(it, "metadata", "ownerReferences"));
+    const owner =
+      own.kind === "Job" ? (owners?.get(`${str(dig(it, "metadata", "namespace"))}/${own.name}`) ?? own) : own;
     return {
       name: str(dig(it, "metadata", "name")),
       namespace: str(dig(it, "metadata", "namespace")),
@@ -691,7 +713,26 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
     const namespace = str(dig(it, "metadata", "namespace"));
     const age = k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs);
     const created = createdAt(it);
-    if (kind === "Deployment" || kind === "StatefulSet") {
+    const uid = str(dig(it, "metadata", "uid"));
+    if (kind === "Job") {
+      // A CronJob's run is its CronJob's — shown in its details, not as a row.
+      const job = jobOf(it, nowMs);
+      if (job.owner?.kind === "CronJob") continue;
+      out.push({
+        kind: "Job",
+        name,
+        namespace,
+        ready: `${job.succeeded}/${job.completions ?? 1}`,
+        replicas: null,
+        schedule: "",
+        suspended: job.status === "Suspended",
+        age,
+        created,
+        scalable: false,
+        uid,
+        status: job.status,
+      });
+    } else if (kind === "Deployment" || kind === "StatefulSet") {
       const desired = num(dig(it, "spec", "replicas"));
       const ready = num(dig(it, "status", "readyReplicas"));
       out.push({
@@ -705,6 +746,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: true,
+        uid,
       });
     } else if (kind === "DaemonSet") {
       const desired = num(dig(it, "status", "desiredNumberScheduled"));
@@ -720,6 +762,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: false,
+        uid,
       });
     } else if (kind === "CronJob") {
       out.push({
@@ -733,6 +776,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         age,
         created,
         scalable: false,
+        uid,
       });
     }
   }
@@ -1552,6 +1596,321 @@ export function metricsGap(out: { stdout: string; stderr: string; exitCode: numb
   return { kind: "other", text };
 }
 
+// ── A workload's details (ADR 0054, stage 4) ────────────────────────────────
+//
+// What a workload is told (its spec), has (its status) and says (its conditions) —
+// from the workloads poll, no call of its own. What it owns is asked only while
+// its details are on screen: its pods and, for a Deployment, its ReplicaSets — by
+// its selector, then taken by owner, since a selector may match more. A CronJob's
+// Jobs come with the poll.
+
+export type JobStatus = "Complete" | "Failed" | "Suspended" | "Running" | "Pending";
+
+export interface K8sJob {
+  name: string;
+  namespace: string;
+  uid: string;
+  /** The controller that made it — a CronJob for its runs; null — a Job of its own. */
+  owner: { kind: string; name: string; uid: string } | null;
+  status: JobStatus;
+  /** The condition's reason: `BackoffLimitExceeded`, `DeadlineExceeded`, `CompletionsReached`. */
+  reason: string;
+  message: string;
+  succeeded: number;
+  failed: number;
+  active: number;
+  completions: number | null;
+  start: number | null;
+  /** Only a completed Job reports when it ended. */
+  end: number | null;
+  durationSec: number | null;
+  age: string;
+  created: number | null;
+}
+
+const when4 = (v: unknown): number | null => {
+  const t = Date.parse(str(v));
+  return Number.isFinite(t) ? t : null;
+};
+
+function conditionOf(it: unknown, type: string): Record<string, unknown> | undefined {
+  return records(dig(it, "status", "conditions")).find((c) => c.type === type && c.status === "True");
+}
+
+function jobOf(it: Record<string, unknown>, nowMs: number): K8sJob {
+  const ref = records(dig(it, "metadata", "ownerReferences")).find((r) => r.controller === true) ??
+    records(dig(it, "metadata", "ownerReferences"))[0];
+  const complete = conditionOf(it, "Complete") ?? conditionOf(it, "SuccessCriteriaMet");
+  const failed = conditionOf(it, "Failed") ?? conditionOf(it, "FailureTarget");
+  const suspended = conditionOf(it, "Suspended");
+  const active = num(dig(it, "status", "active"));
+  const status: JobStatus = complete ? "Complete" : failed ? "Failed" : suspended ? "Suspended" : active > 0 ? "Running" : "Pending";
+  const said = complete ?? failed ?? suspended;
+  const start = when4(dig(it, "status", "startTime"));
+  const end = when4(dig(it, "status", "completionTime"));
+  const completions = dig(it, "spec", "completions");
+  return {
+    name: str(dig(it, "metadata", "name")),
+    namespace: str(dig(it, "metadata", "namespace")),
+    uid: str(dig(it, "metadata", "uid")),
+    owner: ref ? { kind: str(ref.kind), name: str(ref.name), uid: str(ref.uid) } : null,
+    status,
+    reason: str(said?.reason),
+    message: str(said?.message).trim(),
+    succeeded: num(dig(it, "status", "succeeded")),
+    failed: num(dig(it, "status", "failed")),
+    active,
+    completions: typeof completions === "number" ? completions : null,
+    start,
+    end,
+    durationSec: start != null && end != null ? Math.round((end - start) / 1000) : null,
+    age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+    created: createdAt(it),
+  };
+}
+
+/** The Jobs of a `get jobs` list (or of the workloads poll, which carries them). */
+export function parseJobs(raw: string, nowMs: number = Date.now()): K8sJob[] {
+  return items(raw)
+    .filter((it) => str(it.kind || "Job") === "Job")
+    .map((it) => jobOf(it, nowMs));
+}
+
+/** Whose each Job is, by `namespace/name` — what {@link podsOf} rolls a run pod up to. */
+export function jobOwners(jobs: readonly K8sJob[]): Map<string, { kind: string; name: string }> {
+  const out = new Map<string, { kind: string; name: string }>();
+  for (const j of jobs) {
+    if (j.owner?.kind === "CronJob") out.set(`${j.namespace}/${j.name}`, { kind: "CronJob", name: j.owner.name });
+  }
+  return out;
+}
+
+/**
+ * A label selector as kubectl's `--selector` reads it: `k=v`, `k in (a,b)`,
+ * `k notin (a)`, `k`, `!k`. null for an empty one — it selects everything, which is
+ * not a question worth asking.
+ */
+export function selectorArg(selector: unknown): string | null {
+  if (!selector || typeof selector !== "object") return null;
+  const parts: string[] = [];
+  const labels = dig(selector, "matchLabels");
+  if (labels && typeof labels === "object") {
+    for (const [k, v] of Object.entries(labels as Record<string, unknown>)) parts.push(`${k}=${str(v)}`);
+  }
+  for (const e of records(dig(selector, "matchExpressions"))) {
+    const key = str(e.key);
+    const values = Array.isArray(e.values) ? (e.values as unknown[]).map(str).join(",") : "";
+    switch (str(e.operator)) {
+      case "In":
+        parts.push(`${key} in (${values})`);
+        break;
+      case "NotIn":
+        parts.push(`${key} notin (${values})`);
+        break;
+      case "Exists":
+        parts.push(key);
+        break;
+      case "DoesNotExist":
+        parts.push(`!${key}`);
+        break;
+    }
+  }
+  return parts.length ? parts.join(",") : null;
+}
+
+/** The pods a workload's selector picks — taken by owner after ({@link workloadPods}). */
+export function workloadPodsArgs(selector: string): string[] {
+  return ["get", "pods", `--selector=${selector}`, "-o", "json"];
+}
+
+/** A Deployment's ReplicaSets, by its selector — taken by owner after ({@link parseRevisions}). */
+export function replicaSetsArgs(selector: string): string[] {
+  return ["get", "replicasets", `--selector=${selector}`, "-o", "json"];
+}
+
+export interface K8sRevision {
+  revision: number;
+  name: string;
+  images: string[];
+  desired: number;
+  ready: number;
+  age: string;
+  /** The Deployment's own revision — what it rolls out now. */
+  current: boolean;
+}
+
+const templateImages = (spec: unknown): string[] =>
+  records(dig(spec, "template", "spec", "containers")).map((c) => str(c.image)).filter(Boolean);
+
+/** The ReplicaSets the Deployment `ownerUid` owns, as its revisions, newest first. */
+export function parseRevisions(raw: string, ownerUid: string, current: number | null, nowMs: number = Date.now()): K8sRevision[] {
+  return items(raw)
+    .filter((it) => records(dig(it, "metadata", "ownerReferences")).some((r) => str(r.uid) === ownerUid))
+    .map((it) => {
+      const revision = Number.parseInt(str(dig(it, "metadata", "annotations", "deployment.kubernetes.io/revision")), 10);
+      return {
+        revision: Number.isFinite(revision) ? revision : 0,
+        name: str(dig(it, "metadata", "name")),
+        images: templateImages(dig(it, "spec")),
+        desired: num(dig(it, "spec", "replicas")),
+        ready: num(dig(it, "status", "readyReplicas")),
+        age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+        current: current != null && revision === current,
+      };
+    })
+    .sort((a, b) => b.revision - a.revision);
+}
+
+export interface WorkloadReplicas {
+  desired: number;
+  current: number;
+  updated: number;
+  ready: number;
+  available: number;
+  unavailable: number;
+}
+
+export interface WorkloadDetail {
+  kind: K8sWorkload["kind"];
+  name: string;
+  namespace: string;
+  uid: string;
+  /** What picks its pods (`--selector`); null — none (a CronJob makes Jobs, not pods). */
+  selector: string | null;
+  images: string[];
+  conditions: PodCondition[];
+  replicas: WorkloadReplicas | null;
+  /** How it rolls out: `RollingUpdate · maxSurge 25% · maxUnavailable 25%`, `Recreate`, `OnDelete`. */
+  strategy: string;
+  /** A Deployment's revision now; null — not reported. */
+  revision: number | null;
+  progressDeadlineSec: number | null;
+  paused: boolean;
+  serviceName: string;
+  currentRevision: string;
+  updateRevision: string;
+  claims: { name: string; size: string; storageClass: string }[];
+  misscheduled: number | null;
+  schedule: string;
+  timeZone: string;
+  suspended: boolean;
+  concurrency: string;
+  lastSchedule: number | null;
+  lastSuccess: number | null;
+  activeJobs: number;
+  keep: { succeeded: number | null; failed: number | null } | null;
+  job: K8sJob | null;
+}
+
+const intOr = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
+const quantity = (v: unknown): string => (typeof v === "number" ? String(v) : str(v));
+
+function strategyText(s: unknown): string {
+  const type = str(dig(s, "type"));
+  const ru = dig(s, "rollingUpdate");
+  if (type !== "RollingUpdate" || !ru || typeof ru !== "object") return type;
+  const r = ru as Record<string, unknown>;
+  const parts = [type];
+  if ("maxSurge" in r) parts.push(`maxSurge ${quantity(r.maxSurge)}`);
+  if ("maxUnavailable" in r) parts.push(`maxUnavailable ${quantity(r.maxUnavailable)}`);
+  if ("partition" in r) parts.push(`partition ${quantity(r.partition)}`);
+  return parts.join(" · ");
+}
+
+/** What a workload's details show — see the section above; null for what is not one. */
+export function parseWorkloadDetail(item: Record<string, unknown> | null, nowMs: number = Date.now()): WorkloadDetail | null {
+  if (!item || !dig(item, "metadata", "name")) return null;
+  const kind = str(item.kind) as K8sWorkload["kind"];
+  const spec = dig(item, "spec");
+  const st = (k: string) => num(dig(item, "status", k));
+  const conditions = records(dig(item, "status", "conditions")).map((c) => ({
+    type: str(c.type),
+    ok: c.status === "True" ? true : c.status === "False" ? false : null,
+    reason: str(c.reason),
+    message: str(c.message).trim(),
+    since: when4(c.lastTransitionTime),
+  }));
+  let replicas: WorkloadReplicas | null = null;
+  if (kind === "Deployment" || kind === "StatefulSet") {
+    const desired = intOr(dig(spec, "replicas")) ?? 1;
+    replicas = {
+      desired,
+      current: st("replicas"),
+      updated: st("updatedReplicas"),
+      ready: st("readyReplicas"),
+      available: st("availableReplicas"),
+      unavailable: kind === "Deployment" ? st("unavailableReplicas") : Math.max(0, desired - st("availableReplicas")),
+    };
+  } else if (kind === "DaemonSet") {
+    replicas = {
+      desired: st("desiredNumberScheduled"),
+      current: st("currentNumberScheduled"),
+      updated: st("updatedNumberScheduled"),
+      ready: st("numberReady"),
+      available: st("numberAvailable"),
+      unavailable: st("numberUnavailable"),
+    };
+  }
+  const revision = Number.parseInt(str(dig(item, "metadata", "annotations", "deployment.kubernetes.io/revision")), 10);
+  const jobSpec = kind === "CronJob" ? dig(spec, "jobTemplate", "spec") : spec;
+  const keep =
+    kind === "CronJob"
+      ? { succeeded: intOr(dig(spec, "successfulJobsHistoryLimit")), failed: intOr(dig(spec, "failedJobsHistoryLimit")) }
+      : null;
+  return {
+    kind,
+    name: str(dig(item, "metadata", "name")),
+    namespace: str(dig(item, "metadata", "namespace")),
+    uid: str(dig(item, "metadata", "uid")),
+    selector: kind === "CronJob" ? null : selectorArg(dig(spec, "selector")),
+    images: templateImages(jobSpec),
+    conditions,
+    replicas,
+    strategy: strategyText(kind === "Deployment" ? dig(spec, "strategy") : dig(spec, "updateStrategy")),
+    revision: kind === "Deployment" && Number.isFinite(revision) ? revision : null,
+    progressDeadlineSec: kind === "Deployment" ? intOr(dig(spec, "progressDeadlineSeconds")) : null,
+    paused: dig(spec, "paused") === true,
+    serviceName: str(dig(spec, "serviceName")),
+    currentRevision: str(dig(item, "status", "currentRevision")),
+    updateRevision: str(dig(item, "status", "updateRevision")),
+    claims: records(dig(spec, "volumeClaimTemplates")).map((c) => ({
+      name: str(dig(c, "metadata", "name")),
+      size: quantity(dig(c, "spec", "resources", "requests", "storage")),
+      storageClass: str(dig(c, "spec", "storageClassName")),
+    })),
+    misscheduled: kind === "DaemonSet" ? st("numberMisscheduled") : null,
+    schedule: str(dig(spec, "schedule")),
+    timeZone: str(dig(spec, "timeZone")),
+    suspended: dig(spec, "suspend") === true,
+    concurrency: str(dig(spec, "concurrencyPolicy")),
+    lastSchedule: when4(dig(item, "status", "lastScheduleTime")),
+    lastSuccess: when4(dig(item, "status", "lastSuccessfulTime")),
+    activeJobs: records(dig(item, "status", "active")).length,
+    keep,
+    job: kind === "Job" ? jobOf(item, nowMs) : null,
+  };
+}
+
+/** The workload `kind namespace/name` of a parsed list ({@link listItems}); null — not in it. */
+export function workloadItem(
+  list: readonly Record<string, unknown>[],
+  kind: string,
+  namespace: string,
+  name: string,
+): Record<string, unknown> | null {
+  return (
+    list.find(
+      (it) =>
+        str(it.kind) === kind && str(dig(it, "metadata", "name")) === name && str(dig(it, "metadata", "namespace")) === namespace,
+    ) ?? null
+  );
+}
+
+/** A workload's own pods, by the owner the list rolls them up to — not by a selector. */
+export function workloadPods(pods: readonly K8sPod[], w: { kind: string; name: string; namespace: string }): K8sPod[] {
+  return pods.filter((p) => p.namespace === w.namespace && p.ownerKind === w.kind && p.ownerName === w.name);
+}
+
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
 /** Resolve a service's external address from LB ingress / externalIPs / type. */
@@ -1846,6 +2205,9 @@ export function eventTone(type: string): "ok" | "warn" | "bad" | "idle" {
 /** The views of a pod's details (`K8sDetail`); the log first — where details open (v1.33). */
 export type K8sDetailTab = "logs" | "overview" | "resources" | "describe" | "yaml";
 
+/** The views of a workload's details (stage 4). */
+export type K8sWorkloadTab = "overview" | "describe" | "yaml";
+
 /**
  * Why a pod needs a look (v1.33): the strip above the list. Stage 2 names the cause
  * where the pod's own object says it: killed for memory, an image that cannot be
@@ -1965,7 +2327,7 @@ export interface PodUsage {
 }
 
 /** The workload kinds in the order the panel has always listed them. */
-export const WORKLOAD_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "CronJob"];
+export const WORKLOAD_KINDS = ["Deployment", "StatefulSet", "DaemonSet", "CronJob", "Job"];
 const kindRank = (kind: string): number => {
   const i = WORKLOAD_KINDS.indexOf(kind);
   return i === -1 ? WORKLOAD_KINDS.length : i;

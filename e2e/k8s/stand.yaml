@@ -291,6 +291,33 @@ spec:
         - name: fill
           emptyDir: { medium: Memory, sizeLimit: 48Mi }
 ---
+# Выкатка, застрявшая на полпути (ревизии нагрузки): после `kubectl set image deployment/rollout
+# app=busybox:vterm-missing-tag` новая ревизия не скачивает образ, а старая продолжает работать —
+# `maxUnavailable: 0` не даёт убрать её поды; за 30 с — ProgressDeadlineExceeded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector: { matchLabels: { app: rollout } }
+  template:
+    metadata:
+      labels: { app: rollout, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
 # Задание, которое закончилось успешно → под Completed.
 apiVersion: batch/v1
 kind: Job

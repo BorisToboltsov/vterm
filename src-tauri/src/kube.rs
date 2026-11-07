@@ -140,7 +140,7 @@ mod tests {
             &[
                 "kubectl",
                 "get",
-                "deployments,statefulsets,daemonsets,cronjobs",
+                "deployments,statefulsets,daemonsets,cronjobs,jobs",
                 "-o",
                 "json",
             ],
@@ -168,6 +168,25 @@ mod tests {
             &["kubectl", "scale", "deployment", "d", "--replicas", "3"],
             &["kubectl", "rollout", "restart", "deployment/d"],
             &["kubectl", "get", "events", "-o", "json"],
+            &["kubectl", "get", "jobs", "-o", "json", "--namespace", "web"],
+            &[
+                "kubectl",
+                "get",
+                "pods",
+                "--selector=app=rollout,env in (prod,stage),!canary",
+                "-o",
+                "json",
+                "--namespace",
+                "web",
+            ],
+            &[
+                "kubectl",
+                "get",
+                "replicasets",
+                "--selector=app=rollout",
+                "-o",
+                "json",
+            ],
             &[
                 "kubectl",
                 "get",
@@ -385,7 +404,13 @@ mod live_kube {
             pods.iter()
                 .any(|p| label(p, "job-name").starts_with(prefix) && p["status"]["phase"] == phase)
         };
-        let checks: [(&'static str, bool); 13] = [
+        let ready_rollout = pods
+            .iter()
+            .filter(|p| label(p, "app") == "rollout")
+            .filter(|p| condition(p, "Ready").is_some_and(|c| c["status"] == "True"))
+            .count();
+        let checks: [(&'static str, bool); 14] = [
+            ("rollout serves two pods", ready_rollout >= 2),
             (
                 "web is ready",
                 any("web", &|p| {
@@ -513,9 +538,10 @@ mod live_kube {
             tokio::time::sleep(Duration::from_secs(3)).await;
         };
         let workloads = loop {
+            // The panel's own call (stage 4): the kinds and the Jobs at once.
             let list = json(&scoped(&[
                 "get",
-                "deployments,statefulsets,daemonsets,cronjobs",
+                "deployments,statefulsets,daemonsets,cronjobs,jobs",
                 "-o",
                 "json",
             ]))
@@ -534,10 +560,78 @@ mod live_kube {
             );
             tokio::time::sleep(Duration::from_secs(3)).await;
         };
+        let kinds = |k: &str| items(&workloads).iter().filter(|w| w["kind"] == k).count();
         assert_eq!(
-            items(&workloads).len(),
-            13,
-            "9 deployments, a statefulset, a daemonset, 2 cronjobs"
+            items(&workloads).len() - kinds("Job"),
+            14,
+            "10 deployments, a statefulset, a daemonset, 2 cronjobs"
+        );
+        assert!(kinds("Job") >= 2, "migrate and a report run");
+
+        // A rollout stuck halfway (stage 4): a new revision that cannot pull its image
+        // while the old one keeps serving — two ReplicaSets the Deployment owns, asked
+        // by its selector as the details do.
+        let set = Command::new("kubectl")
+            .args([
+                "--context",
+                &ctx,
+                "--namespace",
+                &ns.name,
+                "set",
+                "image",
+                "deployment/rollout",
+                "app=busybox:vterm-missing-tag",
+            ])
+            .output()
+            .expect("kubectl on PATH");
+        assert!(
+            set.status.success(),
+            "{}",
+            String::from_utf8_lossy(&set.stderr)
+        );
+        let owner = items(&workloads)
+            .iter()
+            .find(|w| w["kind"] == "Deployment" && text(w, &["metadata", "name"]) == "rollout")
+            .map(|w| text(w, &["metadata", "uid"]).to_string())
+            .expect("the rollout Deployment");
+        let revisions = loop {
+            let list = json(&scoped(&[
+                "get",
+                "replicasets",
+                "--selector=app=rollout",
+                "-o",
+                "json",
+            ]))
+            .await;
+            let owned = items(&list)
+                .iter()
+                .filter(|r| {
+                    r["metadata"]["ownerReferences"]
+                        .as_array()
+                        .is_some_and(|o| o.iter().any(|x| x["uid"] == owner.as_str()))
+                })
+                .count();
+            if owned >= 2 {
+                break owned;
+            }
+            assert!(
+                started.elapsed() < SETTLE * 2,
+                "no second revision of rollout"
+            );
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        };
+        assert_eq!(revisions, 2);
+        let mine = json(&scoped(&[
+            "get",
+            "pods",
+            "--selector=app=rollout",
+            "-o",
+            "json",
+        ]))
+        .await;
+        assert!(
+            items(&mine).len() >= 3,
+            "two old pods serving and the new one stuck"
         );
 
         // The lists the panel polls.

@@ -23,6 +23,8 @@
   import K8sNetwork from "./K8sNetwork.svelte";
   import K8sCluster from "./K8sCluster.svelte";
   import K8sDetailModal from "./K8sDetailModal.svelte";
+  import K8sWorkloadDetail from "./K8sWorkloadDetail.svelte";
+  import K8sWorkloadModal from "./K8sWorkloadModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
@@ -69,6 +71,13 @@
     podsOf,
     podItem,
     parsePodDetail,
+    jobsArgs,
+    parseJobs,
+    jobOwners,
+    parseWorkloadDetail,
+    workloadItem,
+    type K8sJob,
+    type K8sWorkloadTab,
     podReadings,
     metricsGap,
     type MetricsGap,
@@ -190,6 +199,10 @@
   let resSeq = $state(-1);
   let metricsDown = $state.raw<MetricsGap | null>(null);
   let workloads = $state<K8sWorkload[]>([]);
+  // The objects of the same answer, and its Jobs (stage 4): a workload's details are
+  // read from here; a CronJob's runs are its Jobs.
+  let workloadObjects = $state.raw<Record<string, unknown>[]>([]);
+  let jobs = $state.raw<K8sJob[]>([]);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
   // The Network sub-tab has two views of the same lists (v1.5). The route needs
@@ -278,11 +291,17 @@
   let detailTab = $state<K8sDetailTab>("logs");
   let detailContainer = $state<string | null>(null);
 
+  // A workload's details (stage 4): one detail at a time — opening it puts a pod's
+  // away, opening a pod puts it away. The view is the panel's, as a pod's.
+  let workOpen = $state(false);
+  let workTarget = $state<{ kind: K8sWorkload["kind"]; name: string; namespace: string } | null>(null);
+  let workTab = $state<K8sWorkloadTab>("overview");
+
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
-  // Something stands beside the list (describe, YAML, a pod's details): the
-  // row is two parts with a border the user drags.
-  const sideOpen = $derived(wide && (textOpen || detailOpen));
+  // Something stands beside the list (describe, YAML, a pod's or a workload's
+  // details): the row is two parts with a border the user drags.
+  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen));
   let textTitle = $state("");
   let textBody = $state("");
 
@@ -438,7 +457,14 @@
           kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
         ]);
         const listed = listItems(pods.stdout);
-        podList = podsOf(listed);
+        let parsed = podsOf(listed);
+        // A CronJob's run pods belong to its CronJob, which only their Jobs say
+        // (stage 4) — asked when there are such pods, not on every poll.
+        if (parsed.some((p) => p.ownerKind === "Job")) {
+          const jr = await kubectlRun(sessionId, viewArgs(jobsArgs()), 20, false);
+          if (jr.exitCode === 0) parsed = podsOf(listed, Date.now(), jobOwners(parseJobs(jr.stdout)));
+        }
+        podList = parsed;
         podObjects = listed;
         restartsSeen = podRestartBaseline(restartsSeen, podList);
         const map = new Map<string, K8sPodMetrics>();
@@ -459,6 +485,8 @@
       } else if (activeSub === "workloads") {
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
+        workloadObjects = listItems(res.stdout);
+        jobs = parseJobs(res.stdout);
       } else if (activeSub === "network") {
         const forRoute = netView === "route";
         const [svc, ing, eps] = await Promise.all([
@@ -604,9 +632,42 @@
     // A text asked for earlier (describe, YAML) stands in front of the details:
     // picking a pod asks for the pod.
     textOpen = false;
+    workOpen = false;
     detailPod = pod;
     detailOpen = true;
   }
+
+  function openWorkload(w: K8sWorkload) {
+    const same = workOpen && workTarget?.kind === w.kind && workTarget.namespace === w.namespace && workTarget.name === w.name;
+    if (!same && !workOpen) workTab = "overview";
+    textOpen = false;
+    detailOpen = false;
+    workTarget = { kind: w.kind, name: w.name, namespace: w.namespace };
+    workOpen = true;
+  }
+
+  /** A pod of the open workload: the Pods view, with its details. */
+  function openWorkloadPod(pod: K8sPod) {
+    activeSub = "pods";
+    openDetails(pod);
+  }
+
+  const liveWork = $derived.by(() => {
+    const w = workTarget;
+    if (!w) return null;
+    return workloads.find((x) => x.kind === w.kind && x.namespace === w.namespace && x.name === w.name) ?? null;
+  });
+  const workDetail = $derived(
+    workOpen && workTarget
+      ? parseWorkloadDetail(workloadItem(workloadObjects, workTarget.kind, workTarget.namespace, workTarget.name))
+      : null,
+  );
+  // A CronJob's runs, newest first.
+  const workJobs = $derived.by(() => {
+    const uid = workDetail?.kind === "CronJob" ? workDetail.uid : "";
+    if (!uid) return [];
+    return jobs.filter((j) => j.owner?.uid === uid).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+  });
 
   const ATTENTION_TEXT: Record<PodAttentionReason, MessageKey> = {
     oom: "k8s.attnOom",
@@ -976,6 +1037,8 @@
                   onDescribe={describeObj}
                   onYaml={yamlObj}
                   {showMenu}
+                  onOpen={openWorkload}
+                  selectedKey={workOpen && workTarget ? `${workTarget.kind}/${workTarget.namespace}/${workTarget.name}` : null}
                 />
               {/if}
             </div>
@@ -1029,6 +1092,20 @@
         {#if textOpen}
           <SidePane title={textTitle} onclose={() => (textOpen = false)} testid="k8s-side-text">
             <K8sText text={textBody} fill />
+          </SidePane>
+        {:else if workOpen}
+          <SidePane title={liveWork?.name ?? workTarget?.name ?? ""} onclose={() => (workOpen = false)} testid="k8s-side-workload">
+            <K8sWorkloadDetail
+              active
+              fill
+              bind:tab={workTab}
+              workload={liveWork}
+              detail={workDetail}
+              jobs={workJobs}
+              {refreshSec}
+              {runQuery}
+              onOpenPod={openWorkloadPod}
+            />
           </SidePane>
         {:else}
           <SidePane
@@ -1084,6 +1161,18 @@
   onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
+/>
+
+<K8sWorkloadModal
+  open={workOpen && !wide}
+  bind:tab={workTab}
+  workload={liveWork}
+  detail={workDetail}
+  jobs={workJobs}
+  {refreshSec}
+  {runQuery}
+  onOpenPod={openWorkloadPod}
+  onclose={() => (workOpen = false)}
 />
 
 <K8sTextModal open={textOpen && !wide} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />

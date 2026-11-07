@@ -395,3 +395,57 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(list).toHaveAttribute("data-list-wide", "false");
   });
 });
+
+// Stage 4 (ADR 0054): a workload's details, and a CronJob's run pods under it.
+describe("K8sPanel — workloads (stage 4)", () => {
+  const DEPLOY = {
+    kind: "Deployment",
+    metadata: { name: "rollout", namespace: "shop", uid: "uid-rollout", creationTimestamp: "2026-10-07T10:00:00Z" },
+    spec: { replicas: 2, selector: { matchLabels: { app: "rollout" } }, strategy: { type: "Recreate" } },
+    status: { replicas: 2, readyReplicas: 2, availableReplicas: 2, updatedReplicas: 2 },
+  };
+  const CRON = { kind: "CronJob", metadata: { name: "report", namespace: "shop", uid: "uid-report" }, spec: { schedule: "*/1 * * * *" }, status: {} };
+  const JOB = {
+    kind: "Job",
+    metadata: { name: "report-29901003", namespace: "shop", uid: "uid-job", ownerReferences: [{ kind: "CronJob", name: "report", uid: "uid-report", controller: true }] },
+    spec: { completions: 1 },
+    status: { failed: 1, conditions: [{ type: "Failed", status: "True", reason: "BackoffLimitExceeded" }] },
+  };
+  const RUN_POD = {
+    metadata: { name: "report-29901003-wx9hk", namespace: "shop", creationTimestamp: "2026-10-07T10:00:00Z", ownerReferences: [{ kind: "Job", name: "report-29901003", controller: true }] },
+    spec: { containers: [{ name: "report" }] },
+    status: { phase: "Failed", containerStatuses: [{ name: "report", state: { terminated: { exitCode: 2, reason: "Error" } } }] },
+  };
+  const ok = (items: unknown[]) => ({ stdout: JSON.stringify({ items }), stderr: "", exitCode: 0 });
+
+  it("a CronJob's run pods are grouped under the CronJob, asked of their Jobs", async () => {
+    answer = (args) => {
+      if (args.includes("get") && args.includes("pods")) return ok([RUN_POD]);
+      if (args.includes("get") && args.includes("jobs")) return ok([JOB]);
+      return undefined;
+    };
+    render(K8sPanel, { props: { sessionId: "k-cron-pods", visible: true, sessionReady: true } });
+    await idle();
+    expect(calls.some((c) => c.includes("get jobs -o json"))).toBe(true);
+    const group = screen.getAllByTestId("k8s-group").find((g) => g.textContent?.includes("report"));
+    expect(group).toBeDefined();
+    expect(group!.textContent).not.toContain("report-29901003");
+  });
+
+  it("a click on a workload opens its details; a CronJob's runs are in them", async () => {
+    answer = (args) => (args.includes("deployments,statefulsets,daemonsets,cronjobs,jobs") ? ok([DEPLOY, CRON, JOB]) : undefined);
+    render(K8sPanel, { props: { sessionId: "k-work", visible: true, sessionReady: true } });
+    await idle();
+    await fireEvent.click(screen.getByRole("button", { name: "Workloads" }));
+    await idle();
+    const rows = screen.getAllByTestId("k8s-workload-row");
+    // A CronJob's run is not a row of its own.
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("rollout"), expect.stringContaining("report")]);
+    await fireEvent.click(rows[1]);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByTestId("k8s-work-job")).toHaveTextContent("BackoffLimitExceeded");
+    // Another row, picked while it is open, is shown in the same place.
+    await fireEvent.click(rows[0]);
+    expect(within(screen.getByRole("dialog")).getByTestId("k8s-work-overview")).toHaveTextContent("Recreate");
+  });
+});

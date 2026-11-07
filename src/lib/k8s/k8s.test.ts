@@ -71,6 +71,15 @@ import {
   parseEvents,
   podEventsArgs,
   podReadings,
+  jobsArgs,
+  parseJobs,
+  jobOwners,
+  selectorArg,
+  workloadPodsArgs,
+  replicaSetsArgs,
+  parseRevisions,
+  parseWorkloadDetail,
+  workloadPods,
   podResourceKey,
   topContainersArgs,
   parseTopContainers,
@@ -187,10 +196,10 @@ describe("argument builders", () => {
   it("currentContextArgs", () => {
     expect(currentContextArgs()).toEqual(["config", "current-context"]);
   });
-  it("workloadsArgs fetches the four kinds", () => {
+  it("workloadsArgs fetches the kinds and the Jobs, in one call (stage 4)", () => {
     expect(workloadsArgs()).toEqual([
       "get",
-      "deployments,statefulsets,daemonsets,cronjobs",
+      "deployments,statefulsets,daemonsets,cronjobs,jobs",
       "-o",
       "json",
     ]);
@@ -647,6 +656,7 @@ describe("workload and event lists", () => {
       ["StatefulSet", 0],
       ["DaemonSet", 1],
       ["CronJob", 1],
+      ["Job", 0],
     ]);
   });
 
@@ -1904,5 +1914,216 @@ describe("a pod's resources (stage 3)", () => {
       }),
     );
     expect([web.cpuRequest, web.memRequest]).toEqual([15, 24]);
+  });
+});
+
+// Stage 4 (ADR 0054): a workload's details. The objects are the stand's as Docker
+// Desktop's k8s 1.31.1 answered, trimmed to what the model reads.
+describe("a workload's details (stage 4)", () => {
+  const now = Date.parse("2026-11-07T14:05:00Z");
+  const deploy = (name: string, status: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    kind: "Deployment",
+    metadata: { name, namespace: "vterm-stand", uid: `uid-${name}`, creationTimestamp: "2026-11-07T12:53:39Z", annotations: { "deployment.kubernetes.io/revision": "2" } },
+    spec: {
+      replicas: 2,
+      strategy: { rollingUpdate: { maxSurge: "25%", maxUnavailable: "25%" }, type: "RollingUpdate" },
+      selector: { matchLabels: { app: name } },
+      progressDeadlineSeconds: 30,
+      template: { spec: { containers: [{ name: "app", image: "busybox:vterm-missing-tag" }] } },
+      ...extra,
+    },
+    status,
+  });
+  const rollout = deploy("rollout", {
+    replicas: 3,
+    updatedReplicas: 1,
+    readyReplicas: 2,
+    availableReplicas: 2,
+    unavailableReplicas: 1,
+    conditions: [
+      { type: "Available", status: "True", reason: "MinimumReplicasAvailable", message: "Deployment has minimum availability.", lastTransitionTime: "2026-11-07T13:59:00Z" },
+      { type: "Progressing", status: "False", reason: "ProgressDeadlineExceeded", message: 'ReplicaSet "rollout-5d9c" has timed out progressing.', lastTransitionTime: "2026-11-07T14:01:39Z" },
+    ],
+  });
+  const job = (name: string, owner: string | null, status: Record<string, unknown>) => ({
+    kind: "Job",
+    metadata: {
+      name,
+      namespace: "vterm-stand",
+      uid: `uid-${name}`,
+      creationTimestamp: "2026-11-07T14:02:00Z",
+      ownerReferences: owner ? [{ kind: "CronJob", name: owner, uid: `uid-${owner}`, controller: true }] : undefined,
+    },
+    spec: { completions: 1, parallelism: 1, backoffLimit: 0 },
+    status,
+  });
+  const failed = job("report-29901003", "report", {
+    startTime: "2026-11-07T14:03:00Z",
+    failed: 1,
+    conditions: [
+      { type: "FailureTarget", status: "True", reason: "BackoffLimitExceeded", message: "Job has reached the specified backoff limit" },
+      { type: "Failed", status: "True", reason: "BackoffLimitExceeded", message: "Job has reached the specified backoff limit" },
+    ],
+  });
+  const done = job("migrate", null, {
+    startTime: "2026-11-07T13:01:35Z",
+    completionTime: "2026-11-07T13:01:39Z",
+    succeeded: 1,
+    conditions: [
+      { type: "SuccessCriteriaMet", status: "True", reason: "CompletionsReached" },
+      { type: "Complete", status: "True", reason: "CompletionsReached", message: "Reached expected number of succeeded pods" },
+    ],
+  });
+  const running = job("report-29901004", "report", { startTime: "2026-11-07T14:04:00Z", active: 1 });
+
+  it("asks for the Jobs, and reads each: its CronJob, how it ended, how long it took", () => {
+    expect(jobsArgs()).toEqual(["get", "jobs", "-o", "json"]);
+    const jobs = parseJobs(JSON.stringify({ items: [failed, done, running] }), now);
+    expect(jobs.map((j) => [j.name, j.owner?.name ?? null, j.status, j.reason, j.succeeded, j.failed, j.active])).toEqual([
+      ["report-29901003", "report", "Failed", "BackoffLimitExceeded", 0, 1, 0],
+      ["migrate", null, "Complete", "CompletionsReached", 1, 0, 0],
+      ["report-29901004", "report", "Running", "", 0, 0, 1],
+    ]);
+    expect(jobs[1].durationSec).toBe(4);
+    expect(jobs[0].durationSec).toBeNull();
+    expect(jobs[0].message).toBe("Job has reached the specified backoff limit");
+  });
+
+  it("rolls a CronJob's run pods up to the CronJob, as a ReplicaSet's are rolled up to its Deployment", () => {
+    const jobs = parseJobs(JSON.stringify({ items: [failed, done] }));
+    const owners = jobOwners(jobs);
+    const pods = podsOf(
+      listItems(
+        JSON.stringify({
+          items: [
+            { metadata: { name: "report-29901003-wx9hk", namespace: "vterm-stand", ownerReferences: [{ kind: "Job", name: "report-29901003", controller: true }] }, spec: { containers: [{ name: "c" }] }, status: {} },
+            { metadata: { name: "migrate-qr4zh", namespace: "vterm-stand", ownerReferences: [{ kind: "Job", name: "migrate", controller: true }] }, spec: { containers: [{ name: "c" }] }, status: {} },
+          ],
+        }),
+      ),
+      now,
+      owners,
+    );
+    expect(pods.map((p) => [p.ownerKind, p.ownerName])).toEqual([
+      ["CronJob", "report"],
+      ["Job", "migrate"],
+    ]);
+    // Without the Jobs the pod's own owner is all there is — no guess from the name.
+    expect(podsOf(listItems(JSON.stringify({ items: [{ metadata: { name: "report-29901003-wx9hk", namespace: "vterm-stand", ownerReferences: [{ kind: "Job", name: "report-29901003" }] }, spec: {}, status: {} }] })), now).map((p) => p.ownerKind)).toEqual(["Job"]);
+  });
+
+  it("lists a Job of its own as a workload, and leaves a CronJob's runs to its CronJob", () => {
+    const list = parseWorkloads(JSON.stringify({ items: [rollout, failed, done, running] }), now);
+    expect(list.map((w) => [w.kind, w.name, w.ready, w.uid])).toEqual([
+      ["Deployment", "rollout", "2/2", "uid-rollout"],
+      ["Job", "migrate", "1/1", "uid-migrate"],
+    ]);
+    expect(list[1]).toMatchObject({ status: "Complete", scalable: false, replicas: null });
+  });
+
+  it("writes a selector as kubectl reads it, and asks the pods and ReplicaSets it selects", () => {
+    expect(selectorArg({ matchLabels: { app: "web", tier: "front" } })).toBe("app=web,tier=front");
+    expect(
+      selectorArg({
+        matchExpressions: [
+          { key: "env", operator: "In", values: ["prod", "stage"] },
+          { key: "canary", operator: "DoesNotExist" },
+          { key: "zone", operator: "NotIn", values: ["a"] },
+          { key: "owner", operator: "Exists" },
+        ],
+      }),
+    ).toBe("env in (prod,stage),!canary,zone notin (a),owner");
+    // An empty selector selects everything — not a question worth asking.
+    expect(selectorArg({})).toBeNull();
+    expect(selectorArg(undefined)).toBeNull();
+    expect(workloadPodsArgs("app=web")).toEqual(["get", "pods", "--selector=app=web", "-o", "json"]);
+    expect(replicaSetsArgs("app=web")).toEqual(["get", "replicasets", "--selector=app=web", "-o", "json"]);
+  });
+
+  it("reads a Deployment's revisions from its own ReplicaSets, newest first, the current one marked", () => {
+    const rs = (name: string, rev: string, owner: string, image: string, replicas: number, ready?: number) => ({
+      metadata: { name, namespace: "vterm-stand", creationTimestamp: "2026-11-07T13:00:00Z", annotations: { "deployment.kubernetes.io/revision": rev }, ownerReferences: [{ kind: "Deployment", name: owner, uid: `uid-${owner}`, controller: true }] },
+      spec: { replicas, template: { spec: { containers: [{ name: "app", image }] } } },
+      status: ready == null ? {} : { readyReplicas: ready },
+    });
+    const raw = JSON.stringify({ items: [rs("rollout-7f9c", "1", "rollout", "busybox:1.37", 2, 2), rs("rollout-5d9c", "2", "rollout", "busybox:vterm-missing-tag", 1), rs("web-68b5", "1", "web", "busybox:1.37", 1, 1)] });
+    expect(parseRevisions(raw, "uid-rollout", 2, now).map((r) => [r.revision, r.name, r.images, r.desired, r.ready, r.current])).toEqual([
+      [2, "rollout-5d9c", ["busybox:vterm-missing-tag"], 1, 0, true],
+      [1, "rollout-7f9c", ["busybox:1.37"], 2, 2, false],
+    ]);
+  });
+
+  it("reads what a Deployment is told, has, and says: replicas, strategy, conditions, images", () => {
+    const d = parseWorkloadDetail(rollout, now)!;
+    expect(d).toMatchObject({ kind: "Deployment", name: "rollout", uid: "uid-rollout", selector: "app=rollout", revision: 2 });
+    expect(d.replicas).toEqual({ desired: 2, current: 3, updated: 1, ready: 2, available: 2, unavailable: 1 });
+    expect(d.strategy).toBe("RollingUpdate · maxSurge 25% · maxUnavailable 25%");
+    expect(d.images).toEqual(["busybox:vterm-missing-tag"]);
+    expect(d.conditions.map((c) => [c.type, c.ok, c.reason])).toEqual([
+      ["Available", true, "MinimumReplicasAvailable"],
+      ["Progressing", false, "ProgressDeadlineExceeded"],
+    ]);
+    expect(d.conditions[1].message).toBe('ReplicaSet "rollout-5d9c" has timed out progressing.');
+  });
+
+  it("reads a StatefulSet's revisions and claims, a DaemonSet's nodes, a CronJob's schedule and last runs", () => {
+    const sts = parseWorkloadDetail(
+      {
+        kind: "StatefulSet",
+        metadata: { name: "db", namespace: "vterm-stand", uid: "uid-db" },
+        spec: {
+          replicas: 1,
+          serviceName: "db",
+          selector: { matchLabels: { app: "db" } },
+          updateStrategy: { rollingUpdate: { partition: 0 }, type: "RollingUpdate" },
+          volumeClaimTemplates: [{ metadata: { name: "data" }, spec: { resources: { requests: { storage: "64Mi" } } } }],
+          template: { spec: { containers: [{ name: "db", image: "busybox:1.37" }] } },
+        },
+        status: { availableReplicas: 1, currentReplicas: 1, currentRevision: "db-7b65c666b7", readyReplicas: 1, replicas: 1, updateRevision: "db-7b65c666b7", updatedReplicas: 1 },
+      },
+      now,
+    )!;
+    expect(sts).toMatchObject({ serviceName: "db", currentRevision: "db-7b65c666b7", updateRevision: "db-7b65c666b7", strategy: "RollingUpdate · partition 0" });
+    expect(sts.claims).toEqual([{ name: "data", size: "64Mi", storageClass: "" }]);
+    expect(sts.replicas).toMatchObject({ desired: 1, ready: 1, updated: 1 });
+    const ds = parseWorkloadDetail(
+      {
+        kind: "DaemonSet",
+        metadata: { name: "node-agent", namespace: "vterm-stand", uid: "uid-ds" },
+        spec: { selector: { matchLabels: { app: "node-agent" } }, updateStrategy: { rollingUpdate: { maxSurge: 0, maxUnavailable: 1 }, type: "RollingUpdate" } },
+        status: { currentNumberScheduled: 1, desiredNumberScheduled: 1, numberAvailable: 1, numberMisscheduled: 0, numberReady: 1, updatedNumberScheduled: 1 },
+      },
+      now,
+    )!;
+    expect(ds.replicas).toEqual({ desired: 1, current: 1, updated: 1, ready: 1, available: 1, unavailable: 0 });
+    expect(ds.misscheduled).toBe(0);
+    expect(ds.strategy).toBe("RollingUpdate · maxSurge 0 · maxUnavailable 1");
+    const cron = parseWorkloadDetail(
+      {
+        kind: "CronJob",
+        metadata: { name: "report", namespace: "vterm-stand", uid: "uid-report" },
+        spec: { schedule: "*/1 * * * *", suspend: false, concurrencyPolicy: "Forbid", successfulJobsHistoryLimit: 1, failedJobsHistoryLimit: 2, jobTemplate: { spec: { template: { spec: { containers: [{ name: "report", image: "busybox:1.37" }] } } } } },
+        status: { lastScheduleTime: "2026-11-07T14:03:00Z", active: [{ name: "report-29901004" }] },
+      },
+      now,
+    )!;
+    expect(cron).toMatchObject({ schedule: "*/1 * * * *", suspended: false, concurrency: "Forbid", lastSchedule: Date.parse("2026-11-07T14:03:00Z"), lastSuccess: null, activeJobs: 1, keep: { succeeded: 1, failed: 2 } });
+    expect(cron.images).toEqual(["busybox:1.37"]);
+    expect(cron.selector).toBeNull();
+    expect(parseWorkloadDetail(null, now)).toBeNull();
+  });
+
+  it("takes a workload's pods by their owner, not by a selector that may match more", () => {
+    const pods = parsePods(
+      JSON.stringify({
+        items: [
+          { metadata: { name: "rollout-7f9c-a", namespace: "vterm-stand", ownerReferences: [{ kind: "ReplicaSet", name: "rollout-7f9c", controller: true }] }, spec: { containers: [{ name: "app" }] }, status: {} },
+          { metadata: { name: "rollout-canary", namespace: "vterm-stand" }, spec: { containers: [{ name: "app" }] }, status: {} },
+          { metadata: { name: "db-0", namespace: "vterm-stand", ownerReferences: [{ kind: "StatefulSet", name: "db", controller: true }] }, spec: { containers: [{ name: "db" }] }, status: {} },
+        ],
+      }),
+    );
+    expect(workloadPods(pods, { kind: "Deployment", name: "rollout", namespace: "vterm-stand" }).map((p) => p.name)).toEqual(["rollout-7f9c-a"]);
+    expect(workloadPods(pods, { kind: "StatefulSet", name: "db", namespace: "vterm-stand" }).map((p) => p.name)).toEqual(["db-0"]);
   });
 });

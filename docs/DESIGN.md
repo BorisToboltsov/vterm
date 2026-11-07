@@ -213,6 +213,11 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   `tabular-nums`, лимит и запрос `text-caption text-muted`), `Chart` высотой 72 с `threshold` запроса.
   Контейнер — имя `font-mono`, сетка `4.5rem | 1fr`: значение, полоса доли `h-1 w-16 rounded-full
   bg-edge` с заливкой тона `limitTone`, лимит и запрос `text-caption text-muted`.
+- **Подробности нагрузки** — те же секции и сетка `8rem | 1fr`. Строка нагрузки открывает их щелчком
+  (`cursor-default`, выбранная — `bg-accent/10`, клавиатуре — кнопка `eye` в действиях). Ревизия — `#N`
+  `tabular-nums`, «текущая» `text-caption text-accent`, образы `font-mono text-caption`, `готово/нужно`
+  `text-warn`, пока не сошлось. Под и запуск — строка с точкой тона, имя `font-mono`, возраст справа;
+  под — кнопка во всю ширину (`hover:bg-edge/40`).
 
 ## Диалоги и обратная связь
 

@@ -172,13 +172,15 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_compose -- --ignored
 Стенд [e2e/k8s/stand.yaml](../e2e/k8s/stand.yaml) — по объекту на каждую поломку, которую панель
 k8s обязана объяснить (CrashLoop, OOMKilled, упавший init-контейнер, Pending без места, проба
 готовности и живости, нет образа и ProgressDeadlineExceeded, упавший CronJob, ничейные PVC, сервис
-без эндпоинтов, нагрузка у лимита CPU и памяти — `busy`, ingress на
+без эндпоинтов, нагрузка у лимита CPU и памяти — `busy`, выкатка, застревающая на полпути, —
+`rollout`, ingress на
 несуществующий сервис), и здоровый под со всем, что показывает «Обзор». Пространства имён в файле
 нет — его задаёт тот, кто применяет.
 
 Модуль `live_kube` в [kube.rs](../src-tauri/src/kube.rs) создаёт своё пространство
 `vterm-live-<pid>`, применяет стенд и ждёт до 4 минут (первый запуск CronJob — на начале минуты),
-пока проявится каждая поломка, — иначе называет непроявившиеся. Потом гоняет чтения панели и те,
+пока проявится каждая поломка, — иначе называет непроявившиеся. Затем застревает выкатку `rollout`
+(`set image` на несуществующий образ) и читает её ReplicaSet'ы и поды по селектору, как подробности. Потом гоняет чтения панели и те,
 что понадобятся следующим этапам, через `check_args` и `exec::run_local`, как `kubectl_run` на
 локальной вкладке. Пространство удаляется при любом исходе. Трогает только контекст
 `docker-desktop` или названный в `VTERM_LIVE_KUBE_CONTEXT`. Без metrics-server `top` отвечает
@@ -204,6 +206,7 @@ sed 's|        - --metric-resolution=15s|&\n        - --kubelet-insecure-tls|' c
 ```sh
 kubectl --context docker-desktop create namespace vterm-stand
 kubectl --context docker-desktop apply -n vterm-stand -f e2e/k8s/stand.yaml
+kubectl --context docker-desktop -n vterm-stand set image deployment/rollout app=busybox:vterm-missing-tag
 kubectl --context docker-desktop delete namespace vterm-stand
 ```
 
