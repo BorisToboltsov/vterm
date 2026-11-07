@@ -278,6 +278,9 @@ describe("panel container guard", () => {
     // What a wide panel shows beside its list owns no dialog…
     for (const name of [
       "ui/SidePane",
+      // The log and the strip above a list stand inside the list's own container (v1.33).
+      "ui/LogTail",
+      "ui/AttentionStrip",
       "docker/DockerDetail",
       "docker/DockerText",
       "k8s/K8sDetail",
@@ -354,7 +357,11 @@ describe("panel container guard — catches what it exists for", () => {
   it("a dialog rendered inside the panel's container", () => {
     const rel = "lib/docker/DockerPanel.svelte";
     // The dialog used where the content should be: the mistake the split prevents.
-    const broken = mutate(all[rel], "            <DockerText text={modalText} live={modalLive} fill />", "            <DockerTextModal open title={modalTitle} text={modalText} />");
+    const broken = mutate(
+      all[rel],
+      "            <DockerText text={modalText} live={modalLive} bind:following={modalFollowing} bind:tail={modalTail} fill />",
+      "            <DockerTextModal open title={modalTitle} text={modalText} />",
+    );
     expect(containerViolations(rel, withSource(rel, broken))).toEqual([
       "lib/docker/DockerPanel.svelte: <DockerTextModal> inside a query container puts a fixed element there (DockerTextModal → Modal)",
     ]);

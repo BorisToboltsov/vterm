@@ -37,9 +37,11 @@ export const LIST_COLUMNS = {
   "docker.image": 260,
   "docker.status": 150,
   "docker.ports": 220,
+  "docker.ip": 120,
   "k8s.name": 280,
   "k8s.namespace": 130,
   "k8s.node": 170,
+  "k8s.ip": 120,
   "files.name": 320,
   "files.owner": 150,
 } as const;

@@ -13,7 +13,7 @@
   };
   // `tab` is passed on as a binding, not spread with the rest: the panel owns the
   // view, so that it is the same in this dialog and in the pane beside the list.
-  let { open = false, tab = $bindable("overview"), ...rest }: Props = $props();
+  let { open = false, tab = $bindable("logs"), ...rest }: Props = $props();
 </script>
 
 <Modal {open} title={rest.container?.name ?? ""} width="w-[52rem]" showClose onclose={rest.onclose}>

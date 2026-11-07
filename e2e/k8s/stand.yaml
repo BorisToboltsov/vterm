@@ -1,0 +1,571 @@
+# Стенд панели k8s: по объекту на каждую поломку, которую панель обязана объяснить,
+# и один здоровый под со всем, что показывает «Обзор». Пространства имён в файле нет —
+# его задаёт тот, кто применяет: стенд руками (`vterm-stand`, docs/TESTS.md) и живой
+# тест `live_kube` (src-tauri/src/kube.rs) берут этот же файл. Один образ на всё —
+# busybox; ресурсы крошечные, кроме нарочно невместимого `too-big`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+data:
+  LOG_LEVEL: debug
+  FEATURE_FLAGS: "search,export"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: site
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+data:
+  index.html: "<h1>vterm stand</h1>\n"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secret
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+type: Opaque
+stringData:
+  token: vterm-stand-token
+---
+# Здоровый под: init-контейнер, нативный сайдкар (initContainer с restartPolicy: Always,
+# k8s ≥ 1.29), три пробы трёх видов, окружение всех видов (литерал, секретное по имени,
+# ссылка на секрет и на ConfigMap, envFrom), requests/limits, именованный порт, тома.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels: { app.kubernetes.io/name: web, app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: web } }
+  template:
+    metadata:
+      labels: { app: web, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      initContainers:
+        - name: prepare
+          image: busybox:1.37
+          command: ["sh", "-c", "echo prepared > /work/ready"]
+          volumeMounts: [{ name: work, mountPath: /work }]
+        - name: log-shipper
+          image: busybox:1.37
+          restartPolicy: Always
+          command: ["sh", "-c", "while true; do echo \"$(date -Iseconds) shipped 3 lines\"; sleep 10; done"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+      containers:
+        - name: httpd
+          image: busybox:1.37
+          command: ["sh", "-c", "cp /config/index.html /www/ && exec httpd -f -v -p 8080 -h /www"]
+          ports: [{ name: http, containerPort: 8080 }]
+          env:
+            - name: LOG_LEVEL
+              valueFrom: { configMapKeyRef: { name: app-config, key: LOG_LEVEL } }
+            - name: API_TOKEN
+              valueFrom: { secretKeyRef: { name: app-secret, key: token } }
+            - name: DB_PASSWORD
+              value: stand-password
+            - name: GREETING
+              value: hello
+          envFrom:
+            - configMapRef: { name: app-config }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 64Mi }
+          startupProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 2
+            failureThreshold: 15
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: http }
+            periodSeconds: 10
+          volumeMounts:
+            - { name: site, mountPath: /config }
+            - { name: www, mountPath: /www }
+            - { name: work, mountPath: /work, readOnly: true }
+      volumes:
+        - name: site
+          configMap: { name: site }
+        - name: www
+          emptyDir: {}
+        - name: work
+          emptyDir: {}
+---
+# Падает при старте → CrashLoopBackOff, прошлое завершение — Error, код 1.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: crashloop
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: crashloop } }
+  template:
+    metadata:
+      labels: { app: crashloop, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sh", "-c", "echo 'connecting to db:5432'; sleep 3; echo 'fatal: db unreachable' >&2; exit 1"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Удваивает строку в шелле, пока не упрётся в limit → OOMKilled, код 137.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oom
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: oom } }
+  template:
+    metadata:
+      labels: { app: oom, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sh", "-c", "echo 'loading cache'; x=a; while true; do x=\"$x$x\"; done"]
+          resources:
+            requests: { cpu: 5m, memory: 16Mi }
+            limits: { memory: 24Mi }
+---
+# Не помещается ни на одну ноду → Pending, FailedScheduling «Insufficient memory».
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: too-big
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: too-big } }
+  template:
+    metadata:
+      labels: { app: too-big, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 512Gi }
+---
+# Работает, но проба готовности не проходит никогда → Running 0/1, события Unhealthy.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notready
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: notready } }
+  template:
+    metadata:
+      labels: { app: notready, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          readinessProbe:
+            exec: { command: ["cat", "/tmp/ready"] }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Проба живости проваливается → kubelet убивает контейнер (Error, код 137) и перезапускает:
+# с виду то же, что падение, но причина — проба, а не программа.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: liveness-fail
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: liveness-fail } }
+  template:
+    metadata:
+      labels: { app: liveness-fail, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          livenessProbe:
+            exec: { command: ["cat", "/tmp/alive"] }
+            initialDelaySeconds: 3
+            periodSeconds: 3
+            failureThreshold: 1
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Init-контейнер падает → под не доходит до своих контейнеров: Init:Error, затем
+# Init:CrashLoopBackOff; RESTARTS — перезапуски init-контейнера.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: init-fail
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: init-fail } }
+  template:
+    metadata:
+      labels: { app: init-fail, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      initContainers:
+        - name: wait-db
+          image: busybox:1.37
+          command: ["sh", "-c", "echo 'waiting for db:5432'; sleep 2; echo 'db did not answer' >&2; exit 1"]
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Тега нет → ErrImagePull/ImagePullBackOff; выкатка за 30 с не продвинулась →
+# Progressing=False, ProgressDeadlineExceeded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-image
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  progressDeadlineSeconds: 30
+  selector: { matchLabels: { app: bad-image } }
+  template:
+    metadata:
+      labels: { app: bad-image, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:vterm-missing-tag
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Нагрузка против лимитов («Ресурсы»): `cpu` крутит цикл и упирается в свои 100m, `mem` держит
+# 40 МиБ в памяти (emptyDir в RAM считается памятью контейнера) из 64 МиБ лимита.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: busy
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: busy } }
+  template:
+    metadata:
+      labels: { app: busy, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: cpu
+          image: busybox:1.37
+          command: ["sh", "-c", "while true; do :; done"]
+          resources:
+            requests: { cpu: 50m, memory: 8Mi }
+            limits: { cpu: 100m, memory: 16Mi }
+        - name: mem
+          image: busybox:1.37
+          command: ["sh", "-c", "dd if=/dev/zero of=/fill/blob bs=1M count=40 && exec sleep 3600"]
+          volumeMounts: [{ name: fill, mountPath: /fill }]
+          resources:
+            requests: { cpu: 5m, memory: 32Mi }
+            limits: { cpu: 50m, memory: 64Mi }
+      volumes:
+        - name: fill
+          emptyDir: { medium: Memory, sizeLimit: 48Mi }
+---
+# Выкатка, застрявшая на полпути (ревизии нагрузки): после `kubectl set image deployment/rollout
+# app=busybox:vterm-missing-tag` новая ревизия не скачивает образ, а старая продолжает работать —
+# `maxUnavailable: 0` не даёт убрать её поды; за 30 с — ProgressDeadlineExceeded.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rollout
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 30
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector: { matchLabels: { app: rollout } }
+  template:
+    metadata:
+      labels: { app: rollout, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Релиз Helm «shop» (приложения): метки и аннотация такие, какие ставит Helm на то, чем управляет, —
+# без `part-of`, поэтому панель собирает их по релизу. Сам Helm для стенда не нужен.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-api
+  labels:
+    app.kubernetes.io/name: shop
+    app.kubernetes.io/instance: shop
+    app.kubernetes.io/component: api
+    app.kubernetes.io/version: "1.2.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: shop-1.2.0
+  annotations:
+    meta.helm.sh/release-name: shop
+    meta.helm.sh/release-namespace: vterm-stand
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/instance: shop, app.kubernetes.io/component: api } }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shop
+        app.kubernetes.io/instance: shop
+        app.kubernetes.io/component: api
+        app.kubernetes.io/version: "1.2.0"
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: shop-1.2.0
+    spec:
+      containers:
+        - name: api
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shop-worker
+  labels:
+    app.kubernetes.io/name: shop
+    app.kubernetes.io/instance: shop
+    app.kubernetes.io/component: worker
+    app.kubernetes.io/version: "1.2.0"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: shop-1.2.0
+  annotations:
+    meta.helm.sh/release-name: shop
+    meta.helm.sh/release-namespace: vterm-stand
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/instance: shop, app.kubernetes.io/component: worker } }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: shop
+        app.kubernetes.io/instance: shop
+        app.kubernetes.io/component: worker
+        app.kubernetes.io/version: "1.2.0"
+        app.kubernetes.io/managed-by: Helm
+        helm.sh/chart: shop-1.2.0
+    spec:
+      containers:
+        - name: worker
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Задание, которое закончилось успешно → под Completed.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: busybox:1.37
+          command: ["sh", "-c", "echo 'applying 3 migrations'; sleep 1; echo done"]
+---
+# Расписание каждую минуту, каждый запуск падает → Job'ы с Failed, BackoffLimitExceeded.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: report
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  schedule: "*/1 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app.kubernetes.io/part-of: vterm-stand }
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: report
+              image: busybox:1.37
+              command: ["sh", "-c", "echo 'building report'; echo 'error: no data for today' >&2; exit 2"]
+---
+# Приостановленное расписание: ни одного запуска.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  schedule: "0 3 * * *"
+  suspend: true
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: cleanup
+              image: busybox:1.37
+              command: ["sh", "-c", "echo cleaned"]
+---
+# StatefulSet с томом из шаблона → PVC data-db-0 в Bound.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  serviceName: db
+  replicas: 1
+  selector: { matchLabels: { app: db } }
+  template:
+    metadata:
+      labels: { app: db, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: db
+          image: busybox:1.37
+          command: ["sh", "-c", "echo ready > /data/state; exec sleep 3600"]
+          volumeMounts: [{ name: data, mountPath: /data }]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 64Mi } }
+---
+# Агент на каждой ноде.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-agent
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  selector: { matchLabels: { app: node-agent } }
+  template:
+    metadata:
+      labels: { app: node-agent, app.kubernetes.io/part-of: vterm-stand }
+    spec:
+      containers:
+        - name: agent
+          image: busybox:1.37
+          command: ["sleep", "3600"]
+          resources:
+            requests: { cpu: 5m, memory: 8Mi }
+            limits: { memory: 16Mi }
+---
+# Заявка, которой никто не пользуется: при WaitForFirstConsumer так и стоит Pending.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: spare
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 64Mi } }
+---
+# Заявка на несуществующий класс хранилища → Pending навсегда.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orphan-claim
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  storageClassName: vterm-none
+  accessModes: ["ReadWriteOnce"]
+  resources: { requests: { storage: 64Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  selector: { app: web }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+# Сервис без единого эндпоинта: под его селектор не подходит никто.
+apiVersion: v1
+kind: Service
+metadata:
+  name: orphan
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  selector: { app: nobody }
+  ports: [{ port: 80, targetPort: 8080 }]
+---
+# Сервис над неготовым подом: селектор подходит, эндпоинт есть, но не ready.
+apiVersion: v1
+kind: Service
+metadata:
+  name: notready
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  selector: { app: notready }
+  ports: [{ port: 80, targetPort: 8080 }]
+---
+# Правило на существующий сервис и правило на сервис, которого нет; контроллера
+# ingress на стенде нет — адреса у правила не будет.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  labels: { app.kubernetes.io/part-of: vterm-stand }
+spec:
+  ingressClassName: vterm-none
+  rules:
+    - host: web.vterm.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: web, port: { name: http } } }
+          - path: /reports
+            pathType: Prefix
+            backend: { service: { name: reports, port: { number: 80 } } }

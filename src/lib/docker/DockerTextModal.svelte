@@ -11,9 +11,11 @@
     title?: string;
     onclose?: () => void;
   };
-  let { open = false, title = "", onclose, ...rest }: Props = $props();
+  // The log's follow switch and tail size are the panel's (it asks for the log),
+  // so they pass through as bindings, not with the rest.
+  let { open = false, title = "", onclose, following = $bindable(true), tail = $bindable(200), ...rest }: Props = $props();
 </script>
 
 <Modal {open} {title} width="w-[52rem]" showClose {onclose}>
-  <DockerText {...rest} />
+  <DockerText {...rest} bind:following bind:tail />
 </Modal>

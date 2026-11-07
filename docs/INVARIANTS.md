@@ -291,8 +291,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **argv драйвера проходит политику в Rust на обоих транспортах** (ADR 0036): `git::check_args`,
   `container::check_args` (`docker login` — только `docker_login`), `kube::check_args`, локально
   у проб — `netprobe::local_program_allowed`. Новая подкоманда фронта сперва вносится в
-  политику и в тест `what_the_*_panel_runs_is_allowed`. Shell и `port-forward` идут в терминал,
-  через драйвер — никогда.
+  политику и в тест `what_the_*_panel_runs_is_allowed`. Shell, `logs -f` и `port-forward` идут в
+  терминал, через драйвер — никогда.
 - **Шелл-квотинг на SSH обязателен** — `git::shell_quote`, единственная реализация; пайплайн —
   одним токеном `sh -c '<pipeline>'`.
 - **Локальный спавн — только через [localenv.rs](../src-tauri/src/localenv.rs) и
@@ -344,6 +344,11 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Граница между частями — в сторе [panelsplit](../src/lib/stores/panelsplit.svelte.ts), что
     можно выставить — [panelsplit.ts](../src/lib/layout/panelsplit.ts) (`PART_MIN`); сохранённое не
     переписывается.
+- **Список дока раскладывается по своей ширине** (ADR 0054): часть со списком — свой `@container`
+  и свой `wideWhen` (`listWide` — строке фильтра), таблица — `fitColumns`
+  ([colfit.ts](../src/lib/ui/colfit.ts)) от ширины списка: колонка уходит в порядке списка, имя —
+  никогда, ушедшее названо «+N». Щелчок по строке открывает подробности — на логе, другая строка вид
+  не меняет. Гейт `listfit.guard`.
 - **Док без доступных панелей не рисуется;** сохранённая вкладка дока не переписывается
   (`shownPanel`); зона сброса невидимого дока — оверлей, а не полоса в раскладке.
 - **Скрытая панель не предлагается нигде** (`settings.hiddenPanels`): не рисуется, не
@@ -380,8 +385,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | Драйвер | Команда · тег | Чистая логика | Обязательное |
 |---------|---------------|---------------|--------------|
 | **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
-| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). CVE-скана нет — нет офлайн-способа |
-| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. Бинарь — `settings.kubectlPath` |
+| **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). Факты `inspect` (лимиты, перезапуски, адреса) — одним вызовом на изменившиеся (`staleFacts`). Окружение в подробностях скрыто по имени и значению (`isSensitiveEnv`) и в вопрос ИИ не идёт. `system df` — при открытии вида, по «Обновить» и после удаления, не на опросе. `events` — только снимок с `--until` (политика отказывает без него). Кто использует образ или том — `ps --filter`, не по имени. `compose -f`/`--env-file` — только для `config`; каталог и файлы compose бэкенд сверяет с метками стека (`check_stack`); `up` стека из своих файлов из каталога не предлагается (`usesOwnFiles`). CVE-скана нет — нет офлайн-способа |
+| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. STATUS/READY/RESTARTS — как у kubectl (`podRow`, сайдкар — контейнер пода). «Обзор» — из опрошенного списка (`parsePodDetail`), своего вызова нет; события — только открытого пода по uid (`podEventsArgs`), пока «Обзор» на экране, — причины «Требует внимания» читаются из объекта пода (`podSigns`); «Ресурсы» — история из `top pods` опроса, контейнеры (`top pod --containers`) — только пока вкладка на экране; доля — только против лимита, запрос — отметка, нет замеров — `metricsGap`; подробности нагрузки — из опроса «Нагрузок» (`parseWorkloadDetail`), её поды и ReplicaSet'ы — только у открытой, по селектору, взятые по владельцу; поды Job'ов сворачиваются к CronJob по `ownerReferences` Job'ов (`jobOwners`), не по имени; запрошенное у ноды — как считает планировщик (`podRequest`), её поды и `top node` — только пока «Обзор» ноды на экране; почему заявка ждёт — из уже полученных событий, кто монтирует — из томов подов, поды — только при заявках; приложение — только из `app.kubernetes.io/*` и аннотации Helm (`appOf`), имя объекта не разбирается, секреты Helm не читаются; окружение скрыто `isSensitiveEnv`, значение из Secret не читается, в вопрос ИИ окружение не идёт. Бинарь — `settings.kubectlPath` |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
 
@@ -1130,6 +1135,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `attachtab.guard` | Вкладка контейнера печатает `renderSessionCommand` и не переподключается сама |
 | `prodmark.guard` | Прод помечен на вкладке и рамкой вокруг соединения; рамка — инертный оверлей |
 | `taboverflow.guard` | Полоса вкладок — ограниченный скроллер, «+» сразу за последней вкладкой |
+| `listfit.guard` | Список дока — свой контейнер ширины, таблица — из `fitColumns`, подробности открываются на логе |
 | `dockpanels.guard` | Панель дока не размонтируется, скрытая не опрашивает хост, `sessionReady` — у вкладки любого вида |
 | `docklayout.guard` | Раскладка доков — через `loadDocks` и модель; панель рисуется одним сниппетом и не знает свой док; скрытые панели — через `setPanelHidden`; перетаскивание — при отпускании |
 | `panelcontainer.guard` · `panelwide.test.ts` | В `@container` нет `fixed`-потомков по цепочке импортов; порог ширины один; «рядом» решает `wide && fitsBeside` |
@@ -1179,6 +1185,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `a_job_is_told_only_to_the_windows_of_its_sessions` (Rust) | Событие задания уходит одним `send` и только аудитории |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |
 | `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |
 | `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()`; каждый файл `commands/` — в `BRIDGE` |
 | `network_utilities_never_record_raw_argv_or_output` · `a_netcheck_run_can_always_be_stopped` · `a_local_tool_runs_only_its_fixed_argv` (Rust) | Сетевые утилиты пишут итог; проверку доступа можно остановить; локальный инструмент — только со своим argv |

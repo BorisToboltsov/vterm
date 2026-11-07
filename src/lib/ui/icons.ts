@@ -68,6 +68,8 @@ export const ICONS = {
   // Stop — a filled square (halts an in-flight AI request).
   stop: '<rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="none"/>',
   pause: '<path d="M8 5v14M16 5v14"/>',
+  // Line wrap — a line that turns back under itself (the log view's switch).
+  wrap: '<path d="M4 6h16M4 18h5"/><path d="M4 12h13a3 3 0 0 1 0 6h-4"/><path d="M15 16l-2 2 2 2"/>',
   chevronsLeft: '<path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/>',
   chevronsRight: '<path d="M13 17l5-5-5-5M6 17l5-5-5-5"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',

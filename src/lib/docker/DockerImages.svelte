@@ -6,7 +6,7 @@
   import Icon from "../ui/Icon.svelte";
   import GroupHeader from "../ui/GroupHeader.svelte";
   import { tooltip } from "../actions/tooltip";
-  import { removeImageArgs, dockerAge, dockerDate, type DockerImage } from "./docker";
+  import { removeImageArgs, dockerAge, dockerDate, imageContainers, type DiskDetail, type DockerImage } from "./docker";
   import type { MenuItem } from "../ui/ctxmenu";
   import type { ListGroup } from "../ui/listview";
   import { t, currentLocale } from "../i18n";
@@ -17,6 +17,7 @@
     collapsed = [],
     ontoggle = () => {},
     busy = false,
+    detail = undefined,
     run,
     onInspect,
     showMenu,
@@ -27,6 +28,8 @@
     collapsed?: readonly string[];
     ontoggle?: (key: string) => void;
     busy?: boolean;
+    /** Who uses what, by docker's count (`system df -v`, v1.33); absent — not known. */
+    detail?: DiskDetail | null;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     onInspect: (img: DockerImage) => void;
     /** Open the shared context menu at the event position with these items. */
@@ -38,11 +41,17 @@
    * cross-fades away under the pointer (`.vt-tooltip` keeps newlines).
    */
   function infoTip(img: DockerImage): string {
+    const used = imageContainers(img, detail);
+    const unique = detail?.imageUnique.get([...detail.imageUnique.keys()].find((id) => id.startsWith(img.id.replace(/^sha256:/, ""))) ?? "");
     return [
       `${img.repository}:${img.tag}`,
       img.size,
       `${t("docker.created")}: ${dockerDate(img.created, currentLocale())}`,
-    ].join("\n");
+      used != null ? t("docker.imageUsedBy", { n: used }) : "",
+      unique ? t("docker.imageFrees", { size: unique }) : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   function copyId(img: DockerImage) {
@@ -80,6 +89,10 @@
         <div class="min-w-0 flex-1 truncate" use:tooltip={infoTip(img)}>
           <span class="text-text/90">{img.repository}</span><span class="text-muted">:{img.tag}</span>
         </div>
+        {#if imageContainers(img, detail) === 0}
+          <!-- Not used by any container, by docker's own count: what a prune of unused images takes. -->
+          <span class="shrink-0 text-caption text-muted" data-testid="docker-image-unused">{t("docker.imageUnused")}</span>
+        {/if}
         <!-- Size + age and the hover action share one reserved box, cross-faded
              (same no-reflow rule as the container rows): a button of its own
              cost 25px of every row, and the image name is what gets truncated. -->

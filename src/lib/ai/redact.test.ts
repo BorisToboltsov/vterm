@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { redactSecrets, REDACTED } from "./redact";
+import { isSensitiveEnv, redactSecrets, REDACTED } from "./redact";
 
 describe("redactSecrets", () => {
   it("returns empty input unchanged", () => {
@@ -102,5 +102,14 @@ describe("redactSecrets", () => {
     const r = redactSecrets(t);
     expect(r.count).toBe(2);
     expect(r.text).toContain("normal line");
+  });
+});
+
+describe("isSensitiveEnv", () => {
+  it("masks by a secret-sounding name or by a value redaction would hide", () => {
+    expect(isSensitiveEnv("DB_PASSWORD", "stand-password")).toBe(true);
+    expect(isSensitiveEnv("API_KEY", "x")).toBe(true);
+    expect(isSensitiveEnv("GITHUB", "ghp_abcdefghijklmnopqrstuvwxyz0123")).toBe(true);
+    expect(isSensitiveEnv("LOG_LEVEL", "debug")).toBe(false);
   });
 });

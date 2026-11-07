@@ -5,6 +5,12 @@
   // into the detail modal. The per-container facts (status/ports/cpu/mem) moved
   // off the row into a hover card. Presentational + action wiring only; arg
   // building is pure (docker.ts), the orchestrator's `run` executes.
+  //
+  // v1.33: a click on a row opens its details (beside the list in a wide panel —
+  // the list is then the column of names the details are read against); the
+  // table's columns are fitted to the list's own width (`colfit.ts`), so the name
+  // stays whole when the details take half the row; the state column says the
+  // health check, the exit and the restarts; a column says the address.
   import Icon from "../ui/Icon.svelte";
   import Sparkline from "../monitoring/Sparkline.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -18,23 +24,31 @@
     composeDownArgs,
     composeRestartArgs,
     containerInfoRows,
+    containerAddress,
     dockerDate,
     parseMemUsed,
     groupUsage,
     isRunning,
+    stateSummary,
     stateTone,
     type DockerContainer,
     type DockerStat,
-    type DockerLimits,
+    type DockerFacts,
     type DockerInfoKey,
   } from "./docker";
+  import { portChip, portRows } from "./dockernet";
   import type { MenuItem } from "../ui/ctxmenu";
   import ColumnHead from "../ui/ColumnHead.svelte";
   import GroupHeader from "../ui/GroupHeader.svelte";
   import SortTitle from "../ui/SortTitle.svelte";
   import type { ListGroup, ListSort } from "../ui/listview";
+  import type { Snippet } from "svelte";
   import { columnVars } from "../ui/colwidths";
-  import { columns } from "../stores/colwidths.svelte";
+  import { fitColumns } from "../ui/colfit";
+  import { pick, pickMode, type PickMode } from "../ui/listselect";
+  import { stackOf, usesOwnFiles } from "./dockerstack";
+  import { columns, hiddenFields } from "../stores/colwidths.svelte";
+  import { uiPx } from "../settings/settings.svelte";
   import { t, currentLocale, type MessageKey } from "../i18n";
 
   let {
@@ -47,13 +61,19 @@
     onsort = undefined,
     statsById,
     cpuHistory = {},
-    limitsById = new Map(),
+    factsById = new Map(),
+    all = [],
+    selectedId = null,
+    picked = new Set<string>(),
+    onpick = undefined,
+    after = undefined,
     busy = false,
     run,
     onShell,
     onLogs,
     onInspect,
     onComposeLogs,
+    onStackOpen = undefined,
     onViewDetails,
     showMenu,
   }: {
@@ -71,14 +91,25 @@
     statsById: Map<string, DockerStat>;
     /** Rolling CPU-percent history per container id (Phase 42). */
     cpuHistory?: LoadHistory;
-    /** Configured ceilings per container id (Phase 43); absent = not inspected yet. */
-    limitsById?: ReadonlyMap<string, DockerLimits>;
+    /** What `inspect` told per container id (ceilings, restarts, addresses); absent = not asked yet. */
+    factsById?: ReadonlyMap<string, DockerFacts>;
+    /** Every container, ungrouped — whose network a `container:` one shares is named from it. */
+    all?: readonly DockerContainer[];
+    /** The container whose details are open: its row is marked. */
+    selectedId?: string | null;
+    /** The rows picked for an action on several at once (stage 2); absent `onpick` — no picking. */
+    picked?: ReadonlySet<string>;
+    onpick?: (next: Set<string>) => void;
+    /** After the containers, in the same scroll: the rest of the column of names (stage 4). */
+    after?: Snippet;
     busy?: boolean;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     onShell: (c: DockerContainer) => void;
     onLogs: (c: DockerContainer) => void;
     onInspect: (c: DockerContainer) => void;
     onComposeLogs: (project: string) => void;
+    /** Open a compose stack's details — its services, log, configuration (stage 5). */
+    onStackOpen?: (project: string) => void;
     onViewDetails: (c: DockerContainer) => void;
     /** Open the shared context menu at the event position with these items. */
     showMenu: (e: MouseEvent, items: MenuItem[]) => void;
@@ -96,10 +127,27 @@
     "--c-image": "docker.image",
     "--c-status": "docker.status",
     "--c-ports": "docker.ports",
+    "--c-ip": "docker.ip",
   } as const;
   // The list's visible height: a column's border can be dragged anywhere along
   // it, so the grip in the header reaches this far down (ColumnGrip, `--list-h`).
   let listHeight = $state(0);
+  // Its width: what the table's columns are fitted to — the list's own, not the
+  // panel's, which still counts the details beside it.
+  let listWidth = $state(0);
+  const fit = $derived(fitColumns("docker.containers", columns.widths, hiddenFields("docker.containers"), listWidth / uiPx(1)));
+  const shows = (id: string): boolean => fit.shown.includes(id);
+  // A cell the table has no room for, or the user hid, is gone from the table;
+  // the narrow layout draws the name and the image anyway.
+  const off = (id: string): string => (shows(id) ? "" : "@wide:hidden");
+  const FIELD_LABEL: Record<string, MessageKey> = {
+    image: "docker.image",
+    state: "docker.state",
+    ports: "docker.ports",
+    ip: "docker.address",
+  };
+  const droppedText = $derived(fit.dropped.map((id) => t(FIELD_LABEL[id])).join(", "));
+  const STATE_TEXT: Record<string, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", idle: "text-muted" };
   // A table cell in a wide container: the rule on its right, the row's vertical
   // padding (the row itself has none there, so the rule runs edge to edge) and
   // one line height for both text sizes.
@@ -124,7 +172,7 @@
    * bar filling toward a limit that does not exist.
    */
   function memUsage(c: DockerContainer) {
-    const limit = limitsById.get(c.id)?.memBytes ?? null;
+    const limit = factsById.get(c.id)?.memBytes ?? null;
     const used = parseMemUsed(stat(c)?.mem);
     if (limit == null || used == null || !(limit > 0)) return null;
     const ratio = used / limit;
@@ -175,8 +223,48 @@
     return items.find((c) => c.workdir)?.workdir ?? null;
   }
 
+  // The rows as shown — what a Shift-click range runs over (a folded group's rows
+  // are not shown and are not taken) — and the last row picked one by one.
+  const shownOrder = $derived(groups.flatMap((g) => (grouped && collapsed.includes(g.key) ? [] : g.items.map((c) => c.id))));
+  let anchor: string | null = null;
+  function pickRow(id: string, mode: PickMode) {
+    if (!onpick) return;
+    onpick(pick(picked, shownOrder, anchor, id, mode));
+    if (mode === "toggle") anchor = id;
+  }
+  const picking = $derived(picked.size > 0);
+
+  /** Whether a stack came up from its own files — then `up` from its directory is not offered. */
+  function ownFiles(items: readonly DockerContainer[], project: string): boolean {
+    const st = stackOf(items, project);
+    return st ? usesOwnFiles(st) : false;
+  }
+
   function copyId(c: DockerContainer) {
     void navigator.clipboard?.writeText(c.id);
+  }
+
+  /** The address cell: what it says and what its tooltip adds. */
+  function addressCell(c: DockerContainer): { text: string; tip: string; muted: boolean } {
+    const a = containerAddress(c, factsById.get(c.id), all);
+    switch (a.kind) {
+      case "ip":
+        return {
+          text: a.all.length > 1 ? `${a.first} +${a.all.length - 1}` : a.first,
+          tip: [...a.all.map((x) => `${x.network}: ${[x.ipv4, x.ipv6].filter(Boolean).join(" · ")}`), t("docker.addressInside")].join("\n"),
+          muted: false,
+        };
+      case "host":
+        return { text: t("docker.addressHostShort"), tip: t("docker.addressHost"), muted: true };
+      case "none":
+        return { text: t("docker.addressNoneShort"), tip: t("docker.addressNone"), muted: true };
+      case "shared":
+        return { text: `→ ${a.with}`, tip: t("docker.addressShared", { name: a.with }), muted: true };
+      case "down":
+        return { text: "—", tip: t("docker.addressDown"), muted: true };
+      default:
+        return { text: "—", tip: "", muted: true };
+    }
   }
 
   function menuItems(c: DockerContainer): MenuItem[] {
@@ -202,6 +290,7 @@
 <div
   class="h-full overflow-auto text-xs"
   bind:clientHeight={listHeight}
+  bind:clientWidth={listWidth}
   style="{columnVars(columns.widths, COLS)}{listHeight > 0 ? `; --list-h: ${listHeight}px` : ''}"
 >
   <!-- Column titles — only where there are columns, i.e. in a wide container. The
@@ -215,9 +304,26 @@
     <span class="w-[0.4375rem] shrink-0"></span>
     <div class="flex min-w-0 flex-1 items-stretch">
       <ColumnHead col="docker.name" label={t("docker.name")} class="w-[var(--c-name)] pr-2" sorted={sortedBy("name")} onsort={orderBy("name")} />
-      <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2" sorted={sortedBy("image")} onsort={orderBy("image")} />
-      <ColumnHead col="docker.status" label={t("docker.status")} class="w-[var(--c-status)] px-2" sorted={sortedBy("state")} onsort={orderBy("state")} />
-      <ColumnHead col="docker.ports" label={t("docker.ports")} class="w-[var(--c-ports)] px-2" />
+      {#if shows("image")}
+        <ColumnHead col="docker.image" label={t("docker.image")} class="w-[var(--c-image)] px-2 shrink-0" sorted={sortedBy("image")} onsort={orderBy("image")} />
+      {/if}
+      {#if shows("state")}
+        <ColumnHead col="docker.status" label={t("docker.state")} class="w-[var(--c-status)] px-2 shrink-0" sorted={sortedBy("state")} onsort={orderBy("state")} />
+      {/if}
+      {#if shows("ports")}
+        <ColumnHead col="docker.ports" label={t("docker.ports")} class="w-[var(--c-ports)] px-2 shrink-0" />
+      {/if}
+      {#if shows("ip")}
+        <ColumnHead col="docker.ip" label={t("docker.address")} class="w-[var(--c-ip)] px-2 shrink-0" />
+      {/if}
+      {#if fit.dropped.length > 0}
+        <!-- What the width took off, said rather than silently gone. -->
+        <span
+          class="ml-1 shrink-0 self-center rounded border border-edge px-1 text-caption"
+          use:tooltip={t("list.columnsDropped", { names: droppedText })}
+          data-testid="docker-columns-dropped">+{fit.dropped.length}</span
+        >
+      {/if}
     </div>
     <span class="w-[6.5rem] shrink-0 self-center truncate text-right">
       {#if onsort}
@@ -259,7 +365,9 @@
         {#snippet actions()}
           {#if compose}
             <div class="flex items-center gap-0.5 text-muted">
-              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeUp")} aria-label={t("docker.composeUp")} onclick={() => run(composeUpArgs(g.key, workdir), { successKey: "docker.started" })}>
+              <!-- `up` reads the project's directory: a stack brought up from its own
+                   files would come up as another definition — not offered (stage 5). -->
+              <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy || ownFiles(g.items, g.key)} use:tooltip={ownFiles(g.items, g.key) ? t("docker.stackUpOwnFiles") : t("docker.composeUp")} aria-label={t("docker.composeUp")} data-testid="docker-stack-up-all" onclick={() => run(composeUpArgs(g.key, workdir), { successKey: "docker.started" })}>
                 <Icon name="play" size={13} />
               </button>
               <button class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40" disabled={busy} use:tooltip={t("docker.composeDown")} aria-label={t("docker.composeDown")} onclick={() => run(composeDownArgs(g.key, workdir), { destructive: true, successKey: "docker.stopped" })}>
@@ -271,6 +379,11 @@
               <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.composeLogs")} aria-label={t("docker.composeLogs")} onclick={() => onComposeLogs(g.key)}>
                 <Icon name="note" size={12} />
               </button>
+              {#if onStackOpen}
+                <button class="rounded p-1 hover:bg-edge hover:text-text" use:tooltip={t("docker.stackOpen")} aria-label={t("docker.stackOpen")} data-testid="docker-stack-open" onclick={() => onStackOpen(g.key)}>
+                  <Icon name="info" size={12} />
+                </button>
+              {/if}
             </div>
           {/if}
         {/snippet}
@@ -281,12 +394,50 @@
       {@const history = cpuHistory[c.id] ?? []}
       {@const cpuNow = parsePercent(stat(c)?.cpu)}
       {@const mem = memUsage(c)}
+      {@const summary = stateSummary(c, factsById.get(c.id))}
+      {@const restarts = factsById.get(c.id)?.restarts ?? 0}
+      {@const addr = addressCell(c)}
+      <!-- A click opens the details; the keyboard has the row's own button for it
+           (the eye) — the row is a list item, not a second button around them. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:py-0 {grouped ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'}"
+        class="group flex cursor-default items-center gap-2 border-b border-edge/60 py-1.5 pr-2 @wide:items-stretch @wide:py-0 {grouped ? 'pl-5 @wide:pl-2.5' : 'pl-2.5'} {picked.has(c.id) ? 'bg-accent/15' : selectedId === c.id ? 'bg-accent/10' : 'hover:bg-edge/30'}"
         oncontextmenu={(e) => showMenu(e, menuItems(c))}
+        onmousedown={(e) => {
+          // Shift-click takes a run of rows; it must not select their text too.
+          if (e.shiftKey && onpick) e.preventDefault();
+        }}
+        onclick={(e) => {
+          if ((e.target as HTMLElement).closest("button, input")) return;
+          const mode = onpick ? pickMode(e) : null;
+          if (mode) pickRow(c.id, mode);
+          else onViewDetails(c);
+        }}
         role="listitem"
+        aria-current={selectedId === c.id ? "true" : undefined}
+        data-testid="docker-row"
       >
-        <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:self-center {TONE[stateTone(c.state)]}" use:tooltip={c.state}></span>
+        <!-- The state dot, and in its place the row's checkbox: on hover, and on
+             every row while some are picked — the table keeps its columns. -->
+        <span class="relative flex h-[0.4375rem] w-[0.4375rem] shrink-0 items-center justify-center @wide:self-center">
+          <span
+            class="h-[0.4375rem] w-[0.4375rem] rounded-full {TONE[stateTone(c.state)]} {onpick ? (picking ? 'opacity-0' : 'group-hover:opacity-0') : ''}"
+            use:tooltip={c.state}
+          ></span>
+          {#if onpick}
+            <input
+              type="checkbox"
+              class="absolute h-3 w-3 cursor-default accent-accent {picking ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'}"
+              checked={picked.has(c.id)}
+              aria-label={t("list.pickRow", { name: c.name })}
+              data-testid="docker-row-pick"
+              onclick={(e) => {
+                e.stopPropagation();
+                pickRow(c.id, e.shiftKey ? "range" : "toggle");
+              }}
+            />
+          {/if}
+        </span>
         <!-- Name over image, not side by side (v1.0.14). In the dock's 384px the
              two share ~240px, so a compose-generated name ("edge-proxy-canary-2")
              left the image as "ghcr.io/vc…" — the half that says *what is actually
@@ -299,10 +450,30 @@
              of the row, so their right borders join into column rules (the
              compose indent is dropped — every row has to start at the same x). -->
         <div class="min-w-0 flex-1 @wide:flex @wide:items-stretch" use:tooltip={infoTip(c)}>
-          <div class="truncate font-medium text-text/90 @wide:w-[var(--c-name)] @wide:pr-2 {CELL}">{c.name}</div>
-          <div class="truncate text-caption text-muted @wide:w-[var(--c-image)] @wide:px-2 {CELL}">{c.image}</div>
-          <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-status)] @wide:px-2 {CELL}" data-testid="docker-col-status">{c.status}</div>
-          <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ports)] @wide:px-2 {CELL}" data-testid="docker-col-ports">{c.ports}</div>
+          <div class="flex min-w-0 items-baseline gap-1.5 @wide:w-[var(--c-name)] @wide:pr-2 {CELL}">
+            <span class="truncate font-medium text-text/90">{c.name}</span>
+            <!-- The narrow row has no state column: a container in trouble says so here. -->
+            {#if summary.tone === "warn" || summary.tone === "bad"}
+              <span class="shrink-0 text-caption @wide:hidden {STATE_TEXT[summary.tone]}">{summary.word}</span>
+            {/if}
+            {#if restarts > 0}
+              <span class="shrink-0 text-caption text-warn @wide:hidden">↻{restarts}</span>
+            {/if}
+          </div>
+          <div class="truncate text-caption text-muted @wide:w-[var(--c-image)] @wide:shrink-0 @wide:px-2 {CELL} {off('image')}" data-testid="docker-col-image">{c.image}</div>
+          {#if shows("state")}
+            <div class="hidden truncate text-caption @wide:block @wide:w-[var(--c-status)] @wide:shrink-0 @wide:px-2 {CELL}" data-testid="docker-col-status" use:tooltip={c.status}>
+              <span class={STATE_TEXT[summary.tone]}>{summary.word}</span>{#if summary.age}<span class="text-muted">{` · ${summary.age}`}</span>{/if}{#if restarts > 0}<span class="text-warn">{` · ↻${restarts}`}</span>{/if}
+            </div>
+          {/if}
+          {#if shows("ports")}
+            <div class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ports)] @wide:shrink-0 @wide:px-2 {CELL}" data-testid="docker-col-ports" use:tooltip={c.ports}>
+              {#each portRows(c.ports) as row, i (i)}<span class="mr-1 rounded border border-edge px-1 {row.reach === 'all' ? 'text-text/85' : ''}">{portChip(row)}</span>{/each}
+            </div>
+          {/if}
+          {#if shows("ip")}
+            <div class="hidden truncate font-mono text-caption @wide:block @wide:w-[var(--c-ip)] @wide:shrink-0 @wide:px-2 {CELL} {addr.muted ? 'text-muted' : 'text-text/85'}" data-testid="docker-col-ip" use:tooltip={addr.tip}>{addr.text}</div>
+          {/if}
         </div>
         <!-- CPU shape and the hover actions share one reserved box, stacked and
              cross-faded. Swapping them with `hidden`/`flex` would resize the row
@@ -381,4 +552,5 @@
       </div>
     {/each}
   {/each}
+  {@render after?.()}
 </div>

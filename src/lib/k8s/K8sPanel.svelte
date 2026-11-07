@@ -23,6 +23,10 @@
   import K8sNetwork from "./K8sNetwork.svelte";
   import K8sCluster from "./K8sCluster.svelte";
   import K8sDetailModal from "./K8sDetailModal.svelte";
+  import K8sWorkloadDetail from "./K8sWorkloadDetail.svelte";
+  import K8sWorkloadModal from "./K8sWorkloadModal.svelte";
+  import K8sNodeDetail from "./K8sNodeDetail.svelte";
+  import K8sNodeModal from "./K8sNodeModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
@@ -35,6 +39,9 @@
   import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
   import { listOrder, setListOrder, type ListId } from "../stores/listview.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
+  import AttentionStrip from "../ui/AttentionStrip.svelte";
+  import { hideableFields } from "../ui/colfit";
+  import { hiddenFields, toggleField } from "../stores/colwidths.svelte";
   import { partWidth } from "../stores/panelsplit.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -60,8 +67,27 @@
     describeArgs,
     getYamlArgs,
     execShellArgv,
+    followLogsArgv,
     portForwardArgv,
-    parsePods,
+    listItems,
+    podsOf,
+    podItem,
+    parsePodDetail,
+    jobsArgs,
+    parseJobs,
+    jobOwners,
+    parseWorkloadDetail,
+    workloadItem,
+    parseNodeDetail,
+    claimsArgs,
+    parseClaims,
+    claimUsers as usersOfClaims,
+    type K8sClaim,
+    type K8sJob,
+    type K8sWorkloadTab,
+    podReadings,
+    metricsGap,
+    type MetricsGap,
     parseWorkloads,
     parseNamespaces,
     parseContexts,
@@ -83,6 +109,9 @@
     EVENT_SCHEMA,
     parseAvailability,
     needsConfirm,
+    podAttention,
+    podRestartBaseline,
+    type PodAttentionReason,
     type K8sScope,
     type K8sAvailability,
     type K8sWorkload,
@@ -97,6 +126,7 @@
   } from "./k8s";
   import { buildRoutes } from "./k8sroute";
   import { pushSamples, type LoadHistory } from "../monitoring/loadhistory";
+  import { pushReadings, type History } from "../monitoring/monhistory";
   import {
     collapsedGroups,
     dockState,
@@ -163,10 +193,28 @@
   let firstLoadDone = $state(false);
 
   let podList = $state<K8sPod[]>([]);
+  // The objects of the same answer, as kubectl gave them: «Overview» of the pod
+  // whose details are open is read from here (stage 1) — no call of its own.
+  let podObjects = $state.raw<Record<string, unknown>[]>([]);
   let metricsByKey = $state<Map<string, K8sPodMetrics>>(new Map());
   // CPU history (millicores) per pod, fed by the `top pods` poll already running.
   let cpuHistory = $state<LoadHistory>({});
+  // «Resources» (stage 3): CPU and memory of every pod, one sample per poll of the
+  // same `top pods`, so the view opens with what was polled while it was closed;
+  // and why there are no readings, when there are none.
+  let resHistory = $state.raw<History>({});
+  let resSeq = $state(-1);
+  let metricsDown = $state.raw<MetricsGap | null>(null);
   let workloads = $state<K8sWorkload[]>([]);
+  // The objects of the same answer, and its Jobs (stage 4): a workload's details are
+  // read from here; a CronJob's runs are its Jobs.
+  let workloadObjects = $state.raw<Record<string, unknown>[]>([]);
+  let jobs = $state.raw<K8sJob[]>([]);
+  // The Cluster view's objects (stage 5): the nodes as kubectl gave them (a node's
+  // details are read from here), the volume claims and who mounts each.
+  let nodeObjects = $state.raw<Record<string, unknown>[]>([]);
+  let claims = $state.raw<K8sClaim[]>([]);
+  let claimUsers = $state.raw<Map<string, string[]> | null>(null);
   let services = $state<K8sService[]>([]);
   let ingresses = $state<K8sIngress[]>([]);
   // The Network sub-tab has two views of the same lists (v1.5). The route needs
@@ -212,6 +260,7 @@
   };
   const GROUP_LABEL: Record<string, MessageKey> = {
     owner: "k8s.owner",
+    app: "k8s.application",
     node: "k8s.node",
     namespace: "k8s.namespace",
     kind: "k8s.kind",
@@ -239,6 +288,12 @@
   let wide = $state(false);
   // Width of that row, px — what the border is dragged within.
   let rowWidth = $state(0);
+  // The list's own layout (v1.33): the panel can be wide while the list, with
+  // details beside it, is not — its filter row and its table follow the list.
+  let listWide = $state(false);
+  let attentionOpen = $state(true);
+  // The restart count each pod had when the panel first saw it (`podAttention`).
+  let restartsSeen = $state<Map<string, number>>(new Map());
   // Pod detail modal.
   let detailOpen = $state(false);
   let detailPod = $state<K8sPod | null>(null);
@@ -246,14 +301,24 @@
   // not the details' own: a dialog (narrow) and the pane beside the list (wide)
   // are two instances, and going across the width threshold must show what was
   // on screen, not Overview again.
-  let detailTab = $state<K8sDetailTab>("overview");
+  let detailTab = $state<K8sDetailTab>("logs");
   let detailContainer = $state<string | null>(null);
+
+  // A workload's details (stage 4): one detail at a time — opening it puts a pod's
+  // away, opening a pod puts it away. The view is the panel's, as a pod's.
+  let workOpen = $state(false);
+  let workTarget = $state<{ kind: K8sWorkload["kind"]; name: string; namespace: string } | null>(null);
+  let workTab = $state<K8sWorkloadTab>("overview");
+  // A node's details (stage 5), the same way.
+  let nodeOpen = $state(false);
+  let nodeName = $state<string | null>(null);
+  let nodeTab = $state<K8sWorkloadTab>("overview");
 
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
-  // Something stands beside the list (describe, YAML, a pod's details): the
-  // row is two parts with a border the user drags.
-  const sideOpen = $derived(wide && (textOpen || detailOpen));
+  // Something stands beside the list (describe, YAML, a pod's or a workload's
+  // details): the row is two parts with a border the user drags.
+  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen || nodeOpen));
   let textTitle = $state("");
   let textBody = $state("");
 
@@ -338,6 +403,16 @@
     });
   }
 
+  /** Follow a pod's log live in a terminal tab (`kubectl logs -f`). */
+  function followLogs(pod: K8sPod, container: string | null, tail: number) {
+    onOpenShell?.(followLogsArgv(prog, pod.name, pod.namespace, container, scope, tail), {
+      kind: "pod",
+      name: pod.name,
+      container: container ?? undefined,
+    });
+    notifySuccess(t("k8s.logsFollowOpened", { name: pod.name }));
+  }
+
   // ── Data loading ───────────────────────────────────────────────────────────
 
   /**
@@ -398,7 +473,17 @@
           kubectlRun(sessionId, viewArgs(podsArgs()), 20, false),
           kubectlRun(sessionId, viewArgs(topPodsArgs()), 20, false),
         ]);
-        podList = parsePods(pods.stdout);
+        const listed = listItems(pods.stdout);
+        let parsed = podsOf(listed);
+        // A CronJob's run pods belong to its CronJob, which only their Jobs say
+        // (stage 4) — asked when there are such pods, not on every poll.
+        if (parsed.some((p) => p.ownerKind === "Job")) {
+          const jr = await kubectlRun(sessionId, viewArgs(jobsArgs()), 20, false);
+          if (jr.exitCode === 0) parsed = podsOf(listed, Date.now(), jobOwners(parseJobs(jr.stdout)));
+        }
+        podList = parsed;
+        podObjects = listed;
+        restartsSeen = podRestartBaseline(restartsSeen, podList);
         const map = new Map<string, K8sPodMetrics>();
         for (const m of parseTopPods(top.stdout)) map.set(metricsKey(m.namespace, m.name), m);
         metricsByKey = map;
@@ -411,9 +496,14 @@
           if (millis != null) cpu.set(key, millis);
         }
         cpuHistory = pushSamples(cpuHistory, live, cpu);
+        metricsDown = metricsGap(top);
+        resSeq += 1;
+        resHistory = pushReadings(resHistory, resSeq, podReadings(podList, map));
       } else if (activeSub === "workloads") {
         const res = await kubectlRun(sessionId, viewArgs(workloadsArgs()), 20, false);
         workloads = parseWorkloads(res.stdout);
+        workloadObjects = listItems(res.stdout);
+        jobs = parseJobs(res.stdout);
       } else if (activeSub === "network") {
         const forRoute = netView === "route";
         const [svc, ing, eps] = await Promise.all([
@@ -436,12 +526,21 @@
         if (current) slices = eps && slicesError === null ? parseEndpointSlices(eps.stdout) : null;
       } else {
         // Cluster: nodes are cluster-scoped (no namespace flag); events respect scope.
-        const [nd, ev] = await Promise.all([
+        const [nd, ev, pvc] = await Promise.all([
           kubectlRun(sessionId, viewArgs(nodesArgs(), { namespaced: false }), 20, false),
           kubectlRun(sessionId, viewArgs(eventsArgs()), 20, false),
+          kubectlRun(sessionId, viewArgs(claimsArgs()), 20, false),
         ]);
         nodes = parseNodes(nd.stdout);
+        nodeObjects = listItems(nd.stdout);
         events = parseEvents(ev.stdout);
+        claims = parseClaims(pvc.stdout);
+        // Who mounts a claim is in the pods' own volumes — asked only when there
+        // are claims to answer for (stage 5).
+        if (claims.length > 0) {
+          const pods = await kubectlRun(sessionId, viewArgs(podsArgs()), 20, false);
+          claimUsers = pods.exitCode === 0 ? usersOfClaims(listItems(pods.stdout)) : null;
+        } else claimUsers = null;
       }
     } catch (e) {
       notifyError(String(e));
@@ -496,6 +595,8 @@
     // A different cluster can hold a pod with the same namespace/name; carrying
     // the old series over would draw one cluster's load on another's row.
     cpuHistory = {};
+    resHistory = {};
+    restartsSeen = new Map();
     void reinit();
   }
   function pickNamespace(v: string) {
@@ -546,21 +647,134 @@
 
   // ── Detail modal live sync ───────────────────────────────────────────────────
 
-  function openDetails(pod: K8sPod) {
-    // Opened anew, or for another pod: from the top. The same pod again keeps
-    // the view it is on (see `detailTab`).
+  function openDetails(pod: K8sPod, tab?: K8sDetailTab) {
+    // Details open on the log (v1.33) and keep the view while another row is
+    // picked: the list beside them is browsed, log after log. Another pod starts
+    // from its default container.
     const same = detailOpen && detailPod?.namespace === pod.namespace && detailPod?.name === pod.name;
-    if (!same) {
-      detailTab = "overview";
-      detailContainer = null;
-    }
+    if (tab) detailTab = tab;
+    else if (!detailOpen) detailTab = "logs";
+    if (!same) detailContainer = null;
+    // A text asked for earlier (describe, YAML) stands in front of the details:
+    // picking a pod asks for the pod.
+    textOpen = false;
+    workOpen = false;
+    nodeOpen = false;
     detailPod = pod;
     detailOpen = true;
   }
+
+  function openNode(n: K8sNode) {
+    if (!nodeOpen) nodeTab = "overview";
+    textOpen = false;
+    detailOpen = false;
+    workOpen = false;
+    nodeName = n.name;
+    nodeOpen = true;
+  }
+  const liveNode = $derived(nodeName ? (nodes.find((x) => x.name === nodeName) ?? null) : null);
+  const nodeDetail = $derived(
+    nodeOpen && nodeName
+      ? parseNodeDetail(nodeObjects.find((it) => (it.metadata as { name?: string } | undefined)?.name === nodeName) ?? null)
+      : null,
+  );
+
+  function openWorkload(w: K8sWorkload) {
+    const same = workOpen && workTarget?.kind === w.kind && workTarget.namespace === w.namespace && workTarget.name === w.name;
+    if (!same && !workOpen) workTab = "overview";
+    textOpen = false;
+    detailOpen = false;
+    nodeOpen = false;
+    workTarget = { kind: w.kind, name: w.name, namespace: w.namespace };
+    workOpen = true;
+  }
+
+  /** A pod of the open workload: the Pods view, with its details. */
+  function openWorkloadPod(pod: K8sPod) {
+    activeSub = "pods";
+    openDetails(pod);
+  }
+
+  const liveWork = $derived.by(() => {
+    const w = workTarget;
+    if (!w) return null;
+    return workloads.find((x) => x.kind === w.kind && x.namespace === w.namespace && x.name === w.name) ?? null;
+  });
+  const workDetail = $derived(
+    workOpen && workTarget
+      ? parseWorkloadDetail(workloadItem(workloadObjects, workTarget.kind, workTarget.namespace, workTarget.name))
+      : null,
+  );
+  // A CronJob's runs, newest first.
+  const workJobs = $derived.by(() => {
+    const uid = workDetail?.kind === "CronJob" ? workDetail.uid : "";
+    if (!uid) return [];
+    return jobs.filter((j) => j.owner?.uid === uid).sort((a, b) => (b.created ?? 0) - (a.created ?? 0));
+  });
+
+  const ATTENTION_TEXT: Record<PodAttentionReason, MessageKey> = {
+    oom: "k8s.attnOom",
+    imagePull: "k8s.attnImagePull",
+    unschedulable: "k8s.attnUnschedulable",
+    probe: "k8s.attnProbe",
+    failing: "k8s.attnFailing",
+    pending: "k8s.attnPending",
+    notReady: "k8s.attnNotReady",
+    restarts: "k8s.attnRestarts",
+  };
+  const attention = $derived(
+    podAttention(podList, restartsSeen).map((a) => ({
+      key: a.key,
+      name: a.name,
+      tone: a.tone,
+      reason: t(ATTENTION_TEXT[a.reason]),
+      detail: a.detail,
+    })),
+  );
+  function pickAttention(key: string) {
+    const pod = podList.find((p) => metricsKey(p.namespace, p.name) === key);
+    if (pod) openDetails(pod, "logs");
+  }
+
+  // The «View» menu's columns: what the user may take off the table — only where
+  // the list is a table.
+  const COLUMN_LABEL: Record<string, MessageKey> = {
+    namespace: "k8s.namespace",
+    ip: "k8s.podIp",
+    node: "k8s.node",
+    restarts: "k8s.restarts",
+    spark: "k8s.cpuTrend",
+    mem: "k8s.mem",
+    limits: "k8s.limits",
+    age: "k8s.age",
+  };
+  const columnMenu = $derived.by(() => {
+    if (!listWide) return [];
+    const hidden = hiddenFields("k8s.pods");
+    return [
+      { kind: "separator" as const },
+      {
+        kind: "submenu" as const,
+        key: "columns",
+        icon: "table" as const,
+        label: t("list.columns"),
+        items: hideableFields("k8s.pods").map((id) => ({
+          label: t(COLUMN_LABEL[id]),
+          checked: !hidden.includes(id),
+          onSelect: () => toggleField("k8s.pods", id),
+        })),
+      },
+    ];
+  });
   const liveDetailPod = $derived.by(() => {
     if (!detailPod) return null;
     return podList.find((p) => p.namespace === detailPod!.namespace && p.name === detailPod!.name) ?? null;
   });
+  const podDetail = $derived(
+    detailOpen && liveDetailPod
+      ? parsePodDetail(podItem(podObjects, liveDetailPod.namespace, liveDetailPod.name))
+      : null,
+  );
   const detailMetrics = $derived.by(() => {
     const p = liveDetailPod;
     if (!p) return undefined;
@@ -582,6 +796,8 @@
     if (sessionReady) {
       // Another cluster's pods are not this one's history.
       cpuHistory = {};
+      resHistory = {};
+      restartsSeen = new Map();
       untrack(() => void initAll());
     }
   });
@@ -754,10 +970,15 @@
     <!-- In a wide panel describe/YAML and a pod's details open beside the
          list (below), not over it. -->
     <div class="relative flex min-h-0 flex-1" bind:clientWidth={rowWidth}>
+    <!-- The list is a query container of its own (v1.33): its rows are a table
+         or two-line rows by the list's width, not the panel's — with details
+         beside it, a wide panel's list is a narrow one. -->
     <div
-      class="min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
+      class="@container min-h-0 min-w-0 {sideOpen ? 'shrink-0' : 'flex-1'}"
       style:width={sideOpen ? partWidth("k8s", rowWidth) : null}
+      use:wideWhen={(w) => (listWide = w)}
       data-testid="k8s-list-part"
+      data-list-wide={listWide}
       data-morph
     >
       {#if !firstLoadDone}
@@ -774,6 +995,7 @@
           <EmptyState icon="container" title={t("k8s.noPods")} hint={t("k8s.noPodsHint")} />
         {:else}
           <div class="flex h-full min-h-0 flex-col">
+            <AttentionStrip items={attention} bind:open={attentionOpen} onpick={pickAttention} testid="k8s-attention" />
             <ListHeader
               items={podList}
               schema={PODS}
@@ -785,8 +1007,9 @@
               total={podView.total}
               labels={POD_LABELS}
               placeholder={t("k8s.filterPods")}
-              {wide}
+              wide={listWide}
               onmenu={(m) => (menu = m)}
+              extra={columnMenu}
               fold={(c) => setGroupsCollapsed(sessionId, "k8s.pods", podView.groups.map((g) => g.key), c)}
               testid="k8s-pods-header"
             />
@@ -807,9 +1030,11 @@
                   onsort={(key) => setListOrder("k8s.pods", { ...podOrder, sort: nextSort(PODS, podOrder.sort, key) })}
                   {metricsByKey}
                   {cpuHistory}
+                  allNamespaces={scope.allNamespaces}
+                  selectedKey={detailOpen && liveDetailPod ? metricsKey(liveDetailPod.namespace, liveDetailPod.name) : null}
                   {run}
                   {openShell}
-                  onViewDetails={openDetails}
+                  onViewDetails={(p) => openDetails(p)}
                   {showMenu}
                 />
               {/if}
@@ -832,7 +1057,7 @@
               total={workloadView.total}
               labels={WORKLOAD_LABELS}
               placeholder={t("k8s.name")}
-              {wide}
+              wide={listWide}
               onmenu={(m) => (menu = m)}
               fold={(c) => setGroupsCollapsed(sessionId, "k8s.workloads", workloadView.groups.map((g) => g.key), c)}
               testid="k8s-workloads-header"
@@ -855,6 +1080,9 @@
                   onDescribe={describeObj}
                   onYaml={yamlObj}
                   {showMenu}
+                  onOpen={openWorkload}
+                  allNamespaces={scope.allNamespaces}
+                  selectedKey={workOpen && workTarget ? `${workTarget.kind}/${workTarget.namespace}/${workTarget.name}` : null}
                 />
               {/if}
             </div>
@@ -887,7 +1115,7 @@
           onDescribe={describeObj}
           onYaml={yamlObj}
           {showMenu}
-          {wide}
+          wide={listWide}
           eventFilter={listFilter(sessionId, "k8s.events")}
           oneventfilter={setFilter("k8s.events")}
           eventOrder={listOrder("k8s.events", EVENT_SCHEMA, EVENT_ORDER)}
@@ -895,6 +1123,10 @@
           collapsed={foldOf("k8s.events")}
           ontoggle={toggleFold("k8s.events")}
           onmenu={(m) => (menu = m)}
+          onOpenNode={openNode}
+          selectedNode={nodeOpen ? nodeName : null}
+          {claims}
+          {claimUsers}
         />
       {/if}
     </div>
@@ -909,6 +1141,24 @@
           <SidePane title={textTitle} onclose={() => (textOpen = false)} testid="k8s-side-text">
             <K8sText text={textBody} fill />
           </SidePane>
+        {:else if nodeOpen}
+          <SidePane title={nodeName ?? ""} onclose={() => (nodeOpen = false)} testid="k8s-side-node">
+            <K8sNodeDetail active fill bind:tab={nodeTab} node={liveNode} detail={nodeDetail} {refreshSec} {runQuery} />
+          </SidePane>
+        {:else if workOpen}
+          <SidePane title={liveWork?.name ?? workTarget?.name ?? ""} onclose={() => (workOpen = false)} testid="k8s-side-workload">
+            <K8sWorkloadDetail
+              active
+              fill
+              bind:tab={workTab}
+              workload={liveWork}
+              detail={workDetail}
+              jobs={workJobs}
+              {refreshSec}
+              {runQuery}
+              onOpenPod={openWorkloadPod}
+            />
+          </SidePane>
         {:else}
           <SidePane
             title={liveDetailPod?.name ?? ""}
@@ -921,12 +1171,17 @@
               bind:tab={detailTab}
               bind:container={detailContainer}
               pod={liveDetailPod}
+              detail={podDetail}
               metrics={detailMetrics}
+              history={resHistory}
+              seq={resSeq}
+              {metricsDown}
               {busy}
               {refreshSec}
               {run}
               {runQuery}
               {openShell}
+              onFollowLogs={onOpenShell ? followLogs : undefined}
               {onAsk}
               onclose={() => (detailOpen = false)}
             />
@@ -945,14 +1200,41 @@
   bind:tab={detailTab}
   bind:container={detailContainer}
   pod={liveDetailPod}
+  detail={podDetail}
   metrics={detailMetrics}
+  history={resHistory}
+  seq={resSeq}
+  {metricsDown}
   {busy}
   {refreshSec}
   {run}
   {runQuery}
   {openShell}
+  onFollowLogs={onOpenShell ? followLogs : undefined}
   {onAsk}
   onclose={() => (detailOpen = false)}
+/>
+
+<K8sNodeModal
+  open={nodeOpen && !wide}
+  bind:tab={nodeTab}
+  node={liveNode}
+  detail={nodeDetail}
+  {refreshSec}
+  {runQuery}
+  onclose={() => (nodeOpen = false)}
+/>
+
+<K8sWorkloadModal
+  open={workOpen && !wide}
+  bind:tab={workTab}
+  workload={liveWork}
+  detail={workDetail}
+  jobs={workJobs}
+  {refreshSec}
+  {runQuery}
+  onOpenPod={openWorkloadPod}
+  onclose={() => (workOpen = false)}
 />
 
 <K8sTextModal open={textOpen && !wide} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />

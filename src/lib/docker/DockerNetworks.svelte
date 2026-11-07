@@ -30,6 +30,7 @@
     type DockerContainer,
     type DockerNetwork,
     type DockerVolume,
+    type DiskDetail,
   } from "./docker";
   import {
     HOST_NETWORK,
@@ -39,12 +40,18 @@
     isSharedNetwork,
     membersByNetwork,
     type PortRow,
+    type GraphPick,
   } from "./dockernet";
   import { t } from "../i18n";
 
   let {
     networks,
     volumes,
+    usage = undefined,
+    ips = undefined,
+    subnets = undefined,
+    trouble = undefined,
+    onopen = undefined,
     containers = [],
     view = "list",
     onView,
@@ -59,6 +66,15 @@
   }: {
     networks: DockerNetwork[];
     volumes: DockerVolume[];
+    /** Who mounts each volume and its size, by docker's count (`system df -v`, v1.33); absent — not known. */
+    usage?: DiskDetail | null;
+    /** For the topology (v1.33): a container's addresses and each network's subnets. */
+    ips?: (c: DockerContainer) => string[];
+    subnets?: ReadonlyMap<string, { subnets: string[]; internal: boolean }>;
+    /** What is wrong with a container, by «Needs attention» — the topology frames it in that colour. */
+    trouble?: (id: string) => "warn" | "bad" | null;
+    /** Open what a node of the topology is — picked twice — beside the list. */
+    onopen?: (pick: GraphPick) => void;
     /** Every container on the host, for ports and membership. */
     containers?: DockerContainer[];
     /** Which of the two views is on screen. */
@@ -165,7 +181,7 @@
 
   {#if view === "graph"}
     <div class="min-h-0 flex-1">
-      <DockerNetGraph {networks} {containers} />
+      <DockerNetGraph {networks} {containers} {ips} {subnets} {trouble} onpick={onopen} />
     </div>
   {:else}
     <div class="min-h-0 flex-1 overflow-auto">
@@ -255,6 +271,12 @@
         <div class="group flex items-center gap-2 border-b border-edge/60 px-2.5 py-1.5 hover:bg-edge/30">
           <Icon name="database" size={14} class="shrink-0 text-accent" />
           <span class="min-w-0 flex-1 truncate text-text/90">{v.name}</span>
+          {#if usage?.volumes.get(v.name)}
+            {@const u = usage.volumes.get(v.name)!}
+            <!-- By docker's own count (`system df -v`): what a prune of unused volumes would delete. -->
+            {#if u.links === 0}<span class="shrink-0 text-caption text-warn" data-testid="docker-volume-unused">{t("docker.volumeUnused")}</span>{/if}
+            {#if u.size && u.size !== "N/A"}<span class="shrink-0 text-caption tabular-nums text-muted">{u.size}</span>{/if}
+          {/if}
           <span class="shrink-0 text-caption text-muted">{v.driver}</span>
           <button class="shrink-0 rounded p-1 text-danger opacity-0 hover:bg-edge group-hover:opacity-100 disabled:opacity-40" disabled={busy} use:tooltip={t("docker.remove")} aria-label={t("docker.remove")} onclick={() => run(removeVolumeArgs([v.name]), { destructive: true, successKey: "docker.removed" })}>
             <Icon name="trash" size={13} />

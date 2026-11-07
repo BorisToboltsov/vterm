@@ -5,6 +5,11 @@
   // restarts, live CPU/mem (when metrics-server is present) and age; a right-click
   // menu + hover buttons drive actions. Presentational + action wiring only; arg
   // building is pure (k8s.ts), the orchestrator's `run` executes.
+  //
+  // v1.33: a click on a row opens its details (beside the list in a wide panel);
+  // the table's columns are fitted to the list's own width (`colfit.ts`) — the
+  // name stays whole when the details take half the row; the pod's address and
+  // the address of its node are columns.
   import Icon from "../ui/Icon.svelte";
   import Sparkline from "../monitoring/Sparkline.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -27,8 +32,10 @@
   import SortTitle from "../ui/SortTitle.svelte";
   import type { ListGroup, ListSort } from "../ui/listview";
   import { columnVars } from "../ui/colwidths";
-  import { columns } from "../stores/colwidths.svelte";
-  import { t } from "../i18n";
+  import { fitColumns } from "../ui/colfit";
+  import { columns, hiddenFields } from "../stores/colwidths.svelte";
+  import { uiPx } from "../settings/settings.svelte";
+  import { t, type MessageKey } from "../i18n";
 
   let {
     groups,
@@ -40,6 +47,8 @@
     onsort = undefined,
     metricsByKey,
     cpuHistory = {},
+    allNamespaces = false,
+    selectedKey = null,
     run,
     openShell,
     onViewDetails,
@@ -59,6 +68,10 @@
     metricsByKey: Map<string, K8sPodMetrics>;
     /** Rolling CPU history (millicores) keyed by {@link metricsKey} (Phase 42). */
     cpuHistory?: LoadHistory;
+    /** The list spans every namespace (`-A`); otherwise the namespace column is the first to go. */
+    allNamespaces?: boolean;
+    /** {@link metricsKey} of the pod whose details are open: its row is marked. */
+    selectedKey?: string | null;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
     openShell: (pod: K8sPod, container: string | null) => void;
     onViewDetails: (pod: K8sPod) => void;
@@ -84,10 +97,40 @@
     "--c-name": "k8s.name",
     "--c-ns": "k8s.namespace",
     "--c-node": "k8s.node",
+    "--c-ip": "k8s.ip",
   } as const;
   // The list's visible height: a column's border can be dragged anywhere along
   // it, so the grip in the header reaches this far down (ColumnGrip, `--list-h`).
   let listHeight = $state(0);
+  // Its width: what the table's columns are fitted to — the list's own, not the
+  // panel's, which still counts the details beside it. One namespace in every
+  // row says nothing, so without `-A` that column goes first.
+  let listWidth = $state(0);
+  const fit = $derived(
+    fitColumns("k8s.pods", columns.widths, hiddenFields("k8s.pods"), listWidth / uiPx(1), allNamespaces ? [] : ["namespace"]),
+  );
+  const shows = (id: string): boolean => fit.shown.includes(id);
+  /** A cell drawn in both layouts that the table has no room for. */
+  const off = (id: string): string => (shows(id) ? "" : "@wide:hidden");
+  const FIELD_LABEL: Record<string, MessageKey> = {
+    namespace: "k8s.namespace",
+    ip: "k8s.podIp",
+    node: "k8s.node",
+    restarts: "k8s.restarts",
+    spark: "k8s.cpuTrend",
+    mem: "k8s.mem",
+    limits: "k8s.limits",
+    age: "k8s.age",
+  };
+  const droppedText = $derived(fit.dropped.map((id) => t(FIELD_LABEL[id])).join(", "));
+
+  /** The address cell: the first address, how many more, and the tooltip. */
+  function ipCell(p: K8sPod): { text: string; tip: string } {
+    const ips = p.podIps ?? [];
+    if (ips.length === 0) return { text: "—", tip: t("k8s.noIp") };
+    const tip = [ips.join(" · "), p.hostNetwork ? t("k8s.hostNetworkHint") : ""].filter(Boolean).join("\n");
+    return { text: ips.length > 1 ? `${ips[0]} +${ips.length - 1}` : ips[0], tip };
+  }
   // Table cells of the wide layout. The row stretches its cells and has no
   // vertical padding there, so a cell's rule runs the full height of the row.
   // TEXT: a resizable column on the left, ruled on its right — under the header
@@ -143,6 +186,7 @@
 <div
   class="h-full overflow-auto text-xs"
   bind:clientHeight={listHeight}
+  bind:clientWidth={listWidth}
   style="{columnVars(columns.widths, COLS)}{listHeight > 0 ? `; --list-h: ${listHeight}px` : ''}"
 >
   <!-- Column titles — only where there are columns, i.e. in a wide container. The
@@ -154,13 +198,32 @@
   >
     <span class="mr-2 w-[0.4375rem] shrink-0"></span>
     <ColumnHead col="k8s.name" label={t("k8s.name")} class="w-[var(--c-name)] pr-2" sorted={sortedBy("name")} onsort={onsort ? () => onsort("name") : undefined} />
-    <ColumnHead col="k8s.namespace" label={t("k8s.namespace")} class="w-[var(--c-ns)] px-2" />
-    <ColumnHead col="k8s.node" label={t("k8s.node")} class="w-[var(--c-node)] px-2" />
+    {#if shows("namespace")}
+      <ColumnHead col="k8s.namespace" label={t("k8s.namespace")} class="w-[var(--c-ns)] shrink-0 px-2" />
+    {/if}
+    {#if shows("ip")}
+      <ColumnHead col="k8s.ip" label={t("k8s.podIp")} class="w-[var(--c-ip)] shrink-0 px-2" />
+    {/if}
+    {#if shows("node")}
+      <ColumnHead col="k8s.node" label={t("k8s.node")} class="w-[var(--c-node)] shrink-0 px-2" />
+    {/if}
+    {#if fit.dropped.length > 0}
+      <!-- What the width took off, said rather than silently gone. -->
+      <span
+        class="ml-1 shrink-0 self-center rounded border border-edge px-1 text-caption"
+        use:tooltip={t("list.columnsDropped", { names: droppedText })}
+        data-testid="k8s-columns-dropped">+{fit.dropped.length}</span
+      >
+    {/if}
     <span class="flex-1"></span>
     <span class="{HEAD} w-16 text-right">{t("k8s.ready")}</span>
-    <span class="{HEAD} w-12 text-right" use:tooltip={t("k8s.restarts")}>↻</span>
+    {#if shows("restarts")}
+      <span class="{HEAD} w-12 text-right" use:tooltip={t("k8s.restarts")}>↻</span>
+    {/if}
     <!-- CPU is two cells in a row — the shape, then the figure — under one title. -->
-    <span class="w-[3.25rem] shrink-0 border-l border-edge"></span>
+    {#if shows("spark")}
+      <span class="w-[3.25rem] shrink-0 border-l border-edge"></span>
+    {/if}
     <span class="w-20 shrink-0 truncate px-2 py-1 text-right">
       {#if onsort}
         <SortTitle label={t("k8s.cpu")} sorted={sortedBy("cpu")} onsort={() => onsort("cpu")} testid="column-sort-k8s.cpu" align="right" />
@@ -168,33 +231,40 @@
         {t("k8s.cpu")}
       {/if}
     </span>
-    <span class="{HEAD} w-20 text-right">
-      {#if onsort}
-        <SortTitle label={t("k8s.mem")} sorted={sortedBy("mem")} onsort={() => onsort("mem")} testid="column-sort-k8s.mem" align="right" />
-      {:else}
-        {t("k8s.mem")}
-      {/if}
-    </span>
-    <span class="{HEAD} w-28">{t("k8s.limits")}</span>
-    <span class="{HEAD} w-18 text-right">
-      {#if onsort}
-        <SortTitle label={t("k8s.age")} sorted={sortedBy("age")} onsort={() => onsort("age")} testid="column-sort-k8s.age" align="right" />
-      {:else}
-        {t("k8s.age")}
-      {/if}
-    </span>
+    {#if shows("mem")}
+      <span class="{HEAD} w-20 text-right">
+        {#if onsort}
+          <SortTitle label={t("k8s.mem")} sorted={sortedBy("mem")} onsort={() => onsort("mem")} testid="column-sort-k8s.mem" align="right" />
+        {:else}
+          {t("k8s.mem")}
+        {/if}
+      </span>
+    {/if}
+    {#if shows("limits")}
+      <span class="{HEAD} w-28">{t("k8s.limits")}</span>
+    {/if}
+    {#if shows("age")}
+      <span class="{HEAD} w-18 text-right">
+        {#if onsort}
+          <SortTitle label={t("k8s.age")} sorted={sortedBy("age")} onsort={() => onsort("age")} testid="column-sort-k8s.age" align="right" />
+        {:else}
+          {t("k8s.age")}
+        {/if}
+      </span>
+    {/if}
     <span class="w-14 shrink-0 border-l border-edge"></span>
   </div>
   {#each groups as g (g.key)}
     {@const folded = grouped && collapsed.includes(g.key)}
     {@const kind = grouping === "owner" && !g.rest ? g.items[0].ownerKind : undefined}
+    {@const app = grouping === "app" && !g.rest ? g.items[0].app : undefined}
     {#if grouped}
       <GroupHeader
-        label={g.rest ? t("k8s.standalone") : g.label}
+        label={g.rest ? t(grouping === "app" ? "k8s.noApp" : "k8s.standalone") : app && allNamespaces ? `${g.label} · ${g.items[0].namespace}` : g.label}
         count={g.items.length}
         collapsed={folded}
         ontoggle={() => ontoggle(g.key)}
-        icon={kind ? (KIND_ICON[kind] ?? "cloud") : undefined}
+        icon={kind ? (KIND_ICON[kind] ?? "cloud") : app ? (app.helm ? "ship" : "layoutGrid") : undefined}
         rest={g.rest}
         {kind}
         testid="k8s-group"
@@ -209,10 +279,20 @@
            (`contents`) so each figure becomes a cell of the row with a fixed
            width, a rule and a title above it; cells a pod has nothing for are
            still there, so every row has the same columns. -->
+      {@const key = metricsKey(p.namespace, p.name)}
+      {@const ip = ipCell(p)}
+      <!-- A click opens the details; the keyboard has the row's own button for it
+           (the eye) — the row is a list item, not a second button around them. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
       <div
-        class="group flex items-center gap-2 border-b border-edge/60 py-1.5 pr-2 hover:bg-edge/30 @wide:items-stretch @wide:gap-0 @wide:py-0 @wide:pl-2.5 {grouped ? 'pl-5' : 'pl-2.5'}"
+        class="group flex cursor-default items-center gap-2 border-b border-edge/60 py-1.5 pr-2 @wide:items-stretch @wide:gap-0 @wide:py-0 @wide:pl-2.5 {grouped ? 'pl-5' : 'pl-2.5'} {selectedKey === key ? 'bg-accent/10' : 'hover:bg-edge/30'}"
         oncontextmenu={(e) => showMenu(e, menuItems(p))}
+        onclick={(e) => {
+          if (!(e.target as HTMLElement).closest("button")) onViewDetails(p);
+        }}
         role="listitem"
+        aria-current={selectedKey === key ? "true" : undefined}
+        data-testid="k8s-row"
       >
         <span class="h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full @wide:mr-2 @wide:self-center {TONE[podPhaseTone(p.status)]}" use:tooltip={p.status}></span>
         <div class="min-w-0 flex-1 @wide:w-[var(--c-name)] @wide:flex-initial @wide:pr-2 {TEXT}">
@@ -223,14 +303,28 @@
         </div>
         <!-- Where the pod runs — columns only a wide container has room for
              (v1.1); in a narrow dock they stay in the details view. -->
-        <span
-          class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ns)] @wide:px-2 {TEXT}"
-          data-testid="k8s-col-namespace">{p.namespace}</span
-        >
-        <span
-          class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-node)] @wide:px-2 {TEXT}"
-          data-testid="k8s-col-node">{p.node}</span
-        >
+        {#if shows("namespace")}
+          <span
+            class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-ns)] @wide:shrink-0 @wide:px-2 {TEXT}"
+            data-testid="k8s-col-namespace">{p.namespace}</span
+          >
+        {/if}
+        {#if shows("ip")}
+          <span
+            class="hidden truncate font-mono text-caption @wide:block @wide:w-[var(--c-ip)] @wide:shrink-0 @wide:px-2 {TEXT} {(p.podIps ?? []).length > 0 ? 'text-text/85' : 'text-muted'}"
+            data-testid="k8s-col-ip"
+            use:tooltip={ip.tip}
+            >{ip.text}{#if p.hostNetwork}<span class="ml-1 font-sans text-muted">{t("k8s.hostNetwork")}</span>{/if}</span
+          >
+        {/if}
+        {#if shows("node")}
+          <span
+            class="hidden truncate text-caption text-muted @wide:block @wide:w-[var(--c-node)] @wide:shrink-0 @wide:px-2 {TEXT}"
+            data-testid="k8s-col-node"
+            use:tooltip={p.hostIp ? `${t("k8s.hostIp")}: ${p.hostIp}` : ""}
+            >{p.node || "—"}{#if p.hostIp}<span class="font-mono">{` · ${p.hostIp}`}</span>{/if}</span
+          >
+        {/if}
         <span class="hidden @wide:block @wide:flex-1" aria-hidden="true"></span>
         <!-- CPU shape over the last poll window. Unlike Docker's percentage there is
              no known ceiling for a pod (no limit is reported by `top`), so the
@@ -240,7 +334,9 @@
              column's first cell (placed before the figure with `order`), and
              stays in place when a pod has no history yet. -->
         <span
-          class="contents @wide:order-1 @wide:flex @wide:w-[3.25rem] @wide:shrink-0 @wide:items-center @wide:border-l @wide:border-edge/40 @wide:pl-2"
+          class={shows("spark")
+            ? "contents @wide:order-1 @wide:flex @wide:w-[3.25rem] @wide:shrink-0 @wide:items-center @wide:border-l @wide:border-edge/40 @wide:pl-2"
+            : "contents @wide:hidden"}
           data-testid="k8s-col-spark"
         >
           {#if history.length > 0}
@@ -255,7 +351,7 @@
         <div class="flex shrink-0 items-center gap-2 text-caption text-muted tabular-nums @wide:contents">
           <span class="@wide:w-16 @wide:text-right {NUM}" use:tooltip={t("k8s.ready")}>{p.ready}</span>
           <span
-            class="text-warn {p.restarts > 0 ? '' : 'hidden @wide:block'} @wide:w-12 @wide:text-right {NUM}"
+            class="text-warn {shows('restarts') ? (p.restarts > 0 ? '' : 'hidden @wide:block') : p.restarts > 0 ? '@wide:hidden' : 'hidden'} @wide:w-12 @wide:text-right {NUM}"
             data-testid="k8s-col-restarts"
             use:tooltip={t("k8s.restarts")}>{p.restarts > 0 ? `↻${p.restarts}` : ""}</span
           >
@@ -280,7 +376,7 @@
             {/if}
             {#if mem}
               <span
-                class="flex items-center gap-1 {TONE_TEXT[mem.tone]} @wide:w-20 @wide:justify-end {NUM} {LATE}"
+                class="flex items-center gap-1 {TONE_TEXT[mem.tone]} @wide:w-20 @wide:justify-end {NUM} {LATE} {off('mem')}"
                 use:tooltip={t("k8s.limitMem", { used: m.mem, limit: `${p.memLimit}Mi` })}
               >
                 <span class="h-1 w-6 overflow-hidden rounded bg-edge">
@@ -289,27 +385,27 @@
                 {Math.round(mem.ratio * 100)}%
               </span>
             {:else}
-              <span class="@wide:w-20 @wide:text-right {NUM} {LATE}" use:tooltip={t("k8s.mem")}>{m.mem}</span>
+              <span class="@wide:w-20 @wide:text-right {NUM} {LATE} {off('mem')}" use:tooltip={t("k8s.mem")}>{m.mem}</span>
             {/if}
           {:else}
             <!-- No metrics-server: a narrow row simply has no figures; a table row
                  keeps its two columns and says there is nothing to show. -->
             <span class="hidden @wide:block @wide:w-20 @wide:text-right {CPU}" data-testid="k8s-col-nometrics">—</span>
-            <span class="hidden @wide:block @wide:w-20 @wide:text-right {NUM} {LATE}">—</span>
+            <span class="{shows('mem') ? 'hidden @wide:block' : 'hidden'} @wide:w-20 @wide:text-right {NUM} {LATE}">—</span>
           {/if}
           <!-- The note that the figures have no ceiling. It comes from the spec, not
                from `top`, so the table shows it with or without metrics; the narrow
                row keeps it next to the figures it explains. -->
           {#if p.cpuLimit == null && p.memLimit == null}
             <span
-              class="text-warn {m ? '' : 'hidden @wide:block'} @wide:w-28 @wide:truncate {NUM} {LATE}"
+              class="text-warn {shows('limits') ? (m ? '' : 'hidden @wide:block') : m ? '@wide:hidden' : 'hidden'} @wide:w-28 @wide:truncate {NUM} {LATE}"
               data-testid="k8s-col-limits"
               use:tooltip={t("k8s.qos")}>{t("k8s.noLimit")}</span
             >
           {:else}
-            <span class="hidden @wide:block @wide:w-28 {NUM} {LATE}" data-testid="k8s-col-limits"></span>
+            <span class="{shows('limits') ? 'hidden @wide:block' : 'hidden'} @wide:w-28 {NUM} {LATE}" data-testid="k8s-col-limits"></span>
           {/if}
-          <span class="@wide:w-18 @wide:text-right {NUM} {LATE}" use:tooltip={t("k8s.age")}>{p.age}</span>
+          <span class="@wide:w-18 @wide:text-right {NUM} {LATE} {off('age')}" use:tooltip={t("k8s.age")}>{p.age}</span>
         </div>
         <div
           class="flex shrink-0 items-center gap-0.5 text-muted opacity-0 group-hover:opacity-100 @wide:order-2 @wide:w-14 @wide:justify-end @wide:border-l @wide:border-edge/40"

@@ -10,6 +10,10 @@ const PS = [
 ].map((row) => row.join(US));
 
 const calls: string[] = [];
+// Whether the events snapshot reports a crash loop (stage 3) — off but in its own test.
+const crashing = vi.hoisted(() => ({ on: false }));
+// Whether `ps` reports a compose stack (stage 5) — off but in its own test.
+const stacked = vi.hoisted(() => ({ on: false }));
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   containerRun: vi.fn(async (_session: string, args: string[]) => {
@@ -17,9 +21,25 @@ vi.mock("../api", async (importOriginal) => ({
     await new Promise((r) => setTimeout(r, 5));
     const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
     if (args[1] === "version") return ok("29.0.1\n");
+    if (args[1] === "ps" && args.includes("--filter")) return ok(["abc123456789", "edge-proxy", "running"].join(US));
+    if (args[1] === "compose" && args.includes("ps")) return ok('{"Service":"api","ID":"abc123456789","Name":"shop-api-1","State":"running","Health":"","ExitCode":0}');
+    if (args[1] === "compose" && args.includes("--services")) return ok("api\nworker\n");
+    if (args[1] === "ps" && stacked.on)
+      return ok(["abc123456789", "shop-api-1", "api:1", "running", "Up 2 hours", "", "shop", "api", "/srv/shop", "2026-10-07 10:00:00 +0000 UTC", "2 hours ago", "shop_default", "/srv/shop/compose.yaml", ""].join(US));
     if (args[1] === "ps") return ok(PS.join("\n"));
+    if (args[1] === "images") return ok(["img111111111", "nginx", "1.27", "187MB", "2026-10-07 10:00:00 +0000 UTC"].join(US));
+    if (args[1] === "history") return ok([`/bin/sh -c #(nop)  CMD ["nginx"]`, "0B", "9 days ago"].join(US) + "\n" + ["/bin/sh -c apt-get install nginx", "60MB", "9 days ago"].join(US));
+    if (args[1] === "network" && args[2] === "ls") return ok(["n1", "web_default", "bridge", "local"].join(US));
     if (args[1] === "inspect") return ok('[{"Id":"abc123456789"}]');
     if (args[1] === "logs") return ok("GET /healthz 200");
+    if (args[1] === "events") {
+      if (!crashing.on) return ok("");
+      const now = BigInt(Date.now()) * 1_000_000n;
+      const die = (agoMs: number) => [String(now - BigInt(agoMs) * 1_000_000n), "die", "abc123456789ffff", "edge-proxy", "1", ""].join(US);
+      return ok([die(30_000), die(90_000)].join("\n"));
+    }
+    if (args[1] === "system" && args.includes("-v")) return ok(JSON.stringify({ Images: [], Volumes: [], Containers: [], BuildCache: [] }));
+    if (args[1] === "system") return ok('{"Active":"0","Reclaimable":"33.34GB (98%)","Size":"33.96GB","TotalCount":"143","Type":"Local Volumes"}');
     return ok("");
   }),
 }));
@@ -65,7 +85,8 @@ describe("DockerPanel — where a container's details open", () => {
   it("a narrow dock opens them as a dialog", async () => {
     await mount("d-narrow");
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("docker-detail-overview"));
+    // On the log (v1.33): it is what a container is opened for.
+    expect(screen.getByRole("dialog")).toContainElement(screen.getByTestId("docker-log-tools"));
     expect(screen.queryByTestId("docker-side")).toBeNull();
   });
 
@@ -75,7 +96,7 @@ describe("DockerPanel — where a container's details open", () => {
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     const side = screen.getByTestId("docker-side");
-    expect(side).toContainElement(screen.getByTestId("docker-detail-overview"));
+    expect(side).toContainElement(screen.getByTestId("docker-log-tools"));
     expect(screen.getByTestId("docker-list-part")).toContainElement(
       screen.getByRole("button", { name: "View details" }),
     );
@@ -145,23 +166,45 @@ describe("DockerPanel — where a container's details open", () => {
     expect(screen.getByTestId("docker-text")).toHaveClass("min-h-0", "flex-1");
   });
 
-  it("inspect asked from the row's menu stands in front of the details, and closing it shows them again", async () => {
+  it("inspect asked from the row's menu is the details' own view, not a second pane (v1.33)", async () => {
     await mount("d-text");
     resize(1200);
-    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
     await fireEvent.contextMenu(screen.getByRole("listitem"));
-    // "Inspect" is also a tab of the details; the one asked for is the menu's.
     const menu = await waitFor(() => {
       const el = document.querySelector<HTMLElement>(".fixed.z-50");
       expect(el).not.toBeNull();
       return el!;
     });
     await fireEvent.click(within(menu).getByText("Inspect"));
-    await waitFor(() => expect(screen.getByTestId("docker-side-text")).toBeInTheDocument());
-    expect(screen.queryByTestId("docker-side-detail")).toBeNull();
+    const side = await screen.findByTestId("docker-side-detail");
+    expect(within(side).getByTestId("docker-detail-tab-inspect").className).toContain("text-accent");
+    await waitFor(() => expect(side).toHaveTextContent('"Id":"abc123456789"'));
+    expect(screen.queryByTestId("docker-side-text")).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("a click on the row opens its details, and the row says it is the one open", async () => {
+    await mount("d-row");
+    resize(1200);
+    await fireEvent.click(screen.getByText("edge-proxy"));
+    expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("docker-row")).toHaveAttribute("aria-current", "true");
     await fireEvent.click(screen.getByTestId("side-pane-close"));
-    expect(screen.getByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.getByTestId("docker-row")).not.toHaveAttribute("aria-current");
+  });
+
+  it("the list is laid out by its own width, not the panel's", async () => {
+    await mount("d-own");
+    resize(1200);
+    const list = screen.getByTestId("docker-list-part");
+    // A query container of its own: the rows' `@wide:` reads the list.
+    expect(list).toHaveClass("@container");
+    await waitFor(() => expect(document.querySelector("[data-wide]")).toHaveAttribute("data-wide", "true"));
+    // jsdom gives the list no width: as narrow as the details beside it can make it.
+    expect(list).toHaveAttribute("data-list-wide", "false");
+    Object.defineProperty(list, "clientWidth", { configurable: true, value: 1200 });
+    resize(1200);
+    await waitFor(() => expect(list).toHaveAttribute("data-list-wide", "true"));
   });
 
   it("details that are open follow the panel across the threshold", async () => {
@@ -198,15 +241,16 @@ describe("DockerPanel — where a container's details open", () => {
     await waitFor(() => expect(dialog).toHaveTextContent('"Id":"abc123456789"'));
   });
 
-  it("details opened anew start from Overview", async () => {
+  it("details opened anew start from the log", async () => {
     await mount("d-anew");
     resize(1200);
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    await fireEvent.click(screen.getByTestId("docker-detail-tab-logs"));
-    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+    await fireEvent.click(screen.getByTestId("docker-detail-tab-overview"));
+    expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
     await fireEvent.click(screen.getByTestId("side-pane-close"));
     await fireEvent.click(screen.getByRole("button", { name: "View details" }));
-    expect(screen.getByTestId("docker-detail-overview")).toBeInTheDocument();
+    expect(screen.queryByTestId("docker-detail-overview")).toBeNull();
+    expect(screen.getByTestId("docker-log-tools")).toBeInTheDocument();
   });
 });
 
@@ -239,5 +283,78 @@ describe("DockerPanel — the list's filter row (v1.29)", () => {
     expect(screen.queryByText("edge-proxy")).toBeNull();
     await fireEvent.click(toggle);
     expect(await screen.findByText("edge-proxy")).toBeInTheDocument();
+  });
+});
+
+describe("DockerPanel — several containers and the disk (stage 2)", () => {
+  it("picked containers get one action, and its confirmation names them", async () => {
+    await mount("d-bulk");
+    await fireEvent.click(screen.getByTestId("docker-row-pick"));
+    const bar = screen.getByTestId("docker-picked-bar");
+    expect(bar).toHaveTextContent("Picked: 1");
+    // Running: it can be stopped, not started.
+    expect(screen.getByTestId("docker-picked-start")).toBeDisabled();
+    await fireEvent.click(screen.getByTestId("docker-picked-stop"));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("docker stop edge-proxy");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+    await waitFor(() => expect(calls).toContain("docker stop abc123456789"));
+    await fireEvent.click(screen.getByTestId("docker-picked-clear"));
+    expect(screen.queryByTestId("docker-picked-bar")).toBeNull();
+  });
+
+  it("the images view says what the disk holds — asked when it opens, not on every poll", async () => {
+    await mount("d-disk");
+    expect(calls.some((c) => c.startsWith("docker system df"))).toBe(false);
+    await fireEvent.click(screen.getByTestId("docker-subtab-images"));
+    await waitFor(() => expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.96GB"));
+    expect(screen.getByTestId("docker-disk-volumes")).toHaveTextContent("33.34GB (98%) can be freed");
+    expect(calls.filter((c) => c === "docker system df --format {{json .}}")).toHaveLength(1);
+  });
+});
+
+describe("DockerPanel — what happened lately (stage 3)", () => {
+  it("a container its restart policy keeps bringing back is named, though every poll sees it running", async () => {
+    crashing.on = true;
+    render(DockerPanel, { props: { sessionId: "d-loop", visible: true, sessionReady: true } });
+    const strip = await screen.findByTestId("docker-attention");
+    expect(strip).toHaveTextContent("Crashing and restarting");
+    expect(strip).toHaveTextContent("2× · exit 1");
+    // A snapshot that ends, asked with the containers' poll.
+    expect(calls.some((c) => c.startsWith("docker events --since 10m --until 0s"))).toBe(true);
+    crashing.on = false;
+  });
+});
+
+describe("DockerPanel — the column of names (stage 4)", () => {
+  it("goes on with images, networks and volumes while details stand beside it, and opens an image's", async () => {
+    await mount("d-tree");
+    expect(screen.queryByTestId("docker-tree-sections")).toBeNull();
+    resize(1200);
+    await fireEvent.click(screen.getByText("edge-proxy"));
+    const sections = await screen.findByTestId("docker-tree-sections");
+    await fireEvent.click(within(screen.getByTestId("docker-tree-images")).getByTestId("docker-tree-images-toggle"));
+    await fireEvent.click(await within(sections).findByTestId("docker-tree-image"));
+    const side = await screen.findByTestId("docker-side-item");
+    await waitFor(() => expect(within(side).getByTestId("docker-image-layers")).toHaveTextContent("apt-get install nginx"));
+    expect(within(side).getByTestId("docker-image-users")).toHaveTextContent("edge-proxy");
+    // A user of the image opens that container's details in its place.
+    await fireEvent.click(within(within(side).getByTestId("docker-image-users")).getByText("edge-proxy"));
+    expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
+    expect(screen.queryByTestId("docker-side-item")).toBeNull();
+  });
+});
+
+describe("DockerPanel — a compose stack's details (stage 5)", () => {
+  it("open from the stack's header — as a dialog where there is no room beside the list", async () => {
+    stacked.on = true;
+    render(DockerPanel, { props: { sessionId: "d-stack", visible: true, sessionReady: true } });
+    await screen.findByText("shop-api-1");
+    await fireEvent.click(screen.getByTestId("docker-stack-open"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByTestId("docker-stack-detail")).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getAllByTestId("docker-stack-service")).toHaveLength(2));
+    expect(within(dialog).getAllByTestId("docker-stack-service")[1]).toHaveTextContent("not created");
+    stacked.on = false;
   });
 });
