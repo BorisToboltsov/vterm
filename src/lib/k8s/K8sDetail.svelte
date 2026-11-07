@@ -450,6 +450,12 @@
         <dt class="text-muted">{t("k8s.qos")}</dt>
         <dd class="text-text/85">{p.qos}</dd>
       {/if}
+      {#if detail?.app}
+        <dt class="text-muted">{t("k8s.application")}</dt>
+        <dd class="break-all text-text/85" data-testid="k8s-detail-app">
+          {detail.app.app.name}{#if detail.app.release}<span class="font-mono text-caption text-muted">{` · ${t("k8s.helmRelease")} ${detail.app.release}`}</span>{/if}{#if detail.app.version}<span class="font-mono text-caption text-muted">{` · ${detail.app.version}`}</span>{/if}
+        </dd>
+      {/if}
       {#if detail?.serviceAccount}
         <dt class="text-muted">{t("k8s.serviceAccount")}</dt>
         <dd class="break-all font-mono text-text/85">{detail.serviceAccount}</dd>

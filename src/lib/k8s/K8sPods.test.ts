@@ -253,3 +253,34 @@ describe("K8sPods — addresses and the list beside the details", () => {
     resetColumnWidths();
   });
 });
+
+// Stage 6 (ADR 0054): pods by the application their labels name.
+describe("K8sPods — by application (stage 6)", () => {
+  it("names each application's group, marks a Helm release, and calls the rest «No application»", () => {
+    const base = props().groups[0].items[0];
+    const shop = { ...base, name: "shop-api-1", app: { name: "shop", source: "helm" as const, helm: true } };
+    const loose = { ...base, name: "loose-1", app: null };
+    const groups: ListGroup<K8sPod>[] = [
+      { key: "shop/shop", label: "shop", rest: false, items: [shop] },
+      { key: "", label: "", rest: true, items: [loose] },
+    ];
+    render(K8sPods, { props: { ...props(), groups, grouping: "app" } });
+    const headers = screen.getAllByTestId("k8s-group");
+    expect(headers.map((h) => h.textContent?.trim())).toEqual([expect.stringContaining("shop"), expect.stringContaining("No application")]);
+    expect(headers[0]).not.toHaveTextContent("·");
+  });
+
+  it("across namespaces names the namespace: one application in two is two groups", () => {
+    const base = props().groups[0].items[0];
+    const app = { name: "shop", source: "helm" as const, helm: true };
+    const groups: ListGroup<K8sPod>[] = [
+      { key: "a/shop", label: "shop", rest: false, items: [{ ...base, name: "x", namespace: "a", app }] },
+      { key: "b/shop", label: "shop", rest: false, items: [{ ...base, name: "y", namespace: "b", app }] },
+    ];
+    render(K8sPods, { props: { ...props(), groups, grouping: "app", allNamespaces: true } });
+    expect(screen.getAllByTestId("k8s-group").map((h) => h.textContent?.replace(/\s+/g, " ").trim())).toEqual([
+      expect.stringContaining("shop · a"),
+      expect.stringContaining("shop · b"),
+    ]);
+  });
+});

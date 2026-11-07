@@ -32,6 +32,7 @@
     showMenu,
     onOpen,
     selectedKey = null,
+    allNamespaces = false,
   }: {
     /** The list as `listview.ts` lays it out (by kind, as it always was, by default). */
     groups: ListGroup<K8sWorkload>[];
@@ -49,6 +50,8 @@
     onOpen: (w: K8sWorkload) => void;
     /** `kind/namespace/name` of the workload whose details are open. */
     selectedKey?: string | null;
+    /** The list spans namespaces: one application in two is two groups, named with theirs. */
+    allNamespaces?: boolean;
   } = $props();
 
   const keyOf = (w: K8sWorkload) => `${w.kind}/${w.namespace}/${w.name}`;
@@ -104,12 +107,13 @@
   {#each groups as g (g.key)}
     {@const folded = grouped && collapsed.includes(g.key)}
     {#if grouped}
+      {@const app = grouping === "app" && !g.rest ? g.items[0].app : undefined}
       <GroupHeader
-        label={g.label}
+        label={g.rest && grouping === "app" ? t("k8s.noApp") : app && allNamespaces ? `${g.label} · ${g.items[0].namespace}` : g.label}
         count={g.items.length}
         collapsed={folded}
         ontoggle={() => ontoggle(g.key)}
-        icon={grouping === "kind" ? (KIND_ICON[g.key] ?? "cloud") : undefined}
+        icon={grouping === "kind" ? (KIND_ICON[g.key] ?? "cloud") : app ? (app.helm ? "ship" : "layoutGrid") : undefined}
         testid="k8s-workload-group"
       />
     {/if}

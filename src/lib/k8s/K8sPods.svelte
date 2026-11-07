@@ -257,13 +257,14 @@
   {#each groups as g (g.key)}
     {@const folded = grouped && collapsed.includes(g.key)}
     {@const kind = grouping === "owner" && !g.rest ? g.items[0].ownerKind : undefined}
+    {@const app = grouping === "app" && !g.rest ? g.items[0].app : undefined}
     {#if grouped}
       <GroupHeader
-        label={g.rest ? t("k8s.standalone") : g.label}
+        label={g.rest ? t(grouping === "app" ? "k8s.noApp" : "k8s.standalone") : app && allNamespaces ? `${g.label} · ${g.items[0].namespace}` : g.label}
         count={g.items.length}
         collapsed={folded}
         ontoggle={() => ontoggle(g.key)}
-        icon={kind ? (KIND_ICON[kind] ?? "cloud") : undefined}
+        icon={kind ? (KIND_ICON[kind] ?? "cloud") : app ? (app.helm ? "ship" : "layoutGrid") : undefined}
         rest={g.rest}
         {kind}
         testid="k8s-group"

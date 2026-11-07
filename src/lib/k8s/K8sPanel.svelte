@@ -260,6 +260,7 @@
   };
   const GROUP_LABEL: Record<string, MessageKey> = {
     owner: "k8s.owner",
+    app: "k8s.application",
     node: "k8s.node",
     namespace: "k8s.namespace",
     kind: "k8s.kind",
@@ -1080,6 +1081,7 @@
                   onYaml={yamlObj}
                   {showMenu}
                   onOpen={openWorkload}
+                  allNamespaces={scope.allNamespaces}
                   selectedKey={workOpen && workTarget ? `${workTarget.kind}/${workTarget.namespace}/${workTarget.name}` : null}
                 />
               {/if}

@@ -584,8 +584,8 @@ mod live_kube {
         let kinds = |k: &str| items(&workloads).iter().filter(|w| w["kind"] == k).count();
         assert_eq!(
             items(&workloads).len() - kinds("Job"),
-            14,
-            "10 deployments, a statefulset, a daemonset, 2 cronjobs"
+            16,
+            "12 deployments, a statefulset, a daemonset, 2 cronjobs"
         );
         assert!(kinds("Job") >= 2, "migrate and a report run");
 

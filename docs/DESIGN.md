@@ -224,6 +224,9 @@ Uppercase-микротекст — `text-caption uppercase tracking-wider` (и �
   Давление в строке ноды — `text-caption text-bad`. Заявка на том — строка с точкой тона фазы
   (Bound `bg-ok`, Pending `bg-warn`, Lost `bg-bad`); почему ждёт — `text-caption`, `text-warn` у Warning;
   «не монтирует ни один под» — `text-warn`.
+- **Группа «Приложение»** — `GroupHeader` со значком `ship` у релиза Helm и `layoutGrid` у прочих,
+  остальное — «Без приложения»; в подробностях — строка «Приложение» с источником `text-caption
+  text-muted` (`part-of`, «релиз Helm», `instance`, `name`), релиз и чарт `font-mono`.
 
 ## Диалоги и обратная связь
 

@@ -71,6 +71,8 @@ import {
   parseEvents,
   podEventsArgs,
   podReadings,
+  appOf,
+  appInfo,
   parseNodeDetail,
   nodePodsArgs,
   podRequest,
@@ -2271,5 +2273,81 @@ describe("volume claims (stage 5)", () => {
     expect(why.get("vterm-stand/orphan-claim")).toEqual({ type: "Warning", reason: "ProvisioningFailed", message: 'storageclass.storage.k8s.io "vterm-none" not found' });
     expect(why.get("vterm-stand/spare")?.reason).toBe("WaitForFirstConsumer");
     expect(why.size).toBe(2);
+  });
+});
+
+// Stage 6 (ADR 0054): what application an object is part of — read from the
+// recommended labels and Helm's own annotation, never guessed from a name.
+describe("an object's application (stage 6)", () => {
+  const helmLabels = {
+    "app.kubernetes.io/managed-by": "Helm",
+    "app.kubernetes.io/instance": "shop",
+    "app.kubernetes.io/name": "shop",
+    "app.kubernetes.io/component": "api",
+    "app.kubernetes.io/version": "1.2.0",
+    "helm.sh/chart": "shop-1.2.0",
+  };
+
+  it("reads «part of» first, then a Helm release, then the instance, then the name", () => {
+    expect(appOf({ "app.kubernetes.io/part-of": "vterm-stand", "app.kubernetes.io/name": "web" })).toEqual({ name: "vterm-stand", source: "partOf", helm: false });
+    expect(appOf(helmLabels, { "meta.helm.sh/release-name": "shop", "meta.helm.sh/release-namespace": "vterm-stand" })).toEqual({ name: "shop", source: "helm", helm: true });
+    // Pods carry the chart's labels, not Helm's annotation: managed-by says it is a release.
+    expect(appOf(helmLabels)).toEqual({ name: "shop", source: "helm", helm: true });
+    expect(appOf({ "app.kubernetes.io/instance": "mysql-abc" })).toEqual({ name: "mysql-abc", source: "instance", helm: false });
+    expect(appOf({ "app.kubernetes.io/name": "mysql" })).toEqual({ name: "mysql", source: "name", helm: false });
+    // An object of a Helm release that is part of a bigger application is that application's.
+    expect(appOf({ ...helmLabels, "app.kubernetes.io/part-of": "storefront" })).toEqual({ name: "storefront", source: "partOf", helm: true });
+  });
+
+  it("is nothing for an object that does not say — `app: web` is not an application's label", () => {
+    expect(appOf({ app: "web", "pod-template-hash": "68b5" })).toBeNull();
+    expect(appOf(undefined)).toBeNull();
+    expect(appOf({ "app.kubernetes.io/part-of": "  " })).toBeNull();
+  });
+
+  it("says the whole of it for the details: release, chart, version, component, who manages it", () => {
+    expect(appInfo(helmLabels, { "meta.helm.sh/release-name": "shop" })).toEqual({
+      app: { name: "shop", source: "helm", helm: true },
+      release: "shop",
+      chart: "shop-1.2.0",
+      version: "1.2.0",
+      component: "api",
+      managedBy: "Helm",
+    });
+    expect(appInfo({ app: "web" })).toBeNull();
+  });
+
+  it("puts it on the pods and workloads of a list, and groups them by it", () => {
+    const pods = parsePods(
+      JSON.stringify({
+        items: [
+          { metadata: { name: "shop-api-1", namespace: "a", labels: helmLabels }, spec: { containers: [{ name: "c" }] }, status: {} },
+          { metadata: { name: "web-1", namespace: "a", labels: { "app.kubernetes.io/part-of": "vterm-stand" } }, spec: { containers: [{ name: "c" }] }, status: {} },
+          { metadata: { name: "loose", namespace: "a", labels: { app: "loose" } }, spec: { containers: [{ name: "c" }] }, status: {} },
+        ],
+      }),
+    );
+    expect(pods.map((p) => p.app?.name ?? null)).toEqual(["shop", "vterm-stand", null]);
+    const view = applyView(pods, podSchema(() => ({ cpu: null, mem: null })), NO_FILTER, { sort: { key: "name", dir: "asc" }, group: "app" });
+    expect(view.groups.map((g) => [g.label, g.items.map((p) => p.name)])).toEqual([
+      ["shop", ["shop-api-1"]],
+      ["vterm-stand", ["web-1"]],
+      ["", ["loose"]],
+    ]);
+    const [w] = parseWorkloads(
+      JSON.stringify({
+        items: [
+          {
+            kind: "Deployment",
+            metadata: { name: "shop-api", namespace: "a", labels: helmLabels, annotations: { "meta.helm.sh/release-name": "shop" } },
+            spec: { replicas: 1 },
+            status: {},
+          },
+        ],
+      }),
+    );
+    expect(w.app).toEqual({ name: "shop", source: "helm", helm: true });
+    expect((WORKLOAD_SCHEMA.groups ?? []).map((g) => g.id)).toContain("app");
+    expect(parseWorkloadDetail({ kind: "Deployment", metadata: { name: "shop-api", namespace: "a", labels: helmLabels, annotations: { "meta.helm.sh/release-name": "shop" } }, spec: {}, status: {} })!.app?.release).toBe("shop");
   });
 });

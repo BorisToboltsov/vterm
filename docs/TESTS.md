@@ -173,7 +173,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib live_compose -- --ignored
 k8s обязана объяснить (CrashLoop, OOMKilled, упавший init-контейнер, Pending без места, проба
 готовности и живости, нет образа и ProgressDeadlineExceeded, упавший CronJob, ничейные PVC, сервис
 без эндпоинтов, нагрузка у лимита CPU и памяти — `busy`, выкатка, застревающая на полпути, —
-`rollout`, ingress на
+`rollout`, релиз Helm `shop` (метки Helm без самого Helm), ingress на
 несуществующий сервис), и здоровый под со всем, что показывает «Обзор». Пространства имён в файле
 нет — его задаёт тот, кто применяет.
 

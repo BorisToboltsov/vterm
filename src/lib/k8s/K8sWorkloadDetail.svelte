@@ -63,6 +63,12 @@
   const DOT: Record<string, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", idle: "bg-muted" };
   const JOB_TONE: Record<JobStatus, string> = { Complete: "ok", Failed: "bad", Running: "warn", Suspended: "idle", Pending: "warn" };
   const TEXT_TONE: Record<string, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", idle: "text-muted" };
+  const APP_SOURCE: Record<string, MessageKey> = {
+    partOf: "k8s.appFromPartOf",
+    helm: "k8s.appFromHelm",
+    instance: "k8s.appFromInstance",
+    name: "k8s.appFromName",
+  };
 
   const ago = (ms: number): string => compactAge(ms, Date.now());
   const moment = (ms: number): string => new Date(ms).toLocaleString(currentLocale());
@@ -169,6 +175,22 @@
         <dd class="text-text/85">{w.kind}</dd>
         <dt class="text-muted">{t("k8s.namespace")}</dt>
         <dd class="break-all text-text/85">{w.namespace}</dd>
+        {#if detail?.app}
+          {@const a = detail.app}
+          <!-- What application it is part of — what its labels and Helm say (stage 6). -->
+          <dt class="text-muted">{t("k8s.application")}</dt>
+          <dd class="break-all text-text/85" data-testid="k8s-work-app">
+            {a.app.name}<span class="text-caption text-muted">{` · ${t(APP_SOURCE[a.app.source])}`}</span>
+          </dd>
+          {#if a.release}
+            <dt class="text-muted">{t("k8s.helmRelease")}</dt>
+            <dd class="break-all font-mono text-text/85">{a.release}{#if a.chart}<span class="text-muted">{` · ${a.chart}`}</span>{/if}</dd>
+          {/if}
+          {#if a.version || a.component}
+            <dt class="text-muted">{t("k8s.appVersion")}</dt>
+            <dd class="break-all font-mono text-text/85">{[a.version, a.component].filter(Boolean).join(" · ")}</dd>
+          {/if}
+        {/if}
         {#if detail?.replicas}
           {@const r = detail.replicas}
           <dt class="text-muted">{t("k8s.replicas")}</dt>

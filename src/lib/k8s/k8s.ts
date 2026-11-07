@@ -274,6 +274,8 @@ export interface K8sPod {
   /** What its running containers ask for (stage 3): millicores and MiB; null — none asks. */
   cpuRequest?: number | null;
   memRequest?: number | null;
+  /** The application it is part of ({@link appOf}, stage 6); null — it does not say. */
+  app?: K8sApp | null;
 }
 
 const IMAGE_PULL = new Set(["ErrImagePull", "ImagePullBackOff", "InvalidImageName", "ErrImageNeverPull"]);
@@ -341,6 +343,8 @@ export interface K8sWorkload {
   uid?: string;
   /** A Job's state ({@link K8sJob}); "" for the other kinds. */
   status?: string;
+  /** The application it is part of ({@link appOf}, stage 6); null — it does not say. */
+  app?: K8sApp | null;
 }
 
 export interface K8sPodMetrics {
@@ -684,6 +688,7 @@ export function podsOf(
       hostNetwork: dig(it, "spec", "hostNetwork") === true,
       uid: str(dig(it, "metadata", "uid")),
       ...podSigns(it),
+      app: appOf(dig(it, "metadata", "labels"), dig(it, "metadata", "annotations")),
     };
   });
 }
@@ -714,6 +719,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
     const age = k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs);
     const created = createdAt(it);
     const uid = str(dig(it, "metadata", "uid"));
+    const app = appOf(dig(it, "metadata", "labels"), dig(it, "metadata", "annotations"));
     if (kind === "Job") {
       // A CronJob's run is its CronJob's — shown in its details, not as a row.
       const job = jobOf(it, nowMs);
@@ -731,6 +737,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         scalable: false,
         uid,
         status: job.status,
+        app,
       });
     } else if (kind === "Deployment" || kind === "StatefulSet") {
       const desired = num(dig(it, "spec", "replicas"));
@@ -747,6 +754,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         created,
         scalable: true,
         uid,
+        app,
       });
     } else if (kind === "DaemonSet") {
       const desired = num(dig(it, "status", "desiredNumberScheduled"));
@@ -763,6 +771,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         created,
         scalable: false,
         uid,
+        app,
       });
     } else if (kind === "CronJob") {
       out.push({
@@ -777,6 +786,7 @@ export function parseWorkloads(raw: string, nowMs: number = Date.now()): K8sWork
         created,
         scalable: false,
         uid,
+        app,
       });
     }
   }
@@ -1266,6 +1276,8 @@ export interface PodContainer {
 }
 
 export interface PodDetail {
+  /** The application it is part of (stage 6); null — it does not say. */
+  app: K8sAppInfo | null;
   /**
    * The pod has finished (Succeeded / Failed): its Ready and ContainersReady are
    * False because it ended — what the end says is in its containers, not there.
@@ -1485,6 +1497,7 @@ export function parsePodDetail(item: Record<string, unknown> | null): PodDetail 
   const labels = dig(item, "metadata", "labels");
   const phase = str(dig(item, "status", "phase"));
   return {
+    app: appInfo(labels, dig(item, "metadata", "annotations")),
     finished: phase === "Succeeded" || phase === "Failed",
     conditions,
     containers,
@@ -1774,6 +1787,8 @@ export interface WorkloadReplicas {
 
 export interface WorkloadDetail {
   kind: K8sWorkload["kind"];
+  /** The application it is part of, with its release, chart and version (stage 6). */
+  app: K8sAppInfo | null;
   name: string;
   namespace: string;
   uid: string;
@@ -1861,6 +1876,7 @@ export function parseWorkloadDetail(item: Record<string, unknown> | null, nowMs:
       : null;
   return {
     kind,
+    app: appInfo(dig(item, "metadata", "labels"), dig(item, "metadata", "annotations")),
     name: str(dig(item, "metadata", "name")),
     namespace: str(dig(item, "metadata", "namespace")),
     uid: str(dig(item, "metadata", "uid")),
@@ -2154,6 +2170,77 @@ export function claimReasons(events: readonly K8sEvent[]): Map<string, { type: s
   }
   return out;
 }
+
+// ── An object's application (ADR 0054, stage 6) ─────────────────────────────
+//
+// What application an object is part of, read from Kubernetes' recommended labels
+// and Helm's own annotation — the way a compose stack is read from its labels. An
+// object that does not say is no application's: `app: web` is a selector's label,
+// not a claim about an application, and a name is never parsed for one.
+
+const L_PART_OF = "app.kubernetes.io/part-of";
+const L_INSTANCE = "app.kubernetes.io/instance";
+const L_NAME = "app.kubernetes.io/name";
+const L_MANAGED = "app.kubernetes.io/managed-by";
+const A_RELEASE = "meta.helm.sh/release-name";
+
+export interface K8sApp {
+  name: string;
+  /** What says it: `app.kubernetes.io/part-of`, a Helm release, the instance, the name. */
+  source: "partOf" | "helm" | "instance" | "name";
+  /** It is (part of) a Helm release. */
+  helm: boolean;
+}
+
+const label = (m: unknown, key: string): string => str(dig(m, key)).trim();
+
+/**
+ * The application an object is part of: its `part-of` — the higher-level
+ * application — first; else its Helm release (Helm's annotation on what it
+ * manages, or the instance of a chart `managed-by: Helm`, which is what a pod of
+ * it carries); else its instance; else its name. null — it does not say.
+ */
+export function appOf(labels: unknown, annotations?: unknown): K8sApp | null {
+  const release = label(annotations, A_RELEASE) || (label(labels, L_MANAGED) === "Helm" ? label(labels, L_INSTANCE) : "");
+  const helm = Boolean(release) || label(labels, L_MANAGED) === "Helm";
+  const partOf = label(labels, L_PART_OF);
+  if (partOf) return { name: partOf, source: "partOf", helm };
+  if (release) return { name: release, source: "helm", helm: true };
+  const instance = label(labels, L_INSTANCE);
+  if (instance) return { name: instance, source: "instance", helm };
+  const name = label(labels, L_NAME);
+  if (name) return { name, source: "name", helm };
+  return null;
+}
+
+export interface K8sAppInfo {
+  app: K8sApp;
+  /** The Helm release it belongs to; "" — none. */
+  release: string;
+  /** `helm.sh/chart`: the chart and its version. */
+  chart: string;
+  version: string;
+  component: string;
+  managedBy: string;
+}
+
+/** The whole of what an object says of its application — for its details; null — nothing. */
+export function appInfo(labels: unknown, annotations?: unknown): K8sAppInfo | null {
+  const app = appOf(labels, annotations);
+  if (!app) return null;
+  return {
+    app,
+    release: label(annotations, A_RELEASE) || (label(labels, L_MANAGED) === "Helm" ? label(labels, L_INSTANCE) : ""),
+    chart: label(labels, "helm.sh/chart"),
+    version: label(labels, "app.kubernetes.io/version"),
+    component: label(labels, "app.kubernetes.io/component"),
+    managedBy: label(labels, L_MANAGED),
+  };
+}
+
+/** The list group of an application, by namespace — the same name in two namespaces is two. */
+const appGroup = (x: { namespace: string; app?: K8sApp | null }) =>
+  x.app ? { key: `${x.namespace}/${x.app.name}`, label: x.app.name } : { key: "", label: "" };
 
 // ── Parsers ──────────────────────────────────────────────────────────────────
 
@@ -2601,6 +2688,8 @@ export function podSchema(usage: (p: K8sPod) => PodUsage): ListSchema<K8sPod> {
         of: (p) => (p.ownerName ? { key: `${p.ownerKind}/${p.ownerName}`, label: p.ownerName } : { key: "", label: "" }),
         compare: (a, b) => byText(a.key, b.key),
       },
+      // By the application its labels name (stage 6); pods that name none are the rest.
+      { id: "app", of: appGroup, compare: (a, b) => byText(a.label, b.label) },
       { id: "node", of: (p) => ({ key: p.node, label: p.node }), compare: (a, b) => byText(a.label, b.label) },
       { id: "namespace", of: (p) => ({ key: p.namespace, label: p.namespace }), compare: (a, b) => byText(a.label, b.label) },
     ],
@@ -2623,6 +2712,7 @@ export const WORKLOAD_SCHEMA: ListSchema<K8sWorkload> = {
   ],
   groups: [
     { id: "kind", of: (w) => ({ key: w.kind, label: w.kind }), compare: (a, b) => kindRank(a.key) - kindRank(b.key) },
+    { id: "app", of: appGroup, compare: (a, b) => byText(a.label, b.label) },
     { id: "namespace", of: (w) => ({ key: w.namespace, label: w.namespace }), compare: (a, b) => byText(a.label, b.label) },
   ],
   facets: [{ id: "kind", value: (w) => w.kind, order: WORKLOAD_KINDS }],

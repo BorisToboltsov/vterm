@@ -159,3 +159,32 @@ describe("K8sWorkloadDetail (stage 4)", () => {
     expect(runQuery).not.toHaveBeenCalled();
   });
 });
+
+describe("K8sWorkloadDetail — its application (stage 6)", () => {
+  it("says what application it is part of, which Helm release and chart, which version", () => {
+    const helm = {
+      ...rolloutObj,
+      metadata: {
+        ...rolloutObj.metadata,
+        labels: {
+          "app.kubernetes.io/managed-by": "Helm",
+          "app.kubernetes.io/instance": "shop",
+          "app.kubernetes.io/version": "1.2.0",
+          "app.kubernetes.io/component": "api",
+          "helm.sh/chart": "shop-1.2.0",
+        },
+        annotations: { ...rolloutObj.metadata.annotations, "meta.helm.sh/release-name": "shop" },
+      },
+    };
+    render(K8sWorkloadDetail, { props: props({ detail: parseWorkloadDetail(helm) }) });
+    expect(screen.getByTestId("k8s-work-app")).toHaveTextContent("shop · Helm release");
+    const overview = screen.getByTestId("k8s-work-overview");
+    expect(overview).toHaveTextContent("shop · shop-1.2.0");
+    expect(overview).toHaveTextContent("1.2.0 · api");
+  });
+
+  it("says nothing of an application its labels do not name", () => {
+    render(K8sWorkloadDetail, { props: props() });
+    expect(screen.queryByTestId("k8s-work-app")).toBeNull();
+  });
+});
