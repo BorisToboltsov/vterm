@@ -175,3 +175,18 @@ describe("saveTables / loadTables", () => {
     expect(saved.rows.h[0].targets).toBe("h0");
   });
 });
+
+describe("IPv6 in the table (v1.35)", () => {
+  it("a target list with an IPv6 address goes in brackets, so the rule reads back", () => {
+    const row = newRow({ targets: "2001:db8::1, 10.0.0.1", ports: "443" });
+    expect(rowLine(row)).toBe("[2001:db8::1, 10.0.0.1]:443/tcp");
+    expect(rowRules(row).error).toBeNull();
+    expect(rowRules(row).rules[0].targets).toEqual(["2001:db8::1", "10.0.0.1"]);
+    expect(rowLine(newRow({ targets: "[::1]", ports: "22" }))).toBe("[::1]:22/tcp");
+  });
+
+  it("splits a typed `[addr]:port` across the two cells", () => {
+    expect(splitHostPort("[2001:db8::1]:443")).toEqual({ target: "2001:db8::1", ports: "443" });
+    expect(splitHostPort("2001:db8::1")).toBeNull();
+  });
+});

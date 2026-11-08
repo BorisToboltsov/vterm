@@ -1,7 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import K8sRouteView from "./K8sRouteView.svelte";
-import { parseEndpointSlices, parseIngress, parseServices } from "./k8s";
+import {
+  parseEndpointSlices,
+  parseHttpRoutes,
+  parseIngress,
+  parseIngressClasses,
+  parseNetworkPolicies,
+  parseServices,
+} from "./k8s";
 import { ROUTE_MAX_ENDPOINTS, buildRoutes, type RouteTable } from "./k8sroute";
 
 const list = (...items: unknown[]) => JSON.stringify({ items });
@@ -218,7 +225,7 @@ describe("K8sRouteView — actions", () => {
     expect(p.onServiceMenu).toHaveBeenCalledTimes(1);
     expect(p.onServiceMenu.mock.calls[0][1]).toMatchObject({ name: "web", namespace: "shop" });
     await fireEvent.contextMenu(screen.getByTestId("k8s-route-entry"));
-    expect(p.onIngressMenu).toHaveBeenCalledWith(expect.anything(), "shop", "shop");
+    expect(p.onIngressMenu).toHaveBeenCalledWith(expect.anything(), "shop", "shop", "ingress");
   });
 
   it("port-forwards to the service's first port", async () => {
@@ -226,5 +233,75 @@ describe("K8sRouteView — actions", () => {
     render(K8sRouteView, { props: p });
     await fireEvent.click(screen.getByRole("button", { name: "Port-forward" }));
     expect(p.onPortForward).toHaveBeenCalledWith("svc/web", "shop", 80);
+  });
+});
+
+describe("K8sRouteView — HTTPRoute, IngressClass, NetworkPolicy (v1.35)", () => {
+  const base = () => ({
+    services: parseServices(list(svc("web"))),
+    slices: parseEndpointSlices(list(slice("web", [ep("10.1.0.5", "web-abc")]))),
+  });
+
+  it("an HTTPRoute is an entry with its gateway, and a refused one says so", async () => {
+    const { services, slices } = base();
+    const httpRoutes = parseHttpRoutes(
+      list({
+        metadata: { name: "shop-route", namespace: "shop" },
+        spec: {
+          parentRefs: [{ name: "public" }],
+          hostnames: ["api.example.com"],
+          rules: [{ matches: [{ path: { type: "PathPrefix", value: "/v1" } }], backendRefs: [{ name: "web", port: 80 }] }],
+        },
+        status: { parents: [{ conditions: [{ type: "Accepted", status: "False" }] }] },
+      }),
+    );
+    const p = props(buildRoutes(services, [], slices, { httpRoutes }));
+    render(K8sRouteView, { props: p });
+    const entry = screen.getByTestId("k8s-route-entry");
+    expect(entry).toHaveTextContent("api.example.com/v1");
+    expect(within(entry).getByTestId("k8s-route-source")).toHaveTextContent("HTTPRoute");
+    expect(entry).toHaveTextContent("shop-route · public");
+    // The address belongs to the gateway: the route says nothing of it.
+    expect(entry).not.toHaveTextContent("no address");
+    expect(within(entry).getByTestId("k8s-route-problem")).toHaveTextContent("did not accept");
+    expect(screen.getByTestId("k8s-route-tone")).toHaveAttribute("data-tone", "bad");
+    await fireEvent.contextMenu(entry);
+    expect(p.onIngressMenu).toHaveBeenCalledWith(expect.anything(), "shop-route", "shop", "httproutes.gateway.networking.k8s.io");
+  });
+
+  it("an ingress's class: the default one standing in, one the cluster has not", () => {
+    const { services, slices } = base();
+    const classes = parseIngressClasses(
+      list({ metadata: { name: "traefik", annotations: { "ingressclass.kubernetes.io/is-default-class": "true" } }, spec: {} }),
+    );
+    const noClass = { ...ingress("a", "web", 80), spec: { ...ingress("a", "web", 80).spec, ingressClassName: undefined } };
+    render(K8sRouteView, {
+      props: props(buildRoutes(services, parseIngress(list(noClass, ingress("b", "web", 80))), slices, { classes })),
+    });
+    const [a, b] = screen.getAllByTestId("k8s-route-entry");
+    expect(a).toHaveTextContent("a · traefik (default)");
+    expect(within(a).queryByTestId("k8s-route-problem")).toBeNull();
+    expect(within(b).getByTestId("k8s-route-problem")).toHaveTextContent("There is no IngressClass “nginx” in the cluster");
+  });
+
+  it("a service shows the policies of its namespace, with whom each is for in its own words", () => {
+    const { services, slices } = base();
+    const policies = parseNetworkPolicies(
+      list(
+        { metadata: { name: "deny-all", namespace: "shop" }, spec: { podSelector: {}, policyTypes: ["Ingress"] } },
+        { metadata: { name: "allow-web", namespace: "shop" }, spec: { podSelector: { matchLabels: { app: "web" } }, ingress: [{ from: [{}] }] } },
+      ),
+    );
+    render(K8sRouteView, { props: props(buildRoutes(services, [], slices, { policies })) });
+    expect(screen.getAllByTestId("k8s-route-policy").map((el) => el.textContent?.trim())).toEqual([
+      "NetworkPolicy allow-web: in only by its rules (1) · for pods app=web",
+      "NetworkPolicy deny-all: nothing comes in · for every pod of the namespace",
+    ]);
+  });
+
+  it("says once when HTTPRoutes could not be read", () => {
+    const { services, slices } = base();
+    render(K8sRouteView, { props: props(buildRoutes(services, [], slices), { routesError: "forbidden" }) });
+    expect(screen.getByTestId("k8s-route-httproute-error")).toHaveTextContent("HTTPRoutes could not be read");
   });
 });

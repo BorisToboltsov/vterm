@@ -97,3 +97,35 @@ export function gridColumns(
   const fit = Math.max(1, Math.floor(containerWidth / minTile));
   return Math.max(1, Math.min(n, fit, maxCols));
 }
+
+/** One page of the grid of the group's members (v1.35). */
+export interface GridPage {
+  /** The members this page shows, in the order given. */
+  shown: string[];
+  /** 0-based, within `pages`. */
+  page: number;
+  pages: number;
+  /** 1-based positions of the first and last shown, for "4–6 of 9". */
+  from: number;
+  to: number;
+}
+
+/**
+ * Which members a grid of `per` panes shows on `page`: the group in order,
+ * `per` at a time, the last page as full as the others (it ends with the last
+ * member, so turning to it never shows a half-empty grid). On the first page
+ * the member in focus is not the one left out. Paging is what scrolling the
+ * grid would be: the panes keep their minimum, the members take turns.
+ */
+export function gridPage(ids: readonly string[], per: number, page: number, focus: string | null = null): GridPage {
+  const size = Math.max(1, Math.trunc(per) || 1);
+  const pages = Math.max(1, Math.ceil(ids.length / size));
+  const at = Math.min(pages - 1, Math.max(0, Math.trunc(page) || 0));
+  const start = Math.max(0, Math.min(at * size, ids.length - size));
+  let shown = ids.slice(start, start + size);
+  if (at === 0 && focus !== null && ids.includes(focus) && !shown.includes(focus)) {
+    shown = [...shown.slice(0, -1), focus];
+  }
+  shown = ids.filter((id) => shown.includes(id));
+  return { shown, page: at, pages, from: start + 1, to: start + shown.length };
+}

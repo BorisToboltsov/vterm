@@ -105,3 +105,13 @@
 спавн в `netcheck.rs` один. Цена — открытому порту уходит строка `GET /` вместо telnet-согласования:
 тот же порядок вмешательства, ответ сервиса по-прежнему не читается. Живой тест —
 `a_curl_run_lets_a_silent_open_port_go_before_the_timeout`.
+
+## Поправка v1.35: `bash` на Windows — не из WSL
+
+«На Windows — только `vterm` и `curl`» запрещало и `bash` из Git Bash, MSYS2 или Cygwin, хотя он
+работает на этой машине и умеет `/dev/tcp`. Довод был про `bash.exe` из System32 — запускалку WSL,
+другой машины в сети. Теперь бэкенд ищет `bash.exe` по `PATH` и берёт первый не под `%SystemRoot%`
+и не псевдоним Store (`WindowsApps`) — `windows_bash`; найден только WSL — плитка «не
+поддерживается», никакого — «не установлен». `telnet` и `nc` на Windows по-прежнему нет. Тест
+`a_windows_bash_is_one_of_this_machine_not_wsl`; `a_bash_run_prints_raw_readings_on_loopback`
+теперь идёт и на Windows-раннере CI, где есть Git Bash.

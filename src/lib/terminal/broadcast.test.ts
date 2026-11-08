@@ -5,6 +5,7 @@ import {
   groupHasProd,
   frameCommand,
   gridColumns,
+  gridPage,
   type BroadcastTab,
 } from "./broadcast";
 
@@ -106,5 +107,29 @@ describe("gridColumns", () => {
   it("keeps at least one column on a narrow container", () => {
     expect(gridColumns(200, 5)).toBe(1);
     expect(gridColumns(1400, 1)).toBe(1);
+  });
+});
+
+describe("gridPage (v1.35)", () => {
+  const ids = ["a", "b", "c", "d", "e", "f", "g"];
+
+  it("shows the members `per` at a time, the last page ending with the last member", () => {
+    expect(gridPage(ids, 3, 0)).toEqual({ shown: ["a", "b", "c"], page: 0, pages: 3, from: 1, to: 3 });
+    expect(gridPage(ids, 3, 1)).toEqual({ shown: ["d", "e", "f"], page: 1, pages: 3, from: 4, to: 6 });
+    // Not one lonely pane: the last page is full, overlapping the one before.
+    expect(gridPage(ids, 3, 2)).toEqual({ shown: ["e", "f", "g"], page: 2, pages: 3, from: 5, to: 7 });
+  });
+
+  it("keeps the page within the group, and everyone on one page when they fit", () => {
+    expect(gridPage(ids, 3, 9).page).toBe(2);
+    expect(gridPage(ids, 3, -1).page).toBe(0);
+    expect(gridPage(["a", "b"], 4, 0)).toEqual({ shown: ["a", "b"], page: 0, pages: 1, from: 1, to: 2 });
+    expect(gridPage(ids, 0, 0).shown).toEqual(["a"]);
+  });
+
+  it("on the first page the member in focus is not left out, in the group's order", () => {
+    expect(gridPage(ids, 3, 0, "f").shown).toEqual(["a", "b", "f"]);
+    expect(gridPage(ids, 3, 1, "a").shown).toEqual(["d", "e", "f"]);
+    expect(gridPage(ids, 3, 0, "zz").shown).toEqual(["a", "b", "c"]);
   });
 });

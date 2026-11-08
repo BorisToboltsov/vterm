@@ -106,7 +106,7 @@ export function listViolations(files: Record<string, string>): string[] {
   }
   const made = pins.match(/const next = [^;]*;/g) ?? [];
   for (const m of made) {
-    if (!/^const next = (?:withPinned|withUnpinned|moveTopbar)\(settings\.topbar, |^const next = \[\.\.\.DEFAULT_TOPBAR\];$/.test(m)) {
+    if (!/^const next = (?:withPinned|withPinnedAt|withUnpinned|moveTopbar)\(settings\.topbar, |^const next = \[\.\.\.DEFAULT_TOPBAR\];$/.test(m)) {
       out.push(`${PINS}: \`${m}\` builds the list outside the model`);
     }
   }
@@ -158,12 +158,21 @@ export function barViolations(bar: string): string[] {
 export function dragViolations(drag: string): string[] {
   const c = code(drag);
   const out: string[] = [];
-  const calls = c.match(/\bmoveAction\(/g)?.length ?? 0;
-  if (calls !== 1 || !/if \(over !== null\) moveAction\(id, over\);/.test(fn(c, "onUp"))) {
+  const up = fn(c, "onUp");
+  const calls = (re: RegExp) => c.match(re)?.length ?? 0;
+  // One change, on release: moved along the bar, pinned where a tool from the
+  // Utilities window lands (v1.35), or — away from the bar — taken off it.
+  const landed =
+    /if \(over !== null\) \{\s*if \(settings\.topbar\.includes\(id\)\) moveAction\(id, over\);\s*else pinActionAt\(id, over\);\s*\} else if \(removing\) \{\s*unpinAction\(id\);/;
+  if (calls(/\bmoveAction\(/g) !== 1 || calls(/\bpinActionAt\(/g) !== 1 || calls(/\bunpinAction\(/g) !== 1 || !landed.test(up)) {
     out.push("the list is not moved exactly once, on release");
   }
-  if (/\bmoveAction\(|\bpinAction\(|\bunpinAction\(/.test(fn(c, "onMove"))) {
+  if (/\bmoveAction\(|\bpinAction\(|\bpinActionAt\(|\bunpinAction\(/.test(fn(c, "onMove"))) {
     out.push("a pointer move changes the list");
+  }
+  // Utilities and Settings are never taken off by a drag.
+  if (!/const removing = pinned && over === null && canUnpin\(candidate\.id\);/.test(fn(c, "onMove"))) {
+    out.push("a drag away from the bar can take off a button that must stay");
   }
   const drop = fn(c, "topbarDropAt");
   if (!/layoutBox\(el\)/.test(drop) || /getBoundingClientRect\(/.test(drop)) {
@@ -362,8 +371,17 @@ describe("top-bar guard — catches what it exists for", () => {
   });
 
   it("a release that moves nothing", () => {
-    const broken = mutate(all[DRAG], "  if (over !== null) moveAction(id, over);\n", "");
+    const broken = mutate(all[DRAG], "    if (settings.topbar.includes(id)) moveAction(id, over);\n", "");
     expect(dragViolations(broken)).toEqual(["the list is not moved exactly once, on release"]);
+  });
+
+  it("a drag away from the bar that takes off an anchor", () => {
+    const broken = mutate(
+      all[DRAG],
+      "const removing = pinned && over === null && canUnpin(candidate.id);",
+      "const removing = pinned && over === null;",
+    );
+    expect(dragViolations(broken)).toEqual(["a drag away from the bar can take off a button that must stay"]);
   });
 
   it("the slot found by where the buttons are drawn", () => {

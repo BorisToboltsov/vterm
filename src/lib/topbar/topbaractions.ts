@@ -21,6 +21,7 @@
 //    pixels there are, not by a count.
 
 import { isUtility, UTILITIES } from "../utilities/utilities";
+import { ICONS, type IconName } from "../ui/icons";
 
 /** The actions the bar has always had, in the order it has always shown them. */
 export const BUILTIN_ACTIONS = [
@@ -34,8 +35,8 @@ export const BUILTIN_ACTIONS = [
 ] as const;
 
 export type BuiltinAction = (typeof BUILTIN_ACTIONS)[number];
-/** A button of the bar: a built-in action, or one tool of the Utilities panel. */
-export type TopbarId = BuiltinAction | `util:${string}`;
+/** A button of the bar: a built-in action, one tool of the Utilities panel, or a ⌘K command (v1.35). */
+export type TopbarId = BuiltinAction | `util:${string}` | `cmd:${string}`;
 
 /** The bar as it was before it could be edited — what a fresh install shows. */
 export const DEFAULT_TOPBAR: readonly TopbarId[] = BUILTIN_ACTIONS;
@@ -49,13 +50,58 @@ export const utilAction = (id: string): TopbarId => `${UTIL}${id}`;
 export const actionUtility = (id: TopbarId): string | null =>
   id.startsWith(UTIL) ? id.slice(UTIL.length) : null;
 
+const CMD = "cmd:";
+
+/** The bar button that runs the ⌘K command `id` (v1.35). */
+export const commandAction = (id: string): TopbarId => `${CMD}${id}`;
+
+/** The ⌘K command a bar button runs, or null for any other button. */
+export const actionCommand = (id: TopbarId): string | null => (id.startsWith(CMD) ? id.slice(CMD.length) : null);
+
+// A palette id as the bar keeps it: short, no spaces or control characters.
+const commandIdOk = (id: string): boolean =>
+  id.length >= 1 && id.length <= 200 && ![...id].some((c) => /\s/.test(c) || c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127);
+
+/**
+ * Whether a ⌘K command can stand on the bar: any with an id of its own, except
+ * the palette's rows that put the bar's buttons on and off it — a button that
+ * pins a button is a menu, not an action.
+ */
+export function isPinnableCommand(id: string): boolean {
+  return commandIdOk(id) && !id.startsWith("topbar:");
+}
+
+/** What the bar remembers of a pinned command: what to call it while the palette does not offer it. */
+export interface PinnedCommand {
+  title: string;
+  icon: IconName;
+}
+
+/** Pinned commands as stored: an entry for a command button, a title and an icon the app knows. */
+export function sanitizePinnedCommands(raw: unknown): Record<string, PinnedCommand> {
+  const out: Record<string, PinnedCommand> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isTopbarId(id) || actionCommand(id) === null || !v || typeof v !== "object") continue;
+    const { title, icon } = v as { title?: unknown; icon?: unknown };
+    if (typeof title !== "string" || title.trim() === "") continue;
+    out[id] = {
+      title: title.slice(0, 200),
+      icon: typeof icon === "string" && Object.hasOwn(ICONS, icon) ? (icon as IconName) : "play",
+    };
+  }
+  return out;
+}
+
 const isBuiltin = (v: string): v is BuiltinAction =>
   (BUILTIN_ACTIONS as readonly string[]).includes(v);
 
 /** Whether `v` names a button this build has (a tool removed later is not one). */
 export function isTopbarId(v: unknown): v is TopbarId {
   if (typeof v !== "string") return false;
-  return isBuiltin(v) || (v.startsWith(UTIL) && isUtility(v.slice(UTIL.length)));
+  if (isBuiltin(v)) return true;
+  if (v.startsWith(UTIL)) return isUtility(v.slice(UTIL.length));
+  return v.startsWith(CMD) && isPinnableCommand(v.slice(CMD.length));
 }
 
 /** Every button there is: the built-in ones, then the tools in the panel's order. */
@@ -115,6 +161,17 @@ export function withPinned(list: readonly TopbarId[], id: TopbarId): TopbarId[] 
   return [...list.slice(0, at), id, ...list.slice(at)];
 }
 
+/**
+ * `list` with `id` dropped in before the button at `index` (v1.35: dragged from
+ * the Utilities window) — clamped to the list, a button already on the bar or
+ * not a button at all changing nothing.
+ */
+export function withPinnedAt(list: readonly TopbarId[], id: TopbarId, index: number): TopbarId[] {
+  if (list.includes(id) || !isTopbarId(id) || !Number.isFinite(index)) return [...list];
+  const at = Math.max(0, Math.min(list.length, Math.trunc(index)));
+  return [...list.slice(0, at), id, ...list.slice(at)];
+}
+
 /** `list` with `id` off the bar. An anchor does not go. */
 export function withUnpinned(list: readonly TopbarId[], id: TopbarId): TopbarId[] {
   return canUnpin(id) ? list.filter((x) => x !== id) : [...list];
@@ -144,7 +201,9 @@ export function previewTopbar(
   id: TopbarId | null,
   over: number | null,
 ): TopbarId[] {
-  return id === null || over === null ? [...list] : moveTopbar(list, id, over);
+  if (id === null || over === null) return [...list];
+  // A button coming from outside the bar takes its slot as if already pinned.
+  return list.includes(id) ? moveTopbar(list, id, over) : withPinnedAt(list, id, over);
 }
 
 /** What the bar needs to know of the session to decide what it shows. */

@@ -246,7 +246,7 @@ describe("a wide file panel", () => {
     expect(sftpGrep).toHaveBeenCalledOnce();
   });
 
-  it("the transfers stand beside the listing too — and only while there are any", async () => {
+  it("the transfers stand beside the listing too — and stay till closed (v1.35)", async () => {
     await connected();
     await layout(1200);
     expect(screen.queryByTestId("sftp-side")).toBeNull();
@@ -257,9 +257,42 @@ describe("a wide file panel", () => {
     expect(within(side).queryByTestId("sftp-side-search")).toBeNull();
     // Not under the listing as well.
     expect(within(screen.getByTestId("sftp-main")).queryByText("release.tar.gz")).toBeNull();
+    // Nothing to close while a transfer runs.
+    expect(within(side).queryByTestId("side-pane-close")).toBeNull();
+    const width = screen.getByTestId("sftp-main").style.width;
 
+    // The last one ended: the column stays, and the listing keeps its width.
     clearTransfers();
+    expect(await within(side).findByTestId("sftp-no-transfers")).toBeInTheDocument();
+    expect(screen.getByTestId("sftp-side")).toBeInTheDocument();
+    expect(screen.getByTestId("sftp-main").style.width).toBe(width);
+
+    // Closed by hand, it goes; the next transfer brings it back.
+    await userEvent.click(within(side).getByTestId("side-pane-close"));
     await waitFor(() => expect(screen.queryByTestId("sftp-side")).toBeNull());
+    transfer("t2", "backup.sql");
+    expect(within(await screen.findByTestId("sftp-side")).getByTestId("sftp-side-footer")).toHaveTextContent("backup.sql");
+  });
+
+  it("a job waiting its turn says so instead of a percentage (v1.35)", async () => {
+    await connected();
+    await layout(1200);
+    applyProgress({ id: "q1", name: "next.tar", direction: "upload", transferred: 0, total: 0, done: false, queued: true });
+    const side = await screen.findByTestId("sftp-side");
+    expect(within(side).getByTestId("transfer-queued")).toHaveTextContent("queued");
+    expect(within(side).queryByText("0%")).toBeNull();
+  });
+
+  it("a narrowed panel lets the kept column go", async () => {
+    await connected();
+    await layout(1200);
+    transfer("t1", "release.tar.gz");
+    await screen.findByTestId("sftp-side");
+    clearTransfers();
+    await layout(500);
+    await waitFor(() => expect(screen.queryByTestId("sftp-side")).toBeNull());
+    await layout(1200);
+    expect(screen.queryByTestId("sftp-side")).toBeNull();
   });
 
   it("the search and the transfers share the column: the search above, the transfers under it", async () => {

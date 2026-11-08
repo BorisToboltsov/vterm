@@ -144,6 +144,26 @@ mod tests {
                 "-o",
                 "json",
             ],
+            // The route's other objects (v1.35); IngressClasses are cluster-wide.
+            &[
+                "kubectl",
+                "get",
+                "httproutes.gateway.networking.k8s.io",
+                "-o",
+                "json",
+                "--namespace",
+                "shop",
+            ],
+            &[
+                "kubectl",
+                "get",
+                "ingressclasses",
+                "-o",
+                "json",
+                "--context",
+                "c",
+            ],
+            &["kubectl", "get", "networkpolicies", "-o", "json", "-A"],
             &[
                 "kubectl",
                 "top",
@@ -689,7 +709,13 @@ mod live_kube {
         ok(&argv(&["config", "current-context"])).await;
         json(&cluster(&["get", "namespaces", "-o", "json"])).await;
         json(&cluster(&["get", "nodes", "-o", "json"])).await;
-        for list in ["services", "ingress", "endpointslices", "events"] {
+        for list in [
+            "services",
+            "ingress",
+            "endpointslices",
+            "events",
+            "networkpolicies",
+        ] {
             json(&scoped(&["get", list, "-o", "json"])).await;
         }
         metrics_or_absent(

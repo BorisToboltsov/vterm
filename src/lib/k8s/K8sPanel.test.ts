@@ -182,9 +182,14 @@ describe("K8sPanel — the route view", () => {
     await fireEvent.click(screen.getByRole("button", { name: "Route" }));
     await idle();
     expect(count("get services")).toBe(1);
-    expect(count("get ingress")).toBe(1);
+    expect(count("get ingress -o")).toBe(1);
     expect(count("get endpointslices")).toBe(1);
     expect(calls.find((c) => c.includes("endpointslices"))).toContain("--context staging-eu");
+    // What else the route reads (v1.35): IngressClasses are the cluster's, not a namespace's.
+    expect(count("get httproutes.gateway.networking.k8s.io")).toBe(1);
+    expect(count("get networkpolicies")).toBe(1);
+    expect(count("get ingressclasses")).toBe(1);
+    expect(calls.find((c) => c.includes("ingressclasses"))).not.toMatch(/ -n | -A/);
     expect(screen.getByTestId("k8s-route-endpoint")).toHaveTextContent("10.1.0.5");
     expect(screen.getByText("1 of 1 ready")).toBeInTheDocument();
     // …and stops asking for them once the list is back.
@@ -192,6 +197,9 @@ describe("K8sPanel — the route view", () => {
     await fireEvent.click(screen.getByRole("button", { name: "List" }));
     await idle();
     expect(count("get endpointslices")).toBe(0);
+    expect(count("get httproutes")).toBe(0);
+    expect(count("get networkpolicies")).toBe(0);
+    expect(count("get ingressclasses")).toBe(0);
   });
 
   it("says the endpoints were not read when the cluster refuses the slices", async () => {

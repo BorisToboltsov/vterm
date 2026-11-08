@@ -52,7 +52,11 @@ function portsPart(raw: string): string {
 /** The row as one canonical rule line: `src -> targets:[ports]/tcp`. */
 export function rowLine(row: RuleDraft): string {
   const src = row.source.trim();
-  const body = `${row.targets.trim()}:${portsPart(row.ports)}/${row.proto}`;
+  // An IPv6 address among the targets: the list goes in brackets, so the colon
+  // before the ports is the only one outside them.
+  const raw = row.targets.trim();
+  const targets = raw.includes(":") && !/^\[.*\]$/.test(raw) ? `[${raw}]` : raw;
+  const body = `${targets}:${portsPart(row.ports)}/${row.proto}`;
   return src ? `${src} -> ${body}` : body;
 }
 
@@ -82,6 +86,9 @@ export function textRows(text: string): RuleRow[] {
  * cells. Null when there's no port part (then the text stays as typed).
  */
 export function splitHostPort(raw: string): { target: string; ports: string } | null {
+  // `[2001:db8::1]:443` — an IPv6 address keeps its colons inside the brackets.
+  const v6 = /^\s*\[([0-9A-Fa-f:.]+)\]\s*:\s*\[?([\w\s,;-]+?)\]?\s*$/.exec(raw);
+  if (v6 && /\d|^[a-z]/i.test(v6[2])) return { target: v6[1], ports: v6[2].trim() };
   const m = /^\s*([^\s:[\]]+)\s*:\s*\[?([\w\s,;-]+?)\]?\s*$/.exec(raw);
   if (!m || !/\d|^[a-z]/i.test(m[2])) return null;
   return { target: m[1], ports: m[2].trim() };

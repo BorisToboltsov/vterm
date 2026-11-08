@@ -986,6 +986,29 @@ export function endpointSlicesArgs(): string[] {
   return ["get", "endpointslices", "-o", "json"];
 }
 
+/** IngressClasses as JSON (v1.35; cluster-scoped — `namespaced:false`): the controller each names, the default. */
+export function ingressClassesArgs(): string[] {
+  return ["get", "ingressclasses", "-o", "json"];
+}
+
+/** HTTPRoutes of the Gateway API in scope as JSON (v1.35) — a cluster without the API answers {@link resourceMissing}. */
+export function httpRoutesArgs(): string[] {
+  return ["get", "httproutes.gateway.networking.k8s.io", "-o", "json"];
+}
+
+/** NetworkPolicies in scope as JSON (v1.35). */
+export function networkPoliciesArgs(): string[] {
+  return ["get", "networkpolicies", "-o", "json"];
+}
+
+/**
+ * kubectl said the cluster has no such type of resource — the Gateway API is not
+ * installed. Then there are no HTTPRoutes: an answer, not a failure to read.
+ */
+export function resourceMissing(stderr: string): boolean {
+  return /the server doesn't have a resource type/i.test(stderr);
+}
+
 /** All nodes as JSON (cluster-scoped — call {@link withScope} with `namespaced:false`). */
 export function nodesArgs(): string[] {
   return ["get", "nodes", "-o", "json"];
@@ -1113,6 +1136,59 @@ export interface K8sIngress {
   defaultBackend: K8sBackend | null;
   /** Hosts listed under `spec.tls`. */
   tlsHosts: string[];
+}
+
+/** An IngressClass (v1.35): the controller it names, and whether it is the cluster's default. */
+export interface K8sIngressClass {
+  name: string;
+  /** `spec.controller`, e.g. `k8s.io/ingress-nginx`. */
+  controller: string;
+  /** Annotated `ingressclass.kubernetes.io/is-default-class: "true"`. */
+  isDefault: boolean;
+}
+
+/** Where an HTTPRoute rule sends traffic: a `backendRef`. */
+export interface K8sRouteBackend {
+  /** "Service" when the ref names no kind (the API's default). */
+  kind: string;
+  name: string;
+  /** The route's own namespace when the ref names none. */
+  namespace: string;
+  /** As written; "" when the ref has none. */
+  port: string;
+}
+
+/** An HTTPRoute of the Gateway API (v1.35), as far as the route view shows it. */
+export interface K8sHttpRoute {
+  name: string;
+  namespace: string;
+  /** The gateways it attaches to (`spec.parentRefs`), by name. */
+  gateways: string[];
+  /** `spec.hostnames`; empty — every host its gateways listen for. */
+  hostnames: string[];
+  /** One per match of each rule: the path and the backends of that rule. */
+  rules: { path: string; pathType: string; backends: K8sRouteBackend[] }[];
+  /** `Accepted` across `status.parents`: false when a gateway refused it, null when none said. */
+  accepted: boolean | null;
+}
+
+/** What a NetworkPolicy does to traffic coming in (v1.35). */
+export type PolicyIngress = "denyAll" | "allowAll" | "rules";
+
+/** A NetworkPolicy, as far as the route view shows it. */
+export interface K8sNetworkPolicy {
+  name: string;
+  namespace: string;
+  /**
+   * The pods it is for, as display text (`app=web, tier In (api)`); "" — every
+   * pod of its namespace. Text on purpose, like a service's selector: nothing
+   * matches it against anything.
+   */
+  appliesTo: string;
+  /** null — it restricts only traffic going out. */
+  ingress: PolicyIngress | null;
+  /** Ingress rules it lists. */
+  ruleCount: number;
 }
 
 /** One endpoint of an EndpointSlice. */
@@ -2372,6 +2448,89 @@ export function parseIngress(raw: string, nowMs: number = Date.now()): K8sIngres
       rules: parsedRules,
       defaultBackend: parseBackend(dig(it, "spec", "defaultBackend")),
       tlsHosts,
+    };
+  });
+}
+
+/** Parse `get ingressclasses -o json`. */
+export function parseIngressClasses(raw: string): K8sIngressClass[] {
+  return items(raw).map((it) => {
+    const notes = dig(it, "metadata", "annotations") as Record<string, unknown> | undefined;
+    return {
+      name: str(dig(it, "metadata", "name")),
+      controller: str(dig(it, "spec", "controller")),
+      isDefault: str(notes?.["ingressclass.kubernetes.io/is-default-class"]) === "true",
+    };
+  });
+}
+
+/** Parse `get httproutes.gateway.networking.k8s.io -o json` (`gateway.networking.k8s.io/v1`). */
+export function parseHttpRoutes(raw: string): K8sHttpRoute[] {
+  const list = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : []);
+  return items(raw).map((it) => {
+    const namespace = str(dig(it, "metadata", "namespace"));
+    const rules: K8sHttpRoute["rules"] = [];
+    for (const rule of list(dig(it, "spec", "rules"))) {
+      const backends = list(rule.backendRefs).map((b) => ({
+        kind: str(b.kind) || "Service",
+        name: str(b.name),
+        namespace: str(b.namespace) || namespace,
+        port: portText(b.port),
+      }));
+      // No match means every request: the API's default is a `/` prefix.
+      const matches = list(rule.matches);
+      for (const m of matches.length ? matches : [{}]) {
+        rules.push({
+          path: str(dig(m, "path", "value")) || "/",
+          pathType: str(dig(m, "path", "type")) || "PathPrefix",
+          backends,
+        });
+      }
+    }
+    const said = list(dig(it, "status", "parents")).flatMap((p) =>
+      list(p.conditions).filter((c) => str(c.type) === "Accepted").map((c) => str(c.status)),
+    );
+    return {
+      name: str(dig(it, "metadata", "name")),
+      namespace,
+      gateways: list(dig(it, "spec", "parentRefs")).map((p) => str(p.name)).filter(Boolean),
+      hostnames: (Array.isArray(dig(it, "spec", "hostnames")) ? (dig(it, "spec", "hostnames") as unknown[]) : [])
+        .map(str)
+        .filter(Boolean),
+      rules,
+      accepted: said.length === 0 ? null : said.every((v) => v === "True") ? true : said.includes("False") ? false : null,
+    };
+  });
+}
+
+/** `podSelector` as text: `matchLabels` and `matchExpressions` both, "" for every pod. */
+function podSelectorText(sel: unknown): string {
+  const labels = selectorText(dig(sel, "matchLabels"));
+  const exprs = dig(sel, "matchExpressions");
+  const rest = (Array.isArray(exprs) ? (exprs as Record<string, unknown>[]) : []).map((e) => {
+    const values = Array.isArray(e.values) ? (e.values as unknown[]).map(str).filter(Boolean) : [];
+    return values.length ? `${str(e.key)} ${str(e.operator)} (${values.join(", ")})` : `${str(e.key)} ${str(e.operator)}`;
+  });
+  return [labels, ...rest].filter(Boolean).join(", ");
+}
+
+/** Parse `get networkpolicies -o json` (`networking.k8s.io/v1`). */
+export function parseNetworkPolicies(raw: string): K8sNetworkPolicy[] {
+  return items(raw).map((it) => {
+    const types = dig(it, "spec", "policyTypes");
+    const ingressRules = dig(it, "spec", "ingress");
+    const rules = Array.isArray(ingressRules) ? (ingressRules as Record<string, unknown>[]) : [];
+    // Without policyTypes a policy always restricts what comes in (and what goes
+    // out only when it lists egress rules) — the API's own reading.
+    const restricts = Array.isArray(types) ? (types as unknown[]).map(str).includes("Ingress") : true;
+    // An empty rule — no `from`, no `ports` — lets everything in.
+    const open = rules.some((r) => !Array.isArray(r.from) && !Array.isArray(r.ports));
+    return {
+      name: str(dig(it, "metadata", "name")),
+      namespace: str(dig(it, "metadata", "namespace")),
+      appliesTo: podSelectorText(dig(it, "spec", "podSelector")),
+      ingress: !restricts ? null : rules.length === 0 ? "denyAll" : open ? "allowAll" : "rules",
+      ruleCount: rules.length,
     };
   });
 }

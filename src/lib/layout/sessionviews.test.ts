@@ -22,7 +22,7 @@ const T = TERMINAL_VIEW;
 /** Zones in reading order: what each holds, with `*` on the view it shows. */
 const shape = (l: ViewLayout): string[][] =>
   panes(l).map((zone) => zone.tabs.map((view) => (zone.active === view ? `${view}*` : view)));
-const opened = (...files: string[]): ViewLayout => files.reduce(openView, terminalOnly());
+const opened = (...files: string[]): ViewLayout => files.reduce((l, f) => openView(l, f), terminalOnly());
 
 describe("a connection with nothing but its terminal", () => {
   it("is one zone showing the terminal, in focus", () => {
@@ -283,5 +283,23 @@ describe("any sequence of operations", () => {
       }),
       { numRuns: 300 },
     );
+  });
+});
+
+describe("the first file beside the terminal (v1.35)", () => {
+  it("gets a zone of its own to the right, and the next files join it", () => {
+    const one = openView(terminalOnly(), "a", true);
+    expect(shape(one)).toEqual([[`${T}*`], ["a*"]]);
+    const two = openView(one, "b", true);
+    expect(shape(two)).toEqual([[`${T}*`], ["a", "b*"]]);
+  });
+
+  it("is not asked for: the file covers the terminal, as before", () => {
+    expect(shape(openView(terminalOnly(), "a"))).toEqual([[T, "a*"]]);
+  });
+
+  it("with a file already shown, a new one joins it wherever it stands", () => {
+    const shown = opened("a");
+    expect(shape(openView(shown, "b", true))).toEqual([[T, "a", "b*"]]);
   });
 });

@@ -258,7 +258,12 @@
                 {Math.min((tr.fileIndex ?? 0) + 1, tr.fileCount)}/{tr.fileCount}
               </span>
             {/if}
-            <span class="shrink-0 text-accent">{pct(tr)}%</span>
+            {#if tr.queued}
+              <!-- Waiting for an earlier job of this session (v1.35). -->
+              <span class="shrink-0 text-muted" data-testid="transfer-queued">{t("sftp.queued")}</span>
+            {:else}
+              <span class="shrink-0 text-accent">{pct(tr)}%</span>
+            {/if}
             {#if isCancellableTransfer(tr)}
               <!-- Always visible, like the sync window's Stop: a hover-only
                    control on a long download is one the user never finds. -->

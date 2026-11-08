@@ -48,6 +48,12 @@ import {
   type PathStyle,
 } from "./termfiles";
 
+/** One command's output as file links keep it: the buffer row its line is on and its folder. */
+export interface SavedBlock {
+  line: number;
+  cwd: string | null;
+}
+
 /** What the terminal tells the provider, read when needed. */
 export interface FileLinkHost {
   /** A local shell rather than SSH. */
@@ -78,6 +84,10 @@ export interface FileLinks {
   noteCwd(path: string): void;
   /** What a selection on buffer row `row` (0-based) names, for the menu. */
   targetOf(text: string, row: number): Promise<FileLinkTarget | null>;
+  /** The blocks noted so far, for another window's terminal (v1.35). */
+  blocks(): SavedBlock[];
+  /** Blocks another window noted, for a buffer replayed from its snapshot. */
+  restore(saved: readonly SavedBlock[]): void;
   dispose(): void;
 }
 
@@ -299,6 +309,23 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
         return { kind: "unplaced" };
       }
       return null;
+    },
+    blocks() {
+      // A folder still being asked is unknown to the other window.
+      return live().map((b) => ({ line: b.marker.line, cwd: b.cwd ?? null }));
+    },
+    restore(saved) {
+      // A marker is placed relative to the cursor: the rows above it are the
+      // replayed buffer, laid out as the snapshot had them.
+      const buf = term.buffer.active;
+      const at = buf.baseY + buf.cursorY;
+      const restored: Block[] = [];
+      for (const s of saved) {
+        if (!Number.isInteger(s.line) || s.line < 0 || s.line > at) continue;
+        const marker = term.registerMarker(s.line - at);
+        if (marker) restored.push({ marker, cwd: typeof s.cwd === "string" ? s.cwd : null });
+      }
+      blocks = [...restored, ...blocks].slice(-MAX_BLOCKS);
     },
     dispose() {
       clearTimeout(pending);

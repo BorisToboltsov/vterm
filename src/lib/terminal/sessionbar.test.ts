@@ -4,6 +4,9 @@ import {
   showSessionBar,
   type SessionBarInput,
   type SessionBarParts,
+  SESSION_TOOL_SIZES,
+  sessionToolsInline,
+  sessionToolsWidth,
 } from "./sessionbar";
 
 const base: SessionBarInput = {
@@ -64,5 +67,26 @@ describe("showSessionBar", () => {
     for (const k of Object.keys(none) as (keyof SessionBarParts)[]) {
       expect(showSessionBar({ ...none, [k]: true })).toBe(true);
     }
+  });
+});
+
+describe("tools in a narrow strip (v1.35)", () => {
+  const all = { search: true, viewToggle: true, clear: true, askAi: true };
+  const S = SESSION_TOOL_SIZES;
+
+  it("measures the row the tools take", () => {
+    expect(sessionToolsWidth(all)).toBe(S.pad + 3 * S.icon + S.toggle + 3 * S.gap);
+    expect(sessionToolsWidth({ search: false, viewToggle: false, clear: true, askAi: false })).toBe(S.pad + S.icon);
+    expect(sessionToolsWidth({ search: false, viewToggle: false, clear: false, askAi: false })).toBe(0);
+  });
+
+  it("stands them in the row while the views keep their room, else under one «⋯»", () => {
+    const need = sessionToolsWidth(all) + S.views;
+    expect(sessionToolsInline(all, need)).toBe(true);
+    expect(sessionToolsInline(all, need - 1)).toBe(false);
+    // At a larger interface scale everything is wider.
+    expect(sessionToolsInline(all, need, 1.25)).toBe(false);
+    // Not measured yet: in the row.
+    expect(sessionToolsInline(all, 0)).toBe(true);
   });
 });

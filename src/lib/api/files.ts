@@ -383,7 +383,8 @@ export interface TransferSpec {
   destDir: string;
 }
 
-export type TransferState = "running" | "done" | "failed" | "cancelled";
+/** `queued` (v1.35) — waiting for an earlier job of one of its sessions to end. */
+export type TransferState = "queued" | "running" | "done" | "failed" | "cancelled";
 
 /** A job as the backend reports it. */
 export interface TransferJob {

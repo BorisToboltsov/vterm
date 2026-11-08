@@ -34,7 +34,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "docker", keywords: "docker containers images registry login credentials ghcr registry refresh interval poll compose докер контейнеры образы реестр логин учётные данные интервал обновление" },
   { id: "k8s", keywords: "kubernetes k8s kubectl kubeconfig context namespace pods deployments cluster k3s microk8s refresh interval poll кубернетес кубектл контекст namespace поды деплойменты кластер интервал обновление" },
   { id: "snippets", keywords: "snippets templates editor insert dockerfile nginx compose systemd kubernetes bash шаблоны сниппеты вставка редактор докерфайл" },
-  { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка" },
+  { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight beside terminal split редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка рядом терминал зона" },
   { id: "behavior", keywords: "Behavior confirm close tab auto reconnect restore tabs session startup launch layout splits поведение подтверждение вкладка переподключение восстановление вкладки сессии запуск раскладка сплиты" },
   { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
   { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },

@@ -18,11 +18,12 @@ import type { DockSessionState } from "../stores/dockstate.svelte";
 import type { SyncJob } from "../stores/syncjob.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import type { Workspace } from "../stores/workspaces.svelte";
+import type { SavedBlock } from "../terminal/filelinkprovider";
 import type { SessionChat } from "../stores/aichat.svelte";
 
 /** Bumped when the packet's shape changes. Both windows run the same build, so
  *  a mismatch is not a migration case — the packet is refused. */
-export const PACKET_VERSION = 4;
+export const PACKET_VERSION = 5;
 
 /** A terminal's screen, scrollback and modes, as `@xterm/addon-serialize` writes them. */
 export interface TermSnapshot {
@@ -33,6 +34,12 @@ export interface TermSnapshot {
   data: string;
   /** Commands typed in this session, newest first (the Ctrl+R list). */
   commands: string[];
+  /** The rows the buffer held: the noted blocks below are good only for a
+   *  replay that comes out the same length (v1.35). */
+  lines: number;
+  /** Where each command's output starts and the folder it ran in — what file
+   *  links read the names of earlier output by (`FileLinks.blocks`). */
+  fileBlocks: SavedBlock[];
 }
 
 /** Per-session facts the page itself keeps (not in a store). */
@@ -104,6 +111,7 @@ export function parsePacket(raw: string | null): TabPacket | null {
   if (!isRecord(terminal) || typeof terminal.data !== "string") return null;
   if (!positiveInt(terminal.cols) || !positiveInt(terminal.rows)) return null;
   if (!Array.isArray(terminal.commands)) return null;
+  if (!Number.isInteger(terminal.lines) || !Array.isArray(terminal.fileBlocks)) return null;
   if (!isRecord(page)) return null;
   const { seat } = value;
   if (seat !== null) {

@@ -3,6 +3,12 @@
 // joins the three lists k8s.ts already parses and decides nothing the cluster's
 // own objects do not say.
 //
+// Since v1.35 an HTTPRoute of the Gateway API is an entry like an ingress rule;
+// an ingress's class is read from the IngressClasses (the default one, one that
+// does not exist); and a service carries the NetworkPolicies of its namespace —
+// which pods each is for is the policy's own text, never matched here: one that
+// is for every pod of the namespace is so by its own word.
+//
 // The one rule this file exists to keep: who receives traffic is read from
 // EndpointSlices, never worked out by matching a service's selector against pod
 // labels. Matching labels would paint "traffic goes here" onto a pod that is not
@@ -11,7 +17,16 @@
 // ingress half: a rule is what a manifest declares; whether any controller serves
 // it is not in the data, and nothing here claims it.
 
-import type { K8sBackend, K8sEndpointSlice, K8sIngress, K8sService, K8sServicePort } from "./k8s";
+import type {
+  K8sBackend,
+  K8sEndpointSlice,
+  K8sHttpRoute,
+  K8sIngress,
+  K8sIngressClass,
+  K8sNetworkPolicy,
+  K8sService,
+  K8sServicePort,
+} from "./k8s";
 
 /** `ready` routes; `terminating` is on its way out; `notReady` is skipped by the cluster. */
 export type EndpointState = "ready" | "notReady" | "terminating";
@@ -41,12 +56,29 @@ export interface RoutePort extends K8sServicePort {
   endpointPort: number | null;
 }
 
-/** One ingress rule (host + path) — the declared entry into a service. */
+/**
+ * What the IngressClasses say of an ingress's class: `default` — it names none
+ * and the cluster's default stands in (`className` is that one); `missing` —
+ * there is no IngressClass of that name; `unset` — it names none and there is
+ * no default. null — nothing to say: an HTTPRoute, or classes not read.
+ */
+export type ClassNote = "default" | "missing" | "unset" | null;
+
+/** One ingress rule (host + path), or one match of an HTTPRoute — a declared entry into a service. */
 export interface RouteEntry {
   key: string;
+  /** Which object declares it (v1.35). */
+  source: "ingress" | "httproute";
+  /** The ingress, or the HTTPRoute, by name. */
   ingress: string;
   namespace: string;
+  /** The ingress class, or the gateways an HTTPRoute attaches to. */
   className: string;
+  classNote: ClassNote;
+  /** The controller the class names, "" when unknown. */
+  controller: string;
+  /** An HTTPRoute's `Accepted`: false — a gateway refused it; null — not said (or an ingress). */
+  accepted: boolean | null;
   /** Rule host, "" when the rule applies to every host. */
   host: string;
   path: string;
@@ -58,6 +90,15 @@ export interface RouteEntry {
   /** The ingress's `defaultBackend` (unmatched requests), not a host/path rule. */
   isDefault: boolean;
   backend: K8sBackend;
+}
+
+/** A NetworkPolicy as a service's route shows it (v1.35). */
+export interface RoutePolicy {
+  name: string;
+  /** The pods it is for, as its own text; "" — every pod of the namespace. */
+  appliesTo: string;
+  ingress: NonNullable<K8sNetworkPolicy["ingress"]>;
+  ruleCount: number;
 }
 
 /** An entry attached to its service. */
@@ -76,6 +117,15 @@ export interface ServiceRoute {
   entries: ServiceEntry[] | null;
   targets: RouteTargets;
   tone: RouteTone;
+  /** The NetworkPolicies of its namespace that restrict what comes in; null — not read. */
+  policies: RoutePolicy[] | null;
+}
+
+/** What the route reads besides services, ingresses and slices (v1.35); null — not read. */
+export interface RouteExtras {
+  httpRoutes?: readonly K8sHttpRoute[] | null;
+  classes?: readonly K8sIngressClass[] | null;
+  policies?: readonly K8sNetworkPolicy[] | null;
 }
 
 /** A rule whose backend cannot be followed. */
@@ -83,6 +133,8 @@ export interface DanglingRoute {
   entry: RouteEntry;
   /** `serviceMissing`: no such service in the namespace. `resource`: the backend is not a service. */
   reason: "serviceMissing" | "resource";
+  /** Where the backend was looked for: the entry's namespace, or an HTTPRoute's ref's own. */
+  backendNamespace: string;
 }
 
 export interface RouteTable {
@@ -155,18 +207,36 @@ export function declaresPort(service: K8sService, port: string): boolean {
  * broken; some endpoints not ready is degraded.
  */
 export function routeTone(targets: RouteTargets, entries: readonly ServiceEntry[] | null): RouteTone {
-  if (entries?.some((e) => !e.portDeclared)) return "bad";
+  if (entries?.some((e) => !e.portDeclared || e.accepted === false)) return "bad";
   if (targets.kind !== "endpoints") return "idle";
   if (targets.ready === 0) return "bad";
   return targets.ready < targets.endpoints.length ? "warn" : "ok";
 }
 
+/** What the IngressClasses say of `className`: the class that stands, and the note. */
+function classOf(
+  className: string,
+  classes: readonly K8sIngressClass[] | null,
+): { className: string; classNote: ClassNote; controller: string } {
+  if (classes === null) return { className, classNote: null, controller: "" };
+  if (className) {
+    const found = classes.find((c) => c.name === className);
+    return { className, classNote: found ? null : "missing", controller: found?.controller ?? "" };
+  }
+  const fallback = classes.find((c) => c.isDefault);
+  return fallback
+    ? { className: fallback.name, classNote: "default", controller: fallback.controller }
+    : { className: "", classNote: "unset", controller: "" };
+}
+
 /** An ingress's rules (and default backend) as entries, in manifest order. */
-function ingressEntries(ing: K8sIngress): RouteEntry[] {
+function ingressEntries(ing: K8sIngress, classes: readonly K8sIngressClass[] | null): RouteEntry[] {
   const base = {
+    source: "ingress" as const,
     ingress: ing.name,
     namespace: ing.namespace,
-    className: ing.className,
+    ...classOf(ing.className, classes),
+    accepted: null,
     address: ing.address,
   };
   const entries: RouteEntry[] = ing.rules.map((r, i) => ({
@@ -195,6 +265,52 @@ function ingressEntries(ing: K8sIngress): RouteEntry[] {
 }
 
 /**
+ * An HTTPRoute as entries: one per hostname, match and backend. A backend of
+ * another namespace keeps its own (`backendNamespace`), the entry the route's.
+ */
+function httpRouteEntries(route: K8sHttpRoute): (RouteEntry & { backendNamespace: string })[] {
+  const out: (RouteEntry & { backendNamespace: string })[] = [];
+  const hosts = route.hostnames.length ? route.hostnames : [""];
+  route.rules.forEach((rule, i) => {
+    rule.backends.forEach((b, k) => {
+      hosts.forEach((host, h) => {
+        out.push({
+          key: `${nsKey(route.namespace, route.name)}#r${i}b${k}h${h}`,
+          source: "httproute",
+          ingress: route.name,
+          namespace: route.namespace,
+          className: route.gateways.join(", "),
+          classNote: null,
+          controller: "",
+          accepted: route.accepted,
+          host,
+          path: rule.path,
+          pathType: rule.pathType,
+          // TLS ends at the gateway's listener, which the route does not name.
+          tls: false,
+          address: "",
+          isDefault: false,
+          backend:
+            b.kind === "Service"
+              ? { service: b.name, port: b.port, resource: "" }
+              : { service: "", port: "", resource: `${b.kind}/${b.name}` },
+          backendNamespace: b.namespace,
+        });
+      });
+    });
+  });
+  return out;
+}
+
+/** The policies of `namespace` that restrict what comes in, by name. */
+function namespacePolicies(policies: readonly K8sNetworkPolicy[], namespace: string): RoutePolicy[] {
+  return policies
+    .filter((p) => p.namespace === namespace && p.ingress !== null)
+    .map((p) => ({ name: p.name, appliesTo: p.appliesTo, ingress: p.ingress!, ruleCount: p.ruleCount }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * Join services, ingresses and EndpointSlices into route rows, sorted by
  * namespace and name so a poll never reorders them.
  *
@@ -207,7 +323,10 @@ export function buildRoutes(
   services: readonly K8sService[],
   ingresses: readonly K8sIngress[] | null,
   slices: readonly K8sEndpointSlice[] | null,
+  extras: RouteExtras = {},
 ): RouteTable {
+  const classes = extras.classes ?? null;
+  const policies = extras.policies ?? null;
   const slicesByService = new Map<string, K8sEndpointSlice[]>();
   for (const slice of slices ?? []) {
     if (!slice.service) continue;
@@ -220,24 +339,26 @@ export function buildRoutes(
   const serviceByKey = new Map(services.map((s) => [nsKey(s.namespace, s.name), s]));
   const entriesByService = new Map<string, ServiceEntry[]>();
   const dangling: DanglingRoute[] = [];
-  for (const ing of ingresses ?? []) {
-    for (const entry of ingressEntries(ing)) {
-      if (!entry.backend.service) {
-        dangling.push({ entry, reason: "resource" });
-        continue;
-      }
-      // A backend is always a service of the ingress's own namespace.
-      const key = nsKey(ing.namespace, entry.backend.service);
-      const service = serviceByKey.get(key);
-      if (!service) {
-        dangling.push({ entry, reason: "serviceMissing" });
-        continue;
-      }
-      const attached = { ...entry, portDeclared: declaresPort(service, entry.backend.port) };
-      const list = entriesByService.get(key);
-      if (list) list.push(attached);
-      else entriesByService.set(key, [attached]);
+  const declared = [
+    // An ingress's backend is always a service of its own namespace.
+    ...(ingresses ?? []).flatMap((ing) => ingressEntries(ing, classes).map((e) => ({ ...e, backendNamespace: ing.namespace }))),
+    ...(extras.httpRoutes ?? []).flatMap(httpRouteEntries),
+  ];
+  for (const { backendNamespace, ...entry } of declared) {
+    if (!entry.backend.service) {
+      dangling.push({ entry, reason: "resource", backendNamespace });
+      continue;
     }
+    const key = nsKey(backendNamespace, entry.backend.service);
+    const service = serviceByKey.get(key);
+    if (!service) {
+      dangling.push({ entry, reason: "serviceMissing", backendNamespace });
+      continue;
+    }
+    const attached = { ...entry, portDeclared: declaresPort(service, entry.backend.port) };
+    const list = entriesByService.get(key);
+    if (list) list.push(attached);
+    else entriesByService.set(key, [attached]);
   }
 
   const routes: ServiceRoute[] = [...services]
@@ -266,6 +387,7 @@ export function buildRoutes(
         entries,
         targets,
         tone: routeTone(targets, entries),
+        policies: policies === null ? null : namespacePolicies(policies, service.namespace),
       };
     });
 

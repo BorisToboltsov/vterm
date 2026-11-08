@@ -136,8 +136,8 @@ import { beforeEach } from "vitest";
 import { resetSettings, settings } from "../settings/settings.svelte";
 import { DEFAULT_TOPBAR, TOPBAR_SIZES, type TopbarId } from "./topbaractions";
 import { actionLabel } from "./topbarui";
-import { pinAction, unpinAction } from "../stores/topbarpins.svelte";
-import { cancelTopbarDrag, topbarDrag } from "../stores/topbardrag.svelte";
+import { pinAction, pinCommand, refreshCommands, unpinAction } from "../stores/topbarpins.svelte";
+import { beginTopbarDrag, cancelTopbarDrag, topbarDrag } from "../stores/topbardrag.svelte";
 
 describe("TopBar — the user's buttons", () => {
   beforeEach(() => {
@@ -380,15 +380,68 @@ describe("TopBar — the user's buttons", () => {
       await waitFor(() => expect(screen.queryByTestId("topbar-drag-ghost")).toBeNull());
     });
 
-    it("released away from the bar, nothing moves", async () => {
+    it("released away from the bar, it is taken off — and says so (v1.35)", async () => {
       render(TopBar, { props: { ...base } });
       layOut();
       const before = [...settings.topbar];
       await down(item("broadcast"), mid(0));
       await move(mid(3), 18);
       expect(topbarDrag.over).not.toBeNull();
+      expect(topbarDrag.removing).toBe(false);
       await move(mid(3), 400);
       expect(topbarDrag.over).toBeNull();
+      expect(topbarDrag.removing).toBe(true);
+      expect(screen.getByTestId("topbar-drop-to-remove")).toBeInTheDocument();
+      expect(screen.getByTestId("topbar-drag-ghost")).toHaveAttribute("data-removing");
+      await up();
+      expect(settings.topbar).toEqual(before.filter((id) => id !== "broadcast"));
+    });
+
+    it("a tool dragged in from the Utilities window lands where it is let go (v1.35)", async () => {
+      render(TopBar, { props: { ...base } });
+      layOut();
+      const before = [...settings.topbar];
+      // A row of the window, outside the bar.
+      const row = document.createElement("button");
+      document.body.append(row);
+      row.getBoundingClientRect = () => new DOMRect(40, 300, 200, 30);
+      row.setPointerCapture = vi.fn();
+      row.releasePointerCapture = vi.fn();
+      row.addEventListener("pointerdown", (e) => beginTopbarDrag(e as PointerEvent, "util:cidr", true));
+      await fireEvent.pointerDown(row, { pointerId: 1, button: 0, clientX: 60, clientY: 310 });
+      await move(80, 300);
+      expect(topbarDrag.id).toBe("util:cidr");
+      expect(topbarDrag.incoming).toBe(true);
+      // The copy at the pointer is a bar button, not the row.
+      expect(topbarDrag.width).toBe(TOPBAR_SIZES.icon);
+      // Away from the bar: nothing to take off, nothing offered.
+      expect(topbarDrag.removing).toBe(false);
+      expect(topbarDrag.over).toBeNull();
+      // Before the second drawn button — monitoring, list index 2 (notes are hidden).
+      await move(mid(1) - 5);
+      expect(topbarDrag.over).toBe(2);
+      await up();
+      expect(settings.topbar).toEqual([...before.slice(0, 2), "util:cidr", ...before.slice(2)]);
+      row.remove();
+    });
+
+    it("a tool already on the bar is not dragged in again", () => {
+      const row = document.createElement("button");
+      row.addEventListener("pointerdown", (e) => beginTopbarDrag(e as PointerEvent, "settings", true));
+      fireEvent.pointerDown(row, { pointerId: 1, button: 0, clientX: 0, clientY: 0 });
+      fireEvent(window, new MouseEvent("pointermove", { clientX: 50, clientY: 50 }));
+      expect(topbarDrag.id).toBeNull();
+    });
+
+    it("Utilities and Settings are not taken off by a drag", async () => {
+      render(TopBar, { props: { ...base } });
+      layOut();
+      const before = [...settings.topbar];
+      const at = before.indexOf("settings");
+      await down(item("settings"), mid(at));
+      await move(mid(at), 400);
+      expect(topbarDrag.removing).toBe(false);
+      expect(screen.queryByTestId("topbar-drop-to-remove")).toBeNull();
       await up();
       expect(settings.topbar).toEqual(before);
     });
@@ -442,5 +495,48 @@ describe("TopBar — the user's buttons", () => {
       await move(mid(3));
       expect(topbarDrag.id).toBeNull();
     });
+  });
+});
+
+describe("TopBar — a ⌘K command on the bar (v1.35)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetSettings();
+    flushSync();
+  });
+
+  it("runs the command as the palette offers it now", async () => {
+    pinCommand({ id: "act:help", title: "Keyboard shortcuts", icon: "info" });
+    flushSync();
+    const run = vi.fn();
+    render(TopBar, {
+      props: { ...base, commands: [{ id: "act:help", title: "Keyboard shortcuts", icon: "info", group: "Actions", run }] },
+    });
+    const button = screen.getByTestId("topbar-cmd-act:help");
+    expect(button).toHaveAttribute("aria-label", "Keyboard shortcuts");
+    await userEvent.click(button);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("one the palette does not offer now waits, and says what it is", () => {
+    pinCommand({ id: "act:duplicate", title: "Duplicate server", icon: "copy" });
+    flushSync();
+    render(TopBar, { props: { ...base, commands: [] } });
+    const button = screen.getByTestId("topbar-cmd-act:duplicate") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute("aria-label")).toContain("Duplicate server");
+  });
+
+  it("remembers its name while on the bar, takes the palette's new one, forgets it when taken off", () => {
+    pinCommand({ id: "act:help", title: "Keyboard shortcuts", icon: "info" });
+    expect(settings.topbarCommands["cmd:act:help"]).toEqual({ title: "Keyboard shortcuts", icon: "info" });
+    refreshCommands([{ id: "act:help", title: "Горячие клавиши", icon: "info" }]);
+    expect(settings.topbarCommands["cmd:act:help"].title).toBe("Горячие клавиши");
+    // A command not on the bar is not written down.
+    refreshCommands([{ id: "act:other", title: "Other", icon: "info" }]);
+    expect(settings.topbarCommands["cmd:act:other"]).toBeUndefined();
+    unpinAction("cmd:act:help");
+    expect(settings.topbar).not.toContain("cmd:act:help");
+    expect(settings.topbarCommands).toEqual({});
   });
 });

@@ -14,7 +14,7 @@
   import { t } from "../i18n";
   import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
   import { clickLink, terminalLinkHandler } from "../stores/linkopen.svelte";
-  import { createFileLinks, type FileLinks } from "./filelinkprovider";
+  import { createFileLinks, type FileLinks, type SavedBlock } from "./filelinkprovider";
   import { createUrlLinks } from "./urllinks";
   import type { FileLinkTarget } from "./termfiles";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
@@ -219,6 +219,8 @@
       rows: term.rows,
       data: serializer.serialize(),
       commands: capturedCommands,
+      lines: term.buffer.active.length,
+      fileBlocks: fileLinks?.blocks() ?? [],
     };
   }
   let flashing = $state(false);
@@ -319,8 +321,15 @@
   const linksEnabled = $derived(settings.terminalLinks !== "off");
   let webLinks: IDisposable | undefined;
   const fileLinksOn = $derived(!!onfilelink && settings.terminalFileLinks !== "off");
+  // Where each command ran is noted whenever the page gives this terminal file
+  // links at all, whatever the setting (v1.35): turned on later, the links find
+  // the folders of what came before. The provider — hovering, asking listings —
+  // is registered only while the setting is on.
+  const fileLinksTracked = $derived(!!onfilelink);
   let fileLinks: FileLinks | undefined;
   let fileLinkProvider: IDisposable | undefined;
+  // Blocks a snapshot brought from another window, until the notes exist here.
+  let adoptedBlocks: SavedBlock[] | null = null;
   // The session is open — a local one can be asked to note folders from now on.
   let live = $state(false);
 
@@ -608,7 +617,7 @@
     ];
     // The selected name, opened the way a click on it would (v1.24) — for a
     // name the hover did not underline, or a hand that prefers the menu.
-    const selected = fileLinks && hasSelection ? term.getSelection() : "";
+    const selected = fileLinksOn && fileLinks && hasSelection ? term.getSelection() : "";
     // xterm reports the selection's row 0-based, whatever its typings say.
     const row = term?.getSelectionPosition()?.start.y;
     if (selected.trim() && !selected.includes("\n") && row !== undefined) {
@@ -903,6 +912,12 @@
       try {
         const data = adopt.data;
         await new Promise<void>((written) => term.write(data, written));
+        // The folders of the output it brought: good only for a buffer that came
+        // out as long as it was — a shorter or longer one has its rows elsewhere.
+        if (term.buffer.active.length === adopt.lines && adopt.fileBlocks.length > 0) {
+          if (fileLinks) fileLinks.restore(adopt.fileBlocks);
+          else adoptedBlocks = adopt.fileBlocks;
+        }
         await attachSession(sessionId);
       } catch (err) {
         onadoptfailed?.(String(err));
@@ -1069,11 +1084,11 @@
   });
 
   // Names of files in the output (v1.24, ADR 0035), under their own setting.
-  // Off — or a tab whose output is not this session's files — registers no
-  // provider at all: the terminal stays plain xterm.
+  // Off registers no provider at all: the terminal draws and asks nothing. A
+  // tab whose output is not this session's files does not even note blocks.
   $effect(() => {
     if (!term) return;
-    if (fileLinksOn && !fileLinks) {
+    if (fileLinksTracked && !fileLinks) {
       fileLinks = createFileLinks(term, {
         local,
         style: () => (local && hostEnv.os === "windows" ? "windows" : "posix"),
@@ -1085,20 +1100,27 @@
         list: (dir) => (local ? localList(dir) : sftpList(sessionId, dir)),
         submittedCwd: () => localSubmittedCwd(sessionId),
       });
-      fileLinkProvider = term.registerLinkProvider(fileLinks.provider);
-    } else if (!fileLinksOn && fileLinks) {
+      if (adoptedBlocks) fileLinks.restore(adoptedBlocks);
+      adoptedBlocks = null;
+    } else if (!fileLinksTracked && fileLinks) {
       fileLinkProvider?.dispose();
       fileLinkProvider = undefined;
       fileLinks.dispose();
       fileLinks = undefined;
     }
+    if (fileLinksOn && fileLinks && !fileLinkProvider) {
+      fileLinkProvider = term.registerLinkProvider(fileLinks.provider);
+    } else if (!fileLinksOn && fileLinkProvider) {
+      fileLinkProvider.dispose();
+      fileLinkProvider = undefined;
+    }
   });
 
   // A local shell notes the folder each line runs in only while it is asked
-  // to (the note costs a look at the process on every Enter).
+  // to (the note costs a look at the process on every Enter): while blocks are.
   $effect(() => {
     if (!local || !live) return;
-    void watchLocalSubmits(sessionId, fileLinksOn).catch(() => {});
+    void watchLocalSubmits(sessionId, fileLinksTracked).catch(() => {});
   });
 
   // Leaving the structured view (and dropping its data) the moment the feature

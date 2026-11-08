@@ -57,10 +57,17 @@ export function fileZone(layout: ViewLayout): Pane {
   return panes(layout).find((zone) => isFileView(zone.active)) ?? focus;
 }
 
-/** Open a file: it joins the file zone, is shown there, and that zone takes the focus. */
-export function openView(layout: ViewLayout, file: string): ViewLayout {
+/**
+ * Open a file: it joins the file zone, is shown there, and that zone takes the
+ * focus. `beside` (v1.35): while no zone shows a file, the file gets one of its
+ * own to the right of the terminal's instead of covering the terminal — whether
+ * there is room for it is the caller's to know.
+ */
+export function openView(layout: ViewLayout, file: string, beside = false): ViewLayout {
   if (file === TERMINAL_VIEW) return layout;
-  return addTab(layout, file, fileZone(layout).id);
+  const zone = fileZone(layout);
+  const added = addTab(layout, file, zone.id);
+  return beside && !isFileView(zone.active) ? splitView(added, file, "right") : added;
 }
 
 /**

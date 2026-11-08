@@ -159,7 +159,8 @@ export function storeViolations(store: string): string[] {
   }
   // A document and its view, in one step.
   for (const name of ["addEditor", "addScratchEditor"]) {
-    if (!/patch\(sessionId, \{ editors: \[\.\.\.ws\.editors, doc\], layout: openView\(ws\.layout, id\) \}\);/.test(fn(c, name))) {
+    // `beside` (v1.35) is the opener's own option: still the model's one step.
+    if (!/patch\(sessionId, \{ editors: \[\.\.\.ws\.editors, doc\], layout: openView\(ws\.layout, id(?:, opts\.beside \?\? false)?\) \}\);/.test(fn(c, name))) {
       out.push(`${name} adds a document without opening its view`);
     }
   }
@@ -409,7 +410,7 @@ describe("session views guard — catches what it exists for", () => {
     // A helper that is not the model's does not count.
     expect(
       storeViolations(
-        mutate(store, "layout: openView(ws.layout, id) });\n  return id;\n}\n\n/**\n * Add an already-filled", "layout: withFile(ws.layout, id) });\n  return id;\n}\n\n/**\n * Add an already-filled"),
+        mutate(store, "layout: openView(ws.layout, id, opts.beside ?? false) });\n  return id;\n}\n\n/**\n * Add an already-filled", "layout: withFile(ws.layout, id) });\n  return id;\n}\n\n/**\n * Add an already-filled"),
       ),
     ).toEqual(
       expect.arrayContaining([expect.stringContaining("something the model did not produce: withFile(")]),
@@ -421,7 +422,7 @@ describe("session views guard — catches what it exists for", () => {
       storeViolations(
         mutate(
           store,
-          "patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });\n  return id;\n}\n\n/**\n * Add an already-filled",
+          "patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, opts.beside ?? false) });\n  return id;\n}\n\n/**\n * Add an already-filled",
           "patch(sessionId, { editors: [...ws.editors, doc] });\n  return id;\n}\n\n/**\n * Add an already-filled",
         ),
       ),

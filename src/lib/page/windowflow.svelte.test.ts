@@ -70,7 +70,7 @@ function harness(over: { editorBusy?: (id: string) => boolean; snapshot?: (id: s
         (async (id: string, sent: number) => {
           calls.push(`snapshot ${sent}`);
           void id;
-          return { cols: 80, rows: 24, data: "$ ", commands: [] };
+          return { cols: 80, rows: 24, data: "$ ", commands: [], lines: 24, fileBlocks: [] };
         }),
     ),
     carried: vi.fn(() => FACTS),

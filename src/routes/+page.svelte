@@ -58,7 +58,7 @@
   import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
   import type { ServerProfile } from "#lib/types.ts";
   import { storeWarningMessage } from "#lib/servers/storewarn.ts";
-  import { sessionBarParts, showSessionBar } from "#lib/terminal/sessionbar.ts";
+  import { sessionBarParts, sessionToolsInline, showSessionBar } from "#lib/terminal/sessionbar.ts";
   import ViewModeToggle from "#lib/ui/ViewModeToggle.svelte";
   import { moveConfirmKeys, nameOf, serversInSubtree, type MoveRequest } from "#lib/servers/tree.ts";
   import {
@@ -187,10 +187,23 @@
   import StatusBar from "#lib/monitoring/StatusBar.svelte";
   import MonitoringOverlay from "#lib/monitoring/MonitoringOverlay.svelte";
   import TopBar from "#lib/topbar/TopBar.svelte";
-  import { allTopbarIds, canUnpin, type SessionAction } from "#lib/topbar/topbaractions.ts";
+  import {
+    allTopbarIds,
+    canUnpin,
+    commandAction,
+    isPinnableCommand,
+    type SessionAction,
+  } from "#lib/topbar/topbaractions.ts";
   import type { SessionActionState } from "#lib/utilities/sessionactions.ts";
   import { actionLabel } from "#lib/topbar/topbarui.ts";
-  import { isPinned, pinAction, resetTopbar, unpinAction } from "#lib/stores/topbarpins.svelte.ts";
+  import {
+    isPinned,
+    pinAction,
+    refreshCommands,
+    resetTopbar,
+    togglePinCommand,
+    unpinAction,
+  } from "#lib/stores/topbarpins.svelte.ts";
   import TitleBar from "#lib/windows/TitleBar.svelte";
   import { hostEnv } from "#lib/stores/hostenv.svelte.ts";
   import ServerTree from "#lib/servers/ServerTree.svelte";
@@ -298,6 +311,8 @@
     frameCommand,
     groupHasProd,
     gridColumns,
+    gridPage,
+    type GridPage,
     prodMembers,
   } from "#lib/terminal/broadcast.ts";
 
@@ -585,7 +600,7 @@
       return {
         sessionId: tab.sessionId,
         alias: tabTitle(tab),
-        host: srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell"),
+        host: tabAddress(tab),
         status: localizedStatus(tab.status),
         dot: dotClass(tab.status),
         isProd: !!srv && isProdServer(srv),
@@ -703,21 +718,51 @@
   // tab gets a pane, as many as keep the pane minimum; the rest stay tabs of the
   // first pane and are said so.
 
-  /** Lay the sessions `ids` out as a grid of panes (two or more of them). */
-  function tileSessions(ids: string[]) {
+  // When not every member fits, the grid is turned page by page (v1.35) — what
+  // scrolling it would be: the panes keep their minimum, the members take turns.
+  let bcGrid = $state<(GridPage & { total: number }) | null>(null);
+  $effect(() => {
+    if (!tabsState.tiled) bcGrid = null;
+  });
+
+  /** Lay the sessions `ids` out as a grid of panes (two or more of them), its `page` when not all fit. */
+  function tileSessions(ids: string[], page = 0) {
     if (ids.length < 2) return;
     const fit = gridFit(areaBounds, gridColumns(areaBounds.width || 1200, ids.length));
-    let shown = ids.slice(0, fit.panes);
-    if (ids.length > fit.panes) {
-      // Not all fit. The session in focus is not the one to leave out.
-      const focus = tabsState.activeId;
-      if (focus && ids.includes(focus) && !shown.includes(focus)) {
-        shown = [...shown.slice(0, -1), focus];
-      }
+    // Not all fit: a page of them — on the first, the session in focus is not the one left out.
+    const grid = gridPage(ids, fit.panes, page, tabsState.activeId);
+    const shown = grid.shown;
+    if (grid.pages > 1 && bcGrid === null) {
       notifyInfo(t("split.gridPartial", { shown: fit.panes, total: ids.length }));
     }
+    bcGrid = grid.pages > 1 ? { ...grid, total: ids.length } : null;
     // In tab order, whoever was picked.
     tilePanes(ids.filter((id) => shown.includes(id)), fit.cols);
+  }
+
+  // The grid comes by itself (v1.35): when the group first holds two members or
+  // more. Left by the user, it does not come back until the group forms again;
+  // laid out by itself, it goes when the group falls under two.
+  let bcCount = 0;
+  let bcAutoGrid = false;
+  $effect(() => {
+    const n = bcMemberTabs.length;
+    untrack(() => {
+      if (n >= 2 && bcCount < 2 && !tabsState.tiled) {
+        tileSessions(bcMemberTabs.map((tab) => tab.sessionId));
+        bcAutoGrid = tabsState.tiled;
+      } else if (n < 2 && bcCount >= 2 && bcAutoGrid && tabsState.tiled) {
+        untilePanes();
+      }
+      if (n < 2) bcAutoGrid = false;
+      bcCount = n;
+    });
+  });
+
+  /** Where a tab is connected, as the roster and the grid say it: `user@host:port`. */
+  function tabAddress(tab: Tab | undefined): string {
+    const srv = tab ? servers.find((s) => s.id === tab.serverId) : undefined;
+    return srv ? `${srv.username}@${srv.host}:${srv.port}` : t("tab.localShell");
   }
 
   /** Add/remove the active tab to/from the group (entering/leaving broadcast). */
@@ -1112,6 +1157,11 @@
   const uiScale = createUiScaleFlow();
   const UI_SCALE_KEYWORDS =
     "scale zoom interface font bigger smaller масштаб интерфейс шрифт увеличить уменьшить";
+  // A ⌘K command on the top bar keeps the palette's current name for it (v1.35).
+  $effect(() => {
+    const live = paletteCommands;
+    untrack(() => refreshCommands(live));
+  });
   const paletteCommands = $derived<CommandItem[]>([
     { id: "scale:up", title: t("palette.uiScaleUp"), icon: "plus", group: t("palette.groupActions"),
       keywords: UI_SCALE_KEYWORDS, run: () => uiScale.step(1) },
@@ -2067,7 +2117,14 @@
   }
 
   // ── Config editor (Phase 12; the flow lives in page/editorflow.svelte.ts) ──
-  const editors = createEditorFlow({ findTab });
+  const editors = createEditorFlow({
+    findTab,
+    // A file beside the terminal only where the terminal's zone holds two.
+    roomBeside: (sid) => {
+      const zone = panes(getWorkspace(sid).layout).find((z) => z.tabs.includes(TERMINAL_VIEW));
+      return !!zone && canSplitZone(sid, zone.id, "right");
+    },
+  });
   // What the sudo prompt says: reopen, check access ahead of editing, or save.
   const sudoPromptPath = $derived(
     editors.sudo?.kind === "open" ? editors.sudo.path : editors.sudo ? editors.sudo.doc.path : "",
@@ -2265,6 +2322,33 @@
    * — the terminal too — goes into a zone of its own beside or below the one it
    * is in, or into the next zone; the zones join back into one.
    */
+  /** The terminal's tools as a menu, for a strip that has no room for them (v1.35). */
+  function openSessionToolsMenu(e: MouseEvent, tab: Tab, bar: ReturnType<typeof sessionBarParts>) {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const sid = tab.sessionId;
+    const structured = !!termStructured[sid];
+    const items: MenuItem[] = [];
+    if (bar.askAi) {
+      const hasSel = (termSelection[sid] ?? 0) > 0;
+      items.push({
+        icon: "aiMark",
+        label: hasSel ? t("sessionBar.askAi") : t("sessionBar.askAiNoSelection"),
+        disabled: !hasSel,
+        onSelect: () => explainWithAi(sid, termRefs[sid]?.selectionText?.() ?? ""),
+      });
+    }
+    if (bar.clear) items.push({ icon: "trash", label: t("sessionBar.clear"), onSelect: () => termRefs[sid]?.clear?.() });
+    if (bar.search) items.push({ icon: "search", label: t("search.open"), onSelect: () => termRefs[sid]?.find?.() });
+    if (bar.viewToggle) {
+      items.push({
+        icon: structured ? "terminal" : "table",
+        label: structured ? t("jsonlog.viewRaw") : t("jsonlog.viewTable"),
+        onSelect: () => termRefs[sid]?.setViewMode?.(!structured),
+      });
+    }
+    tabCtxMenu = { x: box.left, y: box.bottom + 2, items };
+  }
+
   function openViewMenu(e: MouseEvent, sessionId: string, view: string) {
     e.preventDefault();
     const ws = getWorkspace(sessionId);
@@ -2682,6 +2766,7 @@
     onOpenMonitoring={() => runSessionAction("monitoring")}
     onOpenSettings={() => openSettings("servertools")}
     onOpenUtilities={(utility) => openUtilities(utility ?? null)}
+    commands={paletteCommands}
     canBroadcast={sessionActions.canBroadcast}
     broadcastActive={sessionActions.broadcastActive}
     onToggleBroadcast={() => runSessionAction("broadcast")}
@@ -2762,6 +2847,31 @@
                     <Icon name="layoutFocus" size={14} />
                   </button>
                 </div>
+                {#if tabsState.tiled && bcGrid}
+                  {@const grid = bcGrid}
+                  <!-- Not every member fits: the grid is turned page by page (v1.35). -->
+                  <div class="flex items-center gap-0.5 text-muted" data-testid="broadcast-grid-pages">
+                    <button
+                      class="rounded p-1 enabled:hover:text-text disabled:opacity-40"
+                      disabled={grid.page === 0}
+                      onclick={() => tileSessions(bcMemberTabs.map((tab) => tab.sessionId), grid.page - 1)}
+                      use:tooltip={t("broadcast.gridPrev")}
+                      aria-label={t("broadcast.gridPrev")}
+                    >
+                      <Icon name="chevronLeft" size={14} />
+                    </button>
+                    <span class="tabular-nums">{t("broadcast.gridRange", { from: grid.from, to: grid.to, total: grid.total })}</span>
+                    <button
+                      class="rounded p-1 enabled:hover:text-text disabled:opacity-40"
+                      disabled={grid.page >= grid.pages - 1}
+                      onclick={() => tileSessions(bcMemberTabs.map((tab) => tab.sessionId), grid.page + 1)}
+                      use:tooltip={t("broadcast.gridNext")}
+                      aria-label={t("broadcast.gridNext")}
+                    >
+                      <Icon name="chevronRight" size={14} />
+                    </button>
+                  </div>
+                {/if}
                 <button
                   class="flex items-center rounded p-1 text-muted hover:bg-edge hover:text-text"
                   onclick={addAllConnected}
@@ -2829,6 +2939,16 @@
                       pane.id,
                       pane.id,
                     )}
+                    {#if tabsState.tiled && pane.active}
+                      <!-- In the grid, where each pane is connected (v1.35): the tab says
+                           its name, not which server the next command reaches. -->
+                      <span
+                        class="max-w-[45%] shrink-0 self-center truncate px-2 font-mono text-caption text-muted"
+                        data-testid="pane-address"
+                      >
+                        {tabAddress(tabsState.list.find((tab) => tab.sessionId === pane.active))}
+                      </span>
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -2951,7 +3071,22 @@
                         {/each}
                       </div>
                       {#if shownView === TERMINAL_VIEW}
-                        {@render sessionTools(tab, bar)}
+                        {#if sessionToolsInline(bar, vp.panes[zone.id]?.w ?? 0, uiPx(100) / 100)}
+                          {@render sessionTools(tab, bar)}
+                        {:else if showSessionBar(bar)}
+                          <!-- A zone too narrow for the views and the tools both: the
+                               tools give way to one «⋯» that holds them (v1.35). -->
+                          <button
+                            class="flex shrink-0 items-center rounded px-1.5 text-muted hover:bg-edge hover:text-text"
+                            data-testid="session-tools-more"
+                            use:tooltip={t("sessionBar.more")}
+                            aria-label={t("sessionBar.more")}
+                            aria-haspopup="menu"
+                            onclick={(e) => openSessionToolsMenu(e, tab, bar)}
+                          >
+                            <Icon name="dots" size={14} strokeWidth={3} />
+                          </button>
+                        {/if}
                       {/if}
                     </div>
                   {/each}
@@ -3732,7 +3867,15 @@
 />
 
 <!-- Command palette (⌘K) -->
-<CommandPalette bind:open={showPalette} commands={paletteCommands} />
+<CommandPalette
+  bind:open={showPalette}
+  commands={paletteCommands}
+  pin={{
+    can: isPinnableCommand,
+    pinned: (id) => isPinned(commandAction(id)),
+    toggle: (item) => togglePinCommand(item),
+  }}
+/>
 
 <!-- Session recordings library (Phase 11) -->
 <RecordingsPanel bind:open={showRecordings} onOpenScript={openGeneratedScript} />

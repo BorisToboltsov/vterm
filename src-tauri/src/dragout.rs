@@ -284,7 +284,8 @@ pub(crate) async fn fetch(
     in_turn(&KEEPING, &spec.stopped, || async {
         let id = format!("out-{}", crate::uuid_like());
         let job = fetch_spec(spec, item, dest, id);
-        let wait = match crate::commands::sftp::launch_transfer(app, origin, job).await {
+        // Not queued behind the session's other jobs: the system waits for this file now.
+        let wait = match crate::commands::sftp::launch_transfer(app, origin, job, false).await {
             Ok(wait) => wait,
             Err(e) => return Kept::Failed(e.to_string()),
         };

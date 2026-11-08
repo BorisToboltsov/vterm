@@ -12,6 +12,8 @@ import {
   type HostFacts,
   type HostServer,
   type HostTab,
+  knownFactsKey,
+  sanitizeKnownFacts,
 } from "./netroute";
 import { MAX_CHECKS, parseRules, type NetReport, type PortStatus } from "./netcheck";
 
@@ -94,6 +96,36 @@ describe("sourceHosts", () => {
   it("matches a subnet with every server inside it", () => {
     expect(keys("10.64.48.0/24")).toEqual(["10.64.48.180:subnet", "10.64.48.181:subnet"]);
     expect(keys("10.64.49.0/24")).toEqual(["10.64.48.180:subnet"]);
+  });
+  it("finds a server with no session by what it said of itself last", () => {
+    // db.int.corp has no tab: only its profile address was known before v1.35.
+    const known = { ...facts, [knownFactsKey("db.int.corp")]: { hostname: "db-01", addrs: ["10.70.0.5"] } };
+    const match = (src: string) => sourceHosts(src, hosts, known).map((m) => `${m.host.key}:${m.how}`);
+    expect(match("10.70.0.5")).toEqual(["db.int.corp:address"]);
+    expect(match("db-01")).toEqual(["db.int.corp:hostname"]);
+    // A live session's own answer comes first.
+    const stale = { ...facts, [knownFactsKey("10.64.48.180")]: { hostname: "old", addrs: ["10.1.1.1"] } };
+    expect(sourceHosts("10.1.1.1", hosts, stale)).toEqual([]);
+  });
+
+  it("keeps remembered facts only as a hostname and addresses", () => {
+    expect(
+      sanitizeKnownFacts({
+        a: { hostname: "x", addrs: ["10.0.0.1", 2, ""] },
+        b: { hostname: 1, addrs: [] },
+        c: { hostname: "y" },
+        "": { hostname: "z", addrs: [] },
+      }),
+    ).toEqual({ a: { hostname: "x", addrs: ["10.0.0.1"] } });
+    expect(sanitizeKnownFacts([])).toEqual({});
+    expect(sanitizeKnownFacts(null)).toEqual({});
+  });
+
+  it("matches an IPv6 source however it is spelled", () => {
+    const v6 = { ...facts, s2: { hostname: "app-02", addrs: ["10.64.48.181", "2001:db8::22"] } };
+    const match = (src: string) => sourceHosts(src, hosts, v6).map((m) => `${m.host.key}:${m.how}`);
+    expect(match("2001:DB8:0:0::22")).toEqual(["10.64.48.181:address"]);
+    expect(match("2001:db8::23")).toEqual([]);
   });
 });
 

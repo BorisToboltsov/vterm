@@ -8,6 +8,12 @@
 // The bar only marks its buttons (`data-topbar`, `data-topbar-pin`,
 // `data-topbar-own`) and reads `topbarDrag` to draw the preview and the copy at
 // the pointer; where a drop lands is decided by the pure model (`topbarSlot`).
+//
+// v1.35, two more ends to a drag: a button let go away from the bar is taken
+// off it (`removing` while it would be — never Utilities or Settings), and a
+// tool or a session action is dragged in from the Utilities window (`incoming`:
+// not on the bar yet, so it is pinned where it lands, and nothing happens away
+// from the bar).
 
 import {
   cancelOnEscape,
@@ -16,16 +22,21 @@ import {
   passedThreshold,
   swallowReleaseClick,
 } from "../actions/drag";
-import { settings } from "../settings/settings.svelte";
+import { settings, uiPx } from "../settings/settings.svelte";
 import {
+  canUnpin,
   KEEP_SLOT,
   moveChanges,
   sameSlot,
+  TOPBAR_SIZES,
   topbarSlot,
   type SlotBox,
   type TopbarId,
 } from "../topbar/topbaractions";
-import { moveAction } from "./topbarpins.svelte";
+import { actionLabel } from "../topbar/topbarui";
+import { t } from "../i18n";
+import { moveAction, pinActionAt, unpinAction } from "./topbarpins.svelte";
+import { notifyInfo } from "./toasts.svelte";
 
 export const topbarDrag = $state<{
   /** The button being dragged; null while nothing is (a press is not a drag yet). */
@@ -38,7 +49,11 @@ export const topbarDrag = $state<{
   height: number;
   /** The list index it would stand before right now; null — it would not move. */
   over: number | null;
-}>({ id: null, x: 0, y: 0, width: 0, height: 0, over: null });
+  /** Let go now, it would be taken off the bar. */
+  removing: boolean;
+  /** It comes from the Utilities window: not on the bar yet. */
+  incoming: boolean;
+}>({ id: null, x: 0, y: 0, width: 0, height: 0, over: null, removing: false, incoming: false });
 
 interface Candidate {
   id: TopbarId;
@@ -83,6 +98,8 @@ export function topbarDropAt(x: number, y: number): number | typeof KEEP_SLOT | 
 function clearDrag(): void {
   topbarDrag.id = null;
   topbarDrag.over = null;
+  topbarDrag.removing = false;
+  topbarDrag.incoming = false;
 }
 
 function stopListening(): void {
@@ -115,9 +132,13 @@ function onMove(e: PointerEvent): void {
   topbarDrag.x = e.clientX - candidate.grabX;
   topbarDrag.y = e.clientY - candidate.grabY;
   const over = topbarDropAt(e.clientX, e.clientY);
+  const pinned = settings.topbar.includes(candidate.id);
+  const removing = pinned && over === null && canUnpin(candidate.id);
+  if (topbarDrag.removing !== removing) topbarDrag.removing = removing;
   if (over === KEEP_SLOT) return;
-  // A drop that would change nothing is not offered as a target.
-  const next = over !== null && moveChanges(settings.topbar, candidate.id, over) ? over : null;
+  // A drop that would change nothing is not offered as a target; one from
+  // outside the bar changes it wherever it lands.
+  const next = over !== null && (!pinned || moveChanges(settings.topbar, candidate.id, over)) ? over : null;
   // Written only when it is another slot: rewriting it restarts the slides.
   if (!sameSlot(topbarDrag.over, next)) topbarDrag.over = next;
 }
@@ -125,6 +146,7 @@ function onMove(e: PointerEvent): void {
 function onUp(): void {
   const id = topbarDrag.id;
   const over = topbarDrag.over;
+  const removing = topbarDrag.removing;
   stopListening();
   if (id === null) return;
   // The release also produces a click on the button the drag started from — it
@@ -132,7 +154,14 @@ function onUp(): void {
   swallowClick = true;
   setTimeout(() => (swallowClick = false), 0);
   clearDrag();
-  if (over !== null) moveAction(id, over);
+  if (over !== null) {
+    if (settings.topbar.includes(id)) moveAction(id, over);
+    else pinActionAt(id, over);
+  } else if (removing) {
+    unpinAction(id);
+    // Said where it can come back from: the bar's own menu has every button.
+    notifyInfo(t("topbar.removed", { name: actionLabel(id, settings.topbarCommands) }));
+  }
 }
 
 function onCancel(): void {
@@ -140,25 +169,33 @@ function onCancel(): void {
   clearDrag();
 }
 
-/** Arm a possible drag from a button's `pointerdown`; it starts once the pointer moves. */
-export function beginTopbarDrag(e: PointerEvent, id: TopbarId): void {
+/**
+ * Arm a possible drag from a button's `pointerdown`; it starts once the pointer
+ * moves. From a row of the Utilities window (`incoming`) the copy at the pointer
+ * is the bar's button, not the row: it hangs from its middle.
+ */
+export function beginTopbarDrag(e: PointerEvent, id: TopbarId, incoming = false): void {
   if (e.button !== 0) return;
+  // From the window, only what is not on the bar yet: the bar reorders its own.
+  if (incoming && settings.topbar.includes(id)) return;
   stopListening();
   clearDrag();
   const el = e.currentTarget as HTMLElement;
   const box = el.getBoundingClientRect();
   holdSelection();
+  const size = uiPx(TOPBAR_SIZES.icon);
   candidate = {
     id,
     startX: e.clientX,
     startY: e.clientY,
-    grabX: e.clientX - box.left,
-    grabY: e.clientY - box.top,
+    grabX: incoming ? size / 2 : e.clientX - box.left,
+    grabY: incoming ? size / 2 : e.clientY - box.top,
     el,
     pointerId: e.pointerId,
   };
-  topbarDrag.width = box.width;
-  topbarDrag.height = box.height;
+  topbarDrag.width = incoming ? size : box.width;
+  topbarDrag.height = incoming ? size : box.height;
+  topbarDrag.incoming = incoming;
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onCancel);

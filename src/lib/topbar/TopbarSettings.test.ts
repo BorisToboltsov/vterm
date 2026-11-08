@@ -71,3 +71,28 @@ describe("TopbarSettings", () => {
     expect(toastsState.list.map((x) => x.message)).toContain("Top bar restored");
   });
 });
+
+describe("TopbarSettings — the order (v1.35)", () => {
+  const order = () => [...screen.getByTestId("topbar-order").querySelectorAll("li")].map((li) => li.dataset.testid);
+
+  it("lists the bar left to right and moves a button one step either way", async () => {
+    render(TopbarSettings);
+    expect(order()).toEqual(DEFAULT_TOPBAR.map((id) => `topbar-order-${id}`));
+    expect((screen.getByTestId("topbar-left-broadcast") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByTestId("topbar-right-settings") as HTMLButtonElement).disabled).toBe(true);
+    await fireEvent.click(screen.getByTestId("topbar-right-broadcast"));
+    expect(settings.topbar.slice(0, 2)).toEqual(["notes", "broadcast"]);
+    await fireEvent.click(screen.getByTestId("topbar-left-settings"));
+    expect(settings.topbar.slice(-2)).toEqual(["settings", "utilities"]);
+  });
+
+  it("reaches a tool put on the bar, wherever the bar would draw it", async () => {
+    pinAction("util:cidr");
+    flushSync();
+    render(TopbarSettings);
+    // A new button stands before Settings: one step left of it.
+    await fireEvent.click(screen.getByTestId("topbar-left-util:cidr"));
+    expect(settings.topbar.indexOf("util:cidr")).toBe(settings.topbar.indexOf("recordings") + 1);
+    unpinAction("util:cidr");
+  });
+});

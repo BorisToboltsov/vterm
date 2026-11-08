@@ -7,11 +7,15 @@ import { describe, expect, it } from "vitest";
 // What a wrong turn here costs: a click meant to select a name for copying
 // opens it; a name read in the wrong folder — or on the wrong machine — opens
 // another file, on a production server too; the off switch leaves the
-// terminal doing work for nothing. So:
+// terminal asking for listings for nothing. So:
 //  - the terminal registers a file-link provider only while the page gave it
 //    `onfilelink` and the setting is not "off", and the page gives it only
 //    under `fileLinksAllowed(tab)` (a shell inside a container lists the
 //    container's files, which the session's SFTP does not read);
+//  - where each command ran is noted while the page gave `onfilelink`,
+//    whatever the setting (v1.35) — turned on later, the links read earlier
+//    output in its own folders — and only then: the menu's "open the selected
+//    path" waits for the setting like the links;
 //  - a click never opens with a selection (dragging across a name selects it)
 //    or on the second click of a double-click, and the delayed open asks
 //    about the selection again; only `activate` opens;
@@ -82,11 +86,24 @@ export function terminalViolations(raw: string): string[] {
   if (!/const fileLinksOn = \$derived\(!!onfilelink && settings\.terminalFileLinks !== "off"\);/.test(src)) {
     out.push("file links are on without the page's handler or past the setting");
   }
-  const registered = block(src, "if (fileLinksOn && !fileLinks)");
+  if (!/const fileLinksTracked = \$derived\(!!onfilelink\);/.test(src)) {
+    out.push("blocks are noted without the page's handler");
+  }
+  const registered = block(src, "if (fileLinksOn && fileLinks && !fileLinkProvider)");
   if (count(src, /registerLinkProvider\(fileLinks\.provider\)/g) !== 1 || !/registerLinkProvider\(fileLinks\.provider\)/.test(registered)) {
     out.push("the file-link provider is registered other than while file links are on");
   }
-  if (!/submittedCwd: \(\) => localSubmittedCwd\(sessionId\)/.test(registered) || /\blocalCwd\(/.test(src)) {
+  const created = block(src, "if (fileLinksTracked && !fileLinks)");
+  if (count(src, /createFileLinks\(/g) !== 1 || !/createFileLinks\(/.test(created)) {
+    out.push("blocks are noted other than while the page gives file links");
+  }
+  if (!/watchLocalSubmits\(sessionId, fileLinksTracked\)/.test(src)) {
+    out.push("a local shell notes folders other than while blocks are");
+  }
+  if (!/const selected = fileLinksOn && fileLinks && hasSelection/.test(src)) {
+    out.push("the menu opens a selected path while file links are off");
+  }
+  if (!/submittedCwd: \(\) => localSubmittedCwd\(sessionId\)/.test(created) || /\blocalCwd\(/.test(src)) {
     out.push("a local block reads the shell's folder now, not the one noted when its line was sent");
   }
   if (count(src, /fileLinks\?\.noteCwd\(path\)/g) !== 2) {
@@ -187,6 +204,18 @@ const FLOW = "lib/page/pathsyncflow.svelte.ts";
 describe("terminal file link guard", () => {
   it("the terminal shows file links only where the page and the setting allow", () => {
     expect(terminalViolations(read(TERMINAL))).toEqual([]);
+  });
+
+  it("catches blocks noted past the page's handler, or the menu past the setting", () => {
+    const tracked = read(TERMINAL).replace(
+      "const fileLinksTracked = $derived(!!onfilelink);",
+      "const fileLinksTracked = $derived(true);",
+    );
+    expect(terminalViolations(tracked)).toContain("blocks are noted without the page's handler");
+    const menu = read(TERMINAL).replace("const selected = fileLinksOn && fileLinks && hasSelection", "const selected = fileLinks && hasSelection");
+    expect(terminalViolations(menu)).toContain("the menu opens a selected path while file links are off");
+    const watch = read(TERMINAL).replace("watchLocalSubmits(sessionId, fileLinksTracked)", "watchLocalSubmits(sessionId, true)");
+    expect(terminalViolations(watch)).toContain("a local shell notes folders other than while blocks are");
   });
 
   it("catches the file-link provider registered past the setting", () => {
