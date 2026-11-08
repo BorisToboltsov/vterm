@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import { groupMatches, lineSpans, matchSpans } from "./grepview";
-import { GREP_LIMIT, type GrepMatch } from "../sync/sync";
+import { groupMatches, lineSpans, matchSpans, moreLimit } from "./grepview";
+import { GREP_LIMIT, GREP_MAX, type GrepMatch } from "../sync/sync";
 
 const m = (path: string, line: number, text = "x"): GrepMatch => ({ path, line, text });
 const FIXED = { caseSensitive: false, regex: false };
@@ -124,5 +124,17 @@ describe("the limit of a search", () => {
     const limit = /pub const GREP_LIMIT: usize = (\d+);/.exec(rs);
     expect(limit).not.toBeNull();
     expect(Number(limit![1])).toBe(GREP_LIMIT);
+    const max = /pub const GREP_MAX: usize = ([\d_]+);/.exec(rs);
+    expect(max).not.toBeNull();
+    expect(Number(max![1].replace(/_/g, ""))).toBe(GREP_MAX);
+  });
+
+  it("«show more» asks another page while the answer is cut, up to the ceiling", () => {
+    const cut = { matches: [], truncated: true, failed: false };
+    expect(moreLimit(cut, GREP_LIMIT)).toBe(2 * GREP_LIMIT);
+    expect(moreLimit(cut, 0)).toBe(2 * GREP_LIMIT);
+    expect(moreLimit(cut, GREP_MAX - 500)).toBe(GREP_MAX);
+    expect(moreLimit(cut, GREP_MAX)).toBeNull();
+    expect(moreLimit({ ...cut, truncated: false }, GREP_LIMIT)).toBeNull();
   });
 });

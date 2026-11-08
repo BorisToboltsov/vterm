@@ -241,6 +241,56 @@ describe("DockerPanel — where a container's details open", () => {
     await waitFor(() => expect(dialog).toHaveTextContent('"Id":"abc123456789"'));
   });
 
+  it("…and the log reads on as it was: its filter and its lines survive the threshold (v1.34)", async () => {
+    await mount("d-log-cross");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    const side = await screen.findByTestId("docker-side");
+    await fireEvent.input(within(side).getByRole("textbox", { name: "Filter lines" }), { target: { value: "healthz" } });
+    await fireEvent.change(within(side).getByTestId("docker-log-tail"), { target: { value: "1000" } });
+    resize(400);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Filter lines" }).value).toBe("healthz");
+    expect(within(dialog).getByTestId<HTMLSelectElement>("docker-log-tail").value).toBe("1000");
+    await waitFor(() => expect(calls).toContain("docker logs --tail 1000 --timestamps abc123456789"));
+  });
+
+  it("a terminal-tab switch rebuilds the panel: the details come back open, on their view, with the log as it was read (v1.34)", async () => {
+    const first = render(DockerPanel, { props: { sessionId: "d-back", visible: true, sessionReady: true } });
+    await screen.findByText("edge-proxy");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    const side = await screen.findByTestId("docker-side");
+    await fireEvent.click(within(side).getByTestId("docker-log-live"));
+    await fireEvent.click(within(side).getByTestId("docker-detail-tab-inspect"));
+    first.unmount();
+
+    render(DockerPanel, { props: { sessionId: "d-back", visible: true, sessionReady: true } });
+    // The row, and — once the first poll finds it — the pane's title.
+    await screen.findAllByText("edge-proxy");
+    resize(1200);
+    const again = await screen.findByTestId("docker-side");
+    await waitFor(() => expect(again).toHaveTextContent('"Id":"abc123456789"'));
+    expect(within(again).getByTestId("docker-detail-tab-inspect").className).toContain("text-accent");
+    await fireEvent.click(within(again).getByTestId("docker-detail-tab-logs"));
+    // Held still before the switch, held still after it.
+    expect(within(again).getByTestId("docker-log-live")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("…and another session's panel opens nothing of it", async () => {
+    const first = render(DockerPanel, { props: { sessionId: "d-mine", visible: true, sessionReady: true } });
+    await screen.findByText("edge-proxy");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await screen.findByTestId("docker-side");
+    first.unmount();
+    render(DockerPanel, { props: { sessionId: "d-other", visible: true, sessionReady: true } });
+    await screen.findByText("edge-proxy");
+    resize(1200);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByTestId("docker-side")).toBeNull();
+  });
+
   it("details opened anew start from the log", async () => {
     await mount("d-anew");
     resize(1200);
@@ -342,6 +392,24 @@ describe("DockerPanel — the column of names (stage 4)", () => {
     await fireEvent.click(within(within(side).getByTestId("docker-image-users")).getByText("edge-proxy"));
     expect(await screen.findByTestId("docker-side-detail")).toBeInTheDocument();
     expect(screen.queryByTestId("docker-side-item")).toBeNull();
+  });
+
+  it("an image's details open beside the list come back after a terminal-tab switch (v1.34)", async () => {
+    const first = render(DockerPanel, { props: { sessionId: "d-tree-back", visible: true, sessionReady: true } });
+    await screen.findByText("edge-proxy");
+    resize(1200);
+    await fireEvent.click(screen.getByText("edge-proxy"));
+    const sections = await screen.findByTestId("docker-tree-sections");
+    await fireEvent.click(within(screen.getByTestId("docker-tree-images")).getByTestId("docker-tree-images-toggle"));
+    await fireEvent.click(await within(sections).findByTestId("docker-tree-image"));
+    await screen.findByTestId("docker-side-item");
+    first.unmount();
+
+    render(DockerPanel, { props: { sessionId: "d-tree-back", visible: true, sessionReady: true } });
+    await screen.findByText("edge-proxy");
+    resize(1200);
+    const side = await screen.findByTestId("docker-side-item");
+    await waitFor(() => expect(within(side).getByTestId("docker-image-layers")).toHaveTextContent("apt-get install nginx"));
   });
 });
 

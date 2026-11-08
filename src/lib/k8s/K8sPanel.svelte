@@ -130,11 +130,15 @@
   import {
     collapsedGroups,
     dockState,
+    keepAside,
+    keptAside,
     listFilter,
+    logView,
     rememberSub,
     setGroupsCollapsed,
     setListFilter,
     storedSub,
+    type K8sAside,
   } from "../stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { untrack } from "svelte";
@@ -303,6 +307,9 @@
   // on screen, not Overview again.
   let detailTab = $state<K8sDetailTab>("logs");
   let detailContainer = $state<string | null>(null);
+  // How the pod's log is read — the session's, in the dock store (v1.34): the
+  // details are rebuilt across the width threshold and when the tab comes back.
+  const detailLog = untrack(() => logView(sessionId, "k8s"));
 
   // A workload's details (stage 4): one detail at a time — opening it puts a pod's
   // away, opening a pod puts it away. The view is the panel's, as a pod's.
@@ -688,6 +695,52 @@
     workTarget = { kind: w.kind, name: w.name, namespace: w.namespace };
     workOpen = true;
   }
+
+  // What stood beside the list when the panel was last on screen (v1.34): put
+  // back once the first poll is in — a pod only if it is still there (and once
+  // the pods have been read); until then nothing is written over it.
+  let restoring: K8sAside | null = untrack(() => keptAside(sessionId, "k8s"));
+  $effect(() => {
+    const was = restoring;
+    if (!was || !firstLoadDone) return;
+    if (was.kind === "pod") {
+      const pod = podList.find((p) => p.namespace === was.namespace && p.name === was.name);
+      if (!pod && podList.length === 0) return;
+      restoring = null;
+      if (!pod) return;
+      untrack(() => {
+        detailTab = was.tab;
+        detailContainer = was.container;
+        detailPod = pod;
+        detailOpen = true;
+      });
+      return;
+    }
+    restoring = null;
+    untrack(() => {
+      if (was.kind === "workload") {
+        workTab = was.tab;
+        workTarget = { kind: was.workload, name: was.name, namespace: was.namespace };
+        workOpen = true;
+      } else {
+        nodeTab = was.tab;
+        nodeName = was.name;
+        nodeOpen = true;
+      }
+    });
+  });
+  $effect(() => {
+    const next: K8sAside | null =
+      detailOpen && detailPod
+        ? { kind: "pod", namespace: detailPod.namespace, name: detailPod.name, tab: detailTab, container: detailContainer }
+        : workOpen && workTarget
+          ? { kind: "workload", workload: workTarget.kind, namespace: workTarget.namespace, name: workTarget.name, tab: workTab }
+          : nodeOpen && nodeName
+            ? { kind: "node", name: nodeName, tab: nodeTab }
+            : null;
+    if (restoring) return;
+    untrack(() => keepAside(sessionId, "k8s", next));
+  });
 
   /** A pod of the open workload: the Pods view, with its details. */
   function openWorkloadPod(pod: K8sPod) {
@@ -1170,6 +1223,7 @@
               fill
               bind:tab={detailTab}
               bind:container={detailContainer}
+              log={detailLog}
               pod={liveDetailPod}
               detail={podDetail}
               metrics={detailMetrics}
@@ -1199,6 +1253,7 @@
   open={detailOpen && !wide}
   bind:tab={detailTab}
   bind:container={detailContainer}
+  log={detailLog}
   pod={liveDetailPod}
   detail={podDetail}
   metrics={detailMetrics}

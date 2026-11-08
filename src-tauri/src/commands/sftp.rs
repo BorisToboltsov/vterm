@@ -546,6 +546,7 @@ pub async fn sftp_grep(
     query: String,
     case_insensitive: bool,
     fixed: bool,
+    limit: Option<usize>,
 ) -> AppResult<sync::GrepOutcome> {
     if query.trim().is_empty() {
         return Ok(sync::GrepOutcome {
@@ -555,10 +556,17 @@ pub async fn sftp_grep(
         });
     }
     let session = session_arc(&state, &session_id).await?;
+    let limit = sync::grep_limit(limit);
     let out = session
-        .run_file_command(&sync::grep_command(&dir, &query, case_insensitive, fixed))
+        .run_file_command(&sync::grep_command(
+            &dir,
+            &query,
+            case_insensitive,
+            fixed,
+            limit,
+        ))
         .await?;
-    Ok(sync::parse_grep_outcome(&out))
+    Ok(sync::parse_grep_outcome(&out, limit))
 }
 
 #[tauri::command]

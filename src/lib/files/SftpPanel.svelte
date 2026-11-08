@@ -138,7 +138,7 @@
     /** Toolbar "Upload": pick files, then upload them into `destDir`. */
     upload: async (destDir) => uploadPaths(destDir, await pickUploadFiles()),
     download,
-    search: (dir, q, caseInsensitive, fixed) => sftpGrep(sessionId, dir, q, caseInsensitive, fixed),
+    search: (dir, q, caseInsensitive, fixed, limit) => sftpGrep(sessionId, dir, q, caseInsensitive, fixed, limit),
   };
 
   let browser = $state<ReturnType<typeof FileBrowser>>();

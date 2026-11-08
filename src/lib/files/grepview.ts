@@ -2,7 +2,18 @@
 // line with what was searched for marked in it. Pure — the search itself is
 // `grep` on the host (`sync.rs`); this only lays its answer out.
 
-import type { GrepMatch } from "../sync/sync";
+import { GREP_LIMIT, GREP_MAX, type GrepMatch, type GrepOutcome } from "../sync/sync";
+
+/**
+ * The limit «show more» asks the same search again with (v1.34): another page,
+ * up to `GREP_MAX`; null — there is nothing more to ask for (the answer was not
+ * cut, or the ceiling is reached and the search has to be narrowed).
+ */
+export function moreLimit(outcome: GrepOutcome, limit: number): number | null {
+  if (!outcome.truncated) return null;
+  const at = Math.max(limit, GREP_LIMIT);
+  return at >= GREP_MAX ? null : Math.min(at + GREP_LIMIT, GREP_MAX);
+}
 
 /** The matches of one file. */
 export interface GrepGroup {

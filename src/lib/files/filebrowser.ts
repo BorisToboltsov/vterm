@@ -56,7 +56,8 @@ export interface FileBrowserAdapter {
   /** Download a file/dir to a user-picked destination. */
   download?(entry: FileEntry): Promise<void>;
   /** Content search (grep) under `cwd`. */
-  search?(cwd: string, query: string, caseInsensitive: boolean, fixedString: boolean): Promise<GrepOutcome>;
+  /** `limit` — how many matches to return; absent — one page. */
+  search?(cwd: string, query: string, caseInsensitive: boolean, fixedString: boolean, limit?: number): Promise<GrepOutcome>;
 }
 
 /**

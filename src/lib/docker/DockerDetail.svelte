@@ -9,6 +9,7 @@
   // The content only (v1.7): `DockerDetailModal` shows it as a dialog, a wide
   // panel puts it into a `SidePane` beside the list. It owns no dialog itself —
   // it stands inside the panel's query container (`panelcontainer.guard`).
+  import { untrack } from "svelte";
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
   import LogTail from "../ui/LogTail.svelte";
@@ -16,7 +17,7 @@
   import { series, latest, type History } from "../monitoring/monhistory";
   import { SERIES } from "../monitoring/monpalette";
   import { fmtBytes, fmtRate } from "../monitoring/format";
-  import { shortStamp, type LogTailSize } from "../ui/loglines";
+  import { freshLogView, shortStamp, type LogView } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import { REDACTED } from "../ai/redact";
   import {
@@ -63,6 +64,7 @@
     fill = false,
     closeOnAsk = false,
     tab = $bindable("logs"),
+    log = undefined,
     run,
     runQuery,
     onShell,
@@ -98,6 +100,8 @@
      * Left unbound, the component keeps it itself.
      */
     tab?: DockerDetailTab;
+    /** How the log is read, kept by the panel (v1.34) — across the width threshold and a terminal-tab switch. */
+    log?: LogView;
     run: (args: string[], opts?: { destructive?: boolean; successKey?: string }) => Promise<boolean>;
     runQuery: (args: string[], timeout?: number) => Promise<ContainerOutput>;
     onShell: (c: DockerContainer) => void;
@@ -141,9 +145,10 @@
   let inspectText = $state("");
   // How the log is read: followed (re-asked on every poll) or held still, and how
   // many last lines are asked for. Kept across containers: picking the next row
-  // in the list is reading the next log the same way.
-  let following = $state(true);
-  let tail = $state<LogTailSize>(200);
+  // in the list is reading the next log the same way. The panel keeps it (v1.34);
+  // without it the details keep their own.
+  const ownLog = $state(freshLogView());
+  const lv = $derived(log ?? ownLog);
   // The Overview's own reading of `docker inspect` (stage 1): undefined — not
   // asked yet, null — the answer could not be read.
   let detail = $state<ContainerDetail | null | undefined>(undefined);
@@ -184,9 +189,14 @@
   // The view stays (v1.33): with details beside the list, picking the next row
   // is reading the next container's log — a jump back to Overview on every pick
   // made the list useless for that.
+  let firstShown = true;
   $effect(() => {
     const id = active ? (container?.id ?? null) : null;
     if (id === shownId) return;
+    // Another container's log starts at its end; the one these details were
+    // rebuilt on goes back to where it was read.
+    if (!firstShown && id !== null) untrack(() => (lv.top = null));
+    if (id !== null) firstShown = false;
     shownId = id;
     activeId = id;
     logsText = "";
@@ -208,10 +218,10 @@
   // (like the panel's live view); a held log stands still. Inspect once.
   $effect(() => {
     const cid = activeId;
-    const lines = tail;
+    const lines = lv.tail;
     if (!active || tab !== "logs" || !cid) return;
     void fetchLogs(cid, lines);
-    if (!following) return;
+    if (!lv.live) return;
     const timer = setInterval(() => void fetchLogs(cid, lines), Math.max(1, refreshSec) * 1000);
     return () => clearInterval(timer);
   });
@@ -489,12 +499,13 @@
   {:else if tab === "logs"}
     <LogTail
       text={logsText}
-      bind:live={following}
-      bind:tail
+      bind:live={lv.live}
+      bind:tail={lv.tail}
+      view={lv}
       {fill}
       empty={t("docker.noLogs")}
       testid="docker"
-      onterminal={onFollowLogs ? () => onFollowLogs?.(c, tail) : undefined}
+      onterminal={onFollowLogs ? () => onFollowLogs?.(c, lv.tail) : undefined}
     />
   {:else if tab === "resources"}
     <!-- Every container's history is kept by the panel from its own poll — the

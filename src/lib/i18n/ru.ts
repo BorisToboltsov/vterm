@@ -2245,6 +2245,8 @@ export const ru: Record<MessageKey, string> = {
   "search.searching": "Поиск…",
   "search.summary": "Совпадений: {matches} · файлов: {files}",
   "search.truncated": "Показаны только первые {limit} — уточните запрос, чтобы увидеть остальные.",
+  "search.truncatedMore": "Показаны только первые {limit}.",
+  "search.more": "Показать ещё",
   "search.partial": "Часть файлов прочитать не удалось — результат может быть неполным.",
   "search.failed": "Поиск не выполнен: выражение записано неверно, на хосте нет grep или папки больше нет.",
 

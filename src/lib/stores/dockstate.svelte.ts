@@ -12,14 +12,23 @@
 // switch — which does rebuild the session panels — and, since v1.1, across a move
 // of the panel to another dock, which rebuilds it too.
 //
-// Deliberately small: only what a user would have to redo by hand. Scroll offsets,
-// selections and open modals are not worth persisting — they are cheap to recreate
-// and would age badly against a directory that changed underneath them.
+// Deliberately small: only what a user would have to redo by hand. Selections and
+// open modals are not worth persisting — they are cheap to recreate and would age
+// badly against a directory that changed underneath them. Since v1.34 what stands
+// beside a driver panel's list (a container's, a pod's, a node's details and their
+// view), how its log is read — scroll included — and the file panel's content
+// search are kept: a terminal-tab switch used to drop a log mid-read and the
+// results of a search that took a minute.
 //
 // Keyed by `sessionId`, so it is one of the stores `closeTabFully` has to drop —
 // `tabteardown.guard.test.ts` enforces that.
 
 import { NO_FILTER, type ListFilter } from "../ui/listview";
+import { freshLogView, type LogView } from "../ui/loglines";
+import type { DockerDetailTab } from "../docker/docker";
+import type { DockerItem } from "../docker/dockeritems";
+import type { K8sDetailTab, K8sWorkload, K8sWorkloadTab } from "../k8s/k8s";
+import type { GrepOutcome } from "../sync/sync";
 
 /** Where a file panel (SFTP or local) was left off. */
 export interface FilesDockState {
@@ -55,6 +64,34 @@ export interface ListSessionState {
   collapsed: string[];
 }
 
+/** The driver panels whose details stand beside their list (v1.34). */
+export type AsidePanel = "docker" | "k8s";
+
+/** What the Docker panel had open beside its list: a container's details in a view, or an image, network, volume, stack. */
+export type DockerAside = { kind: "container"; id: string; tab: DockerDetailTab } | { kind: "item"; item: DockerItem };
+
+/** What the k8s panel had open beside its list: a pod (and the container picked in it), a workload, a node. */
+export type K8sAside =
+  | { kind: "pod"; namespace: string; name: string; tab: K8sDetailTab; container: string | null }
+  | { kind: "workload"; workload: K8sWorkload["kind"]; namespace: string; name: string; tab: K8sWorkloadTab }
+  | { kind: "node"; name: string; tab: K8sWorkloadTab };
+
+interface AsideOf {
+  docker: DockerAside;
+  k8s: K8sAside;
+}
+
+/** The file panel's content search (v1.34): the question as typed, and the answer on screen with what it was asked. */
+export interface FileSearchState {
+  open: boolean;
+  query: string;
+  caseSensitive: boolean;
+  regex: boolean;
+  outcome: GrepOutcome | null;
+  /** What the results on screen were searched for: the field may have been edited since. */
+  searched: { query: string; caseSensitive: boolean; regex: boolean; dir: string; limit: number };
+}
+
 export interface DockSessionState {
   files: FilesDockState | null;
   /**
@@ -80,12 +117,18 @@ export interface DockSessionState {
   dirRev: Record<string, number>;
   /** Per list (`ListId` of `stores/listview`), its filter and folded groups. */
   lists: Record<string, ListSessionState>;
+  /** What stands beside each driver panel's list (v1.34); absent — nothing. */
+  aside: Partial<{ [P in AsidePanel]: AsideOf[P] }>;
+  /** How each driver panel's log is read (v1.34). */
+  logs: Partial<Record<AsidePanel, LogView>>;
+  /** The file panel's content search (v1.34); null — none asked yet. */
+  search: FileSearchState | null;
 }
 
 const sessions = $state<Record<string, DockSessionState>>({});
 
 function empty(): DockSessionState {
-  return { files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {}, lists: {} };
+  return { files: null, cwd: null, k8sScope: null, sub: {}, dirRev: {}, lists: {}, aside: {}, logs: {}, search: null };
 }
 
 /**
@@ -213,6 +256,51 @@ export function storedSub<T extends string>(
 /** Remember the sub-tab a driver panel is showing. */
 export function rememberSub(sessionId: string, panel: SubTabPanel, sub: string): void {
   dockState(sessionId).sub[panel] = sub;
+}
+
+/** What the panel had open beside its list, read-only (safe inside `$derived`). */
+export function keptAside<P extends AsidePanel>(sessionId: string, panel: P): AsideOf[P] | null {
+  return (sessions[sessionId]?.aside[panel] as AsideOf[P] | undefined) ?? null;
+}
+
+/** Remember what the panel has open beside its list now; null — nothing. Written only when it changed. */
+export function keepAside<P extends AsidePanel>(sessionId: string, panel: P, next: AsideOf[P] | null): void {
+  const s = dockState(sessionId);
+  const was = s.aside[panel] ?? null;
+  if (JSON.stringify(was) === JSON.stringify(next)) return;
+  if (next) s.aside[panel] = next;
+  else delete s.aside[panel];
+}
+
+/**
+ * How the panel's log is read — the store's own object, created fresh on first
+ * use. The log reads and writes it in place, so a detail rebuilt across the width
+ * threshold or after a terminal-tab switch picks it up where it was.
+ */
+export function logView(sessionId: string, panel: AsidePanel): LogView {
+  const s = dockState(sessionId);
+  if (!s.logs[panel]) s.logs[panel] = freshLogView();
+  return s.logs[panel];
+}
+
+/**
+ * The session's content search — the store's own object, created closed on first
+ * use. The file panel reads and writes it in place: results survive the panel
+ * being rebuilt by a terminal-tab switch.
+ */
+export function fileSearch(sessionId: string): FileSearchState {
+  const s = dockState(sessionId);
+  if (!s.search) {
+    s.search = {
+      open: false,
+      query: "",
+      caseSensitive: false,
+      regex: false,
+      outcome: null,
+      searched: { query: "", caseSensitive: false, regex: false, dir: "", limit: 0 },
+    };
+  }
+  return s.search;
 }
 
 /** Reset every session's dock state (tests, and a potential "reset UI" action). */

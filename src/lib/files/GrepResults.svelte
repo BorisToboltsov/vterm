@@ -21,6 +21,8 @@
     limit,
     fill = false,
     onopen,
+    onmore = undefined,
+    moreBusy = false,
   }: {
     outcome: GrepOutcome;
     /** What was searched for — marked in the lines. */
@@ -32,6 +34,10 @@
     /** Take the height of the place it stands in (a pane) and scroll there. */
     fill?: boolean;
     onopen: (match: GrepMatch) => void;
+    /** Ask the same search again for another page (v1.34); absent — nothing more to ask for. */
+    onmore?: () => void;
+    /** That search is under way. */
+    moreBusy?: boolean;
   } = $props();
 
   const groups = $derived(groupMatches(outcome.matches));
@@ -55,8 +61,19 @@
     </p>
     {#if outcome.truncated}
       <p class="flex items-start gap-1 pb-1 text-warn" data-testid="grep-truncated">
-        <Icon name="alert" size={12} class="mt-0.5 shrink-0" />{t("search.truncated", { limit })}
+        <Icon name="alert" size={12} class="mt-0.5 shrink-0" />{t(onmore ? "search.truncatedMore" : "search.truncated", { limit })}
       </p>
+      {#if onmore}
+        <button
+          type="button"
+          class="mb-1 flex w-fit items-center gap-1 rounded border border-edge px-2 py-0.5 text-text/85 hover:bg-edge disabled:opacity-40"
+          disabled={moreBusy}
+          data-testid="grep-more"
+          onclick={() => onmore?.()}
+        >
+          <Icon name="chevronDown" size={12} class="shrink-0" />{moreBusy ? t("search.searching") : t("search.more")}
+        </button>
+      {/if}
     {/if}
     {#if outcome.failed}
       <p class="flex items-start gap-1 pb-1 text-warn" data-testid="grep-partial">

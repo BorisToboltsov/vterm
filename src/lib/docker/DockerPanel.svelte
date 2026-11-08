@@ -122,11 +122,15 @@
   import { pushReadings, type History } from "../monitoring/monhistory";
   import {
     collapsedGroups,
+    keepAside,
+    keptAside,
     listFilter,
+    logView,
     rememberSub,
     setGroupsCollapsed,
     setListFilter,
     storedSub,
+    type DockerAside,
   } from "../stores/dockstate.svelte";
   import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { untrack } from "svelte";
@@ -277,7 +281,11 @@
   // Shared right-click menu (containers + images) and the container detail modal.
   let menu = $state<OpenMenu | null>(null);
   let detailOpen = $state(false);
-  let detailContainer = $state<DockerContainer | null>(null);
+  // By id: the poll hands over a new object for the same container every few seconds.
+  let detailId = $state<string | null>(null);
+  // How the details' log is read — the session's, in the dock store (v1.34): the
+  // details are rebuilt across the width threshold and when the tab comes back.
+  const detailLog = untrack(() => logView(sessionId, "docker"));
 
   function showMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault();
@@ -318,14 +326,42 @@
     // A text asked for earlier (a stack's log) stands in front of the details:
     // picking a container asks for the container.
     if (modalOpen) closeModal();
-    detailContainer = c;
+    detailId = c.id;
     detailOpen = true;
   }
+
+  // What stood beside the list when the panel was last on screen (v1.34): put
+  // back once the first poll says it is still there; until then nothing is
+  // written over it. A terminal-tab switch rebuilds the panel.
+  let restoring: DockerAside | null = untrack(() => keptAside(sessionId, "docker"));
+  $effect(() => {
+    if (!firstLoadDone || !restoring) return;
+    const was = restoring;
+    restoring = null;
+    untrack(() => {
+      if (was.kind === "item") sideItem = was.item;
+      else if (containers.some((c) => c.id === was.id)) {
+        detailTab = was.tab;
+        detailId = was.id;
+        detailOpen = true;
+      }
+    });
+  });
+  $effect(() => {
+    const next: DockerAside | null =
+      detailOpen && detailId
+        ? { kind: "container", id: detailId, tab: detailTab }
+        : sideItem
+          ? { kind: "item", item: { ...sideItem } }
+          : null;
+    if (restoring) return;
+    untrack(() => keepAside(sessionId, "docker", next));
+  });
   // Keep the open detail modal's container in sync with fresh poll data (so its
   // Overview/stats update live); close it if the container disappears.
   const liveDetail = $derived.by(() => {
-    if (!detailContainer) return null;
-    return containers.find((c) => c.id === detailContainer!.id) ?? null;
+    if (!detailId) return null;
+    return containers.find((c) => c.id === detailId) ?? null;
   });
   const detailStat = $derived.by(() => {
     const c = liveDetail;
@@ -1132,6 +1168,7 @@
               active
               fill
               bind:tab={detailTab}
+              log={detailLog}
               container={liveDetail}
               stat={detailStat}
               facts={liveDetail ? factsById.get(liveDetail.id) : undefined}
@@ -1171,6 +1208,7 @@
 <DockerDetailModal
   open={detailOpen && !wide}
   bind:tab={detailTab}
+  log={detailLog}
   container={liveDetail}
   stat={detailStat}
   facts={liveDetail ? factsById.get(liveDetail.id) : undefined}

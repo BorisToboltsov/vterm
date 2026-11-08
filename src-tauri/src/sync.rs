@@ -63,7 +63,7 @@ pub struct GrepMatch {
 #[derive(Serialize, Debug, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct GrepOutcome {
-    /// At most [`GREP_LIMIT`] matches.
+    /// At most as many matches as were asked for ([`GREP_LIMIT`] by default).
     pub matches: Vec<GrepMatch>,
     /// More lines matched than are returned.
     pub truncated: bool,
@@ -73,7 +73,16 @@ pub struct GrepOutcome {
 }
 
 /// The most matches a search returns; a broad search must not flood the channel.
+/// «Show more» asks again for another page of as many (v1.34).
 pub const GREP_LIMIT: usize = 1000;
+
+/// The most matches «show more» goes to: past it the search has to be narrowed.
+pub const GREP_MAX: usize = 10_000;
+
+/// The limit a search is asked with, held within one page and [`GREP_MAX`].
+pub fn grep_limit(asked: Option<usize>) -> usize {
+    asked.unwrap_or(GREP_LIMIT).clamp(GREP_LIMIT, GREP_MAX)
+}
 
 /// The line the search prints after its matches: `grep`'s own exit status.
 const GREP_STATUS: &str = "::vterm-grep-status:";
@@ -274,7 +283,13 @@ pub async fn nginx_config_files_sudo(
 /// past the limit and for that status: a cut search is told from a complete
 /// one, and a search that failed from one that found nothing. The exec channel
 /// gives stdout only, so the status has to travel in it.
-pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool) -> String {
+pub fn grep_command(
+    dir: &str,
+    query: &str,
+    case_insensitive: bool,
+    fixed: bool,
+    limit: usize,
+) -> String {
     let d = shell_quote(dir);
     let q = shell_quote(query);
     let mut flags = String::from("-rnI");
@@ -282,7 +297,7 @@ pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool)
         flags.push('i');
     }
     let mode = if fixed { "-F" } else { "-E" };
-    let cap = GREP_LIMIT + 2;
+    let cap = limit + 2;
     format!(
         "cd -- {d} 2>/dev/null && {{ grep {flags} {mode} -e {q} -- . 2>/dev/null; echo \"{GREP_STATUS}$?\"; }} | head -n {cap}"
     )
@@ -292,14 +307,14 @@ pub fn grep_command(dir: &str, query: &str, case_insensitive: bool, fixed: bool)
 /// fit, and whether `grep` failed. No status line and no overflow means the
 /// command never got as far as `grep` (the folder is gone) — a failure, not an
 /// empty result.
-pub fn parse_grep_outcome(out: &str) -> GrepOutcome {
+pub fn parse_grep_outcome(out: &str, limit: usize) -> GrepOutcome {
     let status = out
         .lines()
         .find_map(|l| l.strip_prefix(GREP_STATUS))
         .and_then(|s| s.trim().parse::<i32>().ok());
     let mut matches = parse_grep(out);
-    let truncated = matches.len() > GREP_LIMIT;
-    matches.truncate(GREP_LIMIT);
+    let truncated = matches.len() > limit;
+    matches.truncate(limit);
     let failed = match status {
         Some(code) => code > 1,
         // Past the cap the status line is cut off with the rest: not known.
@@ -1320,16 +1335,35 @@ mod tests {
 
     #[test]
     fn grep_command_builds_flags() {
-        let c = grep_command("/srv", "TODO", true, true);
+        let c = grep_command("/srv", "TODO", true, true, GREP_LIMIT);
         assert!(c.contains("cd -- '/srv'"));
         assert!(c.contains("grep -rnIi -F -e 'TODO'"));
-        let c2 = grep_command("/srv", "a.+b", false, false);
+        let c2 = grep_command("/srv", "a.+b", false, false, GREP_LIMIT);
         assert!(c2.contains("grep -rnI -E -e 'a.+b'"));
     }
 
     #[test]
+    fn show_more_asks_for_another_page_up_to_the_ceiling() {
+        assert_eq!(grep_limit(None), GREP_LIMIT);
+        assert_eq!(grep_limit(Some(2 * GREP_LIMIT)), 2 * GREP_LIMIT);
+        // Below a page and past the ceiling are held at them: the WebView names the number.
+        assert_eq!(grep_limit(Some(3)), GREP_LIMIT);
+        assert_eq!(grep_limit(Some(usize::MAX)), GREP_MAX);
+        let c = grep_command("/srv", "TODO", true, true, 3000);
+        assert!(c.ends_with("| head -n 3002"), "{c}");
+        let hit = |n: usize| format!("./a.conf:{n}:upstream api\n");
+        let many: String = (1..=2500).map(hit).collect();
+        let page = parse_grep_outcome(&many, GREP_LIMIT);
+        assert!(page.truncated);
+        assert_eq!(page.matches.len(), GREP_LIMIT);
+        let more = parse_grep_outcome(&format!("{many}::vterm-grep-status:0\n"), 3000);
+        assert!(!more.truncated && !more.failed);
+        assert_eq!(more.matches.len(), 2500);
+    }
+
+    #[test]
     fn grep_command_reports_the_status_and_leaves_room_to_see_the_overflow() {
-        let c = grep_command("/srv", "TODO", true, true);
+        let c = grep_command("/srv", "TODO", true, true, GREP_LIMIT);
         assert!(c.contains("echo \"::vterm-grep-status:$?\""));
         assert!(c.ends_with(&format!("| head -n {}", GREP_LIMIT + 2)));
     }
@@ -1338,11 +1372,14 @@ mod tests {
     fn a_search_outcome_tells_cut_from_complete_and_failed_from_empty() {
         let hit = |n: usize| format!("./a.conf:{n}:upstream api\n");
         // Found, and that is all there is.
-        let found = parse_grep_outcome(&format!("{}{}::vterm-grep-status:0\n", hit(1), hit(2)));
+        let found = parse_grep_outcome(
+            &format!("{}{}::vterm-grep-status:0\n", hit(1), hit(2)),
+            GREP_LIMIT,
+        );
         assert_eq!(found.matches.len(), 2);
         assert!(!found.truncated && !found.failed);
         // Nothing matched: an empty result that is true.
-        let none = parse_grep_outcome("::vterm-grep-status:1\n");
+        let none = parse_grep_outcome("::vterm-grep-status:1\n", GREP_LIMIT);
         assert_eq!(
             none,
             GrepOutcome {
@@ -1352,29 +1389,31 @@ mod tests {
             }
         );
         // A bad expression, or no grep: it did not run.
-        let bad = parse_grep_outcome("::vterm-grep-status:2\n");
+        let bad = parse_grep_outcome("::vterm-grep-status:2\n", GREP_LIMIT);
         assert!(bad.matches.is_empty() && bad.failed && !bad.truncated);
-        assert!(parse_grep_outcome("::vterm-grep-status:127\n").failed);
+        assert!(parse_grep_outcome("::vterm-grep-status:127\n", GREP_LIMIT).failed);
         // Matches and an error: some files were not read.
-        let partial = parse_grep_outcome(&format!("{}::vterm-grep-status:2\n", hit(1)));
+        let partial = parse_grep_outcome(&format!("{}::vterm-grep-status:2\n", hit(1)), GREP_LIMIT);
         assert_eq!(partial.matches.len(), 1);
         assert!(partial.failed);
         // The folder is gone: `cd` failed and nothing was printed at all.
-        assert!(parse_grep_outcome("").failed);
+        assert!(parse_grep_outcome("", GREP_LIMIT).failed);
         // Past the cap: the limit is returned, the rest is said to exist, and
         // the status — cut off with it — is not guessed.
         let many: String = (1..=GREP_LIMIT + 2).map(hit).collect();
-        let cut = parse_grep_outcome(&many);
+        let cut = parse_grep_outcome(&many, GREP_LIMIT);
         assert_eq!(cut.matches.len(), GREP_LIMIT);
         assert!(cut.truncated && !cut.failed);
         // Exactly the limit is not a cut.
         let exact: String = (1..=GREP_LIMIT).map(hit).collect();
-        let whole = parse_grep_outcome(&format!("{exact}::vterm-grep-status:0\n"));
+        let whole = parse_grep_outcome(&format!("{exact}::vterm-grep-status:0\n"), GREP_LIMIT);
         assert_eq!(whole.matches.len(), GREP_LIMIT);
         assert!(!whole.truncated && !whole.failed);
         // A file whose text looks like the status line is still a match.
-        let lookalike =
-            parse_grep_outcome("./notes:3:see ::vterm-grep-status:9\n::vterm-grep-status:0\n");
+        let lookalike = parse_grep_outcome(
+            "./notes:3:see ::vterm-grep-status:9\n::vterm-grep-status:0\n",
+            GREP_LIMIT,
+        );
         assert_eq!(lookalike.matches.len(), 1);
         assert!(!lookalike.failed);
     }
@@ -1394,13 +1433,13 @@ mod tests {
         .unwrap();
         std::fs::write(dir.join("upstreams.conf"), "upstream upstream_api {\n}\n").unwrap();
         let run = |query: &str, fixed: bool, at: &std::path::Path| {
-            let cmd = grep_command(&at.to_string_lossy(), query, true, fixed);
+            let cmd = grep_command(&at.to_string_lossy(), query, true, fixed, GREP_LIMIT);
             let out = std::process::Command::new("sh")
                 .arg("-c")
                 .arg(cmd)
                 .output()
                 .unwrap();
-            parse_grep_outcome(&String::from_utf8_lossy(&out.stdout))
+            parse_grep_outcome(&String::from_utf8_lossy(&out.stdout), GREP_LIMIT)
         };
 
         let found = run("upstream", true, &dir);
