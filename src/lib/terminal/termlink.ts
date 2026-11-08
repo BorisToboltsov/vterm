@@ -4,9 +4,9 @@
 // program printed and whose target is set apart from it. A compromised host only
 // has to print `github.com` over a link to somewhere else.
 //
-// Pure: which targets are links at all (http and https), which of them the app
-// may open (https: the opener's capability allows nothing else), whether the
-// click asks first, and how the address is shown in the question. The store
+// Pure: which targets are links at all (http and https — the two the opener's
+// capability allows, ADR 0055), whether the click asks first, and how the
+// address is shown in the question, an unencrypted one marked as such. The store
 // (`stores/linkopen.svelte.ts`) acts on the answer; `LinkOpenDialog` draws it.
 
 /** `settings.terminalLinks`: ask before opening, open right away, or never open. */
@@ -25,8 +25,10 @@ export interface LinkTarget {
   host: string;
   /** The host is an internationalized name: its letters may imitate another's. */
   idn: boolean;
-  /** https — the only scheme the opener's capability lets the app open. */
+  /** A scheme the opener's capability lets the app open: http or https (v1.34). */
   openable: boolean;
+  /** https: what the browser fetches cannot be read or changed on the way. */
+  secure: boolean;
 }
 
 /** `uri` as a link target, or null for anything but http(s) — never offered. */
@@ -44,7 +46,8 @@ export function linkTarget(uri: string): LinkTarget | null {
     href: url.href,
     host,
     idn: host.split(".").some((label) => label.startsWith("xn--")),
-    openable: url.protocol === "https:",
+    openable: true,
+    secure: url.protocol === "https:",
   };
 }
 
@@ -154,6 +157,8 @@ export function linkClick(mode: TerminalLinkMode, uri: string, text?: string): L
   const shown = text === undefined ? null : misleadingHost(text, target);
   const plain = shown === null && target.openable;
   if (mode === "direct" && plain) return { kind: "open", href: target.href };
-  // An http link the app cannot open still asks: copying it is what is left.
+  // An http link opens like an https one (v1.34): the question says it is not
+  // encrypted — a hostile host can print an https link just as well, so the
+  // scheme is the site's property, not a reason to refuse the click.
   return { kind: "ask", question: { target, shown, canSilence: plain } };
 }

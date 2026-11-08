@@ -20,11 +20,21 @@
   // and key paths to change on the way — a backup made for someone else
   // carries the logins and home directory of whoever exported it. Everything
   // it decides is `backupimport.ts`; the parent writes the result.
+  import { untrack } from "svelte";
   import Modal from "../ui/Modal.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import type { BackupContents } from "../api/servers";
   import type { ServerProfile } from "../types";
-  import { keyPathRows, loginRows, planImport, remapServers, type UsageRow } from "./backupimport";
+  import {
+    effectiveKeyPaths,
+    importFolderDate,
+    keyPathRows,
+    loginRows,
+    planImport,
+    remapServers,
+    type UsageRow,
+  } from "./backupimport";
+  import { keyPathExists } from "../api";
   import { t } from "../i18n";
 
   let {
@@ -52,6 +62,13 @@
   let mode = $state<ImportMode>("merge");
   let logins = $state<Record<string, string>>({});
   let keys = $state<Record<string, string>>({});
+  // Adding (v1.34): skip what is here under another login, and put the added
+  // servers into a folder of their own.
+  let skipSameHost = $state(true);
+  let intoFolder = $state(false);
+  let folder = $state("");
+  // Key paths as they will be written, checked on this computer: path → found.
+  let found = $state<Record<string, boolean>>({});
 
   // Each backup starts afresh: everything it holds is taken, nothing is
   // renamed, and its servers are added — replacing is the choice that removes
@@ -64,11 +81,35 @@
     mode = "merge";
     logins = {};
     keys = {};
+    skipSameHost = true;
+    intoFolder = false;
+    folder = t("backup.folderDefault", { date: importFolderDate(new Date()) });
+    found = {};
   });
 
   const servers = $derived(contents?.servers ?? null);
   const loginList = $derived(servers ? loginRows(servers) : []);
   const keyList = $derived(servers ? keyPathRows(servers) : []);
+  const keyPaths = $derived(effectiveKeyPaths(keyList, keys));
+  // Each path is asked once; a replacement typed in is asked when it changes.
+  $effect(() => {
+    if (!open) return;
+    const paths = [...new Set(keyPaths.values())];
+    // What it writes is not what it depends on: only the paths are.
+    untrack(() => {
+      for (const path of paths) {
+        if (path in found) continue;
+        found[path] = true;
+        void keyPathExists(path)
+          .then((yes) => (found[path] = yes))
+          .catch(() => (found[path] = true));
+      }
+    });
+  });
+  const missing = (row: UsageRow): boolean => {
+    const path = keyPaths.get(row.value);
+    return path !== undefined && found[path] === false;
+  };
   const plan = $derived(
     servers && takeServers
       ? planImport(
@@ -77,6 +118,7 @@
           currentFolders,
           remapServers(servers, logins, keys, current),
           contents?.folders ?? [],
+          { skipSameHost, into: intoFolder ? folder : null },
         )
       : null,
   );
@@ -109,13 +151,15 @@
   }
 </script>
 
-{#snippet remapTable(rows: UsageRow[], values: Record<string, string>, mono: boolean, testid: string)}
+{#snippet remapTable(rows: UsageRow[], values: Record<string, string>, mono: boolean, testid: string, checkFile = false)}
   <div class="space-y-1" data-testid={testid}>
     {#each rows as row (row.value)}
       <div class="flex items-center gap-2">
         <div class="min-w-0 flex-1">
           <div class="truncate text-xs text-text {mono ? 'font-mono' : ''}" title={row.value}>{row.value}</div>
-          <div class="text-caption text-muted">{usageText(row)}</div>
+          <div class="text-caption text-muted">
+            {usageText(row)}{#if checkFile && missing(row)}<span class="text-warn" data-testid="backup-key-missing"> · {t("backup.keyMissing")}</span>{/if}
+          </div>
         </div>
         <input
           bind:value={values[row.value]}
@@ -198,7 +242,32 @@
           <div class="mb-1 mt-4 flex items-center gap-1 text-caption uppercase tracking-wider text-muted">
             {t("backup.keyPaths")}<InfoHint text={t("backup.keyPathsHint")} />
           </div>
-          {@render remapTable(keyList, keys, true, "backup-keys")}
+          {@render remapTable(keyList, keys, true, "backup-keys", true)}
+        {/if}
+
+        {#if mode === "merge"}
+          <div class="mt-4 space-y-1.5 text-xs">
+            {#if plan && plan.sameHost > 0}
+              <label class="flex items-start gap-2 text-text">
+                <input type="checkbox" class="mt-0.5" bind:checked={skipSameHost} data-testid="backup-skip-same-host" />
+                <span>{t("backup.skipSameHost", { count: plan.sameHost })}</span>
+              </label>
+            {/if}
+            <label class="flex items-center gap-2 text-text">
+              <input type="checkbox" bind:checked={intoFolder} data-testid="backup-into-folder" />
+              {t("backup.intoFolder")}
+            </label>
+            {#if intoFolder}
+              <input
+                bind:value={folder}
+                aria-label={t("backup.intoFolderName")}
+                spellcheck="false"
+                autocomplete="off"
+                data-testid="backup-folder-name"
+                class="ml-6 w-64 rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
+              />
+            {/if}
+          </div>
         {/if}
 
         <p class="mt-4 text-xs text-muted">{t("backup.secrets")}</p>

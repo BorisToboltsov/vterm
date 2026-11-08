@@ -17,8 +17,8 @@ import { describe, expect, it } from "vitest";
 //    URL addon's callback hands the link to `clickLink`;
 //  - in the store the opener is reached only from `open`, which is called only
 //    for what `linkClick` said to open and for an answered question;
-//  - an answer opens only an https link — the opener's capability allows no
-//    other — and "don't ask again" switches the setting only where it was
+//  - an answer opens only a link the opener may open — http or https, as its
+//    capability allows (ADR 0055) — and "don't ask again" switches the setting only where it was
 //    offered: a link whose text names another site never silences the question;
 //  - nothing else assigns `settings.terminalLinks`.
 // Each check is a function over source text, run against a planted violation
@@ -168,7 +168,7 @@ describe("terminal link guard", () => {
     );
   });
 
-  it("catches an answer that opens an http link", () => {
+  it("catches an answer that opens a link the opener may not open", () => {
     const src = read("lib/stores/linkopen.svelte.ts").replace(
       "if (!asked.target.openable) return;",
       "",

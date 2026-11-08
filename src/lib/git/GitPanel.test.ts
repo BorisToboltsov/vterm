@@ -452,6 +452,33 @@ describe("GitPanel commit details", () => {
     );
   });
 
+  it("a merge is told against its second parent when asked — the files, a file's diff and the whole diff (v1.34)", async () => {
+    await mountHistory();
+    await fireEvent.click(commitRow(MERGE));
+    const detail = await screen.findByTestId("git-commit-detail");
+    await waitFor(() => expect(within(detail).getAllByTestId("git-commit-file")).toHaveLength(1));
+    expect(within(detail).getByTestId("git-commit-parent-1")).toHaveAttribute("aria-pressed", "true");
+    await fireEvent.click(within(detail).getByTestId("git-commit-parent-2"));
+    await waitFor(() =>
+      expect(calls("diff")).toContainEqual(["diff", "-z", "--no-color", "--raw", "--numstat", `${MERGE.hash}^2`, MERGE.hash]),
+    );
+    expect(within(detail).getByTestId("git-commit-parent-2")).toHaveAttribute("aria-pressed", "true");
+    // Its author and the rest of the header are not asked again.
+    expect(detailCalls()).toHaveLength(1);
+    await fireEvent.click(within(detail).getByTestId("git-commit-file"));
+    await waitFor(() =>
+      expect(calls("diff")).toContainEqual(["diff", "--no-color", `${MERGE.hash}^2`, MERGE.hash, "--", "merged.ts"]),
+    );
+    await fireEvent.click(within(detail).getByTestId("git-commit-diff"));
+    await waitFor(() => expect(calls("diff")).toContainEqual(["diff", "--no-color", `${MERGE.hash}^2`, MERGE.hash]));
+    // Another commit, and back: the first parent again.
+    await fireEvent.click(commitRow(FEAT));
+    await fireEvent.click(commitRow(MERGE));
+    await waitFor(() =>
+      expect(within(screen.getByTestId("git-commit-detail")).getByTestId("git-commit-parent-1")).toHaveAttribute("aria-pressed", "true"),
+    );
+  });
+
   it("an ordinary commit carries no merge note, and its file opens the commit's own diff", async () => {
     await mountHistory();
     await fireEvent.click(commitRow(FEAT));

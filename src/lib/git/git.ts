@@ -347,11 +347,14 @@ export function showFileArgs(hash: string, path: string): string[] {
 }
 
 /** The whole diff of a commit; a merge's is against its first parent, as its file list is. */
-export function commitDiffArgs(hash: string, merge: boolean): string[] {
+export function commitDiffArgs(hash: string, merge: boolean, parent = 1): string[] {
   return merge
-    ? ["diff", "--no-color", `${hash}^1`, hash]
+    ? ["diff", "--no-color", `${hash}^${parentNo(parent)}`, hash]
     : ["show", "--no-color", "--format=", hash];
 }
+
+/** A parent's number as git counts them (`^1`, `^2`, …); anything else — the first. */
+const parentNo = (parent: number): number => (Number.isInteger(parent) && parent >= 1 ? parent : 1);
 
 /**
  * The full content of a file at a revision (`git show <ref>:<path>`). Used as the
@@ -388,19 +391,21 @@ export function commitDetailArgs(hash: string): string[] {
 }
 
 /**
- * What a merge brought into the branch: its diff against the first parent.
+ * What a merge brought into the branch: its diff against a parent — the first
+ * by default (what came into the branch merged into), the second (v1.34) for
+ * what the merged branch did not have.
  * `git show` lists a merge's files only where the result differs from *both*
  * parents — nothing, for a clean merge — and what `-m`/`--first-parent` do to
  * that changed between git versions; a diff of two named commits reads the
  * same everywhere.
  */
-export function mergeFilesArgs(hash: string): string[] {
-  return ["diff", "-z", "--no-color", "--raw", "--numstat", `${hash}^1`, hash];
+export function mergeFilesArgs(hash: string, parent = 1): string[] {
+  return ["diff", "-z", "--no-color", "--raw", "--numstat", `${hash}^${parentNo(parent)}`, hash];
 }
 
-/** One file of that list: what the merge changed in it, against the first parent. */
-export function mergeFileDiffArgs(hash: string, path: string): string[] {
-  return ["diff", "--no-color", `${hash}^1`, hash, "--", path];
+/** One file of that list: what the merge changed in it, against the same parent. */
+export function mergeFileDiffArgs(hash: string, path: string, parent = 1): string[] {
+  return ["diff", "--no-color", `${hash}^${parentNo(parent)}`, hash, "--", path];
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────

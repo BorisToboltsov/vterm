@@ -28,6 +28,8 @@
     fill = false,
     color = 0,
     contained = null,
+    parent = 1,
+    onparent = undefined,
     ontoggle,
     onfoldall,
     ondiff,
@@ -52,6 +54,10 @@
     color?: number;
     /** The branches the commit is on; null until answered. */
     contained?: string[] | null;
+    /** A merge's files are told against this parent, 1-based (v1.34). */
+    parent?: number;
+    /** Tell them against another parent; absent — the note only names the first. */
+    onparent?: (parent: number) => void;
     ontoggle?: (dir: string) => void;
     /** Fold every directory of the file tree, or unfold them all. */
     onfoldall?: (fold: boolean) => void;
@@ -91,7 +97,25 @@
         <span>{detail ? t("git.detailFiles", { n: files.length }) : t("git.detailFilesTitle")}</span>
         <!-- A merge has no diff of its own: said where the list is, not in a hint. -->
         {#if merge && detail}
-          <span class="text-caption" data-testid="git-commit-merge-note">{t("git.detailMergeNote")}</span>
+          {#if onparent}
+            <span class="flex items-center gap-1 text-caption" data-testid="git-commit-merge-note">
+              {t("git.detailMergeAgainst")}
+              {#each commit.parents as hash, i (hash)}
+                <button
+                  type="button"
+                  class="rounded border px-1 font-mono {parent === i + 1 ? 'border-accent text-accent' : 'border-edge hover:bg-edge hover:text-text'}"
+                  aria-pressed={parent === i + 1}
+                  use:tooltip={t(i === 0 ? "git.parentFirstHint" : "git.parentOtherHint", { n: i + 1 })}
+                  data-testid="git-commit-parent-{i + 1}"
+                  onclick={() => onparent?.(i + 1)}
+                >
+                  {i + 1}·{hash.slice(0, 7)}
+                </button>
+              {/each}
+            </span>
+          {:else}
+            <span class="text-caption" data-testid="git-commit-merge-note">{t("git.detailMergeNote")}</span>
+          {/if}
         {/if}
       </span>
       {#if detail && files.length}

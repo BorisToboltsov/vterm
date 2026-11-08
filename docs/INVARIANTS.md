@@ -384,7 +384,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 | Драйвер | Команда · тег | Чистая логика | Обязательное |
 |---------|---------------|---------------|--------------|
-| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`, `--raw --numstat`), у слияния — diff с первым родителем (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
+| **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`, `--raw --numstat`), у слияния — diff с выбранным родителем, по умолчанию первым (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
 | **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). Факты `inspect` (лимиты, перезапуски, адреса, порты остановленного) — одним вызовом на изменившиеся (`staleFacts`). Окружение в подробностях скрыто по имени и значению (`isSensitiveEnv`) и в вопрос ИИ не идёт. `system df` — при открытии вида, по «Обновить» и после удаления, не на опросе. `events` — только снимок с `--until` (политика отказывает без него). Кто использует образ или том — `ps --filter`, не по имени. `compose -f`/`--env-file` — только для `config`; каталог и файлы compose бэкенд сверяет с метками стека (`check_stack`); `up` стека из своих файлов из каталога не предлагается (`usesOwnFiles`). CVE-скана нет — нет офлайн-способа |
 | **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. STATUS/READY/RESTARTS — как у kubectl (`podRow`, сайдкар — контейнер пода). «Обзор» — из опрошенного списка (`parsePodDetail`), своего вызова нет; события — только открытого пода по uid (`podEventsArgs`), пока «Обзор» на экране, — причины «Требует внимания» читаются из объекта пода (`podSigns`); «Ресурсы» — история из `top pods` опроса, контейнеры (`top pod --containers`) — только пока вкладка на экране; доля — только против лимита, запрос — отметка, нет замеров — `metricsGap`; подробности нагрузки — из опроса «Нагрузок» (`parseWorkloadDetail`), её поды и ReplicaSet'ы — только у открытой, по селектору, взятые по владельцу; поды Job'ов сворачиваются к CronJob по `ownerReferences` Job'ов (`jobOwners`), не по имени; запрошенное у ноды — как считает планировщик (`podRequest`), её поды и `top node` — только пока «Обзор» ноды на экране; почему заявка ждёт — из уже полученных событий, кто монтирует — из томов подов, поды — только при заявках; приложение — только из `app.kubernetes.io/*` и аннотации Helm (`appOf`), имя объекта не разбирается, секреты Helm не читаются; окружение скрыто `isSensitiveEnv`, значение из Secret не читается, в вопрос ИИ окружение не идёт. Бинарь — `settings.kubectlPath` |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
@@ -526,8 +526,8 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   `terminalLinkHandler`, иначе OSC 8 уходит в `confirm()`/`window.open()` xterm. OSC 8-ссылка,
   текст которой называет другой сайт (`misleadingHost`), спрашивает в любом режиме, кроме
   `off`, и «Больше не спрашивать» ей не предлагается (`canSilence`). В вопросе — хост, к
-  которому подключится браузер (punycode, выделен). Открывается
-  только https, http-ссылку предлагается скопировать. Гейт `termlink.guard`.
+  которому подключится браузер (punycode, выделен). Открываются
+  https и http, у http — пометка «без шифрования» (ADR 0055). Гейт `termlink.guard`.
 - **Файл из вывода открывается по проверенному имени и в каталоге своей команды** (ADR 0035):
   решение — `fileLinkClick` ([termfiles.ts](../src/lib/terminal/termfiles.ts)), открытие — контроллер
   [filelinkflow](../src/lib/page/filelinkflow.svelte.ts) теми же путями, что панель файлов.
@@ -677,7 +677,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   открыта сессия задания. Запускает задание только `startTransfer`
   ([transferflow.ts](../src/lib/files/transferflow.ts)). Конец сессии отменяет её задания
   (`end_session` → `Jobs::cancel_session`). Копия между
-  серверами — через процесс (`relay_staged`), права — как у `scp`. Один файл не останавливает
+  серверами — через процесс (`relay_staged`), права нового файла — как у `scp` в любую сторону, ссылка в папке — ссылкой. Один файл не останавливает
   остальные, пропущенное считается. Синхронизация в реестр не входит. Гейты
   `transferjob.guard`, `a_job_is_told_only_to_the_windows_of_its_sessions`.
 - **Перенос пишет во временный соседний файл и отменяем:** `upload_staged`, `download_file`,
@@ -831,7 +831,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 ## Недоверенный вход
 
 - **CSP строгий, capabilities поимённо** (ADR 0036): ни удалённых origin, ни `csp: null`,
-  `script-src` без `'unsafe-inline'`; ни одного набора `*:default`, opener только `https://`, без
+  `script-src` без `'unsafe-inline'`; ни одного набора `*:default`, opener только `https://` и `http://`, без
   `fs`/`dangerous*`. Зависимости — `cargo deny`/`pnpm audit`/Semgrep; исключение
   advisory живёт, пока ему есть что исключать; npm ставится только `--frozen-lockfile`, у каждого
   пакета. Модель — [SECURITY.md](../SECURITY.md). Гейты `tauri-security.guard`,

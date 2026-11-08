@@ -13,8 +13,9 @@ describe("linkTarget", () => {
   it("takes http and https and nothing else", () => {
     expect(linkTarget("https://example.com/a?b=1")?.href).toBe("https://example.com/a?b=1");
     expect(linkTarget("http://example.com")?.href).toBe("http://example.com/");
-    expect(linkTarget("https://example.com")?.openable).toBe(true);
-    expect(linkTarget("http://example.com")?.openable).toBe(false);
+    // Both open (v1.34, ADR 0055); only https is secure.
+    expect(linkTarget("https://example.com")).toMatchObject({ openable: true, secure: true });
+    expect(linkTarget("http://example.com")).toMatchObject({ openable: true, secure: false });
     for (const uri of [
       "file:///etc/passwd",
       "javascript:alert(1)",
@@ -116,7 +117,7 @@ describe("linkClick", () => {
     expect(asked).toEqual({
       kind: "ask",
       question: {
-        target: { href: "https://example.com/", host: "example.com", idn: false, openable: true },
+        target: { href: "https://example.com/", host: "example.com", idn: false, openable: true, secure: true },
         shown: null,
         canSilence: true,
       },
@@ -138,14 +139,18 @@ describe("linkClick", () => {
     expect(action).toMatchObject({ kind: "ask", question: { shown: "github.com", canSilence: false } });
   });
 
-  it("offers an http link for copying only, in every mode but off", () => {
-    for (const mode of ["confirm", "direct"] as const) {
-      expect(linkClick(mode, "http://localhost:8080/")).toMatchObject({
-        kind: "ask",
-        question: { target: { openable: false }, canSilence: false },
-      });
-    }
+  it("opens an http link as it opens an https one — a dev server's too (v1.34)", () => {
+    expect(linkClick("direct", "http://localhost:8080/")).toEqual({ kind: "open", href: "http://localhost:8080/" });
+    expect(linkClick("confirm", "http://10.0.0.5/status")).toMatchObject({
+      kind: "ask",
+      question: { target: { openable: true, secure: false }, canSilence: true },
+    });
     expect(linkClick("off", "http://localhost:8080/")).toEqual({ kind: "ignore" });
+    // A misleading one asks in every mode, http or not, and is never silenced.
+    expect(linkClick("direct", "http://evil.example/", "github.com")).toMatchObject({
+      kind: "ask",
+      question: { shown: "github.com", canSilence: false },
+    });
   });
 
   it("opens an OSC 8 link whose text names no site, or its own", () => {

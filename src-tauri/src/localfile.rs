@@ -312,7 +312,7 @@ fn hash_file(
 }
 
 /// Unix permission bits of a file (None on non-unix or when unavailable).
-fn file_mode(meta: &std::fs::Metadata) -> Option<u32> {
+pub(crate) fn file_mode(meta: &std::fs::Metadata) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
