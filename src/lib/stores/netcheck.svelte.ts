@@ -7,9 +7,11 @@
 // `closeTabFully` (a run keeps a session id only to retry with; a closed one
 // answers "no session"). The Utilities window unmounts on close, so rules and
 // runs live here: a run started keeps going behind a closed window, its answer
-// waits for the reopen. History and probe methods persist to localStorage
-// (per-viewer conveniences; losing them only loses suggestions); rules, picks
-// and runs don't.
+// waits for the reopen. History, probe methods, the rules tables and the
+// servers picked (v1.35) persist to localStorage — per-viewer conveniences:
+// losing them loses only what was typed, and a stored table is read back
+// through `loadTables`, which drops what does not read as a row. Runs don't
+// persist: their sessions end with the app.
 import {
   checkTargets,
   failedKeys,
@@ -31,7 +33,7 @@ import {
   type NetRule,
   type NetTarget,
 } from "../netcheck/netcheck";
-import type { RuleRow } from "../netcheck/netcheckform";
+import { loadTables, saveTables, type NetTables, type RuleRow } from "../netcheck/netcheckform";
 import type { HostPlan } from "../netcheck/netroute";
 import { netcheckRun, recordAudit, sftpCancel } from "../api";
 import { isRecording } from "./recordings.svelte";
@@ -43,6 +45,8 @@ import { t } from "../i18n";
 const STORAGE_KEY = "vterm.netcheck";
 // The probe method picked per checking host (v1.0.37); "auto" isn't stored.
 const METHOD_KEY = "vterm.netcheck.method";
+// The rules tables and the servers picked, per home host (v1.35).
+export const TABLES_KEY = "vterm.netcheck.tables";
 
 /**
  * running — the check is under way; done — it answered; error — it couldn't run
@@ -84,6 +88,16 @@ function loadMethods(): Record<string, MethodChoice> {
   }
 }
 
+function loadSaved(): NetTables {
+  try {
+    return loadTables(JSON.parse(localStorage.getItem(TABLES_KEY) ?? "null"));
+  } catch {
+    return { rows: {}, picked: {} };
+  }
+}
+
+const saved = loadSaved();
+
 function load(): NetHistory {
   try {
     return sanitizeHistory(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"));
@@ -103,8 +117,8 @@ export const netcheckState = $state<{
   history: NetHistory;
   methods: Record<string, MethodChoice>;
 }>({
-  rows: {},
-  picked: {},
+  rows: saved.rows,
+  picked: saved.picked,
   runs: {},
   history: load(),
   methods: loadMethods(),
@@ -290,3 +304,14 @@ function audit(h: HostRun, rules: NetRule[], at: string, timeout: number, retry:
         : netcheckFailureAudit(rules, h.error || t("util.probe.noOutput"), retry);
   void recordAudit(h.sessionId, entry).catch(() => {});
 }
+
+$effect.root(() => {
+  $effect(() => {
+    const data = JSON.stringify(saveTables({ rows: netcheckState.rows, picked: netcheckState.picked }));
+    try {
+      localStorage.setItem(TABLES_KEY, data);
+    } catch {
+      /* storage blocked — the tables just won't outlive the app */
+    }
+  });
+});

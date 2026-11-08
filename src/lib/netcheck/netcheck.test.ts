@@ -273,6 +273,14 @@ describe("netcheckArgs", () => {
     expect(s.indexOf("M=nc")).toBeLessThan(s.indexOf("M=telnet"));
   });
 
+  it("lets curl go a second after a silent open port answers, over http", () => {
+    const s = netcheckArgs([{ host: "h", ports: [22] }])[2];
+    expect(s).toContain(`--connect-timeout $T -m $T -Y 1 -y 1 "http://$1:$2"`);
+    // telnet:// held an open port until -m, whatever -Y said.
+    expect(s).not.toContain("telnet://");
+    expect(s).not.toMatch(/\$CU:/);
+  });
+
   it("waits after every batch and once more at the end", () => {
     const ports = Array.from({ length: BATCH + 1 }, (_, i) => i + 1);
     const s = netcheckArgs([{ host: "h", ports }])[2];

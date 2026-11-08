@@ -131,6 +131,15 @@ describe("pinning and unpinning", () => {
   it("a new button stands just before Settings when Settings closes the bar", () => {
     expect(withPinned(["record", "settings"], "util:cidr")).toEqual(["record", "util:cidr", "settings"]);
     expect(withPinned(["settings"], "record")).toEqual(["record", "settings"]);
+    // REC and broadcast go where they are shown while on: after the nearest
+    // button that precedes them on the default bar.
+    expect(withPinned(["monitoring", "utilities", "settings"], "record")).toEqual([
+      "monitoring",
+      "record",
+      "utilities",
+      "settings",
+    ]);
+    expect(withPinned(["monitoring", "settings"], "broadcast")).toEqual(["broadcast", "monitoring", "settings"]);
   });
 
   it("…and at the end when the user moved Settings elsewhere", () => {
@@ -233,11 +242,32 @@ describe("what the bar shows", () => {
   it("REC taken off the bar comes back while a recording is running — and goes when it stops", () => {
     const bar: TopbarId[] = ["monitoring", "settings"];
     expect(ids(shownTopbar(bar, QUIET))).toEqual(["monitoring", "settings"]);
+    // Where REC stands on the default bar: after monitoring.
     expect(shownTopbar(bar, { ...QUIET, recording: true })).toEqual([
-      { id: "record", pinned: false },
       { id: "monitoring", pinned: true },
+      { id: "record", pinned: false },
       { id: "settings", pinned: true },
     ]);
+  });
+
+  it("an indicator stands after the nearest button that precedes it on the default bar", () => {
+    const run = { ...QUIET, recording: true };
+    // A bar the user reordered: REC follows monitoring wherever monitoring went.
+    expect(ids(shownTopbar(["settings", "monitoring", "utilities"], run))).toEqual([
+      "settings",
+      "monitoring",
+      "record",
+      "utilities",
+    ]);
+    // Notes come before REC on the default bar — but not while hidden.
+    expect(ids(shownTopbar(["notes", "util:cidr", "settings"], run))).toEqual(["notes", "record", "util:cidr", "settings"]);
+    expect(ids(shownTopbar(["notes", "util:cidr", "settings"], { ...run, showNotes: false }))).toEqual([
+      "record",
+      "util:cidr",
+      "settings",
+    ]);
+    // Nothing that precedes it is on the bar: at the start, as before.
+    expect(ids(shownTopbar(["utilities", "settings"], run))).toEqual(["record", "utilities", "settings"]);
   });
 
   it("the broadcast button likewise, while the tab is in the group", () => {

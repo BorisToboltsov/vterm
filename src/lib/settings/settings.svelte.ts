@@ -43,6 +43,7 @@ import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/t
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
 import { sanitizeHiddenPanels, type PanelId } from "../layout/docklayout";
 import { DEFAULT_TOPBAR, sanitizeTopbar, type TopbarId } from "../topbar/topbaractions";
+import { sanitizeStoredOrders, type StoredOrder } from "../ui/listview";
 import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
@@ -263,6 +264,10 @@ export interface Settings {
   // Changed only through `stores/topbarpins.svelte.ts`; read from storage and
   // from a backup through `sanitizeTopbar` (topbaractions.ts).
   topbar: TopbarId[];
+  // The order and grouping of each list, by list (v1.29, in the settings since
+  // v1.35 — so every window and a backup have it). Changed only through
+  // `stores/listview.svelte.ts`; each entry is read through its list's schema.
+  listOrders: Record<string, StoredOrder>;
   // Kubernetes panel (Phase 37) — how often the live view re-polls the cluster
   // while the panel is open, in seconds. See k8s.ts.
   k8sRefreshSec: number;
@@ -411,6 +416,7 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
+  listOrders: {},
   k8sRefreshSec: 5,
   kubectlPath: "",
   prodTint: { ...DEFAULT_PROD_TINT },
@@ -546,6 +552,7 @@ function load(): Settings {
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar),
+      listOrders: sanitizeStoredOrders(raw.listOrders),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
       prodTint: sanitizeProdTint(raw.prodTint),
@@ -568,6 +575,7 @@ function load(): Settings {
       gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
+      listOrders: {},
       prodTint: { ...DEFAULT_PROD_TINT },
     };
   }
@@ -622,6 +630,7 @@ export function resetSettings(): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    listOrders: {},
   });
 }
 
@@ -649,6 +658,7 @@ export function applyImportedSettings(raw: unknown): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    listOrders: {},
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -665,6 +675,7 @@ export function applyImportedSettings(raw: unknown): void {
     "dockerRegistries",
     "hiddenPanels",
     "topbar",
+    "listOrders",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -691,6 +702,7 @@ export function applyImportedSettings(raw: unknown): void {
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
   next.topbar = sanitizeTopbar(r.topbar);
+  next.listOrders = sanitizeStoredOrders(r.listOrders);
   next.k8sRefreshSec = clampK8sRefresh(next.k8sRefreshSec);
   if (typeof next.kubectlPath !== "string") next.kubectlPath = DEFAULTS.kubectlPath;
   if (r.customTheme && typeof r.customTheme === "object") {

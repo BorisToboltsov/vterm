@@ -249,7 +249,7 @@ impl LocalTool {
     /// The fixed argv after the program, for one `host:port`. The host comes
     /// last or as a positional argument of `bash -c` (`$0`), never inside the
     /// command text, and `validate` keeps it from starting with `-`.
-    fn argv(self, host: &str, port: u16, timeout_secs: u64, curl_scheme: &str) -> Vec<String> {
+    fn argv(self, host: &str, port: u16, timeout_secs: u64) -> Vec<String> {
         let t = timeout_secs.to_string();
         let port = port.to_string();
         match self {
@@ -271,7 +271,16 @@ impl LocalTool {
                 t.clone(),
                 "-m".into(),
                 t,
-                format!("{curl_scheme}://{host}:{port}"),
+                // After the handshake curl waits for the service: on `telnet://`
+                // until -m whatever it is told, so an open port that says nothing
+                // took the whole timeout. Over `http://` it gives up after a
+                // second without a byte — the connect time is read either way,
+                // and the connect itself is still bounded by --connect-timeout.
+                "-Y".into(),
+                "1".into(),
+                "-y".into(),
+                "1".into(),
+                format!("http://{host}:{port}"),
             ],
         }
     }
@@ -315,28 +324,6 @@ async fn find_tools() -> (OsString, Vec<Found>) {
         });
     }
     (path, found)
-}
-
-/// A minimal curl (curl-minimal on RHEL 9) has no `telnet://`; `http://`
-/// connects just the same, and the connect time is what's read either way —
-/// the remote script makes the same choice.
-async fn curl_scheme(program: &OsStr, path: &OsStr) -> &'static str {
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.arg("-V")
-        .env("PATH", path)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    crate::localenv::no_console_window(&mut cmd);
-    match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
-        Ok(Ok(out))
-            if String::from_utf8_lossy(&out.stdout)
-                .split_whitespace()
-                .any(|w| w == "telnet") =>
-        {
-            "telnet"
-        }
-        _ => "http",
-    }
 }
 
 /// Nanoseconds since the epoch — the remote script's `date +%s%N`.
@@ -452,12 +439,6 @@ pub async fn run_tool(
             "none"
         }
     ));
-    let scheme = match &usable {
-        Some(program) if tool == LocalTool::Curl && !targets.is_empty() => {
-            curl_scheme(program, &path).await
-        }
-        _ => "telnet",
-    };
     let jobs = resolve_targets(targets, &mut out).await;
     let secs = timeout.as_secs().max(1);
     let (usable, path) = (&usable, &path);
@@ -466,7 +447,7 @@ pub async fn run_tool(
         .map(|(host, port, _)| async move {
             let (rc, start, end, text) = match usable {
                 Some(program) => {
-                    tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout).await
+                    tool_once(program, path, tool.argv(&host, port, secs), timeout).await
                 }
                 None => (127, 0, 0, String::new()),
             };
@@ -644,18 +625,23 @@ mod tests {
 
     #[test]
     fn tool_argv_is_fixed_and_the_host_is_never_command_text() {
-        let bash = LocalTool::Bash.argv("db.corp", 5432, 3, "telnet");
+        let bash = LocalTool::Bash.argv("db.corp", 5432, 3);
         assert_eq!(bash[0], "-c");
         assert!(!bash[1].contains("db.corp"), "{bash:?}");
         assert_eq!(&bash[2..], ["db.corp", "5432"]);
         assert_eq!(
-            LocalTool::Nc.argv("h", 22, 3, "telnet"),
+            LocalTool::Nc.argv("h", 22, 3),
             ["-z", "-v", "-w", "3", "h", "22"]
         );
-        assert_eq!(LocalTool::Telnet.argv("h", 22, 3, "telnet"), ["h", "22"]);
-        let curl = LocalTool::Curl.argv("h", 22, 3, "http");
+        assert_eq!(LocalTool::Telnet.argv("h", 22, 3), ["h", "22"]);
+        let curl = LocalTool::Curl.argv("h", 22, 3);
         assert_eq!(curl.last().unwrap(), "http://h:22");
         assert!(curl.contains(&"--connect-timeout".to_string()));
+        // A silent open port lets curl go after a second, not at -m.
+        assert!(
+            curl.windows(4).any(|w| w == ["-Y", "1", "-y", "1"]),
+            "{curl:?}"
+        );
         assert_eq!(LocalTool::parse("nc"), Some(LocalTool::Nc));
         assert_eq!(LocalTool::parse("sh"), None);
         assert_eq!(LocalTool::parse("auto"), None);
@@ -715,6 +701,44 @@ mod tests {
         assert!(refused[6].to_lowercase().contains("refused"), "{out}");
         assert!(refused[4].len() >= 16, "{out}");
         assert!(out.ends_with("E\n"));
+    }
+
+    #[tokio::test]
+    async fn a_curl_run_lets_a_silent_open_port_go_before_the_timeout() {
+        // Debt of 1.22: over `telnet://` curl held an open port that said nothing
+        // until -m. The listener accepts and stays silent.
+        let open = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = open.local_addr().unwrap().port();
+        let started = Instant::now();
+        let out = run_tool(
+            &[target("127.0.0.1", &[port])],
+            Duration::from_secs(6),
+            &AtomicBool::new(false),
+            LocalTool::Curl,
+        )
+        .await;
+        if !out.contains("M\tcurl\n") {
+            // No curl on this machine: nothing to measure.
+            assert!(out.contains("M\tnone\n"), "{out}");
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}\n{out}",
+            started.elapsed()
+        );
+        let row = out
+            .lines()
+            .find(|l| l.starts_with(&format!("R\t127.0.0.1\t{port}\t")))
+            .unwrap_or_else(|| panic!("no R line:\n{out}"));
+        // The handshake is the reading: time_connect above zero.
+        let tc = row
+            .split("TC=")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|v| v.parse::<f64>().ok());
+        assert!(tc.is_some_and(|v| v > 0.0), "{row}");
+        drop(open);
     }
 
     #[tokio::test]
@@ -814,14 +838,13 @@ mod tests {
     }
 
     /// Whether, as written, a local tool runs only with the argv fixed here and
-    /// the page can do no more than name it: two spawns in this module (`-V` and
-    /// the check), the check's argv only from `LocalTool::argv`, the command
+    /// the page can do no more than name it: one spawn in this module (the
+    /// check), the check's argv only from `LocalTool::argv`, the command
     /// takes the tool by `LocalTool::parse`, and the local branch hands the
     /// runner no `args` from the page.
     fn tools_take_only_their_name(netcheck: &str, lib: &str) -> bool {
         let nc = code(netcheck);
         let spawns = nc.matches(SPAWN).count();
-        let scheme = body_of(&nc, "curl_scheme");
         let once = body_of(&nc, "tool_once");
         let calls: Vec<&str> = nc
             .match_indices("tool_once(")
@@ -835,10 +858,7 @@ mod tests {
         let run = body_of(&lib, "netcheck_run");
         let exec = body_of(&lib, "netcheck_exec");
         let local = &exec[exec.find("local_pty(").unwrap_or(0)..];
-        spawns == 2
-            && scheme.contains("Command::new(program)")
-            && scheme.contains(".arg(\"-V\")")
-            && !scheme.contains(".args(")
+        spawns == 1
             && once.contains(".args(&argv)")
             && run_calls.len() == 1
             && run_calls[0].starts_with("tool_once(program, path, tool.argv(")
@@ -858,7 +878,7 @@ mod tests {
         assert!(tools_take_only_their_name(nc, lib));
         // Planted: the check's argv comes from somewhere else.
         let planted = nc.replacen(
-            "tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout)",
+            "tool_once(program, path, tool.argv(&host, port, secs), timeout)",
             "tool_once(program, path, page_argv.clone(), timeout)",
             1,
         );

@@ -177,6 +177,31 @@ export function lineText(rows: RowLike[], cols: number): LineText {
   return { text: text.slice(0, end), cells: cells.slice(0, end), widths: widths.slice(0, end) };
 }
 
+/** A buffer row as `logicalRows` reads it. */
+export interface WrappedRow extends RowLike {
+  isWrapped: boolean;
+}
+
+/**
+ * The rows of the logical line holding row `y` (0-based): the row it starts
+ * on and the rows it wraps onto, no more than `max` of them.
+ */
+export function logicalRows<R extends WrappedRow>(
+  buf: { getLine(y: number): R | undefined },
+  y: number,
+  max: number,
+): { first: number; rows: R[] } {
+  let first = y;
+  while (first > 0 && y - first < max && buf.getLine(first)?.isWrapped) first--;
+  const rows: R[] = [];
+  for (let r = first; rows.length < max; r++) {
+    const row = buf.getLine(r);
+    if (!row || (r > first && !row.isWrapped)) break;
+    rows.push(row);
+  }
+  return { first, rows };
+}
+
 /** A range as xterm takes it: 1-based, end inclusive. */
 export interface CellRange {
   start: { x: number; y: number };
@@ -215,6 +240,10 @@ export interface Resolved {
 export function absPath(name: string, dir: string | null, style: PathStyle): string | null {
   if (name === "" || name.startsWith("~")) return null;
   if (style === "windows") {
+    // Git Bash, MSYS and Cygwin spell a drive as a first folder: `/c/Users`,
+    // `/cygdrive/c/Users` — `C:\Users` to the listing that confirms the name.
+    const drive = /^\/(?:cygdrive\/)?([a-zA-Z])(?:\/(.*))?$/.exec(name);
+    if (drive) return resolveRelative("", `${drive[1].toUpperCase()}:\\${(drive[2] ?? "").replace(/\//g, "\\")}`);
     // `\x` hangs off "the current drive", which is not known here.
     if (/^[\\/](?![\\/])/.test(name)) return null;
     return resolveRelative(dir ?? "", name);
@@ -352,7 +381,7 @@ export function lineCandidates(text: string, lineDir: string | null, style: Path
   const ws = words(text);
   // A word that starts at a root starts a path of its own: no name runs on
   // into it (`a.txt /etc/hosts` is two names, not a folder called `a.txt `).
-  const root = style === "windows" ? /^["'(]?(?:[A-Za-z]:[\\/]|\\\\)/ : /^["'(]?\//;
+  const root = style === "windows" ? /^["'(]?(?:[A-Za-z]:[\\/]|\\\\|\/(?:cygdrive\/)?[A-Za-z](?:\/|$))/ : /^["'(]?\//;
   const out: Candidate[] = [];
   for (let i = 0; i < ws.length; i++) {
     let reach = Math.min(ws.length, i + MAX_NAME_WORDS) - 1;
@@ -483,12 +512,23 @@ export interface ListingCommand {
   /** It lists several folders (`ls a b`, `ls -R`, a glob): its headers place
    *  the lines under them. */
   several: boolean;
+  /** `cd x && ls`: the folder the line went to first, as typed — what `dir`
+   *  and the headers are read from. Absent when the listing ran where the
+   *  line was sent. */
+  cd?: string;
 }
 
 const LISTERS = "ls|ll|la|l|dir|vdir|gci|get-childitem|exa|eza|lsd";
 // The command starts after the prompt: at the line's start or after the
 // character a prompt ends with (`$ `, `# `, `% `, `> `, `C:\x>`, `❯ `).
-const COMMAND = new RegExp(`(?:^|[$#%>❯»➜λ✗✔→]\\s*)(${LISTERS})(?=\\s|$)(.*)$`, "i");
+const PROMPT_END = "(?:^|[$#%>❯»➜λ✗✔→]\\s*)";
+const COMMAND = new RegExp(`${PROMPT_END}(${LISTERS})(?=\\s|$)(.*)$`, "i");
+// `cd x && ls`, `cd x; ls`, cmd's `cd /d D:\x && dir`, PowerShell's
+// `Set-Location x; gci`: one folder, then the listing — on the same line.
+const CD_THEN = new RegExp(
+  `${PROMPT_END}(?:cd|chdir|pushd|set-location|sl)\\s+(?:/d\\s+)?('[^']*'|"[^"]*"|[^\\s;&|]+)\\s*(?:&&|;)\\s*(${LISTERS})(?=\\s|$)(.*)$`,
+  "i",
+);
 
 function args(rest: string): string[] {
   const out: string[] = [];
@@ -505,12 +545,23 @@ function args(rest: string): string[] {
  * in, and the listing still has to confirm the name.
  */
 export function listingCommand(line: string, style: PathStyle): ListingCommand | null {
+  const cd = CD_THEN.exec(line);
+  if (cd) {
+    const to = cd[1].replace(/^(['"])(.*)\1$/, "$2");
+    const listed = listing(cd[3], style);
+    // `cd -` and a bare `cd ~`: folders nobody here knows.
+    return { ...listed, cd: to === "-" ? "~" : to };
+  }
   const m = COMMAND.exec(line);
-  if (!m) return null;
+  return m ? listing(m[2], style) : null;
+}
+
+/** What the arguments after a listing command ask for. */
+function listing(rest: string, style: PathStyle): ListingCommand {
   const paths: string[] = [];
   let recursive = false;
   let options = true;
-  for (const a of args(m[2])) {
+  for (const a of args(rest)) {
     if (options && a === "--") {
       options = false;
       continue;
@@ -559,9 +610,20 @@ export function listingDir(
   header: string | null,
   style: PathStyle,
 ): string | null {
-  if (header !== null) return absPath(header, cwd, style);
-  if (cmd?.dir) return absPath(cmd.dir, cwd, style);
-  return cwd;
+  const from = commandDir(cwd, cmd, style);
+  if (header !== null) return absPath(header, from, style);
+  if (cmd?.dir) return absPath(cmd.dir, from, style);
+  return from;
+}
+
+/**
+ * The folder the listing command itself ran in: the line's, or the one its
+ * `cd` went to — null when that cannot be placed (`cd ~`, `cd -`, a relative
+ * `cd` from an unknown folder).
+ */
+export function commandDir(cwd: string | null, cmd: ListingCommand | null, style: PathStyle): string | null {
+  if (cmd?.cd === undefined) return cwd;
+  return absPath(cmd.cd, cwd, style);
 }
 
 // ── A listing nobody can place ───────────────────────────────────────────────

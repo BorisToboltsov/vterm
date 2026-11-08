@@ -143,6 +143,24 @@ describe("file links in a local terminal", () => {
     expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["notes.txt"]);
   });
 
+  it("reads `cd /etc && ls` in /etc, where the line went first", async () => {
+    const s = setup({}, HOME);
+    await run(s, "cd /etc && ls");
+    s.term.print("hosts  a.txt");
+    expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["hosts"]);
+  });
+
+  it("reads `cd src; ls -l notes.txt` in src when the argument is a file", async () => {
+    const s = setup({}, { ...HOME, "/home/u/src": [entry("notes.txt")] });
+    await run(s, "cd src; ls -l notes.txt");
+    s.term.print("-rw-r--r-- 1 u u 3 Oct 28 14:03 notes.txt");
+    const [link] = (await linksAt(s, 2))!;
+    expect(link.text).toBe("notes.txt");
+    link.activate(click(), link.text);
+    await new Promise((r) => setTimeout(r, DOUBLE_CLICK_MS + 10));
+    expect(s.opened).toEqual([expect.objectContaining({ path: "/home/u/src/notes.txt" })]);
+  });
+
   it("has no folder for output before the first command", async () => {
     const s = setup({}, HOME);
     s.term.print("a.txt");

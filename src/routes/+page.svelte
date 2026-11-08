@@ -168,7 +168,7 @@
   import { beginViewDrag, consumeViewDragClick, viewDrag } from "#lib/stores/viewdrag.svelte.ts";
   import { removeChat, getChat, askAbout } from "#lib/stores/aichat.svelte.ts";
   import { removeDockState, setDockCwd } from "#lib/stores/dockstate.svelte.ts";
-  import { baseName } from "#lib/files/fspath.ts";
+  import { baseName, pathHints } from "#lib/files/fspath.ts";
   import { fileLinksAllowed } from "#lib/terminal/termfiles.ts";
   import { followUpdates, pollsLocalCwd } from "#lib/pathsync/followcwd.ts";
   import { aiReady } from "#lib/ai/ai.ts";
@@ -2916,6 +2916,8 @@
                                 {t("workspace.terminal")}
                               </button>
                             {:else if ed}
+                              <!-- Two files of one name: the folder that tells them apart (v1.35). -->
+                              {@const hint = pathHints(ws.editors.map((e) => e.path))[ws.editors.indexOf(ed)]}
                               <button
                                 role="tab"
                                 aria-selected={shown}
@@ -2925,6 +2927,9 @@
                               >
                                 <Icon name="file" size={13} />
                                 <span class="max-w-32 truncate">{ed.name}</span>
+                                {#if hint}
+                                  <span class="max-w-28 truncate text-meta text-muted" data-testid="doc-hint">{hint}</span>
+                                {/if}
                                 {#if isDirty(ed)}
                                   <span
                                     class="h-1.5 w-1.5 rounded-full bg-accent"

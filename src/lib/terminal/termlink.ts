@@ -1,5 +1,5 @@
 // What a click on a web link in terminal output does (v1.20). Two kinds of link
-// reach it: a URL the terminal found in the text (`WebLinksAddon`) — what is
+// reach it: a URL the terminal found in the text (`urllinks.ts`) — what is
 // shown is what it leads to — and an OSC 8 hyperlink, whose text is whatever the
 // program printed and whose target is set apart from it. A compromised host only
 // has to print `github.com` over a link to somewhere else.

@@ -248,13 +248,17 @@ describe("TopBar — the user's buttons", () => {
     await view.rerender({ ...base, canRecord: true, recording: true });
     const rec = screen.getByTestId("record-toggle");
     expect(rec).toHaveAttribute("aria-pressed", "true");
-    // Ahead of the user's own buttons, and not one of them: it cannot be dragged.
-    expect(drawn()[0]).toBe("record");
+    // Where its button stood — after monitoring, as on the default bar — and
+    // not one of the user's own: it cannot be dragged.
+    expect(drawn().indexOf("record")).toBe(drawn().indexOf("monitoring") + 1);
     expect(item("record").dataset.topbarPin).toBeUndefined();
+    const before = drawn();
 
     await fireEvent.contextMenu(rec);
     await fireEvent.click(menuRow("Keep on the top bar"));
     expect(settings.topbar).toContain("record");
+    // Kept where it stood: the bar does not move.
+    expect(drawn()).toEqual(before);
 
     await view.rerender({ ...base, canRecord: true, recording: false });
     expect(screen.getByTestId("record-toggle")).toBeInTheDocument();

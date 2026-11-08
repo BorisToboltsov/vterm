@@ -6,7 +6,6 @@
   import { WebglAddon } from "@xterm/addon-webgl";
   import { SearchAddon } from "@xterm/addon-search";
   import { SerializeAddon } from "@xterm/addon-serialize";
-  import { WebLinksAddon } from "@xterm/addon-web-links";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import "@xterm/xterm/css/xterm.css";
   import { debounce } from "../ui/util";
@@ -16,6 +15,7 @@
   import { notifyError, notifyInfo, notifySuccess } from "../stores/toasts.svelte";
   import { clickLink, terminalLinkHandler } from "../stores/linkopen.svelte";
   import { createFileLinks, type FileLinks } from "./filelinkprovider";
+  import { createUrlLinks } from "./urllinks";
   import type { FileLinkTarget } from "./termfiles";
   import { buildMatcher, contextSnippet, findMatchRows, matchCountLabel } from "./search";
   import {
@@ -317,7 +317,7 @@
   // URLs found in the text are clickable under their own setting (v1.20), not
   // the highlight toggle; every click goes to `clickLink`, which asks or opens.
   const linksEnabled = $derived(settings.terminalLinks !== "off");
-  let webLinks: WebLinksAddon | undefined;
+  let webLinks: IDisposable | undefined;
   const fileLinksOn = $derived(!!onfilelink && settings.terminalFileLinks !== "off");
   let fileLinks: FileLinks | undefined;
   let fileLinkProvider: IDisposable | undefined;
@@ -1061,8 +1061,7 @@
   $effect(() => {
     if (!term) return;
     if (linksEnabled && !webLinks) {
-      webLinks = new WebLinksAddon((_event, uri) => clickLink(uri));
-      term.loadAddon(webLinks);
+      webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));
     } else if (!linksEnabled && webLinks) {
       webLinks.dispose();
       webLinks = undefined;

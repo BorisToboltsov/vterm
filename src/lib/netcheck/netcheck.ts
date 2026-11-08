@@ -403,9 +403,6 @@ export function netcheckArgs(
     `M=none`,
     select,
     `printf 'M\\t%s\\n' "$M"`,
-    // A minimal curl build (curl-minimal, RHEL 9) has no telnet://; http:// connects
-    // just the same, and the connect time is what's read either way.
-    `CU=telnet; [ "$M" = curl ] && ! curl -V 2>/dev/null | grep -qw telnet && CU=http`,
     // BSD/macOS nc: -w does not bound the connect itself, -G does.
     `G=; [ "$M" = nc ] && nc -h 2>&1 | grep -q -- '-G' && G="-G $T"`,
   ];
@@ -419,8 +416,10 @@ export function netcheckArgs(
       `    nc) o=$(nc -z -v -w $T $G "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       `    telnet) o=$(timeout $T telnet "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       // time_connect > 0 ⇔ the TCP handshake completed (the transfer after it may
-      // then time out on a silent service — that's still "open").
-      `    curl) o=$(curl -sS -o /dev/null -w 'TC=%{time_connect} ' --connect-timeout $T -m $T "$CU://$1:$2" 2>&1 </dev/null); r=$? ;;`,
+      // then time out on a silent service — that's still "open"). Over http://
+      // `-Y 1 -y 1` lets a silent service go after a second — on telnet:// curl
+      // held it until -m — and every build has http (curl-minimal has no telnet).
+      `    curl) o=$(curl -sS -o /dev/null -w 'TC=%{time_connect} ' --connect-timeout $T -m $T -Y 1 -y 1 "http://$1:$2" 2>&1 </dev/null); r=$? ;;`,
       `    *) o=; r=127 ;;`,
       `  esac`,
       `  e=$(now)`,
@@ -620,8 +619,8 @@ export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SEC
         const status = classifyAttempt(rep.method, Number.isFinite(rc) ? rc : -1, raw, took, timeoutSecs);
         let msg = raw;
         if (rep.method === "curl") {
-          // curl holds an open port until -m, so wall time says nothing: the
-          // connect time it measured itself is the reading.
+          // curl stays on an open port a second or more after the handshake, so
+          // wall time says nothing: the connect time it measured is the reading.
           const tc = curlConnectSecs(raw);
           ms = status === "open" && tc !== null ? Math.round(tc * 1000) : status === "open" ? null : ms;
           msg = raw.replace(/TC=\S+\s*/, "").replace(/^curl: /, "").trim();

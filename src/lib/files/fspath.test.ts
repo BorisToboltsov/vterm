@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  pathHints,
   resolveRelative,
   baseName,
   DRIVES_ROOT,
@@ -323,5 +324,33 @@ describe("resolveRelative", () => {
     expect(resolveRelative("/srv", "   ")).toBeNull();
     expect(resolveRelative("relative/dir", "a.png")).toBeNull();
     expect(resolveRelative("", "a.png")).toBeNull();
+  });
+});
+
+describe("pathHints", () => {
+  it("is empty for a name no other path has", () => {
+    expect(pathHints(["/etc/hosts", "/etc/nginx/nginx.conf"])).toEqual(["", ""]);
+  });
+
+  it("names the nearest folder that tells two names apart", () => {
+    expect(pathHints(["/etc/nginx/nginx.conf", "/srv/app/nginx.conf", "/etc/hosts"])).toEqual(["nginx", "app", ""]);
+  });
+
+  it("goes up as far as it takes, and only for the paths of that name", () => {
+    expect(pathHints(["/a/x/conf.d/site", "/b/x/conf.d/site", "/b/y/site"])).toEqual([
+      "a/x/conf.d",
+      "b/x/conf.d",
+      "y",
+    ]);
+  });
+
+  it("spells a Windows path with its separator and compares it without case", () => {
+    expect(pathHints(["C:\\app\\Web.config", "D:\\site\\web.config"])).toEqual(["app", "site"]);
+    expect(pathHints(["C:\\a\\b\\x.txt", "C:\\c\\b\\X.TXT"])).toEqual(["a\\b", "c\\b"]);
+  });
+
+  it("falls back to the whole folder when one path's folders end another's", () => {
+    expect(pathHints(["/x/a.txt", "/y/x/a.txt"])).toEqual(["x", "y/x"]);
+    expect(pathHints(["/a.txt", "/srv/a.txt"])).toEqual(["", "srv"]);
   });
 });

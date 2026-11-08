@@ -104,11 +104,14 @@ export function sanitizeTopbar(raw: unknown): TopbarId[] {
 
 /**
  * `list` with `id` on the bar. A new button stands just before Settings when
- * Settings closes the bar (the gear stays the last thing on it), else at the end.
+ * Settings closes the bar (the gear stays the last thing on it), else at the end
+ * — REC and broadcast where they are shown while on (`shownTopbar`), so keeping
+ * one from there does not move it.
  */
 export function withPinned(list: readonly TopbarId[], id: TopbarId): TopbarId[] {
   if (list.includes(id) || !isTopbarId(id)) return [...list];
-  const at = list[list.length - 1] === "settings" ? list.length - 1 : list.length;
+  const indicator = (INDICATORS as readonly TopbarId[]).includes(id);
+  const at = indicator ? placeOf(list, id) : list[list.length - 1] === "settings" ? list.length - 1 : list.length;
   return [...list.slice(0, at), id, ...list.slice(at)];
 }
 
@@ -161,6 +164,19 @@ export interface ShownAction {
   pinned: boolean;
 }
 
+/** The buttons shown while their state is on, even off the user's bar. */
+const INDICATORS = ["broadcast", "record"] as const satisfies readonly TopbarId[];
+
+/**
+ * Where `id` stands among `ids`: right after the nearest button that comes
+ * before it on the default bar — 0 when none of those is there.
+ */
+function placeOf(ids: readonly TopbarId[], id: TopbarId): number {
+  const before = DEFAULT_TOPBAR.slice(0, DEFAULT_TOPBAR.indexOf(id));
+  for (let i = ids.length - 1; i >= 0; i--) if (before.includes(ids[i])) return i + 1;
+  return 0;
+}
+
 /**
  * Whether the bar shows `id` whatever the list says and however little room
  * there is: the anchors, a recording that is running, a broadcast that is on.
@@ -174,19 +190,27 @@ export function mustShow(id: TopbarId, state: TopbarState): boolean {
 
 /**
  * The buttons the bar shows, left to right: the user's list, without the notes
- * button while no server is selected, and — ahead of it — the indicators of a
- * recording or a broadcast the user took off the bar and that is running now.
+ * button while no server is selected, and the indicators of a recording or a
+ * broadcast the user took off the bar and that is running now — each where its
+ * button stood (v1.35): right after the nearest button that comes before it on
+ * the default bar, at the start when none of those is on the bar.
  */
 export function shownTopbar(list: readonly TopbarId[], state: TopbarState): ShownAction[] {
-  const indicators = (["broadcast", "record"] as const).filter(
-    (id) => !list.includes(id) && mustShow(id, state),
-  );
-  return [
-    ...indicators.map((id): ShownAction => ({ id, pinned: false })),
-    ...list
-      .filter((id) => id !== "notes" || state.showNotes)
-      .map((id): ShownAction => ({ id, pinned: true })),
-  ];
+  const out: ShownAction[] = list
+    .filter((id) => id !== "notes" || state.showNotes)
+    .map((id): ShownAction => ({ id, pinned: true }));
+  for (const id of INDICATORS) {
+    if (list.includes(id) || !mustShow(id, state)) continue;
+    out.splice(
+      placeOf(
+        out.map((a) => a.id),
+        id,
+      ),
+      0,
+      { id, pinned: false },
+    );
+  }
+  return out;
 }
 
 /**

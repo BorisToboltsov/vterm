@@ -266,6 +266,32 @@ export function nextSort<T>(schema: ListSchema<T>, current: ListSort, key: strin
   return { key, dir: current.dir === "asc" ? "desc" : "asc" };
 }
 
+/** An order as the settings keep it (v1.35): read through `sanitizeOrder`. */
+export interface StoredOrder {
+  sort: { key: string; dir?: SortDir };
+  group: string;
+}
+
+/**
+ * The orders of every list as the settings keep them — from storage, a backup
+ * or another window. Only the shape is checked: whether a sort key or a
+ * grouping exists is the list's schema to say when it is read, so a key this
+ * build does not know is kept for the build that does.
+ */
+export function sanitizeStoredOrders(raw: unknown): Record<string, StoredOrder> {
+  const out: Record<string, StoredOrder> = {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return out;
+  for (const [list, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!list || typeof v !== "object" || v === null) continue;
+    const { sort, group } = v as { sort?: unknown; group?: unknown };
+    if (typeof sort !== "object" || sort === null || typeof group !== "string") continue;
+    const { key, dir } = sort as { key?: unknown; dir?: unknown };
+    if (typeof key !== "string" || key === "") continue;
+    out[list] = { sort: dir === "asc" || dir === "desc" ? { key, dir } : { key }, group };
+  }
+  return out;
+}
+
 /** A stored order made safe for this schema; anything it does not know is the fallback's. */
 export function sanitizeOrder<T>(raw: unknown, schema: ListSchema<T>, fallback: ListOrder): ListOrder {
   const o = typeof raw === "object" && raw !== null ? (raw as { sort?: unknown; group?: unknown }) : {};

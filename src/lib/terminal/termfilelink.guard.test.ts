@@ -83,7 +83,7 @@ export function terminalViolations(raw: string): string[] {
     out.push("file links are on without the page's handler or past the setting");
   }
   const registered = block(src, "if (fileLinksOn && !fileLinks)");
-  if (count(src, /registerLinkProvider\(/g) !== 1 || !/registerLinkProvider\(fileLinks\.provider\)/.test(registered)) {
+  if (count(src, /registerLinkProvider\(fileLinks\.provider\)/g) !== 1 || !/registerLinkProvider\(fileLinks\.provider\)/.test(registered)) {
     out.push("the file-link provider is registered other than while file links are on");
   }
   if (!/submittedCwd: \(\) => localSubmittedCwd\(sessionId\)/.test(registered) || /\blocalCwd\(/.test(src)) {
@@ -187,6 +187,15 @@ const FLOW = "lib/page/pathsyncflow.svelte.ts";
 describe("terminal file link guard", () => {
   it("the terminal shows file links only where the page and the setting allow", () => {
     expect(terminalViolations(read(TERMINAL))).toEqual([]);
+  });
+
+  it("catches the file-link provider registered past the setting", () => {
+    const src = read(TERMINAL).replace(
+      "webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));",
+      "webLinks = term.registerLinkProvider(createUrlLinks(term, clickLink));\n      term.registerLinkProvider(fileLinks.provider);",
+    );
+    expect(src).not.toBe(read(TERMINAL));
+    expect(terminalViolations(src)).toContain("the file-link provider is registered other than while file links are on");
   });
 
   it("the setup line is said to be one", () => {

@@ -28,6 +28,7 @@ import type { FileEntry } from "../types";
 import {
   blockAt,
   clickOpens,
+  commandDir,
   dirsToList,
   DOUBLE_CLICK_MS,
   headerDir,
@@ -36,6 +37,7 @@ import {
   listingCommand,
   listingDir,
   listingOf,
+  logicalRows,
   pickLinks,
   resolveName,
   spanRange,
@@ -128,16 +130,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
 
   /** The rows of the logical line holding row `y` (0-based): first row and rows. */
   function logical(y: number): { first: number; rows: IBufferLine[] } {
-    const buf = term.buffer.active;
-    let first = y;
-    while (first > 0 && y - first < MAX_WRAPPED_ROWS && buf.getLine(first)?.isWrapped) first--;
-    const rows: IBufferLine[] = [];
-    for (let r = first; rows.length < MAX_WRAPPED_ROWS; r++) {
-      const row = buf.getLine(r);
-      if (!row || (r > first && !row.isWrapped)) break;
-      rows.push(row);
-    }
-    return { first, rows };
+    return logicalRows(term.buffer.active, y, MAX_WRAPPED_ROWS);
   }
 
   const textAt = (y: number): string => lineText(logical(y).rows, term.cols).text;
@@ -162,8 +155,8 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     }
     const dir = listingDir(cwd, cmd, header, style);
     // `ls -l notes.txt` names a file, not a folder: its line reads where the
-    // command ran when the named "folder" has no listing.
-    const fallback = header === null && cmd?.dir ? cwd : null;
+    // command ran (after its `cd`) when the named "folder" has no listing.
+    const fallback = header === null && cmd?.dir ? commandDir(cwd, cmd, style) : null;
     return { style, cmd, dir, fallback, start: block?.marker.line ?? -1 };
   }
 

@@ -14,7 +14,9 @@ import { describe, expect, it } from "vitest";
 //  - every xterm the app creates is given `terminalLinkHandler` — without one
 //    xterm falls back to its own;
 //  - a component that creates an xterm never calls the opener itself, and the
-//    URL addon's callback hands the link to `clickLink`;
+//    URL provider (`createUrlLinks`, urllinks.ts) hands the link to `clickLink`
+//    — and xterm's own URL addon, which never made a non-Latin host a link,
+//    stays out;
 //  - in the store the opener is reached only from `open`, which is called only
 //    for what `linkClick` said to open and for an answered question;
 //  - an answer opens only a link the opener may open — http or https, as its
@@ -90,9 +92,12 @@ export function terminalViolations(raw: string): string[] {
   if (/plugin-opener|openUrl\s*\(/.test(src)) {
     out.push("a terminal component calls the opener itself");
   }
-  for (const m of src.matchAll(/new WebLinksAddon\(([\s\S]*?)\);/g)) {
-    if (!/=>\s*clickLink\(\s*uri\s*\)/.test(m[1])) {
-      out.push("the URL addon does not hand the link to clickLink");
+  if (/new WebLinksAddon\(/.test(src)) {
+    out.push("xterm's URL addon is back — it drops every address with a non-Latin host");
+  }
+  for (const m of src.matchAll(/createUrlLinks\(([^;]*)\);/g)) {
+    if (!/,\s*clickLink\s*\)$/.test(m[1])) {
+      out.push("the URL provider does not hand the link to clickLink");
     }
   }
   return out;
@@ -150,12 +155,22 @@ describe("terminal link guard", () => {
 
   it("catches a terminal that opens links itself", () => {
     const src = read("lib/terminal/Terminal.svelte").replace(
-      "new WebLinksAddon((_event, uri) => clickLink(uri))",
-      "new WebLinksAddon((_event, uri) => openUrl(uri))",
+      "createUrlLinks(term, clickLink)",
+      "createUrlLinks(term, (uri) => openUrl(uri))",
     );
     const found = terminalViolations(src);
     expect(found).toContain("a terminal component calls the opener itself");
-    expect(found).toContain("the URL addon does not hand the link to clickLink");
+    expect(found).toContain("the URL provider does not hand the link to clickLink");
+  });
+
+  it("catches xterm's URL addon coming back", () => {
+    const src = read("lib/terminal/Terminal.svelte").replace(
+      "term.registerLinkProvider(createUrlLinks(term, clickLink))",
+      "new WebLinksAddon((_event, uri) => clickLink(uri))",
+    );
+    expect(terminalViolations(src)).toContain(
+      "xterm's URL addon is back — it drops every address with a non-Latin host",
+    );
   });
 
   it("catches a silence that ignores the misleading link", () => {
