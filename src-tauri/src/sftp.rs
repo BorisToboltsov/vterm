@@ -606,7 +606,8 @@ pub(crate) async fn upload_staged(
     let mut src = tokio::fs::File::open(local)
         .await
         .map_err(|e| format!("open {local}: {e}"))?;
-    let total = src.metadata().await.map(|m| m.len()).unwrap_or(0);
+    let source = src.metadata().await.ok();
+    let total = source.as_ref().map(|m| m.len()).unwrap_or(0);
     let existing = sftp.metadata(remote).await.ok();
     if existing.is_some() && !replace {
         return Err(AppError::DestinationExists);
@@ -629,8 +630,13 @@ pub(crate) async fn upload_staged(
         return Err(e);
     }
     // Keep the replaced file's mode (an uploaded script stays executable), as a
-    // plain overwrite did.
-    let mode = existing.as_ref().and_then(|m| m.permissions);
+    // plain overwrite did; a new file takes the source's permission bits (v1.34),
+    // as `scp` does — a key uploaded from `0600` must not land `0644`. Windows
+    // has no bits to give: the server's default stands.
+    let mode = existing.as_ref().and_then(|m| m.permissions).or(source
+        .as_ref()
+        .and_then(crate::localfile::file_mode)
+        .map(|p| p & 0o777));
     commit_remote(sftp, tmp, remote, existing.is_some(), mode).await
 }
 
@@ -750,11 +756,8 @@ pub(crate) async fn download_file(
     if !replace && tokio::fs::symlink_metadata(local).await.is_ok() {
         return Err(AppError::DestinationExists);
     }
-    let total = sftp
-        .metadata(remote)
-        .await
-        .map(|m| m.size.unwrap_or(0))
-        .unwrap_or(0);
+    let source = sftp.metadata(remote).await.ok();
+    let total = source.as_ref().and_then(|m| m.size).unwrap_or(0);
     let mut src = sftp
         .open(remote)
         .await
@@ -776,15 +779,53 @@ pub(crate) async fn download_file(
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
     }
-    // Keep the replaced file's permissions, as the old in-place overwrite did.
+    // Keep the replaced file's permissions, as the old in-place overwrite did; a
+    // new file takes the server's permission bits (v1.34), as `scp` does. A
+    // Windows disk has none to take.
     if let Ok(meta) = tokio::fs::metadata(local).await {
         let _ = tokio::fs::set_permissions(&tmp, meta.permissions()).await;
+    } else {
+        give_mode(&tmp, source.as_ref().and_then(|m| m.permissions)).await;
     }
     if let Err(e) = tokio::fs::rename(&tmp, local).await {
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(format!("rename onto {local}: {e}").into());
     }
     Ok(())
+}
+
+/// Make `link` on a server a symlink to `target` (v1.34). OpenSSH's `sftp-server`
+/// — every server this app is used against, and the one its live tests run —
+/// reads `SSH_FXP_SYMLINK` with its two paths the other way round from the draft
+/// (its own client sends them so), and russh-sftp writes them in the draft's
+/// order: so the target goes first here. What was made is read back: a server
+/// that reads the draft's order made the link at `target` instead, and that
+/// link — pointing at `link`, made a moment ago — is taken away again.
+pub(crate) async fn make_symlink(sftp: &SftpSession, target: &str, link: &str) -> AppResult<()> {
+    let there_before = sftp.symlink_metadata(target).await.is_ok();
+    sftp.symlink(target, link)
+        .await
+        .map_err(|e| format!("symlink {link}: {e}"))?;
+    if sftp.read_link(link).await.ok().as_deref() == Some(target) {
+        return Ok(());
+    }
+    if !there_before && sftp.read_link(target).await.ok().as_deref() == Some(link) {
+        let _ = sftp.remove_file(target).await;
+    }
+    Err(format!("symlink {link}: the server did not make the link that was asked for").into())
+}
+
+/// Give a file on this disk the permission bits a server reported (`& 0o777`:
+/// no setuid, setgid or sticky bit travels). Best-effort, and nothing on Windows.
+async fn give_mode(path: &std::path::Path, mode: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(bits) = mode {
+        use std::os::unix::fs::PermissionsExt;
+        let _ =
+            tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(bits & 0o777)).await;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
 }
 
 /// Copy `src` into `dst`, telling `report` how far it has got every
@@ -1586,6 +1627,57 @@ pub(crate) mod live_sftp {
         let mode = sftp.metadata(path.clone()).await.expect("stat").permissions;
         assert_eq!(mode.map(|m| m & 0o777), Some(0o755));
         assert!(leftover_temps(&sftp, &path).await.is_empty());
+
+        let _ = sftp.remove_file(path).await;
+    }
+
+    /// A new file takes the source's permission bits both ways (v1.34), as `scp`
+    /// does: a key uploaded from 0600 lands 0600, and comes back 0600 — without
+    /// the setuid bit, which does not travel.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn a_new_file_takes_the_source_mode_up_and_down() {
+        use std::os::unix::fs::PermissionsExt;
+        let sftp = connect().await;
+        let path = path_for("mode-up");
+        let _ = sftp.remove_file(path.clone()).await;
+        let tmp = tempfile::tempdir().unwrap();
+        let local = tmp.path().join("key");
+        std::fs::write(&local, b"secret\n").unwrap();
+        std::fs::set_permissions(&local, std::fs::Permissions::from_mode(0o4600)).unwrap();
+
+        upload_staged(
+            &Report::Silent,
+            &sftp,
+            local.to_str().unwrap(),
+            &path,
+            false,
+            None,
+        )
+        .await
+        .expect("upload");
+        let mode = sftp.metadata(path.clone()).await.expect("stat").permissions;
+        assert_eq!(mode.map(|m| m & 0o7777), Some(0o600));
+
+        sftp.set_metadata(path.clone(), chmod_attrs(0o100_640))
+            .await
+            .expect("chmod");
+        let back = tmp.path().join("back");
+        download_file(
+            &Report::Silent,
+            &sftp,
+            &path,
+            back.to_str().unwrap(),
+            false,
+            None,
+        )
+        .await
+        .expect("download");
+        assert_eq!(
+            std::fs::metadata(&back).unwrap().permissions().mode() & 0o7777,
+            0o640
+        );
 
         let _ = sftp.remove_file(path).await;
     }

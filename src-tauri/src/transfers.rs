@@ -115,7 +115,7 @@ pub struct JobView {
     pub error: Option<String>,
     /// Files and folders that did not make it.
     pub failed: u32,
-    /// Symbolic links and unreadable sub-folders left out.
+    /// Unreadable sub-folders, and links the destination cannot hold or the source would not read, left out.
     pub skipped: u32,
 }
 
@@ -310,6 +310,66 @@ impl End {
     fn is_local(&self) -> bool {
         matches!(self, End::Local)
     }
+
+    /// Where a link points, as the link says it (not resolved).
+    async fn read_link(&self, path: &str) -> AppResult<String> {
+        match self {
+            End::Local => Ok(tokio::fs::read_link(path)
+                .await
+                .map_err(|e| format!("readlink {path}: {e}"))?
+                .to_string_lossy()
+                .into_owned()),
+            End::Remote(s) => Ok(s
+                .read_link(path)
+                .await
+                .map_err(|e| format!("readlink {path}: {e}"))?),
+        }
+    }
+
+    /// Whether this end can hold a link the source had. Windows makes one only
+    /// with a privilege a user rarely has: a link is not offered there at all.
+    fn takes_links(&self) -> bool {
+        !(self.is_local() && cfg!(windows))
+    }
+
+    /// Make `link` a symlink to `target` — what the source's link said, word for
+    /// word (v1.34). A name already there is replaced only when the item says so.
+    async fn make_link(&self, target: &str, link: &str, replace: bool) -> AppResult<()> {
+        if self.exists(link).await {
+            if !replace {
+                return Err(AppError::DestinationExists);
+            }
+            self.remove(link).await;
+        }
+        match self {
+            End::Local => {
+                #[cfg(unix)]
+                {
+                    tokio::fs::symlink(target, link)
+                        .await
+                        .map_err(|e| AppError::from(format!("symlink {link}: {e}")))
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = target;
+                    Err(format!("symlink {link}: links are not made on this system").into())
+                }
+            }
+            End::Remote(s) => sftp::make_symlink(s, target, link).await,
+        }
+    }
+
+    /// Take a name off, file or link (not a folder): what a replaced link stands on.
+    async fn remove(&self, path: &str) {
+        match self {
+            End::Local => {
+                let _ = tokio::fs::remove_file(path).await;
+            }
+            End::Remote(s) => {
+                let _ = s.remove_file(path).await;
+            }
+        }
+    }
 }
 
 /// `dir`/`name` on the destination, for a `name` the source listed. The source
@@ -333,6 +393,10 @@ struct Planned {
     to: String,
     size: u64,
     replace: bool,
+    /// A symlink inside a folder (v1.34): made again at `to` with this target,
+    /// not followed — what it points to is not copied, and a link to a parent
+    /// folder is not a cycle.
+    link: Option<String>,
 }
 
 #[derive(Default)]
@@ -363,6 +427,7 @@ async fn plan(spec: &Spec, src: &End, dst: &End, cancel: &AtomicBool) -> AppResu
                 to: item.to.clone(),
                 size: src.size(&item.from).await,
                 replace: item.replace,
+                link: None,
             });
             continue;
         }
@@ -394,13 +459,24 @@ async fn plan(spec: &Spec, src: &End, dst: &End, cancel: &AtomicBool) -> AppResu
             root = false;
             plan.dirs.push(to_dir.clone());
             for entry in entries {
-                // Reading a link as a file fails, and following one to a folder
-                // risks a cycle.
+                let to = child_path(dst.is_local(), &to_dir, &entry.name)?;
+                // A link goes over as a link (v1.34): following one to a folder
+                // risks a cycle, and its target is not part of the folder. Where
+                // the destination cannot hold one, or it cannot be read, it is
+                // left out and counted.
                 if entry.is_symlink {
-                    plan.skipped += 1;
+                    match (dst.takes_links(), src.read_link(&entry.path).await) {
+                        (true, Ok(target)) => plan.files.push(Planned {
+                            from: entry.path,
+                            to,
+                            size: 0,
+                            replace: item.replace,
+                            link: Some(target),
+                        }),
+                        _ => plan.skipped += 1,
+                    }
                     continue;
                 }
-                let to = child_path(dst.is_local(), &to_dir, &entry.name)?;
                 if entry.is_dir {
                     stack.push((entry.path, to));
                 } else {
@@ -409,6 +485,7 @@ async fn plan(spec: &Spec, src: &End, dst: &End, cancel: &AtomicBool) -> AppResu
                         to,
                         size: entry.size,
                         replace: item.replace,
+                        link: None,
                     });
                 }
             }
@@ -426,6 +503,9 @@ async fn move_file(
     cancel: &AtomicBool,
 ) -> AppResult<()> {
     let (from, to, replace, cancel) = (&file.from, &file.to, file.replace, Some(cancel));
+    if let Some(target) = &file.link {
+        return dst.make_link(target, to, replace).await;
+    }
     match (src, dst) {
         (End::Local, End::Remote(d)) => {
             sftp::upload_staged(report, d, from, to, replace, cancel).await
@@ -1074,13 +1154,14 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn links_are_left_out_and_counted() {
+    async fn links_go_over_as_links_and_a_link_up_the_tree_is_not_walked() {
         let tmp = tempfile::tempdir().unwrap();
         let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
         std::fs::create_dir_all(src.join("d")).unwrap();
         std::fs::create_dir_all(&dst).unwrap();
         std::fs::write(src.join("d/real"), b"r").unwrap();
-        std::os::unix::fs::symlink(src.join("d/real"), src.join("d/link")).unwrap();
+        // A relative link stays relative: it points where it pointed, next to it.
+        std::os::unix::fs::symlink("real", src.join("d/link")).unwrap();
         // A link back up the tree: following it would never end.
         std::os::unix::fs::symlink(&src, src.join("d/loop")).unwrap();
 
@@ -1093,10 +1174,53 @@ mod tests {
         );
         let done = local_job(&job, &AtomicBool::new(false), &Heard::default()).await;
         assert_eq!(done.state, State::Done, "{:?}", done.error);
-        assert_eq!(done.skipped, 2);
-        assert_eq!(done.file_count, 1);
-        assert!(dst.join("d/real").exists());
-        assert!(!dst.join("d/link").exists() && !dst.join("d/loop").exists());
+        assert_eq!(done.skipped, 0);
+        assert_eq!(done.file_count, 3);
+        assert_eq!(std::fs::read(dst.join("d/real")).unwrap(), b"r");
+        assert_eq!(
+            std::fs::read_link(dst.join("d/link")).unwrap(),
+            Path::new("real")
+        );
+        assert_eq!(std::fs::read(dst.join("d/link")).unwrap(), b"r");
+        // The loop is a link to the source again — not a copy of the whole tree.
+        assert_eq!(std::fs::read_link(dst.join("d/loop")).unwrap(), src);
+        assert!(std::fs::symlink_metadata(dst.join("d/loop"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_link_already_at_the_destination_is_replaced_only_when_told_to() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+        std::fs::create_dir_all(src.join("d")).unwrap();
+        std::fs::create_dir_all(dst.join("d")).unwrap();
+        std::os::unix::fs::symlink("new", src.join("d/link")).unwrap();
+        std::os::unix::fs::symlink("old", dst.join("d/link")).unwrap();
+        let job = |replace: bool| {
+            spec(
+                "j",
+                disk(),
+                disk(),
+                vec![item(&path(&src, "d"), &path(&dst, "d"), true, replace)],
+                &path(&dst, ""),
+            )
+        };
+        // Not told to: the folder itself is already there, nothing is touched.
+        let kept = local_job(&job(false), &AtomicBool::new(false), &Heard::default()).await;
+        assert_eq!(kept.failed, 1);
+        assert_eq!(
+            std::fs::read_link(dst.join("d/link")).unwrap(),
+            Path::new("old")
+        );
+        let done = local_job(&job(true), &AtomicBool::new(false), &Heard::default()).await;
+        assert_eq!(done.state, State::Done, "{:?}", done.error);
+        assert_eq!(
+            std::fs::read_link(dst.join("d/link")).unwrap(),
+            Path::new("new")
+        );
     }
 
     #[tokio::test]
@@ -1266,6 +1390,77 @@ mod live_sftp {
                 .len(),
             300 * 1024
         );
+
+        for dir in [&from, &to] {
+            let _ = sftp::remove(&a, dir, true).await;
+        }
+    }
+
+    /// A link inside a folder is made again on the other server as the same link
+    /// (v1.34) — the order OpenSSH reads `SSH_FXP_SYMLINK` in is what this checks
+    /// — and a new file there takes the source's permission bits.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn a_link_goes_over_as_a_link_and_a_new_file_keeps_its_mode() {
+        let (a, b) = (Arc::new(connect().await), Arc::new(connect().await));
+        let from = path_for("link-src").replace(".conf", "");
+        let to = path_for("link-dst").replace(".conf", "");
+        a.create_dir(from.clone()).await.expect("mkdir");
+        seed(&a, &format!("{from}/key"), b"secret\n").await;
+        a.set_metadata(format!("{from}/key"), sftp::chmod_attrs(0o100_600))
+            .await
+            .expect("chmod");
+        sftp::make_symlink(&a, "key", &format!("{from}/key.link"))
+            .await
+            .expect("a link on the source");
+        assert_eq!(
+            a.read_link(format!("{from}/key.link"))
+                .await
+                .expect("readlink"),
+            "key"
+        );
+
+        let job = Spec {
+            id: "j".into(),
+            src: remote("a", "web"),
+            dst: remote("b", "db"),
+            items: vec![Item {
+                from: from.clone(),
+                to: to.clone(),
+                is_dir: true,
+                replace: false,
+            }],
+            dest_dir: DIR.to_string(),
+        };
+        let done = carry_out(
+            JobView::start(&job),
+            &job,
+            &End::Remote(a.clone()),
+            &End::Remote(b.clone()),
+            &AtomicBool::new(false),
+            &|_, _| {},
+        )
+        .await;
+        assert_eq!(done.state, State::Done, "{:?}", done.error);
+        assert_eq!((done.file_count, done.skipped), (2, 0));
+        assert_eq!(
+            b.read_link(format!("{to}/key.link"))
+                .await
+                .expect("readlink"),
+            "key"
+        );
+        assert_eq!(
+            b.read(format!("{to}/key.link"))
+                .await
+                .expect("through the link"),
+            b"secret\n"
+        );
+        let mode = b
+            .metadata(format!("{to}/key"))
+            .await
+            .expect("stat")
+            .permissions;
+        assert_eq!(mode.map(|m| m & 0o777), Some(0o600));
 
         for dir in [&from, &to] {
             let _ = sftp::remove(&a, dir, true).await;

@@ -58,15 +58,21 @@ describe("LinkOpenDialog", () => {
     expect(screen.getByTestId("link-idn")).toBeInTheDocument();
   });
 
-  it("an http link can be copied but not opened", () => {
+  it("an http link opens too, and the question says it is not encrypted (v1.34)", () => {
     render(LinkOpenDialog);
     clickLink("http://localhost:8080/");
     flushSync();
-    expect(screen.getByTestId("link-http")).toBeInTheDocument();
-    expect(screen.getByText("Copy link?")).toBeInTheDocument();
-    expect(screen.queryByTestId("link-open")).toBeNull();
-    expect(screen.queryByTestId("link-silence")).toBeNull();
+    expect(screen.getByTestId("link-http")).toHaveTextContent("Not encrypted");
+    expect(screen.getByTestId("link-open")).toBeInTheDocument();
     expect(screen.getByTestId("link-copy")).toBeInTheDocument();
+    expect(screen.getByTestId("link-silence")).toBeInTheDocument();
+  });
+
+  it("an https link carries no such note", () => {
+    render(LinkOpenDialog);
+    clickLink("https://example.com/");
+    flushSync();
+    expect(screen.queryByTestId("link-http")).toBeNull();
   });
 
   it("a new question starts with the box unticked", async () => {

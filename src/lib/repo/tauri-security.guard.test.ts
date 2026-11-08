@@ -14,6 +14,10 @@ const cap = JSON.parse(
   readFileSync(join(ROOT, "src-tauri/capabilities/default.json"), "utf8"),
 );
 
+/** The opener's scope names web addresses only: `https://*` and `http://*`, nothing else. */
+export const webOnly = (urls: readonly (string | undefined)[]): boolean =>
+  urls.length > 0 && urls.every((u) => u === "https://*" || u === "http://*");
+
 describe("Tauri Content-Security-Policy", () => {
   const csp: string | null = conf.app?.security?.csp ?? null;
 
@@ -98,7 +102,7 @@ describe("capabilities are least-privilege", () => {
     expect(stringPerms.filter((p) => /allow-create/.test(p))).toEqual([]);
   });
 
-  it("restricts the opener to https URLs", () => {
+  it("restricts the opener to web URLs — https and http (ADR 0055), no file:, no other scheme", () => {
     const opener = perms.find(
       (p): p is { identifier: string; allow?: { url?: string }[] } =>
         typeof p === "object" &&
@@ -107,7 +111,11 @@ describe("capabilities are least-privilege", () => {
     );
     expect(opener, "opener:allow-open-url must be scoped").toBeTruthy();
     const urls = (opener!.allow ?? []).map((a) => a.url);
-    expect(urls.every((u) => u?.startsWith("https://"))).toBe(true);
+    expect(webOnly(urls)).toBe(true);
+    // Live violations: another scheme, an unscoped entry, a wildcard scheme.
+    expect(webOnly([...urls, "file://*"])).toBe(false);
+    expect(webOnly([...urls, undefined])).toBe(false);
+    expect(webOnly(["*"])).toBe(false);
   });
 });
 

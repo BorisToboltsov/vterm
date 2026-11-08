@@ -96,13 +96,12 @@ describe("a click on a terminal link", () => {
     expect(toastsState.list.map((x) => x.kind)).toEqual(["error"]);
   });
 
-  it("an http link is never opened, only copied", async () => {
-    settings.terminalLinks = "direct";
+  it("an http link opens as an https one does, and can be copied too (v1.34)", async () => {
+    settings.terminalLinks = "confirm";
     clickLink("http://localhost:8080/");
-    expect(currentLinkQuestion()?.target.openable).toBe(false);
-    answerLink("open", true);
-    expect(openUrl).not.toHaveBeenCalled();
-    expect(settings.terminalLinks).toBe("direct");
+    expect(currentLinkQuestion()?.target).toMatchObject({ openable: true, secure: false });
+    answerLink("open");
+    expect(openUrl).toHaveBeenCalledWith("http://localhost:8080/");
     clickLink("http://localhost:8080/");
     answerLink("copy");
     await flush();

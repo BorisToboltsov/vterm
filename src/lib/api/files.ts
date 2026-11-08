@@ -404,7 +404,7 @@ export interface TransferJob {
   error: string | null;
   /** Files and folders that did not make it. */
   failed: number;
-  /** Symbolic links and unreadable sub-folders left out. */
+  /** Unreadable sub-folders, and links the destination cannot hold (Windows) or the source would not read, left out (v1.34: links go over as links). */
   skipped: number;
 }
 

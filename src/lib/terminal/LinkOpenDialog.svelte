@@ -4,8 +4,8 @@
   // connect to — punycode for a non-Latin name — and the whole address with the
   // host standing out, so a trusted name put in the user part or a lookalike
   // letter is in plain sight. A link whose text names another site says so, and
-  // asks without offering "don't ask again". An http link is offered for copying
-  // only: the opener's capability lets the app open https and nothing else.
+  // asks without offering "don't ask again". An http link opens too (v1.34), and
+  // says it is not encrypted.
   import Modal from "../ui/Modal.svelte";
   import { addressParts } from "./termlink";
   import { answerLink, currentLinkQuestion } from "../stores/linkopen.svelte";
@@ -24,11 +24,7 @@
 
 <Modal
   open={!!ask}
-  title={ask?.shown
-    ? t("link.misleadTitle")
-    : ask && !ask.target.openable
-      ? t("link.copyTitle")
-      : t("link.title")}
+  title={ask?.shown ? t("link.misleadTitle") : t("link.title")}
   titleClass={ask?.shown ? "text-danger" : "text-accent"}
   width="w-[32rem]"
   onclose={() => answerLink("cancel")}
@@ -47,8 +43,8 @@
     {#if ask.target.idn}
       <p class="mt-1 text-xs text-warn" data-testid="link-idn">{t("link.idn")}</p>
     {/if}
-    {#if !ask.target.openable}
-      <p class="mt-1 text-xs text-warn" data-testid="link-http">{t("link.httpOnlyCopy")}</p>
+    {#if !ask.target.secure}
+      <p class="mt-1 text-xs text-warn" data-testid="link-http">{t("link.http")}</p>
     {/if}
     <div class="mb-1 mt-3 text-caption uppercase tracking-wider text-muted">{t("link.address")}</div>
     <p

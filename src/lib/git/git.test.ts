@@ -452,6 +452,11 @@ describe("commitDiffArgs", () => {
   it("shows a commit, and a merge against its first parent as its file list does", () => {
     expect(commitDiffArgs("h", false)).toEqual(["show", "--no-color", "--format=", "h"]);
     expect(commitDiffArgs("h", true)).toEqual(["diff", "--no-color", "h^1", "h"]);
+    // A merge against another parent (v1.34); a parent that is not one is the first.
+    expect(commitDiffArgs("h", true, 2)).toEqual(["diff", "--no-color", "h^2", "h"]);
+    expect(commitDiffArgs("h", true, 0)).toEqual(["diff", "--no-color", "h^1", "h"]);
+    expect(commitDiffArgs("h", true, 1.5)).toEqual(["diff", "--no-color", "h^1", "h"]);
+    expect(commitDiffArgs("h", false, 2)).toEqual(["show", "--no-color", "--format=", "h"]);
   });
 });
 
@@ -589,6 +594,8 @@ describe("commit details", () => {
 
   it("asks a merge for its diff against the first parent, by name", () => {
     expect(mergeFilesArgs("abc123")).toEqual(["diff", "-z", "--no-color", "--raw", "--numstat", "abc123^1", "abc123"]);
+    expect(mergeFilesArgs("abc123", 2)).toEqual(["diff", "-z", "--no-color", "--raw", "--numstat", "abc123^2", "abc123"]);
+    expect(mergeFileDiffArgs("abc123", "a.ts", 2)).toEqual(["diff", "--no-color", "abc123^2", "abc123", "--", "a.ts"]);
     expect(mergeFileDiffArgs("abc123", "src/a b.ts")).toEqual([
       "diff",
       "--no-color",

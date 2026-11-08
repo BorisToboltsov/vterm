@@ -174,6 +174,9 @@
   let selected = $state<string | null>(null);
   // What the query added to the selected commit; null until it answers.
   let detail = $state<CommitDetail | null>(null);
+  // Which parent a merge's files are told against (v1.34): the first — what came
+  // into the branch — unless the user picked another. A new commit starts at 1.
+  let mergeParent = $state(1);
   let loadingDetail = $state(false);
   let detailFailed = $state(false);
   // Directories of the selected commit's file tree the user folded.
@@ -235,14 +238,37 @@
   }
 
   /** The answer for `hash`, or null when it is not one. A merge takes a second call. */
-  async function readDetail(commit: GitCommit): Promise<CommitDetail | null> {
+  async function readDetail(commit: GitCommit, parent: number): Promise<CommitDetail | null> {
     const res = await runQuery(commitDetailArgs(commit.hash));
     const parsed = res.exitCode === 0 ? parseCommitDetail(res.stdout) : null;
     if (!parsed || commit.parents.length < 2) return parsed;
     // `git show` lists nothing for a clean merge: its files are its diff
-    // against the first parent, and the pane says that is what they are.
-    const diff = await runQuery(mergeFilesArgs(commit.hash));
+    // against a parent, and the pane says which one.
+    const diff = await runQuery(mergeFilesArgs(commit.hash, parent));
     return diff.exitCode === 0 ? { ...parsed, files: parseRawNumstatZ(diff.stdout) } : null;
+  }
+
+  /** Tell the open merge's files against another of its parents. */
+  async function pickParent(parent: number) {
+    const hash = selected;
+    const commit = rows.find((r) => r.commit.hash === hash)?.commit;
+    if (!hash || !commit || commit.parents.length < 2 || parent === mergeParent) return;
+    mergeParent = parent;
+    loadingDetail = true;
+    detailFailed = false;
+    let answer: CommitDetail | null;
+    try {
+      const diff = await runQuery(mergeFilesArgs(hash, parent));
+      answer = diff.exitCode === 0 && detail ? { ...detail, files: parseRawNumstatZ(diff.stdout) } : null;
+    } catch {
+      answer = null;
+    }
+    // Another commit or another parent was picked meanwhile: that answer wins.
+    if (selected !== hash || mergeParent !== parent) return;
+    closedDirs = new Set();
+    detail = answer;
+    detailFailed = answer === null;
+    loadingDetail = false;
   }
 
   /** A click on a row: another commit opens; the one open closes where it can close. */
@@ -260,6 +286,7 @@
     if (!commit) return;
     selected = hash;
     detail = null;
+    mergeParent = 1;
     contained = null;
     detailFailed = false;
     closedDirs = new Set();
@@ -267,7 +294,7 @@
     void readContained(hash);
     let answer: CommitDetail | null;
     try {
-      answer = await readDetail(commit);
+      answer = await readDetail(commit, 1);
     } catch {
       answer = null;
     }
@@ -299,7 +326,7 @@
   }
 
   async function showCommitDiff(commit: GitCommit) {
-    const res = await runQuery(commitDiffArgs(commit.hash, commit.parents.length > 1));
+    const res = await runQuery(commitDiffArgs(commit.hash, commit.parents.length > 1, mergeParent));
     openDiff(`${commit.short} · ${commit.subject}`, parseDiff(res.stdout));
   }
 
@@ -320,7 +347,7 @@
   async function showFile(commit: GitCommit, file: CommitFile) {
     const args =
       commit.parents.length > 1
-        ? mergeFileDiffArgs(commit.hash, file.path)
+        ? mergeFileDiffArgs(commit.hash, file.path, mergeParent)
         : showFileArgs(commit.hash, file.path);
     const res = await runQuery(args);
     openDiff(file.path, parseDiff(res.stdout));
@@ -562,6 +589,8 @@
         loading={loadingDetail}
         failed={detailFailed}
         closed={closedDirs}
+        parent={mergeParent}
+        onparent={(n) => void pickParent(n)}
         known={(hash) => rows.some((r) => r.commit.hash === hash)}
         color={rows.find((r) => r.commit.hash === commit.hash)?.color ?? 0}
         {fill}

@@ -1,6 +1,14 @@
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+
+// Which key paths exist on "this computer".
+const onDisk = vi.hoisted(() => new Set<string>(["/Users/boris/.ssh/id_ed25519", "~/.ssh/id_ed25519"]));
+vi.mock("../api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../api")>()),
+  keyPathExists: vi.fn(async (path: string) => onDisk.has(path)),
+}));
+
 import BackupImportDialog from "./BackupImportDialog.svelte";
 import type { BackupContents } from "../api/servers";
 import type { ServerProfile } from "../types";
@@ -96,6 +104,43 @@ describe("BackupImportDialog", () => {
     await userEvent.click(screen.getByTestId("backup-take-settings"));
     expect(screen.getByTestId("backup-nothing")).toHaveTextContent("Choose what to import.");
     expect(screen.getByTestId("backup-import-confirm")).toBeDisabled();
+  });
+
+  it("skips a server that is here under another login — and adds it when told to (v1.34)", async () => {
+    const onimport = vi.fn();
+    const theirs = contents({ servers: [server("t", { host: "a.example.net", username: "deploy" }), server("b")] });
+    render(BackupImportDialog, { props: { open: true, contents: theirs, current: [server("a")], onimport } });
+    const skip = screen.getByTestId("backup-skip-same-host");
+    expect(skip).toBeChecked();
+    expect(screen.getByTestId("backup-plan")).toHaveTextContent("Will be added: 1; already here: 1.");
+    await userEvent.click(skip);
+    expect(screen.getByTestId("backup-plan")).toHaveTextContent("Will be added: 2; already here: 0.");
+    await userEvent.click(screen.getByTestId("backup-import-confirm"));
+    expect(onimport.mock.calls[0][0].catalog.servers.map((s: ServerProfile) => s.id)).toEqual(["a", "t", "b"]);
+  });
+
+  it("puts the added servers into a folder of their own when asked, named by the day", async () => {
+    const onimport = vi.fn();
+    render(BackupImportDialog, { props: { open: true, contents: contents(), current: [], onimport } });
+    expect(screen.queryByTestId("backup-folder-name")).toBeNull();
+    await userEvent.click(screen.getByTestId("backup-into-folder"));
+    const name = screen.getByTestId<HTMLInputElement>("backup-folder-name");
+    expect(name.value).toMatch(/^From backup \d{4}-\d{2}-\d{2}$/);
+    await userEvent.clear(name);
+    await userEvent.type(name, "Theirs");
+    await userEvent.click(screen.getByTestId("backup-import-confirm"));
+    const { catalog } = onimport.mock.calls[0][0];
+    expect(catalog.servers.map((s: ServerProfile) => s.group)).toEqual(["Theirs", "Theirs"]);
+    expect(catalog.folders).toEqual(["Theirs", "Theirs/Prod"]);
+  });
+
+  it("names a key path that is not on this computer — and stops once it is replaced with one that is", async () => {
+    render(BackupImportDialog, {
+      props: { open: true, contents: contents({ servers: [server("a", { keyPath: "/home/them/.ssh/id" })] }), current: [] },
+    });
+    expect(await screen.findByTestId("backup-key-missing")).toHaveTextContent("no such file on this computer");
+    await userEvent.type(screen.getByRole("textbox", { name: /\/home\/them\/\.ssh\/id/ }), "~/.ssh/id_ed25519");
+    await vi.waitFor(() => expect(screen.queryByTestId("backup-key-missing")).toBeNull());
   });
 
   it("a backup with nothing in it says so and offers no import", () => {

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { keyPathRows, loginRows, planImport, remapServers } from "./backupimport";
+import {
+  effectiveKeyPaths,
+  folderName,
+  importFolderDate,
+  keyPathRows,
+  loginRows,
+  planImport,
+  remapServers,
+} from "./backupimport";
 import type { ServerProfile, ServerProxy } from "../types";
 
 const server = (id: string, over: Partial<ServerProfile> = {}): ServerProfile => ({
@@ -121,17 +129,58 @@ describe("planImport", () => {
     expect(plan).toMatchObject({ added: 1, skipped: 0, removed: 2 });
   });
 
-  it("adding keeps every current server and skips the ones already here", () => {
-    const incoming = [
-      server("m2"), // the same id
-      server("x", { host: " DB.example.net ", username: "ivan" }), // the same place and login
-      server("y", { host: "db.example.net", username: "root" }), // another login: a server of its own
-      server("z", { host: "db.example.net", username: "ivan", port: 2222 }), // another port
-    ];
+  const incoming = [
+    server("m2"), // the same id
+    server("x", { host: " DB.example.net ", username: "ivan" }), // the same place and login
+    server("y", { host: "db.example.net", username: "root" }), // the same place, another login
+    server("z", { host: "db.example.net", username: "ivan", port: 2222 }), // another port
+  ];
+
+  it("adding keeps every current server and skips the ones already here — under another login too (v1.34)", () => {
     const plan = planImport("merge", mine, ["Mine", "Shared"], incoming, ["Shared", "Theirs"]);
-    expect(plan.catalog.servers.map((s) => s.id)).toEqual(["m1", "m2", "y", "z"]);
+    expect(plan.catalog.servers.map((s) => s.id)).toEqual(["m1", "m2", "z"]);
     expect(plan.catalog.folders).toEqual(["Mine", "Shared", "Theirs"]);
-    expect(plan).toMatchObject({ added: 2, skipped: 2, removed: 0 });
+    expect(plan).toMatchObject({ added: 1, skipped: 3, sameHost: 1, removed: 0 });
+  });
+
+  it("…unless asked to add those as servers of their own", () => {
+    const plan = planImport("merge", mine, ["Mine"], incoming, [], { skipSameHost: false });
+    expect(plan.catalog.servers.map((s) => s.id)).toEqual(["m1", "m2", "y", "z"]);
+    expect(plan).toMatchObject({ added: 2, skipped: 2, sameHost: 1 });
+  });
+
+  it("puts the added servers into a folder of their own, their folders under it", () => {
+    const backup = [server("p", { group: "Prod/db" }), server("q", { group: null }), server("m1")];
+    const plan = planImport("merge", mine, ["Mine"], backup, ["Prod", "Prod/db"], { into: " From backup / 2026-11-08 / " });
+    expect(plan.catalog.servers.map((s) => [s.id, s.group])).toEqual([
+      ["m1", mine[0].group],
+      ["m2", mine[1].group],
+      ["p", "From backup/2026-11-08/Prod/db"],
+      ["q", "From backup/2026-11-08"],
+    ]);
+    expect(plan.catalog.folders).toEqual([
+      "From backup/2026-11-08",
+      "From backup/2026-11-08/Prod",
+      "From backup/2026-11-08/Prod/db",
+      "Mine",
+    ]);
+    // A name that names nothing puts them where the backup had them.
+    expect(planImport("merge", [], [], backup, ["Prod"], { into: " / " }).catalog.servers[0].group).toBe("Prod/db");
+    // Replacing puts nothing anywhere: the backup is the catalog.
+    expect(planImport("replace", mine, [], backup, ["Prod"], { into: "X" }).catalog.servers[0].group).toBe("Prod/db");
+  });
+
+  it("names a folder as a path and a day as the date", () => {
+    expect(folderName("  a // b /")).toBe("a/b");
+    expect(folderName("   ")).toBeNull();
+    expect(importFolderDate(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+
+  it("a key path is checked as it will be written: its replacement, or itself", () => {
+    const rows = keyPathRows([server("a", { keyPath: "/home/them/.ssh/id" }), server("b", { keyPath: "~/.ssh/work" })]);
+    const paths = effectiveKeyPaths(rows, { "/home/them/.ssh/id": " ~/.ssh/id_ed25519 " });
+    expect(paths.get("/home/them/.ssh/id")).toBe("~/.ssh/id_ed25519");
+    expect(paths.get("~/.ssh/work")).toBe("~/.ssh/work");
   });
 
   it("adding to an empty catalog is the backup itself", () => {
