@@ -94,3 +94,27 @@ export function linesText(lines: readonly LogLine[], withStamps: boolean): strin
 export function sanitizeTail(v: unknown): LogTailSize {
   return (LOG_TAILS as readonly number[]).includes(v as number) ? (v as LogTailSize) : LOG_TAILS[0];
 }
+
+/**
+ * How a log in the details is being read (v1.34): followed or held, how many
+ * lines, narrowed to what, and where it was scrolled to. The details are rebuilt
+ * when the panel crosses its width threshold (the pane beside the list and the
+ * dialog are two instances) and when its terminal tab comes back on screen, so
+ * the panel keeps this per session (`stores/dockstate`) and the log reads on as
+ * it was, instead of starting over at the bottom of 200 lines.
+ */
+export interface LogView {
+  live: boolean;
+  tail: LogTailSize;
+  query: string;
+  level: LogLevelFilter;
+  stamps: boolean;
+  wrap: boolean;
+  /** Scrolled up to this offset, px; null — at the bottom, following the end. */
+  top: number | null;
+}
+
+/** A log as it is first shown: followed, the last 200 lines, nothing narrowed, at the bottom. */
+export function freshLogView(): LogView {
+  return { live: true, tail: LOG_TAILS[0], query: "", level: "all", stamps: true, wrap: true, top: null };
+}

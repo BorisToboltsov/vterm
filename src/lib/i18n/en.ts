@@ -2248,6 +2248,8 @@ export const en = {
   "search.searching": "Searching…",
   "search.summary": "Matches: {matches} · files: {files}",
   "search.truncated": "Only the first {limit} are shown — narrow the search to see the rest.",
+  "search.truncatedMore": "Only the first {limit} are shown.",
+  "search.more": "Show more",
   "search.partial": "Some files could not be read — the result may be incomplete.",
   "search.failed": "The search did not run: the expression is malformed, the host has no grep, or the folder is gone.",
   "search.copied": "Copied match with surrounding lines",

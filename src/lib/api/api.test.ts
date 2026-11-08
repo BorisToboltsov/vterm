@@ -226,13 +226,17 @@ describe("invoke wrappers pass the right command + args", () => {
       actions,
     });
     await api.sftpGrep("sess", "/srv", "TODO", true, false);
+    // Without a limit: one page, which the backend reads from `null`.
     expect(invoke).toHaveBeenCalledWith("sftp_grep", {
       sessionId: "sess",
       dir: "/srv",
       query: "TODO",
       caseInsensitive: true,
       fixed: false,
+      limit: null,
     });
+    await api.sftpGrep("sess", "/srv", "TODO", true, false, 3000);
+    expect(invoke).toHaveBeenCalledWith("sftp_grep", expect.objectContaining({ limit: 3000 }));
     await api.lintRemote("sess", "key: val\n", "yaml");
     expect(invoke).toHaveBeenCalledWith("lint_remote", {
       sessionId: "sess",

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GrepOutcome } from "../sync/sync";
@@ -21,6 +21,7 @@ vi.mock("@tauri-apps/api/webview", () => ({
 import SftpPanel from "./SftpPanel.svelte";
 import { applyProgress, clearTransfers } from "../stores/transfers.svelte";
 import { panelSplits, resetPanelShares } from "../stores/panelsplit.svelte";
+import { resetDockState } from "../stores/dockstate.svelte";
 
 const FOUND: GrepOutcome = {
   matches: [
@@ -65,6 +66,8 @@ const transfer = (id: string, name: string) =>
   applyProgress({ id, name, direction: "upload", transferred: 10, total: 100, done: false });
 
 beforeEach(() => {
+  // Every test is session s1, and a session's search outlives its panel (v1.34).
+  resetDockState();
   resetPanelShares();
   sftpGrep.mockReset().mockResolvedValue(FOUND);
   onOpenFile.mockReset();
@@ -113,6 +116,38 @@ describe("the content search", () => {
     await openSearch();
     await search("upstream");
     expect(screen.getByTestId("grep-truncated").textContent).toContain("first 1000");
+  });
+
+  it("asks the same search again for another page — not what the field says now (v1.34)", async () => {
+    sftpGrep.mockResolvedValue({ ...FOUND, truncated: true });
+    await connected();
+    await openSearch();
+    await search("upstream");
+    expect(sftpGrep).toHaveBeenLastCalledWith("s1", "/etc/nginx", "upstream", true, true, 1000);
+    // The field is edited after the search ran: «show more» asks what is on screen.
+    await fireEvent.input(screen.getByTestId("sftp-search-input"), { target: { value: "else" } });
+    await userEvent.click(screen.getByTestId("grep-more"));
+    expect(sftpGrep).toHaveBeenLastCalledWith("s1", "/etc/nginx", "upstream", true, true, 2000);
+    await waitFor(() => expect(screen.getByTestId("grep-truncated").textContent).toContain("first 2000"));
+    // An answer that is all there is has nothing more to show.
+    sftpGrep.mockResolvedValue(FOUND);
+    await userEvent.click(screen.getByTestId("grep-more"));
+    await waitFor(() => expect(screen.queryByTestId("grep-truncated")).toBeNull());
+    expect(screen.queryByTestId("grep-more")).toBeNull();
+  });
+
+  it("a terminal-tab switch rebuilds the panel: the search comes back with its results (v1.34)", async () => {
+    await connected();
+    await openSearch();
+    await search("upstream");
+    const before = screen.getByTestId("grep-results").textContent;
+    cleanup();
+    sftpGrep.mockClear();
+    await connected();
+    expect(screen.getByTestId<HTMLInputElement>("sftp-search-input").value).toBe("upstream");
+    expect(screen.getByTestId("grep-results").textContent).toBe(before);
+    // Shown again, not asked again.
+    expect(sftpGrep).not.toHaveBeenCalled();
   });
 
   it("a search that did not run is an error — never 'no matches'", async () => {

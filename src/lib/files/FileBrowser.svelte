@@ -22,7 +22,8 @@
     pasteTargetName,
     type FileBrowserAdapter,
   } from "./filebrowser";
-  import { GREP_LIMIT, type GrepMatch, type GrepOutcome } from "../sync/sync";
+  import { GREP_LIMIT, type GrepMatch } from "../sync/sync";
+  import { moreLimit } from "./grepview";
   import GrepResults from "./GrepResults.svelte";
   import SidePane from "../ui/SidePane.svelte";
   import PanelDivider from "../ui/PanelDivider.svelte";
@@ -64,6 +65,8 @@
   import {
     dirRevision,
     dockState,
+    fileSearch,
+    type FileSearchState,
     listFilter,
     setListFilter,
     pendingFilesDir,
@@ -316,29 +319,37 @@
   let renameName = $state("");
 
   // Content search (grep), SFTP only — gated by the adapter exposing `search`.
-  let showSearch = $state(false);
-  let searchQuery = $state("");
-  let searchOutcome = $state<GrepOutcome | null>(null);
-  // What the results on screen were searched for: the field may have been
-  // edited since, and the marks in the lines belong to the search that ran.
-  let searched = $state({ query: "", caseSensitive: false, regex: false });
+  // The question and the answer on screen are the session's (v1.34, `dockstate`):
+  // a terminal-tab switch rebuilds the panel, and a search that took a minute
+  // was gone with it. Without a session the panel keeps its own.
+  const ownSearch = $state<FileSearchState>({
+    open: false,
+    query: "",
+    caseSensitive: false,
+    regex: false,
+    outcome: null,
+    searched: { query: "", caseSensitive: false, regex: false, dir: "", limit: 0 },
+  });
+  const search = untrack(() => (sessionKey ? fileSearch(sessionKey) : ownSearch));
   let searching = $state(false);
-  let caseSensitive = $state(false);
-  let useRegex = $state(false);
 
-  async function runSearch() {
-    const q = searchQuery.trim();
-    if (!q || !adapter.search) return;
+  /** Ask `grep`: the field as typed (a new search), or the search on screen again with a higher `limit` («show more»). */
+  async function runSearch(limit?: number) {
+    if (!adapter.search) return;
+    const asked =
+      limit === undefined
+        ? { query: search.query.trim(), caseSensitive: search.caseSensitive, regex: search.regex, dir: cwd || ".", limit: GREP_LIMIT }
+        : { ...search.searched, limit };
+    if (!asked.query) return;
     searching = true;
-    const asked = { query: q, caseSensitive, regex: useRegex };
     try {
-      searchOutcome = await adapter.search(cwd || ".", q, !caseSensitive, !useRegex);
+      search.outcome = await adapter.search(asked.dir, asked.query, !asked.caseSensitive, !asked.regex, asked.limit);
     } catch (e) {
       notifyError(String(e));
       // The call itself failed: that is a search that did not run.
-      searchOutcome = { matches: [], truncated: false, failed: true };
+      search.outcome = { matches: [], truncated: false, failed: true };
     } finally {
-      searched = asked;
+      search.searched = asked;
       searching = false;
     }
   }
@@ -351,12 +362,13 @@
   let wide = $state(false);
   let rowWidth = $state(0);
   const beside = $derived(wide && fitsBeside(rowWidth));
-  const searchOpen = $derived(showSearch && !!adapter.search);
+  const searchOpen = $derived(search.open && !!adapter.search);
   const sideOpen = $derived(beside && (searchOpen || footerCount > 0));
 
   function openMatch(m: GrepMatch) {
     const name = m.path.split("/").pop() ?? m.path;
-    onOpenFile?.(joinPath(cwd, m.path), name, m.line);
+    // From the folder the search ran in: the panel may have moved on since.
+    onOpenFile?.(joinPath(search.searched.dir || cwd, m.path), name, m.line);
   }
 
   /** Open the transport and list the starting directory (SFTP connect button). */
@@ -758,7 +770,7 @@
         selection = clickSelect(selection, cursorEntry.path, { toggle: true, range: false }, order);
       }
     } else if (e.key === "Escape") {
-      if (showSearch) showSearch = false;
+      if (search.open) search.open = false;
       else if (selection.selected.size) selection = emptySelection();
     } else if (mod && chordLetter(e) === "a") {
       e.preventDefault();
@@ -1128,7 +1140,7 @@
       class="flex gap-1"
       onsubmit={(e) => {
         e.preventDefault();
-        runSearch();
+        void runSearch();
       }}
     >
       <!-- eslint-disable-next-line vterm/filter-field -- a search of the files' contents (grep on the host), not a filter of the listing -->
@@ -1136,7 +1148,7 @@
         class="w-full rounded border border-edge bg-panel px-2 py-1 text-xs text-text outline-none focus:border-accent"
         placeholder={t("search.contentPlaceholder")}
         data-testid="{testPrefix}-search-input"
-        bind:value={searchQuery}
+        bind:value={search.query}
       />
       <button
         class="shrink-0 rounded bg-accent px-2 py-1 text-xs text-panel-alt"
@@ -1147,24 +1159,27 @@
     </form>
     <div class="mt-1 flex gap-3 text-meta text-muted">
       <label class="flex items-center gap-1">
-        <input type="checkbox" bind:checked={caseSensitive} />
+        <input type="checkbox" bind:checked={search.caseSensitive} />
         {t("search.caseSensitive")}
       </label>
       <label class="flex items-center gap-1">
-        <input type="checkbox" bind:checked={useRegex} />
+        <input type="checkbox" bind:checked={search.regex} />
         {t("search.regex")}
       </label>
     </div>
-    {#if searchOutcome}
+    {#if search.outcome}
+      {@const more = moreLimit(search.outcome, search.searched.limit)}
       <div class="mt-1 flex flex-col {fill ? 'min-h-0 flex-1' : ''}">
         <GrepResults
-          outcome={searchOutcome}
-          query={searched.query}
-          caseSensitive={searched.caseSensitive}
-          regex={searched.regex}
-          limit={GREP_LIMIT}
+          outcome={search.outcome}
+          query={search.searched.query}
+          caseSensitive={search.searched.caseSensitive}
+          regex={search.searched.regex}
+          limit={Math.max(search.searched.limit, GREP_LIMIT)}
           {fill}
           onopen={openMatch}
+          onmore={more === null ? undefined : () => void runSearch(more)}
+          moreBusy={searching}
         />
       </div>
     {/if}
@@ -1281,7 +1296,7 @@
                 data-row-key="search"
                 use:tooltip={t("search.contentSearch")}
                 aria-label={t("search.contentSearch")}
-                onclick={() => (showSearch = !showSearch)}
+                onclick={() => (search.open = !search.open)}
               >
                 <Icon name="search" size={14} />
               </button>
@@ -1806,7 +1821,7 @@
               <div class="min-h-0 flex-1">
                 <SidePane
                   title={t("search.contentSearch")}
-                  onclose={() => (showSearch = false)}
+                  onclose={() => (search.open = false)}
                   testid="{testPrefix}-side-search"
                 >
                   {@render searchBox(true)}

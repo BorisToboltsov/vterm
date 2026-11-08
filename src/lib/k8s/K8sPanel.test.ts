@@ -372,6 +372,40 @@ describe("K8sPanel — where a pod's details open", () => {
     expect(within(again).queryByTestId("k8s-detail-overview")).toBeNull();
   });
 
+  it("…and the log reads on as it was: its filter survives the threshold (v1.34)", async () => {
+    await mountWithPod("k-log-cross");
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    const side = screen.getByTestId("k8s-side");
+    await fireEvent.input(within(side).getByRole("textbox", { name: "Filter lines" }), { target: { value: "ready" } });
+    await fireEvent.click(within(side).getByTestId("k8s-log-live"));
+    resize(400);
+    await waitFor(() => expect(screen.queryByTestId("k8s-side")).toBeNull());
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole<HTMLInputElement>("textbox", { name: "Filter lines" }).value).toBe("ready");
+    expect(within(dialog).getByTestId("k8s-log-live")).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("a terminal-tab switch rebuilds the panel: the pod's details come back on their view (v1.34)", async () => {
+    answer = (args) =>
+      args.includes("pods") && args.includes("get")
+        ? { stdout: JSON.stringify({ items: [POD] }), stderr: "", exitCode: 0 }
+        : undefined;
+    const first = render(K8sPanel, { props: { sessionId: "k-back", visible: true, sessionReady: true } });
+    await idle();
+    resize(1200);
+    await fireEvent.click(screen.getByRole("button", { name: "View details" }));
+    await fireEvent.click(within(screen.getByTestId("k8s-side")).getByTestId("k8s-detail-tab-describe"));
+    first.unmount();
+
+    render(K8sPanel, { props: { sessionId: "k-back", visible: true, sessionReady: true } });
+    await idle();
+    resize(1200);
+    const again = await screen.findByTestId("k8s-side");
+    expect(within(again).getByTestId("k8s-detail-tab-describe").className).toContain("text-accent");
+    expect(screen.getByTestId("k8s-row")).toHaveAttribute("aria-current", "true");
+  });
+
   it("details opened anew start from the log", async () => {
     await mountWithPod("k-anew");
     resize(1200);

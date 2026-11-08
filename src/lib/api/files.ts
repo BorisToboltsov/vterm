@@ -269,8 +269,10 @@ export function sftpGrep(
   query: string,
   caseInsensitive: boolean,
   fixed: boolean,
+  /** How many matches to return; absent — one page (`GREP_LIMIT`). The backend holds it within `GREP_MAX`. */
+  limit?: number,
 ): Promise<GrepOutcome> {
-  return invoke<GrepOutcome>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed });
+  return invoke<GrepOutcome>("sftp_grep", { sessionId, dir, query, caseInsensitive, fixed, limit: limit ?? null });
 }
 
 /**

@@ -8,10 +8,11 @@
   // The content only (v1.7): `K8sDetailModal` shows it as a dialog, a wide panel
   // puts it into a `SidePane` beside the list. It owns no dialog itself — it
   // stands inside the panel's query container (`panelcontainer.guard`).
+  import { untrack } from "svelte";
   import Icon from "../ui/Icon.svelte";
   import CopyButton from "../ui/CopyButton.svelte";
   import LogTail from "../ui/LogTail.svelte";
-  import type { LogTailSize } from "../ui/loglines";
+  import { freshLogView, type LogView } from "../ui/loglines";
   import { tooltip } from "../actions/tooltip";
   import { REDACTED } from "../ai/redact";
   import { compactAge } from "../ui/age";
@@ -67,6 +68,7 @@
     closeOnAsk = false,
     tab = $bindable("logs"),
     container = $bindable(null),
+    log = undefined,
     run,
     runQuery,
     openShell,
@@ -101,6 +103,8 @@
      */
     tab?: K8sDetailTab;
     container?: string | null;
+    /** How the log is read, kept by the panel (v1.34) — across the width threshold and a terminal-tab switch. */
+    log?: LogView;
     run: (
       bareArgs: string[],
       namespace: string,
@@ -175,9 +179,10 @@
   let describeText = $state("");
   let yamlText = $state("");
   // How the log is read — followed or held, how many lines — kept across pods:
-  // picking the next row is reading the next log the same way.
-  let following = $state(true);
-  let tail = $state<LogTailSize>(200);
+  // picking the next row is reading the next log the same way. The panel keeps it
+  // (v1.34); without it the details keep their own.
+  const ownLog = $state(freshLogView());
+  const lv = $derived(log ?? ownLog);
   // Secrets in the environment stay masked until asked for, per pod.
   let showSecrets = $state(false);
   // The open pod's events (stage 2), asked by its uid while «Overview» is on
@@ -274,6 +279,9 @@
     if (switched) {
       showSecrets = false;
       labelsOpen = false;
+      // Another pod's log starts at its end; the one these details were rebuilt
+      // on goes back to where it was read.
+      untrack(() => (lv.top = null));
     }
     if (!p) return;
     const first = p.containers.length > 1 ? p.containers[0] : null;
@@ -332,10 +340,10 @@
   $effect(() => {
     const p = target;
     const c = container; // refetch when the container selection changes
-    const lines = tail;
+    const lines = lv.tail;
     if (!active || tab !== "logs" || !p) return;
     void fetchLogs(p.name, p.namespace, c, lines);
-    if (!following) return;
+    if (!lv.live) return;
     const id = setInterval(() => void fetchLogs(p.name, p.namespace, c, lines), Math.max(1, refreshSec) * 1000);
     return () => clearInterval(id);
   });
@@ -745,12 +753,13 @@
   {:else if tab === "logs"}
     <LogTail
       text={logsText}
-      bind:live={following}
-      bind:tail
+      bind:live={lv.live}
+      bind:tail={lv.tail}
+      view={lv}
       {fill}
       empty={t("k8s.noLogs")}
       testid="k8s"
-      onterminal={onFollowLogs ? () => onFollowLogs?.(p, container, tail) : undefined}
+      onterminal={onFollowLogs ? () => onFollowLogs?.(p, container, lv.tail) : undefined}
     >
       {#if p.containers.length > 1}
         <label class="flex shrink-0 items-center gap-1 text-meta text-muted">

@@ -48,7 +48,7 @@ export interface GrepMatch {
 
 /** What a content search came back with (mirrors sync.rs `GrepOutcome`). */
 export interface GrepOutcome {
-  /** At most `GREP_LIMIT` matches. */
+  /** At most as many matches as were asked for (`GREP_LIMIT` by default). */
   matches: GrepMatch[];
   /** More lines matched than are returned. */
   truncated: boolean;
@@ -59,8 +59,11 @@ export interface GrepOutcome {
   failed: boolean;
 }
 
-/** The most matches a search returns (`GREP_LIMIT` in sync.rs). */
+/** The most matches a search returns (`GREP_LIMIT` in sync.rs) — and what «show more» adds (v1.34). */
 export const GREP_LIMIT = 1000;
+
+/** The most «show more» goes to (`GREP_MAX` in sync.rs): past it the search has to be narrowed. */
+export const GREP_MAX = 10_000;
 
 /** Translate a single glob (`*`, `?`) into an anchored regex (no `/` crossing). */
 function globToRegex(glob: string): RegExp {
