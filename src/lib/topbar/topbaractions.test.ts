@@ -23,6 +23,11 @@ import {
   topbarSlot,
   utilAction,
   withPinned,
+  actionCommand,
+  commandAction,
+  isPinnableCommand,
+  sanitizePinnedCommands,
+  withPinnedAt,
   withUnpinned,
   type SlotBox,
   type TopbarId,
@@ -131,10 +136,31 @@ describe("pinning and unpinning", () => {
   it("a new button stands just before Settings when Settings closes the bar", () => {
     expect(withPinned(["record", "settings"], "util:cidr")).toEqual(["record", "util:cidr", "settings"]);
     expect(withPinned(["settings"], "record")).toEqual(["record", "settings"]);
+    // REC and broadcast go where they are shown while on: after the nearest
+    // button that precedes them on the default bar.
+    expect(withPinned(["monitoring", "utilities", "settings"], "record")).toEqual([
+      "monitoring",
+      "record",
+      "utilities",
+      "settings",
+    ]);
+    expect(withPinned(["monitoring", "settings"], "broadcast")).toEqual(["broadcast", "monitoring", "settings"]);
   });
 
   it("…and at the end when the user moved Settings elsewhere", () => {
     expect(withPinned(["settings", "record"], "util:cidr")).toEqual(["settings", "record", "util:cidr"]);
+  });
+
+  it("a button dragged in lands before the one at the index, clamped to the bar (v1.35)", () => {
+    const list: TopbarId[] = ["monitoring", "utilities", "settings"];
+    expect(withPinnedAt(list, "util:cidr", 1)).toEqual(["monitoring", "util:cidr", "utilities", "settings"]);
+    expect(withPinnedAt(list, "util:cidr", -3)).toEqual(["util:cidr", ...list]);
+    expect(withPinnedAt(list, "util:cidr", 99)).toEqual([...list, "util:cidr"]);
+    expect(withPinnedAt(list, "monitoring", 0)).toEqual(list);
+    expect(withPinnedAt(list, "util:nope", 0)).toEqual(list);
+    expect(withPinnedAt(list, "util:cidr", Number.NaN)).toEqual(list);
+    // While it is held, the bar draws it in its slot as if pinned.
+    expect(previewTopbar(list, "util:cidr", 2)).toEqual(["monitoring", "utilities", "util:cidr", "settings"]);
   });
 
   it("pinning what is on the bar, or is not a button, changes nothing", () => {
@@ -233,11 +259,32 @@ describe("what the bar shows", () => {
   it("REC taken off the bar comes back while a recording is running — and goes when it stops", () => {
     const bar: TopbarId[] = ["monitoring", "settings"];
     expect(ids(shownTopbar(bar, QUIET))).toEqual(["monitoring", "settings"]);
+    // Where REC stands on the default bar: after monitoring.
     expect(shownTopbar(bar, { ...QUIET, recording: true })).toEqual([
-      { id: "record", pinned: false },
       { id: "monitoring", pinned: true },
+      { id: "record", pinned: false },
       { id: "settings", pinned: true },
     ]);
+  });
+
+  it("an indicator stands after the nearest button that precedes it on the default bar", () => {
+    const run = { ...QUIET, recording: true };
+    // A bar the user reordered: REC follows monitoring wherever monitoring went.
+    expect(ids(shownTopbar(["settings", "monitoring", "utilities"], run))).toEqual([
+      "settings",
+      "monitoring",
+      "record",
+      "utilities",
+    ]);
+    // Notes come before REC on the default bar — but not while hidden.
+    expect(ids(shownTopbar(["notes", "util:cidr", "settings"], run))).toEqual(["notes", "record", "util:cidr", "settings"]);
+    expect(ids(shownTopbar(["notes", "util:cidr", "settings"], { ...run, showNotes: false }))).toEqual([
+      "record",
+      "util:cidr",
+      "settings",
+    ]);
+    // Nothing that precedes it is on the bar: at the start, as before.
+    expect(ids(shownTopbar(["utilities", "settings"], run))).toEqual(["record", "utilities", "settings"]);
   });
 
   it("the broadcast button likewise, while the tab is in the group", () => {
@@ -403,5 +450,35 @@ describe("topbarSlot", () => {
     expect(sameSlot(2, 2)).toBe(true);
     expect(sameSlot(2, null)).toBe(false);
     expect(sameSlot(0, 1)).toBe(false);
+  });
+});
+
+describe("⌘K commands on the bar (v1.35)", () => {
+  it("a command with an id of its own can stand there; the bar's own pin rows cannot", () => {
+    expect(isPinnableCommand("act:monitoring")).toBe(true);
+    expect(isPinnableCommand("server:0b1c")).toBe(true);
+    expect(isPinnableCommand("topbar:pin:util:cidr")).toBe(false);
+    expect(isPinnableCommand("")).toBe(false);
+    expect(isPinnableCommand("a b")).toBe(false);
+    expect(isPinnableCommand("x".repeat(201))).toBe(false);
+    expect(isPinnableCommand("bad\u0007")).toBe(false);
+    expect(isTopbarId(commandAction("act:help"))).toBe(true);
+    expect(isTopbarId("cmd:topbar:pin:x")).toBe(false);
+    expect(actionCommand(commandAction("act:help"))).toBe("act:help");
+    expect(actionCommand("util:cidr")).toBeNull();
+  });
+
+  it("keeps a pinned command on the bar through sanitizing, with what it is called", () => {
+    expect(sanitizeTopbar(["cmd:act:help", "settings"])).toEqual(["cmd:act:help", "settings", "utilities"]);
+    expect(
+      sanitizePinnedCommands({
+        "cmd:act:help": { title: "Help", icon: "info" },
+        "cmd:act:x": { title: "X", icon: "not-an-icon" },
+        "cmd:act:y": { title: "  " },
+        "util:cidr": { title: "CIDR", icon: "info" },
+        junk: 1,
+      }),
+    ).toEqual({ "cmd:act:help": { title: "Help", icon: "info" }, "cmd:act:x": { title: "X", icon: "play" } });
+    expect(sanitizePinnedCommands(null)).toEqual({});
   });
 });

@@ -57,12 +57,15 @@ pub fn validate(targets: &[NetTarget]) -> Result<(), String> {
     let mut total = 0usize;
     for t in targets {
         let h = t.host.trim();
+        // An IPv6 address (v1.35) — parsed whole, so its colons can't carry
+        // anything else; no zone, no brackets: those are the page's spelling.
+        let ipv6 = h.parse::<Ipv6Addr>().is_ok();
         if h.is_empty()
             || h.len() > 253
             || h.starts_with('-')
-            || !h
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            || !(ipv6
+                || h.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_')))
         {
             return Err(format!("netcheck: bad host {:?}", t.host));
         }
@@ -238,18 +241,20 @@ impl LocalTool {
         }
     }
 
-    /// Whether this check can run it here. On Windows only curl can: `bash` in
-    /// System32 is WSL — another machine on the network as far as a firewall
-    /// rule is concerned — its telnet prints nothing on connect, so an open port
-    /// would read as a timeout, and the nc builds there disagree on `-z`.
+    /// Whether this check can run it here. On Windows only curl and a bash of
+    /// this machine can: the `bash` in System32 is WSL — another machine on the
+    /// network as far as a firewall rule is concerned — so only one from Git
+    /// Bash, MSYS2 or Cygwin counts (`windows_bash`); Windows' telnet prints
+    /// nothing on connect, so an open port would read as a timeout, and the nc
+    /// builds there disagree on `-z`.
     fn supported(self) -> bool {
-        cfg!(not(windows)) || self == Self::Curl
+        cfg!(not(windows)) || matches!(self, Self::Curl | Self::Bash)
     }
 
     /// The fixed argv after the program, for one `host:port`. The host comes
     /// last or as a positional argument of `bash -c` (`$0`), never inside the
     /// command text, and `validate` keeps it from starting with `-`.
-    fn argv(self, host: &str, port: u16, timeout_secs: u64, curl_scheme: &str) -> Vec<String> {
+    fn argv(self, host: &str, port: u16, timeout_secs: u64) -> Vec<String> {
         let t = timeout_secs.to_string();
         let port = port.to_string();
         match self {
@@ -271,7 +276,23 @@ impl LocalTool {
                 t.clone(),
                 "-m".into(),
                 t,
-                format!("{curl_scheme}://{host}:{port}"),
+                // After the handshake curl waits for the service: on `telnet://`
+                // until -m whatever it is told, so an open port that says nothing
+                // took the whole timeout. Over `http://` it gives up after a
+                // second without a byte — the connect time is read either way,
+                // and the connect itself is still bounded by --connect-timeout.
+                "-Y".into(),
+                "1".into(),
+                "-y".into(),
+                "1".into(),
+                // An IPv6 host goes in brackets; -g keeps curl from reading them
+                // as a glob range.
+                "-g".into(),
+                if host.contains(':') {
+                    format!("http://[{host}]:{port}")
+                } else {
+                    format!("http://{host}:{port}")
+                },
             ],
         }
     }
@@ -283,6 +304,29 @@ struct Found {
     tool: LocalTool,
     state: &'static str,
     program: OsString,
+}
+
+/// The first `bash.exe` on `path` that runs on this machine (v1.35): not one
+/// under the Windows directory (`system_root`, where WSL's launcher lives) and
+/// not a Store alias (`WindowsApps`). `Err(true)` — only WSL's was found, which
+/// this check can't use; `Err(false)` — no bash at all. Pure.
+fn windows_bash(path: &OsStr, system_root: &std::path::Path) -> Result<std::path::PathBuf, bool> {
+    let root = system_root.to_string_lossy().to_lowercase();
+    let mut wsl = false;
+    for dir in std::env::split_paths(path) {
+        let cand = dir.join("bash.exe");
+        if !cand.is_file() {
+            continue;
+        }
+        let at = cand.to_string_lossy().to_lowercase();
+        let system = !root.is_empty() && at.starts_with(&root);
+        if system || at.contains("\\windowsapps\\") || at.contains("/windowsapps/") {
+            wsl = true;
+            continue;
+        }
+        return Ok(cand);
+    }
+    Err(wsl)
 }
 
 /// Look the four tools up on the user's PATH (`localenv`: a packaged macOS app
@@ -297,11 +341,25 @@ async fn find_tools() -> (OsString, Vec<Found>) {
         } else {
             tool.name().to_string()
         };
-        let (program, p) = crate::localenv::resolved_local(&exe).await;
+        let (mut program, p) = crate::localenv::resolved_local(&exe).await;
         path = p;
-        let there = std::path::Path::new(&program).is_absolute()
+        let mut there = std::path::Path::new(&program).is_absolute()
             && std::path::Path::new(&program).is_file();
-        let state = if !tool.supported() {
+        let mut wsl_only = false;
+        if cfg!(windows) && tool == LocalTool::Bash {
+            let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+            match windows_bash(&path, std::path::Path::new(&root)) {
+                Ok(found) => {
+                    program = found.into_os_string();
+                    there = true;
+                }
+                Err(wsl) => {
+                    there = false;
+                    wsl_only = wsl;
+                }
+            }
+        }
+        let state = if !tool.supported() || wsl_only {
             "unsupported"
         } else if there {
             "ok"
@@ -315,28 +373,6 @@ async fn find_tools() -> (OsString, Vec<Found>) {
         });
     }
     (path, found)
-}
-
-/// A minimal curl (curl-minimal on RHEL 9) has no `telnet://`; `http://`
-/// connects just the same, and the connect time is what's read either way —
-/// the remote script makes the same choice.
-async fn curl_scheme(program: &OsStr, path: &OsStr) -> &'static str {
-    let mut cmd = tokio::process::Command::new(program);
-    cmd.arg("-V")
-        .env("PATH", path)
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    crate::localenv::no_console_window(&mut cmd);
-    match tokio::time::timeout(Duration::from_secs(5), cmd.output()).await {
-        Ok(Ok(out))
-            if String::from_utf8_lossy(&out.stdout)
-                .split_whitespace()
-                .any(|w| w == "telnet") =>
-        {
-            "telnet"
-        }
-        _ => "http",
-    }
 }
 
 /// Nanoseconds since the epoch — the remote script's `date +%s%N`.
@@ -452,12 +488,6 @@ pub async fn run_tool(
             "none"
         }
     ));
-    let scheme = match &usable {
-        Some(program) if tool == LocalTool::Curl && !targets.is_empty() => {
-            curl_scheme(program, &path).await
-        }
-        _ => "telnet",
-    };
     let jobs = resolve_targets(targets, &mut out).await;
     let secs = timeout.as_secs().max(1);
     let (usable, path) = (&usable, &path);
@@ -466,7 +496,7 @@ pub async fn run_tool(
         .map(|(host, port, _)| async move {
             let (rc, start, end, text) = match usable {
                 Some(program) => {
-                    tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout).await
+                    tool_once(program, path, tool.argv(&host, port, secs), timeout).await
                 }
                 None => (127, 0, 0, String::new()),
             };
@@ -547,6 +577,12 @@ mod tests {
         assert!(validate(&[target("a@b", &[22])]).is_err());
         assert!(validate(&[target("a/b", &[22])]).is_err());
         assert!(validate(&[target("db-01.corp_x", &[22])]).is_ok());
+        // IPv6: a whole address, nothing around it.
+        assert!(validate(&[target("2001:db8::1", &[443])]).is_ok());
+        assert!(validate(&[target("::1", &[22])]).is_ok());
+        assert!(validate(&[target("[::1]", &[22])]).is_err());
+        assert!(validate(&[target("fe80::1%eth0", &[22])]).is_err());
+        assert!(validate(&[target("::1:-e", &[22])]).is_err());
         let many: Vec<u16> = (1..=(MAX_CHECKS as u16 + 1)).collect();
         assert!(validate(&[target("h", &many)]).is_err());
     }
@@ -564,6 +600,26 @@ mod tests {
     fn route_src_for_loopback_is_loopback() {
         let src = route_src(IpAddr::V4(Ipv4Addr::LOCALHOST)).unwrap();
         assert!(src.is_loopback());
+    }
+
+    #[tokio::test]
+    async fn native_run_checks_an_ipv6_address() {
+        // v1.35: a rule may name an IPv6 address. A machine without IPv6
+        // loopback has nothing to say here.
+        let Ok(open) = TcpListener::bind("[::1]:0") else {
+            return;
+        };
+        let port = open.local_addr().unwrap().port();
+        let out = run_native(
+            &[target("::1", &[port])],
+            Duration::from_secs(2),
+            &AtomicBool::new(false),
+        )
+        .await;
+        assert!(out.contains(&format!("N\t::1\t{port}\topen\t")), "{out}");
+        // An address is not a name: nothing was resolved.
+        assert!(!out.contains("D\t::1"), "{out}");
+        assert!(out.ends_with("E\n"), "{out}");
     }
 
     #[tokio::test]
@@ -634,7 +690,10 @@ mod tests {
                 .find(|l| l.starts_with(&format!("C\t{}\t", tool.name())))
                 .unwrap_or_else(|| panic!("no C line for {}:\n{out}", tool.name()));
             let state = line.rsplit('\t').next().unwrap();
-            if tool.supported() {
+            if tool.supported() && cfg!(windows) && tool == LocalTool::Bash {
+                // WSL's bash alone reads as unsupported.
+                assert!(matches!(state, "ok" | "missing" | "unsupported"), "{line}");
+            } else if tool.supported() {
                 assert!(matches!(state, "ok" | "missing"), "{line}");
             } else {
                 assert_eq!(state, "unsupported", "{line}");
@@ -643,19 +702,53 @@ mod tests {
     }
 
     #[test]
+    fn a_windows_bash_is_one_of_this_machine_not_wsl() {
+        let tmp = std::env::temp_dir().join(format!("vterm-wbash-{}", std::process::id()));
+        let sys = tmp.join("Windows").join("System32");
+        let apps = tmp.join("Users").join("u").join("WindowsApps");
+        let git = tmp.join("Git").join("bin");
+        for d in [&sys, &apps, &git] {
+            std::fs::create_dir_all(d).unwrap();
+            std::fs::write(d.join("bash.exe"), b"").unwrap();
+        }
+        let root = tmp.join("Windows");
+        let path = |dirs: &[&std::path::PathBuf]| std::env::join_paths(dirs.iter()).unwrap();
+        // WSL's launcher first on PATH: skipped for the bash after it.
+        assert_eq!(
+            windows_bash(&path(&[&sys, &git]), &root),
+            Ok(git.join("bash.exe"))
+        );
+        // Only WSL's (or a Store alias): there is a bash, and it can't be used.
+        assert_eq!(windows_bash(&path(&[&sys]), &root), Err(true));
+        assert_eq!(windows_bash(&path(&[&apps]), &root), Err(true));
+        // None at all.
+        assert_eq!(windows_bash(&path(&[&tmp]), &root), Err(false));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn tool_argv_is_fixed_and_the_host_is_never_command_text() {
-        let bash = LocalTool::Bash.argv("db.corp", 5432, 3, "telnet");
+        let bash = LocalTool::Bash.argv("db.corp", 5432, 3);
         assert_eq!(bash[0], "-c");
         assert!(!bash[1].contains("db.corp"), "{bash:?}");
         assert_eq!(&bash[2..], ["db.corp", "5432"]);
         assert_eq!(
-            LocalTool::Nc.argv("h", 22, 3, "telnet"),
+            LocalTool::Nc.argv("h", 22, 3),
             ["-z", "-v", "-w", "3", "h", "22"]
         );
-        assert_eq!(LocalTool::Telnet.argv("h", 22, 3, "telnet"), ["h", "22"]);
-        let curl = LocalTool::Curl.argv("h", 22, 3, "http");
+        assert_eq!(LocalTool::Telnet.argv("h", 22, 3), ["h", "22"]);
+        let curl = LocalTool::Curl.argv("h", 22, 3);
         assert_eq!(curl.last().unwrap(), "http://h:22");
+        assert!(curl.contains(&"-g".to_string()));
+        let v6 = LocalTool::Curl.argv("2001:db8::1", 443, 3);
+        assert_eq!(v6.last().unwrap(), "http://[2001:db8::1]:443");
+        assert_eq!(&LocalTool::Nc.argv("::1", 22, 3)[4..], ["::1", "22"]);
         assert!(curl.contains(&"--connect-timeout".to_string()));
+        // A silent open port lets curl go after a second, not at -m.
+        assert!(
+            curl.windows(4).any(|w| w == ["-Y", "1", "-y", "1"]),
+            "{curl:?}"
+        );
         assert_eq!(LocalTool::parse("nc"), Some(LocalTool::Nc));
         assert_eq!(LocalTool::parse("sh"), None);
         assert_eq!(LocalTool::parse("auto"), None);
@@ -683,7 +776,6 @@ mod tests {
         assert!(t0.to_string().len() >= 16 && t1 > t0);
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn a_bash_run_prints_raw_readings_on_loopback() {
         let open = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -699,6 +791,11 @@ mod tests {
             LocalTool::Bash,
         )
         .await;
+        if cfg!(windows) && !out.contains("C\tbash\tok\n") {
+            // No Git Bash, MSYS2 or Cygwin on this Windows machine.
+            assert!(out.contains("M\tnone\n"), "{out}");
+            return;
+        }
         assert!(out.contains("C\tbash\tok\n"), "{out}");
         assert!(out.contains("M\tbash\n"), "{out}");
         let row = |port: u16| -> Vec<String> {
@@ -710,6 +807,11 @@ mod tests {
                 .collect()
         };
         assert_eq!(row(open_port)[3], "0", "{out}");
+        if cfg!(windows) {
+            // Windows retries a refused SYN for about the whole timeout, and
+            // bash can't turn that off the way the native check does.
+            return;
+        }
         let refused = row(closed_port);
         assert_ne!(refused[3], "0", "{out}");
         assert!(refused[6].to_lowercase().contains("refused"), "{out}");
@@ -718,18 +820,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_curl_run_lets_a_silent_open_port_go_before_the_timeout() {
+        // Debt of 1.22: over `telnet://` curl held an open port that said nothing
+        // until -m. The listener accepts and stays silent.
+        let open = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = open.local_addr().unwrap().port();
+        let started = Instant::now();
+        let out = run_tool(
+            &[target("127.0.0.1", &[port])],
+            Duration::from_secs(6),
+            &AtomicBool::new(false),
+            LocalTool::Curl,
+        )
+        .await;
+        if !out.contains("M\tcurl\n") {
+            // No curl on this machine: nothing to measure.
+            assert!(out.contains("M\tnone\n"), "{out}");
+            return;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "{:?}\n{out}",
+            started.elapsed()
+        );
+        let row = out
+            .lines()
+            .find(|l| l.starts_with(&format!("R\t127.0.0.1\t{port}\t")))
+            .unwrap_or_else(|| panic!("no R line:\n{out}"));
+        // The handshake is the reading: time_connect above zero.
+        let tc = row
+            .split("TC=")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|v| v.parse::<f64>().ok());
+        assert!(tc.is_some_and(|v| v > 0.0), "{row}");
+        drop(open);
+    }
+
+    #[tokio::test]
     async fn a_tool_that_cant_run_here_is_method_none_and_every_port_127() {
-        // On Windows bash is unsupported; elsewhere a stopped-before-start run
+        // On Windows telnet is unsupported; elsewhere a stopped-before-start run
         // is checked instead, so this test means something on every OS.
         if cfg!(windows) {
             let out = run_tool(
                 &[target("127.0.0.1", &[1])],
                 Duration::from_secs(1),
                 &AtomicBool::new(false),
-                LocalTool::Bash,
+                LocalTool::Telnet,
             )
             .await;
-            assert!(out.contains("C\tbash\tunsupported\n"), "{out}");
+            assert!(out.contains("C\ttelnet\tunsupported\n"), "{out}");
             assert!(out.contains("M\tnone\n"), "{out}");
             assert!(out.contains("R\t127.0.0.1\t1\t127\t"), "{out}");
         } else {
@@ -814,14 +954,13 @@ mod tests {
     }
 
     /// Whether, as written, a local tool runs only with the argv fixed here and
-    /// the page can do no more than name it: two spawns in this module (`-V` and
-    /// the check), the check's argv only from `LocalTool::argv`, the command
+    /// the page can do no more than name it: one spawn in this module (the
+    /// check), the check's argv only from `LocalTool::argv`, the command
     /// takes the tool by `LocalTool::parse`, and the local branch hands the
     /// runner no `args` from the page.
     fn tools_take_only_their_name(netcheck: &str, lib: &str) -> bool {
         let nc = code(netcheck);
         let spawns = nc.matches(SPAWN).count();
-        let scheme = body_of(&nc, "curl_scheme");
         let once = body_of(&nc, "tool_once");
         let calls: Vec<&str> = nc
             .match_indices("tool_once(")
@@ -835,10 +974,7 @@ mod tests {
         let run = body_of(&lib, "netcheck_run");
         let exec = body_of(&lib, "netcheck_exec");
         let local = &exec[exec.find("local_pty(").unwrap_or(0)..];
-        spawns == 2
-            && scheme.contains("Command::new(program)")
-            && scheme.contains(".arg(\"-V\")")
-            && !scheme.contains(".args(")
+        spawns == 1
             && once.contains(".args(&argv)")
             && run_calls.len() == 1
             && run_calls[0].starts_with("tool_once(program, path, tool.argv(")
@@ -858,7 +994,7 @@ mod tests {
         assert!(tools_take_only_their_name(nc, lib));
         // Planted: the check's argv comes from somewhere else.
         let planted = nc.replacen(
-            "tool_once(program, path, tool.argv(&host, port, secs, scheme), timeout)",
+            "tool_once(program, path, tool.argv(&host, port, secs), timeout)",
             "tool_once(program, path, page_argv.clone(), timeout)",
             1,
         );

@@ -188,7 +188,9 @@ export function terminalViolations(terminal: string): string[] {
   const c = code(terminal);
   const out: string[] = [];
   const listens = c.indexOf("listen<number[]>(outputEvent(sessionId)");
-  const replays = c.search(/term\.write\(data, written\)\);\s*await attachSession\(sessionId\);/);
+  // Between the replay and the attach only what runs at once (the noted
+  // blocks of file links, v1.35): nothing that waits, so no output slips in.
+  const replays = c.search(/term\.write\(data, written\)\);(?:(?!\bawait\b)[\s\S])*?await attachSession\(sessionId\);/);
   if (listens < 0 || replays < 0 || listens > replays) {
     out.push("an adopted terminal does not listen, replay its snapshot and only then attach");
   }
@@ -430,10 +432,21 @@ describe("window guard — catches what it exists for", () => {
     ).toEqual(["a tab held over another window is drawn in both"]);
   });
 
+  it("a terminal that waits for something between its replay and the attach", () => {
+    const waits = mutate(
+      terminal,
+      "await new Promise<void>((written) => term.write(data, written));",
+      "await new Promise<void>((written) => term.write(data, written));\n        await tick();",
+    );
+    expect(terminalViolations(waits)).toContain(
+      "an adopted terminal does not listen, replay its snapshot and only then attach",
+    );
+  });
+
   it("a terminal that attaches before its snapshot is written", () => {
     const swapped = mutate(
-      terminal,
-      "await new Promise<void>((written) => term.write(data, written));\n        await attachSession(sessionId);",
+      mutate(terminal, "await attachSession(sessionId);", ""),
+      "await new Promise<void>((written) => term.write(data, written));",
       "await attachSession(sessionId);\n        await new Promise<void>((written) => term.write(data, written));",
     );
     expect(terminalViolations(swapped)).toContain(

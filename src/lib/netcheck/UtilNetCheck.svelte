@@ -17,6 +17,7 @@
   import NetCheckRuleTable from "./NetCheckRuleTable.svelte";
   import NetCheckMatrix from "./NetCheckMatrix.svelte";
   import { t } from "../i18n";
+  import { tooltip } from "../actions/tooltip";
   import { netcheckRun } from "../api";
   import {
     BATCH,
@@ -24,7 +25,6 @@
     MAX_CHECKS,
     checkCount,
     effectiveMethod,
-    failedKeys,
     formatReports,
     netcheckArgs,
     parseNetReport,
@@ -33,6 +33,7 @@
   } from "./netcheck";
   import {
     buildHosts,
+    knownFactsKey,
     LOCAL_KEY,
     planRun,
     routeRow,
@@ -47,13 +48,22 @@
   import {
     isRunning,
     methodFor,
+    netcheckState,
     pickedOf,
+    rememberFacts,
+    retryChecks,
     retryRun,
     rowsOf,
     runOf,
     startRun,
+    startWaiting,
     stopRun,
+    stopWaiting,
     togglePicked,
+    WAIT_EVERY_SECS,
+    WAIT_FOR_SECS,
+    WAIT_MAX_CHECKS,
+    waitOf,
   } from "../stores/netcheck.svelte";
 
   let {
@@ -92,18 +102,23 @@
   let identities = $state<Record<string, NetReport>>({});
   let asked = new Set<string>();
   let seenToken = -1;
-  const facts = $derived<Record<string, HostFacts>>(
-    Object.fromEntries(
+  // What a server said the last time (v1.35) stands in while no session to it is open.
+  const facts = $derived<Record<string, HostFacts>>({
+    ...Object.fromEntries(Object.entries(netcheckState.known).map(([key, f]) => [knownFactsKey(key), f])),
+    ...Object.fromEntries(
       Object.entries(identities).map(([sid, r]) => [sid, { hostname: r.hostname, addrs: visibleAddrs(r.addrs) }]),
     ),
-  );
+  });
 
   async function loadIdentity(sid: string) {
     if (asked.has(sid)) return;
     asked.add(sid);
     try {
       const out = await netcheckRun(sid, netcheckArgs([]), [], DEFAULT_TIMEOUT_SECS, 15, `netcheck-id:${sid}:${Date.now()}`);
-      identities[sid] = parseNetReport(out.stdout);
+      const rep = parseNetReport(out.stdout);
+      identities[sid] = rep;
+      const key = hosts.find((h) => h.sessionId === sid)?.key;
+      if (key && (rep.hostname || rep.addrs.length)) rememberFacts(key, { hostname: rep.hostname, addrs: visibleAddrs(rep.addrs) });
     } catch {
       /* the chip just shows no details; a run reports its own error */
     }
@@ -213,17 +228,21 @@
     const timer = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(timer);
   });
+  // «Wait for open» (ADR 0056): the store keeps it going; this window only counts down.
+  const wait = $derived(waitOf(homeKey));
+  $effect(() => {
+    if (!wait) return;
+    now = Date.now();
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    return () => clearInterval(timer);
+  });
   const longest = $derived(
     Math.max(0, ...(run?.hosts ?? []).map((h) => Math.ceil(checkCount(h.rules) / BATCH) * (run?.timeout ?? 0))),
   );
 
   // What "Retry failed" would check again: what didn't open, and every check of
   // a server that answered nothing.
-  const retryCount = $derived(
-    !run || running
-      ? 0
-      : run.hosts.reduce((n, h) => n + (h.report ? failedKeys(h.rules, h.report).size : checkCount(h.rules)), 0),
-  );
+  const retryCount = $derived(!run || running ? 0 : retryChecks(run));
 
   const reportParts = $derived(
     (run?.hosts ?? [])
@@ -339,7 +358,23 @@
               <CopyButton text={reportText} label={t("util.netcheck.copyReport")} testid="netcheck-copy" />
               <CopyButton text={reportMarkdown} label={t("util.netcheck.copyMarkdown")} testid="netcheck-copy-md" />
             {/if}
-            {#if retryCount > 0}
+            {#if wait}
+              <span class="flex items-center gap-1 text-meta text-muted" data-testid="netcheck-waiting">
+                <Icon name="clock" size={12} />
+                {t("util.netcheck.waitingOpen", {
+                  n: wait.attempts,
+                  s: Math.max(0, Math.ceil((wait.next - now) / 1000)),
+                })}
+              </span>
+              <button
+                type="button"
+                data-testid="netcheck-wait-stop"
+                class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text"
+                onclick={() => stopWaiting(homeKey)}
+              >
+                <Icon name="stop" size={12} />{t("util.netcheck.waitStop")}
+              </button>
+            {:else if retryCount > 0}
               <button
                 type="button"
                 data-testid="netcheck-retry"
@@ -347,6 +382,18 @@
                 onclick={() => void retryRun(homeKey)}
               >
                 <Icon name="refresh" size={12} />{t("util.netcheck.retry", { n: retryCount })}
+              </button>
+              <button
+                type="button"
+                data-testid="netcheck-wait"
+                class="flex items-center gap-1 rounded px-1.5 py-0.5 text-meta text-muted hover:bg-edge hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                disabled={retryCount > WAIT_MAX_CHECKS}
+                use:tooltip={retryCount > WAIT_MAX_CHECKS
+                  ? t("util.netcheck.waitTooMany", { n: WAIT_MAX_CHECKS })
+                  : t("util.netcheck.waitHint", { s: WAIT_EVERY_SECS, min: WAIT_FOR_SECS / 60 })}
+                onclick={() => void startWaiting(homeKey)}
+              >
+                <Icon name="clock" size={12} />{t("util.netcheck.wait")}
               </button>
             {/if}
           </div>

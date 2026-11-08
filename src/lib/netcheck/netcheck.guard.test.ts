@@ -113,7 +113,18 @@ function pasteAddsOnlyByAct(src: string): boolean {
 /** The tool asks the store by its home host — never by a session id. */
 function filedByHome(tool: string, store: string): boolean {
   const t = strip(tool);
-  for (const fn of ["rowsOf", "runOf", "startRun", "stopRun", "retryRun", "pickedOf", "togglePicked"]) {
+  for (const fn of [
+    "rowsOf",
+    "runOf",
+    "startRun",
+    "stopRun",
+    "retryRun",
+    "pickedOf",
+    "togglePicked",
+    "waitOf",
+    "startWaiting",
+    "stopWaiting",
+  ]) {
     for (const m of t.matchAll(new RegExp(`\\b${fn}\\(([^,)]*)`, "g"))) {
       if (m[1].trim() !== "homeKey") return false;
     }
@@ -123,7 +134,7 @@ function filedByHome(tool: string, store: string): boolean {
     /rows:\s*Record<string, RuleRow\[\]>/.test(st) &&
     /picked:\s*Record<string, string\[\]>/.test(st) &&
     /runs:\s*Record<string, NetRun>/.test(st) &&
-    ![...st.matchAll(/netcheckState\.(?:rows|runs|picked)\[([^\]]+)\]/g)].some((m) => m[1].trim() !== "home")
+    ![...st.matchAll(/netcheckState\.(?:rows|runs|picked|waiting)\[([^\]]+)\]/g)].some((m) => m[1].trim() !== "home")
   );
 }
 

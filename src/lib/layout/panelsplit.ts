@@ -16,6 +16,9 @@ export const PANEL_SPLITS = {
   // The list beside what was opened from it: halves.
   docker: 0.5,
   k8s: 0.5,
+  // The chat beside its column — endpoint, model, what goes with the question
+  // (v1.35, dragged like the rest): the conversation keeps the larger part.
+  ai: 0.7,
 } as const;
 
 export type PanelSplit = keyof typeof PANEL_SPLITS;

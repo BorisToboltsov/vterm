@@ -3,7 +3,7 @@ import { flushSync } from "svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import LocalFilePanel from "./LocalFilePanel.svelte";
 import type { FileEntry } from "../types";
-import { listOrder, resetListOrders, setListOrder, STORAGE_KEY } from "../stores/listview.svelte";
+import { listOrder, resetListOrders, setListOrder } from "../stores/listview.svelte";
 import { FILE_ORDER, FILE_SCHEMA } from "./filesort";
 import { settings } from "../settings/settings.svelte";
 
@@ -216,7 +216,11 @@ describe("the order of the file listing", () => {
   it("the order is the app's: it is kept, and a panel opened later comes in it", async () => {
     setFileSort({ key: "size", dir: "asc" });
     flushSync();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null").files).toEqual({ sort: { key: "size", dir: "asc" }, group: "none" });
+    // Kept with the settings: what every window shares and a backup carries.
+    expect(JSON.parse(localStorage.getItem("vterm.settings") ?? "null").listOrders.files).toEqual({
+      sort: { key: "size", dir: "asc" },
+      group: "none",
+    });
     await renderPanel(LISTING);
     expect(shown().slice(2)).toEqual(["upstreams.conf", "nginx.conf", "mime.types"]);
   });

@@ -12,7 +12,7 @@ const tools = (items: MenuItem[]): MenuSubmenu => items.find((i): i is MenuSubme
 
 describe("what a button is called and drawn as", () => {
   it("names every button, each differently", () => {
-    const labels = allTopbarIds().map(actionLabel);
+    const labels = allTopbarIds().map((id) => actionLabel(id));
     expect(labels.slice(0, BUILTIN_ACTIONS.length)).toEqual([
       "Broadcast input",
       "Notes",
@@ -43,7 +43,7 @@ describe("what a button is called and drawn as", () => {
   });
 
   it("…and no tool looks like a built-in button of the bar", () => {
-    const builtin = BUILTIN_ACTIONS.map(actionIcon);
+    const builtin = BUILTIN_ACTIONS.map((id) => actionIcon(id));
     for (const u of UTILITIES) expect(builtin, u.id).not.toContain(u.icon);
   });
 });
@@ -53,7 +53,7 @@ describe("the bar's menu", () => {
     const bar: TopbarId[] = ["record", "settings"];
     const items = topbarMenu(bar, null, on());
     const builtin = actions(items).filter((a) => a.checked !== undefined);
-    expect(builtin.map((a) => a.label)).toEqual(BUILTIN_ACTIONS.map(actionLabel));
+    expect(builtin.map((a) => a.label)).toEqual(BUILTIN_ACTIONS.map((id) => actionLabel(id)));
     expect(builtin.filter((a) => a.checked).map((a) => a.label)).toEqual(["Recording (REC)", "Settings"]);
   });
 

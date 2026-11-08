@@ -8,11 +8,13 @@ import type { MenuAction, MenuItem } from "../ui/ctxmenu";
 import { t } from "../i18n";
 import { UTILITIES } from "../utilities/utilities";
 import {
+  actionCommand,
   actionUtility,
   BUILTIN_ACTIONS,
   canUnpin,
   utilAction,
   type BuiltinAction,
+  type PinnedCommand,
   type TopbarId,
 } from "./topbaractions";
 
@@ -51,15 +53,21 @@ const utility = (id: TopbarId) => {
   return name === null ? undefined : UTILITIES.find((u) => u.id === name);
 };
 
-/** What a button is called in a list. Reactive: reads the language through `t()`. */
-export function actionLabel(id: TopbarId): string {
+/**
+ * What a button is called in a list. Reactive: reads the language through `t()`.
+ * A ⌘K command (v1.35) is called what the bar remembered of it (`commands`).
+ */
+export function actionLabel(id: TopbarId, commands: Readonly<Record<string, PinnedCommand>> = {}): string {
+  const cmd = actionCommand(id);
+  if (cmd !== null) return commands[id]?.title || cmd;
   const util = utility(id);
   if (util) return t(util.titleKey);
   return actionUtility(id) === null ? builtinLabel(id as BuiltinAction) : id;
 }
 
 /** The glyph that stands for a button in a list and at the pointer while it is dragged. */
-export function actionIcon(id: TopbarId): IconName {
+export function actionIcon(id: TopbarId, commands: Readonly<Record<string, PinnedCommand>> = {}): IconName {
+  if (actionCommand(id) !== null) return commands[id]?.icon ?? "play";
   return utility(id)?.icon ?? BUILTIN_ICON[id as BuiltinAction] ?? "wrench";
 }
 

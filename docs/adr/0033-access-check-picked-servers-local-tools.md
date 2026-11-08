@@ -88,8 +88,30 @@
 - Локальный опрос «кто это» сообщает и инструменты (`C`): поиск по `PATH` пользователя
   (`localenv`) — один раз на открытие, без запуска самих инструментов. `curl -V` спрашивается
   только перед прогоном с `curl`.
-- Гейты: Rust `a_local_tool_runs_only_its_fixed_argv` (два спавна в `netcheck.rs`, argv
+- Гейты: Rust `a_local_tool_runs_only_its_fixed_argv` (спавны в `netcheck.rs` — только проверка, argv
   проверки только из `LocalTool::argv`, команда берёт имя через `LocalTool::parse`, локальная
   ветка не передаёт `args` страницы); `every_local_cli_spawn_hides_the_console_window` теперь
   считает и `netcheck.rs`; `netcheck.guard` — отметки по хосту вкладки, маршрут правил без
   источника только из отметок.
+
+## Поправка v1.35: `curl` — по `http://`, без `curl -V`
+
+`curl` проверял порт по `telnet://` (по `http://` — только сборка без telnet, curl-minimal), и на
+открытом порту, который молчит, ждал до `-m`: telnet-режим не слушает `--speed-limit`. Проверка
+читает только `time_connect`, поэтому теперь — `http://` с `-Y 1 -y 1` у обоих транспортов: после
+соединения curl уходит через секунду без ответа, а само соединение по-прежнему ждёт
+`--connect-timeout` (ограничение скорости до установки соединения не действует — проверено на
+неотвечающем адресе). `http` есть в любой сборке, поэтому `curl -V` больше не спрашивается, и
+спавн в `netcheck.rs` один. Цена — открытому порту уходит строка `GET /` вместо telnet-согласования:
+тот же порядок вмешательства, ответ сервиса по-прежнему не читается. Живой тест —
+`a_curl_run_lets_a_silent_open_port_go_before_the_timeout`.
+
+## Поправка v1.35: `bash` на Windows — не из WSL
+
+«На Windows — только `vterm` и `curl`» запрещало и `bash` из Git Bash, MSYS2 или Cygwin, хотя он
+работает на этой машине и умеет `/dev/tcp`. Довод был про `bash.exe` из System32 — запускалку WSL,
+другой машины в сети. Теперь бэкенд ищет `bash.exe` по `PATH` и берёт первый не под `%SystemRoot%`
+и не псевдоним Store (`WindowsApps`) — `windows_bash`; найден только WSL — плитка «не
+поддерживается», никакого — «не установлен». `telnet` и `nc` на Windows по-прежнему нет. Тест
+`a_windows_bash_is_one_of_this_machine_not_wsl`; `a_bash_run_prints_raw_readings_on_loopback`
+теперь идёт и на Windows-раннере CI, где есть Git Bash.

@@ -245,7 +245,7 @@ describe("smartLogs (Phase 10)", () => {
 
 describe("editor settings (Phase 12)", () => {
   it("defaults to diff-before-save on", () => {
-    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false });
+    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false, openBeside: false });
   });
 
   it("merges a partial backup snapshot onto defaults", () => {
@@ -258,7 +258,7 @@ describe("editor settings (Phase 12)", () => {
   it("is restored to defaults by resetSettings", () => {
     settings.editor.diffBeforeSave = false;
     resetSettings();
-    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false });
+    expect(settings.editor).toEqual({ diffBeforeSave: true, backupOnSave: false, openBeside: false });
   });
 });
 

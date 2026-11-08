@@ -656,6 +656,7 @@ pub(crate) async fn launch_transfer(
     app: &AppHandle,
     origin: &str,
     spec: transfers::Spec,
+    queued: bool,
 ) -> AppResult<tokio::sync::oneshot::Receiver<transfers::JobView>> {
     if spec.items.is_empty() {
         return Err("nothing to transfer".into());
@@ -675,7 +676,7 @@ pub(crate) async fn launch_transfer(
     let (ended, wait) = tokio::sync::oneshot::channel();
     let (app, origin) = (app.clone(), origin.to_string());
     tokio::spawn(async move {
-        let done = transfers::run(&app, spec, src, dst, cancel, origin).await;
+        let done = transfers::run(&app, spec, src, dst, cancel, origin, queued).await;
         app.state::<AppState>().cancels.locked().remove(&id);
         let _ = ended.send(done);
     });
@@ -694,7 +695,8 @@ pub async fn transfer_start(
     spec: transfers::Spec,
 ) -> AppResult<String> {
     let id = spec.id.clone();
-    launch_transfer(&app, window.label(), spec).await?;
+    // In its session's turn (v1.35): one job of a session at a time.
+    launch_transfer(&app, window.label(), spec, true).await?;
     Ok(id)
 }
 

@@ -363,7 +363,17 @@
   let rowWidth = $state(0);
   const beside = $derived(wide && fitsBeside(rowWidth));
   const searchOpen = $derived(search.open && !!adapter.search);
-  const sideOpen = $derived(beside && (searchOpen || footerCount > 0));
+  // The column of the transfers stays once a transfer opened it (v1.35), until
+  // it is closed by hand: one that left with the last transfer gave the listing
+  // its width back, and the next transfer took it again. A narrowed panel lets
+  // it go — under the listing the footer is only there while it lists something.
+  let footerKept = $state(false);
+  $effect(() => {
+    if (!beside) footerKept = false;
+    else if (footerCount > 0) footerKept = true;
+  });
+  const footerShown = $derived(!!footer && (footerCount > 0 || footerKept));
+  const sideOpen = $derived(beside && (searchOpen || footerShown));
 
   function openMatch(m: GrepMatch) {
     const name = m.path.split("/").pop() ?? m.path;
@@ -1828,14 +1838,27 @@
                 </SidePane>
               </div>
             {/if}
-            {#if footerCount > 0}
+            {#if footerShown}
               <!-- The footer (transfers): all of the column while nothing else is
-                   in it, the lower part of it under the search. -->
+                   in it, the lower part of it under the search. Closed by hand,
+                   and only once nothing is under way. -->
               <div
-                class="overflow-auto {searchOpen ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1'}"
+                class="{searchOpen ? 'max-h-[45%] shrink-0' : 'min-h-0 flex-1'} flex flex-col"
                 data-testid="{testPrefix}-side-footer"
               >
-                {@render footer?.()}
+                <SidePane
+                  title={t("sftp.transfersTitle")}
+                  onclose={footerCount === 0 ? () => (footerKept = false) : undefined}
+                  testid="{testPrefix}-side-transfers"
+                >
+                  {#if footerCount > 0}
+                    <div class="min-h-0 overflow-auto">{@render footer?.()}</div>
+                  {:else}
+                    <p class="text-caption text-muted" data-testid="{testPrefix}-no-transfers">
+                      {t("sftp.noTransfers")}
+                    </p>
+                  {/if}
+                </SidePane>
               </div>
             {/if}
           </div>

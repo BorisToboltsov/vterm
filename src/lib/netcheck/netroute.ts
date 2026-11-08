@@ -20,6 +20,8 @@ import {
   egressDiffers,
   isCidr,
   isIpv4,
+  isIpv6,
+  ipv6Of,
   MAX_CHECKS,
   parseCidr,
   rowsFor,
@@ -50,11 +52,35 @@ export interface NetHost {
   hasTab: boolean;
 }
 
-/** What a live session reported about its host (the identity probe). */
+/**
+ * What a session reported about its host (the identity probe), by session id —
+ * and, under `knownFactsKey(host key)`, what the server said the last time it
+ * was asked (v1.35): a rule naming a second address of a server with no
+ * session still finds it. A live session's word comes first.
+ */
 export interface HostFacts {
   hostname: string;
   /** Visible addresses only — no loopback, no link-local: every host has those. */
   addrs: string[];
+}
+
+/** Where `facts` keeps what a server said of itself before, by its host key. */
+export const knownFactsKey = (hostKey: string): string => `host:${hostKey}`;
+
+/** Remembered facts at most this many servers keep; the most recent win. */
+export const KNOWN_FACTS_MAX = 500;
+
+/** Remembered facts as stored: what is not a hostname and a list of addresses is dropped. */
+export function sanitizeKnownFacts(raw: unknown): Record<string, HostFacts> {
+  const out: Record<string, HostFacts> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [key, v] of Object.entries(raw as Record<string, unknown>).slice(-KNOWN_FACTS_MAX)) {
+    if (!key || !v || typeof v !== "object") continue;
+    const { hostname, addrs } = v as { hostname?: unknown; addrs?: unknown };
+    if (typeof hostname !== "string" || !Array.isArray(addrs)) continue;
+    out[key] = { hostname, addrs: addrs.filter((a): a is string => typeof a === "string" && a !== "").slice(0, 64) };
+  }
+  return out;
 }
 
 /** The fields of a server profile this module reads. */
@@ -162,18 +188,21 @@ export function sourceHosts(
   hosts: readonly NetHost[],
   facts: Readonly<Record<string, HostFacts>>,
 ): { host: NetHost; how: MatchHow }[] {
-  const s = source.trim().toLowerCase();
+  // An IPv6 address matches however it is spelled: both sides in canonical form.
+  const canon = (a: string) => ipv6Of(a) ?? a.toLowerCase();
+  const s = canon(source.trim());
   if (!s) return [];
   const net = parseCidr(s);
   const out: { host: NetHost; how: MatchHow }[] = [];
   for (const host of hosts) {
-    const f = host.sessionId ? facts[host.sessionId] : undefined;
-    const addrs = [...(isIpv4(host.address) ? [host.address] : []), ...(f?.addrs ?? [])];
+    const f = (host.sessionId ? facts[host.sessionId] : undefined) ?? facts[knownFactsKey(host.key)];
+    const own = isIpv4(host.address) || isIpv6(host.address) ? [canon(host.address)] : [];
+    const addrs = [...own, ...(f?.addrs ?? []).map(canon)];
     let how: MatchHow | null = null;
     if (net) {
       if (addrs.some((a) => cidrContains(net, a))) how = "subnet";
     } else if (host.name && host.name.toLowerCase() === s) how = "name";
-    else if (host.address.toLowerCase() === s || addrs.includes(s)) how = "address";
+    else if (canon(host.address) === s || addrs.includes(s)) how = "address";
     else if (f?.hostname) {
       const hn = f.hostname.toLowerCase();
       if (hn === s || hn.split(".")[0] === s) how = "hostname";

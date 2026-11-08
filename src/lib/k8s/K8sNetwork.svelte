@@ -28,6 +28,7 @@
     servicesError = null,
     ingressError = null,
     slicesError = null,
+    routesError = null,
     run,
     onDescribe,
     onYaml,
@@ -45,6 +46,8 @@
     servicesError?: string | null;
     ingressError?: string | null;
     slicesError?: string | null;
+    /** Why HTTPRoutes could not be read; null when they were (or the cluster has none). */
+    routesError?: string | null;
     run: (bareArgs: string[], namespace: string, opts?: { successKey?: string }) => Promise<boolean>;
     onDescribe: (kind: string, name: string, namespace: string) => void;
     onYaml: (kind: string, name: string, namespace: string) => void;
@@ -77,14 +80,14 @@
   }
 
   // Takes the name and namespace, not the object: a route entry knows its ingress
-  // only by those.
-  function ingMenu(name: string, namespace: string): MenuItem[] {
+  // only by those. An HTTPRoute (v1.35) is described and shown the same way.
+  function ingMenu(name: string, namespace: string, kind = "ingress"): MenuItem[] {
     return [
-      { icon: "note", label: t("k8s.describe"), onSelect: () => onDescribe("ingress", name, namespace) },
-      { icon: "braces", label: t("k8s.yaml"), onSelect: () => onYaml("ingress", name, namespace) },
+      { icon: "note", label: t("k8s.describe"), onSelect: () => onDescribe(kind, name, namespace) },
+      { icon: "braces", label: t("k8s.yaml"), onSelect: () => onYaml(kind, name, namespace) },
       { kind: "separator" },
       { icon: "copy", label: t("k8s.copyName"), onSelect: () => copy(name) },
-      { icon: "trash", label: t("k8s.delete"), danger: true, onSelect: () => run(deleteArgs("ingress", name), namespace, { successKey: "k8s.deleted" }) },
+      { icon: "trash", label: t("k8s.delete"), danger: true, onSelect: () => run(deleteArgs(kind, name), namespace, { successKey: "k8s.deleted" }) },
     ];
   }
 </script>
@@ -124,8 +127,9 @@
         table={routes}
         {slicesError}
         {ingressError}
+        {routesError}
         onServiceMenu={(e, s) => showMenu(e, svcMenu(s))}
-        onIngressMenu={(e, name, namespace) => showMenu(e, ingMenu(name, namespace))}
+        onIngressMenu={(e, name, namespace, kind) => showMenu(e, ingMenu(name, namespace, kind))}
         {onPortForward}
       />
     </div>

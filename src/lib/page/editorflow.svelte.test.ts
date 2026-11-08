@@ -29,6 +29,7 @@ vi.mock("../stores/toasts.svelte", () => toasts);
 import { createEditorFlow, type EditorFlow } from "./editorflow.svelte";
 import { settings } from "../settings/settings.svelte";
 import { findEditorByPath, getWorkspace, removeWorkspace, setEditorContent } from "../stores/workspaces.svelte";
+import { panes } from "../layout/splitlayout";
 import type { Tab } from "../stores/tabs.svelte";
 import type { TextFile } from "../types";
 
@@ -239,5 +240,49 @@ describe("editor flow: closing", () => {
     expect(doc("/etc/x.conf")).toBeNull();
     expect(api.sftpWriteText).not.toHaveBeenCalled();
     cleanup();
+  });
+});
+
+describe("the first file beside the terminal (v1.35)", () => {
+  const zones = () => panes(getWorkspace(SID).layout).length;
+  function withRoom(room: boolean) {
+    let flow!: EditorFlow;
+    const cleanup = $effect.root(() => {
+      flow = createEditorFlow({
+        findTab: (id) => (id === SID ? ({ sessionId: SID, kind: "ssh" } as Tab) : null),
+        roomBeside: () => room,
+      });
+    });
+    flushSync();
+    return { flow, cleanup };
+  }
+  const was = settings.editor.openBeside;
+  afterEach(() => {
+    settings.editor.openBeside = was;
+  });
+
+  it("opens in a zone of its own when the setting is on and the terminal has room", async () => {
+    settings.editor.openBeside = true;
+    const { flow, cleanup } = withRoom(true);
+    await flow.openFile(SID, "/etc/app.conf", "app.conf");
+    await settled();
+    expect(zones()).toBe(2);
+    cleanup();
+  });
+
+  it("covers the terminal without room, or with the setting off", async () => {
+    settings.editor.openBeside = true;
+    const tight = withRoom(false);
+    await tight.flow.openFile(SID, "/etc/app.conf", "app.conf");
+    await settled();
+    expect(zones()).toBe(1);
+    tight.cleanup();
+    removeWorkspace(SID);
+    settings.editor.openBeside = false;
+    const off = withRoom(true);
+    await off.flow.openFile(SID, "/etc/app.conf", "app.conf");
+    await settled();
+    expect(zones()).toBe(1);
+    off.cleanup();
   });
 });

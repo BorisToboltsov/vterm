@@ -255,3 +255,31 @@ export function normalizeInputPath(raw: string, home?: string): string | null {
   if (/^[A-Za-z]:$/.test(s)) return `${s}\\`;
   return isRoot(s) ? s : trimTrailing(s);
 }
+
+/**
+ * What tells `paths` apart where their names do not (v1.35): for each path,
+ * "" when no other path has its name, else the shortest run of the folders
+ * above it that no path of the same name shares — `nginx` and `app` for
+ * `/etc/nginx/nginx.conf` and `/srv/app/nginx.conf`, the whole folder when
+ * nothing shorter does. Names compare as the paths' system would: a Windows
+ * path regardless of case. Spelled with the path's own separator.
+ */
+export function pathHints(paths: readonly string[]): string[] {
+  const keyOf = (s: string, win: boolean) => (win ? s.toLowerCase() : s);
+  const split = paths.map((p) => {
+    const win = isWindowsPath(p);
+    const parts = trimTrailing(p).split(win ? /[\\/]+/ : /\/+/).filter(Boolean);
+    return { win, sep: sep(p), name: parts.pop() ?? "", dirs: parts };
+  });
+  return split.map((me, i) => {
+    const same = split.filter((o, j) => j !== i && keyOf(o.name, o.win) === keyOf(me.name, me.win));
+    if (same.length === 0) return "";
+    for (let n = 1; n <= me.dirs.length; n++) {
+      const tail = keyOf(me.dirs.slice(-n).join("/"), me.win);
+      if (same.every((o) => keyOf(o.dirs.slice(-n).join("/"), o.win) !== tail)) {
+        return me.dirs.slice(-n).join(me.sep);
+      }
+    }
+    return me.dirs.join(me.sep);
+  });
+}

@@ -23,7 +23,9 @@
   import { scale } from "svelte/transition";
   import { motion } from "../ui/motion";
   import { settings, uiPx } from "../settings/settings.svelte";
+  import type { CommandItem } from "../app/command";
   import {
+    actionCommand,
     actionUtility,
     fitTopbar,
     isTopbarId,
@@ -50,6 +52,7 @@
     onOpenMonitoring,
     onOpenSettings,
     onOpenUtilities,
+    commands = [],
     canBroadcast = false,
     broadcastActive = false,
     onToggleBroadcast,
@@ -73,6 +76,8 @@
     onOpenSettings: () => void;
     /** Open the Utilities panel (keygen, CIDR, codecs, …) — on one tool, when named. */
     onOpenUtilities?: (utility?: string) => void;
+    /** The ⌘K commands there are now — what a pinned command button runs (v1.35). */
+    commands?: readonly CommandItem[];
     /** There is an active tab → the broadcast action is enabled (kept in its slot,
      *  dimmed + disabled otherwise, like REC/monitoring). */
     canBroadcast?: boolean;
@@ -119,6 +124,18 @@
 
   /** What a button does and whether it can now — one answer for the bar and for «⋯». */
   function act(id: TopbarId): { run: () => void; disabled: boolean; label: string } {
+    const cmd = actionCommand(id);
+    if (cmd !== null) {
+      // A ⌘K command runs as the palette would run it now; one the palette does
+      // not offer at the moment (no server selected, …) waits, and says so.
+      const live = commands.find((c) => c.id === cmd);
+      if (live) return { run: () => live.run(), disabled: false, label: live.title };
+      return {
+        run: () => {},
+        disabled: true,
+        label: t("topbar.commandUnavailable", { name: actionLabel(id, settings.topbarCommands) }),
+      };
+    }
     const util = actionUtility(id);
     if (util !== null) return { run: () => onOpenUtilities?.(util), disabled: false, label: actionLabel(id) };
     switch (id) {
@@ -149,6 +166,8 @@
 
   /** `data-testid` of a plain icon button — the ones tests and E2E already know. */
   function testid(id: TopbarId): string {
+    const cmd = actionCommand(id);
+    if (cmd !== null) return `topbar-cmd-${cmd}`;
     const util = actionUtility(id);
     if (util !== null) return `topbar-util-${util}`;
     return id === "recordings" ? "open-recordings" : `topbar-${id}`;
@@ -180,7 +199,7 @@
       y: box.bottom + 2,
       items: fit.overflow.map((id): MenuAction => {
         const a = act(id);
-        const icon = id === "record" && recording ? "stop" : actionIcon(id);
+        const icon = id === "record" && recording ? "stop" : actionIcon(id, settings.topbarCommands);
         return { icon, label: a.label, disabled: a.disabled, onSelect: a.run };
       }),
     };
@@ -262,7 +281,7 @@
       disabled={a.disabled}
       onclick={a.run}
     >
-      <Icon name={actionIcon(id)} size={15} />
+      <Icon name={actionIcon(id, settings.topbarCommands)} size={15} />
     </button>
   {/if}
 {/snippet}
@@ -339,15 +358,29 @@
   <div
     aria-hidden="true"
     data-testid="topbar-drag-ghost"
-    class="pointer-events-none fixed z-50 flex items-center justify-center overflow-hidden rounded-sm border border-accent bg-panel-alt text-xs text-accent shadow-lg"
+    class="pointer-events-none fixed z-50 flex items-center justify-center overflow-hidden rounded-sm border bg-panel-alt text-xs shadow-lg {topbarDrag.removing
+      ? 'border-danger text-danger opacity-60'
+      : 'border-accent text-accent'}"
+    data-removing={topbarDrag.removing ? "" : undefined}
     style="left: {topbarDrag.x}px; top: {topbarDrag.y}px; width: {topbarDrag.width}px; height: {topbarDrag.height}px"
   >
     {#if topbarDrag.id === "record"}
       REC
     {:else}
-      <Icon name={actionIcon(topbarDrag.id)} size={15} />
+      <Icon name={actionIcon(topbarDrag.id, settings.topbarCommands)} size={15} />
     {/if}
   </div>
+  {#if topbarDrag.removing}
+    <!-- Away from the bar a release takes the button off: said where the pointer is. -->
+    <div
+      aria-hidden="true"
+      class="pointer-events-none fixed z-50 rounded bg-panel-alt px-1.5 py-0.5 text-caption text-danger shadow"
+      style="left: {topbarDrag.x}px; top: {topbarDrag.y + topbarDrag.height + 4}px"
+      data-testid="topbar-drop-to-remove"
+    >
+      {t("topbar.dropToRemove")}
+    </div>
+  {/if}
 {/if}
 
 <ContextMenu {menu} onclose={() => (menu = null)} />

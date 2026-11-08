@@ -68,7 +68,14 @@ describe("what is written down of a tab", () => {
       secret: "hunter2",
       remember: true,
       waiting: "prod",
-      adopt: { cols: 80, rows: 24, data: "\u001b[31mprinted with hunter2", commands: ["export TOKEN=hunter2"] },
+      adopt: {
+        cols: 80,
+        rows: 24,
+        data: "\u001b[31mprinted with hunter2",
+        commands: ["export TOKEN=hunter2"],
+        lines: 24,
+        fileBlocks: [{ line: 0, cwd: "/home/hunter2" }],
+      },
     });
     const json = JSON.stringify(savedWindow([loaded], addTab(emptyLayout(), "s1")));
     expect(json).not.toContain("hunter2");

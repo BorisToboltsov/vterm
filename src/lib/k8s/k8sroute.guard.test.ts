@@ -142,7 +142,29 @@ describe("route guard: an unread list is not an empty one", () => {
   it("the route is built from ingresses only when they were read", () => {
     const call = buildRoutesCall(panel);
     expect(call, "buildRoutes( not called in K8sPanel.svelte").not.toBeNull();
-    expect(call).toMatch(/buildRoutes\(\s*services\s*,\s*netErrors\.ingress\s*===\s*null\s*\?\s*ingresses\s*:\s*null\s*,\s*slices\s*\)/);
+    expect(call).toMatch(
+      /buildRoutes\(\s*services\s*,\s*netErrors\.ingress\s*===\s*null\s*\?\s*ingresses\s*:\s*null\s*,\s*slices\s*(?:,\s*\{[^}]*\}\s*)?\)/,
+    );
+  });
+
+  it("HTTPRoutes, IngressClasses and NetworkPolicies are parsed only when read (v1.35)", () => {
+    // A cluster without the Gateway API has no HTTPRoutes — said by kubectl itself;
+    // any other failure leaves them unknown.
+    expect(panel).toMatch(/httpRoutes\s*=\s*noGateway\s*\?\s*\[\]\s*:\s*hr\s*&&\s*routesError\s*===\s*null\s*\?\s*parseHttpRoutes\(hr\.stdout\)\s*:\s*null/);
+    expect(panel).toMatch(/const noGateway = hr !== null && resourceMissing\(hr\.stderr\);/);
+    expect(panel).toMatch(/ingressClasses\s*=\s*cls\s*&&\s*listFailure\(cls\.stdout,\s*cls\.stderr,\s*cls\.exitCode\)\s*===\s*null\s*\?\s*parseIngressClasses\(cls\.stdout\)\s*:\s*null/);
+    expect(panel).toMatch(/netPolicies\s*=\s*np\s*&&\s*listFailure\(np\.stdout,\s*np\.stderr,\s*np\.exitCode\)\s*===\s*null\s*\?\s*parseNetworkPolicies\(np\.stdout\)\s*:\s*null/);
+    // Asked for only while the route is on screen, like the slices.
+    for (const args of ["httpRoutesArgs", "ingressClassesArgs", "networkPoliciesArgs"]) {
+      expect(panel).toMatch(new RegExp(`forRoute \\? kubectlRun\\(sessionId, viewArgs\\(${args}\\(\\)`));
+    }
+  });
+
+  it("the policy text is only ever shown, never matched", () => {
+    // The route model takes a policy's pods as its own words, like a selector.
+    const src = read("k8s/k8sroute.ts");
+    expect(src).not.toMatch(/appliesTo\s*(?:===|!==|\.includes|\.split|\.match)/);
+    expect(infersEndpoints(src)).toEqual([]);
   });
 
   it("unread services are an error on screen, in either view", () => {

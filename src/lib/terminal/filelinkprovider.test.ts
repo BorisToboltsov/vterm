@@ -32,6 +32,10 @@ class FakeTerm {
             get type() {
               return self.type;
             },
+            baseY: 0,
+            get cursorY() {
+              return Math.max(0, self.lines.length - 1);
+            },
             getLine: (y: number) => {
               const l = self.lines[y];
               if (!l) return undefined;
@@ -45,9 +49,9 @@ class FakeTerm {
           };
         },
       },
-      registerMarker: () => {
+      registerMarker: (offset = 0) => {
         const m = {
-          line: self.lines.length - 1,
+          line: self.lines.length - 1 + offset,
           isDisposed: false,
           dispose() {
             m.isDisposed = true;
@@ -141,6 +145,24 @@ describe("file links in a local terminal", () => {
     await run(s, "ls -l notes.txt");
     s.term.print("-rw-r--r-- 1 u u 3 Oct 28 14:03 notes.txt");
     expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["notes.txt"]);
+  });
+
+  it("reads `cd /etc && ls` in /etc, where the line went first", async () => {
+    const s = setup({}, HOME);
+    await run(s, "cd /etc && ls");
+    s.term.print("hosts  a.txt");
+    expect((await linksAt(s, 2))!.map((l) => l.text)).toEqual(["hosts"]);
+  });
+
+  it("reads `cd src; ls -l notes.txt` in src when the argument is a file", async () => {
+    const s = setup({}, { ...HOME, "/home/u/src": [entry("notes.txt")] });
+    await run(s, "cd src; ls -l notes.txt");
+    s.term.print("-rw-r--r-- 1 u u 3 Oct 28 14:03 notes.txt");
+    const [link] = (await linksAt(s, 2))!;
+    expect(link.text).toBe("notes.txt");
+    link.activate(click(), link.text);
+    await new Promise((r) => setTimeout(r, DOUBLE_CLICK_MS + 10));
+    expect(s.opened).toEqual([expect.objectContaining({ path: "/home/u/src/notes.txt" })]);
   });
 
   it("has no folder for output before the first command", async () => {
@@ -516,5 +538,44 @@ describe("targetOf (the menu's selection)", () => {
     s.term.print("a.txt");
     expect(await s.links.targetOf("a.txt", 1)).toEqual({ kind: "unplaced" });
     expect(await s.links.targetOf("ls", 0)).toBeNull();
+  });
+});
+
+describe("blocks taken to another window (v1.35)", () => {
+  it("a terminal replayed from a snapshot reads earlier output in its own folders", async () => {
+    const before = setup({}, HOME);
+    await run(before, "ls /etc");
+    before.term.print("hosts");
+    await run(before, "ls");
+    before.term.print("a.txt");
+    const saved = before.links.blocks();
+    expect(saved).toEqual([
+      { line: 0, cwd: "/home/u" },
+      { line: 2, cwd: "/home/u" },
+    ]);
+
+    // The other window: the same buffer, written from the snapshot — no command typed there.
+    const after = setup({ submittedCwd: async () => "/elsewhere" }, HOME);
+    for (const l of before.term.lines) after.term.print(l.text, l.wrapped);
+    expect(await linksAt(after, 2)).toBeUndefined();
+    after.links.restore(saved);
+    expect((await linksAt(after, 2))!.map((l) => l.text)).toEqual(["hosts"]);
+    expect((await linksAt(after, 4))!.map((l) => l.text)).toEqual(["a.txt"]);
+  });
+
+  it("keeps out what does not fit the buffer it is given", async () => {
+    const s = setup({}, HOME);
+    s.term.print("u@h:~$ ls");
+    s.term.print("a.txt");
+    s.links.restore([
+      { line: 7, cwd: "/home/u" },
+      { line: -1, cwd: "/home/u" },
+      { line: 0.5, cwd: "/home/u" },
+    ]);
+    expect(s.links.blocks()).toEqual([]);
+    s.links.restore([{ line: 0, cwd: null }]);
+    // A block whose folder the other window never knew: still no folder here.
+    expect(s.links.blocks()).toEqual([{ line: 0, cwd: null }]);
+    expect(await linksAt(s, 2)).toBeUndefined();
   });
 });

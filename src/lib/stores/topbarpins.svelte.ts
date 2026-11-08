@@ -6,10 +6,15 @@
 // (`topbar.guard.test.ts`).
 
 import { settings } from "../settings/settings.svelte";
+import type { IconName } from "../ui/icons";
 import {
+  actionCommand,
+  commandAction,
   DEFAULT_TOPBAR,
+  isPinnableCommand,
   moveTopbar,
   withPinned,
+  withPinnedAt,
   withUnpinned,
   type TopbarId,
 } from "../topbar/topbaractions";
@@ -26,10 +31,65 @@ export function pinAction(id: TopbarId): void {
   if (differs(next)) settings.topbar = next;
 }
 
+/** Put `id` on the bar before the button at `index` (dropped there from the Utilities window). */
+export function pinActionAt(id: TopbarId, index: number): void {
+  const next = withPinnedAt(settings.topbar, id, index);
+  if (differs(next)) settings.topbar = next;
+}
+
 /** Take `id` off the bar. Utilities and Settings stay; asking is a no-op. */
 export function unpinAction(id: TopbarId): void {
   const next = withUnpinned(settings.topbar, id);
   if (differs(next)) settings.topbar = next;
+  forgetCommands();
+}
+
+/** A ⌘K command (v1.35), as the palette names it. */
+export interface CommandRef {
+  id: string;
+  title: string;
+  icon: IconName;
+}
+
+/** Put a ⌘K command on the bar, remembering what to call it while the palette does not offer it. */
+export function pinCommand(cmd: CommandRef): void {
+  if (!isPinnableCommand(cmd.id)) return;
+  const id = commandAction(cmd.id);
+  settings.topbarCommands = { ...settings.topbarCommands, [id]: { title: cmd.title, icon: cmd.icon } };
+  pinAction(id);
+}
+
+/** On the bar if it is not, off it if it is — the palette's pin. */
+export function togglePinCommand(cmd: CommandRef): void {
+  const id = commandAction(cmd.id);
+  if (isPinned(id)) unpinAction(id);
+  else pinCommand(cmd);
+}
+
+/**
+ * The palette's commands as they are now: a pinned one keeps its current title
+ * and icon (the language changed, a session's name did) — written only when it
+ * differs, so a palette rebuilt on every keystroke writes nothing.
+ */
+export function refreshCommands(live: readonly CommandRef[]): void {
+  let next: typeof settings.topbarCommands | null = null;
+  for (const cmd of live) {
+    const id = commandAction(cmd.id);
+    const was = settings.topbarCommands[id];
+    if (!was || (was.title === cmd.title && was.icon === cmd.icon)) continue;
+    next ??= { ...settings.topbarCommands };
+    next[id] = { title: cmd.title, icon: cmd.icon };
+  }
+  if (next) settings.topbarCommands = next;
+}
+
+/** What is remembered of commands no longer on the bar goes with them. */
+function forgetCommands(): void {
+  const kept = Object.keys(settings.topbarCommands).filter(
+    (id) => actionCommand(id as TopbarId) !== null && settings.topbar.includes(id as TopbarId),
+  );
+  if (kept.length === Object.keys(settings.topbarCommands).length) return;
+  settings.topbarCommands = Object.fromEntries(kept.map((id) => [id, settings.topbarCommands[id]]));
 }
 
 /** Move `id` to stand before the button at `index` (the end of a drag, once). */
@@ -42,4 +102,5 @@ export function moveAction(id: TopbarId, index: number): void {
 export function resetTopbar(): void {
   const next = [...DEFAULT_TOPBAR];
   if (differs(next)) settings.topbar = next;
+  forgetCommands();
 }

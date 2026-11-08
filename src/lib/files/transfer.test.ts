@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  jobEnded,
   etaSeconds,
   fmtEta,
   isCancellableTransfer,
@@ -170,6 +171,17 @@ describe("a job, as the list and the toasts read it", () => {
       ...over,
     };
   }
+
+  it("a job waiting its turn is not over, and says it waits (v1.35)", () => {
+    expect(jobEnded(job({ state: "queued" }))).toBe(false);
+    expect(jobEnded(job({ state: "running" }))).toBe(false);
+    expect(jobEnded(job({ state: "cancelled" }))).toBe(true);
+    const row = jobRow(job({ state: "queued" }));
+    expect(row.done).toBe(false);
+    expect(row.queued).toBe(true);
+    expect(isCancellableTransfer(row)).toBe(true);
+    expect(jobRow(job()).queued).toBeUndefined();
+  });
 
   it("rejects late events and list snapshots after the SSH tab closes", () => {
     const download = job({ src: side("closed"), dst: side(null, true) });

@@ -48,6 +48,8 @@ import { lineDiffStat } from "../ui/util";
 /** What the page tells the editor flow, each read when it is needed. */
 export interface EditorDeps {
   findTab: (id: string) => Tab | null | undefined;
+  /** Whether the terminal of `sid` has room for a zone beside it (v1.35); absent — never. */
+  roomBeside?: (sid: string) => boolean;
 }
 
 export type SudoAsk =
@@ -77,6 +79,9 @@ export function createEditorFlow(deps: EditorDeps) {
 
   /** Configured editor open-size limit, in bytes. */
   const maxBytes = () => settings.sftp.maxOpenMb * 1024 * 1024;
+  // The first file beside the terminal (v1.35): asked of the setting, and of the
+  // room the terminal has — a zone too narrow for two opens the file over it.
+  const beside = (sid: string) => settings.editor.openBeside && (deps.roomBeside?.(sid) ?? false);
 
   // Per-session cache of the paths nginx actually loads (`nginx -T`), so files that
   // include-outside `/etc/nginx/` still get nginx highlighting + lint. Fetched lazily
@@ -135,6 +140,7 @@ export function createEditorFlow(deps: EditorDeps) {
     // once the buffer is read so kubeconform/ansible-lint can run (no-op for non-YAML).
     lang = editorLangWithDialect(lang, file.content);
     const id = addEditor(sid, path, name, lang, "sftp", {
+      beside: beside(sid),
       gotoLine: opts.gotoLine,
       gotoColumn: opts.gotoColumn,
       sudo: opts.sudo,
@@ -175,6 +181,7 @@ export function createEditorFlow(deps: EditorDeps) {
       return;
     }
     const id = addEditor(sid, path, name, editorLangOrPlain(path), "local", {
+      beside: beside(sid),
       gitBase: opts.gitBase,
       gotoLine: opts.gotoLine,
       gotoColumn: opts.gotoColumn,

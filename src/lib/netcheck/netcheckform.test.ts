@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   asProto,
   isBlankRow,
+  loadTables,
   newRow,
   rowLine,
   rowRules,
   rowsText,
+  SAVED_ROWS_MAX,
+  saveTables,
   sourceChoice,
   sourceOptions,
   splitHostPort,
@@ -114,5 +117,76 @@ describe("the From cell", () => {
       "10.64.48.180",
     ]);
     expect(sourceOptions([], keys, { kind: "text", text: "x" })).toEqual([]);
+  });
+});
+
+describe("saveTables / loadTables", () => {
+  const row = (targets: string, ports: string, via: string | null = null) => newRow({ targets, ports }, via);
+
+  it("keeps the rows as typed and the servers picked, per home host", () => {
+    const saved = saveTables({
+      rows: { "10.0.0.5": [row("db", "5432", "local"), newRow()], local: [newRow()] },
+      picked: { "10.0.0.5": ["local", "10.0.0.5"], local: [] },
+    });
+    // Blank rows and ids are not kept; a home with nothing typed is not kept.
+    expect(saved).toEqual({
+      rows: { "10.0.0.5": [{ source: "", targets: "db", ports: "5432", proto: "tcp", via: "local" }] },
+      picked: { "10.0.0.5": ["local", "10.0.0.5"], local: [] },
+    });
+    const back = loadTables(JSON.parse(JSON.stringify(saved)));
+    expect(back.rows["10.0.0.5"].map(({ id: _id, ...r }) => r)).toEqual(saved.rows["10.0.0.5"]);
+    expect(back.rows["10.0.0.5"][0].id).toMatch(/^r/);
+    // Picking nothing is a choice too: not the home host by default.
+    expect(back.picked).toEqual({ "10.0.0.5": ["local", "10.0.0.5"], local: [] });
+  });
+
+  it("drops what does not read as a row instead of guessing", () => {
+    const back = loadTables({
+      rows: {
+        h: [
+          { source: "", targets: "a", ports: "22", proto: "tcp", via: null },
+          { source: "", targets: "b", ports: 22, proto: "tcp", via: null },
+          { source: "", targets: "c", ports: "22", proto: "icmp", via: null },
+          { source: "", targets: "d", ports: "22", proto: "udp", via: "" },
+          { source: "", targets: "", ports: "", proto: "tcp", via: null },
+          "e:22",
+          null,
+        ],
+        "": [{ source: "", targets: "x", ports: "1", proto: "tcp", via: null }],
+        k: "nope",
+      },
+      picked: { h: ["a", 1, "", "a"], j: "x" },
+    });
+    expect(back.rows.h.map((r) => r.targets)).toEqual(["a"]);
+    expect(Object.keys(back.rows)).toEqual(["h"]);
+    expect(back.picked).toEqual({ h: ["a"] });
+  });
+
+  it("reads nothing from what is not a stored table", () => {
+    for (const raw of [null, undefined, 1, "x", [], { rows: [], picked: [] }]) {
+      expect(loadTables(raw)).toEqual({ rows: {}, picked: {} });
+    }
+  });
+
+  it("keeps a long table's first rows", () => {
+    const rows = Array.from({ length: SAVED_ROWS_MAX + 5 }, (_, i) => row(`h${i}`, "22"));
+    const saved = saveTables({ rows: { h: rows }, picked: {} });
+    expect(saved.rows.h).toHaveLength(SAVED_ROWS_MAX);
+    expect(saved.rows.h[0].targets).toBe("h0");
+  });
+});
+
+describe("IPv6 in the table (v1.35)", () => {
+  it("a target list with an IPv6 address goes in brackets, so the rule reads back", () => {
+    const row = newRow({ targets: "2001:db8::1, 10.0.0.1", ports: "443" });
+    expect(rowLine(row)).toBe("[2001:db8::1, 10.0.0.1]:443/tcp");
+    expect(rowRules(row).error).toBeNull();
+    expect(rowRules(row).rules[0].targets).toEqual(["2001:db8::1", "10.0.0.1"]);
+    expect(rowLine(newRow({ targets: "[::1]", ports: "22" }))).toBe("[::1]:22/tcp");
+  });
+
+  it("splits a typed `[addr]:port` across the two cells", () => {
+    expect(splitHostPort("[2001:db8::1]:443")).toEqual({ target: "2001:db8::1", ports: "443" });
+    expect(splitHostPort("2001:db8::1")).toBeNull();
   });
 });

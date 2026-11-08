@@ -183,6 +183,7 @@
     syntax: "util.netcheck.err.syntax",
     host: "util.netcheck.err.host",
     unspecified: "util.netcheck.err.unspecified",
+    ipv6Brackets: "util.netcheck.err.ipv6Brackets",
     port: "util.netcheck.err.port",
     range: "util.netcheck.err.range",
     empty: "util.netcheck.err.empty",

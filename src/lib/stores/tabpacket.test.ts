@@ -55,6 +55,8 @@ const SNAPSHOT: TermSnapshot = {
   rows: 43,
   data: "\u001b[32m$ uptime\u001b[0m\r\n 14:05 up 3 days",
   commands: ["uptime", "ls -la"],
+  lines: 43,
+  fileBlocks: [{ line: 0, cwd: "/srv/app" }],
 };
 
 const FACTS: PageFacts = {

@@ -87,6 +87,8 @@ pub struct Spec {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
+    /// Waiting for an earlier job of one of its sessions to end (v1.35).
+    Queued,
     Running,
     Done,
     /// It ran to the end, and at least one file did not make it.
@@ -158,9 +160,14 @@ struct Entry {
     origin: String,
 }
 
-/// The jobs under way. No Tauri types: every rule here is unit-tested.
+/// The jobs under way, and the turn each session gives them (v1.35): the jobs
+/// of one session run one at a time, in the order they were started. No Tauri
+/// types: every rule here is unit-tested.
 #[derive(Default)]
-pub struct Jobs(Mutex<HashMap<String, Entry>>);
+pub struct Jobs(
+    Mutex<HashMap<String, Entry>>,
+    Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+);
 
 impl Jobs {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Entry>> {
@@ -210,6 +217,58 @@ impl Jobs {
             .collect();
         shown.sort_by(|a, b| a.id.cmp(&b.id));
         shown
+    }
+
+    /// The turn of `session`: held by the job of it that runs now.
+    fn turn_of(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut turns = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        turns.entry(session.to_string()).or_default().clone()
+    }
+
+    /// Wait until every session `spec` touches is free, in the order jobs came:
+    /// `Queued` is told while it waits. None — it was stopped before its turn.
+    /// The sessions are taken in one order, so two jobs never hold one each.
+    pub async fn wait_turn(
+        &self,
+        spec: &Spec,
+        view: &mut JobView,
+        cancel: &AtomicBool,
+        tell: &(dyn Fn(&JobView, bool) + Send + Sync),
+    ) -> Option<Vec<tokio::sync::OwnedMutexGuard<()>>> {
+        let mut sessions: Vec<&str> = [&spec.src, &spec.dst]
+            .iter()
+            .filter_map(|side| side.session.as_deref())
+            .collect();
+        sessions.sort_unstable();
+        sessions.dedup();
+        let mut held = Vec::new();
+        for session in sessions {
+            let turn = self.turn_of(session);
+            if let Ok(guard) = turn.clone().try_lock_owned() {
+                held.push(guard);
+                continue;
+            }
+            if view.state != State::Queued {
+                view.state = State::Queued;
+                tell(view, false);
+            }
+            // One future for the whole wait: a new one would lose its place.
+            let wait = turn.lock_owned();
+            tokio::pin!(wait);
+            let guard = loop {
+                tokio::select! {
+                    guard = &mut wait => break guard,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                        if cancel.load(Ordering::Relaxed) {
+                            return None;
+                        }
+                    }
+                }
+            };
+            held.push(guard);
+        }
+        view.state = State::Running;
+        Some(held)
     }
 
     /// A session is ending: stop every job that reads from it or writes to it.
@@ -708,7 +767,7 @@ fn audit_exit(done: &JobView) -> i32 {
     match done.state {
         State::Cancelled => 130,
         State::Failed => 1,
-        State::Running | State::Done => 0,
+        State::Queued | State::Running | State::Done => 0,
     }
 }
 
@@ -736,6 +795,7 @@ pub async fn run(
     dst: Party,
     cancel: Arc<AtomicBool>,
     origin: String,
+    queued: bool,
 ) -> JobView {
     let started = std::time::Instant::now();
     let last_told = AtomicU64::new(0);
@@ -750,15 +810,24 @@ pub async fn run(
         }
         send(app, view, &origin);
     };
-    let done = carry_out(
-        JobView::start(&spec),
-        &spec,
-        &src.end,
-        &dst.end,
-        &cancel,
-        &tell,
-    )
-    .await;
+    // Its turn first (v1.35) — except for a file promised to the system, which
+    // is waited for right now (`dragout`). Held until the job ends.
+    let mut start = JobView::start(&spec);
+    let turn = if queued {
+        app.state::<Jobs>()
+            .wait_turn(&spec, &mut start, &cancel, &tell)
+            .await
+    } else {
+        Some(Vec::new())
+    };
+    let done = match turn {
+        Some(_held) => carry_out(start, &spec, &src.end, &dst.end, &cancel, &tell).await,
+        // Stopped while it waited: nothing was moved.
+        None => JobView {
+            state: State::Cancelled,
+            ..start
+        },
+    };
     // Off the registry first: a window that asks for the list on hearing the
     // last word must not be handed a job that has ended.
     app.state::<Jobs>().remove(&done.id);
@@ -807,6 +876,93 @@ mod tests {
 
     fn remote(session: &str, label: &str) -> Side {
         side(Some(session), false, label)
+    }
+
+    /// A job's turn (v1.35): one job of a session at a time, in the order they came.
+    #[tokio::test]
+    async fn the_jobs_of_one_session_take_turns() {
+        let jobs = Jobs::default();
+        let told = Mutex::new(Vec::new());
+        let tell = |v: &JobView, _minor: bool| told.lock().unwrap().push((v.id.clone(), v.state));
+        let up = |id: &str, session: &str| {
+            spec(
+                id,
+                disk(),
+                remote(session, "web"),
+                vec![item("/a", "/b", false, false)],
+                "/",
+            )
+        };
+        let first = up("j1", "s1");
+        let mut first_view = JobView::start(&first);
+        let held = jobs
+            .wait_turn(&first, &mut first_view, &AtomicBool::new(false), &tell)
+            .await
+            .expect("the first job runs at once");
+        assert_eq!(first_view.state, State::Running);
+        assert!(
+            told.lock().unwrap().is_empty(),
+            "nothing to wait for, nothing told"
+        );
+
+        // Another session's job does not wait for it.
+        let other = up("j2", "s2");
+        let mut other_view = JobView::start(&other);
+        let other_held = jobs
+            .wait_turn(&other, &mut other_view, &AtomicBool::new(false), &tell)
+            .await;
+        assert!(other_held.is_some());
+
+        // The same session's next job waits, says so, and runs when the first ends.
+        let second = up("j3", "s1");
+        let waiting = async {
+            let mut v = JobView::start(&second);
+            let turn = jobs
+                .wait_turn(&second, &mut v, &AtomicBool::new(false), &tell)
+                .await;
+            (v.state, turn.is_some())
+        };
+        let release = async {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            assert_eq!(
+                told.lock().unwrap().as_slice(),
+                &[("j3".to_string(), State::Queued)]
+            );
+            drop(held);
+        };
+        let ((state, ran), ()) = tokio::join!(waiting, release);
+        assert_eq!(state, State::Running);
+        assert!(ran);
+    }
+
+    #[tokio::test]
+    async fn a_job_stopped_while_queued_never_runs() {
+        let jobs = Jobs::default();
+        let tell = |_: &JobView, _: bool| {};
+        let up = |id: &str| {
+            spec(
+                id,
+                remote("s1", "web"),
+                disk(),
+                vec![item("/a", "/b", false, false)],
+                "/",
+            )
+        };
+        let first = up("j1");
+        let mut v1 = JobView::start(&first);
+        let _held = jobs
+            .wait_turn(&first, &mut v1, &AtomicBool::new(false), &tell)
+            .await;
+        let second = up("j2");
+        let mut v2 = JobView::start(&second);
+        let cancel = AtomicBool::new(false);
+        let stop = async {
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            cancel.store(true, Ordering::Relaxed);
+        };
+        let (turn, ()) = tokio::join!(jobs.wait_turn(&second, &mut v2, &cancel, &tell), stop);
+        assert!(turn.is_none());
+        assert_eq!(v2.state, State::Queued);
     }
 
     fn disk() -> Side {

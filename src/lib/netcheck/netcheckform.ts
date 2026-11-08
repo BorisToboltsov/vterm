@@ -52,7 +52,11 @@ function portsPart(raw: string): string {
 /** The row as one canonical rule line: `src -> targets:[ports]/tcp`. */
 export function rowLine(row: RuleDraft): string {
   const src = row.source.trim();
-  const body = `${row.targets.trim()}:${portsPart(row.ports)}/${row.proto}`;
+  // An IPv6 address among the targets: the list goes in brackets, so the colon
+  // before the ports is the only one outside them.
+  const raw = row.targets.trim();
+  const targets = raw.includes(":") && !/^\[.*\]$/.test(raw) ? `[${raw}]` : raw;
+  const body = `${targets}:${portsPart(row.ports)}/${row.proto}`;
   return src ? `${src} -> ${body}` : body;
 }
 
@@ -82,6 +86,9 @@ export function textRows(text: string): RuleRow[] {
  * cells. Null when there's no port part (then the text stays as typed).
  */
 export function splitHostPort(raw: string): { target: string; ports: string } | null {
+  // `[2001:db8::1]:443` — an IPv6 address keeps its colons inside the brackets.
+  const v6 = /^\s*\[([0-9A-Fa-f:.]+)\]\s*:\s*\[?([\w\s,;-]+?)\]?\s*$/.exec(raw);
+  if (v6 && /\d|^[a-z]/i.test(v6[2])) return { target: v6[1], ports: v6[2].trim() };
   const m = /^\s*([^\s:[\]]+)\s*:\s*\[?([\w\s,;-]+?)\]?\s*$/.exec(raw);
   if (!m || !/\d|^[a-z]/i.test(m[2])) return null;
   return { target: m[1], ports: m[2].trim() };
@@ -130,5 +137,69 @@ export function withSource(choice: SourceChoice): { source: string; via: string 
 export function sourceOptions(picked: readonly string[], hostKeys: readonly string[], choice: SourceChoice): string[] {
   const out = hostKeys.filter((k) => picked.includes(k));
   if (choice.kind === "host" && !out.includes(choice.key)) out.push(choice.key);
+  return out;
+}
+
+// ── Kept for the next launch (v1.35) ─────────────────────────────────────────
+
+/** The rules tables and the servers picked to check from, per home host. */
+export interface NetTables {
+  rows: Record<string, RuleRow[]>;
+  picked: Record<string, string[]>;
+}
+
+/** Rows a home host keeps across a restart; a longer table keeps its first. */
+export const SAVED_ROWS_MAX = 200;
+
+type SavedRow = Omit<RuleRow, "id">;
+
+/** The tables as stored: rows without their ids, blank rows left out. */
+export function saveTables(tables: NetTables): { rows: Record<string, SavedRow[]>; picked: Record<string, string[]> } {
+  const rows: Record<string, SavedRow[]> = {};
+  for (const [home, list] of Object.entries(tables.rows)) {
+    const kept = list
+      .filter((r) => !isBlankRow(r))
+      .slice(0, SAVED_ROWS_MAX)
+      .map(({ source, targets, ports, proto, via }) => ({ source, targets, ports, proto, via }));
+    if (home && kept.length) rows[home] = kept;
+  }
+  const picked: Record<string, string[]> = {};
+  for (const [home, keys] of Object.entries(tables.picked)) if (home) picked[home] = [...keys];
+  return { rows, picked };
+}
+
+const isText = (v: unknown): v is string => typeof v === "string";
+
+/**
+ * Stored tables back as rows with fresh ids. What does not read as a row —
+ * a cell that is not text, an unknown protocol — is dropped, not guessed at:
+ * a table that lost a row says less, one that invented a cell would check it.
+ */
+export function loadTables(raw: unknown): NetTables {
+  const out: NetTables = { rows: {}, picked: {} };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  const { rows, picked } = raw as { rows?: unknown; picked?: unknown };
+  if (rows && typeof rows === "object" && !Array.isArray(rows)) {
+    for (const [home, list] of Object.entries(rows as Record<string, unknown>)) {
+      if (!home || !Array.isArray(list)) continue;
+      const kept: RuleRow[] = [];
+      for (const r of list.slice(0, SAVED_ROWS_MAX) as unknown[]) {
+        if (!r || typeof r !== "object") continue;
+        const { source, targets, ports, proto, via } = r as Record<string, unknown>;
+        if (!isText(source) || !isText(targets) || !isText(ports)) continue;
+        if (proto !== "tcp" && proto !== "udp") continue;
+        if (via !== null && !(isText(via) && via !== "")) continue;
+        const row = newRow({ source, targets, ports, proto }, via);
+        if (!isBlankRow(row)) kept.push(row);
+      }
+      if (kept.length) out.rows[home] = kept;
+    }
+  }
+  if (picked && typeof picked === "object" && !Array.isArray(picked)) {
+    for (const [home, keys] of Object.entries(picked as Record<string, unknown>)) {
+      if (!home || !Array.isArray(keys)) continue;
+      out.picked[home] = [...new Set(keys.filter((k): k is string => isText(k) && k !== ""))];
+    }
+  }
   return out;
 }

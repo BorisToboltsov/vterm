@@ -7,10 +7,13 @@
 // `closeTabFully` (a run keeps a session id only to retry with; a closed one
 // answers "no session"). The Utilities window unmounts on close, so rules and
 // runs live here: a run started keeps going behind a closed window, its answer
-// waits for the reopen. History and probe methods persist to localStorage
-// (per-viewer conveniences; losing them only loses suggestions); rules, picks
-// and runs don't.
+// waits for the reopen. History, probe methods, the rules tables and the
+// servers picked (v1.35) persist to localStorage — per-viewer conveniences:
+// losing them loses only what was typed, and a stored table is read back
+// through `loadTables`, which drops what does not read as a row. Runs don't
+// persist: their sessions end with the app.
 import {
+  checkCount,
   checkTargets,
   failedKeys,
   localToolOf,
@@ -31,10 +34,11 @@ import {
   type NetRule,
   type NetTarget,
 } from "../netcheck/netcheck";
-import type { RuleRow } from "../netcheck/netcheckform";
-import type { HostPlan } from "../netcheck/netroute";
+import { loadTables, saveTables, type NetTables, type RuleRow } from "../netcheck/netcheckform";
+import { KNOWN_FACTS_MAX, sanitizeKnownFacts, type HostFacts, type HostPlan } from "../netcheck/netroute";
 import { netcheckRun, recordAudit, sftpCancel } from "../api";
 import { isRecording } from "./recordings.svelte";
+import { notifyInfo, notifySuccess } from "./toasts.svelte";
 import { probeError } from "../utilities/probe";
 import { isCancelled } from "../sync/sync";
 import { reportWords } from "../netcheck/netcheckwords";
@@ -43,6 +47,18 @@ import { t } from "../i18n";
 const STORAGE_KEY = "vterm.netcheck";
 // The probe method picked per checking host (v1.0.37); "auto" isn't stored.
 const METHOD_KEY = "vterm.netcheck.method";
+// The rules tables and the servers picked, per home host (v1.35).
+export const TABLES_KEY = "vterm.netcheck.tables";
+// What each server said of itself the last time it was asked (v1.35).
+export const KNOWN_KEY = "vterm.netcheck.known";
+
+function loadKnown(): Record<string, HostFacts> {
+  try {
+    return sanitizeKnownFacts(JSON.parse(localStorage.getItem(KNOWN_KEY) ?? "null"));
+  } catch {
+    return {};
+  }
+}
 
 /**
  * running — the check is under way; done — it answered; error — it couldn't run
@@ -67,6 +83,26 @@ export interface HostRun {
   cancelId: string;
 }
 
+/**
+ * «Wait for open» (v1.35, ADR 0056): the ports that did not open are checked
+ * again every `WAIT_EVERY_SECS` until they all do, the user stops, or
+ * `WAIT_FOR_SECS` pass. Started by its button only, for at most
+ * `WAIT_MAX_CHECKS` checks — a repeat is part of that act, not a check of its own.
+ */
+export const WAIT_EVERY_SECS = 10;
+export const WAIT_FOR_SECS = 30 * 60;
+export const WAIT_MAX_CHECKS = 64;
+
+export interface NetWait {
+  id: number;
+  /** When it gives up (ms since the epoch). */
+  until: number;
+  /** When the next attempt starts (ms since the epoch). */
+  next: number;
+  /** Attempts made so far. */
+  attempts: number;
+}
+
 /** A run from one or more servers. */
 export interface NetRun {
   id: number;
@@ -84,6 +120,16 @@ function loadMethods(): Record<string, MethodChoice> {
   }
 }
 
+function loadSaved(): NetTables {
+  try {
+    return loadTables(JSON.parse(localStorage.getItem(TABLES_KEY) ?? "null"));
+  } catch {
+    return { rows: {}, picked: {} };
+  }
+}
+
+const saved = loadSaved();
+
 function load(): NetHistory {
   try {
     return sanitizeHistory(JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"));
@@ -100,15 +146,42 @@ export const netcheckState = $state<{
   picked: Record<string, string[]>;
   /** The last run, per home host. */
   runs: Record<string, NetRun>;
+  /** A «wait for open» under way, per home host. */
+  waiting: Record<string, NetWait>;
   history: NetHistory;
   methods: Record<string, MethodChoice>;
+  /** What each server said of itself last (hostname, addresses), by host key. */
+  known: Record<string, HostFacts>;
 }>({
-  rows: {},
-  picked: {},
+  rows: saved.rows,
+  picked: saved.picked,
   runs: {},
+  waiting: {},
   history: load(),
   methods: loadMethods(),
+  known: loadKnown(),
 });
+
+/**
+ * Remember what the server `key` said of itself, for when no session to it is
+ * open. The same answer again writes nothing.
+ */
+export function rememberFacts(key: string, facts: HostFacts): void {
+  if (!key) return;
+  const was = netcheckState.known[key];
+  if (was && was.hostname === facts.hostname && was.addrs.join() === facts.addrs.join()) return;
+  const next = { ...netcheckState.known };
+  delete next[key];
+  next[key] = { hostname: facts.hostname, addrs: [...facts.addrs] };
+  const keys = Object.keys(next);
+  for (const k of keys.slice(0, Math.max(0, keys.length - KNOWN_FACTS_MAX))) delete next[k];
+  netcheckState.known = next;
+  try {
+    localStorage.setItem(KNOWN_KEY, JSON.stringify(next));
+  } catch {
+    /* storage blocked — the facts just won't outlive the app */
+  }
+}
 
 /** The rules table of `home`. */
 export function rowsOf(home: string): RuleRow[] {
@@ -181,6 +254,8 @@ let runSeq = 0;
  */
 export async function startRun(home: string, plan: HostPlan[], timeout: number, text: string): Promise<void> {
   if (!home || plan.length === 0 || isRunning(runOf(home))) return;
+  // A new run is a new question: a wait for the old one's answer ends.
+  delete netcheckState.waiting[home];
   rememberRules(home, text);
   const id = ++runSeq;
   netcheckState.runs[home] = {
@@ -204,8 +279,17 @@ export async function startRun(home: string, plan: HostPlan[], timeout: number, 
   await Promise.all(plan.map((p, i) => probeHost(home, id, i, checkTargets(p.rules), false)));
 }
 
-/** Check again, on every server, only what didn't come back open. */
-export async function retryRun(home: string): Promise<void> {
+/** What a retry would check again: what didn't open, and all of a server that answered nothing. */
+export function retryChecks(run: NetRun | null): number {
+  if (!run) return 0;
+  return run.hosts.reduce((n, h) => n + (h.report ? failedKeys(h.rules, h.report).size : checkCount(h.rules)), 0);
+}
+
+/**
+ * Check again, on every server, only what didn't come back open. `quiet` — a
+ * «wait for open» attempt: recorded only when it opened something.
+ */
+export async function retryRun(home: string, quiet = false): Promise<void> {
   const run = runOf(home);
   if (!run || isRunning(run)) return;
   const jobs = run.hosts
@@ -215,12 +299,74 @@ export async function retryRun(home: string): Promise<void> {
   run.at = reportStamp(new Date());
   for (const j of jobs) j.h.state = "running";
   await Promise.all(
-    jobs.map((j) => probeHost(home, run.id, j.i, checkTargets(j.h.rules, j.keys ?? undefined), j.keys !== null)),
+    jobs.map((j) => probeHost(home, run.id, j.i, checkTargets(j.h.rules, j.keys ?? undefined), j.keys !== null, quiet)),
   );
 }
 
-/** Stop every server of the run that is still checking (ADR 0032). */
+/** The «wait for open» of `home`, if one is under way. */
+export function waitOf(home: string): NetWait | null {
+  return netcheckState.waiting[home] ?? null;
+}
+
+let waitSeq = 0;
+
+/** Sleep until `at`, waking early when `still()` turns false. */
+async function sleepUntil(at: number, still: () => boolean): Promise<void> {
+  while (still() && Date.now() < at) {
+    await new Promise((r) => setTimeout(r, Math.min(250, Math.max(0, at - Date.now()))));
+  }
+}
+
+/**
+ * Wait for what did not open to open (ADR 0056): an attempt every
+ * `WAIT_EVERY_SECS`, until every port is open, a server can no longer check,
+ * the user stops, or `WAIT_FOR_SECS` pass. Nothing to wait for, or more than
+ * `WAIT_MAX_CHECKS` checks, and it does not start.
+ */
+export async function startWaiting(home: string): Promise<void> {
+  const run = runOf(home);
+  const todo = retryChecks(run);
+  if (!home || !run || isRunning(run) || waitOf(home) || todo === 0 || todo > WAIT_MAX_CHECKS) return;
+  const id = ++waitSeq;
+  const now = Date.now();
+  netcheckState.waiting[home] = { id, until: now + WAIT_FOR_SECS * 1000, next: now + WAIT_EVERY_SECS * 1000, attempts: 0 };
+  const still = () => waitOf(home)?.id === id && runOf(home)?.id === run.id;
+  while (still()) {
+    const w = waitOf(home)!;
+    await sleepUntil(w.next, still);
+    if (!still()) return;
+    if (Date.now() >= w.until) {
+      delete netcheckState.waiting[home];
+      notifyInfo(t("util.netcheck.waitExpired", { n: WAIT_FOR_SECS / 60 }));
+      return;
+    }
+    w.attempts += 1;
+    await retryRun(home, true);
+    if (!still()) return;
+    const cur = runOf(home)!;
+    if (cur.hosts.some((h) => h.state === "error" || h.state === "stopped")) {
+      delete netcheckState.waiting[home];
+      return;
+    }
+    if (retryChecks(cur) === 0) {
+      delete netcheckState.waiting[home];
+      notifySuccess(t("util.netcheck.waitOpened"));
+      return;
+    }
+    w.next = Date.now() + WAIT_EVERY_SECS * 1000;
+  }
+}
+
+/** Stop waiting for `home`; an attempt under way is stopped too. */
+export function stopWaiting(home: string): void {
+  if (!waitOf(home)) return;
+  delete netcheckState.waiting[home];
+  stopRun(home);
+}
+
+/** Stop every server of the run that is still checking (ADR 0032) — and a wait. */
 export function stopRun(home: string): void {
+  delete netcheckState.waiting[home];
   for (const h of runOf(home)?.hosts ?? []) {
     if (h.state === "running" && h.cancelId) void sftpCancel(h.cancelId).catch(() => {});
   }
@@ -232,10 +378,18 @@ function hostOf(home: string, id: number, i: number): HostRun | null {
   return run?.id === id ? (run.hosts[i] ?? null) : null;
 }
 
-async function probeHost(home: string, id: number, i: number, targets: NetTarget[], retry: boolean): Promise<void> {
+async function probeHost(
+  home: string,
+  id: number,
+  i: number,
+  targets: NetTarget[],
+  retry: boolean,
+  quiet = false,
+): Promise<void> {
   const h = hostOf(home, id, i);
   const run = netcheckState.runs[home];
   if (!h || !run) return;
+  const failedBefore = h.report ? failedKeys(h.rules, h.report).size : null;
   h.state = "running";
   h.error = "";
   h.cancelId = `netcheck:${id}:${i}:${Date.now().toString(36)}`;
@@ -272,7 +426,10 @@ async function probeHost(home: string, id: number, i: number, targets: NetTarget
     }
   }
   const cur = hostOf(home, id, i);
-  if (cur) audit(cur, rules, netcheckState.runs[home]?.at ?? "", timeout, retry);
+  if (!cur) return;
+  // A wait's attempt goes into the recording only when it opened something.
+  const opened = failedBefore !== null && cur.report !== null && failedKeys(rules, cur.report).size < failedBefore;
+  if (!quiet || opened) audit(cur, rules, netcheckState.runs[home]?.at ?? "", timeout, retry);
 }
 
 /**
@@ -290,3 +447,14 @@ function audit(h: HostRun, rules: NetRule[], at: string, timeout: number, retry:
         : netcheckFailureAudit(rules, h.error || t("util.probe.noOutput"), retry);
   void recordAudit(h.sessionId, entry).catch(() => {});
 }
+
+$effect.root(() => {
+  $effect(() => {
+    const data = JSON.stringify(saveTables({ rows: netcheckState.rows, picked: netcheckState.picked }));
+    try {
+      localStorage.setItem(TABLES_KEY, data);
+    } catch {
+      /* storage blocked — the tables just won't outlive the app */
+    }
+  });
+});

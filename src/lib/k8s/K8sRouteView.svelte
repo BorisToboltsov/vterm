@@ -8,6 +8,10 @@
   // Three things are kept apart on purpose, because they look alike and mean
   // different things: "no endpoints" (the service routes nowhere), "endpoints
   // not read" (the cluster refused the question) and "not loaded yet".
+  //
+  // v1.35: an HTTPRoute is an entry beside the ingress rules; an ingress's class
+  // and a route's acceptance are what the cluster's objects say; a service shows
+  // the NetworkPolicies of its namespace with whom each is for, in its own words.
   import Icon from "../ui/Icon.svelte";
   import Skeleton from "../ui/Skeleton.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -18,8 +22,10 @@
     shownEndpoints,
     type EndpointState,
     type RouteEntry,
+    type RoutePolicy,
     type RouteTable,
     type RouteTone,
+    type ServiceEntry,
   } from "./k8sroute";
   import { t, type MessageKey } from "../i18n";
 
@@ -27,6 +33,7 @@
     table,
     slicesError = null,
     ingressError = null,
+    routesError = null,
     onServiceMenu,
     onIngressMenu,
     onPortForward,
@@ -36,8 +43,10 @@
     slicesError?: string | null;
     /** Why ingresses could not be read; null when they were. */
     ingressError?: string | null;
+    /** Why HTTPRoutes could not be read; null when they were or the cluster has none. */
+    routesError?: string | null;
     onServiceMenu: (e: MouseEvent, service: K8sService) => void;
-    onIngressMenu: (e: MouseEvent, name: string, namespace: string) => void;
+    onIngressMenu: (e: MouseEvent, name: string, namespace: string, kind: string) => void;
     onPortForward: (target: string, namespace: string, port: number) => void;
   } = $props();
 
@@ -64,6 +73,35 @@
     return e.isDefault ? t("k8s.routeDefaultBackend") : `${e.host || "*"}${e.path}`;
   }
 
+  /** Who declares an entry: the ingress or route, its class or gateways (the default one marked). */
+  function entryOwner(e: RouteEntry): string {
+    const cls = e.classNote === "default" ? `${e.className} (${t("k8s.routeClassDefault")})` : e.className;
+    return [e.ingress, cls].filter(Boolean).join(" · ");
+  }
+
+  /** What is wrong with an entry, in the cluster's own terms. */
+  function entryProblems(e: RouteEntry, declared: boolean): string[] {
+    const out: string[] = [];
+    if (!declared) out.push(t("k8s.routePortMissing", { port: e.backend.port || "—" }));
+    if (e.accepted === false) out.push(t("k8s.routeNotAccepted"));
+    if (e.classNote === "missing") out.push(t("k8s.routeClassMissing", { name: e.className }));
+    if (e.classNote === "unset") out.push(t("k8s.routeClassUnset"));
+    return out;
+  }
+
+  const POLICY_KEY: Record<RoutePolicy["ingress"], MessageKey> = {
+    denyAll: "k8s.routePolicyDenyAll",
+    allowAll: "k8s.routePolicyAllowAll",
+    rules: "k8s.routePolicyRules",
+  };
+
+  /** One policy as a line: what it lets in, and for whom. */
+  function policyText(p: RoutePolicy): string {
+    const what = t(POLICY_KEY[p.ingress], { name: p.name, n: p.ruleCount });
+    const who = p.appliesTo ? t("k8s.routePolicyFor", { pods: p.appliesTo }) : t("k8s.routePolicyAllPods");
+    return `${what} · ${who}`;
+  }
+
   /** The service's facts under its name: cluster IP (when it has one) and its ports. */
   function serviceFacts(s: K8sService, ports: string[]): string {
     const ip = s.clusterIp && s.clusterIp !== "None" ? [s.clusterIp] : [];
@@ -71,11 +109,12 @@
   }
 </script>
 
-{#snippet entry(e: RouteEntry, problem: string | null)}
-  <!-- One ingress rule. What it shows is what the manifest declares. -->
+{#snippet entry(e: RouteEntry, problems: string[])}
+  <!-- One ingress rule or HTTPRoute match. What it shows is what the manifest declares. -->
   <div
     class="flex items-start gap-1.5 py-0.5"
-    oncontextmenu={(ev) => onIngressMenu(ev, e.ingress, e.namespace)}
+    oncontextmenu={(ev) =>
+      onIngressMenu(ev, e.ingress, e.namespace, e.source === "httproute" ? "httproutes.gateway.networking.k8s.io" : "ingress")}
     role="group"
     aria-label={entryLabel(e)}
     data-testid="k8s-route-entry"
@@ -92,18 +131,29 @@
         {/if}
       </div>
       <div class="flex min-w-0 items-baseline gap-1 text-caption text-muted">
-        <span class="truncate">{e.ingress}{#if e.className} · {e.className}{/if}</span>
-        <span class="shrink-0">·</span>
-        {#if e.address}
-          <span class="shrink-0">{e.address}</span>
+        {#if e.source === "httproute"}
+          <!-- The address and TLS belong to the gateway's listener, not to the route. -->
+          <span class="shrink-0" data-testid="k8s-route-source">HTTPRoute</span>
+          <span class="shrink-0">·</span>
+          <span class="truncate" use:tooltip={e.className ? t("k8s.routeGatewayTip", { name: e.className }) : undefined}
+            >{entryOwner(e)}</span
+          >
         {:else}
-          <!-- An empty status is all the data says; why it is empty, it does not. -->
-          <span class="shrink-0" use:tooltip={t("k8s.routeNoAddressTip")}>{t("k8s.routeNoAddress")}</span>
+          <span class="truncate" use:tooltip={e.controller ? t("k8s.routeControllerTip", { controller: e.controller }) : undefined}
+            >{entryOwner(e)}</span
+          >
+          <span class="shrink-0">·</span>
+          {#if e.address}
+            <span class="shrink-0">{e.address}</span>
+          {:else}
+            <!-- An empty status is all the data says; why it is empty, it does not. -->
+            <span class="shrink-0" use:tooltip={t("k8s.routeNoAddressTip")}>{t("k8s.routeNoAddress")}</span>
+          {/if}
         {/if}
       </div>
-      {#if problem}
+      {#each problems as problem (problem)}
         <div class="text-caption text-bad" data-testid="k8s-route-problem">{problem}</div>
-      {/if}
+      {/each}
     </div>
   </div>
 {/snippet}
@@ -111,7 +161,7 @@
 <div class="h-full overflow-auto text-xs" data-testid="k8s-route">
   <!-- Column heads — only where the chain runs left to right. -->
   <div class="sticky top-0 z-10 hidden border-b border-edge bg-panel-alt text-meta font-medium text-muted @wide:grid {COLS}">
-    <span class="px-2.5 py-1.5 {RULE}">{t("k8s.ingress")}</span>
+    <span class="px-2.5 py-1.5 {RULE}">{t("k8s.routeEntryHead")}</span>
     <span class="px-2.5 py-1.5 {RULE}">{t("k8s.service")}</span>
     <span class="px-2.5 py-1.5">{t("k8s.endpoints")}</span>
   </div>
@@ -120,6 +170,11 @@
     <!-- Said once, up here: in a narrow dock the per-row cell that says it is hidden. -->
     <div class="border-b border-edge/60 px-2.5 py-1.5 text-caption text-warn" use:tooltip={ingressError || undefined} data-testid="k8s-route-ingress-error">
       {t("k8s.routeIngressFailed")}
+    </div>
+  {/if}
+  {#if routesError !== null}
+    <div class="border-b border-edge/60 px-2.5 py-1.5 text-caption text-warn" use:tooltip={routesError || undefined} data-testid="k8s-route-httproute-error">
+      {t("k8s.routeHttpRoutesFailed")}
     </div>
   {/if}
 
@@ -135,7 +190,7 @@
           <span class="text-caption text-muted">{t("k8s.routeNoIngress")}</span>
         {:else}
           {#each r.entries as e (e.key)}
-            {@render entry(e, e.portDeclared ? null : t("k8s.routePortMissing", { port: e.backend.port || "—" }))}
+            {@render entry(e, entryProblems(e, (e as ServiceEntry).portDeclared))}
           {/each}
         {/if}
       </div>
@@ -158,6 +213,18 @@
             <span class="shrink-0 text-caption text-muted">{r.service.namespace}</span>
           </div>
           <div class="truncate font-mono text-caption text-muted">{serviceFacts(r.service, r.ports.map(portLabel))}</div>
+          {#if r.policies?.length}
+            <!-- The namespace's NetworkPolicies, each with whom it is for in its own words. -->
+            {#each r.policies as p (p.name)}
+              <div
+                class="flex min-w-0 items-baseline gap-1 text-caption {p.ingress === 'denyAll' ? 'text-warn' : 'text-muted'}"
+                data-testid="k8s-route-policy"
+              >
+                <Icon name="lock" size={10} class="shrink-0 self-center" />
+                <span class="truncate" use:tooltip={policyText(p)}>{policyText(p)}</span>
+              </div>
+            {/each}
+          {/if}
         </div>
         {#if r.service.firstPort !== null}
           <button
@@ -213,12 +280,12 @@
     <div class="border-b border-edge px-2.5 py-1 text-caption uppercase tracking-wider text-muted">{t("k8s.routeDangling")}</div>
     {#each table.dangling as d (d.entry.key)}
       <div class="border-b border-edge/60 px-2.5 py-1 hover:bg-edge/30" role="listitem" data-testid="k8s-route-dangling">
-        {@render entry(
-          d.entry,
-          d.reason === "serviceMissing"
-            ? t("k8s.routeServiceMissing", { name: d.entry.backend.service, namespace: d.entry.namespace })
-            : null,
-        )}
+        {@render entry(d.entry, [
+          ...(d.reason === "serviceMissing"
+            ? [t("k8s.routeServiceMissing", { name: d.entry.backend.service, namespace: d.backendNamespace })]
+            : []),
+          ...entryProblems(d.entry, true),
+        ])}
         {#if d.reason === "resource"}
           <div class="pl-[1.1875rem] text-caption text-muted">{t("k8s.routeResourceBackend", { resource: d.entry.backend.resource })}</div>
         {/if}

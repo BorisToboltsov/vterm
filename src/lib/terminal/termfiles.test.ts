@@ -16,6 +16,7 @@ import {
   lineText,
   listingCommand,
   listingDir,
+  commandDir,
   listingOf,
   MAX_DIRS_PER_LINE,
   pickLinks,
@@ -218,6 +219,21 @@ describe("absPath / resolveName", () => {
     expect(resolveName("/", null, "posix")).toBeNull();
   });
 
+  it("reads a Git Bash, MSYS or Cygwin drive as the drive", () => {
+    expect(absPath("/c/Users/bob/a.txt", null, "windows")).toBe("C:\\Users\\bob\\a.txt");
+    expect(absPath("/d", "C:\\x", "windows")).toBe("D:\\");
+    expect(absPath("/cygdrive/e/logs/../app.log", null, "windows")).toBe("E:\\app.log");
+    expect(resolveName("/c/Users/bob/", null, "windows")).toEqual({
+      path: "C:\\Users\\bob",
+      dir: "C:\\Users",
+      base: "bob",
+      wantsDir: true,
+    });
+    // A folder called `cc` at the drive's root is no drive.
+    expect(absPath("/cc/x", null, "windows")).toBeNull();
+    expect(absPath("/c/a.txt", null, "posix")).toBe("/c/a.txt");
+  });
+
   it("resolves Windows names with either separator and refuses a drive-relative root", () => {
     expect(resolveName("docs\\a.txt", "C:\\Users\\bob", "windows")).toEqual({
       path: "C:\\Users\\bob\\docs\\a.txt",
@@ -287,6 +303,13 @@ describe("links in a line", () => {
     const listing = { "C:\\Users\\bob": { "Readme.TXT": "file" } } as const;
     expect(linksOf("10/28/2026  02:00 PM   12 readme.txt", "C:\\Users\\bob", listing, { style: "windows" })).toEqual([
       { text: "readme.txt", kind: "file", path: "C:\\Users\\bob\\readme.txt" },
+    ]);
+  });
+
+  it("links a Git Bash path by the Windows listing of its drive", () => {
+    const listing = { "C:\\Users\\bob": { "notes.txt": "file" } } as const;
+    expect(linksOf("see /c/Users/bob/notes.txt here", null, listing, { style: "windows" })).toEqual([
+      { text: "/c/Users/bob/notes.txt", kind: "file", path: "C:\\Users\\bob\\notes.txt" },
     ]);
   });
 
@@ -435,6 +458,29 @@ describe("listingCommand", () => {
     expect(listingCommand("u@h:~/ls-tool$ make", "posix")).toBeNull();
     expect(listingCommand("", "posix")).toBeNull();
   });
+
+  it("reads a `cd` before the listing on the same line", () => {
+    expect(listingCommand("u@h:~$ cd /etc && ls", "posix")).toEqual({ dir: null, several: false, cd: "/etc" });
+    expect(listingCommand("$ cd src; ls -la lib", "posix")).toEqual({ dir: "lib", several: false, cd: "src" });
+    expect(listingCommand("$ cd 'my dir' && ls a b", "posix")).toEqual({ dir: null, several: true, cd: "my dir" });
+    expect(listingCommand("C:\\>cd /d D:\\logs && dir", "windows")).toEqual({
+      dir: null,
+      several: false,
+      cd: "D:\\logs",
+    });
+    expect(listingCommand("PS C:\\> Set-Location tmp; gci", "windows")).toEqual({
+      dir: null,
+      several: false,
+      cd: "tmp",
+    });
+    // `cd -` goes back to a folder nobody here saw.
+    expect(listingCommand("$ cd - && ls", "posix")?.cd).toBe("~");
+  });
+
+  it("is null when the listing does not follow the `cd`", () => {
+    expect(listingCommand("$ cd /etc && cat hosts", "posix")).toBeNull();
+    expect(listingCommand("$ cd /etc || ls", "posix")).toBeNull();
+  });
 });
 
 describe("headerDir / listingDir", () => {
@@ -461,6 +507,18 @@ describe("headerDir / listingDir", () => {
     expect(listingDir(null, { dir: "/etc", several: false }, null, "posix")).toBe("/etc");
     expect(listingDir(null, { dir: "src", several: false }, null, "posix")).toBeNull();
     expect(listingDir(null, null, "C:\\x", "windows")).toBe("C:\\x");
+  });
+
+  it("reads from the folder a `cd` on the command line went to", () => {
+    const cd = (to: string, dir: string | null = null, several = false) => ({ dir, several, cd: to });
+    expect(listingDir("/home/u", cd("/etc"), null, "posix")).toBe("/etc");
+    expect(listingDir("/home/u", cd("src", "lib"), null, "posix")).toBe("/home/u/src/lib");
+    expect(listingDir("/home/u", cd("src", null, true), "a", "posix")).toBe("/home/u/src/a");
+    expect(listingDir("/home/u", cd("~"), null, "posix")).toBeNull();
+    expect(listingDir(null, cd("src"), null, "posix")).toBeNull();
+    expect(listingDir("C:\\x", cd("D:\\logs"), null, "windows")).toBe("D:\\logs");
+    expect(commandDir("/home/u", cd("src", "notes.txt"), "posix")).toBe("/home/u/src");
+    expect(commandDir("/home/u", { dir: null, several: false }, "posix")).toBe("/home/u");
   });
 });
 

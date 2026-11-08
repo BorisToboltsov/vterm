@@ -858,6 +858,17 @@ describe("AiChat — in a wide panel", () => {
     for (const id of ["ai-model", "ai-attach", "ai-clear"]) expect(screen.getAllByTestId(id)).toHaveLength(1);
   });
 
+  it("wide: the border between the chat and its column is dragged, its share the store's (v1.35)", async () => {
+    enableAi();
+    render(AiChat, { props: { getContext } });
+    await resize(1200);
+    const divider = screen.getByTestId("panel-divider");
+    expect(divider).toHaveAttribute("role", "separator");
+    // The chat keeps the larger part by default; the column takes the rest.
+    expect(screen.getByTestId("ai-main").style.width).not.toBe("");
+    expect(screen.getByTestId("ai-side").className).not.toContain("w-64");
+  });
+
   it("wide: the question stays under the chat, not in the column", async () => {
     enableAi();
     render(AiChat, { props: { getContext } });

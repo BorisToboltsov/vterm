@@ -64,6 +64,9 @@
     nodesArgs,
     eventsArgs,
     endpointSlicesArgs,
+    httpRoutesArgs,
+    ingressClassesArgs,
+    networkPoliciesArgs,
     describeArgs,
     getYamlArgs,
     execShellArgv,
@@ -97,6 +100,10 @@
     parseNodes,
     parseEvents,
     parseEndpointSlices,
+    parseHttpRoutes,
+    parseIngressClasses,
+    parseNetworkPolicies,
+    resourceMissing,
     listFailure,
     metricsKey,
     parseCpuMillis,
@@ -122,6 +129,9 @@
     type K8sNode,
     type K8sEvent,
     type K8sEndpointSlice,
+    type K8sHttpRoute,
+    type K8sIngressClass,
+    type K8sNetworkPolicy,
     type K8sDetailTab,
   } from "./k8s";
   import { buildRoutes } from "./k8sroute";
@@ -228,15 +238,33 @@
   let netView = $state<NetView>(untrack(() => storedSub<NetView>(sessionId, "k8sNet", "list")));
   // null = not known: not asked for, on their way, or refused (`netErrors.slices`).
   let slices = $state<K8sEndpointSlice[] | null>(null);
+  // The route's other objects (v1.35), asked for like the slices — only while it
+  // is on screen; null = not known. A cluster without the Gateway API has no
+  // HTTPRoutes (`resourceMissing`): an empty list, not an unread one.
+  let httpRoutes = $state.raw<K8sHttpRoute[] | null>(null);
+  let ingressClasses = $state.raw<K8sIngressClass[] | null>(null);
+  let netPolicies = $state.raw<K8sNetworkPolicy[] | null>(null);
   // Why a list could not be read, per source; null = it was read. Kept apart from
   // the lists because an unread list and an empty one must not look the same.
-  let netErrors = $state<{ services: string | null; ingress: string | null; slices: string | null }>({
+  let netErrors = $state<{
+    services: string | null;
+    ingress: string | null;
+    slices: string | null;
+    httpRoutes: string | null;
+  }>({
     services: null,
     ingress: null,
     slices: null,
+    httpRoutes: null,
   });
   const routes = $derived(
-    netView === "route" ? buildRoutes(services, netErrors.ingress === null ? ingresses : null, slices) : null,
+    netView === "route"
+      ? buildRoutes(services, netErrors.ingress === null ? ingresses : null, slices, {
+          httpRoutes,
+          classes: ingressClasses,
+          policies: netPolicies,
+        })
+      : null,
   );
   let nodes = $state<K8sNode[]>([]);
   let events = $state<K8sEvent[]>([]);
@@ -513,10 +541,13 @@
         jobs = parseJobs(res.stdout);
       } else if (activeSub === "network") {
         const forRoute = netView === "route";
-        const [svc, ing, eps] = await Promise.all([
+        const [svc, ing, eps, hr, cls, np] = await Promise.all([
           kubectlRun(sessionId, viewArgs(servicesArgs()), 20, false),
           kubectlRun(sessionId, viewArgs(ingressArgs()), 20, false),
           forRoute ? kubectlRun(sessionId, viewArgs(endpointSlicesArgs()), 20, false) : null,
+          forRoute ? kubectlRun(sessionId, viewArgs(httpRoutesArgs()), 20, false) : null,
+          forRoute ? kubectlRun(sessionId, viewArgs(ingressClassesArgs(), { namespaced: false }), 20, false) : null,
+          forRoute ? kubectlRun(sessionId, viewArgs(networkPoliciesArgs()), 20, false) : null,
         ]);
         services = parseServices(svc.stdout);
         ingresses = parseIngress(ing.stdout);
@@ -525,12 +556,23 @@
         // was on its way — says nothing about the slices this view needs: a late
         // list-view reload must not wipe the endpoints the route's own brought.
         const current = forRoute === (netView === "route");
+        const noGateway = hr !== null && resourceMissing(hr.stderr);
+        const routesError = hr && !noGateway ? listFailure(hr.stdout, hr.stderr, hr.exitCode) : null;
         netErrors = {
           services: listFailure(svc.stdout, svc.stderr, svc.exitCode),
           ingress: listFailure(ing.stdout, ing.stderr, ing.exitCode),
           slices: current ? slicesError : netErrors.slices,
+          httpRoutes: current ? routesError : netErrors.httpRoutes,
         };
-        if (current) slices = eps && slicesError === null ? parseEndpointSlices(eps.stdout) : null;
+        if (current) {
+          slices = eps && slicesError === null ? parseEndpointSlices(eps.stdout) : null;
+          httpRoutes = noGateway ? [] : hr && routesError === null ? parseHttpRoutes(hr.stdout) : null;
+          // Classes and policies a cluster refuses (RBAC) are simply not spoken of.
+          ingressClasses =
+            cls && listFailure(cls.stdout, cls.stderr, cls.exitCode) === null ? parseIngressClasses(cls.stdout) : null;
+          netPolicies =
+            np && listFailure(np.stdout, np.stderr, np.exitCode) === null ? parseNetworkPolicies(np.stdout) : null;
+        }
       } else {
         // Cluster: nodes are cluster-scoped (no namespace flag); events respect scope.
         const [nd, ev, pvc] = await Promise.all([
@@ -626,6 +668,10 @@
     netView = view;
     slices = null;
     netErrors.slices = null;
+    httpRoutes = null;
+    ingressClasses = null;
+    netPolicies = null;
+    netErrors.httpRoutes = null;
     rememberSub(sessionId, "k8sNet", view);
     void refresh();
   }
@@ -1151,6 +1197,7 @@
           servicesError={netErrors.services}
           ingressError={netErrors.ingress}
           slicesError={netErrors.slices}
+          routesError={netErrors.httpRoutes}
           {run}
           onDescribe={describeObj}
           onYaml={yamlObj}

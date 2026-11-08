@@ -44,6 +44,7 @@
     type SessionActionState,
   } from "./sessionactions";
   import { isPinned, pinAction, unpinAction } from "../stores/topbarpins.svelte";
+  import { beginTopbarDrag, consumeTopbarClick, topbarDrag } from "../stores/topbardrag.svelte";
 
   let {
     open = $bindable(false),
@@ -134,12 +135,27 @@
   function onKey(e: KeyboardEvent) {
     if (e.key === "Escape") close();
   }
+
+  // A row dragged to the top bar (v1.35) ends in a click on it: not a pick.
+  function swallowDragClick(e: MouseEvent) {
+    if (!consumeTopbarClick()) return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 </script>
 
 <svelte:window onkeydown={open ? onKey : undefined} />
 
 {#if open}
-  <div class="fixed inset-0 z-40 flex items-center justify-center" data-testid="utilities-panel">
+  <!-- While a tool is carried to the top bar the window fades, so the bar it
+       lands on shows (v1.35); the pointer is the drag's, not the window's. -->
+  <div
+    class="fixed inset-0 z-40 flex items-center justify-center transition-opacity {topbarDrag.id !== null &&
+    topbarDrag.incoming
+      ? 'pointer-events-none opacity-20'
+      : ''}"
+    data-testid="utilities-panel"
+  >
     <!-- Dims only; closing is the × or Escape (lint rule `vterm/backdrop-no-close`). -->
     <div class="absolute inset-0 bg-black/50" aria-hidden="true"></div>
     <div class="relative flex max-h-[85vh] w-[52rem] flex-col rounded-lg border border-edge bg-panel-alt">
@@ -185,6 +201,8 @@
                     ? 'bg-edge text-text'
                     : 'text-muted hover:bg-edge/50 hover:text-text'}"
                   aria-current={selected === sessionKey(a.id) ? "page" : undefined}
+                  onpointerdown={(e) => beginTopbarDrag(e, a.id, true)}
+                  onclickcapture={swallowDragClick}
                   onclick={() => (selected = sessionKey(a.id))}
                 >
                   <Icon name={a.icon} size={15} class="mt-0.5 shrink-0" />
@@ -210,6 +228,8 @@
                   ? 'bg-edge text-text'
                   : 'text-muted hover:bg-edge/50 hover:text-text'}"
                 aria-current={selected === u.id ? "page" : undefined}
+                onpointerdown={(e) => beginTopbarDrag(e, utilAction(u.id), true)}
+                onclickcapture={swallowDragClick}
                 onclick={() => (selected = u.id)}
               >
                 <Icon name={u.icon} size={15} class="mt-0.5 shrink-0" />

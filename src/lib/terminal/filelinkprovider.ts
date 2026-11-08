@@ -28,6 +28,7 @@ import type { FileEntry } from "../types";
 import {
   blockAt,
   clickOpens,
+  commandDir,
   dirsToList,
   DOUBLE_CLICK_MS,
   headerDir,
@@ -36,6 +37,7 @@ import {
   listingCommand,
   listingDir,
   listingOf,
+  logicalRows,
   pickLinks,
   resolveName,
   spanRange,
@@ -45,6 +47,12 @@ import {
   type Listing,
   type PathStyle,
 } from "./termfiles";
+
+/** One command's output as file links keep it: the buffer row its line is on and its folder. */
+export interface SavedBlock {
+  line: number;
+  cwd: string | null;
+}
 
 /** What the terminal tells the provider, read when needed. */
 export interface FileLinkHost {
@@ -76,6 +84,10 @@ export interface FileLinks {
   noteCwd(path: string): void;
   /** What a selection on buffer row `row` (0-based) names, for the menu. */
   targetOf(text: string, row: number): Promise<FileLinkTarget | null>;
+  /** The blocks noted so far, for another window's terminal (v1.35). */
+  blocks(): SavedBlock[];
+  /** Blocks another window noted, for a buffer replayed from its snapshot. */
+  restore(saved: readonly SavedBlock[]): void;
   dispose(): void;
 }
 
@@ -128,16 +140,7 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
 
   /** The rows of the logical line holding row `y` (0-based): first row and rows. */
   function logical(y: number): { first: number; rows: IBufferLine[] } {
-    const buf = term.buffer.active;
-    let first = y;
-    while (first > 0 && y - first < MAX_WRAPPED_ROWS && buf.getLine(first)?.isWrapped) first--;
-    const rows: IBufferLine[] = [];
-    for (let r = first; rows.length < MAX_WRAPPED_ROWS; r++) {
-      const row = buf.getLine(r);
-      if (!row || (r > first && !row.isWrapped)) break;
-      rows.push(row);
-    }
-    return { first, rows };
+    return logicalRows(term.buffer.active, y, MAX_WRAPPED_ROWS);
   }
 
   const textAt = (y: number): string => lineText(logical(y).rows, term.cols).text;
@@ -162,8 +165,8 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
     }
     const dir = listingDir(cwd, cmd, header, style);
     // `ls -l notes.txt` names a file, not a folder: its line reads where the
-    // command ran when the named "folder" has no listing.
-    const fallback = header === null && cmd?.dir ? cwd : null;
+    // command ran (after its `cd`) when the named "folder" has no listing.
+    const fallback = header === null && cmd?.dir ? commandDir(cwd, cmd, style) : null;
     return { style, cmd, dir, fallback, start: block?.marker.line ?? -1 };
   }
 
@@ -306,6 +309,23 @@ export function createFileLinks(term: LinkTerminal, host: FileLinkHost): FileLin
         return { kind: "unplaced" };
       }
       return null;
+    },
+    blocks() {
+      // A folder still being asked is unknown to the other window.
+      return live().map((b) => ({ line: b.marker.line, cwd: b.cwd ?? null }));
+    },
+    restore(saved) {
+      // A marker is placed relative to the cursor: the rows above it are the
+      // replayed buffer, laid out as the snapshot had them.
+      const buf = term.buffer.active;
+      const at = buf.baseY + buf.cursorY;
+      const restored: Block[] = [];
+      for (const s of saved) {
+        if (!Number.isInteger(s.line) || s.line < 0 || s.line > at) continue;
+        const marker = term.registerMarker(s.line - at);
+        if (marker) restored.push({ marker, cwd: typeof s.cwd === "string" ? s.cwd : null });
+      }
+      blocks = [...restored, ...blocks].slice(-MAX_BLOCKS);
     },
     dispose() {
       clearTimeout(pending);

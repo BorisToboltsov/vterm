@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   parseEndpointSlices,
+  parseHttpRoutes,
   parseIngress,
+  parseIngressClasses,
+  parseNetworkPolicies,
   parseServices,
+  resourceMissing,
   type K8sEndpointSlice,
   type K8sIngress,
   type K8sService,
@@ -269,9 +273,14 @@ describe("buildRoutes — ingress rules", () => {
     expect(routes[0].entries).toEqual([
       {
         key: "shop/shop#0",
+        source: "ingress",
         ingress: "shop",
         namespace: "shop",
         className: "nginx",
+        // IngressClasses not asked for: nothing said about the class.
+        classNote: null,
+        controller: "",
+        accepted: null,
         host: "shop.example.com",
         path: "/",
         pathType: "Prefix",
@@ -479,5 +488,135 @@ describe("shownEndpoints", () => {
     const { shown, hidden } = shownEndpoints(t.endpoints);
     expect(shown[0]).toMatchObject({ targetName: "web-150", state: "notReady" });
     expect(hidden).toBe(200 - ROUTE_MAX_ENDPOINTS);
+  });
+});
+
+describe("v1.35: HTTPRoute, IngressClass and NetworkPolicy", () => {
+  const ready = () => slices(slice("web", [ep("10.1.0.5", "web-abc")]));
+  const web = () => services(svc("web"));
+
+  function httpRoute(name: string, spec: Record<string, unknown>, status: Record<string, unknown> = {}, namespace = "shop") {
+    return { apiVersion: "gateway.networking.k8s.io/v1", kind: "HTTPRoute", metadata: { name, namespace }, spec, status };
+  }
+  const accepted = (value: "True" | "False") => ({
+    parents: [{ parentRef: { name: "public" }, conditions: [{ type: "Accepted", status: value }] }],
+  });
+
+  it("an HTTPRoute is an entry into the service its rule names", () => {
+    const routes = parseHttpRoutes(
+      list(
+        httpRoute(
+          "shop-route",
+          {
+            parentRefs: [{ name: "public" }],
+            hostnames: ["shop.example.com"],
+            rules: [{ matches: [{ path: { type: "PathPrefix", value: "/api" } }], backendRefs: [{ name: "web", port: 80 }] }],
+          },
+          accepted("True"),
+        ),
+      ),
+    );
+    const { routes: rows, dangling } = buildRoutes(web(), [], ready(), { httpRoutes: routes });
+    expect(dangling).toEqual([]);
+    expect(rows[0].entries).toEqual([
+      expect.objectContaining({
+        source: "httproute",
+        ingress: "shop-route",
+        className: "public",
+        host: "shop.example.com",
+        path: "/api",
+        pathType: "PathPrefix",
+        accepted: true,
+        tls: false,
+        backend: { service: "web", port: "80", resource: "" },
+        portDeclared: true,
+      }),
+    ]);
+    expect(rows[0].tone).toBe("ok");
+  });
+
+  it("a route a gateway refused leads nowhere; one with no match is every path", () => {
+    const routes = parseHttpRoutes(
+      list(httpRoute("r", { parentRefs: [{ name: "public" }], rules: [{ backendRefs: [{ name: "web", port: 80 }] }] }, accepted("False"))),
+    );
+    expect(routes[0].rules).toEqual([{ path: "/", pathType: "PathPrefix", backends: [expect.objectContaining({ kind: "Service" })] }]);
+    const { routes: rows } = buildRoutes(web(), [], ready(), { httpRoutes: routes });
+    expect(rows[0].entries?.[0]).toMatchObject({ accepted: false, host: "" });
+    expect(rows[0].tone).toBe("bad");
+    // No status yet: nothing said, not "refused".
+    expect(parseHttpRoutes(list(httpRoute("r", { rules: [] })))[0].accepted).toBeNull();
+  });
+
+  it("a backend of another kind or a missing service is dangling, looked for in the ref's namespace", () => {
+    const routes = parseHttpRoutes(
+      list(
+        httpRoute("r", {
+          rules: [{ backendRefs: [{ kind: "Bucket", name: "files" }, { name: "api", namespace: "backend", port: 8080 }] }],
+        }),
+      ),
+    );
+    const { dangling } = buildRoutes(web(), [], ready(), { httpRoutes: routes });
+    expect(dangling.map((d) => [d.reason, d.entry.backend.resource || d.entry.backend.service, d.backendNamespace])).toEqual([
+      ["resource", "Bucket/files", "shop"],
+      ["serviceMissing", "api", "backend"],
+    ]);
+  });
+
+  it("a cluster without the Gateway API says so in its own words", () => {
+    expect(resourceMissing('error: the server doesn\'t have a resource type "httproutes"')).toBe(true);
+    expect(resourceMissing("Error from server (Forbidden): httproutes is forbidden")).toBe(false);
+  });
+
+  it("an ingress's class is read from the IngressClasses", () => {
+    const classes = parseIngressClasses(
+      list(
+        {
+          metadata: { name: "nginx", annotations: { "ingressclass.kubernetes.io/is-default-class": "true" } },
+          spec: { controller: "k8s.io/ingress-nginx" },
+        },
+        { metadata: { name: "traefik" }, spec: { controller: "traefik.io/ingress-controller" } },
+      ),
+    );
+    const ing = (name: string, cls?: string) =>
+      ingress(name, { ...(cls ? { ingressClassName: cls } : {}), rules: [rule(`${name}.example.com`, "/", "web", 80)] });
+    const { routes } = buildRoutes(web(), ingresses(ing("a"), ing("b", "traefik"), ing("c", "haproxy")), ready(), { classes });
+    expect(routes[0].entries?.map((e) => [e.ingress, e.className, e.classNote, e.controller])).toEqual([
+      ["a", "nginx", "default", "k8s.io/ingress-nginx"],
+      ["b", "traefik", null, "traefik.io/ingress-controller"],
+      ["c", "haproxy", "missing", ""],
+    ]);
+    // No default class: a class nobody named stays unnamed.
+    const none = buildRoutes(web(), ingresses(ing("a")), ready(), { classes: classes.filter((c) => !c.isDefault) });
+    expect(none.routes[0].entries?.[0]).toMatchObject({ className: "", classNote: "unset" });
+    // Classes not read: nothing is said about any class.
+    const unread = buildRoutes(web(), ingresses(ing("c", "haproxy")), ready(), { classes: null });
+    expect(unread.routes[0].entries?.[0].classNote).toBeNull();
+  });
+
+  it("a service carries the policies of its namespace that restrict what comes in, as their own text", () => {
+    const policies = parseNetworkPolicies(
+      list(
+        { metadata: { name: "deny-all", namespace: "shop" }, spec: { podSelector: {}, policyTypes: ["Ingress"] } },
+        {
+          metadata: { name: "allow-web", namespace: "shop" },
+          spec: {
+            podSelector: { matchLabels: { app: "web" }, matchExpressions: [{ key: "tier", operator: "In", values: ["front"] }] },
+            ingress: [{ from: [{ podSelector: {} }], ports: [{ port: 80 }] }, { from: [{ namespaceSelector: {} }] }],
+          },
+        },
+        { metadata: { name: "open", namespace: "shop" }, spec: { podSelector: {}, ingress: [{}] } },
+        { metadata: { name: "egress-only", namespace: "shop" }, spec: { podSelector: {}, policyTypes: ["Egress"] } },
+        { metadata: { name: "elsewhere", namespace: "other" }, spec: { podSelector: {} } },
+      ),
+    );
+    const { routes } = buildRoutes(web(), [], ready(), { policies });
+    expect(routes[0].policies).toEqual([
+      { name: "allow-web", appliesTo: "app=web, tier In (front)", ingress: "rules", ruleCount: 2 },
+      { name: "deny-all", appliesTo: "", ingress: "denyAll", ruleCount: 0 },
+      { name: "open", appliesTo: "", ingress: "allowAll", ruleCount: 1 },
+    ]);
+    // Not read: no word about policies, not "none".
+    expect(buildRoutes(web(), [], ready()).routes[0].policies).toBeNull();
+    expect(buildRoutes(web(), [], ready(), { policies: [] }).routes[0].policies).toEqual([]);
   });
 });

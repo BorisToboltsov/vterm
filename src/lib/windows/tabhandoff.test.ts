@@ -34,7 +34,14 @@ const packet = (over: Record<string, unknown> = {}): Record<string, unknown> => 
     gen: 3,
   },
   seat: null,
-  terminal: { cols: 120, rows: 40, data: "\u001b[1mhi\u001b[0m", commands: ["ls"] },
+  terminal: {
+    cols: 120,
+    rows: 40,
+    data: "\u001b[1mhi\u001b[0m",
+    commands: ["ls"],
+    lines: 40,
+    fileBlocks: [{ line: 0, cwd: "/home/u" }],
+  },
   workspace: null,
   chat: null,
   dock: null,
@@ -84,6 +91,9 @@ describe("parsePacket", () => {
     expect(bad({ terminal: { cols: 0, rows: 24, data: "", commands: [] } })).toBeNull();
     expect(bad({ terminal: { cols: 80, rows: 2.5, data: "", commands: [] } })).toBeNull();
     expect(bad({ terminal: { cols: 80, rows: 24, data: "", commands: "ls" } })).toBeNull();
+    // A snapshot of this build says how long its buffer was and what file links noted.
+    expect(bad({ terminal: { cols: 80, rows: 24, data: "", commands: [], fileBlocks: [] } })).toBeNull();
+    expect(bad({ terminal: { cols: 80, rows: 24, data: "", commands: [], lines: 24 } })).toBeNull();
     expect(bad({ page: null })).toBeNull();
   });
 
@@ -100,7 +110,7 @@ describe("parsePacket", () => {
   });
 
   it("an empty screen is still a terminal", () => {
-    const empty = packet({ terminal: { cols: 80, rows: 24, data: "", commands: [] } });
+    const empty = packet({ terminal: { cols: 80, rows: 24, data: "", commands: [], lines: 24, fileBlocks: [] } });
     expect(parsePacket(JSON.stringify(empty))).not.toBeNull();
   });
 });

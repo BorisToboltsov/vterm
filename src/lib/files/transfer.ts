@@ -135,6 +135,13 @@ export interface TransferRow extends Omit<SftpProgress, "direction"> {
   /** What the user calls the tabs at each end — only when the backend named one. */
   srcLabel?: string;
   dstLabel?: string;
+  /** Waiting for an earlier job of one of its sessions (v1.35). */
+  queued?: true;
+}
+
+/** Whether a job has ended — not still waiting its turn, not still running. */
+export function jobEnded(job: Pick<TransferJob, "state">): boolean {
+  return job.state !== "running" && job.state !== "queued";
 }
 
 /** Up to a server, down from one — or a copy, when both sides are alike. */
@@ -166,7 +173,8 @@ export function jobRow(job: TransferJob): TransferRow {
     direction: jobDirection(job),
     transferred: job.transferred,
     total: job.total,
-    done: job.state !== "running",
+    done: jobEnded(job),
+    ...(job.state === "queued" ? { queued: true as const } : {}),
     sessions: jobSessions(job),
     ...(job.fileCount > 1 ? { fileIndex: job.fileIndex, fileCount: job.fileCount } : {}),
     destDir: job.destDir,

@@ -18,6 +18,7 @@ import {
   nextSort,
   pickFacet,
   sanitizeOrder,
+  sanitizeStoredOrders,
   sortItems,
   viewMenu,
   type ListFilter,
@@ -348,5 +349,37 @@ describe("the facet menus", () => {
     action(picked, "Reset filters").onSelect();
     // The reset drops the facets and keeps the text.
     expect(onpick).toHaveBeenLastCalledWith(filter("a"));
+  });
+});
+
+describe("sanitizeStoredOrders", () => {
+  it("keeps the shape of each order, whatever keys this build knows", () => {
+    expect(
+      sanitizeStoredOrders({
+        files: { sort: { key: "size", dir: "desc" }, group: "none" },
+        "k8s.pods": { sort: { key: "future-key" }, group: "future-group" },
+        odd: { sort: { key: "name", dir: "sideways" }, group: "none" },
+      }),
+    ).toEqual({
+      files: { sort: { key: "size", dir: "desc" }, group: "none" },
+      "k8s.pods": { sort: { key: "future-key" }, group: "future-group" },
+      odd: { sort: { key: "name" }, group: "none" },
+    });
+  });
+
+  it("drops what is not an order", () => {
+    expect(
+      sanitizeStoredOrders({
+        a: null,
+        b: { sort: "name", group: "none" },
+        c: { sort: { key: "" }, group: "none" },
+        d: { sort: { key: "name" } },
+        e: 3,
+        "": { sort: { key: "name" }, group: "none" },
+      }),
+    ).toEqual({});
+    for (const raw of [null, undefined, "x", 1, [{ sort: { key: "a" }, group: "none" }]]) {
+      expect(sanitizeStoredOrders(raw)).toEqual({});
+    }
   });
 });

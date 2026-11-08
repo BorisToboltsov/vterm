@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   parseRules,
+  hostPort,
+  ipv6Of,
+  ruleText,
   normalizeRuleLine,
   checkTargets,
   checkKey,
@@ -261,6 +264,15 @@ describe("netcheckArgs", () => {
     expect(args[2]).toContain("res 10.0.0.1");
   });
 
+  it("a stop takes the checks already under way with it", () => {
+    const s = netcheckArgs([{ host: "h", ports: [22] }])[2];
+    const trap = `trap 'trap "" TERM HUP; kill -TERM 0 2>/dev/null; exit 130' TERM HUP`;
+    expect(s).toContain(trap);
+    // Set before the first check starts.
+    expect(s.indexOf(trap)).toBeLessThan(s.indexOf("\nc h 22"));
+    expect(netcheckArgs([])[2]).not.toContain("trap ");
+  });
+
   it("identity probe has no checks", () => {
     const script = netcheckArgs([])[2];
     expect(script).not.toContain("chk ");
@@ -271,6 +283,14 @@ describe("netcheckArgs", () => {
     const s = netcheckArgs([])[2];
     expect(s.indexOf("M=bash")).toBeLessThan(s.indexOf("M=nc"));
     expect(s.indexOf("M=nc")).toBeLessThan(s.indexOf("M=telnet"));
+  });
+
+  it("lets curl go a second after a silent open port answers, over http", () => {
+    const s = netcheckArgs([{ host: "h", ports: [22] }])[2];
+    expect(s).toContain(`--connect-timeout $T -m $T -Y 1 -y 1 "http://$u:$2"`);
+    // telnet:// held an open port until -m, whatever -Y said.
+    expect(s).not.toContain("telnet://");
+    expect(s).not.toMatch(/\$CU:/);
   });
 
   it("waits after every batch and once more at the end", () => {
@@ -828,5 +848,55 @@ describe("pasted rules", () => {
 
   it("still reports a broken line, with notes stripped", () => {
     expect(parseRules("10.0.0.1 (gitlab) -> (vault)").errors[0]).toMatchObject({ line: 1, code: "syntax" });
+  });
+});
+
+describe("IPv6 (v1.35)", () => {
+  it("reads an address in brackets, alone or in a list, in its canonical form", () => {
+    const { rules, errors } = parseRules(
+      "[2001:DB8:0:0::1]:443\n[2001:db8::1, 10.0.0.1]:[22, 80]\n[2001:db8::5] -> [fd00::7]:5432",
+    );
+    expect(errors).toEqual([]);
+    expect(rules.map((r) => [r.source, r.targets, r.ports])).toEqual([
+      [null, ["2001:db8::1"], [443]],
+      [null, ["2001:db8::1", "10.0.0.1"], [22, 80]],
+      ["2001:db8::5", ["fd00::7"], [5432]],
+    ]);
+  });
+
+  it("refuses an address outside brackets: where the port starts is a guess", () => {
+    expect(parseRules("2001:db8::1:443").errors).toEqual([{ line: 1, code: "ipv6Brackets", token: "2001:db8::1" }]);
+    expect(parseRules("10.0.0.1, ::1:22").errors[0].code).toBe("ipv6Brackets");
+  });
+
+  it("refuses the unspecified address, a zone and what is no address", () => {
+    expect(parseRules("[::]:22").errors[0].code).toBe("unspecified");
+    expect(parseRules("[fe80::1%eth0]:22").errors[0].code).toBe("host");
+    expect(parseRules("[2001:db8::g]:22").errors[0].code).toBe("host");
+    expect(parseRules("[1:2:3:4:5:6:7:8:9]:22").errors[0].code).toBe("host");
+  });
+
+  it("knows an address from a name", () => {
+    expect(ipv6Of("[::1]")).toBe("::1");
+    expect(ipv6Of("2001:0db8:0000::0001")).toBe("2001:db8::1");
+    expect(ipv6Of("10.0.0.1")).toBeNull();
+    expect(ipv6Of("db.corp")).toBeNull();
+  });
+
+  it("writes an address back in brackets, where a port follows it", () => {
+    expect(hostPort("2001:db8::1", 443)).toBe("[2001:db8::1]:443");
+    expect(hostPort("10.0.0.1", 22)).toBe("10.0.0.1:22");
+    const [rule] = parseRules("[2001:db8::1]:443").rules;
+    expect(ruleText(rule)).toBe("[2001:db8::1]:443/tcp");
+    expect(parseRules(ruleText(rule)).rules[0].targets).toEqual(["2001:db8::1"]);
+  });
+
+  it("the server script checks it as an address and curls it in brackets", () => {
+    const s = netcheckArgs([{ host: "2001:db8::1", ports: [443] }])[2];
+    expect(s).toContain("case $1 in *:*) ;; *[!0-9.]*)");
+    expect(s).toContain(`u=$1; case $1 in *:*) u="[$1]" ;; esac`);
+    expect(s).toContain(`curl -g -sS`);
+    expect(s).toContain(`"http://$u:$2"`);
+    expect(s).toMatch(/^c '?2001:db8::1'? 443$/m);
   });
 });

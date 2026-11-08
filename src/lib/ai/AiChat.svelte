@@ -9,6 +9,8 @@
   import { tick } from "svelte";
   import { tooltip } from "../actions/tooltip";
   import { wideWhen } from "../actions/panelwide.svelte";
+  import PanelDivider from "../ui/PanelDivider.svelte";
+  import { partWidth } from "../stores/panelsplit.svelte";
   import { settings } from "../settings/settings.svelte";
   import {
     aiReady,
@@ -123,6 +125,8 @@
   let attach = $state(false);
   // The wide layout (v1.17) — see the markup.
   let wide = $state(false);
+  // The row the chat and its column share, for the border between them (v1.35).
+  let rowWidth = $state(0);
   let showTiers = $state(false); // context-tier popover open
   let scrollEl = $state<HTMLElement>();
   let inputEl = $state<HTMLTextAreaElement>();
@@ -443,10 +447,15 @@
 <div
   class="flex h-full min-h-0 {wide ? '' : 'flex-col'}"
   use:wideWhen={(w) => (wide = w)}
+  bind:clientWidth={rowWidth}
   data-wide={wide}
   data-testid="ai-chat"
 >
-  <div class="flex min-h-0 min-w-0 flex-1 flex-col" data-testid="ai-main">
+  <div
+    class="flex min-h-0 min-w-0 flex-col {wide ? 'shrink-0' : 'flex-1'}"
+    style:width={wide ? partWidth("ai", rowWidth) : null}
+    data-testid="ai-main"
+  >
   {#if !wide}
     <div class="flex items-center gap-2 border-b border-edge px-2 py-1" data-testid="ai-header">
       {@render endpointControls(false)}
@@ -727,8 +736,10 @@
   </div>
   </div>
   {#if wide}
+    <!-- The border is dragged (v1.35): the share is the store's, one for every chat. -->
+    <PanelDivider split="ai" width={rowWidth} />
     <aside
-      class="flex w-64 shrink-0 flex-col gap-2 overflow-y-auto border-l border-edge p-2"
+      class="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto border-l border-edge p-2"
       data-testid="ai-side"
     >
       {#if ready && endpoint}

@@ -12,6 +12,7 @@
 
 import type { TransferJob } from "../api";
 import {
+  jobEnded,
   jobRow,
   pushSample,
   rowTouches,
@@ -62,7 +63,7 @@ export function setTransferClock(fn: () => number): void {
  */
 export function applyJob(job: TransferJob): void {
   applyProgress(jobRow(job));
-  if (job.state !== "running" && job.dst.session) touchDir(job.dst.session, job.destDir);
+  if (jobEnded(job) && job.dst.session) touchDir(job.dst.session, job.destDir);
 }
 
 /**

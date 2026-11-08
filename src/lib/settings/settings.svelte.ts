@@ -42,7 +42,14 @@ import {
 import { DEFAULT_RESTORE_MODE, isRestoreMode, type RestoreMode } from "../tabs/tabrestore";
 import { sanitizeDockerRegistries, type DockerRegistry } from "../docker/docker";
 import { sanitizeHiddenPanels, type PanelId } from "../layout/docklayout";
-import { DEFAULT_TOPBAR, sanitizeTopbar, type TopbarId } from "../topbar/topbaractions";
+import {
+  DEFAULT_TOPBAR,
+  sanitizePinnedCommands,
+  sanitizeTopbar,
+  type PinnedCommand,
+  type TopbarId,
+} from "../topbar/topbaractions";
+import { sanitizeStoredOrders, type StoredOrder } from "../ui/listview";
 import { DEFAULT_FAVORITE_BRANCHES, sanitizeFavoriteBranches } from "../git/gitrefs";
 import { defaultAiSettings, sanitizeAiSettings, type AiSettings } from "../ai/ai";
 import {
@@ -137,6 +144,11 @@ export interface EditorSettings {
   diffBeforeSave: boolean;
   /** Keep a `.bak` copy of the file on the server before overwriting (Phase 12.6). */
   backupOnSave: boolean;
+  /**
+   * The first file of a connection opens in a zone of its own beside the
+   * terminal, not over it (v1.35) — when the terminal has the room.
+   */
+  openBeside: boolean;
 }
 
 /** SFTP behaviour (Phase 12). */
@@ -263,6 +275,14 @@ export interface Settings {
   // Changed only through `stores/topbarpins.svelte.ts`; read from storage and
   // from a backup through `sanitizeTopbar` (topbaractions.ts).
   topbar: TopbarId[];
+  // What the bar remembers of each ⌘K command pinned on it (v1.35): its title
+  // and icon, for while the palette does not offer it. Written with the list,
+  // by `stores/topbarpins.svelte.ts`; read through `sanitizePinnedCommands`.
+  topbarCommands: Record<string, PinnedCommand>;
+  // The order and grouping of each list, by list (v1.29, in the settings since
+  // v1.35 — so every window and a backup have it). Changed only through
+  // `stores/listview.svelte.ts`; each entry is read through its list's schema.
+  listOrders: Record<string, StoredOrder>;
   // Kubernetes panel (Phase 37) — how often the live view re-polls the cluster
   // while the panel is open, in seconds. See k8s.ts.
   k8sRefreshSec: number;
@@ -396,7 +416,7 @@ const DEFAULTS: Settings = {
   recordMaskPasswords: true,
   recordMode: "commands",
   recordIdlePauseSecs: 20,
-  editor: { diffBeforeSave: true, backupOnSave: false },
+  editor: { diffBeforeSave: true, backupOnSave: false, openBeside: false },
   snippets: defaultSnippets(),
   sftp: { maxOpenMb: 2, showHiddenFiles: false },
   hostKeyPolicy: "ask",
@@ -411,6 +431,8 @@ const DEFAULTS: Settings = {
   gitHighlightCurrent: true,
   hiddenPanels: [],
   topbar: [...DEFAULT_TOPBAR],
+  topbarCommands: {},
+  listOrders: {},
   k8sRefreshSec: 5,
   kubectlPath: "",
   prodTint: { ...DEFAULT_PROD_TINT },
@@ -546,6 +568,8 @@ function load(): Settings {
       gitHighlightCurrent: raw.gitHighlightCurrent !== false,
       hiddenPanels: sanitizeHiddenPanels(raw.hiddenPanels),
       topbar: sanitizeTopbar(raw.topbar),
+      topbarCommands: sanitizePinnedCommands(raw.topbarCommands),
+      listOrders: sanitizeStoredOrders(raw.listOrders),
       k8sRefreshSec: clampK8sRefresh(raw.k8sRefreshSec),
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
       prodTint: sanitizeProdTint(raw.prodTint),
@@ -568,6 +592,8 @@ function load(): Settings {
       gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
       hiddenPanels: [],
       topbar: [...DEFAULT_TOPBAR],
+      topbarCommands: {},
+      listOrders: {},
       prodTint: { ...DEFAULT_PROD_TINT },
     };
   }
@@ -622,6 +648,8 @@ export function resetSettings(): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    topbarCommands: {},
+    listOrders: {},
   });
 }
 
@@ -649,6 +677,8 @@ export function applyImportedSettings(raw: unknown): void {
     gitFavoriteBranches: [...DEFAULT_FAVORITE_BRANCHES],
     hiddenPanels: [],
     topbar: [...DEFAULT_TOPBAR],
+    topbarCommands: {},
+    listOrders: {},
   };
   const sink = next as unknown as Record<string, unknown>;
   const nested = [
@@ -665,6 +695,8 @@ export function applyImportedSettings(raw: unknown): void {
     "dockerRegistries",
     "hiddenPanels",
     "topbar",
+    "topbarCommands",
+    "listOrders",
   ];
   for (const key of Object.keys(DEFAULTS)) {
     if (!nested.includes(key) && key in r) {
@@ -691,6 +723,8 @@ export function applyImportedSettings(raw: unknown): void {
   next.dockerRegistries = sanitizeDockerRegistries(r.dockerRegistries);
   next.hiddenPanels = sanitizeHiddenPanels(r.hiddenPanels);
   next.topbar = sanitizeTopbar(r.topbar);
+  next.topbarCommands = sanitizePinnedCommands(r.topbarCommands);
+  next.listOrders = sanitizeStoredOrders(r.listOrders);
   next.k8sRefreshSec = clampK8sRefresh(next.k8sRefreshSec);
   if (typeof next.kubectlPath !== "string") next.kubectlPath = DEFAULTS.kubectlPath;
   if (r.customTheme && typeof r.customTheme === "object") {

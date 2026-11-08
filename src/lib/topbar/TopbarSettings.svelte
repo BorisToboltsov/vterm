@@ -3,12 +3,16 @@
   // the top bar. The same list as the bar's right-click menu, as checkboxes —
   // several can be changed without reopening a menu. Utilities and Settings are
   // listed ticked and cannot be unticked; the order is changed on the bar itself,
-  // by dragging.
+  // by dragging — and here, button by button (v1.35), which reaches the buttons
+  // under «⋯» too: the bar does not drag what it does not draw.
   // The rule lives in topbaractions.ts, the value in `settings.topbar`.
-  import { BUILTIN_ACTIONS, canUnpin, utilAction, type TopbarId } from "./topbaractions";
-  import { actionLabel } from "./topbarui";
+  import { actionCommand, BUILTIN_ACTIONS, canUnpin, utilAction, type TopbarId } from "./topbaractions";
+  import { actionIcon, actionLabel } from "./topbarui";
+  import Icon from "../ui/Icon.svelte";
+  import { tooltip } from "../actions/tooltip";
   import { UTILITIES } from "../utilities/utilities";
-  import { isPinned, pinAction, resetTopbar, unpinAction } from "../stores/topbarpins.svelte";
+  import { isPinned, moveAction, pinAction, resetTopbar, unpinAction } from "../stores/topbarpins.svelte";
+  import { settings } from "../settings/settings.svelte";
   import { notifySuccess } from "../stores/toasts.svelte";
   import InfoHint from "../ui/InfoHint.svelte";
   import { t } from "../i18n";
@@ -47,6 +51,51 @@
       {@render box(utilAction(u.id))}
     {/each}
   </div>
+  <!-- The order of the bar, left to right: what the bar draws, and what is under «⋯». -->
+  <p class="mb-1.5 mt-3 text-xs text-muted">{t("settings.topbarOrder")}</p>
+  <ol class="space-y-0.5" data-testid="topbar-order">
+    {#each settings.topbar as id, i (id)}
+      <li class="flex items-center gap-1.5 text-xs text-muted" data-testid={`topbar-order-${id}`}>
+        <Icon name={actionIcon(id, settings.topbarCommands)} size={13} class="shrink-0" />
+        <span class="min-w-0 flex-1 truncate">{actionLabel(id, settings.topbarCommands)}</span>
+        <button
+          type="button"
+          class="rounded p-0.5 hover:bg-edge hover:text-text disabled:opacity-30"
+          aria-label={t("settings.topbarLeft")}
+          use:tooltip={t("settings.topbarLeft")}
+          disabled={i === 0}
+          data-testid={`topbar-left-${id}`}
+          onclick={() => moveAction(id, i - 1)}
+        >
+          <Icon name="chevronLeft" size={13} />
+        </button>
+        <button
+          type="button"
+          class="rounded p-0.5 hover:bg-edge hover:text-text disabled:opacity-30"
+          aria-label={t("settings.topbarRight")}
+          use:tooltip={t("settings.topbarRight")}
+          disabled={i === settings.topbar.length - 1}
+          data-testid={`topbar-right-${id}`}
+          onclick={() => moveAction(id, i + 2)}
+        >
+          <Icon name="chevronRight" size={13} />
+        </button>
+        {#if actionCommand(id) !== null}
+          <!-- A ⌘K command (v1.35) has no box above to untick: it is taken off here. -->
+          <button
+            type="button"
+            class="rounded p-0.5 hover:bg-edge hover:text-danger"
+            aria-label={t("topbar.unpin")}
+            use:tooltip={t("topbar.unpin")}
+            data-testid={`topbar-remove-${id}`}
+            onclick={() => unpinAction(id)}
+          >
+            <Icon name="close" size={13} />
+          </button>
+        {/if}
+      </li>
+    {/each}
+  </ol>
   <button
     type="button"
     data-testid="topbar-reset"

@@ -88,6 +88,8 @@ export interface EditorDoc {
 
 /** Options passed when opening an editor (sudo / line jump / git diff base). */
 export interface OpenEditorOpts {
+  /** Open beside the terminal while no file is shown (`openView`, v1.35). */
+  beside?: boolean;
   sudo?: boolean;
   sudoPassword?: string;
   gotoLine?: number;
@@ -199,7 +201,7 @@ export function addEditor(
     gitBase: opts.gitBase,
   };
   const ws = ensure(sessionId);
-  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id) });
+  patch(sessionId, { editors: [...ws.editors, doc], layout: openView(ws.layout, id, opts.beside ?? false) });
   return id;
 }
 

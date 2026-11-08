@@ -51,7 +51,7 @@ export interface NetRule {
 export interface ParseError {
   line: number;
   /** Stable error code — the UI localizes it (`util.netcheck.err.<code>`). */
-  code: "syntax" | "host" | "unspecified" | "port" | "range" | "empty" | "tooMany";
+  code: "syntax" | "host" | "unspecified" | "ipv6Brackets" | "port" | "range" | "empty" | "tooMany";
   /** The offending token, for the message. */
   token: string;
 }
@@ -103,8 +103,10 @@ function takeLabels(side: string): { rest: string; label?: string } {
   });
   return notes.length ? { rest, label: notes.join(", ") } : { rest };
 }
-// Hostnames and IPv4 only: the script embeds targets, so the alphabet is strict
-// (quoted anyway). IPv6 would collide with the `host:port` syntax.
+// Hostnames, IPv4 and IPv6 (v1.35): the script embeds targets, so the alphabet
+// is strict (quoted anyway). An IPv6 address is written in brackets — alone,
+// `[2001:db8::1]:443`, or in a list, `[2001:db8::1, 10.0.0.1]:22` — as in a URL:
+// bare, `2001:db8::1:443` is an address of its own as much as one with a port.
 const HOST = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
@@ -112,10 +114,42 @@ export function isIpv4(s: string): boolean {
   return IPV4.test(s);
 }
 
+/**
+ * An IPv6 address, brackets or not, in the form the URL parser gives it —
+ * lowercase, zeros compressed — or null. No zone (`fe80::1%eth0`): a zone
+ * names an interface of the checking host, which a rule can't know.
+ */
+export function ipv6Of(s: string): string | null {
+  const t = s.trim().replace(/^\[(.*)\]$/, "$1");
+  if (!t.includes(":") || !/^[0-9A-Fa-f:.]+$/.test(t)) return null;
+  try {
+    return new URL(`http://[${t}]/`).hostname.slice(1, -1);
+  } catch {
+    return null;
+  }
+}
+
+export function isIpv6(s: string): boolean {
+  return ipv6Of(s) !== null;
+}
+
+/** `host:port` as it is written back — an IPv6 address in brackets. */
+export function hostPort(host: string, port: number | string): string {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
 function validHost(s: string): boolean {
+  if (isIpv6(s)) return true;
   // All-numeric dotted strings must be real IPv4 (`10.70.39.300` is a typo, not a name).
   if (/^[\d.]+$/.test(s)) return IPV4.test(s);
   return HOST.test(s);
+}
+
+/** A host as rules keep it: an IPv6 address in its canonical form, a subnet too. */
+function canonHost(h: string): string {
+  const v6 = ipv6Of(h);
+  if (v6 !== null) return v6;
+  return isCidr(h) ? cidrText(parseCidr(h)!) : h;
 }
 
 // ── Subnets (ADR 0032) ──────────────────────────────────────────────────────
@@ -242,18 +276,24 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
     if (sources.length === 0) return void errors.push({ line, code: "host", token: "" });
     const badSource = sources.find((s) => s !== null && !validHost(s) && !isCidr(s));
     if (badSource !== undefined) return void errors.push({ line, code: "host", token: badSource ?? "" });
+    const v6Sources = sources.map((s) => (s === null ? null : (ipv6Of(s) ?? s)));
     const m = /^(.+?)\s*:\s*(\[[^\]]*\]|[A-Za-z0-9\s,;-]+?)\s*(?:\/\s*(tcp|udp))?$/i.exec(rhs.trim());
     if (!m) return void errors.push({ line, code: "syntax", token: rhs.trim() });
+    // An IPv6 address outside brackets: where it ends and the port starts is a guess.
+    if (m[1].includes(":") && !m[1].trim().startsWith("[")) {
+      return void errors.push({ line, code: "ipv6Brackets", token: m[1].trim() });
+    }
     const written = [...new Set(splitList(m[1]))];
     if (written.length === 0) return void errors.push({ line, code: "empty", token: m[1] });
     const badHost = written.find((h) => !validHost(h) && !isCidr(h));
     if (badHost) return void errors.push({ line, code: "host", token: badHost });
-    // A subnet is kept as written in its canonical form: results group under it.
-    const targets = [...new Set(written.map((h) => (isCidr(h) ? cidrText(parseCidr(h)!) : h)))];
+    // A subnet is kept as written in its canonical form: results group under it;
+    // an IPv6 address likewise, so `2001:DB8::1` and `2001:db8:0::1` are one target.
+    const targets = [...new Set(written.map(canonHost))];
     // `0.0.0.0` means "any address": a connect to it lands on the checking host
     // itself (Linux routes it to loopback), so an "open" would be about the wrong
     // machine. A /31 or /32 around it would smuggle it back in.
-    const unspecified = targets.find((h) => h === "0.0.0.0" || /^0\.0\.0\.0\/3[12]$/.test(h));
+    const unspecified = targets.find((h) => h === "0.0.0.0" || h === "::" || /^0\.0\.0\.0\/3[12]$/.test(h));
     if (unspecified) return void errors.push({ line, code: "unspecified", token: unspecified });
     const portToks = splitList(m[2]);
     if (portToks.length === 0) return void errors.push({ line, code: "empty", token: m[2] });
@@ -270,7 +310,7 @@ export function parseRules(text: string): { rules: NetRule[]; errors: ParseError
     if (proto === "tcp" && ruleCost(targets, ports) > MAX_CHECKS) {
       return void errors.push({ line, code: "tooMany", token: String(MAX_CHECKS) });
     }
-    for (const source of sources) {
+    for (const source of v6Sources) {
       const rule: NetRule = { line, source, targets, ports, proto };
       if (src?.label) rule.sourceLabel = src.label;
       if (dst.label) rule.label = dst.label;
@@ -403,14 +443,16 @@ export function netcheckArgs(
     `M=none`,
     select,
     `printf 'M\\t%s\\n' "$M"`,
-    // A minimal curl build (curl-minimal, RHEL 9) has no telnet://; http:// connects
-    // just the same, and the connect time is what's read either way.
-    `CU=telnet; [ "$M" = curl ] && ! curl -V 2>/dev/null | grep -qw telnet && CU=http`,
     // BSD/macOS nc: -w does not bound the connect itself, -G does.
     `G=; [ "$M" = nc ] && nc -h 2>&1 | grep -q -- '-G' && G="-G $T"`,
   ];
   if (targets.length > 0) {
     lines.push(
+      // «Stop» signals this shell (SIGTERM, or HUP when the channel goes): take
+      // the checks already under way with it. sshd runs the command in a
+      // session of its own, so its process group is this run and nothing else;
+      // the shell ignores the signal it sends itself and leaves with 130.
+      `trap 'trap "" TERM HUP; kill -TERM 0 2>/dev/null; exit 130' TERM HUP`,
       `now() { date +%s%N 2>/dev/null; }`,
       `chk() {`,
       `  s=$(now)`,
@@ -419,8 +461,11 @@ export function netcheckArgs(
       `    nc) o=$(nc -z -v -w $T $G "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       `    telnet) o=$(timeout $T telnet "$1" "$2" 2>&1 </dev/null); r=$? ;;`,
       // time_connect > 0 ⇔ the TCP handshake completed (the transfer after it may
-      // then time out on a silent service — that's still "open").
-      `    curl) o=$(curl -sS -o /dev/null -w 'TC=%{time_connect} ' --connect-timeout $T -m $T "$CU://$1:$2" 2>&1 </dev/null); r=$? ;;`,
+      // then time out on a silent service — that's still "open"). Over http://
+      // `-Y 1 -y 1` lets a silent service go after a second — on telnet:// curl
+      // held it until -m — and every build has http (curl-minimal has no telnet).
+      // An IPv6 host goes in brackets, and -g keeps curl from reading them as a glob.
+      `    curl) u=$1; case $1 in *:*) u="[$1]" ;; esac; o=$(curl -g -sS -o /dev/null -w 'TC=%{time_connect} ' --connect-timeout $T -m $T -Y 1 -y 1 "http://$u:$2" 2>&1 </dev/null); r=$? ;;`,
       `    *) o=; r=127 ;;`,
       `  esac`,
       `  e=$(now)`,
@@ -429,7 +474,8 @@ export function netcheckArgs(
       `}`,
       `res() {`,
       `  a=$1`,
-      `  case $1 in *[!0-9.]*)`,
+      // An IPv6 address is its own address: nothing to resolve.
+      `  case $1 in *:*) ;; *[!0-9.]*)`,
       `    if command -v getent >/dev/null 2>&1; then a=$(getent ahostsv4 "$1" 2>/dev/null | awk 'NR==1{print $1}'); printf 'D\\t%s\\t%s\\n' "$1" "$a"; else a=; fi ;;`,
       `  esac`,
       `  if [ -n "$a" ] && command -v ip >/dev/null 2>&1; then`,
@@ -620,8 +666,8 @@ export function parseNetReport(stdout: string, timeoutSecs = DEFAULT_TIMEOUT_SEC
         const status = classifyAttempt(rep.method, Number.isFinite(rc) ? rc : -1, raw, took, timeoutSecs);
         let msg = raw;
         if (rep.method === "curl") {
-          // curl holds an open port until -m, so wall time says nothing: the
-          // connect time it measured itself is the reading.
+          // curl stays on an open port a second or more after the handshake, so
+          // wall time says nothing: the connect time it measured is the reading.
           const tc = curlConnectSecs(raw);
           ms = status === "open" && tc !== null ? Math.round(tc * 1000) : status === "open" ? null : ms;
           msg = raw.replace(/TC=\S+\s*/, "").replace(/^curl: /, "").trim();
@@ -955,7 +1001,7 @@ export function formatReport(
   // target's note joining the tail next to the service name.
   const srcNote = (r: ReportRow) => (r.sourceLabel && !r.ruleSource ? ` (${r.sourceLabel})` : "");
   const rule = (r: ReportRow) =>
-    `${r.source ? `${r.source}${srcNote(r)} → ` : ""}${r.host}:${r.port}/${r.proto}`;
+    `${r.source ? `${r.source}${srcNote(r)} → ` : ""}${hostPort(r.host, r.port)}/${r.proto}`;
   const ruleW = Math.max(0, ...rows.map((r) => rule(r).length));
   const plain = rows.filter((r) => !r.rest);
   const statusW = Math.max(0, ...plain.map((r) => words.status[r.status].length));
@@ -1001,7 +1047,8 @@ export function formatReports(
 /** One rule back in the syntax it was written in (notes kept), for the audit line. */
 export function ruleText(r: NetRule): string {
   const note = (n?: string) => (n ? ` (${n})` : "");
-  const targets = r.targets.length === 1 ? r.targets[0] : `[${r.targets.join(", ")}]`;
+  const one = r.targets.length === 1 && !r.targets[0].includes(":");
+  const targets = one ? r.targets[0] : `[${r.targets.join(", ")}]`;
   const ports = r.ports.length === 1 ? String(r.ports[0]) : `[${r.ports.join(", ")}]`;
   const src = r.source ? `${r.source}${note(r.sourceLabel)} -> ` : "";
   return `${src}${targets}:${ports}/${r.proto}${note(r.label)}`;
