@@ -52,7 +52,7 @@
     type TermSnapshot,
   } from "#lib/windows/tabhandoff.ts";
   import { waitView } from "#lib/tabs/tabrestore.ts";
-  import { forgetSavedTabs } from "#lib/stores/tabrestore.svelte.ts";
+  import { forgetSavedTabs, provideShellCwd } from "#lib/stores/tabrestore.svelte.ts";
   import { forgetMetrics, readMetrics } from "#lib/stores/metricsfeed.svelte.ts";
   import type { SectionId } from "#lib/monitoring/monproblems.ts";
   import { createRestoreFlow } from "#lib/page/restoreflow.svelte.ts";
@@ -279,7 +279,7 @@
     clearRecording,
   } from "#lib/stores/recordings.svelte.ts";
   import type { SftpProgress, TransferJob } from "#lib/api/index.ts";
-  import { applyImportedSettings, settings, uiPx } from "#lib/settings/settings.svelte.ts";
+  import { activeChromePanel, applyImportedSettings, settings, uiPx } from "#lib/settings/settings.svelte.ts";
   import { t } from "#lib/i18n/index.ts";
   import {
     setMenuLanguage,
@@ -404,6 +404,7 @@
       setViewMode?: (structured: boolean) => void;
       clear?: () => void;
       snapshot?: (sent: number) => Promise<TermSnapshot | null>;
+      keepsake?: () => Promise<TermSnapshot | null>;
     }
   > = {};
   // Raw (false) ↔ structured table (true) per session, reported by the terminal —
@@ -1423,9 +1424,12 @@
     // The tabs of the previous launch come back once the catalog is known
     // (ADR 0019) — in the main window; another window starts with the tab it
     // was opened for.
-    void refresh().then(() => {
-      if (isMainWindow) restoreFlow.restore();
+    const catalog = refresh();
+    void catalog.then(() => {
+      if (isMainWindow) void restoreFlow.restore();
     });
+    // What the tabs printed is written down as they go (only under `restoreOutput`).
+    const stopKeeping = restoreFlow.startKeeping();
     // Resolve the host OS once so the custom window chrome (TitleBar) and the
     // macOS-only native-menu sync below become reactively available.
     void hostEnv.resolve();
@@ -1546,8 +1550,15 @@
         unlisteners.push(u),
       );
     } else {
-      // This window was opened for a tab: take it over.
-      void windows.adoptHandoff();
+      // Reopened at launch with tabs of the previous one (v1.36, ADR 0057), or
+      // opened for a tab: take them over.
+      void (async () => {
+        await catalog;
+        const back = await restoreFlow.restoreWindow();
+        if (back === null) void windows.adoptHandoff();
+        else if (back > 0) windowHasHadTab = true;
+        else void closeWindow().catch(() => {});
+      })();
     }
     // Files the system drags over the window from the desktop (v1.13). One
     // listener for the window: where they are dropped is read from where the
@@ -1566,6 +1577,7 @@
     return () => {
       unlisteners.forEach((u) => u());
       document.removeEventListener("keydown", handleClipboardShortcut, true);
+      stopKeeping();
     };
   });
 
@@ -1829,6 +1841,16 @@
   const restoreFlow = createRestoreFlow({
     servers: () => servers,
     askSecret: (server, label, sessionId) => secretPrompt?.prompt(server, label, "", undefined, sessionId),
+    keepsake: async (sid) => (await termRefs[sid]?.keepsake?.()) ?? null,
+    background: () => activeChromePanel(),
+  });
+  // Where each shell is goes into the slot with its tab (v1.36, ADR 0057).
+  provideShellCwd((sid) => terminalCwd[sid] ?? null);
+  // What the tabs printed is kept only under the setting; turned off, it goes.
+  $effect(() => {
+    void settings.restoreOutput;
+    void settings.restoreTabs;
+    untrack(() => restoreFlow.settingsChanged());
   });
 
   // ── Connection / tabs ──────────────────────────────────────────────────────
@@ -1851,17 +1873,18 @@
   }
 
   /**
-   * The server rejected the credentials. Drop the failed tab, forget a stale
-   * saved secret (if one was used), and re-open the prompt so the user can retry.
+   * The server rejected the credentials. Forget a stale saved secret (if one was
+   * used) and ask again — for this tab: the answer connects it where it stands
+   * (`SecretPrompt` with `forTab`), with its open files and its conversation.
+   * It used to be closed and replaced by a new tab in the pane in focus, which
+   * lost a restored tab its place (ADR 0019). Cancelling leaves the tab as it
+   * is, saying why it is not connected.
    */
   async function reauth(sessionId: string) {
     const tab = findTab(sessionId);
     if (!tab) return;
     const server = servers.find((s) => s.id === tab.serverId);
     const usedSaved = tab.secret === null;
-    // Full teardown, not just the row: this session id is dead, and anything
-    // keyed by it (editors, chat, broadcast membership) has to go with it.
-    closeTabFully(sessionId);
     if (usedSaved) {
       await forgetSecrets(tab.serverId);
       servers = servers.map((s) =>
@@ -1874,7 +1897,7 @@
         plan.secretLabel === "Passphrase"
           ? t("page.passphraseRejected")
           : t("page.passwordRejected");
-      secretPrompt?.prompt(server, plan.secretLabel, msg);
+      secretPrompt?.prompt(server, plan.secretLabel, msg, undefined, sessionId);
     }
   }
 
@@ -1911,6 +1934,9 @@
     // exception is a tab handed to another window (`keepSession`): that window
     // owns the session now, and the backend would refuse this one anyway.
     if (!keepSession) void disconnect(sessionId).catch(() => {});
+    // What was kept of it for the next launch: the tab is closed, it does not come back.
+    // A tab handed to another window keeps it — it lives on there.
+    if (!keepSession) restoreFlow.forget(sessionId);
     removeWorkspace(sessionId);
     removeChat(sessionId);
     removeBroadcastMember(sessionId);
@@ -3230,6 +3256,8 @@
                     tint={prodTabIds.has(tab.sessionId) ? settings.prodTint : null}
                     focusOnConnect={tabsState.activeId === tab.sessionId && terminalFocused(views)}
                     adopt={tab.adopt ?? null}
+                    replay={tab.replay ?? null}
+                    startDir={tab.kind === "local" ? (tab.startDir ?? null) : null}
                     waiting={!!tab.waiting}
                     onadopted={() => {
                       clearAdopt(tab.sessionId);
@@ -3238,8 +3266,14 @@
                     onadoptfailed={() => windows.adoptFailed(tab.sessionId)}
                     onresize={(cols, rows) => (termDims[tab.sessionId] = { cols, rows })}
                     onactivity={() => recFlow.activity(tab.sessionId)}
-                    onoutput={() => idleOutputTick++}
-                    oncwd={(path) => (terminalCwd[tab.sessionId] = path)}
+                    onoutput={() => {
+                      idleOutputTick++;
+                      restoreFlow.printed(tab.sessionId);
+                    }}
+                    oncwd={(path) => {
+                      terminalCwd[tab.sessionId] = path;
+                      restoreFlow.shellAt(tab.sessionId, path);
+                    }}
                     onExplain={aiOn && servers.find((s) => s.id === tab.serverId)?.noAi !== true
                       ? (sel) => explainWithAi(tab.sessionId, sel)
                       : undefined}
@@ -3257,7 +3291,11 @@
                       // The login finished either way — no question can still be open.
                       if (st !== "connecting") clearAuthPrompt(tab.sessionId);
                       if (st === "connecting") connPhase[tab.sessionId] = "connecting";
-                      if (st === "connected") idleWasConnected.add(tab.sessionId);
+                      if (st === "connected") {
+                        idleWasConnected.add(tab.sessionId);
+                        // What it brought from the previous launch: its files are read now.
+                        restoreFlow.connected(tab.sessionId);
+                      }
                       // A container/pod tab enters its target on EVERY connect (so
                       // "Enter again" is a plain reconnect); a one-shot command once.
                       const attach = findTab(tab.sessionId)?.attach;
@@ -3343,6 +3381,9 @@
                       <div class="absolute inset-0">
                         {#if ed.loadError}
                           <div class="p-4 text-sm text-danger">{ed.loadError}</div>
+                        {:else if ed.awaiting}
+                          <!-- A file of the previous launch: read once the connection is open. -->
+                          <div class="p-4 text-sm text-muted" data-testid="doc-awaiting">{t("editor.awaiting")}</div>
                         {:else if ed.loading}
                           <div class="p-4 text-sm text-muted">{t("editor.loading")}</div>
                         {:else}
@@ -3638,7 +3679,8 @@
   onconfirm={() => {
     if (quitForUpdate) { void confirmUpdate(); return; }
     if (isMainWindow) {
-      void quitApp();
+      // What the tabs printed since the last round is written down first (briefly).
+      void restoreFlow.flush().finally(() => void quitApp());
       return;
     }
     // This window's sessions end with it: its tabs are not to come back.

@@ -392,7 +392,7 @@ describe("tabs that come back from the previous launch", () => {
     splitTabOff(c, tabsState.center.focus, "right");
     activateTab(a);
     const out = {
-      tabs: tabsState.list.map(savedTab),
+      tabs: tabsState.list.map((t) => savedTab(t)),
       layout: JSON.parse(JSON.stringify(savedLayout(tabsState.center))),
     };
     resetTabs();

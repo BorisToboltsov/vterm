@@ -33,8 +33,13 @@ export function builderViolations(appwin: string, expected: number): string[] {
   if (value === undefined || Number(value) !== expected) {
     out.push(`appwin.rs WINDOW_MIN_WIDTH is ${value ?? "missing"}, not ${expected}`);
   }
-  const build = src.slice(src.indexOf("fn build_window("), src.indexOf("builder.build()"));
-  if (!/\.min_inner_size\(WINDOW_MIN_WIDTH,/.test(build)) {
+  // Every window the backend builds for tabs: one opened for a tab, and one of
+  // the previous launch opened again (v1.36).
+  const built = (name: string) => {
+    const at = src.indexOf(`fn ${name}(`);
+    return at < 0 ? "" : src.slice(at, src.indexOf("builder.build()", at));
+  };
+  if (![built("build_window"), built("build_reopened")].every((b) => /\.min_inner_size\(WINDOW_MIN_WIDTH,/.test(b))) {
     out.push("a window carried a tab is built without the minimum width");
   }
   return out;

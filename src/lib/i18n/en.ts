@@ -145,6 +145,7 @@ export const en = {
   "restore.enter": "Enter",
   "restore.startShell": "Start the shell",
   "restore.serversGone": "Tabs not restored: {n} — their servers are no longer in the list.",
+  "restore.previousOutput": "previous launch, {time}",
   "tab.close": "Close tab",
   "tab.openLocalTerminal": "Open local terminal",
 
@@ -535,6 +536,7 @@ export const en = {
   "editor.readOnly": "Read-only",
   "editor.unsaved": "Unsaved changes",
   "editor.loading": "Loading…",
+  "editor.awaiting": "Opens once the connection is open.",
   "editor.conflict": "{name} changed on the server since you opened it — reopen it before saving",
   "editor.backupFailed":
     "{name} was NOT saved: the .bak copy could not be created, so nothing was overwritten and the file on the server is unchanged. Fix the .bak sibling (remove it, or free the name) or turn off \"Keep a .bak copy\" in settings, then save again. Cause: {detail}",
@@ -2370,7 +2372,10 @@ export const en = {
   "settings.restoreTabsManual": "Restore, connect by button",
   "settings.restoreTabsConnect": "Restore and connect",
   "settings.restoreTabsHint":
-    "Tabs come back where they stood: the panes, their order, what each pane showed. Sessions are opened anew and terminals start empty; passwords are never saved. A production server, a container and a server that asks for a password always wait for their button.",
+    "Tabs come back where they stood: the panes and windows, their order, what each pane showed, the files open in a connection and the folders its shell and file panel were in. Sessions are opened anew; passwords are never saved. A production server, a container and a server that asks for a password always wait for their button.",
+  "settings.restoreOutput": "Keep terminal output and assistant conversations",
+  "settings.restoreOutputHint":
+    "What each tab printed and its conversation with the assistant come back too. They are written to the app's data folder, readable by you alone — everything that was printed, including secrets a command showed. Never kept for production servers. Turned off, what was kept is removed.",
 
   "settings.sectionConnection": "Connection",
   "settings.connectionNote": "Applies to new connections.",

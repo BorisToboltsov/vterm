@@ -11,14 +11,21 @@ import {
   RESTORE_MODES,
   restoreSaved,
   SAVE_VERSION,
+  isAbsolutePath,
+  keepsDoc,
+  MAX_SAVED_DOCS,
   savedTab,
   savedWindow,
   slotKey,
   waitReason,
   waitView,
+  windowRecord,
+  withWindows,
   type SavedTab,
+  type TabFacts,
   type WaitFacts,
 } from "./tabrestore";
+import type { EditorDoc } from "../stores/workspaces.svelte";
 
 const tab = (over: Partial<Tab> = {}): Tab => ({
   sessionId: "s1",
@@ -120,7 +127,7 @@ describe("reading a slot back", () => {
   it("takes what a window wrote", () => {
     const tabs = [tab(), tab({ sessionId: "s2", attach: ATTACH })];
     const read = parseSavedWindow(slot(tabs));
-    expect(read?.tabs).toEqual(tabs.map(savedTab));
+    expect(read?.tabs).toEqual(tabs.map((t) => savedTab(t)));
   });
 
   it("is not a slot: another version, no tab list, not an object", () => {
@@ -214,7 +221,10 @@ describe("reading a slot back", () => {
             expect(["ssh", "local"]).toContain(t.kind);
             expect(typeof t.serverId).toBe("string");
             expect(typeof t.alias).toBe("string");
-            expect(Object.keys(t).every((k) => ["id", "kind", "serverId", "alias", "attach"].includes(k))).toBe(true);
+            const known = ["id", "kind", "serverId", "alias", "attach", "shellCwd", "dock", "docs", "views"];
+            expect(Object.keys(t).every((k) => known.includes(k))).toBe(true);
+            if (t.shellCwd !== undefined) expect(isAbsolutePath(t.shellCwd)).toBe(true);
+            for (const d of t.docs ?? []) expect(isAbsolutePath(d.path)).toBe(true);
           }
         }
       }),
@@ -235,43 +245,205 @@ describe("what the main window restores", () => {
     expect(layoutProblems(layout, ["s1", "s2"])).toEqual([]);
   });
 
-  it("the tabs of the windows that were open beside it come back to it", () => {
+  it("the windows that were open beside it come back with their tabs (v1.36)", () => {
     const restored = restoreSaved(
       slot([tab()]),
-      [slot([tab({ sessionId: "w1" })]), null, slot([tab({ sessionId: "w2", kind: "local", serverId: "" })])],
+      [
+        { label: "win-2", raw: slot([tab({ sessionId: "w1" })]) },
+        { label: "win-3", raw: null },
+        { label: "win-4", raw: slot([tab({ sessionId: "w2", kind: "local", serverId: "" })]) },
+      ],
       known,
     );
-    expect(restored.tabs.map((t) => t.id)).toEqual(["s1", "w1", "w2"]);
-    // They stand in no pane of the main window's layout: they join the one in focus.
-    const layout = loadLayout(restored.layout, restored.tabs.map((t) => t.id));
-    expect(layoutProblems(layout, ["s1", "w1", "w2"])).toEqual([]);
+    expect(restored.tabs.map((t) => t.id)).toEqual(["s1"]);
+    // A slot with nothing to bring back opens no window.
+    expect(restored.windows.map((w) => [w.label, w.window.tabs.map((t) => t.id)])).toEqual([
+      ["win-2", ["w1"]],
+      ["win-4", ["w2"]],
+    ]);
   });
 
-  it("with no slot of its own it still takes in the other windows' tabs", () => {
-    const restored = restoreSaved(null, [slot([tab({ sessionId: "w1" })])], known);
-    expect(restored.tabs.map((t) => t.id)).toEqual(["w1"]);
-    expect(restored.layout).toBeNull();
+  it("a window that does not open again gives its tabs to the main one", () => {
+    const restored = restoreSaved(
+      slot([tab()]),
+      [
+        { label: "win-2", raw: slot([tab({ sessionId: "w1" })]) },
+        { label: "win-4", raw: slot([tab({ sessionId: "w2", kind: "local", serverId: "" })]) },
+      ],
+      known,
+    );
+    expect(withWindows(restored, ["win-2", "win-4"]).map((t) => t.id)).toEqual(["s1"]);
+    const all = withWindows(restored, ["win-2"]).map((t) => t.id);
+    expect(all).toEqual(["s1", "w2"]);
+    // They stand in no pane of the main window's layout: they join the one in focus.
+    const layout = loadLayout(restored.layout, all);
+    expect(layoutProblems(layout, all)).toEqual([]);
+  });
+
+  it("a reopened window is handed its slot as the main window read it", () => {
+    const tabs = [tab({ sessionId: "w1" }), tab({ sessionId: "w2", kind: "local", serverId: "" })];
+    const restored = restoreSaved(null, [{ label: "win-2", raw: slot(tabs) }], known);
+    const record = windowRecord(restored.windows[0].window);
+    const again = restoreSaved(JSON.parse(record), [], known);
+    expect(again.tabs).toEqual(tabs.map((t) => savedTab(t)));
+    expect(layoutProblems(loadLayout(again.layout, ["w1", "w2"]), ["w1", "w2"])).toEqual([]);
   });
 
   it("a tab whose server is gone is counted, not restored", () => {
     const restored = restoreSaved(
       slot([tab(), tab({ sessionId: "s2", serverId: "deleted" }), tab({ sessionId: "s3", kind: "local", serverId: "" })]),
-      [slot([tab({ sessionId: "w1", serverId: "deleted-too" })])],
+      [{ label: "win-2", raw: slot([tab({ sessionId: "w1", serverId: "deleted-too" })]) }],
       known,
     );
     expect(restored.tabs.map((t) => t.id)).toEqual(["s1", "s3"]);
+    expect(restored.windows).toEqual([]);
     expect(restored.missing).toBe(2);
   });
 
   it("a tab that two windows both wrote down comes back once", () => {
     // A tab on its way between windows may be in both slots for a moment.
-    const restored = restoreSaved(slot([tab()]), [slot([tab(), tab({ sessionId: "w1" })])], known);
-    expect(restored.tabs.map((t) => t.id)).toEqual(["s1", "w1"]);
+    const restored = restoreSaved(slot([tab()]), [{ label: "win-2", raw: slot([tab(), tab({ sessionId: "w1" })]) }], known);
+    expect(restored.tabs.map((t) => t.id)).toEqual(["s1"]);
+    expect(restored.windows[0].window.tabs.map((t) => t.id)).toEqual(["w1"]);
   });
 
   it("nothing saved is nothing to restore", () => {
-    expect(restoreSaved(null, [], known)).toEqual({ tabs: [], layout: null, missing: 0 });
-    expect(restoreSaved("junk", [42, {}], known)).toEqual({ tabs: [], layout: null, missing: 0 });
+    const none = { tabs: [], layout: null, beforeTile: null, windows: [], missing: 0 };
+    expect(restoreSaved(null, [], known)).toEqual(none);
+    expect(restoreSaved("junk", [{ label: "win-2", raw: 42 }, { label: "win-3", raw: {} }], known)).toEqual(none);
+  });
+});
+
+describe("where a tab was (v1.36)", () => {
+  const doc = (over: Partial<EditorDoc> = {}): EditorDoc => ({
+    id: "d1",
+    source: "sftp",
+    path: "/etc/nginx/nginx.conf",
+    name: "nginx.conf",
+    lang: { kind: "plain" } as EditorDoc["lang"],
+    content: "user www-data; # with the token hunter2",
+    baseContent: "user www-data;",
+    baseSha256: "abc",
+    eol: "lf",
+    encoding: "utf-8",
+    mode: null,
+    readOnly: false,
+    writeAccess: "writable",
+    saveIssue: "none",
+    loading: false,
+    loadError: null,
+    sudo: false,
+    sudoPassword: "",
+    gotoLine: null,
+    ...over,
+  });
+  const views = addTab(addTab(addTab(emptyLayout(), "terminal"), "d1"), "d2");
+  const facts = (over: Partial<TabFacts> = {}): TabFacts => ({
+    shellCwd: "/srv/app",
+    dock: {
+      cwd: "/srv/app/logs",
+      files: { connected: true, cwd: "/srv/app", home: "/home/deploy" },
+      k8sScope: { context: "prod-eu", namespace: "shop", allNamespaces: false },
+    },
+    workspace: { editors: [doc(), doc({ id: "d2", path: "/etc/hosts", name: "hosts" })], layout: views },
+    ...over,
+  });
+
+  it("the folders, the k8s scope and the files go with the tab — never what the files hold", () => {
+    const saved = savedTab(tab(), facts());
+    expect(saved.shellCwd).toBe("/srv/app");
+    expect(saved.dock).toEqual({
+      cwd: "/srv/app/logs",
+      files: { cwd: "/srv/app", home: "/home/deploy" },
+      k8s: { context: "prod-eu", namespace: "shop", allNamespaces: false },
+    });
+    expect(saved.docs).toEqual([
+      { id: "d1", source: "sftp", path: "/etc/nginx/nginx.conf", name: "nginx.conf" },
+      { id: "d2", source: "sftp", path: "/etc/hosts", name: "hosts" },
+    ]);
+    expect(saved.views).toEqual({ root: views.root, focus: views.focus });
+    expect(JSON.stringify(saved)).not.toContain("hunter2");
+  });
+
+  it("a file opened through sudo, a diff against a commit and an unsaved buffer stay behind", () => {
+    const editors = [
+      doc({ id: "a", sudo: true, sudoPassword: "hunter2" }),
+      doc({ id: "b", gitBase: "old text" }),
+      doc({ id: "c", path: "script.sh", name: "script.sh", baseSha256: "" }),
+      doc({ id: "d", source: "local", path: "C:\\Users\\me\\notes.txt", name: "notes.txt" }),
+    ];
+    const saved = savedTab(tab(), facts({ workspace: { editors, layout: views } }));
+    expect(saved.docs?.map((d) => d.id)).toEqual(["d"]);
+    expect(JSON.stringify(saved)).not.toContain("hunter2");
+    expect(keepsDoc(doc({ sudo: true }))).toBe(false);
+    // Nothing worth reopening: neither files nor zones are written.
+    const none = savedTab(tab(), facts({ workspace: { editors: [editors[0]], layout: views } }));
+    expect(none.docs).toBeUndefined();
+    expect(none.views).toBeUndefined();
+  });
+
+  it("a file panel that was not connected keeps its folder for Git, not its own", () => {
+    const saved = savedTab(tab(), facts({ dock: { cwd: "/srv", files: null, k8sScope: null } }));
+    expect(saved.dock).toEqual({ cwd: "/srv" });
+    expect(savedTab(tab(), facts({ dock: { cwd: null, files: null, k8sScope: null } })).dock).toBeUndefined();
+  });
+
+  it("a shell inside a container keeps none of its folders: they are the container's", () => {
+    const saved = savedTab(tab({ attach: ATTACH }), facts());
+    expect(saved.shellCwd).toBeUndefined();
+    expect(saved.dock).toBeUndefined();
+  });
+
+  it("comes back as it was written", () => {
+    const tabs = [tab()];
+    const layout = addTab(emptyLayout(), "s1");
+    const raw = JSON.parse(JSON.stringify(savedWindow(tabs, layout, () => facts())));
+    expect(parseSavedWindow(raw)?.tabs).toEqual([savedTab(tab(), facts())]);
+  });
+
+  it("a damaged part is left out and the tab still comes back", () => {
+    const good = savedTab(tab(), facts());
+    const broken: Record<string, unknown>[] = [
+      { shellCwd: "relative/dir" },
+      { shellCwd: "/srv/a\nrm -rf /" },
+      { shellCwd: 42 },
+      { dock: { cwd: "~/logs", files: { cwd: "/srv", home: 5 }, k8s: { context: "", namespace: null, allNamespaces: false } } },
+      { docs: [{ id: "has space", source: "sftp", path: "/etc/hosts", name: "hosts" }] },
+      { docs: [{ id: "d9", source: "ftp", path: "/etc/hosts", name: "hosts" }] },
+      { docs: [{ id: "d9", source: "sftp", path: "etc/hosts", name: "hosts" }] },
+      { docs: "all of them" },
+    ];
+    for (const part of broken) {
+      const read = parseSavedWindow({ v: SAVE_VERSION, tabs: [{ ...good, ...part }] })?.tabs;
+      expect(read, JSON.stringify(part)).toHaveLength(1);
+      const back = read![0];
+      if ("shellCwd" in part) expect(back.shellCwd).toBeUndefined();
+      if ("docs" in part) expect(back.docs).toBeUndefined();
+      if ("dock" in part) expect(back.dock).toBeUndefined();
+    }
+  });
+
+  it("a file listed twice comes back once, and no more files than a connection reopens", () => {
+    const d = { id: "d1", source: "sftp", path: "/etc/hosts", name: "hosts" };
+    const twice = parseSavedWindow({ v: SAVE_VERSION, tabs: [{ ...savedTab(tab()), docs: [d, { ...d, id: "d2" }, d] }] });
+    expect(twice?.tabs[0].docs).toEqual([d]);
+    const many = Array.from({ length: MAX_SAVED_DOCS + 5 }, (_, i) => ({ ...d, id: `d${i}`, path: `/etc/f${i}` }));
+    const read = parseSavedWindow({ v: SAVE_VERSION, tabs: [{ ...savedTab(tab()), docs: many }] });
+    expect(read?.tabs[0].docs).toHaveLength(MAX_SAVED_DOCS);
+  });
+
+  it("a grid is written with the layout to go back to, and read back as written", () => {
+    const layout = addTab(addTab(emptyLayout(), "s1"), "s2");
+    const before = { root: layout.root, focus: layout.focus };
+    const saved = savedWindow([tab(), tab({ sessionId: "s2" })], layout, undefined, before);
+    expect(saved.beforeTile).toEqual(before);
+    expect(parseSavedWindow(JSON.parse(JSON.stringify(saved)))?.beforeTile).toEqual(before);
+    expect(savedWindow([tab()], layout).beforeTile).toBeUndefined();
+  });
+
+  it("an absolute path is POSIX, a drive or a share — a buffer's bare name is not", () => {
+    for (const p of ["/", "/srv/app", "C:\\", "d:/data", "\\\\nas\\share"]) expect(isAbsolutePath(p), p).toBe(true);
+    for (const p of ["", "script.sh", "./x", "~/x", "C:", "srv/app"]) expect(isAbsolutePath(p), p).toBe(false);
   });
 });
 

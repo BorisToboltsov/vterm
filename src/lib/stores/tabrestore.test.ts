@@ -4,7 +4,10 @@ import { addTab, emptyLayout, type CenterLayout } from "../layout/splitlayout";
 import { resetSettings, settings } from "../settings/settings.svelte";
 import { parseSavedWindow, slotKey } from "../tabs/tabrestore";
 import { closeTab, openLocalTab, openTab, resetTabs, tabsState, type Tab } from "./tabs.svelte";
-import { startSavingTabs, tabKeeper, takeSavedTabs } from "./tabrestore.svelte";
+import { provideShellCwd, startSavingTabs, tabKeeper, takeSavedTabs } from "./tabrestore.svelte";
+import { removeDockState, setDockCwd } from "./dockstate.svelte";
+import { addEditor, removeWorkspace } from "./workspaces.svelte";
+import type { TabFacts } from "../tabs/tabrestore";
 
 /** A storage of its own for a keeper under test. */
 function memory(seed: Record<string, string> = {}) {
@@ -57,7 +60,11 @@ describe("the main window's slot", () => {
     const keeper = tabKeeper("main", store);
     const taken = keeper.take("manual");
     expect(parseSavedWindow(taken?.main)?.tabs.map((t) => t.id)).toEqual(["m"]);
-    expect(taken?.others.map((o) => parseSavedWindow(o)?.tabs[0].id)).toEqual(["w2", "w3"]);
+    // Each by the label of its window: it is opened again under it (v1.36).
+    expect(taken?.others.map((o) => [o.label, parseSavedWindow(o.raw)?.tabs[0].id])).toEqual([
+      ["win-2", "w2"],
+      ["win-3", "w3"],
+    ]);
     expect(keeper.take("manual")).toBeNull();
   });
 
@@ -93,6 +100,31 @@ describe("the main window's slot", () => {
     const read = parseSavedWindow(JSON.parse(raw));
     expect(read?.tabs.map((t) => t.id)).toEqual(["a", "b"]);
     expect(read?.layout).toMatchObject({ focus: "p0" });
+  });
+
+  it("holds where each tab was — folders, files, the grid's layout — and is rewritten only when that changes", () => {
+    const writes: string[] = [];
+    const store = memory();
+    const spy = { ...store, setItem: (k: string, v: string) => (writes.push(v), store.setItem(k, v)) };
+    const keeper = tabKeeper("main", spy);
+    keeper.start();
+    const facts = (): TabFacts => ({
+      shellCwd: "/srv/app",
+      dock: { cwd: "/srv/app", files: null, k8sScope: null },
+      workspace: null,
+    });
+    const before = { root: layoutOf("a", "b").root, focus: "p0" };
+    keeper.sync([tab("a"), tab("b")], layoutOf("a", "b"), "manual", facts, before);
+    keeper.sync([tab("a"), tab("b")], layoutOf("a", "b"), "manual", facts, before);
+    expect(writes).toHaveLength(1);
+    const read = parseSavedWindow(JSON.parse(store.data.get(slotKey("main")) ?? "null"));
+    expect(read?.tabs.map((t) => [t.id, t.shellCwd, t.dock?.cwd])).toEqual([
+      ["a", "/srv/app", "/srv/app"],
+      ["b", "/srv/app", "/srv/app"],
+    ]);
+    expect(read?.beforeTile).toEqual(before);
+    keeper.sync([tab("a"), tab("b")], layoutOf("a", "b"), "manual", facts, null);
+    expect(writes).toHaveLength(2);
   });
 
   it("is cleared when the last tab goes, and when restoring is turned off", () => {
@@ -210,5 +242,38 @@ describe("this window's slot follows the tabs", () => {
     closeTab(tabsState.list[0].sessionId);
     flushSync();
     expect(localStorage.getItem(own)).toBeNull();
+  });
+});
+
+describe("what this window writes of each session (v1.36)", () => {
+  const own = slotKey("main");
+  const stored = () => parseSavedWindow(JSON.parse(localStorage.getItem(own) ?? "null"));
+
+  beforeEach(() => {
+    resetTabs();
+    resetSettings();
+    flushSync();
+  });
+
+  it("follows the shell's folder, the dock's and the files open in the connection", () => {
+    takeSavedTabs();
+    startSavingTabs();
+    const cwd: Record<string, string> = {};
+    provideShellCwd((sid) => cwd[sid] ?? null);
+    const id = openTab("srv", "web-1", null, false);
+    flushSync();
+    expect(stored()?.tabs[0].shellCwd).toBeUndefined();
+    cwd[id] = "/srv/app";
+    setDockCwd(id, "/srv/app/logs");
+    addEditor(id, "/etc/hosts", "hosts", { kind: "plain" } as never);
+    flushSync();
+    const [saved] = stored()?.tabs ?? [];
+    expect(saved.dock).toEqual({ cwd: "/srv/app/logs" });
+    expect(saved.docs?.map((d) => d.path)).toEqual(["/etc/hosts"]);
+    removeWorkspace(id);
+    removeDockState(id);
+    provideShellCwd(() => null);
+    closeTab(id);
+    flushSync();
   });
 });

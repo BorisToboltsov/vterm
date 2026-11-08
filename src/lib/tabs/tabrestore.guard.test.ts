@@ -12,7 +12,8 @@
 //  3. The main window writes its slot only after it has taken the previous
 //     launch in. The store of tabs starts empty: a slot written from the first
 //     moment would replace "the tabs I had" with "no tabs" before reading them.
-//  4. Only the main window restores, and once.
+//  4. Only the main window reads the slots, and once; a window of the previous
+//     launch opened again (v1.36) takes the tabs it is handed, never a slot.
 //  5. A tab that came back opens its session through the policy or through its
 //     own button — never because it was mounted. `waitReason` is what keeps a
 //     production server, a container and a server that asks for a password
@@ -23,6 +24,9 @@
 //     lint rule `vterm/owned-imports`. Checked here: how the page wires it.
 //  6. A window closed on purpose forgets its tabs: its sessions end with it,
 //     and what the user closed must not come back at the next launch.
+//  7. What a tab printed and its conversation (v1.36, ADR 0057) reach the disk
+//     in one place — the restore flow's `keep` — and only past `keepsContent`:
+//     the setting, and never a production server. A closed tab's go with it.
 //
 // Every check is a function over source text, so that the same file can show it
 // catches the violation it exists for (the second `describe`). Sources are read
@@ -38,6 +42,7 @@ const MODEL = "lib/tabs/tabrestore.ts";
 const KEEPER = "lib/stores/tabrestore.svelte.ts";
 const PAGE = "routes/+page.svelte";
 const TERMINAL = "lib/terminal/Terminal.svelte";
+const FLOW = "lib/page/restoreflow.svelte.ts";
 
 /** Drop `<!-- … -->` blocks (a scan: one regex pass leaves a nested opener behind). */
 function stripHtmlComments(src: string): string {
@@ -87,8 +92,8 @@ const count = (src: string, re: RegExp): number => (src.match(re) ?? []).length;
 
 // ── 1: what is written ───────────────────────────────────────────────────────
 
-/** Fields of a tab that belong to its session, not to what the tab is. */
-const SESSION_FIELDS = /\b(?:secret|remember|status|adopt|waiting|gen)\b/;
+/** Fields of a tab that belong to its session, not to what the tab is — and the text a file holds. */
+const SESSION_FIELDS = /\b(?:secret|remember|status|adopt|waiting|gen|replay|sudoPassword|content|baseContent)\b/;
 
 export function recordViolations(model: string): string[] {
   const c = code(model);
@@ -99,7 +104,7 @@ export function recordViolations(model: string): string[] {
   if (SESSION_FIELDS.test(record.slice(record.indexOf("{")))) {
     out.push("savedTab writes down something of the session");
   }
-  if (!/tabs\.map\(savedTab\)/.test(fn(c, "savedWindow"))) {
+  if (!/tabs\.map\(\(tab\) => savedTab\(tab, factsOf\?\.\(tab\.sessionId\)\)\)/.test(fn(c, "savedWindow"))) {
     out.push("savedWindow does not build its tabs with savedTab");
   }
   return out;
@@ -111,13 +116,18 @@ export function keeperViolations(keeper: string): string[] {
   const c = code(keeper);
   const out: string[] = [];
   const writes = [...c.matchAll(/\.setItem\(([^;]*)\);/g)].map((m) => m[1].replace(/\s+/g, " "));
-  if (writes.length !== 1 || writes[0] !== "own, JSON.stringify(savedWindow(tabs, layout))") {
+  const built = /const text = JSON\.stringify\(savedWindow\(tabs, layout, factsOf, beforeTile\)\);/.test(c);
+  if (writes.length !== 1 || writes[0] !== "own, text" || !built) {
     out.push(`the slot is written with something other than savedWindow: ${writes.join(" | ")}`);
+  }
+  // What it says of a session is read, never made: `dockState(` creates an entry.
+  if (!/function factsOf\([^]*?peekDockState\(sessionId\)[^]*?peekWorkspace\(sessionId\)/.test(c) || /\bdockState\(/.test(c)) {
+    out.push("the facts written with a tab are not read through the peeks");
   }
   if (!/let writing = \$state\(!main\);/.test(c)) {
     out.push("the main window writes its slot from the start");
   }
-  if (!/sync\([^)]*\): void \{\s*if \(!writing\) return;/.test(c)) {
+  if (!/sync\([^]*?\): void \{\s*if \(!writing\) return;/.test(c)) {
     out.push("sync writes before the previous launch was taken in");
   }
   if (!/take\([^)]*\): SavedSlots \| null \{\s*if \(!main \|\| taken\) return null;\s*taken = true;/.test(c)) {
@@ -150,9 +160,15 @@ export function pageViolations(page: string, terminal: string): string[] {
   const markup = c.slice(at);
   const out: string[] = [];
 
-  // 4 — the main window asks the flow, once.
-  if (count(c, /\brestoreFlow\.restore\(\)/g) !== 1 || !/if \(isMainWindow\) restoreFlow\.restore\(\);/.test(script)) {
+  // 4 — the main window asks the flow, once; any other takes what it is handed, once.
+  if (count(c, /\brestoreFlow\.restore\(\)/g) !== 1 || !/if \(isMainWindow\) void restoreFlow\.restore\(\);/.test(script)) {
     out.push("the saved tabs are restored somewhere other than once, in the main window");
+  }
+  if (
+    count(c, /\brestoreFlow\.restoreWindow\(\)/g) !== 1 ||
+    !/\} else \{[^]*?await restoreFlow\.restoreWindow\(\);\s*if \(back === null\) void windows\.adoptHandoff\(\);/.test(script)
+  ) {
+    out.push("a reopened window takes its tabs somewhere other than once, outside the main window");
   }
   // 5 — ⌘K opens what the policy lets open, and only from the palette.
   if (count(c, /\brestoreFlow\.wakeAll\(/g) !== 1 || !/run: \(\) => restoreFlow\.wakeAll\(\)/.test(script)) {
@@ -180,6 +196,29 @@ export function pageViolations(page: string, terminal: string): string[] {
   if (!/forgetSavedTabs\(\);\s*void closeWindow\(\);/.test(markup)) {
     out.push("a window closed on purpose leaves its tabs to come back");
   }
+  // 7 — a closed tab's content goes with it (one handed to another window lives on there).
+  if (!/if \(!keepSession\) restoreFlow\.forget\(sessionId\);/.test(fn(script, "closeTabFully", "  "))) {
+    out.push("closing a tab leaves what was kept of it for the next launch");
+  }
+  return out;
+}
+
+// ── 7: what a tab printed ────────────────────────────────────────────────────
+
+export function contentViolations(flow: string): string[] {
+  const c = code(flow);
+  const out: string[] = [];
+  const keep = fn(c, "keep", "  ");
+  if (count(c, /\btabContentSave\(/g) !== 1 || !/\btabContentSave\(/.test(keep)) {
+    out.push("what a tab printed is written somewhere other than keep");
+  }
+  const gate = keep.search(/if \(!keepsContent\(settings, isProd\(tab\)\)\) \{/);
+  if (gate < 0 || gate > keep.search(/\btabContentSave\(/)) {
+    out.push("what a tab printed is written before keepsContent was asked");
+  }
+  if (!/async function loadContent[^]*?if \(!keepsContent\(settings, isProd\(tab\)\)\) return;/.test(c)) {
+    out.push("what a tab printed is read back where it is no longer kept");
+  }
   return out;
 }
 
@@ -198,6 +237,10 @@ describe("tab restore guard", () => {
 
   it("the main window restores once, and a restored tab opens by the palette or its button", () => {
     expect(pageViolations(raw(PAGE), raw(TERMINAL))).toEqual([]);
+  });
+
+  it("what a tab printed is written in one place, past the setting and the prod flag", () => {
+    expect(contentViolations(raw(FLOW))).toEqual([]);
   });
 });
 
@@ -228,14 +271,22 @@ describe("tab restore guard — catches what it exists for", () => {
   });
 
   it("a window saved without going through the record", () => {
-    expect(recordViolations(mutate(model, "tabs: tabs.map(savedTab)", "tabs: [...tabs]"))).toContain(
-      "savedWindow does not build its tabs with savedTab",
-    );
+    expect(
+      recordViolations(mutate(model, "tabs: tabs.map((tab) => savedTab(tab, factsOf?.(tab.sessionId)))", "tabs: [...tabs]")),
+    ).toContain("savedWindow does not build its tabs with savedTab");
+  });
+
+  it("the terminal's output written into a tab's record", () => {
+    expect(
+      recordViolations(mutate(model, "    alias: tab.alias,\n  };", "    alias: tab.alias,\n    out: tab.replay,\n  };")),
+    ).toContain("savedTab writes down something of the session");
   });
 
   it("a slot written with the tabs themselves", () => {
     expect(
-      keeperViolations(mutate(keeper, "JSON.stringify(savedWindow(tabs, layout))", "JSON.stringify({ tabs, layout })")),
+      keeperViolations(
+        mutate(keeper, "JSON.stringify(savedWindow(tabs, layout, factsOf, beforeTile))", "JSON.stringify({ tabs, layout })"),
+      ),
     ).toEqual([expect.stringContaining("something other than savedWindow")]);
     // A second write is a second way for something to reach the disk.
     expect(
@@ -271,26 +322,38 @@ describe("tab restore guard — catches what it exists for", () => {
     expect(ownershipViolations(KEEPER, `storage.getItem(slotKey("main"))`)).toEqual([]);
   });
 
+  it("facts of a session made rather than read", () => {
+    expect(keeperViolations(mutate(keeper, "dock: peekDockState(sessionId),", "dock: dockState(sessionId),"))).toContain(
+      "the facts written with a tab are not read through the peeks",
+    );
+  });
+
   it("every window restoring, or the main one restoring twice", () => {
     expect(
-      pageViolations(mutate(page, "if (isMainWindow) restoreFlow.restore();", "restoreFlow.restore();"), terminal),
+      pageViolations(mutate(page, "if (isMainWindow) void restoreFlow.restore();", "void restoreFlow.restore();"), terminal),
     ).toContain("the saved tabs are restored somewhere other than once, in the main window");
     expect(
       pageViolations(
-        mutate(page, "if (isMainWindow) restoreFlow.restore();", "if (isMainWindow) restoreFlow.restore();\n      restoreFlow.restore();"),
+        mutate(page, "if (isMainWindow) void restoreFlow.restore();", "if (isMainWindow) void restoreFlow.restore();\n      void restoreFlow.restore();"),
         terminal,
       ),
     ).toContain("the saved tabs are restored somewhere other than once, in the main window");
+    expect(
+      pageViolations(
+        mutate(page, "if (isMainWindow) void restoreFlow.restore();", "void restoreFlow.restoreWindow();\n      if (isMainWindow) void restoreFlow.restore();"),
+        terminal,
+      ),
+    ).toContain("a reopened window takes its tabs somewhere other than once, outside the main window");
   });
 
   it("a waiting tab opened by something other than its button or the palette", () => {
     const woken = mutate(
       page,
-      "      if (isMainWindow) restoreFlow.restore();",
-      "      if (isMainWindow) restoreFlow.restore();\n      for (const tab of tabsState.list) void restoreFlow.wake(tab.sessionId);",
+      "      if (isMainWindow) void restoreFlow.restore();",
+      "      if (isMainWindow) void restoreFlow.restore();\n      for (const tab of tabsState.list) void restoreFlow.wake(tab.sessionId);",
     );
     expect(pageViolations(woken, terminal)).toContain("a waiting tab is opened by something other than its own button");
-    const all = mutate(page, "      if (isMainWindow) restoreFlow.restore();", "      if (isMainWindow) {\n        restoreFlow.restore();\n        restoreFlow.wakeAll();\n      }");
+    const all = mutate(page, "      if (isMainWindow) void restoreFlow.restore();", "      if (isMainWindow) {\n        void restoreFlow.restore();\n        restoreFlow.wakeAll();\n      }");
     expect(pageViolations(all, terminal)).toContain(
       "waiting tabs are opened all at once from somewhere other than the palette",
     );
@@ -309,6 +372,25 @@ describe("tab restore guard — catches what it exists for", () => {
     expect(pageViolations(mutate(page, "    forgetSavedTabs();\n", ""), terminal)).toContain(
       "a window closed on purpose leaves its tabs to come back",
     );
+  });
+
+  it("a closed tab whose output would come back", () => {
+    expect(pageViolations(mutate(page, "    if (!keepSession) restoreFlow.forget(sessionId);\n", ""), terminal)).toContain(
+      "closing a tab leaves what was kept of it for the next launch",
+    );
+  });
+
+  it("output written past the setting, or from a second place", () => {
+    const flow = raw(FLOW);
+    expect(
+      contentViolations(mutate(flow, "    if (!keepsContent(settings, isProd(tab))) {\n      if (kept.delete(sid))", "    if (false) {\n      if (kept.delete(sid))")),
+    ).toContain("what a tab printed is written before keepsContent was asked");
+    expect(
+      contentViolations(mutate(flow, "    async flush(): Promise<void> {", "    async flush(): Promise<void> {\n      void tabContentSave(\"x\", \"{}\");")),
+    ).toContain("what a tab printed is written somewhere other than keep");
+    expect(
+      contentViolations(mutate(flow, "        if (!keepsContent(settings, isProd(tab))) return;\n", "")),
+    ).toContain("what a tab printed is read back where it is no longer kept");
   });
 
   it("is not satisfied by a comment that only names the markers", () => {

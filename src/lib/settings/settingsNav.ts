@@ -35,7 +35,7 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: "k8s", keywords: "kubernetes k8s kubectl kubeconfig context namespace pods deployments cluster k3s microk8s refresh interval poll кубернетес кубектл контекст namespace поды деплойменты кластер интервал обновление" },
   { id: "snippets", keywords: "snippets templates editor insert dockerfile nginx compose systemd kubernetes bash шаблоны сниппеты вставка редактор докерфайл" },
   { id: "editor", keywords: "Editor config diff lint save yaml json syntax highlight beside terminal split редактор конфиг дифф различия линт сохранение синтаксис проверка подсветка рядом терминал зона" },
-  { id: "behavior", keywords: "Behavior confirm close tab auto reconnect restore tabs session startup launch layout splits поведение подтверждение вкладка переподключение восстановление вкладки сессии запуск раскладка сплиты" },
+  { id: "behavior", keywords: "Behavior confirm close tab auto reconnect restore tabs session startup launch layout splits windows output scrollback conversation поведение подтверждение вкладка переподключение восстановление вкладки сессии запуск раскладка сплиты окна вывод история диалог" },
   { id: "connection", keywords: "Connection timeout keepalive default port подключение таймаут порт" },
   { id: "statusbar", keywords: "Status bar metrics poll interval cpu ram disk threshold thresholds warn limit average пороги monitoring мониторинг статус-бар метрики" },
   { id: "idle", keywords: "Screensaver idle inactivity timeout matrix parallax words weak signal server card no signal burn-in burn in OLED drift shift pixel заставка простой бездействие таймаут матрица параллакс слова слабый сигнал карточка сервера скринсейвер хранитель экрана выгорание сдвиг пиксели OLED" },

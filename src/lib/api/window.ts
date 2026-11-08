@@ -218,6 +218,27 @@ export function takeHandoff(): Promise<string | null> {
   return invoke<string | null>("take_handoff");
 }
 
+/** A window of the previous launch to open again, and the tabs it brings back (v1.36, ADR 0057). */
+export interface ReopenWindow {
+  label: string;
+  /** Its tabs, as the main window read them from the window's slot (JSON). */
+  record: string;
+}
+
+/**
+ * The main window, once it has read the slots of the previous launch: open its
+ * other windows again, each under its old label and at its old place. Resolves
+ * with the labels opened — the tabs of any other stay with the main window.
+ */
+export function reopenWindows(reopen: ReopenWindow[], background: string | null): Promise<string[]> {
+  return invoke<string[]>("reopen_windows", { reopen, background });
+}
+
+/** In a window reopened at launch: the tabs it brings back (handed out once); null otherwise. */
+export function takeRestore(): Promise<string | null> {
+  return invoke<string | null>("take_restore");
+}
+
 /**
  * In a window that was offered a tab and cannot take it: say so now, so the
  * window giving it up is not left waiting for its timeout. `sessionId` names

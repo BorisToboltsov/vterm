@@ -55,6 +55,8 @@
   import type { ConnPhase } from "../connect/connphase";
   import type { AuthPromptRequest } from "../types";
   import type { TermSnapshot } from "../windows/tabhandoff";
+  import { cutBlocks, RESTORE_SCROLLBACK, separatorLine } from "../tabs/tabcontent";
+  import type { RestoredOutput } from "../stores/tabs.svelte";
   import { accumulatePinch } from "./termzoom";
   import { resolveLocalShell } from "./localshell";
   import { cdShellKind, type CdShell } from "../pathsync/cdterminal";
@@ -77,6 +79,8 @@
     tint = null,
     focusOnConnect = true,
     adopt = null,
+    replay = null,
+    startDir = null,
     waiting = false,
     onadopted,
     onadoptfailed,
@@ -114,6 +118,15 @@
      * session over. Read once, at mount.
      */
     adopt?: TermSnapshot | null;
+    /**
+     * What the terminal showed at the end of the previous launch (v1.36, ADR
+     * 0057 — kept only under `restoreOutput`): replayed first, under a line
+     * that says so, and then the session opens as any other. Read once, at mount.
+     */
+    replay?: RestoredOutput | null;
+    /** Local tabs: the folder to start the shell in (where it was at the end of
+     *  the previous launch); the backend takes it only if it still exists. */
+    startDir?: string | null;
     /**
      * The tab came back from the previous launch and waits for its button
      * (ADR 0019): the terminal mounts — the list of terminals is flat — but
@@ -186,6 +199,27 @@
   // snapshot is written: replayed at another width, its lines would wrap
   // differently and the cursor would land elsewhere.
   let replaying = false;
+
+  /**
+   * What is kept of this terminal across a restart (v1.36, ADR 0057): the last
+   * `RESTORE_SCROLLBACK` rows and the screen of the normal buffer, without the
+   * modes — a program full-screen at the time (an editor, `top`) is not
+   * replayed into the next session's shell. Null while it is still replaying.
+   */
+  export async function keepsake(): Promise<TermSnapshot | null> {
+    if (!term || !serializer || replaying) return null;
+    await new Promise<void>((parsed) => term.write("", parsed));
+    const length = term.buffer.normal.length;
+    const kept = Math.min(length, RESTORE_SCROLLBACK + term.rows);
+    return {
+      cols: term.cols,
+      rows: term.rows,
+      data: serializer.serialize({ scrollback: RESTORE_SCROLLBACK, excludeAltBuffer: true, excludeModes: true }),
+      commands: [...capturedCommands],
+      lines: kept,
+      fileBlocks: cutBlocks(fileLinks?.blocks() ?? [], length, kept),
+    };
+  }
 
   /**
    * The terminal as another window can restore it: screen, scrollback, colours
@@ -723,9 +757,13 @@
       // xterm's own English confirm() and window.open().
       linkHandler: terminalLinkHandler(() => term?.buffer.active),
       theme,
-      ...(adopt ? { cols: adopt.cols, rows: adopt.rows } : {}),
+      ...(adopt
+        ? { cols: adopt.cols, rows: adopt.rows }
+        : replay
+          ? { cols: replay.term.cols, rows: replay.term.rows }
+          : {}),
     });
-    replaying = adopt !== null;
+    replaying = adopt !== null || replay !== null;
     fit = new FitAddon();
     term.loadAddon(fit);
     // Loaded up front (cheap): the snapshot a tab handoff takes of this terminal.
@@ -904,6 +942,28 @@
       );
     }
 
+    if (!adopt && replay) {
+      // The previous launch's output (v1.36): put back at the grid it was
+      // taken at, then fitted here — xterm rewraps it — and closed by a line,
+      // so where this launch begins is never in doubt.
+      capturedCommands = replay.term.commands.slice(0, CAPTURE_CAP);
+      const before = replay.term.data;
+      await new Promise<void>((done) => term.write(before, done));
+      if (term.buffer.active.length === replay.term.lines && replay.term.fileBlocks.length > 0) {
+        if (fileLinks) fileLinks.restore(replay.term.fileBlocks);
+        else adoptedBlocks = replay.term.fileBlocks;
+      }
+      replaying = false;
+      try {
+        fit.fit();
+        onresize?.(term.cols, term.rows);
+      } catch {
+        /* container not measurable yet */
+      }
+      const time = new Date(replay.savedAt).toLocaleString(settings.language);
+      term.write(separatorLine(t("restore.previousOutput", { time })));
+    }
+
     if (adopt) {
       // The session is live and its output is being held for us. Put back what
       // its terminal showed, then take it over: from that call on the held
@@ -961,7 +1021,7 @@
         // Report the actual program we're about to spawn, not the current setting:
         // a tab keeps its shell even if the preference changes later.
         onlocalshell?.(cdShellKind(os, shell));
-        await openLocalTerminal(sessionId, term.cols, term.rows, shell);
+        await openLocalTerminal(sessionId, term.cols, term.rows, shell, startDir);
       } else {
         const outcome = await connectSession(
           sessionId,

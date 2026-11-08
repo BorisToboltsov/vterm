@@ -226,6 +226,29 @@ pub fn save_folders(folders: &[String]) -> AppResult<()> {
     Ok(())
 }
 
+// ── Window places (v1.36, ADR 0057) ────────────────────────────────────────────
+//
+// Where each window stood when the app last quit — `winplace` says what a place
+// is and how it is fitted to the monitors there are now. A store file like the
+// others: rewritten whole, atomically, quarantined when it does not parse.
+
+fn window_places_path() -> Option<PathBuf> {
+    config_file("windows.json")
+}
+
+pub fn load_window_places() -> crate::winplace::Places {
+    let Some(path) = window_places_path() else {
+        return crate::winplace::Places::new();
+    };
+    crate::winplace::sanitize(read_store(&path))
+}
+
+pub fn save_window_places(places: &crate::winplace::Places) -> AppResult<()> {
+    let path = window_places_path().ok_or("could not resolve config directory")?;
+    let json = serde_json::to_vec_pretty(places).map_err(|e| format!("serialize: {e}"))?;
+    write_atomic(&path, &json)
+}
+
 // ── Host-key store (vterm-managed known_hosts) ─────────────────────────────────
 //
 // Maps "host:port" → host-key fingerprint (SHA256). Used to verify server

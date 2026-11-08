@@ -61,15 +61,18 @@ export function connectSession(
 /**
  * Open a local-shell terminal (a PTY on the machine running vterm). `shell` is an
  * explicit program/path (Windows cmd/PowerShell/pwsh preset or a custom path);
- * `null` lets the backend use the OS default ($SHELL / %ComSpec%).
+ * `null` lets the backend use the OS default ($SHELL / %ComSpec%). `cwd`: the
+ * folder to start in — a tab of the previous launch comes back where its shell
+ * was (v1.36); the backend takes it only when it is an existing folder, else home.
  */
 export function openLocalTerminal(
   sessionId: string,
   cols: number,
   rows: number,
   shell: string | null = null,
+  cwd: string | null = null,
 ): Promise<void> {
-  return invoke<void>("open_local_terminal", { sessionId, cols, rows, shell });
+  return invoke<void>("open_local_terminal", { sessionId, cols, rows, shell, cwd });
 }
 
 /**

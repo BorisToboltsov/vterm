@@ -271,7 +271,13 @@ export function mainOnlyViolations(page: string, layout: string): string[] {
       out.push(`${call} runs outside the main window`);
     }
   }
-  if (!/\} else \{\s*void windows\.adoptHandoff\(\);/.test(c.slice(c.indexOf(main) + main.length - 1))) {
+  // Opened for a tab, it takes it; reopened at launch (v1.36), it takes the
+  // tabs it was handed — and the tab of a handoff when it was handed none.
+  const rest = c.slice(c.indexOf(main) + main.length - 1);
+  const takes =
+    /\} else \{\s*void windows\.adoptHandoff\(\);/.test(rest) ||
+    /\} else \{\s*void \(async \(\) => \{\s*await catalog;\s*const back = await restoreFlow\.restoreWindow\(\);\s*if \(back === null\) void windows\.adoptHandoff\(\);/.test(rest);
+  if (!takes) {
     out.push("a secondary window does not take over the tab it was opened for");
   }
   const store = code(layout);

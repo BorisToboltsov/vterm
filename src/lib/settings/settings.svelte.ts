@@ -228,6 +228,12 @@ export interface Settings {
   autoReconnect: boolean;
   /** What happens to the tabs of the previous launch (tabrestore.ts, ADR 0019). */
   restoreTabs: RestoreMode;
+  /**
+   * Keep what the tabs printed and their conversation with the assistant
+   * across a restart (v1.36, ADR 0057) — written to the data folder, never for
+   * a production server. Off by default: it is everything that was printed.
+   */
+  restoreOutput: boolean;
   // Logs & text (Phase 10)
   smartLogs: SmartLogs;
   highlightRules: HighlightRule[];
@@ -408,6 +414,7 @@ const DEFAULTS: Settings = {
   statusPollInterval: 5,
   autoReconnect: false,
   restoreTabs: DEFAULT_RESTORE_MODE,
+  restoreOutput: false,
   smartLogs: {
     enabled: true,
   },
@@ -574,6 +581,7 @@ function load(): Settings {
       kubectlPath: typeof raw.kubectlPath === "string" ? raw.kubectlPath : DEFAULTS.kubectlPath,
       prodTint: sanitizeProdTint(raw.prodTint),
       restoreTabs: isRestoreMode(raw.restoreTabs) ? raw.restoreTabs : DEFAULTS.restoreTabs,
+      restoreOutput: raw.restoreOutput === true,
     };
   } catch {
     return {
@@ -717,6 +725,7 @@ export function applyImportedSettings(raw: unknown): void {
   next.localPathSync = pathSyncMode(next.localPathSync);
   if (!isIdleSetting(next.idleEffect)) next.idleEffect = DEFAULTS.idleEffect;
   if (!isRestoreMode(next.restoreTabs)) next.restoreTabs = DEFAULTS.restoreTabs;
+  next.restoreOutput = next.restoreOutput === true;
   next.idleTimeoutSec = clampIdleTimeout(next.idleTimeoutSec);
   next.idleShiftEverySec = sanitizeShiftInterval(next.idleShiftEverySec);
   next.dockerRefreshSec = clampDockerRefresh(next.dockerRefreshSec);

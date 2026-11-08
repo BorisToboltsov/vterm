@@ -166,11 +166,31 @@ export default defineConfig(
           },
           // The tabs of the previous launch: taken once, opened by the policy (ADR 0019).
           ...Object.fromEntries(
-            ["takeSavedTabs", "startSavingTabs", "restoreSaved", "openRestored"].map((name) => [
+            ["takeSavedTabs", "startSavingTabs", "restoreSaved", "openRestored", "reopenWindows", "takeRestore"].map((name) => [
               name,
               {
                 owners: ["src/lib/page/restoreflow.svelte.ts"],
                 why: "the restore flow takes the slots once, writes the slot only after, and opens restored tabs only as waitReason allows",
+              },
+            ]),
+          ),
+          // What a tab printed and its conversation (ADR 0057): kept only past keepsContent.
+          ...Object.fromEntries(
+            ["tabContentSave", "tabContentLoad", "tabContentForget", "tabContentKeepOnly", "restoreChat"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/page/restoreflow.svelte.ts"],
+                why: "what was printed reaches the disk only under restoreOutput and never for a production server — the restore flow asks keepsContent",
+              },
+            ]),
+          ),
+          // Where a tab was (ADR 0057): put back once, from a read slot.
+          ...Object.fromEntries(
+            ["restoreWorkspace", "restoreDockState"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/page/restoreflow.svelte.ts"],
+                why: "a tab's files and dock come back from its parsed record, once, when the restore flow brings it back",
               },
             ]),
           ),

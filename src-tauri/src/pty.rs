@@ -13,7 +13,7 @@ use crate::outgate::OutputGate;
 use crate::recording::Recorder;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -255,8 +255,28 @@ pub fn open_local(
     cols: u32,
     rows: u32,
     shell: Option<String>,
+    cwd: Option<String>,
 ) -> AppResult<LocalPty> {
-    open_with_gate(OutputGate::for_session(app, &session_id), cols, rows, shell)
+    open_with_gate(
+        OutputGate::for_session(app, &session_id),
+        cols,
+        rows,
+        shell,
+        cwd,
+    )
+}
+
+/// The folder a local shell starts in: the one asked for — a tab of the previous
+/// launch comes back where its shell was (v1.36, ADR 0057) — when it is an
+/// absolute path to a folder that exists, otherwise the home folder. A folder
+/// that went since the last launch is not an error: the shell starts at home,
+/// as any new one does.
+fn start_dir(asked: Option<&str>, home: Option<PathBuf>) -> Option<PathBuf> {
+    asked
+        .map(Path::new)
+        .filter(|p| p.is_absolute() && p.is_dir())
+        .map(Path::to_path_buf)
+        .or(home)
 }
 
 /// [`open_local`] over a given gate — the seam a test opens a real shell
@@ -266,6 +286,7 @@ fn open_with_gate(
     cols: u32,
     rows: u32,
     shell: Option<String>,
+    cwd: Option<String>,
 ) -> AppResult<LocalPty> {
     let pair = native_pty_system()
         .openpty(pty_size(cols, rows))
@@ -282,8 +303,9 @@ fn open_with_gate(
         None => CommandBuilder::new_default_prog(),
     };
     cmd.env("TERM", "xterm-256color");
-    if let Some(dirs) = directories::UserDirs::new() {
-        cmd.cwd(dirs.home_dir());
+    let home = directories::UserDirs::new().map(|d| d.home_dir().to_path_buf());
+    if let Some(dir) = start_dir(cwd.as_deref(), home) {
+        cmd.cwd(dir);
     }
 
     let mut child = pair
@@ -358,6 +380,31 @@ mod tests {
         assert_eq!((s.cols, s.rows), (120, 40));
     }
 
+    #[test]
+    fn a_shell_starts_in_the_folder_asked_for_only_when_it_is_there() {
+        let dir = std::env::temp_dir().join(format!("vterm-startdir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("not-a-folder");
+        std::fs::write(&file, b"x").unwrap();
+        let home = Some(PathBuf::from("/home/someone"));
+        let dir_str = dir.to_string_lossy().into_owned();
+        let file_str = file.to_string_lossy().into_owned();
+        let gone = dir.join("gone").to_string_lossy().into_owned();
+        assert_eq!(start_dir(Some(&dir_str), home.clone()), Some(dir.clone()));
+        // A folder that went since, a file, a relative path, nothing: home.
+        for asked in [
+            Some(gone.as_str()),
+            Some(file_str.as_str()),
+            Some("relative/dir"),
+            Some(""),
+            None,
+        ] {
+            assert_eq!(start_dir(asked, home.clone()), home, "{asked:?}");
+        }
+        assert_eq!(start_dir(None, None), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A real shell behind a real PTY, its output held while its tab "moves":
     /// the reader thread, the gate and the kernel together. What the shell prints
     /// during the hold must not reach the old listener, and must reach the new
@@ -373,7 +420,7 @@ mod tests {
         let gate = Arc::new(OutputGate::new(Box::new(move |e| {
             sink.lock().unwrap().push(e)
         })));
-        let pty = match open_with_gate(gate.clone(), 80, 24, Some("/bin/sh".into())) {
+        let pty = match open_with_gate(gate.clone(), 80, 24, Some("/bin/sh".into()), None) {
             Ok(pty) => pty,
             // No pseudo-terminals in this environment (a locked-down container):
             // nothing to hold. Opening one is not what this test is about.
@@ -457,7 +504,7 @@ mod tests {
         use std::time::{Duration, Instant};
 
         let gate = Arc::new(OutputGate::new(Box::new(|_| {})));
-        let pty = match open_with_gate(gate, 80, 24, Some("/bin/sh".into())) {
+        let pty = match open_with_gate(gate, 80, 24, Some("/bin/sh".into()), None) {
             Ok(pty) => pty,
             Err(e) => {
                 eprintln!("skipped: cannot open a pty here ({e})");

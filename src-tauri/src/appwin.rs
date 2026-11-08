@@ -163,6 +163,9 @@ struct Registry {
     raised: Option<String>,
     /// Number of the last secondary window opened.
     seq: u32,
+    /// The tabs of the previous launch each reopened window brings back (v1.36,
+    /// ADR 0057), as the main window read them — handed out once, like a packet.
+    restoring: HashMap<String, String>,
 }
 
 impl Registry {
@@ -342,7 +345,28 @@ impl Registry {
             self.owners.remove(id);
         }
         let waker = self.pending.remove(label).map(|p| p.done);
+        self.restoring.remove(label);
         (sessions, waker)
+    }
+
+    /// Open window `label` again — one of the previous launch, reopened with
+    /// its tabs: it holds `record` until it asks for it, and a window opened
+    /// later is numbered after it. False when `label` is not one to reopen or
+    /// was given out in this launch already.
+    fn reopening(&mut self, label: &str, record: String) -> bool {
+        let Some(n) = label
+            .strip_prefix(SECONDARY_PREFIX)
+            .filter(|_| crate::winplace::kept_label(label))
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            return false;
+        };
+        if self.gone.contains(label) || self.restoring.contains_key(label) {
+            return false;
+        }
+        self.seq = self.seq.max(n);
+        self.restoring.insert(label.to_string(), record);
+        true
     }
 }
 
@@ -507,11 +531,153 @@ pub fn arm_close_guard(window: WebviewWindow, windows: State<Windows>) {
     windows.lock().armed.insert(window.label().to_string());
 }
 
-/// The user confirmed quitting: disarm every guard and exit.
+/// The user confirmed quitting: disarm every guard, write down where every
+/// window stands (v1.36, ADR 0057) and exit.
 #[tauri::command]
 pub fn quit_app(app: AppHandle, windows: State<Windows>) {
     windows.lock().armed.clear();
+    remember_places(&app);
     app.exit(0);
+}
+
+// ── Where the windows stood (v1.36, ADR 0057) ──────────────────────────────
+
+/// A window is not cut below this height when its place is given back.
+const PLACE_MIN_HEIGHT: f64 = 240.0;
+
+/// The smallest place a window is given back, in its physical px.
+fn place_min(window: &WebviewWindow) -> (u32, u32) {
+    let scale = window.scale_factor().unwrap_or(1.0);
+    (
+        (WINDOW_MIN_WIDTH * scale) as u32,
+        (PLACE_MIN_HEIGHT * scale) as u32,
+    )
+}
+
+/// Every window's place, written at quit: quitting is the one way out
+/// (`quitting_always_goes_through_the_confirmation`), so it is the one moment
+/// all of them still stand. The floating drag label is no window of ours.
+fn remember_places(app: &AppHandle) {
+    let places: crate::winplace::Places = app
+        .webview_windows()
+        .iter()
+        .filter(|(label, _)| crate::winplace::kept_label(label))
+        .filter_map(|(label, w)| crate::winplace::place_of(w).map(|p| (label.clone(), p)))
+        .collect();
+    let _ = crate::store::save_window_places(&places);
+}
+
+/// The main window, before it is shown: where it stood when the app last quit.
+pub fn place_main(window: &WebviewWindow) -> bool {
+    match crate::store::load_window_places().get(MAIN) {
+        Some(saved) => crate::winplace::apply(window, *saved, place_min(window)),
+        None => false,
+    }
+}
+
+/// A window of the previous launch to open again, with what it brings back.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reopen {
+    pub label: String,
+    /// Its tabs, as the main window read them from the window's slot.
+    pub record: String,
+}
+
+/// More than this is not a record the main window wrote (200 tabs, each a few
+/// hundred bytes of facts and paths).
+const MAX_RECORD: usize = 2 * 1024 * 1024;
+
+/// Open again the windows of the previous launch that bring tabs back (v1.36,
+/// ADR 0057), each under its old label and at its old place. Asked by the main
+/// window alone, once it has read the slots; returns the labels opened — the
+/// tabs of any other the main window keeps itself. Async: a window built in a
+/// synchronous command deadlocks on Windows.
+#[tauri::command]
+pub async fn reopen_windows(
+    app: AppHandle,
+    window: WebviewWindow,
+    windows: State<'_, Windows>,
+    reopen: Vec<Reopen>,
+    background: Option<String>,
+) -> AppResult<Vec<String>> {
+    if window.label() != MAIN {
+        return Ok(Vec::new());
+    }
+    let places = crate::store::load_window_places();
+    let mut opened = Vec::new();
+    for Reopen { label, record } in reopen {
+        if record.len() > MAX_RECORD || app.get_webview_window(&label).is_some() {
+            continue;
+        }
+        if !windows.lock().reopening(&label, record) {
+            continue;
+        }
+        match build_reopened(
+            &app,
+            &window,
+            &label,
+            places.get(&label).copied(),
+            background.as_deref(),
+        ) {
+            Ok(()) => opened.push(label),
+            Err(_) => {
+                windows.lock().restoring.remove(&label);
+            }
+        }
+    }
+    Ok(opened)
+}
+
+/// A reopened window: built hidden, put at its place, then shown — unlike a
+/// window opened for a tab, nothing waits for it, and it should not be seen
+/// jumping from where the window system put it.
+fn build_reopened(
+    app: &AppHandle,
+    main: &WebviewWindow,
+    label: &str,
+    place: Option<crate::winplace::Place>,
+    background: Option<&str>,
+) -> tauri::Result<()> {
+    let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::default())
+        .title("vterm")
+        .inner_size(FALLBACK_SIZE.0, FALLBACK_SIZE.1)
+        .min_inner_size(WINDOW_MIN_WIDTH, 0.0)
+        .visible(false)
+        .focused(false)
+        .shadow(true);
+    if let Some(color) = background.and_then(|c| c.parse::<tauri::window::Color>().ok()) {
+        builder = builder.background_color(color);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.decorations(false);
+    }
+    let win = builder.build()?;
+    let maximize = match place {
+        Some(saved) => crate::winplace::apply(&win, saved, place_min(&win)),
+        None => {
+            // No place written down (the app did not quit through the
+            // confirmation last time): beside the main window, as a new one.
+            if let Ok(pos) = main.outer_position() {
+                let step = (CASCADE * main.scale_factor().unwrap_or(1.0)) as i32;
+                let _ = win.set_position(tauri::PhysicalPosition::new(pos.x + step, pos.y + step));
+            }
+            false
+        }
+    };
+    win.show()?;
+    if maximize {
+        let _ = win.maximize();
+    }
+    Ok(())
+}
+
+/// The tabs this window was reopened with — asked once by a window on load;
+/// `None` for a window opened for a tab, or asked a second time.
+#[tauri::command]
+pub fn take_restore(window: WebviewWindow, windows: State<Windows>) -> Option<String> {
+    windows.lock().restoring.remove(window.label())
 }
 
 /// The user confirmed closing a secondary window (or it has nothing left to
@@ -1153,6 +1319,28 @@ mod tests {
         let mut reg = Registry::default();
         assert_eq!(reg.next_label(), "win-2");
         assert_eq!(reg.next_label(), "win-3");
+    }
+
+    #[test]
+    fn a_window_of_the_previous_launch_opens_under_its_label_and_hands_its_tabs_out_once() {
+        let mut reg = Registry::default();
+        assert!(reg.reopening("win-5", "{\"v\":1}".into()));
+        // A window opened for a tab later is numbered after it.
+        assert_eq!(reg.next_label(), "win-6");
+        // Not twice, not the main window, not a label of no window of ours.
+        assert!(!reg.reopening("win-5", "{}".into()));
+        for label in ["main", "drag-ghost", "win-", "win-x", "win-12345678901"] {
+            assert!(!reg.reopening(label, "{}".into()), "{label}");
+        }
+        assert_eq!(reg.restoring.remove("win-5").as_deref(), Some("{\"v\":1}"));
+        assert_eq!(reg.restoring.remove("win-5"), None);
+        // A label given out and gone in this launch is never reopened.
+        reg.forget_window("win-6");
+        assert!(!reg.reopening("win-6", "{}".into()));
+        // A window that goes before taking its tabs takes them with it.
+        assert!(reg.reopening("win-7", "{}".into()));
+        reg.forget_window("win-7");
+        assert!(!reg.restoring.contains_key("win-7"));
     }
 
     #[test]
