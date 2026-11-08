@@ -65,6 +65,12 @@ export interface EditorDoc {
   saveIssue: "none" | "permission" | "sudo" | "other";
   /** True while the initial content is being fetched. */
   loading: boolean;
+  /**
+   * A file of the previous launch (v1.36, ADR 0057): it stands in its zone and
+   * is read once its connection is open — until then it says so, rather than
+   * showing a load that is not happening.
+   */
+  awaiting?: boolean;
   /** Load error message, or null. */
   loadError: string | null;
   /** Opened/saved with sudo (root-owned file); save reuses it. */
@@ -131,6 +137,64 @@ export function getWorkspace(sessionId: string | null): Workspace {
 /** The session's workspace as stored, or null when it never opened an editor. */
 export function peekWorkspace(sessionId: string): Workspace | null {
   return workspacesState.map[sessionId] ?? null;
+}
+
+/** A file of the previous launch to put back into a connection (v1.36). */
+export interface RestoredDoc {
+  id: string;
+  source: "sftp" | "local";
+  path: string;
+  name: string;
+  lang: EditorLang;
+}
+
+/**
+ * Put back the files a connection had open at the end of the previous launch
+ * (v1.36, ADR 0057), in the zones they stood in: each stands in its zone and
+ * waits for the connection (`awaiting`); `fillEditor` / `failEditor` end the
+ * wait. The documents and their views come in one step, as `addEditor` adds
+ * one; the zones were read from storage, so they are rebuilt, not taken.
+ */
+export function restoreWorkspace(sessionId: string, docs: readonly RestoredDoc[], saved: unknown): void {
+  if (docs.length === 0 || workspacesState.map[sessionId]) return;
+  const editors = docs.map(
+    (d): EditorDoc => ({
+      id: d.id,
+      source: d.source,
+      path: d.path,
+      name: d.name,
+      lang: d.lang,
+      content: "",
+      baseContent: "",
+      baseSha256: "",
+      eol: "lf",
+      encoding: "utf-8",
+      mode: null,
+      readOnly: false,
+      writeAccess: d.source === "sftp" ? "checking" : "unknown",
+      saveIssue: "none",
+      loading: false,
+      awaiting: true,
+      loadError: null,
+      sudo: false,
+      sudoPassword: "",
+      gotoLine: null,
+    }),
+  );
+  workspacesState.map = {
+    ...workspacesState.map,
+    [sessionId]: { editors, layout: loadViews(saved, editors.map((e) => e.id)) },
+  };
+}
+
+/** The files of a connection still waiting for it to open (v1.36). */
+export function awaitingDocs(sessionId: string): EditorDoc[] {
+  return (workspacesState.map[sessionId]?.editors ?? []).filter((e) => e.awaiting);
+}
+
+/** A waiting file is being read now. */
+export function startLoading(sessionId: string, id: string): void {
+  updateDoc(sessionId, id, { awaiting: false, loading: true });
 }
 
 /**
@@ -252,10 +316,12 @@ function updateDoc(sessionId: string, id: string, next: Partial<EditorDoc>): voi
   });
 }
 
-/** Fill a loading editor with fetched file content. */
-export function fillEditor(sessionId: string, id: string, file: TextFile): void {
+/** Fill a loading editor with fetched file content; `lang` — what the content says it is. */
+export function fillEditor(sessionId: string, id: string, file: TextFile, lang?: EditorLang): void {
   const source = ensure(sessionId).editors.find((e) => e.id === id)?.source;
   updateDoc(sessionId, id, {
+    ...(lang ? { lang } : {}),
+    awaiting: false,
     content: file.content,
     baseContent: file.content,
     baseSha256: file.sha256,
@@ -272,7 +338,7 @@ export function fillEditor(sessionId: string, id: string, file: TextFile): void 
 
 /** Mark a loading editor as failed (keeps the sub-tab so the error is visible). */
 export function failEditor(sessionId: string, id: string, message: string): void {
-  updateDoc(sessionId, id, { loading: false, loadError: message });
+  updateDoc(sessionId, id, { loading: false, awaiting: false, loadError: message });
 }
 
 /** Live edit from the editor component. */

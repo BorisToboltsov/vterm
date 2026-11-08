@@ -262,13 +262,14 @@ pub async fn open_local_terminal(
     cols: u32,
     rows: u32,
     shell: Option<String>,
+    cwd: Option<String>,
 ) -> AppResult<()> {
     // Replace any existing session registered under this id; the tab is this
     // window's from here on.
     end_session(&app, &session_id).await;
     windows.claim(&session_id, window.label());
 
-    let local = pty::open_local(app, session_id.clone(), cols, rows, shell)?;
+    let local = pty::open_local(app, session_id.clone(), cols, rows, shell, cwd)?;
     state
         .local_ptys
         .locked()

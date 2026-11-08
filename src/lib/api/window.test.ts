@@ -114,6 +114,16 @@ describe("window api", () => {
     expect(await api.takeHandoff()).toBeNull();
     expect(invoke).toHaveBeenLastCalledWith("take_handoff");
 
+    invoke.mockResolvedValue(["win-3"]);
+    expect(await api.reopenWindows([{ label: "win-3", record: "{}" }], "#101010")).toEqual(["win-3"]);
+    expect(invoke).toHaveBeenLastCalledWith("reopen_windows", {
+      reopen: [{ label: "win-3", record: "{}" }],
+      background: "#101010",
+    });
+    invoke.mockResolvedValue(null);
+    expect(await api.takeRestore()).toBeNull();
+    expect(invoke).toHaveBeenLastCalledWith("take_restore");
+
     await api.attachSession("s1");
     expect(invoke).toHaveBeenLastCalledWith("attach_session", { sessionId: "s1" });
   });

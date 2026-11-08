@@ -531,6 +531,15 @@
               <option value="connect">{t("settings.restoreTabsConnect")}</option>
             </select>
           </label>
+          <label class="mt-2 flex items-center gap-2 text-xs text-muted">
+            <input
+              type="checkbox"
+              data-testid="restore-output"
+              bind:checked={settings.restoreOutput}
+              disabled={settings.restoreTabs === "off"}
+            />
+            {t("settings.restoreOutput")}<InfoHint text={t("settings.restoreOutputHint")} />
+          </label>
         </section>
 
         {/if}

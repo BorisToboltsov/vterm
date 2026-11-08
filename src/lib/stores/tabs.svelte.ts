@@ -80,6 +80,25 @@ export interface Tab {
    * and clear this.
    */
   waiting?: WaitReason;
+  /**
+   * What the tab's terminal showed at the end of the previous launch (v1.36,
+   * ADR 0057; kept only under `restoreOutput`): replayed when its terminal
+   * mounts, until the session is first connected (`clearRestored`) — a tab
+   * woken by its button mounts a new terminal and replays it again.
+   */
+  replay?: RestoredOutput;
+  /**
+   * The folder its shell was in at the end of the previous launch (v1.36): a
+   * local shell starts there, an SSH one is taken there once its shell says
+   * where it is (OSC 7). Dropped once used.
+   */
+  startDir?: string;
+}
+
+/** A terminal of the previous launch, and when it was written down. */
+export interface RestoredOutput {
+  term: TermSnapshot;
+  savedAt: number;
 }
 
 /** Status of a tab whose session was never opened in this launch (see `Tab.waiting`). */
@@ -293,6 +312,10 @@ export const tabsState = {
   get tiled(): boolean {
     return beforeTile !== null;
   },
+  /** The layout to go back to from the grid — written down with the tabs (v1.36). */
+  get beforeTile(): SavedLayout | null {
+    return beforeTile;
+  },
 };
 
 /** Close everything and forget the layout (tests). */
@@ -435,10 +458,19 @@ export function connectTabWith(sessionId: string, secret: string, remember: bool
  * Tabs opened before this ran (a file opened with the app at launch) are kept:
  * they join the pane in focus and stay on screen.
  */
+/** What else a restored tab may bring back (v1.36, ADR 0057). */
+export interface RestoreExtras {
+  /** The layout before the grid the tabs stood in, as it was written (rebuilt here). */
+  beforeTile?: unknown;
+  /** The terminal of the previous launch, when it was kept. */
+  replay?: (sessionId: string) => RestoredOutput | null;
+}
+
 export function openRestored(
   saved: readonly SavedTab[],
   layout: unknown,
   reasonOf: (tab: SavedTab) => WaitReason | null,
+  extras: RestoreExtras = {},
 ): void {
   const have = new Set(list.map((t) => t.sessionId));
   const fresh = saved
@@ -457,6 +489,9 @@ export function openRestored(
       };
       if (s.attach) tab.attach = s.attach;
       if (waiting !== null) tab.waiting = waiting;
+      if (s.shellCwd) tab.startDir = s.shellCwd;
+      const replay = extras.replay?.(s.id);
+      if (replay) tab.replay = replay;
       return tab;
     });
   if (fresh.length === 0) return;
@@ -464,6 +499,26 @@ export function openRestored(
   list = [...fresh, ...list];
   center = loadLayout(layout, list.map((t) => t.sessionId));
   if (shown !== null) center = activateTabIn(center, shown);
+  // A grid comes back as a grid: with the layout to go back to, rebuilt against
+  // the tabs that are here — the saved one is read, not trusted.
+  if (extras.beforeTile && beforeTile === null) {
+    beforeTile = savedLayout(loadLayout(extras.beforeTile, list.map((t) => t.sessionId)));
+  }
+}
+
+/**
+ * A restored tab's session is open: what it brought back from the previous
+ * launch is used up — a later reconnect starts its terminal empty and its shell
+ * at home, as any reconnect does. `startDir` is kept for an SSH tab whose shell
+ * has not said where it is yet (`keepDir`).
+ */
+export function clearRestored(sessionId: string, keepDir = false): void {
+  if (!list.some((t) => t.sessionId === sessionId && (t.replay || (t.startDir && !keepDir)))) return;
+  list = list.map((t) => {
+    if (t.sessionId !== sessionId) return t;
+    const { replay: _shown, startDir, ...rest } = t;
+    return keepDir && startDir ? { ...rest, startDir } : rest;
+  });
 }
 
 /** Change why a restored tab waits (it was checked, and cannot open by itself). */

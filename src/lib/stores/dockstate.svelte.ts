@@ -188,6 +188,26 @@ export function adoptDockState(sessionId: string, state: DockSessionState): void
 }
 
 /**
+ * Put back what a tab's dock remembered at the end of the previous launch
+ * (v1.36, ADR 0057): its shared folder, the file panel's folder — it lists it
+ * once the session is open, and falls back to its empty start if the folder is
+ * gone — and the k8s scope, which the panel checks against the kubeconfig
+ * before it uses it. Nothing else: what stood beside a list and how a log was
+ * read belong to a session that ended.
+ */
+export function restoreDockState(
+  sessionId: string,
+  saved: { cwd?: string; files?: { cwd: string; home: string }; k8s?: K8sScopeState },
+): void {
+  if (sessions[sessionId]) return;
+  const s = empty();
+  if (saved.cwd) s.cwd = saved.cwd;
+  if (saved.files) s.files = { connected: true, cwd: saved.files.cwd, home: saved.files.home };
+  if (saved.k8s) s.k8sScope = { ...saved.k8s };
+  sessions[sessionId] = s;
+}
+
+/**
  * A folder the session's file panel is asked to open (v1.24: a folder named
  * in terminal output was clicked). Held here, not in the panel: the panel may
  * not be mounted yet — opening the "Files" tab mounts it, and it takes the

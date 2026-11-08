@@ -32,6 +32,7 @@ mod sftp;
 mod ssh;
 mod store;
 mod sync;
+mod tabcontent;
 mod textenc;
 mod transfers;
 mod update_helper;
@@ -39,6 +40,7 @@ mod update_protocol;
 mod updater;
 mod webview2;
 mod winhit;
+mod winplace;
 
 use error::{AppError, AppResult};
 
@@ -254,7 +256,13 @@ pub fn run() {
                 .expect("main window is defined in tauri.conf.json");
             #[cfg(not(target_os = "macos"))]
             win.set_decorations(false)?;
+            // Where it stood when the app last quit (v1.36, ADR 0057) — set
+            // while hidden, so it is never seen moving there.
+            let maximize = appwin::place_main(&win);
             win.show()?;
+            if maximize {
+                let _ = win.maximize();
+            }
             // Any write of the server list or the folders reaches every window:
             // each keeps its own copy, and `prod` / `noAi` must not drift apart.
             let handle = app.handle().clone();
@@ -420,6 +428,12 @@ pub fn run() {
             appwin::detach_abort,
             appwin::detach_commit,
             appwin::take_handoff,
+            appwin::reopen_windows,
+            appwin::take_restore,
+            tabcontent::tab_content_save,
+            tabcontent::tab_content_load,
+            tabcontent::tab_content_forget,
+            tabcontent::tab_content_keep_only,
             appwin::decline_handoff,
             appwin::attach_session,
             appwin::announce_window,

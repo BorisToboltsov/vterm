@@ -628,6 +628,16 @@ describe("restoreTabs (v1.6)", () => {
     }
   });
 
+  it("keeps no output by default, and takes only a true from a backup (v1.36)", () => {
+    expect(settings.restoreOutput).toBe(false);
+    applyImportedSettings({ restoreOutput: true });
+    expect(settings.restoreOutput).toBe(true);
+    for (const junk of ["yes", 1, null, {}]) {
+      applyImportedSettings({ restoreOutput: junk });
+      expect(settings.restoreOutput).toBe(false);
+    }
+  });
+
   it("is persisted with the rest of the settings and cleared by a reset", () => {
     settings.restoreTabs = "connect";
     flushSync();

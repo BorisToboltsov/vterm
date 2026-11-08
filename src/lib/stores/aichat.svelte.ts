@@ -138,7 +138,6 @@ export function clearChat(sessionId: string | undefined): void {
   c.pending = null;
 }
 
-/** Drop a session's conversation entirely (its tab was closed). */
 /** The session's conversation as stored, or null when there is none yet. */
 export function peekChat(sessionId: string): SessionChat | null {
   return aiChatState.map[sessionId] ?? null;
@@ -156,6 +155,18 @@ export function adoptChat(sessionId: string, chat: SessionChat): void {
   };
 }
 
+/**
+ * Put back the conversation of a tab of the previous launch (v1.36, ADR 0057;
+ * kept only under `restoreOutput`): its turns, nothing of a run — no stream,
+ * no step waiting for a go-ahead, no attachment. A chat already started here
+ * is not replaced.
+ */
+export function restoreChat(sessionId: string, messages: AiChatItem[]): void {
+  if (messages.length === 0 || aiChatState.map[sessionId]?.messages.length) return;
+  getChat(sessionId).messages = messages;
+}
+
+/** Drop a session's conversation entirely (its tab was closed). */
 export function removeChat(sessionId: string): void {
   stopStream(sessionId);
   if (!aiChatState.map[sessionId]) return;
