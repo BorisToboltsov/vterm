@@ -549,6 +549,7 @@ pub fn on_window_event(window: &tauri::Window, event: &tauri::WindowEvent) -> bo
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     for id in sessions {
+                        crate::transfers::forget_session(&app, &id).await;
                         crate::end_session(&app, &id).await;
                     }
                 });
@@ -568,13 +569,26 @@ pub fn arm_close_guard(window: WebviewWindow, windows: State<Windows>) {
     windows.lock().armed.insert(window.label().to_string());
 }
 
+/// How long quitting waits for interrupted transfers' partial copies to go.
+const DISCARD_ON_QUIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// The user confirmed quitting: disarm every guard, write down where every
-/// window stands (v1.36, ADR 0057) and exit.
+/// window stands (v1.36, ADR 0057), take the partial copies of interrupted
+/// transfers off their destinations — they are not gone on with after a
+/// restart (ADR 0060) — and exit.
 #[tauri::command]
-pub fn quit_app(app: AppHandle, windows: State<Windows>) {
-    windows.lock().armed.clear();
+pub async fn quit_app(app: AppHandle) -> crate::error::AppResult<()> {
+    app.state::<Windows>().lock().armed.clear();
     remember_places(&app);
+    let kept = app.state::<crate::transfers::Jobs>().take_all_held();
+    let discard = async {
+        for held in kept {
+            crate::transfers::discard_held(&app, held).await;
+        }
+    };
+    let _ = tokio::time::timeout(DISCARD_ON_QUIT, discard).await;
     app.exit(0);
+    Ok(())
 }
 
 // ── Where the windows stood (v1.36, ADR 0057) ──────────────────────────────

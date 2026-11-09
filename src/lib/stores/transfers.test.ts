@@ -11,6 +11,7 @@ import {
   dropTransfersOf,
   removeTransfer,
   setTransferClock,
+  transferList,
   transfersOf,
   transfersState,
 } from "./transfers.svelte";
@@ -182,6 +183,7 @@ describe("jobs of the backend", () => {
       error: null,
       failed: 0,
       skipped: 0,
+      resumable: false,
       ...over,
     };
   }
@@ -226,6 +228,22 @@ describe("jobs of the backend", () => {
     expect(transfersState.map.u.done).toBe(true);
     vi.advanceTimersByTime(DONE_LINGER_MS + 1);
     expect(transfersState.map.u).toBeUndefined();
+  });
+
+  it("a kept job stays until it is gone on with or dropped, and is no transfer under way (v1.36)", () => {
+    resetDockState();
+    applyJob(job({ id: "k", state: "interrupted", resumable: true, transferred: 40 }));
+    vi.advanceTimersByTime(DONE_LINGER_MS * 10);
+    expect(transfersState.map.k.resumable).toBe("interrupted");
+    expect(aggregateTransfers(transferList())).toEqual({ active: 0, pct: 0, direction: null });
+    // Gone on with: it runs again under the same id.
+    applyJob(job({ id: "k", state: "running", transferred: 50 }));
+    expect(transfersState.map.k.resumable).toBeUndefined();
+    expect(aggregateTransfers(transferList()).active).toBe(1);
+    // Dropped in another window: the backend says it is no longer kept.
+    applyJob(job({ id: "k", state: "interrupted", resumable: false }));
+    vi.advanceTimersByTime(DONE_LINGER_MS + 1);
+    expect(transfersState.map.k).toBeUndefined();
   });
 
   it("a tab that leaves takes the rows that were only its own", () => {

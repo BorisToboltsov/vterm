@@ -3,6 +3,7 @@
 
 use crate::appwin::WindowSink;
 use crate::error::{AppError, AppResult};
+use crate::partial::{self, Keep, Partial, Resume};
 use crate::textenc;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
@@ -10,8 +11,9 @@ use russh_sftp::client::SftpSession;
 use russh_sftp::protocol::FileAttributes;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::io::SeekFrom;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWrite, AsyncWriteExt};
 
 const CHUNK: usize = 32 * 1024;
 /// Throttle progress events to roughly one per this many transferred bytes.
@@ -75,7 +77,7 @@ struct Progress {
 }
 
 /// Emit a single already-finished `sftp://progress` event (Phase 39.8). Deletes
-/// inside a sync run transfer no bytes, so they never reach [`copy_with_progress`]
+/// inside a sync run transfer no bytes, so they never reach [`copy_from`]
 /// — without this the plan row would sit at "queued" forever while the file is
 /// long gone. Same channel and same DTO as a real transfer, so the shared store,
 /// the SFTP panel and the status bar need no special case.
@@ -591,9 +593,12 @@ pub async fn upload(
         id: &id,
         direction: "upload",
     };
-    upload_staged(&report, sftp, local, remote, replace, cancel).await
+    upload_staged(&report, sftp, local, remote, replace, cancel, None).await
 }
 
+/// [`upload`] for a job: with `keep`, the temp is the job's — continued from a
+/// partial copy when one is given and still good, and left in place on an error
+/// once its first point was told (v1.36, ADR 0060).
 pub(crate) async fn upload_staged(
     report: &Report<'_>,
     sftp: &SftpSession,
@@ -601,6 +606,7 @@ pub(crate) async fn upload_staged(
     remote: &str,
     replace: bool,
     cancel: Option<&AtomicBool>,
+    keep: Option<&Keep<'_>>,
 ) -> AppResult<()> {
     let name = base_name(remote);
     let mut src = tokio::fs::File::open(local)
@@ -612,13 +618,33 @@ pub(crate) async fn upload_staged(
     if existing.is_some() && !replace {
         return Err(AppError::DestinationExists);
     }
-    let tmp = temp_sibling(remote);
-    let mut dst = sftp
-        .create(&tmp)
+    let stamp = source.as_ref().and_then(partial::local_stamp);
+    let held = keep.and_then(|k| k.resume.as_ref());
+    let tmp_len = match held {
+        Some(p) => partial::remote_len(sftp, &p.tmp).await,
+        None => None,
+    };
+    let (tmp, at) = partial::staging(held, stamp, tmp_len, || temp_sibling(remote));
+    let mut dst = partial::remote_writer(sftp, &tmp, at)
         .await
         .map_err(|e| format!("create {remote}: {e}"))?;
+    if at > 0 {
+        src.seek(SeekFrom::Start(at))
+            .await
+            .map_err(|e| format!("seek {local}: {e}"))?;
+    }
+    let told = told(keep, stamp, &tmp, at);
     let copied = async {
-        copy_with_progress(report, &name, total, &mut src, &mut dst, cancel).await?;
+        copy_from(
+            report,
+            &name,
+            total,
+            &mut src,
+            &mut dst,
+            cancel,
+            resume(&told, at),
+        )
+        .await?;
         dst.shutdown()
             .await
             .map_err(|e| AppError::from(e.to_string()))
@@ -626,7 +652,9 @@ pub(crate) async fn upload_staged(
     .await;
     drop(dst);
     if let Err(e) = copied {
-        let _ = sftp.remove_file(tmp).await;
+        if told.is_none() {
+            let _ = sftp.remove_file(tmp).await;
+        }
         return Err(e);
     }
     // Keep the replaced file's mode (an uploaded script stays executable), as a
@@ -675,6 +703,8 @@ async fn commit_remote(
 ///
 /// A new file takes the source's permission bits, as `scp` does: a private key
 /// copied from `0600` must not come out `0644`. A replaced file keeps its own.
+/// `keep` — as for [`upload_staged`].
+#[allow(clippy::too_many_arguments)] // two servers, two paths, and the job's word on each
 pub(crate) async fn relay_staged(
     report: &Report<'_>,
     src: &SftpSession,
@@ -683,6 +713,7 @@ pub(crate) async fn relay_staged(
     to: &str,
     replace: bool,
     cancel: Option<&AtomicBool>,
+    keep: Option<&Keep<'_>>,
 ) -> AppResult<()> {
     let name = base_name(to);
     let source = src
@@ -697,14 +728,35 @@ pub(crate) async fn relay_staged(
         .open(from)
         .await
         .map_err(|e| format!("open {from}: {e}"))?;
-    let tmp = temp_sibling(to);
-    let mut writer = dst
-        .create(&tmp)
+    let stamp = partial::remote_stamp(&source);
+    let held = keep.and_then(|k| k.resume.as_ref());
+    let tmp_len = match held {
+        Some(p) => partial::remote_len(dst, &p.tmp).await,
+        None => None,
+    };
+    let (tmp, at) = partial::staging(held, stamp, tmp_len, || temp_sibling(to));
+    let mut writer = partial::remote_writer(dst, &tmp, at)
         .await
         .map_err(|e| format!("create {to}: {e}"))?;
+    if at > 0 {
+        reader
+            .seek(SeekFrom::Start(at))
+            .await
+            .map_err(|e| format!("seek {from}: {e}"))?;
+    }
     let total = source.size.unwrap_or(0);
+    let told = told(keep, stamp, &tmp, at);
     let copied = async {
-        copy_with_progress(report, &name, total, &mut reader, &mut writer, cancel).await?;
+        copy_from(
+            report,
+            &name,
+            total,
+            &mut reader,
+            &mut writer,
+            cancel,
+            resume(&told, at),
+        )
+        .await?;
         writer
             .shutdown()
             .await
@@ -713,7 +765,9 @@ pub(crate) async fn relay_staged(
     .await;
     drop(writer);
     if let Err(e) = copied {
-        let _ = dst.remove_file(tmp).await;
+        if told.is_none() {
+            let _ = dst.remove_file(tmp).await;
+        }
         return Err(e);
     }
     let mode = existing
@@ -739,11 +793,12 @@ pub async fn download(
         direction: "download",
     };
     // A sync plan is the decision to replace: the row said so.
-    download_file(&report, sftp, remote, local, true, cancel).await
+    download_file(&report, sftp, remote, local, true, cancel, None).await
 }
 
 /// Download `remote` to `local`. Without `replace` a file already there is left
 /// alone ([`AppError::DestinationExists`]) — the same word an upload needs.
+/// `keep` — as for [`upload_staged`].
 pub(crate) async fn download_file(
     report: &Report<'_>,
     sftp: &SftpSession,
@@ -751,6 +806,7 @@ pub(crate) async fn download_file(
     local: &str,
     replace: bool,
     cancel: Option<&AtomicBool>,
+    keep: Option<&Keep<'_>>,
 ) -> AppResult<()> {
     let name = base_name(remote);
     if !replace && tokio::fs::symlink_metadata(local).await.is_ok() {
@@ -764,19 +820,46 @@ pub(crate) async fn download_file(
         .map_err(|e| format!("open {remote}: {e}"))?;
     // Staged next to the target, renamed over it only when complete: a cancelled
     // or broken download never leaves a truncated file where the user's was.
-    let tmp = crate::localfile::local_temp(local);
-    let mut dst = tokio::fs::File::create(&tmp)
+    let stamp = source.as_ref().and_then(partial::remote_stamp);
+    let held = keep.and_then(|k| k.resume.as_ref());
+    let tmp_len = match held {
+        Some(p) => partial::local_len(&p.tmp).await,
+        None => None,
+    };
+    let (tmp, at) = partial::staging(held, stamp, tmp_len, || {
+        crate::localfile::local_temp(local)
+            .to_string_lossy()
+            .into_owned()
+    });
+    let mut dst = partial::local_writer(&tmp, at)
         .await
         .map_err(|e| format!("create {local}: {e}"))?;
+    if at > 0 {
+        src.seek(SeekFrom::Start(at))
+            .await
+            .map_err(|e| format!("seek {remote}: {e}"))?;
+    }
+    let told = told(keep, stamp, &tmp, at);
     let copied = async {
-        copy_with_progress(report, &name, total, &mut src, &mut dst, cancel).await?;
+        copy_from(
+            report,
+            &name,
+            total,
+            &mut src,
+            &mut dst,
+            cancel,
+            resume(&told, at),
+        )
+        .await?;
         dst.flush().await.map_err(|e| AppError::from(e.to_string()))
     }
     .await;
     // Close the handle before renaming: Windows refuses to move an open file.
     drop(dst);
     if let Err(e) = copied {
-        let _ = tokio::fs::remove_file(&tmp).await;
+        if told.is_none() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
         return Err(e);
     }
     // Keep the replaced file's permissions, as the old in-place overwrite did; a
@@ -785,7 +868,11 @@ pub(crate) async fn download_file(
     if let Ok(meta) = tokio::fs::metadata(local).await {
         let _ = tokio::fs::set_permissions(&tmp, meta.permissions()).await;
     } else {
-        give_mode(&tmp, source.as_ref().and_then(|m| m.permissions)).await;
+        give_mode(
+            std::path::Path::new(&tmp),
+            source.as_ref().and_then(|m| m.permissions),
+        )
+        .await;
     }
     if let Err(e) = tokio::fs::rename(&tmp, local).await {
         let _ = tokio::fs::remove_file(&tmp).await;
@@ -828,25 +915,68 @@ async fn give_mode(path: &std::path::Path, mode: Option<u32>) {
     let _ = (path, mode);
 }
 
+/// The partial copy of `tmp` as `keep` hears of it — told its first point at
+/// once, so the temp is the job's from its first byte. None: nobody keeps it (a
+/// sync run), or its source cannot be stamped — the temp goes with an error.
+pub(crate) fn told<'a>(
+    keep: Option<&'a Keep<'a>>,
+    stamp: Option<partial::Stamp>,
+    tmp: &str,
+    at: u64,
+) -> Option<impl Fn(u64) + Send + Sync + 'a> {
+    let (keep, source) = (keep?, stamp?);
+    let tmp = tmp.to_string();
+    let tell = move |at: u64| {
+        (keep.mark)(Partial {
+            tmp: tmp.clone(),
+            at,
+            source,
+        })
+    };
+    tell(at);
+    Some(tell)
+}
+
+/// Where a copy that is kept begins, and who hears its checkpoints.
+pub(crate) fn resume<'a>(
+    told: &'a Option<impl Fn(u64) + Send + Sync + 'a>,
+    at: u64,
+) -> Option<Resume<'a>> {
+    told.as_ref().map(|t| Resume {
+        start: at,
+        checkpoint: t,
+    })
+}
+
 /// Copy `src` into `dst`, telling `report` how far it has got every
 /// [`PROGRESS_STEP`] bytes and once more at the end. A raised `cancel` flag stops
 /// the copy between chunks with [`AppError::Cancelled`]; callers only pass one
-/// when the destination is a staging temp they discard on error.
-pub(crate) async fn copy_with_progress<R, W>(
+/// when the destination is a staging temp.
+///
+/// With `resume`, `src` and `dst` already stand at `resume.start`: progress
+/// counts from the file's first byte, and every
+/// [`partial::CHECKPOINT_STEP`] bytes the copy has every write before that point
+/// confirmed (`flush`) and tells it (v1.36, ADR 0060). A writer that pipelines
+/// its writes — the SFTP client does — has more on its way than is written; a
+/// point told is one a partial copy may be continued from.
+pub(crate) async fn copy_from<R, W>(
     report: &Report<'_>,
     name: &str,
     total: u64,
     src: &mut R,
     dst: &mut W,
     cancel: Option<&AtomicBool>,
+    resume: Option<Resume<'_>>,
 ) -> AppResult<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
     let mut buf = vec![0u8; CHUNK];
-    let mut transferred: u64 = 0;
-    let mut last_emit: u64 = 0;
+    let start = resume.as_ref().map_or(0, |r| r.start);
+    let mut transferred: u64 = start;
+    let mut last_emit: u64 = start;
+    let mut last_mark: u64 = start;
     loop {
         if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(AppError::Cancelled);
@@ -865,6 +995,15 @@ where
         if transferred - last_emit >= PROGRESS_STEP {
             last_emit = transferred;
             report.tell(name, transferred, total, false);
+        }
+        if let Some(resume) = &resume {
+            if transferred - last_mark >= partial::CHECKPOINT_STEP {
+                dst.flush()
+                    .await
+                    .map_err(|e| format!("write {name}: {e}"))?;
+                last_mark = transferred;
+                (resume.checkpoint)(transferred);
+            }
         }
     }
     report.tell(name, transferred, total, true);
@@ -1582,6 +1721,7 @@ pub(crate) mod live_sftp {
             &path,
             true,
             Some(&stop),
+            None,
         )
         .await;
         assert!(matches!(res, Err(AppError::Cancelled)), "{res:?}");
@@ -1615,6 +1755,7 @@ pub(crate) mod live_sftp {
             local.to_str().unwrap(),
             &path,
             true,
+            None,
             None,
         )
         .await
@@ -1654,6 +1795,7 @@ pub(crate) mod live_sftp {
             &path,
             false,
             None,
+            None,
         )
         .await
         .expect("upload");
@@ -1670,6 +1812,7 @@ pub(crate) mod live_sftp {
             &path,
             back.to_str().unwrap(),
             false,
+            None,
             None,
         )
         .await
@@ -1697,7 +1840,7 @@ pub(crate) mod live_sftp {
             .expect("chmod");
         let _ = b.remove_file(to.clone()).await;
 
-        relay_staged(&Report::Silent, &a, &b, &from, &to, false, None)
+        relay_staged(&Report::Silent, &a, &b, &from, &to, false, None, None)
             .await
             .expect("relay");
         assert_eq!(b.read(to.clone()).await.expect("read"), b"secret\n");
@@ -1707,7 +1850,7 @@ pub(crate) mod live_sftp {
 
         // The name is taken now: refused, and what is there stays.
         seed(&a, &from, b"changed\n").await;
-        let res = relay_staged(&Report::Silent, &a, &b, &from, &to, false, None).await;
+        let res = relay_staged(&Report::Silent, &a, &b, &from, &to, false, None, None).await;
         assert!(matches!(res, Err(AppError::DestinationExists)), "{res:?}");
         assert_eq!(b.read(to.clone()).await.expect("read"), b"secret\n");
 
@@ -1715,7 +1858,7 @@ pub(crate) mod live_sftp {
         b.set_metadata(to.clone(), chmod_attrs(0o100_640))
             .await
             .expect("chmod");
-        relay_staged(&Report::Silent, &a, &b, &from, &to, true, None)
+        relay_staged(&Report::Silent, &a, &b, &from, &to, true, None, None)
             .await
             .expect("relay over");
         assert_eq!(b.read(to.clone()).await.expect("read"), b"changed\n");
@@ -1738,7 +1881,7 @@ pub(crate) mod live_sftp {
         seed(&b, &to, b"original\n").await;
 
         let stop = AtomicBool::new(true);
-        let res = relay_staged(&Report::Silent, &a, &b, &from, &to, true, Some(&stop)).await;
+        let res = relay_staged(&Report::Silent, &a, &b, &from, &to, true, Some(&stop), None).await;
         assert!(matches!(res, Err(AppError::Cancelled)), "{res:?}");
         assert_eq!(b.read(to.clone()).await.expect("read"), b"original\n");
         assert!(leftover_temps(&b, &to).await.is_empty());
@@ -1768,6 +1911,7 @@ pub(crate) mod live_sftp {
             &path,
             false,
             None,
+            None,
         )
         .await;
         assert!(matches!(res, Err(AppError::DestinationExists)), "{res:?}");
@@ -1782,6 +1926,7 @@ pub(crate) mod live_sftp {
             local.to_str().unwrap(),
             &fresh,
             false,
+            None,
             None,
         )
         .await
@@ -1813,6 +1958,7 @@ pub(crate) mod live_sftp {
             local.to_str().unwrap(),
             true,
             Some(&stop),
+            None,
         )
         .await;
         assert!(matches!(res, Err(AppError::Cancelled)), "{res:?}");
@@ -1831,6 +1977,7 @@ pub(crate) mod live_sftp {
             &path,
             local.to_str().unwrap(),
             true,
+            None,
             None,
         )
         .await

@@ -690,11 +690,13 @@ async fn transfer_party(
 /// Take a job into the registry and carry it out in the background. Resolves
 /// at once with a receiver of how it ended — which the command drops (a window
 /// awaits no transfer) and a promise made to the system keeps (`dragout`).
+/// `resumed` — what an interrupted run of it left (v1.36, ADR 0060).
 pub(crate) async fn launch_transfer(
     app: &AppHandle,
     origin: &str,
     spec: transfers::Spec,
     queued: bool,
+    resumed: Option<transfers::Left>,
 ) -> AppResult<tokio::sync::oneshot::Receiver<transfers::JobView>> {
     if spec.items.is_empty() {
         return Err("nothing to transfer".into());
@@ -714,7 +716,7 @@ pub(crate) async fn launch_transfer(
     let (ended, wait) = tokio::sync::oneshot::channel();
     let (app, origin) = (app.clone(), origin.to_string());
     tokio::spawn(async move {
-        let done = transfers::run(&app, spec, src, dst, cancel, origin, queued).await;
+        let done = transfers::run(&app, spec, src, dst, cancel, origin, queued, resumed).await;
         app.state::<AppState>().cancels.locked().remove(&id);
         let _ = ended.send(done);
     });
@@ -734,8 +736,50 @@ pub async fn transfer_start(
 ) -> AppResult<String> {
     let id = spec.id.clone();
     // In its session's turn (v1.35): one job of a session at a time.
-    launch_transfer(&app, window.label(), spec, true).await?;
+    launch_transfer(&app, window.label(), spec, true, None).await?;
     Ok(id)
+}
+
+/// Go on with an interrupted transfer (v1.36, ADR 0060): a job again, under the
+/// same id and in its sessions' turn, that copies what was left — the cut-off
+/// file from its last checkpoint. Refused while a session of it is not
+/// connected; the job stays kept.
+#[tauri::command]
+pub async fn transfer_resume(
+    window: tauri::WebviewWindow,
+    app: AppHandle,
+    id: String,
+) -> AppResult<()> {
+    let jobs = app.state::<transfers::Jobs>();
+    let held = jobs
+        .take_held(&id)
+        .ok_or_else(|| AppError::from("nothing to resume"))?;
+    let resumed = Some(held.left.clone());
+    match launch_transfer(&app, window.label(), held.spec.clone(), true, resumed).await {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            if let Err(held) = jobs.hold(held) {
+                transfers::discard_held(&app, *held).await;
+            }
+            Err(e)
+        }
+    }
+}
+
+/// Drop an interrupted transfer: its partial copies are taken off the
+/// destination, and every window showing it is told it is no longer kept.
+#[tauri::command]
+pub async fn transfer_forget(app: AppHandle, id: String) -> AppResult<()> {
+    let Some(held) = app.state::<transfers::Jobs>().take_held(&id) else {
+        return Ok(());
+    };
+    let view = transfers::JobView {
+        resumable: false,
+        ..held.view.clone()
+    };
+    transfers::send(&app, &view, &held.origin);
+    transfers::discard_held(&app, held).await;
+    Ok(())
 }
 
 /// The transfers this window shows right now — asked when a window opens, and

@@ -118,6 +118,10 @@ export default defineConfig(
             owners: ["src/lib/files/transferflow.ts"],
             why: "startTransfer asks before a file is replaced — a second starter replaces without asking (ADR 0025)",
           },
+          transferResume: {
+            owners: ["src/lib/files/transferflow.ts"],
+            why: "resumeTransfer says why going on was refused and leaves the row — a second caller loses both (ADR 0060)",
+          },
           importBackup: {
             owners: ["src/lib/servers/BackupSettings.svelte"],
             why: "an import writes the catalog the preview planned, after the user saw it",

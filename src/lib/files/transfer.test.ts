@@ -168,9 +168,20 @@ describe("a job, as the list and the toasts read it", () => {
       error: null,
       failed: 0,
       skipped: 0,
+      resumable: false,
       ...over,
     };
   }
+
+  it("a job cut off with something left is kept, and says why it ended (v1.36)", () => {
+    const cut = job({ state: "interrupted", resumable: true });
+    expect(jobRow(cut)).toMatchObject({ done: true, resumable: "interrupted" });
+    expect(jobRow(job({ state: "failed", failed: 1, resumable: true })).resumable).toBe("failed");
+    // Not kept (its tab closed, or nothing was left): an ordinary ended row.
+    expect(jobRow(job({ state: "interrupted" })).resumable).toBeUndefined();
+    expect(jobNotice(cut)).toEqual({ kind: "info", key: "transfer.interrupted", vars: { name: "a.txt" } });
+    expect(jobNotice(job({ state: "interrupted" }))).toBeNull();
+  });
 
   it("a job waiting its turn is not over, and says it waits (v1.35)", () => {
     expect(jobEnded(job({ state: "queued" }))).toBe(false);

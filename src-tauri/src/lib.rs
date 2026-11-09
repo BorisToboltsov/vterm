@@ -23,6 +23,7 @@ mod model;
 mod netcheck;
 mod netprobe;
 mod outgate;
+mod partial;
 mod proccwd;
 mod pty;
 mod recording;
@@ -398,6 +399,8 @@ pub fn run() {
             commands::sftp::sftp_copy,
             commands::sftp::transfer_start,
             commands::sftp::transfer_list,
+            commands::sftp::transfer_resume,
+            commands::sftp::transfer_forget,
             commands::sftp::sftp_cancel,
             commands::chrome::read_clipboard_text,
             commands::chrome::set_menu_language,

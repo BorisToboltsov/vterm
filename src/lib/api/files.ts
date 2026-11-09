@@ -403,7 +403,8 @@ export interface TransferSpec {
 }
 
 /** `queued` (v1.35) — waiting for an earlier job of one of its sessions to end. */
-export type TransferState = "queued" | "running" | "done" | "failed" | "cancelled";
+/** `interrupted` — cut off by its session ending under it (v1.36, ADR 0060); `cancelled` — stopped by the user. */
+export type TransferState = "queued" | "running" | "done" | "failed" | "cancelled" | "interrupted";
 
 /** A job as the backend reports it. */
 export interface TransferJob {
@@ -426,6 +427,8 @@ export interface TransferJob {
   failed: number;
   /** Unreadable sub-folders, and links the destination cannot hold (Windows) or the source would not read, left out (v1.34: links go over as links). */
   skipped: number;
+  /** It ended with something left to do and is kept to go on with (v1.36, ADR 0060). */
+  resumable: boolean;
 }
 
 /** Start a transfer; resolves with its id as soon as the backend has taken it. */
@@ -436,6 +439,20 @@ export function transferStart(spec: TransferSpec): Promise<string> {
 /** The transfers this window shows right now (asked on start and on taking a tab over). */
 export function transferList(): Promise<TransferJob[]> {
   return invoke<TransferJob[]>("transfer_list");
+}
+
+/**
+ * Go on with an interrupted transfer (v1.36, ADR 0060): a job again, under the
+ * same id, copying what was left — the cut-off file from its last checkpoint.
+ * Refused while a session of it is not connected; the job stays kept.
+ */
+export function transferResume(id: string): Promise<void> {
+  return invoke<void>("transfer_resume", { id });
+}
+
+/** Drop an interrupted transfer and its partial copies. */
+export function transferForget(id: string): Promise<void> {
+  return invoke<void>("transfer_forget", { id });
 }
 
 /** Pick one or more local files to upload; returns absolute paths. */

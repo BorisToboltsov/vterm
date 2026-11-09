@@ -397,6 +397,9 @@ pub async fn disconnect(
     session_id: String,
 ) -> AppResult<()> {
     if windows.release(&session_id, window.label()) {
+        // A closed tab keeps no interrupted transfer (v1.36): dropped while its
+        // server can still be reached to clean up the partial copies.
+        crate::transfers::forget_session(&app, &session_id).await;
         end_session(&app, &session_id).await;
     }
     Ok(())

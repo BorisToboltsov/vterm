@@ -684,6 +684,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   последнего байта; прямой `create(target)` запрещён. Отмена — `state.cancels`/`sftp_cancel`, не
   ошибка (в аудите `exit 130`); файлы прогона синхронизации отменяются прогоном
   (`isCancellableTransfer`).
+- **Прерванный перенос продолжается с подтверждённой точки** (ADR 0060). Оборванное концом
+  сессии (`Interrupted`) или со сбоем файлов бэкенд держит (`Jobs::hold`): что осталось и частичную
+  копию (`partial::Partial`); остановленное пользователем и задание закрытой вкладки — нет, их копии
+  удаляются; выход удаляет все. Точку называют только после `flush` (`copy_from`, каждые
+  `CHECKPOINT_STEP`): SFTP пишет конвейером. С неё продолжают, только если размер и время источника
+  те же (`resume_at`), иначе файл заново. Продолжение — то же задание (`transfer_resume`); имя,
+  занятое тем временем, не остаётся. Гейт `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab`.
 - **Перенос не заменяет файл без согласия:** занятое имя без `replace` — `dest-exists` до
   первого байта. Занятость спрашивают у назначения, один вопрос на пачку
   (`checkUpload`/`uploadItems`, `ReplaceDialog` с очередью
@@ -1107,7 +1114,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1177,6 +1184,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `local_paths_from_server_names_are_checked` (Rust) | Путь из имени сервера — только через `safe_child`/`safe_join`/`child_path` |
 | `a_file_leaves_the_app_only_as_a_checked_promise` (Rust) | Системное перетаскивание начинается с проверенных имён и только в `dragout/` |
 | `a_job_is_told_only_to_the_windows_of_its_sessions` (Rust) | Событие задания уходит одним `send` и только аудитории |
+| `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab` (Rust) | Точка частичной копии — после `flush`; временный файл и смещение — из `partial::staging`; удаляет его при ошибке только тот, кого не держат; закрытая вкладка и выход не оставляют держимого |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |

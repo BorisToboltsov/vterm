@@ -33,7 +33,7 @@ export const transfersState = $state<{
   rates: Record<string, number | null>;
 }>({ map: {}, rates: {} });
 
-/** Active (not-yet-finished) transfers, plus those still in their linger window. */
+/** Active (not-yet-finished) transfers, those still in their linger window, and the kept ones (v1.36). */
 export const transferList = (): TransferRow[] => Object.values(transfersState.map);
 
 /** The rows the panel of `sessionId` lists: its own jobs, and the files of a sync run. */
@@ -96,7 +96,9 @@ export function applyProgress(p: TransferRow): void {
     clearTimeout(existing);
     timers.delete(p.id);
   }
-  if (p.done) {
+  // A row kept to go on with (v1.36, ADR 0060) stays until it is gone on with
+  // or dropped.
+  if (p.done && !p.resumable) {
     timers.set(
       p.id,
       setTimeout(() => removeTransfer(p.id), DONE_LINGER_MS),
@@ -140,7 +142,9 @@ export interface TransferSummary {
  * Summarise a list of transfers for the compact status-bar indicator. Percent is
  * the bytes/files weighted average; an upload in the set wins the arrow.
  */
-export function aggregateTransfers(list: TransferRow[]): TransferSummary {
+export function aggregateTransfers(rows: TransferRow[]): TransferSummary {
+  // A kept row is no transfer under way: it waits in its panel (v1.36).
+  const list = rows.filter((t) => !t.resumable);
   const active = list.filter((t) => !t.done).length;
   let transferred = 0;
   let total = 0;

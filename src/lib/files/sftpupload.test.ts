@@ -72,6 +72,7 @@ function said(spec: TransferSpec, over: Partial<TransferJob> = {}): TransferJob 
     error: null,
     failed: 0,
     skipped: 0,
+    resumable: false,
     ...over,
   };
 }

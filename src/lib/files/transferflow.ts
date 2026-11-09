@@ -17,6 +17,8 @@
 import {
   localList,
   sftpList,
+  transferForget,
+  transferResume,
   transferStart,
   type TransferItem,
   type TransferSide,
@@ -25,6 +27,7 @@ import { checkUpload, uploadItems, type UploadCheck } from "./filebrowser";
 import { baseName, joinPath } from "./fspath";
 import { askReplace } from "../stores/replaceask.svelte";
 import { notifyError } from "../stores/toasts.svelte";
+import { removeTransfer } from "../stores/transfers.svelte";
 
 /** A side that is this machine, named outside any tab. */
 export const DISK: TransferSide = { session: null, local: true, label: "" };
@@ -106,5 +109,29 @@ export async function startTransfer(req: TransferRequest): Promise<string | null
   } catch (e) {
     notifyError(String(e));
     return null;
+  }
+}
+
+/**
+ * Go on with an interrupted transfer (v1.36, ADR 0060). Nothing is asked: what
+ * is left was asked about when the job began, and a name taken meanwhile is
+ * refused by the backend. Refused — a session of it is not connected — the
+ * row stays, and the reason is said.
+ */
+export async function resumeTransfer(id: string): Promise<void> {
+  try {
+    await transferResume(id);
+  } catch (e) {
+    notifyError(String(e));
+  }
+}
+
+/** Drop an interrupted transfer: its row goes, and its partial copies with it. */
+export async function forgetTransfer(id: string): Promise<void> {
+  removeTransfer(id);
+  try {
+    await transferForget(id);
+  } catch (e) {
+    notifyError(String(e));
   }
 }

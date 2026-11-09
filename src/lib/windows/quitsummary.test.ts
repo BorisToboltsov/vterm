@@ -26,6 +26,17 @@ describe("quitRows", () => {
     ]);
   });
 
+  it("counts a transfer kept to go on with: quitting drops it (v1.36)", () => {
+    const rows = quitRows({
+      ...none,
+      transfers: [
+        { id: "k", done: true, resumable: "interrupted" },
+        { id: "d", done: true },
+      ],
+    });
+    expect(rows).toEqual([{ key: "transfers", count: 1 }]);
+  });
+
   it("counts in-flight user transfers, not finished ones or sync-run files", () => {
     const rows = quitRows({
       ...none,

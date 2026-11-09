@@ -137,6 +137,11 @@ export interface TransferRow extends Omit<SftpProgress, "direction"> {
   dstLabel?: string;
   /** Waiting for an earlier job of one of its sessions (v1.35). */
   queued?: true;
+  /**
+   * Ended with something left and kept to go on with (v1.36, ADR 0060) — and
+   * why it ended: cut off by its session, or some files failed.
+   */
+  resumable?: "interrupted" | "failed";
 }
 
 /** Whether a job has ended — not still waiting its turn, not still running. */
@@ -175,6 +180,7 @@ export function jobRow(job: TransferJob): TransferRow {
     total: job.total,
     done: jobEnded(job),
     ...(job.state === "queued" ? { queued: true as const } : {}),
+    ...(job.resumable ? { resumable: job.state === "interrupted" ? ("interrupted" as const) : ("failed" as const) } : {}),
     sessions: jobSessions(job),
     ...(job.fileCount > 1 ? { fileIndex: job.fileIndex, fileCount: job.fileCount } : {}),
     destDir: job.destDir,
@@ -215,6 +221,9 @@ export function jobNotice(job: TransferJob): JobNotice | null {
           vars: { failed: job.failed, count: Math.max(job.fileCount, job.failed), error },
         }
       : { kind: "error", key: "transfer.failedOne", vars: { name: job.name, error } };
+  }
+  if (job.state === "interrupted" && job.resumable) {
+    return { kind: "info", key: "transfer.interrupted", vars: { name: job.name } };
   }
   if (job.state === "done" && job.skipped > 0) {
     return { kind: "info", key: "transfer.skipped", vars: { count: job.skipped } };

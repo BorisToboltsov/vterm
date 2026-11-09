@@ -27,7 +27,7 @@
   import type { FileEntry } from "../types";
   import { notifyError } from "../stores/toasts.svelte";
   import { transfersOf, transfersState } from "../stores/transfers.svelte";
-  import { DISK, startTransfer } from "./transferflow";
+  import { DISK, forgetTransfer, resumeTransfer, startTransfer } from "./transferflow";
   import { etaSeconds, fmtEta, isCancellableTransfer, type TransferRow } from "./transfer";
   import { fmtBytes, fmtRate } from "../monitoring/format";
   import { tooltip } from "../actions/tooltip";
@@ -261,6 +261,11 @@
             {#if tr.queued}
               <!-- Waiting for an earlier job of this session (v1.35). -->
               <span class="shrink-0 text-muted" data-testid="transfer-queued">{t("sftp.queued")}</span>
+            {:else if tr.resumable}
+              <!-- Cut off with something left, kept to go on with (v1.36, ADR 0060). -->
+              <span class="shrink-0 text-warn" data-testid="transfer-kept">
+                {t(tr.resumable === "interrupted" ? "sftp.transferInterrupted" : "sftp.transferFailed")}
+              </span>
             {:else}
               <span class="shrink-0 text-accent">{pct(tr)}%</span>
             {/if}
@@ -276,10 +281,29 @@
               >
                 <Icon name="close" size={12} />
               </button>
+            {:else if tr.resumable}
+              <button
+                data-testid="transfer-resume"
+                class="inline-flex shrink-0 items-center rounded p-0.5 text-accent hover:bg-accent hover:text-white"
+                use:tooltip={t("sftp.resumeTransfer")}
+                aria-label={t("sftp.resumeTransfer")}
+                onclick={() => void resumeTransfer(tr.id)}
+              >
+                <Icon name="play" size={12} />
+              </button>
+              <button
+                data-testid="transfer-forget"
+                class="inline-flex shrink-0 items-center rounded p-0.5 text-muted hover:bg-edge hover:text-text"
+                use:tooltip={t("sftp.forgetTransfer")}
+                aria-label={t("sftp.forgetTransfer")}
+                onclick={() => void forgetTransfer(tr.id)}
+              >
+                <Icon name="close" size={12} />
+              </button>
             {/if}
           </div>
           <div class="mt-0.5 h-1 rounded bg-edge">
-            <div class="h-1 rounded bg-accent" style="width: {pct(tr)}%"></div>
+            <div class="h-1 rounded {tr.resumable ? 'bg-warn' : 'bg-accent'}" style="width: {pct(tr)}%"></div>
           </div>
           <!-- Size/speed and ETA. Both stay absent rather than showing a made-up
                zero while the window is still filling (see transfer.ts). -->
