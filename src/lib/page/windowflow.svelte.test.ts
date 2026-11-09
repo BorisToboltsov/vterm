@@ -8,7 +8,7 @@ const api = vi.hoisted(() => ({
   closeWindow: vi.fn(async () => {}),
   declineHandoff: vi.fn(async (..._a: unknown[]) => {}),
   detachAbort: vi.fn(async (..._a: unknown[]) => {}),
-  detachBegin: vi.fn(async (..._a: unknown[]) => 7),
+  detachBegin: vi.fn(async (..._a: unknown[]) => ({ output: 7, stream: null as { id: string; sent: number } | null })),
   detachCommit: vi.fn(async (..._a: unknown[]): Promise<string> => "win-2"),
   dragDrop: vi.fn(async (..._a: unknown[]): Promise<string | null> => null),
   dragEnd: vi.fn(async () => {}),
@@ -27,8 +27,8 @@ vi.mock("../windows/appwindow", () => ({
 }));
 const drag = vi.hoisted(() => ({
   host: null as null | {
-    release: (id: string, at: { x: number; y: number }, outside: boolean) => void;
-    over: (id: string) => Promise<unknown>;
+    release: (id: string, at: { x: number; y: number }, outside: boolean, pane?: string | null) => void;
+    over: (id: string, pane?: string | null) => Promise<unknown>;
     left: () => void;
   },
   state: { outside: false, window: null as string | null },
@@ -60,7 +60,13 @@ function connectedTab(): string {
 
 const settled = () => new Promise((r) => setTimeout(r, 0));
 
-function harness(over: { editorBusy?: (id: string) => boolean; snapshot?: (id: string, sent: number) => Promise<unknown> } = {}) {
+function harness(
+  over: {
+    editorBusy?: (id: string) => boolean;
+    snapshot?: (id: string, sent: number) => Promise<unknown>;
+    ghostProbe?: () => HTMLElement | undefined;
+  } = {},
+) {
   const deps = {
     title: vi.fn((tab: { sessionId: string }) => `title-${tab.sessionId.slice(0, 4)}`),
     alias: vi.fn(() => "alias"),
@@ -77,7 +83,7 @@ function harness(over: { editorBusy?: (id: string) => boolean; snapshot?: (id: s
     arrived: vi.fn(),
     teardown: vi.fn((id: string, keep: boolean) => calls.push(`teardown ${keep}`) && void id),
     refreshTransfers: vi.fn(),
-    ghostProbe: () => undefined,
+    ghostProbe: over.ghostProbe ?? (() => undefined),
     areaBounds: () => ({ width: 1200, height: 800 }),
   };
   let flow!: WindowFlow;
@@ -97,7 +103,7 @@ beforeEach(() => {
   drag.state.outside = false;
   drag.state.window = null;
   drag.incomingDrop = null;
-  api.detachBegin.mockImplementation(async () => (calls.push("begin"), 7));
+  api.detachBegin.mockImplementation(async () => (calls.push("begin"), { output: 7, stream: null }));
   api.detachCommit.mockImplementation(async () => (calls.push("commit"), "win-2"));
   api.detachAbort.mockImplementation(async () => void calls.push("abort"));
 });
@@ -358,6 +364,86 @@ describe("window flow: a pane moving whole", () => {
     expect(api.detachBegin).toHaveBeenCalledTimes(1);
     expect(toasts.notifyError).toHaveBeenCalledTimes(1);
     expect(String(toasts.notifyError.mock.calls[0][0])).not.toBe("");
+    cleanup();
+  });
+});
+
+describe("window flow: work in flight goes with the tab (v1.36, ADR 0058)", () => {
+  it("an answer streaming in the tab is packed only once it was heard up to the hold", async () => {
+    const id = connectedTab();
+    connectedTab();
+    // The backend held a stream this window has no ear for: its pieces never arrive.
+    api.detachBegin.mockImplementation(async () => (calls.push("begin"), { output: 7, stream: { id: "st-1", sent: 3 } }));
+    const { flow, deps, cleanup } = harness();
+    expect(await flow.detachTab(id)).toBe(false);
+    // Called off, the output and the answer given back, the tab left where it was.
+    expect(calls).toEqual(["begin", "snapshot 7", "abort"]);
+    expect(api.detachCommit).not.toHaveBeenCalled();
+    expect(deps.teardown).not.toHaveBeenCalled();
+    cleanup();
+  });
+});
+
+describe("window flow: a whole window (v1.36, ADR 0058)", () => {
+  it("goes into an open window, its panes built again there in the order of the tree", async () => {
+    const a = connectedTab();
+    const b = connectedTab();
+    const c = connectedTab();
+    splitTabOff(c, tabsState.center.focus, "right");
+    const { flow, cleanup } = harness();
+    expect(flow.windowMoveOffered).toBe(false);
+    flow.heardWindows([{ label: "main", title: "x", tabs: 2 }]);
+    flushSync();
+    expect(flow.windowMoveOffered).toBe(true);
+    api.detachCommit.mockImplementation(async () => (calls.push("commit"), "main"));
+    await flow.moveWindow("main");
+    const sent = api.detachCommit.mock.calls.map(([, p, o]) => ({
+      id: JSON.parse(p as string).tab.sessionId,
+      seat: JSON.parse(p as string).seat,
+      to: (o as { target: string }).target,
+    }));
+    expect(sent.map((s) => s.to)).toEqual(["main", "main", "main"]);
+    // The left pane's shown tab opens; the right pane opens beside it; the rest sit behind.
+    expect(sent[0]).toMatchObject({ id: b, seat: { lead: null, before: false } });
+    expect(sent[1]).toMatchObject({ id: c, seat: { lead: null, split: { beside: b, edge: "right", ratio: 0.5 } } });
+    expect(sent[2]).toMatchObject({ id: a, seat: { lead: b, before: true } });
+    cleanup();
+  });
+
+  it("does not start when any tab of it may not go, and names that tab", async () => {
+    connectedTab();
+    const b = connectedTab();
+    splitTabOff(connectedTab(), tabsState.center.focus, "right");
+    setTabStatus(b, "closed");
+    const { flow, cleanup } = harness();
+    flow.heardWindows([{ label: "main", title: "x", tabs: 2 }]);
+    await flow.moveWindow("main");
+    expect(api.detachBegin).not.toHaveBeenCalled();
+    expect(toasts.notifyInfo).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+});
+
+describe("window flow: the label over the desktop is a copy of the tab (v1.36)", () => {
+  it("is read off the unseen copy the page keeps: name, host, chip, font, with +N for a pane", async () => {
+    const id = connectedTab();
+    connectedTab();
+    const probe = document.createElement("div");
+    probe.innerHTML =
+      '<span data-part="dot"></span><span data-part="title">nginx</span>' +
+      '<span data-part="sub">· web-01</span><span data-part="chip">prod</span>';
+    probe.style.font = "15px Inter";
+    document.body.append(probe);
+    drag.state.outside = true;
+    const { cleanup } = harness({ ghostProbe: () => probe });
+    await drag.host!.over(id, null);
+    const look = api.dragOver.mock.calls[0][1] as Record<string, unknown>;
+    expect(look).toMatchObject({ title: "nginx", sub: "· web-01", chip: "prod" });
+    expect(String(look.font)).toContain("15px");
+    // A pane carries its other tabs as a count.
+    await drag.host!.over(id, tabsState.center.focus);
+    expect((api.dragOver.mock.calls[1][1] as { title: string }).title).toBe("nginx +1");
+    probe.remove();
     cleanup();
   });
 });

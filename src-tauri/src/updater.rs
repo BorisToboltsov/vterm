@@ -405,7 +405,7 @@ pub async fn update_install(
         if let Some(p) = state.prepared.locked().take() {
             let _ = p.directory.keep();
         }
-        crate::appwin::quit_app(app.clone(), app.state());
+        let _ = crate::appwin::quit_app(app.clone()).await;
         Ok(())
     }
     .await;

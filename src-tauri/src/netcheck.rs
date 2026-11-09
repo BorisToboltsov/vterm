@@ -703,7 +703,8 @@ mod tests {
 
     #[test]
     fn a_windows_bash_is_one_of_this_machine_not_wsl() {
-        let tmp = std::env::temp_dir().join(format!("vterm-wbash-{}", std::process::id()));
+        let scratch = tempfile::tempdir().unwrap();
+        let tmp = scratch.path().to_path_buf();
         let sys = tmp.join("Windows").join("System32");
         let apps = tmp.join("Users").join("u").join("WindowsApps");
         let git = tmp.join("Git").join("bin");
@@ -723,7 +724,7 @@ mod tests {
         assert_eq!(windows_bash(&path(&[&apps]), &root), Err(true));
         // None at all.
         assert_eq!(windows_bash(&path(&[&tmp]), &root), Err(false));
-        let _ = std::fs::remove_dir_all(&tmp);
+        drop(scratch);
     }
 
     #[test]

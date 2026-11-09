@@ -39,6 +39,9 @@ import {
   confirmDialogStep,
   skipDialogStep,
   KEY_NONE,
+  adoptChat,
+  heardStream,
+  liveStream,
   type StartChatOpts,
 } from "./aichat.svelte";
 import { defaultAiSettings } from "../ai/ai";
@@ -322,5 +325,83 @@ describe("dialog loop (17.8)", () => {
     expect(c.pending).toBeNull();
     expect(c.dialogRunning).toBe(false);
     expect(aiExec).not.toHaveBeenCalled();
+  });
+});
+
+describe("an answer under way goes with its tab (v1.36, ADR 0058)", () => {
+  it("is asked for in the session's name, so a move can hold it", async () => {
+    void startChat(opts());
+    await flush();
+    expect(aiChat.mock.calls[0][0].sessionId).toBe("s1");
+  });
+
+  it("counts what it heard: a move waits for the pieces sent before the hold", async () => {
+    void startChat(opts());
+    await flush();
+    const live = liveStream("s1");
+    expect(live).toMatchObject({ idx: 1, opts: expect.objectContaining({ sessionId: "s1" }) });
+    emit("out", "Dis");
+    // Two were sent before the hold; one is here.
+    const waited = heardStream("s1", live!.streamId, 2);
+    let done = false;
+    void waited.then((v) => (done = v));
+    await flush();
+    expect(done).toBe(false);
+    emit("out", "k ");
+    expect(await waited).toBe(true);
+    expect(getChat("s1").messages[1].content).toBe("Disk ");
+    // Another stream, or one that never came: nothing to wait for.
+    expect(await heardStream("s1", "other", 0)).toBe(false);
+    expect(await heardStream("nobody", live!.streamId, 0)).toBe(false);
+  });
+
+  it("gives up waiting when the pieces do not all arrive", async () => {
+    void startChat(opts());
+    await flush();
+    expect(await heardStream("s1", liveStream("s1")!.streamId, 5, 10)).toBe(false);
+  });
+
+  it("in the window taking the tab, the rest of the answer fills the same message", async () => {
+    void startChat(opts());
+    await flush();
+    emit("out", "Disk ");
+    const live = liveStream("s1")!;
+    const packed = JSON.parse(JSON.stringify(getChat("s1")));
+    // The window giving the tab up lets it go: its listeners go, the stream does not stop.
+    removeChat("s1");
+    expect(cancelAiChat).not.toHaveBeenCalled();
+    aiChatState.map = {};
+    await adoptChat("s2", packed, JSON.parse(JSON.stringify(live)));
+    expect(getChat("s2")).toMatchObject({ streaming: true });
+    emit("out", "full");
+    emit("done", null);
+    expect(getChat("s2").messages[1].content).toBe("Disk full");
+    expect(getChat("s2").streaming).toBe(false);
+    expect(liveStream("s2")).toBeNull();
+  });
+
+  it("taken over without its stream, it claims none", async () => {
+    const chat = getChat("s1");
+    chat.messages.push({ role: "user", content: "q" }, { role: "assistant", content: "half" });
+    chat.streaming = true;
+    chat.dialogRunning = true;
+    const packed = JSON.parse(JSON.stringify(chat));
+    aiChatState.map = {};
+    await adoptChat("s1", packed, null);
+    expect(getChat("s1")).toMatchObject({ streaming: false, dialogRunning: false });
+  });
+
+  it("a dialog step's command running holds the tab — and only while it runs", async () => {
+    let finish!: (v: unknown) => void;
+    aiExec.mockReturnValue(new Promise((r) => (finish = r)));
+    void startChat(opts({ execMode: "dialog" }));
+    await flush();
+    emit("out", "```bash\nuptime\n```");
+    emit("done", null);
+    await flush();
+    expect(getChat("s1").stepRunning).toBe(true);
+    finish({ stdout: "up", stderr: "", code: 0, timedOut: false });
+    await flush();
+    expect(getChat("s1").stepRunning).toBe(false);
   });
 });

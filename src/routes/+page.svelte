@@ -103,6 +103,7 @@
   } from "#lib/stores/tabs.svelte.ts";
   import {
     canSplit,
+    findPane,
     gridFit,
     layoutRects,
     neighbourPane,
@@ -123,6 +124,7 @@
     stripStyle,
   } from "#lib/layout/centerview.ts";
   import {
+    beginPaneDrag,
     beginTabDrag,
     consumeTabDragClick,
     tabDrag,
@@ -271,14 +273,15 @@
   import { createFileDragFlow } from "#lib/page/filedragflow.svelte.ts";
   import { createWindowFlow } from "#lib/page/windowflow.svelte.ts";
   import { applySyncProgress } from "#lib/stores/syncrun.svelte.ts";
-  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob } from "#lib/stores/syncjob.svelte.ts";
+  import { applyScanProgress, isBusy, peekSyncJob, removeSyncJob, runHeard } from "#lib/stores/syncjob.svelte.ts";
   import {
     recordingState,
     recordingPaused,
     isRecording,
     clearRecording,
   } from "#lib/stores/recordings.svelte.ts";
-  import type { SftpProgress, TransferJob } from "#lib/api/index.ts";
+  import type { SftpProgress, SyncRunView, TransferJob } from "#lib/api/index.ts";
+  import { SYNC_RUN_EVENT } from "#lib/api/index.ts";
   import { activeChromePanel, applyImportedSettings, settings, uiPx } from "#lib/settings/settings.svelte.ts";
   import { t } from "#lib/i18n/index.ts";
   import {
@@ -1125,6 +1128,19 @@
         });
       }
     }
+    // The whole window (v1.36, ADR 0058) — when it has more than one pane.
+    if (windows.windowMoveOffered) {
+      for (const w of windows.targets) {
+        out.push({
+          id: `window:all:move:${w.label}`,
+          title: t("palette.moveWindowTo", { target: windows.targetName(w) }),
+          icon: "popOut",
+          group,
+          keywords: "window whole all panes tabs merge move окно целиком все области вкладки объединить перенести",
+          run: () => void windows.moveWindow(w.label),
+        });
+      }
+    }
     return out;
   });
 
@@ -1480,6 +1496,9 @@
       applyProgress(e.payload);
       applySyncProgress(e.payload);
     }).then((u) => unlisteners.push(u));
+    // A sync run is the backend's too (v1.36, ADR 0058): how it stands is told
+    // to the window that shows its session — this one, or the one its tab moved to.
+    listenHere<SyncRunView>(SYNC_RUN_EVENT, (e) => runHeard(e.payload)).then((u) => unlisteners.push(u));
     // Transfers are jobs of the backend (v1.12, ADR 0025): it tells the window
     // that shows the tab of a session a job touches. Listened to first, then
     // asked what is already under way — a window opened to take a tab over
@@ -1947,7 +1966,9 @@
     // Here only their rows go — but a copy to a tab still in this window stays.
     dropTransfersOf(sessionId, (other) => tabsState.list.some((x) => x.sessionId === other));
     setFileSelection(sessionId, null);
-    removeSyncJob(sessionId); // also stops a compare/run still going on
+    // Also stops a compare or a run still going on — but a run of a tab handed to
+    // another window goes on there (v1.36).
+    removeSyncJob(sessionId, keepSession);
     // Flags only — a recording handed over with its tab keeps running; left set,
     // this window would go on pausing it as "not on screen here".
     clearRecording(sessionId);
@@ -2113,6 +2134,20 @@
           items: whole,
         });
       }
+    }
+    // The window as a whole (v1.36): the open windows, every pane as it stands.
+    if (windows.windowMoveOffered) {
+      items.push({
+        kind: "submenu",
+        key: "moveWindow",
+        icon: "popOut",
+        label: t("ctx.moveWindow"),
+        items: windows.targets.map((w) => ({
+          icon: "popOut",
+          label: windows.targetName(w),
+          onSelect: () => void windows.moveWindow(w.label),
+        })),
+      });
     }
     if (tab.waiting) {
       // A tab of the previous launch (ADR 0019): the menu opens its session the
@@ -2442,7 +2477,20 @@
   // ── Tab drag: reorder, move to another pane, split (stores/tabdrag.svelte.ts) ──
   function tabPointerDown(event: PointerEvent, sessionId: string) {
     if ((event.target as HTMLElement).closest("[data-close]")) return;
-    beginTabDrag(event, sessionId);
+    // Held with Alt, a tab carries its whole pane (v1.36) — the way to drag a
+    // pane whose strip has no empty part left.
+    const pane = event.altKey ? paneOf(center, sessionId) : null;
+    if (pane) beginPaneDrag(event, pane.id);
+    else beginTabDrag(event, sessionId);
+  }
+
+  /**
+   * A press on the empty part of a strip (v1.36, ADR 0058): the whole pane is
+   * dragged — onto another pane's middle or edge, or out to another window.
+   */
+  function stripPointerDown(event: PointerEvent, paneId: string) {
+    if (event.target !== event.currentTarget || !findPane(center, paneId)?.tabs.length) return;
+    beginPaneDrag(event, paneId);
   }
 
   /** A click on a tab shows it — unless the click is the end of a drag. */
@@ -2629,9 +2677,12 @@
 {/snippet}
 
 {#snippet stripTabs(tabs: Tab[], peers: Tab[], shownId: string | null, stripId: string, paneId: string | null)}
+  <!-- The empty part of the strip carries the whole pane (v1.36). -->
   <div
     data-tabstrip={stripId}
-    class="tab-strip-scroll flex min-w-0 flex-1 items-stretch overflow-x-auto"
+    class="tab-strip-scroll flex min-w-0 flex-1 items-stretch overflow-x-auto touch-none"
+    onpointerdown={(e) => stripPointerDown(e, stripId)}
+    role="presentation"
   >
   {#each tabs as tab (tab.sessionId)}
     <!-- `inert` on the place kept for a tab held over the window from another
@@ -3531,15 +3582,25 @@
      held over this window from another (ADR 0018), which keeps the pointer
      while this window draws it. -->
 {#if draggingTab && windows.leavesWindow}
-  <!-- The label as it is drawn next to the pointer, unseen — its size and
-       colours are what the floating label over the desktop is given. -->
+  <!-- The tab as its strip draws it, unseen — what the floating label over the
+       desktop is a copy of (v1.36): its size, colours, font at the app's scale,
+       its dot, name, a container's host and the prod chip. -->
+  {@const prodGhost = prodTabIds.has(draggingTab.sessionId)}
   <div
     bind:this={ghostProbe}
     aria-hidden="true"
-    class="pointer-events-none invisible fixed left-0 top-0 flex max-w-64 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm"
+    class="pointer-events-none invisible fixed left-0 top-0 flex max-w-48 items-center gap-2 border-t-2 bg-panel px-2.5 py-1.5 text-sm text-text {prodGhost
+      ? 'border-bad'
+      : 'border-accent'}"
   >
     <span data-part="dot" class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
-    <span class="truncate">{tabAlias(draggingTab)}</span>
+    <span data-part="title" class="truncate">{draggingTab.attach ? draggingTab.attach.name : tabAlias(draggingTab)}</span>
+    {#if draggingTab.attach}
+      <span data-part="sub" class="truncate text-muted">· {tabAlias(draggingTab)}</span>
+    {/if}
+    {#if prodGhost}
+      <span data-part="chip" class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
+    {/if}
   </div>
 {/if}
 {#if viewDrag.view !== null && viewDrag.session !== null}

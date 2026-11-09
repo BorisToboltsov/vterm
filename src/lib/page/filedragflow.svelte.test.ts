@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const api = vi.hoisted(() => ({
   dragDrop: vi.fn(async (): Promise<unknown> => null),
   dragEnd: vi.fn(async () => {}),
-  dragOutBegin: vi.fn(async () => true),
+  dragOutBegin: vi.fn(async (..._a: unknown[]): Promise<{ taken: boolean; why: string | null }> => ({ taken: true, why: null })),
   dragOver: vi.fn(async () => null),
   localKinds: vi.fn(async (paths: string[]) => paths.map((p) => p.endsWith("/"))),
 }));
@@ -51,6 +51,7 @@ vi.mock("../stores/tabs.svelte", () => ({
 import { createFileDragFlow, type FileDragFlow } from "./filedragflow.svelte";
 import type { CarriedFiles } from "../files/filedrop";
 import type { CopyTarget } from "../files/copyto";
+import { t } from "../i18n";
 
 type Host = {
   meaning: (f: CarriedFiles, t: unknown) => unknown;
@@ -202,19 +203,30 @@ describe("file drag flow: other windows and the system", () => {
 
   it("files are handed to the system only when the model says they can be", async () => {
     const { host, cleanup } = harness();
-    // Files of this machine stay the page's.
-    expect(await host.out(files("l", ["/Users/me/x"]))).toBe(false);
+    // Files of this machine go too, as they are (v1.36).
+    expect(await host.out(files("l", ["/Users/me/x"]))).toBe(true);
+    expect(api.dragOutBegin).toHaveBeenLastCalledWith(expect.objectContaining({ session: "l", local: true }));
     // A server's files go, named after their tab.
     expect(await host.out(files("a", ["/srv/x"]))).toBe(true);
-    expect(api.dragOutBegin).toHaveBeenCalledTimes(1);
-    expect(api.dragOutBegin).toHaveBeenCalledWith(expect.objectContaining({ session: "a", label: "title-web" }));
+    expect(api.dragOutBegin).toHaveBeenCalledTimes(2);
+    expect(api.dragOutBegin).toHaveBeenLastCalledWith(expect.objectContaining({ session: "a", label: "title-web", local: false }));
     cleanup();
     // A session that is down: not even asked.
     stores.tabs = stores.tabs.map((t) => (t.sessionId === "a" ? { ...t, status: "Disconnected" } : t));
     const down = harness();
     expect(await down.host.out(files("a", ["/srv/x"]))).toBe(false);
-    expect(api.dragOutBegin).toHaveBeenCalledTimes(1);
+    expect(api.dragOutBegin).toHaveBeenCalledTimes(2);
     down.cleanup();
+  });
+
+  it("a drag the system would not take says the backend's reason when it is let go of outside", async () => {
+    api.dragOutBegin.mockResolvedValueOnce({ taken: false, why: "folderLink" });
+    const { host, cleanup } = harness();
+    expect(await host.out(files("a", ["/srv/site"]))).toBe(false);
+    host.release(files("a", ["/srv/site"]));
+    await settled();
+    expect(stores.notifyInfo).toHaveBeenCalledWith(t("dragout.whyFolderLink"));
+    cleanup();
   });
 
   it("let go of outside every window: says why it was not carried, where a drop was plainly meant", async () => {
@@ -223,8 +235,8 @@ describe("file drag flow: other windows and the system", () => {
     host.release(files("a", ["/srv/x"]));
     await settled();
     expect(stores.notifyInfo).toHaveBeenCalledTimes(1);
-    // Files of this machine were never the system's to carry: nothing to say.
-    host.release(files("l", ["/Users/me/x"]));
+    // Files that came from the desktop were never the system's to carry: nothing to say.
+    host.release(files(null, ["/Users/me/x"]));
     await settled();
     expect(stores.notifyInfo).toHaveBeenCalledTimes(1);
     cleanup();

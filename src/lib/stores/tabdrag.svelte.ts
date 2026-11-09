@@ -23,6 +23,12 @@
 // is said about one drag is said in the order it happened: a move, then the
 // next, then the release or the end.
 //
+// **A whole pane is dragged the same way** (v1.36, ADR 0058) — by the empty part
+// of its strip, or a tab held with Alt: `tabDrag.pane` names it and `tab` is the
+// tab it shows, which is what the windows out there draw. Inside the window it
+// lands on another pane's middle (its tabs join) or edge (it stands there) —
+// never in a strip slot: a strip it is over means that pane's middle.
+//
 // **The layout changes once, on release.** While a tab is in the air the strips
 // draw the order the drop would give (`previewTabs`) and a tint shows the half
 // of a pane it would take. Moving the tab for real on every pointer move would
@@ -37,6 +43,7 @@ import {
   swallowReleaseClick,
 } from "../actions/drag";
 import {
+  applyPaneDrop,
   canSplit,
   dropChanges,
   findPane,
@@ -49,11 +56,13 @@ import {
   type TabDrop,
 } from "../layout/splitlayout";
 import { releasedOutside } from "../windows/tabhandoff";
-import { dropTab, tabsState } from "./tabs.svelte";
+import { dropPane, dropTab, tabsState } from "./tabs.svelte";
 
 export const tabDrag = $state<{
   /** The tab (session id) being dragged; null while nothing is — a press is not a drag yet. */
   tab: string | null;
+  /** The pane being dragged as a whole (v1.36) — `tab` is the tab it shows; null for one tab. */
+  pane: string | null;
   /** The pointer, in viewport px — the floating label hangs from it. */
   x: number;
   y: number;
@@ -71,7 +80,7 @@ export const tabDrag = $state<{
   window: string | null;
   /** Over none of the app's windows: a floating label draws the tab, not this page. */
   floating: boolean;
-}>({ tab: null, x: 0, y: 0, over: null, zone: null, outside: false, window: null, floating: false });
+}>({ tab: null, pane: null, x: 0, y: 0, over: null, zone: null, outside: false, window: null, floating: false });
 
 /** Where on the screen a tab was let go of outside the window (screen px). */
 export interface ScreenPoint {
@@ -93,13 +102,13 @@ export interface OutsideDrag {
    * It was let go of away from this window's panes: outside the window
    * (`outside`), or inside its bounds but over another window lying on top.
    */
-  release: (tab: string, at: ScreenPoint, outside: boolean) => void;
+  release: (tab: string, at: ScreenPoint, outside: boolean, pane: string | null) => void;
   /**
    * Called on every move of a dragged tab, inside the window too — another
    * window, brought to the front, may lie over this one, and only the backend
    * can tell. Resolves with where the tab is; null — there was nothing to ask.
    */
-  over?: (tab: string) => Promise<DragSight | null>;
+  over?: (tab: string, pane: string | null) => Promise<DragSight | null>;
   /** It is no longer held outside, and was not let go of there. */
   left?: () => void;
 }
@@ -133,7 +142,7 @@ function tellOver(): void {
     return;
   }
   told = true;
-  const said: Promise<void> = over(drag.tab)
+  const said: Promise<void> = over(drag.tab, drag.pane)
     .catch(() => null)
     .then((sight) => {
       if (telling === said) telling = null;
@@ -174,6 +183,8 @@ const viewport = () => ({ width: window.innerWidth, height: window.innerHeight }
 
 interface Candidate {
   tab: string;
+  /** A whole pane, when one is dragged (v1.36). */
+  pane: string | null;
   startX: number;
   startY: number;
   el: HTMLElement;
@@ -236,6 +247,22 @@ export function tabDropAt(x: number, y: number, tab: string): TabHit | null {
 }
 
 /**
+ * Where a dragged pane would land under a point (v1.36): what a tab would hit,
+ * except that a strip stands for its pane's middle — a pane goes into a pane,
+ * not into a slot between two tabs.
+ */
+export function paneDropAt(x: number, y: number, tab: string): TabHit | null {
+  const hit = tabDropAt(x, y, tab);
+  if (!hit || hit.drop.kind !== "strip") return hit;
+  const pane = hit.drop.pane;
+  const body = [...document.querySelectorAll<HTMLElement>("[data-pane-body]")].find((b) => b.dataset.paneBody === pane);
+  return {
+    drop: { kind: "pane", pane, zone: "center" },
+    zone: body ? zoneRect(toRect(body.getBoundingClientRect()), "center") : null,
+  };
+}
+
+/**
  * Say where the tab would land — written only when that is somewhere else.
  *
  * The strips are drawn from the target, and a strip that is redrawn starts
@@ -252,6 +279,7 @@ function offer(hit: TabHit | null): void {
 
 function clearDrag(): void {
   tabDrag.tab = null;
+  tabDrag.pane = null;
   tabDrag.over = null;
   tabDrag.zone = null;
   tabDrag.outside = false;
@@ -284,6 +312,7 @@ function onMove(e: PointerEvent): void {
   if (tabDrag.tab === null) {
     if (!passedThreshold(candidate.startX, candidate.startY, e.clientX, e.clientY, 5)) return;
     tabDrag.tab = candidate.tab;
+    tabDrag.pane = candidate.pane;
     try {
       candidate.el.setPointerCapture(candidate.pointerId);
     } catch {
@@ -306,14 +335,20 @@ function onMove(e: PointerEvent): void {
     tabDrag.zone = null;
     return;
   }
-  const hit = tabDropAt(e.clientX, e.clientY, candidate.tab);
+  const pane = candidate.pane;
+  const hit = pane ? paneDropAt(e.clientX, e.clientY, candidate.tab) : tabDropAt(e.clientX, e.clientY, candidate.tab);
   // A drop that would change nothing is not offered as a target.
-  const offered = hit !== null && dropChanges(tabsState.center, candidate.tab, hit.drop);
+  const offered =
+    hit !== null &&
+    (pane
+      ? applyPaneDrop(tabsState.center, pane, hit.drop) !== tabsState.center
+      : dropChanges(tabsState.center, candidate.tab, hit.drop));
   offer(offered ? hit : null);
 }
 
 function onUp(e: PointerEvent): void {
   const tab = tabDrag.tab;
+  const pane = tabDrag.pane;
   const over = tabDrag.over;
   // Decided from where the pointer was let go, not from the last move: the
   // release is the gesture.
@@ -334,10 +369,11 @@ function onUp(e: PointerEvent): void {
   setTimeout(() => (swallowClick = false), 0);
   if (out && drag) {
     const at = { x: e.screenX, y: e.screenY };
-    afterTelling(() => drag.release(tab, at, outside));
+    afterTelling(() => drag.release(tab, at, outside, pane));
     return;
   }
-  if (over) dropTab(tab, over);
+  if (over && pane) dropPane(pane, over);
+  else if (over) dropTab(tab, over);
 }
 
 function onCancel(): void {
@@ -345,8 +381,19 @@ function onCancel(): void {
   clearDrag();
 }
 
+/**
+ * Arm a possible drag of a whole pane (v1.36) from a `pointerdown` on the empty
+ * part of its strip; it starts once the pointer moves.
+ */
+export function beginPaneDrag(e: PointerEvent, paneId: string): void {
+  const pane = findPane(tabsState.center, paneId);
+  const tab = pane?.active ?? pane?.tabs[0];
+  if (tab === undefined) return;
+  beginTabDrag(e, tab, paneId);
+}
+
 /** Arm a possible drag from a tab's `pointerdown`; it starts once the pointer moves. */
-export function beginTabDrag(e: PointerEvent, tab: string): void {
+export function beginTabDrag(e: PointerEvent, tab: string, pane: string | null = null): void {
   if (e.button !== 0) return;
   stopListening();
   clearDrag();
@@ -356,6 +403,7 @@ export function beginTabDrag(e: PointerEvent, tab: string): void {
   holdSelection();
   candidate = {
     tab,
+    pane,
     startX: e.clientX,
     startY: e.clientY,
     el: e.currentTarget as HTMLElement,

@@ -173,8 +173,14 @@ export interface AiChatRequest {
   maxTokens?: number;
   /** Extra generation params merged into the request body (temperature, top_p…). */
   params?: Record<string, unknown>;
-  /** Per-request timeout in seconds (the broker's reqwest client timeout). */
-  timeoutSec?: number;
+  /**
+   * Per-request timeout in seconds (the broker's reqwest read timeout). Named as
+   * `ai.rs` reads it: it was sent as `timeoutSec` and dropped without a word, so
+   * every endpoint ran on the backend's 120 s whatever it was set to.
+   */
+  timeoutSecs?: number;
+  /** The session whose chat asks (v1.36): a tab moving to another window holds its answer by it. */
+  sessionId?: string | null;
 }
 
 const PROVIDERS: AiProvider[] = ["openai", "anthropic"];
@@ -689,6 +695,6 @@ export function buildChatRequest(
     messages: trimHistory(messages, s.historyLimit, s.historyCharCap).messages,
     maxTokens,
     params: parseParams(ep.params) ?? undefined,
-    timeoutSec: ep.timeoutSec ?? DEFAULT_AI_TIMEOUT_SEC,
+    timeoutSecs: ep.timeoutSec ?? DEFAULT_AI_TIMEOUT_SEC,
   };
 }

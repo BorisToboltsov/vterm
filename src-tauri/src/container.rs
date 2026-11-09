@@ -685,7 +685,9 @@ mod live_compose {
     #[ignore]
     fn a_real_stack_passes_its_own_directory_and_refuses_another() {
         let project = "vterm-live-compose";
-        let dir = std::env::temp_dir().join(project);
+        // The folder is named as the project, inside a fresh temp folder.
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().join(project);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("compose.yaml"),

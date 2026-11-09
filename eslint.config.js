@@ -118,6 +118,10 @@ export default defineConfig(
             owners: ["src/lib/files/transferflow.ts"],
             why: "startTransfer asks before a file is replaced — a second starter replaces without asking (ADR 0025)",
           },
+          transferResume: {
+            owners: ["src/lib/files/transferflow.ts"],
+            why: "resumeTransfer says why going on was refused and leaves the row — a second caller loses both (ADR 0060)",
+          },
           importBackup: {
             owners: ["src/lib/servers/BackupSettings.svelte"],
             why: "an import writes the catalog the preview planned, after the user saw it",
@@ -157,6 +161,16 @@ export default defineConfig(
               {
                 owners: ["src/lib/page/windowflow.svelte.ts"],
                 why: "a tab is held, snapshotted, handed over and let go in one order, and a window takes tabs only once it listens",
+              },
+            ]),
+          ),
+          // A sync run is the backend's (ADR 0058): started, and heard of, by its store alone.
+          ...Object.fromEntries(
+            ["sftpSyncStart", "syncRunOf"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/stores/syncjob.svelte.ts"],
+                why: "a run is started once per plan and its end taken once — the store matches both to the job by run id",
               },
             ]),
           ),

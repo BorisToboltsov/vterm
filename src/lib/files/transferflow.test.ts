@@ -5,10 +5,14 @@ import type { TransferSpec } from "../api";
 const sftpList = vi.fn();
 const localList = vi.fn();
 const transferStart = vi.fn();
+const transferResume = vi.fn();
+const transferForget = vi.fn();
 vi.mock("../api", () => ({
   sftpList: (...a: unknown[]) => sftpList(...a),
   localList: (...a: unknown[]) => localList(...a),
   transferStart: (...a: unknown[]) => transferStart(...a),
+  transferResume: (...a: unknown[]) => transferResume(...a),
+  transferForget: (...a: unknown[]) => transferForget(...a),
 }));
 
 import {
@@ -17,7 +21,15 @@ import {
   currentReplaceQuestion,
 } from "../stores/replaceask.svelte";
 import { clearToasts, toastsState } from "../stores/toasts.svelte";
-import { DISK, destPath, startTransfer, type TransferRequest } from "./transferflow";
+import { applyProgress, clearTransfers, transfersState } from "../stores/transfers.svelte";
+import {
+  DISK,
+  destPath,
+  forgetTransfer,
+  resumeTransfer,
+  startTransfer,
+  type TransferRequest,
+} from "./transferflow";
 
 const named = (...names: string[]) => names.map((name) => ({ name }));
 const web = { session: "web", local: false, label: "web-01" };
@@ -165,5 +177,28 @@ describe("a destination path", () => {
   it("uses this machine's separator on this machine", () => {
     expect(destPath("/Users/me", "a.txt", true)).toBe("/Users/me/a.txt");
     expect(destPath("C:\\Users\\me", "a.txt", true)).toBe("C:\\Users\\me\\a.txt");
+  });
+});
+
+describe("an interrupted transfer (v1.36, ADR 0060)", () => {
+  const kept = { id: "k", name: "big.iso", direction: "upload" as const, transferred: 4, total: 10, done: true };
+
+  it("is gone on with by its id, and a refusal is said", async () => {
+    transferResume.mockReset().mockResolvedValueOnce(undefined);
+    await resumeTransfer("k");
+    expect(transferResume).toHaveBeenCalledWith("k");
+    expect(toastsState.list).toEqual([]);
+    transferResume.mockRejectedValueOnce("the session is not connected");
+    await resumeTransfer("k");
+    expect(toastsState.list.map((t) => t.message)).toEqual(["the session is not connected"]);
+  });
+
+  it("dropped, its row goes at once and the backend is told", async () => {
+    clearTransfers();
+    applyProgress({ ...kept, resumable: "interrupted" });
+    transferForget.mockReset().mockResolvedValueOnce(undefined);
+    await forgetTransfer("k");
+    expect(transfersState.map.k).toBeUndefined();
+    expect(transferForget).toHaveBeenCalledWith("k");
   });
 });

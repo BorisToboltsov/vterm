@@ -558,7 +558,13 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
   на сервер, `arrowDown` с сервера, `arrowRight` для копии между сессиями и локальной копии;
   имя текущего файла; у задания из нескольких файлов — `2/5` (`tabular-nums`); процент,
   полоса `h-1 bg-accent` на `bg-edge`, под ней размер, скорость и оставшееся время
-  (`text-caption text-muted`). Отмена — всегда видимый крестик `text-danger`.
+  (`text-caption text-muted`). Отмена — всегда видимый крестик `text-danger`. Прерванный
+  перенос (ADR 0060): вместо процента — `text-warn` «прерван» / «не завершён», полоса `bg-warn`
+  на месте обрыва, рядом «Продолжить» (`play`, `text-accent hover:bg-accent hover:text-white`) и
+  «Убрать» (`close`, `text-muted hover:bg-edge hover:text-text`).
+- **Значение, похожее на секрет** (ConfigMap, ADR 0061): `••••••` `text-muted` вместо значения, рядом
+  кнопка-глаз (`eye`/`eyeOff`, `text-muted hover:bg-edge`) — по одному ключу; копирование — только
+  показанного. Secret — ключи без значений и строка `text-caption text-muted`, почему их нет.
 - **Третий ответ в `ConfirmDialog`** (`altLabel`): между «Отмена» и подтверждением —
   безопасный путь («Пропустить существующие»), кнопка `bg-edge hover:bg-accent
   hover:text-panel-alt`, как вторичные кнопки окна синхронизации.

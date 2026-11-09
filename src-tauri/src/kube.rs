@@ -17,12 +17,21 @@
 // (`kubectl foo` runs `kubectl-foo` from PATH) would run code of the caller's
 // choosing; `--kubeconfig` would load exec credential plugins from a file of its
 // choosing, `--server` would hand the context's token to another address.
+//
+// It changes the cluster only in the shapes the panel offers (v1.36, ADR 0061):
+// `rollout undo` of a Deployment to a revision, a CronJob's Job made by hand
+// (`create job <name> --from=cronjob/<name>` — `create` at large would make any
+// object, a ClusterRoleBinding among them). And a Secret's values are never read:
+// its list comes from one template that prints keys and no value
+// ([`SECRET_KEYS_TEMPLATE`]); every other `get`/`describe` of Secrets — `describe`
+// prints a service-account token in clear — and `--raw`, which reads any path of
+// the API, are refused.
 
 /// The verbs the Kubernetes panel runs through `kubectl_run` (k8s.ts). Shells
 /// and port-forwards are typed into a terminal tab instead.
 const VERBS: &[&str] = &[
     "version", "config", "get", "describe", "logs", "delete", "rollout", "scale", "top", "cordon",
-    "uncordon", "drain",
+    "uncordon", "drain", "create",
 ];
 
 /// Long options refused wherever they stand: credentials and endpoints other
@@ -47,6 +56,7 @@ const DANGEROUS_OPTIONS: &[&str] = &[
     "--log-file",
     "--log-dir",
     "--profile-output",
+    "--raw",
 ];
 
 /// Shorthand options the panel uses. Any other single-dash token is refused —
@@ -69,6 +79,102 @@ fn verb_index(args: &[String]) -> Result<usize, String> {
     }
 }
 
+/// The one way the panel lists Secrets (v1.36, ADR 0061): namespace, name, type,
+/// creation time and the keys, a line each — and no value. Mirrored by
+/// `SECRET_KEYS_TEMPLATE` in `k8s.ts` (`k8s.test.ts` holds them equal).
+pub const SECRET_KEYS_TEMPLATE: &str = r#"{{range .items}}{{.metadata.namespace}}{{"\t"}}{{.metadata.name}}{{"\t"}}{{.type}}{{"\t"}}{{.metadata.creationTimestamp}}{{"\t"}}{{range $k, $v := .data}}{{$k}}{{" "}}{{end}}{{"\n"}}{{end}}"#;
+
+/// The options `withScope` (k8s.ts) adds, with the value each takes.
+fn scope_option(token: &str) -> Option<bool> {
+    match token {
+        "--context" | "--namespace" | "-n" => Some(true),
+        "-A" => Some(false),
+        _ if token.starts_with("--context=") || token.starts_with("--namespace=") => Some(false),
+        _ => None,
+    }
+}
+
+/// The tokens left once the scope options and their values are taken out.
+fn unscoped(rest: &[String]) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut tokens = rest.iter();
+    while let Some(token) = tokens.next() {
+        match scope_option(token) {
+            Some(true) => {
+                tokens.next();
+            }
+            Some(false) => {}
+            None => out.push(token.as_str()),
+        }
+    }
+    out
+}
+
+/// Whether a token names Secrets as a kind: `secret`, `secrets`, `Secret`,
+/// `secrets.v1`, `secret/x`, or one of a comma list. A value of a scope option
+/// (a namespace called `secrets`) is no kind — `unscoped` has taken it out.
+fn names_secrets(token: &str) -> bool {
+    !token.starts_with('-')
+        && token.split(',').any(|piece| {
+            let kind = piece.split('/').next().unwrap_or(piece);
+            let base = kind.split('.').next().unwrap_or(kind).to_ascii_lowercase();
+            base == "secret" || base == "secrets"
+        })
+}
+
+/// A Kubernetes object name: lowercase letters, digits and `-`, at most 63.
+fn object_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 63
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+}
+
+/// `rollout undo deployment/<name> [--to-revision=<n>]` and nothing else.
+fn check_undo(rest: &[&str]) -> Result<(), String> {
+    let refuse = || Err("kubectl: `rollout undo` goes only to a Deployment's revision".to_string());
+    let Some((target, more)) = rest.split_first() else {
+        return refuse();
+    };
+    let Some(name) = target
+        .strip_prefix("deployment/")
+        .or_else(|| target.strip_prefix("deployments/"))
+    else {
+        return refuse();
+    };
+    let revision = |t: &&str| {
+        t.strip_prefix("--to-revision=")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+    };
+    if !object_name(name) || more.len() > 1 || !more.iter().all(revision) {
+        return refuse();
+    }
+    Ok(())
+}
+
+/// `create job <name> --from=cronjob/<name>` and nothing else.
+fn check_run_now(rest: &[&str]) -> Result<(), String> {
+    match rest {
+        ["job", name, from] if object_name(name) => match from.strip_prefix("--from=cronjob/") {
+            Some(cronjob) if object_name(cronjob) => Ok(()),
+            _ => Err("kubectl: a Job is made here only from a CronJob".into()),
+        },
+        _ => Err("kubectl: `create` here makes only a CronJob's Job".into()),
+    }
+}
+
+/// `get secrets` with the keys template — the only read of Secrets there is.
+fn reads_secret_values(verb: &str, rest: &[&str]) -> bool {
+    if !rest.iter().any(|t| names_secrets(t)) {
+        return false;
+    }
+    let keys = format!("--output=go-template={SECRET_KEYS_TEMPLATE}");
+    !(verb == "get" && rest == ["secrets", keys.as_str()])
+}
+
 /// Whether the WebView may run this argv through `kubectl_run`.
 pub fn check_args(args: &[String]) -> Result<(), String> {
     let at = verb_index(args)?;
@@ -81,8 +187,19 @@ pub fn check_args(args: &[String]) -> Result<(), String> {
         "config" if !matches!(next, Some("get-contexts" | "current-context")) => {
             return Err("kubectl: only `config get-contexts` and `config current-context` read the kubeconfig here".into());
         }
-        "rollout" if next != Some("restart") => {
-            return Err("kubectl: only `rollout restart` is allowed".into());
+        "rollout" => match next {
+            Some("restart") => {}
+            Some("undo") => check_undo(&unscoped(&args[at + 2..]))?,
+            _ => {
+                return Err("kubectl: only `rollout restart` and `rollout undo` are allowed".into())
+            }
+        },
+        "create" => check_run_now(&unscoped(&args[at + 1..]))?,
+        "get" | "describe" if reads_secret_values(verb, &unscoped(&args[at + 1..])) => {
+            return Err(
+                "kubectl: a Secret's values are never read here — its keys are listed without them"
+                    .into(),
+            );
         }
         _ => {}
     }
@@ -187,6 +304,41 @@ mod tests {
             &["kubectl", "delete", "pod", "p", "--namespace", "web"],
             &["kubectl", "scale", "deployment", "d", "--replicas", "3"],
             &["kubectl", "rollout", "restart", "deployment/d"],
+            // Going back, and a CronJob run by hand (v1.36, ADR 0061).
+            &[
+                "kubectl",
+                "rollout",
+                "undo",
+                "deployment/d",
+                "--to-revision=3",
+                "--context",
+                "c",
+                "--namespace",
+                "web",
+            ],
+            &["kubectl", "rollout", "undo", "deployment/d"],
+            &[
+                "kubectl",
+                "create",
+                "job",
+                "report-manual-1a2b",
+                "--from=cronjob/report",
+                "--namespace",
+                "web",
+            ],
+            // Config: ConfigMaps whole, a namespace that happens to be called `secrets`,
+            // an object whose name merely starts with it.
+            &["kubectl", "get", "configmaps", "-o", "json", "-A"],
+            &[
+                "kubectl",
+                "get",
+                "pods",
+                "-o",
+                "json",
+                "--namespace",
+                "secrets",
+            ],
+            &["kubectl", "get", "deployment", "secret-store", "-o", "yaml"],
             &["kubectl", "get", "events", "-o", "json"],
             &["kubectl", "get", "jobs", "-o", "json", "--namespace", "web"],
             &[
@@ -257,6 +409,14 @@ mod tests {
         ] {
             assert_eq!(check_args(&argv(ok)), Ok(()), "{ok:?}");
         }
+        // The Secrets list, as the panel asks for it — and only so.
+        let keys = format!("--output=go-template={SECRET_KEYS_TEMPLATE}");
+        for scope in [&[][..], &["-A"], &["--context", "c", "--namespace", "web"]] {
+            let mut list = argv(&["kubectl", "get", "secrets", &keys]);
+            list.extend(argv(scope));
+            assert_eq!(check_args(&list), Ok(()), "{list:?}");
+        }
+        assert!(SECRET_KEYS_TEMPLATE.contains("{{$k}}") && !SECRET_KEYS_TEMPLATE.contains("$v}}"));
     }
 
     #[test]
@@ -274,7 +434,6 @@ mod tests {
             &["kubectl", "evil-plugin"],
             &["kubectl", "config", "use-context", "prod"],
             &["kubectl", "config", "view", "--raw"],
-            &["kubectl", "rollout", "undo", "deployment/d"],
             &["kubectl", "get", "pods", "--kubeconfig=/tmp/k"],
             &["kubectl", "get", "pods", "--server", "https://evil"],
             &["kubectl", "get", "pods", "-s", "https://evil"],
@@ -282,6 +441,106 @@ mod tests {
             &["kubectl", "get", "pods", "--log-file=/home/u/.bashrc"],
             &["kubectl", "get", "secrets", "--as", "system:admin"],
             &["kubectl", "get", "pods", "--token=x"],
+        ] {
+            assert!(check_args(&argv(bad)).is_err(), "{bad:?}");
+        }
+    }
+    /// The cluster is changed only in the shapes the panel offers (v1.36, ADR 0061):
+    /// a Deployment back to a revision, a CronJob's Job made now — `create` at
+    /// large would make any object, a ClusterRoleBinding among them.
+    #[test]
+    fn the_cluster_is_changed_only_in_the_shapes_the_panel_offers() {
+        for bad in [
+            &["kubectl", "rollout", "undo", "statefulset/s"][..],
+            &[
+                "kubectl",
+                "rollout",
+                "undo",
+                "deployment/d",
+                "--to-revision=x",
+            ],
+            &[
+                "kubectl",
+                "rollout",
+                "undo",
+                "deployment/d",
+                "--dry-run=server",
+                "-o",
+                "yaml",
+            ],
+            &["kubectl", "rollout", "history", "deployment/d"],
+            &["kubectl", "rollout", "pause", "deployment/d"],
+            &[
+                "kubectl",
+                "create",
+                "clusterrolebinding",
+                "x",
+                "--clusterrole=cluster-admin",
+                "--user=me",
+            ],
+            &["kubectl", "create", "-f", "/tmp/x.yaml"],
+            &["kubectl", "create", "--filename=/tmp/x.yaml"],
+            &["kubectl", "create", "job", "x", "--from=deployment/d"],
+            &[
+                "kubectl",
+                "create",
+                "job",
+                "x",
+                "--image=alpine",
+                "--",
+                "id",
+            ],
+            &[
+                "kubectl",
+                "create",
+                "job",
+                "x",
+                "--from=cronjob/r",
+                "--dry-run=client",
+                "-o",
+                "yaml",
+            ],
+            &["kubectl", "create", "job", "Bad_Name", "--from=cronjob/r"],
+        ] {
+            assert!(check_args(&argv(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    /// A Secret's values are never read (v1.36, ADR 0061): the keys template is
+    /// the one read of Secrets; `describe` prints a service-account token in
+    /// clear, and `--raw` reads any path of the API.
+    #[test]
+    fn a_secrets_value_is_never_read_by_any_road() {
+        for bad in [
+            &["kubectl", "get", "secrets", "-o", "yaml"][..],
+            &["kubectl", "get", "secret", "creds", "-o", "json"],
+            &[
+                "kubectl",
+                "get",
+                "Secrets.v1",
+                "-o",
+                "jsonpath={.items[*].data}",
+            ],
+            &["kubectl", "get", "deployments,secrets", "-o", "json"],
+            &[
+                "kubectl",
+                "get",
+                "deployment/d",
+                "secret/creds",
+                "-o",
+                "yaml",
+            ],
+            &["kubectl", "get", "--context", "c", "secrets", "-o", "json"],
+            &["kubectl", "get", "--sort-by", "x", "secrets", "-o", "json"],
+            &[
+                "kubectl",
+                "get",
+                "secrets",
+                "--output=go-template={{range .items}}{{.data}}{{end}}",
+            ],
+            &["kubectl", "describe", "secret", "sa-token"],
+            &["kubectl", "describe", "secrets"],
+            &["kubectl", "get", "--raw", "/api/v1/namespaces/web/secrets"],
         ] {
             assert!(check_args(&argv(bad)).is_err(), "{bad:?}");
         }
@@ -767,6 +1026,60 @@ mod live_kube {
             ]))
             .await,
             "top pod --containers",
+        );
+
+        // Config (v1.36, ADR 0061): ConfigMaps whole, Secrets by their keys and no value.
+        let maps = json(&scoped(&["get", "configmaps", "-o", "json"])).await;
+        let config = items(&maps)
+            .iter()
+            .find(|m| text(m, &["metadata", "name"]) == "app-config")
+            .expect("the stand's ConfigMap");
+        assert_eq!(text(config, &["data", "LOG_LEVEL"]), "debug");
+        let keys = format!("--output=go-template={SECRET_KEYS_TEMPLATE}");
+        let secrets = ok(&scoped(&["get", "secrets", &keys])).await;
+        let line = format!("{}\tapp-secret\tOpaque\t", ns.name);
+        assert!(secrets.stdout.contains(&line), "{}", secrets.stdout);
+        assert!(secrets.stdout.contains("\ttoken \n"), "{}", secrets.stdout);
+        for value in ["vterm-stand-token", "dnRlcm0tc3RhbmQtdG9rZW4"] {
+            assert!(
+                !secrets.stdout.contains(value),
+                "a value was read: {}",
+                secrets.stdout
+            );
+        }
+
+        // Going back: the stuck rollout, to the revision that worked.
+        ok(&scoped(&[
+            "rollout",
+            "undo",
+            "deployment/rollout",
+            "--to-revision=1",
+        ]))
+        .await;
+        let back = json(&scoped(&["get", "deployment", "rollout", "-o", "json"])).await;
+        let image = &back["spec"]["template"]["spec"]["containers"][0]["image"];
+        assert_eq!(image, "busybox:1.37", "{back}");
+        assert_eq!(
+            text(
+                &back,
+                &[
+                    "metadata",
+                    "annotations",
+                    "deployment.kubernetes.io/revision"
+                ]
+            ),
+            "3"
+        );
+
+        // A CronJob run now: a Job the panel files under its CronJob, by owner.
+        let made = "report-manual-live";
+        ok(&scoped(&["create", "job", made, "--from=cronjob/report"])).await;
+        let job = json(&scoped(&["get", "job", made, "-o", "json"])).await;
+        let owner = &job["metadata"]["ownerReferences"][0];
+        assert_eq!(
+            (owner["kind"].as_str(), owner["name"].as_str()),
+            (Some("CronJob"), Some("report")),
+            "{job}"
         );
         drop(ns);
     }

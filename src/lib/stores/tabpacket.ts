@@ -16,7 +16,7 @@ import {
   type TabPacket,
   type TermSnapshot,
 } from "../windows/tabhandoff";
-import { adoptChat, peekChat } from "./aichat.svelte";
+import { adoptChat, liveStream, peekChat } from "./aichat.svelte";
 import { adoptDockState, peekDockState } from "./dockstate.svelte";
 import {
   isRecordingPaused,
@@ -25,7 +25,8 @@ import {
   setRecordingPausedState,
 } from "./recordings.svelte";
 import type { TabDrop } from "../layout/splitlayout";
-import { adoptSyncJob, peekSyncJob } from "./syncjob.svelte";
+import { adoptSyncJob, peekSyncJob, syncRunOwner } from "./syncjob.svelte";
+import { adoptSyncRun, syncRunState } from "./syncrun.svelte";
 import { adoptTab, findTab } from "./tabs.svelte";
 import { adoptWorkspace, peekWorkspace } from "./workspaces.svelte";
 
@@ -54,8 +55,13 @@ export function packTab(
     terminal,
     workspace: peekWorkspace(sessionId),
     chat: peekChat(sessionId),
+    aiStream: liveStream(sessionId),
     dock: peekDockState(sessionId),
     sync: peekSyncJob(sessionId),
+    syncProgress:
+      syncRunOwner.sessionId === sessionId && peekSyncJob(sessionId)?.applying
+        ? { map: { ...syncRunState.map }, done: syncRunState.done, weight: syncRunState.weight }
+        : null,
     page: {
       ...page,
       recording: recordingState[sessionId] ?? null,
@@ -68,16 +74,20 @@ export function packTab(
 /**
  * Put a packet's state into this window's stores and open its tab — where it
  * was dropped, when it was (`drop`). The tab goes in last: its terminal and
- * panels mount against what is already restored.
+ * panels mount against what is already restored — and the chat listens for
+ * the rest of an answer under way before the terminal takes the session over,
+ * which is what lets the backend give that rest to this window.
  *
  * A tab that follows the first one of its pane (v1.10) takes its seat next to
  * it instead, unseen: the pane goes on showing what it showed.
  */
-export function unpackTab(packet: TabPacket, drop: TabDrop | null = null): void {
+export async function unpackTab(packet: TabPacket, drop: TabDrop | null = null): Promise<void> {
   const id = packet.tab.sessionId;
   if (packet.workspace) adoptWorkspace(id, packet.workspace);
-  if (packet.chat) adoptChat(id, packet.chat);
+  if (packet.chat) await adoptChat(id, packet.chat, packet.aiStream ?? null);
   if (packet.dock) adoptDockState(id, packet.dock);
+  // The rows of a run going on come first: the job then asks how the run stands.
+  if (packet.syncProgress) adoptSyncRun(packet.syncProgress);
   if (packet.sync) adoptSyncJob(id, packet.sync);
   if (packet.page.recording) {
     // The recording itself is the backend's and never stopped; this window

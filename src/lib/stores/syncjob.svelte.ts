@@ -11,8 +11,14 @@
 // One run at a time app-wide: per-file progress ids are `sync:<path>` with no
 // session in them (sync.rs `sync_transfer_id`), so two concurrent runs would draw
 // each other's bars. Compares may overlap; they report on their own ids.
+//
+// Since v1.36 (ADR 0058) a run is the backend's: `apply` only starts it, and how
+// it goes and ends arrives as `sync://run` to the window that shows the session
+// (`runHeard`) — so the tab may move to another window mid-run, and the window
+// that takes it asks once how the run stands (`adoptSyncJob`). A compare is
+// still this window's: it holds the tab until it ends or is stopped.
 
-import { localHashTree, sftpHashTree, sftpSyncApply, sftpCancel } from "../api";
+import { localHashTree, sftpHashTree, sftpSyncStart, sftpCancel, syncRunOf, type SyncRunView } from "../api";
 import {
   applicable,
   diffTrees,
@@ -26,6 +32,7 @@ import {
   type SyncDirection,
   type SyncRunPhase,
 } from "../sync/sync";
+import { dockCwd, touchDir } from "./dockstate.svelte";
 import { clearSyncRun } from "./syncrun.svelte";
 import { notifyError, notifyInfo, notifySuccess } from "./toasts.svelte";
 import { t } from "../i18n";
@@ -48,6 +55,8 @@ export interface SyncJob {
   applying: boolean;
   stopping: boolean;
   runId: string;
+  /** How many actions the run was started with — what "done N of M" counts against. */
+  runTotal: number;
   phase: SyncRunPhase;
   /** The dialog is showing this job — a finish while it's closed gets a toast. */
   dialogOpen: boolean;
@@ -80,6 +89,7 @@ function fresh(): SyncJob {
     applying: false,
     stopping: false,
     runId: "",
+    runTotal: 0,
     phase: "idle",
     dialogOpen: false,
   };
@@ -100,19 +110,28 @@ export function peekSyncJob(sessionId: string): SyncJob | null {
 
 /**
  * Take over the sync form (and the compared plan) of a tab moved here from
- * another window (ADR 0017). A tab does not move while it compares or applies,
- * and the flags are reset regardless: work in flight cannot be carried over.
+ * another window (ADR 0017). A compare does not travel (a tab does not move
+ * while one goes); a run does (v1.36): it is the backend's, its events come
+ * here from now on, and how it stands is asked once — it may have ended while
+ * the tab was on its way, its last word told to the window it left.
  */
 export function adoptSyncJob(sessionId: string, job: SyncJob): void {
+  const running = job.applying && job.runId !== "";
   jobs[sessionId] = {
     ...fresh(),
     ...job,
     comparing: false,
-    applying: false,
-    stopping: false,
+    compareId: "",
+    applying: running,
+    stopping: running && job.stopping,
     dialogOpen: false,
-    phase: job.phase === "running" ? "idle" : job.phase,
+    phase: job.phase === "running" && !running ? "idle" : job.phase,
   };
+  if (!running) return;
+  syncRunOwner.sessionId = sessionId;
+  void syncRunOf(sessionId)
+    .then((view) => view && runHeard(view))
+    .catch(() => {});
 }
 
 /** A compare or a run is going on. */
@@ -128,12 +147,15 @@ export function invalidate(job: SyncJob): void {
   job.phase = "idle";
 }
 
-/** Stop the session's work and forget it — part of the tab teardown. */
-export function removeSyncJob(sessionId: string): void {
+/**
+ * Stop the session's work and forget it — part of the tab teardown. A tab handed
+ * to another window (`keepRun`) leaves its run going: that window shows it now.
+ */
+export function removeSyncJob(sessionId: string, keepRun = false): void {
   const job = jobs[sessionId];
   if (!job) return;
   if (job.comparing) stopCompare(job);
-  if (job.applying) void sftpCancel(job.runId);
+  if (job.applying && !keepRun) void sftpCancel(job.runId);
   if (syncRunOwner.sessionId === sessionId) syncRunOwner.sessionId = null;
   delete jobs[sessionId];
 }
@@ -223,8 +245,11 @@ export function stopCompare(job: SyncJob): void {
   if (id) cancelCompareIds(id);
 }
 
-/** Apply the compared plan. `onapplied` refreshes the panel listing afterwards. */
-export async function apply(sessionId: string, onapplied?: () => void): Promise<void> {
+/**
+ * Start the compared plan. Resolves once the backend has it — or refused it;
+ * how the run goes is told by `runHeard`.
+ */
+export async function apply(sessionId: string): Promise<void> {
   const job = syncJob(sessionId);
   const toApply = job.plan ? applicable(job.plan) : [];
   if (toApply.length === 0 || job.applying || otherRunHolds(sessionId)) return;
@@ -232,32 +257,15 @@ export async function apply(sessionId: string, onapplied?: () => void): Promise<
   job.stopping = false;
   job.phase = "running";
   job.runId = `sync-run-${crypto.randomUUID()}`;
+  job.runTotal = toApply.length;
   syncRunOwner.sessionId = sessionId;
   clearSyncRun();
   try {
-    const stats = await sftpSyncApply(sessionId, job.runId, job.localPath, job.remote, toApply);
-    onapplied?.();
-    if (stats.stopped) {
-      // The ticked rows ARE the report of what got through, and the plan is stale
-      // afterwards — keep both until the user compares again.
-      job.phase = "stopped";
-      notifyInfo(
-        t("sync.stoppedToast", {
-          done: stats.uploaded + stats.downloaded + stats.deleted,
-          total: toApply.length,
-        }),
-      );
-      return;
-    }
-    // Drop the finished plan: re-opening would otherwise redraw every row of it.
-    job.plan = null;
-    job.facts = null;
-    job.phase = "done";
-    notifySuccess(
-      t("sync.applied", { up: stats.uploaded, down: stats.downloaded, del: stats.deleted }),
-    );
+    await sftpSyncStart(sessionId, job.runId, job.localPath, job.remote, toApply);
   } catch (e) {
     const err = String(e);
+    job.applying = false;
+    job.stopping = false;
     if (isSyncBusy(err)) {
       // Refused before it started (a run in another window holds the slot): the
       // plan is untouched, so this is not a stopped run.
@@ -267,10 +275,54 @@ export async function apply(sessionId: string, onapplied?: () => void): Promise<
       job.phase = "stopped";
       notifyError(err);
     }
-  } finally {
-    job.applying = false;
-    job.stopping = false;
   }
+}
+
+/**
+ * The backend told how a run stands (`sync://run`, to the window that shows
+ * its session). Its end is taken once — the same end may also come as the
+ * answer to `syncRunOf` after the tab moved here.
+ */
+export function runHeard(view: SyncRunView): void {
+  const job = jobs[view.sessionId];
+  if (!job || job.runId !== view.runId) return;
+  if (view.state === "running") {
+    job.applying = true;
+    job.phase = "running";
+    syncRunOwner.sessionId = view.sessionId;
+    return;
+  }
+  if (!job.applying) return;
+  job.applying = false;
+  job.stopping = false;
+  // What the run wrote is listed again by any panel showing it — in whichever
+  // window the tab is now (the dialog that started the run may be long gone).
+  touchDir(view.sessionId, job.remote);
+  const cwd = dockCwd(view.sessionId);
+  if (cwd && cwd !== job.remote) touchDir(view.sessionId, cwd);
+  const stats = view.stats;
+  if (view.state === "stopped") {
+    // The ticked rows ARE the report of what got through, and the plan is stale
+    // afterwards — keep both until the user compares again.
+    job.phase = "stopped";
+    notifyInfo(
+      t("sync.stoppedToast", {
+        done: stats.uploaded + stats.downloaded + stats.deleted,
+        total: job.runTotal,
+      }),
+    );
+    return;
+  }
+  if (view.state === "failed") {
+    job.phase = "stopped";
+    notifyError(view.error ?? "");
+    return;
+  }
+  // Drop the finished plan: re-opening would otherwise redraw every row of it.
+  job.plan = null;
+  job.facts = null;
+  job.phase = "done";
+  notifySuccess(t("sync.applied", { up: stats.uploaded, down: stats.downloaded, del: stats.deleted }));
 }
 
 /** Another session's run is going on and holds the (single) progress feed. */

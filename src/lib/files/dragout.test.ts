@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dragOutBlocker, dragOutOffered, dragOutSpec, dragOutTold } from "./dragout";
+import { declinedMessage, dragOutBlocker, dragOutOffered, dragOutSpec, dragOutTold, type DragOutDeclined } from "./dragout";
+import { messages } from "../i18n/messages";
 import { describeFiles, parseFiles, type CarriedFiles, type DropTab } from "./filedrop";
 
 const tabs: DropTab[] = [
@@ -42,9 +43,11 @@ describe("what can be handed to the system", () => {
     expect(dragOutBlocker(files(), tabs, "")).toBe("unsupported");
   });
 
-  it("is not files that are on this machine already", () => {
-    // A local tab's panel: the file manager drags those itself.
-    expect(dragOutBlocker(files({ from: "mine", local: true }), tabs, "macos")).toBe("here");
+  it("is files of a local tab's panel, as they are (v1.36) — not the desktop's own", () => {
+    expect(dragOutBlocker(files({ from: "mine", local: true }), tabs, "macos")).toBeNull();
+    expect(dragOutBlocker(files({ from: "mine", local: true }), tabs, "windows")).toBeNull();
+    // A local tab has no session to be down: its files are here.
+    expect(dragOutBlocker(files({ from: "gone", local: true }), tabs, "windows")).toBeNull();
     // The desktop's own, passing over the window.
     expect(dragOutBlocker(files({ from: null, local: true }), tabs, "macos")).toBe("here");
   });
@@ -54,11 +57,10 @@ describe("what can be handed to the system", () => {
     expect(dragOutBlocker(files({ from: "gone" }), tabs, "macos")).toBe("offline");
   });
 
-  it("is a folder on macOS, and not on Windows", () => {
+  it("is a folder on macOS and on Windows (v1.36) — the backend walks it for Explorer", () => {
     const withFolder = files({ entries: [files().entries[0], folder] });
     expect(dragOutBlocker(withFolder, tabs, "macos")).toBeNull();
-    // Not "the files of it": half of what was picked up would be left behind.
-    expect(dragOutBlocker(withFolder, tabs, "windows")).toBe("folders");
+    expect(dragOutBlocker(withFolder, tabs, "windows")).toBeNull();
   });
 
   it("names the reason that comes first: a system that cannot is asked nothing else", () => {
@@ -69,9 +71,18 @@ describe("what can be handed to the system", () => {
 });
 
 describe("which reasons the user is told", () => {
-  it("is the ones a drop outside could have meant something for", () => {
-    expect(dragOutTold("folders")).toBe(true);
+  it("is the one a drop outside could have meant something for", () => {
     expect(dragOutTold("offline")).toBe(true);
+  });
+
+  it("names why the backend did not hand the drag over, each in words of its own", () => {
+    const all: DragOutDeclined[] = ["name", "tooMany", "folderLink", "unreadable", "longPath", "gone", "notTaken"];
+    const keys = all.map(declinedMessage);
+    expect(new Set(keys).size).toBe(all.length);
+    for (const key of keys) expect(messages.en[key]).toBeTruthy();
+    // Not said why: the general words.
+    expect(declinedMessage(null)).toBe("dragout.declined");
+    expect(declinedMessage("notTaken")).toBe("dragout.declined");
   });
 
   it("is not what never could be, nor nothing", () => {
@@ -87,6 +98,7 @@ describe("what the backend is handed", () => {
     const spec = dragOutSpec(carried);
     expect(spec).toEqual({
       session: "web",
+      local: false,
       label: "web-01",
       items: [
         { path: "/etc/nginx/nginx.conf", name: "nginx.conf", isDir: false },

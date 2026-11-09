@@ -29,6 +29,7 @@ export type ListId =
   | "k8s.pods"
   | "k8s.workloads"
   | "k8s.events"
+  | "k8s.config"
   | "files"
   | "git.changes"
   | "recordings"

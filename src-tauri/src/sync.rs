@@ -36,7 +36,7 @@ pub struct SyncAction {
     pub op: String,
 }
 
-#[derive(Serialize, Debug, Default)]
+#[derive(Serialize, Debug, Default, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncStats {
     pub uploaded: u32,
@@ -46,6 +46,73 @@ pub struct SyncStats {
     /// (Phase 39.8). Counts above are then partial — the caller reports
     /// "moved N of M", not a green "done".
     pub stopped: bool,
+}
+
+// ── A run as the backend's job (v1.36, ADR 0058) ───────────────────────────────
+//
+// A run used to be awaited by the window that started it: its result came back
+// as the answer to the command, so a tab with a run going could not be moved to
+// another window — the answer would have come to a window that no longer had
+// the tab. Now the command only starts it; the run is the backend's, and its
+// progress and its end are told to whichever window shows the session's tab at
+// that moment (`WindowSink::following`). The last run of each session is kept,
+// so a window that takes the tab over asks how it stands.
+
+/// The event a run's state travels in — to the window that shows its session.
+pub const RUN_EVENT: &str = "sync://run";
+
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RunState {
+    Running,
+    /// Through the whole plan.
+    Done,
+    /// Stopped by the user between two files.
+    Stopped,
+    /// A file could not be moved: the run ended there.
+    Failed,
+}
+
+/// A run, as its windows see it.
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunView {
+    pub run_id: String,
+    pub session_id: String,
+    pub state: RunState,
+    pub stats: SyncStats,
+    pub error: Option<String>,
+}
+
+impl RunView {
+    pub fn running(run_id: &str, session_id: &str) -> Self {
+        Self {
+            run_id: run_id.to_string(),
+            session_id: session_id.to_string(),
+            state: RunState::Running,
+            stats: SyncStats::default(),
+            error: None,
+        }
+    }
+
+    /// How the run ended, from what `apply` returned.
+    pub fn ended(mut self, res: &AppResult<SyncStats>) -> Self {
+        match res {
+            Ok(stats) => {
+                self.state = if stats.stopped {
+                    RunState::Stopped
+                } else {
+                    RunState::Done
+                };
+                self.stats = stats.clone();
+            }
+            Err(e) => {
+                self.state = RunState::Failed;
+                self.error = Some(e.to_string());
+            }
+        }
+        self
+    }
 }
 
 /// One content-search hit (Phase 12.6 grep-over-SSH): relative path, line, text.
@@ -915,6 +982,35 @@ pub async fn sudo_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_runs_end_is_what_apply_returned() {
+        let running = RunView::running("run-1", "s1");
+        assert_eq!(running.state, RunState::Running);
+        let done = running.clone().ended(&Ok(SyncStats {
+            uploaded: 2,
+            ..Default::default()
+        }));
+        assert_eq!(
+            (done.state, done.stats.uploaded, done.error.is_none()),
+            (RunState::Done, 2, true)
+        );
+        let stopped = running.clone().ended(&Ok(SyncStats {
+            stopped: true,
+            ..Default::default()
+        }));
+        assert_eq!(stopped.state, RunState::Stopped);
+        let failed = running.ended(&Err(AppError::Message("disk full".into())));
+        assert_eq!(
+            (failed.state, failed.error.as_deref()),
+            (RunState::Failed, Some("disk full"))
+        );
+        // Told to the frontend as `sync.ts` reads it.
+        let json = serde_json::to_value(&failed).unwrap();
+        assert_eq!(json["state"], "failed");
+        assert_eq!(json["runId"], "run-1");
+        assert_eq!(json["sessionId"], "s1");
+    }
 
     fn act(path: &str, op: &str) -> SyncAction {
         SyncAction {

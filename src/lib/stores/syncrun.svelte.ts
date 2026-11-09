@@ -31,6 +31,16 @@ export function applySyncProgress(p: SftpProgress): void {
   syncRunState.map[p.id] = next;
 }
 
+/**
+ * The rows of a run that came with its tab from another window (v1.36): the
+ * run goes on here, and its ticks so far are its report.
+ */
+export function adoptSyncRun(run: { map: SyncProgressMap; done: number; weight: number }): void {
+  syncRunState.map = { ...run.map };
+  syncRunState.done = run.done;
+  syncRunState.weight = run.weight;
+}
+
 /** Drop everything (a new run starts from a clean list). */
 export function clearSyncRun(): void {
   syncRunState.map = {};

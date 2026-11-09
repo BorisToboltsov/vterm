@@ -47,17 +47,27 @@ const OFFSET: (f64, f64) = (12.0, 8.0);
 /// that, it would be an empty rectangle next to the pointer.
 static LOADED: AtomicBool = AtomicBool::new(false);
 
-/// How the label looks: what the window the tab is dragged out of shows for it
-/// — its status dot and its name. No caption: the tab over the desktop says
-/// what is being carried, not what letting go will do.
+/// How the label looks: the tab as the window it is dragged out of draws it in
+/// its strip (v1.36) — its colours, its font at the app's scale, its status dot,
+/// its name, a container's host after it and the `prod` chip. No caption: the
+/// tab over the desktop says what is being carried, not what letting go will do.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Look {
     title: String,
+    /// After the title, muted: the host of a shell inside a container.
+    sub: String,
+    /// A chip at the end — `prod` — and its colours.
+    chip: String,
+    chip_bg: String,
+    chip_fg: String,
     bg: String,
     fg: String,
+    muted: String,
     accent: String,
     dot: String,
+    /// The tab's font, as CSS `font` shorthand (family and size at the app's scale).
+    font: String,
     /// Size of the label as the page measured it, CSS px.
     w: f64,
     h: f64,
@@ -181,6 +191,19 @@ mod tests {
         assert_eq!(look.accent, "#7db3ff");
         assert_eq!(look.dot, "");
         assert_eq!(look.size(), (120.5, 24.0));
+        // The parts of a tab that a page of an older build does not send are empty.
+        assert_eq!(
+            (look.sub.as_str(), look.chip.as_str(), look.font.as_str()),
+            ("", "", "")
+        );
+        let full: Look = serde_json::from_str(
+            r##"{"title":"nginx","sub":"· web-01","chip":"prod","chipBg":"rgba(1,2,3,0.15)","chipFg":"#f00","muted":"#888","font":"14px Inter"}"##,
+        )
+        .unwrap();
+        assert_eq!(
+            (full.sub.as_str(), full.chip.as_str(), full.chip_bg.as_str()),
+            ("· web-01", "prod", "rgba(1,2,3,0.15)")
+        );
     }
 
     /// A source file before its tests, line comments stripped.

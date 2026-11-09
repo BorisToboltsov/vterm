@@ -27,6 +27,9 @@
   import K8sWorkloadModal from "./K8sWorkloadModal.svelte";
   import K8sNodeDetail from "./K8sNodeDetail.svelte";
   import K8sNodeModal from "./K8sNodeModal.svelte";
+  import K8sConfigs from "./K8sConfigs.svelte";
+  import K8sConfigDetail from "./K8sConfigDetail.svelte";
+  import K8sConfigModal from "./K8sConfigModal.svelte";
   import K8sTextModal from "./K8sTextModal.svelte";
   import K8sDetail from "./K8sDetail.svelte";
   import K8sText from "./K8sText.svelte";
@@ -84,6 +87,13 @@
     parseNodeDetail,
     claimsArgs,
     parseClaims,
+    configMapsArgs,
+    secretsArgs,
+    parseConfigMaps,
+    parseSecrets,
+    CONFIG_SCHEMA,
+    CONFIG_ORDER,
+    type K8sConfig,
     claimUsers as usersOfClaims,
     type K8sClaim,
     type K8sJob,
@@ -116,12 +126,15 @@
     EVENT_SCHEMA,
     parseAvailability,
     needsConfirm,
+    rollbackArgs,
+    runNowArgs,
     podAttention,
     podRestartBaseline,
     type PodAttentionReason,
     type K8sScope,
     type K8sAvailability,
     type K8sWorkload,
+    type K8sRevision,
     type K8sPod,
     type K8sPodMetrics,
     type K8sService,
@@ -182,7 +195,7 @@
   const refreshSec = $derived(settings.k8sRefreshSec);
   const prog = $derived(kubectlProg(settings.kubectlPath));
 
-  type Sub = "pods" | "workloads" | "network" | "cluster";
+  type Sub = "pods" | "workloads" | "network" | "cluster" | "config";
   let activeSub = $state<Sub>(untrack(() => storedSub<Sub>(sessionId, "k8s", "pods")));
 
   // Scope selection (baked into every argv; kubeconfig untouched). Remembered per
@@ -268,6 +281,11 @@
   );
   let nodes = $state<K8sNode[]>([]);
   let events = $state<K8sEvent[]>([]);
+  // ConfigMaps and Secrets (v1.36, ADR 0061): one list. Why each kind could not be
+  // read is kept apart — an unread list and an empty one must not look the same,
+  // and a cluster may refuse Secrets (RBAC) while it gives ConfigMaps.
+  let configs = $state.raw<K8sConfig[]>([]);
+  let configErrors = $state<{ maps: string | null; secrets: string | null }>({ maps: null, secrets: null });
 
   let menu = $state<OpenMenu | null>(null);
 
@@ -302,6 +320,11 @@
     sort: (id) => t(SORT_LABEL[id]),
     facet: (id) => t(id === "node" ? "k8s.node" : "k8s.status"),
   };
+  const CONFIG_LABELS: ListLabels = {
+    group: (id) => t(GROUP_LABEL[id]),
+    sort: (id) => t(SORT_LABEL[id]),
+    facet: () => t("k8s.kind"),
+  };
   const WORKLOAD_LABELS: ListLabels = {
     group: (id) => t(GROUP_LABEL[id]),
     sort: (id) => t(SORT_LABEL[id]),
@@ -313,6 +336,9 @@
   const workloadFilter = $derived(listFilter(sessionId, "k8s.workloads"));
   const workloadOrder = $derived(listOrder("k8s.workloads", WORKLOAD_SCHEMA, WORKLOAD_ORDER));
   const workloadView = $derived(applyView(workloads, WORKLOAD_SCHEMA, workloadFilter, workloadOrder));
+  const configFilter = $derived(listFilter(sessionId, "k8s.config"));
+  const configOrder = $derived(listOrder("k8s.config", CONFIG_SCHEMA, CONFIG_ORDER));
+  const configView = $derived(applyView(configs, CONFIG_SCHEMA, configFilter, configOrder));
 
   // The wide layout (v1.7): the panel is laid out by its container query, but
   // whether details open beside the list or as a dialog is behaviour, not layout
@@ -347,23 +373,29 @@
   // A node's details (stage 5), the same way.
   let nodeOpen = $state(false);
   let nodeName = $state<string | null>(null);
+  // A ConfigMap's or a Secret's details (v1.36).
+  let configOpen = $state(false);
+  let configTarget = $state<{ kind: K8sConfig["kind"]; name: string; namespace: string } | null>(null);
   let nodeTab = $state<K8sWorkloadTab>("overview");
 
   // Shared text modal (workload describe / YAML — read-only).
   let textOpen = $state(false);
   // Something stands beside the list (describe, YAML, a pod's or a workload's
   // details): the row is two parts with a border the user drags.
-  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen || nodeOpen));
+  const sideOpen = $derived(wide && (textOpen || detailOpen || workOpen || nodeOpen || configOpen));
   let textTitle = $state("");
   let textBody = $state("");
 
   // Confirm dialog (pending-resolver pattern, like DockerPanel).
   let confirmOpen = $state(false);
   let confirmText = $state("");
+  // What the change brings, said in words beside the command (a rollback's images).
+  let confirmNote = $state("");
   let confirmResolve: ((ok: boolean) => void) | null = null;
 
-  function askConfirm(text: string): Promise<boolean> {
+  function askConfirm(text: string, note = ""): Promise<boolean> {
     confirmText = text;
+    confirmNote = note;
     confirmOpen = true;
     return new Promise((resolve) => (confirmResolve = resolve));
   }
@@ -404,11 +436,11 @@
   async function run(
     bare: string[],
     namespace: string,
-    opts: { successKey?: string } = {},
+    opts: { successKey?: string; note?: string } = {},
   ): Promise<boolean> {
     if (busy) return false;
     if (needsConfirm(bare)) {
-      const ok = await askConfirm(objArgs(bare, namespace).join(" "));
+      const ok = await askConfirm(objArgs(bare, namespace).join(" "), opts.note);
       if (!ok) return false;
     }
     busy = true;
@@ -539,6 +571,20 @@
         workloads = parseWorkloads(res.stdout);
         workloadObjects = listItems(res.stdout);
         jobs = parseJobs(res.stdout);
+      } else if (activeSub === "config") {
+        const [maps, secrets] = await Promise.all([
+          kubectlRun(sessionId, viewArgs(configMapsArgs()), 20, false),
+          kubectlRun(sessionId, viewArgs(secretsArgs()), 20, false),
+        ]);
+        configErrors = {
+          maps: listFailure(maps.stdout, maps.stderr, maps.exitCode),
+          // Lines of the keys template, not JSON: read is a clean exit.
+          secrets: secrets.exitCode === 0 ? null : listFailure(secrets.stdout, secrets.stderr, secrets.exitCode),
+        };
+        configs = [
+          ...(configErrors.maps === null ? parseConfigMaps(maps.stdout) : []),
+          ...(configErrors.secrets === null ? parseSecrets(secrets.stdout) : []),
+        ];
       } else if (activeSub === "network") {
         const forRoute = netView === "route";
         const [svc, ing, eps, hr, cls, np] = await Promise.all([
@@ -711,6 +757,7 @@
     // A text asked for earlier (describe, YAML) stands in front of the details:
     // picking a pod asks for the pod.
     textOpen = false;
+    configOpen = false;
     workOpen = false;
     nodeOpen = false;
     detailPod = pod;
@@ -720,6 +767,7 @@
   function openNode(n: K8sNode) {
     if (!nodeOpen) nodeTab = "overview";
     textOpen = false;
+    configOpen = false;
     detailOpen = false;
     workOpen = false;
     nodeName = n.name;
@@ -732,10 +780,42 @@
       : null,
   );
 
+  /** Roll the open Deployment back to `r` (ADR 0061): the question says which images come back. */
+  function rollback(r: K8sRevision) {
+    const w = workTarget;
+    if (!w || w.kind !== "Deployment") return;
+    void run(rollbackArgs(w.name, r.revision), w.namespace, {
+      successKey: "k8s.rolledBack",
+      note: t("k8s.rollbackNote", { revision: r.revision, images: r.images.join(", ") || "—" }),
+    });
+  }
+
+  /** Make a Job of the open CronJob now (ADR 0061). */
+  function runNow() {
+    const w = workTarget;
+    if (!w || w.kind !== "CronJob") return;
+    void run(runNowArgs(w.name), w.namespace, { successKey: "k8s.runNowStarted" });
+  }
+
+  function openConfig(c: K8sConfig) {
+    textOpen = false;
+    detailOpen = false;
+    workOpen = false;
+    nodeOpen = false;
+    configTarget = { kind: c.kind, name: c.name, namespace: c.namespace };
+    configOpen = true;
+  }
+  const liveConfig = $derived.by(() => {
+    const c = configTarget;
+    if (!c) return null;
+    return configs.find((x) => x.kind === c.kind && x.namespace === c.namespace && x.name === c.name) ?? null;
+  });
+
   function openWorkload(w: K8sWorkload) {
     const same = workOpen && workTarget?.kind === w.kind && workTarget.namespace === w.namespace && workTarget.name === w.name;
     if (!same && !workOpen) workTab = "overview";
     textOpen = false;
+    configOpen = false;
     detailOpen = false;
     nodeOpen = false;
     workTarget = { kind: w.kind, name: w.name, namespace: w.namespace };
@@ -768,6 +848,9 @@
         workTab = was.tab;
         workTarget = { kind: was.workload, name: was.name, namespace: was.namespace };
         workOpen = true;
+      } else if (was.kind === "config") {
+        configTarget = { kind: was.config, name: was.name, namespace: was.namespace };
+        configOpen = true;
       } else {
         nodeTab = was.tab;
         nodeName = was.name;
@@ -783,7 +866,9 @@
           ? { kind: "workload", workload: workTarget.kind, namespace: workTarget.namespace, name: workTarget.name, tab: workTab }
           : nodeOpen && nodeName
             ? { kind: "node", name: nodeName, tab: nodeTab }
-            : null;
+            : configOpen && configTarget
+              ? { kind: "config", config: configTarget.kind, namespace: configTarget.namespace, name: configTarget.name }
+              : null;
     if (restoring) return;
     untrack(() => keepAside(sessionId, "k8s", next));
   });
@@ -953,6 +1038,7 @@
     { id: "workloads", label: t("k8s.workloads") },
     { id: "network", label: t("k8s.network") },
     { id: "cluster", label: t("k8s.cluster") },
+    { id: "config", label: t("k8s.config") },
   ];
 
   const unavailableHint = $derived.by(() => {
@@ -1204,6 +1290,60 @@
           onPortForward={portForward}
           {showMenu}
         />
+      {:else if activeSub === "config"}
+        {#if configs.length === 0}
+          {#if configErrors.maps !== null && configErrors.secrets !== null}
+            <EmptyState icon="key" title={t("k8s.configUnread")} hint={configErrors.maps || configErrors.secrets || ""} />
+          {:else}
+            <EmptyState icon="key" title={t("k8s.noConfigObjects")} hint={t("k8s.noConfigHint")} />
+          {/if}
+        {:else}
+          <div class="flex h-full min-h-0 flex-col">
+            <ListHeader
+              items={configs}
+              schema={CONFIG_SCHEMA}
+              filter={configFilter}
+              onfilter={setFilter("k8s.config")}
+              order={configOrder}
+              onorder={(o) => setListOrder("k8s.config", o)}
+              shown={configView.shown}
+              total={configView.total}
+              labels={CONFIG_LABELS}
+              placeholder={t("k8s.filterConfig")}
+              wide={listWide}
+              onmenu={(m) => (menu = m)}
+              fold={(c) => setGroupsCollapsed(sessionId, "k8s.config", configView.groups.map((g) => g.key), c)}
+              testid="k8s-config-header"
+            />
+            {#each [["maps", "k8s.configMapsUnread"], ["secrets", "k8s.secretsUnread"]] as const as [which, key] (which)}
+              {#if configErrors[which] !== null}
+                <p class="border-b border-edge px-2.5 py-1 text-caption text-warn" data-testid="k8s-config-unread">
+                  {t(key, { why: configErrors[which] || "—" })}
+                </p>
+              {/if}
+            {/each}
+            <div class="min-h-0 flex-1">
+              {#if configView.shown === 0}
+                <FilteredEmpty
+                  summary={filterSummary(CONFIG_SCHEMA, configFilter, listMenuText(CONFIG_LABELS))}
+                  onreset={() => setListFilter(sessionId, "k8s.config", NO_FILTER)}
+                />
+              {:else}
+                <K8sConfigs
+                  groups={configView.groups}
+                  grouped={configView.grouped}
+                  grouping={configOrder.group}
+                  collapsed={foldOf("k8s.config")}
+                  ontoggle={toggleFold("k8s.config")}
+                  onOpen={openConfig}
+                  onYaml={yamlObj}
+                  {showMenu}
+                  selectedKey={configOpen && configTarget ? `${configTarget.kind}/${configTarget.namespace}/${configTarget.name}` : null}
+                />
+              {/if}
+            </div>
+          </div>
+        {/if}
       {:else if nodes.length === 0 && events.length === 0}
         <EmptyState icon="server" title={t("k8s.noNodes")} hint={t("k8s.noNodesHint")} />
       {:else}
@@ -1245,6 +1385,10 @@
           <SidePane title={nodeName ?? ""} onclose={() => (nodeOpen = false)} testid="k8s-side-node">
             <K8sNodeDetail active fill bind:tab={nodeTab} node={liveNode} detail={nodeDetail} {refreshSec} {runQuery} />
           </SidePane>
+        {:else if configOpen}
+          <SidePane title={liveConfig?.name ?? configTarget?.name ?? ""} onclose={() => (configOpen = false)} testid="k8s-side-config">
+            <K8sConfigDetail config={liveConfig} fill />
+          </SidePane>
         {:else if workOpen}
           <SidePane title={liveWork?.name ?? workTarget?.name ?? ""} onclose={() => (workOpen = false)} testid="k8s-side-workload">
             <K8sWorkloadDetail
@@ -1257,6 +1401,9 @@
               {refreshSec}
               {runQuery}
               onOpenPod={openWorkloadPod}
+              {busy}
+              onRollback={rollback}
+              onRunNow={runNow}
             />
           </SidePane>
         {:else}
@@ -1336,8 +1483,13 @@
   {refreshSec}
   {runQuery}
   onOpenPod={openWorkloadPod}
+  {busy}
+  onRollback={rollback}
+  onRunNow={runNow}
   onclose={() => (workOpen = false)}
 />
+
+<K8sConfigModal open={configOpen && !wide} config={liveConfig} onclose={() => (configOpen = false)} />
 
 <K8sTextModal open={textOpen && !wide} title={textTitle} text={textBody} onclose={() => (textOpen = false)} />
 
@@ -1352,6 +1504,9 @@
 >
   {t("k8s.confirmBody")}
   <code class="mt-1 block break-all rounded bg-panel px-1 py-0.5 text-text/80">{confirmText}</code>
+  {#if confirmNote}
+    <span class="mt-1 block break-all text-text/85" data-testid="k8s-confirm-note">{confirmNote}</span>
+  {/if}
   {#if prod}
     <span class="mt-1 block text-meta text-danger">{t("k8s.confirmProdWarn")}</span>
   {/if}

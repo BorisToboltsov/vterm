@@ -1,8 +1,9 @@
 <!doctype html>
 <!-- The label of a tab dragged out of its window, shown over the desktop by a
      small window of its own (src-tauri/src/dragghost.rs, ADR 0018). A picture:
-     it calls no command and is told how to look by the backend. No inline
-     script or style — the app's CSP applies here as everywhere. -->
+     it calls no command and is told how to look by the backend — since v1.36 a
+     copy of the tab as its strip draws it. No inline script or style — the
+     app's CSP applies here as everywhere. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -11,9 +12,11 @@
     <script src="/ghost.js" defer></script>
   </head>
   <body>
-    <div id="chip">
+    <div id="tab">
       <span id="dot"></span>
       <span id="title"></span>
+      <span id="sub" hidden></span>
+      <span id="chip" hidden></span>
     </div>
   </body>
 </html>

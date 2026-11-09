@@ -12,7 +12,7 @@
 
 import { dragDrop, dragEnd, dragOutBegin, dragOver, localKinds } from "../api";
 import { sideOf } from "../files/copyto";
-import { dragOutBlocker, dragOutSpec, dragOutTold } from "../files/dragout";
+import { declinedMessage, dragOutBlocker, dragOutSpec, dragOutTold, type DragOutDeclined } from "../files/dragout";
 import { checkMove } from "../files/filemove";
 import {
   describeFiles,
@@ -154,8 +154,8 @@ export function createFileDragFlow(deps: FileDragDeps) {
     return from ? { ...files, label: deps.title(from) } : files;
   }
 
-  /** The system was asked to carry the files of this drag and would not. */
-  let systemDeclined = false;
+  /** The system was asked to carry the files of this drag and would not — and why. */
+  let systemDeclined: { why: DragOutDeclined | null } | null = null;
 
   /**
    * Files have left the window: hand the drag to the system, if it can carry
@@ -163,15 +163,18 @@ export function createFileDragFlow(deps: FileDragDeps) {
    * knows how. Anything else stays the page's own drag, as it always was.
    */
   async function handToSystem(files: CarriedFiles): Promise<boolean> {
-    systemDeclined = false;
+    systemDeclined = null;
     const mine = labelled(files);
     if (dragOutBlocker(mine, dropTabs, hostEnv.os) !== null) return false;
     const spec = dragOutSpec(mine);
-    const took = spec ? await dragOutBegin(spec).catch(() => false) : false;
+    const answer = spec
+      ? await dragOutBegin(spec).catch(() => ({ taken: false, why: null }))
+      : { taken: false, why: null };
     // Nothing here stood in the way, and still it would not: a name it cannot
-    // give a file, a folder behind a link, a file the server gives no length.
-    systemDeclined = !took;
-    return took;
+    // give a file, a folder behind a link, a file the server gives no length —
+    // the backend says which (v1.36).
+    if (!answer.taken) systemDeclined = { why: answer.why };
+    return answer.taken;
   }
 
   /**
@@ -183,11 +186,11 @@ export function createFileDragFlow(deps: FileDragDeps) {
   function tellNotCarried(files: CarriedFiles) {
     const why = dragOutBlocker(files, dropTabs, hostEnv.os);
     if (why === null) {
-      if (systemDeclined) notifyInfo(t("dragout.declined"));
+      if (systemDeclined) notifyInfo(t(declinedMessage(systemDeclined.why)));
       return;
     }
     if (!dragOutTold(why)) return;
-    notifyInfo(t(why === "folders" ? "dragout.foldersNotCarried" : "dragout.sessionDown"));
+    notifyInfo(t("dragout.sessionDown"));
   }
 
   $effect(() => {

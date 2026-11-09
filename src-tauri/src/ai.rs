@@ -12,6 +12,7 @@
 //! keys come from the OS keychain (`vterm:ai-key`, keyed by endpoint id) and are
 //! never logged.
 
+use crate::aigate::{self, Piece};
 use crate::error::{AppError, AppResult};
 use crate::locks::Locked;
 use crate::secrets;
@@ -45,8 +46,11 @@ pub struct AiMessage {
     pub content: String,
 }
 
+/// What the frontend asks for. A field it sends under another name is refused,
+/// not dropped (`deny_unknown_fields`): `timeoutSec` was, and every endpoint's
+/// timeout silently became the default.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiChatRequest {
     /// Correlates the `ai://…/{id}` event channel with the frontend request.
     pub stream_id: String,
@@ -66,6 +70,10 @@ pub struct AiChatRequest {
     /// Per-request timeout in seconds (see [`chat_client`] for what it bounds).
     #[serde(default)]
     pub timeout_secs: Option<u64>,
+    /// The session whose chat asked (v1.36): a tab moving to another window
+    /// holds its answer by it (`aigate`). None for a chat of no session.
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Token counts for one reply, reported to the frontend on `ai://done/{id}`.
@@ -100,7 +108,7 @@ fn chat_client(timeout_secs: u64) -> reqwest::Result<reqwest::Client> {
 /// Request to list an endpoint's available models (also doubles as a reachability
 /// check). Sent by the settings "Check connection" button and the chat's model picker.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AiModelsRequest {
     pub endpoint_id: String,
     pub provider: String,
@@ -318,33 +326,60 @@ pub fn agent_mirror(
 
 // ── Streaming command ───────────────────────────────────────────────────────────
 
+/// The gate a stream's pieces go through (`aigate`): its `ai://…/{id}` events.
+fn stream_gate(app: &AppHandle, id: &str) -> Arc<aigate::StreamGate> {
+    let app = app.clone();
+    let (out, think, done, error) = (
+        out_event(id),
+        think_event(id),
+        done_event(id),
+        error_event(id),
+    );
+    Arc::new(aigate::StreamGate::new(Box::new(move |piece| {
+        let _ = match piece {
+            Piece::Out(t) => app.emit(&out, t),
+            Piece::Think(t) => app.emit(&think, t),
+            Piece::Done(usage) => app.emit(&done, usage),
+            Piece::Error(e) => app.emit(&error, e),
+        };
+    })))
+}
+
 #[tauri::command]
 pub async fn ai_chat(app: AppHandle, req: AiChatRequest) -> AppResult<()> {
     let id = req.stream_id.clone();
     let notify = Arc::new(Notify::new());
     cancels().locked().insert(id.clone(), notify.clone());
+    // Every piece of the answer goes through the gate: a handoff of its tab
+    // holds it there (v1.36, ADR 0058).
+    let gate = stream_gate(&app, &id);
+    aigate::open(&id, req.session_id.clone(), gate.clone());
 
     // Race the stream against a cancel signal; cancelling drops `run_chat`, which
     // aborts the underlying HTTP request, and is reported as a graceful stop.
     let outcome = tokio::select! {
-        r = run_chat(&app, &req) => r,
+        r = run_chat(&gate, &req) => r,
         _ = notify.notified() => Ok(None),
     };
     cancels().locked().remove(&id);
 
-    match outcome {
+    let result = match outcome {
         Ok(usage) => {
             // The done event carries the tally (or null): usage is terminal data,
             // not a stream, so it rides the event that already means "finished"
             // rather than earning a channel of its own.
-            let _ = app.emit(&done_event(&id), usage);
+            gate.send(Piece::Done(
+                serde_json::to_value(usage).unwrap_or(Value::Null),
+            ));
             Ok(())
         }
         Err(e) => {
-            let _ = app.emit(&error_event(&id), e.to_string());
+            gate.send(Piece::Error(e.to_string()));
             Err(e)
         }
-    }
+    };
+    aigate::close(&id);
+    result
 }
 
 /// Stop an in-flight `ai_chat` stream (the chat's Stop button). No-op if the
@@ -461,7 +496,7 @@ async fn send_chat(
         .map_err(|e| AppError::from(format!("ai-unreachable: {e}")))
 }
 
-async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<Option<AiUsage>> {
+async fn run_chat(gate: &aigate::StreamGate, req: &AiChatRequest) -> AppResult<Option<AiUsage>> {
     let is_anthropic = req.provider == "anthropic";
     let timeout = req.timeout_secs.unwrap_or(120);
     let client = chat_client(timeout).map_err(|e| format!("ai client error: {e}"))?;
@@ -510,14 +545,14 @@ async fn run_chat(app: &AppHandle, req: &AiChatRequest) -> AppResult<Option<AiUs
                     return Ok(finish_usage(usage));
                 }
                 if let Some(t) = anthropic_reasoning_delta(&v) {
-                    let _ = app.emit(&think_event(&req.stream_id), t);
+                    gate.send(Piece::Think(t));
                 } else if let Some(t) = anthropic_delta(&v) {
-                    let _ = app.emit(&out_event(&req.stream_id), t);
+                    gate.send(Piece::Out(t));
                 }
             } else if let Some(t) = openai_reasoning_delta(&v) {
-                let _ = app.emit(&think_event(&req.stream_id), t);
+                gate.send(Piece::Think(t));
             } else if let Some(t) = openai_delta(&v) {
-                let _ = app.emit(&out_event(&req.stream_id), t);
+                gate.send(Piece::Out(t));
             }
         }
     }
@@ -549,7 +584,29 @@ mod tests {
             max_tokens: None,
             params: None,
             timeout_secs: None,
+            session_id: None,
         }
+    }
+
+    #[test]
+    fn the_timeout_is_read_by_its_name_and_a_misnamed_field_is_refused() {
+        let base = r#""streamId":"s","endpointId":"e","provider":"openai","baseUrl":"http://h/v1","model":"m","messages":[]"#;
+        let req: AiChatRequest =
+            serde_json::from_str(&format!(r#"{{{base},"timeoutSecs":30,"sessionId":"t1"}}"#))
+                .unwrap();
+        assert_eq!(
+            (req.timeout_secs, req.session_id.as_deref()),
+            (Some(30), Some("t1"))
+        );
+        // The name the frontend used to send: refused, not quietly ignored.
+        assert!(
+            serde_json::from_str::<AiChatRequest>(&format!(r#"{{{base},"timeoutSec":30}}"#))
+                .is_err()
+        );
+        assert!(serde_json::from_str::<AiModelsRequest>(
+            r#"{"endpointId":"e","provider":"openai","baseUrl":"u","extra":1}"#
+        )
+        .is_err());
     }
 
     #[test]

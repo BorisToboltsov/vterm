@@ -506,15 +506,18 @@ pub(crate) fn safe_join(root: &str, rel: &str) -> AppResult<PathBuf> {
 /// written to a hidden sibling temp and renamed over the target once complete,
 /// so a cancelled copy leaves the file that was there untouched. Without
 /// `replace` an existing target is refused. The copy takes the replaced file's
-/// permissions, or — a new file — the source's, as `cp` does.
+/// permissions, or — a new file — the source's, as `cp` does. `keep` — as for
+/// [`crate::sftp::upload_staged`] (v1.36, ADR 0060).
 pub(crate) async fn copy_staged(
     report: &crate::sftp::Report<'_>,
     from: &str,
     to: &str,
     replace: bool,
     cancel: Option<&std::sync::atomic::AtomicBool>,
+    keep: Option<&crate::partial::Keep<'_>>,
 ) -> AppResult<()> {
-    use tokio::io::AsyncWriteExt;
+    use crate::partial;
+    use tokio::io::{AsyncSeekExt, AsyncWriteExt};
     let replaced = tokio::fs::symlink_metadata(to).await.ok();
     if replaced.is_some() && !replace {
         return Err(AppError::DestinationExists);
@@ -528,19 +531,36 @@ pub(crate) async fn copy_staged(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = local_temp(to);
-    let mut dst = tokio::fs::File::create(&tmp)
+    let stamp = source.as_ref().and_then(partial::local_stamp);
+    let held = keep.and_then(|k| k.resume.as_ref());
+    let tmp_len = match held {
+        Some(p) => partial::local_len(&p.tmp).await,
+        None => None,
+    };
+    let (tmp, at) = partial::staging(held, stamp, tmp_len, || {
+        local_temp(to).to_string_lossy().into_owned()
+    });
+    let mut dst = partial::local_writer(&tmp, at)
         .await
         .map_err(|e| format!("create {to}: {e}"))?;
+    if at > 0 {
+        src.seek(std::io::SeekFrom::Start(at))
+            .await
+            .map_err(|e| format!("seek {from}: {e}"))?;
+    }
+    let told = crate::sftp::told(keep, stamp, &tmp, at);
     let copied = async {
-        crate::sftp::copy_with_progress(report, &name, total, &mut src, &mut dst, cancel).await?;
+        let resume = crate::sftp::resume(&told, at);
+        crate::sftp::copy_from(report, &name, total, &mut src, &mut dst, cancel, resume).await?;
         dst.flush().await.map_err(|e| AppError::from(e.to_string()))
     }
     .await;
     // Close the handle before renaming: Windows refuses to move an open file.
     drop(dst);
     if let Err(e) = copied {
-        let _ = tokio::fs::remove_file(&tmp).await;
+        if told.is_none() {
+            let _ = tokio::fs::remove_file(&tmp).await;
+        }
         return Err(e);
     }
     let kept = match tokio::fs::metadata(to).await {

@@ -18,7 +18,7 @@ export interface QuitRow {
 
 export interface QuitInput {
   tabs: readonly { kind: "ssh" | "local"; status: string }[];
-  transfers: readonly { id: string; done: boolean }[];
+  transfers: readonly { id: string; done: boolean; resumable?: unknown }[];
   /** Sessions whose sync job is comparing or applying. */
   syncBusy: number;
   /** Sessions being recorded. */
@@ -31,14 +31,15 @@ export interface QuitInput {
  * A tab counts while it is live (connected or still connecting — quitting cuts
  * that connect off too); a dead tab loses nothing. Transfers count the way the
  * status bar's "cancel all" does: in flight and started by the user — a sync
- * run's files are the sync row.
+ * run's files are the sync row — and the interrupted ones kept to go on with:
+ * quitting drops them (v1.36, ADR 0060).
  */
 export function quitRows(input: QuitInput): QuitRow[] {
   const live = input.tabs.filter((t) => isLive(t.status));
   const rows: QuitRow[] = [
     { key: "ssh", count: live.filter((t) => t.kind === "ssh").length },
     { key: "local", count: live.filter((t) => t.kind === "local").length },
-    { key: "transfers", count: input.transfers.filter(isCancellableTransfer).length },
+    { key: "transfers", count: input.transfers.filter((t) => isCancellableTransfer(t) || !!t.resumable).length },
     { key: "sync", count: input.syncBusy },
     { key: "recording", count: input.recordings },
     { key: "editors", count: input.dirtyEditors ?? 0 },

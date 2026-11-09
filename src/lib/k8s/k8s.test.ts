@@ -1,7 +1,18 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { applyView, facetValues, NO_FILTER } from "../ui/listview";
 import { SHELL_SCRIPT } from "../terminal/termcmd";
 import {
+  CONFIG_ORDER,
+  CONFIG_SCHEMA,
+  configMapsArgs,
+  manualJobName,
+  parseConfigMaps,
+  parseSecrets,
+  rollbackArgs,
+  runNowArgs,
+  SECRET_KEYS_TEMPLATE,
+  secretsArgs,
   followLogsArgv,
   podAttention,
   podRestartBaseline,
@@ -2349,5 +2360,81 @@ describe("an object's application (stage 6)", () => {
     expect(w.app).toEqual({ name: "shop", source: "helm", helm: true });
     expect((WORKLOAD_SCHEMA.groups ?? []).map((g) => g.id)).toContain("app");
     expect(parseWorkloadDetail({ kind: "Deployment", metadata: { name: "shop-api", namespace: "a", labels: helmLabels, annotations: { "meta.helm.sh/release-name": "shop" } }, spec: {}, status: {} })!.app?.release).toBe("shop");
+  });
+});
+
+// ── Going back, running by hand, and the config (v1.36, ADR 0061) ───────────
+describe("a Deployment rolled back and a CronJob run by hand", () => {
+  it("are the shapes the backend lets through, and both are asked about", () => {
+    expect(rollbackArgs("web", 3)).toEqual(["rollout", "undo", "deployment/web", "--to-revision=3"]);
+    const run = runNowArgs("report", Date.UTC(2026, 10, 9, 12, 0, 0));
+    expect(run).toEqual(["create", "job", "report-manual-to8hc0", "--from=cronjob/report"]);
+    expect(needsConfirm(rollbackArgs("web", 3))).toBe(true);
+    expect(needsConfirm(run)).toBe(true);
+    expect(isDestructive(rollbackArgs("web", 3))).toBe(false);
+  });
+
+  it("a Job made by hand keeps within the 63 a Job's name may have", () => {
+    const long = "a".repeat(52);
+    const name = manualJobName(long, 1_800_000_000_000);
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(name).toMatch(/^a+-manual-[0-9a-z]+$/);
+    // A cut that would end in a dash does not.
+    expect(manualJobName(`${"b".repeat(48)}-tail`, 1_800_000_000_000)).not.toMatch(/--manual/);
+  });
+});
+
+describe("ConfigMaps and Secrets", () => {
+  it("the Secrets template is the backend's, word for word — the one read of Secrets it lets through", () => {
+    const rust = readFileSync("src-tauri/src/kube.rs", "utf8");
+    const raw = /pub const SECRET_KEYS_TEMPLATE: &str = r#"(.*)"#;/.exec(rust)?.[1];
+    expect(raw).toBe(SECRET_KEYS_TEMPLATE);
+    expect(secretsArgs()).toEqual(["get", "secrets", `--output=go-template=${SECRET_KEYS_TEMPLATE}`]);
+    expect(configMapsArgs()).toEqual(["get", "configmaps", "-o", "json"]);
+  });
+
+  it("a Secret is its keys and no value — as a real cluster prints them", () => {
+    // `kubectl get secrets -A --output=go-template=…` against the stand.
+    const raw = "vterm-stand\tapp-secret\tOpaque\t2026-11-07T18:57:35Z\ttoken \nweb\tweb-tls\tkubernetes.io/tls\t2026-11-08T10:00:00Z\ttls.key tls.crt \nweb\tempty\tOpaque\t2026-11-08T10:00:00Z\t\n";
+    const now = Date.parse("2026-11-09T10:00:00Z");
+    const secrets = parseSecrets(raw, now);
+    expect(secrets.map((s) => [s.namespace, s.name, s.type, s.entries.map((e) => e.key)])).toEqual([
+      ["vterm-stand", "app-secret", "Opaque", ["token"]],
+      ["web", "web-tls", "kubernetes.io/tls", ["tls.crt", "tls.key"]],
+      ["web", "empty", "Opaque", []],
+    ]);
+    expect(secrets[1].age).toBe("1d");
+    expect(secrets.flatMap((s) => s.entries).every((e) => e.value === null && e.sensitive)).toBe(true);
+    expect(parseSecrets("")).toEqual([]);
+  });
+
+  it("a ConfigMap is read whole; what looks like a secret is marked, binary data named", () => {
+    const raw = JSON.stringify({
+      items: [
+        {
+          metadata: { namespace: "web", name: "app", creationTimestamp: "2026-11-08T10:00:00Z" },
+          data: { LOG_LEVEL: "debug", DB_PASSWORD: "hunter2", "nginx.conf": "server {\n  listen 80;\n}\n" },
+          binaryData: { "logo.png": "iVBORw0KGgo=" },
+        },
+      ],
+    });
+    const [cm] = parseConfigMaps(raw, Date.parse("2026-11-09T10:00:00Z"));
+    expect(cm).toMatchObject({ kind: "ConfigMap", namespace: "web", name: "app", type: "", age: "1d" });
+    expect(cm.entries).toEqual([
+      { key: "DB_PASSWORD", value: "hunter2", sensitive: true },
+      { key: "LOG_LEVEL", value: "debug", sensitive: false },
+      { key: "logo.png", value: null, sensitive: false },
+      { key: "nginx.conf", value: "server {\n  listen 80;\n}\n", sensitive: false },
+    ]);
+    expect(parseConfigMaps("not json")).toEqual([]);
+  });
+
+  it("the list groups by kind, ConfigMaps first, and is found by a key", () => {
+    const secrets = parseSecrets("web\tcreds\tOpaque\t2026-11-08T10:00:00Z\tpassword \n");
+    const maps = parseConfigMaps(JSON.stringify({ items: [{ metadata: { namespace: "web", name: "app" }, data: { A: "1" } }] }));
+    const view = applyView([...secrets, ...maps], CONFIG_SCHEMA, NO_FILTER, CONFIG_ORDER);
+    expect(view.groups.map((g) => g.key)).toEqual(["ConfigMap", "Secret"]);
+    const found = applyView([...secrets, ...maps], CONFIG_SCHEMA, { ...NO_FILTER, text: "password" }, CONFIG_ORDER);
+    expect(found.groups.flatMap((g) => g.items.map((c) => c.name))).toEqual(["creds"]);
   });
 });

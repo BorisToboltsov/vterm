@@ -55,6 +55,7 @@ const GROUPED = [
   "src/lib/k8s/K8sPods.svelte",
   "src/lib/k8s/K8sWorkloads.svelte",
   "src/lib/k8s/K8sCluster.svelte",
+  "src/lib/k8s/K8sConfigs.svelte",
   "src/lib/recording/RecordingsPanel.svelte",
   "src/lib/git/GitChanges.svelte",
 ];

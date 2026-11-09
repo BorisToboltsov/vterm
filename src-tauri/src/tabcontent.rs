@@ -198,11 +198,12 @@ pub fn tab_content_keep_only(session_ids: Vec<String>) {
 mod tests {
     use super::*;
 
-    fn scratch(name: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("vterm-tabcontent-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        dir
+    /// A folder that does not exist yet, inside a fresh temp folder that goes
+    /// with the guard.
+    fn scratch(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join(name);
+        (root, dir)
     }
 
     #[test]
@@ -228,7 +229,7 @@ mod tests {
 
     #[test]
     fn what_is_kept_comes_back_and_nothing_outside_the_folder_is_touched() {
-        let dir = scratch("roundtrip");
+        let (_root, dir) = scratch("roundtrip");
         save_in(&dir, "s1", r#"{"v":1}"#).unwrap();
         assert_eq!(load_in(&dir, "s1").as_deref(), Some(r#"{"v":1}"#));
         // Written again, the new content replaces the old.
@@ -257,7 +258,7 @@ mod tests {
     #[test]
     fn the_file_and_its_folder_are_the_users_alone() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = scratch("mode");
+        let (_root, dir) = scratch("mode");
         save_in(&dir, "s1", "{}").unwrap();
         let file = fs::metadata(dir.join("s1.json"))
             .unwrap()
@@ -271,7 +272,7 @@ mod tests {
 
     #[test]
     fn content_over_the_limit_is_refused_not_cut() {
-        let dir = scratch("limit");
+        let (_root, dir) = scratch("limit");
         let big = "x".repeat(MAX_CONTENT + 1);
         assert!(save_in(&dir, "s1", &big).is_err());
         assert_eq!(load_in(&dir, "s1"), None);
@@ -280,7 +281,7 @@ mod tests {
 
     #[test]
     fn keeping_only_some_tabs_removes_the_rest_and_stray_temp_files() {
-        let dir = scratch("keep");
+        let (_root, dir) = scratch("keep");
         for id in ["a", "b", "c"] {
             save_in(&dir, id, "{}").unwrap();
         }

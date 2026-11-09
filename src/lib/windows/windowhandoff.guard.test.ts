@@ -48,6 +48,13 @@
 //     it got. In the window taking it, only the pane's first tab is shown; the
 //     others take their seats next to it — placed like a new tab, each would
 //     take the pane's view in turn and the order would be the order of arrival.
+//  9. Work in flight goes with its tab (v1.36, ADR 0058). An answer of the
+//     assistant streaming in it is packed only once the window giving it up has
+//     heard every piece sent before the backend held the rest — packed earlier,
+//     the pieces in between are lost — and the window taking it listens for the
+//     rest before the tab is placed, which is what lets its terminal take the
+//     session over and the backend let the held part go. A sync run of the tab
+//     is not stopped by its teardown when the tab was handed over.
 //
 // 2, 6, 7 and 8 are the window flow's (page/windowflow, v1.25.3): the trip, a
 // tab dropped outside, an open window taking a tab and a pane moving whole are
@@ -126,6 +133,7 @@ const PACKET = "lib/stores/tabpacket.ts";
 const TERMINAL = "lib/terminal/Terminal.svelte";
 const LAYOUT = "lib/stores/layout.svelte.ts";
 const SESSION_API = "lib/api/session.ts";
+const FLOW = "lib/page/windowflow.svelte.ts";
 
 // ── 1: who ends a session ────────────────────────────────────────────────────
 
@@ -303,6 +311,28 @@ export function seatViolations(tabs: string, packet: string): string[] {
   return out;
 }
 
+// ── 9: work in flight goes with its tab ─────────────────────────────────────
+
+export function inFlightViolations(flow: string, packet: string, page: string): string[] {
+  const out: string[] = [];
+  const trip = fn(code(flow), "handOver");
+  const heard = trip.search(/await heardStream\(sessionId, begun\.stream\.id, begun\.stream\.sent\)/);
+  const packed = trip.search(/\bpackTab\(/);
+  if (heard < 0 || packed < 0 || heard > packed || !/terminal && heard && packTab\(/.test(trip)) {
+    out.push("the conversation is packed before the answer was heard up to the hold");
+  }
+  const unpack = code(packet);
+  const listens = unpack.search(/await adoptChat\(id, packet\.chat, packet\.aiStream \?\? null\)/);
+  const placed = unpack.search(/\badoptTab\(\s*packet\.tab/);
+  if (listens < 0 || placed < 0 || listens > placed) {
+    out.push("the tab is placed before its chat listens for the rest of the answer");
+  }
+  if (!/removeSyncJob\(sessionId, keepSession\);/.test(code(page))) {
+    out.push("a handed-over tab's teardown stops its sync run");
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("window guard", () => {
@@ -329,6 +359,10 @@ describe("window guard", () => {
 
   it("a tab of a moving pane takes its seat on arrival", () => {
     expect(seatViolations(raw(TABS), raw(PACKET))).toEqual([]);
+  });
+
+  it("work in flight goes with its tab", () => {
+    expect(inFlightViolations(raw(FLOW), raw(PACKET), raw(PAGE))).toEqual([]);
   });
 });
 
@@ -542,6 +576,26 @@ describe("window guard — catches what it exists for", () => {
   const tabs = raw(TABS);
   const packet = raw(PACKET);
   const pane = (s = tabs, k = packet) => seatViolations(s, k);
+
+  it("a conversation packed before the answer was heard, or a tab placed before its chat listens", () => {
+    const flow = raw(FLOW);
+    const packet = raw(PACKET);
+    const early = mutate(
+      flow,
+      "const heard = !begun.stream || (await heardStream(sessionId, begun.stream.id, begun.stream.sent));",
+      "const heard = true;",
+    );
+    expect(inFlightViolations(early, packet, page)).toEqual([
+      "the conversation is packed before the answer was heard up to the hold",
+    ]);
+    const late = mutate(packet, "  if (packet.chat) await adoptChat(id, packet.chat, packet.aiStream ?? null);\n", "");
+    expect(inFlightViolations(flow, `${late}\nawait adoptChat(id, packet.chat, packet.aiStream ?? null);`, page)).toEqual([
+      "the tab is placed before its chat listens for the rest of the answer",
+    ]);
+    expect(
+      inFlightViolations(flow, packet, mutate(page, "removeSyncJob(sessionId, keepSession);", "removeSyncJob(sessionId);")),
+    ).toEqual(["a handed-over tab's teardown stops its sync run"]);
+  });
 
   it("a seat that never reaches the store", () => {
     expect(

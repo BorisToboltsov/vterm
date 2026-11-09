@@ -274,6 +274,7 @@ const FD_ATTRIBUTES: u32 = 0x0000_0004;
 const FD_FILESIZE: u32 = 0x0000_0040;
 const FD_PROGRESSUI: u32 = 0x0000_4000;
 const FD_UNICODE: u32 = 0x8000_0000;
+const FILE_ATTRIBUTE_DIRECTORY: u32 = 0x0000_0010;
 const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
 
 /// The name a file is given in Explorer: the server's, with what Windows
@@ -289,25 +290,39 @@ pub fn windows_name(name: &str) -> String {
         .collect()
 }
 
-/// The bytes of a `FILEGROUPDESCRIPTORW` for `items`: each a plain file, with
-/// its size when the listing knew it, and Explorer's own progress window asked
-/// for.
+/// The path of an item inside the drag as Explorer takes it: each part named
+/// the Windows way, the parts joined by `\` (v1.36 — a folder's files are
+/// `site/conf/a.conf` in the drag, `dragout::flatten`).
+pub fn windows_path(name: &str) -> String {
+    name.split('/')
+        .map(windows_name)
+        .collect::<Vec<_>>()
+        .join("\\")
+}
+
+/// The bytes of a `FILEGROUPDESCRIPTORW` for `items`: each a file with its size
+/// when the server gave it, or a folder (v1.36) — made before the files in it —
+/// and Explorer's own progress window asked for.
 pub fn descriptor_bytes(items: &[OutItem]) -> Vec<u8> {
     let mut out = vec![0u8; 4 + items.len() * DESCRIPTOR_SIZE];
     out[..4].copy_from_slice(&(items.len() as u32).to_le_bytes());
     for (i, item) in items.iter().enumerate() {
         let record = &mut out[4 + i * DESCRIPTOR_SIZE..4 + (i + 1) * DESCRIPTOR_SIZE];
         let mut flags = FD_ATTRIBUTES | FD_PROGRESSUI | FD_UNICODE;
-        if let Some(size) = item.size {
+        if let (false, Some(size)) = (item.is_dir, item.size) {
             flags |= FD_FILESIZE;
             record[AT_SIZE_HIGH..AT_SIZE_HIGH + 4]
                 .copy_from_slice(&((size >> 32) as u32).to_le_bytes());
             record[AT_SIZE_LOW..AT_SIZE_LOW + 4].copy_from_slice(&(size as u32).to_le_bytes());
         }
         record[AT_FLAGS..AT_FLAGS + 4].copy_from_slice(&flags.to_le_bytes());
-        record[AT_ATTRIBUTES..AT_ATTRIBUTES + 4]
-            .copy_from_slice(&FILE_ATTRIBUTE_NORMAL.to_le_bytes());
-        for (n, unit) in windows_name(&item.name)
+        let attributes = if item.is_dir {
+            FILE_ATTRIBUTE_DIRECTORY
+        } else {
+            FILE_ATTRIBUTE_NORMAL
+        };
+        record[AT_ATTRIBUTES..AT_ATTRIBUTES + 4].copy_from_slice(&attributes.to_le_bytes());
+        for (n, unit) in windows_path(&item.name)
             .encode_utf16()
             .take(NAME_UNITS)
             .enumerate()
@@ -315,6 +330,26 @@ pub fn descriptor_bytes(items: &[OutItem]) -> Vec<u8> {
             record[AT_NAME + n * 2..AT_NAME + n * 2 + 2].copy_from_slice(&unit.to_le_bytes());
         }
     }
+    out
+}
+
+/// The bytes of a `DROPFILES` block for `paths` — files of this machine handed
+/// to the system as they are (v1.36): the header (offset of the list, a point,
+/// "not client area", "wide"), then each path in UTF-16 with its zero, and one
+/// more zero to end the list.
+pub fn hdrop_bytes<'a>(paths: impl IntoIterator<Item = &'a str>) -> Vec<u8> {
+    const HEADER: u32 = 20;
+    let mut out = Vec::new();
+    out.extend_from_slice(&HEADER.to_le_bytes());
+    out.extend_from_slice(&[0u8; 8]); // pt
+    out.extend_from_slice(&0u32.to_le_bytes()); // fNC
+    out.extend_from_slice(&1u32.to_le_bytes()); // fWide
+    for path in paths {
+        for unit in path.encode_utf16().chain(std::iter::once(0)) {
+            out.extend_from_slice(&unit.to_le_bytes());
+        }
+    }
+    out.extend_from_slice(&0u16.to_le_bytes());
     out
 }
 
@@ -340,9 +375,22 @@ impl Feed {
         &self.spec.items
     }
 
-    /// The file at `index`, as a stream to hand over. Nothing is read yet.
+    /// Files of this machine (v1.36): handed over as a list of where they are
+    /// (`CF_HDROP`), not as streams. Null — the drag's files are a server's.
+    pub fn local_drop(&self) -> Option<Vec<u8>> {
+        self.spec
+            .local
+            .then(|| hdrop_bytes(self.spec.items.iter().map(|item| item.path.as_str())))
+    }
+
+    /// The file at `index`, as a stream to hand over. Nothing is read yet. A
+    /// folder has no contents to read: Explorer makes it from its descriptor.
     pub fn outflow(self: &std::sync::Arc<Self>, index: usize) -> Option<Outflow> {
-        let size = self.spec.items.get(index)?.size;
+        let item = self.spec.items.get(index)?;
+        if item.is_dir || self.spec.local {
+            return None;
+        }
+        let size = item.size;
         let feed = self.clone();
         Some(Outflow::new(size, move || feed.open(index)))
     }
@@ -681,6 +729,61 @@ mod tests {
             .take_while(|u| *u != 0)
             .count();
         assert_eq!(units, NAME_UNITS);
+    }
+
+    #[test]
+    fn a_folder_is_told_as_a_folder_and_its_files_by_their_path_inside_the_drag() {
+        let items = vec![
+            OutItem {
+                path: "/srv/site".into(),
+                name: "site".into(),
+                is_dir: true,
+                size: None,
+            },
+            OutItem {
+                path: "/srv/site/conf/a|b.conf".into(),
+                name: "site/conf/a|b.conf".into(),
+                is_dir: false,
+                size: Some(12),
+            },
+        ];
+        let bytes = descriptor_bytes(&items);
+        let field = |record: usize, at: usize| {
+            let at = 4 + record * DESCRIPTOR_SIZE + at;
+            u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+        };
+        let name = |record: usize| {
+            let at = 4 + record * DESCRIPTOR_SIZE + AT_NAME;
+            let units: Vec<u16> = bytes[at..at + 520]
+                .chunks(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .take_while(|u| *u != 0)
+                .collect();
+            String::from_utf16(&units).unwrap()
+        };
+        assert_eq!(field(0, AT_ATTRIBUTES), FILE_ATTRIBUTE_DIRECTORY);
+        // A folder claims no length.
+        assert_eq!(field(0, AT_FLAGS) & FD_FILESIZE, 0);
+        assert_eq!(name(0), "site");
+        assert_eq!(field(1, AT_ATTRIBUTES), FILE_ATTRIBUTE_NORMAL);
+        assert_eq!(field(1, AT_SIZE_LOW), 12);
+        // Parts joined the Windows way, each mended on its own.
+        assert_eq!(name(1), "site\\conf\\a_b.conf");
+        assert_eq!(windows_path("a/b"), "a\\b");
+    }
+
+    #[test]
+    fn files_of_this_machine_go_as_a_list_of_where_they_are() {
+        let bytes = hdrop_bytes(["C:\\Users\\me\\a.txt", "D:\\отчёт.pdf"]);
+        let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        // The list begins after the header; the names are wide.
+        assert_eq!((word(0), word(12), word(16)), (20, 0, 1));
+        let units: Vec<u16> = bytes[20..]
+            .chunks(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        let text = String::from_utf16(&units).unwrap();
+        assert_eq!(text, "C:\\Users\\me\\a.txt\0D:\\отчёт.pdf\0\0");
     }
 
     #[test]

@@ -5,10 +5,10 @@
 // point is a pointer that leaves a window. So the X server's own pointer is
 // moved, with `xdotool` — the events reach the app the way a mouse's do.
 //
-// Runs where there is an X server to move a pointer on and `xdotool` to move it
-// (the Linux box, `pnpm e2e:linux`); skipped elsewhere, CI's runner included —
-// a test that drives the pointer of a screen is not one to gate a release on
-// before it has earned it.
+// Runs where there is an X server to move a pointer on and `xdotool` to move it:
+// the Linux box (`pnpm e2e:linux`) and, since v1.36, CI's runner, whose E2E job
+// installs `xdotool` and `x11-apps` for it. Skipped elsewhere — on Wayland the
+// window under the pointer cannot be asked (winhit.rs).
 
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {

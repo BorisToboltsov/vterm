@@ -5,7 +5,7 @@
 история и отвергнутые альтернативы — в [adr/](adr/), устройство — в
 [ARCHITECTURE.md](ARCHITECTURE.md), правила процесса — в [../AGENTS.md](../AGENTS.md). Файл
 подставляется в контекст **каждой** сессии, поэтому объяснение длиннее фразы уходит в ADR, а
-сюда — ссылка; бюджет держит гейт `docs.guard`.
+сюда — ссылка; длину каждого пункта держит гейт `docs.guard`.
 
 **Содержание:**
 [Сквозные принципы](#сквозные-принципы) ·
@@ -71,7 +71,8 @@
    берётся только через `.locked()`: отравленная блокировка иначе роняла бы каждую следующую
    команду над тем же реестром (гейт `a_poisoned_lock_never_cascades`).
 9. **Контракт типов — camelCase.** Rust-модели — `#[serde(rename_all = "camelCase")]`, зеркало
-   в [types.ts](../src/lib/types.ts); новые поля старых структур — `#[serde(default)]`.
+   в [types.ts](../src/lib/types.ts); новые поля старых структур — `#[serde(default)]`. Запрос ИИ —
+   `deny_unknown_fields`, ключи сверяет `ai.test.ts`: поле под чужим именем отбрасывалось молча.
 
 ---
 
@@ -107,17 +108,14 @@
   он (`vterm/terminal-write`).
 - **Окно подключения — честный чек-лист.** Фазы
   [ConnectingOverlay](../src/lib/connect/ConnectingOverlay.svelte) — реальные события
-  `term://phase/{id}` (`connecting`→`authenticating`→`session`), маппинг —
-  [connphase.ts](../src/lib/connect/connphase.ts); новая обязательная стадия = `emit` в `connect` +
-  запись в `PHASE_ORDER`, не новый канал. Прокси-подстадии — тоже реальные события, вне
-  `PHASE_ORDER` (`phaseSteps(current, errored, proxy)`), чек-лист всегда вложенный. Тот же
-  компонент — экран ошибки (`failed`, маппинг — `sshErrorView`); провал аутентификации не
-  закрывает вкладку (`reauth`). Верхняя плашка — только у локальных вкладок; анимации — только
-  `transform`/`opacity`. Экран укладывается в свою область: кольцо, промежутки и отступы —
-  одно число `ringFit` ([connfit.ts](../src/lib/connect/connfit.ts), `use:connFit`), кольцо —
-  размер модели, а не сжимаемый flex-элемент (сжатое было овалом); не помещается и наименьшее —
-  спиннер в строку заголовка, затем одна строка с текущим шагом; скачок размера доводится
-  блоками через `fluidglide`. Гейт `connfit.guard`.
+  `term://phase/{id}` (маппинг — [connphase.ts](../src/lib/connect/connphase.ts)): новая стадия —
+  `emit` в `connect` и запись в `PHASE_ORDER`, не новый канал; прокси-подстадии — тоже события, вне
+  `PHASE_ORDER`. Тот же компонент — экран ошибки (`sshErrorView`); провал входа не закрывает
+  вкладку (`reauth`). Плашка сверху — только у локальных вкладок. Экран укладывается в свою
+  область одним числом `ringFit` ([connfit.ts](../src/lib/connect/connfit.ts)): кольцо — размер
+  модели, а не сжимаемый flex (сжатое было овалом); не помещается — спиннер в строку заголовка,
+  затем одна строка; движение — только `transform`/`opacity` через `fluidglide`. Гейт
+  `connfit.guard`.
 - **Вкладка закрывается ровно одним путём — `closeTabFully`** в `+page.svelte`. Под
   `sessionId` живут workspace, чат ИИ, членство в broadcast, nginx-кэш, состояние доков; сырой
   `closeTab` стора — только операция над списком, и зовёт его только `closeTabFully`
@@ -175,16 +173,14 @@
   `tabsState.activeId`. Клавиатуру после подключения берёт только терминал области в фокусе
   (`focusOnConnect`). Пока область одна, полоса вкладок одна — над центром.
 - **После перезапуска возвращается вкладка и её место, а не сессия** (ADR 0019, 0057). Она ждёт
-  (`Tab.waiting`; для остального — `offline`). Кто подключается сам, решает только `waitReason`
+  (`Tab.waiting`); кто подключается сам, решает только `waitReason`
   ([tabrestore.ts](../src/lib/tabs/tabrestore.ts)): контейнер, прод и сервер с секретом не из
-  keychain ждут кнопки в любом режиме; `off`/`manual` при запуске не ходят в сеть и в keychain.
-  Открывает сессию [restoreflow](../src/lib/page/restoreflow.svelte.ts). Запись вкладки — по
-  полям (`savedTab`): ни пароля, ни текста файлов; файлы читаются после подключения, `cd` по SSH —
-  после первого OSC 7; дерево — `loadLayout`. Вывод и чат пишет только `keep` после
-  `keepsContent` (настройка, не прод). Слоты (`vterm.tabs:<метка>`) читает главное окно — раз,
-  после каталога, свой пишет после; вторые окна открывает бэкенд с вручёнными вкладками
-  (`reopen_windows`), их места пишет `quit_app`. Закрытое с подтверждением окно слот стирает.
-  Секрет вводят на месте (`forTab`). Гейт `tabrestore.guard`.
+  keychain ждут кнопки всегда; `off`/`manual` при запуске не ходят в сеть и в keychain. Запись
+  вкладки — по полям (`savedTab`): ни пароля, ни текста файлов; файлы читаются после подключения,
+  `cd` по SSH — после первого OSC 7. Вывод и чат пишет только `keep` после `keepsContent`
+  (настройка, не прод). Слоты читает главное окно — раз, после каталога, и пишет свой после;
+  вторые окна открывает бэкенд (`reopen_windows`), их места пишет `quit_app`; закрытое с
+  подтверждением окно слот стирает. Секрет — на месте (`forTab`). Гейт `tabrestore.guard`.
 - **Перетаскивание вкладки терминала меняет раскладку один раз — при отпускании**
   ([tabdrag](../src/lib/stores/tabdrag.svelte.ts)): до него полосы рисуют `previewTabs`, а
   область — подсветка; перенос на каждое движение слал бы терминалам `SIGWINCH` на пиксель.
@@ -213,26 +209,26 @@
 живёт в бэкенде ([appwin.rs](../src-tauri/src/appwin.rs)). Разборы — [ADR 0038](adr/0038-windows-and-tab-drag-details.md).
 
 - **Окно — та же страница, роль — по метке** (`main`/`win-N`,
-  [appwindow.ts](../src/lib/windows/appwindow.ts)). Передачу ведёт контроллер
-  [windowflow](../src/lib/page/windowflow.svelte.ts) (`detachTab`, `handOver`, `dropOutside`,
-  `tellDragOver`, `adoptFailed`); «урезанной» страницы нет. Создаёт окна только Rust (гейт
-  `tauri-security.guard`).
-- **Главное окно — якорь:** его закрытие — выход; только оно пишет раскладку доков,
-  восстанавливает вкладки, забирает «Открыть с помощью» (`take_pending_opens`) и предупреждения
-  хранилища. Второе окно появляется выносом вкладки и закрывается с последней.
+  [appwindow.ts](../src/lib/windows/appwindow.ts)). Передачу ведёт
+  [windowflow](../src/lib/page/windowflow.svelte.ts); «урезанной» страницы нет. Создаёт окна
+  только Rust (гейт `tauri-security.guard`).
+- **Главное окно — якорь:** его закрытие — выход; только оно пишет раскладку доков, читает
+  слоты вкладок, забирает «Открыть с помощью» (`take_pending_opens`) и предупреждения
+  хранилища. Второе окно закрывается с последней вкладкой.
 - **Сессию завершает `closeTabFully`, а не компонент.** `Terminal.svelte` не зовёт `disconnect`:
   вкладка, отданная другому окну, размонтирует терминал, а сессия живёт. Бэкенд помнит
   окно-владельца, чужой `disconnect` игнорирует, сессии уничтоженного окна завершает сам; из
   реестра сессия уходит только в `end_session`. Без завершения (`closeTabFully(id, true)`)
   вкладка уходит, только если её приняло другое окно или это окно не смогло её принять. Гейт
   `a_session_ends_in_one_place_and_only_for_its_owner`.
-- **Вывод терминала — только через затвор** ([outgate.rs](../src-tauri/src/outgate.rs)): эмит
-  мимо него минует придержку при передаче, и байты пропадут. Гейт
-  `terminal_output_goes_only_through_the_gate`.
+- **Вывод терминала — только через затвор** ([outgate.rs](../src-tauri/src/outgate.rs)), ответ
+  ИИ — через свой ([aigate.rs](../src-tauri/src/aigate.rs)): эмит мимо минует придержку при
+  передаче, и куски пропадут. Гейты `terminal_output_goes_only_through_the_gate`,
+  `the_assistants_answer_goes_only_through_its_gate_and_moves_with_its_tab`.
 - **Передача: придержать → снять → передать → отпустить.** `detach_begin` → снимок xterm, когда
-  терминал получил все ушедшие события (сверка счёта, а не пауза) → `detach_commit` → вкладка
-  убирается. Принимающее окно подписывается на вывод, пишет снимок в той же сетке и только
-  потом зовёт `attach_session`. Сбой до этого — откат (`gate.resume()`). Придержанное
+  терминал и чат получили все ушедшие события (сверка счёта, а не пауза) →
+  `detach_commit` → вкладка убирается. Принимающее окно подписывается на вывод и стрим, пишет
+  снимок в той же сетке и только потом зовёт `attach_session`. Сбой до этого — откат (`gate.resume()`). Придержанное
   ограничено `HOLD_CAP`: переполнение — откат с сообщением.
 - **Пакет вкладки — только через IPC и только в памяти** (`Zeroizing`, одному окну, один раз):
   в нём пароли; `localStorage` и `BroadcastChannel` запрещены.
@@ -244,42 +240,41 @@
   Гейты `windowhandoff.guard`, `a_failed_handoff_never_closes_a_window_that_was_already_open`.
 - **Окно под указателем спрашивают у ОС — точно или никак**
   ([winhit.rs](../src-tauri/src/winhit.rs)): прямоугольники и порядок фокуса не знают, что
-  окно перекрыто, свёрнуто или на другом столе. Место указателя внутри окна — тоже от ОС
-  (`contentLayoutRect`, `ScreenToClient`, `page_origin`). Где оконная система не отвечает
+  окно перекрыто, свёрнуто или на другом столе. Место указателя внутри окна — тоже от ОС. Где оконная система не отвечает
   (Wayland, X11 поверх Wayland — `asks_an_x_server`), цели нет: бросок открывает новое окно.
   Решает отпускание (`drag_drop`). Гейт
   `the_window_under_the_pointer_is_asked_of_the_os_never_guessed`.
 - **Вкладку над чужим окном рисует это окно — и до её прибытия ничего в себе не меняет.**
   `drag_over` → `window://drag` → предпросмотр
-  ([tabincoming](../src/lib/stores/tabincoming.svelte.ts), `previewIncoming`; стор знает стор
-  вкладок только по типу); вкладка встаёт один раз (`placeTab`), не «открыть и переставить».
+  ([tabincoming](../src/lib/stores/tabincoming.svelte.ts), `previewIncoming`); вкладка встаёт один раз (`placeTab`), не «открыть и переставить».
   О перетаскивании говорится по порядку и до конца: `over` по одному, `left` и отпускание ждут
   отправленного, каждый конец без прибытия — `drag_end`; место держится (`landing`) не дольше
   `LANDING_TIMEOUT_MS`. Вкладка, которую нельзя перенести, никому не показывается. Гейты
   `windowhandoff.guard`, `centerlayout.guard`.
-- **Окно под указателем выходит вперёд** (`raise_window`, раз на заход — `Registry::raise`),
-  поэтому при других окнах о вкладке сообщается на каждом движении, и где указатель — решает
-  ответ бэкенда (`tabDrag.window`), а не границы своего окна.
+- **Окно под указателем выходит вперёд** (`raise_window`, раз на заход): о вкладке сообщается
+  на каждом движении, где указатель — решает ответ бэкенда (`tabDrag.window`), а не границы окна.
 - **Над рабочим столом вкладку рисует окно-метка — картинка, а не участник**
   ([dragghost.rs](../src-tauri/src/dragghost.rs)): без фокуса, прозрачно для мыши, с меткой
   `drag-ghost` вне прав и списка окон, показывается после загрузки своей страницы. На Linux
   его нет — метка остаётся у края окна с подписью. Гейт
   `the_floating_label_is_a_picture_and_never_a_window_of_the_app`.
-- **Выносится только то, что можно вынести целиком** (`detachBlocker`,
-  [tabhandoff.ts](../src/lib/windows/tabhandoff.ts)): сравнение, синхронизация, ответ ИИ и сохранение
-  файла держат вкладку. Новая работа «в полёте» по сессии — в `DetachState` или бэкенду.
-  Состояние вкладки собирают `packTab`/`unpackTab`; новое состояние по сессии — в обе.
+- **Выносится только то, что можно вынести целиком** (`detachBlocker`): сравнение, команда
+  шага диалога ИИ и сохранение файла держат вкладку; прогон синхронизации и ответ ИИ едут с ней
+  (ADR 0058). Новая работа «в полёте» — в `DetachState` или бэкенду; состояние вкладки —
+  `packTab`/`unpackTab`, новое — в обе.
 - **Область уходит целиком — передачей на вкладку, одной и той же** (`handOver`, ADR 0023):
   целиком или никак, решается до первой вкладки (`paneMoveBlocker`) и заново перед каждой;
   первой уходит показанная, остальные встают за ней (`paneMoveOrder`, `PaneSeat`,
-  `addTabBehind`); новое окно ждут по событию `window://windows`.
+  `addTabBehind`); новое окно ждут по событию `window://windows`. Окно — тем же путём, раскладкой
+  (`windowMoveOrder`, `seat.split`).
 - **Событие без id в имени — одному окну, и слушают его `listenHere`:** обычный `listen` слышит
   посланное другому окну.
-- **Общее для окон — через бэкенд:** настройки — снимком (`window://settings`), запись
-  каталога — `window://catalog` (хук в `store.rs`), «один прогон синхронизации» — замок
-  `SyncBusy`. Куда скопировать файл, окна сообщают друг другу (`announce_copy_targets` →
-  `window://targets`); чужой список читается, а не принимается на веру (`foreignTargets`).
-- **Три точки входа:** меню вкладки, ⌘K и бросок за окно (`releasedOutside`).
+- **Общее для окон — через бэкенд:** настройки — снимком (`window://settings`), каталог —
+  `window://catalog` (хук в `store.rs`), один прогон синхронизации — замок `SyncBusy`. Цели
+  копирования окна сообщают друг другу (`window://targets`); чужой список читается, а не
+  принимается на веру (`foreignTargets`).
+- **Три точки входа:** меню вкладки, ⌘K и бросок за окно (`releasedOutside`); область —
+  за полосу (`tabDrag.pane`).
 
 ---
 
@@ -387,10 +382,28 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 |---------|---------------|---------------|--------------|
 | **Git** | `git_run` · `[git]` | [git.ts](../src/lib/git/git.ts), [gitview.ts](../src/lib/git/gitview.ts), [gitlanes.ts](../src/lib/git/gitlanes.ts), [gitrefs.ts](../src/lib/git/gitrefs.ts) | Каталог — `gitCwd` (при выключенной синхронизации — каталог терминала). `GIT_TERMINAL_PROMPT=0` обязателен (иначе зависание на промпте кредов). `needsConfirm` на любом сервере, в том числе в `syncRun`; stage/unstage/fetch/ветка — без диалога. Коммит — одним вызовом (`commitDetailArgs`, `--raw --numstat`), у слияния — diff с выбранным родителем, по умолчанию первым (`mergeFilesArgs`); неразобранный ответ — ошибка, ответ на ушедший коммит отбрасывается. Файл рабочего дерева — в `EditorTab` как inline-diff против HEAD (`gitBase`), файл коммита — `GitDiffView` |
 | **Docker** | `container_run` · `[docker]` | [docker.ts](../src/lib/docker/docker.ts), [dockernet.ts](../src/lib/docker/dockernet.ts) | `--format` с US-разделителем; `dockerRefreshSec` 1…30; группировка по `com.docker.compose.project`; `needsConfirm` шире `isDestructive` (+ stop/restart/kill). Факты `inspect` (лимиты, перезапуски, адреса, порты остановленного) — одним вызовом на изменившиеся (`staleFacts`). Окружение в подробностях скрыто по имени и значению (`isSensitiveEnv`) и в вопрос ИИ не идёт. `system df` — при открытии вида, по «Обновить» и после удаления, не на опросе. `events` — только снимок с `--until` (политика отказывает без него). Кто использует образ или том — `ps --filter`, не по имени. `compose -f`/`--env-file` — только для `config`; каталог и файлы compose бэкенд сверяет с метками стека (`check_stack`); `up` стека из своих файлов из каталога не предлагается (`usesOwnFiles`). CVE-скана нет — нет офлайн-способа |
-| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker. `-o json`. `context`/`namespace` вшиваются в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка по `ownerReferences`. STATUS/READY/RESTARTS — как у kubectl (`podRow`, сайдкар — контейнер пода). «Обзор» — из опрошенного списка (`parsePodDetail`), своего вызова нет; события — только открытого пода по uid (`podEventsArgs`), пока «Обзор» на экране, — причины «Требует внимания» читаются из объекта пода (`podSigns`); «Ресурсы» — история из `top pods` опроса, контейнеры (`top pod --containers`) — только пока вкладка на экране; доля — только против лимита, запрос — отметка, нет замеров — `metricsGap`; подробности нагрузки — из опроса «Нагрузок» (`parseWorkloadDetail`), её поды и ReplicaSet'ы — только у открытой, по селектору, взятые по владельцу; поды Job'ов сворачиваются к CronJob по `ownerReferences` Job'ов (`jobOwners`), не по имени; запрошенное у ноды — как считает планировщик (`podRequest`), её поды и `top node` — только пока «Обзор» ноды на экране; почему заявка ждёт — из уже полученных событий, кто монтирует — из томов подов, поды — только при заявках; приложение — только из `app.kubernetes.io/*` и аннотации Helm (`appOf`), имя объекта не разбирается, секреты Helm не читаются; окружение скрыто `isSensitiveEnv`, значение из Secret не читается, в вопрос ИИ окружение не идёт. Бинарь — `settings.kubectlPath` |
+| **k8s** | `kubectl_run` · `[k8s]` | [k8s.ts](../src/lib/k8s/k8s.ts), [k8sroute.ts](../src/lib/k8s/k8sroute.ts) | Свой вид, не список Docker; `-o json`. `context`/`namespace` — в argv (`withScope`, `objectScope`), kubeconfig не мутируем. Группировка — по `ownerReferences`; STATUS/READY/RESTARTS — как у kubectl (`podRow`, сайдкар — контейнер пода). Окружение скрыто `isSensitiveEnv`, значение из Secret не читается (ниже), в вопрос ИИ не идёт. Бинарь — `settings.kubectlPath`. Что k8s спрашивает и когда — ниже |
 | **Пробы** | `probe_run` · `[util]` | [probe.ts](../src/lib/utilities/probe.ts), [tls.ts](../src/lib/utilities/tls.ts), [http.ts](../src/lib/utilities/http.ts) | Локально — только `curl`/`openssl` пользователя, без шелла, шагами через stdin (`tlsSteps`, ADR 0014). «Выполнить в терминале» — под запущенную оболочку (`curl.exe` вне POSIX). argv — сырые токены, квотит транспорт |
 | **Метрики** | `fetch_metrics*`, `fetch_pending_updates`, `fetch_extras` | [metrics/mod.rs](../src-tauri/src/metrics/mod.rs), [metrics/local.rs](../src-tauri/src/metrics/local.rs) | Одни DTO на оба транспорта (SSH → `/proc`, локально → `sysinfo`). Гейт UI — `isMonitorable(tab)`, а не `kind==="ssh"` |
 
+- **k8s меняет кластер только формами панели и не читает значений Secret** (ADR 0061). Откат —
+  `rollout undo deployment/<имя> --to-revision=N`, запуск CronJob — `create job <имя>
+  --from=cronjob/<имя>`; другой формы `undo` и `create` политика не пускает. Secret читается
+  одним шаблоном ключей (`SECRET_KEYS_TEMPLATE`, один в `kube.rs` и `k8s.ts`); прочие
+  `get`/`describe` Secret и `--raw` — отказ: `describe` печатает токен сервисного аккаунта. У
+  ConfigMap похожее на секрет скрыто до щелчка и в ИИ не идёт. Гейты `the_cluster_is_changed_only_in_the_shapes_the_panel_offers`, `a_secrets_value_is_never_read_by_any_road`.
+- **k8s спрашивает только то, что на экране, и читает, а не выводит.**
+  - «Обзор» пода — из опрошенного списка (`parsePodDetail`); события — только открытого пода по uid
+    (`podEventsArgs`), пока «Обзор» на экране; причины «Требует внимания» — из объекта пода (`podSigns`).
+  - «Ресурсы» — история из `top pods` опроса, контейнеры — только пока вкладка на экране; доля — только
+    против лимита, запрос — отметка, нет замеров — `metricsGap`.
+  - Нагрузка — из опроса «Нагрузок» (`parseWorkloadDetail`), её поды и ReplicaSet'ы — только у
+    открытой, по селектору и владельцу; поды Job'ов — к CronJob по `ownerReferences` (`jobOwners`),
+    не по имени.
+  - Нода: запрошенное — как считает планировщик (`podRequest`), её поды и `top node` — пока «Обзор» на
+    экране. Заявка: почему ждёт — из полученных событий, кто монтирует — из томов подов.
+  - Приложение — только из `app.kubernetes.io/*` и аннотации Helm (`appOf`); имя объекта не
+    разбирается, секреты Helm не читаются.
 - **Линия истории Git держит полосу и цвет** (ADR 0048): `buildGraph` оставляет первого родителя на полосе коммита, соседние полосы не двигает; main — левая полоса; цвет — от имени ветки (`colorSeed`), никогда от номера полосы, иначе все ветки одной полосы одного цвета; ребро — от центра строки до центра следующей, поворот один (`edgePath`). Цвета — `--color-rail-*` из темы (`railPalette`, не ниже 3:1 на обеих панелях): константы не читались на светлых темах. Гейты `gitlanes.guard`, `gitlanes.test.ts`, `themes.test.ts`.
 - **Историю ищет git, а не фильтр по загруженному** (`LogFilter` → `logArgs`): иначе старый коммит «не найден». Обрыв называется, а не молчит: подпись и «Загрузить ещё» до `LOG_CAP`, ответ на устаревший запрос отбрасывается (`logSeq`), отказ git — текстом, а не пустым списком. Новый репозиторий сбрасывает фильтр. Строки — окном (`windowRange`): их высота зависит от ширины, поэтому список мерит себя сам, без `@container`, и у него свой порог колонок `LOG_WIDE_REM`.
 - **Клик по ветке выбирает, двойной — переключает:** выбор поднимает коммит в истории; ветка старше загруженного сужает историю до себя (`revealRef`), а не молчит. Значки дерева — полосой сбоку в широкой панели, рядом сверху в узкой. Счётчики ↑↓ разбираются по `%(upstream:trackshort)`: слова `track` переводит локаль хоста.
@@ -473,17 +486,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   пользователя из allowlist (ADR 0014), а не открывает сокеты сама.
 - **«Проверка доступа» — единственное исключение, и оно узкое** (ADR 0012, 0032, 0033). Одна
   команда `netcheck_run`, транспорт по сессии. На SSH — скрипт `netcheckArgs`
-  ([netcheck.ts](../src/lib/netcheck/netcheck.ts)); порядок «Авто»: `bash /dev/tcp` под `timeout` → `nc -z`
-  (с `-G`, если есть) → `telnet` под `timeout` → `curl` («открыт» — по `time_connect`, а не по
-  коду выхода); пригодность каждого средства — строкой `C`, выбранное, но непригодное блокирует
-  запуск — тихой подмены нет. Локально —
-  рукопожатие в Rust ([netcheck.rs](../src-tauri/src/netcheck.rs): по кнопке, к введённым
-  адресам, без полезной нагрузки, не больше `MAX_CHECKS`; на Windows без повторов SYN —
-  `no_syn_retries`) или
-  `bash`/`nc`/`telnet`/`curl` пользователя с argv только из `LocalTool::argv` — страница называет
-  лишь инструмент (гейт `a_local_tool_runs_only_its_fixed_argv`). Протокол один (`H/A/C/M/D/S/R/N/E`),
-  вердикт — `classifyAttempt`, без `E` прогон оборван. `0.0.0.0` и подсети вокруг — отказ; UDP
-  не проверяется нигде.
+  ([netcheck.ts](../src/lib/netcheck/netcheck.ts)), «Авто»: `bash /dev/tcp` → `nc -z` → `telnet` →
+  `curl` («открыт» — по `time_connect`); выбранное, но непригодное средство блокирует запуск —
+  тихой подмены нет. Локально — рукопожатие в Rust ([netcheck.rs](../src-tauri/src/netcheck.rs): по
+  кнопке, к введённым адресам, без нагрузки, до `MAX_CHECKS`) или `bash`/`nc`/`telnet`/`curl`
+  пользователя с argv только из `LocalTool::argv` (гейт `a_local_tool_runs_only_its_fixed_argv`).
+  Протокол один (`H…E`), вердикт — `classifyAttempt`, без `E` прогон оборван. `0.0.0.0` и подсети
+  вокруг — отказ; UDP не проверяется.
   - Заявка вставляется как есть, но берётся только по действию: эвристика `recognize`
     ([netcheckpaste.ts](../src/lib/netcheck/netcheckpaste.ts)) показывает, что взято; в таблицу — кнопкой
     или ⌘/Ctrl+Enter. Строка таблицы своего понятия о правиле не имеет — уходит в `parseRules`
@@ -531,17 +540,13 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   которому подключится браузер (punycode, выделен). Открываются
   https и http, у http — пометка «без шифрования» (ADR 0055). Гейт `termlink.guard`.
 - **Файл из вывода открывается по проверенному имени и в каталоге своей команды** (ADR 0035):
-  решение — `fileLinkClick` ([termfiles.ts](../src/lib/terminal/termfiles.ts)), открытие — контроллер
-  [filelinkflow](../src/lib/page/filelinkflow.svelte.ts) теми же путями, что панель файлов.
-  Ссылкой делает листинг каталога, а не формат `ls`; канал, сокет, устройство — не файл.
-  Каталог строки — снимок при отправке (локально — бэкенд до байтов и только пока терминал
-  держит сам шелл, `prompt_cwd`; по SSH — сообщённый после прошлой строки), не `localCwd`.
-  `x.c:42:5` открывается на строке и столбце (`gotoLine`, `gotoColumn`), но имя сперва читается целиком. Выделение и
-  двойной клик не открывают. Шелл контейнера ссылок не даёт (`fileLinksAllowed`); SSH без
-  сообщаемого каталога предлагает синхронизацию пути. Ответ шелла на её строку настройки —
-  каталог команды прямо перед ней и только её (`setup`): её промпт, а более ранняя могла быть
-  до `cd`. Клик по такому имени читает строку заново: xterm держит ссылки ряда. Гейт
-  `termfilelink.guard`.
+  решает `fileLinkClick` ([termfiles.ts](../src/lib/terminal/termfiles.ts)), открывает
+  [filelinkflow](../src/lib/page/filelinkflow.svelte.ts) путями панели файлов. Ссылкой делает
+  листинг каталога, а не формат `ls`; канал, сокет, устройство — не файл. Каталог строки — снимок
+  при отправке (локально — `prompt_cwd`, пока терминал держит сам шелл; по SSH — сообщённый после
+  прошлой строки), не `localCwd`; ответ на строку настройки синхронизации — каталог только её
+  (`setup`). `x.c:42:5` — на строке и столбце, имя читается целиком. Выделение и двойной клик не
+  открывают; шелл контейнера ссылок не даёт (`fileLinksAllowed`). Гейт `termfilelink.guard`.
 - **Структурный вид парсит, только пока открыт** (`feedJson`, буфер `MAX_JSON_ENTRIES`); формат
   построчно JSON → nginx → syslog → dmesg → logfmt последним; «Clear» ставит водяной знак
   (`registerMarker`). Логика — [jsonlog.ts](../src/lib/terminal/jsonlog.ts).
@@ -598,15 +603,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   стола слушает страница, один раз на окно (место — `pagePoint`); на терминал локальной вкладки
   вписываются пути (`quotePaths`). В другое окно — эстафетой `drag_over`, сказанное берётся
   назад (`dragEnd`). Гейт `filedrag.guard`.
-- **Файл выносится из приложения только обещанием** (ADR 0027): системе отдаётся имя,
-  содержимое читается после броска. Страница спрашивает систему у края окна один раз
-  (`drag_out_begin` в `handOver`, после `afterTelling`); пока вопрос открыт,
-  `pointerup`/`pointercancel` ждут (`afterHanding`); взяла — `systemTook` и `releaseSelection`.
-  Что можно — `dragOutBlocker` (зеркало `SUPPORTED`/`FOLDERS`), имя — только проверенное
-  (`safe_component`). macOS: обещание исполняет задание реестра по очереди (`in_turn`,
-  `KEPT_AT_ONCE`); Windows: сбой чтения потока — никогда не конец файла
-  ([feed.rs](../src-tauri/src/dragout/feed.rs)), длина — от сервера в момент начала. Гейты
-  `dragout.guard`, `a_file_leaves_the_app_only_as_a_checked_promise`.
+- **Файл сервера выносится из приложения только обещанием** (ADR 0027, 0059): системе отдаётся
+  имя, содержимое читается после броска; файл локальной вкладки — путём, проверенным бэкендом
+  (`local_items`). Систему спрашивают у края окна один раз (`drag_out_begin` в `handOver`, после
+  `afterTelling`); пока вопрос открыт, отпускание ждёт (`afterHanding`); отказ называет причину
+  бэкенда (`declinedMessage`). Что можно — `dragOutBlocker` (зеркало `SUPPORTED`/`FOLDERS`), имя —
+  только `safe_component`. macOS: обещание исполняет задание реестра по очереди (`in_turn`);
+  Windows: папка — обходом сервера при начале, целиком или никак (`flatten`, `MAX_ITEMS`); длина —
+  от сервера; сбой чтения — никогда не конец файла ([feed.rs](../src-tauri/src/dragout/feed.rs)).
+  Гейты `dragout.guard`, `a_file_leaves_the_app_only_as_a_checked_promise`.
 - **Путевая арифметика — чистая и сепаратор-осознанная** ([fspath.ts](../src/lib/files/fspath.ts)):
   корни POSIX, диска и UNC; сравнение путей на Windows — регистронезависимо. `isRoot`/`parentOf`
   — файловые, `navParent` — навигационный: выше корня диска — `DRIVES_ROOT` (`"::drives"`,
@@ -672,21 +677,26 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 - **«Открыть с помощью vterm»:** `tauri-plugin-single-instance` регистрируется первым; пути — из
   argv и `RunEvent::Opened` (только macOS, под `cfg`) в `pending_opens` + `vterm://open-file`.
 - **Перенос файла — задание бэкенда: окно его показывает, а не ждёт** (ADR 0025,
-  [transfers.rs](../src-tauri/src/transfers.rs)). `transfer_start` возвращается сразу, дальше —
-  `sftp://job` окнам, которые показывают вкладки сессий задания **на момент события**
-  (`audience`, отправка одна — `send`). В окне — только строка: окно сперва слушает
-  `sftp://job`, потом спрашивает `transfer_list`; позднее событие попадает в стор, только пока
-  открыта сессия задания. Запускает задание только `startTransfer`
-  ([transferflow.ts](../src/lib/files/transferflow.ts)). Конец сессии отменяет её задания
-  (`end_session` → `Jobs::cancel_session`). Задания сессии — по очереди (`wait_turn`). Копия между
-  серверами — через процесс (`relay_staged`), права нового файла — как у `scp` в любую сторону, ссылка в папке — ссылкой. Один файл не останавливает
-  остальные, пропущенное считается. Синхронизация в реестр не входит. Гейты
-  `transferjob.guard`, `a_job_is_told_only_to_the_windows_of_its_sessions`.
+  [transfers.rs](../src-tauri/src/transfers.rs)). `transfer_start` возвращается сразу; `sftp://job` —
+  окнам, показывающим вкладки сессий задания **на момент события** (`audience`, одна отправка —
+  `send`). Окно сперва слушает, потом спрашивает `transfer_list`; позднее событие — в стор, только
+  пока сессия открыта. Запускает задание только `startTransfer`. Конец сессии отменяет её задания
+  (`Jobs::cancel_session`), задания сессии — по очереди (`wait_turn`). Копия между серверами — через
+  процесс (`relay_staged`), права — как у `scp`, ссылка — ссылкой; один файл не останавливает
+  остальные. Прогон синхронизации — вне реестра, но тоже за сессией (`WindowSink::following`).
+  Гейты `transferjob.guard`, `a_job_is_told_only_to_the_windows_of_its_sessions`.
 - **Перенос пишет во временный соседний файл и отменяем:** `upload_staged`, `download_file`,
   `relay_staged`, `localfile::copy_staged` пишут `.<имя>.vterm-tmp-*` и `rename`-ят после
   последнего байта; прямой `create(target)` запрещён. Отмена — `state.cancels`/`sftp_cancel`, не
   ошибка (в аудите `exit 130`); файлы прогона синхронизации отменяются прогоном
   (`isCancellableTransfer`).
+- **Прерванный перенос продолжается с подтверждённой точки** (ADR 0060). Оборванное концом
+  сессии (`Interrupted`) или со сбоем файлов бэкенд держит (`Jobs::hold`): что осталось и частичную
+  копию (`partial::Partial`); остановленное пользователем и задание закрытой вкладки — нет, их копии
+  удаляются; выход удаляет все. Точку называют только после `flush` (`copy_from`, каждые
+  `CHECKPOINT_STEP`): SFTP пишет конвейером. С неё продолжают, только если размер и время источника
+  те же (`resume_at`), иначе файл заново. Продолжение — то же задание (`transfer_resume`); имя,
+  занятое тем временем, не остаётся. Гейт `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab`.
 - **Перенос не заменяет файл без согласия:** занятое имя без `replace` — `dest-exists` до
   первого байта. Занятость спрашивают у назначения, один вопрос на пачку
   (`checkUpload`/`uploadItems`, `ReplaceDialog` с очередью
@@ -1010,20 +1020,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   - Бандл-иконка: один мастер [icon-source.svg](../src-tauri/icons/icon-source.svg), Windows-артефакты
     — тем же SVG со сдвинутым `viewBox`; генерация только `pnpm icons`. Гейт `appicon.guard`.
 - **Заставка простоя** ([IdleOverlay](../src/lib/screensaver/IdleOverlay.svelte), `z-index:35`): простой —
-  нет ввода **и** вывода PTY; без вкладок заставки нет (`screensaverAllowed`); накрывает только
-  область терминалов, раскладку карточки выбирает `cardTier`; первый кадр — `$effect` над
-  `active`+canvas; рисует копию буфера и в PTY не пишет; метрики — `monitoredSessionId`; гасят
-  только клик или клавиша (`dismissesScreensaver`), курсор не прячется, жест глотается только по
-  самой заставке (`swallowDismiss`). NO SIGNAL — только реальный неожиданный обрыв
-  ([connlost.ts](../src/lib/connect/connlost.ts)). Load на графике — доля от `cpuCount`, без данных —
-  `null`. История простоя ([standby.ts](../src/lib/screensaver/standby.ts)) сводит точки по пику,
-  события — по порогам статус-бара, неудачный опрос — разрыв; раскладка шагает по настройке
-  (`shiftOffset` раз в `idleShiftEverySec`, по умолчанию выкл.), рамка прода — нет. Меток на
-  графике нет: момент рассказывает подсказка у точки под указателем (`pointAt`, указатель — за
-  вычетом сдвига), она называет точку максимумом своего промежутка и гаснет через `HOVER_STILL_MS`
-  без движения — и без цикла анимации. Замер не прыгает: кольца, числа и полоса переноса доходят
-  до него от показанного значения, края графиков — до новой точки
-  ([tween.ts](../src/lib/ui/tween.ts), длительности — `motionMs`). Гейт `idlecard.guard`.
+  нет ввода **и** вывода PTY; без вкладок её нет (`screensaverAllowed`); накрывает только область
+  терминалов, рисует копию буфера и в PTY не пишет; первый кадр —
+  `$effect`. Гасят только клик или клавиша (`dismissesScreensaver`), жест глотается только по самой
+  заставке, курсор не прячется. NO SIGNAL — только неожиданный обрыв
+  ([connlost.ts](../src/lib/connect/connlost.ts)). Load — доля от `cpuCount`, без данных — `null`.
+  История (`standby.ts`): точки — по пику, события — по порогам
+  статус-бара, неудачный опрос — разрыв; сдвиг — по настройке, рамка прода не сдвигается. Меток на
+  графике нет: подсказка у точки (`pointAt`) гаснет через `HOVER_STILL_MS`, без цикла анимации.
+  Замеры доходят плавно ([tween.ts](../src/lib/ui/tween.ts), `motionMs`). Гейт `idlecard.guard`.
 - **Вшитый WebView2 — только когда системного нет** (ADR 0013): системный и
   `WEBVIEW2_BROWSER_EXECUTABLE_FOLDER` побеждают всегда; распаковка атомарная, со sha256; версия
   хвоста — строго `a.b.c.d`; `.cab` — только с подписью Microsoft; без движка — окно с
@@ -1115,7 +1120,7 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 `overlay-z-index` · `type-scale` · `rem-sizes` · `micro-label` · `motion-duration` · `locale-binding` · `md-links`
 · `backdrop-no-close` · `each-as-t` · `path-sync-mode` · `owned-imports` (вызов, правило которого
 живёт в одном модуле, импортирует только он: `setServerPathSync`, `transferStart`,
-`importBackup`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
+`importBackup`, `transferResume`, `startChat`, `netcheckRun`, `sftpOpenAs`, `fetchMetrics`, `fetchLiveExtras`, `fetchProcessDetail`, сырой `closeTab`) · `forbidden-imports` (стор вкладок
 не знает сторов рабочих пространств и чата, стор пришедшей вкладки знает стор вкладок только
 по типу) · `owned-writes` (`settings.terminalLinks`/`terminalFileLinks` пишут только раздел
 настроек и вопрос, который он отключает) · `theme-colors` · `virtual-scroll` · `paste-caret` ·
@@ -1128,12 +1133,12 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 
 | Гейт | Что держит |
 |------|------------|
-| `docs.guard` | `CLAUDE.md` — только импорт `AGENTS.md`; этот файл в бюджете; каждый гейт и ADR, названный здесь, существует, а каждый `*.guard.test.ts` здесь назван; цитаты INVARIANTS из кода и доков называют существующий пункт |
+| `docs.guard` | `CLAUDE.md` — только импорт `AGENTS.md`; пункт, подпункт и строка таблицы этого файла — в своём пределе; каждый гейт и ADR, названный здесь, существует, а каждый `*.guard.test.ts` здесь назван; цитаты INVARIANTS из кода и доков называют существующий пункт |
 | `tabteardown.guard` | Вкладка сносится только `closeTabFully`, и он чистит каждое состояние по `sessionId` |
 | `centerlayout.guard` | Раскладка центра — только результат `splitlayout.ts`; монтирование `Terminal` не зависит от раскладки; синхронный ввод своей раскладки не держит; вкладка из другого окна встаёт один раз |
 | `sessionviews.guard` | Файл внутри соединения: раскладка зон — только моделью, документ и вид — одним шагом, монтирование редактора не зависит от зон, вид перетаскивается внутри своего соединения |
 | `tabrestore.guard` | Запись вкладки по полям, слоты — только стор восстановления, читает главное окно раз, ждущая вкладка не подключается сама, вывод — только `keep` |
-| `windowhandoff.guard` | Сессию завершает только `closeTabFully`; окно называет себя принимающим после подписки; принимающий терминал сперва слушает, потом берёт сессию; события одного окна — `listenHere`; общее главного окна трогает только оно |
+| `windowhandoff.guard` | Сессию завершает только `closeTabFully`; окно называет себя принимающим после подписки; принимающий терминал сперва слушает, потом берёт сессию; события одного окна — `listenHere`; общее главного окна трогает только оно; работа в полёте едет с вкладкой |
 | `attachtab.guard` | Вкладка контейнера печатает `renderSessionCommand` и не переподключается сама |
 | `prodmark.guard` | Прод помечен на вкладке и рамкой вокруг соединения; рамка — инертный оверлей |
 | `taboverflow.guard` | Полоса вкладок — ограниченный скроллер, «+» сразу за последней вкладкой |
@@ -1185,8 +1190,10 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
 | `local_paths_from_server_names_are_checked` (Rust) | Путь из имени сервера — только через `safe_child`/`safe_join`/`child_path` |
 | `a_file_leaves_the_app_only_as_a_checked_promise` (Rust) | Системное перетаскивание начинается с проверенных имён и только в `dragout/` |
 | `a_job_is_told_only_to_the_windows_of_its_sessions` (Rust) | Событие задания уходит одним `send` и только аудитории |
+| `a_partial_copy_goes_on_only_from_a_confirmed_point_and_never_outlives_its_tab` (Rust) | Точка частичной копии — после `flush`; временный файл и смещение — из `partial::staging`; удаляет его при ошибке только тот, кого не держат; закрытая вкладка и выход не оставляют держимого |
 | `login_answers_come_only_from_the_plan` · `nothing_after_login_can_fail_the_connection` (Rust) | Ответы `keyboard-interactive` — только из `kbdauth::merge`; после входа нет `?` |
 | `what_the_git_panel_runs_is_allowed` · `what_the_docker_panel_runs_is_allowed` · `what_the_k8s_panel_runs_is_allowed` (Rust) | Политики argv драйверов пускают формы фронта и ничего опасного |
+| `the_cluster_is_changed_only_in_the_shapes_the_panel_offers` · `a_secrets_value_is_never_read_by_any_road` (Rust) | kubectl меняет кластер только откатом Deployment и запуском CronJob; Secret читается только шаблоном ключей, без `describe` и `--raw` |
 | `a_compose_command_reads_only_the_definition_its_stack_was_brought_up_from` · `a_compose_argv_is_held_to_its_stack_before_it_runs` (Rust) | Каталог, файлы и env-файл compose — из меток стека, и сверка идёт до исполнения |
 | `every_process_is_listed_with_its_cpu_now_not_its_lifetime_average` (Rust) | CPU% процесса — из прироста тиков между опросами, переиспользованный pid — без значения |
 | `a_poisoned_lock_never_cascades` · `the_bridge_source_lists_every_command_module` (Rust) | Вне тестов нет `.lock().unwrap()`; каждый файл `commands/` — в `BRIDGE` |

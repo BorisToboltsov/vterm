@@ -276,24 +276,43 @@ export function sftpGrep(
 }
 
 /**
- * Apply a computed sync plan (uploads/downloads/deletes); returns counts.
- * `runId` is the handle `sftpCancel` stops the run with — the same cancel map
- * folder downloads use.
+ * Start applying a computed sync plan (uploads/downloads/deletes) — resolves
+ * once it has started (v1.36, ADR 0058). The run is the backend's: how it goes
+ * and how it ends is told (`SYNC_RUN_EVENT`) to whichever window shows the
+ * session's tab at the moment. `runId` is the handle `sftpCancel` stops it
+ * with — the same cancel map folder downloads use.
  */
-export function sftpSyncApply(
+export function sftpSyncStart(
   sessionId: string,
   runId: string,
   localRoot: string,
   remoteRoot: string,
   actions: SyncAction[],
-): Promise<SyncStats> {
-  return invoke<SyncStats>("sftp_sync_apply", {
+): Promise<void> {
+  return invoke<void>("sftp_sync_start", {
     sessionId,
     runId,
     localRoot,
     remoteRoot,
     actions,
   });
+}
+
+/** How a sync run stands, told to the window that shows its session. */
+export const SYNC_RUN_EVENT = "sync://run";
+
+/** A sync run as the backend tells it (`sync.rs` `RunView`). */
+export interface SyncRunView {
+  runId: string;
+  sessionId: string;
+  state: "running" | "done" | "stopped" | "failed";
+  stats: SyncStats;
+  error: string | null;
+}
+
+/** The last sync run of a session — asked by a window that has just taken its tab over. */
+export function syncRunOf(sessionId: string): Promise<SyncRunView | null> {
+  return invoke<SyncRunView | null>("sync_run_of", { sessionId });
 }
 
 /** Event name emitted when the OS asks vterm to open a file ("Open with vterm"). */
@@ -384,7 +403,8 @@ export interface TransferSpec {
 }
 
 /** `queued` (v1.35) — waiting for an earlier job of one of its sessions to end. */
-export type TransferState = "queued" | "running" | "done" | "failed" | "cancelled";
+/** `interrupted` — cut off by its session ending under it (v1.36, ADR 0060); `cancelled` — stopped by the user. */
+export type TransferState = "queued" | "running" | "done" | "failed" | "cancelled" | "interrupted";
 
 /** A job as the backend reports it. */
 export interface TransferJob {
@@ -407,6 +427,8 @@ export interface TransferJob {
   failed: number;
   /** Unreadable sub-folders, and links the destination cannot hold (Windows) or the source would not read, left out (v1.34: links go over as links). */
   skipped: number;
+  /** It ended with something left to do and is kept to go on with (v1.36, ADR 0060). */
+  resumable: boolean;
 }
 
 /** Start a transfer; resolves with its id as soon as the backend has taken it. */
@@ -417,6 +439,20 @@ export function transferStart(spec: TransferSpec): Promise<string> {
 /** The transfers this window shows right now (asked on start and on taking a tab over). */
 export function transferList(): Promise<TransferJob[]> {
   return invoke<TransferJob[]>("transfer_list");
+}
+
+/**
+ * Go on with an interrupted transfer (v1.36, ADR 0060): a job again, under the
+ * same id, copying what was left — the cut-off file from its last checkpoint.
+ * Refused while a session of it is not connected; the job stays kept.
+ */
+export function transferResume(id: string): Promise<void> {
+  return invoke<void>("transfer_resume", { id });
+}
+
+/** Drop an interrupted transfer and its partial copies. */
+export function transferForget(id: string): Promise<void> {
+  return invoke<void>("transfer_forget", { id });
 }
 
 /** Pick one or more local files to upload; returns absolute paths. */

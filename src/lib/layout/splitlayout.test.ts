@@ -6,7 +6,10 @@ import {
   addTab,
   addTabBehind,
   applyDrop,
+  applyPaneDrop,
   arrivalDrop,
+  besideDrop,
+  ratioOfNewPane,
   canSplit,
   clampRatio,
   dropChanges,
@@ -1315,5 +1318,77 @@ describe("the grid that fits", () => {
       ),
       { numRuns: 200 },
     );
+  });
+});
+
+describe("a whole pane dragged by its strip (v1.36, ADR 0058)", () => {
+  /** a b | c d — the left pane shows b, the right one shows c. */
+  function twoPanes() {
+    let l = ["a", "b", "c", "d"].reduce((x, id) => addTab(x, id), emptyLayout());
+    l = splitWithTab(l, "c", paneOf(l, "a")!.id, "right");
+    l = moveTab(l, "d", paneOf(l, "c")!.id);
+    l = activateTab(activateTab(l, "c"), "b");
+    return l;
+  }
+  const left = (l: ReturnType<typeof twoPanes>) => paneOf(l, "a")!.id;
+  const right = (l: ReturnType<typeof twoPanes>) => paneOf(l, "c")!.id;
+
+  it("dropped on another pane's middle, its tabs join it in their order, showing what it showed", () => {
+    const l = twoPanes();
+    const next = applyPaneDrop(l, left(l), { kind: "pane", pane: right(l), zone: "center" });
+    expect(panes(next).map((p) => [p.tabs, p.active])).toEqual([[["c", "d", "a", "b"], "b"]]);
+    expect(layoutProblems(next, ["a", "b", "c", "d"])).toEqual([]);
+    // A strip means the same as the middle.
+    const strip = applyPaneDrop(l, left(l), { kind: "strip", pane: right(l), index: 0 });
+    expect(panes(strip).map((p) => p.tabs)).toEqual([["c", "d", "a", "b"]]);
+  });
+
+  it("dropped on an edge, it stands there as a pane, its tabs in order, showing what it showed", () => {
+    const l = twoPanes();
+    const next = applyPaneDrop(l, left(l), { kind: "pane", pane: right(l), zone: "bottom" });
+    expect(next.root).toMatchObject({ kind: "split", dir: "col" });
+    expect(panes(next).map((p) => [p.tabs, p.active])).toEqual([
+      [["c", "d"], "c"],
+      [["a", "b"], "b"],
+    ]);
+    expect(layoutProblems(next, ["a", "b", "c", "d"])).toEqual([]);
+  });
+
+  it("dropped on itself, or nowhere it knows, nothing changes", () => {
+    const l = twoPanes();
+    for (const zone of ["center", "left", "right", "top", "bottom"] as const) {
+      expect(applyPaneDrop(l, left(l), { kind: "pane", pane: left(l), zone })).toBe(l);
+    }
+    expect(applyPaneDrop(l, "gone", { kind: "pane", pane: right(l), zone: "center" })).toBe(l);
+    expect(applyPaneDrop(l, left(l), { kind: "pane", pane: "gone", zone: "center" })).toBe(l);
+  });
+
+  it("whatever pane goes wherever, every tab stays in exactly one pane", () => {
+    const zones = ["center", "left", "right", "top", "bottom"] as const;
+    fc.assert(
+      fc.property(fc.nat(), fc.nat(), fc.constantFrom(...zones), (from, to, zone) => {
+        const l = twoPanes();
+        const ps = panes(l);
+        const next = applyPaneDrop(l, ps[from % 2].id, { kind: "pane", pane: ps[to % 2].id, zone });
+        expect(layoutProblems(next, ["a", "b", "c", "d"])).toEqual([]);
+      }),
+    );
+  });
+});
+
+describe("a pane of a window arriving whole (v1.36)", () => {
+  it("opens beside the pane it is placed by, or joins it without room, or arrives as a pane", () => {
+    let l = addTab(addTab(emptyLayout(), "a"), "b");
+    const big = { [paneOf(l, "a")!.id]: { x: 0, y: 0, w: 1200, h: 800 } };
+    expect(besideDrop(l, big, "a", "right")).toEqual({ kind: "pane", pane: paneOf(l, "a")!.id, zone: "right" });
+    const tiny = { [paneOf(l, "a")!.id]: { x: 0, y: 0, w: 200, h: 100 } };
+    expect(besideDrop(l, tiny, "a", "bottom")).toEqual({ kind: "pane", pane: paneOf(l, "a")!.id, zone: "center" });
+    // What it was to stand beside is not here: it arrives as an arriving pane does.
+    expect(besideDrop(l, big, "gone", "right")).toEqual(arrivalDrop(l, big));
+    l = splitWithTab(l, "b", paneOf(l, "a")!.id, "right");
+    const withRatio = ratioOfNewPane(l, paneOf(l, "b")!.id, 0.3);
+    expect(withRatio.root).toMatchObject({ kind: "split", ratio: 0.3 });
+    // The first half is no new pane: nothing to set.
+    expect(ratioOfNewPane(l, paneOf(l, "a")!.id, 0.3)).toBe(l);
   });
 });

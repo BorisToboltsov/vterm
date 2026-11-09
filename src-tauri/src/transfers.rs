@@ -16,14 +16,22 @@
 //! is a session's server (over its SFTP), or this machine. That gives four
 //! kinds from one loop: upload, download, a copy between two servers — through
 //! this process, never through the disk — and a local copy.
+//!
+//! A job cut off before it was through — the connection dropped, its session
+//! was replaced — is kept (v1.36, ADR 0060): what it had left to do, and the
+//! partial copy of the file it was in the middle of ([`crate::partial`]). Its
+//! row offers to go on; going on is a job again, under the same id, that copies
+//! only what was left and the cut-off file from its last checkpoint. A job the
+//! user stopped is not kept, and neither is one whose tab has closed.
 
 use crate::error::{AppError, AppResult};
 use crate::localfile;
+use crate::partial::{Keep, Partial};
 use crate::sftp::{self, Report};
 use crate::ssh::SshSession;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -93,7 +101,11 @@ pub enum State {
     Done,
     /// It ran to the end, and at least one file did not make it.
     Failed,
+    /// Stopped by the user.
     Cancelled,
+    /// Cut off by its session ending under it — a reconnect, a closed tab
+    /// (v1.36, ADR 0060).
+    Interrupted,
 }
 
 /// A job as its windows see it.
@@ -119,6 +131,9 @@ pub struct JobView {
     pub failed: u32,
     /// Unreadable sub-folders, and links the destination cannot hold or the source would not read, left out.
     pub skipped: u32,
+    /// It ended with something left to do, and is kept to go on with it
+    /// (v1.36, ADR 0060): `transfer_resume`, or `transfer_forget`.
+    pub resumable: bool,
 }
 
 impl JobView {
@@ -141,6 +156,7 @@ impl JobView {
             error: None,
             failed: 0,
             skipped: 0,
+            resumable: false,
         }
     }
 
@@ -158,20 +174,45 @@ struct Entry {
     cancel: Arc<AtomicBool>,
     /// The window that started the job.
     origin: String,
+    /// Its session ended under it (`cancel_session`): cut off, not stopped.
+    interrupted: bool,
 }
 
-/// The jobs under way, and the turn each session gives them (v1.35): the jobs
-/// of one session run one at a time, in the order they were started. No Tauri
-/// types: every rule here is unit-tested.
+/// An interrupted job, kept to be gone on with (v1.36, ADR 0060).
+pub struct Held {
+    /// Its last word, `resumable`.
+    pub view: JobView,
+    pub spec: Spec,
+    pub left: Left,
+    /// The window that started it — told of it when no tab of its shows.
+    pub origin: String,
+}
+
+/// The jobs under way, the turn each session gives them (v1.35): the jobs of
+/// one session run one at a time, in the order they were started — and the
+/// interrupted ones kept to be gone on with (v1.36). No Tauri types: every
+/// rule here is unit-tested.
 #[derive(Default)]
-pub struct Jobs(
-    Mutex<HashMap<String, Entry>>,
-    Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-);
+pub struct Jobs {
+    running: Mutex<HashMap<String, Entry>>,
+    turns: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    held: Mutex<HashMap<String, Held>>,
+    /// Sessions whose tab has closed: nothing is kept for them any more. A
+    /// session id is a tab's, and a closed tab never comes back under it.
+    closed: Mutex<HashSet<String>>,
+}
 
 impl Jobs {
     fn lock(&self) -> MutexGuard<'_, HashMap<String, Entry>> {
-        self.0.lock().unwrap_or_else(|e| e.into_inner())
+        self.running.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn held(&self) -> MutexGuard<'_, HashMap<String, Held>> {
+        self.held.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn closed(&self) -> MutexGuard<'_, HashSet<String>> {
+        self.closed.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Take a new job in. False — and nothing changes — when its id is taken:
@@ -188,9 +229,54 @@ impl Jobs {
                 view,
                 cancel,
                 origin: origin.to_string(),
+                interrupted: false,
             },
         );
         true
+    }
+
+    /// Whether the job's session ended under it — as opposed to the user's stop.
+    fn interrupted(&self, id: &str) -> bool {
+        self.lock().get(id).is_some_and(|e| e.interrupted)
+    }
+
+    /// Keep an interrupted job. Refused — and handed back, for its partial
+    /// copies to be cleaned up — when a tab it touches has closed meanwhile.
+    pub fn hold(&self, held: Held) -> Result<(), Box<Held>> {
+        let closed = self.closed();
+        let gone = [&held.spec.src, &held.spec.dst]
+            .iter()
+            .filter_map(|side| side.session.as_deref())
+            .any(|session| closed.contains(session));
+        if gone {
+            return Err(Box::new(held));
+        }
+        self.held().insert(held.view.id.clone(), held);
+        Ok(())
+    }
+
+    /// Take a kept job out — to go on with it, or to drop it.
+    pub fn take_held(&self, id: &str) -> Option<Held> {
+        self.held().remove(id)
+    }
+
+    /// Every kept job, taken out: the app is quitting.
+    pub fn take_all_held(&self) -> Vec<Held> {
+        self.held().drain().map(|(_, held)| held).collect()
+    }
+
+    /// A tab has closed: the kept jobs that touch it go — handed back for their
+    /// partial copies to be cleaned up — and none is kept for it from now on.
+    pub fn close_session(&self, session_id: &str) -> Vec<Held> {
+        let mut closed = self.closed();
+        closed.insert(session_id.to_string());
+        let mut held = self.held();
+        let ids: Vec<String> = held
+            .values()
+            .filter(|h| h.view.touches(session_id))
+            .map(|h| h.view.id.clone())
+            .collect();
+        ids.iter().filter_map(|id| held.remove(id)).collect()
     }
 
     fn put(&self, view: &JobView) {
@@ -203,25 +289,31 @@ impl Jobs {
         self.lock().remove(id);
     }
 
-    /// The jobs window `label` shows: those it would be told about now.
+    /// The jobs window `label` shows: those it would be told about now — the
+    /// kept ones too.
     pub fn shown_in(&self, label: &str, owner_of: impl Fn(&str) -> Option<String>) -> Vec<JobView> {
+        let shows = |view: &JobView, origin: &str| {
+            audience(view, origin, &owner_of).iter().any(|l| l == label)
+        };
         let mut shown: Vec<JobView> = self
             .lock()
             .values()
-            .filter(|e| {
-                audience(&e.view, &e.origin, &owner_of)
-                    .iter()
-                    .any(|l| l == label)
-            })
+            .filter(|e| shows(&e.view, &e.origin))
             .map(|e| e.view.clone())
             .collect();
+        shown.extend(
+            self.held()
+                .values()
+                .filter(|h| shows(&h.view, &h.origin))
+                .map(|h| h.view.clone()),
+        );
         shown.sort_by(|a, b| a.id.cmp(&b.id));
         shown
     }
 
     /// The turn of `session`: held by the job of it that runs now.
     fn turn_of(&self, session: &str) -> Arc<tokio::sync::Mutex<()>> {
-        let mut turns = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        let mut turns = self.turns.lock().unwrap_or_else(|e| e.into_inner());
         turns.entry(session.to_string()).or_default().clone()
     }
 
@@ -272,18 +364,18 @@ impl Jobs {
     }
 
     /// A session is ending: stop every job that reads from it or writes to it.
-    /// The job holds the session open until it notices, so it must be told —
-    /// and what it staged on the other side is cleaned up by its own exit.
+    /// The job holds the session open until it notices, so it must be told. It
+    /// ends cut off, not stopped (v1.36): kept to go on with — unless its tab
+    /// has closed, and then what it staged is cleaned up by its own exit.
     pub fn cancel_session(&self, session_id: &str) -> usize {
-        let jobs = self.lock();
-        let hit: Vec<&Entry> = jobs
-            .values()
-            .filter(|e| e.view.touches(session_id))
-            .collect();
-        for entry in &hit {
+        let mut jobs = self.lock();
+        let mut hit = 0;
+        for entry in jobs.values_mut().filter(|e| e.view.touches(session_id)) {
+            entry.interrupted = true;
             entry.cancel.store(true, Ordering::Relaxed);
+            hit += 1;
         }
-        hit.len()
+        hit
     }
 }
 
@@ -447,7 +539,8 @@ fn child_path(local: bool, dir: &str, name: &str) -> AppResult<String> {
 
 // ── Carrying a job out ──────────────────────────────────────────────────────
 
-struct Planned {
+#[derive(Debug, Clone)]
+pub struct Planned {
     from: String,
     to: String,
     size: u64,
@@ -468,6 +561,48 @@ struct Plan {
     refused: Vec<String>,
     /// The walk was stopped before it had seen everything.
     cut: bool,
+}
+
+/// What an interrupted job had left to do (v1.36, ADR 0060).
+#[derive(Debug, Clone)]
+pub enum Left {
+    /// It was cut off before its walk had seen everything — or before its
+    /// turn: walked again, nothing having been written.
+    Walk,
+    /// The files that did not make it, each with its partial copy.
+    Files(LeftFiles),
+}
+
+#[derive(Debug, Clone)]
+pub struct LeftFiles {
+    /// The folders, made again (they may well be there).
+    dirs: Vec<String>,
+    files: Vec<(Planned, Option<Partial>)>,
+    /// The whole job's count and size: what its row counts against.
+    file_count: u32,
+    total: u64,
+    skipped: u32,
+}
+
+impl LeftFiles {
+    fn done_files(&self) -> u32 {
+        self.file_count.saturating_sub(self.files.len() as u32)
+    }
+
+    fn done_bytes(&self) -> u64 {
+        let left: u64 = self.files.iter().map(|(f, _)| f.size).sum();
+        self.total.saturating_sub(left)
+    }
+}
+
+impl Left {
+    /// The partial copies it keeps on the destination.
+    pub fn partials(&self) -> Vec<Partial> {
+        match self {
+            Left::Walk => Vec::new(),
+            Left::Files(left) => left.files.iter().filter_map(|(_, p)| p.clone()).collect(),
+        }
+    }
 }
 
 /// Walk what was asked for: every file to move, with its size, and every folder
@@ -560,37 +695,55 @@ async fn move_file(
     file: &Planned,
     report: &Report<'_>,
     cancel: &AtomicBool,
+    keep: &Keep<'_>,
 ) -> AppResult<()> {
     let (from, to, replace, cancel) = (&file.from, &file.to, file.replace, Some(cancel));
     if let Some(target) = &file.link {
         return dst.make_link(target, to, replace).await;
     }
+    let keep = Some(keep);
     match (src, dst) {
         (End::Local, End::Remote(d)) => {
-            sftp::upload_staged(report, d, from, to, replace, cancel).await
+            sftp::upload_staged(report, d, from, to, replace, cancel, keep).await
         }
         (End::Remote(s), End::Local) => {
-            sftp::download_file(report, s, from, to, replace, cancel).await
+            sftp::download_file(report, s, from, to, replace, cancel, keep).await
         }
         (End::Remote(s), End::Remote(d)) => {
-            sftp::relay_staged(report, s, d, from, to, replace, cancel).await
+            sftp::relay_staged(report, s, d, from, to, replace, cancel, keep).await
         }
-        (End::Local, End::Local) => localfile::copy_staged(report, from, to, replace, cancel).await,
+        (End::Local, End::Local) => {
+            localfile::copy_staged(report, from, to, replace, cancel, keep).await
+        }
     }
 }
 
-/// Carry a job out and return how it ended. `tell` hears every change of the
-/// view; `true` marks a byte count inside a file — the kind a listener may drop.
-/// One file failing does not stop the rest: the job says how many did not make
-/// it, and why the first one did not.
-pub(crate) async fn carry_out(
+/// Take a kept job's partial copies off its destination. Best effort: a server
+/// gone with its connection keeps its temp.
+pub async fn discard(dst: &End, left: &Left) {
+    for partial in left.partials() {
+        dst.remove(&partial.tmp).await;
+    }
+}
+
+/// Carry a job out and return how it ended, and what it had left to do. `tell`
+/// hears every change of the view; `true` marks a byte count inside a file —
+/// the kind a listener may drop. One file failing does not stop the rest: the
+/// job says how many did not make it, and why the first one did not.
+///
+/// `from` — the rest of an interrupted job (v1.36, ADR 0060): its files and none
+/// other, each partial copy continued from its checkpoint, the row counting on
+/// from where it stood. A file refused because its name was taken is not left:
+/// going on would be refused again.
+pub(crate) async fn carry_out_from(
     start: JobView,
     spec: &Spec,
     src: &End,
     dst: &End,
     cancel: &AtomicBool,
     tell: &(dyn Fn(&JobView, bool) + Send + Sync),
-) -> JobView {
+    from: Option<LeftFiles>,
+) -> (JobView, Option<Left>) {
     let view = Mutex::new(start);
     let change = |minor: bool, apply: &dyn Fn(&mut JobView)| {
         let mut v = view.lock().unwrap_or_else(|e| e.into_inner());
@@ -599,7 +752,23 @@ pub(crate) async fn carry_out(
     };
     change(false, &|_| {});
 
-    let planned = plan(spec, src, dst, cancel).await;
+    // What to do: the walk of what was asked for, or what an interrupted run left.
+    let (planned, held, base, whole) = match from {
+        Some(left) => {
+            let base = (left.done_files(), left.done_bytes());
+            let whole = (left.file_count, left.total);
+            let (files, held): (Vec<Planned>, Vec<Option<Partial>>) =
+                left.files.into_iter().unzip();
+            let plan = Plan {
+                dirs: left.dirs,
+                files,
+                skipped: left.skipped,
+                ..Plan::default()
+            };
+            (Ok(plan), held, base, Some(whole))
+        }
+        None => (plan(spec, src, dst, cancel).await, Vec::new(), (0, 0), None),
+    };
     // A walk that failed as a whole — a listed name that would leave the
     // destination — fails every item, with nothing written.
     let (mut failed, mut error) = match &planned {
@@ -607,55 +776,97 @@ pub(crate) async fn carry_out(
         Ok(plan) => (plan.refused.len() as u32, plan.refused.first().cloned()),
     };
     let mut cancelled = false;
+    let mut left: Option<Left> = None;
     if let Ok(plan) = planned {
+        let Plan {
+            dirs,
+            files,
+            skipped,
+            cut,
+            ..
+        } = plan;
         // Stopped while the tree was being walked: what was found is not moved.
-        cancelled = plan.cut;
-        let total: u64 = plan.files.iter().map(|f| f.size).sum();
-        let count = plan.files.len() as u32;
+        cancelled = cut;
+        let (count, total) =
+            whole.unwrap_or((files.len() as u32, files.iter().map(|f| f.size).sum()));
+        let (done_files, done_bytes) = base;
         change(false, &|v| {
             v.file_count = count;
             v.total = total;
-            v.skipped = plan.skipped;
+            v.skipped = skipped;
             v.failed = failed;
+            v.file_index = done_files;
+            v.transferred = done_bytes;
         });
         if !cancelled {
-            for dir in &plan.dirs {
+            for dir in &dirs {
                 dst.mkdir(dir).await;
             }
         }
-        let mut moved: u64 = 0;
-        for (index, file) in plan.files.iter().enumerate() {
+        let mut held = held.into_iter();
+        let mut rest: Vec<(Planned, Option<Partial>)> = Vec::new();
+        let mut moved: u64 = done_bytes;
+        for (index, file) in files.into_iter().enumerate() {
+            let partial = held.next().flatten();
             if cancelled || cancel.load(Ordering::Relaxed) {
                 cancelled = true;
-                break;
+                rest.push((file, partial));
+                continue;
             }
+            let at = done_files + index as u32;
             change(false, &|v| {
                 v.name = base_name(&file.to);
-                v.file_index = index as u32;
+                v.file_index = at;
                 v.transferred = moved;
             });
             let before = moved;
             let within = |bytes: u64| {
                 change(true, &|v| v.transferred = (before + bytes).min(total));
             };
-            match move_file(src, dst, file, &Report::Job(&within), cancel).await {
+            // Where the copy is known to stand, as it goes.
+            let current = Mutex::new(partial.clone());
+            let mark = |p: Partial| *current.lock().unwrap_or_else(|e| e.into_inner()) = Some(p);
+            let keep = Keep {
+                resume: partial,
+                mark: &mark,
+            };
+            let ended = move_file(src, dst, &file, &Report::Job(&within), cancel, &keep).await;
+            let partial = current.into_inner().unwrap_or_else(|e| e.into_inner());
+            match ended {
                 Ok(()) => {}
                 Err(AppError::Cancelled) => {
                     cancelled = true;
-                    break;
+                    rest.push((file, partial));
+                    continue;
                 }
                 Err(e) => {
                     failed += 1;
                     error.get_or_insert(e.to_string());
+                    if !matches!(e, AppError::DestinationExists) {
+                        rest.push((file.clone(), partial));
+                    }
                 }
             }
             moved += file.size;
             change(false, &|v| {
-                v.file_index = index as u32 + 1;
+                v.file_index = at + 1;
                 v.transferred = moved;
                 v.failed = failed;
             });
         }
+        left = if cut {
+            Some(Left::Walk)
+        } else if rest.is_empty() {
+            None
+        } else {
+            Some(Left::Files(LeftFiles {
+                dirs,
+                files: rest,
+                file_count: count,
+                total,
+                skipped,
+            }))
+        };
     }
 
     let mut done = view.into_inner().unwrap_or_else(|e| e.into_inner());
@@ -668,7 +879,7 @@ pub(crate) async fn carry_out(
     } else {
         State::Done
     };
-    done
+    (done, left)
 }
 
 // ── What a session's recording is told ──────────────────────────────────────
@@ -760,12 +971,15 @@ pub fn audit_body(spec: &Spec, done: &JobView) -> String {
     if done.state == State::Cancelled {
         lines.push("stopped by user".to_string());
     }
+    if done.state == State::Interrupted {
+        lines.push("interrupted: the session ended".to_string());
+    }
     lines.join("\n")
 }
 
 fn audit_exit(done: &JobView) -> i32 {
     match done.state {
-        State::Cancelled => 130,
+        State::Cancelled | State::Interrupted => 130,
         State::Failed => 1,
         State::Queued | State::Running | State::Done => 0,
     }
@@ -777,7 +991,7 @@ fn base_name(path: &str) -> String {
 
 // ── The job, as the app runs it ─────────────────────────────────────────────
 
-fn send(app: &AppHandle, view: &JobView, origin: &str) {
+pub(crate) fn send(app: &AppHandle, view: &JobView, origin: &str) {
     let windows = app.state::<crate::appwin::Windows>();
     for label in audience(view, origin, |session| windows.owner_of(session)) {
         let _ = app.emit_to(label.as_str(), EVENT, view);
@@ -785,9 +999,12 @@ fn send(app: &AppHandle, view: &JobView, origin: &str) {
 }
 
 /// Run a registered job to its end: tell its windows as it goes, take it off
-/// the registry, say the last word, and write it into the recordings of the
-/// SSH sessions it touched. Returns how it ended — for the one caller that has
-/// someone waiting on the file (a promise made to the system, `dragout`).
+/// the registry, keep it if it was cut off with something left (v1.36), say the
+/// last word, and write it into the recordings of the SSH sessions it touched.
+/// Returns how it ended — for the one caller that has someone waiting on the
+/// file (a promise made to the system, `dragout`). `resumed` — what an
+/// interrupted run of it left ([`Left`]); None, a new job.
+#[allow(clippy::too_many_arguments)] // a job, its two ends, and how it is run
 pub async fn run(
     app: &AppHandle,
     spec: Spec,
@@ -796,6 +1013,7 @@ pub async fn run(
     cancel: Arc<AtomicBool>,
     origin: String,
     queued: bool,
+    resumed: Option<Left>,
 ) -> JobView {
     let started = std::time::Instant::now();
     let last_told = AtomicU64::new(0);
@@ -820,20 +1038,60 @@ pub async fn run(
     } else {
         Some(Vec::new())
     };
-    let done = match turn {
-        Some(_held) => carry_out(start, &spec, &src.end, &dst.end, &cancel, &tell).await,
-        // Stopped while it waited: nothing was moved.
-        None => JobView {
-            state: State::Cancelled,
-            ..start
-        },
+    let from = match &resumed {
+        Some(Left::Files(left)) => Some(left.clone()),
+        _ => None,
     };
+    let (mut done, left) = match turn {
+        Some(_held) => carry_out_from(start, &spec, &src.end, &dst.end, &cancel, &tell, from).await,
+        // Stopped while it waited: nothing was moved — what it had to do is
+        // still all there.
+        None => (
+            JobView {
+                state: State::Cancelled,
+                ..start
+            },
+            Some(resumed.clone().unwrap_or(Left::Walk)),
+        ),
+    };
+    let jobs = app.state::<Jobs>();
+    if done.state == State::Cancelled && jobs.interrupted(&done.id) {
+        done.state = State::Interrupted;
+    }
     // Off the registry first: a window that asks for the list on hearing the
     // last word must not be handed a job that has ended.
-    app.state::<Jobs>().remove(&done.id);
+    jobs.remove(&done.id);
+    // Cut off with something left: kept to go on with — unless a tab of it has
+    // closed. Stopped by the user, or not kept: its partial copies go.
+    if let Some(left) = left {
+        let keeps = matches!(done.state, State::Failed | State::Interrupted);
+        done.resumable = keeps;
+        let held = Held {
+            view: done.clone(),
+            spec: spec.clone(),
+            left,
+            origin: origin.clone(),
+        };
+        let refused = if keeps {
+            jobs.hold(held).err()
+        } else {
+            Some(Box::new(held))
+        };
+        if let Some(held) = refused {
+            done.resumable = false;
+            discard(&dst.end, &held.left).await;
+        }
+    }
     send(app, &done, &origin);
 
-    let body = audit_body(&spec, &done);
+    let mut body = audit_body(&spec, &done);
+    if resumed.is_some() {
+        body.push_str(if body.is_empty() {
+            "resumed"
+        } else {
+            "\nresumed"
+        });
+    }
     for (party, on_src) in [(&src, true), (&dst, false)] {
         if let Some(session) = &party.ssh {
             let line = sftp::sftp_mirror(&audit_op(&spec, on_src), audit_exit(&done), &body);
@@ -843,9 +1101,57 @@ pub async fn run(
     done
 }
 
+/// A kept job is dropped: its partial copies are taken off its destination,
+/// if that is still reachable — this machine, or a session still open.
+pub async fn discard_held(app: &AppHandle, held: Held) {
+    let dst = if held.spec.dst.local {
+        Some(End::Local)
+    } else {
+        match held.spec.dst.session.as_deref() {
+            Some(id) => match crate::session_arc_of(app, id).await {
+                Ok(session) => session.sftp().await.ok().map(End::Remote),
+                Err(_) => None,
+            },
+            None => None,
+        }
+    };
+    if let Some(dst) = dst {
+        discard(&dst, &held.left).await;
+    }
+}
+
+/// A tab has closed (v1.36): the kept jobs that touch it go, and their partial
+/// copies with them. Called before its session ends, while it can still reach
+/// its server.
+pub async fn forget_session(app: &AppHandle, session_id: &str) {
+    let dropped = app.state::<Jobs>().close_session(session_id);
+    for held in dropped {
+        discard_held(app, held).await;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A job carried out as `run` ends it: stopped by the user, it leaves no
+    /// partial copy behind.
+    pub(super) async fn carry_out(
+        start: JobView,
+        spec: &Spec,
+        src: &End,
+        dst: &End,
+        cancel: &AtomicBool,
+        tell: &(dyn Fn(&JobView, bool) + Send + Sync),
+    ) -> JobView {
+        let (done, left) = carry_out_from(start, spec, src, dst, cancel, tell, None).await;
+        if let Some(left) = &left {
+            if done.state == State::Cancelled {
+                discard(dst, left).await;
+            }
+        }
+        done
+    }
 
     fn side(session: Option<&str>, local: bool, label: &str) -> Side {
         Side {
@@ -1446,6 +1752,267 @@ mod tests {
         assert!(!dst.join("nope").exists());
     }
 
+    // ── Going on with an interrupted job (v1.36, ADR 0060) ────────────────
+
+    const MIB: usize = 1024 * 1024;
+
+    /// A file whose every byte says where it is — a copy started over, or one
+    /// stitched at the wrong place, does not come out equal.
+    fn patterned(len: usize, salt: u8) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8 ^ salt).collect()
+    }
+
+    fn temps(dir: &Path) -> Vec<String> {
+        walk(dir)
+            .into_iter()
+            .filter(|p| p.contains(".vterm-tmp-"))
+            .collect()
+    }
+
+    /// `a` (small), `big` (20 MiB), `c` — cut off inside `big`, past its first
+    /// checkpoint. Returns the job, its folders and what it left.
+    async fn cut_inside_big(
+        tmp: &Path,
+    ) -> (Spec, std::path::PathBuf, std::path::PathBuf, LeftFiles) {
+        let (src, dst) = (tmp.join("src"), tmp.join("dst"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a"), b"alpha").unwrap();
+        std::fs::write(src.join("big"), patterned(20 * MIB, 0)).unwrap();
+        std::fs::write(src.join("c"), b"gamma").unwrap();
+        let items = ["a", "big", "c"]
+            .iter()
+            .map(|n| item(&path(&src, n), &path(&dst, n), false, false))
+            .collect();
+        let job = spec("j", disk(), disk(), items, &path(&dst, ""));
+        let cancel = AtomicBool::new(false);
+        // The connection "drops" 9 MiB into `big`: one checkpoint behind it.
+        let tell = |view: &JobView, _minor: bool| {
+            if view.name == "big" && view.transferred >= 5 + 9 * MIB as u64 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        };
+        let (done, left) = carry_out_from(
+            JobView::start(&job),
+            &job,
+            &End::Local,
+            &End::Local,
+            &cancel,
+            &tell,
+            None,
+        )
+        .await;
+        assert_eq!(done.state, State::Cancelled);
+        let Some(Left::Files(left)) = left else {
+            panic!("a job cut off inside a file leaves what it had to do: {left:?}");
+        };
+        (job, src, dst, left)
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_job_keeps_what_it_left_and_the_partial_copy_at_its_checkpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_job, src, dst, left) = cut_inside_big(tmp.path()).await;
+        assert_eq!(std::fs::read(dst.join("a")).unwrap(), b"alpha");
+        assert!(!dst.join("big").exists() && !dst.join("c").exists());
+        // What was left: `big` with its partial copy, and `c` not begun.
+        let names: Vec<(String, Option<u64>)> = left
+            .files
+            .iter()
+            .map(|(f, p)| (base_name(&f.to), p.as_ref().map(|p| p.at)))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("big".to_string(), Some(crate::partial::CHECKPOINT_STEP)),
+                ("c".to_string(), None)
+            ]
+        );
+        assert_eq!((left.done_files(), left.done_bytes()), (1, 5));
+        // The partial copy is there, holding at least its checkpoint.
+        let partial = left.files[0].1.clone().unwrap();
+        let held = std::fs::metadata(&partial.tmp).unwrap().len();
+        assert!(held >= partial.at, "{held} < {}", partial.at);
+        assert_eq!(partial.source.size, 20 * MIB as u64);
+        assert_eq!(temps(&dst), std::slice::from_ref(&partial.tmp));
+        // Stopped by the user instead, nothing is left behind (`run` drops it).
+        discard(&End::Local, &Left::Files(left)).await;
+        assert!(temps(&dst).is_empty());
+        drop(src);
+    }
+
+    #[tokio::test]
+    async fn going_on_copies_what_was_left_and_the_cut_file_from_its_checkpoint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (job, src, dst, left) = cut_inside_big(tmp.path()).await;
+        let partial = left.files[0].1.clone().unwrap();
+        // Mark a byte before the checkpoint: a copy that went on from there
+        // leaves it as it is; one started over would write it back.
+        let mut bytes = std::fs::read(&partial.tmp).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&partial.tmp, &bytes).unwrap();
+        let heard = Heard::default();
+        let tell = |view: &JobView, minor: bool| heard.lock().unwrap().push((view.clone(), minor));
+        let (done, rest) = carry_out_from(
+            JobView::start(&job),
+            &job,
+            &End::Local,
+            &End::Local,
+            &AtomicBool::new(false),
+            &tell,
+            Some(left),
+        )
+        .await;
+        assert_eq!(done.state, State::Done, "{:?}", done.error);
+        assert!(rest.is_none());
+        let copied = std::fs::read(dst.join("big")).unwrap();
+        let source = std::fs::read(src.join("big")).unwrap();
+        assert_eq!(copied.len(), source.len());
+        assert_eq!(
+            copied[0],
+            source[0] ^ 0xff,
+            "the bytes before the checkpoint are not copied again"
+        );
+        assert_eq!(copied[1..], source[1..]);
+        assert_eq!(std::fs::read(dst.join("c")).unwrap(), b"gamma");
+        assert!(temps(&dst).is_empty());
+        // The row counts on from where it stood: the whole job, the file done,
+        // and `big` from its checkpoint.
+        let heard = heard.lock().unwrap();
+        assert_eq!((heard[1].0.file_count, heard[1].0.file_index), (3, 1));
+        assert_eq!(done.total, 5 + 20 * MIB as u64 + 5);
+        assert!(heard
+            .iter()
+            .filter(|(v, minor)| *minor && v.name == "big")
+            .all(|(v, _)| v.transferred >= 5 + crate::partial::CHECKPOINT_STEP));
+        assert_eq!((done.file_index, done.transferred), (3, done.total));
+    }
+
+    #[tokio::test]
+    async fn a_partial_copy_of_a_source_that_changed_is_copied_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (job, src, dst, left) = cut_inside_big(tmp.path()).await;
+        let partial = left.files[0].1.clone().unwrap();
+        let mut bytes = std::fs::read(&partial.tmp).unwrap();
+        bytes[0] ^= 0xff;
+        std::fs::write(&partial.tmp, &bytes).unwrap();
+        // The source is rewritten meanwhile — same size, a later time.
+        let changed = patterned(20 * MIB, 7);
+        std::fs::write(src.join("big"), &changed).unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+        std::fs::File::options()
+            .write(true)
+            .open(src.join("big"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let (done, _) = carry_out_from(
+            JobView::start(&job),
+            &job,
+            &End::Local,
+            &End::Local,
+            &AtomicBool::new(false),
+            &|_, _| {},
+            Some(left),
+        )
+        .await;
+        assert_eq!(done.state, State::Done, "{:?}", done.error);
+        assert_eq!(std::fs::read(dst.join("big")).unwrap(), changed);
+        assert!(temps(&dst).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_file_that_failed_is_left_and_a_name_taken_meanwhile_is_not() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dst) = (tmp.path().join("src"), tmp.path().join("dst"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("ok"), b"1").unwrap();
+        std::fs::write(src.join("taken"), b"2").unwrap();
+        std::fs::write(dst.join("taken"), b"theirs").unwrap();
+        let items = vec![
+            item(&path(&src, "gone"), &path(&dst, "gone"), false, false),
+            item(&path(&src, "taken"), &path(&dst, "taken"), false, false),
+            item(&path(&src, "ok"), &path(&dst, "ok"), false, false),
+        ];
+        let job = spec("j", disk(), disk(), items, &path(&dst, ""));
+        let (done, left) = carry_out_from(
+            JobView::start(&job),
+            &job,
+            &End::Local,
+            &End::Local,
+            &AtomicBool::new(false),
+            &|_, _| {},
+            None,
+        )
+        .await;
+        assert_eq!((done.state, done.failed), (State::Failed, 2));
+        let Some(Left::Files(left)) = left else {
+            panic!("a failed file is left to go on with");
+        };
+        let names: Vec<String> = left.files.iter().map(|(f, _)| base_name(&f.to)).collect();
+        assert_eq!(names, ["gone"], "a refusal would be refused again");
+    }
+
+    #[test]
+    fn a_kept_job_is_shown_where_its_tab_is_and_goes_with_its_closed_tab() {
+        let jobs = Jobs::default();
+        let job = spec(
+            "j",
+            disk(),
+            remote("s1", "web"),
+            vec![item("/a", "/b", false, false)],
+            "/",
+        );
+        let kept = |id: &str| Held {
+            view: JobView {
+                resumable: true,
+                state: State::Interrupted,
+                ..JobView::start(&spec(id, disk(), remote("s1", "web"), vec![], "/"))
+            },
+            spec: job.clone(),
+            left: Left::Walk,
+            origin: "main".into(),
+        };
+        assert!(jobs.hold(kept("j")).is_ok());
+        let owner = |s: &str| (s == "s1").then(|| "win-1".to_string());
+        assert_eq!(jobs.shown_in("win-1", owner).len(), 1);
+        assert!(jobs.shown_in("main", owner).is_empty());
+        // Taken out to go on with, put back when that was refused.
+        let back = jobs.take_held("j").unwrap();
+        assert!(jobs.take_held("j").is_none());
+        assert!(jobs.hold(back).is_ok());
+        // Its tab closes: it goes, and nothing is kept for that tab any more.
+        let gone = jobs.close_session("s1");
+        assert_eq!(gone.len(), 1);
+        assert!(jobs.shown_in("win-1", owner).is_empty());
+        assert!(jobs.hold(kept("k")).is_err());
+        // Quitting takes whatever is kept.
+        assert!(jobs.take_all_held().is_empty());
+    }
+
+    #[test]
+    fn a_job_whose_session_ends_under_it_is_cut_off_not_stopped() {
+        let jobs = Jobs::default();
+        let up = spec(
+            "j",
+            disk(),
+            remote("s1", "web"),
+            vec![item("/a", "/b", false, false)],
+            "/",
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        assert!(jobs.add(JobView::start(&up), stop.clone(), "main"));
+        assert!(!jobs.interrupted("j"));
+        assert_eq!(jobs.cancel_session("s1"), 1);
+        assert!(stop.load(Ordering::Relaxed));
+        assert!(jobs.interrupted("j"));
+        let mut done = JobView::start(&up);
+        done.state = State::Interrupted;
+        assert_eq!(audit_exit(&done), 130);
+        assert!(audit_body(&up, &done).ends_with("interrupted: the session ended"));
+    }
+
     /// Source of this module before its tests, line comments stripped.
     fn code() -> String {
         let src = include_str!("transfers.rs").replace("\r\n", "\n");
@@ -1486,6 +2053,7 @@ mod tests {
 /// `cargo test --lib live_sftp -- --ignored` (see docs/TESTS.md).
 #[cfg(test)]
 mod live_sftp {
+    use super::tests::carry_out;
     use super::*;
     use crate::sftp::live_sftp::{connect, path_for, seed, DIR};
 
@@ -1549,6 +2117,77 @@ mod live_sftp {
 
         for dir in [&from, &to] {
             let _ = sftp::remove(&a, dir, true).await;
+        }
+    }
+
+    /// A copy between two servers cut off mid-file goes on from its checkpoint
+    /// (v1.36, ADR 0060): the client pipelines its writes, so this is where a
+    /// point told too early would leave a hole — and where the reader and the
+    /// writer are opened at an offset on a real `sftp-server`.
+    #[tokio::test]
+    #[ignore = "needs e2e/docker-compose.ssh.yml up -d"]
+    async fn a_copy_between_servers_cut_off_mid_file_goes_on_from_its_checkpoint() {
+        let (a, b) = (Arc::new(connect().await), Arc::new(connect().await));
+        let from = path_for("resume-src");
+        let to = path_for("resume-dst");
+        let size = 20 * 1024 * 1024;
+        let source: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        seed(&a, &from, &source).await;
+        let job = Spec {
+            id: "j".into(),
+            src: remote("a", "web"),
+            dst: remote("b", "db"),
+            items: vec![Item {
+                from: from.clone(),
+                to: to.clone(),
+                is_dir: false,
+                replace: false,
+            }],
+            dest_dir: DIR.to_string(),
+        };
+        let (src, dst) = (End::Remote(a.clone()), End::Remote(b.clone()));
+        let cancel = AtomicBool::new(false);
+        let cut = |view: &JobView, _minor: bool| {
+            if view.transferred >= 9 * 1024 * 1024 {
+                cancel.store(true, Ordering::Relaxed);
+            }
+        };
+        let (_, left) =
+            carry_out_from(JobView::start(&job), &job, &src, &dst, &cancel, &cut, None).await;
+        let Some(Left::Files(left)) = left else {
+            panic!("cut off mid-file, the job leaves the file: {left:?}");
+        };
+        let partial = left.files[0].1.clone().expect("a partial copy");
+        assert_eq!(partial.at, crate::partial::CHECKPOINT_STEP);
+        let mut staged = b.read(partial.tmp.clone()).await.expect("the temp is kept");
+        assert!(staged.len() as u64 >= partial.at);
+        assert_eq!(staged[..partial.at as usize], source[..partial.at as usize]);
+        // Mark a byte before the checkpoint: going on leaves it as it is.
+        staged[0] ^= 0xff;
+        seed(&b, &partial.tmp, &staged).await;
+
+        let (done, rest) = carry_out_from(
+            JobView::start(&job),
+            &job,
+            &src,
+            &dst,
+            &AtomicBool::new(false),
+            &|_, _| {},
+            Some(left),
+        )
+        .await;
+        assert_eq!(done.state, State::Done, "{:?}", done.error);
+        assert!(rest.is_none());
+        let copied = b.read(to.clone()).await.expect("read");
+        assert_eq!(copied.len(), source.len());
+        assert_eq!(copied[0], source[0] ^ 0xff);
+        assert_eq!(copied[1..], source[1..]);
+        assert!(
+            b.metadata(partial.tmp.clone()).await.is_err(),
+            "the temp became the file"
+        );
+        for path in [&from, &to] {
+            let _ = a.remove_file(path.clone()).await;
         }
     }
 

@@ -546,3 +546,73 @@ describe("K8sPanel — the Cluster view (stage 5)", () => {
     expect(within(screen.getByRole("dialog")).getByTestId("k8s-node-overview")).toHaveTextContent("Ready");
   });
 });
+
+describe("K8sPanel — a CronJob run now (ADR 0061)", () => {
+  it("asks first, then makes the Job in the CronJob's own namespace, and reloads", async () => {
+    const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+    const cron = {
+      kind: "CronJob",
+      metadata: { name: "report", namespace: "shop", uid: "uid-report", creationTimestamp: "2026-11-08T10:00:00Z" },
+      spec: { schedule: "*/5 * * * *", jobTemplate: { spec: { template: { spec: { containers: [{ image: "busybox:1.37" }] } } } } },
+      status: {},
+    };
+    answer = (args) => (args.includes("deployments,statefulsets,daemonsets,cronjobs,jobs") ? ok(JSON.stringify({ items: [cron] })) : undefined);
+    render(K8sPanel, { props: { sessionId: "run-now", visible: true, sessionReady: true } });
+    await idle();
+    await fireEvent.click(screen.getByTestId("k8s-subtab-workloads"));
+    await idle();
+    await fireEvent.click(await screen.findByTestId("k8s-workload-run-now"));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(/create job report-manual-[0-9a-z]+ --from=cronjob\/report --context staging-eu --namespace shop/);
+    expect(count("create job")).toBe(0);
+    const loads = count("cronjobs,jobs");
+    await fireEvent.click(within(dialog).getByRole("button", { name: "OK" }));
+    await idle();
+    expect(count("create job")).toBe(1);
+    expect(count("cronjobs,jobs")).toBe(loads + 1);
+  });
+});
+
+describe("K8sPanel — ConfigMaps and Secrets (ADR 0061)", () => {
+  const ok = (stdout: string) => ({ stdout, stderr: "", exitCode: 0 });
+  const maps = JSON.stringify({
+    items: [{ metadata: { namespace: "shop", name: "app", creationTimestamp: "2026-11-08T10:00:00Z" }, data: { LOG_LEVEL: "debug" } }],
+  });
+
+  it("lists both through their own reads — Secrets only by the keys template — and opens one", async () => {
+    answer = (args) =>
+      args.includes("configmaps")
+        ? ok(maps)
+        : args[2] === "secrets"
+          ? ok("shop\tcreds\tOpaque\t2026-11-08T10:00:00Z\tpassword \n")
+          : undefined;
+    render(K8sPanel, { props: { sessionId: "cfg", visible: true, sessionReady: true } });
+    await idle();
+    await fireEvent.click(screen.getByTestId("k8s-subtab-config"));
+    await idle();
+    const secretReads = calls.filter((c) => /\bsecrets?\b/i.test(c.split(" --context")[0]));
+    expect(secretReads).toHaveLength(1);
+    expect(secretReads[0]).toMatch(/^kubectl get secrets --output=go-template=\{\{range \.items\}\}/);
+    const rows = await screen.findAllByTestId("k8s-config-row");
+    expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("app"), expect.stringContaining("creds")]);
+    await fireEvent.click(rows[1]);
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByTestId("k8s-secret-note")).toBeInTheDocument();
+    expect(within(dialog).getAllByTestId("k8s-config-entry").map((e) => e.textContent?.trim())).toEqual(["password"]);
+  });
+
+  it("a cluster that refuses Secrets still shows its ConfigMaps, and says the Secrets were not read", async () => {
+    answer = (args) =>
+      args.includes("configmaps")
+        ? ok(maps)
+        : args[2] === "secrets"
+          ? { stdout: "", stderr: 'Error from server (Forbidden): secrets is forbidden: User "dev" cannot list', exitCode: 1 }
+          : undefined;
+    render(K8sPanel, { props: { sessionId: "cfg-rbac", visible: true, sessionReady: true } });
+    await idle();
+    await fireEvent.click(screen.getByTestId("k8s-subtab-config"));
+    await idle();
+    expect(await screen.findAllByTestId("k8s-config-row")).toHaveLength(1);
+    expect(screen.getByTestId("k8s-config-unread")).toHaveTextContent("Secrets could not be read: Error from server (Forbidden)");
+  });
+});
