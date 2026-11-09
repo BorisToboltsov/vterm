@@ -115,11 +115,17 @@ impl Formats {
     }
 }
 
+/// The system's own format for files of this machine: a list of where they are
+/// (`CF_HDROP`, v1.36). A number of its headers, not a registered name.
+const CF_HDROP_ID: u16 = 15;
+
 /// What a caller of the data object asked for.
 enum Asked {
     Descriptor,
     /// The contents of the file at this index; negative — "all there is".
     Contents(i32),
+    /// Files of this machine, as the list of where they are.
+    Drop,
 }
 
 /// The files of a drag, as another program sees them.
@@ -128,6 +134,9 @@ struct DataObject {
     feed: Arc<Feed>,
     formats: Formats,
     descriptor: Vec<u8>,
+    /// Files of this machine (v1.36): the `DROPFILES` block — the only format
+    /// such a drag offers. `None` — the files are a server's.
+    local: Option<Vec<u8>>,
     /// Whether what took the files may read them after the drop has returned.
     asynchronous: Cell<bool>,
     in_operation: Cell<bool>,
@@ -140,6 +149,13 @@ impl DataObject {
         if format.dwAspect != DVASPECT_CONTENT.0 {
             return Err(DV_E_FORMATETC.into());
         }
+        if self.local.is_some() {
+            return if format.cfFormat == CF_HDROP_ID && format.tymed & TYMED_HGLOBAL.0 as u32 != 0 {
+                Ok(Asked::Drop)
+            } else {
+                Err(DV_E_FORMATETC.into())
+            };
+        }
         if format.cfFormat == self.formats.descriptor && format.tymed & TYMED_HGLOBAL.0 as u32 != 0
         {
             return Ok(Asked::Descriptor);
@@ -148,6 +164,21 @@ impl DataObject {
             return Ok(Asked::Contents(format.lindex));
         }
         Err(DV_E_FORMATETC.into())
+    }
+
+    /// What `EnumFormatEtc` lists: a server's files as a descriptor and
+    /// streams, this machine's as the list of where they are.
+    fn offered(&self) -> Vec<FORMATETC> {
+        if self.local.is_none() {
+            return self.formats.offered().to_vec();
+        }
+        vec![FORMATETC {
+            cfFormat: CF_HDROP_ID,
+            ptd: std::ptr::null_mut(),
+            dwAspect: DVASPECT_CONTENT.0,
+            lindex: -1,
+            tymed: TYMED_HGLOBAL.0 as u32,
+        }]
     }
 
     /// Which file an index of the contents format names.
@@ -166,6 +197,7 @@ impl IDataObject_Impl for DataObject_Impl {
     fn GetData(&self, pformatetcin: *const FORMATETC) -> Result<STGMEDIUM> {
         match self.asked(pformatetcin)? {
             Asked::Descriptor => memory_block(&self.descriptor),
+            Asked::Drop => memory_block(self.local.as_deref().unwrap_or_default()),
             Asked::Contents(lindex) => {
                 let stream = stream_of(&self.feed, self.index(lindex)?)?;
                 Ok(STGMEDIUM {
@@ -221,7 +253,7 @@ impl IDataObject_Impl for DataObject_Impl {
             return Err(E_NOTIMPL.into());
         }
         // SAFETY: a plain array of plain structures, copied by the callee.
-        unsafe { SHCreateStdEnumFmtEtc(&self.formats.offered()) }
+        unsafe { SHCreateStdEnumFmtEtc(&self.offered()) }
     }
 
     fn DAdvise(
@@ -583,8 +615,14 @@ pub fn begin(feed: Arc<Feed>, answer: impl FnOnce(bool)) {
         return;
     };
     let let_go = Rc::new(Cell::new(false));
+    let local = feed.local_drop();
     let data: IDataObject = DataObject {
-        descriptor: descriptor_bytes(feed.items()),
+        descriptor: if local.is_some() {
+            Vec::new()
+        } else {
+            descriptor_bytes(feed.items())
+        },
+        local,
         feed: feed.clone(),
         formats,
         // After the drop, on a thread of the taker's — not inside it, with

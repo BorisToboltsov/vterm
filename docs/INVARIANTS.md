@@ -597,15 +597,15 @@ Git, Docker, k8s, сетевые пробы и метрики — **один к�
   стола слушает страница, один раз на окно (место — `pagePoint`); на терминал локальной вкладки
   вписываются пути (`quotePaths`). В другое окно — эстафетой `drag_over`, сказанное берётся
   назад (`dragEnd`). Гейт `filedrag.guard`.
-- **Файл выносится из приложения только обещанием** (ADR 0027): системе отдаётся имя,
-  содержимое читается после броска. Страница спрашивает систему у края окна один раз
-  (`drag_out_begin` в `handOver`, после `afterTelling`); пока вопрос открыт,
-  `pointerup`/`pointercancel` ждут (`afterHanding`); взяла — `systemTook` и `releaseSelection`.
-  Что можно — `dragOutBlocker` (зеркало `SUPPORTED`/`FOLDERS`), имя — только проверенное
-  (`safe_component`). macOS: обещание исполняет задание реестра по очереди (`in_turn`,
-  `KEPT_AT_ONCE`); Windows: сбой чтения потока — никогда не конец файла
-  ([feed.rs](../src-tauri/src/dragout/feed.rs)), длина — от сервера в момент начала. Гейты
-  `dragout.guard`, `a_file_leaves_the_app_only_as_a_checked_promise`.
+- **Файл сервера выносится из приложения только обещанием** (ADR 0027, 0059): системе отдаётся
+  имя, содержимое читается после броска; файл локальной вкладки — путём, проверенным бэкендом
+  (`local_items`). Систему спрашивают у края окна один раз (`drag_out_begin` в `handOver`, после
+  `afterTelling`); пока вопрос открыт, отпускание ждёт (`afterHanding`); отказ называет причину
+  бэкенда (`declinedMessage`). Что можно — `dragOutBlocker` (зеркало `SUPPORTED`/`FOLDERS`), имя —
+  только `safe_component`. macOS: обещание исполняет задание реестра по очереди (`in_turn`);
+  Windows: папка — обходом сервера при начале, целиком или никак (`flatten`, `MAX_ITEMS`); длина —
+  от сервера; сбой чтения — никогда не конец файла ([feed.rs](../src-tauri/src/dragout/feed.rs)).
+  Гейты `dragout.guard`, `a_file_leaves_the_app_only_as_a_checked_promise`.
 - **Путевая арифметика — чистая и сепаратор-осознанная** ([fspath.ts](../src/lib/files/fspath.ts)):
   корни POSIX, диска и UNC; сравнение путей на Windows — регистронезависимо. `isRoot`/`parentOf`
   — файловые, `navParent` — навигационный: выше корня диска — `DRIVES_ROOT` (`"::drives"`,

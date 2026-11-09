@@ -1,4 +1,4 @@
-// Drag-out guard (v1.14, ADR 0027).
+// Drag-out guard (v1.14, ADR 0027; folders and local files — ADR 0059).
 //
 // Files of a server are dragged onto the desktop by a drag of the system's own:
 // when they leave the window, the page hands the drag over and lets go. The
@@ -9,8 +9,8 @@
 //  1. One door. The command is called from one wrapper, the wrapper from one
 //     function of the file-drag flow (`handToSystem`, page/filedragflow) — and
 //     only after the pure model said these files can be handed over at all. A
-//     second caller would hand over files of this machine, or of a session that
-//     is down. Who imports the wrapper is the lint rule `vterm/owned-imports`;
+//     second caller would hand over files dragged in from the desktop, or of a
+//     session that is down. Who imports the wrapper is the lint rule `vterm/owned-imports`;
 //     that the flow asks the model first is its behaviour tests.
 //  2. Asked once, in order. The store asks through `handOver` only, after what
 //     was being said of the files has been heard, and says nothing more of
@@ -34,7 +34,8 @@
 //     the moment the drag begins: a listing is minutes old, and gives a link
 //     the length of its own text.
 //  7. The page and the backend agree on where this can be done, and on where a
-//     folder can be promised.
+//     folder can be promised — everywhere it can be done, since v1.36: the page
+//     holds back no folder, the backend walks one for Explorer.
 //  8. One picture at the pointer. The system draws what it carries; files it
 //     carries back over a window of the app are marked as its own, and the
 //     window draws where they would land — not a second label beside the
@@ -197,11 +198,9 @@ export function mirrorViolations(model: string, backend: string): string[] {
   const offered = /return os === "macos" \|\| os === "windows";/.test(fn(m, "dragOutOffered"));
   const supported = /pub const SUPPORTED: bool = cfg!\(any\(target_os = "macos", windows\)\);/.test(b);
   if (!offered || !supported) out.push("the page and the backend differ on where files can be dragged out");
-  const folders = /if \(os === "windows" && files\.entries\.some\(\(e\) => e\.isDir\)\) return "folders";/.test(
-    fn(m, "dragOutBlocker"),
-  );
-  const promised = /pub const FOLDERS: bool = cfg!\(target_os = "macos"\);/.test(b);
-  if (!folders || !promised) out.push("the page and the backend differ on where a folder can be promised");
+  const holdsBack = /isDir/.test(fn(m, "dragOutBlocker"));
+  const promised = /pub const FOLDERS: bool = cfg!\(any\(target_os = "macos", windows\)\);/.test(b);
+  if (holdsBack || !promised) out.push("the page and the backend differ on where a folder can be promised");
   return out;
 }
 
@@ -364,12 +363,20 @@ describe("the page and the backend agree on what can be dragged out", () => {
     expect(mirrorViolations(linux, backend)).toContain(
       "the page and the backend differ on where files can be dragged out",
     );
-    const everywhere = backend.replace(
+    const macOnly = backend.replace(
+      'pub const FOLDERS: bool = cfg!(any(target_os = "macos", windows));',
       'pub const FOLDERS: bool = cfg!(target_os = "macos");',
-      "pub const FOLDERS: bool = true;",
     );
-    expect(everywhere).not.toBe(backend);
-    expect(mirrorViolations(model, everywhere)).toContain(
+    expect(macOnly).not.toBe(backend);
+    expect(mirrorViolations(model, macOnly)).toContain(
+      "the page and the backend differ on where a folder can be promised",
+    );
+    const heldBack = model.replace(
+      '  if (files.local) return null;',
+      '  if (files.local) return null;\n  if (files.entries.some((e) => e.isDir)) return "offline";',
+    );
+    expect(heldBack).not.toBe(model);
+    expect(mirrorViolations(heldBack, backend)).toContain(
       "the page and the backend differ on where a folder can be promised",
     );
   });

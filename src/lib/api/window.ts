@@ -4,7 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit, type EventCallback, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import type { DragOutSpec } from "../files/dragout";
+import type { DragOutAnswer, DragOutSpec } from "../files/dragout";
 import type { QuitRow } from "../windows/quitsummary";
 
 /**
@@ -177,15 +177,16 @@ export function dragEnd(): Promise<void> {
 }
 
 /**
- * Files of a server have left this window: ask the system to carry them on —
- * onto the desktop, into a folder of the file manager (v1.14, ADR 0027). True
- * — it has the drag now: this page lets go, and from here on is told where the
- * files are like any other window of the app (`window://drag`). False — it
- * does not (this system cannot, the button is up, nothing can be promised) and
- * the drag stays the page's own.
+ * Files have left this window: ask the system to carry them on — onto the
+ * desktop, into a folder of the file manager (v1.14, ADR 0027; a local tab's
+ * files and a folder for Explorer since v1.36, ADR 0059). Taken — it has the
+ * drag now: this page lets go, and from here on is told where the files are
+ * like any other window of the app (`window://drag`). Not — it does not, and
+ * `why` (this system cannot, the button is up, a folder holds a link, …): the
+ * drag stays the page's own.
  */
-export function dragOutBegin(spec: DragOutSpec): Promise<boolean> {
-  return invoke<boolean>("drag_out_begin", { spec });
+export function dragOutBegin(spec: DragOutSpec): Promise<DragOutAnswer> {
+  return invoke<DragOutAnswer>("drag_out_begin", { spec });
 }
 
 // ── Moving a tab to another window ────────────────────────────────────────────

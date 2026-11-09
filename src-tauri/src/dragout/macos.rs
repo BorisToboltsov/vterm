@@ -8,6 +8,10 @@
 //! something outside the app has accepted the drop, what each file is called
 //! and — given the URL to write it to — fetches it.
 //!
+//! Files of this machine — a local tab's (v1.36, ADR 0059) — are no promise:
+//! they are handed over as the URLs of where they are, and whatever takes them
+//! copies them from there.
+//!
 //! Everything here runs on the main thread: AppKit calls the source there, and
 //! the promises are asked to be written there too (`operationQueue…`). Writing
 //! only starts a job and returns; the completion block is called back on the
@@ -275,32 +279,48 @@ pub fn begin(app: &AppHandle, window: &WebviewWindow, spec: OutSpec) -> bool {
     let mut items: Vec<Retained<NSDraggingItem>> = Vec::with_capacity(spec.items.len());
     let mut promises = Vec::with_capacity(spec.items.len());
     for (i, item) in spec.items.iter().enumerate() {
-        let kind = NSString::from_str(if item.is_dir {
-            "public.folder"
+        let dragged = if spec.local {
+            // A file of this machine: the URL of where it is (checked by
+            // `dragout::local_items` a moment ago).
+            let url = NSURL::fileURLWithPath(&NSString::from_str(&item.path));
+            NSDraggingItem::initWithPasteboardWriter(
+                NSDraggingItem::alloc(),
+                ProtocolObject::from_ref(&*url),
+            )
         } else {
-            "public.data"
-        });
-        let provider = NSFilePromiseProvider::initWithFileType_delegate(
-            NSFilePromiseProvider::alloc(),
-            &kind,
-            delegate,
-        );
-        let dragged = NSDraggingItem::initWithPasteboardWriter(
-            NSDraggingItem::alloc(),
-            ProtocolObject::from_ref(&*provider),
-        );
+            let kind = NSString::from_str(if item.is_dir {
+                "public.folder"
+            } else {
+                "public.data"
+            });
+            let provider = NSFilePromiseProvider::initWithFileType_delegate(
+                NSFilePromiseProvider::alloc(),
+                &kind,
+                delegate,
+            );
+            let dragged = NSDraggingItem::initWithPasteboardWriter(
+                NSDraggingItem::alloc(),
+                ProtocolObject::from_ref(&*provider),
+            );
+            promises.push((provider, item.clone()));
+            dragged
+        };
         // Under the pointer, each next file a step behind the one before.
         let step = (i.min(4) as f64) * 3.0;
         let frame = NSRect::new(
             NSPoint::new(in_view.x - ICON / 2.0 + step, in_view.y - ICON / 2.0 - step),
             NSSize::new(ICON, ICON),
         );
-        let picture = icon(item);
+        let picture = if spec.local {
+            // The file is here: its own icon, a preview where the system makes one.
+            NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(&item.path))
+        } else {
+            icon(item)
+        };
         let picture: &AnyObject = picture.as_ref();
         // SAFETY: the contents of a dragging frame may be an `NSImage`.
         unsafe { dragged.setDraggingFrame_contents(frame, Some(picture)) };
         items.push(dragged);
-        promises.push((provider, item.clone()));
     }
     source.ivars().promises.replace(promises);
 

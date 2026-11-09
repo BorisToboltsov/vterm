@@ -509,11 +509,16 @@ export const en = {
   "transfer.failedSome": "{failed} of {count} not transferred: {error}",
   "transfer.skipped": "Left out of the transfer — unreadable folders and links that cannot be made here: {count}",
   "filedrag.cannotPaste": "This path cannot be typed safely into this shell.",
-  "dragout.foldersNotCarried":
-    "A folder cannot be dragged into Explorer — only files. Copy it with a local tab's file panel.",
   "dragout.sessionDown": "The session is not connected — there is nothing to read the file from.",
   "dragout.declined":
     "The system could not take these files. Copy them with a local tab's file panel.",
+  "dragout.whyTooMany": "More than 500 files and folders in one drag — copy the folder with a local tab's file panel.",
+  "dragout.whyFolderLink": "The folder holds a link to a folder — copy it with a local tab's file panel.",
+  "dragout.whyUnreadable":
+    "Something in it cannot be read, or the server gives no length for it — copy it with a local tab's file panel.",
+  "dragout.whyLongPath": "A path inside the folder is longer than Explorer takes.",
+  "dragout.whyName": "A name in it cannot be given to a file on this computer.",
+  "dragout.whyGone": "The file is no longer where it was.",
   "sftp.movedMulti": "Moved {count} items to “{dest}”",
   "sftp.moveSkipped": "Skipped {count} — a name already exists at the destination",
   "sftp.dragCount": "{count} items",

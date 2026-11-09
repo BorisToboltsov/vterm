@@ -19,6 +19,12 @@
 //!    protocol is not something every file manager speaks; the way to one's own
 //!    machine there is a local tab's file panel.
 //!
+//! A folder goes to Explorer too since v1.36 (ADR 0059): Explorer is told every
+//! file before the drop, so the folder is walked on the server when the drag
+//! begins and handed over as the list of what is in it ([`flatten`]). And files
+//! of this machine — a local tab's — are handed over as they are, not promised:
+//! the system copies them from where they are ([`local_items`]).
+//!
 //! While the system has the drag, the page that began it hears nothing of the
 //! pointer. The drag's source does, and says to the app's windows what the page
 //! used to ([`crate::appwin::system_drag_moved`]): held over a window of the
@@ -26,7 +32,8 @@
 //! own drop, as before.
 
 use crate::error::AppResult;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tauri::{AppHandle, WebviewWindow};
 
 mod feed;
@@ -41,13 +48,57 @@ pub const SUPPORTED: bool = cfg!(any(target_os = "macos", windows));
 
 /// Whether a folder can be promised. macOS takes one as it takes a file — a
 /// place to write to. Explorer is told every file of a drag before it is
-/// dropped, and a folder's would have to be listed off the server for that; a
-/// folder is not dragged out there (mirror of `dragOutBlocker` in dragout.ts).
-pub const FOLDERS: bool = cfg!(target_os = "macos");
+/// dropped: since v1.36 a folder is listed off the server for that when the
+/// drag begins ([`flatten`]).
+pub const FOLDERS: bool = cfg!(any(target_os = "macos", windows));
 
 /// More than this is not promised in one drag: each item is an object of the
-/// system's, made before the drag can begin.
+/// system's, made before the drag can begin — on Windows every file and folder
+/// inside a dragged folder counts too.
 pub const MAX_ITEMS: usize = 500;
+
+/// Why the system was not handed a drag — said to the page, which tells the
+/// user when the files are let go of outside every window (v1.36).
+#[cfg_attr(not(windows), allow(dead_code))] // the walk of a folder is Windows'
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Declined {
+    /// A name this machine cannot give a file.
+    Name,
+    /// More files and folders than one drag carries ([`MAX_ITEMS`]).
+    TooMany,
+    /// A link to a folder: followed, it could lead anywhere, round in a circle too.
+    FolderLink,
+    /// Something that cannot be read, or whose length the server does not give.
+    Unreadable,
+    /// A path inside a folder longer than Explorer takes.
+    LongPath,
+    /// A file of this machine that is not there any more.
+    Gone,
+    /// The system would not take the drag (the button is up, the window is gone).
+    NotTaken,
+}
+
+/// What `drag_out_begin` answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutAnswer {
+    pub taken: bool,
+    pub why: Option<Declined>,
+}
+
+impl OutAnswer {
+    const TAKEN: Self = Self {
+        taken: true,
+        why: None,
+    };
+    fn declined(why: Declined) -> Self {
+        Self {
+            taken: false,
+            why: Some(why),
+        }
+    }
+}
 
 /// One file or folder of a server, promised to the system.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -61,7 +112,7 @@ pub struct OutItem {
     #[serde(default)]
     pub is_dir: bool,
     /// How long it is — asked of the server when the drag begins, where the
-    /// taker has to be told beforehand ([`measured`]). Never the page's word:
+    /// taker has to be told beforehand ([`flatten`]). Never the page's word:
     /// a listing is minutes old, and gives a link the length of its own text.
     #[serde(skip)]
     pub size: Option<u64>,
@@ -80,6 +131,10 @@ pub struct OutSpec {
     /// The files as a window of the app is told of them (`describeFiles`):
     /// passed on unread to the window they are held over.
     pub carried: serde_json::Value,
+    /// The files are this machine's (a local tab's panel, v1.36): handed over
+    /// as they are — `path` is where they are here — not promised.
+    #[serde(default)]
+    pub local: bool,
     /// A transfer of this drag was stopped: the promises not yet begun are not
     /// kept ([`in_turn`]). Shared by every copy of the drag's description.
     #[serde(skip)]
@@ -105,31 +160,229 @@ pub fn promised(items: &[OutItem], folders: bool) -> Vec<OutItem> {
         .collect()
 }
 
-/// What the server says of an item at this moment: whether it is a folder and
-/// how long it is. `None` — it could not be asked, or its length is not one a
-/// reader can go by ([`sizeless`]).
-pub type Fact = Option<(bool, u64)>;
+// ── A folder for Explorer (v1.36, ADR 0059) ──────────────────────────────────
 
-/// The files of a drag with the lengths the server gives them now — for a
-/// taker that is told how long each file is before it reads one (Explorer).
-/// `None` — the drag is not begun: something in it is a folder after all (a
-/// link to one), cannot be read, or has no length to go by. Not "the rest of
-/// it": half of what was picked up would be left behind without a word.
+/// What the walk saw of one entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seen {
+    /// A file, and how long it is.
+    File(u64),
+    Folder,
+    /// A link to a folder.
+    FolderLink,
+    /// It could not be read, or has no length to go by.
+    Unreadable,
+}
+
+/// One entry of a folder of the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub name: String,
+    pub seen: Seen,
+}
+
+/// What a walk of the dragged folders found: each folder's entries by its path
+/// on the server; `None` — it could not be listed.
+pub type Listings = HashMap<String, Option<Vec<Entry>>>;
+
+/// Most UTF-16 units of a path inside a dragged folder: what the name field of
+/// a `FILEDESCRIPTORW` holds (`feed::NAME_UNITS`).
 #[cfg_attr(not(windows), allow(dead_code))]
-pub fn measured(items: Vec<OutItem>, facts: Vec<Fact>) -> Option<Vec<OutItem>> {
-    if items.len() != facts.len() {
-        return None;
+pub const PATH_UNITS: usize = 259;
+
+/// The path of `name` inside the folder it was found in, on the server.
+pub fn remote_child(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+/// The items of a drag as Explorer is told of them: every file with its length
+/// and every folder, a folder before what is in it, each named by its path
+/// inside the drag (`site/conf/a.conf` — `feed` writes the separators Windows'
+/// way). `top` are the dragged items, `seen` what the server says of each of
+/// them now; `listings` what the walk found in the folders.
+///
+/// Whole or not at all: a link to a folder, something unreadable, a name this
+/// machine cannot give a file, a path too long, more than one drag carries —
+/// and the drag is not begun, with the reason. Half of a folder in Explorer,
+/// looking like all of it, would be worse than none.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn flatten(
+    top: &[OutItem],
+    seen: &[Seen],
+    listings: &Listings,
+) -> Result<Vec<OutItem>, Declined> {
+    if top.len() != seen.len() {
+        return Err(Declined::Unreadable);
+    }
+    let mut out = Vec::new();
+    fn add(
+        out: &mut Vec<OutItem>,
+        listings: &Listings,
+        path: &str,
+        name: &str,
+        seen: Seen,
+    ) -> Result<(), Declined> {
+        if !crate::localfile::safe_component(name.rsplit('/').next().unwrap_or(name)) {
+            return Err(Declined::Name);
+        }
+        if name.encode_utf16().count() > PATH_UNITS {
+            return Err(Declined::LongPath);
+        }
+        if out.len() >= MAX_ITEMS {
+            return Err(Declined::TooMany);
+        }
+        match seen {
+            Seen::File(size) => out.push(OutItem {
+                path: path.to_string(),
+                name: name.to_string(),
+                is_dir: false,
+                size: Some(size),
+            }),
+            Seen::FolderLink => return Err(Declined::FolderLink),
+            Seen::Unreadable => return Err(Declined::Unreadable),
+            Seen::Folder => {
+                out.push(OutItem {
+                    path: path.to_string(),
+                    name: name.to_string(),
+                    is_dir: true,
+                    size: None,
+                });
+                let Some(Some(entries)) = listings.get(path) else {
+                    return Err(Declined::Unreadable);
+                };
+                for entry in entries {
+                    let child = remote_child(path, &entry.name);
+                    add(
+                        out,
+                        listings,
+                        &child,
+                        &format!("{name}/{}", entry.name),
+                        entry.seen,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+    for (item, seen) in top.iter().zip(seen) {
+        add(&mut out, listings, &item.path, &item.name, *seen)?;
+    }
+    Ok(out)
+}
+
+/// What the server says of `path` now, following a link: a file with its
+/// length (an "empty" one is read once — the server gives no length to what it
+/// makes up as it is read, [`sizeless`]), a folder, or neither. `link` — the
+/// entry is a link, and a folder behind it is a [`Seen::FolderLink`].
+#[cfg_attr(not(windows), allow(dead_code))]
+async fn seen_of(sftp: &russh_sftp::client::SftpSession, path: &str, link: bool) -> Seen {
+    use tokio::io::AsyncReadExt;
+    let Ok(said) = sftp.metadata(path.to_string()).await else {
+        return Seen::Unreadable;
+    };
+    if said.is_dir() {
+        return if link { Seen::FolderLink } else { Seen::Folder };
+    }
+    if !said.is_regular() {
+        return Seen::Unreadable;
+    }
+    let Some(size) = said.size else {
+        return Seen::Unreadable;
+    };
+    if size == 0 {
+        let Ok(mut file) = sftp.open(path.to_string()).await else {
+            return Seen::Unreadable;
+        };
+        let mut byte = [0u8; 1];
+        match file.read(&mut byte).await {
+            Ok(first) if !sizeless(size, first) => {}
+            _ => return Seen::Unreadable,
+        }
+    }
+    Seen::File(size)
+}
+
+/// Walk the dragged items on the server: what each is, and what is in each
+/// folder, down to the bottom — stopping as soon as more turned up than one
+/// drag carries.
+#[cfg_attr(not(windows), allow(dead_code))]
+async fn survey(
+    app: &AppHandle,
+    session_id: &str,
+    items: &[OutItem],
+) -> Result<(Vec<Seen>, Listings), Declined> {
+    let session = crate::session_arc_of(app, session_id)
+        .await
+        .map_err(|_| Declined::Unreadable)?;
+    let sftp = session.sftp().await.map_err(|_| Declined::Unreadable)?;
+    let mut seen = Vec::with_capacity(items.len());
+    let mut folders = Vec::new();
+    for item in items {
+        // A dragged entry the listing called a file but is a folder is a link to one.
+        let now = seen_of(&sftp, &item.path, !item.is_dir).await;
+        if now == Seen::Folder {
+            folders.push(item.path.clone());
+        }
+        seen.push(now);
+    }
+    let mut listings = Listings::new();
+    let mut counted = items.len();
+    while let Some(dir) = folders.pop() {
+        let Ok(listed) = sftp.read_dir(dir.clone()).await else {
+            listings.insert(dir, None);
+            continue;
+        };
+        let mut entries = Vec::new();
+        for entry in listed {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            counted += 1;
+            if counted > MAX_ITEMS {
+                return Err(Declined::TooMany);
+            }
+            let path = remote_child(&dir, &name);
+            let kind = entry.file_type();
+            let now = if kind.is_dir() {
+                Seen::Folder
+            } else {
+                seen_of(&sftp, &path, kind.is_symlink()).await
+            };
+            if now == Seen::Folder {
+                folders.push(path);
+            }
+            entries.push(Entry { name, seen: now });
+        }
+        listings.insert(dir, Some(entries));
+    }
+    Ok((seen, listings))
+}
+
+/// Files of this machine to hand to the system as they are (v1.36): each must
+/// be an absolute path that is there now — the page's word is checked, never
+/// taken. A drag of a file that went is not begun.
+pub fn local_items(items: &[OutItem]) -> Result<Vec<OutItem>, Declined> {
+    if items.len() > MAX_ITEMS {
+        return Err(Declined::TooMany);
     }
     items
-        .into_iter()
-        .zip(facts)
-        .map(|(item, fact)| match fact {
-            Some((false, size)) => Some(OutItem {
-                size: Some(size),
-                is_dir: false,
-                ..item
-            }),
-            _ => None,
+        .iter()
+        .map(|item| {
+            let path = std::path::Path::new(&item.path);
+            if !path.is_absolute() {
+                return Err(Declined::Gone);
+            }
+            let meta = std::fs::metadata(path).map_err(|_| Declined::Gone)?;
+            Ok(OutItem {
+                is_dir: meta.is_dir(),
+                size: meta.is_file().then_some(meta.len()),
+                ..item.clone()
+            })
         })
         .collect()
 }
@@ -141,47 +394,6 @@ pub fn measured(items: Vec<OutItem>, facts: Vec<Fact>) -> Option<Vec<OutItem>> {
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn sizeless(size: u64, first: usize) -> bool {
     size == 0 && first > 0
-}
-
-/// How many files are asked about at once.
-#[cfg_attr(not(windows), allow(dead_code))]
-const ASKED_AT_ONCE: usize = 32;
-
-/// Ask the server about each item ([`Fact`]), following links.
-#[cfg_attr(not(windows), allow(dead_code))]
-async fn facts(app: &AppHandle, session_id: &str, items: &[OutItem]) -> Vec<Fact> {
-    use tokio::io::AsyncReadExt;
-    let Ok(session) = crate::session_arc_of(app, session_id).await else {
-        return vec![None; items.len()];
-    };
-    let Ok(sftp) = session.sftp().await else {
-        return vec![None; items.len()];
-    };
-    let mut all = Vec::with_capacity(items.len());
-    for group in items.chunks(ASKED_AT_ONCE) {
-        let asked = group.iter().map(|item| {
-            let sftp = sftp.clone();
-            async move {
-                let said = sftp.metadata(item.path.clone()).await.ok()?;
-                if said.is_dir() {
-                    return Some((true, 0));
-                }
-                let size = said.size?;
-                if size == 0 {
-                    // Empty — or made up as it is read: one read tells.
-                    let mut file = sftp.open(item.path.clone()).await.ok()?;
-                    let mut byte = [0u8; 1];
-                    let first = file.read(&mut byte).await.ok()?;
-                    if sizeless(size, first) {
-                        return None;
-                    }
-                }
-                Some((false, size))
-            }
-        });
-        all.extend(futures_util::future::join_all(asked).await);
-    }
-    all
 }
 
 /// How many promises are kept at once. Whatever took the files asks for every
@@ -302,31 +514,47 @@ pub(crate) async fn fetch(
 }
 
 /// Files have left the window they were dragged from: hand the drag to the
-/// system. True — it has it now, and the page lets go; false — it does not
-/// (this system cannot, the button is no longer down, nothing can be promised),
-/// and the page carries on as it did.
+/// system. Taken — it has it now, and the page lets go; not — it does not, and
+/// why (this system cannot, the button is no longer down, something cannot be
+/// handed over), and the page carries on as it did.
 #[tauri::command]
 pub async fn drag_out_begin(
     app: AppHandle,
     window: WebviewWindow,
     spec: OutSpec,
-) -> AppResult<bool> {
+) -> AppResult<OutAnswer> {
     if !SUPPORTED {
-        return Ok(false);
+        return Ok(OutAnswer::declined(Declined::NotTaken));
     }
-    let items = promised(&spec.items, FOLDERS);
-    // The session has to be there to read from — asked now, not at the drop.
-    if items.is_empty() || crate::session_arc_of(&app, &spec.session).await.is_err() {
-        return Ok(false);
-    }
-    // Explorer is told how long each file is before it reads one.
-    #[cfg(windows)]
-    let items = {
-        let said = facts(&app, &spec.session, &items).await;
-        match measured(items, said) {
-            Some(items) => items,
-            None => return Ok(false),
+    let items = if spec.local {
+        // This machine's own files: handed over from where they are.
+        match local_items(&spec.items) {
+            Ok(items) => items,
+            Err(why) => return Ok(OutAnswer::declined(why)),
         }
+    } else {
+        let items = promised(&spec.items, FOLDERS);
+        if items.len() != spec.items.len().min(MAX_ITEMS) {
+            return Ok(OutAnswer::declined(Declined::Name));
+        }
+        // The session has to be there to read from — asked now, not at the drop.
+        if items.is_empty() || crate::session_arc_of(&app, &spec.session).await.is_err() {
+            return Ok(OutAnswer::declined(Declined::Unreadable));
+        }
+        // Explorer is told every file and how long it is before it reads one:
+        // a folder is walked now, on the server.
+        #[cfg(windows)]
+        let items = {
+            let flat = match survey(&app, &spec.session, &items).await {
+                Ok((seen, listings)) => flatten(&items, &seen, &listings),
+                Err(why) => Err(why),
+            };
+            match flat {
+                Ok(items) => items,
+                Err(why) => return Ok(OutAnswer::declined(why)),
+            }
+        };
+        items
     };
     let spec = OutSpec { items, ..spec };
     // The system's drag begins on the thread that owns the window.
@@ -335,7 +563,11 @@ pub async fn drag_out_begin(
     let source = window.clone();
     app.run_on_main_thread(move || begin(&handle, &source, spec, answer))
         .map_err(|e| crate::error::AppError::Message(format!("drag out: {e}")))?;
-    Ok(began.await.unwrap_or(false))
+    Ok(if began.await.unwrap_or(false) {
+        OutAnswer::TAKEN
+    } else {
+        OutAnswer::declined(Declined::NotTaken)
+    })
 }
 
 /// Whether the system has the drag — said as soon as it is known, which on
@@ -416,6 +648,7 @@ mod tests {
             items: vec![],
             carried: serde_json::Value::Null,
             stopped: Default::default(),
+            local: false,
         };
         let job = fetch_spec(
             &spec,
@@ -527,24 +760,149 @@ mod tests {
         assert_eq!(in_turn(&turns, &other, keep(Kept::Done)).await, Ok(()));
     }
 
-    #[test]
-    fn a_taker_told_lengths_beforehand_gets_the_server_s_own() {
-        let items = vec![item("a.conf", false), item("b.log", false)];
-        let sized = measured(items, vec![Some((false, 120)), Some((false, 0))]).unwrap();
-        assert_eq!(sized[0].size, Some(120));
-        // An empty file is a file: its length is nought, and that is known.
-        assert_eq!(sized[1].size, Some(0));
+    fn top(path: &str, name: &str, is_dir: bool) -> OutItem {
+        OutItem {
+            path: path.into(),
+            name: name.into(),
+            is_dir,
+            size: None,
+        }
+    }
+
+    fn entry(name: &str, seen: Seen) -> Entry {
+        Entry {
+            name: name.into(),
+            seen,
+        }
     }
 
     #[test]
-    fn a_drag_with_something_that_cannot_be_measured_is_not_begun() {
-        let two = || vec![item("a.conf", false), item("b", false)];
-        // Unreadable, or with no length to go by.
-        assert!(measured(two(), vec![Some((false, 1)), None]).is_none());
-        // A folder after all: the listing showed a link.
-        assert!(measured(two(), vec![Some((false, 1)), Some((true, 0))]).is_none());
-        // Fewer answers than questions is not an answer.
-        assert!(measured(two(), vec![Some((false, 1))]).is_none());
+    fn a_folder_goes_to_explorer_as_what_is_in_it_a_folder_before_its_files() {
+        let items = vec![
+            top("/srv/site", "site", true),
+            top("/srv/a.conf", "a.conf", false),
+        ];
+        let mut listings = Listings::new();
+        listings.insert(
+            "/srv/site".into(),
+            Some(vec![
+                entry("conf", Seen::Folder),
+                entry("index.html", Seen::File(120)),
+                entry("empty", Seen::Folder),
+            ]),
+        );
+        listings.insert(
+            "/srv/site/conf".into(),
+            Some(vec![entry("nginx.conf", Seen::File(0))]),
+        );
+        listings.insert("/srv/site/empty".into(), Some(vec![]));
+        let flat = flatten(&items, &[Seen::Folder, Seen::File(7)], &listings).unwrap();
+        let shown: Vec<(&str, &str, bool, Option<u64>)> = flat
+            .iter()
+            .map(|i| (i.path.as_str(), i.name.as_str(), i.is_dir, i.size))
+            .collect();
+        assert_eq!(
+            shown,
+            vec![
+                ("/srv/site", "site", true, None),
+                ("/srv/site/conf", "site/conf", true, None),
+                (
+                    "/srv/site/conf/nginx.conf",
+                    "site/conf/nginx.conf",
+                    false,
+                    Some(0)
+                ),
+                ("/srv/site/index.html", "site/index.html", false, Some(120)),
+                // An empty folder is made too.
+                ("/srv/site/empty", "site/empty", true, None),
+                ("/srv/a.conf", "a.conf", false, Some(7)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_folder_goes_whole_or_not_at_all_and_says_why() {
+        let site = || vec![top("/srv/site", "site", true)];
+        let with = |entries: Vec<Entry>| {
+            let mut listings = Listings::new();
+            listings.insert("/srv/site".into(), Some(entries));
+            listings
+        };
+        let flat = |entries| flatten(&site(), &[Seen::Folder], &with(entries));
+        assert_eq!(
+            flat(vec![entry("logs", Seen::FolderLink)]),
+            Err(Declined::FolderLink)
+        );
+        assert_eq!(
+            flat(vec![entry("cpuinfo", Seen::Unreadable)]),
+            Err(Declined::Unreadable)
+        );
+        // A name from the server that this machine cannot give a file.
+        assert_eq!(flat(vec![entry("..", Seen::File(1))]), Err(Declined::Name));
+        assert_eq!(
+            flat(vec![entry(&"x".repeat(300), Seen::File(1))]),
+            Err(Declined::LongPath)
+        );
+        let many: Vec<Entry> = (0..MAX_ITEMS)
+            .map(|i| entry(&format!("f{i}"), Seen::File(1)))
+            .collect();
+        assert_eq!(flat(many), Err(Declined::TooMany));
+        // A folder that could not be listed, and one the walk never reached.
+        let mut unlisted = Listings::new();
+        unlisted.insert("/srv/site".into(), None);
+        assert_eq!(
+            flatten(&site(), &[Seen::Folder], &unlisted),
+            Err(Declined::Unreadable)
+        );
+        assert_eq!(
+            flatten(&site(), &[Seen::Folder], &Listings::new()),
+            Err(Declined::Unreadable)
+        );
+        // A dragged "file" that is a link to a folder, and fewer answers than items.
+        assert_eq!(
+            flatten(
+                &[top("/srv/l", "l", false)],
+                &[Seen::FolderLink],
+                &Listings::new()
+            ),
+            Err(Declined::FolderLink)
+        );
+        assert_eq!(
+            flatten(&site(), &[], &Listings::new()),
+            Err(Declined::Unreadable)
+        );
+    }
+
+    #[test]
+    fn a_file_of_this_machine_is_handed_over_only_when_it_is_there() {
+        let dir = std::env::temp_dir().join(format!("vterm-dragout-local-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let at = |p: &std::path::Path| top(&p.to_string_lossy(), "x", false);
+        let items = local_items(&[at(&file), at(&dir)]).unwrap();
+        assert_eq!((items[0].is_dir, items[0].size), (false, Some(5)));
+        assert!(items[1].is_dir);
+        assert_eq!(local_items(&[at(&dir.join("gone"))]), Err(Declined::Gone));
+        assert_eq!(
+            local_items(&[top("relative/a.txt", "a.txt", false)]),
+            Err(Declined::Gone)
+        );
+        let many: Vec<OutItem> = (0..=MAX_ITEMS).map(|_| at(&file)).collect();
+        assert_eq!(local_items(&many), Err(Declined::TooMany));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_page_is_told_whether_the_system_took_the_drag_and_why_not() {
+        assert_eq!(
+            serde_json::to_value(OutAnswer::TAKEN).unwrap(),
+            serde_json::json!({"taken": true, "why": null})
+        );
+        assert_eq!(
+            serde_json::to_value(OutAnswer::declined(Declined::FolderLink)).unwrap(),
+            serde_json::json!({"taken": false, "why": "folderLink"})
+        );
     }
 
     #[test]
@@ -628,6 +986,22 @@ mod tests {
         // The length a taker is told is the server's, never the page's.
         if !block_of(&code, "pub struct OutItem").contains("#[serde(skip)]\n    pub size:") {
             faults.push("a length the page claims would be taken");
+        }
+        // Files of this machine (v1.36): the page's paths are checked — absolute,
+        // there now — before anything is handed over.
+        if !in_order(body, "if spec.local {", "local_items(&spec.items)")
+            || !in_order(body, "local_items(&spec.items)", "begin(&handle")
+        {
+            faults.push("files of this machine are handed over unchecked");
+        }
+        // A folder for Explorer: walked on the server and flattened, whole or not at all.
+        if !in_order(
+            body,
+            "survey(&app, &spec.session, &items)",
+            "flatten(&items, &seen, &listings)",
+        ) || !in_order(body, "flatten(&items, &seen, &listings)", "begin(&handle")
+        {
+            faults.push("a folder is handed to Explorer without being walked");
         }
         faults
     }
@@ -782,6 +1156,21 @@ mod tests {
             "#[serde(default)]\n    pub size:",
         );
         assert!(command_faults(&claimed).contains(&"a length the page claims would be taken"));
+        let trusted = broken(
+            dragout,
+            "match local_items(&spec.items) {",
+            "match Ok::<_, Declined>(spec.items.clone()) {",
+        );
+        assert!(
+            command_faults(&trusted).contains(&"files of this machine are handed over unchecked")
+        );
+        let unwalked = broken(
+            dragout,
+            "Ok((seen, listings)) => flatten(&items, &seen, &listings),",
+            "Ok((_seen, _listings)) => Ok(items.clone()),",
+        );
+        assert!(command_faults(&unwalked)
+            .contains(&"a folder is handed to Explorer without being walked"));
 
         let late = broken(windows, "    answer(true);\n", "");
         assert!(windows_faults(&late).contains(&"the page is answered only when the drag is over"));
