@@ -1758,8 +1758,8 @@ mod tests {
 
     /// A file whose every byte says where it is — a copy started over, or one
     /// stitched at the wrong place, does not come out equal.
-    fn patterned(len: usize, salt: u8) -> Vec<u8> {
-        (0..len).map(|i| (i % 251) as u8 ^ salt).collect()
+    fn patterned(len: usize, xor_mask: u8) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8 ^ xor_mask).collect()
     }
 
     fn temps(dir: &Path) -> Vec<String> {
