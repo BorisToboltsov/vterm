@@ -1038,14 +1038,17 @@ mod live_kube {
         let keys = format!("--output=go-template={SECRET_KEYS_TEMPLATE}");
         let secrets = ok(&scoped(&["get", "secrets", &keys])).await;
         let line = format!("{}\tapp-secret\tOpaque\t", ns.name);
-        assert!(secrets.stdout.contains(&line), "{}", secrets.stdout);
-        assert!(secrets.stdout.contains("\ttoken \n"), "{}", secrets.stdout);
+        // A failed check must not print the response it is checking for leaked values.
+        assert!(
+            secrets.stdout.contains(&line),
+            "the stand's Secret is missing"
+        );
+        assert!(
+            secrets.stdout.contains("\ttoken \n"),
+            "the token key is missing"
+        );
         for value in ["vterm-stand-token", "dnRlcm0tc3RhbmQtdG9rZW4"] {
-            assert!(
-                !secrets.stdout.contains(value),
-                "a value was read: {}",
-                secrets.stdout
-            );
+            assert!(!secrets.stdout.contains(value), "a Secret value was read");
         }
 
         // Going back: the stuck rollout, to the revision that worked.
