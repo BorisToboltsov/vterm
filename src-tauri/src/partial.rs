@@ -371,9 +371,12 @@ mod tests {
     #[tokio::test]
     async fn a_temp_is_opened_at_its_checkpoint_and_made_anew_from_zero() {
         use tokio::io::AsyncWriteExt;
-        let dir = std::env::temp_dir().join(format!("vterm-partial-{}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.unwrap();
-        let tmp = dir.join(".a.vterm-tmp-1").to_string_lossy().into_owned();
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = dir
+            .path()
+            .join(".a.vterm-tmp-1")
+            .to_string_lossy()
+            .into_owned();
         tokio::fs::write(&tmp, b"0123456789").await.unwrap();
         let mut at = local_writer(&tmp, 4).await.unwrap();
         at.write_all(b"ab").await.unwrap();
@@ -386,6 +389,5 @@ mod tests {
         anew.flush().await.unwrap();
         drop(anew);
         assert_eq!(tokio::fs::read(&tmp).await.unwrap(), b"x");
-        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

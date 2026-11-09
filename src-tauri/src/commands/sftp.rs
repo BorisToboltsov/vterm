@@ -838,10 +838,12 @@ mod tests {
 
     #[test]
     fn a_sync_run_follows_its_session_not_the_window_that_started_it() {
+        // A checkout on Windows has CRLF line ends; the body is cut at "\n}\n".
         let src = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/sftp.rs"),
         )
-        .unwrap();
+        .unwrap()
+        .replace("\r\n", "\n");
         let live = src.split("#[cfg(test)]").next().unwrap();
         assert_eq!(runs_held_by_a_window(live), Vec::<&str>::new());
         let back = live.replacen(

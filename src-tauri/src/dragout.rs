@@ -876,8 +876,8 @@ mod tests {
 
     #[test]
     fn a_file_of_this_machine_is_handed_over_only_when_it_is_there() {
-        let dir = std::env::temp_dir().join(format!("vterm-dragout-local-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().to_path_buf();
         let file = dir.join("a.txt");
         std::fs::write(&file, b"hello").unwrap();
         let at = |p: &std::path::Path| top(&p.to_string_lossy(), "x", false);
@@ -891,7 +891,7 @@ mod tests {
         );
         let many: Vec<OutItem> = (0..=MAX_ITEMS).map(|_| at(&file)).collect();
         assert_eq!(local_items(&many), Err(Declined::TooMany));
-        std::fs::remove_dir_all(&dir).unwrap();
+        drop(scratch);
     }
 
     #[test]

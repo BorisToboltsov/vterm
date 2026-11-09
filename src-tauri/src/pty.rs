@@ -382,8 +382,8 @@ mod tests {
 
     #[test]
     fn a_shell_starts_in_the_folder_asked_for_only_when_it_is_there() {
-        let dir = std::env::temp_dir().join(format!("vterm-startdir-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let dir = scratch.path().to_path_buf();
         let file = dir.join("not-a-folder");
         std::fs::write(&file, b"x").unwrap();
         let home = Some(PathBuf::from("/home/someone"));
@@ -402,7 +402,6 @@ mod tests {
             assert_eq!(start_dir(asked, home.clone()), home, "{asked:?}");
         }
         assert_eq!(start_dir(None, None), None);
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A real shell behind a real PTY, its output held while its tab "moves":
