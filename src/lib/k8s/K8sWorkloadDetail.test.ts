@@ -160,6 +160,46 @@ describe("K8sWorkloadDetail (stage 4)", () => {
   });
 });
 
+describe("K8sWorkloadDetail — going back, running now (ADR 0061)", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("offers each revision but the current one to roll back to, and waits while a change is under way", async () => {
+    const onRollback = vi.fn();
+    const { rerender } = render(K8sWorkloadDetail, { props: props({ onRollback }) });
+    await vi.advanceTimersByTimeAsync(0);
+    const [rev2, rev1] = screen.getAllByTestId("k8s-work-revision");
+    expect(rev2.querySelector("[data-testid=k8s-work-rollback]")).toBeNull();
+    const back = rev1.querySelector("[data-testid=k8s-work-rollback]") as HTMLButtonElement;
+    expect(back).toHaveAttribute("aria-label", "Roll back to #1");
+    await fireEvent.click(back);
+    expect(onRollback).toHaveBeenCalledWith(expect.objectContaining({ revision: 1, images: ["busybox:1.37"] }));
+    await rerender({ busy: true });
+    expect(screen.getByTestId("k8s-work-rollback")).toBeDisabled();
+  });
+
+  it("offers nothing to roll back to where nobody can do it", async () => {
+    render(K8sWorkloadDetail, { props: props() });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(screen.queryByTestId("k8s-work-rollback")).toBeNull();
+  });
+
+  it("runs a CronJob now from its runs", async () => {
+    const onRunNow = vi.fn();
+    const cron = {
+      kind: "CronJob",
+      metadata: { name: "report", namespace: "vterm-stand", uid: "uid-report" },
+      spec: { schedule: "*/1 * * * *", jobTemplate: { spec: { template: { spec: { containers: [{ image: "busybox:1.37" }] } } } } },
+      status: {},
+    };
+    render(K8sWorkloadDetail, {
+      props: props({ workload: { ...rollout, kind: "CronJob", name: "report", scalable: false }, detail: parseWorkloadDetail(cron), onRunNow }),
+    });
+    await fireEvent.click(screen.getByTestId("k8s-work-run-now"));
+    expect(onRunNow).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("K8sWorkloadDetail — its application (stage 6)", () => {
   it("says what application it is part of, which Helm release and chart, which version", () => {
     const helm = {

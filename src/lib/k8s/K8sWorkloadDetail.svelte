@@ -8,6 +8,7 @@
   // into a `SidePane` beside the list. It owns no dialog itself — it stands inside
   // the panel's query container (`panelcontainer.guard`).
   import CopyButton from "../ui/CopyButton.svelte";
+  import Icon from "../ui/Icon.svelte";
   import { tooltip } from "../actions/tooltip";
   import { compactAge } from "../ui/age";
   import {
@@ -42,6 +43,9 @@
     tab = $bindable("overview"),
     runQuery,
     onOpenPod,
+    busy = false,
+    onRollback,
+    onRunNow,
   }: {
     /** On screen right now: asks and re-polls only then. */
     active?: boolean;
@@ -57,6 +61,12 @@
     runQuery: (bareArgs: string[], namespace: string, timeout?: number) => Promise<KubeOutput>;
     /** Open one of its pods in the Pods view. */
     onOpenPod: (pod: K8sPod) => void;
+    /** A change is under way: the buttons that make one wait. */
+    busy?: boolean;
+    /** Roll the Deployment back to this revision (ADR 0061) — asked about first. */
+    onRollback?: (revision: K8sRevision) => void;
+    /** Make a Job of the CronJob now (ADR 0061) — asked about first. */
+    onRunNow?: () => void;
   } = $props();
 
   const SECTION = "mb-1 mt-3 flex items-center gap-1.5 text-caption uppercase tracking-wider text-muted";
@@ -307,6 +317,19 @@
                 <span class="min-w-0 break-all font-mono text-caption text-text/85">{r.images.join(", ")}</span>
                 <span class="tabular-nums text-caption {r.ready < r.desired ? 'text-warn' : 'text-muted'}">{r.ready}/{r.desired}</span>
                 <span class="ml-auto font-mono text-caption text-muted">{r.age}</span>
+                {#if !r.current && onRollback}
+                  <button
+                    type="button"
+                    class="shrink-0 self-center rounded p-0.5 text-muted hover:bg-edge hover:text-text disabled:opacity-40"
+                    disabled={busy}
+                    use:tooltip={t("k8s.rollbackTo", { revision: r.revision })}
+                    aria-label={t("k8s.rollbackTo", { revision: r.revision })}
+                    onclick={() => onRollback?.(r)}
+                    data-testid="k8s-work-rollback"
+                  >
+                    <Icon name="history" size={12} />
+                  </button>
+                {/if}
               </div>
             {/each}
           {/if}
@@ -315,7 +338,20 @@
 
       {#if w.kind === "CronJob"}
         <section data-testid="k8s-work-jobs">
-          <h4 class={SECTION}>{t("k8s.jobs")} <span class="tabular-nums">{jobs.length}</span></h4>
+          <h4 class={SECTION}>
+            {t("k8s.jobs")} <span class="tabular-nums">{jobs.length}</span>
+            {#if onRunNow}
+              <button
+                type="button"
+                class="ml-auto inline-flex items-center gap-1 rounded px-1 normal-case tracking-normal text-accent hover:bg-edge disabled:opacity-40"
+                disabled={busy}
+                onclick={() => onRunNow?.()}
+                data-testid="k8s-work-run-now"
+              >
+                <Icon name="play" size={11} />{t("k8s.runNow")}
+              </button>
+            {/if}
+          </h4>
           {#if jobs.length === 0}
             <p class="text-muted">{t("k8s.noJobs")}</p>
           {:else}

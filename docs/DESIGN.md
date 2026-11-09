@@ -562,6 +562,9 @@ min-w-0 flex-1`) и счётчик — и кнопки `Aa`/`W`/`.*`, стрел
   перенос (ADR 0060): вместо процента — `text-warn` «прерван» / «не завершён», полоса `bg-warn`
   на месте обрыва, рядом «Продолжить» (`play`, `text-accent hover:bg-accent hover:text-white`) и
   «Убрать» (`close`, `text-muted hover:bg-edge hover:text-text`).
+- **Значение, похожее на секрет** (ConfigMap, ADR 0061): `••••••` `text-muted` вместо значения, рядом
+  кнопка-глаз (`eye`/`eyeOff`, `text-muted hover:bg-edge`) — по одному ключу; копирование — только
+  показанного. Secret — ключи без значений и строка `text-caption text-muted`, почему их нет.
 - **Третий ответ в `ConfirmDialog`** (`altLabel`): между «Отмена» и подтверждением —
   безопасный путь («Пропустить существующие»), кнопка `bg-edge hover:bg-accent
   hover:text-panel-alt`, как вторичные кнопки окна синхронизации.

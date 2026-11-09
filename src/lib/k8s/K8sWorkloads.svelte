@@ -10,6 +10,7 @@
   import {
     scaleArgs,
     rolloutRestartArgs,
+    runNowArgs,
     deleteArgs,
     type K8sWorkload,
   } from "./k8s";
@@ -81,6 +82,9 @@
       { icon: "note", label: t("k8s.describe"), onSelect: () => onDescribe(kind, w.name, w.namespace) },
       { icon: "braces", label: t("k8s.yaml"), onSelect: () => onYaml(kind, w.name, w.namespace) },
     ];
+    if (w.kind === "CronJob") {
+      items.push({ icon: "play", label: t("k8s.runNow"), onSelect: () => runNow(w) });
+    }
     if (canRollout(w)) {
       items.push({
         icon: "refresh",
@@ -94,6 +98,11 @@
       { icon: "trash", label: t("k8s.delete"), danger: true, onSelect: () => run(deleteArgs(w.kind, w.name), w.namespace, { successKey: "k8s.deleted" }) },
     );
     return items;
+  }
+
+  /** A Job of the CronJob, made now (ADR 0061) — the panel asks first. */
+  function runNow(w: K8sWorkload) {
+    void run(runNowArgs(w.name), w.namespace, { successKey: "k8s.runNowStarted" });
   }
 
   function scale(w: K8sWorkload, delta: number) {
@@ -181,6 +190,18 @@
               onclick={() => scale(w, 1)}
             >
               <Icon name="plus" size={14} />
+            </button>
+          {/if}
+          {#if w.kind === "CronJob"}
+            <button
+              class="rounded p-1 hover:bg-edge hover:text-text disabled:opacity-40"
+              disabled={busy}
+              use:tooltip={t("k8s.runNow")}
+              aria-label={t("k8s.runNow")}
+              onclick={() => runNow(w)}
+              data-testid="k8s-workload-run-now"
+            >
+              <Icon name="play" size={13} />
             </button>
           {/if}
           {#if canRollout(w)}

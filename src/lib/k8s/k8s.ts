@@ -173,6 +173,31 @@ export function rolloutRestartArgs(kind: string, name: string): string[] {
   return ["rollout", "restart", `${kind}/${name}`];
 }
 
+// Going back and running by hand (v1.36, ADR 0061) — the only other changes the
+// backend lets through (`kube::check_args`): a Deployment to one of its revisions,
+// and a CronJob's Job made now.
+export function rollbackArgs(name: string, revision: number): string[] {
+  return ["rollout", "undo", `deployment/${name}`, `--to-revision=${Math.max(0, Math.floor(revision))}`];
+}
+
+/** The longest name a Job may have: it is a label value of its pods. */
+const JOB_NAME_MAX = 63;
+
+/**
+ * The name of a Job made by hand from a CronJob: `<cronjob>-manual-<time>`, as
+ * kubectl's own help names one — told apart from the schedule's runs at a glance,
+ * and within the 63 a Job's name may have (a CronJob's own may be 52).
+ */
+export function manualJobName(cronjob: string, nowMs: number): string {
+  const suffix = `-manual-${Math.floor(nowMs / 1000).toString(36)}`;
+  const head = cronjob.slice(0, JOB_NAME_MAX - suffix.length).replace(/-+$/, "");
+  return `${head}${suffix}`;
+}
+
+export function runNowArgs(cronjob: string, nowMs: number = Date.now()): string[] {
+  return ["create", "job", manualJobName(cronjob, nowMs), `--from=cronjob/${cronjob}`];
+}
+
 /**
  * Interactive shell command typed into a real terminal tab (like docker's
  * `execShellArgv`). NOT run via `kubectl_run` — it runs in a PTY, so the user
@@ -944,14 +969,16 @@ export function isDestructive(args: string[]): boolean {
  * Whether a bare argv warrants a confirmation dialog. Broader than
  * {@link isDestructive}: on top of delete/drain it also covers the
  * disruptive-but-reversible ops the user wants guarded — `cordon`, `rollout
- * restart`, and `scale` to 0 replicas. Non-mutating get/logs/describe/top never
+ * restart` and `undo`, `scale` to 0 replicas and a CronJob run by hand. Non-mutating get/logs/describe/top never
  * prompt. Used on every server, not just prod (prod adds a red warning on top).
  */
 export function needsConfirm(args: string[]): boolean {
   if (isDestructive(args)) return true;
   const cmd = args[0];
   if (cmd === "cordon") return true;
-  if (cmd === "rollout" && args[1] === "restart") return true;
+  if (cmd === "rollout" && (args[1] === "restart" || args[1] === "undo")) return true;
+  // A Job made by hand does whatever the CronJob does — mail, a migration (ADR 0061).
+  if (cmd === "create") return true;
   if (cmd === "scale") {
     const i = args.indexOf("--replicas");
     return i >= 0 && args[i + 1] === "0";
@@ -2892,3 +2919,113 @@ export const EVENT_SCHEMA: ListSchema<K8sEvent> = {
 
 /** The latest first, as `parseEvents` lists them. */
 export const EVENT_ORDER: ListOrder = { sort: { key: "time", dir: "desc" }, group: NO_GROUPS };
+
+// ── ConfigMaps and Secrets (v1.36, ADR 0061) ──────────────────────────────────
+//
+// A ConfigMap is read whole — its values are shown, those that look like a
+// secret masked until asked for (`isSensitiveEnv`) and never put to the AI. A
+// Secret is read through one template that prints its keys and no value: the
+// backend refuses every other read of Secrets (`kube::check_args`), `describe`
+// among them — it prints a service-account token in clear.
+
+/**
+ * Namespace, name, type, creation time and keys of each Secret, a line each — and
+ * no value. The same string as `kube::SECRET_KEYS_TEMPLATE`: the backend lets
+ * this one through and no other (`k8s.test.ts` holds them equal).
+ */
+export const SECRET_KEYS_TEMPLATE =
+  '{{range .items}}{{.metadata.namespace}}{{"\\t"}}{{.metadata.name}}{{"\\t"}}{{.type}}{{"\\t"}}{{.metadata.creationTimestamp}}{{"\\t"}}{{range $k, $v := .data}}{{$k}}{{" "}}{{end}}{{"\\n"}}{{end}}';
+
+export function configMapsArgs(): string[] {
+  return ["get", "configmaps", "-o", "json"];
+}
+
+export function secretsArgs(): string[] {
+  return ["get", "secrets", `--output=go-template=${SECRET_KEYS_TEMPLATE}`];
+}
+
+export interface K8sConfigEntry {
+  key: string;
+  /** The value; null — not read (a Secret) or not text (a ConfigMap's `binaryData`). */
+  value: string | null;
+  /** Looks like a secret (`isSensitiveEnv`): masked until asked for. */
+  sensitive: boolean;
+}
+
+export interface K8sConfig {
+  kind: "ConfigMap" | "Secret";
+  namespace: string;
+  name: string;
+  /** A Secret's type (`Opaque`, `kubernetes.io/tls`, …); empty for a ConfigMap. */
+  type: string;
+  age: string;
+  created: number | null;
+  entries: K8sConfigEntry[];
+}
+
+export const CONFIG_KINDS = ["ConfigMap", "Secret"];
+
+/** `kubectl get configmaps -o json`: every key, its value when it is text. */
+export function parseConfigMaps(raw: string, nowMs: number = Date.now()): K8sConfig[] {
+  return items(raw).map((it) => {
+    const created = Date.parse(str(dig(it, "metadata", "creationTimestamp")));
+    const data = dig(it, "data");
+    const text = data && typeof data === "object" ? Object.entries(data as Record<string, unknown>) : [];
+    const binary = dig(it, "binaryData");
+    const blobs = binary && typeof binary === "object" ? Object.keys(binary as Record<string, unknown>) : [];
+    return {
+      kind: "ConfigMap" as const,
+      namespace: str(dig(it, "metadata", "namespace")),
+      name: str(dig(it, "metadata", "name")),
+      type: "",
+      age: k8sAge(str(dig(it, "metadata", "creationTimestamp")), nowMs),
+      created: Number.isFinite(created) ? created : null,
+      entries: [
+        ...text.map(([key, v]) => ({ key, value: str(v), sensitive: isSensitiveEnv(key, str(v)) })),
+        ...blobs.map((key) => ({ key, value: null, sensitive: false })),
+      ].sort((a, b) => byText(a.key, b.key)),
+    };
+  });
+}
+
+/** The lines {@link SECRET_KEYS_TEMPLATE} prints: keys, and no value to parse. */
+export function parseSecrets(raw: string, nowMs: number = Date.now()): K8sConfig[] {
+  const out: K8sConfig[] = [];
+  for (const line of raw.split("\n")) {
+    const [namespace, name, type, stamp, keys] = line.split("\t");
+    if (!name) continue;
+    const created = Date.parse(stamp ?? "");
+    out.push({
+      kind: "Secret",
+      namespace: namespace ?? "",
+      name,
+      type: type ?? "",
+      age: k8sAge(stamp ?? "", nowMs),
+      created: Number.isFinite(created) ? created : null,
+      entries: (keys ?? "")
+        .split(" ")
+        .filter(Boolean)
+        .sort(byText)
+        .map((key) => ({ key, value: null, sensitive: true })),
+    });
+  }
+  return out;
+}
+
+const configRank = (kind: string): number => CONFIG_KINDS.indexOf(kind);
+
+export const CONFIG_SCHEMA: ListSchema<K8sConfig> = {
+  text: (c) => `${c.name} ${c.namespace} ${c.kind} ${c.type} ${c.entries.map((e) => e.key).join(" ")}`,
+  sorts: [
+    { id: "name", firstDir: "asc", compare: (a, b) => byText(a.name, b.name) },
+    { id: "age", firstDir: "desc", compare: byAge, missing: noAge },
+  ],
+  groups: [
+    { id: "kind", of: (c) => ({ key: c.kind, label: c.kind }), compare: (a, b) => configRank(a.key) - configRank(b.key) },
+    { id: "namespace", of: (c) => ({ key: c.namespace, label: c.namespace }), compare: (a, b) => byText(a.label, b.label) },
+  ],
+  facets: [{ id: "kind", value: (c) => c.kind, order: CONFIG_KINDS }],
+  tie: (a, b) => byText(a.name, b.name) || byText(a.namespace, b.namespace),
+};
+
+export const CONFIG_ORDER: ListOrder = { sort: { key: "name", dir: "asc" }, group: "kind" };

@@ -74,7 +74,8 @@ export type DockerAside = { kind: "container"; id: string; tab: DockerDetailTab 
 export type K8sAside =
   | { kind: "pod"; namespace: string; name: string; tab: K8sDetailTab; container: string | null }
   | { kind: "workload"; workload: K8sWorkload["kind"]; namespace: string; name: string; tab: K8sWorkloadTab }
-  | { kind: "node"; name: string; tab: K8sWorkloadTab };
+  | { kind: "node"; name: string; tab: K8sWorkloadTab }
+  | { kind: "config"; config: "ConfigMap" | "Secret"; namespace: string; name: string };
 
 interface AsideOf {
   docker: DockerAside;
