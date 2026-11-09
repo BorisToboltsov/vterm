@@ -1,7 +1,20 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { messages } from "../i18n/messages";
-import { addTabBehind, emptyLayout, panes, placeTab, type CenterLayout } from "../layout/splitlayout";
+import {
+  addTab,
+  addTabBehind,
+  emptyLayout,
+  paneOf,
+  panes,
+  placeTab,
+  ratioOfNewPane,
+  setRatio,
+  splitWithTab,
+  type CenterLayout,
+  type Edge,
+  type LayoutNode,
+} from "../layout/splitlayout";
 import {
   DETACH_BLOCK_MESSAGE,
   PACKET_VERSION,
@@ -15,6 +28,8 @@ import {
   paneMoveOffered,
   paneMoveOrder,
   parsePacket,
+  windowMoveOffered,
+  windowMoveOrder,
   releasedOutside,
   type DetachState,
   type PaneStep,
@@ -119,8 +134,8 @@ const idle: DetachState = {
   mainWindow: true,
   tabs: 2,
   connected: true,
-  syncBusy: false,
-  chatBusy: false,
+  syncComparing: false,
+  chatStep: false,
   editorBusy: false,
 };
 
@@ -145,7 +160,7 @@ describe("detachBlocker", () => {
     expect(detachBlocker({ ...idle, mainWindow: false, tabs: 1 }, true)).toBeNull();
     // Everything else holds for an open window as for a new one.
     expect(detachBlocker({ ...idle, connected: false }, true)).toBe("notConnected");
-    expect(detachBlocker({ ...idle, syncBusy: true }, true)).toBe("sync");
+    expect(detachBlocker({ ...idle, syncComparing: true }, true)).toBe("sync");
   });
 
   it("only a connected tab has a session to take along", () => {
@@ -153,8 +168,8 @@ describe("detachBlocker", () => {
   });
 
   it("work waiting in this window keeps the tab here", () => {
-    expect(detachBlocker({ ...idle, syncBusy: true })).toBe("sync");
-    expect(detachBlocker({ ...idle, chatBusy: true })).toBe("ai");
+    expect(detachBlocker({ ...idle, syncComparing: true })).toBe("sync");
+    expect(detachBlocker({ ...idle, chatStep: true })).toBe("ai");
     expect(detachBlocker({ ...idle, editorBusy: true })).toBe("editor");
   });
 
@@ -166,12 +181,12 @@ describe("detachBlocker", () => {
       mainWindow: true,
       tabs: true,
       connected: true,
-      syncBusy: true,
-      chatBusy: true,
+      syncComparing: true,
+      chatStep: true,
       editorBusy: true,
     };
     expect(Object.keys(fields).sort()).toEqual(
-      ["chatBusy", "connected", "editorBusy", "mainWindow", "syncBusy", "tabs"],
+      ["chatStep", "connected", "editorBusy", "mainWindow", "syncComparing", "tabs"],
     );
     expect(Object.keys(DETACH_BLOCK_MESSAGE)).not.toContain("transfers");
   });
@@ -181,8 +196,8 @@ describe("detachBlocker", () => {
       mainWindow: false,
       tabs: 1,
       connected: false,
-      syncBusy: true,
-      chatBusy: true,
+      syncComparing: true,
+      chatStep: true,
       editorBusy: true,
     };
     expect(detachBlocker(everything)).toBe("lastTab");
@@ -307,8 +322,8 @@ describe("paneMoveBlocker", () => {
     mainWindow: true,
     tabs: 4,
     connected: true,
-    syncBusy: false,
-  chatBusy: false,
+    syncComparing: false,
+  chatStep: false,
     editorBusy: false,
   };
 
@@ -319,7 +334,7 @@ describe("paneMoveBlocker", () => {
   });
 
   it("one tab that cannot go keeps the whole pane, and is named", () => {
-    expect(paneMoveBlocker([idle, { ...idle, syncBusy: true }, idle], true)).toEqual({
+    expect(paneMoveBlocker([idle, { ...idle, syncComparing: true }, idle], true)).toEqual({
       at: 1,
       block: "sync",
     });
@@ -329,7 +344,7 @@ describe("paneMoveBlocker", () => {
     });
     // The first one in strip order, when several cannot.
     expect(
-      paneMoveBlocker([{ ...idle, chatBusy: true }, { ...idle, syncBusy: true }], true),
+      paneMoveBlocker([{ ...idle, chatStep: true }, { ...idle, syncComparing: true }], true),
     ).toEqual({ at: 0, block: "ai" });
   });
 
@@ -440,5 +455,100 @@ describe("ghostPlace", () => {
       x: 8,
       y: 8,
     });
+  });
+});
+
+describe("a whole window (v1.36, ADR 0058)", () => {
+  /** The steps applied as the window taking the tabs applies them — room for every pane. */
+  function replay(steps: PaneStep[]): CenterLayout {
+    let layout = emptyLayout();
+    for (const { tab, seat } of steps) {
+      if (seat.lead !== null) {
+        layout = addTabBehind(layout, tab, seat.lead, seat.before ? "before" : "end");
+      } else if (seat.split) {
+        const beside = paneOf(layout, seat.split.beside);
+        expect(beside, `${tab} opens beside ${seat.split.beside}, which arrived before it`).not.toBeNull();
+        layout = placeTab(layout, tab, { kind: "pane", pane: beside!.id, zone: seat.split.edge });
+        layout = ratioOfNewPane(layout, paneOf(layout, tab)!.id, seat.split.ratio);
+      } else {
+        layout = placeTab(layout, tab, null);
+      }
+    }
+    return layout;
+  }
+
+  /** A tree with its ids taken away: what is on screen. */
+  function shape(node: LayoutNode): unknown {
+    return node.kind === "pane"
+      ? { tabs: node.tabs, shows: node.active }
+      : { dir: node.dir, ratio: node.ratio, a: shape(node.a), b: shape(node.b) };
+  }
+
+  const all = (pane: { tabs: string[] }) => pane.tabs;
+
+  it("arrives with its panes as they stood: splits, shares, order, what each pane shows", () => {
+    // a b | c  above  d e (showing e)
+    let layout = addTab(addTab(addTab(addTab(addTab(emptyLayout(), "a"), "b"), "c"), "d"), "e");
+    layout = splitWithTab(layout, "c", paneOf(layout, "a")!.id, "right");
+    layout = splitWithTab(layout, "d", paneOf(layout, "a")!.id, "bottom");
+    layout = placeTab(layout, "e", null);
+    layout = addTabBehind(layout, "e", "d", "end");
+    const steps = windowMoveOrder(layout.root, all);
+    expect(steps[0].seat).toEqual({ lead: null, before: false });
+    expect(steps.filter((s) => s.seat.split).length).toBe(panes(layout).length - 1);
+    expect(shape(replay(steps).root)).toEqual(shape(layout.root));
+  });
+
+  it("whatever the panes, the other window builds them again", () => {
+    const edges: Edge[] = ["left", "right", "top", "bottom"];
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 7 }),
+        fc.array(fc.record({ tab: fc.nat(), pane: fc.nat(), edge: fc.constantFrom(...edges), ratio: fc.double({ min: 0.1, max: 0.9, noNaN: true }) }), { maxLength: 8 }),
+        fc.array(fc.nat(), { maxLength: 4 }),
+        (count, splits, shown) => {
+          const ids = Array.from({ length: count }, (_, i) => `t${i}`);
+          let layout = ids.reduce((l, id) => addTab(l, id), emptyLayout());
+          for (const op of splits) {
+            const ps = panes(layout);
+            const at = ps[op.pane % ps.length];
+            layout = splitWithTab(layout, ids[op.tab % count], at.id, op.edge);
+            const fresh = paneOf(layout, ids[op.tab % count]);
+            if (fresh) {
+              // Give the split it made a share of its own.
+              const walk = (n: LayoutNode): string | null =>
+                n.kind === "pane" ? null : [n.a, n.b].some((c) => c.kind === "pane" && c.id === fresh.id) ? n.id : (walk(n.a) ?? walk(n.b));
+              const split = walk(layout.root);
+              if (split) layout = setRatio(layout, split, op.ratio);
+            }
+          }
+          for (const i of shown) layout = placeTab(layout, ids[i % count], null);
+          const steps = windowMoveOrder(layout.root, all);
+          expect(steps.map((s) => s.tab).sort()).toEqual([...ids].sort());
+          expect(shape(replay(steps).root)).toEqual(shape(layout.root));
+        },
+      ),
+      { numRuns: 300 },
+    );
+  });
+
+  it("is offered as a whole only with more than one pane", () => {
+    expect(windowMoveOffered(1)).toBe(false);
+    expect(windowMoveOffered(2)).toBe(true);
+  });
+
+  it("the place a pane opens at travels in the packet and is read, not trusted", () => {
+    const split = { beside: "s0", edge: "bottom", ratio: 0.3 };
+    const seat = { lead: null, before: false, split };
+    const got = parsePacket(JSON.stringify(packet({ seat })));
+    expect(got?.seat?.split).toEqual(split);
+    for (const bad of [
+      { ...split, beside: "" },
+      { ...split, edge: "left" },
+      { ...split, ratio: "half" },
+      "s0:bottom",
+    ]) {
+      expect(parsePacket(JSON.stringify(packet({ seat: { ...seat, split: bad } }))), JSON.stringify(bad)).toBeNull();
+    }
   });
 });

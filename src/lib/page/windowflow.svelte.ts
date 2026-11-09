@@ -26,16 +26,15 @@ import {
   type DragLook,
 } from "../api";
 import { isMainWindow, otherWindows, windowLabel, windowTarget, type WindowEntry } from "../windows/appwindow";
-import { chatBusy } from "../ai/aiask";
 import { t } from "../i18n";
 import { activeChromePanel } from "../settings/settings.svelte";
-import { arrivalDrop, findPane, layoutRects } from "../layout/splitlayout";
-import { peekChat } from "../stores/aichat.svelte";
-import { isBusy, peekSyncJob } from "../stores/syncjob.svelte";
+import { arrivalDrop, besideDrop, findPane, layoutRects, panes } from "../layout/splitlayout";
+import { heardStream, peekChat } from "../stores/aichat.svelte";
+import { peekSyncJob } from "../stores/syncjob.svelte";
 import { onTabDraggedOutside, tabDrag, type ScreenPoint } from "../stores/tabdrag.svelte";
 import { describeTab, takeIncomingDrop } from "../stores/tabincoming.svelte";
 import { packTab, unpackTab, type PageFacts } from "../stores/tabpacket";
-import { findTab, tabsState, type Tab } from "../stores/tabs.svelte";
+import { findTab, settleArrivedPane, tabsState, type Tab } from "../stores/tabs.svelte";
 import { notifyError, notifyInfo } from "../stores/toasts.svelte";
 import {
   DETACH_BLOCK_MESSAGE,
@@ -43,9 +42,13 @@ import {
   detachErrorKey,
   detachOffered,
   moveOffered,
+  paneDetachOffered,
   paneMoveBlocker,
   paneMoveOrder,
   parsePacket,
+  windowMoveOffered,
+  windowMoveOrder,
+  type PaneStep,
   type DetachState,
   type PaneSeat,
   type TermSnapshot,
@@ -110,7 +113,8 @@ export function createWindowFlow(deps: WindowDeps) {
     onTabDraggedOutside(
       leavesWindow
         ? {
-            release: (sessionId, at, outside) => void dropOutside(sessionId, at, outside),
+            release: (sessionId, at, outside, pane) =>
+              void (pane ? dropPaneOutside(pane, at, outside) : dropOutside(sessionId, at, outside)),
             // Told of with or without another window to land in: over the
             // desktop the tab is drawn by the floating label either way.
             over: tellDragOver,
@@ -132,21 +136,21 @@ export function createWindowFlow(deps: WindowDeps) {
       mainWindow: isMainWindow,
       tabs: tabsState.list.length,
       connected: tab.status.startsWith("Connected"),
-      syncBusy: isBusy(peekSyncJob(sid)),
-      chatBusy: !!chat && chatBusy(chat),
+      syncComparing: !!peekSyncJob(sid)?.comparing,
+      chatStep: !!chat?.stepRunning,
       editorBusy: deps.editorBusy(sid),
     };
   }
 
-  /** How the floating label looks: like the one this page would draw. */
-  function dragLook(tab: Tab): DragLook | null {
+  /** How the floating label looks: like the one this page would draw — with "+N" for a pane's other tabs. */
+  function dragLook(tab: Tab, others = 0): DragLook | null {
     const probe = deps.ghostProbe();
     if (!probe) return null;
     const box = probe.getBoundingClientRect();
     const style = getComputedStyle(probe);
     const dot = probe.querySelector<HTMLElement>('[data-part="dot"]');
     return {
-      title: deps.alias(tab),
+      title: others > 0 ? `${deps.alias(tab)} +${others}` : deps.alias(tab),
       bg: style.backgroundColor,
       fg: style.color,
       accent: style.borderTopColor,
@@ -161,13 +165,43 @@ export function createWindowFlow(deps: WindowDeps) {
    * another window of the app, or over none of them. A tab that cannot go
    * anywhere right now is shown to nobody — letting go of it says why.
    */
-  async function tellDragOver(sessionId: string): Promise<DragAnswer | null> {
+  async function tellDragOver(sessionId: string, pane: string | null = null): Promise<DragAnswer | null> {
     const tab = findTab(sessionId);
     if (!tab || detachBlocker(stateOf(tab), true)) return null;
+    // A pane (v1.36) is shown to nobody when one of its tabs cannot go.
+    const tabs = pane ? paneSessions(pane) : [tab];
+    if (pane && paneMoveBlocker(tabs.map(stateOf), true)) return null;
     // Inside this window, with no other one that could lie over it, there is
     // nothing the backend could add: a tab reordered in its strip asks nobody.
     if (!tabDrag.outside && targets.length === 0) return null;
-    return dragOver(describeTab(tab), dragLook(tab));
+    return dragOver(describeTab(tab), dragLook(tab, tabs.length - 1));
+  }
+
+  /**
+   * A whole pane (v1.36) was let go of away from this window's panes: onto
+   * another window of the app it moves into it — its first tab where it was
+   * dropped, the others around it; anywhere else, into a window of its own.
+   */
+  async function dropPaneOutside(paneId: string, at: ScreenPoint, outside: boolean) {
+    const tabs = paneSessions(paneId);
+    const lead = findTab(findPane(tabsState.center, paneId)?.active ?? null) ?? tabs[0];
+    if (!lead) return;
+    const held = paneMoveBlocker(tabs.map(stateOf), true);
+    if (held) {
+      void dragEnd().catch(() => {});
+      const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
+      notifyInfo(t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }));
+      return;
+    }
+    const under = await dragDrop(describeTab(lead)).catch(() => null);
+    if (under && targets.some((w) => w.label === under)) {
+      await movePane(paneId, { window: under });
+      return;
+    }
+    if (under) void dragEnd().catch(() => {});
+    if (outside && paneDetachOffered({ mainWindow: isMainWindow, tabs: tabsState.list.length }, tabs.length)) {
+      await movePane(paneId, { at });
+    }
   }
 
   /**
@@ -241,10 +275,14 @@ export function createWindowFlow(deps: WindowDeps) {
   ): Promise<string> {
     let held = false;
     try {
-      const sent = await detachBegin(sessionId);
+      const begun = await detachBegin(sessionId);
       held = true;
-      const terminal = await deps.snapshot(sessionId, sent);
-      const packet = terminal && packTab(sessionId, terminal, deps.carried(sessionId), seat);
+      const terminal = await deps.snapshot(sessionId, begun.output);
+      // An answer streaming in the tab goes with it (v1.36): packed once every
+      // piece sent before the hold was heard here — the rest the backend keeps
+      // for the other window.
+      const heard = !begun.stream || (await heardStream(sessionId, begun.stream.id, begun.stream.sent));
+      const packet = terminal && heard && packTab(sessionId, terminal, deps.carried(sessionId), seat);
       if (!packet) throw new Error("handoff-failed: no snapshot");
       const taken = await detachCommit(sessionId, packet, {
         ...to.at,
@@ -284,6 +322,69 @@ export function createWindowFlow(deps: WindowDeps) {
   }
 
   /**
+   * Move a pane — every session tab in it, each with its files — to another
+   * window: the open one `to.window`, or a new one (opened at `to.at`, when it
+   * was dropped there). One handoff per tab, in the order that rebuilds the pane
+   * there (`paneMoveOrder`): the tab the pane shows goes first and opens the
+   * pane, the others take their seats around it.
+   *
+   * The pane goes whole or not at all — judged before the first tab leaves.
+   * What can still stop it midway is a handoff that fails; the tabs that went
+   * stay where they went, the rest stay here, and that is what is said.
+   */
+  async function movePane(paneId: string, to: { window?: string; at?: ScreenPoint } = {}): Promise<void> {
+    const pane = findPane(tabsState.center, paneId);
+    const tabs = paneSessions(paneId);
+    if (!pane || tabs.length === 0 || detaching) return;
+    const toOpenWindow = to.window !== undefined;
+    const held = paneMoveBlocker(tabs.map(stateOf), toOpenWindow);
+    if (held) {
+      const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
+      notifyInfo(held.block === "lastTab" ? reason : t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }));
+      return;
+    }
+    const steps = paneMoveOrder(
+      tabs.map((tab) => tab.sessionId),
+      pane.active,
+    );
+    await carry(steps, to, "window.paneMovedPartly");
+  }
+
+  /** Every session tab standing in a pane, in reading order. */
+  const paneSessionIds = (): string[] => panes(tabsState.center).flatMap((p) => p.tabs);
+
+  /**
+   * Hand tabs over one after another, each with its seat — a pane's tabs, or a
+   * whole window's. A new window opened for the first one takes the rest once
+   * it listens. A failure midway is said in `partly`'s words.
+   */
+  async function carry(
+    steps: PaneStep[],
+    to: { window?: string; at?: ScreenPoint },
+    partly: "window.paneMovedPartly" | "window.windowMovedPartly",
+  ): Promise<void> {
+    const toOpenWindow = to.window !== undefined;
+    let target = to.window;
+    let moved = 0;
+    try {
+      for (const step of steps) {
+        detaching = step.tab;
+        // A new window was opened for the first tab: the rest go once it listens.
+        if (moved > 0 && !(target && (await windowListed(target)))) throw new Error("handoff-not-taken");
+        // Asked again at each tab's turn: its session may have ended meanwhile.
+        const tab = findTab(step.tab);
+        if (!tab || detachBlocker(stateOf(tab), true)) throw new Error("handoff-not-taken");
+        target = await handOver(step.tab, moved === 0 ? to : { window: target }, step.seat);
+        moved += 1;
+      }
+    } catch (e) {
+      notifyError(moved === 0 ? t(detachErrorKey(e, toOpenWindow)) : t(partly, { moved, total: steps.length }));
+    } finally {
+      detaching = null;
+    }
+  }
+
+  /**
    * Put the tab being handed to this window into its stores; false when there
    * is none to take. Its terminal then replays the snapshot and takes the
    * session over (`Terminal.svelte`, `adopt`).
@@ -296,10 +397,15 @@ export function createWindowFlow(deps: WindowDeps) {
     // command, it goes where a new tab goes — and the first tab of a pane that
     // moves whole (v1.10) opens a pane of its own, where there is room for one.
     const leadsPane = packet.seat !== null && packet.seat.lead === null;
+    const split = packet.seat?.split ?? null;
     const center = tabsState.center;
+    const rects = () => layoutRects(center.root, deps.areaBounds()).panes;
+    // A pane of a window moving whole (v1.36) opens beside what came before it.
     const drop =
-      takeIncomingDrop() ?? (leadsPane ? arrivalDrop(center, layoutRects(center.root, deps.areaBounds()).panes) : null);
-    unpackTab(packet, drop);
+      takeIncomingDrop() ??
+      (split ? besideDrop(center, rects(), split.beside, split.edge) : leadsPane ? arrivalDrop(center, rects()) : null);
+    await unpackTab(packet, drop);
+    if (split) settleArrivedPane(packet.tab.sessionId, split.ratio);
     // A transfer under way came with the session: its events arrive here from
     // now on, and what it has done so far is asked for once.
     deps.refreshTransfers();
@@ -331,52 +437,31 @@ export function createWindowFlow(deps: WindowDeps) {
     paneSessions,
     detachTab,
 
+    /** Whether this window can be moved as a whole: it has more than one pane, and a window to go to. */
+    get windowMoveOffered() {
+      return targets.length > 0 && windowMoveOffered(panes(tabsState.center).length);
+    },
+
     /**
-     * Move a pane — every session tab in it, each with its files — to another
-     * window: the open one `to.window`, or a new one. One handoff per tab, in the
-     * order that rebuilds the pane there (`paneMoveOrder`): the tab the pane
-     * shows goes first and opens the pane, the others take their seats around it.
-     *
-     * The pane goes whole or not at all — judged before the first tab leaves.
-     * What can still stop it midway is a handoff that fails; the tabs that went
-     * stay where they went, the rest stay here, and that is what is said.
+     * Move the whole window — every pane, every session tab in it, each with its
+     * files — into the open window `to` (v1.36, ADR 0058), where its panes are
+     * built again as they stood (`windowMoveOrder`). Whole or not at all, judged
+     * before the first tab leaves; a handoff failing midway leaves what went
+     * there and what did not here, and says so — as a pane's move does.
      */
-    async movePane(paneId: string, to: { window?: string } = {}): Promise<void> {
-      const pane = findPane(tabsState.center, paneId);
-      const tabs = paneSessions(paneId);
-      if (!pane || tabs.length === 0 || detaching) return;
-      const toOpenWindow = to.window !== undefined;
-      const held = paneMoveBlocker(tabs.map(stateOf), toOpenWindow);
+    async moveWindow(to: string): Promise<void> {
+      const tabs = tabsState.list.filter((tab) => paneSessionIds().includes(tab.sessionId));
+      if (tabs.length === 0 || detaching) return;
+      const held = paneMoveBlocker(tabs.map(stateOf), true);
       if (held) {
-        const reason = t(DETACH_BLOCK_MESSAGE[held.block]);
-        notifyInfo(held.block === "lastTab" ? reason : t("window.paneBlocked", { tab: deps.title(tabs[held.at]), reason }));
+        notifyInfo(t("window.windowBlocked", { tab: deps.title(tabs[held.at]), reason: t(DETACH_BLOCK_MESSAGE[held.block]) }));
         return;
       }
-      const steps = paneMoveOrder(
-        tabs.map((tab) => tab.sessionId),
-        pane.active,
-      );
-      let target = to.window;
-      let moved = 0;
-      try {
-        for (const step of steps) {
-          detaching = step.tab;
-          // A new window was opened for the first tab: the rest go once it listens.
-          if (moved > 0 && !(target && (await windowListed(target)))) throw new Error("handoff-not-taken");
-          // Asked again at each tab's turn: its session may have ended meanwhile.
-          const tab = findTab(step.tab);
-          if (!tab || detachBlocker(stateOf(tab), true)) throw new Error("handoff-not-taken");
-          target = await handOver(step.tab, moved === 0 ? to : { window: target }, step.seat);
-          moved += 1;
-        }
-      } catch (e) {
-        notifyError(
-          moved === 0 ? t(detachErrorKey(e, toOpenWindow)) : t("window.paneMovedPartly", { moved, total: steps.length }),
-        );
-      } finally {
-        detaching = null;
-      }
+      const steps = windowMoveOrder(tabsState.center.root, (pane) => pane.tabs.filter((id) => findTab(id)));
+      await carry(steps, { window: to }, "window.windowMovedPartly");
     },
+
+    movePane,
 
     /** The backend listed the windows that take tabs. */
     heardWindows(payload: unknown) {

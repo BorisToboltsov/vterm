@@ -87,11 +87,11 @@ beforeEach(() => {
 });
 
 describe("a tab's packet", () => {
-  it("is nothing for a tab that is not here", () => {
+  it("is nothing for a tab that is not here", async () => {
     expect(packTab("gone", SNAPSHOT, FACTS)).toBeNull();
   });
 
-  it("carries the tab with its credentials, and the terminal as snapshotted", () => {
+  it("carries the tab with its credentials, and the terminal as snapshotted", async () => {
     const sid = openTab("srv-1", "web", "hunter2", true);
     setTabStatus(sid, "connected");
     const packet = parsePacket(packTab(sid, SNAPSHOT, FACTS));
@@ -108,7 +108,7 @@ describe("a tab's packet", () => {
     expect(packet?.page).toEqual({ ...FACTS, recording: null, recordingPaused: false });
   });
 
-  it("moves everything the stores hold for the tab, and leaves nothing behind", () => {
+  it("moves everything the stores hold for the tab, and leaves nothing behind", async () => {
     const other = openLocalTab();
     const sid = openTab("srv-1", "web", null, false, {
       kind: "container",
@@ -151,7 +151,7 @@ describe("a tab's packet", () => {
     // …and in the window taking it:
     const packet = parsePacket(raw);
     expect(packet).not.toBeNull();
-    unpackTab(packet!);
+    await unpackTab(packet!);
 
     const tab = findTab(sid);
     expect(tab).toMatchObject({ kind: "ssh", serverId: "srv-1", status: "Connected", gen: 0 });
@@ -190,12 +190,12 @@ describe("a tab's packet", () => {
     expect(isRecordingPaused(sid)).toBe(true);
   });
 
-  it("a tab with nothing but a terminal arrives with nothing but a terminal", () => {
+  it("a tab with nothing but a terminal arrives with nothing but a terminal", async () => {
     const sid = openLocalTab();
     setTabStatus(sid, "connected");
     const raw = packTab(sid, SNAPSHOT, { ...FACTS, localShell: "posix" });
     leave(sid);
-    unpackTab(parsePacket(raw)!);
+    await unpackTab(parsePacket(raw)!);
     expect(findTab(sid)?.kind).toBe("local");
     expect([peekWorkspace(sid), peekChat(sid), peekDockState(sid), peekSyncJob(sid)]).toEqual([
       null,
@@ -206,9 +206,10 @@ describe("a tab's packet", () => {
     expect(isRecording(sid)).toBe(false);
   });
 
-  it("never claims work in flight in the window taking the tab", () => {
-    // A tab moves only while idle (detachBlocker); the flags are reset anyway —
-    // a stream, a compare or an upload cannot be carried, so none may be claimed.
+  it("never claims work in flight that did not come with it", async () => {
+    // What travels (v1.36) is an answer the backend held, a step waiting for a
+    // go-ahead and a run of the backend's — none of which is set up here: a
+    // stream no window listens to, a compare and a run with no id are not claimed.
     const sid = openTab("srv-1", "web", null, false);
     setTabStatus(sid, "connected");
     const chat = getChat(sid);
@@ -228,9 +229,11 @@ describe("a tab's packet", () => {
     resetDockState();
     resetSyncJobs();
     aiChatState.map = {};
-    unpackTab(packet);
+    await unpackTab(packet);
 
-    expect(peekChat(sid)).toMatchObject({ streaming: false, dialogRunning: false, pending: null });
+    // The step waiting for its go-ahead is state: it comes, and the loop with it.
+    expect(peekChat(sid)).toMatchObject({ streaming: false, stepRunning: false, dialogRunning: true });
+    expect(peekChat(sid)?.pending?.command).toBe("rm -rf /tmp/x");
     expect(peekSyncJob(sid)).toMatchObject({
       comparing: false,
       applying: false,
@@ -240,12 +243,12 @@ describe("a tab's packet", () => {
     });
   });
 
-  it("a tab that arrived once can be moved on without its old snapshot", () => {
+  it("a tab that arrived once can be moved on without its old snapshot", async () => {
     const sid = openLocalTab();
     setTabStatus(sid, "connected");
     const first = parsePacket(packTab(sid, SNAPSHOT, FACTS))!;
     resetTabs();
-    unpackTab(first);
+    await unpackTab(first);
     expect(findTab(sid)?.adopt).toEqual(SNAPSHOT);
     // Its terminal has not even taken over yet — the next packet still carries
     // only the snapshot it is given, never the one the tab came with.
@@ -257,17 +260,17 @@ describe("a tab's packet", () => {
 });
 
 describe("a tab taken over from another window", () => {
-  const arrive = () => {
+  const arrive = async () => {
     const sid = openLocalTab();
     setTabStatus(sid, "connected");
     const packet = parsePacket(packTab(sid, SNAPSHOT, FACTS))!;
     resetTabs();
-    unpackTab(packet);
+    await unpackTab(packet);
     return { sid, packet };
   };
 
-  it("restores its snapshot once: taking over uses it up", () => {
-    const { sid } = arrive();
+  it("restores its snapshot once: taking over uses it up", async () => {
+    const { sid } = await arrive();
     expect(findTab(sid)?.adopt).toEqual(SNAPSHOT);
     const before = tabsState.list;
     clearAdopt(sid);
@@ -281,16 +284,16 @@ describe("a tab taken over from another window", () => {
     expect(tabsState.list).toBe(after);
   });
 
-  it("a reconnect is an ordinary connect, even before it took over", () => {
-    const { sid } = arrive();
+  it("a reconnect is an ordinary connect, even before it took over", async () => {
+    const { sid } = await arrive();
     reconnectTab(sid);
     expect(findTab(sid)).toMatchObject({ status: "Connecting…", gen: 1 });
     expect(findTab(sid)?.adopt).toBeUndefined();
   });
 
-  it("is not added twice", () => {
-    const { sid, packet } = arrive();
-    unpackTab(packet);
+  it("is not added twice", async () => {
+    const { sid, packet } = await arrive();
+    await unpackTab(packet);
     expect(tabsState.list.filter((t) => t.sessionId === sid)).toHaveLength(1);
     expect(panes(tabsState.center).flatMap((p) => p.tabs)).toEqual([sid]);
   });
@@ -308,7 +311,7 @@ describe("a pane taken over from another window (v1.10)", () => {
     return { ids, packets };
   };
 
-  it("the seat travels in the packet; a tab that goes alone has none", () => {
+  it("the seat travels in the packet; a tab that goes alone has none", async () => {
     const { ids, packets } = packPane(3, 1);
     expect(packets.map((p) => [p.tab.sessionId, p.seat])).toEqual([
       [ids[1], { lead: null, before: false }],
@@ -319,9 +322,9 @@ describe("a pane taken over from another window (v1.10)", () => {
     expect(parsePacket(packTab(alone, SNAPSHOT, FACTS))?.seat).toBeNull();
   });
 
-  it("arrives in its order, showing the tab it showed", () => {
+  it("arrives in its order, showing the tab it showed", async () => {
     const { ids, packets } = packPane(4, 2);
-    for (const packet of packets) unpackTab(packet);
+    for (const packet of packets) await unpackTab(packet);
     const [pane] = panes(tabsState.center);
     expect(pane.tabs).toEqual(ids);
     expect(pane.active).toBe(ids[2]);
@@ -330,27 +333,27 @@ describe("a pane taken over from another window (v1.10)", () => {
     for (const id of ids) expect(findTab(id)?.adopt).toEqual(SNAPSHOT);
   });
 
-  it("joins a window that has tabs of its own without changing what it showed", () => {
+  it("joins a window that has tabs of its own without changing what it showed", async () => {
     const { ids, packets } = packPane(3, 0);
     const own = openLocalTab();
     // The first tab was given a pane of its own beside the one in focus.
     const [first, ...rest] = packets;
-    unpackTab(first, { kind: "pane", pane: tabsState.center.focus, zone: "right" });
-    for (const packet of rest) unpackTab(packet);
+    await unpackTab(first, { kind: "pane", pane: tabsState.center.focus, zone: "right" });
+    for (const packet of rest) await unpackTab(packet);
     expect(panes(tabsState.center).map((p) => ({ tabs: p.tabs, active: p.active }))).toEqual([
       { tabs: [own], active: own },
       { tabs: ids, active: ids[0] },
     ]);
   });
 
-  it("a tab whose lead is no longer there still arrives — where a new tab goes, unseen", () => {
+  it("a tab whose lead is no longer there still arrives — where a new tab goes, unseen", async () => {
     const { ids, packets } = packPane(2, 0);
     const own = openLocalTab();
-    unpackTab(packets[1]);
+    await unpackTab(packets[1]);
     expect(panes(tabsState.center)[0]).toMatchObject({ tabs: [own, ids[1]], active: own });
   });
 
-  it("each connection brings its files inside it, in the zones they stood in", () => {
+  it("each connection brings its files inside it, in the zones they stood in", async () => {
     const ids = [openLocalTab(), openLocalTab()];
     for (const id of ids) setTabStatus(id, "connected");
     const doc = addScratchEditor(ids[0], "notes.txt", { kind: "plain", label: "Text" }, "draft");
@@ -361,7 +364,7 @@ describe("a pane taken over from another window (v1.10)", () => {
     );
     removeWorkspace(ids[0]);
     resetTabs();
-    for (const packet of packets) unpackTab(packet);
+    for (const packet of packets) await unpackTab(packet);
     // The pane holds the connections, in their order — and nothing else.
     const [pane] = panes(tabsState.center);
     expect(pane.tabs).toEqual(ids);

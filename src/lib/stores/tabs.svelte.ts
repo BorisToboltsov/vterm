@@ -27,12 +27,15 @@ import {
   addTab,
   addTabBehind,
   applyDrop,
+  applyPaneDrop,
   emptyLayout,
   focusPane as focusPaneIn,
   joinPanes as joinPanesIn,
   loadLayout,
   moveTab as moveTabIn,
+  paneOf,
   placeTab,
+  ratioOfNewPane,
   removeTab,
   savedLayout,
   setRatio,
@@ -397,6 +400,15 @@ export function adoptTab(
   center = placeTab(center, tab.sessionId, drop);
 }
 
+/**
+ * A pane of a window that moved here whole (v1.36) opened with `sessionId`:
+ * the split it opened takes the share it had in that window.
+ */
+export function settleArrivedPane(sessionId: string, ratio: number): void {
+  const pane = paneOf(center, sessionId);
+  if (pane) center = ratioOfNewPane(center, pane.id, ratio);
+}
+
 /** The adopted terminal took its session over: the snapshot has served. */
 export function clearAdopt(sessionId: string): void {
   if (!list.some((t) => t.sessionId === sessionId && t.adopt)) return;
@@ -553,6 +565,11 @@ export function moveTabTo(sessionId: string, paneId: string, index?: number | nu
 /** Drop a dragged tab where the pointer left it. */
 export function dropTab(sessionId: string, drop: TabDrop): void {
   center = applyDrop(center, sessionId, drop);
+}
+
+/** Drop a whole dragged pane where the pointer left it (v1.36). */
+export function dropPane(paneId: string, drop: TabDrop): void {
+  center = applyPaneDrop(center, paneId, drop);
 }
 
 /**

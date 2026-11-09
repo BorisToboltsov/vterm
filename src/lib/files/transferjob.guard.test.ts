@@ -220,16 +220,16 @@ describe("the guard catches", () => {
   it("a transfer that holds its tab again", () => {
     const handoff = mutate(
       read(HANDOFF),
-      "  /** Its sync job is comparing or applying. */",
-      "  /** Its transfers still in flight. */\n  transfers: number;\n  /** Its sync job is comparing or applying. */",
+      "  /** Its sync job is comparing (a run is the backend's and goes with the tab, v1.36). */",
+      "  /** Its transfers still in flight. */\n  transfers: number;\n  /** Its sync job is comparing (a run is the backend's and goes with the tab, v1.36). */",
     );
     expect(detachViolations(handoff, read(WINDOWS))).toEqual([
       "a transfer in flight keeps its tab in this window",
     ]);
     const flow = mutate(
       read(WINDOWS),
-      "      syncBusy: isBusy(peekSyncJob(sid)),\n      chatBusy",
-      "      syncBusy: isBusy(peekSyncJob(sid)) || transfersOf(sid).length > 0,\n      chatBusy",
+      "      syncComparing: !!peekSyncJob(sid)?.comparing,\n      chatStep",
+      "      syncComparing: !!peekSyncJob(sid)?.comparing || transfersOf(sid).length > 0,\n      chatStep",
     );
     expect(detachViolations(read(HANDOFF), flow)).toEqual([
       "the window flow counts transfers when asked whether a tab may go",

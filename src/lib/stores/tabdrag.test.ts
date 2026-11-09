@@ -2,6 +2,7 @@ import { flushSync } from "svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { panes } from "../layout/splitlayout";
 import {
+  beginPaneDrag,
   beginTabDrag,
   cancelTabDrag,
   consumeTabDragClick,
@@ -407,7 +408,7 @@ describe("a tab let go of outside the window", () => {
     expect(tabDrag.zone).toBeNull();
     releaseAt(1500, 230, 2100, 400);
     expect(moved).toHaveBeenCalledTimes(1);
-    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true);
+    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true, null);
     // The layout here is not touched — the page moves the tab once it is taken.
     expect(shape()).toEqual([[a, b], [c]]);
     expect(tabDrag.tab).toBeNull();
@@ -439,7 +440,7 @@ describe("a tab let go of outside the window", () => {
     expect(tabDrag.over).not.toBeNull();
     // The release itself is past the bottom edge.
     releaseAt(690, 800, 690, 1000);
-    expect(moved).toHaveBeenCalledWith(a, { x: 690, y: 1000 }, true);
+    expect(moved).toHaveBeenCalledWith(a, { x: 690, y: 1000 }, true, null);
     expect(shape()).toEqual([[a, b], [c]]);
   });
 
@@ -502,7 +503,7 @@ describe("a dragged tab the backend is told of", () => {
     at("bodyR");
     move(900, 230);
     expect(over).toHaveBeenCalledTimes(1);
-    expect(over).toHaveBeenCalledWith(a);
+    expect(over).toHaveBeenCalledWith(a, null);
     await said();
     // Over no other window: the panes of this one are still the targets.
     expect(tabDrag.window).toBeNull();
@@ -597,7 +598,7 @@ describe("a dragged tab the backend is told of", () => {
     move(1500, 230);
     await said();
     releaseAt(1500, 230);
-    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true);
+    expect(moved).toHaveBeenCalledWith(a, { x: 2100, y: 400 }, true, null);
     expect(left).not.toHaveBeenCalled();
   });
 
@@ -610,7 +611,7 @@ describe("a dragged tab the backend is told of", () => {
     await said();
     releaseAt(900, 230);
     // Handed to the page as a drop away from here — `outside` says it was within the bounds.
-    expect(moved).toHaveBeenCalledWith(a, { x: 1500, y: 400 }, false);
+    expect(moved).toHaveBeenCalledWith(a, { x: 1500, y: 400 }, false, null);
     // No pane of this window took it.
     expect(shape()).toEqual([[a, b], [c]]);
   });
@@ -693,5 +694,63 @@ describe("a pane with no tabs", () => {
       pane: only,
       zone: "center",
     });
+  });
+});
+
+describe("a whole pane dragged by its strip (v1.36, ADR 0058)", () => {
+  // jsdom's window is 1024×768.
+  const releaseAt = (x: number, y: number, screenX: number, screenY: number) =>
+    window.dispatchEvent(
+      new PointerEvent("pointerup", { clientX: x, clientY: y, screenX, screenY, pointerId: 7 }),
+    );
+
+  it("over another pane's strip means its middle: the tabs join it on release", () => {
+    beginPaneDrag(press(byId("stripL")), left);
+    at("stripR");
+    move(690, 10);
+    flushSync();
+    expect(tabDrag.pane).toBe(left);
+    // Never a slot: a pane goes into a pane, and that pane's body is tinted.
+    expect(tabDrag.over).toEqual({ kind: "pane", pane: right, zone: "center" });
+    expect(tabDrag.zone).not.toBeNull();
+    expect(shape()).toEqual([[a, b], [c]]);
+    release();
+    expect(shape()).toEqual([[c, a, b]]);
+    expect(tabDrag.pane).toBeNull();
+  });
+
+  it("on an edge it stands there as a pane; over itself nothing is offered", () => {
+    beginPaneDrag(press(byId("stripL")), left);
+    at("inL");
+    move(300, 420);
+    expect(tabDrag.over).toBeNull();
+    at("inR");
+    move(900, 420);
+    expect(tabDrag.over).toEqual({ kind: "pane", pane: right, zone: "bottom" });
+    release();
+    expect(shape()).toEqual([[c], [a, b]]);
+  });
+
+  it("let go of outside the window, it is handed to the page as the pane", async () => {
+    const moved = vi.fn();
+    const over = vi.fn(async () => null);
+    onTabDraggedOutside({ release: moved, over });
+    beginPaneDrag(press(byId("stripL")), left);
+    move(40, 40);
+    move(1500, 230);
+    // The windows out there are told of the tab the pane shows, and that it is a pane.
+    expect(over).toHaveBeenCalledWith(b, left);
+    releaseAt(1500, 230, 2100, 400);
+    // Said once what was being said about the drag has been said.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(moved).toHaveBeenCalledWith(b, { x: 2100, y: 400 }, true, left);
+    expect(shape()).toEqual([[a, b], [c]]);
+  });
+
+  it("an empty pane carries nothing", () => {
+    resetTabs();
+    beginPaneDrag(press(byId("stripL")), tabsState.center.focus);
+    move(400, 400);
+    expect(tabDrag.tab).toBeNull();
   });
 });

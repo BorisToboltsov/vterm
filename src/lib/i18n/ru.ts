@@ -317,13 +317,18 @@ export const ru: Record<MessageKey, string> = {
   "window.detachBlockedNotConnected":
     "В другое окно можно перенести только подключённую вкладку.",
   "window.detachBlockedSync":
-    "Дождитесь конца сравнения или синхронизации — вместе с вкладкой они не переносятся.",
-  "window.detachBlockedAi": "Дождитесь, пока ассистент закончит ответ.",
+    "Дождитесь конца сравнения или остановите его — вместе с вкладкой оно не переносится.",
+  "window.detachBlockedAi": "Дождитесь, пока выполнится команда ассистента.",
   "window.detachBlockedEditor":
     "Файл ещё открывается или сохраняется — повторите через мгновение.",
   "window.detachFailed": "Не удалось открыть вкладку в новом окне — она осталась здесь.",
   "window.moveFailed": "То окно не приняло вкладку — она осталась здесь.",
   "ctx.movePane": "Всю область",
+  "ctx.moveWindow": "Всё окно",
+  "palette.moveWindowTo": "Всё окно: {target}",
+  "window.windowBlocked": "Окно осталось как было. «{tab}»: {reason}",
+  "window.windowMovedPartly":
+    "В другое окно перенесено вкладок: {moved} из {total} — остальные остались здесь.",
   "palette.movePaneToWindow": "Область — в отдельное окно",
   "palette.movePaneTo": "Область: {target}",
   "window.paneBlocked": "Область осталась здесь. «{tab}»: {reason}",

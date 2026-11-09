@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import {
   defaultAiSettings,
@@ -398,9 +400,31 @@ describe("buildChatRequest (Phase 40 fields)", () => {
 
   it("carries a timeout, defaulting when the endpoint sets none", () => {
     const { s, ep } = ready();
-    expect(buildChatRequest(s, "sid", convo(2))!.timeoutSec).toBe(DEFAULT_AI_TIMEOUT_SEC);
+    expect(buildChatRequest(s, "sid", convo(2))!.timeoutSecs).toBe(DEFAULT_AI_TIMEOUT_SEC);
     ep.timeoutSec = 30;
-    expect(buildChatRequest(s, "sid", convo(2))!.timeoutSec).toBe(30);
+    expect(buildChatRequest(s, "sid", convo(2))!.timeoutSecs).toBe(30);
+  });
+
+  /** The fields of a `pub struct` in `ai.rs`, as serde names them (camelCase). */
+  function rustFields(name: string): string[] {
+    const src = readFileSync(join(process.cwd(), "src-tauri", "src", "ai.rs"), "utf8");
+    const at = src.indexOf(`pub struct ${name} {`);
+    expect(at, `ai.rs has no struct ${name}`).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    return [...body.matchAll(/^\s*pub (\w+):/gm)].map(([, f]) => f.replace(/_(\w)/g, (_, c: string) => c.toUpperCase()));
+  }
+
+  it("sends the fields the backend reads, by its names — a misnamed one would be dropped", () => {
+    const { s, ep } = ready();
+    ep.maxTokens = 256;
+    ep.params = '{"temperature":0.2}';
+    // The session is added by the chat store (`startChat`), every other field here.
+    const req = { ...buildChatRequest(s, "sid", convo(2), "be brief")!, sessionId: "s1" };
+    const fields = rustFields("AiChatRequest");
+    expect(Object.keys(req).filter((k) => !fields.includes(k))).toEqual([]);
+    expect(fields.filter((f) => !(f in req))).toEqual([]);
+    // And the check would see a misnamed one.
+    expect(Object.keys({ ...req, timeoutSec: 30 }).filter((k) => !fields.includes(k))).toEqual(["timeoutSec"]);
   });
 
   it("trims the history it sends", () => {

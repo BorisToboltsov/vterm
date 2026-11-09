@@ -584,6 +584,34 @@ export function applyDrop(layout: CenterLayout, tab: string, drop: TabDrop): Cen
 }
 
 /**
+ * The layout after dropping a whole pane (v1.36, ADR 0058) — dragged by the
+ * empty part of its strip. On another pane's middle (or its strip) its tabs
+ * join that pane, in their order, and the tab it showed is shown; on an edge it
+ * stands there as a pane, its tabs in their order, showing what it showed. On
+ * itself, or anywhere it would not change: the layout as it is.
+ */
+export function applyPaneDrop(layout: CenterLayout, pane: string, drop: TabDrop): CenterLayout {
+  const src = findPane(layout, pane);
+  const target = findPane(layout, drop.pane);
+  if (!src || !target || target.id === src.id) return layout;
+  const lead = src.active ?? src.tabs[0];
+  if (lead === undefined) return layout;
+  if (drop.kind === "strip" || drop.zone === "center") {
+    let next = layout;
+    for (const tab of src.tabs) next = moveTab(next, tab, target.id);
+    return activateTab(next, lead);
+  }
+  let next = splitWithTab(layout, lead, target.id, drop.zone);
+  const fresh = paneOf(next, lead);
+  if (!fresh || fresh.id === src.id) return layout;
+  const at = src.tabs.indexOf(lead);
+  src.tabs.forEach((tab, i) => {
+    if (tab !== lead) next = moveTab(next, tab, fresh.id, i < at ? i : null);
+  });
+  return activateTab(next, lead);
+}
+
+/**
  * Whether a drop would change anything. A target that changes nothing is not
  * offered: the tab's own slot, the body of its own pane, an edge of a pane it is
  * alone in.
@@ -700,6 +728,41 @@ export function arrivalDrop(
   if (canSplit(rect, "right", lim)) return { kind: "pane", pane: pane.id, zone: "right" };
   if (canSplit(rect, "bottom", lim)) return { kind: "pane", pane: pane.id, zone: "bottom" };
   return null;
+}
+
+/**
+ * Where a pane of a window moving here whole (v1.36, ADR 0058) lands: a pane of
+ * its own at `edge` of the pane `beside` arrived in — so the window's panes are
+ * built again as they stood. Into that pane, when there is no room beside it;
+ * where an arriving pane goes (`arrivalDrop`), when `beside` is not here.
+ */
+export function besideDrop(
+  layout: CenterLayout,
+  rects: Readonly<Record<string, Rect>>,
+  beside: string,
+  edge: Edge,
+  lim: PaneLimits = PANE_LIMITS,
+): TabDrop | null {
+  const pane = paneOf(layout, beside);
+  if (!pane) return arrivalDrop(layout, rects, lim);
+  return { kind: "pane", pane: pane.id, zone: canSplit(rects[pane.id], edge, lim) ? edge : "center" };
+}
+
+/**
+ * The share of the split in which pane `pane` is the second half — the one a
+ * pane split off at the right or the bottom is — set to `ratio`. Unchanged when
+ * the pane is no such half.
+ */
+export function ratioOfNewPane(layout: CenterLayout, pane: string, ratio: number): CenterLayout {
+  let split: string | null = null;
+  const walk = (n: LayoutNode): void => {
+    if (n.kind === "pane" || split) return;
+    if (n.b.kind === "pane" && n.b.id === pane) split = n.id;
+    walk(n.a);
+    walk(n.b);
+  };
+  walk(layout.root);
+  return split ? setRatio(layout, split, ratio) : layout;
 }
 
 /**

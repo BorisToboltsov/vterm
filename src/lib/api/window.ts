@@ -191,12 +191,17 @@ export interface DetachOpts {
   background?: string;
 }
 
-/**
- * Step 1: hold the session's output. Resolves with how many `term://out` events
- * were sent before the hold — the terminal waits for that many, then snapshots.
- */
-export function detachBegin(sessionId: string): Promise<number> {
-  return invoke<number>("detach_begin", { sessionId });
+/** What step 1 held (`appwin.rs` `DetachBegun`). */
+export interface DetachBegun {
+  /** `term://out` events sent before the hold — the terminal waits for that many, then snapshots. */
+  output: number;
+  /** The assistant's answer streaming in the session (v1.36): its pieces sent before the hold. */
+  stream: { id: string; sent: number } | null;
+}
+
+/** Step 1: hold the session's output — and an answer of the assistant streaming in it. */
+export function detachBegin(sessionId: string): Promise<DetachBegun> {
+  return invoke<DetachBegun>("detach_begin", { sessionId });
 }
 
 /** Roll step 1 back: the held output comes to this window after all. */

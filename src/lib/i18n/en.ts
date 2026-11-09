@@ -319,13 +319,18 @@ export const en = {
     "This is the window's only tab — it is already in a window of its own.",
   "window.detachBlockedNotConnected": "Only a connected tab can be moved to another window.",
   "window.detachBlockedSync":
-    "Wait for the comparison or sync to finish — it can't move with the tab.",
-  "window.detachBlockedAi": "Wait for the assistant to finish its answer.",
+    "Wait for the comparison to finish or stop it — it can't move with the tab.",
+  "window.detachBlockedAi": "Wait for the assistant's command to finish running.",
   "window.detachBlockedEditor":
     "A file is still opening or being saved — try again in a moment.",
   "window.detachFailed": "Couldn't open the tab in a new window — it stays here.",
   "window.moveFailed": "That window didn't take the tab — it stays here.",
   "ctx.movePane": "Whole pane",
+  "ctx.moveWindow": "Whole window",
+  "palette.moveWindowTo": "Whole window: {target}",
+  "window.windowBlocked": "The window stays as it is. “{tab}”: {reason}",
+  "window.windowMovedPartly":
+    "Moved {moved} of {total} tabs to the other window — the rest stay here.",
   "palette.movePaneToWindow": "Move the pane to a new window",
   "palette.movePaneTo": "Pane: {target}",
   "window.paneBlocked": "The pane stays here. “{tab}”: {reason}",

@@ -276,24 +276,43 @@ export function sftpGrep(
 }
 
 /**
- * Apply a computed sync plan (uploads/downloads/deletes); returns counts.
- * `runId` is the handle `sftpCancel` stops the run with — the same cancel map
- * folder downloads use.
+ * Start applying a computed sync plan (uploads/downloads/deletes) — resolves
+ * once it has started (v1.36, ADR 0058). The run is the backend's: how it goes
+ * and how it ends is told (`SYNC_RUN_EVENT`) to whichever window shows the
+ * session's tab at the moment. `runId` is the handle `sftpCancel` stops it
+ * with — the same cancel map folder downloads use.
  */
-export function sftpSyncApply(
+export function sftpSyncStart(
   sessionId: string,
   runId: string,
   localRoot: string,
   remoteRoot: string,
   actions: SyncAction[],
-): Promise<SyncStats> {
-  return invoke<SyncStats>("sftp_sync_apply", {
+): Promise<void> {
+  return invoke<void>("sftp_sync_start", {
     sessionId,
     runId,
     localRoot,
     remoteRoot,
     actions,
   });
+}
+
+/** How a sync run stands, told to the window that shows its session. */
+export const SYNC_RUN_EVENT = "sync://run";
+
+/** A sync run as the backend tells it (`sync.rs` `RunView`). */
+export interface SyncRunView {
+  runId: string;
+  sessionId: string;
+  state: "running" | "done" | "stopped" | "failed";
+  stats: SyncStats;
+  error: string | null;
+}
+
+/** The last sync run of a session — asked by a window that has just taken its tab over. */
+export function syncRunOf(sessionId: string): Promise<SyncRunView | null> {
+  return invoke<SyncRunView | null>("sync_run_of", { sessionId });
 }
 
 /** Event name emitted when the OS asks vterm to open a file ("Open with vterm"). */

@@ -12,7 +12,7 @@ use crate::{
 use russh_sftp::client::SftpSession;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use zeroize::Zeroizing;
 
@@ -475,65 +475,103 @@ pub async fn run_tool_install(
         .await
 }
 
-/// Apply a computed sync plan: upload/download changed files, delete extraneous.
+/// Start applying a computed sync plan: upload/download changed files, delete
+/// extraneous ones — and return at once (v1.36, ADR 0058). The run is the
+/// backend's: its per-file progress (`sftp://progress`) and its end
+/// ([`sync::RUN_EVENT`]) go to whichever window shows the session's tab when
+/// they are sent, so the tab can move to another window mid-run. Refused at once
+/// while another run holds the app-wide slot.
 ///
 /// `run_id` registers the run in the shared cancel map, so `sftp_cancel` stops it
 /// the same way it stops a folder download — no second cancellation mechanism.
 /// The run lands in the session recording as ONE `[sftp] $ sync …` entry (audit
 /// contract, Phase 37.2), not one per file; `exit 130` marks a user stop.
 #[tauri::command]
-pub async fn sftp_sync_apply(
+pub async fn sftp_sync_start(
+    app: AppHandle,
     window: tauri::WebviewWindow,
-    state: State<'_, AppState>,
     session_id: String,
     run_id: String,
     local_root: String,
     remote_root: String,
     actions: Vec<sync::SyncAction>,
-) -> AppResult<sync::SyncStats> {
+) -> AppResult<()> {
+    let state = app.state::<AppState>();
     let session = session_arc(&state, &session_id).await?;
     let sftp = session.sftp().await?;
-    // One run at a time, app-wide; the slot is freed however this command ends.
-    let _slot = SyncRunSlot::take(&state.sync_run, &run_id)?;
-    let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
-    let body = sync::sync_mirror_body(&actions);
-
+    // One run at a time, app-wide; the slot is freed however the run ends.
+    let slot = SyncRunSlot::take(&app, &run_id)?;
     let cancel = Arc::new(AtomicBool::new(false));
     state
         .cancels
         .locked()
         .insert(run_id.clone(), cancel.clone());
-    let win = appwin::WindowSink::of(&window);
-    let res = sync::apply(&win, &sftp, &local_root, &remote_root, actions, cancel).await;
-    state.cancels.locked().remove(&run_id);
+    let running = sync::RunView::running(&run_id, &session_id);
+    state
+        .sync_runs
+        .locked()
+        .insert(session_id.clone(), running.clone());
+    let sink = appwin::WindowSink::following(&app, &session_id, window.label());
+    sink.emit(sync::RUN_EVENT, running.clone());
 
-    let (code, detail) = match &res {
-        Ok(stats) if stats.stopped => (130, format!("{body}\nstopped by user")),
-        Ok(_) => (0, body),
-        Err(e) => (1, format!("{body}\n{e}")),
-    };
-    session.record_output(sftp::sftp_mirror(&op, code, &detail).as_bytes());
-    res
+    tauri::async_runtime::spawn(async move {
+        let _slot = slot;
+        let op = sync::sync_mirror_op(&local_root, &remote_root, actions.len());
+        let body = sync::sync_mirror_body(&actions);
+        let res = sync::apply(&sink, &sftp, &local_root, &remote_root, actions, cancel).await;
+        let state = app.state::<AppState>();
+        state.cancels.locked().remove(&running.run_id);
+        let (code, detail) = match &res {
+            Ok(stats) if stats.stopped => (130, format!("{body}\nstopped by user")),
+            Ok(_) => (0, body),
+            Err(e) => (1, format!("{body}\n{e}")),
+        };
+        session.record_output(sftp::sftp_mirror(&op, code, &detail).as_bytes());
+        let ended = running.ended(&res);
+        // Kept only while the session is: an ended session dropped its entry.
+        if let Some(entry) = state.sync_runs.locked().get_mut(&ended.session_id) {
+            if entry.run_id == ended.run_id {
+                *entry = ended.clone();
+            }
+        }
+        sink.emit(sync::RUN_EVENT, ended);
+    });
+    Ok(())
 }
 
-/// The app-wide "a sync run is applying" slot, held for the length of one run.
-struct SyncRunSlot<'a>(&'a Mutex<Option<String>>);
+/// The last sync run of a session — asked by a window that has just taken the
+/// tab over, after it started listening for [`sync::RUN_EVENT`]: the run may
+/// have ended while the tab was on its way. None — the session never ran one.
+#[tauri::command]
+pub fn sync_run_of(state: State<'_, AppState>, session_id: String) -> Option<sync::RunView> {
+    state.sync_runs.locked().get(&session_id).cloned()
+}
 
-impl<'a> SyncRunSlot<'a> {
+/// The app-wide "a sync run is applying" slot, held for the length of one run —
+/// which, since v1.36, outlives the command that started it.
+struct SyncRunSlot(AppHandle);
+
+/// Take `slot` for `run_id`, or refuse while another run holds it.
+fn take_slot(slot: &std::sync::Mutex<Option<String>>, run_id: &str) -> AppResult<()> {
+    let mut current = slot.locked();
+    if current.is_some() {
+        return Err(AppError::SyncBusy);
+    }
+    *current = Some(run_id.to_string());
+    Ok(())
+}
+
+impl SyncRunSlot {
     /// Take the slot for `run_id`, or refuse while another run holds it.
-    fn take(slot: &'a Mutex<Option<String>>, run_id: &str) -> AppResult<Self> {
-        let mut current = slot.lock().unwrap_or_else(|e| e.into_inner());
-        if current.is_some() {
-            return Err(AppError::SyncBusy);
-        }
-        *current = Some(run_id.to_string());
-        Ok(Self(slot))
+    fn take(app: &AppHandle, run_id: &str) -> AppResult<Self> {
+        take_slot(&app.state::<AppState>().sync_run, run_id)?;
+        Ok(Self(app.clone()))
     }
 }
 
-impl Drop for SyncRunSlot<'_> {
+impl Drop for SyncRunSlot {
     fn drop(&mut self) {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.0.state::<AppState>().sync_run.locked() = None;
     }
 }
 
@@ -723,14 +761,58 @@ mod tests {
 
     #[test]
     fn only_one_sync_run_applies_at_a_time() {
-        let slot = Mutex::new(None);
-        let first = SyncRunSlot::take(&slot, "run-1").expect("free slot");
-        assert!(matches!(
-            SyncRunSlot::take(&slot, "run-2"),
-            Err(AppError::SyncBusy)
-        ));
-        // However the run ends, the slot is free again.
-        drop(first);
-        assert!(SyncRunSlot::take(&slot, "run-2").is_ok());
+        let slot = std::sync::Mutex::new(None);
+        take_slot(&slot, "run-1").expect("free slot");
+        assert!(matches!(take_slot(&slot, "run-2"), Err(AppError::SyncBusy)));
+        // However the run ends, the slot is free again (`SyncRunSlot`'s drop).
+        *slot.locked() = None;
+        assert!(take_slot(&slot, "run-2").is_ok());
+    }
+
+    /// Guard (v1.36, ADR 0058): a sync run is the backend's job. It is started
+    /// and returns at once, its progress and its end go to whichever window
+    /// shows the session's tab when they are sent — never to the window that
+    /// started it, which the tab may have left — and its last state is kept
+    /// for the window that takes the tab over.
+    pub(crate) fn runs_held_by_a_window(sftp: &str) -> Vec<&'static str> {
+        let at = sftp.find("pub async fn sftp_sync_start(").unwrap_or(0);
+        let start = &sftp[at..at + sftp[at..].find("\n}\n").unwrap_or(0)];
+        let mut out = Vec::new();
+        if !start.contains("WindowSink::following(&app, &session_id, window.label())")
+            || start.contains("WindowSink::of(")
+        {
+            out.push("the run's progress goes to the window that started it");
+        }
+        if !start.contains("tauri::async_runtime::spawn(") || !start.contains("-> AppResult<()>") {
+            out.push("the run is awaited by the command that started it");
+        }
+        if !start.contains(".sync_runs") {
+            out.push("the run's state is not kept for a window that takes the tab");
+        }
+        out
+    }
+
+    #[test]
+    fn a_sync_run_follows_its_session_not_the_window_that_started_it() {
+        let src = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/sftp.rs"),
+        )
+        .unwrap();
+        let live = src.split("#[cfg(test)]").next().unwrap();
+        assert_eq!(runs_held_by_a_window(live), Vec::<&str>::new());
+        let back = live.replacen(
+            "WindowSink::following(&app, &session_id, window.label())",
+            "WindowSink::of(&window)",
+            1,
+        );
+        assert!(runs_held_by_a_window(&back)
+            .contains(&"the run's progress goes to the window that started it"));
+        let awaited = live.replacen(
+            "tauri::async_runtime::spawn(",
+            "futures::executor::block_on(",
+            1,
+        );
+        assert!(runs_held_by_a_window(&awaited)
+            .contains(&"the run is awaited by the command that started it"));
     }
 }

@@ -160,6 +160,16 @@ export default defineConfig(
               },
             ]),
           ),
+          // A sync run is the backend's (ADR 0058): started, and heard of, by its store alone.
+          ...Object.fromEntries(
+            ["sftpSyncStart", "syncRunOf"].map((name) => [
+              name,
+              {
+                owners: ["src/lib/stores/syncjob.svelte.ts"],
+                why: "a run is started once per plan and its end taken once — the store matches both to the job by run id",
+              },
+            ]),
+          ),
           closeTab: {
             owners: ["src/routes/+page.svelte"],
             why: "a tab closes through closeTabFully, which drops everything kept by its session id",

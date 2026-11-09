@@ -217,14 +217,17 @@ describe("invoke wrappers pass the right command + args", () => {
       cancelId: "c1:local",
     });
     const actions = [{ path: "a.txt", op: "upload" as const, reason: "new" as const }];
-    await api.sftpSyncApply("sess", "run-1", "/home/me/app", "/srv/app", actions);
-    expect(invoke).toHaveBeenCalledWith("sftp_sync_apply", {
+    await api.sftpSyncStart("sess", "run-1", "/home/me/app", "/srv/app", actions);
+    expect(invoke).toHaveBeenCalledWith("sftp_sync_start", {
       sessionId: "sess",
       runId: "run-1",
       localRoot: "/home/me/app",
       remoteRoot: "/srv/app",
       actions,
     });
+    invoke.mockResolvedValueOnce(null);
+    expect(await api.syncRunOf("sess")).toBeNull();
+    expect(invoke).toHaveBeenLastCalledWith("sync_run_of", { sessionId: "sess" });
     await api.sftpGrep("sess", "/srv", "TODO", true, false);
     // Without a limit: one page, which the backend reads from `null`.
     expect(invoke).toHaveBeenCalledWith("sftp_grep", {

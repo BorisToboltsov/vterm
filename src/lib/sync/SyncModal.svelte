@@ -55,13 +55,11 @@
     sessionId,
     remotePath,
     onclose,
-    onapplied,
   }: {
     open?: boolean;
     sessionId: string;
     remotePath: string;
     onclose?: () => void;
-    onapplied?: () => void;
   } = $props();
 
   // The session is fixed for this component's life (the panel remounts per tab).
@@ -145,7 +143,7 @@
   }
 
   function apply() {
-    void applyJob(sessionId, onapplied);
+    void applyJob(sessionId);
   }
 
   /** Cancel / × / Escape / backdrop: ask before abandoning work in flight. */

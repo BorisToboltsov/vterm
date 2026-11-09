@@ -311,5 +311,4 @@
   {sessionId}
   remotePath={cwd || "."}
   onclose={() => (showSync = false)}
-  onapplied={() => browser?.refresh()}
 />

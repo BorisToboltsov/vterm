@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const hoisted = vi.hoisted(() => ({
   localHashTree: vi.fn(),
   sftpHashTree: vi.fn(),
-  sftpSyncApply: vi.fn(),
+  sftpSyncStart: vi.fn(),
+  syncRunOf: vi.fn(async () => null),
   sftpCancel: vi.fn(),
   pickSaveDir: vi.fn(),
   sftpList: vi.fn(),
@@ -24,8 +25,22 @@ vi.mock("../api", () => hoisted);
 import SyncModal from "./SyncModal.svelte";
 import { applySyncProgress, clearSyncRun } from "../stores/syncrun.svelte";
 import { clearToasts, toastsState } from "../stores/toasts.svelte";
-import { resetSyncJobs, applyScanProgress } from "../stores/syncjob.svelte";
+import { resetSyncJobs, applyScanProgress, runHeard } from "../stores/syncjob.svelte";
 import type { SftpProgress } from "../api";
+import type { SyncStats } from "./sync";
+
+/**
+ * The run the backend would carry out (v1.36: it is started, and its end is
+ * heard as `sync://run`): ends as `result` does.
+ */
+function runWith(result: SyncStats | Promise<unknown>) {
+  hoisted.sftpSyncStart.mockImplementation(async (sessionId: string, runId: string) => {
+    void Promise.resolve(result).then((v) => {
+      const stats = v as SyncStats;
+      runHeard({ runId, sessionId, state: stats.stopped ? "stopped" : "done", stats, error: null });
+    });
+  });
+}
 
 const progress = (path: string, transferred: number, total: number, done = false): SftpProgress => ({
   id: `sync:${path}`,
@@ -64,7 +79,7 @@ describe("SyncModal", () => {
   it("shows per-row progress while a run is in flight", async () => {
     // Hold the run open so the dialog stays in its "running" phase.
     let finish: (v: unknown) => void = () => {};
-    hoisted.sftpSyncApply.mockReturnValue(new Promise((r) => (finish = r)));
+    runWith(new Promise((r) => (finish = r)));
     await openWithPlan();
 
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
@@ -80,13 +95,13 @@ describe("SyncModal", () => {
   });
 
   it("cancels the run it started, by its own run id", async () => {
-    hoisted.sftpSyncApply.mockReturnValue(new Promise(() => {}));
+    runWith(new Promise(() => {}));
     await openWithPlan();
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
     await fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
 
-    const runId = hoisted.sftpSyncApply.mock.calls[0][1];
+    const runId = hoisted.sftpSyncStart.mock.calls[0][1];
     expect(hoisted.sftpCancel).toHaveBeenCalledWith(runId);
     expect(screen.getByRole("button", { name: /Stopping/ })).toBeTruthy();
   });
@@ -95,7 +110,7 @@ describe("SyncModal", () => {
     // One file made it, then the user stopped: the run resolves only after that
     // first file's progress has landed (starting a run clears the previous one).
     let finish: (v: unknown) => void = () => {};
-    hoisted.sftpSyncApply.mockReturnValue(new Promise((r) => (finish = r)));
+    runWith(new Promise((r) => (finish = r)));
     const onclose = vi.fn();
     hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
     hoisted.localHashTree.mockResolvedValue(tree([
@@ -125,7 +140,7 @@ describe("SyncModal", () => {
   });
 
   it("closes on a clean run", async () => {
-    hoisted.sftpSyncApply.mockResolvedValue({
+    runWith({
       uploaded: 2,
       downloaded: 0,
       deleted: 0,
@@ -288,7 +303,7 @@ describe("SyncModal", () => {
   });
 
   it("asks before abandoning a run and stops it by its run id", async () => {
-    hoisted.sftpSyncApply.mockReturnValue(new Promise(() => {}));
+    runWith(new Promise(() => {}));
     const onclose = vi.fn();
     hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
     hoisted.localHashTree.mockResolvedValue(tree([{ path: "a.txt", sha256: "1" }]));
@@ -302,12 +317,12 @@ describe("SyncModal", () => {
     await fireEvent.click(screen.getByLabelText("Close"));
     expect(await screen.findByText("Stop the sync?")).toBeTruthy();
     await fireEvent.click(screen.getByTestId("confirm"));
-    expect(hoisted.sftpCancel).toHaveBeenCalledWith(hoisted.sftpSyncApply.mock.calls[0][1]);
+    expect(hoisted.sftpCancel).toHaveBeenCalledWith(hoisted.sftpSyncStart.mock.calls[0][1]);
     expect(onclose).toHaveBeenCalledOnce();
   });
 
   it("drops the plan after a clean run, so re-opening doesn't redraw it", async () => {
-    hoisted.sftpSyncApply.mockResolvedValue({ uploaded: 1, downloaded: 0, deleted: 0, stopped: false });
+    runWith({ uploaded: 1, downloaded: 0, deleted: 0, stopped: false });
     hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
     hoisted.localHashTree.mockResolvedValue(tree([{ path: "a.txt", sha256: "1" }]));
     hoisted.sftpHashTree.mockResolvedValue(tree([]));
@@ -325,7 +340,7 @@ describe("SyncModal", () => {
     hoisted.pickSaveDir.mockResolvedValue("/home/me/app");
     hoisted.localHashTree.mockResolvedValue(tree([{ path: "a.txt", sha256: "1" }]));
     hoisted.sftpHashTree.mockResolvedValue(tree([]));
-    hoisted.sftpSyncApply.mockResolvedValue({ uploaded: 1, downloaded: 0, deleted: 0, stopped: false });
+    runWith({ uploaded: 1, downloaded: 0, deleted: 0, stopped: false });
     const view = render(SyncModal, {
       props: { open: true, sessionId: "sess", remotePath: "/srv/app" },
     });
@@ -335,8 +350,8 @@ describe("SyncModal", () => {
     // Follow-terminal moves the panel underneath the open dialog.
     await view.rerender({ open: true, sessionId: "sess", remotePath: "/opt/elsewhere" });
     await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
-    await waitFor(() => expect(hoisted.sftpSyncApply).toHaveBeenCalled());
-    expect(hoisted.sftpSyncApply.mock.calls[0][3]).toBe("/srv/app");
+    await waitFor(() => expect(hoisted.sftpSyncStart).toHaveBeenCalled());
+    expect(hoisted.sftpSyncStart.mock.calls[0][3]).toBe("/srv/app");
   });
 
   it("runs a compare in the background and reports when it's ready", async () => {

@@ -19,11 +19,13 @@ import type { SyncJob } from "../stores/syncjob.svelte";
 import type { Tab } from "../stores/tabs.svelte";
 import type { Workspace } from "../stores/workspaces.svelte";
 import type { SavedBlock } from "../terminal/filelinkprovider";
-import type { SessionChat } from "../stores/aichat.svelte";
+import type { LiveStream, SessionChat } from "../stores/aichat.svelte";
+import type { SyncProgressMap } from "../sync/sync";
+import type { LayoutNode, Pane } from "../layout/splitlayout";
 
 /** Bumped when the packet's shape changes. Both windows run the same build, so
  *  a mismatch is not a migration case — the packet is refused. */
-export const PACKET_VERSION = 5;
+export const PACKET_VERSION = 6;
 
 /** A terminal's screen, scrollback and modes, as `@xterm/addon-serialize` writes them. */
 export interface TermSnapshot {
@@ -69,6 +71,19 @@ export interface PaneSeat {
   lead: string | null;
   /** It stood before the lead in the strip and goes right before it; otherwise to the pane's end. */
   before: boolean;
+  /**
+   * A pane of a window moving whole (v1.36, ADR 0058): its first arrival opens
+   * it at `edge` of the pane of `beside` — a tab that arrived before it — with
+   * `ratio` the share the other half keeps. Absent: it arrives as a pane does.
+   */
+  split?: PaneSplit;
+}
+
+/** Where a pane of a window moving whole opens, beside what arrived before it. */
+export interface PaneSplit {
+  beside: string;
+  edge: "right" | "bottom";
+  ratio: number;
 }
 
 export interface TabPacket {
@@ -79,8 +94,12 @@ export interface TabPacket {
   terminal: TermSnapshot;
   workspace: Workspace | null;
   chat: SessionChat | null;
+  /** The answer streaming in its chat (v1.36): the rest of it is heard in the other window. */
+  aiStream: LiveStream | null;
   dock: DockSessionState | null;
   sync: SyncJob | null;
+  /** The rows of its sync run so far, when the run is going (v1.36). */
+  syncProgress: { map: SyncProgressMap; done: number; weight: number } | null;
   page: PageSessionState;
 }
 
@@ -117,6 +136,11 @@ export function parsePacket(raw: string | null): TabPacket | null {
   if (seat !== null) {
     if (!isRecord(seat) || typeof seat.before !== "boolean") return null;
     if (seat.lead !== null && (typeof seat.lead !== "string" || !seat.lead)) return null;
+    const split = seat.split;
+    if (split !== undefined) {
+      if (!isRecord(split) || typeof split.beside !== "string" || !split.beside) return null;
+      if ((split.edge !== "right" && split.edge !== "bottom") || typeof split.ratio !== "number") return null;
+    }
   }
   return value as unknown as TabPacket;
 }
@@ -137,10 +161,14 @@ export interface DetachState {
   tabs: number;
   /** The tab's session is connected. */
   connected: boolean;
-  /** Its sync job is comparing or applying. */
-  syncBusy: boolean;
-  /** Its assistant is streaming, running a dialog step or awaiting a go-ahead. */
-  chatBusy: boolean;
+  /** Its sync job is comparing (a run is the backend's and goes with the tab, v1.36). */
+  syncComparing: boolean;
+  /**
+   * Its assistant is running a dialog step's command right now. A streaming
+   * answer is held by the backend while the tab moves and goes with it, and a
+   * step waiting for a go-ahead is state (v1.36, ADR 0058).
+   */
+  chatStep: boolean;
   /** One of its editors is loading or being saved. */
   editorBusy: boolean;
 }
@@ -149,13 +177,15 @@ export interface DetachState {
  * The first reason a tab cannot go, or `null` when it can.
  *
  * A tab moves whole or not at all. Work that is *waiting* in this window's
- * memory — a compare, a sync run, a streaming answer, a save — cannot be
- * carried to another window: its continuation would be left behind, with
- * nothing to hand its result to. So the tab waits for it instead.
+ * memory — a compare, a dialog step's command, a save — cannot be carried to
+ * another window: its continuation would be left behind, with nothing to hand
+ * its result to. So the tab waits for it instead.
  *
  * A file transfer is not such work (v1.12, ADR 0025): it is a job of the
  * backend, told to whichever window shows the tab — so a tab leaves with its
- * transfers under way.
+ * transfers under way. Since v1.36 (ADR 0058) neither is a sync run (a job of
+ * the backend too) nor a streaming answer (the backend holds the stream while
+ * the tab moves, as it holds the terminal's output).
  *
  * Structural reasons come first (they are not something to wait out), then the
  * session, then work in flight.
@@ -167,8 +197,8 @@ export function detachBlocker(s: DetachState, toOpenWindow = false): DetachBlock
   // closes behind it.
   if (!toOpenWindow && !s.mainWindow && s.tabs <= 1) return "lastTab";
   if (!s.connected) return "notConnected";
-  if (s.syncBusy) return "sync";
-  if (s.chatBusy) return "ai";
+  if (s.syncComparing) return "sync";
+  if (s.chatStep) return "ai";
   if (s.editorBusy) return "editor";
   return null;
 }
@@ -224,6 +254,48 @@ export function paneMoveOrder(tabs: readonly string[], shown: string | null): Pa
     ...tabs.slice(at + 1).map((tab) => ({ tab, seat: { lead, before: false } })),
   ];
 }
+
+/**
+ * The order a whole window's tabs go in (v1.36, ADR 0058), so that the other
+ * window builds its panes again as they stood: the shown tab of the first pane
+ * opens it as an arriving pane does; at each split, the first tab of its second
+ * half opens a pane at the right or the bottom of the tab that stands for the
+ * first half (`seat.split`, with the split's share); every other tab of a pane
+ * takes its seat around the pane's first arrival, as in a pane's move.
+ * `sessionsOf` — a pane's session tabs in strip order.
+ */
+export function windowMoveOrder(root: LayoutNode, sessionsOf: (pane: Pane) => string[]): PaneStep[] {
+  const leadOf = (pane: Pane): string | null => {
+    const tabs = sessionsOf(pane);
+    return pane.active !== null && tabs.includes(pane.active) ? pane.active : (tabs[0] ?? null);
+  };
+  const firstLead = (node: LayoutNode): string | null =>
+    node.kind === "pane" ? leadOf(node) : (firstLead(node.a) ?? firstLead(node.b));
+  const steps: PaneStep[] = [];
+  const walk = (node: LayoutNode, anchor: string): void => {
+    if (node.kind === "pane") {
+      steps.push(...paneMoveOrder(sessionsOf(node), anchor).slice(1));
+      return;
+    }
+    const second = firstLead(node.b);
+    if (second === null) return walk(node.a, anchor);
+    if (firstLead(node.a) === null) return walk(node.b, anchor);
+    steps.push({
+      tab: second,
+      seat: { lead: null, before: false, split: { beside: anchor, edge: node.dir === "row" ? "right" : "bottom", ratio: node.ratio } },
+    });
+    walk(node.a, anchor);
+    walk(node.b, second);
+  };
+  const first = firstLead(root);
+  if (first === null) return [];
+  steps.push({ tab: first, seat: { lead: null, before: false } });
+  walk(root, first);
+  return steps;
+}
+
+/** Whether a window is offered as a whole: with one pane it is that pane's (or its tab's) move. */
+export const windowMoveOffered = (panes: number): boolean => panes > 1;
 
 /**
  * Whether "move the pane to a new window" is offered: not for a secondary

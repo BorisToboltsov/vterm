@@ -406,13 +406,26 @@ impl Windows {
 
 // ── Events addressed to one window ──────────────────────────────────────────
 
-/// Progress of work one window started — a transfer, a sync run, a tree hash —
+/// Progress of work one window started — a tree hash, a download it waits for —
 /// goes to that window and no other: each window keeps its own list of what it
-/// is doing, and its close confirmation counts from that list.
+/// is doing, and its close confirmation counts from that list. Work that
+/// belongs to a session rather than to a window — a sync run since v1.36 (ADR
+/// 0058) — follows the session's tab instead (`following`).
 #[derive(Clone)]
 pub struct WindowSink {
     app: AppHandle,
-    label: String,
+    to: SinkTarget,
+}
+
+#[derive(Clone)]
+enum SinkTarget {
+    Window(String),
+    /// Whichever window shows the session's tab when the event is sent; the
+    /// window that started the work when none does.
+    Session {
+        session: String,
+        origin: String,
+    },
 }
 
 impl WindowSink {
@@ -420,12 +433,36 @@ impl WindowSink {
     pub fn of(window: &WebviewWindow) -> Self {
         Self {
             app: window.app_handle().clone(),
-            label: window.label().to_string(),
+            to: SinkTarget::Window(window.label().to_string()),
+        }
+    }
+
+    /// The sink of a session's work: each event goes to the window that shows
+    /// its tab at that moment — the tab can move to another window mid-run.
+    pub fn following(app: &AppHandle, session: &str, origin: &str) -> Self {
+        Self {
+            app: app.clone(),
+            to: SinkTarget::Session {
+                session: session.to_string(),
+                origin: origin.to_string(),
+            },
+        }
+    }
+
+    /// The window an event goes to now.
+    pub fn label(&self) -> String {
+        match &self.to {
+            SinkTarget::Window(label) => label.clone(),
+            SinkTarget::Session { session, origin } => self
+                .app
+                .try_state::<Windows>()
+                .and_then(|w| w.owner_of(session))
+                .unwrap_or_else(|| origin.clone()),
         }
     }
 
     pub fn emit<S: Serialize + Clone>(&self, event: &str, payload: S) {
-        let _ = self.app.emit_to(self.label.as_str(), event, payload);
+        let _ = self.app.emit_to(self.label().as_str(), event, payload);
     }
 }
 
@@ -1086,23 +1123,44 @@ fn build_window(
     builder.build()
 }
 
-/// Step 1: start holding the session's output. Returns how many output events
-/// were sent before the hold — the window waits for that many, then snapshots
-/// its terminal.
+/// What step 1 held: the terminal's output and, when the assistant is answering
+/// in the session, its answer (v1.36, ADR 0058).
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetachBegun {
+    /// Output events sent before the hold: the window waits for that many,
+    /// then snapshots its terminal.
+    pub output: u64,
+    /// The answer streaming now, and how many of its pieces were sent before the
+    /// hold: the chat waits for that many, then the conversation is packed.
+    pub stream: Option<HeldStream>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeldStream {
+    pub id: String,
+    pub sent: u64,
+}
+
+/// Step 1: start holding the session's output — and the assistant's answer
+/// streaming in it.
 #[tauri::command]
 pub async fn detach_begin(
     window: WebviewWindow,
     state: State<'_, AppState>,
     windows: State<'_, Windows>,
     session_id: String,
-) -> AppResult<u64> {
+) -> AppResult<DetachBegun> {
     if !windows.owns(&session_id, window.label()) {
         return Err(AppError::NoSession);
     }
     let gate = crate::session_gate(&state, &session_id)
         .await
         .ok_or(AppError::NoSession)?;
-    gate.hold().ok_or(AppError::NoSession)
+    let output = gate.hold().ok_or(AppError::NoSession)?;
+    let stream = crate::aigate::hold_session(&session_id).map(|(id, sent)| HeldStream { id, sent });
+    Ok(DetachBegun { output, stream })
 }
 
 /// Roll step 1 back: the held output goes to the window that still has the tab.
@@ -1119,6 +1177,7 @@ pub async fn detach_abort(
     if let Some(gate) = crate::session_gate(&state, &session_id).await {
         gate.resume();
     }
+    crate::aigate::resume_session(&session_id);
     Ok(())
 }
 
@@ -1155,8 +1214,10 @@ pub async fn detach_commit(
     let gate = crate::session_gate(&state, &session_id)
         .await
         .ok_or(AppError::NoSession)?;
-    if !gate.is_held() {
-        // The hold already gave way (the terminal printed past the limit).
+    if !gate.is_held() || crate::aigate::overflowed_in(&session_id) {
+        // The hold already gave way (the terminal printed, or the assistant
+        // wrote, past the limit).
+        crate::aigate::resume_session(&session_id);
         return Err(AppError::HandoffOverflowed);
     }
 
@@ -1187,6 +1248,7 @@ pub async fn detach_commit(
     let Some(label) = label else {
         // That window is gone, has not loaded, or is taking another tab.
         gate.resume();
+        crate::aigate::resume_session(&session_id);
         return Err(AppError::HandoffNotTaken);
     };
 
@@ -1200,6 +1262,7 @@ pub async fn detach_commit(
     if let Err(e) = opened {
         windows.lock().pending.remove(&label);
         gate.resume();
+        crate::aigate::resume_session(&session_id);
         return Err(e);
     }
 
@@ -1223,6 +1286,7 @@ pub async fn detach_commit(
             // the tab. A window opened for the tab is closed with it; one that
             // was already open has tabs of its own and stays.
             gate.resume();
+            crate::aigate::resume_session(&session_id);
             if created {
                 if let Some(w) = app.get_webview_window(&label) {
                     let _ = w.destroy();
@@ -1280,8 +1344,15 @@ pub async fn attach_session(
     // From here every path answers the window waiting in `detach_commit`.
     let outcome: HandoffResult = match crate::session_gate(&state, &session_id).await {
         None => Err(HandoffFailure::NotTaken),
+        // An answer that outgrew its hold went to the old window: the tab stays there.
+        Some(_) if crate::aigate::overflowed_in(&session_id) => {
+            crate::aigate::resume_session(&session_id);
+            Err(HandoffFailure::Overflowed)
+        }
         Some(gate) => match gate.hand_over() {
             Ok(()) => {
+                // The window listens for the answer too: what was held of it goes there.
+                let _ = crate::aigate::hand_over_session(&session_id);
                 let mut reg = windows.lock();
                 reg.claim(&session_id, &label);
                 // The tab it was shown is the one it now has.

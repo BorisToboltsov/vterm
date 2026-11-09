@@ -1,4 +1,5 @@
 mod ai;
+mod aigate;
 mod appwin;
 mod backup;
 mod commands;
@@ -69,6 +70,9 @@ pub(crate) struct AppState {
     /// run's progress rows are keyed by path alone, so two runs — in two windows,
     /// since v1.3 — would draw each other's bars.
     sync_run: Mutex<Option<String>>,
+    /// The last sync run of each session (v1.36, ADR 0058): what a window that
+    /// takes the tab over is told of a run that may have ended on the way.
+    sync_runs: Mutex<HashMap<String, sync::RunView>>,
     /// Per-session sample stores for the metrics probes (CPU%, throughput, etc.);
     /// see [`metrics::MetricsSamples`]. Cleared on disconnect.
     pub(crate) metrics_samples: metrics::MetricsSamples,
@@ -128,6 +132,14 @@ pub(crate) async fn end_session(app: &AppHandle, session_id: &str) {
     // Transfers reading from this session or writing to it stop here: each
     // holds the session open until it notices, and removes what it staged.
     app.state::<transfers::Jobs>().cancel_session(session_id);
+    // So does its sync run, between two files (v1.36: the run is the backend's,
+    // no window's teardown stops it any more).
+    let run = state.sync_runs.locked().remove(session_id);
+    if let Some(run) = run {
+        if let Some(cancel) = state.cancels.locked().get(&run.run_id) {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     state.sessions.lock().await.remove(session_id);
     // Removing the LocalPty drops it, which kills the child shell.
     state.local_ptys.locked().remove(session_id);
@@ -224,6 +236,7 @@ pub fn run() {
         local_ptys: Mutex::new(HashMap::new()),
         cancels: Mutex::new(HashMap::new()),
         sync_run: Mutex::new(None),
+        sync_runs: Mutex::new(HashMap::new()),
         metrics_samples: metrics::MetricsSamples::default(),
         pending_opens: Mutex::new(initial_files),
         id_names: Mutex::new(HashMap::new()),
@@ -373,7 +386,8 @@ pub fn run() {
             localfile::local_copy,
             commands::sftp::sftp_hash_tree,
             commands::sftp::local_hash_tree,
-            commands::sftp::sftp_sync_apply,
+            commands::sftp::sftp_sync_start,
+            commands::sftp::sync_run_of,
             commands::sftp::sftp_grep,
             commands::sftp::lint_remote,
             commands::sftp::nginx_config_files,

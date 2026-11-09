@@ -4,8 +4,10 @@
 // AGENTS.md and CLAUDE.md were two copies of the same process rules that differed
 // only in the title line — an edit to one left the other stale. docs/INVARIANTS.md
 // is imported into the context of every session and had grown to ~222k characters
-// of rule plus history; stage E moved the history to ADRs, and the budget keeps it
-// there: a rule that needs more than a phrase of reason gets an ADR and a link.
+// of rule plus history; stage E moved the history to ADRs. A budget on the whole
+// file kept it there until v1.36; since then each rule is held short instead — an
+// item, a sub-item, a table row — so the canon grows by rules, never by stories:
+// a rule that needs more than a phrase of reason gets an ADR and a link.
 //
 // The rules name gates and ADRs, and code comments cite rules by their title. A
 // renamed gate or a reworded title leaves a pointer to nothing, and no other test
@@ -24,10 +26,12 @@ const read = (rel: string) => readFileSync(join(ROOT, rel), "utf8");
 const SELF = "docs.guard.test.ts";
 
 /**
- * Characters, not bytes: Cyrillic is two bytes a character in UTF-8. 90 000 until 1.32,
- * when the release contracts (the train, hotfixes) joined the canon.
+ * How long one rule may be, in characters (not bytes: Cyrillic is two in UTF-8):
+ * a top-level item with its own lines, a nested sub-item, a row of a table. The
+ * whole file had a budget of 100 000 until v1.36; a cap per rule keeps each one
+ * a rule — the canon may grow, a rule may not become a story.
  */
-export const INVARIANTS_BUDGET = 100_000;
+export const RULE_LIMITS = { item: 900, subItem: 400, row: 1000 } as const;
 
 function walk(dir: string, keep: (name: string) => boolean): string[] {
   const out: string[] = [];
@@ -53,9 +57,42 @@ export function claudeProblems(claude: string): string[] {
 
 export const importsInvariants = (agents: string) => /^@docs\/INVARIANTS\.md[ \t]*$/m.test(agents);
 
-// --- 2. budget ----------------------------------------------------------------
+// --- 2. each rule short --------------------------------------------------------
 
-export const overBudget = (text: string, budget = INVARIANTS_BUDGET) => [...text].length > budget;
+/**
+ * The rules of the canon that are over their limit, as `line N: kind, M > limit`.
+ * An item is a `- ` line with the lines indented under it; a sub-item is an
+ * `  - ` line with its own; a row is a `|` line (the separator row aside).
+ */
+export function longRules(text: string, limits: { item: number; subItem: number; row: number } = RULE_LIMITS): string[] {
+  const out: string[] = [];
+  const lines = text.split("\n");
+  let cur: { line: number; kind: "item" | "subItem"; text: string } | null = null;
+  const close = () => {
+    if (cur && [...cur.text].length > limits[cur.kind]) {
+      out.push(`line ${cur.line}: ${cur.kind}, ${[...cur.text].length} > ${limits[cur.kind]}`);
+    }
+    cur = null;
+  };
+  lines.forEach((line, i) => {
+    if (line.startsWith("- ")) {
+      close();
+      cur = { line: i + 1, kind: "item", text: line };
+    } else if (line.startsWith("  - ")) {
+      close();
+      cur = { line: i + 1, kind: "subItem", text: line };
+    } else if (cur && /^ {2,}\S/.test(line)) {
+      cur.text += `\n${line}`;
+    } else {
+      close();
+      if (line.startsWith("|") && !/^\|[\s|:-]+\|$/.test(line) && [...line].length > limits.row) {
+        out.push(`line ${i + 1}: row, ${[...line].length} > ${limits.row}`);
+      }
+    }
+  });
+  close();
+  return out;
+}
 
 // --- 3. named gates and ADRs exist ------------------------------------------
 
@@ -127,9 +164,9 @@ describe("documentation guard", () => {
     expect(importsInvariants(AGENTS)).toBe(true);
   });
 
-  it("keeps INVARIANTS within its budget", () => {
-    // Over budget: condense a rule to a phrase of reason and move the story to an ADR.
-    expect([...INVARIANTS].length).toBeLessThanOrEqual(INVARIANTS_BUDGET);
+  it("keeps every rule of INVARIANTS short", () => {
+    // Too long: the rule, its reason in a phrase and its gate stay; the story goes to an ADR.
+    expect(longRules(INVARIANTS)).toEqual([]);
   });
 
   it("names every *.guard file, and every named guard exists", () => {
@@ -181,8 +218,14 @@ describe("documentation guard", () => {
     ]);
     expect(claudeProblems("@AGENTS.md\n" + "x".repeat(500))).toEqual(["is longer than a pointer"]);
     expect(importsInvariants("Контракты — в docs/INVARIANTS.md.")).toBe(false);
-    expect(overBudget("я".repeat(11), 10)).toBe(true);
-    expect(overBudget("я".repeat(10), 10)).toBe(false);
+    const lim = { item: 20, subItem: 12, row: 15 };
+    expect(longRules(`- **Правило.** ${"я".repeat(6)}\n  продолжение`, lim)).toEqual(["line 1: item, 35 > 20"]);
+    expect(longRules("- **Коротко.**\n  - подпункт длиннее\n    своего предела", lim)).toEqual([
+      "line 2: subItem, 39 > 12",
+    ]);
+    expect(longRules("| a | очень длинная строка |\n|---|---|", lim)).toEqual(["line 1: row, 28 > 15"]);
+    // Within the limits, and a new item starts a new count.
+    expect(longRules("- **Раз.**\n- **Два.**\n\n| a | b |", lim)).toEqual([]);
     expect([...namedGuards("Гейт `ghost.guard` и `real.guard`.")]).toEqual(["ghost.guard", "real.guard"]);
     expect([...namedTests("гейт `Ghost.test.ts`")]).toEqual(["Ghost.test.ts"]);
     expect([...namedRustGates("| `gone_gate` · `other_gate` (Rust) | что-то `not_a_gate` |")]).toEqual([

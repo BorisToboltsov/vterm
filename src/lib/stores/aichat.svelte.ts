@@ -57,6 +57,11 @@ export interface SessionChat {
   dialogStep: number;
   /** A dialog loop is active (streaming or awaiting confirmation). */
   dialogRunning: boolean;
+  /**
+   * A dialog step's command is running on the host now (v1.36): the one part of
+   * a turn that lives in this window's memory — the tab waits for it to move.
+   */
+  stepRunning?: boolean;
   /** A command awaiting the user's go-ahead (dialogConfirm / dangerous), or null. */
   pending: { command: string; opts: StartChatOpts } | null;
   /** Per-chat context tiers (chosen in the Context popover; default from settings). */
@@ -94,12 +99,28 @@ export const KEY_NONE = "_none";
 export const aiChatState = $state<{ map: Record<string, SessionChat> }>({ map: {} });
 
 // Active stream per session key (module scope → survives tab switches): its event
-// listeners plus the streamId, so Stop can cancel the backend request.
+// listeners plus the streamId, so Stop can cancel the backend request — and,
+// since v1.36, what a tab moving to another window carries of it (`LiveStream`)
+// and how many of its pieces were heard here (the backend holds the rest).
 interface ActiveStream {
   streamId: string;
   un: UnlistenFn[];
+  live: LiveStream;
+  heard: number;
+  /** A handoff waits until `heard` reaches `count`. */
+  waiting: { count: number; arrived: () => void } | null;
 }
 const active = new Map<string, ActiveStream>();
+
+/** An answer streaming into a chat, as a tab moving to another window carries it (v1.36, ADR 0058). */
+export interface LiveStream {
+  streamId: string;
+  /** The assistant message it fills. */
+  idx: number;
+  startedAt: number;
+  /** The turn it answers — what happens when it ends (the dialog loop) depends on it. */
+  opts: StartChatOpts;
+}
 const encoder = new TextEncoder();
 
 /** The chat for a session, creating an empty one on first access. */
@@ -145,14 +166,56 @@ export function peekChat(sessionId: string): SessionChat | null {
 
 /**
  * Take over the conversation of a tab moved here from another window (ADR 0017).
- * A tab only moves while its chat is idle; the turn flags are reset regardless —
- * a stream cannot be carried over, so nothing here may claim one is running.
+ * An answer streaming in it comes along (v1.36, ADR 0058): `live` says which, and
+ * this window listens for the rest of it — the backend held the pieces sent
+ * while the tab was on its way and lets them go once the tab is taken over. A
+ * dialog step waiting for a go-ahead comes too; one running a command does not
+ * (the tab waited for it). Without a stream, nothing may claim one is running.
  */
-export function adoptChat(sessionId: string, chat: SessionChat): void {
+export async function adoptChat(sessionId: string, chat: SessionChat, live: LiveStream | null = null): Promise<void> {
+  const streaming = live !== null && chat.streaming && !!chat.messages[live.idx];
   aiChatState.map = {
     ...aiChatState.map,
-    [sessionId]: { ...chat, streaming: false, dialogRunning: false, pending: null, ask: null },
+    [sessionId]: {
+      ...chat,
+      streaming,
+      dialogRunning: chat.dialogRunning && (streaming || chat.pending !== null),
+      stepRunning: false,
+      ask: null,
+    },
   };
+  if (streaming && live) await listenStream(sessionId, aiChatState.map[sessionId], live);
+}
+
+/** The answer streaming in a session now, as a tab moving away carries it; null — none. */
+export function liveStream(sessionId: string): LiveStream | null {
+  return active.get(sessionId)?.live ?? null;
+}
+
+/**
+ * A tab is moving away while an answer streams in it: wait until this window
+ * has heard the `count` pieces the backend sent before it held the rest — then
+ * the conversation packed is the answer up to the hold. False — they did not
+ * all arrive in `timeoutMs` (the move is called off), or no answer streams.
+ */
+export function heardStream(sessionId: string, streamId: string, count: number, timeoutMs = 3000): Promise<boolean> {
+  const a = active.get(sessionId);
+  if (!a || a.streamId !== streamId) return Promise.resolve(false);
+  if (a.heard >= count) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      a.waiting = null;
+      resolve(false);
+    }, timeoutMs);
+    a.waiting = {
+      count,
+      arrived: () => {
+        clearTimeout(timer);
+        a.waiting = null;
+        resolve(true);
+      },
+    };
+  });
 }
 
 /**
@@ -253,55 +316,81 @@ export async function startChat(opts: StartChatOpts): Promise<void> {
     c.dialogRunning = false;
     return;
   }
+  req.sessionId = sessionId ?? null;
   c.streaming = true;
   c.error = null;
 
-  const startedAt = Date.now();
-  const finish = () => {
-    c.streaming = false;
-    c.messages[idx].elapsedMs = Date.now() - startedAt;
-    stopStream(key);
+  const live: LiveStream = { streamId, idx, startedAt: Date.now(), opts };
+  await listenStream(key, c, live);
+
+  try {
+    await aiChat(req);
+  } catch (e) {
+    // Not ours to report once the tab went to another window with its answer.
+    if (c.streaming && active.get(key)?.streamId === streamId) {
+      c.error = describeAiError(e);
+      c.dialogRunning = false;
+      endStream(key, c, live);
+    }
+  }
+}
+
+function endStream(key: string, c: SessionChat, live: LiveStream): void {
+  c.streaming = false;
+  const msg = c.messages[live.idx];
+  if (msg) msg.elapsedMs = Date.now() - live.startedAt;
+  stopStream(key);
+}
+
+/**
+ * Listen for the pieces of an answer into chat `c` — when it is asked, and in
+ * the window a tab with an answer under way moved to (`adoptChat`). Every piece
+ * heard is counted: a move waits until all those sent before its hold arrived.
+ */
+async function listenStream(key: string, c: SessionChat, live: LiveStream): Promise<void> {
+  const { streamId, idx, opts } = live;
+  const entry: ActiveStream = { streamId, un: [], live, heard: 0, waiting: null };
+  const heard = () => {
+    entry.heard += 1;
+    if (entry.waiting && entry.heard >= entry.waiting.count) entry.waiting.arrived();
   };
-  const un: UnlistenFn[] = [];
-  un.push(
+  const msg = () => c.messages[idx];
+  active.set(key, entry);
+  entry.un.push(
     await listen<string>(`ai://out/${streamId}`, (e) => {
-      c.messages[idx].content += e.payload;
+      heard();
+      const m = msg();
+      if (m) m.content += e.payload;
     }),
   );
   // Reasoning rides its own channel, so it accumulates into its own field and
   // never lands in `content` — otherwise the model's scratchpad would be parsed
   // for runnable command blocks and offered up for execution.
-  un.push(
+  entry.un.push(
     await listen<string>(`ai://think/${streamId}`, (e) => {
-      c.messages[idx].reasoning = (c.messages[idx].reasoning ?? "") + e.payload;
+      heard();
+      const m = msg();
+      if (m) m.reasoning = (m.reasoning ?? "") + e.payload;
     }),
   );
-  un.push(
+  entry.un.push(
     await listen<AiUsage | null>(`ai://done/${streamId}`, (e) => {
-      if (e.payload) c.messages[idx].usage = e.payload;
-      finish();
+      heard();
+      const m = msg();
+      if (e.payload && m) m.usage = e.payload;
+      endStream(key, c, live);
       afterReply(c, idx, opts);
     }),
   );
-  un.push(
+  entry.un.push(
     await listen<string>(`ai://error/${streamId}`, (e) => {
+      heard();
       c.error = describeAiError(e.payload);
       // A failed reply ends the loop — left running, it would hold the chat busy.
       c.dialogRunning = false;
-      finish();
+      endStream(key, c, live);
     }),
   );
-  active.set(key, { streamId, un });
-
-  try {
-    await aiChat(req);
-  } catch (e) {
-    if (c.streaming) {
-      c.error = describeAiError(e);
-      c.dialogRunning = false;
-      finish();
-    }
-  }
 }
 
 /**
@@ -420,12 +509,15 @@ async function runDialogStep(c: SessionChat, command: string, opts: StartChatOpt
   c.pending = null;
   c.dialogStep += 1;
   let result;
+  c.stepRunning = true;
   try {
     result = await aiExec(opts.sessionId as string, command, EXEC_TIMEOUT_SECS);
   } catch (e) {
     c.error = describeAiError(e);
     c.dialogRunning = false;
     return;
+  } finally {
+    c.stepRunning = false;
   }
   // The backend already mirrored the step into the terminal + recording.
   await startChat({ ...opts, question: buildFeedback(command, result), context: "", feedback: true });
