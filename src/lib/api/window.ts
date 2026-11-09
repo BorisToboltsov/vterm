@@ -124,6 +124,16 @@ export interface DragLook {
   fg: string;
   accent: string;
   dot: string;
+  // The parts of a tab (v1.36) — a label of files has none of them.
+  /** After the title, muted: the host of a shell inside a container. */
+  sub?: string;
+  /** A chip at the end (`prod`) and its colours. */
+  chip?: string;
+  chipBg?: string;
+  chipFg?: string;
+  muted?: string;
+  /** The font as CSS `font` shorthand — its family and size at the app's scale. */
+  font?: string;
   /** Size of the label as this page draws it, CSS px. */
   w: number;
   h: number;

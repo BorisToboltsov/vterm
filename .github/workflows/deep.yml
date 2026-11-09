@@ -158,11 +158,13 @@ jobs:
           persist-credentials: false
 
       # webkit2gtk-driver — WebDriver для WebKitGTK, без него tauri-driver
-      # не к чему подключаться; xvfb — окно на безголовом раннере.
+      # не к чему подключаться; xvfb — окно на безголовом раннере; xdotool —
+      # настоящий указатель X-сервера для windowdrop.e2e.js, x11-apps — окно
+      # чужого приложения (xclock) поверх нашего в том же сценарии.
       - name: Rust-окружение и WebDriver
         uses: $/.github/actions/setup-rust
         with:
-          extra-packages: webkit2gtk-driver xvfb
+          extra-packages: webkit2gtk-driver xvfb xdotool x11-apps
           cache-key: deep-e2e
 
       - name: Фронтенд-окружение

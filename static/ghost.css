@@ -1,6 +1,8 @@
-/* The floating label of a dragged tab (ghost.html, ADR 0018). It mirrors the
-   label a page draws next to the pointer; the colours come from the window the
-   tab is dragged out of, so it follows the theme without knowing the themes. */
+/* The floating label of a dragged tab (ghost.html, ADR 0018): a copy of the tab
+   as its strip draws it (v1.36) — the active tab's line along the top, its
+   font at the app's scale, its parts. The colours and the font come from the
+   window the tab is dragged out of, so it follows the theme and the scale
+   without knowing either. */
 html,
 body {
   margin: 0;
@@ -12,20 +14,22 @@ body {
   cursor: default;
 }
 
-#chip {
+#tab {
   box-sizing: border-box;
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border: 1px solid var(--accent, #7db3ff);
+  gap: 0.5em;
+  padding: 0 0.7em;
+  box-shadow: inset 0 2px 0 0 var(--accent, #7db3ff);
   color: var(--fg, #cdd6e6);
   font:
     14px/1.2 Inter,
-    system-ui,
     -apple-system,
     "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
     sans-serif;
   white-space: nowrap;
 }
@@ -38,8 +42,26 @@ body {
   background: var(--dot, #8a97ad);
 }
 
-#title {
+#title,
+#sub {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+#sub {
+  color: var(--muted, #8a97ad);
+}
+
+#chip {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 0.75em;
+  color: var(--chip-fg, #ff6b6b);
+  background: var(--chip-bg, rgba(255, 107, 107, 0.15));
+}
+
+[hidden] {
+  display: none !important;
 }

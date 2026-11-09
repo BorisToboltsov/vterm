@@ -142,19 +142,35 @@ export function createWindowFlow(deps: WindowDeps) {
     };
   }
 
-  /** How the floating label looks: like the one this page would draw — with "+N" for a pane's other tabs. */
+  /**
+   * How the floating label looks (v1.36): the tab as this page draws it in its
+   * strip, read off the unseen copy the page keeps of the dragged tab — its
+   * colours, font at the app's scale, dot, name, a container's host and the
+   * `prod` chip — with "+N" for a pane's other tabs.
+   */
   function dragLook(tab: Tab, others = 0): DragLook | null {
     const probe = deps.ghostProbe();
     if (!probe) return null;
     const box = probe.getBoundingClientRect();
     const style = getComputedStyle(probe);
-    const dot = probe.querySelector<HTMLElement>('[data-part="dot"]');
+    const part = (name: string) => probe.querySelector<HTMLElement>(`[data-part="${name}"]`);
+    const styleOf = (name: string) => {
+      const el = part(name);
+      return el ? getComputedStyle(el) : null;
+    };
+    const title = part("title")?.textContent ?? deps.alias(tab);
     return {
-      title: others > 0 ? `${deps.alias(tab)} +${others}` : deps.alias(tab),
+      title: others > 0 ? `${title} +${others}` : title,
+      sub: part("sub")?.textContent ?? "",
+      chip: part("chip")?.textContent ?? "",
+      chipBg: styleOf("chip")?.backgroundColor ?? "",
+      chipFg: styleOf("chip")?.color ?? "",
       bg: style.backgroundColor,
       fg: style.color,
+      muted: styleOf("sub")?.color ?? style.color,
       accent: style.borderTopColor,
-      dot: dot ? getComputedStyle(dot).backgroundColor : style.color,
+      dot: styleOf("dot")?.backgroundColor ?? style.color,
+      font: style.font,
       w: Math.ceil(box.width),
       h: Math.ceil(box.height),
     };

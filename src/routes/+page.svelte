@@ -3582,15 +3582,25 @@
      held over this window from another (ADR 0018), which keeps the pointer
      while this window draws it. -->
 {#if draggingTab && windows.leavesWindow}
-  <!-- The label as it is drawn next to the pointer, unseen — its size and
-       colours are what the floating label over the desktop is given. -->
+  <!-- The tab as its strip draws it, unseen — what the floating label over the
+       desktop is a copy of (v1.36): its size, colours, font at the app's scale,
+       its dot, name, a container's host and the prod chip. -->
+  {@const prodGhost = prodTabIds.has(draggingTab.sessionId)}
   <div
     bind:this={ghostProbe}
     aria-hidden="true"
-    class="pointer-events-none invisible fixed left-0 top-0 flex max-w-64 items-center gap-2 rounded border border-accent bg-panel-alt px-3 py-1.5 text-sm"
+    class="pointer-events-none invisible fixed left-0 top-0 flex max-w-48 items-center gap-2 border-t-2 bg-panel px-2.5 py-1.5 text-sm text-text {prodGhost
+      ? 'border-bad'
+      : 'border-accent'}"
   >
     <span data-part="dot" class="h-2 w-2 shrink-0 rounded-full {dotClass(draggingTab.status)}"></span>
-    <span class="truncate">{tabAlias(draggingTab)}</span>
+    <span data-part="title" class="truncate">{draggingTab.attach ? draggingTab.attach.name : tabAlias(draggingTab)}</span>
+    {#if draggingTab.attach}
+      <span data-part="sub" class="truncate text-muted">· {tabAlias(draggingTab)}</span>
+    {/if}
+    {#if prodGhost}
+      <span data-part="chip" class="shrink-0 rounded bg-bad/15 px-1 text-caption text-bad">prod</span>
+    {/if}
   </div>
 {/if}
 {#if viewDrag.view !== null && viewDrag.session !== null}

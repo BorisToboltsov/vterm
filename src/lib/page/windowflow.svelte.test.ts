@@ -27,8 +27,8 @@ vi.mock("../windows/appwindow", () => ({
 }));
 const drag = vi.hoisted(() => ({
   host: null as null | {
-    release: (id: string, at: { x: number; y: number }, outside: boolean) => void;
-    over: (id: string) => Promise<unknown>;
+    release: (id: string, at: { x: number; y: number }, outside: boolean, pane?: string | null) => void;
+    over: (id: string, pane?: string | null) => Promise<unknown>;
     left: () => void;
   },
   state: { outside: false, window: null as string | null },
@@ -60,7 +60,13 @@ function connectedTab(): string {
 
 const settled = () => new Promise((r) => setTimeout(r, 0));
 
-function harness(over: { editorBusy?: (id: string) => boolean; snapshot?: (id: string, sent: number) => Promise<unknown> } = {}) {
+function harness(
+  over: {
+    editorBusy?: (id: string) => boolean;
+    snapshot?: (id: string, sent: number) => Promise<unknown>;
+    ghostProbe?: () => HTMLElement | undefined;
+  } = {},
+) {
   const deps = {
     title: vi.fn((tab: { sessionId: string }) => `title-${tab.sessionId.slice(0, 4)}`),
     alias: vi.fn(() => "alias"),
@@ -77,7 +83,7 @@ function harness(over: { editorBusy?: (id: string) => boolean; snapshot?: (id: s
     arrived: vi.fn(),
     teardown: vi.fn((id: string, keep: boolean) => calls.push(`teardown ${keep}`) && void id),
     refreshTransfers: vi.fn(),
-    ghostProbe: () => undefined,
+    ghostProbe: over.ghostProbe ?? (() => undefined),
     areaBounds: () => ({ width: 1200, height: 800 }),
   };
   let flow!: WindowFlow;
@@ -414,6 +420,30 @@ describe("window flow: a whole window (v1.36, ADR 0058)", () => {
     await flow.moveWindow("main");
     expect(api.detachBegin).not.toHaveBeenCalled();
     expect(toasts.notifyInfo).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+});
+
+describe("window flow: the label over the desktop is a copy of the tab (v1.36)", () => {
+  it("is read off the unseen copy the page keeps: name, host, chip, font, with +N for a pane", async () => {
+    const id = connectedTab();
+    connectedTab();
+    const probe = document.createElement("div");
+    probe.innerHTML =
+      '<span data-part="dot"></span><span data-part="title">nginx</span>' +
+      '<span data-part="sub">· web-01</span><span data-part="chip">prod</span>';
+    probe.style.font = "15px Inter";
+    document.body.append(probe);
+    drag.state.outside = true;
+    const { cleanup } = harness({ ghostProbe: () => probe });
+    await drag.host!.over(id, null);
+    const look = api.dragOver.mock.calls[0][1] as Record<string, unknown>;
+    expect(look).toMatchObject({ title: "nginx", sub: "· web-01", chip: "prod" });
+    expect(String(look.font)).toContain("15px");
+    // A pane carries its other tabs as a count.
+    await drag.host!.over(id, tabsState.center.focus);
+    expect((api.dragOver.mock.calls[1][1] as { title: string }).title).toBe("nginx +1");
+    probe.remove();
     cleanup();
   });
 });
