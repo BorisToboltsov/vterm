@@ -40,6 +40,11 @@
   } = $props();
 
   const win = $derived(size === "window");
+  let inputEl: HTMLInputElement | undefined;
+
+  export function focus() {
+    inputEl?.focus();
+  }
 
   function set(next: string) {
     value = next;
@@ -62,6 +67,7 @@
 >
   <Icon name="search" size={win ? 14 : 12} class="shrink-0" />
   <input
+    bind:this={inputEl}
     {value}
     oninput={(e) => set(e.currentTarget.value)}
     onkeydown={keydown}

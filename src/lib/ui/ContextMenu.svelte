@@ -9,23 +9,17 @@
 
   let { menu, onclose }: { menu: OpenMenu | null; onclose: () => void } = $props();
 
-  let el = $state<HTMLDivElement | undefined>();
-  let pos = $state({ x: 0, y: 0 });
+  let width = $state(0);
+  let height = $state(0);
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
+  const pos = $derived(clampMenuPosition(menu?.x ?? 0, menu?.y ?? 0, width, height, viewportWidth, viewportHeight));
   let expanded = $state<string | null>(null);
 
-  // Position at the requested point, then clamp once the real size is known
-  // (this effect runs after the DOM updates, so `el` is measured). Reset any
-  // expanded submenu whenever a fresh menu opens.
+  // Dimensions update after expansion and on viewport resize as well as opening.
+  // A fresh menu always starts collapsed, even when it replaces another one.
   $effect(() => {
-    if (!menu) {
-      expanded = null;
-      return;
-    }
-    const { x, y } = menu;
-    pos = { x, y };
-    if (el) {
-      pos = clampMenuPosition(x, y, el.offsetWidth, el.offsetHeight, window.innerWidth, window.innerHeight);
-    }
+    if (menu) expanded = null;
   });
 
   function pick(action: MenuAction) {
@@ -37,7 +31,7 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => menu && e.key === "Escape" && onclose()} />
+<svelte:window bind:innerWidth={viewportWidth} bind:innerHeight={viewportHeight} onkeydown={(e) => menu && e.key === "Escape" && onclose()} />
 
 <!-- The tick column of a switch row: kept whether the row is on or off, so a
      checklist's labels line up. A row that is not a switch has none. -->
@@ -68,8 +62,9 @@
     }}
   ></button>
   <div
-    bind:this={el}
-    class="fixed z-50 min-w-52 max-w-72 rounded-md border border-edge bg-panel py-1 text-xs shadow-lg"
+    bind:offsetWidth={width}
+    bind:offsetHeight={height}
+    class="fixed z-50 max-h-[calc(100dvh-0.5rem)] min-w-52 max-w-72 overflow-y-auto rounded-md border border-edge bg-panel py-1 text-xs shadow-lg"
     style="left:{pos.x}px; top:{pos.y}px"
     role="menu"
   >
@@ -81,6 +76,7 @@
           type="button"
           class="flex w-full items-center gap-2 px-2 py-1 text-left text-muted hover:bg-edge hover:text-text"
           role="menuitem"
+          aria-expanded={expanded === item.key}
           onclick={() => (expanded = expanded === item.key ? null : item.key)}
         >
           {#if item.icon}<Icon name={item.icon} size={13} />{/if}

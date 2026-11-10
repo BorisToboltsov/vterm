@@ -77,6 +77,11 @@
   const picked = $derived(activeFacets(filter).length);
   const narrowed = $derived(isFiltered(filter));
   const view = $derived(order ? viewMenu(schema, order, text, { order: onorder, fold }, extra) : extra);
+  let field: FilterField | undefined;
+
+  export function focusFilter() {
+    field?.focus();
+  }
 
   function open(e: MouseEvent, menu: MenuItem[]) {
     const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -90,6 +95,7 @@
   data-morph
 >
   <FilterField
+    bind:this={field}
     value={filter.text}
     oninput={(value) => onfilter({ ...filter, text: value })}
     {placeholder}

@@ -41,6 +41,11 @@ export interface MenuSubmenu {
 
 export type MenuItem = MenuAction | MenuSeparator | MenuSubmenu;
 
+/** Reuse an existing menu inside one expandable group, without a second nesting level. */
+export function menuActions(items: readonly MenuItem[]): MenuAction[] {
+  return items.flatMap((item) => item.kind === "submenu" ? item.items : isAction(item) ? [item] : []);
+}
+
 /** An open menu: viewport position + the rows to show. */
 export interface OpenMenu {
   x: number;

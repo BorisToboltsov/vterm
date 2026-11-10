@@ -45,7 +45,7 @@
   import ListHeader from "../ui/ListHeader.svelte";
   import FilteredEmpty from "../ui/FilteredEmpty.svelte";
   import { listMenuText } from "../ui/listtext";
-  import { filterItems, filterSummary, isFiltered, NO_FILTER, NO_GROUPS, type ListFilter } from "../ui/listview";
+  import { filterItems, filterSummary, isFiltered, viewMenu, NO_FILTER, NO_GROUPS, type ListFilter } from "../ui/listview";
   import { listOrder, setListOrder } from "../stores/listview.svelte";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { aside, createRowGlide } from "../actions/fluidglide";
@@ -60,7 +60,7 @@
   import Skeleton from "../ui/Skeleton.svelte";
   import ConfirmDialog from "../ui/ConfirmDialog.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
-  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
+  import { menuActions, type MenuItem, type OpenMenu } from "../ui/ctxmenu";
   import { notifyError, notifySuccess } from "../stores/toasts.svelte";
   import {
     dirRevision,
@@ -646,6 +646,55 @@
     null,
   );
   let ctxMenu = $state<OpenMenu | null>(null);
+  let listHeader = $state<ListHeader<FileEntry>>();
+  const listLabels = { sort: (id: string) => COLUMN_LABEL[id as SortKey]() };
+  const viewExtra = $derived([
+    {
+      label: t("sftp.hiddenFiles"),
+      checked: settings.sftp.showHiddenFiles,
+      onSelect: toggleHiddenFiles,
+    },
+  ]);
+
+  function toggleHiddenFiles() {
+    const held = cursorEntry?.path;
+    settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles;
+    if (held === undefined) return;
+    const at = shownEntries.findIndex((entry) => entry.path === held);
+    cursor = at < 0 ? -1 : (hasParent ? 1 : 0) + at;
+  }
+
+  // The row and empty-area menus expose the header's controls and state.
+  // Flatten its sort group: ContextMenu has one level of inline expansion.
+  function panelMenu(): MenuItem[] {
+    const items: MenuItem[] = [];
+    if (mutable) {
+      items.push({
+        kind: "submenu", key: "view", icon: "eye", label: t("list.view"),
+        items: menuActions(viewMenu(FILE_SCHEMA, fileOrder, listMenuText(listLabels), {
+          order: (o) => orderBy(o.sort as FileSort),
+        }, viewExtra)),
+      });
+      items.push({
+        kind: "submenu", key: "search", icon: "search", label: t("sftp.menuSearch"),
+        items: [
+          { label: t("sftp.searchName"), onSelect: () => listHeader?.focusFilter() },
+          ...(adapter.search ? [{ label: t("search.contentSearch"), onSelect: () => (search.open = true) }] : []),
+        ],
+      });
+    }
+    items.push({
+      kind: "submenu", key: "folder", icon: "folder", label: t("sftp.menuFolder"),
+      items: [
+        { label: t("ctx.refresh"), onSelect: refresh },
+        ...(onToggleFollowTerminal ? [{
+          label: t("sftp.followTerminalMenu"), checked: followTerminal, onSelect: onToggleFollowTerminal,
+        }] : []),
+        ...(onSync ? [{ label: syncActive ? t("sync.runningButton") : t("sftp.syncFiles"), onSelect: onSync }] : []),
+      ],
+    });
+    return items;
+  }
 
   /**
    * Order the listing by `next`. The row under the keyboard cursor stays under
@@ -893,6 +942,7 @@
       label: multi ? t("ctx.deleteN", { count: sel.length }) : t("ctx.delete"),
       onSelect: () => (deleteTargets = sel),
     });
+    items.push({ kind: "separator" }, ...panelMenu());
     ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
@@ -927,7 +977,7 @@
       }
       items.push({ kind: "separator" });
     }
-    items.push({ icon: "refresh", label: t("ctx.refresh"), onSelect: () => refresh() });
+    items.push(...panelMenu());
     ctxMenu = { x: e.clientX, y: e.clientY, items };
   }
 
@@ -1381,10 +1431,10 @@
       {:else}
         {@render banner?.()}
         {#if mutable}
-          <!-- The filter row (v1.29): the name in this folder, «View» with the
-               order and the hidden files — their only switch since the toolbar's
-               eye went: two eyes side by side meant two different things. -->
+          <!-- The filter row: the name in this folder and «View» with the order
+               and hidden files. Context menus reuse these controls and state. -->
           <ListHeader
+            bind:this={listHeader}
             items={visibleEntries}
             schema={FILE_SCHEMA}
             filter={nameFilter}
@@ -1393,17 +1443,11 @@
             onorder={(o) => orderBy(o.sort as FileSort)}
             shown={shownEntries.length}
             total={visibleEntries.length}
-            labels={{ sort: (id) => COLUMN_LABEL[id as SortKey]() }}
+            labels={listLabels}
             placeholder={t("sftp.filterName")}
             {wide}
             onmenu={(m) => (ctxMenu = m)}
-            extra={[
-              {
-                label: t("sftp.hiddenFiles"),
-                checked: settings.sftp.showHiddenFiles,
-                onSelect: () => (settings.sftp.showHiddenFiles = !settings.sftp.showHiddenFiles),
-              },
-            ]}
+            extra={viewExtra}
             testid="{testPrefix}-header"
           />
         {/if}
