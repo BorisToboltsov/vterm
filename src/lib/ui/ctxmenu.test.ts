@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampMenuPosition, isAction, type MenuItem } from "./ctxmenu";
+import { clampMenuPosition, isAction, menuActions, type MenuItem } from "./ctxmenu";
 
 describe("clampMenuPosition", () => {
   const vw = 1000;
@@ -45,4 +45,16 @@ describe("isAction", () => {
     expect(isAction({ kind: "separator" })).toBe(false);
     expect(isAction({ kind: "submenu", key: "reset", label: "Reset", items: [] })).toBe(false);
   });
+});
+
+it("embeds existing actions without changing their checks, availability or callbacks", () => {
+  const first = { label: "Name", checked: true, onSelect: () => {} };
+  const second = { label: "Hidden", checked: false, disabled: true, onSelect: () => {} };
+  const result = menuActions([
+    { kind: "submenu", key: "sort", label: "Sort", items: [first] },
+    { kind: "separator" }, second,
+  ]);
+  expect(result).toEqual([first, second]);
+  expect(result[0]).toBe(first);
+  expect(result[1]).toBe(second);
 });

@@ -54,6 +54,9 @@
   import { mdLinks } from "../actions/mdlinks";
   import AiConsentDialog from "./AiConsentDialog.svelte";
   import Icon from "../ui/Icon.svelte";
+  import ContextMenu from "../ui/ContextMenu.svelte";
+  import ConfirmDialog from "../ui/ConfirmDialog.svelte";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { t } from "../i18n";
 
   let {
@@ -137,6 +140,59 @@
   // Which reasoning folds the user opened, by message index. Folded by default:
   // the scratchpad is context for the wait, not the answer.
   let openReasoning = $state<Record<number, boolean>>({});
+  let menuTarget = $state<{ x: number; y: number; copy?: { label: string; text: string }; selection: string } | null>(null);
+  let clearTarget = $state<string | null>(null);
+  const canClear = $derived(messages.length > 0 && !busy && !consent);
+
+  // A session switch must not leave a menu or confirmation targeting the old chat.
+  $effect(() => {
+    if (sessionKey) {
+      menuTarget = null;
+      clearTarget = null;
+    }
+  });
+
+  const ctxMenu: OpenMenu | null = $derived.by(() => {
+    if (!menuTarget) return null;
+    const items: MenuItem[] = [];
+    const copy = menuTarget.copy;
+    const selected = menuTarget.selection;
+    if (selected) items.push({ icon: "copy", label: t("ai.copySelection"), onSelect: () => copyBlock(selected) });
+    if (copy) items.push({ icon: "copy", label: copy.label, onSelect: () => copyBlock(copy.text) });
+    if (items.length) items.push({ kind: "separator" });
+    items.push({
+      kind: "submenu", key: "context", icon: "paperclip", label: t("ai.context.attach"),
+      items: [
+        { label: t("ai.attachContext"), checked: attach, disabled: !canAttach, onSelect: () => { if (canAttach) attach = !attach; } },
+        { label: t("ai.contextBuffer"), checked: chat.context.includeBuffer, disabled: !canAttach || !attach,
+          onSelect: () => { if (canAttach && attach) chat.context.includeBuffer = !chat.context.includeBuffer; } },
+        { label: t("ai.contextRecording"), checked: chat.context.includeRecording, disabled: !canAttach || !attach,
+          onSelect: () => { if (canAttach && attach) chat.context.includeRecording = !chat.context.includeRecording; } },
+        { label: t("ai.contextMetadata"), checked: chat.context.includeMetadata, disabled: !canAttach || !attach,
+          onSelect: () => { if (canAttach && attach) chat.context.includeMetadata = !chat.context.includeMetadata; } },
+      ],
+    });
+    if (ready && endpoint) {
+      items.push({
+        kind: "submenu", key: "model", icon: "cpu", label: t("ai.model"),
+        items: [
+          ...modelOptions.map((model) => ({ label: model, checked: model === endpoint?.model, onSelect: () => setModel(model) })),
+          { label: t("ai.modelRefresh"), disabled: loadingModels, onSelect: refreshModels },
+        ],
+      });
+    }
+    items.push({ kind: "separator" }, { icon: "trash", label: t("ai.clearMenu"), danger: true, disabled: !canClear, onSelect: clearChat });
+    return { x: menuTarget.x, y: menuTarget.y, items };
+  });
+
+  function openChatMenu(e: MouseEvent, copy?: { label: string; text: string }) {
+    e.preventDefault();
+    e.stopPropagation();
+    const selection = window.getSelection();
+    const selected = selection && scrollEl?.contains(selection.anchorNode) && scrollEl.contains(selection.focusNode)
+      ? selection.toString() : "";
+    menuTarget = { x: e.clientX, y: e.clientY, copy, selection: selected };
+  }
 
   const ready = $derived(aiReady(settings.ai));
   const endpoint = $derived(activeEndpoint(settings.ai));
@@ -346,7 +402,15 @@
   }
 
   function clearChat() {
-    clearSessionChat(sessionId);
+    if (canClear) clearTarget = sessionKey;
+  }
+
+  function confirmClear() {
+    if (clearTarget === sessionKey && canClear) {
+      clearSessionChat(sessionId);
+      openReasoning = {};
+    }
+    clearTarget = null;
   }
 </script>
 
@@ -401,7 +465,7 @@
     class="shrink-0 rounded px-1.5 py-0.5 text-meta text-muted hover:text-text disabled:opacity-50"
     data-testid="ai-clear"
     onclick={clearChat}
-    disabled={messages.length === 0 || streaming}>{t("ai.clear")}</button
+    disabled={!canClear}>{t("ai.clear")}</button
   >
 {/snippet}
 
@@ -473,7 +537,7 @@
     </div>
   {/if}
 
-  <div bind:this={scrollEl} class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 text-xs">
+  <div bind:this={scrollEl} class="min-h-0 flex-1 space-y-2 overflow-y-auto p-2 text-xs" oncontextmenu={(e) => openChatMenu(e)} data-testid="ai-conversation" role="log">
     {#if !ready}
       <p class="py-6 text-center text-meta text-muted">{t("ai.disabledHint")}</p>
     {:else if messages.length === 0}
@@ -492,7 +556,11 @@
       </div>
     {/if}
     {#each messages as m, i (i)}
-      <div class="rounded border border-edge p-2 {m.role === 'user' ? 'bg-panel' : ''}">
+      <div
+        class="rounded border border-edge p-2 {m.role === 'user' ? 'bg-panel' : ''}"
+        role="article"
+        oncontextmenu={(e) => openChatMenu(e, { label: t(m.role === "assistant" ? "ai.copyAnswer" : "ai.copyMessage"), text: m.content })}
+      >
         <div class="mb-1 flex items-center gap-1 text-caption uppercase tracking-wider text-muted">
           <span>{m.role === "user" ? t("ai.you") : t("ai.assistant")}</span>
           {#if m.withContext}
@@ -539,7 +607,10 @@
                    at render time and by use:mdLinks on click. -->
               <div class="markdown-preview" use:mdLinks>{@html renderMarkdown(seg.content)}</div>
             {:else}
-              <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-code">
+              <div class="my-1 overflow-hidden rounded border border-edge" data-testid="ai-code"
+                role="group"
+                oncontextmenu={(e) => openChatMenu(e, { label: t("ai.copyCode"), text: seg.content })}
+              >
                 <div
                   class="flex items-center justify-between gap-2 border-b border-edge bg-panel px-2 py-0.5"
                 >
@@ -765,6 +836,17 @@
     </aside>
   {/if}
 </div>
+
+<ContextMenu menu={ctxMenu} onclose={() => (menuTarget = null)} />
+<ConfirmDialog
+  open={clearTarget !== null}
+  title={t("ai.clearTitle")}
+  confirmLabel={t("ai.clear")}
+  onconfirm={confirmClear}
+  oncancel={() => (clearTarget = null)}
+>
+  {t("ai.clearConfirm")}
+</ConfirmDialog>
 
 {#if consent && endpoint}
   <AiConsentDialog

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiChatRequest } from "./ai";
@@ -10,6 +10,8 @@ const aiModels = vi.fn<() => Promise<string[]>>();
 const aiExec = vi.fn<(id: string, cmd: string, t: number) => Promise<unknown>>();
 const writeToTerminal = vi.fn<(id: string, data: Uint8Array) => Promise<void>>();
 const annotateRecording = vi.fn<(id: string, text: string) => Promise<void>>();
+const copyText = vi.fn<(text: string) => Promise<void>>();
+vi.mock("../app/clipboard", () => ({ writeClipboard: (text: string) => copyText(text) }));
 vi.mock("../api", () => ({
   aiChat: (req: AiChatRequest) => aiChat(req),
   cancelAiChat: (streamId: string) => cancelAiChat(streamId),
@@ -92,6 +94,7 @@ beforeEach(() => {
   aiExec.mockReset().mockResolvedValue({ stdout: "ok", stderr: "", exitCode: 0, timedOut: false });
   writeToTerminal.mockReset().mockResolvedValue(undefined);
   annotateRecording.mockReset().mockResolvedValue(undefined);
+  copyText.mockReset().mockResolvedValue(undefined);
 });
 
 describe("AiChat — context + consent (Phase 17.3)", () => {
@@ -538,6 +541,8 @@ describe("AiChat — per-session conversation persistence", () => {
     await ask("clear me");
     emit("done");
     await userEvent.setup().click(screen.getByText("Clear"));
+    expect(screen.getByText("clear me")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByTestId("confirm"));
     expect(screen.queryByText("clear me")).toBeNull();
 
     await rerender({ sessionId: "sA" });
@@ -932,5 +937,117 @@ describe("AiChat — in a wide panel", () => {
     const side = screen.getByTestId("ai-side");
     expect(within(side).queryByTestId("ai-side-endpoint")).toBeNull();
     expect(within(side).getByTestId("ai-attach")).toBeDisabled();
+  });
+});
+
+describe("AiChat — context menus", () => {
+  const background = () => fireEvent.contextMenu(screen.getByTestId("ai-conversation"));
+  const group = (name: string) => fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name }));
+  const choose = (name: string, checkbox = false) => fireEvent.click(within(screen.getByRole("menu")).getByRole(checkbox ? "menuitemcheckbox" : "menuitem", { name }));
+
+  it("copies the answer, code block or user message actually clicked", async () => {
+    enableAi();
+    render(AiChat, {});
+    await askAndReply("show containers", "Use this:\n```bash\ndocker ps\n```\nDone.");
+    await fireEvent.contextMenu(screen.getByText("Use this:"));
+    await choose("Copy answer");
+    expect(copyText).toHaveBeenLastCalledWith("Use this:\n```bash\ndocker ps\n```\nDone.");
+    await fireEvent.contextMenu(screen.getByTestId("ai-code"));
+    expect(screen.queryByRole("menuitem", { name: "Copy answer" })).toBeNull();
+    await choose("Copy code");
+    expect(copyText.mock.lastCall?.[0].trim()).toBe("docker ps");
+    await fireEvent.contextMenu(screen.getByText("show containers"));
+    await choose("Copy message");
+    expect(copyText).toHaveBeenLastCalledWith("show containers");
+    await background();
+    expect(screen.queryByRole("menuitem", { name: /^Copy/ })).toBeNull();
+    expect(aiExec).not.toHaveBeenCalled();
+  });
+
+  it("copies selected text without using a selection outside this chat", async () => {
+    enableAi();
+    render(AiChat, {});
+    await askAndReply("hi", "Only this answer");
+    const answer = screen.getByText("Only this answer");
+    const range = document.createRange();
+    range.selectNodeContents(answer);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    await fireEvent.contextMenu(answer);
+    await choose("Copy selection");
+    expect(copyText).toHaveBeenLastCalledWith("Only this answer");
+    window.getSelection()!.removeAllRanges();
+    await background();
+    expect(screen.queryByRole("menuitem", { name: "Copy selection" })).toBeNull();
+  });
+
+  it("shares context controls and still requires redaction and consent before sending", async () => {
+    enableAi();
+    render(AiChat, { props: { getContext: () => ({ buffer: "export TOKEN=secret123", tail: "TAIL" }) } });
+    await background(); await group("Context");
+    expect(screen.getByRole("menuitemcheckbox", { name: "Whole terminal buffer" })).toBeDisabled();
+    await choose("Attach context", true);
+    expect(screen.getByTestId("ai-attach")).toHaveAttribute("aria-pressed", "true");
+    await background(); await group("Context"); await choose("Whole terminal buffer", true);
+    expect(getChat(undefined).context.includeBuffer).toBe(true);
+    expect(screen.getByTestId("ai-context-summary")).toHaveTextContent(/buffer/i);
+    await ask("explain");
+    expect(await screen.findByTestId("ai-consent-preview")).toHaveTextContent("‹redacted›");
+    expect(screen.getByTestId("ai-consent-preview")).not.toHaveTextContent("secret123");
+    expect(aiChat).not.toHaveBeenCalled();
+  });
+
+  it.each([{ noAi: true, provider: true }, { noAi: false, provider: false }])("blocks context when unavailable: %o", async ({ noAi, provider }) => {
+    enableAi();
+    render(AiChat, { props: { noAi, getContext: provider ? () => ({ tail: "secret" }) : undefined } });
+    await background(); await group("Context");
+    for (const item of screen.getAllByRole("menuitemcheckbox")) expect(item).toBeDisabled();
+    await choose("Attach context", true);
+    expect(screen.getByTestId("ai-attach")).toHaveAttribute("aria-pressed", "false");
+    expect(aiChat).not.toHaveBeenCalled();
+  });
+
+  it("uses fetched models and reflects the selected model in the header", async () => {
+    enableAi();
+    aiModels.mockResolvedValue(["llama3"]);
+    render(AiChat, {});
+    await screen.findByRole("option", { name: "llama3" });
+    await background(); await group("Model"); await choose("llama3", true);
+    expect(screen.getByTestId("ai-model")).toHaveValue("llama3");
+    expect(settings.ai.endpoints[0].model).toBe("llama3");
+    aiModels.mockClear();
+    await background(); await group("Model"); await choose("Refresh models");
+    await waitFor(() => expect(aiModels).toHaveBeenCalledOnce());
+  });
+
+  it("asks before clearing, supports cancellation and never clears during a turn", async () => {
+    enableAi();
+    render(AiChat, {});
+    await background();
+    expect(screen.getByRole("menuitem", { name: "Clear chat…" })).toBeDisabled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await askAndReply("keep", "answer");
+    await background(); await choose("Clear chat…");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByText("keep")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("keep")).toBeInTheDocument();
+    await ask("next");
+    await background();
+    expect(screen.getByRole("menuitem", { name: "Clear chat…" })).toBeDisabled();
+    expect(screen.getByTestId("ai-clear")).toBeDisabled();
+  });
+
+  it("closes menus and clear confirmation on session change", async () => {
+    enableAi();
+    const { rerender } = render(AiChat, { props: { sessionId: "a" } });
+    await askAndReply("keep a", "answer");
+    await background(); await choose("Clear chat…");
+    await rerender({ sessionId: "b" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(getChat("a").messages).toHaveLength(2);
+    await background();
+    await rerender({ sessionId: "a" });
+    expect(screen.queryByRole("menu")).toBeNull();
   });
 });
