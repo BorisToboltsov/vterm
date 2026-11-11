@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AiChatRequest } from "../ai/ai";
@@ -81,6 +81,45 @@ beforeEach(() => {
   listRecordings.mockReset().mockResolvedValue([REC]);
   readRecording.mockReset().mockResolvedValue(CAST);
   aiChat.mockReset().mockResolvedValue(undefined);
+});
+
+describe("RecordingsPanel — library context menu", () => {
+  it("preserves recording actions and closes only the menu on Escape", async () => {
+    render(RecordingsPanel, { open: true });
+    await fireEvent.contextMenu(await screen.findByText("Deploy nginx"));
+    expect(screen.getByRole("menuitem", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "View" })).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("resets an empty search result and refreshes the library from background", async () => {
+    render(RecordingsPanel, { open: true });
+    await screen.findByText("Deploy nginx");
+    const field = screen.getByPlaceholderText("Search by server or date…");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    const area = screen.getByTestId("recordings-library");
+    await fireEvent.contextMenu(area);
+    expect(screen.queryByRole("menuitem", { name: "Play" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset search and filters" }));
+    expect(screen.getByText("Deploy nginx")).toBeInTheDocument();
+    await fireEvent.contextMenu(area);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Refresh" }));
+    await waitFor(() => expect(listRecordings).toHaveBeenCalledTimes(2));
+  });
+
+  it("offers import and refresh in an empty library", async () => {
+    listRecordings.mockResolvedValue([]);
+    render(RecordingsPanel, { open: true });
+    await screen.findByTestId("recordings-upload");
+    await fireEvent.contextMenu(screen.getByTestId("recordings-library"));
+    expect(screen.getByRole("menuitem", { name: "Refresh" })).toBeInTheDocument();
+    const { pickRecordingFile } = await import("../api");
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Upload .cast…" }));
+    expect(pickRecordingFile).toHaveBeenCalledOnce();
+  });
 });
 
 describe("RecordingsPanel — AI generation (Phase 17.5–17.6)", () => {

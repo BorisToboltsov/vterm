@@ -26,7 +26,7 @@
   import { PROC_ORDER, PROC_SCHEMA, procTree, type TreeRow } from "./proclist";
   import { applyView, filterSummary, nextSort, NO_FILTER, type ListFilter } from "../ui/listview";
   import { listMenuText, type ListLabels } from "../ui/listtext";
-  import type { OpenMenu } from "../ui/ctxmenu";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { windowRange } from "../ui/virtuallist";
   import { listOrder, setListOrder } from "../stores/listview.svelte";
   import { listFilter, setListFilter } from "../stores/dockstate.svelte";
@@ -74,6 +74,12 @@
     facet: (id) => (id === "user" ? t("mon.col.user") : t("mon.procState")),
     value: (facet, value) => (facet === "state" && STATE[value] ? t(STATE[value]) : value),
   };
+  let listHeader = $state<{ contextItems(): MenuItem[] }>();
+  function openListMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = { x: e.clientX, y: e.clientY, items: listHeader?.contextItems() ?? [] };
+  }
   let menu = $state<OpenMenu | null>(null);
   const sortedBy = (key: string) => (order.sort.key === key ? order.sort.dir : null);
   const orderBy = (key: string) => () =>
@@ -139,7 +145,9 @@
 />
 
 <MonCard pad={false} testid="proc-table">
+  <div role="presentation" oncontextmenu={openListMenu}>
   <ListHeader
+    bind:this={listHeader}
     items={rows}
     schema={PROC_SCHEMA}
     {filter}
@@ -231,6 +239,7 @@
     </div>
   {/if}
   <p class="border-t border-edge px-3 py-1 text-meta text-muted">{t("mon.procsNote")}</p>
+  </div>
 </MonCard>
 
 {#if current}

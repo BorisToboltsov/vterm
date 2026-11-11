@@ -49,6 +49,7 @@
   import { REM_PX } from "../appearance/uiscale";
 
   let {
+    panelItems = () => [],
     branches,
     tags = [],
     stashes,
@@ -60,6 +61,7 @@
     onreveal,
     onlyref,
   }: {
+    panelItems?: () => MenuItem[];
     branches: GitBranch[];
     tags?: GitTag[];
     stashes: GitStashEntry[];
@@ -240,6 +242,24 @@
   // ── Branch context menu (right-click) ──────────────────────────────────────
   // Declarative items for the shared ContextMenu; each closure captures `branch`
   // directly. Prod-protection unchanged: `run(…, { destructive })` still confirms.
+  let searchField: FilterField | undefined;
+  function openListMenu(e: MouseEvent, items: MenuItem[] = []) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, items: [
+      ...items, ...(items.length ? [{ kind: "separator" as const }] : []),
+      { kind: "submenu", key: "refs-view", icon: "eye", label: t("list.view"), items: [
+        { icon: "chevronDown", label: t("git.expandAll"), onSelect: () => foldAll(false) },
+        { icon: "chevronUp", label: t("git.collapseAll"), onSelect: () => foldAll(true) },
+        { label: t("git.sendToTerminal"), checked: sendToTerminal, onSelect: () => (sendToTerminal = !sendToTerminal) },
+      ] },
+      { kind: "submenu", key: "refs-search", icon: "search", label: t("list.filters"), items: [
+        { label: t("list.find"), onSelect: () => searchField?.focus() },
+        { label: t("list.clear"), disabled: !query, onSelect: () => (query = "") },
+      ] },
+      ...panelItems(),
+    ] };
+  }
   let ctxMenu = $state<OpenMenu | null>(null);
   // Create-branch / create-tag from a branch (name prompt).
   let ctxPrompt = $state<{ kind: "branch" | "tag"; from: string } | null>(null);
@@ -339,20 +359,16 @@
       items.push({ icon: "copy", label: t("git.copyBranchName"), onSelect: () => copyName(branch.name) });
       items.push({ icon: "cloud", label: t("git.copyBranchLink"), onSelect: () => copyBranchLink(branch) });
     }
-    ctxMenu = { x: e.clientX, y: e.clientY, items };
+    openListMenu(e, items);
   }
 
   function openTagMenu(e: MouseEvent, tag: GitTag) {
     e.preventDefault();
     selectedRef = tagRef(tag);
-    ctxMenu = {
-      x: e.clientX,
-      y: e.clientY,
-      items: [
-        ...historyItems(tag.short, tagRef(tag)),
-        { icon: "copy", label: t("git.copyRefName"), onSelect: () => copyName(tag.name) },
-      ],
-    };
+    openListMenu(e, [
+      ...historyItems(tag.short, tagRef(tag)),
+      { icon: "copy", label: t("git.copyRefName"), onSelect: () => copyName(tag.name) },
+    ]);
   }
 
   async function copyName(name: string) {
@@ -523,7 +539,7 @@
   {/if}
 {/snippet}
 
-<div class="flex h-full min-h-0 text-xs {wide ? '' : 'flex-col'}" data-testid="git-branches">
+<div class="flex h-full min-h-0 text-xs {wide ? '' : 'flex-col'}" data-testid="git-branches" role="presentation" oncontextmenu={(e) => openListMenu(e)}>
   <div
     class="flex shrink-0 items-center gap-px {wide ? 'flex-col border-r border-edge px-0.5 py-1' : 'border-b border-edge px-1.5 py-0.5'}"
     data-testid="git-branch-tools"
@@ -535,6 +551,7 @@
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
     <div class="shrink-0 border-b border-edge px-2 py-1">
       <FilterField
+        bind:this={searchField}
         bind:value={query}
         placeholder={t("git.searchRefs")}
         shown={refsShown}

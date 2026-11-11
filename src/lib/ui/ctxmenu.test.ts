@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampMenuPosition, isAction, menuActions, menuPathOpen, toggleMenuPath, type MenuItem } from "./ctxmenu";
+import { clampMenuPosition, isAction, menuActions, menuFocusIndex, menuPathOpen, toggleMenuPath, type MenuItem } from "./ctxmenu";
 
 describe("clampMenuPosition", () => {
   const vw = 1000;
@@ -28,6 +28,17 @@ describe("clampMenuPosition", () => {
   it("respects a custom margin", () => {
     expect(clampMenuPosition(-50, -50, w, h, vw, vh, 10)).toEqual({ x: 10, y: 10 });
   });
+});
+
+it("moves keyboard focus across enabled rows and wraps at either end", () => {
+  expect(menuFocusIndex(-1, 3, "ArrowDown")).toBe(0);
+  expect(menuFocusIndex(2, 3, "ArrowDown")).toBe(0);
+  expect(menuFocusIndex(0, 3, "ArrowUp")).toBe(2);
+  expect(menuFocusIndex(2, 3, "ArrowUp")).toBe(1);
+  expect(menuFocusIndex(2, 3, "Home")).toBe(0);
+  expect(menuFocusIndex(0, 3, "End")).toBe(2);
+  expect(menuFocusIndex(1, 3, "Escape")).toBe(1);
+  expect(menuFocusIndex(-1, 0, "ArrowDown")).toBe(-1);
 });
 
 describe("isAction", () => {

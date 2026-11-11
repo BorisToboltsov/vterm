@@ -25,7 +25,7 @@
   import { motion } from "../ui/motion";
   import EmptyState from "../ui/EmptyState.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
-  import type { OpenMenu } from "../ui/ctxmenu";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { writeClipboard } from "../app/clipboard";
   import { t } from "../i18n";
 
@@ -105,8 +105,26 @@
   // selects it first, so keyboard focus follows the menu target.
   let ctxMenu = $state<OpenMenu | null>(null);
 
+  let searchField: FilterField | undefined;
+  function searchItems(): MenuItem[] {
+    return [{ kind: "submenu", key: "server-search", icon: "search", label: t("list.filters"), items: [
+      { icon: "search", label: t("list.find"), onSelect: () => searchField?.focus() },
+      { icon: "close", label: t("list.clear"), disabled: !serverSearch, onSelect: () => (serverSearch = "") },
+    ] }];
+  }
+  function openEmptyMenu(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, items: [
+      { icon: "server", label: t("tree.addServer"), onSelect: () => { onSelectFolder(""); onAddServer(); } },
+      { icon: "folderPlus", label: t("tree.newFolder"), onSelect: () => onNewFolder("") },
+      ...searchItems(),
+    ] };
+  }
+
   function openServerMenu(e: MouseEvent, server: ServerProfile) {
     e.preventDefault();
+    e.stopPropagation();
     onSelect(server.id);
     ctxMenu = {
       x: e.clientX,
@@ -140,12 +158,15 @@
           label: t("tree.deleteServer"),
           onSelect: () => onDeleteServer(server),
         },
+        { kind: "separator" },
+        ...searchItems(),
       ],
     };
   }
 
   function openFolderMenu(e: MouseEvent, path: string) {
     e.preventDefault();
+    e.stopPropagation();
     onSelectFolder(path);
     ctxMenu = {
       x: e.clientX,
@@ -168,6 +189,8 @@
           label: t("tree.deleteFolder"),
           onSelect: () => onDeleteFolder(path),
         },
+        { kind: "separator" },
+        ...searchItems(),
       ],
     };
   }
@@ -298,6 +321,7 @@
 <div class="flex h-full min-h-0 flex-col" data-testid="server-tree">
   <div class="flex items-center gap-1 p-2">
     <FilterField
+      bind:this={searchField}
       bind:value={serverSearch}
       placeholder={t("tree.searchPlaceholder")}
       shown={serverSearch.trim() ? treeRows.length : null}
@@ -327,6 +351,7 @@
     bind:this={listEl}
     data-drop=""
     role="tree"
+    oncontextmenu={openEmptyMenu}
     tabindex="0"
     onkeydown={onTreeKeydown}
     onpointermove={listPointerMove}

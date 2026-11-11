@@ -39,6 +39,7 @@ export const ru: Record<MessageKey, string> = {
   // ── Lists: filter row, facets, «View» menu (v1.29) ──
   "list.shownOf": "{shown} из {total}",
   "list.clear": "Очистить фильтр",
+  "list.refresh": "Обновить",
   "list.find": "Найти в этом списке",
   "list.resetAll": "Сбросить поиск и фильтры",
   "list.filters": "Фильтры",
@@ -1481,6 +1482,7 @@ export const ru: Record<MessageKey, string> = {
   "git.graph": "Граф",
   "git.changes": "Изменения",
   "git.branches": "Ветки",
+  "git.repoMenu": "Репозиторий",
   "git.refresh": "Обновить",
   "git.pull": "Pull",
   "git.push": "Push",

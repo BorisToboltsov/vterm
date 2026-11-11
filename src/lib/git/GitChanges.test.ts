@@ -55,6 +55,21 @@ beforeEach(() => resetListOrders());
 afterEach(() => resetListOrders());
 
 describe("Git changes by folder", () => {
+  it("shares grouping from a file menu and search focus from empty space", async () => {
+    setup();
+    await fireEvent.contextMenu(screen.getByText("src/lib/util.ts"));
+    expect(screen.getByRole("menuitem", { name: "Stage" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: /^Groups:/ }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Folder" }));
+    expect(screen.getAllByTestId("git-folder").length).toBeGreaterThan(0);
+    await fireEvent.contextMenu(screen.getByTestId("git-changes"));
+    expect(screen.queryByRole("menuitem", { name: "Stage" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Find in this list" }));
+    expect(screen.getByTestId("git-changes-header-field")).toHaveFocus();
+  });
+
   it("lie flat by default, each file by its path", () => {
     setup();
     expect(screen.queryAllByTestId("git-folder")).toHaveLength(0);

@@ -72,6 +72,7 @@
   import { REM_PX } from "../appearance/uiscale";
 
   let {
+    panelItems = () => [],
     rows,
     wide = false,
     filter = NO_FILTER,
@@ -87,6 +88,7 @@
     onloadmore,
     onfilehistory,
   }: {
+    panelItems?: () => MenuItem[];
     rows: GraphRow[];
     /** The panel is in its wide layout: a commit's details may stand beside the list. */
     wide?: boolean;
@@ -222,6 +224,15 @@
   let contained = $state<string[] | null>(null);
 
   // Context menu.
+  let listHeader = $state<{ contextItems(): MenuItem[] }>();
+  function openListMenu(e: MouseEvent, items: MenuItem[] = []) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, items: [
+      ...items, ...(items.length ? [{ kind: "separator" as const }] : []),
+      ...(listHeader?.contextItems() ?? []), ...panelItems(),
+    ] };
+  }
   let ctxMenu = $state<OpenMenu | null>(null);
 
   // Name prompt (create branch / tag from a commit).
@@ -332,6 +343,7 @@
 
   function openFileMenu(e: MouseEvent, commit: GitCommit, file: CommitFile) {
     e.preventDefault();
+    e.stopPropagation();
     ctxMenu = {
       x: e.clientX,
       y: e.clientY,
@@ -400,7 +412,7 @@
       { icon: "copy", label: t("git.ctxCopyMsg"), onSelect: () => copyMsg(commit) },
       { icon: "cloud", label: t("git.ctxCopyLink"), onSelect: () => copyLink(commit) },
     ];
-    ctxMenu = { x: e.clientX, y: e.clientY, items };
+    openListMenu(e, items);
   }
 
   async function copyText(text: string) {
@@ -448,7 +460,7 @@
 </script>
 
 {#if rows.length === 0 && !filtered && !searchError}
-  <p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p>
+  <div role="presentation" class="h-full" oncontextmenu={(e) => openListMenu(e)} data-testid="git-graph-empty"><p class="px-3 py-6 text-center text-xs text-muted">{t("git.noCommits")}</p></div>
 {:else}
   <div class="relative flex h-full min-h-0 text-xs {beside ? '' : 'flex-col'}" bind:clientWidth={rowWidth} data-testid="git-graph-row">
     <!-- The list and its search. It holds no dialog of its own: the filter bar's
@@ -457,10 +469,12 @@
       class="flex min-h-0 min-w-0 flex-col {beside ? 'shrink-0' : 'flex-1'}"
       data-morph
       style:width={beside ? partWidth("gitCommit", rowWidth) : null}
+      role="presentation"
+      oncontextmenu={(e) => openListMenu(e)}
       data-testid="git-graph-column"
     >
       {#if onfilter}
-        <GitLogFilter {filter} full={oneLine} {authors} {branches} {onfilter} />
+        <GitLogFilter bind:this={listHeader} {filter} full={oneLine} {authors} {branches} {onfilter} />
       {/if}
       {#if searchError}
         <p class="border-b border-edge px-2 py-1 text-meta text-bad" data-testid="git-search-error">{t("git.searchFailed", { error: searchError })}</p>

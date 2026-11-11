@@ -42,6 +42,7 @@
   import AiConsentDialog from "../ai/AiConsentDialog.svelte";
 
   let {
+    panelItems = () => [],
     status,
     busy,
     run,
@@ -58,6 +59,7 @@
     ontoggle = () => {},
     onfold = () => {},
   }: {
+    panelItems?: () => MenuItem[];
     status: GitStatus;
     busy: boolean;
     run: (args: string[], opts?: GitRunOpts) => Promise<boolean>;
@@ -231,6 +233,15 @@
   // ── File context menu (right-click) ────────────────────────────────────────
   // Declarative items for the shared ContextMenu; closures capture file/staged
   // directly. Prod-protection is unchanged (discard confirms via ConfirmDialog).
+  let listHeader = $state<{ contextItems(): MenuItem[] }>();
+  function openListMenu(e: MouseEvent, items: MenuItem[] = []) {
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, items: [
+      ...items, ...(items.length ? [{ kind: "separator" as const }] : []),
+      ...(listHeader?.contextItems() ?? []), ...panelItems(),
+    ] };
+  }
   let ctxMenu = $state<OpenMenu | null>(null);
 
   function openMenu(e: MouseEvent, file: GitFile, isStaged: boolean) {
@@ -282,7 +293,7 @@
         onSelect: () => onIgnore(`*.${ext}`),
       });
     }
-    ctxMenu = { x: e.clientX, y: e.clientY, items };
+    openListMenu(e, items);
   }
 
   function fileExt(path: string): string {
@@ -312,8 +323,9 @@
   }
 </script>
 
-<div class="flex h-full min-h-0 flex-col text-xs">
+<div role="presentation" oncontextmenu={(e) => openListMenu(e)} class="flex h-full min-h-0 flex-col text-xs" data-testid="git-changes">
   <ListHeader
+    bind:this={listHeader}
     items={changeItems}
     schema={CHANGE_SCHEMA}
     {filter}

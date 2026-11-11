@@ -41,6 +41,7 @@ export const en = {
   // ── Lists: filter row, facets, «View» menu (v1.29) ──
   "list.shownOf": "{shown} of {total}",
   "list.clear": "Clear the filter",
+  "list.refresh": "Refresh",
   "list.find": "Find in this list",
   "list.resetAll": "Reset search and filters",
   "list.filters": "Filters",
@@ -1491,6 +1492,7 @@ export const en = {
   "git.graph": "Graph",
   "git.changes": "Changes",
   "git.branches": "Branches",
+  "git.repoMenu": "Repository",
   "git.refresh": "Refresh",
   "git.pull": "Pull",
   "git.push": "Push",

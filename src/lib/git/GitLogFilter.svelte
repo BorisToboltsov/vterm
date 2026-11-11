@@ -163,6 +163,16 @@
       },
     ];
   }
+  let searchField: FilterField | undefined;
+  export function contextItems(): MenuItem[] {
+    return [
+      { kind: "submenu", key: "history-view", icon: "eye", label: t("list.view"), items: viewMenu() },
+      { kind: "submenu", key: "history-filters", icon: "filter", label: t("list.filters"), items: [
+        { icon: "search", label: t("list.find"), onSelect: () => searchField?.focus() },
+        ...allFiltersMenu(),
+      ] },
+    ];
+  }
   function reset() {
     clearTimeout(timer);
     draft = "";
@@ -186,6 +196,7 @@
 
 <div class="flex min-w-0 shrink-0 items-center gap-1 border-b border-edge px-2 py-1 text-meta text-muted" data-testid="git-log-filter">
   <FilterField
+    bind:this={searchField}
     value={draft}
     oninput={(v) => {
       draft = v;

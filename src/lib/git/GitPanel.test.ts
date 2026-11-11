@@ -30,6 +30,17 @@ beforeEach(() => {
 });
 
 describe("GitPanel confirmations", () => {
+  it("keeps pull confirmation and production warning when invoked from the background menu", async () => {
+    await mount(true);
+    await fireEvent.contextMenu(await screen.findByTestId("git-changes"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Repository" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Pull" }));
+    expect(await screen.findByText("This server is marked as production.")).toBeInTheDocument();
+    expect(calls("pull")).toHaveLength(0);
+    await fireEvent.click(screen.getByTestId("confirm"));
+    await waitFor(() => expect(calls("pull")).toHaveLength(1));
+  });
+
   it("asks before a pull on an ordinary (non-prod) server and runs it only on confirm", async () => {
     await mount();
     await fireEvent.click(screen.getByRole("button", { name: "Pull" }));
