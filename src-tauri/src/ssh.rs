@@ -1240,13 +1240,14 @@ mod tests {
         // Gate: a channel the app opens on a dead link fails within
         // CHANNEL_STEP_TIMEOUT instead of waiting out the keepalive, with every
         // poll and file call queued behind it.
+        // A Windows checkout carries CRLF (core.autocrlf); the window below counts LF.
         for (name, src) in [
             ("ssh.rs", include_str!("ssh.rs")),
             ("fileuser.rs", include_str!("fileuser.rs")),
             ("sftp.rs", include_str!("sftp.rs")),
         ] {
             assert_eq!(
-                unanswered_opens(src),
+                unanswered_opens(&src.replace("\r\n", "\n")),
                 0,
                 "{name} opens a channel without a deadline"
             );

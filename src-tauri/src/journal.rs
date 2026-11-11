@@ -824,12 +824,15 @@ mod tests {
         // Gate: the journal reaches the disk as a store file — atomic, and
         // quarantined when it does not parse — and nowhere else; a backup never
         // carries it: it is this machine's history.
-        let journal = include_str!("journal.rs");
-        let store = include_str!("store.rs");
-        let backups = [
-            include_str!("backup.rs"),
-            include_str!("commands/backup.rs"),
+        // A Windows checkout carries CRLF (core.autocrlf); the markers below are LF.
+        let lf = |src: &str| src.replace("\r\n", "\n");
+        let (journal, store) = (lf(include_str!("journal.rs")), lf(include_str!("store.rs")));
+        let (journal, store) = (journal.as_str(), store.as_str());
+        let backup_files = [
+            lf(include_str!("backup.rs")),
+            lf(include_str!("commands/backup.rs")),
         ];
+        let backups = [backup_files[0].as_str(), backup_files[1].as_str()];
         assert_eq!(
             store_violations(journal, store, &backups),
             Vec::<String>::new()
