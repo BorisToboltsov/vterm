@@ -29,6 +29,33 @@ const entries: JsonLogEntry[] = [
 ];
 
 describe("JsonLogView", () => {
+  it("keeps row copy alongside column switches and filters instead of replacing it with the background menu", async () => {
+    render(JsonLogView, { entries });
+    await fireEvent.contextMenu(screen.getByText("started ok"));
+    expect(screen.getByRole("menuitem", { name: "Copy" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Columns" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "a" }));
+    expect(screen.getByRole("columnheader", { name: "a" })).toBeInTheDocument();
+    const field = screen.getByPlaceholderText("Filter logs…");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByTestId("jsonlog-view"));
+    expect(screen.queryByRole("menuitem", { name: "Copy" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset search and filters" }));
+    expect(screen.getByText("started ok")).toBeInTheDocument();
+  });
+
+  it("confirms clearing from the context menu", async () => {
+    const onClear = vi.fn();
+    render(JsonLogView, { entries, onClear });
+    await fireEvent.contextMenu(screen.getByTestId("jsonlog-view"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Clear" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(onClear).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByTestId("confirm"));
+    expect(onClear).toHaveBeenCalledOnce();
+  });
+
   it("shows the empty state when there are no entries", () => {
     render(JsonLogView, { props: { entries: [] } });
     expect(screen.getByText("No structured logs yet")).toBeInTheDocument();

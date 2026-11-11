@@ -21,7 +21,7 @@
   import ListHeader from "../ui/ListHeader.svelte";
   import ContextMenu from "../ui/ContextMenu.svelte";
   import { filterItems, NO_FILTER, type ListFilter } from "../ui/listview";
-  import type { OpenMenu } from "../ui/ctxmenu";
+  import type { MenuItem, OpenMenu } from "../ui/ctxmenu";
   import { wideWhen } from "../actions/panelwide.svelte";
   import { uiPx } from "../settings/settings.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -44,6 +44,19 @@
   // The view's width against the panels' one threshold: the level facet is a
   // button that says its values when wide, a funnel when narrow.
   let wide = $state(false);
+  let listHeader = $state<{ contextItems(): MenuItem[] }>();
+  function openListMenu(e: MouseEvent, row?: JsonLogEntry) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = { x: e.clientX, y: e.clientY, items: [
+      ...(row ? [{ icon: "copy" as const, label: t("jsonlog.copy"), onSelect: () => copyRow(row) }, { kind: "separator" as const }] : []),
+      { kind: "submenu", key: "log-columns", icon: "table", label: t("jsonlog.columns"), items:
+        availableFields(entries).map((field) => ({ label: field, checked: extraColumns.includes(field), onSelect: () => toggleColumn(field) })),
+      },
+      ...(listHeader?.contextItems() ?? []),
+      { icon: "trash", label: t("jsonlog.clear"), danger: true, onSelect: () => (confirmClear = true) },
+    ] };
+  }
   let menu = $state<OpenMenu | null>(null);
   let confirmClear = $state(false);
   let expanded = $state(new Set<number>());
@@ -127,10 +140,11 @@
   });
 </script>
 
-<div class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view" use:wideWhen={(w) => (wide = w)}>
+<div role="presentation" oncontextmenu={(e) => openListMenu(e)} class="flex h-full w-full flex-col bg-panel" data-testid="jsonlog-view" use:wideWhen={(w) => (wide = w)}>
   <!-- The filter row: the field and the level facet; «Clear» and the column
        picker stand in it as the list's own buttons. -->
   <ListHeader
+    bind:this={listHeader}
     items={entries}
     schema={LOG_SCHEMA}
     {filter}
@@ -244,7 +258,7 @@
         </thead>
         <tbody>
           {#each filtered as e (e.seq)}
-            <tr class="border-t border-edge/40 align-top hover:bg-edge">
+            <tr oncontextmenu={(event) => openListMenu(event, e)} class="border-t border-edge/40 align-top hover:bg-edge">
               <td class="px-1 py-1">
                 <button
                   type="button"

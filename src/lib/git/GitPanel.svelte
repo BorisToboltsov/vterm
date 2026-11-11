@@ -4,6 +4,7 @@
   // ahead/behind, fetch/pull/push, stash) over three sub-tabs — Graph, Changes,
   // Branches. Works on SSH and local tabs alike; the backend `git_run` dispatches
   // by session kind. All git logic is pure (`git.ts`); this owns data + actions.
+  import type { MenuItem } from "../ui/ctxmenu";
   import Icon from "../ui/Icon.svelte";
   import Modal from "../ui/Modal.svelte";
   import { tooltip } from "../actions/tooltip";
@@ -527,6 +528,18 @@
   const shownSubs = $derived(
     wide ? WIDE_SUBS.map((id) => SUBS.find((s) => s.id === id)!) : SUBS,
   );
+  function panelItems(): MenuItem[] {
+    return [
+      { kind: "submenu", key: "repository", icon: "gitBranch", label: t("git.repoMenu"), items: [
+        { icon: "cloud", label: t("git.fetch"), disabled: busy, onSelect: () => void syncRun("fetch", fetchArgs()) },
+        { icon: "download", label: t("git.pull"), disabled: busy, onSelect: () => void syncRun("pull", pullArgs()) },
+        { icon: "upload", label: t("git.push"), disabled: busy, onSelect: () => void syncRun("push", pushArgs()) },
+        ...(onToggleFollowTerminal ? [{ label: t("sftp.followTerminal"), checked: followTerminal, onSelect: onToggleFollowTerminal }] : []),
+      ] },
+      { icon: "refresh", label: t("git.refresh"), onSelect: () => void loadAll() },
+    ];
+  }
+
 </script>
 
 {#snippet subTabs()}
@@ -658,6 +671,7 @@
           {#if leftSub === "changes"}
             {#if status}
               <GitChanges
+                {panelItems}
                 {status}
                 {busy}
                 {run}
@@ -678,6 +692,7 @@
             {/if}
           {:else}
             <GitBranches
+              {panelItems}
               {branches}
               {tags}
               {stashes}
@@ -700,6 +715,7 @@
       {#if wide || leftSub === "graph"}
         <div class="min-h-0 min-w-0 flex-1" data-testid="git-column-graph">
           <GitGraph
+            {panelItems}
             {rows}
             {wide}
             {filter}

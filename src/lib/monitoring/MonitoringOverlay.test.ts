@@ -427,6 +427,23 @@ describe("MonitoringOverlay — sections", () => {
     expect(order).toEqual(["1", "1234", "1300"]);
   });
 
+  it("Processes: shares View and Filters with the row menu, without requesting process details", async () => {
+    fetchMetricsDetail.mockResolvedValue({ ...detail, processes: PROCESSES });
+    const sec = await openOn("processes");
+    const rows = await within(sec).findAllByTestId("proc-row");
+    await fireEvent.contextMenu(rows[0]);
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "As a tree" }));
+    expect(within(sec).getAllByTestId("proc-row").map((r) => r.textContent?.match(/^\d+/)?.[0])).toEqual(["1", "1234", "1300"]);
+    expect(screen.queryByTestId("proc-detail")).toBeNull();
+    const field = within(screen.getByTestId("proc-list-header")).getByRole("textbox");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByTestId("proc-list-header"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Reset search and filters" }));
+    expect(within(sec).getAllByTestId("proc-row")).toHaveLength(PROCESSES.length);
+  });
+
   it("Processes: says CPU comes with the second reading and when the list is capped", async () => {
     fetchMetricsDetail.mockResolvedValue({
       ...detail,

@@ -55,6 +55,22 @@ afterEach(() => {
 });
 
 describe("GitBranches tree", () => {
+  it("uses row actions and background search separately, with the same fold controls", async () => {
+    setup();
+    await fireEvent.contextMenu(row("main"));
+    expect(screen.getByRole("menuitem", { name: "Copy branch name" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "View" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Expand all" }));
+    expect(shownBranches()).toContain("feat/a");
+    const field = screen.getByTestId("git-tree-search");
+    await fireEvent.input(field, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByTestId("git-branches"));
+    expect(screen.queryByRole("menuitem", { name: "Copy branch name" })).toBeNull();
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Clear the filter" }));
+    expect(shownBranches()).toContain("main");
+  });
+
   it("opens on the favourites and the way to the current branch", () => {
     setup();
     expect(shownBranches()).toEqual(["main", "docs/guide", "docs/old"]);

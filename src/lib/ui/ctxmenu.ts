@@ -86,3 +86,13 @@ export function menuPathOpen(expanded: readonly string[], path: readonly string[
 export function toggleMenuPath(expanded: readonly string[], path: readonly string[]): string[] {
   return menuPathOpen(expanded, path) ? path.slice(0, -1) : [...path];
 }
+
+/** Roving focus over visible, enabled menu rows; separators never enter this list. */
+export function menuFocusIndex(index: number, count: number, key: string): number {
+  if (count === 0) return -1;
+  if (key === "Home") return 0;
+  if (key === "End") return count - 1;
+  if (key === "ArrowDown") return (index + 1) % count;
+  if (key === "ArrowUp") return index <= 0 ? count - 1 : index - 1;
+  return index;
+}

@@ -349,6 +349,18 @@
 
   // ── Right-click menu ────────────────────────────────────────────────────────
   let ctxMenu = $state<OpenMenu | null>(null);
+  let listHeader = $state<{ contextItems(): MenuItem[] }>();
+  function openLibraryMenu(e: MouseEvent, items: MenuItem[] = []) {
+    if (playing || loading) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ctxMenu = { x: e.clientX, y: e.clientY, items: [
+      ...items, ...(items.length ? [{ kind: "separator" as const }] : []),
+      ...(listHeader?.contextItems() ?? []),
+      { icon: "refresh", label: t("list.refresh"), onSelect: () => void refresh() },
+      { icon: "upload", label: t("recordings.upload"), onSelect: () => void upload() },
+    ] };
+  }
   function openRecMenu(e: MouseEvent, rec: RecordingMeta) {
     e.preventDefault();
     const items: MenuItem[] = [
@@ -366,7 +378,7 @@
       label: t("recordings.delete"),
       onSelect: () => (confirmDelete = rec),
     });
-    ctxMenu = { x: e.clientX, y: e.clientY, items };
+    openLibraryMenu(e, items);
   }
 
   function fmtDate(ts: number): string {
@@ -432,6 +444,7 @@
   showClose
   onclose={() => (open = false)}
 >
+  <div role="presentation" oncontextmenu={openLibraryMenu} data-testid="recordings-library">
   {#if playing}
     {#key playing}
       <RecordingPlayer
@@ -464,6 +477,7 @@
     <EmptyState icon="activity" title={t("recordings.emptyTitle")} hint={t("recordings.emptyHint")} />
   {:else if !playing && !loading}
     <ListHeader
+      bind:this={listHeader}
       {items}
       schema={RECS}
       filter={recFilter}
@@ -646,6 +660,7 @@
     </div>
     {/if}
   {/if}
+  </div>
 </Modal>
 
 <ConfirmDialog

@@ -53,6 +53,39 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+describe("ServerTree — background context menu", () => {
+  it("creates a server at the root even when a folder was selected", async () => {
+    const onSelectFolder = vi.fn();
+    const onAddServer = vi.fn();
+    render(ServerTree, { ...baseProps(), selectedFolder: "Production", onSelectFolder, onAddServer });
+    await fireEvent.contextMenu(screen.getByRole("tree"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Add server" }));
+    expect(onSelectFolder).toHaveBeenCalledWith("");
+    expect(onAddServer).toHaveBeenCalledOnce();
+  });
+  it("creates a root folder and can focus and clear search from empty results", async () => {
+    const onNewFolder = vi.fn();
+    render(ServerTree, { ...baseProps(), onNewFolder, servers: [srv({ id: "a", alias: "web" })] });
+    await fireEvent.contextMenu(screen.getByRole("tree"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "New folder" }));
+    expect(onNewFolder).toHaveBeenCalledWith("");
+    const search = screen.getByTestId("server-search");
+    await fireEvent.input(search, { target: { value: "missing" } });
+    await fireEvent.contextMenu(screen.getByRole("tree"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Find in this list" }));
+    expect(search).toHaveFocus();
+    await fireEvent.contextMenu(screen.getByRole("tree"));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Filters" }));
+    await fireEvent.click(screen.getByRole("menuitem", { name: "Clear the filter" }));
+    expect(search).toHaveValue("");
+    expect(screen.getByTestId("server-row")).toHaveTextContent("web");
+    await fireEvent.contextMenu(screen.getByTestId("server-row"));
+    expect(screen.getByRole("menuitem", { name: "Connect" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "New folder" })).toBeNull();
+  });
+});
+
 describe("ServerTree — row actions on a narrow sidebar", () => {
   const props = () => ({ ...baseProps(), servers: [srv({ id: "a", alias: "prod-oel-db-master-01" })] });
 
